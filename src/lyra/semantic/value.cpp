@@ -276,6 +276,32 @@ auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
   return result;
 }
 
+auto MakeIntegralFilled(uint32_t bit_width, bool value_bit, bool unknown_bit)
+    -> RuntimeValue {
+  // Contract: creates an integral with all bits set to the same 4-state value
+  // value_bit=0, unknown_bit=0 → all 0
+  // value_bit=1, unknown_bit=0 → all 1
+  // value_bit=0, unknown_bit=1 → all X
+  // value_bit=1, unknown_bit=1 → all Z
+  if (bit_width == 0) {
+    throw lyra::common::InternalError(
+        "MakeIntegralFilled", "bit_width must be > 0");
+  }
+
+  size_t num_words = WordsNeeded(bit_width);
+  uint64_t value_pattern = value_bit ? ~uint64_t{0} : uint64_t{0};
+  uint64_t unknown_pattern = unknown_bit ? ~uint64_t{0} : uint64_t{0};
+
+  RuntimeIntegral result;
+  result.bit_width = bit_width;
+  result.value.assign(num_words, value_pattern);
+  result.unknown.assign(num_words, unknown_pattern);
+  MaskTopWord(result.value, bit_width);
+  MaskTopWord(result.unknown, bit_width);
+
+  return result;
+}
+
 auto MakeString(std::string val) -> RuntimeValue {
   return RuntimeString{.value = std::move(val)};
 }

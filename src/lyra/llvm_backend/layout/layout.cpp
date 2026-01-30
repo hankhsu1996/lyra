@@ -419,6 +419,10 @@ void CollectPlacesFromEffectOp(
           [&](const mir::MonitorControlEffect&) {
             // MonitorControlEffect only has enable flag, no operands
           },
+          [&](const mir::FillPackedEffect& f) {
+            places.insert(f.target);
+            CollectPlaceFromOperand(f.fill_value, places);
+          },
       },
       effect);
 }

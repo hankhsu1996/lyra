@@ -27,6 +27,7 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/expression.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
+#include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -73,10 +74,20 @@ auto LowerVariableDeclaration(
   const Symbol& sym = (*ctx.symbol_table)[data.symbol];
   auto alloc = ctx.AllocLocal(data.symbol, sym.type);
 
-  if (data.init != hir::kInvalidExpressionId) {
-    Result<mir::Operand> value_result = LowerExpression(data.init, builder);
-    if (!value_result) return std::unexpected(value_result.error());
-    builder.EmitAssign(alloc.place, std::move(*value_result));
+  if (data.initializer.has_value()) {
+    const hir::RValue& rvalue = *data.initializer;
+    if (rvalue.IsExpression()) {
+      // Expression RValue: compute value then store
+      Result<mir::Operand> value_result =
+          LowerExpression(rvalue.AsExpression(), builder);
+      if (!value_result) return std::unexpected(value_result.error());
+      builder.EmitAssign(alloc.place, std::move(*value_result));
+    } else {
+      // Pattern RValue: emit fill/override effects
+      Result<void> pattern_result =
+          LowerPattern(rvalue.AsPattern(), alloc.place, builder);
+      if (!pattern_result) return std::unexpected(pattern_result.error());
+    }
   }
   return {};
 }

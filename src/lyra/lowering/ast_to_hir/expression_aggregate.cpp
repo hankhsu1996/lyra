@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -40,6 +41,8 @@ auto IsPackedContainer(const slang::ast::Type& ct) -> bool {
          (ct.isIntegral() && ct.kind != slang::ast::SymbolKind::ScalarType);
 }
 
+// Check if expression is a fill literal ('0/'1/'x/'z or 'b0/'b1/etc.)
+// These represent single fill bits for all bit positions
 auto IsPackedStruct(const slang::ast::Type& ct) -> bool {
   return ct.kind == slang::ast::SymbolKind::PackedStructType;
 }
@@ -226,6 +229,54 @@ auto LowerSimpleArrayLiteral(
   return MakeArrayLiteral(std::move(*lowered), type, span, ctx);
 }
 
+auto GetStructFieldCount(const slang::ast::Type& ct) -> size_t {
+  if (ct.isUnpackedStruct()) {
+    return ct.as<slang::ast::UnpackedStructType>().fields.size();
+  }
+  size_t count = 0;
+  for ([[maybe_unused]] const auto& _ :
+       ct.as<slang::ast::PackedStructType>()
+           .membersOfType<slang::ast::FieldSymbol>()) {
+    ++count;
+  }
+  return count;
+}
+
+auto LowerStructLiteral(
+    std::span<const slang::ast::Expression* const> elements,
+    const slang::ast::Type& ct, SourceSpan span, ExpressionLoweringView view)
+    -> hir::ExpressionId {
+  auto* ctx = view.context;
+
+  size_t field_count = GetStructFieldCount(ct);
+  if (elements.size() != field_count) {
+    ctx->sink->Error(
+        span, std::format(
+                  "struct assignment pattern did not resolve all fields "
+                  "(got {}, expected {})",
+                  elements.size(), field_count));
+    return hir::kInvalidExpressionId;
+  }
+
+  auto lowered = LowerElementList(elements, view);
+  if (!lowered) {
+    return hir::kInvalidExpressionId;
+  }
+
+  TypeId type = LowerType(ct, span, ctx);
+  if (!type) {
+    return hir::kInvalidExpressionId;
+  }
+
+  return ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kStructLiteral,
+          .type = type,
+          .span = span,
+          .data = hir::StructLiteralExpressionData{
+              .field_values = std::move(*lowered)}});
+}
+
 auto LowerPackedDefaultPattern(
     const slang::ast::StructuredAssignmentPatternExpression& structured,
     const slang::ast::Type& ct, SourceSpan span, ExpressionLoweringView view)
@@ -294,54 +345,6 @@ auto LowerPackedDefaultPattern(
           .type = result_type,
           .span = span,
           .data = hir::ConcatExpressionData{.operands = std::move(operands)}});
-}
-
-auto GetStructFieldCount(const slang::ast::Type& ct) -> size_t {
-  if (ct.isUnpackedStruct()) {
-    return ct.as<slang::ast::UnpackedStructType>().fields.size();
-  }
-  size_t count = 0;
-  for ([[maybe_unused]] const auto& _ :
-       ct.as<slang::ast::PackedStructType>()
-           .membersOfType<slang::ast::FieldSymbol>()) {
-    ++count;
-  }
-  return count;
-}
-
-auto LowerStructLiteral(
-    std::span<const slang::ast::Expression* const> elements,
-    const slang::ast::Type& ct, SourceSpan span, ExpressionLoweringView view)
-    -> hir::ExpressionId {
-  auto* ctx = view.context;
-
-  size_t field_count = GetStructFieldCount(ct);
-  if (elements.size() != field_count) {
-    ctx->sink->Error(
-        span, std::format(
-                  "struct assignment pattern did not resolve all fields "
-                  "(got {}, expected {})",
-                  elements.size(), field_count));
-    return hir::kInvalidExpressionId;
-  }
-
-  auto lowered = LowerElementList(elements, view);
-  if (!lowered) {
-    return hir::kInvalidExpressionId;
-  }
-
-  TypeId type = LowerType(ct, span, ctx);
-  if (!type) {
-    return hir::kInvalidExpressionId;
-  }
-
-  return ctx->hir_arena->AddExpression(
-      hir::Expression{
-          .kind = hir::ExpressionKind::kStructLiteral,
-          .type = type,
-          .span = span,
-          .data = hir::StructLiteralExpressionData{
-              .field_values = std::move(*lowered)}});
 }
 
 auto LowerArrayAssignmentPattern(

@@ -8,6 +8,7 @@
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/hir/fwd.hpp"
+#include "lyra/hir/rvalue.hpp"
 
 namespace lyra::hir {
 
@@ -47,7 +48,7 @@ struct BlockStatementData {
 
 struct VariableDeclarationStatementData {
   SymbolId symbol;
-  ExpressionId init;  // kInvalidExpressionId if no initializer
+  std::optional<RValue> initializer;
 
   auto operator==(const VariableDeclarationStatementData&) const
       -> bool = default;

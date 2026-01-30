@@ -130,6 +130,7 @@ class Context {
   [[nodiscard]] auto GetLyraWritemem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraNotifySignal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintModulePath() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraFillPackedElements() -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -421,6 +422,7 @@ class Context {
   llvm::Function* lyra_writemem_ = nullptr;
   llvm::Function* lyra_notify_signal_ = nullptr;
   llvm::Function* lyra_print_module_path_ = nullptr;
+  llvm::Function* lyra_fill_packed_elements_ = nullptr;
 
   // Maps PlaceRootKey to its LLVM alloca storage.
   // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root

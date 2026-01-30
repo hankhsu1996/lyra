@@ -6,7 +6,7 @@
 namespace lyra::hir {
 
 struct ExpressionId {
-  uint32_t value = 0;
+  uint32_t value = UINT32_MAX;
 
   auto operator==(const ExpressionId&) const -> bool = default;
   auto operator<=>(const ExpressionId&) const = default;
@@ -23,7 +23,7 @@ struct ExpressionId {
 constexpr ExpressionId kInvalidExpressionId{UINT32_MAX};
 
 struct StatementId {
-  uint32_t value = 0;
+  uint32_t value = UINT32_MAX;
 
   auto operator==(const StatementId&) const -> bool = default;
   auto operator<=>(const StatementId&) const = default;
@@ -40,7 +40,7 @@ struct StatementId {
 constexpr StatementId kInvalidStatementId{UINT32_MAX};
 
 struct ProcessId {
-  uint32_t value = 0;
+  uint32_t value = UINT32_MAX;
 
   auto operator==(const ProcessId&) const -> bool = default;
   auto operator<=>(const ProcessId&) const = default;
@@ -57,7 +57,7 @@ struct ProcessId {
 constexpr ProcessId kInvalidProcessId{UINT32_MAX};
 
 struct FunctionId {
-  uint32_t value = 0;
+  uint32_t value = UINT32_MAX;
 
   auto operator==(const FunctionId&) const -> bool = default;
   auto operator<=>(const FunctionId&) const = default;
@@ -74,7 +74,7 @@ struct FunctionId {
 constexpr FunctionId kInvalidFunctionId{UINT32_MAX};
 
 struct TaskId {
-  uint32_t value = 0;
+  uint32_t value = UINT32_MAX;
 
   auto operator==(const TaskId&) const -> bool = default;
   auto operator<=>(const TaskId&) const = default;
@@ -90,10 +90,28 @@ struct TaskId {
 
 constexpr TaskId kInvalidTaskId{UINT32_MAX};
 
+struct PatternId {
+  uint32_t value = UINT32_MAX;
+
+  auto operator==(const PatternId&) const -> bool = default;
+  auto operator<=>(const PatternId&) const = default;
+  explicit operator bool() const {
+    return value != UINT32_MAX;
+  }
+
+  template <typename H>
+  friend auto AbslHashValue(H h, PatternId id) -> H {
+    return H::combine(std::move(h), id.value);
+  }
+};
+
+constexpr PatternId kInvalidPatternId{UINT32_MAX};
+
 struct Expression;
 struct Statement;
 struct Process;
 struct Function;
 struct Task;
+struct Pattern;
 
 }  // namespace lyra::hir

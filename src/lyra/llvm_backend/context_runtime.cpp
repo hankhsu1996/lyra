@@ -937,4 +937,21 @@ auto Context::GetLyraPrintModulePath() -> llvm::Function* {
   return lyra_print_module_path_;
 }
 
+auto Context::GetLyraFillPackedElements() -> llvm::Function* {
+  if (lyra_fill_packed_elements_ == nullptr) {
+    // void LyraFillPackedElements(ptr dst_val, ptr dst_unk, i32 total_bits,
+    //                             ptr src_val, ptr src_unk,
+    //                             i32 elem_bits, i32 elem_count)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty, i32_ty}, false);
+    lyra_fill_packed_elements_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFillPackedElements",
+        llvm_module_.get());
+  }
+  return lyra_fill_packed_elements_;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

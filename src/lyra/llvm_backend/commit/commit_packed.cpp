@@ -191,4 +191,41 @@ auto CommitPackedValue(
   return StoreTwoStateRaw(ctx, wt, raw, storage_type, type_id);
 }
 
+auto GetPackedPlanesPtr(Context& ctx, mir::PlaceId target, TypeId type_id)
+    -> Result<PackedPlanesPtr> {
+  auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
+  if (!wt_or_err) {
+    return std::unexpected(wt_or_err.error());
+  }
+  const auto& wt = *wt_or_err;
+
+  auto storage_type_or_err = BuildLlvmTypeForTypeId(ctx, type_id);
+  if (!storage_type_or_err) {
+    return std::unexpected(storage_type_or_err.error());
+  }
+  llvm::Type* storage_type = *storage_type_or_err;
+
+  auto& builder = ctx.GetBuilder();
+
+  PackedPlanesPtr result;
+  result.root_ptr = wt.ptr;  // Original storage pointer for notify
+  result.signal_id = wt.canonical_signal_id;
+
+  if (storage_type->isStructTy()) {
+    // 4-state: GEP to struct fields (val_ptr points to field 0, unk_ptr to
+    // field 1)
+    auto* struct_type = llvm::cast<llvm::StructType>(storage_type);
+    result.val_ptr =
+        builder.CreateStructGEP(struct_type, wt.ptr, 0, "planes.val");
+    result.unk_ptr =
+        builder.CreateStructGEP(struct_type, wt.ptr, 1, "planes.unk");
+  } else {
+    // 2-state: single integer storage, no unknown plane
+    result.val_ptr = wt.ptr;
+    result.unk_ptr = nullptr;
+  }
+
+  return result;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

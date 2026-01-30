@@ -1,0 +1,113 @@
+feature: assignment_pattern_multibit
+description: "Multi-bit default patterns in assignment patterns"
+
+cases:
+  - name: unbased_unsized_0
+    sv: |
+      module Test;
+        initial begin
+          logic [7:0] x = '{default: '0};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "00000000\n"
+
+  - name: unbased_unsized_1
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: '1};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "1111\n"
+
+  - name: unbased_unsized_x
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: 'x};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "xxxx\n"
+
+  - name: unbased_unsized_z
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: 'z};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "zzzz\n"
+
+  - name: based_unsized_b0
+    sv: |
+      module Test;
+        initial begin
+          logic [7:0] x = '{default: 'b0};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "00000000\n"
+
+  - name: based_unsized_b1
+    sv: |
+      module Test;
+        initial begin
+          logic [1:0] x = '{default: 'b1};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "11\n"
+
+  - name: based_unsized_d0
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: 'd0};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "0000\n"
+
+  - name: packed_array_sized_match
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0][7:0] arr = '{default: 8'hAA};
+          $display("%h %h", arr[0], arr[3]);
+        end
+      endmodule
+    expect:
+      stdout: "aa aa\n"
+
+  - name: packed_array_unbased_0
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0][7:0] arr = '{default: '0};
+          $display("%h", arr[0]);
+        end
+      endmodule
+    expect:
+      stdout: "00\n"
+
+  - name: packed_array_unbased_1
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0][7:0] arr = '{default: '1};
+          $display("%h", arr[0]);
+        end
+      endmodule
+    expect:
+      stdout: "ff\n"

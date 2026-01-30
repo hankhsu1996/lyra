@@ -74,6 +74,11 @@ auto MakeIntegralWide(
     -> RuntimeValue;  // 4-state: explicit value and unknown planes
 auto MakeIntegralFromConstant(const IntegralConstant& c, uint32_t bit_width)
     -> RuntimeValue;
+// Create an integral with all bits set to the same 4-state value.
+// value_bit=0, unknown_bit=0 → all 0; value_bit=1, unknown_bit=0 → all 1
+// value_bit=0, unknown_bit=1 → all X; value_bit=1, unknown_bit=1 → all Z
+auto MakeIntegralFilled(uint32_t bit_width, bool value_bit, bool unknown_bit)
+    -> RuntimeValue;
 auto MakeString(std::string value) -> RuntimeValue;
 auto MakeReal(double value) -> RuntimeValue;
 auto MakeShortReal(float value) -> RuntimeValue;

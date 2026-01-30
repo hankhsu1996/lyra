@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Type.h>
 #include <llvm/Support/Casting.h>
@@ -14,13 +15,17 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/commit.hpp"
+#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
+#include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -113,6 +118,255 @@ auto LowerMonitorControlEffect(
       {engine_ptr,
        llvm::ConstantInt::get(
            llvm::Type::getInt1Ty(llvm_ctx), control.enable ? 1 : 0)});
+
+  return {};
+}
+
+// Thresholds for choosing shift+OR vs runtime helper for element fill.
+// Shift+OR generates O(N) LLVM instructions; runtime helper has call overhead.
+constexpr uint32_t kShiftOrMaxElements = 32;
+constexpr uint32_t kShiftOrMaxTotalBits = 512;
+
+auto UseShiftOr(uint32_t element_count, uint32_t total_bits) -> bool {
+  return element_count <= kShiftOrMaxElements &&
+         total_bits <= kShiftOrMaxTotalBits;
+}
+
+struct FillTargetInfo {
+  mir::PlaceId place_id;
+  TypeId type_id;
+  uint32_t total_bits;
+  uint32_t element_bits;
+  uint32_t element_count;
+  bool is_four_state;
+  llvm::Type* storage_type;
+};
+
+// Build filled value and commit using CommitPackedValueRaw.
+void CommitFilledValue(
+    Context& ctx, const FillTargetInfo& t, llvm::Value* filled_val,
+    llvm::Value* filled_unk) {
+  auto& builder = ctx.GetBuilder();
+
+  llvm::Value* final_value = nullptr;
+  if (t.is_four_state) {
+    auto* struct_type = llvm::cast<llvm::StructType>(t.storage_type);
+    auto* val_type = struct_type->getElementType(0);
+    auto* unk_type = struct_type->getElementType(1);
+
+    llvm::Value* store_val =
+        builder.CreateZExtOrTrunc(filled_val, val_type, "store.val");
+    llvm::Value* store_unk =
+        builder.CreateZExtOrTrunc(filled_unk, unk_type, "store.unk");
+
+    final_value = llvm::UndefValue::get(struct_type);
+    final_value = builder.CreateInsertValue(final_value, store_val, 0);
+    final_value = builder.CreateInsertValue(final_value, store_unk, 1);
+  } else {
+    // 2-state target: X/Z collapses to 0 (val & ~unk)
+    llvm::Value* not_unk = builder.CreateNot(filled_unk, "filled.notunk");
+    llvm::Value* known_val =
+        builder.CreateAnd(filled_val, not_unk, "filled.known");
+    final_value =
+        builder.CreateZExtOrTrunc(known_val, t.storage_type, "store.val");
+  }
+
+  CommitPackedValueRaw(ctx, t.place_id, final_value);
+}
+
+// Bit fill: replicate single bit to all positions using SExt.
+void LowerBitFill(Context& ctx, const FillTargetInfo& t, FourStateValue fs) {
+  auto& builder = ctx.GetBuilder();
+  auto& llvm_ctx = ctx.GetLlvmContext();
+
+  auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
+  auto* target_int_type = llvm::Type::getIntNTy(llvm_ctx, t.total_bits);
+
+  llvm::Value* val_bit = builder.CreateTrunc(fs.value, i1_ty, "fill.val.bit");
+  llvm::Value* unk_bit = builder.CreateTrunc(fs.unknown, i1_ty, "fill.unk.bit");
+  llvm::Value* filled_val =
+      builder.CreateSExt(val_bit, target_int_type, "filled.val");
+  llvm::Value* filled_unk =
+      builder.CreateSExt(unk_bit, target_int_type, "filled.unk");
+
+  CommitFilledValue(ctx, t, filled_val, filled_unk);
+}
+
+// Element fill using shift+OR loop (compile-time unrolled).
+void LowerElementFillShiftOr(
+    Context& ctx, const FillTargetInfo& t, FourStateValue fs) {
+  auto& builder = ctx.GetBuilder();
+  auto& llvm_ctx = ctx.GetLlvmContext();
+
+  auto* elem_ty = llvm::Type::getIntNTy(llvm_ctx, t.element_bits);
+  auto* target_int_type = llvm::Type::getIntNTy(llvm_ctx, t.total_bits);
+
+  llvm::Value* fill_val_elem =
+      builder.CreateZExtOrTrunc(fs.value, elem_ty, "fill.val.elem");
+  llvm::Value* fill_unk_elem =
+      builder.CreateZExtOrTrunc(fs.unknown, elem_ty, "fill.unk.elem");
+  llvm::Value* fill_val_ext =
+      builder.CreateZExt(fill_val_elem, target_int_type, "fill.val.ext");
+  llvm::Value* fill_unk_ext =
+      builder.CreateZExt(fill_unk_elem, target_int_type, "fill.unk.ext");
+
+  llvm::Value* filled_val = llvm::ConstantInt::get(target_int_type, 0);
+  llvm::Value* filled_unk = llvm::ConstantInt::get(target_int_type, 0);
+
+  for (uint32_t i = 0; i < t.element_count; ++i) {
+    uint32_t shift = i * t.element_bits;
+    llvm::Value* shift_amt = llvm::ConstantInt::get(target_int_type, shift);
+    llvm::Value* shifted_val =
+        builder.CreateShl(fill_val_ext, shift_amt, "elem.val");
+    llvm::Value* shifted_unk =
+        builder.CreateShl(fill_unk_ext, shift_amt, "elem.unk");
+    filled_val = builder.CreateOr(filled_val, shifted_val, "filled.val");
+    filled_unk = builder.CreateOr(filled_unk, shifted_unk, "filled.unk");
+  }
+
+  CommitFilledValue(ctx, t, filled_val, filled_unk);
+}
+
+// Element fill using runtime helper (for large arrays).
+auto LowerElementFillRuntime(
+    Context& ctx, const FillTargetInfo& t, FourStateValue fs) -> Result<void> {
+  auto& builder = ctx.GetBuilder();
+  auto& llvm_ctx = ctx.GetLlvmContext();
+
+  // Get addressable storage for target
+  auto planes_result = GetPackedPlanesPtr(ctx, t.place_id, t.type_id);
+  if (!planes_result) {
+    return std::unexpected(planes_result.error());
+  }
+  const auto& planes = *planes_result;
+
+  // Normalize fill value to element width
+  auto* elem_ty = llvm::Type::getIntNTy(llvm_ctx, t.element_bits);
+  llvm::Value* fill_val_elem =
+      builder.CreateZExtOrTrunc(fs.value, elem_ty, "fill.val.elem");
+  llvm::Value* fill_unk_elem =
+      builder.CreateZExtOrTrunc(fs.unknown, elem_ty, "fill.unk.elem");
+
+  // For 2-state source going to 2-state target, collapse X/Z to 0
+  if (!t.is_four_state) {
+    llvm::Value* not_unk = builder.CreateNot(fill_unk_elem, "fill.notunk");
+    fill_val_elem = builder.CreateAnd(fill_val_elem, not_unk, "fill.known");
+  }
+
+  // Materialize element value in alloca for runtime helper.
+  // Runtime expects little-endian word layout (same as RuntimeIntegral planes).
+  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+
+  llvm::AllocaInst* src_val_alloca = nullptr;
+  llvm::AllocaInst* src_unk_alloca = nullptr;
+
+  if (t.element_bits <= 64) {
+    // Single word: allocate i64, zero-extend and store
+    src_val_alloca = builder.CreateAlloca(i64_ty, nullptr, "src.val");
+    llvm::Value* val_word = builder.CreateZExt(fill_val_elem, i64_ty, "val.w0");
+    builder.CreateStore(val_word, src_val_alloca);
+    if (t.is_four_state) {
+      src_unk_alloca = builder.CreateAlloca(i64_ty, nullptr, "src.unk");
+      llvm::Value* unk_word =
+          builder.CreateZExt(fill_unk_elem, i64_ty, "unk.w0");
+      builder.CreateStore(unk_word, src_unk_alloca);
+    }
+  } else {
+    // Multi-word: allocate iN directly and store.
+    // Memory layout is little-endian (LSB word first), which matches
+    // RuntimeIntegral plane convention. Runtime reads via memcpy.
+    src_val_alloca = builder.CreateAlloca(elem_ty, nullptr, "src.val");
+    builder.CreateStore(fill_val_elem, src_val_alloca);
+    if (t.is_four_state) {
+      src_unk_alloca = builder.CreateAlloca(elem_ty, nullptr, "src.unk");
+      builder.CreateStore(fill_unk_elem, src_unk_alloca);
+    }
+  }
+
+  // Call runtime helper
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* null_ptr = llvm::ConstantPointerNull::get(ptr_ty);
+
+  llvm::Value* src_unk_arg = src_unk_alloca != nullptr
+                                 ? static_cast<llvm::Value*>(src_unk_alloca)
+                                 : static_cast<llvm::Value*>(null_ptr);
+  builder.CreateCall(
+      ctx.GetLyraFillPackedElements(),
+      {planes.val_ptr, planes.unk_ptr != nullptr ? planes.unk_ptr : null_ptr,
+       llvm::ConstantInt::get(i32_ty, t.total_bits), src_val_alloca,
+       src_unk_arg, llvm::ConstantInt::get(i32_ty, t.element_bits),
+       llvm::ConstantInt::get(i32_ty, t.element_count)});
+
+  // If design slot, notify after runtime write (use root_ptr, not val_ptr)
+  if (planes.signal_id.has_value()) {
+    builder.CreateCall(
+        ctx.GetLyraNotifySignal(),
+        {ctx.GetEnginePointer(), planes.root_ptr,
+         llvm::ConstantInt::get(i32_ty, *planes.signal_id)});
+  }
+
+  return {};
+}
+
+auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
+    -> Result<void> {
+  auto& builder = context.GetBuilder();
+  const auto& types = context.GetTypeArena();
+  const auto& arena = context.GetMirArena();
+
+  // Build target info
+  const mir::Place& place = arena[fill.target];
+  TypeId target_type_id = mir::TypeOfPlace(types, place);
+  const Type& target_type = types[target_type_id];
+
+  auto storage_type_result = BuildLlvmTypeForTypeId(context, target_type_id);
+  if (!storage_type_result) {
+    return std::unexpected(storage_type_result.error());
+  }
+
+  FillTargetInfo t{
+      .place_id = fill.target,
+      .type_id = target_type_id,
+      .total_bits = PackedBitWidth(target_type, types),
+      .element_bits = 0,
+      .element_count = 0,
+      .is_four_state = IsPackedFourState(target_type, types),
+      .storage_type = *storage_type_result,
+  };
+
+  // Fill element info for packed arrays
+  if (target_type.Kind() == TypeKind::kPackedArray) {
+    const auto& arr_info = target_type.AsPackedArray();
+    t.element_bits = PackedBitWidth(types[arr_info.element_type], types);
+    t.element_count = arr_info.range.Size();
+  }
+
+  // Lower fill value operand
+  auto fill_value_result = LowerOperandRaw(context, fill.fill_value);
+  if (!fill_value_result) {
+    return std::unexpected(fill_value_result.error());
+  }
+  auto fs = ExtractFourStateOrZero(builder, *fill_value_result);
+
+  // Dispatch based on fill kind
+  switch (fill.kind) {
+    case mir::FillKind::kBitFill:
+      LowerBitFill(context, t, fs);
+      return {};
+
+    case mir::FillKind::kElementFill:
+      if (target_type.Kind() != TypeKind::kPackedArray) {
+        throw common::InternalError(
+            "LowerFillPackedEffect",
+            "kElementFill requires packed array target");
+      }
+      if (UseShiftOr(t.element_count, t.total_bits)) {
+        LowerElementFillShiftOr(context, t, fs);
+        return {};
+      }
+      return LowerElementFillRuntime(context, t, fs);
+  }
 
   return {};
 }
@@ -264,6 +518,9 @@ auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
           },
           [&context](const mir::MonitorControlEffect& control) -> Result<void> {
             return LowerMonitorControlEffect(context, control);
+          },
+          [&context](const mir::FillPackedEffect& fill) -> Result<void> {
+            return LowerFillPackedEffect(context, fill);
           },
       },
       effect_op);

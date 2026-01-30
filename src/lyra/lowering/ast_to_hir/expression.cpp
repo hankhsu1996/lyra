@@ -862,9 +862,9 @@ auto LowerExpression(
     case ExpressionKind::MemberAccess:
       return LowerMemberAccessExpression(expr, view);
 
+    case ExpressionKind::StructuredAssignmentPattern:
     case ExpressionKind::ReplicatedAssignmentPattern:
     case ExpressionKind::SimpleAssignmentPattern:
-    case ExpressionKind::StructuredAssignmentPattern:
       return LowerAssignmentPatternExpression(expr, view);
 
     case ExpressionKind::Replication:

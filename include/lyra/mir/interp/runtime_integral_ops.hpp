@@ -130,6 +130,13 @@ auto IntegralExtractSlice(
     const RuntimeIntegral& src, uint32_t bit_offset, uint32_t width)
     -> RuntimeIntegral;
 
+// Extract a slice of bits (4-state aware).
+// Same as IntegralExtractSlice but also extracts the unknown plane.
+// For 2-state sources (empty unknown vector), the result has empty unknown.
+auto IntegralExtractSlice4State(
+    const RuntimeIntegral& src, uint32_t bit_offset, uint32_t width)
+    -> RuntimeIntegral;
+
 // Insert a value into a slice of bits in an integral.
 // Modifies bits [bit_offset + width - 1 : bit_offset], preserves others.
 //
@@ -150,5 +157,11 @@ auto IntegralInsertSlice(
 auto IntegralInsertSlice4State(
     const RuntimeIntegral& dst, const RuntimeIntegral& src, uint32_t bit_offset,
     uint32_t width) -> RuntimeIntegral;
+
+// In-place version of IntegralInsertSlice4State.
+// Mutates dst directly to avoid copying, useful for repeated insertions.
+void IntegralInsertSlice4StateInPlace(
+    RuntimeIntegral& dst, const RuntimeIntegral& src, uint32_t bit_offset,
+    uint32_t width);
 
 }  // namespace lyra::mir::interp

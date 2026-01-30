@@ -32,6 +32,7 @@
 #include "lyra/mir/instruction.hpp"
 #include "lyra/mir/interp/format.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
+#include "lyra/mir/interp/runtime_integral_ops.hpp"
 #include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -229,6 +230,15 @@ auto Interpreter::ExecEffect(ProcessState& state, const Effect& effect)
           [&](const MonitorControlEffect&) {
             // $monitoron/$monitoroff not supported in MIR interpreter.
             // Use LLVM backend for full monitor control.
+          },
+          [&](const FillPackedEffect& op) {
+            if (error) {
+              return;
+            }
+            auto result = ExecFillPackedEffect(state, op);
+            if (!result) {
+              error = std::move(result).error();
+            }
           },
       },
       effect.op);
@@ -621,6 +631,67 @@ auto Interpreter::ExecSystemTfEffect(
           "ExecSystemTfEffect", "$fopen is an rvalue, not an effect");
   }
   throw common::InternalError("ExecSystemTfEffect", "unhandled SystemTfOpcode");
+}
+
+auto Interpreter::ExecFillPackedEffect(
+    ProcessState& state, const FillPackedEffect& fill) -> Result<void> {
+  // Evaluate the fill value once (context-typed conversion already applied)
+  auto fill_value_result = EvalOperand(state, fill.fill_value);
+  if (!fill_value_result) {
+    return std::unexpected(std::move(fill_value_result).error());
+  }
+  RuntimeValue fill_value = std::move(*fill_value_result);
+
+  if (!IsIntegral(fill_value)) {
+    throw common::InternalError(
+        "ExecFillPackedEffect", "fill value must be integral");
+  }
+  const auto& fill_int = AsIntegral(fill_value);
+
+  // Get target place info
+  const Place& place = (*arena_)[fill.target];
+  TypeId target_type_id = TypeOfPlace(*types_, place);
+  const Type& target_type = (*types_)[target_type_id];
+  uint32_t total_width = PackedBitWidth(target_type, *types_);
+
+  // Create filled value based on explicit FillKind (no guessing from width)
+  RuntimeValue filled_value;
+
+  switch (fill.kind) {
+    case FillKind::kBitFill: {
+      // Fill every leaf bit with a single bit value
+      bool value_bit = (fill_int.value[0] & 1) != 0;
+      bool unknown_bit =
+          !fill_int.unknown.empty() && ((fill_int.unknown[0] & 1) != 0);
+      filled_value =
+          semantic::MakeIntegralFilled(total_width, value_bit, unknown_bit);
+      break;
+    }
+
+    case FillKind::kElementFill: {
+      if (target_type.Kind() != TypeKind::kPackedArray) {
+        throw common::InternalError(
+            "ExecFillPackedEffect",
+            "kElementFill requires packed array target");
+      }
+      const auto& arr_info = target_type.AsPackedArray();
+      uint32_t elem_count = arr_info.range.Size();
+      uint32_t elem_width =
+          PackedBitWidth((*types_)[arr_info.element_type], *types_);
+
+      RuntimeIntegral target_int = MakeKnownIntegral(total_width);
+      for (uint32_t i = 0; i < elem_count; ++i) {
+        uint32_t bit_offset = i * elem_width;
+        IntegralInsertSlice4StateInPlace(
+            target_int, fill_int, bit_offset, elem_width);
+      }
+      filled_value = std::move(target_int);
+      break;
+    }
+  }
+
+  // Store the filled value to the target place
+  return StoreToPlace(state, fill.target, std::move(filled_value));
 }
 
 auto Interpreter::ExecGuardedAssign(

@@ -1,0 +1,179 @@
+feature: assignment_pattern_fill
+description: "Assignment pattern fill tests ('{default: ...})"
+
+cases:
+  - name: unbased_unsized_0
+    sv: |
+      module Test;
+        initial begin
+          logic [7:0] x = '{default: '0};
+          $display("%08b", x);
+        end
+      endmodule
+    expect:
+      stdout: "00000000\n"
+
+  - name: unbased_unsized_1
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: '1};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "1111\n"
+
+  - name: unbased_unsized_x
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: 'x};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "xxxx\n"
+
+  - name: unbased_unsized_z
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: 'z};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "zzzz\n"
+
+  - name: packed_array_element_fill
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0][7:0] arr = '{default: 8'hAA};
+          $display("%h %h", arr[0], arr[3]);
+        end
+      endmodule
+    expect:
+      stdout: "aa aa\n"
+
+  - name: packed_array_1bit_elements
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0][1:0] x = '{default: '1};
+          $display("%b %b", x[0], x[3]);
+        end
+      endmodule
+    expect:
+      stdout: "11 11\n"
+
+  - name: large_packed_array_fill
+    description: "64 elements triggers runtime path (threshold: 32 elements)"
+    sv: |
+      module Test;
+        initial begin
+          logic [63:0][7:0] arr = '{default: 8'hAB};
+          $display("%h %h %h", arr[0], arr[31], arr[63]);
+        end
+      endmodule
+    expect:
+      stdout: "ab ab ab\n"
+
+  - name: large_packed_array_fill_4state
+    description: "Large 4-state array fill via runtime path"
+    sv: |
+      module Test;
+        initial begin
+          logic [63:0][7:0] arr = '{default: 8'hCD};
+          $display("%h %h", arr[0], arr[63]);
+        end
+      endmodule
+    expect:
+      stdout: "cd cd\n"
+
+  - name: packed_array_fill_x
+    description: "Element fill with X value (exercises unknown plane)"
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0][7:0] arr = '{default: 8'hxx};
+          $display("%h %h", arr[0], arr[3]);
+        end
+      endmodule
+    expect:
+      stdout: "xx xx\n"
+
+  - name: packed_array_fill_z
+    description: "Element fill with Z value (exercises unknown plane)"
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0][7:0] arr = '{default: 8'bzzzz_zzzz};
+          $display("%h %h", arr[0], arr[3]);
+        end
+      endmodule
+    expect:
+      stdout: "zz zz\n"
+
+  - name: large_packed_array_fill_x
+    description: "Large array with X fill (runtime path + unknown plane)"
+    sv: |
+      module Test;
+        initial begin
+          logic [63:0][7:0] arr = '{default: 8'hxx};
+          $display("%h %h %h", arr[0], arr[31], arr[63]);
+        end
+      endmodule
+    expect:
+      stdout: "xx xx xx\n"
+
+  - name: large_packed_array_fill_z
+    description: "Large array with Z fill (runtime path + unknown plane)"
+    sv: |
+      module Test;
+        initial begin
+          logic [63:0][7:0] arr = '{default: 8'bzzzz_zzzz};
+          $display("%h %h %h", arr[0], arr[31], arr[63]);
+        end
+      endmodule
+    expect:
+      stdout: "zz zz zz\n"
+
+  - name: multiword_element_fill
+    description: "128-bit elements with 64 elements forces runtime path (>32 elem threshold)"
+    sv: |
+      module Test;
+        initial begin
+          logic [63:0][127:0] arr = '{default: 128'hDEADBEEF_CAFEBABE_12345678_9ABCDEF0};
+          $display("%h", arr[0][63:0]);
+          $display("%h", arr[0][127:64]);
+          $display("%h", arr[63][63:0]);
+          $display("%h", arr[63][127:64]);
+        end
+      endmodule
+    expect:
+      stdout: |
+        123456789abcdef0
+        deadbeefcafebabe
+        123456789abcdef0
+        deadbeefcafebabe
+
+  - name: multiword_element_fill_4state
+    description: "128-bit elements with X value (runtime path + unknown plane)"
+    sv: |
+      module Test;
+        initial begin
+          logic [63:0][127:0] arr = '{default: 128'hxxxxxxxx_xxxxxxxx_xxxxxxxx_xxxxxxxx};
+          $display("%h", arr[0][63:0]);
+          $display("%h", arr[0][127:64]);
+          $display("%h", arr[63][63:0]);
+          $display("%h", arr[63][127:64]);
+        end
+      endmodule
+    expect:
+      stdout: |
+        xxxxxxxxxxxxxxxx
+        xxxxxxxxxxxxxxxx
+        xxxxxxxxxxxxxxxx
+        xxxxxxxxxxxxxxxx

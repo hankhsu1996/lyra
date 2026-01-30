@@ -99,11 +99,46 @@ struct MonitorControlEffect {
   bool enable;  // true=$monitoron, false=$monitoroff
 };
 
+// Fill strategy for FillPackedEffect.
+// Decided at HIR→MIR lowering from source-level syntax (unbased-unsized vs
+// sized literal). Backends must not re-derive this from value width.
+enum class FillKind : uint8_t {
+  // Fill every leaf bit with a single bit value (with unknown mask if 4-state).
+  // Used for unbased-unsized literals ('0, '1, 'x, 'z).
+  // fill_value must be 1-bit.
+  kBitFill,
+
+  // Fill outer elements with an element-typed value.
+  // For nested packed arrays, backends should recurse into element types.
+  // Used for sized literals (e.g., 8'hAA for [N:0][7:0] arrays).
+  // fill_value width must match target's element width.
+  kElementFill,
+};
+
+// FillPacked: fill a packed container with a replicated value.
+//
+// Contract:
+// - target: PlaceId of an Integral or PackedArray type
+// - fill_value: 1-bit for kBitFill, element-width for kElementFill
+// - kind: explicit fill strategy (set by HIR→MIR, not inferred by backends)
+//
+// Output invariants (for interpreter):
+// - RuntimeIntegral.bit_width == PackedBitWidth(target_type)
+// - RuntimeIntegral.value.size() == ceil(bit_width / 64)
+// - RuntimeIntegral.unknown.size() == ceil(bit_width / 64)
+// - Padding bits in top word are masked to zero
+struct FillPackedEffect {
+  PlaceId target;      // Container to fill (type derived from place)
+  Operand fill_value;  // Value to replicate
+  FillKind kind;       // Fill strategy (explicit, not inferred from width)
+};
+
 // EffectOp is the variant of all effect operations.
 // Effect operations produce side effects but no value.
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
 using EffectOp = std::variant<
     DisplayEffect, SeverityEffect, MemIOEffect, TimeFormatEffect,
-    SystemTfEffect, StrobeEffect, MonitorEffect, MonitorControlEffect>;
+    SystemTfEffect, StrobeEffect, MonitorEffect, MonitorControlEffect,
+    FillPackedEffect>;
 
 }  // namespace lyra::mir

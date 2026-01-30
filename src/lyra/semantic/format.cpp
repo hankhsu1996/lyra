@@ -210,10 +210,23 @@ auto FormatChar(const RuntimeIntegral& val) -> std::string {
   return std::string(1, static_cast<char>(char_val));
 }
 
+// Maximum reasonable bit width for formatting (1 million bits = 125KB string)
+// Any value larger than this indicates a corrupted RuntimeIntegral.
+constexpr uint32_t kMaxReasonableBitWidth = 1'000'000;
+
 // Format an integral value according to spec.
 auto FormatIntegral(
     const RuntimeIntegral& val, const FormatSpec& spec, bool is_signed)
     -> std::string {
+  // Safety guard: detect corrupted RuntimeIntegral before attempting allocation
+  if (val.bit_width > kMaxReasonableBitWidth) {
+    throw lyra::common::InternalError(
+        "FormatIntegral", std::format(
+                              "bit_width {} exceeds maximum ({}); likely "
+                              "uninitialized or corrupt",
+                              val.bit_width, kMaxReasonableBitWidth));
+  }
+
   std::string result;
 
   switch (spec.kind) {
