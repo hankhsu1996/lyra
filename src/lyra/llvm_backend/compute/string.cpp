@@ -189,7 +189,7 @@ auto LowerStringReplicateValue(
 
   auto count = static_cast<int64_t>(info.count);
 
-  // Lower the single operand → string handle
+  // Lower the single operand to string handle
   auto handle_or_err = LowerOperand(context, operands[0]);
   if (!handle_or_err) return std::unexpected(handle_or_err.error());
   llvm::Value* handle = *handle_or_err;

@@ -28,14 +28,15 @@ struct Process {
 };
 
 enum class PassingKind {
-  kValue,  // Input by value (only mode supported today)
+  kValue,  // Input by value
+  kOut,    // Output only (callee writes to caller's storage)
+  kInOut,  // Bidirectional (callee reads and may modify)
 };
 
 enum class ReturnPolicy {
   kVoid,          // No return value
-  kDirect,        // Return value in register/local 0
-  kSretOutParam,  // Caller provides storage as first argument (aggregates,
-                  // managed)
+  kDirect,        // Return value in register (scalars, managed handles)
+  kSretOutParam,  // Caller provides storage as first argument (aggregates only)
 };
 
 // Calling convention for runtime-invoked thunks.

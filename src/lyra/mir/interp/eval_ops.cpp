@@ -684,7 +684,7 @@ auto EvalBitCast(
   const Type& src = arena[source_type];
   const Type& tgt = arena[target_type];
 
-  // String → packed is handled by EvalCast (semantic conversion with
+  // String -> packed is handled by EvalCast (semantic conversion with
   // padding/truncation), not EvalBitCast (bit-level reinterpretation).
   // If we get here with string source, it's a bug in lowering.
   if (src.Kind() == TypeKind::kString) {

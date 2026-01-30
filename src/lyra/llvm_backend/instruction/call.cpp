@@ -28,12 +28,6 @@ namespace {
 auto LowerUserCall(
     Context& context, const mir::Call& call, mir::FunctionId func_id)
     -> Result<void> {
-  // User function writebacks not yet supported - fail loud to match interpreter
-  if (!call.writebacks.empty()) {
-    throw common::InternalError(
-        "LowerUserCall", "User function writebacks not yet supported");
-  }
-
   auto& builder = context.GetBuilder();
   const auto& arena = context.GetMirArena();
   const auto& func = arena[func_id];
@@ -72,17 +66,52 @@ auto LowerUserCall(
   args.push_back(context.GetDesignPointer());
   args.push_back(context.GetEnginePointer());
 
-  // User arguments
-  for (const auto& operand : call.in_args) {
-    auto val_result = LowerOperandRaw(context, operand);
-    if (!val_result) return std::unexpected(val_result.error());
-    args.push_back(*val_result);
+  // Build argument list: input values + output/inout destination pointers
+  // The signature has params for both in_args AND writebacks in parameter
+  // order. We need to interleave them correctly based on arg_index in
+  // writebacks.
+  size_t in_arg_idx = 0;
+
+  for (size_t param_idx = 0; param_idx < func.signature.params.size();
+       ++param_idx) {
+    const auto& param = func.signature.params[param_idx];
+
+    if (param.kind == mir::PassingKind::kValue) {
+      // Input parameter: pass value
+      if (in_arg_idx >= call.in_args.size()) {
+        throw common::InternalError("LowerUserCall", "in_args underflow");
+      }
+      auto val_result = LowerOperandRaw(context, call.in_args[in_arg_idx]);
+      if (!val_result) return std::unexpected(val_result.error());
+      args.push_back(*val_result);
+      ++in_arg_idx;
+    } else {
+      // Output/inout parameter: pass pointer to destination directly
+      // Find the writeback entry for this parameter
+      const mir::CallWriteback* wb = nullptr;
+      for (const auto& w : call.writebacks) {
+        if (static_cast<size_t>(w.arg_index) == param_idx) {
+          wb = &w;
+          break;
+        }
+      }
+      if (wb == nullptr) {
+        throw common::InternalError(
+            "LowerUserCall",
+            std::format("missing writeback for param {}", param_idx));
+      }
+
+      // Pass pointer to destination directly (no staging temp)
+      auto dest_ptr = context.GetPlacePointer(wb->dest);
+      if (!dest_ptr) return std::unexpected(dest_ptr.error());
+      args.push_back(*dest_ptr);
+    }
   }
 
   // Emit the call
   llvm::Value* call_result = builder.CreateCall(callee, args);
 
-  // Handle result
+  // Handle result (writebacks are handled by callee writing directly to dest)
   if (is_void || !call.ret) {
     // Void call or call for side effects only
     return {};

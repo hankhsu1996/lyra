@@ -1,0 +1,137 @@
+feature: functions
+description: Container output/inout parameters (LLVM-only - MIR interpreter does not support output/inout)
+
+cases:
+  # Test 1: Output parameter overwrites existing handle (must destroy old)
+  - name: output_overwrites_existing
+    sv: |
+      module Test;
+        typedef int unsigned dyn_arr_t[];
+
+        function void fill(output dyn_arr_t a);
+          a = new[2];
+          a[0] = 1;
+          a[1] = 2;
+        endfunction
+
+        int unsigned a, b, sz;
+        initial begin
+          dyn_arr_t arr;
+          arr = new[3];
+          arr[0] = 9;
+          fill(arr);
+          sz = arr.size();
+          a = arr[0];
+          b = arr[1];
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 2
+        a: 1
+        b: 2
+
+  # Test 2: Inout with pre-existing contents
+  - name: inout_preserves_contents
+    sv: |
+      module Test;
+        typedef int unsigned queue_t[$];
+
+        function void append(inout queue_t q, input int unsigned v);
+          q.push_back(v);
+        endfunction
+
+        int unsigned a, b, sz;
+        initial begin
+          queue_t q;
+          q.push_back(7);
+          append(q, 9);
+          sz = q.size();
+          a = q[0];
+          b = q[1];
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 2
+        a: 7
+        b: 9
+
+  # Test 3: Queue output
+  - name: queue_output
+    sv: |
+      module Test;
+        typedef int unsigned queue_t[$];
+
+        function void make_queue(output queue_t q);
+          q.push_back(10);
+          q.push_back(20);
+        endfunction
+
+        int unsigned a, b;
+        initial begin
+          queue_t q;
+          make_queue(q);
+          a = q[0];
+          b = q[1];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 10
+        b: 20
+
+  # Test 4: Multiple output parameters
+  - name: multiple_outputs
+    sv: |
+      module Test;
+        function void split(input int unsigned val, output int unsigned hi, output int unsigned lo);
+          hi = val / 100;
+          lo = val % 100;
+        endfunction
+
+        int unsigned h, l;
+        initial begin
+          split(1234, h, l);
+        end
+      endmodule
+    expect:
+      variables:
+        h: 12
+        l: 34
+
+  # Test 5: Mixed input and inout parameters
+  - name: mixed_params
+    sv: |
+      module Test;
+        typedef int unsigned dyn_arr_t[];
+
+        function void add_to_array(input int unsigned val, inout dyn_arr_t arr);
+          int unsigned new_size = arr.size() + 1;
+          dyn_arr_t old_arr = arr;
+          arr = new[new_size];
+          for (int unsigned i = 0; i < old_arr.size(); i++) begin
+            arr[i] = old_arr[i];
+          end
+          arr[new_size - 1] = val;
+        endfunction
+
+        int unsigned sz, a, b, c;
+        initial begin
+          dyn_arr_t arr;
+          arr = new[2];
+          arr[0] = 1;
+          arr[1] = 2;
+          add_to_array(3, arr);
+          sz = arr.size();
+          a = arr[0];
+          b = arr[1];
+          c = arr[2];
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 3
+        a: 1
+        b: 2
+        c: 3

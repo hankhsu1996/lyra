@@ -1,0 +1,46 @@
+feature: functions
+description: Container parameters and returns across function boundaries - tests ownership and lifecycle correctness
+
+cases:
+  # Test 1: Return managed handle + use after return
+  - name: dynarray_return
+    sv: |
+      module Test;
+        typedef int unsigned dyn_arr_t[];
+
+        function dyn_arr_t make();
+          dyn_arr_t t;
+          t = new[2];
+          t[0] = 5;
+          t[1] = 6;
+          return t;
+        endfunction
+
+        int unsigned a, b;
+        initial begin
+          dyn_arr_t x = make();
+          a = x[0];
+          b = x[1];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 5
+        b: 6
+
+  # Test 2: String return (retain/clone)
+  - name: string_return
+    sv: |
+      module Test;
+        function string greet(input string name);
+          return {"Hello, ", name};
+        endfunction
+
+        initial begin
+          string result;
+          result = greet("world");
+          $display("%s", result);
+        end
+      endmodule
+    expect:
+      stdout: "Hello, world\n"

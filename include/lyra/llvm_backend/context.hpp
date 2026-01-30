@@ -189,6 +189,11 @@ class Context {
   // aggregates with 4-state fields.
   void InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id);
 
+  // Set a place alias. When aliased, accesses to this place root use the
+  // aliased pointer directly instead of allocated storage. Used for inout
+  // parameters with managed types where we want reference semantics.
+  void SetPlaceAlias(const mir::PlaceRoot& root, llvm::Value* ptr);
+
   // FieldIndex accessors (encapsulate map lookups)
   [[nodiscard]] auto GetDesignFieldIndex(mir::SlotId slot_id) const -> uint32_t;
   [[nodiscard]] auto GetFrameFieldIndex(mir::PlaceId place_id) const
@@ -444,6 +449,11 @@ class Context {
   // (but different projections) share the same storage.
   std::unordered_map<PlaceRootKey, llvm::AllocaInst*, PlaceRootKeyHash>
       place_storage_;
+
+  // Maps PlaceRootKey to an aliased pointer (for inout params with managed
+  // types). Checked before place_storage_. When set, accesses to this place
+  // root use the aliased pointer directly instead of allocated storage.
+  std::unordered_map<PlaceRootKey, llvm::Value*, PlaceRootKeyHash> place_alias_;
 
   // Cached enum member values globals (per enum TypeId)
   absl::flat_hash_map<TypeId, llvm::GlobalVariable*> enum_values_globals_;

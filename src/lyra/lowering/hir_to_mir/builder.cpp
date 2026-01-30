@@ -189,6 +189,13 @@ auto MirBuilder::EmitTempAssign(TypeId type, mir::Operand source)
 auto MirBuilder::EmitCall(
     mir::FunctionId callee, std::vector<mir::Operand> args, TypeId return_type)
     -> mir::Operand {
+  return EmitCallWithWritebacks(callee, std::move(args), {}, return_type);
+}
+
+auto MirBuilder::EmitCallWithWritebacks(
+    mir::FunctionId callee, std::vector<mir::Operand> in_args,
+    std::vector<mir::CallWriteback> writebacks, TypeId return_type)
+    -> mir::Operand {
   const auto& types = *ctx_->type_arena;
   bool is_void = types[return_type].Kind() == TypeKind::kVoid;
 
@@ -207,9 +214,9 @@ auto MirBuilder::EmitCall(
   EmitInst(
       mir::Call{
           .callee = callee,
-          .in_args = std::move(args),
+          .in_args = std::move(in_args),
           .ret = ret,
-          .writebacks = {},
+          .writebacks = std::move(writebacks),
       });
 
   return is_void ? mir::Operand::Poison() : mir::Operand::Use(ret_tmp);

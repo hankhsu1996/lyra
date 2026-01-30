@@ -88,37 +88,13 @@ auto LowerModule(
 
     // Phase 2: Register function symbols (before processes that call them)
     // Store references to lower their bodies later.
-    // Always register even if unsupported, so call sites get clear errors.
     for (const auto* sub : members.functions) {
       const auto& ret_type = sub->getReturnType();
       SourceSpan func_span = ctx->SpanOf(GetSourceRange(*sub));
 
-      // Check for unsupported return types.
-      // Supported: void, integral, string, unpacked struct, fixed-element-count
-      // unpacked array. Use canonical type's kind for array check (isFixedSize
-      // checks element types recursively, but we want any unpacked array with
-      // fixed element count, even if elements are strings).
-      const auto& canonical_ret = ret_type.getCanonicalType();
-      bool is_fixed_count_unpacked_array =
-          canonical_ret.kind ==
-          slang::ast::SymbolKind::FixedSizeUnpackedArrayType;
-      bool is_supported_return_type =
-          canonical_ret.isIntegral() || canonical_ret.isVoid() ||
-          canonical_ret.isString() || canonical_ret.isUnpackedStruct() ||
-          is_fixed_count_unpacked_array;
-      if (!is_supported_return_type) {
-        std::string reason = std::format(
-            "function return type '{}' is not supported",
-            std::string(ret_type.toString()));
-        ctx->sink->Error(func_span, reason);
-        // Register as unsupported so call sites get clear errors
-        registrar.Register(
-            *sub, SymbolKind::kFunction, kInvalidTypeId,
-            StorageClass::kDesignStorage, std::move(reason), func_span);
-        continue;
-      }
-
-      TypeId return_type = LowerType(ret_type, span, ctx);
+      // Let LowerType determine if the return type is supported.
+      // If unsupported, LowerType emits an error and returns invalid.
+      TypeId return_type = LowerType(ret_type, func_span, ctx);
       if (!return_type) {
         continue;
       }
@@ -192,19 +168,10 @@ auto LowerModule(
     // Port bindings are now handled at HIR->MIR level via ApplyBindings
 
     // Phase 4: Lower function bodies
-    // Only lower functions with supported return types (skip unsupported ones
-    // that were registered as errors in Phase 2).
+    // Functions with unsupported return types were already skipped in Phase 2.
     for (const auto* sub : members.functions) {
-      const auto& ret_type = sub->getReturnType();
-      const auto& canonical_ret = ret_type.getCanonicalType();
-      bool is_fixed_count_unpacked_array =
-          canonical_ret.kind ==
-          slang::ast::SymbolKind::FixedSizeUnpackedArrayType;
-      bool is_supported_return_type =
-          canonical_ret.isIntegral() || canonical_ret.isVoid() ||
-          canonical_ret.isString() || canonical_ret.isUnpackedStruct() ||
-          is_fixed_count_unpacked_array;
-      if (!is_supported_return_type) {
+      // Skip if not registered (unsupported return type)
+      if (!registrar.Lookup(*sub)) {
         continue;
       }
       hir::FunctionId id = LowerFunction(*sub, lowerer);
