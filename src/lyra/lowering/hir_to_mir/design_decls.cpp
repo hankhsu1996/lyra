@@ -51,8 +51,8 @@ auto CollectDeclarations(
       // Pre-allocate MIR function IDs with frozen signatures
       for (hir::FunctionId hir_func_id : pkg->functions) {
         const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
-        mir::FunctionSignature sig =
-            BuildFunctionSignature(hir_func, *input.symbol_table);
+        mir::FunctionSignature sig = BuildFunctionSignature(
+            hir_func, *input.symbol_table, *input.type_arena);
         mir::FunctionId mir_func_id = mir_arena.ReserveFunction(std::move(sig));
         decls.functions[hir_func.symbol] = mir_func_id;
       }

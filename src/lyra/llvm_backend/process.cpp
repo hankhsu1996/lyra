@@ -31,7 +31,6 @@
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/statement.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
-#include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -1207,8 +1206,23 @@ auto DefineUserFunction(
   // If func.origin is Invalid, this is a no-op.
   OriginScope func_scope(context, func.origin);
 
-  // Check if this function uses sret calling convention
-  bool uses_sret = RequiresSret(func.signature.return_type, types);
+  // MIR ReturnPolicy is authoritative for calling convention
+  bool uses_sret =
+      (func.signature.return_policy == mir::ReturnPolicy::kSretOutParam);
+
+  // Verify sret ABI invariants at function entry
+  if (uses_sret) {
+    if (!llvm_func->getReturnType()->isVoidTy()) {
+      throw common::InternalError(
+          "DefineUserFunction",
+          "kSretOutParam function must have void LLVM return type");
+    }
+    if (llvm_func->arg_size() < 1) {
+      throw common::InternalError(
+          "DefineUserFunction",
+          "kSretOutParam function must have at least 1 argument (out-param)");
+    }
+  }
 
   // Create blocks
   auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", llvm_func);

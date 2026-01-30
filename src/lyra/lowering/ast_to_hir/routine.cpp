@@ -117,11 +117,22 @@ auto LowerFunction(
     return hir::kInvalidFunctionId;
   }
 
-  // Reject unsupported return types (for functions not pre-registered)
+  // Check return type is supported.
+  // Supported: void, integral, string, unpacked struct, fixed-element-count
+  // unpacked array. Not supported: dynamic array, queue, associative array,
+  // class. Use canonical type's kind for array check (isFixedSize checks
+  // element types recursively, but we want any unpacked array with fixed
+  // element count, even if elements are strings).
   const auto& ret_type = func.getReturnType();
-  if (!ret_type.isIntegral() && !ret_type.isVoid() && !ret_type.isString()) {
-    ctx->sink->Error(
-        span, "only integral, void, or string return types supported");
+  const auto& canonical_ret = ret_type.getCanonicalType();
+  bool is_fixed_count_unpacked_array =
+      canonical_ret.kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType;
+  bool is_supported_return_type =
+      canonical_ret.isIntegral() || canonical_ret.isVoid() ||
+      canonical_ret.isString() || canonical_ret.isUnpackedStruct() ||
+      is_fixed_count_unpacked_array;
+  if (!is_supported_return_type) {
+    ctx->sink->Error(span, "unsupported return type");
     return hir::kInvalidFunctionId;
   }
 

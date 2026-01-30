@@ -63,6 +63,11 @@ auto NeedsDestroy(TypeId type_id, const TypeArena& types) -> bool {
 }
 
 auto RequiresSret(TypeId type_id, const TypeArena& types) -> bool {
+  const auto& type = types[type_id];
+  // All aggregates require sret (out-param calling convention)
+  if (type.Kind() == TypeKind::kUnpackedStruct) return true;
+  if (type.Kind() == TypeKind::kUnpackedArray) return true;
+  // Managed types (string, containers) also require sret
   return NeedsDestroy(type_id, types);
 }
 

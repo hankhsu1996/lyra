@@ -1,6 +1,5 @@
 # Tests for MoveInit on aggregate types (struct, array).
-# BLOCKED: Requires aggregate function return types (not yet implemented).
-# Excluded from suites.yaml until feature lands.
+# Tests function returns of unpacked structs and fixed-size unpacked arrays.
 
 feature: lifecycle_move_aggregate
 description: Move semantics for aggregate types (structs, arrays) containing managed fields
@@ -239,3 +238,72 @@ cases:
       endmodule
     expect:
       stdout: "arr[0]=c1 arr[1]=c2\n"
+
+  - name: conditional_return_path
+    description: Function with if/else returning different temporaries
+    sv: |
+      module Test;
+        typedef struct {
+          string s;
+        } wrapper_t;
+
+        function wrapper_t make_a();
+          automatic wrapper_t w;
+          w.s = "from_a";
+          return w;
+        endfunction
+
+        function wrapper_t make_b();
+          automatic wrapper_t w;
+          w.s = "from_b";
+          return w;
+        endfunction
+
+        function wrapper_t conditional_return(bit sel);
+          if (sel)
+            return make_a();
+          else
+            return make_b();
+        endfunction
+
+        initial begin
+          automatic wrapper_t x;
+          x = conditional_return(1);
+          $display("sel=1: %s", x.s);
+          x = conditional_return(0);
+          $display("sel=0: %s", x.s);
+        end
+      endmodule
+    expect:
+      stdout: |
+        sel=1: from_a
+        sel=0: from_b
+
+  - name: struct_copy_then_move
+    description: Return → copy assign → move assign → destroy sequence
+    sv: |
+      module Test;
+        typedef struct {
+          string s;
+        } wrapper_t;
+
+        function wrapper_t make_wrapper(string val);
+          automatic wrapper_t w;
+          w.s = val;
+          return w;
+        endfunction
+
+        initial begin
+          automatic wrapper_t x = make_wrapper("original");
+          automatic wrapper_t y = x;  // copy
+          $display("after copy: x.s=%s y.s=%s", x.s, y.s);
+          x = make_wrapper("updated");  // move assign (destroy old x, move new)
+          $display("after move: x.s=%s y.s=%s", x.s, y.s);
+          // y destroyed at scope end
+        end
+      endmodule
+    expect:
+      stdout: |
+        after copy: x.s=original y.s=original
+        after move: x.s=updated y.s=original
+

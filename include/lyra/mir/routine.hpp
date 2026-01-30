@@ -32,7 +32,10 @@ enum class PassingKind {
 };
 
 enum class ReturnPolicy {
-  kDirect,  // Return value in register/local 0
+  kVoid,          // No return value
+  kDirect,        // Return value in register/local 0
+  kSretOutParam,  // Caller provides storage as first argument (aggregates,
+                  // managed)
 };
 
 // Calling convention for runtime-invoked thunks.

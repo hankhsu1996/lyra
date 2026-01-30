@@ -38,8 +38,8 @@ auto LowerModule(
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
     // Reserve the mir::FunctionId with frozen signature
-    mir::FunctionSignature sig =
-        BuildFunctionSignature(hir_func, *input.symbol_table);
+    mir::FunctionSignature sig = BuildFunctionSignature(
+        hir_func, *input.symbol_table, *input.type_arena);
     mir::FunctionId mir_func_id = mir_arena.ReserveFunction(std::move(sig));
     symbol_to_mir_function[hir_func.symbol] = mir_func_id;
     function_pairs.emplace_back(hir_func_id, mir_func_id);
