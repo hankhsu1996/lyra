@@ -7,6 +7,7 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -29,6 +30,11 @@ void CollectScopeMembers(
       case slang::ast::SymbolKind::Net: {
         const auto& net = member.as<slang::ast::NetSymbol>();
         out.nets.push_back(&net);
+        break;
+      }
+      case slang::ast::SymbolKind::Parameter: {
+        const auto& param = member.as<slang::ast::ParameterSymbol>();
+        out.parameters.push_back(&param);
         break;
       }
       case slang::ast::SymbolKind::Subroutine: {

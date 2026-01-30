@@ -884,6 +884,28 @@ auto LowerExpression(
         return hir::kInvalidExpressionId;
       }
 
+      // Try constant folding first (parameters, enum values).
+      // Parameters are kConstOnly - no runtime storage, so we must fold them.
+      if (const auto* cv = TryGetConstantValue(hier.symbol, expr.sourceRange)) {
+        if (cv->bad()) {
+          ctx->ErrorFmt(
+              span, "hierarchical symbol '{}' has invalid value",
+              hier.symbol.name);
+          return hir::kInvalidExpressionId;
+        }
+        if (cv->isInteger()) {
+          ConstId constant = LowerIntegralConstant(cv->integer(), type, ctx);
+          return ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kConstant,
+                  .type = type,
+                  .span = span,
+                  .data = hir::ConstantExpressionData{.constant = constant}});
+        }
+        // Extend for other constant types as needed (real, string, etc.)
+      }
+
+      // Runtime symbol - needs hierarchical reference
       SymbolId target = registrar.Lookup(hier.symbol);
       if (!target) {
         throw common::InternalError(
