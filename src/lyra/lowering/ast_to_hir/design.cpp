@@ -15,6 +15,7 @@
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -76,6 +77,15 @@ void RegisterModuleDeclarations(
     TypeId type = LowerType(net->getType(), span, ctx);
     if (type) {
       registrar.Register(*net, SymbolKind::kNet, type);
+    }
+  }
+
+  // Register parameters (kConstOnly storage - no runtime storage)
+  for (const auto* param : members.parameters) {
+    TypeId type = LowerType(param->getType(), span, ctx);
+    if (type) {
+      registrar.Register(
+          *param, SymbolKind::kParameter, type, StorageClass::kConstOnly);
     }
   }
 
