@@ -46,16 +46,15 @@ Before committing, format ALL files and run policy checks:
    buildifier -r .
    ```
 
-4. **Exception policy** - Verify exception handling rules:
+4. **Policy checks** - Run all policy checks:
 
    ```bash
-   python3 tools/policy/check_exceptions.py --diff-base origin/main
+   python3 tools/policy/check_exceptions.py --diff-base $(git merge-base origin/main HEAD)
+   python3 tools/policy/check_ascii.py --diff-base $(git merge-base origin/main HEAD)
+   python3 tools/policy/check_llvm_backend_boundaries.py --diff-base $(git merge-base origin/main HEAD)
    ```
 
-   If this fails, fix violations before committing. Key rules:
-   - No `std::runtime_error` in `src/lyra/` - use `InternalError`
-   - No `catch(...)` except in `src/lyra/driver/`
-   - No `assert()` - use `InternalError` for invariants
+   If any fail, fix violations before committing.
 
 ## Commit Format
 
@@ -96,7 +95,7 @@ Bullet points should be **concise** (under 60 chars each) and describe **what ch
 
 1. **Check branch first** - See "STOP: Check Branch First" section above. Do NOT skip this.
 2. Format all files (C++, markdown, Bazel)
-3. Run exception policy check - fix any violations before proceeding
+3. Run all policy checks - fix any violations before proceeding
 4. Stage files with `git add <files>` (do NOT use `git add -A`)
 5. Run `git commit` as a separate command (do NOT chain with add)
 

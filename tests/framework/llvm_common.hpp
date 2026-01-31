@@ -27,7 +27,7 @@ struct LlvmPreparationResult {
 };
 
 // Prepare LLVM IR from test case.
-// Handles AST→HIR→MIR→LLVM lowering with test hooks for variable inspection.
+// Handles AST -> HIR -> MIR -> LLVM lowering with test hooks for variable inspection.
 // work_directory is used for file I/O tests.
 auto PrepareLlvmModule(
     const TestCase& test_case, const std::filesystem::path& work_directory)

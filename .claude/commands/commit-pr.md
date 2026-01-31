@@ -65,7 +65,10 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
    - C++: `find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
    - Markdown: `npx prettier --write "**/*.md"`
    - Bazel: `buildifier -r .`
-3. **Exception policy:** `python3 tools/policy/check_exceptions.py --diff-base origin/main`
+3. **Policy checks:**
+   - `python3 tools/policy/check_exceptions.py --diff-base $(git merge-base origin/main HEAD)`
+   - `python3 tools/policy/check_ascii.py --diff-base $(git merge-base origin/main HEAD)`
+   - `python3 tools/policy/check_llvm_backend_boundaries.py --diff-base $(git merge-base origin/main HEAD)`
 4. **Stage files** with `git add <files>` (not `git add -A`)
 5. **Commit** with `git commit` (this will prompt for permission - your checkpoint to review)
 
