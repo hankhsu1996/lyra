@@ -194,7 +194,7 @@ Supported:
 - `$timeunit($root)`, `$timeprecision($root)` - query global precision
 - `$printtimescale`, `$printtimescale($root)` - print timescale info
 - `$readmemh`, `$readmemb`, `$writememh`, `$writememb` - memory file I/O (2-state only)
-- `$fopen`, `$fclose` - file I/O (MCD and FD modes)
+- `$fopen`, `$fclose`, `$fflush` - file I/O (MCD and FD modes)
 - `$fdisplay`, `$fdisplayb`, `$fdisplayo`, `$fdisplayh` - file output with newline
 - `$fwrite`, `$fwriteb`, `$fwriteo`, `$fwriteh` - file output without newline
 - `$fstrobe`, `$fstrobeb`, `$fstrobeo`, `$fstrobeh` - postponed file output
@@ -210,7 +210,6 @@ Supported:
 Not yet supported:
 
 - `$random`, `$urandom` - random number generation
-- `$fflush` - explicit file flush
 - `$fgets`, `$fscanf`, `$fread` - file reading
 - `$fseek`, `$ftell`, `$rewind`, `$feof` - file positioning
 - `$printtimescale(path)` - hierarchical path variant (requires hierarchy)
