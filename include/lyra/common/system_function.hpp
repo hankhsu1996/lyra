@@ -104,6 +104,12 @@ struct PlusargsFunctionInfo {
   PlusargsKind kind;
 };
 
+// Random functions ($random, $urandom)
+enum class RandomKind : uint8_t { kRandom, kUrandom };
+struct RandomFunctionInfo {
+  RandomKind kind;
+};
+
 // $printtimescale
 struct PrintTimescaleFunctionInfo {};
 
@@ -112,7 +118,7 @@ using SystemCallPayload = std::variant<
     FatalFunctionInfo, SFormatFunctionInfo, TimeFormatFunctionInfo,
     MonitorFunctionInfo, MonitorControlFunctionInfo, TimeFunctionInfo,
     FileIoFunctionInfo, MemIoFunctionInfo, PlusargsFunctionInfo,
-    PrintTimescaleFunctionInfo>;
+    PrintTimescaleFunctionInfo, RandomFunctionInfo>;
 
 struct SystemFunctionInfo {
   std::string_view name;
@@ -219,6 +225,10 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
 
   // Timescale printing
   {.name = "$printtimescale", .min_args = 0, .max_args = 1, .payload = PrintTimescaleFunctionInfo{}},
+
+  // Random functions
+  {.name = "$random",  .min_args = 0, .max_args = 0, .payload = RandomFunctionInfo{.kind = RandomKind::kRandom}},
+  {.name = "$urandom", .min_args = 0, .max_args = 0, .payload = RandomFunctionInfo{.kind = RandomKind::kUrandom}},
 });
 // clang-format on
 

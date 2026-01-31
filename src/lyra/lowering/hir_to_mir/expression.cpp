@@ -18,6 +18,7 @@
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/math_fn.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
@@ -693,6 +694,19 @@ auto LowerSystemCall(
     mir::Rvalue rvalue{
         .operands = {},
         .info = mir::RuntimeQueryRvalueInfo{.kind = query->kind},
+    };
+    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    return mir::Operand::Use(tmp);
+  }
+
+  // $random/$urandom -> SystemTfRvalueInfo (stateful, not pure queries)
+  if (const auto* random = std::get_if<hir::RandomData>(&data)) {
+    SystemTfOpcode opcode = (random->kind == RandomKind::kRandom)
+                                ? SystemTfOpcode::kRandom
+                                : SystemTfOpcode::kUrandom;
+    mir::Rvalue rvalue{
+        .operands = {},
+        .info = mir::SystemTfRvalueInfo{.opcode = opcode},
     };
     mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);

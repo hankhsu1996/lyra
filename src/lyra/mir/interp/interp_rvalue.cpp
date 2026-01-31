@@ -291,6 +291,20 @@ auto Interpreter::EvalRvalue(
                     "EvalRvalue:SystemTf",
                     "$value$plusargs should be lowered via Call, not "
                     "SystemTfRvalueInfo");
+              case SystemTfOpcode::kRandom: {
+                // LCG with glibc constants: a=1103515245, c=12345, m=2^31
+                constexpr uint32_t kMultiplier = 1103515245;
+                constexpr uint32_t kIncrement = 12345;
+                prng_state_ = prng_state_ * kMultiplier + kIncrement;
+                return MakeIntegralSigned(
+                    static_cast<int32_t>(prng_state_), 32);
+              }
+              case SystemTfOpcode::kUrandom: {
+                constexpr uint32_t kMultiplier = 1103515245;
+                constexpr uint32_t kIncrement = 12345;
+                prng_state_ = prng_state_ * kMultiplier + kIncrement;
+                return MakeIntegral(prng_state_, 32);
+              }
             }
             throw common::InternalError(
                 "EvalRvalue:SystemTf", "unhandled SystemTfOpcode");

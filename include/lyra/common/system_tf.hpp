@@ -32,6 +32,9 @@ enum class SystemTfOpcode : uint16_t {
   kFflush = 2,
   // Query
   kValuePlusargs = 3,
+  // Random
+  kRandom = 4,
+  kUrandom = 5,
 };
 
 // Functional category for grouping related system TFs.

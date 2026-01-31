@@ -52,3 +52,4 @@ suites:
       - packages/
       - system_tf/effect/
       - system_tf/pure/
+      - system_tf/state/random\.yaml

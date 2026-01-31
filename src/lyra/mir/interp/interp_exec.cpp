@@ -653,6 +653,12 @@ auto Interpreter::ExecSystemTfEffect(
       throw common::InternalError(
           "ExecSystemTfEffect",
           "$value$plusargs should be lowered via Call, not SystemTfEffect");
+    case SystemTfOpcode::kRandom:
+      throw common::InternalError(
+          "ExecSystemTfEffect", "$random is an rvalue, not an effect");
+    case SystemTfOpcode::kUrandom:
+      throw common::InternalError(
+          "ExecSystemTfEffect", "$urandom is an rvalue, not an effect");
   }
   throw common::InternalError("ExecSystemTfEffect", "unhandled SystemTfOpcode");
 }
