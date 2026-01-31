@@ -33,10 +33,12 @@ enum class PassingKind {
   kInOut,  // Bidirectional (callee reads and may modify)
 };
 
+// Return policy - how function returns are handled at the ABI level.
+// Frozen at HIR->MIR lowering time based on return type characteristics.
 enum class ReturnPolicy {
-  kVoid,          // No return value
-  kDirect,        // Return value in register (scalars, managed handles)
-  kSretOutParam,  // Caller provides storage as first argument (aggregates only)
+  kVoid,          // No return value (void functions)
+  kDirect,        // Return value in register (scalars, small POD types)
+  kSretOutParam,  // Return via out-param pointer (managed/aggregate types)
 };
 
 // Calling convention for runtime-invoked thunks.

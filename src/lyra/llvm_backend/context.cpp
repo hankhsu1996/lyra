@@ -29,7 +29,6 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
-#include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
@@ -425,15 +424,8 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
     -> Result<llvm::FunctionType*> {
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
 
-  // MIR ReturnPolicy is authoritative for calling convention
-  bool uses_sret = (sig.return_policy == mir::ReturnPolicy::kSretOutParam);
-
-  // Consistency check: MIR policy must match type-based RequiresSret
-  if (uses_sret != RequiresSret(sig.return_type, types_)) {
-    throw common::InternalError(
-        "BuildUserFunctionType",
-        "MIR return_policy inconsistent with RequiresSret for type");
-  }
+  // Use MIR return policy (frozen at HIR->MIR lowering)
+  bool uses_sret = sig.return_policy == mir::ReturnPolicy::kSretOutParam;
 
   std::vector<llvm::Type*> param_types;
 
@@ -532,7 +524,6 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
 
 auto Context::FunctionUsesSret(mir::FunctionId func_id) const -> bool {
   const auto& func = arena_[func_id];
-  // MIR ReturnPolicy is authoritative for calling convention
   return func.signature.return_policy == mir::ReturnPolicy::kSretOutParam;
 }
 

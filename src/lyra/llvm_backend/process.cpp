@@ -1207,23 +1207,9 @@ auto DefineUserFunction(
   // If func.origin is Invalid, this is a no-op.
   OriginScope func_scope(context, func.origin);
 
-  // MIR ReturnPolicy is authoritative for calling convention
+  // Use MIR return policy (frozen at HIR->MIR lowering)
   bool uses_sret =
-      (func.signature.return_policy == mir::ReturnPolicy::kSretOutParam);
-
-  // Verify sret ABI invariants at function entry
-  if (uses_sret) {
-    if (!llvm_func->getReturnType()->isVoidTy()) {
-      throw common::InternalError(
-          "DefineUserFunction",
-          "kSretOutParam function must have void LLVM return type");
-    }
-    if (llvm_func->arg_size() < 1) {
-      throw common::InternalError(
-          "DefineUserFunction",
-          "kSretOutParam function must have at least 1 argument (out-param)");
-    }
-  }
+      func.signature.return_policy == mir::ReturnPolicy::kSretOutParam;
 
   // Create blocks
   auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", llvm_func);
@@ -1265,22 +1251,16 @@ auto DefineUserFunction(
   PlaceCollector collector;
   collector.CollectFromFunction(func, arena);
 
-  // Variable to hold return value (for non-void functions)
-  // Must be allocated before any branches
-  // For sret: still allocate local return_slot (don't alias sret during exec)
+  // Variable to hold return value (for non-void, non-sret functions)
+  // For sret: we write directly to sret_ptr at each Return terminator,
+  // eliminating the staging slot and aggregate SSA materialization.
   llvm::Value* return_value_ptr = nullptr;
   const Type& ret_type = types[func.signature.return_type];
-  if (ret_type.Kind() != TypeKind::kVoid) {
-    auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
-    // For sret, use ptr type (managed types are pointer handles)
-    // For non-sret, use the function's return type
-    llvm::Type* ret_llvm_type = uses_sret ? ptr_ty : llvm_func->getReturnType();
-    return_value_ptr = builder.CreateAlloca(ret_llvm_type, nullptr, "retval");
+  if (ret_type.Kind() != TypeKind::kVoid && !uses_sret) {
+    return_value_ptr =
+        builder.CreateAlloca(llvm_func->getReturnType(), nullptr, "retval");
 
     // Default-initialize the return slot (part of the storage invariant).
-    // For managed types: handle becomes nullptr so MoveInit from this slot
-    // at function exit transfers a valid (empty) value to the caller.
-    // This maintains the invariant that all storage is initialized.
     EmitSVDefaultInit(context, return_value_ptr, func.signature.return_type);
   }
 
@@ -1422,11 +1402,32 @@ auto DefineUserFunction(
               return LowerBranch(context, t, llvm_blocks);
             },
             [&](const mir::Return& t) -> Result<void> {
-              // Store return value if present and non-void
-              if (t.value.has_value() && return_value_ptr != nullptr) {
-                auto val_result = LowerOperandRaw(context, *t.value);
-                if (!val_result) return std::unexpected(val_result.error());
-                builder.CreateStore(*val_result, return_value_ptr);
+              // Handle return value based on return policy
+              if (t.value.has_value()) {
+                if (uses_sret) {
+                  // sret: use Place-based lowering (no aggregate SSA)
+                  // CONTRACT: return operand must be a Place for sret types
+                  const auto* place_id =
+                      std::get_if<mir::PlaceId>(&t.value->payload);
+                  if (place_id == nullptr) {
+                    throw common::InternalError(
+                        "DefineUserFunction",
+                        "sret return operand must be a Place, not a constant");
+                  }
+                  auto src_ptr_result = context.GetPlacePointer(*place_id);
+                  if (!src_ptr_result) {
+                    return std::unexpected(src_ptr_result.error());
+                  }
+                  // MoveInit directly from source Place to sret out-param
+                  MoveInit(
+                      context, sret_ptr, *src_ptr_result,
+                      func.signature.return_type);
+                } else if (return_value_ptr != nullptr) {
+                  // Direct return: load value and store to return slot
+                  auto val_result = LowerOperandRaw(context, *t.value);
+                  if (!val_result) return std::unexpected(val_result.error());
+                  builder.CreateStore(*val_result, return_value_ptr);
+                }
               }
               builder.CreateBr(exit_block);
               return {};
@@ -1478,19 +1479,10 @@ auto DefineUserFunction(
     MoveAssign(context, caller_ptr, local_alloca, type_id);
   }
 
-  if (ret_type.Kind() == TypeKind::kVoid) {
-    builder.CreateRetVoid();
-  } else if (uses_sret) {
-    // CONTRACT: Out-param return convention (callee side).
-    //
-    // Caller has already Destroy()'d the out slot (see LowerCall), so dst
-    // is uninitialized. We use MoveInit (not MoveAssign) because:
-    // - dst is known-uninitialized at this ABI boundary
-    // - MoveAssign would redundantly Destroy an already-empty slot
-    //
-    // The return_value_ptr local was default-initialized at function entry,
-    // and holds the value computed during function execution.
-    MoveInit(context, sret_ptr, return_value_ptr, func.signature.return_type);
+  if (ret_type.Kind() == TypeKind::kVoid || uses_sret) {
+    // Void functions and sret functions both return void at the LLVM level.
+    // For sret, the MoveInit to the out-param happens at each Return terminator
+    // (Place-based lowering), so no work needed here.
     builder.CreateRetVoid();
   } else {
     llvm::Value* ret_val =

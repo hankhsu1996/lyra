@@ -29,12 +29,14 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Determine return policy based on return type.
-// - void: kVoid
-// - scalar/integral/packed/enum/managed handles: kDirect
-// - value aggregates (unpacked struct/array/union): kSretOutParam
+// This is frozen here - backends consume it, don't recompute it.
 //
-// Managed handles (string, dynamic array, queue) are single-pointer types
-// that can be returned directly in a register.
+// Policy rules:
+// - kVoid: void functions
+// - kSretOutParam: all aggregates (unpacked struct/array/union) and managed
+// - kDirect: scalars only (integral, real, packed types)
+//
+// All aggregates and managed types use sret for ABI stability.
 auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     -> mir::ReturnPolicy {
   const Type& type = types[return_type];
@@ -43,23 +45,23 @@ auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     case TypeKind::kVoid:
       return mir::ReturnPolicy::kVoid;
 
-    // Direct return: scalars and managed handles (single-word values)
+    // Sret: all aggregates and managed types
+    case TypeKind::kUnpackedStruct:
+    case TypeKind::kUnpackedArray:
+    case TypeKind::kUnpackedUnion:
+    case TypeKind::kString:
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+      return mir::ReturnPolicy::kSretOutParam;
+
+    // Direct return: scalars (fit in registers)
     case TypeKind::kIntegral:
     case TypeKind::kReal:
     case TypeKind::kShortReal:
     case TypeKind::kPackedArray:
     case TypeKind::kPackedStruct:
     case TypeKind::kEnum:
-    case TypeKind::kString:
-    case TypeKind::kDynamicArray:
-    case TypeKind::kQueue:
       return mir::ReturnPolicy::kDirect;
-
-    // Sret: value aggregates (multi-word, copied by value)
-    case TypeKind::kUnpackedStruct:
-    case TypeKind::kUnpackedArray:
-    case TypeKind::kUnpackedUnion:
-      return mir::ReturnPolicy::kSretOutParam;
   }
   return mir::ReturnPolicy::kDirect;
 }

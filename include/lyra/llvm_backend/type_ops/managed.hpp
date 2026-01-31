@@ -26,13 +26,4 @@ auto NeedsFieldByField(TypeId type_id, const TypeArena& types) -> bool;
 // Check if type needs Destroy() to be called (contains any managed type)
 auto NeedsDestroy(TypeId type_id, const TypeArena& types) -> bool;
 
-// Check if a return type requires sret calling convention.
-// Only VALUE AGGREGATES (unpacked struct/array) use sret.
-// Managed HANDLES (string, dynarray, queue) return directly via `ret ptr`.
-auto RequiresSret(TypeId type_id, const TypeArena& types) -> bool;
-
-// Check if a type is a managed handle (string, dynarray, queue) at top level.
-// These are single-pointer types that can be returned directly.
-auto IsManagedHandle(TypeId type_id, const TypeArena& types) -> bool;
-
 }  // namespace lyra::lowering::mir_to_llvm
