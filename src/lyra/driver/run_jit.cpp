@@ -56,8 +56,8 @@ auto RunJit(const CompilationInput& input) -> int {
     return 1;
   }
 
-  auto exec_result =
-      lowering::mir_to_llvm::ExecuteWithOrcJit(*llvm_result, runtime_path);
+  auto exec_result = lowering::mir_to_llvm::ExecuteWithOrcJit(
+      *llvm_result, runtime_path, input.opt_level);
   if (!exec_result) {
     PrintError(std::format("JIT execution failed: {}", exec_result.error()));
     return 1;

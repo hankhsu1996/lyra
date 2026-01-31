@@ -19,6 +19,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/opt_level.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -446,8 +447,8 @@ auto RunLlvmBackend(
         [&captured_output](std::string_view text) {
           captured_output.append(text);
         });
-    exec_result =
-        lowering::mir_to_llvm::ExecuteWithOrcJitInProcess(*llvm_result);
+    exec_result = lowering::mir_to_llvm::ExecuteWithOrcJitInProcess(
+        *llvm_result, OptLevel::kO0);
   }
 
   if (!exec_result) {
