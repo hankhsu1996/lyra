@@ -9,6 +9,8 @@
 #include <slang/ast/Compilation.h>
 #include <slang/text/SourceManager.h>
 
+#include "lyra/common/opt_level.hpp"
+
 namespace lyra::driver {
 
 struct CompilationInput {
@@ -17,8 +19,9 @@ struct CompilationInput {
   std::vector<std::string> incdir;
   std::vector<std::string> defines;
   std::vector<std::string> warnings;
-  std::filesystem::path fs_base_dir;  // Base directory for runtime file I/O
-  std::vector<std::string> plusargs;  // Runtime plusargs for $plusargs
+  std::filesystem::path fs_base_dir;   // Base directory for runtime file I/O
+  std::vector<std::string> plusargs;   // Runtime plusargs for $plusargs
+  OptLevel opt_level = OptLevel::kO2;  // Default O2 for CLI
 };
 
 struct ParseResult {

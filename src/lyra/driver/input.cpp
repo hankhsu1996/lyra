@@ -19,11 +19,12 @@
 namespace lyra::driver {
 
 auto ParseBackend(const std::string& s) -> lyra::Result<Backend> {
-  if (s == "llvm") return Backend::kLlvm;
+  if (s == "jit") return Backend::kJit;
+  if (s == "lli") return Backend::kLli;
   if (s == "mir") return Backend::kMir;
   return std::unexpected(
       Diagnostic::HostError(
-          "unknown backend '" + s + "', use 'llvm' or 'mir'"));
+          "unknown backend '" + s + "', use 'jit', 'lli', or 'mir'"));
 }
 
 auto ParseDumpFormat(const std::string& s) -> lyra::Result<DumpFormat> {
@@ -110,7 +111,7 @@ auto PreprocessArgs(std::span<char*> argv) -> std::vector<std::string> {
     std::string_view arg = raw_arg;
     if (arg.size() > 2 &&
         (arg.starts_with("-D") || arg.starts_with("-I") ||
-         arg.starts_with("-W")) &&
+         arg.starts_with("-W") || arg.starts_with("-O")) &&
         arg[1] != '-') {
       result.emplace_back(arg.substr(0, 2));
       result.emplace_back(arg.substr(2));
@@ -134,6 +135,9 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .append()
       .help("Preprocessor define (repeatable)");
   cmd.add_argument("-W").append().help("Warning flag (repeatable)");
+  cmd.add_argument("-O")
+      .default_value(std::string("2"))
+      .help("Optimization level (0, 1, 2, 3)");
   cmd.add_argument("-f").append().help("Command file (paths relative to CWD)");
   cmd.add_argument("-F").append().help(
       "Command file (paths relative to file itself)");
@@ -219,6 +223,22 @@ auto BuildInput(
   }
   if (auto vals = cmd.present<std::vector<std::string>>("-W")) {
     input.warnings.insert(input.warnings.end(), vals->begin(), vals->end());
+  }
+
+  // Parse optimization level
+  auto opt_str = cmd.get<std::string>("-O");
+  if (opt_str == "0") {
+    input.opt_level = OptLevel::kO0;
+  } else if (opt_str == "1") {
+    input.opt_level = OptLevel::kO1;
+  } else if (opt_str == "2") {
+    input.opt_level = OptLevel::kO2;
+  } else if (opt_str == "3") {
+    input.opt_level = OptLevel::kO3;
+  } else {
+    return std::unexpected(
+        Diagnostic::HostError(
+            "invalid optimization level: " + opt_str + ", use 0-3"));
   }
 
   return input;

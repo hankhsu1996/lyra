@@ -20,6 +20,7 @@
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/marshal.hpp"
+#include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/simulation.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/semantic/format.hpp"
@@ -115,7 +116,8 @@ void SnapshotIntegralSemantic(const VarEntry& var) {
   std::string literal = lyra::semantic::FormatAsSvLiteral(value);
 
   // New protocol: v:i:name=literal
-  std::print("__LYRA_VAR:v:i:{}={}\n", var.name, literal);
+  lyra::runtime::WriteOutput(
+      std::format("__LYRA_VAR:v:i:{}={}\n", var.name, literal));
 }
 
 void SnapshotReal(const VarEntry& var) {
@@ -123,15 +125,16 @@ void SnapshotReal(const VarEntry& var) {
   std::memcpy(&value, var.addr, sizeof(double));
   // New protocol: v:r:name=value (plain decimal, not SV literal)
   // Use max_digits10 (17 for double) to ensure round-trip precision
-  std::print(
-      "__LYRA_VAR:v:r:{}={:.{}g}\n", var.name, value,
-      std::numeric_limits<double>::max_digits10);
+  lyra::runtime::WriteOutput(
+      std::format(
+          "__LYRA_VAR:v:r:{}={:.{}g}\n", var.name, value,
+          std::numeric_limits<double>::max_digits10));
 }
 
 }  // namespace
 
 extern "C" void LyraPrintLiteral(const char* str) {
-  std::print("{}", str);
+  lyra::runtime::WriteOutput(str);
 }
 
 extern "C" void LyraPrintValue(
@@ -144,12 +147,12 @@ extern "C" void LyraPrintValue(
       static_cast<lyra::runtime::RuntimeValueKind>(value_kind), data, width,
       is_signed, output_width, precision, zero_pad, left_align, engine_ptr,
       module_timeunit_power, unknown_data);
-  std::print("{}", formatted);
+  lyra::runtime::WriteOutput(formatted);
 }
 
 extern "C" void LyraPrintEnd(int32_t kind) {
   if (kind == static_cast<int32_t>(lyra::PrintKind::kDisplay)) {
-    std::print("\n");
+    lyra::runtime::WriteOutput("\n");
   }
   // No flush here - flush only at simulation end
 }
@@ -224,8 +227,8 @@ extern "C" void LyraFWrite(
   std::string_view msg{ptr, len};
 
   if (targets.include_stdout) {
-    std::print("{}", msg);
-    if (add_newline) std::print("\n");
+    lyra::runtime::WriteOutput(msg);
+    if (add_newline) lyra::runtime::WriteOutput("\n");
   }
   for (int i = 0; i < targets.file_stream_count; ++i) {
     *targets.file_streams.at(i) << msg;
@@ -328,7 +331,7 @@ extern "C" void LyraReadmem(
 
 extern "C" void LyraPrintModulePath(void* engine_ptr, uint32_t instance_id) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  std::print("{}", engine->GetInstancePath(instance_id));
+  lyra::runtime::WriteOutput(engine->GetInstancePath(instance_id));
 }
 
 extern "C" void LyraWritemem(

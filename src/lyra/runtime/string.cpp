@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <optional>
-#include <print>
 #include <span>
 #include <string>
 #include <string_view>
@@ -16,6 +15,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/marshal.hpp"
+#include "lyra/runtime/output_sink.hpp"
 #include "lyra/semantic/format.hpp"
 #include "lyra/semantic/value.hpp"
 
@@ -230,7 +230,7 @@ extern "C" void LyraPrintString(
   };
   std::string formatted = lyra::semantic::FormatValue(
       lyra::semantic::MakeString(std::move(str_value)), decoded, false);
-  std::print("{}", formatted);
+  lyra::runtime::WriteOutput(formatted);
 }
 
 // Internal buffer for string formatting

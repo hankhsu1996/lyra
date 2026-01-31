@@ -18,7 +18,8 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "print.hpp"
-#include "run_llvm.hpp"
+#include "run_jit.hpp"
+#include "run_lli.hpp"
 #include "run_mir.hpp"
 
 namespace {
@@ -58,8 +59,8 @@ auto main(int argc, char* argv[]) -> int {
   argparse::ArgumentParser run_cmd("run");
   run_cmd.add_description("Run simulation");
   run_cmd.add_argument("--backend")
-      .default_value(std::string("llvm"))
-      .help("Execution backend: llvm (default) or mir (development)");
+      .default_value(std::string("jit"))
+      .help("Execution backend: jit (default), lli, or mir");
   lyra::driver::AddCompilationFlags(run_cmd);
   run_cmd.add_argument("files").remaining().help(
       "Source files (uses lyra.toml if not specified)");
@@ -135,9 +136,14 @@ auto main(int argc, char* argv[]) -> int {
 
       input->plusargs = std::move(plusargs);
 
-      return *backend == lyra::driver::Backend::kLlvm
-                 ? lyra::driver::RunLlvm(*input)
-                 : lyra::driver::RunMir(*input);
+      switch (*backend) {
+        case lyra::driver::Backend::kJit:
+          return lyra::driver::RunJit(*input);
+        case lyra::driver::Backend::kLli:
+          return lyra::driver::RunLli(*input);
+        case lyra::driver::Backend::kMir:
+          return lyra::driver::RunMir(*input);
+      }
     }
 
     if (program.is_subcommand_used("check")) {

@@ -288,6 +288,10 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   }
 
   // Create main function: int main()
+  // Note: "main" is a compiler-owned symbol synthesized by Lyra as the
+  // simulation entry point. User code cannot define main() - it is reserved.
+  // This is the contract between the compiler and the jit/lli backends.
+  // If user-defined main() becomes possible later, rename to "lyra_entry".
   auto* main_type = llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx), false);
   auto* main_func = llvm::Function::Create(
       main_type, llvm::Function::ExternalLinkage, "main", &mod);

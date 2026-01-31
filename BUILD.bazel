@@ -117,6 +117,8 @@ cc_library(
         "@llvm-project//llvm:ExecutionEngine",
         "@llvm-project//llvm:MC",
         "@llvm-project//llvm:MCJIT",
+        "@llvm-project//llvm:OrcJIT",
+        "@llvm-project//llvm:OrcTargetProcess",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:X86AsmParser",
@@ -131,6 +133,7 @@ cc_binary(
         "src/lyra/driver/*.hpp",
     ]),
     data = [":liblyra_runtime.so"],
+    linkopts = ["-Wl,--export-dynamic"],  # Export symbols for ORC JIT
     deps = [
         ":hir",
         ":interp",

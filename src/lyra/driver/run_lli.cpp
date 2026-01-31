@@ -1,22 +1,18 @@
-#include "run_llvm.hpp"
+#include "run_lli.hpp"
 
 #include <cerrno>
-#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
 
-// POSIX headers - provide mkstemps, close, WIFEXITED, WEXITSTATUS
+// POSIX headers
 #include <spawn.h>
-#include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-#include <fmt/color.h>
-#include <fmt/core.h>
 
 #include "frontend.hpp"
 #include "lyra/llvm_backend/lower.hpp"
@@ -24,6 +20,7 @@
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
+#include "runtime_path.hpp"
 
 namespace lyra::driver {
 
@@ -44,10 +41,6 @@ class TempFileGuard {
   TempFileGuard(TempFileGuard&&) = delete;
   auto operator=(TempFileGuard&&) -> TempFileGuard& = delete;
 
-  void Release() {
-    path_.clear();
-  }
-
  private:
   std::string path_;
 };
@@ -67,54 +60,9 @@ auto CreateTempFile(const std::string& suffix) -> std::string {
   return {buf.data()};
 }
 
-auto FindRuntimeLibrary(std::vector<std::string>& tried_paths) -> std::string {
-  constexpr auto kLibName = "liblyra_runtime.so";
-
-  if (const char* env_path = std::getenv("LYRA_RUNTIME_PATH")) {
-    if (std::filesystem::exists(env_path)) {
-      return env_path;
-    }
-    tried_paths.emplace_back(fmt::format("LYRA_RUNTIME_PATH={}", env_path));
-  }
-
-  std::filesystem::path exe_path;
-  try {
-    exe_path = std::filesystem::read_symlink("/proc/self/exe");
-  } catch (const std::filesystem::filesystem_error& e) {
-    tried_paths.emplace_back(
-        fmt::format(
-            "/proc/self/exe ({}; non-Linux or sandboxed?)",
-            e.code().message()));
-  }
-
-  if (!exe_path.empty()) {
-    auto runfiles_path =
-        std::filesystem::path(exe_path.string() + ".runfiles") / "_main" /
-        kLibName;
-    tried_paths.push_back(runfiles_path.string());
-    if (std::filesystem::exists(runfiles_path)) {
-      return runfiles_path.string();
-    }
-
-    auto sibling_path = exe_path.parent_path() / kLibName;
-    tried_paths.push_back(sibling_path.string());
-    if (std::filesystem::exists(sibling_path)) {
-      return sibling_path.string();
-    }
-  }
-
-  auto cwd_path = std::filesystem::current_path() / kLibName;
-  tried_paths.push_back(cwd_path.string());
-  if (std::filesystem::exists(cwd_path)) {
-    return cwd_path.string();
-  }
-
-  return "";
-}
-
-auto RunLli(const std::string& runtime_path, const std::string& ir_path)
+auto SpawnLli(const std::string& runtime_path, const std::string& ir_path)
     -> int {
-  std::string dlopen_arg = fmt::format("--dlopen={}", runtime_path);
+  std::string dlopen_arg = std::format("--dlopen={}", runtime_path);
 
   std::vector<char*> argv;
   std::string lli_cmd = "lli";
@@ -145,7 +93,7 @@ auto RunLli(const std::string& runtime_path, const std::string& ir_path)
 
 }  // namespace
 
-auto RunLlvm(const CompilationInput& input) -> int {
+auto RunLli(const CompilationInput& input) -> int {
   auto result = CompileToMir(input);
   if (!result) {
     result.error().Print();
@@ -176,7 +124,7 @@ auto RunLlvm(const CompilationInput& input) -> int {
   std::string ir_path = CreateTempFile(".ll");
   if (ir_path.empty()) {
     PrintError(
-        fmt::format("failed to create temp file: {}", std::strerror(errno)));
+        std::format("failed to create temp file: {}", std::strerror(errno)));
     return 1;
   }
   TempFileGuard temp_guard(ir_path);
@@ -184,28 +132,28 @@ auto RunLlvm(const CompilationInput& input) -> int {
   {
     std::ofstream out(ir_path);
     if (!out) {
-      PrintError(fmt::format("failed to write to {}", ir_path));
+      PrintError(std::format("failed to write to {}", ir_path));
       return 1;
     }
     out << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
   }
 
   std::vector<std::string> tried_paths;
-  std::string runtime_path = FindRuntimeLibrary(tried_paths);
+  auto runtime_path = FindRuntimeLibrary(tried_paths);
   if (runtime_path.empty()) {
     std::string msg = "runtime library not found\n       tried:";
     for (const auto& path : tried_paths) {
-      msg += fmt::format("\n         - {}", path);
+      msg += std::format("\n         - {}", path);
     }
     msg += "\n       hint: set LYRA_RUNTIME_PATH environment variable";
     PrintError(msg);
     return 1;
   }
 
-  int exit_code = RunLli(runtime_path, ir_path);
+  int exit_code = SpawnLli(runtime_path.string(), ir_path);
   if (exit_code == -1) {
     PrintError(
-        fmt::format(
+        std::format(
             "failed to execute lli: {}\n"
             "       hint: ensure 'lli' is installed and in PATH",
             std::strerror(errno)));
