@@ -14,6 +14,7 @@ namespace lyra::lowering::hir_to_mir {
 
 // Build a frozen FunctionSignature from HIR function metadata.
 // Must be called at pre-allocation time (Phase 1).
+// Computes return_policy based on return type characteristics.
 auto BuildFunctionSignature(
     const hir::Function& function, const SymbolTable& symbol_table,
     const TypeArena& type_arena) -> mir::FunctionSignature;

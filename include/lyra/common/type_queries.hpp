@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <format>
 
 #include "lyra/common/internal_error.hpp"
@@ -128,4 +129,60 @@ inline auto ComputePackedFillShape(
       "target must be packed (integral or packed array)");
 }
 
+// Check if a type kind is "managed" (requires lifecycle operations).
+// Managed types: string, dynamic array, queue.
+inline auto IsManagedKind(TypeKind kind) -> bool {
+  return kind == TypeKind::kString || kind == TypeKind::kDynamicArray ||
+         kind == TypeKind::kQueue;
+}
+
+namespace detail {
+
+// Generic helper: check if type (or any nested field/element) satisfies pred.
+template <typename Pred>
+auto TypeContains(TypeId type_id, const TypeArena& arena, Pred pred) -> bool {
+  const Type& type = arena[type_id];
+
+  if (pred(type.Kind())) {
+    return true;
+  }
+
+  switch (type.Kind()) {
+    case TypeKind::kUnpackedStruct: {
+      const auto& info = type.AsUnpackedStruct();
+      return std::ranges::any_of(info.fields, [&](const auto& field) {
+        return TypeContains(field.type, arena, pred);
+      });
+    }
+    case TypeKind::kUnpackedArray:
+      return TypeContains(type.AsUnpackedArray().element_type, arena, pred);
+    default:
+      return false;
+  }
+}
+
+}  // namespace detail
+
+// Check if a type (or any nested field/element) contains managed types.
+// Used to determine if a type requires destroy/clone operations.
+inline auto TypeContainsManaged(TypeId type_id, const TypeArena& arena)
+    -> bool {
+  return detail::TypeContains(
+      type_id, arena, [](TypeKind kind) { return IsManagedKind(kind); });
+}
+
+// Check if a type (or any nested field/element) contains strings.
+// Used to determine if a type requires field-by-field assignment.
+inline auto TypeContainsString(TypeId type_id, const TypeArena& arena) -> bool {
+  return detail::TypeContains(
+      type_id, arena, [](TypeKind kind) { return kind == TypeKind::kString; });
+}
+
 }  // namespace lyra
+
+// Re-export in common namespace for explicit qualification
+namespace lyra::common {
+using lyra::IsManagedKind;
+using lyra::TypeContainsManaged;
+using lyra::TypeContainsString;
+}  // namespace lyra::common
