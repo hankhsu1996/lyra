@@ -32,11 +32,25 @@ cc_test(
     ],
 )
 
-# LLVM development suite - tests for LLVM JIT backend
+# JIT development suite - tests for in-process ORC JIT backend (used in PR CI)
 cc_test(
-    name = "llvm_dev_tests",
+    name = "jit_dev_tests",
     srcs = ["main.cpp"],
-    args = ["--suite=llvm_dev"],
+    args = ["--suite=jit_dev"],
+    data = [
+        "suites.yaml",
+    ] + glob(["sv_features/**/*.yaml"]),
+    deps = [
+        ":test_framework",
+        "@googletest//:gtest",
+    ],
+)
+
+# LLI development suite - out-of-process LLI execution (for debugging/comparison)
+cc_test(
+    name = "lli_dev_tests",
+    srcs = ["main.cpp"],
+    args = ["--suite=lli_dev"],
     data = [
         "suites.yaml",
         "//:liblyra_runtime.so",

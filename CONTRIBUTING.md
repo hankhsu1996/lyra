@@ -76,10 +76,10 @@ bazel test //tests:mir_dev_tests \
   --test_arg=--backend=mir \
   --test_output=errors
 
-# LLVM backend
-bazel test //tests:llvm_dev_tests \
+# JIT backend
+bazel test //tests:jit_dev_tests \
   --test_arg=--test_file=operators/binary.yaml \
-  --test_arg=--backend=llvm \
+  --test_arg=--backend=jit \
   --test_output=errors
 ```
 

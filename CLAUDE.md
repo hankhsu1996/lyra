@@ -69,7 +69,7 @@ YAML-based tests in `tests/sv_features/`. See `tests/suites.yaml` for suite defi
 
 ```bash
 bazel test //tests:mir_dev_tests --test_output=errors    # MIR interpreter tests
-bazel test //tests:llvm_dev_tests --test_output=errors   # LLVM JIT backend tests
+bazel test //tests:jit_dev_tests --test_output=errors    # In-process ORC JIT tests
 ```
 
 ### Ad-Hoc Testing
@@ -83,10 +83,10 @@ bazel test //tests:mir_dev_tests \
   --test_arg=--backend=mir \
   --test_output=errors
 
-# LLVM backend (use llvm_dev_tests for runtime.so dependency)
-bazel test //tests:llvm_dev_tests \
+# JIT backend
+bazel test //tests:jit_dev_tests \
   --test_arg=--test_file=operators/binary.yaml \
-  --test_arg=--backend=llvm \
+  --test_arg=--backend=jit \
   --test_output=errors
 ```
 

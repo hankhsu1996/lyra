@@ -5,8 +5,8 @@
 # Empty include_regex = all YAML files. Exclude wins over include.
 
 suites:
-  llvm_dev:
-    backend: llvm
+  jit_dev:
+    backend: jit
     include_regex:
       - control_flow/
       - datatypes/
@@ -20,9 +20,24 @@ suites:
       - processes/
       - scheduling/
       - system_tf/
-    exclude_regex:
-      # $display 4-state formatting not implemented (unknown plane not passed)
-      - system_tf/effect/display_four_state\.yaml
+    exclude_regex: []
+
+  lli_dev:
+    backend: lli
+    include_regex:
+      - control_flow/
+      - datatypes/
+      - directives/
+      - functions/
+      - generate/
+      - hierarchy/
+      - lifecycle/
+      - operators/
+      - packages/
+      - processes/
+      - scheduling/
+      - system_tf/
+    exclude_regex: []
 
   mir_dev:
     backend: mir

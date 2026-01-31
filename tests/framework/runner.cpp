@@ -53,9 +53,9 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
       break;
     }
 
-    case BackendKind::kLlvm: {
+    case BackendKind::kJit: {
       if (!test_case.expected_files.empty()) {
-        GTEST_SKIP() << "LLVM backend does not support file assertions";
+        GTEST_SKIP() << "JIT backend does not support file assertions";
       }
 
       auto result = RunLlvmBackend(test_case, work_directory);
@@ -79,6 +79,10 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
         AssertOutput(result.captured_output, test_case.expected_stdout.value());
       }
       break;
+    }
+
+    case BackendKind::kLli: {
+      GTEST_SKIP() << "LLI backend not implemented in test framework";
     }
   }
 }
