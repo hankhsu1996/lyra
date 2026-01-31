@@ -27,7 +27,7 @@
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/simulation.hpp"
-#include "tests/framework/llvm_backend.hpp"
+#include "tests/framework/jit_backend.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
 

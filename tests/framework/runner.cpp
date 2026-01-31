@@ -5,7 +5,8 @@
 #include <optional>
 
 #include "tests/framework/assertions.hpp"
-#include "tests/framework/llvm_backend.hpp"
+#include "tests/framework/jit_backend.hpp"
+#include "tests/framework/lli_backend.hpp"
 #include "tests/framework/mir_backend.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/suite.hpp"
@@ -58,7 +59,7 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
         GTEST_SKIP() << "JIT backend does not support file assertions";
       }
 
-      auto result = RunLlvmBackend(test_case, work_directory);
+      auto result = RunJitBackend(test_case, work_directory);
       ASSERT_TRUE(result.success)
           << "[" << test_case.source_yaml << "] " << result.error_message;
 
@@ -82,7 +83,31 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
     }
 
     case BackendKind::kLli: {
-      GTEST_SKIP() << "LLI backend not implemented in test framework";
+      if (!test_case.expected_files.empty()) {
+        GTEST_SKIP() << "LLI backend does not support file assertions";
+      }
+
+      auto result = RunLliBackend(test_case, work_directory);
+      ASSERT_TRUE(result.success)
+          << "[" << test_case.source_yaml << "] " << result.error_message;
+
+      // Check expected variables
+      if (!test_case.expected_values.empty()) {
+        AssertVariables(
+            result.variables, test_case.expected_values, test_case.source_yaml);
+      }
+
+      // Check expected time
+      if (test_case.expected_time.has_value()) {
+        EXPECT_EQ(result.final_time, *test_case.expected_time)
+            << "[" << test_case.source_yaml << "] Time mismatch";
+      }
+
+      // Check expected stdout
+      if (test_case.expected_stdout.has_value()) {
+        AssertOutput(result.captured_output, test_case.expected_stdout.value());
+      }
+      break;
     }
   }
 }

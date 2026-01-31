@@ -24,6 +24,7 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 - **Staged diff:** !`git diff --cached`
 - **Unstaged diff:** !`git diff`
 - **Commits on this branch:** !`git log --oneline main..HEAD 2>/dev/null || echo "(new branch)"`
+- **Full diff from main:** !`git diff $(git merge-base origin/main HEAD)..HEAD --stat`
 - **Commits behind main:** !`git fetch origin main --quiet 2>/dev/null && git rev-list --count HEAD..origin/main 2>/dev/null || echo "0"`
 
 ## Branch Rules
@@ -64,7 +65,10 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
    - C++: `find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
    - Markdown: `npx prettier --write "**/*.md"`
    - Bazel: `buildifier -r .`
-3. **Exception policy:** `python3 tools/policy/check_exceptions.py --diff-base origin/main`
+3. **Policy checks:**
+   - `python3 tools/policy/check_exceptions.py --diff-base $(git merge-base origin/main HEAD)`
+   - `python3 tools/policy/check_ascii.py --diff-base $(git merge-base origin/main HEAD)`
+   - `python3 tools/policy/check_llvm_backend_boundaries.py --diff-base $(git merge-base origin/main HEAD)`
 4. **Stage files** with `git add <files>` (not `git add -A`)
 5. **Commit** with `git commit` (this will prompt for permission - your checkpoint to review)
 
