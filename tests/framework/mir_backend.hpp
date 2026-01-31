@@ -2,7 +2,7 @@
 
 #include <filesystem>
 
-#include "tests/framework/llvm_backend.hpp"
+#include "tests/framework/jit_backend.hpp"
 #include "tests/framework/test_case.hpp"
 
 namespace lyra::test {

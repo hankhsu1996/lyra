@@ -5,8 +5,8 @@
 #include <optional>
 
 #include "tests/framework/assertions.hpp"
+#include "tests/framework/jit_backend.hpp"
 #include "tests/framework/lli_backend.hpp"
-#include "tests/framework/llvm_backend.hpp"
 #include "tests/framework/mir_backend.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/suite.hpp"
@@ -59,7 +59,7 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
         GTEST_SKIP() << "JIT backend does not support file assertions";
       }
 
-      auto result = RunLlvmBackend(test_case, work_directory);
+      auto result = RunJitBackend(test_case, work_directory);
       ASSERT_TRUE(result.success)
           << "[" << test_case.source_yaml << "] " << result.error_message;
 

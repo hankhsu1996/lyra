@@ -7,64 +7,22 @@
 #include <format>
 #include <fstream>
 #include <optional>
-#include <sstream>
 #include <string>
-#include <type_traits>
 #include <utility>
-#include <variant>
-#include <vector>
 
 // POSIX headers
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <llvm/IR/Value.h>
-
-#include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/common/diagnostic/diagnostic_sink.hpp"
-#include "lyra/common/source_span.hpp"
-#include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
-#include "lyra/hir/module.hpp"
-#include "lyra/hir/package.hpp"
-#include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lower.hpp"
-#include "lyra/lowering/ast_to_hir/lower.hpp"
-#include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/lowering/hir_to_mir/lower.hpp"
-#include "lyra/lowering/origin_map_lookup.hpp"
+#include "tests/framework/llvm_common.hpp"
+#include "tests/framework/output_protocol.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
 
 namespace lyra::test {
 namespace {
-
-// Test framework hooks for variable inspection and timing.
-class TestSimulationHooks : public lowering::mir_to_llvm::SimulationHooks {
- public:
-  TestSimulationHooks(
-      std::vector<lowering::mir_to_llvm::VariableInfo> variables,
-      bool emit_time_report)
-      : variables_(std::move(variables)), emit_time_report_(emit_time_report) {
-  }
-
-  void OnAfterRunSimulation(
-      lowering::mir_to_llvm::Context& context,
-      const std::vector<lowering::mir_to_llvm::SlotInfo>& slots,
-      llvm::Value* design_state) override {
-    lowering::mir_to_llvm::EmitVariableInspection(
-        context, variables_, slots, design_state);
-    if (emit_time_report_) {
-      lowering::mir_to_llvm::EmitTimeReport(context);
-    }
-  }
-
- private:
-  std::vector<lowering::mir_to_llvm::VariableInfo> variables_;
-  bool emit_time_report_;
-};
 
 // Find the runtime library for LLVM backend
 auto FindRuntimeLibrary() -> std::optional<std::filesystem::path> {
@@ -89,39 +47,6 @@ auto FindRuntimeLibrary() -> std::optional<std::filesystem::path> {
   }
 
   return std::nullopt;
-}
-
-// Build tracked variables for inspection
-auto BuildTrackedVariables(
-    const hir::Module* hir_module,
-    const lowering::hir_to_mir::LoweringInput& mir_input,
-    const lowering::ast_to_hir::LoweringResult& hir_result, size_t base_slot_id)
-    -> std::vector<lowering::mir_to_llvm::VariableInfo> {
-  std::vector<lowering::mir_to_llvm::VariableInfo> variables;
-  if (hir_module == nullptr) {
-    return variables;
-  }
-
-  for (size_t i = 0; i < hir_module->variables.size(); ++i) {
-    const auto& sym = (*mir_input.symbol_table)[hir_module->variables[i]];
-    const Type& type = (*hir_result.type_arena)[sym.type];
-
-    if (type.Kind() == TypeKind::kReal) {
-      variables.push_back({.name = sym.name, .slot_id = base_slot_id + i});
-      continue;
-    }
-
-    if (type.Kind() == TypeKind::kString) {
-      continue;
-    }
-
-    if (!IsPacked(type)) {
-      continue;
-    }
-
-    variables.push_back({.name = sym.name, .slot_id = base_slot_id + i});
-  }
-  return variables;
 }
 
 // Run lli subprocess with output capture
@@ -186,102 +111,10 @@ auto RunLliBackend(
     -> TestResult {
   TestResult result;
 
-  auto parse_result = ParseTestCase(test_case, work_directory);
-  if (!parse_result.Success()) {
-    result.error_message = parse_result.error_message;
-    return result;
-  }
-
-  DiagnosticSink sink;
-  auto hir_result =
-      lowering::ast_to_hir::LowerAstToHir(*parse_result.compilation, sink);
-
-  if (sink.HasErrors()) {
-    std::ostringstream error_stream;
-    for (const auto& diagnostic : sink.GetDiagnostics()) {
-      if (diagnostic.primary.kind == DiagKind::kError ||
-          diagnostic.primary.kind == DiagKind::kUnsupported ||
-          diagnostic.primary.kind == DiagKind::kHostError) {
-        error_stream << diagnostic.primary.message << "\n";
-      }
-    }
-    result.error_message = "HIR lowering errors:\n" + error_stream.str();
-    return result;
-  }
-
-  lowering::hir_to_mir::LoweringInput mir_input{
-      .design = &hir_result.design,
-      .hir_arena = hir_result.hir_arena.get(),
-      .type_arena = hir_result.type_arena.get(),
-      .constant_arena = hir_result.constant_arena.get(),
-      .symbol_table = hir_result.symbol_table.get(),
-      .builtin_types = {},
-      .binding_plan = &hir_result.binding_plan,
-      .instance_table = &hir_result.instance_table,
-  };
-  auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
-  if (!mir_result) {
-    result.error_message = std::format(
-        "MIR lowering error: {}", mir_result.error().primary.message);
-    return result;
-  }
-
-  const hir::Module* top_module = nullptr;
-  for (const auto& element : mir_input.design->elements) {
-    if (const auto* mod = std::get_if<hir::Module>(&element)) {
-      top_module = mod;
-      break;
-    }
-  }
-
-  size_t base_slot_id = 0;
-  for (const auto& element : mir_input.design->elements) {
-    if (const auto* pkg = std::get_if<hir::Package>(&element)) {
-      base_slot_id += pkg->variables.size();
-    }
-  }
-  auto tracked_variables =
-      BuildTrackedVariables(top_module, mir_input, hir_result, base_slot_id);
-
-  TestSimulationHooks hooks(std::move(tracked_variables), true);
-
-  lowering::OriginMapLookup origin_lookup(
-      &mir_result->origin_map, hir_result.hir_arena.get());
-  lowering::DiagnosticContext diag_ctx(origin_lookup);
-
-  auto fs_base_dir =
-      work_directory.empty()
-          ? std::filesystem::absolute(std::filesystem::current_path()).string()
-          : std::filesystem::absolute(work_directory).string();
-  lowering::mir_to_llvm::LoweringInput llvm_input{
-      .design = &mir_result->design,
-      .mir_arena = mir_result->mir_arena.get(),
-      .type_arena = hir_result.type_arena.get(),
-      .diag_ctx = &diag_ctx,
-      .hooks = &hooks,
-      .fs_base_dir = fs_base_dir,
-      .plusargs = test_case.plusargs,
-  };
-
-  auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
-  if (!llvm_result) {
-    const auto& diag = llvm_result.error();
-    std::string location;
-    std::visit(
-        [&](const auto& span) {
-          using T = std::decay_t<decltype(span)>;
-          if constexpr (std::is_same_v<T, SourceSpan>) {
-            location = FormatSourceLocation(span, *hir_result.source_manager);
-          }
-        },
-        diag.primary.span);
-    if (!location.empty()) {
-      result.error_message =
-          std::format("{}: error: {}", location, diag.primary.message);
-    } else {
-      result.error_message =
-          std::format("LLVM lowering error: {}", diag.primary.message);
-    }
+  // Prepare LLVM module (AST -> HIR -> MIR -> LLVM)
+  auto prep_result = PrepareLlvmModule(test_case, work_directory);
+  if (!prep_result) {
+    result.error_message = prep_result.error();
     return result;
   }
 
@@ -297,7 +130,7 @@ auto RunLliBackend(
       result.error_message = "Failed to write IR file";
       return result;
     }
-    out << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
+    out << lowering::mir_to_llvm::DumpLlvmIr(prep_result->llvm_result);
   }
 
   auto runtime_path = FindRuntimeLibrary();
