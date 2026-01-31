@@ -180,6 +180,11 @@ class Engine {
   // Enable/disable the active monitor. No-op if no active monitor.
   void SetMonitorEnabled(bool enabled);
 
+  // Random number generation ($random, $urandom).
+  // Advances RNG state on each call.
+  [[nodiscard]] auto Random() -> int32_t;
+  [[nodiscard]] auto Urandom() -> uint32_t;
+
  private:
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
@@ -261,6 +266,10 @@ class Engine {
   // Active monitor state ($monitor). Only one can be active at a time.
   // Checked after all strobe callbacks complete in ExecutePostponedRegion.
   std::optional<MonitorState> active_monitor_;
+
+  // PRNG state for $random/$urandom. LCG with glibc constants.
+  // Initial seed = 1 for deterministic reproducibility.
+  uint32_t prng_state_ = 1;
 };
 
 }  // namespace lyra::runtime

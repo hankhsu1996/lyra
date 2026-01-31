@@ -60,6 +60,28 @@ constexpr std::array kMetadataTable = std::to_array<SystemTfMetadata>({
     .max_args = 2,
     .out_arg_index = 1,  // Second arg is output (first is format string)
   },
+  // kRandom: $random() -> signed int32
+  {
+    .opcode = SystemTfOpcode::kRandom,
+    .name = "$random",
+    .family = SystemTfFamily::kRandom,
+    .role = SystemTfRole::kMixed,  // Stateful (advances RNG) + returns value
+    .result_conv = ResultConvention::kIntegral,
+    .min_args = 0,
+    .max_args = 0,
+    .out_arg_index = -1,
+  },
+  // kUrandom: $urandom() -> unsigned int32
+  {
+    .opcode = SystemTfOpcode::kUrandom,
+    .name = "$urandom",
+    .family = SystemTfFamily::kRandom,
+    .role = SystemTfRole::kMixed,  // Stateful (advances RNG) + returns value
+    .result_conv = ResultConvention::kIntegral,
+    .min_args = 0,
+    .max_args = 0,
+    .out_arg_index = -1,
+  },
 });
 // clang-format on
 
@@ -69,6 +91,8 @@ constexpr std::array kNameTable = std::to_array<std::pair<std::string_view, Syst
   {"$fclose", SystemTfOpcode::kFclose},
   {"$fflush", SystemTfOpcode::kFflush},
   {"$fopen", SystemTfOpcode::kFopen},
+  {"$random", SystemTfOpcode::kRandom},
+  {"$urandom", SystemTfOpcode::kUrandom},
   {"$value$plusargs", SystemTfOpcode::kValuePlusargs},
 });
 // clang-format on
@@ -105,6 +129,10 @@ auto ToString(SystemTfOpcode op) -> const char* {
       return "$fflush";
     case SystemTfOpcode::kValuePlusargs:
       return "$value$plusargs";
+    case SystemTfOpcode::kRandom:
+      return "$random";
+    case SystemTfOpcode::kUrandom:
+      return "$urandom";
   }
   return "?";
 }

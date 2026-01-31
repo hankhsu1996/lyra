@@ -982,4 +982,30 @@ auto Context::GetLyraFillPackedElements() -> llvm::Function* {
   return lyra_fill_packed_elements_;
 }
 
+auto Context::GetLyraRandom() -> llvm::Function* {
+  if (lyra_random_ == nullptr) {
+    // int32_t LyraRandom(ptr engine)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty}, false);
+    lyra_random_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraRandom",
+        llvm_module_.get());
+  }
+  return lyra_random_;
+}
+
+auto Context::GetLyraUrandom() -> llvm::Function* {
+  if (lyra_urandom_ == nullptr) {
+    // uint32_t LyraUrandom(ptr engine)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty}, false);
+    lyra_urandom_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraUrandom",
+        llvm_module_.get());
+  }
+  return lyra_urandom_;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

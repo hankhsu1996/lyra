@@ -206,10 +206,10 @@ Supported:
 - `$realtobits`, `$bitstoreal` - real to 64-bit bitcast
 - `$shortrealtobits`, `$bitstoshortreal` - shortreal to 32-bit bitcast
 - Math functions (20.8): `$clog2`, `$ln`, `$log10`, `$exp`, `$sqrt`, `$pow`, `$floor`, `$ceil`, `$sin`, `$cos`, `$tan`, `$asin`, `$acos`, `$atan`, `$atan2`, `$hypot`, `$sinh`, `$cosh`, `$tanh`, `$asinh`, `$acosh`, `$atanh`
+- `$random`, `$urandom` - random number generation (deterministic LCG with seed=1)
 
 Not yet supported:
 
-- `$random`, `$urandom` - random number generation
 - `$fgets`, `$fscanf`, `$fread` - file reading
 - `$fseek`, `$ftell`, `$rewind`, `$feof` - file positioning
 - `$printtimescale(path)` - hierarchical path variant (requires hierarchy)

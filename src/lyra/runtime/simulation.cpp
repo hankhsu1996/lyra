@@ -428,3 +428,13 @@ extern "C" void LyraNotifySignal(
   // Value-changed notify only: old_lsb = new_lsb = lsb (no edge)
   engine->RecordSignalUpdate(signal_id, lsb, lsb, true);
 }
+
+extern "C" auto LyraRandom(void* engine_ptr) -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  return engine->Random();
+}
+
+extern "C" auto LyraUrandom(void* engine_ptr) -> uint32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  return engine->Urandom();
+}

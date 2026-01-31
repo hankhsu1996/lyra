@@ -9,6 +9,7 @@
 #include "lyra/common/format.hpp"
 #include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/severity.hpp"
+#include "lyra/common/system_function.hpp"
 #include "lyra/hir/fwd.hpp"
 
 namespace lyra::hir {
@@ -127,10 +128,17 @@ struct MonitorControlData {
   auto operator==(const MonitorControlData&) const -> bool = default;
 };
 
+// $random, $urandom - random number generation
+struct RandomData {
+  RandomKind kind;
+
+  auto operator==(const RandomData&) const -> bool = default;
+};
+
 using SystemCallExpressionData = std::variant<
     DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
     TestPlusargsData, ValuePlusargsData, MemIOData, FopenData, FcloseData,
     FflushData, RuntimeQueryData, TimeFormatData, MonitorSystemCallData,
-    MonitorControlData>;
+    MonitorControlData, RandomData>;
 
 }  // namespace lyra::hir

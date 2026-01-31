@@ -956,6 +956,17 @@ struct LowerVisitor {
     throw common::InternalError("LowerSystemCall", "unhandled PlusargsKind");
   }
 
+  auto operator()(const RandomFunctionInfo& info) const -> hir::ExpressionId {
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+
+    return Ctx()->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kSystemCall,
+            .type = result_type,
+            .span = span,
+            .data = hir::RandomData{.kind = info.kind}});
+  }
+
   auto operator()(const PrintTimescaleFunctionInfo& /*info*/) const
       -> hir::ExpressionId {
     SourceSpan span = Ctx()->SpanOf(call->sourceRange);

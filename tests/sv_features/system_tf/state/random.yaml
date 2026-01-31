@@ -1,0 +1,129 @@
+feature: random_functions
+description: Tests for random number generation system functions ($random, $urandom)
+
+cases:
+  # $urandom basic tests
+  - name: urandom_basic
+    description: $urandom returns a 32-bit unsigned value
+    sv: |
+      module Test;
+        int unsigned r;
+        initial begin
+          r = $urandom;
+          $display("urandom=%d", r);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "urandom="
+
+  - name: urandom_in_variable
+    description: $urandom result can be stored in a variable
+    sv: |
+      module Test;
+        int unsigned r;
+        initial begin
+          r = $urandom;
+        end
+      endmodule
+    expect:
+      variables:
+        r: 1103527590
+
+  # $random basic tests
+  - name: random_basic
+    description: $random returns a signed 32-bit value
+    sv: |
+      module Test;
+        int r;
+        initial begin
+          r = $random;
+          $display("random=%d", r);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "random="
+
+  - name: random_in_variable
+    description: $random result can be stored in a variable
+    sv: |
+      module Test;
+        int r;
+        initial begin
+          r = $random;
+        end
+      endmodule
+    expect:
+      variables:
+        r: 1103527590
+
+  # Multiple calls differ (LCG guarantees each call advances state)
+  - name: urandom_multiple_differ
+    description: Multiple $urandom calls return different values
+    sv: |
+      module Test;
+        int unsigned r1, r2, r3;
+        initial begin
+          r1 = $urandom;
+          r2 = $urandom;
+          r3 = $urandom;
+          $display("r1=%d r2=%d r3=%d", r1, r2, r3);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "r1=1103527590 r2=2524885223 r3=662824084"
+
+  - name: random_multiple_differ
+    description: Multiple $random calls return different values
+    sv: |
+      module Test;
+        int r1, r2;
+        initial begin
+          r1 = $random;
+          r2 = $random;
+          // r1 != r2 always holds with LCG
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 1103527590
+        r2: -1770082073
+
+  # Usage in expressions
+  - name: urandom_in_expression
+    description: $urandom can be used in arithmetic expressions
+    sv: |
+      module Test;
+        int unsigned r;
+        initial begin
+          r = $urandom % 100;
+          $display("r mod 100=%d", r);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "r mod 100=90"
+
+  - name: random_in_conditional
+    description: $random result can be used in conditionals
+    sv: |
+      module Test;
+        int r;
+        initial begin
+          r = $random;
+          if (r != 0)
+            $display("r is non-zero");
+          else
+            $display("r is zero");
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "r is non-zero"

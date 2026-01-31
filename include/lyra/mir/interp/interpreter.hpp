@@ -300,6 +300,10 @@ class Interpreter {
   runtime::FileManager file_manager_;
   uint64_t simulation_time_ = 0;
   std::filesystem::path fs_base_dir_;
+
+  // PRNG state for $random/$urandom. LCG with glibc constants.
+  // Same algorithm as Engine to ensure matching behavior.
+  uint32_t prng_state_ = 1;
 };
 
 // Helper: Create ProcessState for a given process.
