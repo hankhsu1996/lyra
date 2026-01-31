@@ -1,0 +1,401 @@
+feature: type_queries
+description: Tests for $bits, $isunbounded, and $typename system functions (IEEE 1800-2023 20.6)
+
+cases:
+  # $bits tests - expression form
+
+  - name: bits_int
+    description: $bits of int returns 32
+    sv: |
+      module Test;
+        int a;
+        int result;
+        initial begin
+          result = $bits(a);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 32
+
+  - name: bits_byte
+    description: $bits of byte returns 8
+    sv: |
+      module Test;
+        byte b;
+        int result;
+        initial begin
+          result = $bits(b);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 8
+
+  - name: bits_shortint
+    description: $bits of shortint returns 16
+    sv: |
+      module Test;
+        shortint s;
+        int result;
+        initial begin
+          result = $bits(s);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 16
+
+  - name: bits_longint
+    description: $bits of longint returns 64
+    sv: |
+      module Test;
+        longint l;
+        int result;
+        initial begin
+          result = $bits(l);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 64
+
+  - name: bits_logic_vector
+    description: $bits of logic vector
+    sv: |
+      module Test;
+        logic [15:0] v;
+        int result;
+        initial begin
+          result = $bits(v);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 16
+
+  - name: bits_logic_nonzero_base
+    description: $bits of logic vector with non-zero base
+    sv: |
+      module Test;
+        logic [7:4] v;
+        int result;
+        initial begin
+          result = $bits(v);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 4
+
+  - name: bits_real
+    description: $bits of real returns 64
+    sv: |
+      module Test;
+        real r;
+        int result;
+        initial begin
+          result = $bits(r);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 64
+
+  - name: bits_shortreal
+    description: $bits of shortreal returns 32
+    sv: |
+      module Test;
+        shortreal r;
+        int result;
+        initial begin
+          result = $bits(r);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 32
+
+  # $bits tests - unpacked arrays (element width * count)
+
+  - name: bits_unpacked_array
+    description: $bits of unpacked array (element width * count)
+    sv: |
+      module Test;
+        int arr[4];
+        int result;
+        initial begin
+          result = $bits(arr);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 128
+
+  - name: bits_unpacked_array_2d
+    description: $bits of 2D unpacked array
+    sv: |
+      module Test;
+        byte arr[2][3];
+        int result;
+        initial begin
+          result = $bits(arr);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 48
+
+  - name: bits_logic_unpacked
+    description: $bits of logic unpacked array
+    sv: |
+      module Test;
+        logic [7:0] arr[4];
+        int result;
+        initial begin
+          result = $bits(arr);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 32
+
+  # $bits tests - type form
+
+  - name: bits_type_int
+    description: $bits(int) type form
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          result = $bits(int);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 32
+
+  - name: bits_type_byte
+    description: $bits(byte) type form
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          result = $bits(byte);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 8
+
+  - name: bits_type_logic_vector
+    description: $bits of logic type
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          result = $bits(logic [31:0]);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 32
+
+  # $bits tests - packed struct
+
+  - name: bits_packed_struct
+    description: $bits of packed struct
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [7:0] a;
+          logic [15:0] b;
+        } my_struct_t;
+        my_struct_t s;
+        int result;
+        initial begin
+          result = $bits(s);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 24
+
+  # $bits tests - enum
+
+  - name: bits_enum
+    description: $bits of enum type
+    sv: |
+      module Test;
+        typedef enum logic [2:0] { A, B, C } my_enum_t;
+        my_enum_t e;
+        int result;
+        initial begin
+          result = $bits(e);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 3
+
+  # $bits tests - display integration
+
+  - name: bits_display
+    description: $bits in $display
+    sv: |
+      module Test;
+        logic [7:0] arr[4];
+        initial begin
+          $display("bits=%0d", $bits(arr));
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "bits=32"
+
+  # $bits tests - overflow (32-bit wrap)
+  # 67108864 * 32 = 2^31 bits, wraps to -2147483648 as int32
+
+  - name: bits_overflow
+    description: $bits overflow wraps to 32-bit (defined behavior)
+    sv: |
+      module Test;
+        typedef int big_arr_t[67108864];
+        int result;
+        initial begin
+          result = $bits(big_arr_t);
+        end
+      endmodule
+    expect:
+      variables:
+        result: -2147483648
+
+  # $typename tests
+
+  - name: typename_int
+    description: $typename of int
+    sv: |
+      module Test;
+        int a;
+        string s;
+        initial begin
+          s = $typename(a);
+          $display("%s", s);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "int"
+
+  - name: typename_logic_vector
+    description: $typename of logic vector
+    sv: |
+      module Test;
+        logic [7:0] v;
+        string s;
+        initial begin
+          s = $typename(v);
+          $display("%s", s);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "logic"
+          - "[7:0]"
+
+  - name: typename_byte
+    description: $typename of byte
+    sv: |
+      module Test;
+        byte b;
+        string s;
+        initial begin
+          s = $typename(b);
+          $display("%s", s);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "byte"
+
+  - name: typename_type_form
+    description: $typename with type argument
+    sv: |
+      module Test;
+        string s;
+        initial begin
+          s = $typename(int);
+          $display("%s", s);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "int"
+
+  - name: typename_real
+    description: $typename of real
+    sv: |
+      module Test;
+        real r;
+        string s;
+        initial begin
+          s = $typename(r);
+          $display("%s", s);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "real"
+
+  - name: typename_string
+    description: $typename of string
+    sv: |
+      module Test;
+        string str;
+        string s;
+        initial begin
+          s = $typename(str);
+          $display("%s", s);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "string"
+
+  # $isunbounded tests
+
+  - name: isunbounded_fixed_param
+    description: $isunbounded returns 0 for bounded parameter
+    sv: |
+      module Test;
+        parameter int N = 10;
+        bit result;
+        initial begin
+          result = $isunbounded(N);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: isunbounded_unbounded_param
+    description: $isunbounded returns 1 for parameter with $ value
+    sv: |
+      module Test #(parameter int N = $);
+        bit result;
+        initial begin
+          result = $isunbounded(N);
+          $display("unbounded=%b", result);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "unbounded=1"
