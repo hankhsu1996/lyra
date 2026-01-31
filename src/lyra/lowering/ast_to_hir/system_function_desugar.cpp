@@ -11,6 +11,8 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
+#include <slang/ast/types/TypePrinter.h>
 #include <slang/numeric/Time.h>
 
 #include "lyra/common/constant.hpp"
@@ -144,6 +146,17 @@ auto ClassifyDesugarableSystemFunction(const slang::ast::CallExpression& call)
     return TimeScaleSysFnKind::kTimeprecision;
   }
 
+  // Type query functions -> constant
+  if (name == "$bits") {
+    return TypeQuerySysFnKind::kBits;
+  }
+  if (name == "$isunbounded") {
+    return TypeQuerySysFnKind::kIsUnbounded;
+  }
+  if (name == "$typename") {
+    return TypeQuerySysFnKind::kTypename;
+  }
+
   return std::nullopt;
 }
 
@@ -268,6 +281,37 @@ auto MakeIntConstant(int32_t value, SourceSpan span, Context* ctx)
       hir::Expression{
           .kind = hir::ExpressionKind::kConstant,
           .type = int_type,
+          .span = span,
+          .data = hir::ConstantExpressionData{.constant = cid}});
+}
+
+auto MakeBitConstant(uint8_t value, SourceSpan span, Context* ctx)
+    -> hir::ExpressionId {
+  TypeId bit_type = ctx->type_arena->Intern(
+      TypeKind::kIntegral,
+      IntegralInfo{.bit_width = 1, .is_signed = false, .is_four_state = false});
+  IntegralConstant ic;
+  ic.value = {static_cast<uint64_t>(value & 1)};
+  ic.unknown = {0};
+  ConstId cid = ctx->constant_arena->Intern(bit_type, std::move(ic));
+  return ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kConstant,
+          .type = bit_type,
+          .span = span,
+          .data = hir::ConstantExpressionData{.constant = cid}});
+}
+
+auto MakeStringConstant(std::string value, SourceSpan span, Context* ctx)
+    -> hir::ExpressionId {
+  TypeId string_type =
+      ctx->type_arena->Intern(TypeKind::kString, std::monostate{});
+  ConstId cid = ctx->constant_arena->Intern(
+      string_type, StringConstant{.value = std::move(value)});
+  return ctx->hir_arena->AddExpression(
+      hir::Expression{
+          .kind = hir::ExpressionKind::kConstant,
+          .type = string_type,
           .span = span,
           .data = hir::ConstantExpressionData{.constant = cid}});
 }
@@ -430,6 +474,77 @@ auto LowerDesugarableSystemFunction(
                     .span = span,
                     .data = hir::MathCallExpressionData{
                         .fn = fn.fn, .args = std::move(args)}});
+          },
+          [&](TypeQuerySysFnKind kind) -> hir::ExpressionId {
+            if (call.arguments().size() != 1) {
+              ctx->ErrorFmt(
+                  span, "{}() requires exactly one argument",
+                  call.getSubroutineName());
+              return hir::kInvalidExpressionId;
+            }
+
+            const auto& arg = *call.arguments()[0];
+            const slang::ast::Type& target_type = *arg.type;
+
+            switch (kind) {
+              case TypeQuerySysFnKind::kBits: {
+                // Reject hierarchical references (same guard as slang's
+                // noHierarchical)
+                if (arg.hasHierarchicalReference()) {
+                  ctx->ErrorFmt(
+                      span, "$bits() does not support hierarchical references");
+                  return hir::kInvalidExpressionId;
+                }
+
+                // Only support fixed-size types (no runtime evaluation)
+                if (!target_type.isFixedSize()) {
+                  ctx->ErrorFmt(span, "$bits() requires fixed-size type");
+                  return hir::kInvalidExpressionId;
+                }
+
+                uint64_t width = target_type.getBitstreamWidth();
+                // Intentional truncation to 32-bit signed int per IEEE 1800 /
+                // slang behavior. Large widths wrap (defined overflow). See
+                // slang QueryFuncs.cpp:69-72.
+                return MakeIntConstant(static_cast<int32_t>(width), span, ctx);
+              }
+
+              case TypeQuerySysFnKind::kIsUnbounded: {
+                bool is_unbounded = target_type.isUnbounded();
+
+                // Also check parameter value (parameter may have bounded type
+                // but $ value)
+                if (!is_unbounded &&
+                    arg.kind == slang::ast::ExpressionKind::NamedValue) {
+                  const auto* sym = arg.getSymbolReference();
+                  if (sym && sym->kind == slang::ast::SymbolKind::Parameter) {
+                    const auto& param = sym->as<slang::ast::ParameterSymbol>();
+                    if (param.getValue(arg.sourceRange).isUnbounded()) {
+                      is_unbounded = true;
+                    }
+                  }
+                }
+
+                return MakeBitConstant(is_unbounded ? 1 : 0, span, ctx);
+              }
+
+              case TypeQuerySysFnKind::kTypename: {
+                // Reject hierarchical references
+                if (arg.hasHierarchicalReference()) {
+                  ctx->ErrorFmt(
+                      span,
+                      "$typename() does not support hierarchical references");
+                  return hir::kInvalidExpressionId;
+                }
+
+                slang::ast::TypePrinter printer;
+                printer.append(target_type);
+                return MakeStringConstant(printer.toString(), span, ctx);
+              }
+            }
+
+            ctx->ErrorFmt(span, "unhandled type query function");
+            return hir::kInvalidExpressionId;
           }},
       classification);
 }

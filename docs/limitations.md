@@ -207,6 +207,7 @@ Supported:
 - `$shortrealtobits`, `$bitstoshortreal` - shortreal to 32-bit bitcast
 - Math functions (20.8): `$clog2`, `$ln`, `$log10`, `$exp`, `$sqrt`, `$pow`, `$floor`, `$ceil`, `$sin`, `$cos`, `$tan`, `$asin`, `$acos`, `$atan`, `$atan2`, `$hypot`, `$sinh`, `$cosh`, `$tanh`, `$asinh`, `$acosh`, `$atanh`
 - `$random`, `$urandom` - random number generation (deterministic LCG with seed=1)
+- Data query functions (20.6): `$bits`, `$isunbounded`, `$typename` - fixed-size types only, result truncated to 32-bit signed integer
 
 Not yet supported:
 
@@ -216,7 +217,6 @@ Not yet supported:
 - `$timeunit(path)`, `$timeprecision(path)` - hierarchical path variants (requires hierarchy)
 - `$timeunit($unit)`, `$timeprecision($unit)` - compilation unit variants
 - `$cast` - dynamic type casting
-- Data query functions (20.6): `$bits`, `$isunbounded`, `$typename`
 - Array query functions (20.7): `$unpacked_dimensions`, `$dimensions`, `$left`, `$right`, `$low`, `$high`, `$increment`, `$size`
 - Bit vector functions (20.9): `$countbits`, `$countones`, `$onehot`, `$onehot0`, `$isunknown`
 

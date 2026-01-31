@@ -52,9 +52,16 @@ struct MathSysFn {
   MathFn fn;
 };
 
+// Category 5: Type query functions (IEEE 1800 20.6) -> constant
+enum class TypeQuerySysFnKind {
+  kBits,
+  kIsUnbounded,
+  kTypename,
+};
+
 using DesugarableClassification = std::variant<
     ConversionSysFnKind, UnaryOpSysFn, BinaryOpSysFn, TimeScaleSysFnKind,
-    MathSysFn>;
+    MathSysFn, TypeQuerySysFnKind>;
 
 // Classify a system call as desugarable (lowers to ordinary HIR, not
 // kSystemCall). Returns nullopt if the call requires kSystemCall lowering.
