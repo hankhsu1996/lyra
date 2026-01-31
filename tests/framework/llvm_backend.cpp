@@ -228,16 +228,8 @@ void ParseLyraVarEntry(
   }
 }
 
-struct ParsedOutput {
-  std::string clean;
-  std::map<std::string, TestValue> variables;
-  uint64_t final_time = 0;
-};
+}  // namespace
 
-// Parse __LYRA_VAR and __LYRA_TIME__ output, stripping protocol lines.
-// Preserves all other output exactly, including trailing newlines.
-// Handles __LYRA_VAR and __LYRA_TIME__ appearing mid-line (after $write with no
-// newline).
 auto ParseLyraVarOutput(const std::string& output) -> ParsedOutput {
   ParsedOutput parsed;
   std::string& clean_output = parsed.clean;
@@ -318,8 +310,6 @@ auto ParseLyraVarOutput(const std::string& output) -> ParsedOutput {
 
   return parsed;
 }
-
-}  // namespace
 
 auto RunLlvmBackend(
     const TestCase& test_case, const std::filesystem::path& work_directory)
