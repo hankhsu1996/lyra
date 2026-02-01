@@ -14,8 +14,8 @@ Clean up local branch after PR is merged.
 
 ## Instructions
 
-1. Switch to main branch: `git switch main`
-2. Pull latest changes: `git pull`
-3. Delete the local feature branch (the one we were working on)
+1. Switch to main: `git switch main`
+2. Pull latest: `git pull`
+3. Delete local branch with `-D` (squash merge requires force): `git branch -D <branch>`
 
-The remote branch is auto-deleted by GitHub on merge, so no need to delete it manually.
+The remote branch is auto-deleted by GitHub on merge.
