@@ -1,6 +1,6 @@
 ---
 description: Create a commit with a well-formatted message
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), AskUserQuestion
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*)
 ---
 
 # Commit
@@ -12,7 +12,7 @@ Create a commit following the project format.
 **You are NOT allowed to commit on main.** Before doing ANYTHING else:
 
 1. Check the current branch in the Context section below
-2. If on `main`, STOP and ask the user for a branch name using AskUserQuestion
+2. If on `main`, infer an appropriate branch name from the changes (see Branch Rules)
 3. Create the branch with `git switch -c <branch-name>` BEFORE any other steps
 
 Do NOT proceed with formatting or staging until you are on a feature branch.
