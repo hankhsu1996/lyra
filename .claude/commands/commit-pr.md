@@ -24,7 +24,7 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 - **Staged diff:** !`git diff --cached`
 - **Unstaged diff:** !`git diff`
 - **Commits on this branch:** !`git log --oneline main..HEAD 2>/dev/null || echo "(new branch)"`
-- **Full diff from main:** !`git diff $(git merge-base origin/main HEAD)..HEAD --stat`
+- **Full diff from main:** !`git diff --merge-base origin/main HEAD --stat`
 - **Commits behind main:** !`git fetch origin main --quiet 2>/dev/null && git rev-list --count HEAD..origin/main 2>/dev/null || echo "0"`
 
 ## Branch Rules

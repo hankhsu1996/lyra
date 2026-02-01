@@ -12,7 +12,7 @@ Create a PR following the project format.
 - **Current branch:** !`git branch --show-current`
 - **Git status:** !`git status --short`
 - **Commits on this branch:** !`git log --oneline main..HEAD`
-- **Full diff from main:** !`git diff $(git merge-base origin/main HEAD)..HEAD --stat`
+- **Full diff from main:** !`git diff --merge-base origin/main HEAD --stat`
 - **Commits behind main:** !`git fetch origin main --quiet && git rev-list --count HEAD..origin/main`
 
 ## PR Format
