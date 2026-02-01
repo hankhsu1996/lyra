@@ -1,11 +1,10 @@
 #include "lyra/llvm_backend/emit_string_conv.hpp"
 
-#include <cassert>
-
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type_queries.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -14,9 +13,10 @@ auto EmitPackedToString(
     Context& context, llvm::Value* packed_value, const Type& packed_type)
     -> llvm::Value* {
   // Guardrail: must be called with a packed type
-  assert(
-      IsPacked(packed_type) &&
-      "EmitPackedToString called with non-packed type");
+  if (!IsPacked(packed_type)) {
+    throw common::InternalError(
+        "EmitPackedToString", "called with non-packed type");
+  }
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
