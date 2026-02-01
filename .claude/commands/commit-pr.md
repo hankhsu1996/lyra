@@ -1,6 +1,6 @@
 ---
 description: Create a commit and PR with auto-merge enabled
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(git fetch:*), Bash(git rebase:*), Bash(git push:*), Bash(git rev-list:*), Bash(gh pr create:*), Bash(gh pr merge:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*), AskUserQuestion
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git branch:*), Bash(git switch:*), Bash(git log:*), Bash(git fetch:*), Bash(git rebase:*), Bash(git push:*), Bash(git rev-list:*), Bash(gh pr create:*), Bash(gh pr merge:*), Bash(clang-format:*), Bash(npx prettier:*), Bash(buildifier:*), Bash(find:*), Bash(python3 tools/policy/*)
 ---
 
 # Commit and PR
@@ -12,7 +12,7 @@ Create a commit and PR in one workflow, with auto-merge enabled.
 **You are NOT allowed to commit on main.** Before doing ANYTHING else:
 
 1. Check the current branch in the Context section below
-2. If on `main`, STOP and ask the user for a branch name using AskUserQuestion
+2. If on `main`, infer an appropriate branch name from the changes (see Branch Rules)
 3. Create the branch with `git switch -c <branch-name>` BEFORE any other steps
 
 Do NOT proceed with formatting or staging until you are on a feature branch.
@@ -60,7 +60,7 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 
 ### Phase 1: Commit
 
-1. **Check branch** - If on main, ask for branch name and create it
+1. **Check branch** - If on main, infer branch name from changes and create it
 2. **Format all files:**
    - C++: `find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
    - Markdown: `npx prettier --write "**/*.md"`
