@@ -9,11 +9,12 @@
 #include <iterator>
 #include <limits>
 #include <optional>
-#include <print>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <fmt/core.h>
 
 #include "lyra/common/format.hpp"
 #include "lyra/common/memfile.hpp"
@@ -244,7 +245,7 @@ extern "C" void LyraReadmem(
   // Sanity checks
   if (element_width <= 0 || stride_bytes <= 0 || value_size_bytes <= 0 ||
       element_count <= 0) {
-    std::print(stderr, "$readmem: invalid element parameters\n");
+    fmt::print(stderr, "$readmem: invalid element parameters\n");
     return;
   }
 
@@ -255,7 +256,7 @@ extern "C" void LyraReadmem(
                                 ? 2 * value_size_bytes
                                 : value_size_bytes;
   if (stride_bytes != expected_stride) {
-    std::print(
+    fmt::print(
         stderr, "$readmem: stride mismatch (got {}, expected {})\n",
         stride_bytes, expected_stride);
     return;
@@ -271,7 +272,7 @@ extern "C" void LyraReadmem(
 
   std::ifstream file(path);
   if (!file) {
-    std::print(stderr, "$readmem: cannot open file '{}'\n", filename);
+    fmt::print(stderr, "$readmem: cannot open file '{}'\n", filename);
     return;
   }
 
@@ -299,7 +300,7 @@ extern "C" void LyraReadmem(
     auto words_result =
         lyra::common::ParseMemTokenToWords(token, bit_width, is_hex);
     if (!words_result) {
-      std::print(stderr, "{}: {}\n", task_name, words_result.error());
+      fmt::print(stderr, "{}: {}\n", task_name, words_result.error());
       return;
     }
     const auto& words = *words_result;
@@ -325,7 +326,7 @@ extern "C" void LyraReadmem(
       content, is_hex, min_addr, max_addr, current_addr, final_addr, step,
       task_name, store);
   if (!result.success) {
-    std::print(stderr, "{}: {}\n", task_name, result.error);
+    fmt::print(stderr, "{}: {}\n", task_name, result.error);
   }
 }
 
@@ -342,7 +343,7 @@ extern "C" void LyraWritemem(
   // Sanity checks
   if (element_width <= 0 || stride_bytes <= 0 || value_size_bytes <= 0 ||
       element_count <= 0) {
-    std::print(stderr, "$writemem: invalid element parameters\n");
+    fmt::print(stderr, "$writemem: invalid element parameters\n");
     return;
   }
 
@@ -353,7 +354,7 @@ extern "C" void LyraWritemem(
                                 ? 2 * value_size_bytes
                                 : value_size_bytes;
   if (stride_bytes != expected_stride) {
-    std::print(
+    fmt::print(
         stderr, "$writemem: stride mismatch (got {}, expected {})\n",
         stride_bytes, expected_stride);
     return;
@@ -369,7 +370,7 @@ extern "C" void LyraWritemem(
 
   std::ofstream file(path);
   if (!file) {
-    std::print(
+    fmt::print(
         stderr, "$writemem: cannot open file '{}' for writing\n", filename);
     return;
   }

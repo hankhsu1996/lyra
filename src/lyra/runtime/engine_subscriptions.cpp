@@ -3,11 +3,12 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
-#include <print>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include <fmt/core.h>
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -69,7 +70,7 @@ void Engine::TerminateWithResourceError(
   termination_reason_ = std::format("{} ({}/{})", reason, current, limit);
   finished_ = true;
 
-  std::println(
+  fmt::println(
       stderr,
       "lyra: simulation terminated: {}\n"
       "  time: {}",
@@ -96,9 +97,9 @@ void Engine::PrintTopWaiters(size_t count) {
       waiter_counts, middle,
       [](const auto& a, const auto& b) { return a.second > b.second; });
 
-  std::println(stderr, "  top {} signals by waiter count:", count);
+  fmt::println(stderr, "  top {} signals by waiter count:", count);
   for (size_t i = 0; i < std::min(count, waiter_counts.size()); ++i) {
-    std::println(
+    fmt::println(
         stderr, "    signal {}: {} waiters", waiter_counts[i].first,
         waiter_counts[i].second);
   }

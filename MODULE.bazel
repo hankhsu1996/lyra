@@ -45,6 +45,15 @@ bazel_dep(name = "argparse", version = "3.2.0")
 # Abseil C++ library
 bazel_dep(name = "abseil-cpp", version = "20260107.0")
 
+# BuildBuddy RBE toolchain (Ubuntu 24.04 has GCC 13)
+bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4")
+
+buildbuddy = use_extension("@toolchains_buildbuddy//:extensions.bzl", "buildbuddy")
+buildbuddy.platform(buildbuddy_container_image = "UBUNTU24_04_IMAGE")
+use_repo(buildbuddy, "buildbuddy_toolchain")
+
+register_toolchains("@buildbuddy_toolchain//:all")
+
 # Development tools
 bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
 git_override(

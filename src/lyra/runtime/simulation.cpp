@@ -6,11 +6,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <print>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <fmt/core.h>
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/format.hpp"
@@ -162,7 +163,7 @@ extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
 
   // Init processes must not suspend - they run to completion
   if (suspend->tag != lyra::runtime::SuspendTag::kFinished) {
-    std::println(
+    fmt::println(
         stderr, "error: init process suspended (tag={}), aborting",
         static_cast<int>(suspend->tag));
     std::abort();
