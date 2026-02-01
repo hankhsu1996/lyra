@@ -1,8 +1,9 @@
 #include "lyra/runtime/output_sink.hpp"
 
 #include <functional>
-#include <print>
 #include <string_view>
+
+#include <fmt/core.h>
 
 namespace lyra::runtime {
 
@@ -26,7 +27,7 @@ void WriteOutput(std::string_view text) {
   if (g_output_sink) {
     g_output_sink(text);
   } else {
-    std::print("{}", text);
+    fmt::print("{}", text);
   }
 }
 

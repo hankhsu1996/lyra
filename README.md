@@ -12,7 +12,7 @@ It compiles to LLVM IR for execution, prioritizing fast iteration (compile + run
 
 - [Bazel](https://bazel.build/) (via [bazelisk](https://github.com/bazelbuild/bazelisk))
 - Clang 20+
-- C++23-compliant standard library (GCC 14+ libstdc++ or libc++)
+- C++23-compliant standard library (GCC 13+ libstdc++ or libc++)
 - LLVM tools with `lli` available in PATH
 
 ## Quick Start
