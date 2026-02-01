@@ -12,6 +12,8 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/system_tf.hpp"
+#include "lyra/common/type.hpp"
+#include "lyra/llvm_backend/abi_check.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -109,6 +111,7 @@ auto LowerUserCall(
   }
 
   // Emit the call
+  VerifyCallAbi(callee, args, "UserCall");
   llvm::Value* call_result = builder.CreateCall(callee, args);
 
   // Handle result (writebacks are handled by callee writing directly to dest)
@@ -137,14 +140,30 @@ auto LowerUserCall(
   // Register return: store to tmp, then commit to dest if statement form
   auto tmp_ptr = context.GetPlacePointer(call.ret->tmp);
   if (!tmp_ptr) return std::unexpected(tmp_ptr.error());
-  builder.CreateStore(call_result, *tmp_ptr);
+
+  const auto& types = context.GetTypeArena();
+  const Type& ret_type = types[return_type];
+  bool is_managed = ret_type.Kind() == TypeKind::kString ||
+                    ret_type.Kind() == TypeKind::kDynamicArray ||
+                    ret_type.Kind() == TypeKind::kQueue;
 
   if (call.ret->dest.has_value()) {
+    // Statement form: commit result to dest.
+    // For managed types, CommitValue transfers ownership to dest; tmp is
+    // not used (no Use(tmp) in statement form), so we skip the tmp store
+    // to avoid leaving a stale handle in tmp.
+    // For non-managed types, tmp store is harmless but unnecessary.
+    if (!is_managed) {
+      builder.CreateStore(call_result, *tmp_ptr);
+    }
     return CommitValue(
         context, *call.ret->dest, call_result, return_type,
         OwnershipPolicy::kMove);
   }
-  // Expression form: Use(ret.tmp) handled by outer Assign
+
+  // Expression form: store result to tmp for later Use(tmp).
+  // The returned handle has ownership transferred to tmp.
+  builder.CreateStore(call_result, *tmp_ptr);
   return {};
 }
 

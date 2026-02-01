@@ -33,10 +33,12 @@ namespace {
 //
 // Policy rules:
 // - kVoid: void functions
-// - kSretOutParam: all aggregates (unpacked struct/array/union) and managed
-// - kDirect: scalars only (integral, real, packed types)
+// - kSretOutParam: value aggregates only (unpacked struct/array/union)
+// - kDirect: scalars AND managed handles (both fit in registers)
 //
-// All aggregates and managed types use sret for ABI stability.
+// Managed handles (string, dynamic array, queue) are pointer-sized values
+// that fit in a register. They should NOT use sret. The handle value is
+// returned directly; ownership transfers from callee to caller.
 auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     -> mir::ReturnPolicy {
   const Type& type = types[return_type];
@@ -45,13 +47,10 @@ auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     case TypeKind::kVoid:
       return mir::ReturnPolicy::kVoid;
 
-    // Sret: all aggregates and managed types
+    // Sret: value aggregates only (need caller-provided storage)
     case TypeKind::kUnpackedStruct:
     case TypeKind::kUnpackedArray:
     case TypeKind::kUnpackedUnion:
-    case TypeKind::kString:
-    case TypeKind::kDynamicArray:
-    case TypeKind::kQueue:
       return mir::ReturnPolicy::kSretOutParam;
 
     // Direct return: scalars (fit in registers)
@@ -61,6 +60,12 @@ auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     case TypeKind::kPackedArray:
     case TypeKind::kPackedStruct:
     case TypeKind::kEnum:
+      return mir::ReturnPolicy::kDirect;
+
+    // Direct return: managed handles are pointer values (fit in registers)
+    case TypeKind::kString:
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
       return mir::ReturnPolicy::kDirect;
   }
   return mir::ReturnPolicy::kDirect;

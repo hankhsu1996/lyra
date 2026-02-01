@@ -37,8 +37,8 @@ enum class PassingKind {
 // Frozen at HIR->MIR lowering time based on return type characteristics.
 enum class ReturnPolicy {
   kVoid,          // No return value (void functions)
-  kDirect,        // Return value in register (scalars, small POD types)
-  kSretOutParam,  // Return via out-param pointer (managed/aggregate types)
+  kDirect,        // Return value in register (scalars, managed handles)
+  kSretOutParam,  // Return via out-param pointer (value aggregates only)
 };
 
 // Calling convention for runtime-invoked thunks.
