@@ -2,10 +2,6 @@ name: Exception Policy
 
 on:
   pull_request:
-    paths:
-      - 'src/lyra/**'
-      - 'include/lyra/**'
-      - 'tools/policy/check_exceptions.py'
 
 jobs:
   check:
