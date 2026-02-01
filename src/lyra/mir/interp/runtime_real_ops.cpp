@@ -1,11 +1,11 @@
 #include "lyra/mir/interp/runtime_real_ops.hpp"
 
-#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 
@@ -175,7 +175,10 @@ auto RealHypot(const RuntimeReal& lhs, const RuntimeReal& rhs) -> RuntimeReal {
 auto RealToIntegral(
     const RuntimeReal& src, uint32_t target_width, bool target_signed)
     -> RuntimeIntegral {
-  assert(target_width > 0 && "RealToIntegral: target_width must be positive");
+  if (target_width == 0) {
+    throw common::InternalError(
+        "RealToIntegral", "target_width must be positive");
+  }
 
   // Truncate toward zero (C++ static_cast semantics for floating -> int)
   // Handle overflow by clamping to representable range
