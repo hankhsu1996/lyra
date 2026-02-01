@@ -46,12 +46,14 @@ Before committing, format ALL files and run policy checks:
    buildifier -r .
    ```
 
-4. **Policy checks** - Run all policy checks:
+4. **Policy checks** - First get merge base, then run checks with that SHA:
 
    ```bash
-   python3 tools/policy/check_exceptions.py --diff-base $(git merge-base origin/main HEAD)
-   python3 tools/policy/check_ascii.py --diff-base $(git merge-base origin/main HEAD)
-   python3 tools/policy/check_llvm_backend_boundaries.py --diff-base $(git merge-base origin/main HEAD)
+   git merge-base origin/main HEAD
+   # Use the returned SHA in subsequent commands
+   python3 tools/policy/check_exceptions.py --diff-base <SHA>
+   python3 tools/policy/check_ascii.py --diff-base <SHA>
+   python3 tools/policy/check_llvm_backend_boundaries.py --diff-base <SHA>
    ```
 
    If any fail, fix violations before committing.
