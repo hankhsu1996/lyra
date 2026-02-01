@@ -15,6 +15,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
+#include "lyra/llvm_backend/abi_check.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
@@ -98,7 +99,9 @@ auto LowerMonitorEffect(Context& context, const mir::MonitorEffect& monitor)
 
   // Call setup thunk - it handles initial print + serialization + registration
   // Setup thunk signature: void (DesignState*, Engine*)
-  builder.CreateCall(setup_fn, {design_ptr, engine_ptr});
+  std::vector<llvm::Value*> setup_args = {design_ptr, engine_ptr};
+  VerifyCallAbi(setup_fn, setup_args, "MonitorSetup");
+  builder.CreateCall(setup_fn, setup_args);
 
   return {};
 }

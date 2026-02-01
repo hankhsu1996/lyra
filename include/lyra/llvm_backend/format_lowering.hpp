@@ -1,9 +1,12 @@
 #pragma once
 
 #include <span>
+#include <utility>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/mir/operand.hpp"
 
 namespace llvm {
 class Value;
@@ -12,6 +15,16 @@ class Value;
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+
+// Lower a %s format argument to a string handle.
+// - For string type: returns {handle, false} (no release needed)
+// - For packed type: converts via EmitPackedToString, returns {handle, true}
+// - Otherwise: returns error
+//
+// Caller MUST call LyraStringRelease on the handle if needs_release is true.
+auto LowerFormatStringArg(
+    Context& context, const mir::Operand& operand, TypeId type_id)
+    -> Result<std::pair<llvm::Value*, bool>>;
 
 // Validate all format ops can be lowered (for early-exit before
 // LyraStringFormatStart). Returns error for unsupported types, 4-state values,

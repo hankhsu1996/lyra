@@ -22,6 +22,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/emit_string_conv.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -137,26 +138,8 @@ auto LowerCastRvalue(
   if (IsPacked(src_type) && tgt_type.Kind() == TypeKind::kString) {
     auto source_or_err = LowerOperandRaw(context, source_operand);
     if (!source_or_err) return std::unexpected(source_or_err.error());
-    llvm::Value* source = *source_or_err;
 
-    uint32_t bit_width = PackedBitWidth(src_type, types);
-
-    // Allocate stack space for the packed value
-    llvm::Type* storage_type = source->getType();
-    if (storage_type->isStructTy()) {
-      // 4-state: extract value plane (ignore unknown bits for string)
-      source = builder.CreateExtractValue(source, 0, "cast.val");
-      storage_type = source->getType();
-    }
-    auto* alloca = builder.CreateAlloca(storage_type);
-    builder.CreateStore(source, alloca);
-
-    // Call LyraStringFromPacked(ptr data, i32 bit_width)
-    auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-    llvm::Value* result = builder.CreateCall(
-        context.GetLyraStringFromPacked(),
-        {alloca, llvm::ConstantInt::get(i32_ty, bit_width)}, "packed.tostr");
-
+    llvm::Value* result = EmitPackedToString(context, *source_or_err, src_type);
     return RvalueValue::TwoState(result);
   }
 

@@ -13,15 +13,56 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/emit_string_conv.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/runtime/marshal.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
+
+auto LowerFormatStringArg(
+    Context& context, const mir::Operand& operand, TypeId type_id)
+    -> Result<std::pair<llvm::Value*, bool>> {
+  const auto& types = context.GetTypeArena();
+  const Type& operand_type = types[type_id];
+
+  if (operand_type.Kind() == TypeKind::kString) {
+    // String operand: use directly (no release needed)
+    auto handle_or_err = LowerOperand(context, operand);
+    if (!handle_or_err) return std::unexpected(handle_or_err.error());
+    return std::pair{*handle_or_err, false};
+  }
+
+  if (IsPacked(operand_type)) {
+    // Packed operand: convert to string (needs release)
+    auto value_or_err = LowerOperand(context, operand);
+    if (!value_or_err) return std::unexpected(value_or_err.error());
+    llvm::Value* packed_val = *value_or_err;
+
+    // Invariant: packed operands lower to integer or struct, not pointer
+    if (!packed_val->getType()->isIntegerTy() &&
+        !packed_val->getType()->isStructTy()) {
+      throw common::InternalError(
+          "LowerFormatStringArg",
+          "packed operand should be iN or {iN,iN}, not pointer");
+    }
+
+    llvm::Value* handle = EmitPackedToString(context, packed_val, operand_type);
+    return std::pair{handle, true};
+  }
+
+  return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+      context.GetCurrentOrigin(),
+      std::format(
+          "unsupported type for %s format: got {}, expected string or packed",
+          ToString(operand_type.Kind())),
+      UnsupportedCategory::kType));
+}
 
 auto ValidateFormatOps(Context& context, std::span<const mir::FormatOp> ops)
     -> Result<void> {
@@ -95,12 +136,17 @@ auto LowerFormatOpToBuffer(
   }
 
   if (op.kind == FormatKind::kString) {
-    // Append string handle contents
+    // Append string handle contents - may be string or packed operand
     if (op.value.has_value()) {
-      auto handle_or_err = LowerOperand(context, *op.value);
-      if (!handle_or_err) return std::unexpected(handle_or_err.error());
-      llvm::Value* handle = *handle_or_err;
+      auto result = LowerFormatStringArg(context, *op.value, op.type);
+      if (!result) return std::unexpected(result.error());
+      auto [handle, needs_release] = *result;
+
       builder.CreateCall(context.GetLyraStringFormatString(), {buf, handle});
+
+      if (needs_release) {
+        builder.CreateCall(context.GetLyraStringRelease(), {handle});
+      }
     }
     return {};
   }
