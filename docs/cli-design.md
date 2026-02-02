@@ -75,6 +75,7 @@ The `run`, `check`, and `dump` commands accept these options:
 | `-D, --define-macro`      | Define preprocessor macro (e.g., `-DDEBUG`)                                  |
 | `-G<name>=<value>`        | Override top-level module parameter (repeatable, applies to all top modules) |
 | `-W <warn>`               | Warning control (e.g., `-Wno-unused`)                                        |
+| `--pedantic`              | Enable strict LRM compliance (disallow implicit enum conversions)            |
 | `-f <file>`               | Command file (paths relative to CWD)                                         |
 | `-F <file>`               | Command file (paths relative to file itself)                                 |
 | `<files...>`              | Source files (positional)                                                    |
@@ -171,6 +172,21 @@ Two execution backends:
 | MIR            | AST -> HIR -> MIR -> Interp | Development, full feature set |
 
 The LLVM backend is the default. The MIR interpreter (`--backend=mir`) supports the full feature set and is useful for development and testing.
+
+## Strictness Modes
+
+By default, Lyra relaxes certain LRM rules for compatibility with common industry practices. The `--pedantic` flag enforces strict LRM-style behavior.
+
+| Behavior                             | Default (compatibility) | `--pedantic` (strict) |
+| ------------------------------------ | ----------------------- | --------------------- |
+| Implicit integral-to-enum conversion | Allowed                 | Error                 |
+
+In `lyra.toml`:
+
+```toml
+[compilation]
+pedantic = true
+```
 
 ## Design Decisions
 

@@ -1,0 +1,68 @@
+feature: enum_implicit_conversion
+description: Tests for implicit integral-to-enum conversion
+
+cases:
+  - name: implicit_int_to_enum_default
+    description: Default allows implicit int-to-enum
+    sv: |
+      module Test;
+        typedef enum {A, B, C} val_t;
+        val_t v;
+        int result;
+        initial begin
+          v = 1;  // Implicit conversion allowed in default mode
+          result = v;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: explicit_cast_works
+    description: Explicit cast always works
+    sv: |
+      module Test;
+        typedef enum {A, B, C} val_t;
+        val_t v;
+        int result;
+        initial begin
+          v = val_t'(2);  // Explicit cast
+          result = v;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 2
+
+  - name: explicit_cast_pedantic
+    description: Explicit cast works under pedantic mode
+    pedantic: true
+    sv: |
+      module Test;
+        typedef enum {A, B, C} val_t;
+        val_t v;
+        int result;
+        initial begin
+          v = val_t'(2);  // Explicit cast - works even in pedantic
+          result = v;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 2
+
+  - name: enum_to_int_unchanged
+    description: Enum to int still works as before
+    sv: |
+      module Test;
+        typedef enum {A=10, B=20} val_t;
+        val_t v;
+        int result;
+        initial begin
+          v = B;
+          result = v + 5;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 25

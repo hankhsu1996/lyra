@@ -23,6 +23,7 @@ struct CompilationInput {
   std::filesystem::path fs_base_dir;   // Base directory for runtime file I/O
   std::vector<std::string> plusargs;   // Runtime plusargs for $plusargs
   OptLevel opt_level = OptLevel::kO2;  // Default O2 for CLI
+  bool pedantic = false;               // Strict LRM compliance mode
 };
 
 struct ParseResult {

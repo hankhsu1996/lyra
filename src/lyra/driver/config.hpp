@@ -17,6 +17,7 @@ struct ProjectConfig {
   std::vector<std::string> defines;
   std::vector<std::string> warnings;
   std::string out_dir = "out";
+  bool pedantic = false;  // Strict LRM compliance mode
 
   // Directory where lyra.toml was found
   std::filesystem::path root_dir;
