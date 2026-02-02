@@ -177,8 +177,6 @@ auto main(int argc, char* argv[]) -> int {
     }
   } catch (const lyra::common::InternalError& e) {
     std::cerr << "lyra: internal compiler error: " << e.what() << "\n";
-    std::cerr << "This is a bug. Please report it at "
-                 "https://github.com/lyra-lang/lyra/issues\n";
     return 1;
   } catch (const std::exception& e) {
     lyra::driver::PrintDiagnostic(
