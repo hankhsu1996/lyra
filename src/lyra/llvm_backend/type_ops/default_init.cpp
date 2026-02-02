@@ -2,12 +2,15 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
+#include <llvm/Support/Alignment.h>
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/internal_error.hpp"
@@ -44,15 +47,10 @@ void EmitStoreFourStateX(
   builder.CreateStore(init, ptr);
 }
 
-// Emit memset(ptr, 0, size) for zero-initializing storage.
-void EmitMemsetZero(Context& ctx, llvm::Value* ptr, llvm::Type* llvm_type) {
-  auto& builder = ctx.GetBuilder();
-  auto& module = ctx.GetModule();
-
-  auto byte_size = module.getDataLayout().getTypeAllocSize(llvm_type);
-
-  // Use IRBuilder::CreateMemSet for correct intrinsic signature handling
-  builder.CreateMemSet(ptr, builder.getInt8(0), byte_size, llvm::MaybeAlign());
+// Local helper that forwards to the public EmitMemsetZero.
+void EmitMemsetZeroLocal(
+    Context& ctx, llvm::Value* ptr, llvm::Type* llvm_type) {
+  EmitMemsetZero(ctx, ptr, llvm_type);
 }
 
 }  // namespace
@@ -155,7 +153,7 @@ void EmitSVDefaultInit(Context& ctx, llvm::Value* ptr, TypeId type_id) {
         throw common::InternalError(
             "EmitSVDefaultInit", "failed to build LLVM type for union");
       }
-      EmitMemsetZero(ctx, ptr, *llvm_type_result);
+      EmitMemsetZeroLocal(ctx, ptr, *llvm_type_result);
       return;
     }
 
@@ -163,6 +161,30 @@ void EmitSVDefaultInit(Context& ctx, llvm::Value* ptr, TypeId type_id) {
       throw common::InternalError(
           "EmitSVDefaultInit", "unsupported type for default initialization");
   }
+}
+
+void EmitMemsetZero(
+    Context& ctx, llvm::Value* dst_ptr, llvm::Type* pointee_ty,
+    std::optional<llvm::Align> align) {
+  auto& builder = ctx.GetBuilder();
+  auto& module = ctx.GetModule();
+  const llvm::DataLayout& dl = module.getDataLayout();
+
+  uint64_t byte_size = dl.getTypeAllocSize(pointee_ty);
+
+  // Determine alignment: use provided, infer from alloca, or use preferred
+  llvm::MaybeAlign effective_align;
+  if (align.has_value()) {
+    effective_align = *align;
+  } else if (
+      auto* alloca =
+          llvm::dyn_cast<llvm::AllocaInst>(dst_ptr->stripPointerCasts())) {
+    effective_align = alloca->getAlign();
+  } else {
+    effective_align = dl.getPrefTypeAlign(pointee_ty);
+  }
+
+  builder.CreateMemSet(dst_ptr, builder.getInt8(0), byte_size, effective_align);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -5,21 +5,29 @@
 #include <expected>
 #include <format>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include <llvm/ADT/StringMap.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
+#include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/Casting.h>
+#include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/TargetParser/Host.h>
+#include <llvm/TargetParser/SubtargetFeature.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -35,6 +43,59 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
+// Initialize LLVM native targets (thread-safe, once per process).
+void InitializeLlvmTargets() {
+  static std::once_flag flag;
+  std::call_once(flag, [] {
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    llvm::InitializeNativeTargetAsmParser();
+  });
+}
+
+// Set module's DataLayout and TargetTriple to match the host.
+// This MUST be called before any IR generation that uses DataLayout
+// (e.g., getTypeAllocSize for memset).
+//
+// Uses host CPU and features to ensure DataLayout matches what ORC JIT expects.
+void SetHostDataLayout(llvm::Module& module) {
+  InitializeLlvmTargets();
+
+  std::string triple = llvm::sys::getDefaultTargetTriple();
+  std::string cpu = llvm::sys::getHostCPUName().str();
+
+  // Collect host CPU features
+  llvm::StringMap<bool> feature_map;
+  llvm::sys::getHostCPUFeatures(feature_map);
+  llvm::SubtargetFeatures subtarget_features;
+  for (const auto& kv : feature_map) {
+    if (kv.getValue()) {
+      subtarget_features.AddFeature(kv.getKey().str());
+    }
+  }
+  std::string features = subtarget_features.getString();
+
+  std::string error;
+  const llvm::Target* target =
+      llvm::TargetRegistry::lookupTarget(triple, error);
+  if (target == nullptr) {
+    throw common::InternalError(
+        "SetHostDataLayout",
+        std::format("failed to lookup target for '{}': {}", triple, error));
+  }
+
+  std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
+      triple, cpu, features, llvm::TargetOptions(), std::nullopt));
+  if (tm == nullptr) {
+    throw common::InternalError(
+        "SetHostDataLayout",
+        std::format("failed to create TargetMachine for '{}'", triple));
+  }
+
+  module.setTargetTriple(triple);
+  module.setDataLayout(tm->createDataLayout());
+}
+
 // Initialize DesignState: zero everything, then overwrite 4-state slots with X
 void InitializeDesignState(
     Context& context, llvm::Value* design_state,
@@ -43,9 +104,8 @@ void InitializeDesignState(
   auto* design_type = context.GetDesignStateType();
   const auto& types = context.GetTypeArena();
 
-  // Use aggregate zero for simple initialization (covers 2-state fields)
-  auto* zero = llvm::ConstantAggregateZero::get(design_type);
-  builder.CreateStore(zero, design_state);
+  // Zero-initialize via memset (avoids LLVM assertion on wide aggregates)
+  EmitMemsetZero(context, design_state, design_type);
 
   // Overwrite slots containing 4-state fields with proper X encoding
   for (const auto& slot : slots) {
@@ -71,9 +131,8 @@ void InitializeProcessState(
   auto* header_type = context.GetHeaderType();
   const auto& types = context.GetTypeArena();
 
-  // Use aggregate zero for the entire state
-  auto* zero = llvm::ConstantAggregateZero::get(state_type);
-  builder.CreateStore(zero, process_state);
+  // Zero-initialize via memset (avoids LLVM assertion on wide aggregates)
+  EmitMemsetZero(context, process_state, state_type);
 
   // Set design pointer: header->design (field 1)
   auto* header_ptr = builder.CreateStructGEP(state_type, process_state, 0);
@@ -168,6 +227,12 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   // Create LLVM context and module
   auto llvm_ctx = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("lyra_module", *llvm_ctx);
+
+  // Set DataLayout BEFORE any IR generation that depends on type
+  // sizes/alignment. Without this, getTypeAllocSize() uses default rules that
+  // may differ from the target's actual layout, causing size mismatches (e.g.,
+  // memset length).
+  SetHostDataLayout(*module);
 
   // Build slot info from design's slot_table (MIR is single source of truth)
   auto slot_info = BuildSlotInfoFromDesign(*input.design, *input.type_arena);
