@@ -49,7 +49,8 @@ struct MemIOEffect {
   bool is_hex = false;   // true = hex, false = binary
   PlaceId target;        // The memory array (written for read, read for write)
   TypeId target_type;    // Array type (for element width/count)
-  Operand filename;      // String operand
+  TypedOperand
+      filename;  // String operand (typed for packed-to-string coercion)
   std::optional<Operand> start_addr;
   std::optional<Operand> end_addr;
 };

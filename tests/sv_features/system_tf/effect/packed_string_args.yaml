@@ -1,0 +1,69 @@
+feature: packed_string_args
+description: Tests system tasks with packed string arguments (packed-to-string coercion)
+
+cases:
+  - name: readmemh_packed_filename
+    description: $readmemh with packed filename should work
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            bit [7:0] mem [0:3];
+            bit [7:0] a0, a1, a2, a3;
+            // Packed filename (logic [8*8-1:0])
+            logic [8*8-1:0] fn = "mem.hex";
+            initial begin
+              $readmemh(fn, mem);
+              a0 = mem[0];
+              a1 = mem[1];
+              a2 = mem[2];
+              a3 = mem[3];
+            end
+          endmodule
+      - name: mem.hex
+        content: |
+          11
+          22
+          33
+          44
+    expect:
+      variables:
+        a0: 17
+        a1: 34
+        a2: 51
+        a3: 68
+
+  - name: readmemh_string_filename
+    description: $readmemh with string filename (baseline)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            bit [7:0] mem [0:3];
+            bit [7:0] a0, a1, a2, a3;
+            string fn = "mem.hex";
+            initial begin
+              $readmemh(fn, mem);
+              a0 = mem[0];
+              a1 = mem[1];
+              a2 = mem[2];
+              a3 = mem[3];
+            end
+          endmodule
+      - name: mem.hex
+        content: |
+          aa
+          bb
+          cc
+          dd
+    expect:
+      variables:
+        a0: 170
+        a1: 187
+        a2: 204
+        a3: 221
+
+  # Note: $fopen and $test$plusargs require string types - slang rejects packed types
+  # for these system tasks. The tests below use string variables to verify the
+  # infrastructure works, but do not test packed-to-string coercion for these TFs.
+  # Only $readmemh/$writememh accept packed types directly (tested above).

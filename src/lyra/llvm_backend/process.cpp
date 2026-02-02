@@ -593,7 +593,14 @@ struct PlaceCollector {
               CollectFromPlace(*info.receiver, arena);
             }
           } else if constexpr (std::is_same_v<T, mir::TestPlusargsRvalueInfo>) {
-            // Test plusargs is pure - no output place
+            // Test plusargs uses info.query, not Rvalue::operands
+            CollectFromOperand(info.query.operand, arena);
+          } else if constexpr (std::is_same_v<T, mir::FopenRvalueInfo>) {
+            // Fopen uses info.filename/mode, not Rvalue::operands
+            CollectFromOperand(info.filename.operand, arena);
+            if (info.mode) {
+              CollectFromOperand(info.mode->operand, arena);
+            }
           } else if constexpr (std::is_same_v<T, mir::SFormatRvalueInfo>) {
             for (const auto& fop : info.ops) {
               if (fop.value) {
@@ -665,7 +672,7 @@ struct PlaceCollector {
             }
           } else if constexpr (std::is_same_v<E, mir::MemIOEffect>) {
             CollectFromPlace(eff.target, arena);
-            CollectFromOperand(eff.filename, arena);
+            CollectFromOperand(eff.filename.operand, arena);
             if (eff.start_addr.has_value()) {
               CollectFromOperand(*eff.start_addr, arena);
             }

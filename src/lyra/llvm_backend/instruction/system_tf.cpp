@@ -21,35 +21,10 @@ auto LowerSystemTfRvalue(
     Context& context, const mir::Rvalue& rvalue,
     const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
   switch (info.opcode) {
-    case SystemTfOpcode::kFopen: {
-      auto& builder = context.GetBuilder();
-
-      if (rvalue.operands.size() != 1 && rvalue.operands.size() != 2) {
-        throw common::InternalError(
-            "LowerSystemTfRvalue:kFopen",
-            std::format(
-                "expected 1 or 2 operands, got {}", rvalue.operands.size()));
-      }
-
-      auto filename_or_err = LowerOperand(context, rvalue.operands[0]);
-      if (!filename_or_err) return std::unexpected(filename_or_err.error());
-
-      llvm::Value* result = nullptr;
-      if (rvalue.operands.size() == 2) {
-        auto mode_or_err = LowerOperand(context, rvalue.operands[1]);
-        if (!mode_or_err) return std::unexpected(mode_or_err.error());
-        result = builder.CreateCall(
-            context.GetLyraFopenFd(),
-            {context.GetEnginePointer(), *filename_or_err, *mode_or_err},
-            "fopen.fd");
-      } else {
-        result = builder.CreateCall(
-            context.GetLyraFopenMcd(),
-            {context.GetEnginePointer(), *filename_or_err}, "fopen.mcd");
-      }
-
-      return RvalueValue::TwoState(result);
-    }
+    case SystemTfOpcode::kFopen:
+      throw common::InternalError(
+          "LowerSystemTfRvalue",
+          "$fopen should use FopenRvalueInfo, not SystemTfRvalueInfo");
     case SystemTfOpcode::kFclose:
       throw common::InternalError(
           "LowerSystemTfRvalue", "$fclose is an effect, not an rvalue");

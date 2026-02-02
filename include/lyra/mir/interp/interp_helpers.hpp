@@ -2,13 +2,16 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
+#include "lyra/semantic/format.hpp"
 
 namespace lyra::mir::interp {
 
@@ -79,6 +82,23 @@ inline auto TryGetIndex(
   }
 
   return static_cast<int64_t>(raw_bits);
+}
+
+// Coerce a RuntimeValue to std::string.
+// - If string type: returns the string value directly.
+// - If packed integral: converts via semantic::PackedToStringBytes (MSB-first).
+// - Otherwise: throws InternalError.
+// This is the canonical helper for string-like argument coercion in the
+// interpreter (matches LowerArgAsStringHandle in LLVM lowering).
+inline auto CoerceToString(const RuntimeValue& val, const char* context)
+    -> std::string {
+  if (IsString(val)) {
+    return AsString(val).value;
+  }
+  if (IsIntegral(val)) {
+    return semantic::PackedToStringBytes(AsIntegral(val));
+  }
+  throw common::InternalError(context, "value must be string or packed");
 }
 
 }  // namespace lyra::mir::interp

@@ -120,7 +120,16 @@ struct StorageCollector {
         Visit(arena[*info->receiver], arena);
       }
     }
-    // TestPlusargsRvalueInfo has no places - nothing to visit
+    // Visit operands stored in info structs (TypedOperand)
+    if (const auto* info = std::get_if<TestPlusargsRvalueInfo>(&rv.info)) {
+      Visit(info->query.operand, arena);
+    }
+    if (const auto* info = std::get_if<FopenRvalueInfo>(&rv.info)) {
+      Visit(info->filename.operand, arena);
+      if (info->mode) {
+        Visit(info->mode->operand, arena);
+      }
+    }
   }
 
   void Visit(const RightHandSide& rhs, const Arena& arena) {
@@ -168,7 +177,7 @@ struct StorageCollector {
                       },
                       [&](const MemIOEffect& m) -> void {
                         Visit(arena[m.target], arena);
-                        Visit(m.filename, arena);
+                        Visit(m.filename.operand, arena);
                         if (m.start_addr) {
                           Visit(*m.start_addr, arena);
                         }

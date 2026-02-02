@@ -636,13 +636,20 @@ auto LowerSystemCall(
 
   // $test$plusargs -> TestPlusargsRvalueInfo (pure, no side effects)
   if (const auto* test_pa = std::get_if<hir::TestPlusargsData>(&data)) {
+    Context& ctx = builder.GetContext();
     Result<mir::Operand> query_result =
         LowerExpression(test_pa->query, builder);
     if (!query_result) return std::unexpected(query_result.error());
     mir::Operand query_op = *query_result;
+    const hir::Expression& query_expr = (*ctx.hir_arena)[test_pa->query];
     mir::Rvalue rvalue{
-        .operands = {query_op},
-        .info = mir::TestPlusargsRvalueInfo{},
+        .operands = {},
+        .info =
+            mir::TestPlusargsRvalueInfo{
+                .query =
+                    mir::TypedOperand{
+                        .operand = std::move(query_op),
+                        .type = query_expr.type}},
     };
     mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);
@@ -669,22 +676,33 @@ auto LowerSystemCall(
         {{output_lv.place, output_type, mir::PassMode::kOut}});
   }
 
-  // $fopen -> SystemTfRvalueInfo
+  // $fopen -> FopenRvalueInfo with semantic fields for string coercion
   if (const auto* fopen_data = std::get_if<hir::FopenData>(&data)) {
+    Context& ctx = builder.GetContext();
     Result<mir::Operand> filename_result =
         LowerExpression(fopen_data->filename, builder);
     if (!filename_result) return std::unexpected(filename_result.error());
-    mir::Operand filename_op = *filename_result;
-    std::vector<mir::Operand> operands = {filename_op};
+    const hir::Expression& filename_expr =
+        (*ctx.hir_arena)[fopen_data->filename];
+
+    mir::FopenRvalueInfo info{
+        .filename =
+            mir::TypedOperand{
+                .operand = std::move(*filename_result),
+                .type = filename_expr.type},
+        .mode = std::nullopt,
+    };
+
     if (fopen_data->mode) {
       Result<mir::Operand> mode_result =
           LowerExpression(*fopen_data->mode, builder);
       if (!mode_result) return std::unexpected(mode_result.error());
-      operands.push_back(*mode_result);
+      const hir::Expression& mode_expr = (*ctx.hir_arena)[*fopen_data->mode];
+      info.mode = mir::TypedOperand{
+          .operand = std::move(*mode_result), .type = mode_expr.type};
     }
-    mir::Rvalue rvalue{
-        .operands = std::move(operands),
-        .info = mir::SystemTfRvalueInfo{.opcode = SystemTfOpcode::kFopen}};
+
+    mir::Rvalue rvalue{.operands = {}, .info = std::move(info)};
     mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);
   }

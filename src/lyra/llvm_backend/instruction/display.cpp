@@ -133,11 +133,6 @@ auto LowerStringOp(Context& context, const mir::FormatOp& op) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
-  // Get string handle (handles both string and packed operands)
-  auto result = LowerFormatStringArg(context, *op.value, op.type);
-  if (!result) return std::unexpected(result.error());
-  auto [handle, needs_release] = *result;
-
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
 
@@ -170,14 +165,11 @@ auto LowerStringOp(Context& context, const mir::FormatOp& op) -> Result<void> {
   builder.CreateStore(llvm::ConstantInt::get(i8_ty, flags), flags_ptr);
   // reserved[3] left uninitialized (don't care)
 
-  builder.CreateCall(context.GetLyraPrintString(), {handle, spec_alloca});
-
-  // Release temporary handle we allocated via EmitPackedToString
-  if (needs_release) {
-    builder.CreateCall(context.GetLyraStringRelease(), {handle});
-  }
-
-  return {};
+  return WithStringHandle(
+      context, *op.value, op.type, [&](llvm::Value* h) -> Result<void> {
+        builder.CreateCall(context.GetLyraPrintString(), {h, spec_alloca});
+        return {};
+      });
 }
 
 auto LowerTimeOp(Context& context, const mir::FormatOp& op) -> Result<void> {

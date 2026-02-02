@@ -354,7 +354,14 @@ void CollectPlacesFromRvalue(
             places.insert(*info.receiver);
           }
         } else if constexpr (std::is_same_v<T, mir::TestPlusargsRvalueInfo>) {
-          // Test plusargs is pure - no output place
+          // Test plusargs uses info.query, not Rvalue::operands
+          CollectPlaceFromOperand(info.query.operand, places);
+        } else if constexpr (std::is_same_v<T, mir::FopenRvalueInfo>) {
+          // Fopen uses info.filename/mode, not Rvalue::operands
+          CollectPlaceFromOperand(info.filename.operand, places);
+          if (info.mode) {
+            CollectPlaceFromOperand(info.mode->operand, places);
+          }
         } else if constexpr (std::is_same_v<T, mir::SFormatRvalueInfo>) {
           for (const auto& fop : info.ops) {
             if (fop.value) {
@@ -410,7 +417,7 @@ void CollectPlacesFromEffectOp(
           },
           [&](const mir::MemIOEffect& m) {
             places.insert(m.target);
-            CollectPlaceFromOperand(m.filename, places);
+            CollectPlaceFromOperand(m.filename.operand, places);
             if (m.start_addr) {
               CollectPlaceFromOperand(*m.start_addr, places);
             }

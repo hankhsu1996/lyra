@@ -273,13 +273,19 @@ auto Interpreter::EvalRvalue(
           [&](const SFormatRvalueInfo&) -> Result<RuntimeValue> {
             return EvalSFormat(state, rv);
           },
-          [&](const TestPlusargsRvalueInfo&) -> Result<RuntimeValue> {
-            return EvalTestPlusargs(state, rv);
+          [&](const TestPlusargsRvalueInfo& info) -> Result<RuntimeValue> {
+            return EvalTestPlusargs(state, rv, info);
+          },
+          [&](const FopenRvalueInfo& info) -> Result<RuntimeValue> {
+            return EvalFopen(state, info);
           },
           [&](const SystemTfRvalueInfo& info) -> Result<RuntimeValue> {
             switch (info.opcode) {
               case SystemTfOpcode::kFopen:
-                return EvalFopen(state, rv);
+                throw common::InternalError(
+                    "EvalRvalue:SystemTf",
+                    "$fopen should use FopenRvalueInfo, not "
+                    "SystemTfRvalueInfo");
               case SystemTfOpcode::kFclose:
                 throw common::InternalError(
                     "EvalRvalue:SystemTf", "$fclose is an effect, not rvalue");
@@ -687,15 +693,7 @@ auto Interpreter::EvalConcat(ProcessState& state, const Rvalue& rv)
       if (!val_result) {
         return std::unexpected(std::move(val_result).error());
       }
-      auto& val = *val_result;
-      if (IsString(val)) {
-        result += AsString(val).value;
-      } else if (IsIntegral(val)) {
-        result += semantic::PackedToStringBytes(AsIntegral(val));
-      } else {
-        throw common::InternalError(
-            "EvalConcat", "string concat operand must be string or integral");
-      }
+      result += CoerceToString(*val_result, "EvalConcat");
     }
     return MakeString(std::move(result));
   }
@@ -854,19 +852,16 @@ auto Interpreter::EvalSFormat(ProcessState& state, const Rvalue& rv)
   return MakeString(std::move(result));
 }
 
-auto Interpreter::EvalTestPlusargs(ProcessState& state, const Rvalue& rv)
+auto Interpreter::EvalTestPlusargs(
+    ProcessState& state, const Rvalue& rv, const TestPlusargsRvalueInfo& info)
     -> Result<RuntimeValue> {
-  // Evaluate query operand (always a string)
-  auto query_val_result = EvalOperand(state, rv.operands[0]);
+  // Evaluate query operand and coerce to string if packed
+  auto query_val_result = EvalOperand(state, info.query.operand);
   if (!query_val_result) {
     return std::unexpected(std::move(query_val_result).error());
   }
-  auto& query_val = *query_val_result;
-  if (!IsString(query_val)) {
-    throw common::InternalError(
-        "EvalTestPlusargs", "query operand is not a string");
-  }
-  std::string_view query = AsString(query_val).value;
+  std::string query_str = CoerceToString(*query_val_result, "EvalTestPlusargs");
+  std::string_view query = query_str;
 
   // Helper: strip '+' prefix from a plusarg
   auto get_content = [](std::string_view arg) -> std::string_view {
@@ -886,31 +881,24 @@ auto Interpreter::EvalTestPlusargs(ProcessState& state, const Rvalue& rv)
   return MakeIntegralSigned(0, 32);
 }
 
-auto Interpreter::EvalFopen(ProcessState& state, const Rvalue& rv)
+auto Interpreter::EvalFopen(ProcessState& state, const FopenRvalueInfo& info)
     -> Result<RuntimeValue> {
-  auto filename_val_result = EvalOperand(state, rv.operands[0]);
+  // Evaluate filename and coerce to string if packed
+  auto filename_val_result = EvalOperand(state, info.filename.operand);
   if (!filename_val_result) {
     return std::unexpected(std::move(filename_val_result).error());
   }
-  auto& filename_val = *filename_val_result;
-  if (!IsString(filename_val)) {
-    throw common::InternalError(
-        "EvalFopen", "filename operand is not a string");
-  }
-  const std::string& filename = AsString(filename_val).value;
+  std::string filename = CoerceToString(*filename_val_result, "EvalFopen");
 
   int32_t result = 0;
-  if (rv.operands.size() == 2) {
+  if (info.mode) {
     // FD mode: $fopen(filename, mode)
-    auto mode_val_result = EvalOperand(state, rv.operands[1]);
+    auto mode_val_result = EvalOperand(state, info.mode->operand);
     if (!mode_val_result) {
       return std::unexpected(std::move(mode_val_result).error());
     }
-    auto& mode_val = *mode_val_result;
-    if (!IsString(mode_val)) {
-      throw common::InternalError("EvalFopen", "mode operand is not a string");
-    }
-    result = file_manager_.FopenFd(filename, AsString(mode_val).value);
+    std::string mode = CoerceToString(*mode_val_result, "EvalFopen");
+    result = file_manager_.FopenFd(filename, mode);
   } else {
     // MCD mode: $fopen(filename)
     result = file_manager_.FopenMcd(filename);

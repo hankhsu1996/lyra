@@ -20,6 +20,7 @@
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
@@ -421,11 +422,6 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
   if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
   llvm::Value* target_ptr = *target_ptr_result;
 
-  // Lower filename operand (string handle)
-  auto filename_result = LowerOperand(context, mem_io.filename);
-  if (!filename_result) return std::unexpected(filename_result.error());
-  llvm::Value* filename_handle = *filename_result;
-
   auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
@@ -435,7 +431,8 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
   int64_t left = arr_info.range.left;
   int64_t right = arr_info.range.right;
 
-  // Default: left_bound -> right_bound (IEEE LRM semantics)
+  // Lower start/end address operands before filename (to avoid early-return
+  // issues with string handle release)
   llvm::Value* eff_start = llvm::ConstantInt::get(i64_ty, left);
   if (mem_io.start_addr) {
     auto start_result = LowerOperand(context, *mem_io.start_addr);
@@ -460,29 +457,32 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
   llvm::Value* current_addr = (step > 0) ? low : high;
   llvm::Value* final_addr = (step > 0) ? high : low;
 
-  // Emit runtime call
-  std::vector<llvm::Value*> args = {
-      filename_handle,
-      target_ptr,
-      llvm::ConstantInt::get(i32_ty, element_width),
-      llvm::ConstantInt::get(i32_ty, stride_bytes),
-      llvm::ConstantInt::get(i32_ty, value_size_bytes),
-      llvm::ConstantInt::get(i32_ty, element_count),
-      llvm::ConstantInt::get(i64_ty, min_addr),
-      current_addr,
-      final_addr,
-      llvm::ConstantInt::get(i64_ty, step),
-      llvm::ConstantInt::get(i1_ty, mem_io.is_hex ? 1 : 0),
-      llvm::ConstantInt::get(i32_ty, element_kind),
-  };
+  // Lower filename and emit runtime call with automatic handle release
+  return WithStringHandle(
+      context, mem_io.filename.operand, mem_io.filename.type,
+      [&](llvm::Value* filename_handle) -> Result<void> {
+        std::vector<llvm::Value*> args = {
+            filename_handle,
+            target_ptr,
+            llvm::ConstantInt::get(i32_ty, element_width),
+            llvm::ConstantInt::get(i32_ty, stride_bytes),
+            llvm::ConstantInt::get(i32_ty, value_size_bytes),
+            llvm::ConstantInt::get(i32_ty, element_count),
+            llvm::ConstantInt::get(i64_ty, min_addr),
+            current_addr,
+            final_addr,
+            llvm::ConstantInt::get(i64_ty, step),
+            llvm::ConstantInt::get(i1_ty, mem_io.is_hex ? 1 : 0),
+            llvm::ConstantInt::get(i32_ty, element_kind),
+        };
 
-  if (mem_io.is_read) {
-    builder.CreateCall(context.GetLyraReadmem(), args);
-  } else {
-    builder.CreateCall(context.GetLyraWritemem(), args);
-  }
-
-  return {};
+        if (mem_io.is_read) {
+          builder.CreateCall(context.GetLyraReadmem(), args);
+        } else {
+          builder.CreateCall(context.GetLyraWritemem(), args);
+        }
+        return {};
+      });
 }
 
 }  // namespace

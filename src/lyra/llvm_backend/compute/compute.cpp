@@ -22,6 +22,7 @@
 #include "lyra/llvm_backend/compute/real.hpp"
 #include "lyra/llvm_backend/compute/string.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -31,17 +32,60 @@ namespace {
 
 // LowerTestPlusargsRvalue: $test$plusargs (pure, no side effects)
 // Returns 1 if a plusarg matching the query prefix exists, 0 otherwise.
-auto LowerTestPlusargsRvalue(Context& context, const mir::Rvalue& rvalue)
+// Query is stored in info.query as TypedOperand for packed-to-string coercion.
+auto LowerTestPlusargsRvalue(
+    Context& context, const mir::Rvalue& rvalue,
+    const mir::TestPlusargsRvalueInfo& info) -> Result<RvalueValue> {
+  auto& builder = context.GetBuilder();
+
+  llvm::Value* result = nullptr;
+  auto status = WithStringHandle(
+      context, info.query.operand, info.query.type,
+      [&](llvm::Value* query_handle) -> Result<void> {
+        result = builder.CreateCall(
+            context.GetLyraPlusargsTest(),
+            {context.GetEnginePointer(), query_handle});
+        return {};
+      });
+
+  if (!status) return std::unexpected(status.error());
+  return RvalueValue::TwoState(result);
+}
+
+// LowerFopenRvalue: $fopen system function
+// - MCD mode: $fopen(filename) - opens for writing, returns multi-channel desc
+// - FD mode: $fopen(filename, mode) - opens with mode, returns file descriptor
+// Uses nested WithStringHandle for automatic handle release.
+auto LowerFopenRvalue(Context& context, const mir::FopenRvalueInfo& info)
     -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
 
-  auto query_or_err = LowerOperand(context, rvalue.operands[0]);
-  if (!query_or_err) return std::unexpected(query_or_err.error());
+  llvm::Value* result = nullptr;
 
-  llvm::Value* result = builder.CreateCall(
-      context.GetLyraPlusargsTest(),
-      {context.GetEnginePointer(), *query_or_err});
+  // Use nested WithStringHandle for filename (and optionally mode)
+  auto status = WithStringHandle(
+      context, info.filename.operand, info.filename.type,
+      [&](llvm::Value* filename_handle) -> Result<void> {
+        if (info.mode) {
+          // FD mode: $fopen(filename, mode) - nested WithStringHandle
+          return WithStringHandle(
+              context, info.mode->operand, info.mode->type,
+              [&](llvm::Value* mode_handle) -> Result<void> {
+                result = builder.CreateCall(
+                    context.GetLyraFopenFd(),
+                    {context.GetEnginePointer(), filename_handle, mode_handle},
+                    "fopen.fd");
+                return {};
+              });
+        }
+        // MCD mode: $fopen(filename)
+        result = builder.CreateCall(
+            context.GetLyraFopenMcd(),
+            {context.GetEnginePointer(), filename_handle}, "fopen.mcd");
+        return {};
+      });
 
+  if (!status) return std::unexpected(status.error());
   return RvalueValue::TwoState(result);
 }
 
@@ -120,8 +164,11 @@ auto LowerRvalue(
           [&](const mir::MathCallRvalueInfo&) -> Result<RvalueValue> {
             return LowerMathRvalue(context, rvalue, result_type);
           },
-          [&](const mir::TestPlusargsRvalueInfo&) -> Result<RvalueValue> {
-            return LowerTestPlusargsRvalue(context, rvalue);
+          [&](const mir::TestPlusargsRvalueInfo& info) -> Result<RvalueValue> {
+            return LowerTestPlusargsRvalue(context, rvalue, info);
+          },
+          [&](const mir::FopenRvalueInfo& info) -> Result<RvalueValue> {
+            return LowerFopenRvalue(context, info);
           },
           [&](const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
             return LowerSystemTfRvalue(context, rvalue, info);

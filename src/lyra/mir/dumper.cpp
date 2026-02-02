@@ -553,8 +553,17 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
                 FormatKindToSpecChar(info.default_format),
                 info.has_runtime_format);
           },
-          [](const TestPlusargsRvalueInfo&) {
-            return std::string("test_plusargs");
+          [this](const TestPlusargsRvalueInfo& info) {
+            return std::format(
+                "test_plusargs({})", FormatOperand(info.query.operand));
+          },
+          [this](const FopenRvalueInfo& info) {
+            std::string args = FormatOperand(info.filename.operand);
+            if (info.mode) {
+              args += ", ";
+              args += FormatOperand(info.mode->operand);
+            }
+            return std::format("$fopen({})", args);
           },
           [](const RuntimeQueryRvalueInfo&) {
             return std::string("runtime_query");
@@ -714,7 +723,7 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
             result = effect_op.is_hex ? "$writememh" : "$writememb";
           }
           result += std::format(
-              "({}, @{})", FormatOperand(effect_op.filename),
+              "({}, @{})", FormatOperand(effect_op.filename.operand),
               FormatPlace(effect_op.target));
           if (effect_op.start_addr) {
             result +=

@@ -25,7 +25,7 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto LowerFormatStringArg(
+auto LowerArgAsStringHandle(
     Context& context, const mir::Operand& operand, TypeId type_id)
     -> Result<std::pair<llvm::Value*, bool>> {
   const auto& types = context.GetTypeArena();
@@ -48,7 +48,7 @@ auto LowerFormatStringArg(
     if (!packed_val->getType()->isIntegerTy() &&
         !packed_val->getType()->isStructTy()) {
       throw common::InternalError(
-          "LowerFormatStringArg",
+          "LowerArgAsStringHandle",
           "packed operand should be iN or {iN,iN}, not pointer");
     }
 
@@ -138,15 +138,11 @@ auto LowerFormatOpToBuffer(
   if (op.kind == FormatKind::kString) {
     // Append string handle contents - may be string or packed operand
     if (op.value.has_value()) {
-      auto result = LowerFormatStringArg(context, *op.value, op.type);
-      if (!result) return std::unexpected(result.error());
-      auto [handle, needs_release] = *result;
-
-      builder.CreateCall(context.GetLyraStringFormatString(), {buf, handle});
-
-      if (needs_release) {
-        builder.CreateCall(context.GetLyraStringRelease(), {handle});
-      }
+      return WithStringHandle(
+          context, *op.value, op.type, [&](llvm::Value* h) -> Result<void> {
+            builder.CreateCall(context.GetLyraStringFormatString(), {buf, h});
+            return {};
+          });
     }
     return {};
   }

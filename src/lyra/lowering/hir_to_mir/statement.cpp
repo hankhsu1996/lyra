@@ -680,6 +680,7 @@ auto LowerMemIOEffect(const hir::MemIOData& data, MirBuilder& builder)
       LowerExpression(data.filename, builder);
   if (!filename_result) return std::unexpected(filename_result.error());
   mir::Operand filename = *filename_result;
+  const hir::Expression& filename_expr = (*ctx.hir_arena)[data.filename];
 
   Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
   if (!target_result) return std::unexpected(target_result.error());
@@ -705,7 +706,9 @@ auto LowerMemIOEffect(const hir::MemIOData& data, MirBuilder& builder)
       .is_hex = data.is_hex,
       .target = target.place,
       .target_type = target_expr.type,
-      .filename = std::move(filename),
+      .filename =
+          mir::TypedOperand{
+              .operand = std::move(filename), .type = filename_expr.type},
       .start_addr = std::move(start_addr),
       .end_addr = std::move(end_addr),
   };

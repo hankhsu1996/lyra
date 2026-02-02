@@ -188,6 +188,33 @@ Three semantic roles only (fixed classification, does not grow with API count):
 
 Hard rule: if a syscall changes control state (terminate/suspend), it must be a Terminator. Otherwise it must be an Effect statement. No system task is represented as a value-producing Rvalue.
 
+### Rvalue Info Promotion Rule
+
+System functions that produce values use Rvalue info structs. Classification:
+
+**Keep in `SystemTfRvalueInfo { opcode }` when:**
+
+- The payload is fully represented by opcode plus `Rvalue::operands`
+- No extra invariants beyond operand count
+- No type-driven coercion or special lifetime/ownership rules
+
+**Promote to dedicated `*RvalueInfo` when any of these apply:**
+
+- Type-driven coercion is required (e.g., packed-to-string conversion)
+- Optional/structured arguments should be represented semantically
+- Additional invariants must be enforced beyond operand count
+- Special resource/lifetime handling is involved
+
+**Example: `$fopen` uses `FopenRvalueInfo`**
+
+`$fopen` requires dedicated representation because:
+
+1. Arguments are `TypedOperand` (not plain `Operand`) for packed-to-string coercion
+2. Mode is optional with semantic meaning (MCD vs FD mode)
+3. Call sites use `info.mode.has_value()` instead of magic `operands.size() == 2`
+
+This makes MIR self-documenting and removes magic-number decoding from backends.
+
 ## Terminator Categories
 
 Terminators end a basic block and determine the next control state.

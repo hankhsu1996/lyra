@@ -106,14 +106,24 @@ struct SFormatRvalueInfo {
 
 // TestPlusargsRvalueInfo: $test$plusargs system function (pure, no side
 // effects) Returns 1 if a plusarg matching the query prefix exists, 0
-// otherwise. operands[0] = query string
+// otherwise. Query is stored as TypedOperand for packed-to-string coercion.
 struct TestPlusargsRvalueInfo {
-  // No fields needed - query comes from operands[0]
+  TypedOperand query;  // Query string (typed for packed-to-string coercion)
+};
+
+// FopenRvalueInfo: $fopen system function.
+// - MCD mode: $fopen(filename) - opens for writing, returns multi-channel desc
+// - FD mode: $fopen(filename, mode) - opens with mode, returns file descriptor
+// Filename and mode are TypedOperand for packed-to-string coercion.
+struct FopenRvalueInfo {
+  TypedOperand filename;
+  std::optional<TypedOperand> mode;  // Present for FD mode
 };
 
 // SystemTfRvalueInfo: Generic rvalue-producing system TFs.
-// Covers simple system TFs where payload is just opcode + operands.
-// Operands come from Rvalue::operands (existing pattern).
+// Covers simple system TFs where payload is just opcode.
+// Uses Rvalue::operands for any operand storage.
+// Note: $fopen uses dedicated FopenRvalueInfo, not this struct.
 struct SystemTfRvalueInfo {
   SystemTfOpcode opcode;
 };
@@ -135,8 +145,8 @@ using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
     AggregateRvalueInfo, BuiltinCallRvalueInfo, IndexValidityRvalueInfo,
     GuardedUseRvalueInfo, ConcatRvalueInfo, ReplicateRvalueInfo,
-    SFormatRvalueInfo, TestPlusargsRvalueInfo, RuntimeQueryRvalueInfo,
-    MathCallRvalueInfo, SystemTfRvalueInfo>;
+    SFormatRvalueInfo, TestPlusargsRvalueInfo, FopenRvalueInfo,
+    RuntimeQueryRvalueInfo, MathCallRvalueInfo, SystemTfRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -172,6 +182,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "sformat";
         } else if constexpr (std::is_same_v<T, TestPlusargsRvalueInfo>) {
           return "test_plusargs";
+        } else if constexpr (std::is_same_v<T, FopenRvalueInfo>) {
+          return "fopen";
         } else if constexpr (std::is_same_v<T, RuntimeQueryRvalueInfo>) {
           return "runtime_query";
         } else if constexpr (std::is_same_v<T, MathCallRvalueInfo>) {
