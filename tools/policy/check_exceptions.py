@@ -6,6 +6,7 @@ Rules:
   E002: No catch(...) except in driver
   E003: No throw except InternalError (rethrow 'throw;' also banned outside driver)
   E004: No assert() or <cassert>/<assert.h> (use InternalError for invariants)
+  E005: Bug report messages only in internal_error.hpp (prevents duplicates)
 
 Usage:
   python3 tools/policy/check_exceptions.py                          # All files
@@ -40,6 +41,11 @@ RE_INTERNAL_ERROR = re.compile(r'\b(common::)?InternalError\b')
 RE_ASSERT_CALL = re.compile(r'\bassert\s*\(')
 RE_CASSERT_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*cassert\s*>', re.MULTILINE)
 RE_ASSERT_H_INCLUDE = re.compile(r'^\s*#\s*include\s*<\s*assert\.h\s*>', re.MULTILINE)
+# Match bug report phrases inside string literals only (single line)
+RE_BUG_REPORT_STRING = re.compile(r'"[^"\n]*(?:Please report|This is a bug|github\.com/[^/]+/lyra/issues)[^"\n]*"')
+
+# Files allowed to contain bug report messages
+BUG_REPORT_ALLOWLIST = frozenset({"include/lyra/common/internal_error.hpp"})
 
 
 def get_repo_root() -> Path:
@@ -157,6 +163,17 @@ def check_file(filepath: str, repo_root: Path) -> list[str]:
         errors.append(
             f"{filepath}:{line}: E004 <assert.h> banned - use InternalError")
 
+    # E005: Bug report messages only in internal_error.hpp
+    # Only check string literals (comments are OK)
+    if filepath not in BUG_REPORT_ALLOWLIST:
+        for match in RE_BUG_REPORT_STRING.finditer(original):
+            line = offset_to_line(original, match.start())
+            snippet = match.group(0)[:40]
+            if len(match.group(0)) > 40:
+                snippet += "..."
+            errors.append(
+                f"{filepath}:{line}: E005 bug report message belongs in internal_error.hpp: {snippet}")
+
     return errors
 
 
@@ -204,6 +221,7 @@ def main() -> int:
         print("  E002: catch(...) allowed only in src/lyra/driver/")
         print("  E003: Only throw common::InternalError for compiler bugs")
         print("  E004: Use InternalError for invariants, not assert()")
+        print("  E005: Bug report messages only in internal_error.hpp")
         return 1
 
     print(f"Checked {len(files)} files, no violations")
