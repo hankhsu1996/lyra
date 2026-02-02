@@ -6,20 +6,27 @@
 #include "lyra/mir/interp/interpreter.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
+#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
 auto RunMir(const CompilationInput& input) -> int {
-  auto compilation = CompileToMir(input);
+  VerboseLogger vlog(input.verbose);
+
+  auto compilation = CompileToMir(input, vlog);
   if (!compilation) {
     compilation.error().Print();
     return 1;
   }
 
-  auto result = mir::interp::RunSimulation(
-      compilation->mir.design, *compilation->mir.mir_arena,
-      *compilation->hir.type_arena, &std::cout, input.plusargs,
-      input.fs_base_dir);
+  mir::interp::SimulationResult result;
+  {
+    PhaseTimer timer(vlog, "run");
+    result = mir::interp::RunSimulation(
+        compilation->mir.design, *compilation->mir.mir_arena,
+        *compilation->hir.type_arena, &std::cout, input.plusargs,
+        input.fs_base_dir);
+  }
 
   if (!result.error_message.empty()) {
     PrintError(result.error_message);

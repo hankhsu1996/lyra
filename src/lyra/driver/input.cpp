@@ -109,7 +109,13 @@ auto PreprocessArgs(std::span<char*> argv) -> std::vector<std::string> {
   std::vector<std::string> result;
   for (char* raw_arg : argv) {
     std::string_view arg = raw_arg;
-    if (arg.size() > 2 &&
+    // Convert -v, -vv, -vvv, etc. to --verbose=N (clamped to 3)
+    if (arg.size() >= 2 && arg[0] == '-' && arg[1] == 'v' &&
+        arg.find_first_not_of('v', 1) == std::string_view::npos) {
+      int level = std::min(static_cast<int>(arg.size() - 1), 3);
+      result.emplace_back(std::format("--verbose={}", level));
+    } else if (
+        arg.size() > 2 &&
         (arg.starts_with("-D") || arg.starts_with("-I") ||
          arg.starts_with("-W") || arg.starts_with("-O") ||
          arg.starts_with("-G")) &&
@@ -150,6 +156,10 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .implicit_value(true)
       .help(
           "Enable strict LRM compliance (disallow implicit enum conversions)");
+  cmd.add_argument("--verbose")
+      .default_value(0)
+      .scan<'i', int>()
+      .help("Verbosity level (0-3, or use -v/-vv/-vvv)");
 }
 
 auto BuildInput(
@@ -259,6 +269,9 @@ auto BuildInput(
   } else if (config) {
     input.pedantic = config->pedantic;
   }
+
+  // Verbose: CLI only (no config file support)
+  input.verbose = cmd.get<int>("--verbose");
 
   return input;
 }

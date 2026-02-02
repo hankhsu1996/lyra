@@ -13,11 +13,14 @@
 #include "pipeline.hpp"
 #include "print.hpp"
 #include "runtime_path.hpp"
+#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
 auto RunJit(const CompilationInput& input) -> int {
-  auto result = CompileToMir(input);
+  VerboseLogger vlog(input.verbose);
+
+  auto result = CompileToMir(input, vlog);
   if (!result) {
     result.error().Print();
     return 1;
@@ -38,7 +41,11 @@ auto RunJit(const CompilationInput& input) -> int {
       .plusargs = input.plusargs,
   };
 
-  auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
+  {
+    PhaseTimer timer(vlog, "lower_llvm");
+    llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  }
   if (!llvm_result) {
     PrintDiagnostic(llvm_result.error(), *compilation.hir.source_manager);
     return 1;
@@ -56,8 +63,12 @@ auto RunJit(const CompilationInput& input) -> int {
     return 1;
   }
 
-  auto exec_result = lowering::mir_to_llvm::ExecuteWithOrcJit(
-      *llvm_result, runtime_path, input.opt_level);
+  std::expected<int, std::string> exec_result;
+  {
+    PhaseTimer timer(vlog, "jit", true);
+    exec_result = lowering::mir_to_llvm::ExecuteWithOrcJit(
+        *llvm_result, runtime_path, input.opt_level);
+  }
   if (!exec_result) {
     PrintError(std::format("JIT execution failed: {}", exec_result.error()));
     return 1;

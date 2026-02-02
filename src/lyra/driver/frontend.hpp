@@ -24,6 +24,7 @@ struct CompilationInput {
   std::vector<std::string> plusargs;   // Runtime plusargs for $plusargs
   OptLevel opt_level = OptLevel::kO2;  // Default O2 for CLI
   bool pedantic = false;               // Strict LRM compliance mode
+  int verbose = 0;                     // Verbosity level (0-3)
 };
 
 struct ParseResult {
@@ -31,6 +32,13 @@ struct ParseResult {
   std::unique_ptr<slang::ast::Compilation> compilation;
 };
 
+// Parse source files into a compilation object (no elaboration yet).
+auto ParseFiles(const CompilationInput& input) -> std::optional<ParseResult>;
+
+// Force elaboration and check for errors. Returns false if errors occurred.
+auto Elaborate(ParseResult& result, const CompilationInput& input) -> bool;
+
+// Legacy combined parse + elaborate function.
 auto LoadFiles(const CompilationInput& input) -> std::optional<ParseResult>;
 
 }  // namespace lyra::driver
