@@ -47,6 +47,14 @@ lyra dump mir [files...]         # Dump MIR representation
 lyra dump llvm [files...]        # Dump LLVM IR
 ```
 
+### Debugging Flags
+
+```bash
+lyra run -v [files...]           # Show phase timing (-v, -vv, -vvv)
+lyra run --stats [files...]      # Show LLVM IR statistics (top 10 functions)
+lyra run --stats=N [files...]    # Show top N functions (0 = summary only)
+```
+
 ## SystemVerilog Version
 
 Lyra targets **IEEE 1800-2023** (SystemVerilog 2023). The slang frontend is configured with `languageVersion = v1800_2023`. When testing SV 2023 features directly with slang, use `--std 1800-2023`.

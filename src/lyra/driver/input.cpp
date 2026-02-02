@@ -114,6 +114,11 @@ auto PreprocessArgs(std::span<char*> argv) -> std::vector<std::string> {
         arg.find_first_not_of('v', 1) == std::string_view::npos) {
       int level = std::min(static_cast<int>(arg.size() - 1), 3);
       result.emplace_back(std::format("--verbose={}", level));
+    } else if (arg.starts_with("--stats=")) {
+      // Convert --stats=N to --stats-value N --stats
+      result.emplace_back("--stats-value");
+      result.emplace_back(arg.substr(8));
+      result.emplace_back("--stats");
     } else if (
         arg.size() > 2 &&
         (arg.starts_with("-D") || arg.starts_with("-I") ||
@@ -160,6 +165,10 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .default_value(0)
       .scan<'i', int>()
       .help("Verbosity level (0-3, or use -v/-vv/-vvv)");
+  cmd.add_argument("--stats").default_value(false).implicit_value(true).help(
+      "Show LLVM IR statistics (optional: top N functions, default 10)");
+  // Hidden argument for --stats=N preprocessing (see PreprocessArgs)
+  cmd.add_argument("--stats-value").scan<'i', int>().hidden();
 }
 
 auto BuildInput(
@@ -272,6 +281,25 @@ auto BuildInput(
 
   // Verbose: CLI only (no config file support)
   input.verbose = cmd.get<int>("--verbose");
+
+  // Stats: CLI only (no config file support)
+  // --stats alone = top 10 (default)
+  // --stats=N preprocessed to --stats-value N --stats
+  bool stats_enabled = cmd.get<bool>("--stats");
+  auto stats_value_opt = cmd.present<int>("--stats-value");
+  if (stats_value_opt) {
+    // Explicit value provided via --stats=N
+    int stats_value = *stats_value_opt;
+    if (stats_value < 0) {
+      return std::unexpected(
+          Diagnostic::HostError(
+              std::format("invalid --stats value: {}", stats_value)));
+    }
+    input.stats_top_n = std::min(stats_value, 200);  // clamp to max
+  } else if (stats_enabled) {
+    // --stats alone = top 10
+    input.stats_top_n = 10;
+  }
 
   return input;
 }
