@@ -439,3 +439,50 @@ extern "C" auto LyraUrandom(void* engine_ptr) -> uint32_t {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   return engine->Urandom();
 }
+
+extern "C" void LyraApply4StatePatches8(
+    void* base, const uint64_t* offsets, const uint8_t* masks, uint64_t count) {
+  if (count == 0 || base == nullptr || offsets == nullptr || masks == nullptr)
+    return;
+  auto* base_bytes = static_cast<uint8_t*>(base);
+  for (uint64_t i = 0; i < count; ++i) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    std::memcpy(base_bytes + offsets[i], &masks[i], sizeof(uint8_t));
+  }
+}
+
+extern "C" void LyraApply4StatePatches16(
+    void* base, const uint64_t* offsets, const uint16_t* masks,
+    uint64_t count) {
+  if (count == 0 || base == nullptr || offsets == nullptr || masks == nullptr)
+    return;
+  auto* base_bytes = static_cast<uint8_t*>(base);
+  for (uint64_t i = 0; i < count; ++i) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    std::memcpy(base_bytes + offsets[i], &masks[i], sizeof(uint16_t));
+  }
+}
+
+extern "C" void LyraApply4StatePatches32(
+    void* base, const uint64_t* offsets, const uint32_t* masks,
+    uint64_t count) {
+  if (count == 0 || base == nullptr || offsets == nullptr || masks == nullptr)
+    return;
+  auto* base_bytes = static_cast<uint8_t*>(base);
+  for (uint64_t i = 0; i < count; ++i) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    std::memcpy(base_bytes + offsets[i], &masks[i], sizeof(uint32_t));
+  }
+}
+
+extern "C" void LyraApply4StatePatches64(
+    void* base, const uint64_t* offsets, const uint64_t* masks,
+    uint64_t count) {
+  if (count == 0 || base == nullptr || offsets == nullptr || masks == nullptr)
+    return;
+  auto* base_bytes = static_cast<uint8_t*>(base);
+  for (uint64_t i = 0; i < count; ++i) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    std::memcpy(base_bytes + offsets[i], &masks[i], sizeof(uint64_t));
+  }
+}

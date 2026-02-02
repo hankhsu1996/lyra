@@ -11,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include <llvm/IR/DataLayout.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Type.h>
 
@@ -307,6 +308,141 @@ auto GetLlvmTypeForTypeId(
   throw common::InternalError("GetLlvmTypeForTypeId", "unreachable");
 }
 
+// Get semantic width for a packed 4-state type.
+// Precondition: type is a packed 4-state type (integral, packed array/struct,
+// enum)
+auto GetPackedSemanticWidth(TypeId type_id, const TypeArena& types)
+    -> uint32_t {
+  const Type& type = types[type_id];
+  switch (type.Kind()) {
+    case TypeKind::kIntegral:
+      return type.AsIntegral().bit_width;
+    case TypeKind::kPackedArray:
+    case TypeKind::kPackedStruct:
+    case TypeKind::kEnum:
+      return PackedBitWidth(type, types);
+    default:
+      throw common::InternalError(
+          "GetPackedSemanticWidth", "called on non-packed type");
+  }
+}
+
+// Add a patch entry to the appropriate bucket based on storage width.
+// The mask has low semantic_width bits set.
+void AddPatch(
+    FourStatePatchTable& table, uint64_t offset, uint32_t semantic_width,
+    uint32_t storage_width) {
+  // Enforce invariant: semantic_width <= storage_width
+  if (semantic_width > storage_width) {
+    throw common::InternalError(
+        "AddPatch", std::format(
+                        "semantic_width ({}) > storage_width ({})",
+                        semantic_width, storage_width));
+  }
+
+  // Compute mask: low semantic_width bits set
+  uint64_t mask =
+      (semantic_width >= 64) ? UINT64_MAX : (1ULL << semantic_width) - 1;
+
+  switch (storage_width) {
+    case 8:
+      table.patches_8.emplace_back(offset, static_cast<uint8_t>(mask));
+      break;
+    case 16:
+      table.patches_16.emplace_back(offset, static_cast<uint16_t>(mask));
+      break;
+    case 32:
+      table.patches_32.emplace_back(offset, static_cast<uint32_t>(mask));
+      break;
+    case 64:
+      table.patches_64.emplace_back(offset, mask);
+      break;
+    default:
+      throw common::InternalError(
+          "AddPatch",
+          std::format("unexpected storage width: {}", storage_width));
+  }
+}
+
+// Check if a type is scalar patchable by inspecting the LLVM field type.
+// A type is patchable if it lowers to a struct {iW, iW} where W is 8/16/32/64.
+auto IsFieldScalarPatchable(
+    TypeId type_id, const TypeArena& types, llvm::Type* field_type) -> bool {
+  const Type& type = types[type_id];
+
+  // Must be 4-state
+  switch (type.Kind()) {
+    case TypeKind::kIntegral:
+      if (!type.AsIntegral().is_four_state) return false;
+      break;
+    case TypeKind::kPackedArray:
+    case TypeKind::kPackedStruct:
+    case TypeKind::kEnum:
+      if (!IsPackedFourState(type, types)) return false;
+      break;
+    default:
+      return false;  // Unpacked arrays, structs, unions are not patchable
+  }
+
+  // Must be a struct type with exactly 2 identical integer fields
+  auto* struct_ty = llvm::dyn_cast<llvm::StructType>(field_type);
+  if (struct_ty == nullptr || struct_ty->getNumElements() != 2) {
+    return false;
+  }
+
+  auto* field0 = struct_ty->getElementType(0);
+  auto* field1 = struct_ty->getElementType(1);
+  if (field0 != field1 || !field0->isIntegerTy()) {
+    return false;
+  }
+
+  // Storage width must be 8, 16, 32, or 64
+  auto* int_ty = llvm::cast<llvm::IntegerType>(field0);
+  uint32_t storage_width = int_ty->getBitWidth();
+  return storage_width == 8 || storage_width == 16 || storage_width == 32 ||
+         storage_width == 64;
+}
+
+// Collect patches for a struct type using DataLayout for accurate byte offsets.
+// Only adds patches for scalar-patchable fields. Composite fields (arrays,
+// structs with 4-state content) must be handled separately via recursive init.
+template <typename TypeIdGetter>
+void CollectPatches(
+    FourStatePatchTable& table, llvm::StructType* struct_type,
+    const llvm::DataLayout& dl, const TypeArena& types,
+    TypeIdGetter get_type_id, size_t field_count) {
+  const llvm::StructLayout* struct_layout = dl.getStructLayout(struct_type);
+
+  for (size_t i = 0; i < field_count; ++i) {
+    TypeId type_id = get_type_id(i);
+    auto* field_type = struct_type->getElementType(static_cast<unsigned>(i));
+
+    if (!IsFieldScalarPatchable(type_id, types, field_type)) {
+      continue;
+    }
+
+    // Get field offset from parent struct
+    uint64_t field_offset = struct_layout->getElementOffset(i);
+
+    // Get the 4-state struct type (already validated as {iW, iW})
+    auto* four_state_type = llvm::cast<llvm::StructType>(field_type);
+
+    // Unknown plane is element 1 of the {iW, iW} struct
+    const llvm::StructLayout* fs_layout = dl.getStructLayout(four_state_type);
+    uint64_t unk_offset = fs_layout->getElementOffset(1);
+
+    uint64_t total_offset = field_offset + unk_offset;
+
+    // Get semantic width and storage width
+    uint32_t semantic_width = GetPackedSemanticWidth(type_id, types);
+    auto* elem_type = four_state_type->getElementType(0);
+    auto storage_width = static_cast<uint32_t>(
+        llvm::cast<llvm::IntegerType>(elem_type)->getBitWidth());
+
+    AddPatch(table, total_offset, semantic_width, storage_width);
+  }
+}
+
 // Collect a PlaceId from an Operand if it's a use
 void CollectPlaceFromOperand(
     const mir::Operand& operand,
@@ -577,7 +713,7 @@ auto BuildHeaderType(llvm::LLVMContext& ctx, llvm::StructType* suspend_type)
 // Build DesignLayout from slot info
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
-    llvm::LLVMContext& ctx) -> DesignLayout {
+    llvm::LLVMContext& ctx, const llvm::DataLayout& dl) -> DesignLayout {
   DesignLayout layout;
 
   std::vector<llvm::Type*> field_types;
@@ -599,13 +735,21 @@ auto BuildDesignLayout(
         llvm::StructType::create(ctx, field_types, "DesignState");
   }
 
+  // Collect 4-state patches for scalar patchable fields
+  if (!slots.empty()) {
+    CollectPatches(
+        layout.four_state_patches, layout.llvm_type, dl, types,
+        [&](size_t i) { return slots[i].type_id; }, slots.size());
+  }
+
   return layout;
 }
 
 // Build FrameLayout from de-duplicated roots
 auto BuildFrameLayout(
     const std::vector<RootInfo>& roots, const TypeArena& types,
-    llvm::LLVMContext& ctx, size_t process_index) -> FrameLayout {
+    llvm::LLVMContext& ctx, size_t process_index, const llvm::DataLayout& dl)
+    -> FrameLayout {
   FrameLayout layout;
   std::vector<llvm::Type*> field_types;
 
@@ -624,6 +768,13 @@ auto BuildFrameLayout(
     layout.llvm_type = llvm::StructType::create(ctx, field_types, name);
   }
 
+  // Collect 4-state patches for scalar patchable fields
+  if (!roots.empty()) {
+    CollectPatches(
+        layout.four_state_patches, layout.llvm_type, dl, types,
+        [&](size_t i) { return roots[i].type; }, roots.size());
+  }
+
   return layout;
 }
 
@@ -636,6 +787,31 @@ auto BuildProcessStateType(
 }
 
 }  // namespace
+
+auto IsScalarPatchable(TypeId type_id, const TypeArena& types) -> bool {
+  const Type& type = types[type_id];
+
+  // Must be a packed 4-state type
+  switch (type.Kind()) {
+    case TypeKind::kIntegral: {
+      const auto& info = type.AsIntegral();
+      if (!info.is_four_state) return false;
+      // Storage width must fit in 8/16/32/64 bits
+      return info.bit_width <= 64;
+    }
+    case TypeKind::kPackedArray:
+    case TypeKind::kPackedStruct:
+    case TypeKind::kEnum: {
+      if (!IsPackedFourState(type, types)) return false;
+      uint32_t width = PackedBitWidth(type, types);
+      // Storage width must fit in 8/16/32/64 bits
+      return width <= 64;
+    }
+    default:
+      // Unpacked arrays, structs, unions are not scalar patchable
+      return false;
+  }
+}
 
 auto BuildSlotInfoFromDesign(const mir::Design& design, const TypeArena& types)
     -> std::vector<SlotInfo> {
@@ -695,7 +871,8 @@ auto BuildSlotInfoFromDesign(const mir::Design& design, const TypeArena& types)
 
 auto BuildLayout(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
-    const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx) -> Layout {
+    const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx,
+    const llvm::DataLayout& dl) -> Layout {
   Layout layout;
 
   // Build runtime types
@@ -703,7 +880,7 @@ auto BuildLayout(
   layout.header_type = BuildHeaderType(ctx, layout.suspend_record_type);
 
   // Build design layout (use actual TypeIds for type derivation)
-  layout.design = BuildDesignLayout(slots, types, ctx);
+  layout.design = BuildDesignLayout(slots, types, ctx, dl);
 
   // Phase 1: Collect init processes (package variable initialization)
   // These run synchronously before scheduling, in design.init_processes order
@@ -746,7 +923,7 @@ auto BuildLayout(
     auto frame_roots = CollectFrameRoots(process, arena, types);
 
     // Build frame layout
-    proc_layout.frame = BuildFrameLayout(frame_roots, types, ctx, i);
+    proc_layout.frame = BuildFrameLayout(frame_roots, types, ctx, i, dl);
 
     // Build process state type
     proc_layout.state_type = BuildProcessStateType(
