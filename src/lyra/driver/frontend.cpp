@@ -48,6 +48,12 @@ auto LoadFiles(const CompilationInput& input) -> std::optional<ParseResult> {
     comp_options.topModules.emplace(input.top);
   }
   comp_options.paramOverrides = input.param_overrides;
+
+  // Enable relaxed enum conversions by default (unless --pedantic)
+  if (!input.pedantic) {
+    comp_options.flags |= slang::ast::CompilationFlags::RelaxEnumConversions;
+  }
+
   auto compilation = std::make_unique<slang::ast::Compilation>(comp_options);
 
   for (const auto& path : input.files) {

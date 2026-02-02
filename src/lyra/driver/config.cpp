@@ -147,6 +147,13 @@ auto LoadConfig(const fs::path& config_path) -> lyra::Result<ProjectConfig> {
     }
   }
 
+  // [compilation] section (optional)
+  if (auto compilation = tbl["compilation"]) {
+    if (auto p = compilation["pedantic"].value<bool>()) {
+      config.pedantic = *p;
+    }
+  }
+
   return config;
 }
 

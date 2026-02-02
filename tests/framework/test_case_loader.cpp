@@ -317,7 +317,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     ValidateKeys(
         node,
         {"name", "description", "sv", "files", "plusargs", "param_overrides",
-         "expect"},
+         "pedantic", "expect"},
         case_context, path);
 
     // Single-file format: sv: |
@@ -355,6 +355,11 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       for (const auto& arg : node["param_overrides"]) {
         test_case.param_overrides.push_back(arg.as<std::string>());
       }
+    }
+
+    // Pedantic mode
+    if (node["pedantic"]) {
+      test_case.pedantic = node["pedantic"].as<bool>();
     }
 
     // Parse unified expect: block

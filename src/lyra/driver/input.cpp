@@ -146,6 +146,10 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .append()
       .metavar("NAME=VALUE")
       .help("Override top-level module parameter (repeatable)");
+  cmd.add_argument("--pedantic")
+      .implicit_value(true)
+      .help(
+          "Enable strict LRM compliance (disallow implicit enum conversions)");
 }
 
 auto BuildInput(
@@ -247,6 +251,13 @@ auto BuildInput(
     return std::unexpected(
         Diagnostic::HostError(
             "invalid optimization level: " + opt_str + ", use 0-3"));
+  }
+
+  // Pedantic: CLI presence overrides config, else fall back to config
+  if (auto p = cmd.present<bool>("--pedantic")) {
+    input.pedantic = *p;
+  } else if (config) {
+    input.pedantic = config->pedantic;
   }
 
   return input;

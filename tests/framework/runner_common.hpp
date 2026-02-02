@@ -185,6 +185,13 @@ inline auto ParseTestCase(
   slang::ast::CompilationOptions compilation_options;
   compilation_options.languageVersion = slang::LanguageVersion::v1800_2023;
   compilation_options.paramOverrides = test_case.param_overrides;
+
+  // Enable relaxed enum conversions by default (unless pedantic mode)
+  if (!test_case.pedantic) {
+    compilation_options.flags |=
+        slang::ast::CompilationFlags::RelaxEnumConversions;
+  }
+
   result.compilation =
       std::make_unique<slang::ast::Compilation>(compilation_options);
 
