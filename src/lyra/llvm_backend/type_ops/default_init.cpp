@@ -25,6 +25,12 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
+// Threshold for unrolling small 4-state array init.
+// Arrays with count <= this emit direct stores; larger arrays use a loop.
+// Chosen to balance IR size vs loop overhead. At 8 elements, unrolling costs
+// ~24 IR lines (3 per element) vs ~37 for a loop, and avoids 4 basic blocks.
+constexpr uint32_t kSmallArrayUnrollThreshold = 8;
+
 // Store X-encoded value to a 4-state pointer.
 // X encoding: {value=0, unknown=semantic_mask}
 // semantic_mask has 1s in the low semantic_width bits.
@@ -205,12 +211,50 @@ void EmitSVDefaultInitImpl(
       // using the same type hierarchy, ensuring consistency with opaque
       // pointers.
 
-      // For 4-state arrays, we need a loop to set X encoding per element.
+      // For 4-state arrays, we need to set X encoding per element.
       // First memset to zero (handles value plane) unless already zeroed.
       if (!already_zeroed) {
         EmitMemsetZeroLocal(ctx, ptr, array_llvm_type);
       }
 
+      // Get element type info for init
+      const Type& elem_type = types[info.element_type];
+      auto* elem_llvm_type = array_llvm_type->getElementType();
+
+      // For small arrays, unroll directly (no loop, no extra basic blocks).
+      // This avoids 4 basic blocks + phi + branch overhead for tiny arrays.
+      if (count <= kSmallArrayUnrollThreshold) {
+        for (uint32_t i = 0; i < count; ++i) {
+          auto* elem_ptr =
+              builder.CreateConstGEP2_32(array_llvm_type, ptr, 0, i);
+
+          if (elem_type.Kind() == TypeKind::kIntegral &&
+              elem_type.AsIntegral().is_four_state) {
+            // 4-state scalar: only write unknown plane (value plane already 0)
+            auto* struct_type =
+                llvm::dyn_cast<llvm::StructType>(elem_llvm_type);
+            if (struct_type == nullptr || struct_type->getNumElements() != 2) {
+              throw common::InternalError(
+                  "EmitSVDefaultInitImpl",
+                  "4-state array element is not a 2-field struct");
+            }
+            auto* field0_type = struct_type->getElementType(0);
+            auto* elem_int_type = llvm::cast<llvm::IntegerType>(field0_type);
+            uint32_t bit_width = elem_type.AsIntegral().bit_width;
+            auto unk_mask = llvm::APInt::getLowBitsSet(
+                elem_int_type->getIntegerBitWidth(), bit_width);
+            auto* unk_ptr = builder.CreateStructGEP(struct_type, elem_ptr, 1);
+            builder.CreateStore(
+                llvm::ConstantInt::get(elem_int_type, unk_mask), unk_ptr);
+          } else {
+            // Nested type containing 4-state
+            EmitSVDefaultInitImpl(ctx, elem_ptr, info.element_type, true);
+          }
+        }
+        return;
+      }
+
+      // Large arrays: use a loop to avoid IR explosion.
       // Build canonical loop: preheader -> header -> body -> latch ->
       // header/exit
       auto* func = builder.GetInsertBlock()->getParent();
@@ -237,10 +281,6 @@ void EmitSVDefaultInitImpl(
       builder.SetInsertPoint(body);
       auto* elem_ptr = builder.CreateGEP(
           array_llvm_type, ptr, {builder.getInt32(0), phi}, "arr.init.elem");
-
-      // Handle element initialization based on type
-      const Type& elem_type = types[info.element_type];
-      auto* elem_llvm_type = array_llvm_type->getElementType();
 
       if (elem_type.Kind() == TypeKind::kIntegral &&
           elem_type.AsIntegral().is_four_state) {
