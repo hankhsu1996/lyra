@@ -34,6 +34,7 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
+#include "lyra/llvm_backend/type_ops/four_state_init.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
@@ -96,22 +97,33 @@ void SetHostDataLayout(llvm::Module& module) {
   module.setDataLayout(tm->createDataLayout());
 }
 
-// Initialize DesignState: zero everything, then overwrite 4-state slots with X
+// Initialize DesignState: zero everything, apply 4-state patches, then handle
+// composite 4-state fields with recursive init.
 void InitializeDesignState(
     Context& context, llvm::Value* design_state,
-    const std::vector<SlotInfo>& slots) {
+    const std::vector<SlotInfo>& slots, const FourStatePatchTable& patches) {
   auto& builder = context.GetBuilder();
   auto* design_type = context.GetDesignStateType();
   const auto& types = context.GetTypeArena();
 
-  // Zero-initialize via memset (avoids LLVM assertion on wide aggregates)
+  // 1. Zero-initialize via memset (avoids LLVM assertion on wide aggregates)
   EmitMemsetZero(context, design_state, design_type);
 
-  // Overwrite slots containing 4-state fields with proper X encoding
+  // 2. Apply scalar 4-state patches via runtime helper (O(1) IR calls)
+  EmitApply4StatePatches(context, design_state, patches, "design");
+
+  // 3. Handle composite 4-state fields (arrays, structs with 4-state content)
+  //    These cannot be patched and need the recursive init path.
   for (const auto& slot : slots) {
+    // Skip if not 4-state at all
     if (!IsFourStateType(slot.type_id, types)) {
-      continue;  // Zero-init is correct for pure 2-state types
+      continue;
     }
+    // Skip if scalar patchable (already handled by patch table)
+    if (IsScalarPatchable(slot.type_id, types)) {
+      continue;
+    }
+    // Composite 4-state: use recursive init
     uint32_t field_index = context.GetDesignFieldIndex(slot.slot_id);
     auto* slot_ptr =
         builder.CreateStructGEP(design_type, design_state, field_index);
@@ -119,36 +131,48 @@ void InitializeDesignState(
   }
 }
 
-// Initialize ProcessStateN: zero everything, set design pointer, then
-// overwrite 4-state frame places with X encoding.
+// Initialize ProcessStateN: zero everything, set design pointer, apply 4-state
+// patches, then handle composite 4-state fields with recursive init.
 // Takes ProcessLayout explicitly to avoid implicit dependency on
 // Context::SetCurrentProcess.
 void InitializeProcessState(
     Context& context, llvm::Value* process_state, llvm::Value* design_state,
-    const ProcessLayout& proc_layout) {
+    const ProcessLayout& proc_layout, size_t process_index) {
   auto& builder = context.GetBuilder();
   auto* state_type = proc_layout.state_type;
   auto* header_type = context.GetHeaderType();
   const auto& types = context.GetTypeArena();
 
-  // Zero-initialize via memset (avoids LLVM assertion on wide aggregates)
+  // 1. Zero-initialize via memset (avoids LLVM assertion on wide aggregates)
   EmitMemsetZero(context, process_state, state_type);
 
-  // Set design pointer: header->design (field 1)
+  // 2. Set design pointer: header->design (field 1)
   auto* header_ptr = builder.CreateStructGEP(state_type, process_state, 0);
   auto* design_ptr_ptr = builder.CreateStructGEP(header_type, header_ptr, 1);
   builder.CreateStore(design_state, design_ptr_ptr);
 
-  // Overwrite slots containing 4-state fields with proper X encoding
+  // 3. Apply scalar 4-state patches to frame via runtime helper
+  //    Note: patches are relative to frame base, not process_state base
   auto* frame_type = proc_layout.frame.llvm_type;
   auto* frame_ptr = builder.CreateStructGEP(state_type, process_state, 1);
   const auto& frame_layout = proc_layout.frame;
 
+  std::string frame_prefix = std::format("frame.{}", process_index);
+  EmitApply4StatePatches(
+      context, frame_ptr, frame_layout.four_state_patches, frame_prefix);
+
+  // 4. Handle composite 4-state fields (arrays, structs with 4-state content)
   for (uint32_t i = 0; i < frame_layout.root_types.size(); ++i) {
     TypeId type_id = frame_layout.root_types[i];
+    // Skip if not 4-state at all
     if (!IsFourStateType(type_id, types)) {
-      continue;  // Zero-init is correct for pure 2-state types
+      continue;
     }
+    // Skip if scalar patchable (already handled by patch table)
+    if (IsScalarPatchable(type_id, types)) {
+      continue;
+    }
+    // Composite 4-state: use recursive init
     auto* field_ptr = builder.CreateStructGEP(frame_type, frame_ptr, i);
     EmitSVDefaultInitAfterZero(context, field_ptr, type_id);
   }
@@ -239,7 +263,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
 
   // Build layout first (pure analysis, no LLVM IR emission)
   Layout layout = BuildLayout(
-      *input.design, *input.mir_arena, *input.type_arena, slot_info, *llvm_ctx);
+      *input.design, *input.mir_arena, *input.type_arena, slot_info, *llvm_ctx,
+      module->getDataLayout());
 
   // Create context with layout
   Context context(
@@ -369,8 +394,9 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   auto* design_state = builder.CreateAlloca(
       context.GetDesignStateType(), nullptr, "design_state");
 
-  // Initialize DesignState (zero + 4-state X init)
-  InitializeDesignState(context, design_state, slot_info);
+  // Initialize DesignState (zero + 4-state patches + composite 4-state init)
+  InitializeDesignState(
+      context, design_state, slot_info, layout.design.four_state_patches);
 
   // Initialize runtime state (reset time tracker, set fs_base_dir)
   auto* fs_base_dir_str =
@@ -394,7 +420,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     auto* process_state = builder.CreateAlloca(
         proc_layout.state_type, nullptr, std::format("init_state_{}", i));
 
-    InitializeProcessState(context, process_state, design_state, proc_layout);
+    InitializeProcessState(
+        context, process_state, design_state, proc_layout, i);
 
     // Run synchronously to completion via runtime API
     // (entry block number is encapsulated in LyraRunProcessSync)
@@ -421,7 +448,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       auto* process_state = builder.CreateAlloca(
           proc_layout.state_type, nullptr, std::format("process_state_{}", i));
 
-      InitializeProcessState(context, process_state, design_state, proc_layout);
+      InitializeProcessState(
+          context, process_state, design_state, proc_layout, i);
       module_states.push_back(process_state);
     }
 

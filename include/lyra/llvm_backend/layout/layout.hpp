@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <llvm/IR/DataLayout.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 
@@ -15,6 +16,22 @@
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
+
+// Patches for 4-state X-encoding initialization, grouped by store width.
+// Each patch contains the byte offset (from base) and the mask to write.
+// After memset(0), these patches set the unknown plane bits for scalar 4-state
+// fields to encode X values.
+struct FourStatePatchTable {
+  std::vector<std::pair<uint64_t, uint8_t>> patches_8;
+  std::vector<std::pair<uint64_t, uint16_t>> patches_16;
+  std::vector<std::pair<uint64_t, uint32_t>> patches_32;
+  std::vector<std::pair<uint64_t, uint64_t>> patches_64;
+
+  [[nodiscard]] auto IsEmpty() const -> bool {
+    return patches_8.empty() && patches_16.empty() && patches_32.empty() &&
+           patches_64.empty();
+  }
+};
 
 struct SlotIdHash {
   auto operator()(mir::SlotId id) const noexcept -> size_t {
@@ -55,6 +72,8 @@ struct DesignLayout {
   std::unordered_map<mir::SlotId, uint32_t, SlotIdHash> slot_to_field;
   // LLVM struct type for DesignState (built by BuildLayout)
   llvm::StructType* llvm_type = nullptr;
+  // Patches for 4-state X-encoding (byte offsets to unknown planes)
+  FourStatePatchTable four_state_patches;
 };
 
 // Process frame layout - one per process
@@ -68,6 +87,8 @@ struct FrameLayout {
   std::unordered_map<PlaceRootKey, uint32_t, PlaceRootKeyHash> root_to_field;
   // LLVM struct type for ProcessFrameN (built by BuildLayout)
   llvm::StructType* llvm_type = nullptr;
+  // Patches for 4-state X-encoding (byte offsets to unknown planes)
+  FourStatePatchTable four_state_patches;
 };
 
 // Per-process layout info
@@ -130,6 +151,12 @@ auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
 auto BuildSlotInfoFromDesign(const mir::Design& design, const TypeArena& types)
     -> std::vector<SlotInfo>;
 
+// Check if a type is "scalar patchable" - i.e., maps to a single 4-state
+// storage object (struct {iW, iW} where W is 8/16/32/64).
+// These types can be initialized via the patch table optimization.
+// Types that return false must use the existing recursive init path.
+auto IsScalarPatchable(TypeId type_id, const TypeArena& types) -> bool;
+
 // Build complete layout from MIR design.
 // This is a pure analysis pass that creates LLVM types but does NOT emit IR.
 //
@@ -139,11 +166,13 @@ auto BuildSlotInfoFromDesign(const mir::Design& design, const TypeArena& types)
 //   types: Type arena for looking up types
 //   slots: Ordered list of design slots (declaration order from HIR)
 //   ctx: LLVM context for creating struct types
+//   dl: LLVM DataLayout for computing byte offsets
 //
 // Returns:
 //   Complete Layout with all struct types created
 auto BuildLayout(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
-    const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx) -> Layout;
+    const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx,
+    const llvm::DataLayout& dl) -> Layout;
 
 }  // namespace lyra::lowering::mir_to_llvm

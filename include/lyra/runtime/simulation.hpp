@@ -158,4 +158,20 @@ void LyraMonitorSetEnabled(void* engine_ptr, bool enabled);
 // - signal_id: slot ID for notification
 void LyraNotifySignal(
     void* engine_ptr, const void* slot_ptr, uint32_t signal_id);
+
+// Apply 4-state X-encoding patches to unknown planes after memset(0).
+// Each variant handles a different store width. Uses memcpy for alignment and
+// strict-aliasing safety.
+// - base: pointer to the base of the struct (DesignState or ProcessFrame)
+// - offsets: array of byte offsets from base to the unknown plane
+// - masks: array of masks to write at each offset
+// - count: number of patches to apply
+void LyraApply4StatePatches8(
+    void* base, const uint64_t* offsets, const uint8_t* masks, uint64_t count);
+void LyraApply4StatePatches16(
+    void* base, const uint64_t* offsets, const uint16_t* masks, uint64_t count);
+void LyraApply4StatePatches32(
+    void* base, const uint64_t* offsets, const uint32_t* masks, uint64_t count);
+void LyraApply4StatePatches64(
+    void* base, const uint64_t* offsets, const uint64_t* masks, uint64_t count);
 }
