@@ -31,7 +31,7 @@ Before committing, format ALL files and run policy checks:
 1. **C++ files** - Format all source files:
 
    ```bash
-   find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i
+   find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i
    ```
 
 2. **Documentation** - Format all markdown files:
@@ -98,7 +98,8 @@ Bullet points should be **concise** (under 60 chars each) and describe **what ch
 1. **Check branch first** - See "STOP: Check Branch First" section above. Do NOT skip this.
 2. Format all files (C++, markdown, Bazel)
 3. Run all policy checks - fix any violations before proceeding
-4. Stage files with `git add <files>` (do NOT use `git add -A`)
-5. Run `git commit` as a separate command (do NOT chain with add)
+4. **Check git status again** - Formatters may modify files beyond your original changeset. Run `git status --short` to see all modified files before staging.
+5. Stage files with `git add <files>` (do NOT use `git add -A`)
+6. Run `git commit` as a separate command (do NOT chain with add)
 
 **Note:** Never use `git commit --amend` if the previous commit has been pushed. If `git status` shows "Your branch is up to date with origin", the last commit is pushed - create a new commit instead.
