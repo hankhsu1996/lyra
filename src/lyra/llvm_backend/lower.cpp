@@ -115,7 +115,7 @@ void InitializeDesignState(
     uint32_t field_index = context.GetDesignFieldIndex(slot.slot_id);
     auto* slot_ptr =
         builder.CreateStructGEP(design_type, design_state, field_index);
-    EmitSVDefaultInit(context, slot_ptr, slot.type_id);
+    EmitSVDefaultInitAfterZero(context, slot_ptr, slot.type_id);
   }
 }
 
@@ -150,7 +150,7 @@ void InitializeProcessState(
       continue;  // Zero-init is correct for pure 2-state types
     }
     auto* field_ptr = builder.CreateStructGEP(frame_type, frame_ptr, i);
-    EmitSVDefaultInit(context, field_ptr, type_id);
+    EmitSVDefaultInitAfterZero(context, field_ptr, type_id);
   }
 }
 

@@ -12,6 +12,7 @@ Checks: >
   -readability-function-cognitive-complexity,
   -readability-redundant-member-init,
   -readability-braces-around-statements,
+  -readability-suspicious-call-argument,
   -google-readability-braces-around-statements,
   -cppcoreguidelines-avoid-magic-numbers,
   -cppcoreguidelines-avoid-capturing-lambda-coroutines,
