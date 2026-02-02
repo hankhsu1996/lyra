@@ -102,9 +102,24 @@ auto ExecuteWithOrcJitImpl(
     dylib.addGenerator(std::move(*gen));
   }
 
-  // Set module data layout and triple to match JIT target
-  result.module->setDataLayout((*jit)->getDataLayout());
-  result.module->setTargetTriple((*jit)->getTargetTriple().str());
+  // Validate module DataLayout matches JIT target.
+  // DataLayout MUST be set before lowering (in LowerMirToLlvm) - never mutate
+  // it here. Post-lowering mutation would invalidate DL-dependent constants
+  // already baked into the IR (e.g., memset sizes, struct offsets).
+  const auto& module_dl = result.module->getDataLayout();
+  const auto& jit_dl = (*jit)->getDataLayout();
+  if (module_dl.isDefault()) {
+    throw common::InternalError(
+        "ExecuteWithOrcJitImpl", "module DataLayout not set before lowering");
+  }
+  if (module_dl != jit_dl) {
+    throw common::InternalError(
+        "ExecuteWithOrcJitImpl",
+        std::format(
+            "module DataLayout mismatch: module='{}', jit='{}'",
+            module_dl.getStringRepresentation(),
+            jit_dl.getStringRepresentation()));
+  }
 
   // Create thread-safe context and module (takes ownership)
   llvm::orc::ThreadSafeContext tsc(std::move(result.context));
