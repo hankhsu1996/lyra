@@ -553,8 +553,9 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
                 FormatKindToSpecChar(info.default_format),
                 info.has_runtime_format);
           },
-          [](const TestPlusargsRvalueInfo&) {
-            return std::string("test_plusargs");
+          [this](const TestPlusargsRvalueInfo& info) {
+            return std::format(
+                "test_plusargs({})", FormatOperand(info.query.operand));
           },
           [](const RuntimeQueryRvalueInfo&) {
             return std::string("runtime_query");
@@ -562,7 +563,17 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
           [](const MathCallRvalueInfo& info) {
             return std::format("math_call({})", ToString(info.fn));
           },
-          [](const SystemTfRvalueInfo& info) {
+          [this](const SystemTfRvalueInfo& info) {
+            if (info.opcode == SystemTfOpcode::kFopen) {
+              std::string args;
+              for (size_t i = 0; i < info.typed_operands.size(); ++i) {
+                if (i > 0) {
+                  args += ", ";
+                }
+                args += FormatOperand(info.typed_operands[i].operand);
+              }
+              return std::format("$fopen({})", args);
+            }
             return std::format("system_tf({})", ToString(info.opcode));
           },
       },
@@ -714,7 +725,7 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
             result = effect_op.is_hex ? "$writememh" : "$writememb";
           }
           result += std::format(
-              "({}, @{})", FormatOperand(effect_op.filename),
+              "({}, @{})", FormatOperand(effect_op.filename.operand),
               FormatPlace(effect_op.target));
           if (effect_op.start_addr) {
             result +=

@@ -11,6 +11,8 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
+#include "lyra/common/overloaded.hpp"
+#include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
@@ -27,6 +29,57 @@
 #include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+namespace {
+
+// Verifier for Rvalue invariants. Always-on (fail-loud in all builds).
+// Checks that operand storage follows the MIR design contract:
+// - kFopen: uses info.typed_operands, Rvalue::operands must be empty
+// - TestPlusargs: uses info.query, Rvalue::operands must be empty
+// - Other SystemTf opcodes: use Rvalue::operands, typed_operands must be empty
+void VerifyRvalueInvariants(const mir::Rvalue& rv) {
+  std::visit(
+      common::Overloaded{
+          [&](const mir::TestPlusargsRvalueInfo& /*info*/) {
+            if (!rv.operands.empty()) {
+              throw common::InternalError(
+                  "VerifyRvalueInvariants",
+                  "TestPlusargs: operands must be empty (query stored in "
+                  "info.query)");
+            }
+          },
+          [&](const mir::SystemTfRvalueInfo& info) {
+            if (info.opcode == SystemTfOpcode::kFopen) {
+              if (!rv.operands.empty()) {
+                throw common::InternalError(
+                    "VerifyRvalueInvariants",
+                    "kFopen: operands must be empty (use typed_operands)");
+              }
+              if (info.typed_operands.empty()) {
+                throw common::InternalError(
+                    "VerifyRvalueInvariants",
+                    "kFopen: typed_operands must have filename");
+              }
+              if (info.typed_operands.size() > 2) {
+                throw common::InternalError(
+                    "VerifyRvalueInvariants",
+                    "kFopen: typed_operands must have at most 2 elements");
+              }
+            } else {
+              if (!info.typed_operands.empty()) {
+                throw common::InternalError(
+                    "VerifyRvalueInvariants",
+                    "non-kFopen SystemTf: typed_operands must be empty");
+              }
+            }
+          },
+          [](const auto& /*info*/) {
+            // Other rvalue kinds: no special constraints
+          }},
+      rv.info);
+}
+
+}  // namespace
 
 MirBuilder::MirBuilder(mir::Arena* arena, Context* ctx, OriginMap* origin_map)
     : arena_(arena),
@@ -166,6 +219,7 @@ void MirBuilder::EmitAssign(mir::PlaceId target, mir::Operand source) {
 }
 
 void MirBuilder::EmitAssign(mir::PlaceId target, mir::Rvalue value) {
+  VerifyRvalueInvariants(value);
   EmitInst(mir::Assign{.dest = target, .rhs = std::move(value)});
 }
 

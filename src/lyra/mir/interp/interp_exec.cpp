@@ -40,6 +40,7 @@
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/file_manager.hpp"
+#include "lyra/semantic/format.hpp"
 
 namespace lyra::mir::interp {
 
@@ -403,16 +404,13 @@ auto Interpreter::ExecSeverityEffect(
 
 auto Interpreter::ExecMemIOEffect(
     ProcessState& state, const MemIOEffect& mem_io) -> Result<void> {
-  // Evaluate filename
-  auto filename_val_result = EvalOperand(state, mem_io.filename);
+  // Evaluate filename and coerce to string if packed
+  auto filename_val_result = EvalOperand(state, mem_io.filename.operand);
   if (!filename_val_result) {
     return std::unexpected(std::move(filename_val_result).error());
   }
-  auto& filename_val = *filename_val_result;
-  if (!IsString(filename_val)) {
-    throw common::InternalError("ExecMemIOEffect", "filename must be a string");
-  }
-  const std::string& filename = AsString(filename_val).value;
+  std::string filename =
+      CoerceToString(*filename_val_result, "ExecMemIOEffect");
 
   // Get array type info
   const Type& arr_type = (*types_)[mem_io.target_type];

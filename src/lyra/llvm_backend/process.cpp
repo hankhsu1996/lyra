@@ -665,7 +665,7 @@ struct PlaceCollector {
             }
           } else if constexpr (std::is_same_v<E, mir::MemIOEffect>) {
             CollectFromPlace(eff.target, arena);
-            CollectFromOperand(eff.filename, arena);
+            CollectFromOperand(eff.filename.operand, arena);
             if (eff.start_addr.has_value()) {
               CollectFromOperand(*eff.start_addr, arena);
             }

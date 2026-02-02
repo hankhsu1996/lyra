@@ -183,9 +183,12 @@ class Interpreter {
       -> Result<RuntimeValue>;
   auto EvalSFormat(ProcessState& state, const Rvalue& rv)
       -> Result<RuntimeValue>;
-  auto EvalTestPlusargs(ProcessState& state, const Rvalue& rv)
+  auto EvalTestPlusargs(
+      ProcessState& state, const Rvalue& rv, const TestPlusargsRvalueInfo& info)
       -> Result<RuntimeValue>;
-  auto EvalFopen(ProcessState& state, const Rvalue& rv) -> Result<RuntimeValue>;
+  auto EvalFopen(
+      ProcessState& state, const Rvalue& rv, const SystemTfRvalueInfo& info)
+      -> Result<RuntimeValue>;
   auto EvalMathCall(
       ProcessState& state, const Rvalue& rv, const MathCallRvalueInfo& info)
       -> Result<RuntimeValue>;

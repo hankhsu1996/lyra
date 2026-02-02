@@ -12,6 +12,7 @@
 #include "lyra/common/system_tf.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -23,31 +24,41 @@ auto LowerSystemTfRvalue(
   switch (info.opcode) {
     case SystemTfOpcode::kFopen: {
       auto& builder = context.GetBuilder();
+      const auto& typed_ops = info.typed_operands;
 
-      if (rvalue.operands.size() != 1 && rvalue.operands.size() != 2) {
+      if (typed_ops.empty() || typed_ops.size() > 2) {
         throw common::InternalError(
             "LowerSystemTfRvalue:kFopen",
-            std::format(
-                "expected 1 or 2 operands, got {}", rvalue.operands.size()));
+            std::format("expected 1 or 2 operands, got {}", typed_ops.size()));
       }
-
-      auto filename_or_err = LowerOperand(context, rvalue.operands[0]);
-      if (!filename_or_err) return std::unexpected(filename_or_err.error());
 
       llvm::Value* result = nullptr;
-      if (rvalue.operands.size() == 2) {
-        auto mode_or_err = LowerOperand(context, rvalue.operands[1]);
-        if (!mode_or_err) return std::unexpected(mode_or_err.error());
-        result = builder.CreateCall(
-            context.GetLyraFopenFd(),
-            {context.GetEnginePointer(), *filename_or_err, *mode_or_err},
-            "fopen.fd");
-      } else {
-        result = builder.CreateCall(
-            context.GetLyraFopenMcd(),
-            {context.GetEnginePointer(), *filename_or_err}, "fopen.mcd");
-      }
 
+      // Use nested WithStringHandle for filename (and optionally mode)
+      auto status = WithStringHandle(
+          context, typed_ops[0].operand, typed_ops[0].type,
+          [&](llvm::Value* filename_handle) -> Result<void> {
+            if (typed_ops.size() == 2) {
+              // FD mode: $fopen(filename, mode) - nested WithStringHandle
+              return WithStringHandle(
+                  context, typed_ops[1].operand, typed_ops[1].type,
+                  [&](llvm::Value* mode_handle) -> Result<void> {
+                    result = builder.CreateCall(
+                        context.GetLyraFopenFd(),
+                        {context.GetEnginePointer(), filename_handle,
+                         mode_handle},
+                        "fopen.fd");
+                    return {};
+                  });
+            }
+            // MCD mode: $fopen(filename)
+            result = builder.CreateCall(
+                context.GetLyraFopenMcd(),
+                {context.GetEnginePointer(), filename_handle}, "fopen.mcd");
+            return {};
+          });
+
+      if (!status) return std::unexpected(status.error());
       return RvalueValue::TwoState(result);
     }
     case SystemTfOpcode::kFclose:

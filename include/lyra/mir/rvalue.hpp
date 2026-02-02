@@ -106,16 +106,18 @@ struct SFormatRvalueInfo {
 
 // TestPlusargsRvalueInfo: $test$plusargs system function (pure, no side
 // effects) Returns 1 if a plusarg matching the query prefix exists, 0
-// otherwise. operands[0] = query string
+// otherwise. Query is stored as TypedOperand for packed-to-string coercion.
 struct TestPlusargsRvalueInfo {
-  // No fields needed - query comes from operands[0]
+  TypedOperand query;  // Query string (typed for packed-to-string coercion)
 };
 
 // SystemTfRvalueInfo: Generic rvalue-producing system TFs.
 // Covers simple system TFs where payload is just opcode + operands.
-// Operands come from Rvalue::operands (existing pattern).
+// For opcodes that need string coercion (kFopen), use typed_operands.
+// Other opcodes continue using Rvalue::operands.
 struct SystemTfRvalueInfo {
   SystemTfOpcode opcode;
+  std::vector<TypedOperand> typed_operands;  // For kFopen: filename [, mode]
 };
 
 // Engine-state queries ($time, $stime, $realtime).
