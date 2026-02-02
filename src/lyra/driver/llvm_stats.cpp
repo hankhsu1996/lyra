@@ -2,10 +2,10 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <format>
 #include <string>
 #include <vector>
 
+#include <fmt/core.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 
@@ -67,33 +67,27 @@ void PrintLlvmStats(const llvm::Module& module, int top_n, FILE* sink) {
       });
 
   // Print summary
-  std::fprintf(
-      sink,
-      "[lyra][stats] defined_functions=%lu globals=%lu bbs=%lu insts=%lu\n",
-      static_cast<unsigned long>(defined_functions),
-      static_cast<unsigned long>(global_count),
-      static_cast<unsigned long>(total_bbs),
-      static_cast<unsigned long>(total_insts));
+  fmt::print(
+      sink, "[lyra][stats] functions={} globals={} bbs={} insts={}\n",
+      defined_functions, global_count, total_bbs, total_insts);
 
   // Print max function (if any defined functions exist)
   if (!func_stats.empty() && total_insts > 0) {
     const auto& max_func = func_stats[0];
-    double pct = 100.0 * static_cast<double>(max_func.instructions) /
-                 static_cast<double>(total_insts);
-    std::fprintf(
-        sink, "[lyra][stats][max] name=%s insts=%lu pct=%.1f%%\n",
-        max_func.name.c_str(),
-        static_cast<unsigned long>(max_func.instructions), pct);
+    double percent = 100.0 * static_cast<double>(max_func.instructions) /
+                     static_cast<double>(total_insts);
+    fmt::print(
+        sink, "[lyra][stats][max] name={} insts={} percent={:.1f}%\n",
+        max_func.name, max_func.instructions, percent);
   }
 
   // Print top N functions
   int count = std::min(top_n, static_cast<int>(func_stats.size()));
   for (int i = 0; i < count; ++i) {
     const auto& fs = func_stats[i];
-    std::fprintf(
-        sink, "[lyra][stats][top] %d) %s insts=%lu bbs=%lu\n", i + 1,
-        fs.name.c_str(), static_cast<unsigned long>(fs.instructions),
-        static_cast<unsigned long>(fs.basic_blocks));
+    fmt::print(
+        sink, "[lyra][stats][top] {}) {} insts={} bbs={}\n", i + 1, fs.name,
+        fs.instructions, fs.basic_blocks);
   }
 
   std::fflush(sink);

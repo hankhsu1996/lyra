@@ -75,7 +75,10 @@ The `run`, `check`, and `dump` commands accept these options:
 | `-D, --define-macro`      | Define preprocessor macro (e.g., `-DDEBUG`)                                  |
 | `-G<name>=<value>`        | Override top-level module parameter (repeatable, applies to all top modules) |
 | `-W <warn>`               | Warning control (e.g., `-Wno-unused`)                                        |
+| `-O <level>`              | Optimization level (0-3, default 2)                                          |
 | `--pedantic`              | Enable strict LRM compliance (disallow implicit enum conversions)            |
+| `-v, --verbose`           | Verbosity level (-v, -vv, -vvv or --verbose=0-3)                             |
+| `--stats[=N]`             | Show LLVM IR statistics (top N functions, default 10; 0 for summary only)    |
 | `-f <file>`               | Command file (paths relative to CWD)                                         |
 | `-F <file>`               | Command file (paths relative to file itself)                                 |
 | `<files...>`              | Source files (positional)                                                    |
