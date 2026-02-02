@@ -84,31 +84,31 @@ jobs:
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          CACHE_FLAGS=""
+          RBE_FLAGS=""
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-            CACHE_FLAGS="--config=ci --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
           fi
-          bazel build //... $CACHE_FLAGS
+          bazel build //... $RBE_FLAGS
 
       - name: Test (MIR)
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          CACHE_FLAGS=""
+          RBE_FLAGS=""
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-            CACHE_FLAGS="--config=ci --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
           fi
-          bazel test //tests:mir_dev_tests $CACHE_FLAGS --test_output=errors --verbose_failures
+          bazel test //tests:mir_dev_tests $RBE_FLAGS --test_output=errors --verbose_failures
 
       - name: Test (JIT)
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          CACHE_FLAGS=""
+          RBE_FLAGS=""
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-            CACHE_FLAGS="--config=ci --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
           fi
-          bazel test //tests:jit_dev_tests $CACHE_FLAGS --test_output=errors --verbose_failures
+          bazel test //tests:jit_dev_tests $RBE_FLAGS --test_output=errors --verbose_failures
 
   # This job always runs and reports success when build is skipped
   # Required for branch protection rules that require this check

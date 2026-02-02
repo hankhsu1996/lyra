@@ -2,10 +2,6 @@ name: LLVM Backend Boundaries
 
 on:
   pull_request:
-    paths:
-      - 'src/lyra/llvm_backend/**'
-      - 'include/lyra/llvm_backend/**'
-      - 'tools/policy/check_llvm_backend_boundaries.py'
 
 jobs:
   check:
