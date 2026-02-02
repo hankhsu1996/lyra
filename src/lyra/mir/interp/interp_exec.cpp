@@ -1394,9 +1394,21 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             return std::nullopt;
           },
 
-          [](const Wait& /*t*/) -> ResultType {
-            throw common::InternalError(
-                "ExecTerminator", "wait terminator requires runtime/scheduler");
+          [&](const Wait& /*t*/) -> ResultType {
+            if (diag_ctx_ != nullptr) {
+              return std::unexpected(diag_ctx_->MakeUnsupported(
+                  term.origin, "wait statements require the LLVM backend",
+                  UnsupportedCategory::kFeature));
+            }
+            return std::unexpected(
+                Diagnostic{
+                    .primary =
+                        {.kind = DiagKind::kUnsupported,
+                         .span = UnknownSpan{},
+                         .message = "wait statements require the LLVM backend",
+                         .category = UnsupportedCategory::kFeature},
+                    .notes = {},
+                });
           },
 
           [&](const Return& t) -> ResultType {
@@ -1450,10 +1462,21 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             return std::nullopt;
           },
 
-          [](const Repeat& /*t*/) -> ResultType {
-            throw common::InternalError(
-                "ExecTerminator",
-                "repeat terminator requires runtime/scheduler");
+          [&](const Repeat& /*t*/) -> ResultType {
+            if (diag_ctx_ != nullptr) {
+              return std::unexpected(diag_ctx_->MakeUnsupported(
+                  term.origin, "always blocks require the LLVM backend",
+                  UnsupportedCategory::kFeature));
+            }
+            return std::unexpected(
+                Diagnostic{
+                    .primary =
+                        {.kind = DiagKind::kUnsupported,
+                         .span = UnknownSpan{},
+                         .message = "always blocks require the LLVM backend",
+                         .category = UnsupportedCategory::kFeature},
+                    .notes = {},
+                });
           },
       },
       term.data);
