@@ -12,18 +12,36 @@
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/dumper.hpp"
 #include "print.hpp"
+#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
 auto DumpHir(const CompilationInput& input) -> int {
-  auto parse_result = LoadFiles(input);
+  VerboseLogger vlog(input.verbose);
+
+  std::optional<ParseResult> parse_result;
+  {
+    PhaseTimer timer(vlog, "parse");
+    parse_result = ParseFiles(input);
+  }
   if (!parse_result) {
     return 1;
   }
 
+  {
+    PhaseTimer timer(vlog, "elaborate");
+    if (!Elaborate(*parse_result, input)) {
+      return 1;
+    }
+  }
+
   DiagnosticSink sink;
-  auto result =
-      lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
+  lowering::ast_to_hir::LoweringResult result;
+  {
+    PhaseTimer timer(vlog, "lower_hir");
+    result =
+        lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
+  }
 
   if (sink.HasErrors()) {
     PrintDiagnostics(sink, result.source_manager.get());
@@ -39,14 +57,31 @@ auto DumpHir(const CompilationInput& input) -> int {
 }
 
 auto DumpMir(const CompilationInput& input) -> int {
-  auto parse_result = LoadFiles(input);
+  VerboseLogger vlog(input.verbose);
+
+  std::optional<ParseResult> parse_result;
+  {
+    PhaseTimer timer(vlog, "parse");
+    parse_result = ParseFiles(input);
+  }
   if (!parse_result) {
     return 1;
   }
 
+  {
+    PhaseTimer timer(vlog, "elaborate");
+    if (!Elaborate(*parse_result, input)) {
+      return 1;
+    }
+  }
+
   DiagnosticSink sink;
-  auto hir_result =
-      lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
+  lowering::ast_to_hir::LoweringResult hir_result;
+  {
+    PhaseTimer timer(vlog, "lower_hir");
+    hir_result =
+        lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
+  }
 
   if (sink.HasErrors()) {
     PrintDiagnostics(sink, hir_result.source_manager.get());
@@ -64,7 +99,11 @@ auto DumpMir(const CompilationInput& input) -> int {
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
   };
-  auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
+  {
+    PhaseTimer timer(vlog, "lower_mir");
+    mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  }
   if (!mir_result) {
     PrintDiagnostic(mir_result.error(), *hir_result.source_manager);
     return 1;
@@ -78,14 +117,31 @@ auto DumpMir(const CompilationInput& input) -> int {
 }
 
 auto DumpLlvm(const CompilationInput& input) -> int {
-  auto parse_result = LoadFiles(input);
+  VerboseLogger vlog(input.verbose);
+
+  std::optional<ParseResult> parse_result;
+  {
+    PhaseTimer timer(vlog, "parse");
+    parse_result = ParseFiles(input);
+  }
   if (!parse_result) {
     return 1;
   }
 
+  {
+    PhaseTimer timer(vlog, "elaborate");
+    if (!Elaborate(*parse_result, input)) {
+      return 1;
+    }
+  }
+
   DiagnosticSink sink;
-  auto hir_result =
-      lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
+  lowering::ast_to_hir::LoweringResult hir_result;
+  {
+    PhaseTimer timer(vlog, "lower_hir");
+    hir_result =
+        lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
+  }
 
   if (sink.HasErrors()) {
     PrintDiagnostics(sink, hir_result.source_manager.get());
@@ -103,7 +159,11 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
   };
-  auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
+  {
+    PhaseTimer timer(vlog, "lower_mir");
+    mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  }
   if (!mir_result) {
     PrintDiagnostic(mir_result.error(), *hir_result.source_manager);
     return 1;
@@ -122,7 +182,11 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = {},  // Not needed for dump
   };
-  auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
+  {
+    PhaseTimer timer(vlog, "lower_llvm");
+    llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  }
   if (!llvm_result) {
     PrintDiagnostic(llvm_result.error(), *hir_result.source_manager);
     return 1;

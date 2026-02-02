@@ -21,6 +21,7 @@
 #include "pipeline.hpp"
 #include "print.hpp"
 #include "runtime_path.hpp"
+#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
@@ -94,7 +95,9 @@ auto SpawnLli(const std::string& runtime_path, const std::string& ir_path)
 }  // namespace
 
 auto RunLli(const CompilationInput& input) -> int {
-  auto result = CompileToMir(input);
+  VerboseLogger vlog(input.verbose);
+
+  auto result = CompileToMir(input, vlog);
   if (!result) {
     result.error().Print();
     return 1;
@@ -115,7 +118,11 @@ auto RunLli(const CompilationInput& input) -> int {
       .plusargs = input.plusargs,
   };
 
-  auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
+  {
+    PhaseTimer timer(vlog, "lower_llvm");
+    llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
+  }
   if (!llvm_result) {
     PrintDiagnostic(llvm_result.error(), *compilation.hir.source_manager);
     return 1;
@@ -150,7 +157,11 @@ auto RunLli(const CompilationInput& input) -> int {
     return 1;
   }
 
-  int exit_code = SpawnLli(runtime_path.string(), ir_path);
+  int exit_code;
+  {
+    PhaseTimer timer(vlog, "lli", true);
+    exit_code = SpawnLli(runtime_path.string(), ir_path);
+  }
   if (exit_code == -1) {
     PrintError(
         std::format(

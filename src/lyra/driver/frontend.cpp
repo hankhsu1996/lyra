@@ -20,7 +20,7 @@ constexpr auto kToolColor = fmt::terminal_color::white;
 constexpr auto kToolStyle = fmt::fg(kToolColor) | fmt::emphasis::bold;
 }  // namespace
 
-auto LoadFiles(const CompilationInput& input) -> std::optional<ParseResult> {
+auto ParseFiles(const CompilationInput& input) -> std::optional<ParseResult> {
   if (input.files.empty()) {
     fmt::print(
         stderr, "{}: {}: {}\n", fmt::styled("lyra", kToolStyle),
@@ -70,9 +70,16 @@ auto LoadFiles(const CompilationInput& input) -> std::optional<ParseResult> {
     compilation->addSyntaxTree(result.value());
   }
 
-  auto diagnostics = compilation->getAllDiagnostics();
+  return ParseResult{
+      .source_manager = std::move(source_manager),
+      .compilation = std::move(compilation),
+  };
+}
+
+auto Elaborate(ParseResult& result, const CompilationInput& input) -> bool {
+  auto diagnostics = result.compilation->getAllDiagnostics();
   if (!diagnostics.empty()) {
-    slang::DiagnosticEngine diag_engine(*source_manager);
+    slang::DiagnosticEngine diag_engine(*result.source_manager);
     auto diag_client = std::make_shared<slang::TextDiagnosticClient>();
     diag_client->showColors(true);
     diag_engine.addClient(diag_client);
@@ -89,14 +96,21 @@ auto LoadFiles(const CompilationInput& input) -> std::optional<ParseResult> {
     fmt::print(stderr, "{}", diag_client->getString());
 
     if (diag_engine.getNumErrors() > 0) {
-      return std::nullopt;
+      return false;
     }
   }
+  return true;
+}
 
-  return ParseResult{
-      .source_manager = std::move(source_manager),
-      .compilation = std::move(compilation),
-  };
+auto LoadFiles(const CompilationInput& input) -> std::optional<ParseResult> {
+  auto result = ParseFiles(input);
+  if (!result) {
+    return std::nullopt;
+  }
+  if (!Elaborate(*result, input)) {
+    return std::nullopt;
+  }
+  return result;
 }
 
 }  // namespace lyra::driver

@@ -8,6 +8,7 @@
 #include "lyra/common/source_manager.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
+#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
@@ -31,7 +32,7 @@ struct CompilationError {
 
 struct CompilationInput;
 
-auto CompileToMir(const CompilationInput& input)
+auto CompileToMir(const CompilationInput& input, VerboseLogger& vlog)
     -> std::expected<CompilationResult, CompilationError>;
 
 }  // namespace lyra::driver
