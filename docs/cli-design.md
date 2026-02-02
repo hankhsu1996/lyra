@@ -67,16 +67,17 @@ Example: `lyra -C path/to/project run`
 
 The `run`, `check`, and `dump` commands accept these options:
 
-| Option                    | Description                                  |
-| ------------------------- | -------------------------------------------- |
-| `--no-project`            | Skip lyra.toml, use CWD-relative paths       |
-| `--top <module>`          | Top module name                              |
-| `-I, --include-directory` | Add include search path (repeatable)         |
-| `-D, --define-macro`      | Define preprocessor macro (e.g., `-DDEBUG`)  |
-| `-W <warn>`               | Warning control (e.g., `-Wno-unused`)        |
-| `-f <file>`               | Command file (paths relative to CWD)         |
-| `-F <file>`               | Command file (paths relative to file itself) |
-| `<files...>`              | Source files (positional)                    |
+| Option                    | Description                                                                  |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| `--no-project`            | Skip lyra.toml, use CWD-relative paths                                       |
+| `--top <module>`          | Top module name                                                              |
+| `-I, --include-directory` | Add include search path (repeatable)                                         |
+| `-D, --define-macro`      | Define preprocessor macro (e.g., `-DDEBUG`)                                  |
+| `-G<name>=<value>`        | Override top-level module parameter (repeatable, applies to all top modules) |
+| `-W <warn>`               | Warning control (e.g., `-Wno-unused`)                                        |
+| `-f <file>`               | Command file (paths relative to CWD)                                         |
+| `-F <file>`               | Command file (paths relative to file itself)                                 |
+| `<files...>`              | Source files (positional)                                                    |
 
 ### CLI Arguments
 

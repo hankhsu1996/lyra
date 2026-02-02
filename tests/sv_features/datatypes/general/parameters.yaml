@@ -304,3 +304,38 @@ cases:
     expect:
       variables:
         result: 43981
+
+  - name: param_override_basic
+    description: Parameter override via -G
+    param_overrides: ["WIDTH=32"]
+    sv: |
+      module top #(parameter int WIDTH = 8);
+        initial $display("WIDTH=%0d", WIDTH);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "WIDTH=32"
+
+  - name: param_override_multiple
+    description: Multiple parameter overrides
+    param_overrides: ["WIDTH=16", "DEPTH=64"]
+    sv: |
+      module top #(parameter int WIDTH = 8, parameter int DEPTH = 32);
+        initial $display("WIDTH=%0d DEPTH=%0d", WIDTH, DEPTH);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "WIDTH=16 DEPTH=64"
+
+  - name: param_override_default
+    description: Default value when no override
+    sv: |
+      module top #(parameter int WIDTH = 8);
+        initial $display("WIDTH=%0d", WIDTH);
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "WIDTH=8"
