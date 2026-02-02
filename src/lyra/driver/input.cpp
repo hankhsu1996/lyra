@@ -111,7 +111,8 @@ auto PreprocessArgs(std::span<char*> argv) -> std::vector<std::string> {
     std::string_view arg = raw_arg;
     if (arg.size() > 2 &&
         (arg.starts_with("-D") || arg.starts_with("-I") ||
-         arg.starts_with("-W") || arg.starts_with("-O")) &&
+         arg.starts_with("-W") || arg.starts_with("-O") ||
+         arg.starts_with("-G")) &&
         arg[1] != '-') {
       result.emplace_back(arg.substr(0, 2));
       result.emplace_back(arg.substr(2));
@@ -141,6 +142,10 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
   cmd.add_argument("-f").append().help("Command file (paths relative to CWD)");
   cmd.add_argument("-F").append().help(
       "Command file (paths relative to file itself)");
+  cmd.add_argument("-G")
+      .append()
+      .metavar("NAME=VALUE")
+      .help("Override top-level module parameter (repeatable)");
 }
 
 auto BuildInput(
@@ -223,6 +228,9 @@ auto BuildInput(
   }
   if (auto vals = cmd.present<std::vector<std::string>>("-W")) {
     input.warnings.insert(input.warnings.end(), vals->begin(), vals->end());
+  }
+  if (auto vals = cmd.present<std::vector<std::string>>("-G")) {
+    input.param_overrides = *vals;
   }
 
   // Parse optimization level

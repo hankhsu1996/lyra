@@ -184,6 +184,7 @@ inline auto ParseTestCase(
 
   slang::ast::CompilationOptions compilation_options;
   compilation_options.languageVersion = slang::LanguageVersion::v1800_2023;
+  compilation_options.paramOverrides = test_case.param_overrides;
   result.compilation =
       std::make_unique<slang::ast::Compilation>(compilation_options);
 

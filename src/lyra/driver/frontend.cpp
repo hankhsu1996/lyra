@@ -47,6 +47,7 @@ auto LoadFiles(const CompilationInput& input) -> std::optional<ParseResult> {
   if (!input.top.empty()) {
     comp_options.topModules.emplace(input.top);
   }
+  comp_options.paramOverrides = input.param_overrides;
   auto compilation = std::make_unique<slang::ast::Compilation>(comp_options);
 
   for (const auto& path : input.files) {

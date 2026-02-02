@@ -86,11 +86,13 @@ Supported:
 - Parameters with explicit types (`parameter int`, `parameter logic [7:0]`)
 - Parameters with implicit types (inferred from value)
 - Parameters used in expressions and display statements
+- Parameterized modules with parameter port lists (`module m #(parameter int WIDTH = 8)`)
+- Top-level module parameter override via `-G` CLI option
 
 Not yet supported:
 
-- Parameterized modules with parameter port lists (`module m #(parameter int WIDTH = 8)`)
 - Parameter override at instantiation (`mod #(16) u1()`, `mod #(.WIDTH(16)) u1()`)
+- Hierarchical parameter overrides (e.g., `top.sub.PARAM=val`)
 - Type parameters (`parameter type T = int`)
 - `defparam` statements
 - `specparam` (timing parameters)

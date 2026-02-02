@@ -19,6 +19,7 @@ struct CompilationInput {
   std::vector<std::string> incdir;
   std::vector<std::string> defines;
   std::vector<std::string> warnings;
+  std::vector<std::string> param_overrides;  // Top-level param overrides (-G)
   std::filesystem::path fs_base_dir;   // Base directory for runtime file I/O
   std::vector<std::string> plusargs;   // Runtime plusargs for $plusargs
   OptLevel opt_level = OptLevel::kO2;  // Default O2 for CLI

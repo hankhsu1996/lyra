@@ -32,6 +32,7 @@ struct TestCase {
   std::string sv_code;
   std::vector<SourceFile> files;
   std::vector<std::string> plusargs;
+  std::vector<std::string> param_overrides;  // Compile-time param overrides
   std::map<std::string, ExpectedValue> expected_values;
   std::optional<uint64_t> expected_time;
   std::optional<ExpectedOutput> expected_stdout;

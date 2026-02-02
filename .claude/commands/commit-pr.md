@@ -62,15 +62,16 @@ Do NOT proceed with formatting or staging until you are on a feature branch.
 
 1. **Check branch** - If on main, infer branch name from changes and create it
 2. **Format all files:**
-   - C++: `find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
+   - C++: `find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i`
    - Markdown: `npx prettier --write "**/*.md"`
    - Bazel: `buildifier -r .`
 3. **Policy checks** - First run `git merge-base origin/main HEAD`, then use that SHA:
    - `python3 tools/policy/check_exceptions.py --diff-base <SHA>`
    - `python3 tools/policy/check_ascii.py --diff-base <SHA>`
    - `python3 tools/policy/check_llvm_backend_boundaries.py --diff-base <SHA>`
-4. **Stage files** with `git add <files>` (not `git add -A`)
-5. **Commit** with `git commit` (this will prompt for permission - your checkpoint to review)
+4. **Check git status** - Formatters may modify files beyond your original changeset. Run `git status --short` to see all modified files before staging.
+5. **Stage files** with `git add <files>` (not `git add -A`)
+6. **Commit** with `git commit` (this will prompt for permission - your checkpoint to review)
 
 ### Phase 2: PR
 

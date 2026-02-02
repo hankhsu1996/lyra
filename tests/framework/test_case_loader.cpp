@@ -315,7 +315,9 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     auto case_context = std::format("case '{}'", test_case.name);
 
     ValidateKeys(
-        node, {"name", "description", "sv", "files", "plusargs", "expect"},
+        node,
+        {"name", "description", "sv", "files", "plusargs", "param_overrides",
+         "expect"},
         case_context, path);
 
     // Single-file format: sv: |
@@ -343,6 +345,15 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       ValidateIsSequence(node["plusargs"], "plusargs", case_context, path);
       for (const auto& arg : node["plusargs"]) {
         test_case.plusargs.push_back(arg.as<std::string>());
+      }
+    }
+
+    // Param overrides: param_overrides: ["WIDTH=32", "DEPTH=64"]
+    if (node["param_overrides"]) {
+      ValidateIsSequence(
+          node["param_overrides"], "param_overrides", case_context, path);
+      for (const auto& arg : node["param_overrides"]) {
+        test_case.param_overrides.push_back(arg.as<std::string>());
       }
     }
 
