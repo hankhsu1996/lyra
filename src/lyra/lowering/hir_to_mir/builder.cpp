@@ -34,9 +34,8 @@ namespace {
 
 // Verifier for Rvalue invariants. Always-on (fail-loud in all builds).
 // Checks that operand storage follows the MIR design contract:
-// - kFopen: uses info.typed_operands, Rvalue::operands must be empty
+// - FopenRvalueInfo: uses info.filename/mode, Rvalue::operands must be empty
 // - TestPlusargs: uses info.query, Rvalue::operands must be empty
-// - Other SystemTf opcodes: use Rvalue::operands, typed_operands must be empty
 void VerifyRvalueInvariants(const mir::Rvalue& rv) {
   std::visit(
       common::Overloaded{
@@ -48,29 +47,12 @@ void VerifyRvalueInvariants(const mir::Rvalue& rv) {
                   "info.query)");
             }
           },
-          [&](const mir::SystemTfRvalueInfo& info) {
-            if (info.opcode == SystemTfOpcode::kFopen) {
-              if (!rv.operands.empty()) {
-                throw common::InternalError(
-                    "VerifyRvalueInvariants",
-                    "kFopen: operands must be empty (use typed_operands)");
-              }
-              if (info.typed_operands.empty()) {
-                throw common::InternalError(
-                    "VerifyRvalueInvariants",
-                    "kFopen: typed_operands must have filename");
-              }
-              if (info.typed_operands.size() > 2) {
-                throw common::InternalError(
-                    "VerifyRvalueInvariants",
-                    "kFopen: typed_operands must have at most 2 elements");
-              }
-            } else {
-              if (!info.typed_operands.empty()) {
-                throw common::InternalError(
-                    "VerifyRvalueInvariants",
-                    "non-kFopen SystemTf: typed_operands must be empty");
-              }
+          [&](const mir::FopenRvalueInfo& /*info*/) {
+            if (!rv.operands.empty()) {
+              throw common::InternalError(
+                  "VerifyRvalueInvariants",
+                  "FopenRvalueInfo: operands must be empty (use "
+                  "filename/mode)");
             }
           },
           [](const auto& /*info*/) {

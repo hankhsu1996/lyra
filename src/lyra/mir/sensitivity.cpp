@@ -90,7 +90,15 @@ void CollectFromRvalue(
           [](const ConcatRvalueInfo&) {},
           [](const ReplicateRvalueInfo&) {},
           [](const SFormatRvalueInfo&) {},
-          [](const TestPlusargsRvalueInfo&) {},
+          [&](const TestPlusargsRvalueInfo& info) {
+            CollectFromOperand(info.query.operand, arena, seen);
+          },
+          [&](const FopenRvalueInfo& info) {
+            CollectFromOperand(info.filename.operand, arena, seen);
+            if (info.mode) {
+              CollectFromOperand(info.mode->operand, arena, seen);
+            }
+          },
           [](const RuntimeQueryRvalueInfo&) {},
           [](const MathCallRvalueInfo&) {},
           [](const SystemTfRvalueInfo&) {},

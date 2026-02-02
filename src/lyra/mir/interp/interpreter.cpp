@@ -124,9 +124,10 @@ struct StorageCollector {
     if (const auto* info = std::get_if<TestPlusargsRvalueInfo>(&rv.info)) {
       Visit(info->query.operand, arena);
     }
-    if (const auto* info = std::get_if<SystemTfRvalueInfo>(&rv.info)) {
-      for (const auto& typed_op : info->typed_operands) {
-        Visit(typed_op.operand, arena);
+    if (const auto* info = std::get_if<FopenRvalueInfo>(&rv.info)) {
+      Visit(info->filename.operand, arena);
+      if (info->mode) {
+        Visit(info->mode->operand, arena);
       }
     }
   }

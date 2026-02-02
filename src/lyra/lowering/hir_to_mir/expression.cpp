@@ -676,36 +676,33 @@ auto LowerSystemCall(
         {{output_lv.place, output_type, mir::PassMode::kOut}});
   }
 
-  // $fopen -> SystemTfRvalueInfo with typed_operands for string coercion
+  // $fopen -> FopenRvalueInfo with semantic fields for string coercion
   if (const auto* fopen_data = std::get_if<hir::FopenData>(&data)) {
     Context& ctx = builder.GetContext();
     Result<mir::Operand> filename_result =
         LowerExpression(fopen_data->filename, builder);
     if (!filename_result) return std::unexpected(filename_result.error());
-    mir::Operand filename_op = *filename_result;
     const hir::Expression& filename_expr =
         (*ctx.hir_arena)[fopen_data->filename];
 
-    std::vector<mir::TypedOperand> typed_operands;
-    typed_operands.push_back(
-        mir::TypedOperand{
-            .operand = std::move(filename_op), .type = filename_expr.type});
+    mir::FopenRvalueInfo info{
+        .filename =
+            mir::TypedOperand{
+                .operand = std::move(*filename_result),
+                .type = filename_expr.type},
+        .mode = std::nullopt,
+    };
 
     if (fopen_data->mode) {
       Result<mir::Operand> mode_result =
           LowerExpression(*fopen_data->mode, builder);
       if (!mode_result) return std::unexpected(mode_result.error());
       const hir::Expression& mode_expr = (*ctx.hir_arena)[*fopen_data->mode];
-      typed_operands.push_back(
-          mir::TypedOperand{
-              .operand = std::move(*mode_result), .type = mode_expr.type});
+      info.mode = mir::TypedOperand{
+          .operand = std::move(*mode_result), .type = mode_expr.type};
     }
 
-    mir::Rvalue rvalue{
-        .operands = {},
-        .info = mir::SystemTfRvalueInfo{
-            .opcode = SystemTfOpcode::kFopen,
-            .typed_operands = std::move(typed_operands)}};
+    mir::Rvalue rvalue{.operands = {}, .info = std::move(info)};
     mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);
   }

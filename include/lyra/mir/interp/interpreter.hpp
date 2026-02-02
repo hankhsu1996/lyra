@@ -186,8 +186,7 @@ class Interpreter {
   auto EvalTestPlusargs(
       ProcessState& state, const Rvalue& rv, const TestPlusargsRvalueInfo& info)
       -> Result<RuntimeValue>;
-  auto EvalFopen(
-      ProcessState& state, const Rvalue& rv, const SystemTfRvalueInfo& info)
+  auto EvalFopen(ProcessState& state, const FopenRvalueInfo& info)
       -> Result<RuntimeValue>;
   auto EvalMathCall(
       ProcessState& state, const Rvalue& rv, const MathCallRvalueInfo& info)

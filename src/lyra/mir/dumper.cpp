@@ -557,23 +557,21 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
             return std::format(
                 "test_plusargs({})", FormatOperand(info.query.operand));
           },
+          [this](const FopenRvalueInfo& info) {
+            std::string args = FormatOperand(info.filename.operand);
+            if (info.mode) {
+              args += ", ";
+              args += FormatOperand(info.mode->operand);
+            }
+            return std::format("$fopen({})", args);
+          },
           [](const RuntimeQueryRvalueInfo&) {
             return std::string("runtime_query");
           },
           [](const MathCallRvalueInfo& info) {
             return std::format("math_call({})", ToString(info.fn));
           },
-          [this](const SystemTfRvalueInfo& info) {
-            if (info.opcode == SystemTfOpcode::kFopen) {
-              std::string args;
-              for (size_t i = 0; i < info.typed_operands.size(); ++i) {
-                if (i > 0) {
-                  args += ", ";
-                }
-                args += FormatOperand(info.typed_operands[i].operand);
-              }
-              return std::format("$fopen({})", args);
-            }
+          [](const SystemTfRvalueInfo& info) {
             return std::format("system_tf({})", ToString(info.opcode));
           },
       },

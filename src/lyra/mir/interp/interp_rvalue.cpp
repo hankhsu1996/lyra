@@ -276,10 +276,16 @@ auto Interpreter::EvalRvalue(
           [&](const TestPlusargsRvalueInfo& info) -> Result<RuntimeValue> {
             return EvalTestPlusargs(state, rv, info);
           },
+          [&](const FopenRvalueInfo& info) -> Result<RuntimeValue> {
+            return EvalFopen(state, info);
+          },
           [&](const SystemTfRvalueInfo& info) -> Result<RuntimeValue> {
             switch (info.opcode) {
               case SystemTfOpcode::kFopen:
-                return EvalFopen(state, rv, info);
+                throw common::InternalError(
+                    "EvalRvalue:SystemTf",
+                    "$fopen should use FopenRvalueInfo, not "
+                    "SystemTfRvalueInfo");
               case SystemTfOpcode::kFclose:
                 throw common::InternalError(
                     "EvalRvalue:SystemTf", "$fclose is an effect, not rvalue");
@@ -875,30 +881,19 @@ auto Interpreter::EvalTestPlusargs(
   return MakeIntegralSigned(0, 32);
 }
 
-auto Interpreter::EvalFopen(
-    ProcessState& state, const Rvalue& rv, const SystemTfRvalueInfo& info)
+auto Interpreter::EvalFopen(ProcessState& state, const FopenRvalueInfo& info)
     -> Result<RuntimeValue> {
-  const auto& typed_ops = info.typed_operands;
-  if (typed_ops.empty()) {
-    throw common::InternalError("EvalFopen", "missing filename operand");
-  }
-  if (typed_ops.size() > 2) {
-    throw common::InternalError(
-        "EvalFopen",
-        std::format("expected 1 or 2 operands, got {}", typed_ops.size()));
-  }
-
   // Evaluate filename and coerce to string if packed
-  auto filename_val_result = EvalOperand(state, typed_ops[0].operand);
+  auto filename_val_result = EvalOperand(state, info.filename.operand);
   if (!filename_val_result) {
     return std::unexpected(std::move(filename_val_result).error());
   }
   std::string filename = CoerceToString(*filename_val_result, "EvalFopen");
 
   int32_t result = 0;
-  if (typed_ops.size() == 2) {
+  if (info.mode) {
     // FD mode: $fopen(filename, mode)
-    auto mode_val_result = EvalOperand(state, typed_ops[1].operand);
+    auto mode_val_result = EvalOperand(state, info.mode->operand);
     if (!mode_val_result) {
       return std::unexpected(std::move(mode_val_result).error());
     }

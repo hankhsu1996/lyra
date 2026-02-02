@@ -12,7 +12,6 @@
 #include "lyra/common/system_tf.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -22,45 +21,10 @@ auto LowerSystemTfRvalue(
     Context& context, const mir::Rvalue& rvalue,
     const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
   switch (info.opcode) {
-    case SystemTfOpcode::kFopen: {
-      auto& builder = context.GetBuilder();
-      const auto& typed_ops = info.typed_operands;
-
-      if (typed_ops.empty() || typed_ops.size() > 2) {
-        throw common::InternalError(
-            "LowerSystemTfRvalue:kFopen",
-            std::format("expected 1 or 2 operands, got {}", typed_ops.size()));
-      }
-
-      llvm::Value* result = nullptr;
-
-      // Use nested WithStringHandle for filename (and optionally mode)
-      auto status = WithStringHandle(
-          context, typed_ops[0].operand, typed_ops[0].type,
-          [&](llvm::Value* filename_handle) -> Result<void> {
-            if (typed_ops.size() == 2) {
-              // FD mode: $fopen(filename, mode) - nested WithStringHandle
-              return WithStringHandle(
-                  context, typed_ops[1].operand, typed_ops[1].type,
-                  [&](llvm::Value* mode_handle) -> Result<void> {
-                    result = builder.CreateCall(
-                        context.GetLyraFopenFd(),
-                        {context.GetEnginePointer(), filename_handle,
-                         mode_handle},
-                        "fopen.fd");
-                    return {};
-                  });
-            }
-            // MCD mode: $fopen(filename)
-            result = builder.CreateCall(
-                context.GetLyraFopenMcd(),
-                {context.GetEnginePointer(), filename_handle}, "fopen.mcd");
-            return {};
-          });
-
-      if (!status) return std::unexpected(status.error());
-      return RvalueValue::TwoState(result);
-    }
+    case SystemTfOpcode::kFopen:
+      throw common::InternalError(
+          "LowerSystemTfRvalue",
+          "$fopen should use FopenRvalueInfo, not SystemTfRvalueInfo");
     case SystemTfOpcode::kFclose:
       throw common::InternalError(
           "LowerSystemTfRvalue", "$fclose is an effect, not an rvalue");

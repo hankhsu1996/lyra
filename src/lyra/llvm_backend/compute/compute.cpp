@@ -52,6 +52,43 @@ auto LowerTestPlusargsRvalue(
   return RvalueValue::TwoState(result);
 }
 
+// LowerFopenRvalue: $fopen system function
+// - MCD mode: $fopen(filename) - opens for writing, returns multi-channel desc
+// - FD mode: $fopen(filename, mode) - opens with mode, returns file descriptor
+// Uses nested WithStringHandle for automatic handle release.
+auto LowerFopenRvalue(Context& context, const mir::FopenRvalueInfo& info)
+    -> Result<RvalueValue> {
+  auto& builder = context.GetBuilder();
+
+  llvm::Value* result = nullptr;
+
+  // Use nested WithStringHandle for filename (and optionally mode)
+  auto status = WithStringHandle(
+      context, info.filename.operand, info.filename.type,
+      [&](llvm::Value* filename_handle) -> Result<void> {
+        if (info.mode) {
+          // FD mode: $fopen(filename, mode) - nested WithStringHandle
+          return WithStringHandle(
+              context, info.mode->operand, info.mode->type,
+              [&](llvm::Value* mode_handle) -> Result<void> {
+                result = builder.CreateCall(
+                    context.GetLyraFopenFd(),
+                    {context.GetEnginePointer(), filename_handle, mode_handle},
+                    "fopen.fd");
+                return {};
+              });
+        }
+        // MCD mode: $fopen(filename)
+        result = builder.CreateCall(
+            context.GetLyraFopenMcd(),
+            {context.GetEnginePointer(), filename_handle}, "fopen.mcd");
+        return {};
+      });
+
+  if (!status) return std::unexpected(status.error());
+  return RvalueValue::TwoState(result);
+}
+
 }  // namespace
 
 auto LowerRvalue(
@@ -129,6 +166,9 @@ auto LowerRvalue(
           },
           [&](const mir::TestPlusargsRvalueInfo& info) -> Result<RvalueValue> {
             return LowerTestPlusargsRvalue(context, rvalue, info);
+          },
+          [&](const mir::FopenRvalueInfo& info) -> Result<RvalueValue> {
+            return LowerFopenRvalue(context, info);
           },
           [&](const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
             return LowerSystemTfRvalue(context, rvalue, info);
