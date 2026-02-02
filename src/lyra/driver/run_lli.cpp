@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "frontend.hpp"
+#include "llvm_stats.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
@@ -126,6 +127,10 @@ auto RunLli(const CompilationInput& input) -> int {
   if (!llvm_result) {
     PrintDiagnostic(llvm_result.error(), *compilation.hir.source_manager);
     return 1;
+  }
+
+  if (input.stats_top_n >= 0) {
+    PrintLlvmStats(*llvm_result->module, input.stats_top_n);
   }
 
   std::string ir_path = CreateTempFile(".ll");
