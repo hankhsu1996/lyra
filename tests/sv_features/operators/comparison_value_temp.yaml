@@ -1,0 +1,114 @@
+feature: comparison_value_temp
+description: Comparison operators producing ValueTemp (DefineTemp) intermediates
+
+cases:
+  - name: relational_less_than
+    sv: |
+      module Test;
+        int a, b;
+        bit result;
+        initial begin
+          a = 3;
+          b = 5;
+          result = (a < b);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: relational_greater_equal
+    sv: |
+      module Test;
+        int a, b;
+        bit result;
+        initial begin
+          a = 10;
+          b = 5;
+          result = (a >= b);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: equality_equal
+    sv: |
+      module Test;
+        int a, b;
+        bit result;
+        initial begin
+          a = 42;
+          b = 42;
+          result = (a == b);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: equality_not_equal
+    sv: |
+      module Test;
+        int a, b;
+        bit result;
+        initial begin
+          a = 10;
+          b = 20;
+          result = (a != b);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: comparison_in_conditional
+    sv: |
+      module Test;
+        int a, b, c;
+        initial begin
+          a = 3;
+          b = 5;
+          c = 0;
+          if (a < b) c = 100;
+        end
+      endmodule
+    expect:
+      variables:
+        c: 100
+
+  - name: chained_comparisons
+    sv: |
+      module Test;
+        int a, b, c;
+        bit r1, r2, both;
+        initial begin
+          a = 1;
+          b = 2;
+          c = 3;
+          r1 = (a < b);
+          r2 = (b < c);
+          both = r1 & r2;
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 1
+        r2: 1
+        both: 1
+
+  - name: comparison_as_expression
+    sv: |
+      module Test;
+        int x, y;
+        int result;
+        initial begin
+          x = 10;
+          y = 5;
+          // Comparison result (1) cast to int
+          result = (x > y);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

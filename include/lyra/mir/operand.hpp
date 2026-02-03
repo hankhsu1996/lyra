@@ -8,6 +8,23 @@
 
 namespace lyra::mir {
 
+// TempKind: distinguishes SSA value temps from addressable place temps.
+// - kValue: SSA temp (no address, no storage). Defined by DefineTemp or
+// BlockParam.
+// - kPlace: Addressable temp (PlaceRoot::kTemp). Used for call returns,
+// writebacks.
+enum class TempKind {
+  kValue,  // SSA value temp - no storage, referenced via UseTemp
+  kPlace,  // Addressable temp - has storage, referenced via PlaceRoot::kTemp
+};
+
+// TempMetadata: authoritative kind/type info for a temp_id.
+// Indexed by temp_id in Function/Process::temp_metadata.
+struct TempMetadata {
+  TempKind kind = TempKind::kPlace;
+  TypeId type{};
+};
+
 // TempId: wrapper for temp_id values in UseTemp operands.
 // Distinguishes temp references from PlaceId in the variant.
 struct TempId {

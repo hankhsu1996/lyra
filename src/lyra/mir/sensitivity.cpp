@@ -149,6 +149,7 @@ void CollectFromStatement(
               CollectFromOperand(arg, arena, seen);
             }
           },
+          [&](const DefineTemp& dt) { CollectFromRhs(dt.rhs, arena, seen); },
       },
       stmt.data);
 }
@@ -159,11 +160,17 @@ void CollectFromTerminator(
   std::visit(
       common::Overloaded{
           [&](const Branch& branch) {
-            CollectFromPlace(arena[branch.condition], arena, seen);
+            CollectFromOperand(branch.condition, arena, seen);
+          },
+          [&](const Switch& sw) {
+            CollectFromOperand(sw.selector, arena, seen);
+          },
+          [&](const QualifiedDispatch& qd) {
+            for (const auto& cond : qd.conditions) {
+              CollectFromOperand(cond, arena, seen);
+            }
           },
           [](const Jump&) {},
-          [](const Switch&) {},
-          [](const QualifiedDispatch&) {},
           [](const Delay&) {},
           [](const Wait&) {},
           [](const Return&) {},

@@ -88,7 +88,7 @@ auto Interpreter::RunFunction(
 
   // Use function's metadata for storage allocation
   const auto& local_types = func.local_types;
-  const auto& temp_types = func.temp_types;
+  const auto& temp_metadata = func.temp_metadata;
 
   // Initialize locals with default values
   std::vector<RuntimeValue> locals;
@@ -98,12 +98,12 @@ auto Interpreter::RunFunction(
         type_id ? CreateDefaultValue(*types_, type_id) : RuntimeValue{});
   }
 
-  // Initialize temps with default values
+  // Initialize temps with default values from temp_metadata
   std::vector<RuntimeValue> temps;
-  temps.reserve(temp_types.size());
-  for (TypeId type_id : temp_types) {
+  temps.reserve(temp_metadata.size());
+  for (const auto& meta : temp_metadata) {
     temps.push_back(
-        type_id ? CreateDefaultValue(*types_, type_id) : RuntimeValue{});
+        meta.type ? CreateDefaultValue(*types_, meta.type) : RuntimeValue{});
   }
 
   // Copy arguments to parameter locals using explicit slot mapping
@@ -1227,6 +1227,23 @@ auto Interpreter::ExecStatement(ProcessState& state, const Statement& stmt)
           if (!result) {
             error = std::move(result).error();
           }
+        } else if constexpr (std::is_same_v<T, DefineTemp>) {
+          // DefineTemp: evaluate RHS and bind to temp_id
+          auto value_result = std::visit(
+              common::Overloaded{
+                  [&](const Operand& operand) -> Result<RuntimeValue> {
+                    return EvalOperand(state, operand);
+                  },
+                  [&](const Rvalue& rvalue) -> Result<RuntimeValue> {
+                    return EvalRvalue(state, rvalue, i.type);
+                  },
+              },
+              i.rhs);
+          if (!value_result) {
+            error = std::move(value_result).error();
+          } else {
+            state.frame.GetTemp(i.temp_id) = std::move(*value_result);
+          }
         } else {
           // Non-blocking assignments require the LLVM backend runtime
           if (diag_ctx_ != nullptr) {
@@ -1298,7 +1315,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
           },
 
           [&](const Branch& t) -> ResultType {
-            auto cond_result = ReadPlace(state, t.condition);
+            auto cond_result = EvalOperand(state, t.condition);
             if (!cond_result) {
               return std::unexpected(std::move(cond_result).error());
             }
@@ -1336,7 +1353,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
               throw common::InternalError(
                   "ExecTerminator", "switch terminator has no targets");
             }
-            auto selector_result = ReadPlace(state, t.selector);
+            auto selector_result = EvalOperand(state, t.selector);
             if (!selector_result) {
               return std::unexpected(std::move(selector_result).error());
             }
@@ -1371,11 +1388,11 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
 
             std::ostream& out = output_ != nullptr ? *output_ : std::cout;
 
-            // Read all condition values and count how many are true
+            // Evaluate all condition values and count how many are true
             size_t first_true_index = t.conditions.size();  // sentinel
             size_t true_count = 0;
             for (size_t i = 0; i < t.conditions.size(); ++i) {
-              auto cond_result = ReadPlace(state, t.conditions[i]);
+              auto cond_result = EvalOperand(state, t.conditions[i]);
               if (!cond_result) {
                 return std::unexpected(std::move(cond_result).error());
               }

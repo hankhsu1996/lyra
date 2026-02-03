@@ -191,8 +191,8 @@ auto MirBuilder::CreateBlockWithParams(std::vector<TypeId> param_types)
   std::vector<int> temp_ids;
   temp_ids.reserve(param_types.size());
   for (TypeId ty : param_types) {
-    int temp_id = ctx_->next_temp_id++;
-    ctx_->temp_types.push_back(ty);
+    // Use AllocValueTemp to properly record in temp_metadata
+    int temp_id = ctx_->AllocValueTemp(ty);
     blocks_[idx.value].params.push_back(
         mir::BlockParam{
             .temp_id = temp_id,
@@ -244,6 +244,22 @@ auto MirBuilder::EmitTempAssign(TypeId type, mir::Operand source)
   mir::PlaceId temp = ctx_->AllocTemp(type);
   EmitAssign(temp, source);
   return temp;
+}
+
+auto MirBuilder::EmitValueTemp(TypeId type, mir::Rvalue value) -> mir::Operand {
+  VerifyRvalueInvariants(value);
+  int temp_id = ctx_->AllocValueTemp(type);
+  EmitInst(
+      mir::DefineTemp{
+          .temp_id = temp_id, .type = type, .rhs = std::move(value)});
+  return mir::Operand::UseTemp(temp_id);
+}
+
+auto MirBuilder::EmitValueTempAssign(TypeId type, mir::Operand source)
+    -> mir::Operand {
+  int temp_id = ctx_->AllocValueTemp(type);
+  EmitInst(mir::DefineTemp{.temp_id = temp_id, .type = type, .rhs = source});
+  return mir::Operand::UseTemp(temp_id);
 }
 
 auto MirBuilder::EmitCall(
@@ -361,6 +377,8 @@ auto MirBuilder::EmitUnary(
       .operands = {std::move(operand)},
       .info = mir::UnaryRvalueInfo{.op = op},
   };
+  // Use PlaceTemp for expression intermediates - they may be used as bases
+  // for projections which require addressable storage.
   return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
 }
 
@@ -371,6 +389,8 @@ auto MirBuilder::EmitBinary(
       .operands = {std::move(lhs), std::move(rhs)},
       .info = mir::BinaryRvalueInfo{.op = op},
   };
+  // Use PlaceTemp for expression intermediates - they may be used as bases
+  // for projections which require addressable storage.
   return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
 }
 
@@ -386,6 +406,8 @@ auto MirBuilder::EmitCast(
           mir::CastRvalueInfo{
               .source_type = source_type, .target_type = target_type},
   };
+  // Use PlaceTemp for expression intermediates - they may be used as bases
+  // for projections which require addressable storage.
   return mir::Operand::Use(EmitTemp(target_type, std::move(rvalue)));
 }
 
@@ -400,6 +422,7 @@ auto MirBuilder::EmitIndexValidity(
               .upper_bound = upper,
               .check_known = check_known},
   };
+  // Use PlaceTemp - validity results feed into control flow decisions
   return mir::Operand::Use(EmitTemp(ctx_->GetBitType(), std::move(rvalue)));
 }
 
@@ -411,6 +434,7 @@ auto MirBuilder::EmitGuardedUse(
       .info =
           mir::GuardedUseRvalueInfo{.place = place, .result_type = result_type},
   };
+  // Use PlaceTemp for guarded reads - may be used as bases for projections
   return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
 }
 
@@ -543,7 +567,7 @@ void MirBuilder::EmitPriorityChain(
 
 void MirBuilder::EmitUniqueDispatch(
     mir::DispatchQualifier qualifier, mir::DispatchStatementKind statement_kind,
-    const std::vector<mir::PlaceId>& conditions,
+    const std::vector<mir::Operand>& conditions,
     const std::vector<std::function<void()>>& bodies,
     std::function<void()> else_body, bool has_else) {
   // Create body blocks + else block
@@ -679,14 +703,15 @@ void MirBuilder::EmitJump(BlockIndex target, std::vector<mir::Operand> args) {
 void MirBuilder::EmitBranch(
     mir::Operand cond, BlockIndex then_bb, std::vector<mir::Operand> then_args,
     BlockIndex else_bb, std::vector<mir::Operand> else_args) {
-  if (cond.kind != mir::Operand::Kind::kUse) {
+  // Condition can be Use (place) or UseTemp (value temp)
+  if (cond.kind != mir::Operand::Kind::kUse &&
+      cond.kind != mir::Operand::Kind::kUseTemp) {
     throw common::InternalError(
-        "EmitBranch", "branch condition must be a Use operand");
+        "EmitBranch", "branch condition must be a Use or UseTemp operand");
   }
-  auto cond_place = std::get<mir::PlaceId>(cond.payload);
   EmitTerm(
       mir::Branch{
-          .condition = cond_place,
+          .condition = std::move(cond),
           .then_target = mir::BasicBlockId{then_bb.value},
           .then_args = std::move(then_args),
           .else_target = mir::BasicBlockId{else_bb.value},
@@ -701,7 +726,7 @@ void MirBuilder::EmitBranch(
 
 void MirBuilder::EmitQualifiedDispatch(
     mir::DispatchQualifier qualifier, mir::DispatchStatementKind statement_kind,
-    const std::vector<mir::PlaceId>& conditions,
+    const std::vector<mir::Operand>& conditions,
     const std::vector<BlockIndex>& targets, bool has_else) {
   // Validate invariant: targets = one per condition + else fallthrough
   if (targets.size() != conditions.size() + 1) {

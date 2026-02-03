@@ -1,5 +1,8 @@
 #pragma once
 
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
@@ -24,6 +27,27 @@ struct RvalueValue {
   }
   [[nodiscard]] auto IsFourState() const -> bool {
     return unknown != nullptr;
+  }
+
+  // Pack this RvalueValue into a single llvm::Value* suitable for temp binding.
+  // For 2-state: returns value directly.
+  // For 4-state: returns a {value, unknown} struct.
+  //
+  // This is the canonical representation for ValueTemps. Using this method
+  // ensures consistent packing across all sites that bind temps.
+  [[nodiscard]] auto PackForTemp(llvm::IRBuilder<>& builder) const
+      -> llvm::Value* {
+    if (!IsFourState()) {
+      return value;
+    }
+    // Pack into {value, unknown} struct
+    llvm::Type* val_ty = value->getType();
+    auto* struct_ty =
+        llvm::StructType::get(val_ty->getContext(), {val_ty, val_ty});
+    llvm::Value* packed = llvm::UndefValue::get(struct_ty);
+    packed = builder.CreateInsertValue(packed, value, 0);
+    packed = builder.CreateInsertValue(packed, unknown, 1);
+    return packed;
   }
 };
 

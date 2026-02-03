@@ -42,6 +42,7 @@ auto MakeDesignContext(
       .next_temp_id = 0,
       .local_types = {},
       .temp_types = {},
+      .temp_metadata = {},
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = &decls.functions,
       .return_slot = std::nullopt,
@@ -75,6 +76,7 @@ auto CreateConnectionProcess(
       .kind = mir::ProcessKind::kLooping,
       .entry = mir::BasicBlockId{entry_idx.value},
       .blocks = blocks,
+      .temp_metadata = {},
   };
   auto triggers = mir::CollectSensitivity(temp_process, mir_arena);
 
@@ -93,6 +95,7 @@ auto CreateConnectionProcess(
           .kind = mir::ProcessKind::kLooping,
           .entry = mir::BasicBlockId{entry_idx.value},
           .blocks = std::move(blocks),
+          .temp_metadata = std::move(ctx.temp_metadata),
       });
 }
 

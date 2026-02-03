@@ -640,13 +640,27 @@ auto CollectProcessPlaces(const mir::Process& process)
                   CollectPlaceFromOperand(arg, places);
                 }
               },
+              [&](const mir::DefineTemp& dt) {
+                // DefineTemp doesn't create place storage; only visit RHS
+                CollectPlacesFromRhs(dt.rhs, places);
+              },
           },
           instr.data);
     }
 
     std::visit(
         common::Overloaded{
-            [&](const mir::Branch& b) { places.insert(b.condition); },
+            [&](const mir::Branch& b) {
+              CollectPlaceFromOperand(b.condition, places);
+            },
+            [&](const mir::Switch& s) {
+              CollectPlaceFromOperand(s.selector, places);
+            },
+            [&](const mir::QualifiedDispatch& qd) {
+              for (const auto& cond : qd.conditions) {
+                CollectPlaceFromOperand(cond, places);
+              }
+            },
             [](const auto&) {},
         },
         block.terminator.data);

@@ -172,6 +172,19 @@ auto IsRelationalOp(hir::BinaryOp op) -> bool {
          op == BO::kGreaterThan || op == BO::kGreaterThanEqual;
 }
 
+auto IsEqualityOp(hir::BinaryOp op) -> bool {
+  using BO = hir::BinaryOp;
+  return op == BO::kEqual || op == BO::kNotEqual || op == BO::kCaseEqual ||
+         op == BO::kCaseNotEqual || op == BO::kWildcardEqual ||
+         op == BO::kWildcardNotEqual;
+}
+
+// Returns true for all comparison operators (relational + equality).
+// Results are single-bit values that cannot be projection bases.
+auto IsComparisonOp(hir::BinaryOp op) -> bool {
+  return IsRelationalOp(op) || IsEqualityOp(op);
+}
+
 auto IsDivisionOrModuloOp(hir::BinaryOp op) -> bool {
   using BO = hir::BinaryOp;
   return op == BO::kDivide || op == BO::kMod;
@@ -446,6 +459,11 @@ auto LowerBinary(
       .info = mir::BinaryRvalueInfo{.op = mir_op},
   };
 
+  // Use ValueTemp for comparison results - single-bit values that cannot be
+  // projection bases.
+  if (IsComparisonOp(data.op)) {
+    return builder.EmitValueTemp(expr.type, std::move(rvalue));
+  }
   mir::PlaceId temp_id = builder.EmitTemp(expr.type, std::move(rvalue));
   return mir::Operand::Use(temp_id);
 }
@@ -1334,13 +1352,26 @@ auto LowerBuiltinMethodCall(
 }
 
 // Get the base place from an operand, materializing to temp if needed.
+// This handles:
+// - kUse (PlaceId): return the place directly
+// - kConst: materialize to a PlaceTemp
+// UseTemp is NOT supported here - expressions that may be used as bases for
+// projections must emit PlaceTemps, not ValueTemps. This invariant is enforced
+// at lowering time by using EmitTemp for expression intermediates.
 auto GetOrMaterializePlace(
     mir::Operand& operand, TypeId type, MirBuilder& builder) -> mir::PlaceId {
   if (operand.kind == mir::Operand::Kind::kUse) {
     return std::get<mir::PlaceId>(operand.payload);
   }
   if (operand.kind == mir::Operand::Kind::kConst) {
+    // Materialize constant to a PlaceTemp for projection
     return builder.EmitTempAssign(type, operand);
+  }
+  if (operand.kind == mir::Operand::Kind::kUseTemp) {
+    throw common::InternalError(
+        "GetOrMaterializePlace",
+        "UseTemp cannot be used as base for projection; expression lowering "
+        "should have emitted PlaceTemp for this intermediate");
   }
   throw common::InternalError(
       "GetOrMaterializePlace", "unexpected operand kind");

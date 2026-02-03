@@ -51,6 +51,11 @@ class MirBuilder {
   auto EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId;
   auto EmitTempAssign(TypeId type, mir::Operand source) -> mir::PlaceId;
 
+  // Emit DefineTemp statement and return UseTemp operand.
+  // For expression intermediates - no alloca, no storage.
+  auto EmitValueTemp(TypeId type, mir::Rvalue value) -> mir::Operand;
+  auto EmitValueTempAssign(TypeId type, mir::Operand source) -> mir::Operand;
+
   // Emit a Call instruction for user function invocation.
   // If return_type is void, dest is nullopt. Otherwise allocates temp.
   // Returns Use of result place, or Poison for void calls.
@@ -150,7 +155,7 @@ class MirBuilder {
   void EmitUniqueDispatch(
       mir::DispatchQualifier qualifier,
       mir::DispatchStatementKind statement_kind,
-      const std::vector<mir::PlaceId>& conditions,
+      const std::vector<mir::Operand>& conditions,
       const std::vector<std::function<void()>>& bodies,
       std::function<void()> else_body, bool has_else);
 
@@ -194,7 +199,7 @@ class MirBuilder {
   void EmitQualifiedDispatch(
       mir::DispatchQualifier qualifier,
       mir::DispatchStatementKind statement_kind,
-      const std::vector<mir::PlaceId>& conditions,
+      const std::vector<mir::Operand>& conditions,
       const std::vector<BlockIndex>& targets, bool has_else);
   void EmitReturn(mir::Operand value);
   void EmitRepeat();

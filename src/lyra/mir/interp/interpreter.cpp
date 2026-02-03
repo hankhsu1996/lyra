@@ -244,6 +244,18 @@ struct StorageCollector {
                 Visit(arg, arena);
               }
             },
+            [&](const DefineTemp& dt) {
+              // DefineTemp defines a ValueTemp - ensure it's in temp_types
+              auto idx = static_cast<size_t>(dt.temp_id);
+              if (idx >= temp_types.size()) {
+                temp_types.resize(idx + 1, kInvalidTypeId);
+              }
+              if (!temp_types[idx]) {
+                temp_types[idx] = dt.type;
+              }
+              // Visit RHS operands
+              Visit(dt.rhs, arena);
+            },
         },
         stmt.data);
   }
@@ -271,7 +283,7 @@ struct StorageCollector {
               }
             },
             [&](const Branch& t) {
-              Visit(arena[t.condition], arena);
+              Visit(t.condition, arena);
               for (const auto& arg : t.then_args) {
                 Visit(arg, arena);
               }
@@ -279,10 +291,10 @@ struct StorageCollector {
                 Visit(arg, arena);
               }
             },
-            [&](const Switch& t) { Visit(arena[t.selector], arena); },
+            [&](const Switch& t) { Visit(t.selector, arena); },
             [&](const QualifiedDispatch& t) {
-              for (PlaceId cond : t.conditions) {
-                Visit(arena[cond], arena);
+              for (const auto& cond : t.conditions) {
+                Visit(cond, arena);
               }
             },
             [](const Delay&) {},

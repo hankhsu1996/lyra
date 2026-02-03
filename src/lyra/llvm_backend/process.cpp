@@ -190,22 +190,17 @@ void VerifyLlvmFunction(llvm::Function* func, const char* caller) {
   }
 }
 
-auto LoadConditionAsI1(Context& context, mir::PlaceId place_id)
+auto LoadConditionAsI1(Context& context, const mir::Operand& operand)
     -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
-  auto cond_ptr_or_err = context.GetPlacePointer(place_id);
-  if (!cond_ptr_or_err) return std::unexpected(cond_ptr_or_err.error());
-  llvm::Value* cond_ptr = *cond_ptr_or_err;
-
-  auto cond_type_or_err = context.GetPlaceLlvmType(place_id);
-  if (!cond_type_or_err) return std::unexpected(cond_type_or_err.error());
-  llvm::Type* cond_type = *cond_type_or_err;
-
-  llvm::Value* cond_val = builder.CreateLoad(cond_type, cond_ptr, "cond");
+  // Lower the operand to get the condition value
+  auto cond_val_or_err = LowerOperandRaw(context, operand);
+  if (!cond_val_or_err) return std::unexpected(cond_val_or_err.error());
+  llvm::Value* cond_val = *cond_val_or_err;
 
   // 4-state struct: extract known-true bits (a & ~b)
-  if (cond_type->isStructTy()) {
+  if (cond_val->getType()->isStructTy()) {
     auto* a = builder.CreateExtractValue(cond_val, 0, "cond.a");
     auto* b = builder.CreateExtractValue(cond_val, 1, "cond.b");
     auto* not_b = builder.CreateNot(b, "cond.notb");
@@ -483,8 +478,8 @@ auto LowerQualifiedDispatch(
   // Load all conditions as i1
   std::vector<llvm::Value*> conds;
   conds.reserve(dispatch.conditions.size());
-  for (auto place_id : dispatch.conditions) {
-    auto cond_or_err = LoadConditionAsI1(context, place_id);
+  for (const auto& cond_op : dispatch.conditions) {
+    auto cond_or_err = LoadConditionAsI1(context, cond_op);
     if (!cond_or_err) return std::unexpected(cond_or_err.error());
     conds.push_back(*cond_or_err);
   }
@@ -997,6 +992,10 @@ struct PlaceCollector {
                 for (const auto& arg : data.args) {
                   CollectFromOperand(arg, arena);
                 }
+              } else if constexpr (std::is_same_v<T, mir::DefineTemp>) {
+                // DefineTemp doesn't create place storage; only visit RHS
+                // operands
+                CollectFromRhs(data.rhs, arena);
               }
             },
             inst.data);
@@ -1011,8 +1010,8 @@ struct PlaceCollector {
                 CollectFromOperand(arg, arena);
               }
             } else if constexpr (std::is_same_v<T, mir::Branch>) {
-              // Branch::condition is PlaceId
-              CollectFromPlace(term.condition, arena);
+              // Branch::condition is Operand
+              CollectFromOperand(term.condition, arena);
               // Branch edge args for block params
               for (const auto& arg : term.then_args) {
                 CollectFromOperand(arg, arena);
@@ -1025,10 +1024,13 @@ struct PlaceCollector {
               if (term.value.has_value()) {
                 CollectFromOperand(*term.value, arena);
               }
+            } else if constexpr (std::is_same_v<T, mir::Switch>) {
+              // Switch::selector is Operand
+              CollectFromOperand(term.selector, arena);
             } else if constexpr (std::is_same_v<T, mir::QualifiedDispatch>) {
-              // QualifiedDispatch::conditions is vector<PlaceId>
-              for (auto cond : term.conditions) {
-                CollectFromPlace(cond, arena);
+              // QualifiedDispatch::conditions is vector<Operand>
+              for (const auto& cond : term.conditions) {
+                CollectFromOperand(cond, arena);
               }
             }
           },

@@ -7,6 +7,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/operand.hpp"
 
 namespace lyra::mir {
 
@@ -25,6 +26,10 @@ struct Process {
   std::vector<BasicBlock> blocks;  // Direct ownership
   common::OriginId origin = common::OriginId::Invalid();  // Source location
   uint32_t owner_instance_id = UINT32_MAX;  // Index into Design::instance_table
+
+  // Authoritative temp metadata (indexed by temp_id).
+  // Contains kind (kValue vs kPlace) and type for each temp.
+  std::vector<TempMetadata> temp_metadata;
 };
 
 enum class PassingKind {
@@ -73,7 +78,11 @@ struct Function {
 
   // Storage metadata (for interpreter frame allocation)
   std::vector<TypeId> local_types;  // Types for each local slot
-  std::vector<TypeId> temp_types;   // Types for each temp slot
+  std::vector<TypeId> temp_types;   // Types for each temp slot (deprecated)
+
+  // Authoritative temp metadata (indexed by temp_id).
+  // Contains kind (kValue vs kPlace) and type for each temp.
+  std::vector<TempMetadata> temp_metadata;
 
   // Explicit parameter-to-local mapping.
   // param_local_slots[i] = local slot index for parameter i.

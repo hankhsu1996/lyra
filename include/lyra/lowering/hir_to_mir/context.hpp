@@ -9,6 +9,7 @@
 #include "lyra/hir/arena.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/operand.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -96,7 +97,11 @@ struct Context {
   // Storage type tables - populated during allocation, not post-collection.
   // These grow as locals/temps are allocated.
   std::vector<TypeId> local_types;
-  std::vector<TypeId> temp_types;
+  std::vector<TypeId> temp_types;  // deprecated: use temp_metadata instead
+
+  // Authoritative temp metadata (indexed by temp_id).
+  // Built during lowering, persisted to MIR Function/Process at finalization.
+  std::vector<mir::TempMetadata> temp_metadata;
 
   BuiltinTypes builtin_types;
 
@@ -116,6 +121,10 @@ struct Context {
 
   auto AllocLocal(SymbolId sym, TypeId type) -> LocalAllocation;
   auto AllocTemp(TypeId type) -> mir::PlaceId;
+
+  // Allocate a ValueTemp (SSA value, no storage).
+  // Returns the temp_id to use with UseTemp operand.
+  auto AllocValueTemp(TypeId type) -> int;
 
   // Throws InternalError if symbol not found (compiler bug, not user error).
   auto LookupPlace(SymbolId sym) const -> mir::PlaceId;
