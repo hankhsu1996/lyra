@@ -160,15 +160,22 @@ auto LowerElementAccessLvalue(
     throw common::InternalError(
         "LowerElementAccessLvalue", "base is not an array or queue");
   }
-  if (index_operand.kind != mir::Operand::Kind::kConst &&
-      index_operand.kind != mir::Operand::Kind::kUse) {
-    throw common::InternalError(
-        "LowerElementAccessLvalue", "index operand must be Const or Use");
-  }
 
+  // Normalize the index (may create ValueTemp via EmitCast/EmitBinary)
   const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
   index_operand = NormalizeUnpackedIndex(
       index_operand, index_expr.type, base_type, builder);
+
+  // Materialize UseTemp to PlaceTemp if needed - IndexProjection currently
+  // requires addressable operand (Const or Use) in the MIR shape for LLVM
+  // lowering. TODO: Relax this constraint to accept UseTemp directly and lower
+  // as a GEP value index.
+  if (index_operand.kind == mir::Operand::Kind::kUseTemp) {
+    TypeId offset_type = ctx.GetOffsetType();
+    mir::PlaceId index_place =
+        builder.MaterializeToPlace(offset_type, index_operand);
+    index_operand = mir::Operand::Use(index_place);
+  }
 
   common::OriginId origin = builder.RecordProjectionOrigin(expr_id);
   mir::Projection proj{

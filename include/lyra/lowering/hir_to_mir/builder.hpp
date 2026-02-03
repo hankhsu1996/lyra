@@ -56,6 +56,14 @@ class MirBuilder {
   auto EmitValueTemp(TypeId type, mir::Rvalue value) -> mir::Operand;
   auto EmitValueTempAssign(TypeId type, mir::Operand source) -> mir::Operand;
 
+  // Materialize a ValueTemp (or any Operand) to a PlaceTemp with storage.
+  // - Allocates a new PlaceTemp (TempKind::kPlace)
+  // - Emits Assign statement that writes value into it
+  // - Returns PlaceId referencing that PlaceTemp
+  // Use for materializing ValueTemps when they need to be used as projection
+  // bases.
+  auto MaterializeToPlace(TypeId type, mir::Operand value) -> mir::PlaceId;
+
   // Emit a Call instruction for user function invocation.
   // If return_type is void, dest is nullopt. Otherwise allocates temp.
   // Returns Use of result place, or Poison for void calls.

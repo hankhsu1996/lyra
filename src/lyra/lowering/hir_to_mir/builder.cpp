@@ -262,6 +262,13 @@ auto MirBuilder::EmitValueTempAssign(TypeId type, mir::Operand source)
   return mir::Operand::UseTemp(temp_id);
 }
 
+auto MirBuilder::MaterializeToPlace(TypeId type, mir::Operand value)
+    -> mir::PlaceId {
+  mir::PlaceId place = ctx_->AllocTemp(type);
+  EmitAssign(place, std::move(value));
+  return place;
+}
+
 auto MirBuilder::EmitCall(
     mir::FunctionId callee, std::vector<mir::Operand> args, TypeId return_type)
     -> mir::Operand {
@@ -377,9 +384,7 @@ auto MirBuilder::EmitUnary(
       .operands = {std::move(operand)},
       .info = mir::UnaryRvalueInfo{.op = op},
   };
-  // Use PlaceTemp for expression intermediates - they may be used as bases
-  // for projections which require addressable storage.
-  return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
+  return EmitValueTemp(result_type, std::move(rvalue));
 }
 
 auto MirBuilder::EmitBinary(
@@ -389,9 +394,7 @@ auto MirBuilder::EmitBinary(
       .operands = {std::move(lhs), std::move(rhs)},
       .info = mir::BinaryRvalueInfo{.op = op},
   };
-  // Use PlaceTemp for expression intermediates - they may be used as bases
-  // for projections which require addressable storage.
-  return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
+  return EmitValueTemp(result_type, std::move(rvalue));
 }
 
 auto MirBuilder::EmitCast(
@@ -406,9 +409,7 @@ auto MirBuilder::EmitCast(
           mir::CastRvalueInfo{
               .source_type = source_type, .target_type = target_type},
   };
-  // Use PlaceTemp for expression intermediates - they may be used as bases
-  // for projections which require addressable storage.
-  return mir::Operand::Use(EmitTemp(target_type, std::move(rvalue)));
+  return EmitValueTemp(target_type, std::move(rvalue));
 }
 
 auto MirBuilder::EmitIndexValidity(
@@ -422,8 +423,7 @@ auto MirBuilder::EmitIndexValidity(
               .upper_bound = upper,
               .check_known = check_known},
   };
-  // Use PlaceTemp - validity results feed into control flow decisions
-  return mir::Operand::Use(EmitTemp(ctx_->GetBitType(), std::move(rvalue)));
+  return EmitValueTemp(ctx_->GetBitType(), std::move(rvalue));
 }
 
 auto MirBuilder::EmitGuardedUse(

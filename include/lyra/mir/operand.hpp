@@ -2,6 +2,7 @@
 
 #include <variant>
 
+#include "absl/hash/hash.h"
 #include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
@@ -29,6 +30,13 @@ struct TempMetadata {
 // Distinguishes temp references from PlaceId in the variant.
 struct TempId {
   int value;
+
+  auto operator==(const TempId& other) const -> bool = default;
+
+  template <typename H>
+  friend auto AbslHashValue(H h, TempId id) -> H {
+    return H::combine(std::move(h), id.value);
+  }
 };
 
 using OperandPayload = std::variant<Constant, PlaceId, TempId>;

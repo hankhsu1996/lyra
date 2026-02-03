@@ -172,19 +172,6 @@ auto IsRelationalOp(hir::BinaryOp op) -> bool {
          op == BO::kGreaterThan || op == BO::kGreaterThanEqual;
 }
 
-auto IsEqualityOp(hir::BinaryOp op) -> bool {
-  using BO = hir::BinaryOp;
-  return op == BO::kEqual || op == BO::kNotEqual || op == BO::kCaseEqual ||
-         op == BO::kCaseNotEqual || op == BO::kWildcardEqual ||
-         op == BO::kWildcardNotEqual;
-}
-
-// Returns true for all comparison operators (relational + equality).
-// Results are single-bit values that cannot be projection bases.
-auto IsComparisonOp(hir::BinaryOp op) -> bool {
-  return IsRelationalOp(op) || IsEqualityOp(op);
-}
-
 auto IsDivisionOrModuloOp(hir::BinaryOp op) -> bool {
   using BO = hir::BinaryOp;
   return op == BO::kDivide || op == BO::kMod;
@@ -454,18 +441,7 @@ auto LowerBinary(
   };
   mir::BinaryOp mir_op = select_mir_op();
 
-  mir::Rvalue rvalue{
-      .operands = {lhs, rhs},
-      .info = mir::BinaryRvalueInfo{.op = mir_op},
-  };
-
-  // Use ValueTemp for comparison results - single-bit values that cannot be
-  // projection bases.
-  if (IsComparisonOp(data.op)) {
-    return builder.EmitValueTemp(expr.type, std::move(rvalue));
-  }
-  mir::PlaceId temp_id = builder.EmitTemp(expr.type, std::move(rvalue));
-  return mir::Operand::Use(temp_id);
+  return builder.EmitBinary(mir_op, lhs, rhs, expr.type);
 }
 
 auto LowerCast(
@@ -1355,9 +1331,7 @@ auto LowerBuiltinMethodCall(
 // This handles:
 // - kUse (PlaceId): return the place directly
 // - kConst: materialize to a PlaceTemp
-// UseTemp is NOT supported here - expressions that may be used as bases for
-// projections must emit PlaceTemps, not ValueTemps. This invariant is enforced
-// at lowering time by using EmitTemp for expression intermediates.
+// - kUseTemp (ValueTemp): materialize to PlaceTemp
 auto GetOrMaterializePlace(
     mir::Operand& operand, TypeId type, MirBuilder& builder) -> mir::PlaceId {
   if (operand.kind == mir::Operand::Kind::kUse) {
@@ -1365,13 +1339,11 @@ auto GetOrMaterializePlace(
   }
   if (operand.kind == mir::Operand::Kind::kConst) {
     // Materialize constant to a PlaceTemp for projection
-    return builder.EmitTempAssign(type, operand);
+    return builder.MaterializeToPlace(type, operand);
   }
   if (operand.kind == mir::Operand::Kind::kUseTemp) {
-    throw common::InternalError(
-        "GetOrMaterializePlace",
-        "UseTemp cannot be used as base for projection; expression lowering "
-        "should have emitted PlaceTemp for this intermediate");
+    // Materialize ValueTemp to PlaceTemp for projection
+    return builder.MaterializeToPlace(type, operand);
   }
   throw common::InternalError(
       "GetOrMaterializePlace", "unexpected operand kind");
@@ -1489,7 +1461,7 @@ auto LowerPackedElementSelect(
   auto [offset, valid] = EmitPackedElementOffset(
       index_operand, index_expr.type, base_type, builder);
 
-  // Get base as Place
+  // Get base as Place (materialize ValueTemp if needed)
   mir::PlaceId base_place =
       GetOrMaterializePlace(base_operand, base_expr.type, builder);
 
@@ -1528,7 +1500,7 @@ auto LowerBitSelect(
   auto [offset, valid] =
       EmitBitSelectOffset(index_operand, index_expr.type, base_type, builder);
 
-  // Get base as Place
+  // Get base as Place (materialize ValueTemp if needed)
   mir::PlaceId base_place =
       GetOrMaterializePlace(base_operand, base_expr.type, builder);
 
@@ -1594,7 +1566,7 @@ auto LowerRangeSelect(
   mir::Operand offset =
       mir::Operand::Const(MakeIntegralConst(bit_offset, ctx.GetOffsetType()));
 
-  // Get base as Place
+  // Get base as Place (materialize ValueTemp if needed)
   mir::PlaceId base_place =
       GetOrMaterializePlace(base_operand, base_expr.type, builder);
 
@@ -1754,7 +1726,7 @@ auto LowerIndexedPartSelect(
       index_operand, index_expr.type, base_type, data.width, data.ascending,
       builder);
 
-  // Get base as Place
+  // Get base as Place (materialize ValueTemp if needed)
   mir::PlaceId base_place =
       GetOrMaterializePlace(base_operand, base_expr.type, builder);
 
@@ -1787,7 +1759,7 @@ auto LowerPackedFieldAccess(
   mir::Operand offset = mir::Operand::Const(
       MakeIntegralConst(data.bit_offset, ctx.GetOffsetType()));
 
-  // Get base as Place
+  // Get base as Place (materialize ValueTemp if needed)
   mir::PlaceId base_place =
       GetOrMaterializePlace(base_operand, base_expr.type, builder);
 
@@ -1926,6 +1898,17 @@ auto LowerElementAccessRvalue(
   const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
   index_operand = NormalizeUnpackedIndex(
       index_operand, index_expr.type, base_type, builder);
+
+  // Materialize UseTemp to PlaceTemp if needed - IndexProjection currently
+  // requires addressable operand (Const or Use) in the MIR shape for LLVM
+  // lowering. TODO: Relax this constraint to accept UseTemp directly and lower
+  // as a GEP value index.
+  if (index_operand.kind == mir::Operand::Kind::kUseTemp) {
+    TypeId offset_type = ctx.GetOffsetType();
+    mir::PlaceId index_place =
+        builder.MaterializeToPlace(offset_type, index_operand);
+    index_operand = mir::Operand::Use(index_place);
+  }
 
   mir::Projection proj{
       .info = mir::IndexProjection{.index = index_operand},
