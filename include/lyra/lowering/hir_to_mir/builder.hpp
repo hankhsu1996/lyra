@@ -48,21 +48,24 @@ class MirBuilder {
   void EmitAssign(mir::PlaceId target, mir::Operand source);
   void EmitAssign(mir::PlaceId target, mir::Rvalue value);
   void EmitEffect(mir::EffectOp op);
-  auto EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId;
-  auto EmitTempAssign(TypeId type, mir::Operand source) -> mir::PlaceId;
+
+  // Allocate PlaceTemp from Rvalue and emit Assign to initialize.
+  auto EmitPlaceTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId;
 
   // Emit DefineTemp statement and return UseTemp operand.
   // For expression intermediates - no alloca, no storage.
   auto EmitValueTemp(TypeId type, mir::Rvalue value) -> mir::Operand;
   auto EmitValueTempAssign(TypeId type, mir::Operand source) -> mir::Operand;
 
-  // Materialize a ValueTemp (or any Operand) to a PlaceTemp with storage.
-  // - Allocates a new PlaceTemp (TempKind::kPlace)
-  // - Emits Assign statement that writes value into it
-  // - Returns PlaceId referencing that PlaceTemp
-  // Use for materializing ValueTemps when they need to be used as projection
-  // bases.
-  auto MaterializeToPlace(TypeId type, mir::Operand value) -> mir::PlaceId;
+  // Allocate PlaceTemp from Operand. ALWAYS allocates - no caching.
+  auto MaterializeOperandToPlace(TypeId type, mir::Operand value)
+      -> mir::PlaceId;
+
+  // Return existing PlaceId if kUse, otherwise materialize to new PlaceTemp.
+  // kUse: returns place directly (caller ensures type matches base place type)
+  // kConst/kUseTemp: allocates fresh PlaceTemp (no caching)
+  auto MaterializeIfNeededToPlace(TypeId type, mir::Operand operand)
+      -> mir::PlaceId;
 
   // Emit a Call instruction for user function invocation.
   // If return_type is void, dest is nullopt. Otherwise allocates temp.

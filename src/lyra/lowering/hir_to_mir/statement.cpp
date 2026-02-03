@@ -411,7 +411,7 @@ auto LowerSFormatEffect(
 
   // Get string type from the output expression (output is always a string)
   const hir::Expression& out_expr = (*ctx.hir_arena)[*data.output];
-  mir::PlaceId tmp = builder.EmitTemp(out_expr.type, std::move(rvalue));
+  mir::PlaceId tmp = builder.EmitPlaceTemp(out_expr.type, std::move(rvalue));
 
   // Assign to output
   Result<LvalueResult> target_result = LowerLvalue(*data.output, builder);
@@ -1464,7 +1464,8 @@ auto LowerRepeatLoop(
       .operands = {mir::Operand::Use(counter), mir::Operand::Const(zero)},
       .info = mir::BinaryRvalueInfo{.op = cmp_op},
   };
-  mir::PlaceId cmp_result = builder.EmitTemp(cond_type, std::move(cmp_rvalue));
+  mir::PlaceId cmp_result =
+      builder.EmitPlaceTemp(cond_type, std::move(cmp_rvalue));
   builder.EmitBranch(mir::Operand::Use(cmp_result), body_bb, exit_bb);
 
   // 4. Body block
@@ -1485,7 +1486,7 @@ auto LowerRepeatLoop(
       .info = mir::BinaryRvalueInfo{.op = mir::BinaryOp::kSubtract},
   };
   mir::PlaceId new_count =
-      builder.EmitTemp(count_expr.type, std::move(dec_rvalue));
+      builder.EmitPlaceTemp(count_expr.type, std::move(dec_rvalue));
   builder.EmitAssign(counter, mir::Operand::Use(new_count));
   builder.EmitJump(cond_bb);
 
@@ -1591,7 +1592,7 @@ auto LowerStatement(hir::StatementId stmt_id, MirBuilder& builder)
                 .operands = std::move(format_operands),
                 .info = std::move(info)};
             mir::PlaceId msg_place =
-                builder.EmitTemp(ctx.GetStringType(), std::move(rvalue));
+                builder.EmitPlaceTemp(ctx.GetStringType(), std::move(rvalue));
             message = mir::Operand::Use(msg_place);
           }
 

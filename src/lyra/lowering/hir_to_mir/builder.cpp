@@ -233,16 +233,9 @@ void MirBuilder::EmitEffect(mir::EffectOp op) {
   EmitInst(mir::Effect{.op = std::move(op)});
 }
 
-auto MirBuilder::EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId {
+auto MirBuilder::EmitPlaceTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId {
   mir::PlaceId temp = ctx_->AllocTemp(type);
   EmitAssign(temp, std::move(value));
-  return temp;
-}
-
-auto MirBuilder::EmitTempAssign(TypeId type, mir::Operand source)
-    -> mir::PlaceId {
-  mir::PlaceId temp = ctx_->AllocTemp(type);
-  EmitAssign(temp, source);
   return temp;
 }
 
@@ -262,11 +255,37 @@ auto MirBuilder::EmitValueTempAssign(TypeId type, mir::Operand source)
   return mir::Operand::UseTemp(temp_id);
 }
 
-auto MirBuilder::MaterializeToPlace(TypeId type, mir::Operand value)
+auto MirBuilder::MaterializeOperandToPlace(TypeId type, mir::Operand value)
     -> mir::PlaceId {
   mir::PlaceId place = ctx_->AllocTemp(type);
   EmitAssign(place, std::move(value));
   return place;
+}
+
+namespace {
+
+// Check if a place has no projections (is "unprojected").
+// Used for debug type checks: unprojected places have type == root.type.
+auto IsUnprojectedPlace(const mir::Place& place) -> bool {
+  return place.projections.empty();
+}
+
+}  // namespace
+
+auto MirBuilder::MaterializeIfNeededToPlace(TypeId type, mir::Operand operand)
+    -> mir::PlaceId {
+  if (operand.kind == mir::Operand::Kind::kUse) {
+    mir::PlaceId place = std::get<mir::PlaceId>(operand.payload);
+    // Debug check: for unprojected temps, verify type matches.
+    // Projected places have different effective type than root - skip check.
+    const mir::Place& place_data = (*arena_)[place];
+    if (IsUnprojectedPlace(place_data) && place_data.root.type != type) {
+      throw common::InternalError(
+          "MaterializeIfNeededToPlace", "type mismatch for unprojected place");
+    }
+    return place;
+  }
+  return MaterializeOperandToPlace(type, std::move(operand));
 }
 
 auto MirBuilder::EmitCall(
@@ -435,7 +454,7 @@ auto MirBuilder::EmitGuardedUse(
           mir::GuardedUseRvalueInfo{.place = place, .result_type = result_type},
   };
   // Use PlaceTemp for guarded reads - may be used as bases for projections
-  return mir::Operand::Use(EmitTemp(result_type, std::move(rvalue)));
+  return mir::Operand::Use(EmitPlaceTemp(result_type, std::move(rvalue)));
 }
 
 void MirBuilder::EmitGuardedAssign(
@@ -652,7 +671,7 @@ void MirBuilder::EmitCaseCascade(
           .info = mir::BinaryRvalueInfo{.op = comparison_op},
       };
       mir::PlaceId cmp_result =
-          EmitTemp(ctx_->GetBitType(), std::move(cmp_rvalue));
+          EmitPlaceTemp(ctx_->GetBitType(), std::move(cmp_rvalue));
 
       bool is_last_expr = (j + 1 == item.expressions.size());
       BlockIndex nomatch_bb = is_last_expr ? next_item_bb : CreateBlock();
