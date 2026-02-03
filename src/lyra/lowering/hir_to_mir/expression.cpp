@@ -1899,17 +1899,6 @@ auto LowerElementAccessRvalue(
   index_operand = NormalizeUnpackedIndex(
       index_operand, index_expr.type, base_type, builder);
 
-  // Materialize UseTemp to PlaceTemp if needed - IndexProjection currently
-  // requires addressable operand (Const or Use) in the MIR shape for LLVM
-  // lowering. TODO: Relax this constraint to accept UseTemp directly and lower
-  // as a GEP value index.
-  if (index_operand.kind == mir::Operand::Kind::kUseTemp) {
-    TypeId offset_type = ctx.GetOffsetType();
-    mir::PlaceId index_place =
-        builder.MaterializeToPlace(offset_type, index_operand);
-    index_operand = mir::Operand::Use(index_place);
-  }
-
   mir::Projection proj{
       .info = mir::IndexProjection{.index = index_operand},
   };
