@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <format>
 #include <optional>
@@ -335,6 +336,9 @@ auto Interpreter::EvalRvalue(
           },
           [&](const ArrayQueryRvalueInfo& info) -> Result<RuntimeValue> {
             return EvalArrayQuery(state, rv, info);
+          },
+          [&](const SystemCmdRvalueInfo& info) -> Result<RuntimeValue> {
+            return EvalSystemCmd(state, info);
           },
       },
       rv.info);
@@ -1040,6 +1044,35 @@ auto Interpreter::EvalArrayQuery(
   }
 
   throw common::InternalError("EvalArrayQuery", "unknown array query kind");
+}
+
+auto Interpreter::EvalSystemCmd(
+    ProcessState& state, const SystemCmdRvalueInfo& info)
+    -> Result<RuntimeValue> {
+  // Security gate: check enable_system_ before executing
+  if (!enable_system_) {
+    // Disabled: return -1 deterministically (safe for CI/sandbox)
+    return MakeIntegralSigned(-1, 32);
+  }
+
+  if (!info.command) {
+    // No-arg form: check shell availability
+    // NOLINTNEXTLINE(cert-env33-c) - $system is an intentional shell interface
+    int result = std::system(nullptr);
+    return MakeIntegralSigned(static_cast<int32_t>(result), 32);
+  }
+
+  // Evaluate command and coerce to string (handles packed arrays -> string)
+  auto cmd_val_result = EvalOperand(state, info.command->operand);
+  if (!cmd_val_result) {
+    return std::unexpected(std::move(cmd_val_result).error());
+  }
+  std::string command = CoerceToString(*cmd_val_result, "EvalSystemCmd");
+
+  // Execute and return raw result truncated to int32 (host-dependent semantics)
+  // NOLINTNEXTLINE(cert-env33-c) - $system is an intentional shell interface
+  int result = std::system(command.c_str());
+  return MakeIntegralSigned(static_cast<int32_t>(result), 32);
 }
 
 }  // namespace lyra::mir::interp

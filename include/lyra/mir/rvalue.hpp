@@ -167,6 +167,13 @@ struct ArrayQueryRvalueInfo {
   uint8_t unpacked_dims;  // Count of unpacked dimensions
 };
 
+// SystemCmdRvalueInfo: $system shell command execution.
+// SIDE-EFFECTING: must not be eliminated or reordered by any future optimizer.
+// Command is TypedOperand for packed-to-string coercion.
+struct SystemCmdRvalueInfo {
+  std::optional<TypedOperand> command;  // nullopt = system(NULL)
+};
+
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
@@ -174,7 +181,7 @@ using RvalueInfo = std::variant<
     GuardedUseRvalueInfo, ConcatRvalueInfo, ReplicateRvalueInfo,
     SFormatRvalueInfo, TestPlusargsRvalueInfo, FopenRvalueInfo,
     RuntimeQueryRvalueInfo, MathCallRvalueInfo, SystemTfRvalueInfo,
-    ArrayQueryRvalueInfo>;
+    ArrayQueryRvalueInfo, SystemCmdRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -220,9 +227,43 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "system_tf";
         } else if constexpr (std::is_same_v<T, ArrayQueryRvalueInfo>) {
           return "array_query";
+        } else if constexpr (std::is_same_v<T, SystemCmdRvalueInfo>) {
+          return "system_cmd";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }
+      },
+      info);
+}
+
+// Helper to classify side-effecting rvalues for optimization/scheduling.
+// Side-effecting rvalues must not be eliminated or reordered.
+inline auto RvalueHasSideEffects(const RvalueInfo& info) -> bool {
+  return std::visit(
+      [](const auto& i) -> bool {
+        using T = std::decay_t<decltype(i)>;
+        // $system executes shell commands - definitely side-effecting
+        if constexpr (std::is_same_v<T, SystemCmdRvalueInfo>) {
+          return true;
+        }
+        // $fopen opens files - side-effecting
+        if constexpr (std::is_same_v<T, FopenRvalueInfo>) {
+          return true;
+        }
+        // SystemTfRvalueInfo: check specific opcodes for side effects
+        if constexpr (std::is_same_v<T, SystemTfRvalueInfo>) {
+          switch (i.opcode) {
+            case SystemTfOpcode::kRandom:
+            case SystemTfOpcode::kUrandom:
+              // $random/$urandom mutate PRNG state
+              return true;
+            default:
+              // Other opcodes in this bucket may or may not be effectful;
+              // conservatively treat as pure unless explicitly listed above.
+              return false;
+          }
+        }
+        return false;
       },
       info);
 }

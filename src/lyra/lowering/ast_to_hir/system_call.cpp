@@ -967,6 +967,27 @@ struct LowerVisitor {
             .data = hir::RandomData{.kind = info.kind}});
   }
 
+  auto operator()(const SystemCmdFunctionInfo& /*info*/) const
+      -> hir::ExpressionId {
+    SourceSpan span = Ctx()->SpanOf(call->sourceRange);
+
+    std::optional<hir::ExpressionId> command;
+    if (!call->arguments().empty()) {
+      hir::ExpressionId cmd = LowerExpression(*call->arguments()[0], view);
+      if (!cmd) {
+        return hir::kInvalidExpressionId;
+      }
+      command = cmd;
+    }
+
+    return Ctx()->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kSystemCall,
+            .type = result_type,
+            .span = span,
+            .data = hir::SystemCmdData{.command = command}});
+  }
+
   auto operator()(const PrintTimescaleFunctionInfo& /*info*/) const
       -> hir::ExpressionId {
     SourceSpan span = Ctx()->SpanOf(call->sourceRange);

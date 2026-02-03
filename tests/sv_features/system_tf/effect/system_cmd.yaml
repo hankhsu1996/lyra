@@ -1,0 +1,49 @@
+feature: system_cmd
+description: >
+  Tests for $system shell command execution (IEEE 1800-2023 20.18.1).
+  NOTE: Tests verify DISABLED path only (default), which returns -1 deterministically.
+  This is safe for CI/sandbox. Enabled-path tests require --enable-system.
+
+cases:
+  - name: system_disabled_with_command
+    description: When $system is disabled (default), returns -1 regardless of command
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int result;
+            initial result = $system("echo hello");
+          endmodule
+    expect:
+      variables:
+        result: -1
+
+  - name: system_disabled_no_arg
+    description: No-arg $system() returns -1 when disabled (not shell availability)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int result;
+            initial result = $system();
+          endmodule
+    expect:
+      variables:
+        result: -1
+
+  - name: system_disabled_with_packed_string
+    description: $system with packed string arg returns -1 when disabled
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int result;
+            string cmd;
+            initial begin
+              cmd = "ls";
+              result = $system(cmd);
+            end
+          endmodule
+    expect:
+      variables:
+        result: -1

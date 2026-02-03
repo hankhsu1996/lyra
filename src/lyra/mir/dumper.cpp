@@ -604,6 +604,13 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
             }
             return std::format("array_query({})", name);
           },
+          [this](const SystemCmdRvalueInfo& info) {
+            if (info.command) {
+              return std::format(
+                  "$system({})", FormatOperand(info.command->operand));
+            }
+            return std::string("$system()");
+          },
       },
       rv.info);
 

@@ -110,6 +110,9 @@ struct RandomFunctionInfo {
   RandomKind kind;
 };
 
+// $system - execute shell command (IEEE 1800-2023 20.18.1)
+struct SystemCmdFunctionInfo {};
+
 // $printtimescale
 struct PrintTimescaleFunctionInfo {};
 
@@ -118,7 +121,7 @@ using SystemCallPayload = std::variant<
     FatalFunctionInfo, SFormatFunctionInfo, TimeFormatFunctionInfo,
     MonitorFunctionInfo, MonitorControlFunctionInfo, TimeFunctionInfo,
     FileIoFunctionInfo, MemIoFunctionInfo, PlusargsFunctionInfo,
-    PrintTimescaleFunctionInfo, RandomFunctionInfo>;
+    PrintTimescaleFunctionInfo, RandomFunctionInfo, SystemCmdFunctionInfo>;
 
 struct SystemFunctionInfo {
   std::string_view name;
@@ -229,6 +232,9 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
   // Random functions
   {.name = "$random",  .min_args = 0, .max_args = 0, .payload = RandomFunctionInfo{.kind = RandomKind::kRandom}},
   {.name = "$urandom", .min_args = 0, .max_args = 0, .payload = RandomFunctionInfo{.kind = RandomKind::kUrandom}},
+
+  // Shell command ($system)
+  {.name = "$system", .min_args = 0, .max_args = 1, .payload = SystemCmdFunctionInfo{}},
 });
 // clang-format on
 

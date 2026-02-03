@@ -169,6 +169,12 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       "Show LLVM IR statistics (optional: top N functions, default 10)");
   // Hidden argument for --stats=N preprocessing (see PreprocessArgs)
   cmd.add_argument("--stats-value").scan<'i', int>().hidden();
+  cmd.add_argument("--enable-system")
+      .default_value(false)
+      .implicit_value(true)
+      .help(
+          "Enable SystemVerilog $system shell command execution (SECURITY: "
+          "disabled by default)");
 }
 
 auto BuildInput(
@@ -300,6 +306,9 @@ auto BuildInput(
     // --stats alone = top 10
     input.stats_top_n = 10;
   }
+
+  // Security: $system execution (CLI only, default disabled)
+  input.enable_system = cmd.get<bool>("--enable-system");
 
   return input;
 }

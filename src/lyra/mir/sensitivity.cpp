@@ -103,6 +103,11 @@ void CollectFromRvalue(
           [](const MathCallRvalueInfo&) {},
           [](const SystemTfRvalueInfo&) {},
           [](const ArrayQueryRvalueInfo&) {},
+          [&](const SystemCmdRvalueInfo& info) {
+            if (info.command) {
+              CollectFromOperand(info.command->operand, arena, seen);
+            }
+          },
       },
       rvalue.info);
 }

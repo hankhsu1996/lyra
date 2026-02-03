@@ -363,7 +363,7 @@ auto CollectInitialProcesses(const Design& design, const Arena& arena)
 auto RunSimulation(
     const Design& design, const Arena& mir_arena, const TypeArena& types,
     std::ostream* output, std::span<const std::string> plusargs,
-    const std::filesystem::path& fs_base_dir,
+    const std::filesystem::path& fs_base_dir, bool enable_system,
     const lowering::DiagnosticContext* diag_ctx) -> SimulationResult {
   // Initialize runtime state (same API as LLVM backend uses)
   LyraInitRuntime(fs_base_dir.c_str());
@@ -388,6 +388,7 @@ auto RunSimulation(
   interp.SetPlusargs(
       std::vector<std::string>(plusargs.begin(), plusargs.end()));
   interp.SetFsBaseDir(fs_base_dir);
+  interp.SetEnableSystem(enable_system);
 
   // Extract instance paths for %m support (needed before running any processes)
   // Only the interpreter needs instance paths for MIR backend; Engine's

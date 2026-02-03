@@ -498,6 +498,11 @@ void CollectPlacesFromRvalue(
           if (info.mode) {
             CollectPlaceFromOperand(info.mode->operand, places);
           }
+        } else if constexpr (std::is_same_v<T, mir::SystemCmdRvalueInfo>) {
+          // SystemCmd uses info.command, not Rvalue::operands
+          if (info.command) {
+            CollectPlaceFromOperand(info.command->operand, places);
+          }
         } else if constexpr (std::is_same_v<T, mir::SFormatRvalueInfo>) {
           for (const auto& fop : info.ops) {
             if (fop.value) {

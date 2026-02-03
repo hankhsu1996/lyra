@@ -601,6 +601,11 @@ struct PlaceCollector {
             if (info.mode) {
               CollectFromOperand(info.mode->operand, arena);
             }
+          } else if constexpr (std::is_same_v<T, mir::SystemCmdRvalueInfo>) {
+            // SystemCmd uses info.command, not Rvalue::operands
+            if (info.command) {
+              CollectFromOperand(info.command->operand, arena);
+            }
           } else if constexpr (std::is_same_v<T, mir::SFormatRvalueInfo>) {
             for (const auto& fop : info.ops) {
               if (fop.value) {
