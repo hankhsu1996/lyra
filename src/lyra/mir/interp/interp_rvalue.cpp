@@ -31,7 +31,6 @@
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/rvalue.hpp"
-#include "lyra/semantic/format.hpp"
 
 namespace lyra::mir::interp {
 
@@ -333,6 +332,9 @@ auto Interpreter::EvalRvalue(
           },
           [&](const MathCallRvalueInfo& info) -> Result<RuntimeValue> {
             return EvalMathCall(state, rv, info);
+          },
+          [&](const ArrayQueryRvalueInfo& info) -> Result<RuntimeValue> {
+            return EvalArrayQuery(state, rv, info);
           },
       },
       rv.info);
@@ -853,8 +855,8 @@ auto Interpreter::EvalSFormat(ProcessState& state, const Rvalue& rv)
 }
 
 auto Interpreter::EvalTestPlusargs(
-    ProcessState& state, const Rvalue& rv, const TestPlusargsRvalueInfo& info)
-    -> Result<RuntimeValue> {
+    ProcessState& state, [[maybe_unused]] const Rvalue& rv,
+    const TestPlusargsRvalueInfo& info) -> Result<RuntimeValue> {
   // Evaluate query operand and coerce to string if packed
   auto query_val_result = EvalOperand(state, info.query.operand);
   if (!query_val_result) {
@@ -923,6 +925,121 @@ auto Interpreter::EvalMathCall(
 
   // Delegate to the single math call entry point (handles arity validation)
   return mir::interp::EvalMathCall(info.fn, args, *types_);
+}
+
+auto Interpreter::EvalArrayQuery(
+    ProcessState& state, const Rvalue& rv, const ArrayQueryRvalueInfo& info)
+    -> Result<RuntimeValue> {
+  using lyra::ArrayQuerySysFnKind;
+
+  // 1. Evaluate dim operand
+  auto dim_val = EvalOperand(state, rv.operands[1]);
+  if (!dim_val) return std::unexpected(std::move(dim_val).error());
+
+  if (!IsIntegral(*dim_val)) {
+    throw common::InternalError(
+        "EvalArrayQuery", "dimension operand must be integral");
+  }
+  const auto& dim_int = AsIntegral(*dim_val);
+
+  // If dim has unknown bits, return 'x
+  if (!dim_int.IsKnown()) {
+    return MakeIntegralX(32);
+  }
+
+  // Get dim as signed 32-bit integer
+  int32_t dim = 1;
+  if (!dim_int.value.empty()) {
+    auto raw = static_cast<int64_t>(dim_int.value[0]);
+    // Handle sign extension for negative values
+    if (dim_int.bit_width <= 32) {
+      auto mask = static_cast<int32_t>((1LL << dim_int.bit_width) - 1);
+      dim = static_cast<int32_t>(raw & mask);
+      // Sign-extend if MSB is set
+      if ((dim & (1 << (dim_int.bit_width - 1))) != 0) {
+        dim |= ~mask;
+      }
+    } else {
+      dim = static_cast<int32_t>(raw);
+    }
+  }
+
+  // 2. Validate dim range (out of range -> 'x, not error)
+  if (dim < 1 || dim > static_cast<int32_t>(info.total_dims)) {
+    return MakeIntegralX(32);
+  }
+
+  // 3. Get dimension metadata (0-indexed)
+  const auto& dim_info = info.dims.at(static_cast<size_t>(dim - 1));
+
+  // Note: IEEE 20.7.1 (dim > 1 on variable-sized dimension for array variable)
+  // is enforced at compile-time for constant dim on variable-rooted lvalues.
+  // For non-constant dim at runtime, we cannot distinguish variable-rooted
+  // lvalues from other expressions, but the spec only requires an error for
+  // the variable case. For robustness, we return 'x for any dim > 1 on a
+  // variable-sized dimension, which is a safe conservative behavior.
+  if (dim > 1 && dim_info.is_variable_sized) {
+    return MakeIntegralX(32);
+  }
+
+  // 5. Get left/right (possibly from runtime size for variable dims)
+  int32_t left = dim_info.left;
+  int32_t right = dim_info.right;
+
+  if (dim_info.is_variable_sized) {
+    // Evaluate array operand to get runtime size
+    auto array_val = EvalOperand(state, rv.operands[0]);
+    if (!array_val) return std::unexpected(std::move(array_val).error());
+
+    // Get element count (works for RuntimeArray from dynamic array and queue)
+    // Note: String dimension queries should be folded to 'x at compile time,
+    // so we don't handle IsString here.
+    int32_t size = 0;
+    if (IsArray(*array_val)) {
+      size = static_cast<int32_t>(AsArray(*array_val).elements.size());
+    }
+
+    // Variable-sized: left=0, right=size-1 (or -1 if empty)
+    left = 0;
+    right = (size == 0) ? -1 : size - 1;
+  }
+
+  // 6. Compute increment, low, high, size using correct semantics
+  // increment = -1 for variable-sized, otherwise (left >= right) ? 1 : -1
+  int32_t increment = -1;
+  if (!dim_info.is_variable_sized) {
+    increment = (left >= right) ? 1 : -1;
+  }
+
+  // low = (increment == -1) ? left : right
+  // high = (increment == -1) ? right : left
+  int32_t low = (increment == -1) ? left : right;
+  int32_t high = (increment == -1) ? right : left;
+  int32_t computed_size = high - low + 1;
+
+  // 7. Return based on query kind
+  switch (info.kind) {
+    case ArrayQuerySysFnKind::kLeft:
+      return MakeIntegralSigned(left, 32);
+    case ArrayQuerySysFnKind::kRight:
+      return MakeIntegralSigned(right, 32);
+    case ArrayQuerySysFnKind::kLow:
+      return MakeIntegralSigned(low, 32);
+    case ArrayQuerySysFnKind::kHigh:
+      return MakeIntegralSigned(high, 32);
+    case ArrayQuerySysFnKind::kIncrement:
+      return MakeIntegralSigned(increment, 32);
+    case ArrayQuerySysFnKind::kSize:
+      return MakeIntegralSigned(computed_size, 32);
+    case ArrayQuerySysFnKind::kDimensions:
+      // Should be folded at lowering, but handle for robustness
+      return MakeIntegralSigned(info.total_dims, 32);
+    case ArrayQuerySysFnKind::kUnpackedDimensions:
+      // Should be folded at lowering, but handle for robustness
+      return MakeIntegralSigned(info.unpacked_dims, 32);
+  }
+
+  throw common::InternalError("EvalArrayQuery", "unknown array query kind");
 }
 
 }  // namespace lyra::mir::interp

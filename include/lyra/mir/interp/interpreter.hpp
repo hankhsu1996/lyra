@@ -191,6 +191,9 @@ class Interpreter {
   auto EvalMathCall(
       ProcessState& state, const Rvalue& rv, const MathCallRvalueInfo& info)
       -> Result<RuntimeValue>;
+  auto EvalArrayQuery(
+      ProcessState& state, const Rvalue& rv, const ArrayQueryRvalueInfo& info)
+      -> Result<RuntimeValue>;
 
   // Execute SystemTfEffect
   auto ExecSystemTfEffect(ProcessState& state, const SystemTfEffect& effect)

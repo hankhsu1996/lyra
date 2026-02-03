@@ -102,6 +102,7 @@ void CollectFromRvalue(
           [](const RuntimeQueryRvalueInfo&) {},
           [](const MathCallRvalueInfo&) {},
           [](const SystemTfRvalueInfo&) {},
+          [](const ArrayQueryRvalueInfo&) {},
       },
       rvalue.info);
 }

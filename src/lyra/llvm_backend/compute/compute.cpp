@@ -173,6 +173,15 @@ auto LowerRvalue(
           [&](const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
             return LowerSystemTfRvalue(context, rvalue, info);
           },
+          [&](const mir::ArrayQueryRvalueInfo&) -> Result<RvalueValue> {
+            return std::unexpected(
+                context.GetDiagnosticContext().MakeUnsupported(
+                    context.GetCurrentOrigin(),
+                    "array query functions ($left, $right, etc.) are not "
+                    "supported "
+                    "in the LLVM backend; use MIR interpreter instead",
+                    UnsupportedCategory::kFeature));
+          },
       },
       rvalue.info);
 }

@@ -6,10 +6,12 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/array_query_kind.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/common/system_function.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/hir/fwd.hpp"
 
 namespace lyra::hir {
@@ -135,10 +137,22 @@ struct RandomData {
   auto operator==(const RandomData&) const -> bool = default;
 };
 
+// Array query functions ($left, $right, $low, $high, $increment, $size)
+// that require runtime evaluation (non-constant dim or variable-sized dim).
+// Note: $dimensions/$unpacked_dimensions always fold to constant at lowering.
+struct ArrayQueryData {
+  ArrayQuerySysFnKind kind;
+  ExpressionId array;  // The array expression (operand 0)
+  ExpressionId dim;    // The dimension expression (operand 1, or constant 1)
+  TypeId array_type;   // For DimMeta extraction during HIR->MIR
+
+  auto operator==(const ArrayQueryData&) const -> bool = default;
+};
+
 using SystemCallExpressionData = std::variant<
     DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
     TestPlusargsData, ValuePlusargsData, MemIOData, FopenData, FcloseData,
     FflushData, RuntimeQueryData, TimeFormatData, MonitorSystemCallData,
-    MonitorControlData, RandomData>;
+    MonitorControlData, RandomData, ArrayQueryData>;
 
 }  // namespace lyra::hir

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <functional>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -725,6 +726,139 @@ auto LowerSystemCall(
     mir::Rvalue rvalue{
         .operands = {},
         .info = mir::SystemTfRvalueInfo{.opcode = opcode},
+    };
+    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    return mir::Operand::Use(tmp);
+  }
+
+  // Array query functions -> ArrayQueryRvalueInfo
+  if (const auto* arr_query = std::get_if<hir::ArrayQueryData>(&data)) {
+    Context& ctx = builder.GetContext();
+
+    // Lower array and dim operands
+    Result<mir::Operand> array_result =
+        LowerExpression(arr_query->array, builder);
+    if (!array_result) return std::unexpected(array_result.error());
+
+    Result<mir::Operand> dim_result = LowerExpression(arr_query->dim, builder);
+    if (!dim_result) return std::unexpected(dim_result.error());
+
+    // Extract dimension metadata from array type
+    mir::ArrayQueryRvalueInfo info{
+        .kind = arr_query->kind,
+        .dims = {},
+        .total_dims = 0,
+        .unpacked_dims = 0,
+    };
+
+    // Helper to fill DimInfo for a Lyra type
+    std::function<void(TypeId, bool)> extract_dims;
+    extract_dims = [&](TypeId type_id, bool is_packed) {
+      const Type& type = (*ctx.type_arena)[type_id];
+
+      switch (type.Kind()) {
+        case TypeKind::kUnpackedArray: {
+          if (info.total_dims >= mir::kMaxArrayQueryDims) {
+            throw common::InternalError(
+                "LowerSystemCall", "array has too many dimensions (max 8)");
+          }
+          const auto& arr = type.AsUnpackedArray();
+          info.dims.at(info.total_dims) = mir::DimInfo{
+              .left = arr.range.left,
+              .right = arr.range.right,
+              .is_variable_sized = false,
+              .is_packed = false,
+          };
+          ++info.total_dims;
+          ++info.unpacked_dims;
+          extract_dims(arr.element_type, false);
+          break;
+        }
+        case TypeKind::kDynamicArray: {
+          if (info.total_dims >= mir::kMaxArrayQueryDims) {
+            throw common::InternalError(
+                "LowerSystemCall", "array has too many dimensions (max 8)");
+          }
+          const auto& dyn = type.AsDynamicArray();
+          info.dims.at(info.total_dims) = mir::DimInfo{
+              .left = 0,
+              .right = -1,  // Sentinel for variable-sized
+              .is_variable_sized = true,
+              .is_packed = false,
+          };
+          ++info.total_dims;
+          ++info.unpacked_dims;
+          extract_dims(dyn.element_type, false);
+          break;
+        }
+        case TypeKind::kQueue: {
+          if (info.total_dims >= mir::kMaxArrayQueryDims) {
+            throw common::InternalError(
+                "LowerSystemCall", "array has too many dimensions (max 8)");
+          }
+          const auto& q = type.AsQueue();
+          info.dims.at(info.total_dims) = mir::DimInfo{
+              .left = 0,
+              .right = -1,  // Sentinel for variable-sized
+              .is_variable_sized = true,
+              .is_packed = false,
+          };
+          ++info.total_dims;
+          ++info.unpacked_dims;
+          extract_dims(q.element_type, false);
+          break;
+        }
+        case TypeKind::kPackedArray: {
+          if (info.total_dims >= mir::kMaxArrayQueryDims) {
+            throw common::InternalError(
+                "LowerSystemCall", "array has too many dimensions (max 8)");
+          }
+          const auto& packed = type.AsPackedArray();
+          info.dims.at(info.total_dims) = mir::DimInfo{
+              .left = packed.range.left,
+              .right = packed.range.right,
+              .is_variable_sized = false,
+              .is_packed = true,
+          };
+          ++info.total_dims;
+          extract_dims(packed.element_type, true);
+          break;
+        }
+        case TypeKind::kIntegral: {
+          if (!is_packed) {
+            // Integral type as element: treat as 1-dim packed [N-1:0]
+            if (info.total_dims >= mir::kMaxArrayQueryDims) {
+              throw common::InternalError(
+                  "LowerSystemCall", "array has too many dimensions (max 8)");
+            }
+            const auto& integral = type.AsIntegral();
+            info.dims.at(info.total_dims) = mir::DimInfo{
+                .left = static_cast<int32_t>(integral.bit_width) - 1,
+                .right = 0,
+                .is_variable_sized = false,
+                .is_packed = true,
+            };
+            ++info.total_dims;
+          }
+          break;
+        }
+        case TypeKind::kString:
+          // String: dimension functions are NOT defined by LRM (only
+          // $dimensions=1). These should be folded to 'x at compile time, not
+          // reach runtime. If we somehow get here, treat string as a non-array
+          // element (stop).
+          break;
+        default:
+          // Non-array element type: stop
+          break;
+      }
+    };
+
+    extract_dims(arr_query->array_type, false);
+
+    mir::Rvalue rvalue{
+        .operands = {*array_result, *dim_result},
+        .info = std::move(info),
     };
     mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);

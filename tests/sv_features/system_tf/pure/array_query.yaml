@@ -1,0 +1,565 @@
+feature: array_query
+description: Tests for array query functions (IEEE 1800-2023 20.7)
+
+cases:
+  # Fixed-size unpacked array tests
+
+  - name: unpacked_ascending
+    description: $left/$right/$low/$high/$increment/$size for ascending unpacked array
+    sv: |
+      module Test;
+        int arr[0:9];
+        int l, r, lo, hi, inc, sz;
+        initial begin
+          l = $left(arr);
+          r = $right(arr);
+          lo = $low(arr);
+          hi = $high(arr);
+          inc = $increment(arr);
+          sz = $size(arr);
+        end
+      endmodule
+    expect:
+      variables:
+        l: 0
+        r: 9
+        lo: 0
+        hi: 9
+        inc: -1
+        sz: 10
+
+  - name: unpacked_descending
+    description: $left/$right/$low/$high/$increment/$size for descending unpacked array
+    sv: |
+      module Test;
+        int arr[9:0];
+        int l, r, lo, hi, inc, sz;
+        initial begin
+          l = $left(arr);
+          r = $right(arr);
+          lo = $low(arr);
+          hi = $high(arr);
+          inc = $increment(arr);
+          sz = $size(arr);
+        end
+      endmodule
+    expect:
+      variables:
+        l: 9
+        r: 0
+        lo: 0
+        hi: 9
+        inc: 1
+        sz: 10
+
+  - name: unpacked_simple
+    description: $size for simple unpacked array declaration
+    sv: |
+      module Test;
+        int arr[4];
+        int sz;
+        initial begin
+          sz = $size(arr);
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 4
+
+  # Packed array tests
+
+  - name: packed_descending
+    description: $left/$right/$low/$high/$increment/$size for packed array
+    sv: |
+      module Test;
+        logic [7:0] v;
+        int l, r, lo, hi, inc, sz;
+        initial begin
+          l = $left(v);
+          r = $right(v);
+          lo = $low(v);
+          hi = $high(v);
+          inc = $increment(v);
+          sz = $size(v);
+        end
+      endmodule
+    expect:
+      variables:
+        l: 7
+        r: 0
+        lo: 0
+        hi: 7
+        inc: 1
+        sz: 8
+
+  - name: packed_ascending
+    description: $left/$right for ascending packed array
+    sv: |
+      module Test;
+        logic [0:7] v;
+        int l, r, inc, sz;
+        initial begin
+          l = $left(v);
+          r = $right(v);
+          inc = $increment(v);
+          sz = $size(v);
+        end
+      endmodule
+    expect:
+      variables:
+        l: 0
+        r: 7
+        inc: -1
+        sz: 8
+
+  # Multi-dimensional array tests with explicit dimension argument
+
+  - name: multidim_size
+    description: $size with dimension argument
+    sv: |
+      module Test;
+        int arr[3][4];
+        int sz1, sz2;
+        initial begin
+          sz1 = $size(arr, 1);
+          sz2 = $size(arr, 2);
+        end
+      endmodule
+    expect:
+      variables:
+        sz1: 3
+        sz2: 4
+
+  - name: multidim_all_queries
+    description: All array queries on multi-dimensional array
+    sv: |
+      module Test;
+        int arr[1:5][2:8];
+        int l1, r1, sz1, l2, r2, sz2;
+        initial begin
+          l1 = $left(arr, 1);
+          r1 = $right(arr, 1);
+          sz1 = $size(arr, 1);
+          l2 = $left(arr, 2);
+          r2 = $right(arr, 2);
+          sz2 = $size(arr, 2);
+        end
+      endmodule
+    expect:
+      variables:
+        l1: 1
+        r1: 5
+        sz1: 5
+        l2: 2
+        r2: 8
+        sz2: 7
+
+  # Golden test from LRM example - dimension numbering
+
+  - name: lrm_dimension_numbering
+    description: LRM example - dimension numbering (unpacked then packed)
+    sv: |
+      module Test;
+        //      Dimension numbers
+        //      3    4    1    2
+        logic [3:0][2:1] n [1:5][2:8];
+        int l1, r1, sz1, inc1;
+        int l2, r2, sz2, inc2;
+        int l3, r3, sz3, inc3;
+        int l4, r4, sz4, inc4;
+        int dims, udims;
+        initial begin
+          l1 = $left(n, 1);
+          r1 = $right(n, 1);
+          sz1 = $size(n, 1);
+          inc1 = $increment(n, 1);
+
+          l2 = $left(n, 2);
+          r2 = $right(n, 2);
+          sz2 = $size(n, 2);
+          inc2 = $increment(n, 2);
+
+          l3 = $left(n, 3);
+          r3 = $right(n, 3);
+          sz3 = $size(n, 3);
+          inc3 = $increment(n, 3);
+
+          l4 = $left(n, 4);
+          r4 = $right(n, 4);
+          sz4 = $size(n, 4);
+          inc4 = $increment(n, 4);
+
+          dims = $dimensions(n);
+          udims = $unpacked_dimensions(n);
+        end
+      endmodule
+    expect:
+      variables:
+        l1: 1
+        r1: 5
+        sz1: 5
+        inc1: -1
+        l2: 2
+        r2: 8
+        sz2: 7
+        inc2: -1
+        l3: 3
+        r3: 0
+        sz3: 4
+        inc3: 1
+        l4: 2
+        r4: 1
+        sz4: 2
+        inc4: 1
+        dims: 4
+        udims: 2
+
+  # $dimensions / $unpacked_dimensions tests
+
+  - name: dimensions_int
+    description: $dimensions of int returns 1
+    sv: |
+      module Test;
+        int a;
+        int d, ud;
+        initial begin
+          d = $dimensions(a);
+          ud = $unpacked_dimensions(a);
+        end
+      endmodule
+    expect:
+      variables:
+        d: 1
+        ud: 0
+
+  - name: dimensions_string
+    description: $dimensions of string returns 1, $unpacked_dimensions returns 0
+    sv: |
+      module Test;
+        string s;
+        int d, ud;
+        initial begin
+          d = $dimensions(s);
+          ud = $unpacked_dimensions(s);
+        end
+      endmodule
+    expect:
+      variables:
+        d: 1
+        ud: 0
+
+  - name: string_dimension_funcs_return_x
+    description: Dimension functions on string return 'x (NOT defined by LRM)
+    sv: |
+      module Test;
+        string s;
+        integer left_val, right_val, size_val, inc_val;
+        initial begin
+          s = "hello";
+          // LRM only defines $dimensions(string)=1, NOT dimension functions
+          left_val = $left(s);
+          right_val = $right(s);
+          size_val = $size(s);
+          inc_val = $increment(s);
+        end
+      endmodule
+    expect:
+      variables:
+        left_val: "32'hxxxxxxxx"
+        right_val: "32'hxxxxxxxx"
+        size_val: "32'hxxxxxxxx"
+        inc_val: "32'hxxxxxxxx"
+
+  - name: dimensions_logic_vector
+    description: $dimensions of logic vector
+    sv: |
+      module Test;
+        logic [7:0] v;
+        int d, ud;
+        initial begin
+          d = $dimensions(v);
+          ud = $unpacked_dimensions(v);
+        end
+      endmodule
+    expect:
+      variables:
+        d: 1
+        ud: 0
+
+  - name: dimensions_unpacked_array
+    description: $dimensions of unpacked array of int
+    sv: |
+      module Test;
+        int arr[3];
+        int d, ud;
+        initial begin
+          d = $dimensions(arr);
+          ud = $unpacked_dimensions(arr);
+        end
+      endmodule
+    expect:
+      variables:
+        d: 2
+        ud: 1
+
+  # Integral type dimension queries
+
+  - name: int_left_right
+    description: $left/$right for int (implicit [31:0])
+    sv: |
+      module Test;
+        int a;
+        int l, r, sz;
+        initial begin
+          l = $left(a);
+          r = $right(a);
+          sz = $size(a);
+        end
+      endmodule
+    expect:
+      variables:
+        l: 31
+        r: 0
+        sz: 32
+
+  - name: byte_left_right
+    description: $left/$right for byte (implicit [7:0])
+    sv: |
+      module Test;
+        byte b;
+        int l, r, sz;
+        initial begin
+          l = $left(b);
+          r = $right(b);
+          sz = $size(b);
+        end
+      endmodule
+    expect:
+      variables:
+        l: 7
+        r: 0
+        sz: 8
+
+  # Dynamic array tests
+
+  - name: dynamic_array_size
+    description: $size of dynamic array after new[]
+    sv: |
+      module Test;
+        int dyn[];
+        int sz;
+        initial begin
+          dyn = new[5];
+          sz = $size(dyn);
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 5
+
+  - name: dynamic_array_empty
+    description: $size of empty dynamic array
+    sv: |
+      module Test;
+        int dyn[];
+        int sz, r, hi;
+        initial begin
+          sz = $size(dyn);
+          r = $right(dyn);
+          hi = $high(dyn);
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 0
+        r: -1
+        hi: -1
+
+  - name: dynamic_array_left
+    description: $left of dynamic array is always 0
+    sv: |
+      module Test;
+        int dyn[];
+        int l, lo;
+        initial begin
+          dyn = new[3];
+          l = $left(dyn);
+          lo = $low(dyn);
+        end
+      endmodule
+    expect:
+      variables:
+        l: 0
+        lo: 0
+
+  - name: dynamic_array_increment
+    description: $increment of dynamic array is always -1
+    sv: |
+      module Test;
+        int dyn[];
+        int inc;
+        initial begin
+          dyn = new[3];
+          inc = $increment(dyn);
+        end
+      endmodule
+    expect:
+      variables:
+        inc: -1
+
+  # Queue tests
+
+  - name: queue_empty
+    description: $size of empty queue
+    sv: |
+      module Test;
+        int q[$];
+        int sz, r, hi, lo;
+        initial begin
+          sz = $size(q);
+          r = $right(q);
+          hi = $high(q);
+          lo = $low(q);
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 0
+        r: -1
+        hi: -1
+        lo: 0
+
+  - name: queue_after_push
+    description: $size of queue after push
+    sv: |
+      module Test;
+        int q[$];
+        int sz, r, hi;
+        initial begin
+          q.push_back(10);
+          q.push_back(20);
+          q.push_back(30);
+          sz = $size(q);
+          r = $right(q);
+          hi = $high(q);
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 3
+        r: 2
+        hi: 2
+
+  # Type-form tests (using type directly)
+
+  - name: type_form_int
+    description: $size(int) type form
+    sv: |
+      module Test;
+        int sz, l, r;
+        initial begin
+          sz = $size(int);
+          l = $left(int);
+          r = $right(int);
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 32
+        l: 31
+        r: 0
+
+  # Note: Type-form with typedef ($size(arr_t) where arr_t is typedef)
+  # is not yet fully supported. Only built-in type names work.
+  # The typedef case requires additional slang expression handling.
+
+  # Out-of-range dimension tests are not possible with constant dimensions
+  # because slang correctly validates them at compile time.
+  # Runtime dimension checking would require non-constant dim expressions.
+
+  # Display integration
+
+  - name: display_size
+    description: $size in $display
+    sv: |
+      module Test;
+        int arr[5];
+        initial begin
+          $display("size=%0d", $size(arr));
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "size=5"
+
+  - name: display_dimensions
+    description: $dimensions in $display
+    sv: |
+      module Test;
+        int arr[3][4];
+        initial begin
+          $display("dims=%0d udims=%0d", $dimensions(arr), $unpacked_dimensions(arr));
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "dims=3"
+          - "udims=2"
+
+  # IEEE 20.7.1 tests - variable vs non-variable distinction
+  # The spec error only applies to "v denotes array variable", not general expressions
+
+  - name: conditional_expr_dim2
+    description: $size on conditional expression (not variable) with dim > 1 should work
+    sv: |
+      module Test;
+        int arr1[3][4];
+        int arr2[3][4];
+        int sz;
+        logic sel;
+        initial begin
+          sel = 1'b0;
+          // Conditional expression is NOT a variable, so 20.7.1 does not apply
+          sz = $size(sel ? arr1 : arr2, 2);
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 4
+
+  # Runtime dim out-of-range returns 'x (not abort)
+
+  - name: runtime_dim_out_of_range
+    description: Runtime dim out of range returns 'x
+    sv: |
+      module Test;
+        int arr[3][4];
+        int dim_val;
+        integer result;  // Use integer (4-state) to capture 'x
+        initial begin
+          dim_val = 10;  // Out of range (only 3 dims)
+          result = $size(arr, dim_val);
+        end
+      endmodule
+    expect:
+      variables:
+        result: "32'hxxxxxxxx"
+
+  # Variable with dim=1 on variable-sized is allowed (only dim > 1 is error)
+
+  - name: dynamic_array_dim1_ok
+    description: $size(dyn, 1) is always allowed (dim=1)
+    sv: |
+      module Test;
+        int dyn[];
+        int sz;
+        initial begin
+          dyn = new[5];
+          sz = $size(dyn, 1);  // dim=1 is always OK
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 5
