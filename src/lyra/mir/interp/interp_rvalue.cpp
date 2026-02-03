@@ -172,6 +172,11 @@ auto Interpreter::EvalOperand(const ProcessState& state, const Operand& op)
       return ReadPlace(state, place_id);
     }
 
+    case Operand::Kind::kUseTemp: {
+      int temp_id = std::get<TempId>(op.payload).value;
+      return Clone(state.frame.GetTemp(temp_id));
+    }
+
     case Operand::Kind::kPoison:
       throw common::InternalError("EvalOperand", "poison operand encountered");
   }

@@ -16,6 +16,7 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
@@ -97,14 +98,19 @@ auto LoadFourStateOperand(Context& context, const mir::Operand& operand)
   const auto& types = context.GetTypeArena();
 
   bool is_four_state = std::visit(
-      [&](const auto& payload) -> bool {
-        using T = std::decay_t<decltype(payload)>;
-        if constexpr (std::is_same_v<T, Constant>) {
-          return IsTypeFourState(types, payload.type);
-        } else {
-          const auto& place = arena[payload];
-          return IsTypeFourState(types, mir::TypeOfPlace(types, place));
-        }
+      common::Overloaded{
+          [&](const Constant& c) -> bool {
+            return IsTypeFourState(types, c.type);
+          },
+          [&](mir::PlaceId place_id) -> bool {
+            const auto& place = arena[place_id];
+            return IsTypeFourState(types, mir::TypeOfPlace(types, place));
+          },
+          [&](mir::TempId temp_id) -> bool {
+            // Look up the MIR type (source of truth), not the LLVM type
+            TypeId type = context.GetTempType(temp_id.value);
+            return IsTypeFourState(types, type);
+          },
       },
       operand.payload);
 

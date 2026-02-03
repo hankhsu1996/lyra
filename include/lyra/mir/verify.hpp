@@ -14,6 +14,10 @@ namespace lyra::mir {
 // - Param slots are unique (no aliasing)
 // - Non-void function: all Return terminators must have a value
 // - Void function: all Return terminators must NOT have a value
+// - BlockParam temp_ids are unique across all blocks
+// - For Jump/Branch: edge arg count == target block param count
+// - For Jump/Branch: edge arg types match target block param types
+// - All UseTemp operands in edge args reference defined temp_ids
 void VerifyFunction(
     const Function& func, const Arena& arena, const TypeArena& types);
 
@@ -21,6 +25,10 @@ void VerifyFunction(
 //
 // Invariants checked:
 // - All Return terminators must NOT have a value (processes don't return)
+// - BlockParam temp_ids are unique across all blocks
+// - For Jump/Branch: edge arg count == target block param count
+// - For Jump/Branch: edge arg types match target block param types
+// - All UseTemp operands in edge args reference defined temp_ids
 void VerifyProcess(
     const Process& proc, const Arena& arena, const TypeArena& types);
 

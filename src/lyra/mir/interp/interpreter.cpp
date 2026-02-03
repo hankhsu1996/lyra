@@ -107,6 +107,14 @@ struct StorageCollector {
     if (op.kind == Operand::Kind::kUse) {
       PlaceId place_id = std::get<PlaceId>(op.payload);
       Visit(arena[place_id], arena);
+    } else if (op.kind == Operand::Kind::kUseTemp) {
+      // UseTemp references a temp by id - ensure it's in our temp_types
+      int temp_id = std::get<TempId>(op.payload).value;
+      auto idx = static_cast<size_t>(temp_id);
+      if (idx >= temp_types.size()) {
+        temp_types.resize(idx + 1, kInvalidTypeId);
+      }
+      // Note: type will be set by BlockParam visitor below
     }
   }
 
@@ -239,6 +247,60 @@ struct StorageCollector {
         },
         stmt.data);
   }
+
+  // Visit block params (defines temps at block entry)
+  void VisitBlockParams(const BasicBlock& block) {
+    for (const auto& param : block.params) {
+      auto idx = static_cast<size_t>(param.temp_id);
+      if (idx >= temp_types.size()) {
+        temp_types.resize(idx + 1, kInvalidTypeId);
+      }
+      if (!temp_types[idx]) {
+        temp_types[idx] = param.type;
+      }
+    }
+  }
+
+  // Visit terminator for edge args
+  void VisitTerminator(const Terminator& term, const Arena& arena) {
+    std::visit(
+        common::Overloaded{
+            [&](const Jump& t) {
+              for (const auto& arg : t.args) {
+                Visit(arg, arena);
+              }
+            },
+            [&](const Branch& t) {
+              Visit(arena[t.condition], arena);
+              for (const auto& arg : t.then_args) {
+                Visit(arg, arena);
+              }
+              for (const auto& arg : t.else_args) {
+                Visit(arg, arena);
+              }
+            },
+            [&](const Switch& t) { Visit(arena[t.selector], arena); },
+            [&](const QualifiedDispatch& t) {
+              for (PlaceId cond : t.conditions) {
+                Visit(arena[cond], arena);
+              }
+            },
+            [](const Delay&) {},
+            [](const Wait&) {},
+            [&](const Return& t) {
+              if (t.value) {
+                Visit(*t.value, arena);
+              }
+            },
+            [&](const Finish& t) {
+              if (t.message) {
+                Visit(*t.message, arena);
+              }
+            },
+            [](const Repeat&) {},
+        },
+        term.data);
+  }
 };
 
 }  // namespace
@@ -251,9 +313,14 @@ auto CreateProcessState(
   // Scan all blocks to collect local/temp storage requirements and types
   StorageCollector collector;
   for (const BasicBlock& block : process.blocks) {
+    // Collect temps defined by block params
+    collector.VisitBlockParams(block);
+    // Collect places/temps used in statements
     for (const auto& stmt : block.statements) {
       collector.Visit(stmt, arena);
     }
+    // Collect places/temps used in terminator edge args
+    collector.VisitTerminator(block.terminator, arena);
   }
 
   // Initialize locals with default values based on their types
@@ -285,6 +352,18 @@ auto CreateProcessState(
   };
 }
 
+// Helper to visit all blocks in a process for design state collection
+void VisitProcessBlocks(
+    StorageCollector& collector, const Process& process, const Arena& arena) {
+  for (const BasicBlock& block : process.blocks) {
+    collector.VisitBlockParams(block);
+    for (const auto& stmt : block.statements) {
+      collector.Visit(stmt, arena);
+    }
+    collector.VisitTerminator(block.terminator, arena);
+  }
+}
+
 auto CreateDesignState(
     const Arena& arena, const TypeArena& types, const Design& design)
     -> DesignState {
@@ -293,30 +372,15 @@ auto CreateDesignState(
   for (const auto& element : design.elements) {
     if (const auto* module = std::get_if<Module>(&element)) {
       for (ProcessId process_id : module->processes) {
-        const auto& process = arena[process_id];
-        for (const BasicBlock& block : process.blocks) {
-          for (const auto& stmt : block.statements) {
-            collector.Visit(stmt, arena);
-          }
-        }
+        VisitProcessBlocks(collector, arena[process_id], arena);
       }
     }
   }
   for (ProcessId process_id : design.init_processes) {
-    const auto& process = arena[process_id];
-    for (const BasicBlock& block : process.blocks) {
-      for (const auto& inst : block.statements) {
-        collector.Visit(inst, arena);
-      }
-    }
+    VisitProcessBlocks(collector, arena[process_id], arena);
   }
   for (ProcessId process_id : design.connection_processes) {
-    const auto& process = arena[process_id];
-    for (const BasicBlock& block : process.blocks) {
-      for (const auto& inst : block.statements) {
-        collector.Visit(inst, arena);
-      }
-    }
+    VisitProcessBlocks(collector, arena[process_id], arena);
   }
 
   // Initialize design storage with default values based on types

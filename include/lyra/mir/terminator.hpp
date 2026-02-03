@@ -16,13 +16,16 @@ namespace lyra::mir {
 // Unconditional jump to a single target.
 struct Jump {
   BasicBlockId target;
+  std::vector<Operand> args;  // Values for target.params (edge args for SSA)
 };
 
 // Conditional branch based on a boolean condition.
 struct Branch {
   PlaceId condition;
   BasicBlockId then_target;
+  std::vector<Operand> then_args;  // Values for then_target.params
   BasicBlockId else_target;
+  std::vector<Operand> else_args;  // Values for else_target.params
 };
 
 // Multi-way switch based on selector value.

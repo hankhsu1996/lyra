@@ -298,10 +298,25 @@ class Interpreter {
   auto ExecStatement(ProcessState& state, const Statement& stmt)
       -> Result<void>;
 
-  // Execute terminator, return next block or nullopt for completion.
-  // Returns error on suspension terminators (Delay, Wait, Repeat).
+  // Result of executing a terminator: target block + edge args for block params
+  struct TerminatorResult {
+    std::optional<BasicBlockId> target;
+    std::vector<RuntimeValue> edge_args;  // Values for target block's params
+  };
+
+  // Execute terminator, return next block and edge args, or nullopt for
+  // completion. Returns error on suspension terminators (Delay, Wait, Repeat).
   auto ExecTerminator(ProcessState& state, const Terminator& term)
-      -> Result<std::optional<BasicBlockId>>;
+      -> Result<TerminatorResult>;
+
+  // Evaluate edge args (operands) to RuntimeValues
+  auto EvalEdgeArgs(ProcessState& state, const std::vector<Operand>& args)
+      -> Result<std::vector<RuntimeValue>>;
+
+  // Bind edge args to block params (temps defined at block entry)
+  void BindBlockParams(
+      ProcessState& state, const BasicBlock& block,
+      std::vector<RuntimeValue> edge_args);
 
   const Arena* arena_;
   const TypeArena* types_;

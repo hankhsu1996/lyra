@@ -179,6 +179,30 @@ auto MirBuilder::CreateBlock() -> BlockIndex {
   return idx;
 }
 
+auto MirBuilder::CreateBlockWithParams(std::vector<TypeId> param_types)
+    -> std::pair<BlockIndex, std::vector<int>> {
+  if (finished_) {
+    throw common::InternalError(
+        "MirBuilder", "CreateBlockWithParams called after Finish()");
+  }
+  BlockIndex idx{static_cast<uint32_t>(blocks_.size())};
+  blocks_.emplace_back();
+
+  std::vector<int> temp_ids;
+  temp_ids.reserve(param_types.size());
+  for (TypeId ty : param_types) {
+    int temp_id = ctx_->next_temp_id++;
+    ctx_->temp_types.push_back(ty);
+    blocks_[idx.value].params.push_back(
+        mir::BlockParam{
+            .temp_id = temp_id,
+            .type = ty,
+        });
+    temp_ids.push_back(temp_id);
+  }
+  return {idx, temp_ids};
+}
+
 void MirBuilder::SetCurrentBlock(BlockIndex block) {
   if (finished_) {
     throw common::InternalError(
@@ -644,12 +668,17 @@ void MirBuilder::EmitCaseCascade(
   }
 }
 
-void MirBuilder::EmitJump(BlockIndex target) {
-  EmitTerm(mir::Jump{.target = mir::BasicBlockId{target.value}});
+void MirBuilder::EmitJump(BlockIndex target, std::vector<mir::Operand> args) {
+  EmitTerm(
+      mir::Jump{
+          .target = mir::BasicBlockId{target.value},
+          .args = std::move(args),
+      });
 }
 
 void MirBuilder::EmitBranch(
-    mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb) {
+    mir::Operand cond, BlockIndex then_bb, std::vector<mir::Operand> then_args,
+    BlockIndex else_bb, std::vector<mir::Operand> else_args) {
   if (cond.kind != mir::Operand::Kind::kUse) {
     throw common::InternalError(
         "EmitBranch", "branch condition must be a Use operand");
@@ -659,8 +688,15 @@ void MirBuilder::EmitBranch(
       mir::Branch{
           .condition = cond_place,
           .then_target = mir::BasicBlockId{then_bb.value},
+          .then_args = std::move(then_args),
           .else_target = mir::BasicBlockId{else_bb.value},
+          .else_args = std::move(else_args),
       });
+}
+
+void MirBuilder::EmitBranch(
+    mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb) {
+  EmitBranch(cond, then_bb, {}, else_bb, {});
 }
 
 void MirBuilder::EmitQualifiedDispatch(
@@ -820,6 +856,7 @@ auto MirBuilder::Finish() -> std::vector<mir::BasicBlock> {
     block_map[i] = static_cast<int>(result.size());
     result.push_back(
         mir::BasicBlock{
+            .params = std::move(bb.params),
             .statements = std::move(bb.statements),
             .terminator = std::move(*bb.terminator),
         });

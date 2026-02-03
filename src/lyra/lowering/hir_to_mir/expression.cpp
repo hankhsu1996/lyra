@@ -950,32 +950,32 @@ auto LowerAssignment(
   return value;
 }
 
-// Lower ternary operator (a ? b : c) to control flow.
+// Lower ternary operator (a ? b : c) to control flow with SSA block args.
 // We use branches instead of a select instruction to ensure short-circuit
 // evaluation - only the taken arm is evaluated. This matters when arms have
 // side effects or access potentially invalid places.
 //
-// Lowering:
-//   result = _
+// SSA-by-construction lowering:
 //   branch cond -> then_bb, else_bb
-//   then_bb: result = then_val; jump merge_bb
-//   else_bb: result = else_val; jump merge_bb
-//   merge_bb: (continue here)
+//   then_bb: then_val = ...; jump merge_bb(then_val)
+//   else_bb: else_val = ...; jump merge_bb(else_val)
+//   merge_bb(result: T): (continue here, result is SSA temp)
+//
+// The merge block has a single parameter (result temp_id) that receives
+// values from both predecessors via edge args. This makes the temp SSA
+// by construction - exactly one definition (the block param).
 auto LowerConditional(
     const hir::ConditionalExpressionData& data, const hir::Expression& expr,
     MirBuilder& builder) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
-  // 1. Allocate result temp BEFORE branching (dominates both arms and merge)
-  mir::PlaceId result = ctx.AllocTemp(expr.type);
-
-  // 2. Lower condition (must not emit terminator - currently safe since
+  // 1. Lower condition (must not emit terminator - currently safe since
   //    logical ops use binary instructions, not control flow)
   Result<mir::Operand> cond_result = LowerExpression(data.condition, builder);
   if (!cond_result) return std::unexpected(cond_result.error());
   mir::Operand cond = *cond_result;
 
-  // 3. EmitBranch requires Use operand; materialize if needed
+  // 2. EmitBranch requires Use operand; materialize if needed
   //    Use condition's type (not expr.type) for the temp
   if (cond.kind != mir::Operand::Kind::kUse) {
     const hir::Expression& cond_expr = (*ctx.hir_arena)[data.condition];
@@ -984,31 +984,32 @@ auto LowerConditional(
     cond = mir::Operand::Use(temp);
   }
 
-  // 4. Create blocks and emit branch (terminates current block)
+  // 3. Create blocks: then, else, and merge with 1 param for the result
   BlockIndex then_bb = builder.CreateBlock();
   BlockIndex else_bb = builder.CreateBlock();
-  BlockIndex merge_bb = builder.CreateBlock();
+  auto [merge_bb, merge_temps] = builder.CreateBlockWithParams({expr.type});
+  int result_temp_id = merge_temps[0];
+
+  // 4. Emit branch (terminates current block)
   builder.EmitBranch(cond, then_bb, else_bb);
 
-  // 5. Then block: lower then_expr HERE (short-circuit), assign, terminate
+  // 5. Then block: lower then_expr HERE (short-circuit), jump with value
   builder.SetCurrentBlock(then_bb);
   Result<mir::Operand> then_result = LowerExpression(data.then_expr, builder);
   if (!then_result) return std::unexpected(then_result.error());
   mir::Operand then_val = *then_result;
-  builder.EmitAssign(result, std::move(then_val));
-  builder.EmitJump(merge_bb);
+  builder.EmitJump(merge_bb, {std::move(then_val)});
 
-  // 6. Else block: lower else_expr HERE (short-circuit), assign, terminate
+  // 6. Else block: lower else_expr HERE (short-circuit), jump with value
   builder.SetCurrentBlock(else_bb);
   Result<mir::Operand> else_result = LowerExpression(data.else_expr, builder);
   if (!else_result) return std::unexpected(else_result.error());
   mir::Operand else_val = *else_result;
-  builder.EmitAssign(result, std::move(else_val));
-  builder.EmitJump(merge_bb);
+  builder.EmitJump(merge_bb, {std::move(else_val)});
 
-  // 7. Continue in merge block
+  // 7. Continue in merge block; result is the block param (SSA temp)
   builder.SetCurrentBlock(merge_bb);
-  return mir::Operand::Use(result);
+  return mir::Operand::UseTemp(result_temp_id);
 }
 
 auto LowerStructLiteral(

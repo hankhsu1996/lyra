@@ -170,10 +170,26 @@ class MirBuilder {
   // Low-level CFG primitives (for special cases like loops, delays, waits).
   // Prefer high-level primitives when possible.
   auto CreateBlock() -> BlockIndex;
+
+  // Create a block with parameters that define SSA temps at block entry.
+  // Returns the block index and the temp_ids for each parameter.
+  // Callers use UseTemp(temp_id) to reference these temps.
+  auto CreateBlockWithParams(std::vector<TypeId> param_types)
+      -> std::pair<BlockIndex, std::vector<int>>;
+
   void SetCurrentBlock(BlockIndex block);
   [[nodiscard]] auto CurrentBlock() const -> BlockIndex;
 
-  void EmitJump(BlockIndex target);
+  // Emit jump with optional edge args for target block params.
+  void EmitJump(BlockIndex target, std::vector<mir::Operand> args = {});
+
+  // Emit branch with optional edge args for each target's block params.
+  void EmitBranch(
+      mir::Operand cond, BlockIndex then_bb,
+      std::vector<mir::Operand> then_args, BlockIndex else_bb,
+      std::vector<mir::Operand> else_args);
+
+  // Legacy overload without edge args (for backward compatibility).
   void EmitBranch(mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb);
   void EmitQualifiedDispatch(
       mir::DispatchQualifier qualifier,
@@ -248,6 +264,7 @@ class MirBuilder {
   void ClearInsertionPoint();
 
   struct BlockBuilder {
+    std::vector<mir::BlockParam> params;
     std::vector<mir::Statement> statements;
     std::optional<mir::Terminator> terminator;
   };

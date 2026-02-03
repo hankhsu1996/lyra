@@ -64,13 +64,17 @@ auto Interpreter::Run(ProcessState& state) -> Result<ProcessStatus> {
     if (!next_result) {
       return std::unexpected(std::move(next_result).error());
     }
-    auto next = *next_result;
-    if (!next) {
+    auto& term_result = *next_result;
+    if (!term_result.target) {
       state.status = ProcessStatus::kFinished;
       break;
     }
 
-    state.current_block = *next;
+    // Bind edge args to target block's params before entering
+    const auto& next_block = process.blocks[term_result.target->value];
+    BindBlockParams(state, next_block, std::move(term_result.edge_args));
+
+    state.current_block = *term_result.target;
     state.instruction_index = 0;
   }
 
@@ -139,12 +143,16 @@ auto Interpreter::RunFunction(
     if (!next_result) {
       return std::unexpected(std::move(next_result).error());
     }
-    auto next = *next_result;
-    if (!next) {
+    auto& term_result = *next_result;
+    if (!term_result.target) {
       break;  // Return reached
     }
 
-    func_state.current_block = *next;
+    // Bind edge args to target block's params before entering
+    const auto& next_block = func.blocks[term_result.target->value];
+    BindBlockParams(func_state, next_block, std::move(term_result.edge_args));
+
+    func_state.current_block = *term_result.target;
     func_state.instruction_index = 0;
   }
 
@@ -1249,13 +1257,45 @@ auto Interpreter::ExecStatement(ProcessState& state, const Statement& stmt)
   return {};
 }
 
+auto Interpreter::EvalEdgeArgs(
+    ProcessState& state, const std::vector<Operand>& args)
+    -> Result<std::vector<RuntimeValue>> {
+  std::vector<RuntimeValue> values;
+  values.reserve(args.size());
+  for (const auto& arg : args) {
+    auto val = EvalOperand(state, arg);
+    if (!val) return std::unexpected(std::move(val).error());
+    values.push_back(std::move(*val));
+  }
+  return values;
+}
+
+void Interpreter::BindBlockParams(
+    ProcessState& state, const BasicBlock& block,
+    std::vector<RuntimeValue> edge_args) {
+  if (block.params.size() != edge_args.size()) {
+    throw common::InternalError(
+        "BindBlockParams", std::format(
+                               "param/arg count mismatch: {} params, {} args",
+                               block.params.size(), edge_args.size()));
+  }
+  for (size_t i = 0; i < block.params.size(); ++i) {
+    state.frame.GetTemp(block.params[i].temp_id) = std::move(edge_args[i]);
+  }
+}
+
 auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
-    -> Result<std::optional<BasicBlockId>> {
-  using ResultType = Result<std::optional<BasicBlockId>>;
+    -> Result<TerminatorResult> {
+  using ResultType = Result<TerminatorResult>;
 
   return std::visit(
       common::Overloaded{
-          [](const Jump& t) -> ResultType { return t.target; },
+          [&](const Jump& t) -> ResultType {
+            auto args = EvalEdgeArgs(state, t.args);
+            if (!args) return std::unexpected(std::move(args).error());
+            return TerminatorResult{
+                .target = t.target, .edge_args = std::move(*args)};
+          },
 
           [&](const Branch& t) -> ResultType {
             auto cond_result = ReadPlace(state, t.condition);
@@ -1264,25 +1304,31 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             }
             auto& cond = *cond_result;
             // Support integral, real, and shortreal conditions
+            bool take_then = false;
             if (IsReal(cond)) {
-              return RealIsTrue(AsReal(cond)) ? t.then_target : t.else_target;
-            }
-            if (IsShortReal(cond)) {
-              return ShortRealIsTrue(AsShortReal(cond)) ? t.then_target
-                                                        : t.else_target;
-            }
-            if (!IsIntegral(cond)) {
+              take_then = RealIsTrue(AsReal(cond));
+            } else if (IsShortReal(cond)) {
+              take_then = ShortRealIsTrue(AsShortReal(cond));
+            } else if (!IsIntegral(cond)) {
               throw common::InternalError(
                   "ExecTerminator",
                   "branch condition must be integral, real, or shortreal");
+            } else {
+              const auto& cond_int = AsIntegral(cond);
+              if (!cond_int.IsKnown()) {
+                // TODO(hankhsu): SV semantics - should return X, not throw
+                return std::unexpected(
+                    Diagnostic::HostError("branch condition is X/Z"));
+              }
+              take_then = !cond_int.IsZero();
             }
-            const auto& cond_int = AsIntegral(cond);
-            if (!cond_int.IsKnown()) {
-              // TODO(hankhsu): SV semantics - should return X, not throw
-              return std::unexpected(
-                  Diagnostic::HostError("branch condition is X/Z"));
-            }
-            return cond_int.IsZero() ? t.else_target : t.then_target;
+            // Evaluate appropriate edge args based on branch direction
+            auto args = take_then ? EvalEdgeArgs(state, t.then_args)
+                                  : EvalEdgeArgs(state, t.else_args);
+            if (!args) return std::unexpected(std::move(args).error());
+            return TerminatorResult{
+                .target = take_then ? t.then_target : t.else_target,
+                .edge_args = std::move(*args)};
           },
 
           [&](const Switch& t) -> ResultType {
@@ -1300,14 +1346,19 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
                   "ExecTerminator", "switch selector must be integral");
             }
             const auto& sel_int = AsIntegral(selector);
+            BasicBlockId target;
             if (!sel_int.IsKnown()) {
-              return t.targets.back();
+              target = t.targets.back();
+            } else {
+              uint64_t val = sel_int.value.empty() ? 0 : sel_int.value[0];
+              if (val >= t.targets.size() - 1) {
+                target = t.targets.back();
+              } else {
+                target = t.targets[static_cast<size_t>(val)];
+              }
             }
-            uint64_t val = sel_int.value.empty() ? 0 : sel_int.value[0];
-            if (val >= t.targets.size() - 1) {
-              return t.targets.back();
-            }
-            return t.targets[static_cast<size_t>(val)];
+            // Switch doesn't have edge args in this iteration
+            return TerminatorResult{.target = target, .edge_args = {}};
           },
 
           [&](const QualifiedDispatch& t) -> ResultType {
@@ -1379,10 +1430,11 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
             }
 
             // Dispatch to first true target or else target (last one)
-            if (first_true_index < t.conditions.size()) {
-              return t.targets[first_true_index];
-            }
-            return t.targets.back();
+            BasicBlockId target = (first_true_index < t.conditions.size())
+                                      ? t.targets[first_true_index]
+                                      : t.targets.back();
+            // QualifiedDispatch doesn't have edge args in this iteration
+            return TerminatorResult{.target = target, .edge_args = {}};
           },
 
           [&](const Delay& t) -> ResultType {
@@ -1391,7 +1443,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
                 .ticks = t.ticks,
                 .resume_block = t.resume,
             };
-            return std::nullopt;
+            return TerminatorResult{.target = std::nullopt, .edge_args = {}};
           },
 
           [&](const Wait& /*t*/) -> ResultType {
@@ -1420,7 +1472,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
               }
               state.function_return_value = Clone(*val_result);
             }
-            return std::nullopt;
+            return TerminatorResult{.target = std::nullopt, .edge_args = {}};
           },
 
           [&](const Finish& t) -> ResultType {
@@ -1459,7 +1511,7 @@ auto Interpreter::ExecTerminator(ProcessState& state, const Terminator& term)
               }
               out << name << " called at time " << GetSimulationTime() << "\n";
             }
-            return std::nullopt;
+            return TerminatorResult{.target = std::nullopt, .edge_args = {}};
           },
 
           [&](const Repeat& /*t*/) -> ResultType {
@@ -1503,11 +1555,15 @@ auto Interpreter::RunUntilSuspend(ProcessState& state)
     if (!next_block_result) {
       return std::unexpected(std::move(next_block_result).error());
     }
-    auto next_block = *next_block_result;
+    auto& term_result = *next_block_result;
 
-    if (next_block) {
+    if (term_result.target) {
+      // Bind edge args to target block's params before entering
+      const auto& next_block = process.blocks[term_result.target->value];
+      BindBlockParams(state, next_block, std::move(term_result.edge_args));
+
       // Continue to next block
-      state.current_block = *next_block;
+      state.current_block = *term_result.target;
       state.instruction_index = 0;
     } else {
       // Check if a suspension terminator set pending_suspend

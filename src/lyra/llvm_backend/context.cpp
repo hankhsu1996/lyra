@@ -300,6 +300,38 @@ auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
   return it->second;
 }
 
+void Context::BindTemp(int temp_id, llvm::Value* v, TypeId type) {
+  auto [it, inserted] = temp_values_.try_emplace(temp_id, v);
+  if (!inserted) {
+    throw common::InternalError(
+        "BindTemp", std::format("temp {} already bound", temp_id));
+  }
+  temp_types_.emplace(temp_id, type);
+}
+
+auto Context::ReadTemp(int temp_id) const -> llvm::Value* {
+  auto it = temp_values_.find(temp_id);
+  if (it == temp_values_.end()) {
+    throw common::InternalError(
+        "ReadTemp", std::format("temp {} not bound", temp_id));
+  }
+  return it->second;
+}
+
+auto Context::GetTempType(int temp_id) const -> TypeId {
+  auto it = temp_types_.find(temp_id);
+  if (it == temp_types_.end()) {
+    throw common::InternalError(
+        "GetTempType", std::format("temp {} not bound", temp_id));
+  }
+  return it->second;
+}
+
+void Context::ClearTemps() {
+  temp_values_.clear();
+  temp_types_.clear();
+}
+
 void Context::SetCurrentProcess(size_t process_index) {
   current_process_index_ = process_index;
   state_ptr_ = nullptr;
