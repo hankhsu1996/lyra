@@ -253,3 +253,53 @@ cases:
       variables:
         quotient: 14
         remainder: 2
+
+  # Concat as projection base - triggers materialization
+  # {8'hAB, 8'hCD} = 16'hABCD, bits [11:8] = 0xB
+  - name: concat_projection_base
+    sv: |
+      module Test;
+        bit [7:0] a, b;
+        bit [3:0] result;
+        initial begin
+          a = 8'hAB;
+          b = 8'hCD;
+          result = {a, b}[11:8];  // Concat used as range-select base
+        end
+      endmodule
+    expect:
+      variables:
+        result: "4'hB"
+
+  # Replicate as projection base
+  # {4{4'hA}} = 16'hAAAA, bits [15:8] = 0xAA
+  - name: replicate_projection_base
+    sv: |
+      module Test;
+        bit [3:0] x;
+        bit [7:0] result;
+        initial begin
+          x = 4'hA;
+          result = {4{x}}[15:8];  // Replicate used as range-select base
+        end
+      endmodule
+    expect:
+      variables:
+        result: "8'hAA"
+
+  # Concat with bit select
+  # {4'b1010, 4'b0101} = 8'b10100101, bit[5] = 1
+  - name: concat_bit_select
+    sv: |
+      module Test;
+        bit [3:0] a, b;
+        bit result;
+        initial begin
+          a = 4'b1010;
+          b = 4'b0101;
+          result = {a, b}[5];  // Bit select on concat
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

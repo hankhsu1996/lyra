@@ -1811,7 +1811,7 @@ auto LowerConcat(
               mir::CastRvalueInfo{
                   .source_type = operand_expr.type, .target_type = expr.type},
       };
-      return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+      return builder.EmitValueTemp(expr.type, std::move(rvalue));
     }
   }
 
@@ -1827,7 +1827,7 @@ auto LowerConcat(
       .operands = std::move(operands),
       .info = mir::ConcatRvalueInfo{.result_type = expr.type},
   };
-  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerReplicate(
@@ -1840,7 +1840,7 @@ auto LowerReplicate(
       .operands = {*elem_result},
       .info = mir::ReplicateRvalueInfo{
           .result_type = expr.type, .count = data.count}};
-  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerMathCall(
