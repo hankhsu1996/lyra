@@ -574,6 +574,36 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
           [](const SystemTfRvalueInfo& info) {
             return std::format("system_tf({})", ToString(info.opcode));
           },
+          [](const ArrayQueryRvalueInfo& info) {
+            const char* name = nullptr;
+            switch (info.kind) {
+              case ArrayQuerySysFnKind::kLeft:
+                name = "$left";
+                break;
+              case ArrayQuerySysFnKind::kRight:
+                name = "$right";
+                break;
+              case ArrayQuerySysFnKind::kLow:
+                name = "$low";
+                break;
+              case ArrayQuerySysFnKind::kHigh:
+                name = "$high";
+                break;
+              case ArrayQuerySysFnKind::kIncrement:
+                name = "$increment";
+                break;
+              case ArrayQuerySysFnKind::kSize:
+                name = "$size";
+                break;
+              case ArrayQuerySysFnKind::kDimensions:
+                name = "$dimensions";
+                break;
+              case ArrayQuerySysFnKind::kUnpackedDimensions:
+                name = "$unpacked_dimensions";
+                break;
+            }
+            return std::format("array_query({})", name);
+          },
       },
       rv.info);
 

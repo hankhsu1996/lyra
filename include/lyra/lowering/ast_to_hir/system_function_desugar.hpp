@@ -5,12 +5,16 @@
 
 #include <slang/ast/expressions/CallExpression.h>
 
+#include "lyra/common/array_query_kind.hpp"
 #include "lyra/common/math_fn.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/operator.hpp"
 #include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+// Import ArrayQuerySysFnKind from common namespace
+using lyra::ArrayQuerySysFnKind;
 
 // "Desugarable" system functions are lowered to ordinary HIR nodes (kCast,
 // kUnaryOp, kConstant, etc.) rather than hir::kSystemCall. This is a
@@ -61,7 +65,7 @@ enum class TypeQuerySysFnKind {
 
 using DesugarableClassification = std::variant<
     ConversionSysFnKind, UnaryOpSysFn, BinaryOpSysFn, TimeScaleSysFnKind,
-    MathSysFn, TypeQuerySysFnKind>;
+    MathSysFn, TypeQuerySysFnKind, ArrayQuerySysFnKind>;
 
 // Classify a system call as desugarable (lowers to ordinary HIR, not
 // kSystemCall). Returns nullopt if the call requires kSystemCall lowering.

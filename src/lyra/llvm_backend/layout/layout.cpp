@@ -515,7 +515,8 @@ void CollectPlacesFromRvalue(
             std::is_same_v<T, mir::ReplicateRvalueInfo> ||
             std::is_same_v<T, mir::RuntimeQueryRvalueInfo> ||
             std::is_same_v<T, mir::MathCallRvalueInfo> ||
-            std::is_same_v<T, mir::SystemTfRvalueInfo>) {
+            std::is_same_v<T, mir::SystemTfRvalueInfo> ||
+            std::is_same_v<T, mir::ArrayQueryRvalueInfo>) {
           // These RvalueInfo types have no embedded PlaceIds or Operands
           // beyond what's in Rvalue::operands (already collected above)
         } else {

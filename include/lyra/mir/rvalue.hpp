@@ -1,10 +1,12 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <variant>
 #include <vector>
 
+#include "lyra/common/array_query_kind.hpp"
 #include "lyra/common/math_fn.hpp"
 #include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/system_tf.hpp"
@@ -140,13 +142,39 @@ struct MathCallRvalueInfo {
   MathFn fn;
 };
 
+// Per-dimension compile-time metadata for array query functions.
+// Extracted during HIR->MIR lowering to allow MIR interpreter to evaluate
+// queries without access to slang types.
+struct DimInfo {
+  int32_t left;            // Fixed: actual left bound; Variable: 0
+  int32_t right;           // Fixed: actual right bound; Variable: -1 (sentinel)
+  bool is_variable_sized;  // true for dynamic array / queue dimensions
+  bool is_packed;          // true for packed dimensions
+};
+
+// Array query functions ($left, $right, $low, $high, $increment, $size)
+// requiring runtime evaluation.
+// Note: $dimensions/$unpacked_dimensions always fold at lowering time.
+// operands[0] = array to query
+// operands[1] = dimension index (integer)
+static constexpr size_t kMaxArrayQueryDims = 8;
+
+struct ArrayQueryRvalueInfo {
+  ArrayQuerySysFnKind kind;
+  std::array<DimInfo, kMaxArrayQueryDims>
+      dims;               // SV dim order: dims[0] = dim 1
+  uint8_t total_dims;     // Actual count of dimensions
+  uint8_t unpacked_dims;  // Count of unpacked dimensions
+};
+
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
     AggregateRvalueInfo, BuiltinCallRvalueInfo, IndexValidityRvalueInfo,
     GuardedUseRvalueInfo, ConcatRvalueInfo, ReplicateRvalueInfo,
     SFormatRvalueInfo, TestPlusargsRvalueInfo, FopenRvalueInfo,
-    RuntimeQueryRvalueInfo, MathCallRvalueInfo, SystemTfRvalueInfo>;
+    RuntimeQueryRvalueInfo, MathCallRvalueInfo, SystemTfRvalueInfo,
+    ArrayQueryRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -190,6 +218,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "math_call";
         } else if constexpr (std::is_same_v<T, SystemTfRvalueInfo>) {
           return "system_tf";
+        } else if constexpr (std::is_same_v<T, ArrayQueryRvalueInfo>) {
+          return "array_query";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }
