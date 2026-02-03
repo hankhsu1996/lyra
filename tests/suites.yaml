@@ -20,7 +20,8 @@ suites:
       - processes/
       - scheduling/
       - system_tf/
-    exclude_regex: []
+    exclude_regex:
+      - system_tf/pure/array_query\.yaml  # MIR-only (LLVM backend unsupported)
 
   lli_dev:
     backend: lli
@@ -37,7 +38,8 @@ suites:
       - processes/
       - scheduling/
       - system_tf/
-    exclude_regex: []
+    exclude_regex:
+      - system_tf/pure/array_query\.yaml  # MIR-only (LLVM backend unsupported)
 
   mir_dev:
     backend: mir
