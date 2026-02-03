@@ -209,18 +209,29 @@ Supported:
 - `$shortrealtobits`, `$bitstoshortreal` - shortreal to 32-bit bitcast
 - Math functions (20.8): `$clog2`, `$ln`, `$log10`, `$exp`, `$sqrt`, `$pow`, `$floor`, `$ceil`, `$sin`, `$cos`, `$tan`, `$asin`, `$acos`, `$atan`, `$atan2`, `$hypot`, `$sinh`, `$cosh`, `$tanh`, `$asinh`, `$acosh`, `$atanh`
 - `$random`, `$urandom` - random number generation (deterministic LCG with seed=1)
+- `$system` - shell command execution (IEEE 1800-2023 20.18.1)
 - Data query functions (20.6): `$bits`, `$isunbounded`, `$typename` - fixed-size types only, result truncated to 32-bit signed integer
+- Array query functions (20.7): `$unpacked_dimensions`, `$dimensions`, `$left`, `$right`, `$low`, `$high`, `$increment`, `$size`
 
 Not yet supported:
 
+- `$fgetc`, `$ungetc` - character I/O
 - `$fgets`, `$fscanf`, `$fread` - file reading
-- `$fseek`, `$ftell`, `$rewind`, `$feof` - file positioning
+- `$sscanf` - string scanning
+- `$fseek`, `$ftell`, `$rewind`, `$feof`, `$ferror` - file positioning and status
+- VCD tasks (21.7): `$dumpfile`, `$dumpvars`, `$dumpoff`, `$dumpon`, `$dumpall`, `$dumplimit`, `$dumpflush`, `$dumpports*`
 - `$printtimescale(path)` - hierarchical path variant (requires hierarchy)
 - `$timeunit(path)`, `$timeprecision(path)` - hierarchical path variants (requires hierarchy)
 - `$timeunit($unit)`, `$timeprecision($unit)` - compilation unit variants
 - `$cast` - dynamic type casting
-- Array query functions (20.7): `$unpacked_dimensions`, `$dimensions`, `$left`, `$right`, `$low`, `$high`, `$increment`, `$size`
 - Bit vector functions (20.9): `$countbits`, `$countones`, `$onehot`, `$onehot0`, `$isunknown`
+- Assertion control tasks (20.11): `$asserton`, `$assertoff`, `$assertkill`, `$assertcontrol`, `$assertpasson`, `$assertpassoff`, `$assertfailon`, `$assertfailoff`, `$assertnonvacuouson`, `$assertvacuousoff`
+- Sampled value functions (20.12): `$sampled`, `$rose`, `$fell`, `$stable`, `$changed`, `$past`, `$past_gclk`, `$rose_gclk`, `$fell_gclk`, `$stable_gclk`, `$changed_gclk`, `$future_gclk`, `$rising_gclk`, `$falling_gclk`, `$steady_gclk`, `$changing_gclk`
+- Coverage control functions (20.13): `$coverage_control`, `$coverage_get_max`, `$coverage_get`, `$coverage_merge`, `$coverage_save`, `$get_coverage`, `$set_coverage_db_name`, `$load_coverage_db`
+- Probabilistic distribution functions (20.14): `$dist_chi_square`, `$dist_erlang`, `$dist_exponential`, `$dist_normal`, `$dist_poisson`, `$dist_t`, `$dist_uniform`
+- Stochastic analysis tasks (20.15): `$q_initialize`, `$q_add`, `$q_remove`, `$q_full`, `$q_exam`
+- PLA modeling tasks (20.16): `$async$and$array`, `$async$and$plane`, `$async$nand$array`, `$async$nand$plane`, `$async$or$array`, `$async$or$plane`, `$async$nor$array`, `$async$nor$plane`, `$sync$and$array`, `$sync$and$plane`, `$sync$nand$array`, `$sync$nand$plane`, `$sync$or$array`, `$sync$or$plane`, `$sync$nor$array`, `$sync$nor$plane`
+- `$stacktrace` - call stack display
 
 ## Timescale
 
