@@ -134,6 +134,11 @@ class Interpreter {
     instance_paths_ = std::move(paths);
   }
 
+  // Security: Enable $system shell command execution (disabled by default)
+  void SetEnableSystem(bool enable) {
+    enable_system_ = enable;
+  }
+
   // Execute process to completion. Returns final status.
   // Returns error on suspension terminators (Delay, Wait, Repeat).
   auto Run(ProcessState& state) -> Result<ProcessStatus>;
@@ -193,6 +198,8 @@ class Interpreter {
       -> Result<RuntimeValue>;
   auto EvalArrayQuery(
       ProcessState& state, const Rvalue& rv, const ArrayQueryRvalueInfo& info)
+      -> Result<RuntimeValue>;
+  auto EvalSystemCmd(ProcessState& state, const SystemCmdRvalueInfo& info)
       -> Result<RuntimeValue>;
 
   // Execute SystemTfEffect
@@ -309,6 +316,9 @@ class Interpreter {
   // PRNG state for $random/$urandom. LCG with glibc constants.
   // Same algorithm as Engine to ensure matching behavior.
   uint32_t prng_state_ = 1;
+
+  // Security: $system execution gate (default disabled)
+  bool enable_system_ = false;
 };
 
 // Helper: Create ProcessState for a given process.
@@ -347,10 +357,11 @@ struct SimulationResult {
 // Encapsulates all interpreter internals (process states, suspension handling,
 // engine integration). Returns exit code (0 = success).
 // fs_base_dir: Absolute path for relative file I/O resolution.
+// enable_system: Security gate for $system execution (default false).
 auto RunSimulation(
     const Design& design, const Arena& mir_arena, const TypeArena& types,
     std::ostream* output, std::span<const std::string> plusargs,
-    const std::filesystem::path& fs_base_dir,
+    const std::filesystem::path& fs_base_dir, bool enable_system = false,
     const lowering::DiagnosticContext* diag_ctx = nullptr) -> SimulationResult;
 
 }  // namespace lyra::mir::interp

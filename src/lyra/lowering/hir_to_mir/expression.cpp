@@ -731,6 +731,27 @@ auto LowerSystemCall(
     return mir::Operand::Use(tmp);
   }
 
+  // $system -> SystemCmdRvalueInfo (side-effecting shell command)
+  if (const auto* system_cmd = std::get_if<hir::SystemCmdData>(&data)) {
+    Context& ctx = builder.GetContext();
+
+    mir::SystemCmdRvalueInfo info{.command = std::nullopt};
+    if (system_cmd->command) {
+      Result<mir::Operand> cmd_result =
+          LowerExpression(*system_cmd->command, builder);
+      if (!cmd_result) {
+        return std::unexpected(cmd_result.error());
+      }
+      const auto& cmd_expr = (*ctx.hir_arena)[*system_cmd->command];
+      info.command = mir::TypedOperand{
+          .operand = std::move(*cmd_result), .type = cmd_expr.type};
+    }
+
+    mir::Rvalue rvalue{.operands = {}, .info = std::move(info)};
+    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    return mir::Operand::Use(tmp);
+  }
+
   // Array query functions -> ArrayQueryRvalueInfo
   if (const auto* arr_query = std::get_if<hir::ArrayQueryData>(&data)) {
     Context& ctx = builder.GetContext();

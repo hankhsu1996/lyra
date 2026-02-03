@@ -182,6 +182,14 @@ auto LowerRvalue(
                     "in the LLVM backend; use MIR interpreter instead",
                     UnsupportedCategory::kFeature));
           },
+          [&](const mir::SystemCmdRvalueInfo&) -> Result<RvalueValue> {
+            return std::unexpected(
+                context.GetDiagnosticContext().MakeUnsupported(
+                    context.GetCurrentOrigin(),
+                    "$system is not supported in the LLVM backend; use MIR "
+                    "interpreter instead",
+                    UnsupportedCategory::kFeature));
+          },
       },
       rvalue.info);
 }

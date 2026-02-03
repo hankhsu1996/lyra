@@ -25,7 +25,8 @@ struct CompilationInput {
   OptLevel opt_level = OptLevel::kO2;  // Default O2 for CLI
   bool pedantic = false;               // Strict LRM compliance mode
   int verbose = 0;                     // Verbosity level (0-3)
-  int stats_top_n = -1;  // LLVM stats: -1=off, 0=summary, >0=top N
+  int stats_top_n = -1;        // LLVM stats: -1=off, 0=summary, >0=top N
+  bool enable_system = false;  // Security: $system disabled by default
 };
 
 struct ParseResult {

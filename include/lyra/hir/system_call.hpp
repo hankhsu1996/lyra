@@ -149,10 +149,17 @@ struct ArrayQueryData {
   auto operator==(const ArrayQueryData&) const -> bool = default;
 };
 
+// $system - execute shell command (IEEE 1800-2023 20.18.1)
+struct SystemCmdData {
+  std::optional<ExpressionId> command;  // nullopt = system(NULL)
+
+  auto operator==(const SystemCmdData&) const -> bool = default;
+};
+
 using SystemCallExpressionData = std::variant<
     DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
     TestPlusargsData, ValuePlusargsData, MemIOData, FopenData, FcloseData,
     FflushData, RuntimeQueryData, TimeFormatData, MonitorSystemCallData,
-    MonitorControlData, RandomData, ArrayQueryData>;
+    MonitorControlData, RandomData, ArrayQueryData, SystemCmdData>;
 
 }  // namespace lyra::hir
