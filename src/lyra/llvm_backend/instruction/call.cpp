@@ -19,6 +19,7 @@
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/mir/arena.hpp"
@@ -86,31 +87,15 @@ auto LowerUserCall(
         throw common::InternalError("LowerUserCall", "in_args underflow");
       }
 
-      // Compute expected LLVM type for the parameter (matches
-      // BuildUserFunctionType logic).
-      const Type& type = context.GetTypeArena()[param.type];
-      auto& llvm_ctx = context.GetLlvmContext();
-      llvm::Type* expected_type = nullptr;
-
-      if (type.Kind() == TypeKind::kString ||
-          type.Kind() == TypeKind::kDynamicArray ||
-          type.Kind() == TypeKind::kQueue) {
-        expected_type = llvm::PointerType::getUnqual(llvm_ctx);
-      } else if (type.Kind() == TypeKind::kReal) {
-        expected_type = llvm::Type::getDoubleTy(llvm_ctx);
-      } else if (type.Kind() == TypeKind::kShortReal) {
-        expected_type = llvm::Type::getFloatTy(llvm_ctx);
-      } else if (IsPacked(type)) {
-        auto width = PackedBitWidth(type, context.GetTypeArena());
-        if (IsPackedFourState(type, context.GetTypeArena())) {
-          expected_type = GetFourStateStructType(llvm_ctx, width);
-        } else {
-          expected_type = GetLlvmStorageType(llvm_ctx, width);
-        }
-      } else {
+      // Compute expected LLVM type using centralized ABI mapping
+      llvm::Type* expected_type = GetLlvmAbiTypeForValue(
+          context.GetLlvmContext(), param.type, context.GetTypeArena());
+      if (expected_type == nullptr) {
         throw common::InternalError(
             "LowerUserCall",
-            std::format("unsupported param type: {}", ToString(type.Kind())));
+            std::format(
+                "aggregate type {} cannot be passed by value in call",
+                param.type.value));
       }
 
       auto val_result = LowerOperandAsStorage(

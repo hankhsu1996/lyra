@@ -30,6 +30,7 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/interp/format.hpp"
+#include "lyra/mir/interp/frame_temps.hpp"
 #include "lyra/mir/interp/interp_helpers.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
@@ -88,7 +89,6 @@ auto Interpreter::RunFunction(
 
   // Use function's metadata for storage allocation
   const auto& local_types = func.local_types;
-  const auto& temp_metadata = func.temp_metadata;
 
   // Initialize locals with default values
   std::vector<RuntimeValue> locals;
@@ -98,16 +98,8 @@ auto Interpreter::RunFunction(
         type_id ? CreateDefaultValue(*types_, type_id) : RuntimeValue{});
   }
 
-  // Initialize temps with default values from temp_metadata
-  std::vector<RuntimeValue> temps;
-  std::vector<TypeId> temp_types;
-  temps.reserve(temp_metadata.size());
-  temp_types.reserve(temp_metadata.size());
-  for (const auto& meta : temp_metadata) {
-    temps.push_back(
-        meta.type ? CreateDefaultValue(*types_, meta.type) : RuntimeValue{});
-    temp_types.push_back(meta.type);
-  }
+  // Initialize temps from canonical func.temp_metadata
+  auto [temps, temp_types] = BuildFrameTemps(func.temp_metadata, *types_);
 
   // Copy arguments to parameter locals using explicit slot mapping
   for (size_t i = 0; i < args.size(); ++i) {

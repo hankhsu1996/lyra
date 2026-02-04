@@ -304,6 +304,14 @@ auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
 void Context::BindTemp(int temp_id, llvm::Value* v, TypeId type) {
   // Invariant: if MIR type is 4-state, LLVM value must be a {val, unk} struct.
   // Violating this causes crashes when LoadFourStateOperand assumes struct.
+  //
+  // Note: We check 2-state vs 4-state, NOT exact type match.
+  // Temps may have semantic width (e.g., i1 for bit). ABI width coercion
+  // happens at use sites that require it (function call arguments), not here.
+  // This keeps BindTemp simple and avoids unnecessary zext/trunc churn.
+  //
+  // GetLlvmAbiTypeForValue returns storage types (i8 for 1-bit), but temps
+  // use semantic types (i1 for 1-bit). The key invariant is 2s vs 4s.
   bool mir_is_4s = IsTypeFourState(types_, type);
   bool llvm_is_struct = v->getType()->isStructTy();
   if (mir_is_4s != llvm_is_struct) {
@@ -314,10 +322,6 @@ void Context::BindTemp(int temp_id, llvm::Value* v, TypeId type) {
             mir_is_4s ? "4-state" : "2-state",
             llvm_is_struct ? "struct" : "scalar"));
   }
-
-  // Note: Temps may have semantic width (e.g., i1 for bit). ABI width coercion
-  // happens at use sites that require it (function call arguments), not here.
-  // This keeps BindTemp simple and avoids unnecessary zext/trunc churn.
 
   auto [it, inserted] = temp_values_.try_emplace(temp_id, v);
   if (!inserted) {
@@ -490,42 +494,23 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
 
   // Add parameter types from signature
   for (const auto& param : sig.params) {
-    const Type& type = types_[param.type];
     llvm::Type* param_ty = nullptr;
-
-    if (type.Kind() == TypeKind::kVoid) {
-      throw common::InternalError(
-          "BuildUserFunctionType", "void parameter type not allowed");
-    }
 
     // Output/inout parameters: always pass as pointer to destination
     if (param.kind == mir::PassingKind::kOut ||
         param.kind == mir::PassingKind::kInOut) {
       param_ty = ptr_ty;  // Pointer to destination (direct passing)
-    } else if (
-        type.Kind() == TypeKind::kString ||
-        type.Kind() == TypeKind::kDynamicArray ||
-        type.Kind() == TypeKind::kQueue) {
-      // Input managed types: pass handle by value
-      param_ty = ptr_ty;
-    } else if (type.Kind() == TypeKind::kReal) {
-      param_ty = llvm::Type::getDoubleTy(*llvm_context_);
-    } else if (type.Kind() == TypeKind::kShortReal) {
-      param_ty = llvm::Type::getFloatTy(*llvm_context_);
-    } else if (IsPacked(type)) {
-      auto width = PackedBitWidth(type, types_);
-      if (IsPackedFourState(type, types_)) {
-        param_ty = GetFourStateStructType(*llvm_context_, width);
-      } else {
-        param_ty = GetLlvmStorageType(*llvm_context_, width);
-      }
     } else {
-      return std::unexpected(
-          GetDiagnosticContext().MakeUnsupported(
-              current_origin_,
-              std::format(
-                  "unsupported parameter type: {}", ToString(type.Kind())),
-              UnsupportedCategory::kType));
+      param_ty = GetLlvmAbiTypeForValue(*llvm_context_, param.type, types_);
+      if (param_ty == nullptr) {
+        return std::unexpected(
+            GetDiagnosticContext().MakeUnsupported(
+                current_origin_,
+                std::format(
+                    "aggregate type {} cannot be passed by value",
+                    param.type.value),
+                UnsupportedCategory::kType));
+      }
     }
 
     param_types.push_back(param_ty);
@@ -542,30 +527,18 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
 
     if (ret_type.Kind() == TypeKind::kVoid) {
       llvm_ret_type = llvm::Type::getVoidTy(*llvm_context_);
-    } else if (
-        ret_type.Kind() == TypeKind::kString ||
-        ret_type.Kind() == TypeKind::kDynamicArray ||
-        ret_type.Kind() == TypeKind::kQueue) {
-      // Managed handles return directly as ptr (the handle value)
-      llvm_ret_type = ptr_ty;
-    } else if (ret_type.Kind() == TypeKind::kReal) {
-      llvm_ret_type = llvm::Type::getDoubleTy(*llvm_context_);
-    } else if (ret_type.Kind() == TypeKind::kShortReal) {
-      llvm_ret_type = llvm::Type::getFloatTy(*llvm_context_);
-    } else if (IsPacked(ret_type)) {
-      auto width = PackedBitWidth(ret_type, types_);
-      if (IsPackedFourState(ret_type, types_)) {
-        llvm_ret_type = GetFourStateStructType(*llvm_context_, width);
-      } else {
-        llvm_ret_type = GetLlvmStorageType(*llvm_context_, width);
-      }
     } else {
-      return std::unexpected(
-          GetDiagnosticContext().MakeUnsupported(
-              current_origin_,
-              std::format(
-                  "unsupported return type: {}", ToString(ret_type.Kind())),
-              UnsupportedCategory::kType));
+      llvm_ret_type =
+          GetLlvmAbiTypeForValue(*llvm_context_, sig.return_type, types_);
+      if (llvm_ret_type == nullptr) {
+        return std::unexpected(
+            GetDiagnosticContext().MakeUnsupported(
+                current_origin_,
+                std::format(
+                    "aggregate type {} cannot be returned by value",
+                    sig.return_type.value),
+                UnsupportedCategory::kType));
+      }
     }
   }
 
