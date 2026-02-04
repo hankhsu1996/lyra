@@ -154,6 +154,7 @@ auto LowerCastRvalue(
     uint32_t bit_width = PackedBitWidth(tgt_type, types);
     llvm::Type* result_type =
         llvm::Type::getIntNTy(context.GetLlvmContext(), bit_width);
+    bool tgt_is_4s = IsPackedFourState(tgt_type, types);
 
     // Try constant-folding for compile-time strings
     const auto* constant = std::get_if<Constant>(&source_operand.payload);
@@ -171,8 +172,13 @@ auto LowerCastRvalue(
           auto byte_val = static_cast<uint8_t>(str[i]);
           packed_val |= llvm::APInt(bit_width, byte_val) << bit_offset;
         }
-        return RvalueValue::TwoState(
-            llvm::ConstantInt::get(context.GetLlvmContext(), packed_val));
+        llvm::Value* result =
+            llvm::ConstantInt::get(context.GetLlvmContext(), packed_val);
+        if (tgt_is_4s) {
+          auto* zero = llvm::ConstantInt::get(result_type, 0);
+          return RvalueValue::FourState(result, zero);
+        }
+        return RvalueValue::TwoState(result);
       }
     }
 
@@ -193,6 +199,10 @@ auto LowerCastRvalue(
     // Load the result
     llvm::Value* result =
         builder.CreateLoad(result_type, alloca, "str.topacked");
+    if (tgt_is_4s) {
+      auto* zero = llvm::ConstantInt::get(result_type, 0);
+      return RvalueValue::FourState(result, zero);
+    }
     return RvalueValue::TwoState(result);
   }
 
@@ -261,6 +271,12 @@ auto LowerCastRvalue(
     }
 
     result = ApplyWidthMask(context, result, bit_width);
+
+    if (tgt_is_4s) {
+      // Float -> 4s: unknown plane is all zeros (value is fully known)
+      auto* zero = llvm::ConstantInt::get(elem_type, 0);
+      return RvalueValue::FourState(result, zero);
+    }
     return RvalueValue::TwoState(result);
   }
 
@@ -294,6 +310,12 @@ auto LowerCastRvalue(
 
   llvm::Value* result = ExtOrTrunc(builder, source, elem_type, is_signed);
   result = ApplyWidthMask(context, result, bit_width);
+
+  if (tgt_is_4s) {
+    // 2s -> 4s: unknown plane is all zeros (value is fully known)
+    auto* zero = llvm::ConstantInt::get(elem_type, 0);
+    return RvalueValue::FourState(result, zero);
+  }
   return RvalueValue::TwoState(result);
 }
 
@@ -326,6 +348,7 @@ auto LowerBitCastRvalue(
   llvm::Value* src = *src_or_err;
 
   llvm::Value* result = nullptr;
+  bool tgt_is_4s = IsPacked(tgt_type) && IsPackedFourState(tgt_type, types);
 
   if (src_type.Kind() == TypeKind::kReal && is_packed_integral(tgt_type)) {
     result =
@@ -346,6 +369,10 @@ auto LowerBitCastRvalue(
     llvm_unreachable("invalid bitcast types");
   }
 
+  if (tgt_is_4s) {
+    auto* zero = llvm::ConstantInt::get(result->getType(), 0);
+    return RvalueValue::FourState(result, zero);
+  }
   return RvalueValue::TwoState(result);
 }
 

@@ -26,6 +26,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
+#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
@@ -301,6 +302,23 @@ auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
 }
 
 void Context::BindTemp(int temp_id, llvm::Value* v, TypeId type) {
+  // Invariant: if MIR type is 4-state, LLVM value must be a {val, unk} struct.
+  // Violating this causes crashes when LoadFourStateOperand assumes struct.
+  bool mir_is_4s = IsTypeFourState(types_, type);
+  bool llvm_is_struct = v->getType()->isStructTy();
+  if (mir_is_4s != llvm_is_struct) {
+    throw common::InternalError(
+        "BindTemp",
+        std::format(
+            "temp {} state mismatch: MIR type is {}, LLVM type is {}", temp_id,
+            mir_is_4s ? "4-state" : "2-state",
+            llvm_is_struct ? "struct" : "scalar"));
+  }
+
+  // Note: Temps may have semantic width (e.g., i1 for bit). ABI width coercion
+  // happens at use sites that require it (function call arguments), not here.
+  // This keeps BindTemp simple and avoids unnecessary zext/trunc churn.
+
   auto [it, inserted] = temp_values_.try_emplace(temp_id, v);
   if (!inserted) {
     throw common::InternalError(

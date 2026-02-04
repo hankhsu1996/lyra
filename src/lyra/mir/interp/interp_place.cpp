@@ -42,7 +42,7 @@ auto SignExtendToInt64(uint64_t raw, uint32_t bit_width) -> int64_t {
 // Evaluates an index operand to int64, handling sign extension and X/Z checks.
 auto ResolveIndex(
     const RuntimeValue& idx_val, const Operand& idx_operand, const Arena& arena,
-    const TypeArena& types) -> Result<int64_t> {
+    const TypeArena& types, const Frame& frame) -> Result<int64_t> {
   if (!IsIntegral(idx_val)) {
     throw common::InternalError("ResolveIndex", "index must be integral");
   }
@@ -52,7 +52,7 @@ auto ResolveIndex(
     return std::unexpected(Diagnostic::HostError("index is X/Z"));
   }
   uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
-  TypeId type_id = TypeOfOperand(idx_operand, arena, types);
+  TypeId type_id = TypeOfOperand(idx_operand, arena, types, frame);
   if (IsSignedIntegral(types, type_id)) {
     return SignExtendToInt64(raw, idx_int.bit_width);
   }
@@ -167,8 +167,8 @@ auto Interpreter::ApplyProjectionsForRead(
                 error = std::move(idx_val_result).error();
                 return;
               }
-              auto idx_result =
-                  ResolveIndex(*idx_val_result, ip.index, *arena_, *types_);
+              auto idx_result = ResolveIndex(
+                  *idx_val_result, ip.index, *arena_, *types_, state.frame);
               if (!idx_result) {
                 error = std::move(idx_result).error();
                 return;
@@ -367,8 +367,8 @@ auto Interpreter::ApplyProjectionsForWrite(
                 error = std::move(idx_val_result).error();
                 return;
               }
-              auto idx_result =
-                  ResolveIndex(*idx_val_result, ip.index, *arena_, *types_);
+              auto idx_result = ResolveIndex(
+                  *idx_val_result, ip.index, *arena_, *types_, state.frame);
               if (!idx_result) {
                 error = std::move(idx_result).error();
                 return;

@@ -303,3 +303,40 @@ cases:
     expect:
       variables:
         result: 1
+
+  # 2-state to 4-state implicit conversion - regression for ValueTemp representation
+  # Exercises that 2s->4s assignment conversion produces correct {val, zero}
+  - name: two_state_to_four_state_assignment
+    sv: |
+      module Test;
+        int a;              // 2-state signed
+        logic [31:0] out;   // 4-state target
+        int result;
+        initial begin
+          a = -1;
+          // 2-state to 4-state implicit conversion
+          out = a;
+          result = out;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -1
+
+  # 2s->4s in expression chain - ensures 4-state intermediate
+  - name: two_state_to_four_state_expression
+    sv: |
+      module Test;
+        bit [7:0] x;        // 2-state
+        logic [15:0] y;     // 4-state
+        int result;
+        initial begin
+          x = 8'hAB;
+          // 2-state assigned to 4-state, then addition
+          y = x + 16'd1;
+          result = y;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 172

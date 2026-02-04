@@ -13,8 +13,10 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/abi_check.hpp"
 #include "lyra/llvm_backend/commit.hpp"
+#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
@@ -79,11 +81,40 @@ auto LowerUserCall(
     const auto& param = func.signature.params[param_idx];
 
     if (param.kind == mir::PassingKind::kValue) {
-      // Input parameter: pass value
+      // Input parameter: pass value coerced to expected ABI type
       if (in_arg_idx >= call.in_args.size()) {
         throw common::InternalError("LowerUserCall", "in_args underflow");
       }
-      auto val_result = LowerOperandRaw(context, call.in_args[in_arg_idx]);
+
+      // Compute expected LLVM type for the parameter (matches
+      // BuildUserFunctionType logic).
+      const Type& type = context.GetTypeArena()[param.type];
+      auto& llvm_ctx = context.GetLlvmContext();
+      llvm::Type* expected_type = nullptr;
+
+      if (type.Kind() == TypeKind::kString ||
+          type.Kind() == TypeKind::kDynamicArray ||
+          type.Kind() == TypeKind::kQueue) {
+        expected_type = llvm::PointerType::getUnqual(llvm_ctx);
+      } else if (type.Kind() == TypeKind::kReal) {
+        expected_type = llvm::Type::getDoubleTy(llvm_ctx);
+      } else if (type.Kind() == TypeKind::kShortReal) {
+        expected_type = llvm::Type::getFloatTy(llvm_ctx);
+      } else if (IsPacked(type)) {
+        auto width = PackedBitWidth(type, context.GetTypeArena());
+        if (IsPackedFourState(type, context.GetTypeArena())) {
+          expected_type = GetFourStateStructType(llvm_ctx, width);
+        } else {
+          expected_type = GetLlvmStorageType(llvm_ctx, width);
+        }
+      } else {
+        throw common::InternalError(
+            "LowerUserCall",
+            std::format("unsupported param type: {}", ToString(type.Kind())));
+      }
+
+      auto val_result = LowerOperandAsStorage(
+          context, call.in_args[in_arg_idx], expected_type);
       if (!val_result) return std::unexpected(val_result.error());
       args.push_back(*val_result);
       ++in_arg_idx;

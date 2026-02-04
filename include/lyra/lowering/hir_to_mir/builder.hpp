@@ -23,6 +23,9 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+// Forward declaration for cache type (definition in materialize_cache.hpp)
+struct PlaceMaterializationCache;
+
 // Builder-local block index. Used during construction to reference blocks
 // before they are materialized into the Arena.
 struct BlockIndex {
@@ -65,6 +68,14 @@ class MirBuilder {
   // kUse: returns place directly (caller ensures type matches base place type)
   // kConst/kUseTemp: allocates fresh PlaceTemp (no caching)
   auto MaterializeIfNeededToPlace(TypeId type, mir::Operand operand)
+      -> mir::PlaceId;
+
+  // Memoized materialization for projection bases.
+  // kUse: returns place directly
+  // kUseTemp: memoizes by (temp_id, type) to avoid duplicate allocations
+  // kConst: materializes without memoization
+  auto EnsurePlaceCached(
+      TypeId type, mir::Operand operand, PlaceMaterializationCache& cache)
       -> mir::PlaceId;
 
   // Emit a Call instruction for user function invocation.

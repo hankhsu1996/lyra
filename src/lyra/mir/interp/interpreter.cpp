@@ -128,6 +128,10 @@ struct StorageCollector {
         Visit(arena[*info->receiver], arena);
       }
     }
+    // Visit place inside GuardedUse (may have projections with temp operands)
+    if (const auto* info = std::get_if<GuardedUseRvalueInfo>(&rv.info)) {
+      Visit(arena[info->place], arena);
+    }
     // Visit operands stored in info structs (TypedOperand)
     if (const auto* info = std::get_if<TestPlusargsRvalueInfo>(&rv.info)) {
       Visit(info->query.operand, arena);
@@ -355,7 +359,8 @@ auto CreateProcessState(
       .process = process_id,
       .current_block = process.entry,
       .instruction_index = 0,
-      .frame = Frame(std::move(locals), std::move(temps)),
+      .frame = Frame(
+          std::move(locals), std::move(temps), std::move(collector.temp_types)),
       .design_state = design_state,
       .status = ProcessStatus::kRunning,
       .instance_id = process.owner_instance_id,

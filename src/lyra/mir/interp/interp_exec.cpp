@@ -100,10 +100,13 @@ auto Interpreter::RunFunction(
 
   // Initialize temps with default values from temp_metadata
   std::vector<RuntimeValue> temps;
+  std::vector<TypeId> temp_types;
   temps.reserve(temp_metadata.size());
+  temp_types.reserve(temp_metadata.size());
   for (const auto& meta : temp_metadata) {
     temps.push_back(
         meta.type ? CreateDefaultValue(*types_, meta.type) : RuntimeValue{});
+    temp_types.push_back(meta.type);
   }
 
   // Copy arguments to parameter locals using explicit slot mapping
@@ -119,7 +122,8 @@ auto Interpreter::RunFunction(
       .process = ProcessId{0},  // Unused for function execution
       .current_block = func.entry,
       .instruction_index = 0,
-      .frame = Frame(std::move(locals), std::move(temps)),
+      .frame =
+          Frame(std::move(locals), std::move(temps), std::move(temp_types)),
       .design_state = design_state,
       .status = ProcessStatus::kRunning,
       .pending_suspend = std::nullopt,
@@ -1121,7 +1125,8 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
     }
 
     case BuiltinMethod::kQueueInsert: {
-      TypeId idx_type = TypeOfOperand(call.args[0], *arena_, *types_);
+      TypeId idx_type =
+          TypeOfOperand(call.args[0], *arena_, *types_, state.frame);
       auto idx_val_result = EvalOperand(state, call.args[0]);
       if (!idx_val_result) {
         return std::unexpected(std::move(idx_val_result).error());
@@ -1163,7 +1168,8 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
     }
 
     case BuiltinMethod::kQueueDeleteAt: {
-      TypeId idx_type = TypeOfOperand(call.args[0], *arena_, *types_);
+      TypeId idx_type =
+          TypeOfOperand(call.args[0], *arena_, *types_, state.frame);
       auto idx_val_result = EvalOperand(state, call.args[0]);
       if (!idx_val_result) {
         return std::unexpected(std::move(idx_val_result).error());

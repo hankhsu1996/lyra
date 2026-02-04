@@ -438,7 +438,8 @@ auto Interpreter::EvalNewArray(ProcessState& state, const Rvalue& rv)
 
   // Sign-extend based on operand type to detect negatives
   uint64_t raw_bits = size_int.value.empty() ? 0 : size_int.value[0];
-  TypeId size_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
+  TypeId size_type =
+      TypeOfOperand(rv.operands[0], *arena_, *types_, state.frame);
   const auto& type_info = (*types_)[size_type];
   if (type_info.Kind() == TypeKind::kIntegral) {
     const auto& integral = type_info.AsIntegral();
@@ -679,7 +680,8 @@ auto Interpreter::EvalIndexValidity(ProcessState& state, const Rvalue& rv)
     return MakeIntegral(0, 1);  // Invalid: X/Z index
   }
 
-  TypeId index_type = TypeOfOperand(rv.operands[0], *arena_, *types_);
+  TypeId index_type =
+      TypeOfOperand(rv.operands[0], *arena_, *types_, state.frame);
   bool is_signed = IsSignedType(*types_, index_type);
 
   // Special case: unsigned index with negative bounds.
@@ -746,7 +748,7 @@ auto Interpreter::EvalConcat(ProcessState& state, const Rvalue& rv)
     auto& val = *val_result;
     RuntimeIntegral integral;
     if (IsString(val)) {
-      TypeId op_type = TypeOfOperand(operand, *arena_, *types_);
+      TypeId op_type = TypeOfOperand(operand, *arena_, *types_, state.frame);
       const Type& op_type_ref = (*types_)[op_type];
       uint32_t op_width = 0;
       if (IsPacked(op_type_ref)) {
@@ -859,7 +861,8 @@ auto Interpreter::EvalSFormat(ProcessState& state, const Rvalue& rv)
     std::string fmt_str = AsString(*fmt_val_result).value;
     std::vector<TypedValue> value_args;
     for (size_t i = 1; i < rv.operands.size(); ++i) {
-      TypeId type = TypeOfOperand(rv.operands[i], *arena_, *types_);
+      TypeId type =
+          TypeOfOperand(rv.operands[i], *arena_, *types_, state.frame);
       auto arg_result = EvalOperand(state, rv.operands[i]);
       if (!arg_result) {
         return std::unexpected(std::move(arg_result).error());
@@ -872,7 +875,7 @@ auto Interpreter::EvalSFormat(ProcessState& state, const Rvalue& rv)
     // Auto-format path
     std::vector<TypedValue> typed_args;
     for (const auto& operand : rv.operands) {
-      TypeId type = TypeOfOperand(operand, *arena_, *types_);
+      TypeId type = TypeOfOperand(operand, *arena_, *types_, state.frame);
       auto arg_result = EvalOperand(state, operand);
       if (!arg_result) {
         return std::unexpected(std::move(arg_result).error());

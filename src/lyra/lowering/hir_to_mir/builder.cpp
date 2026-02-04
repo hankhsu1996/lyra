@@ -16,6 +16,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
+#include "lyra/lowering/hir_to_mir/materialize_cache.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
@@ -285,6 +286,31 @@ auto MirBuilder::MaterializeIfNeededToPlace(TypeId type, mir::Operand operand)
     }
     return place;
   }
+  return MaterializeOperandToPlace(type, std::move(operand));
+}
+
+auto MirBuilder::EnsurePlaceCached(
+    TypeId type, mir::Operand operand, PlaceMaterializationCache& cache)
+    -> mir::PlaceId {
+  // kUse: already a place, return directly
+  if (operand.kind == mir::Operand::Kind::kUse) {
+    return std::get<mir::PlaceId>(operand.payload);
+  }
+
+  // kUseTemp: memoize by (temp_id, type)
+  if (operand.kind == mir::Operand::Kind::kUseTemp) {
+    mir::TempId temp_id = std::get<mir::TempId>(operand.payload);
+    PlaceMaterializationCache::Key key{temp_id.value, type};
+    auto it = cache.map.find(key);
+    if (it != cache.map.end()) {
+      return it->second;
+    }
+    mir::PlaceId place = MaterializeOperandToPlace(type, std::move(operand));
+    cache.map[key] = place;
+    return place;
+  }
+
+  // kConst: just materialize (no memoization)
   return MaterializeOperandToPlace(type, std::move(operand));
 }
 

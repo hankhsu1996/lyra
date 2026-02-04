@@ -415,8 +415,7 @@ auto LowerUnary(
       .info = mir::UnaryRvalueInfo{.op = MapUnaryOp(data.op)},
   };
 
-  mir::PlaceId temp_id = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
-  return mir::Operand::Use(temp_id);
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerBinary(
