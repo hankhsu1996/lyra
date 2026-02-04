@@ -731,6 +731,38 @@ auto LowerSystemCall(
     return mir::Operand::Use(tmp);
   }
 
+  // $fgetc -> SystemTfRvalueInfo (reads file state)
+  if (const auto* fgetc = std::get_if<hir::FgetcData>(&data)) {
+    Result<mir::Operand> desc_result =
+        LowerExpression(fgetc->descriptor, builder);
+    if (!desc_result) return std::unexpected(desc_result.error());
+
+    mir::Rvalue rvalue{
+        .operands = {*desc_result},
+        .info = mir::SystemTfRvalueInfo{.opcode = SystemTfOpcode::kFgetc},
+    };
+    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    return mir::Operand::Use(tmp);
+  }
+
+  // $ungetc -> SystemTfRvalueInfo (modifies file state)
+  if (const auto* ungetc = std::get_if<hir::UngetcData>(&data)) {
+    Result<mir::Operand> char_result =
+        LowerExpression(ungetc->character, builder);
+    if (!char_result) return std::unexpected(char_result.error());
+
+    Result<mir::Operand> desc_result =
+        LowerExpression(ungetc->descriptor, builder);
+    if (!desc_result) return std::unexpected(desc_result.error());
+
+    mir::Rvalue rvalue{
+        .operands = {*char_result, *desc_result},
+        .info = mir::SystemTfRvalueInfo{.opcode = SystemTfOpcode::kUngetc},
+    };
+    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    return mir::Operand::Use(tmp);
+  }
+
   // $system -> SystemCmdRvalueInfo (side-effecting shell command)
   if (const auto* system_cmd = std::get_if<hir::SystemCmdData>(&data)) {
     Context& ctx = builder.GetContext();

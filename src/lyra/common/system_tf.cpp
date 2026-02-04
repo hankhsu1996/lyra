@@ -49,6 +49,28 @@ constexpr std::array kMetadataTable = std::to_array<SystemTfMetadata>({
     .max_args = 1,
     .out_arg_index = -1,
   },
+  // kFgetc: $fgetc(fd) -> int32 char or -1
+  {
+    .opcode = SystemTfOpcode::kFgetc,
+    .name = "$fgetc",
+    .family = SystemTfFamily::kFileIO,
+    .role = SystemTfRole::kMixed,  // Reads file state + returns value
+    .result_conv = ResultConvention::kIntegral,
+    .min_args = 1,
+    .max_args = 1,
+    .out_arg_index = -1,
+  },
+  // kUngetc: $ungetc(c, fd) -> int32 char or -1
+  {
+    .opcode = SystemTfOpcode::kUngetc,
+    .name = "$ungetc",
+    .family = SystemTfFamily::kFileIO,
+    .role = SystemTfRole::kMixed,  // Modifies file state + returns value
+    .result_conv = ResultConvention::kIntegral,
+    .min_args = 2,
+    .max_args = 2,
+    .out_arg_index = -1,
+  },
   // kValuePlusargs: $value$plusargs(format, output) -> int32 success
   {
     .opcode = SystemTfOpcode::kValuePlusargs,
@@ -90,8 +112,10 @@ constexpr std::array kMetadataTable = std::to_array<SystemTfMetadata>({
 constexpr std::array kNameTable = std::to_array<std::pair<std::string_view, SystemTfOpcode>>({
   {"$fclose", SystemTfOpcode::kFclose},
   {"$fflush", SystemTfOpcode::kFflush},
+  {"$fgetc", SystemTfOpcode::kFgetc},
   {"$fopen", SystemTfOpcode::kFopen},
   {"$random", SystemTfOpcode::kRandom},
+  {"$ungetc", SystemTfOpcode::kUngetc},
   {"$urandom", SystemTfOpcode::kUrandom},
   {"$value$plusargs", SystemTfOpcode::kValuePlusargs},
 });
@@ -127,6 +151,10 @@ auto ToString(SystemTfOpcode op) -> const char* {
       return "$fclose";
     case SystemTfOpcode::kFflush:
       return "$fflush";
+    case SystemTfOpcode::kFgetc:
+      return "$fgetc";
+    case SystemTfOpcode::kUngetc:
+      return "$ungetc";
     case SystemTfOpcode::kValuePlusargs:
       return "$value$plusargs";
     case SystemTfOpcode::kRandom:

@@ -67,6 +67,16 @@ auto LyraFopenMcd(void* engine, LyraStringHandle filename) -> int32_t;
 // engine: opaque pointer to lyra::runtime::Engine
 void LyraFclose(void* engine, int32_t descriptor);
 
+// $fgetc - read single byte from file descriptor
+// Returns 0-255 on success, -1 on error/EOF.
+// MCD descriptors always return -1 (write-only).
+auto LyraFgetc(void* engine, int32_t descriptor) -> int32_t;
+
+// $ungetc - push character back onto input stream
+// Returns (c & 0xFF) on success, -1 on failure.
+// c == -1 returns -1. Only one character of pushback guaranteed.
+auto LyraUngetc(void* engine, int32_t character, int32_t descriptor) -> int32_t;
+
 // Write formatted message to file descriptor(s).
 // - engine: pointer to Engine (for FileManager access)
 // - descriptor: MCD or FD descriptor (0 = no-op, silently ignored)

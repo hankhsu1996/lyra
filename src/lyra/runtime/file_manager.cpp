@@ -59,16 +59,16 @@ auto FileManager::FopenFd(const std::string& filename, const std::string& mode)
   }
 
   int32_t index = next_fd_index_++;
-  fd_table_[index] = std::move(stream);
+  fd_table_[index] = FdEntry{.stream = std::move(stream), .pushback = {}};
   return static_cast<int32_t>(kFdBit | static_cast<uint32_t>(index));
 }
 
 void FileManager::Fclose(int32_t descriptor) {
   auto udesc = static_cast<uint32_t>(descriptor);
 
-  if ((udesc & kFdBit) != 0) {
+  if (IsFdDescriptor(udesc)) {
     // FD mode: close single file
-    auto index = static_cast<int32_t>(udesc & ~kFdBit);
+    int32_t index = DecodeFdIndex(udesc);
     fd_table_.erase(index);
   } else {
     // MCD mode: iterate set bits, close each channel
@@ -89,9 +89,9 @@ void FileManager::Fflush(std::optional<int32_t> descriptor) {
         stream->flush();
       }
     }
-    for (auto& [index, stream] : fd_table_) {
-      if (stream && stream->is_open()) {
-        stream->flush();
+    for (auto& [index, entry] : fd_table_) {
+      if (entry.stream && entry.stream->is_open()) {
+        entry.stream->flush();
       }
     }
     return;
@@ -99,12 +99,13 @@ void FileManager::Fflush(std::optional<int32_t> descriptor) {
 
   auto udesc = static_cast<uint32_t>(*descriptor);
 
-  if ((udesc & kFdBit) != 0) {
+  if (IsFdDescriptor(udesc)) {
     // FD mode: flush single file
-    auto index = static_cast<int32_t>(udesc & ~kFdBit);
+    int32_t index = DecodeFdIndex(udesc);
     auto it = fd_table_.find(index);
-    if (it != fd_table_.end() && it->second && it->second->is_open()) {
-      it->second->flush();
+    if (it != fd_table_.end() && it->second.stream &&
+        it->second.stream->is_open()) {
+      it->second.stream->flush();
     }
   } else {
     // MCD mode: bit 0 = stdout, bits 1-30 = file channels
@@ -122,6 +123,70 @@ void FileManager::Fflush(std::optional<int32_t> descriptor) {
   }
 }
 
+auto FileManager::Fgetc(int32_t descriptor) -> int32_t {
+  auto udesc = static_cast<uint32_t>(descriptor);
+
+  // MCD is write-only, return EOF
+  if (!IsFdDescriptor(udesc)) {
+    return -1;
+  }
+
+  int32_t index = DecodeFdIndex(udesc);
+  auto it = fd_table_.find(index);
+  if (it == fd_table_.end() || !it->second.stream ||
+      !it->second.stream->is_open()) {
+    return -1;
+  }
+
+  FdEntry& entry = it->second;
+
+  // Check pushback first
+  if (entry.pushback.has_value()) {
+    int ch = *entry.pushback;
+    entry.pushback.reset();
+    return ch;
+  }
+
+  // Read from stream
+  int ch = entry.stream->get();
+  if (ch == std::char_traits<char>::eof()) {
+    return -1;
+  }
+  return ch;
+}
+
+auto FileManager::Ungetc(int32_t character, int32_t descriptor) -> int32_t {
+  // If character is EOF, return failure
+  if (character == -1) {
+    return -1;
+  }
+
+  auto udesc = static_cast<uint32_t>(descriptor);
+
+  // MCD is write-only, return EOF
+  if (!IsFdDescriptor(udesc)) {
+    return -1;
+  }
+
+  int32_t index = DecodeFdIndex(udesc);
+  auto it = fd_table_.find(index);
+  if (it == fd_table_.end() || !it->second.stream ||
+      !it->second.stream->is_open()) {
+    return -1;
+  }
+
+  FdEntry& entry = it->second;
+
+  // Only one character of pushback guaranteed
+  if (entry.pushback.has_value()) {
+    return -1;
+  }
+
+  int stored = character & 0xFF;
+  entry.pushback = stored;
+  return stored;
+}
+
 auto FileManager::CollectStreams(uint32_t descriptor) -> StreamTargets {
   StreamTargets targets;
 
@@ -129,12 +194,14 @@ auto FileManager::CollectStreams(uint32_t descriptor) -> StreamTargets {
     return targets;  // No-op
   }
 
-  if ((descriptor & kFdBit) != 0) {
-    // FD mode: mask off bit 31, look up fd index
-    auto index = static_cast<int32_t>(descriptor & ~kFdBit);
+  if (IsFdDescriptor(descriptor)) {
+    // FD mode: look up fd index
+    int32_t index = DecodeFdIndex(descriptor);
     auto it = fd_table_.find(index);
-    if (it != fd_table_.end() && it->second && it->second->is_open()) {
-      targets.file_streams.at(targets.file_stream_count++) = it->second.get();
+    if (it != fd_table_.end() && it->second.stream &&
+        it->second.stream->is_open()) {
+      targets.file_streams.at(targets.file_stream_count++) =
+          it->second.stream.get();
     }
   } else {
     // MCD mode: bit 0 = stdout, bits 1-30 = file channels

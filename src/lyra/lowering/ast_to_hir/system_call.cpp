@@ -857,6 +857,39 @@ struct LowerVisitor {
                 .data = hir::SystemCallExpressionData{
                     hir::FflushData{.descriptor = descriptor}}});
       }
+      case FileIoKind::kGetc: {
+        hir::ExpressionId descriptor =
+            LowerExpression(*call->arguments()[0], view);
+        if (!descriptor) {
+          return hir::kInvalidExpressionId;
+        }
+        return Ctx()->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kSystemCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::SystemCallExpressionData{
+                    hir::FgetcData{.descriptor = descriptor}}});
+      }
+      case FileIoKind::kUngetc: {
+        hir::ExpressionId character =
+            LowerExpression(*call->arguments()[0], view);
+        if (!character) {
+          return hir::kInvalidExpressionId;
+        }
+        hir::ExpressionId descriptor =
+            LowerExpression(*call->arguments()[1], view);
+        if (!descriptor) {
+          return hir::kInvalidExpressionId;
+        }
+        return Ctx()->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kSystemCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::SystemCallExpressionData{hir::UngetcData{
+                    .character = character, .descriptor = descriptor}}});
+      }
     }
     throw common::InternalError("LowerSystemCall", "unhandled FileIoKind");
   }

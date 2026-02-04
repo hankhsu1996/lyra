@@ -311,6 +311,29 @@ auto Interpreter::EvalRvalue(
                 prng_state_ = prng_state_ * kMultiplier + kIncrement;
                 return MakeIntegral(prng_state_, 32);
               }
+              case SystemTfOpcode::kFgetc: {
+                auto desc_result = EvalOperand(state, rv.operands.at(0));
+                if (!desc_result) return std::unexpected(desc_result.error());
+                const auto& desc_int = AsIntegral(*desc_result);
+                int32_t desc = static_cast<int32_t>(
+                    desc_int.value.empty() ? 0 : desc_int.value[0]);
+                int32_t result = file_manager_.Fgetc(desc);
+                return MakeIntegralSigned(result, 32);
+              }
+              case SystemTfOpcode::kUngetc: {
+                auto char_result = EvalOperand(state, rv.operands.at(0));
+                if (!char_result) return std::unexpected(char_result.error());
+                auto desc_result = EvalOperand(state, rv.operands.at(1));
+                if (!desc_result) return std::unexpected(desc_result.error());
+                const auto& char_int = AsIntegral(*char_result);
+                const auto& desc_int = AsIntegral(*desc_result);
+                int32_t ch = static_cast<int32_t>(
+                    char_int.value.empty() ? 0 : char_int.value[0]);
+                int32_t desc = static_cast<int32_t>(
+                    desc_int.value.empty() ? 0 : desc_int.value[0]);
+                int32_t result = file_manager_.Ungetc(ch, desc);
+                return MakeIntegralSigned(result, 32);
+              }
             }
             throw common::InternalError(
                 "EvalRvalue:SystemTf", "unhandled SystemTfOpcode");

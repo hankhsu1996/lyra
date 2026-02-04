@@ -30,11 +30,13 @@ enum class SystemTfOpcode : uint16_t {
   kFopen = 0,
   kFclose = 1,
   kFflush = 2,
+  kFgetc = 3,
+  kUngetc = 4,
   // Query
-  kValuePlusargs = 3,
+  kValuePlusargs = 5,
   // Random
-  kRandom = 4,
-  kUrandom = 5,
+  kRandom = 6,
+  kUrandom = 7,
 };
 
 // Functional category for grouping related system TFs.

@@ -1008,4 +1008,31 @@ auto Context::GetLyraUrandom() -> llvm::Function* {
   return lyra_urandom_;
 }
 
+auto Context::GetLyraFgetc() -> llvm::Function* {
+  if (lyra_fgetc_ == nullptr) {
+    // int32_t LyraFgetc(ptr engine, int32_t descriptor)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty, i32_ty}, false);
+    lyra_fgetc_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFgetc",
+        llvm_module_.get());
+  }
+  return lyra_fgetc_;
+}
+
+auto Context::GetLyraUngetc() -> llvm::Function* {
+  if (lyra_ungetc_ == nullptr) {
+    // int32_t LyraUngetc(ptr engine, int32_t character, int32_t descriptor)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type =
+        llvm::FunctionType::get(i32_ty, {ptr_ty, i32_ty, i32_ty}, false);
+    lyra_ungetc_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraUngetc",
+        llvm_module_.get());
+  }
+  return lyra_ungetc_;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

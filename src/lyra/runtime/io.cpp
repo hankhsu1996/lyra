@@ -201,6 +201,17 @@ extern "C" void LyraFclose(void* engine_ptr, int32_t descriptor) {
   engine->GetFileManager().Fclose(descriptor);
 }
 
+extern "C" auto LyraFgetc(void* engine_ptr, int32_t descriptor) -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  return engine->GetFileManager().Fgetc(descriptor);
+}
+
+extern "C" auto LyraUngetc(
+    void* engine_ptr, int32_t character, int32_t descriptor) -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  return engine->GetFileManager().Ungetc(character, descriptor);
+}
+
 extern "C" void LyraFflush(
     void* engine_ptr, bool has_desc, int32_t descriptor) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);

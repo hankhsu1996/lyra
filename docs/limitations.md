@@ -194,7 +194,7 @@ Supported:
 - `$timeformat` - configure `%t` output format
 - `$timeunit`, `$timeprecision`, `$printtimescale` - timescale queries
 - `$readmemh`, `$readmemb`, `$writememh`, `$writememb` - memory file I/O (2-state only)
-- `$fopen`, `$fclose`, `$fflush` - file I/O (MCD and FD modes)
+- `$fopen`, `$fclose`, `$fflush`, `$fgetc`, `$ungetc` - file I/O (MCD and FD modes)
 - `$fdisplay`, `$fdisplayb`, `$fdisplayo`, `$fdisplayh` - file output with newline
 - `$fwrite`, `$fwriteb`, `$fwriteo`, `$fwriteh` - file output without newline
 - `$fstrobe`, `$fstrobeb`, `$fstrobeo`, `$fstrobeh` - postponed file output
@@ -213,7 +213,6 @@ Supported:
 
 Not yet supported:
 
-- `$fgetc`, `$ungetc` - character I/O
 - `$fgets`, `$fscanf`, `$fread` - file reading
 - `$sscanf` - string scanning
 - `$fseek`, `$ftell`, `$rewind`, `$feof`, `$ferror` - file positioning and status
