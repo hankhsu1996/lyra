@@ -30,6 +30,9 @@ struct Process {
   // Authoritative temp metadata (indexed by temp_id).
   // Contains kind (kValue vs kPlace) and type for each temp.
   std::vector<TempMetadata> temp_metadata;
+
+  // Stats: materialize-to-place operations (for --stats output).
+  uint64_t materialize_count = 0;
 };
 
 enum class PassingKind {
@@ -95,6 +98,9 @@ struct Function {
   std::vector<common::OriginId> param_origins;
 
   common::OriginId origin = common::OriginId::Invalid();  // Source location
+
+  // Stats: materialize-to-place operations (for --stats output).
+  uint64_t materialize_count = 0;
 };
 
 }  // namespace lyra::mir

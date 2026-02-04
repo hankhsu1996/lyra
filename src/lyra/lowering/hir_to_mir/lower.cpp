@@ -48,6 +48,55 @@ void VerifyLoweredMir(
   }
 }
 
+// Compute MIR statistics for --stats output.
+auto ComputeMirStats(const mir::Design& design, const mir::Arena& arena)
+    -> LoweringStats {
+  LoweringStats stats;
+
+  auto count_routine = [&](const auto& routine) {
+    for (const auto& meta : routine.temp_metadata) {
+      if (meta.kind == mir::TempKind::kPlace) {
+        ++stats.place_temps;
+      } else {
+        ++stats.value_temps;
+      }
+    }
+    for (const auto& block : routine.blocks) {
+      stats.mir_stmts += block.statements.size();
+    }
+    stats.materialize_to_place += routine.materialize_count;
+  };
+
+  for (const auto& element : design.elements) {
+    std::visit(
+        common::Overloaded{
+            [&](const mir::Module& mod) {
+              for (auto fid : mod.functions) {
+                count_routine(arena[fid]);
+              }
+              for (auto pid : mod.processes) {
+                count_routine(arena[pid]);
+              }
+            },
+            [&](const mir::Package& pkg) {
+              for (auto fid : pkg.functions) {
+                count_routine(arena[fid]);
+              }
+            },
+        },
+        element);
+  }
+
+  for (auto fid : design.generated_functions) {
+    count_routine(arena[fid]);
+  }
+  for (auto pid : design.init_processes) {
+    count_routine(arena[pid]);
+  }
+
+  return stats;
+}
+
 }  // namespace
 
 auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
@@ -65,10 +114,13 @@ auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
   // Single verification gate at the end of lowering
   VerifyLoweredMir(design, *mir_arena, *input.type_arena);
 
+  LoweringStats stats = ComputeMirStats(design, *mir_arena);
+
   return LoweringResult{
       .design = std::move(design),
       .mir_arena = std::move(mir_arena),
       .origin_map = std::move(origin_map),
+      .stats = stats,
   };
 }
 

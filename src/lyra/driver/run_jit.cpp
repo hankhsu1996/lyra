@@ -1,15 +1,19 @@
 #include "run_jit.hpp"
 
+#include <cstdio>
 #include <format>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <fmt/core.h>
 
 #include "frontend.hpp"
 #include "llvm_stats.hpp"
 #include "lyra/llvm_backend/execution.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
@@ -17,6 +21,21 @@
 #include "verbose_logger.hpp"
 
 namespace lyra::driver {
+
+namespace {
+
+void PrintMirStats(
+    const lowering::hir_to_mir::LoweringStats& stats, FILE* sink = stderr) {
+  fmt::print(
+      sink,
+      "[lyra][stats][mir] place_temps={} value_temps={} "
+      "materialize_to_place={} mir_stmts={}\n",
+      stats.place_temps, stats.value_temps, stats.materialize_to_place,
+      stats.mir_stmts);
+  std::fflush(sink);
+}
+
+}  // namespace
 
 auto RunJit(const CompilationInput& input) -> int {
   VerboseLogger vlog(input.verbose);
@@ -52,10 +71,6 @@ auto RunJit(const CompilationInput& input) -> int {
     return 1;
   }
 
-  if (input.stats_top_n >= 0) {
-    PrintLlvmStats(*llvm_result->module, input.stats_top_n);
-  }
-
   std::vector<std::string> tried_paths;
   auto runtime_path = FindRuntimeLibrary(tried_paths);
   if (runtime_path.empty()) {
@@ -68,6 +83,13 @@ auto RunJit(const CompilationInput& input) -> int {
     return 1;
   }
 
+  // Collect LLVM stats BEFORE JIT (module is consumed by JIT execution)
+  bool emit_stats = input.stats_top_n >= 0;
+  LlvmStats llvm_stats;
+  if (emit_stats) {
+    llvm_stats = CollectLlvmStats(*llvm_result->module);
+  }
+
   std::expected<int, std::string> exec_result;
   {
     PhaseTimer timer(vlog, "jit", true);
@@ -77,6 +99,13 @@ auto RunJit(const CompilationInput& input) -> int {
   if (!exec_result) {
     PrintError(std::format("JIT execution failed: {}", exec_result.error()));
     return 1;
+  }
+
+  // Stats output AFTER all phases complete (so JIT timing is included)
+  if (emit_stats) {
+    PrintMirStats(compilation.mir.stats);
+    vlog.PrintPhaseSummary();
+    PrintLlvmStats(llvm_stats, input.stats_top_n);
   }
 
   return *exec_result;

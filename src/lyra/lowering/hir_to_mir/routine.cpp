@@ -183,6 +183,7 @@ auto LowerFunctionBody(
       .param_local_slots = std::move(param_local_slots),
       .param_origins = {},
       .origin = common::OriginId::Invalid(),
+      .materialize_count = ctx.materialize_count,
   };
 }
 
