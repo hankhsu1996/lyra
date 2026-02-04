@@ -119,6 +119,9 @@ struct Context {
   std::optional<mir::PlaceId> return_slot;
   TypeId return_type = kInvalidTypeId;
 
+  // Stats: count of MaterializeOperandToPlace calls (for --stats output).
+  uint64_t materialize_count = 0;
+
   auto AllocLocal(SymbolId sym, TypeId type) -> LocalAllocation;
   auto AllocTemp(TypeId type) -> mir::PlaceId;
 

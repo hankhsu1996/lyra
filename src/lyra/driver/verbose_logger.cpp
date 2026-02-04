@@ -72,12 +72,34 @@ PhaseTimer::~PhaseTimer() {
     // jthread destructor will join
   }
 
+  auto end = std::chrono::steady_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end - start_);
+  double seconds = duration.count() / 1000.0;
+
+  // ALWAYS record duration (for --stats), regardless of verbosity
+  logger_.RecordPhaseDuration(phase_name_, seconds);
+
+  // Only print human-readable logs if verbose enabled
   if (enabled_) {
-    auto end = std::chrono::steady_clock::now();
-    auto duration =
-        std::chrono::duration_cast<std::chrono::milliseconds>(end - start_);
-    logger_.PhaseDone(phase_name_, duration.count() / 1000.0);
+    logger_.PhaseDone(phase_name_, seconds);
   }
+}
+
+void VerboseLogger::RecordPhaseDuration(std::string_view name, double seconds) {
+  phase_durations_[std::string(name)] = seconds;
+}
+
+void VerboseLogger::PrintPhaseSummary(FILE* sink) const {
+  std::string line = "[lyra][stats][phase]";
+  for (std::string_view phase : kPhaseOrder) {
+    auto it = phase_durations_.find(std::string(phase));
+    if (it != phase_durations_.end()) {
+      line += fmt::format(" {}={:.2f}s", phase, it->second);
+    }
+  }
+  fmt::print(sink, "{}\n", line);
+  std::fflush(sink);
 }
 
 void PhaseTimer::HeartbeatLoop(std::stop_token stop_token) {

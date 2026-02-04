@@ -258,6 +258,7 @@ auto MirBuilder::EmitValueTempAssign(TypeId type, mir::Operand source)
 
 auto MirBuilder::MaterializeOperandToPlace(TypeId type, mir::Operand value)
     -> mir::PlaceId {
+  ++ctx_->materialize_count;
   mir::PlaceId place = ctx_->AllocTemp(type);
   EmitAssign(place, std::move(value));
   return place;

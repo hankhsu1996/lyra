@@ -126,6 +126,7 @@ auto LowerProcess(
       .origin = origin,
       .owner_instance_id = owner_instance_id,
       .temp_metadata = std::move(ctx.temp_metadata),
+      .materialize_count = ctx.materialize_count,
   };
 
   mir_arena.SetProcessBody(mir_proc_id, std::move(mir_process));

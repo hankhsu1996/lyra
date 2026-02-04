@@ -11,28 +11,13 @@
 
 namespace lyra::driver {
 
-namespace {
-
-struct FunctionStats {
-  std::string name;
-  uint64_t instructions;
-  uint64_t basic_blocks;
-};
-
-}  // namespace
-
-void PrintLlvmStats(const llvm::Module& module, int top_n, FILE* sink) {
-  uint64_t global_count = 0;
-  uint64_t defined_functions = 0;
-  uint64_t total_bbs = 0;
-  uint64_t total_insts = 0;
-
-  std::vector<FunctionStats> func_stats;
+auto CollectLlvmStats(const llvm::Module& module) -> LlvmStats {
+  LlvmStats stats;
 
   // Count globals
   for (const auto& g : module.globals()) {
     (void)g;
-    ++global_count;
+    ++stats.global_count;
   }
 
   // Count functions and their stats
@@ -40,7 +25,7 @@ void PrintLlvmStats(const llvm::Module& module, int top_n, FILE* sink) {
     if (f.isDeclaration()) {
       continue;
     }
-    ++defined_functions;
+    ++stats.defined_functions;
 
     uint64_t func_bbs = 0;
     uint64_t func_insts = 0;
@@ -50,10 +35,10 @@ void PrintLlvmStats(const llvm::Module& module, int top_n, FILE* sink) {
       func_insts += bb.size();
     }
 
-    total_bbs += func_bbs;
-    total_insts += func_insts;
+    stats.total_bbs += func_bbs;
+    stats.total_insts += func_insts;
 
-    func_stats.push_back({
+    stats.func_stats.push_back({
         .name = f.getName().str(),
         .instructions = func_insts,
         .basic_blocks = func_bbs,
@@ -62,35 +47,46 @@ void PrintLlvmStats(const llvm::Module& module, int top_n, FILE* sink) {
 
   // Sort by instruction count descending
   std::sort(
-      func_stats.begin(), func_stats.end(), [](const auto& a, const auto& b) {
+      stats.func_stats.begin(), stats.func_stats.end(),
+      [](const auto& a, const auto& b) {
         return a.instructions > b.instructions;
       });
 
+  return stats;
+}
+
+void PrintLlvmStats(const LlvmStats& stats, int top_n, FILE* sink) {
   // Print summary
   fmt::print(
       sink, "[lyra][stats] functions={} globals={} bbs={} insts={}\n",
-      defined_functions, global_count, total_bbs, total_insts);
+      stats.defined_functions, stats.global_count, stats.total_bbs,
+      stats.total_insts);
 
   // Print max function (if any defined functions exist)
-  if (!func_stats.empty() && total_insts > 0) {
-    const auto& max_func = func_stats[0];
+  if (!stats.func_stats.empty() && stats.total_insts > 0) {
+    const auto& max_func = stats.func_stats[0];
     double percent = 100.0 * static_cast<double>(max_func.instructions) /
-                     static_cast<double>(total_insts);
+                     static_cast<double>(stats.total_insts);
     fmt::print(
         sink, "[lyra][stats][max] name={} insts={} percent={:.1f}%\n",
         max_func.name, max_func.instructions, percent);
   }
 
   // Print top N functions
-  int count = std::min(top_n, static_cast<int>(func_stats.size()));
+  int count = std::min(top_n, static_cast<int>(stats.func_stats.size()));
   for (int i = 0; i < count; ++i) {
-    const auto& fs = func_stats[i];
+    const auto& fs = stats.func_stats[i];
     fmt::print(
         sink, "[lyra][stats][top] {}) {} insts={} bbs={}\n", i + 1, fs.name,
         fs.instructions, fs.basic_blocks);
   }
 
   std::fflush(sink);
+}
+
+void PrintLlvmStats(const llvm::Module& module, int top_n, FILE* sink) {
+  LlvmStats stats = CollectLlvmStats(module);
+  PrintLlvmStats(stats, top_n, sink);
 }
 
 }  // namespace lyra::driver

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -7,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 
 namespace lyra::driver {
 
@@ -32,13 +34,26 @@ class VerboseLogger {
   // Log a progress heartbeat (level 1).
   void Progress(std::string_view phase_name, double elapsed_seconds);
 
+  // Record phase duration (always, regardless of verbosity level).
+  // Called by PhaseTimer destructor.
+  void RecordPhaseDuration(std::string_view name, double seconds);
+
+  // Print phase summary line for --stats output.
+  void PrintPhaseSummary(FILE* sink = stderr) const;
+
   auto level() const -> int {
     return level_;
   }
 
  private:
+  // Fixed phase order for deterministic output.
+  static constexpr std::array<std::string_view, 7> kPhaseOrder = {
+      "parse",      "elaborate", "lower_hir", "lower_mir",
+      "lower_llvm", "jit",       "run"};
+
   int level_;
   FILE* sink_;
+  std::unordered_map<std::string, double> phase_durations_;
 };
 
 // RAII helper for timing phases. Logs begin on construction, done on
