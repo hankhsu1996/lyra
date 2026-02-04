@@ -47,6 +47,36 @@ auto LowerSystemTfRvalue(
           context.GetLyraUrandom(), {context.GetEnginePointer()}, "urandom");
       return RvalueValue::TwoState(result);
     }
+    case SystemTfOpcode::kFgetc: {
+      if (rvalue.operands.size() != 1) {
+        throw common::InternalError(
+            "LowerSystemTfRvalue:kFgetc",
+            std::format("expected 1 arg, got {}", rvalue.operands.size()));
+      }
+      auto& builder = context.GetBuilder();
+      auto desc_or_err = LowerOperand(context, rvalue.operands[0]);
+      if (!desc_or_err) return std::unexpected(desc_or_err.error());
+      llvm::Value* result = builder.CreateCall(
+          context.GetLyraFgetc(), {context.GetEnginePointer(), *desc_or_err},
+          "fgetc");
+      return RvalueValue::TwoState(result);
+    }
+    case SystemTfOpcode::kUngetc: {
+      if (rvalue.operands.size() != 2) {
+        throw common::InternalError(
+            "LowerSystemTfRvalue:kUngetc",
+            std::format("expected 2 args, got {}", rvalue.operands.size()));
+      }
+      auto& builder = context.GetBuilder();
+      auto char_or_err = LowerOperand(context, rvalue.operands[0]);
+      if (!char_or_err) return std::unexpected(char_or_err.error());
+      auto desc_or_err = LowerOperand(context, rvalue.operands[1]);
+      if (!desc_or_err) return std::unexpected(desc_or_err.error());
+      llvm::Value* result = builder.CreateCall(
+          context.GetLyraUngetc(),
+          {context.GetEnginePointer(), *char_or_err, *desc_or_err}, "ungetc");
+      return RvalueValue::TwoState(result);
+    }
   }
   throw common::InternalError(
       "LowerSystemTfRvalue", "unhandled SystemTfOpcode");
@@ -101,6 +131,12 @@ auto LowerSystemTfEffect(Context& context, const mir::SystemTfEffect& effect)
     case SystemTfOpcode::kUrandom:
       throw common::InternalError(
           "LowerSystemTfEffect", "$urandom is an rvalue, not an effect");
+    case SystemTfOpcode::kFgetc:
+      throw common::InternalError(
+          "LowerSystemTfEffect", "$fgetc is an rvalue, not an effect");
+    case SystemTfOpcode::kUngetc:
+      throw common::InternalError(
+          "LowerSystemTfEffect", "$ungetc is an rvalue, not an effect");
   }
   throw common::InternalError(
       "LowerSystemTfEffect", "unhandled SystemTfOpcode");

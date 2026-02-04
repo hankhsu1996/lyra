@@ -257,6 +257,10 @@ inline auto RvalueHasSideEffects(const RvalueInfo& info) -> bool {
             case SystemTfOpcode::kUrandom:
               // $random/$urandom mutate PRNG state
               return true;
+            case SystemTfOpcode::kFgetc:
+            case SystemTfOpcode::kUngetc:
+              // $fgetc/$ungetc read/modify file state
+              return true;
             default:
               // Other opcodes in this bucket may or may not be effectful;
               // conservatively treat as pure unless explicitly listed above.

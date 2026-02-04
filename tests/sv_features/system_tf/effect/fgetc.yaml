@@ -1,0 +1,223 @@
+feature: file_io
+description: Tests for $fgetc and $ungetc character I/O system functions
+
+cases:
+  - name: fgetc_basic
+    description: Read bytes from file and hit EOF
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int c1, c2, c3;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              c1 = $fgetc(fd);  // 'A' = 65
+              c2 = $fgetc(fd);  // 'B' = 66
+              c3 = $fgetc(fd);  // EOF = -1
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "AB"
+    expect:
+      variables:
+        c1: 65
+        c2: 66
+        c3: -1
+
+  - name: fgetc_ungetc_pushback
+    description: Pushback character and re-read
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int c1, push_result, c2;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              c1 = $fgetc(fd);          // 'A' = 65
+              push_result = $ungetc(c1, fd);  // push 'A' back, returns 65
+              c2 = $fgetc(fd);          // re-read, should get 'A' = 65
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "AB"
+    expect:
+      variables:
+        c1: 65
+        push_result: 65
+        c2: 65
+
+  - name: ungetc_double_fails
+    description: Second ungetc without intervening fgetc fails
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int c1, push1, push2;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              c1 = $fgetc(fd);            // 'A' = 65
+              push1 = $ungetc(c1, fd);    // success, returns 65
+              push2 = $ungetc(66, fd);    // fails, buffer full, returns -1
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "AB"
+    expect:
+      variables:
+        c1: 65
+        push1: 65
+        push2: -1
+
+  - name: fgetc_invalid_fd
+    description: $fgetc on invalid/closed fd returns -1
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int c_zero, c_closed;
+            initial begin
+              // Invalid descriptor 0
+              c_zero = $fgetc(0);
+              // Closed file
+              fd = $fopen("data.txt", "r");
+              $fclose(fd);
+              c_closed = $fgetc(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "AB"
+    expect:
+      variables:
+        c_zero: -1
+        c_closed: -1
+
+  - name: fgetc_mcd_rejected
+    description: $fgetc on MCD descriptor returns -1 (MCD is write-only)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int mcd;
+            int c;
+            initial begin
+              // MCD mode (no mode argument = write-only)
+              mcd = $fopen("test.txt");
+              c = $fgetc(mcd);  // MCD is write-only, returns -1
+              $fclose(mcd);
+            end
+          endmodule
+    expect:
+      variables:
+        c: -1
+
+  - name: fgetc_no_cse
+    description: Multiple $fgetc calls must not be CSE'd or reordered
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int a, b;
+            int different;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              a = $fgetc(fd);  // reads 'A' = 65
+              b = $fgetc(fd);  // reads 'B' = 66
+              different = (a != b) ? 1 : 0;
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "AB"
+    expect:
+      variables:
+        a: 65
+        b: 66
+        different: 1
+
+  - name: ungetc_truncates
+    description: $ungetc(256, fd) stores 0 (truncated to 8 bits)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int push_result, read_back;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              push_result = $ungetc(256, fd);  // 256 & 0xFF = 0
+              read_back = $fgetc(fd);          // should get 0
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "AB"
+    expect:
+      variables:
+        push_result: 0
+        read_back: 0
+
+  - name: ungetc_eof_rejected
+    description: $ungetc(-1, fd) returns -1 (EOF character rejected)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int push_result;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              push_result = $ungetc(-1, fd);  // EOF rejected, returns -1
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "AB"
+    expect:
+      variables:
+        push_result: -1
+
+  - name: ungetc_on_mcd
+    description: $ungetc on MCD descriptor returns -1
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int mcd;
+            int push_result;
+            initial begin
+              mcd = $fopen("test.txt");
+              push_result = $ungetc(65, mcd);  // MCD is write-only
+              $fclose(mcd);
+            end
+          endmodule
+    expect:
+      variables:
+        push_result: -1
+
+  - name: fgetc_read_write_mode
+    description: $fgetc works on r+ mode file
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int c1;
+            initial begin
+              fd = $fopen("data.txt", "r+");
+              c1 = $fgetc(fd);  // 'A' = 65
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "AB"
+    expect:
+      variables:
+        c1: 65
