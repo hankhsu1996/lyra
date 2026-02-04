@@ -194,6 +194,8 @@ auto LowerSystemTfCall(
       return LowerFgetsCall(context, call);
     case SystemTfOpcode::kFread:
       return LowerFreadCall(context, call);
+    case SystemTfOpcode::kFscanf:
+      return LowerFscanfCall(context, call);
     default:
       throw common::InternalError(
           "LowerSystemTfCall", std::format(
@@ -457,6 +459,137 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
   }
 
   // No writeback commit needed - runtime writes directly to target
+  return {};
+}
+
+auto LowerFscanfCall(Context& context, const mir::Call& call) -> Result<void> {
+  auto& builder = context.GetBuilder();
+
+  // Validate shape: 2 in_args (descriptor, format), optional ret (count),
+  // 0+ writebacks (outputs)
+  if (call.in_args.size() != 2) {
+    throw common::InternalError(
+        "LowerFscanfCall",
+        std::format("expected 2 in_args, got {}", call.in_args.size()));
+  }
+
+  // Lower operands
+  auto desc_or_err = LowerOperand(context, call.in_args[0]);
+  if (!desc_or_err) return std::unexpected(desc_or_err.error());
+  auto format_or_err = LowerOperand(context, call.in_args[1]);
+  if (!format_or_err) return std::unexpected(format_or_err.error());
+
+  auto* i32_ty = llvm::Type::getInt32Ty(builder.getContext());
+  auto* ptr_ty = llvm::PointerType::getUnqual(builder.getContext());
+
+  // Build array of output tmp pointers on the stack
+  int32_t output_count = static_cast<int32_t>(call.writebacks.size());
+  llvm::Value* output_count_val = llvm::ConstantInt::get(i32_ty, output_count);
+
+  llvm::Value* output_ptrs_array = nullptr;
+  if (output_count > 0) {
+    // Allocate array of pointers on the stack
+    auto* array_type = llvm::ArrayType::get(ptr_ty, output_count);
+    output_ptrs_array =
+        builder.CreateAlloca(array_type, nullptr, "fscanf_outputs");
+
+    // Fill array with output tmp pointers
+    // Also zero-initialize tmp locations before runtime call.
+    // This is critical for 4-state types where the runtime only writes the
+    // value plane, leaving the unknown plane uninitialized. Zero-init ensures
+    // the unknown plane is 0 (meaning known/2-state values).
+    for (int32_t i = 0; i < output_count; ++i) {
+      const auto& wb = call.writebacks[static_cast<size_t>(i)];
+      auto tmp_ptr = context.GetPlacePointer(wb.tmp);
+      if (!tmp_ptr) return std::unexpected(tmp_ptr.error());
+
+      // Zero-initialize the tmp location
+      auto tmp_llvm_type = context.GetPlaceLlvmType(wb.tmp);
+      if (!tmp_llvm_type) return std::unexpected(tmp_llvm_type.error());
+      llvm::Constant* zero = llvm::Constant::getNullValue(*tmp_llvm_type);
+      builder.CreateStore(zero, *tmp_ptr);
+
+      auto* gep = builder.CreateConstGEP2_32(
+          array_type, output_ptrs_array, 0, static_cast<unsigned>(i));
+      builder.CreateStore(*tmp_ptr, gep);
+    }
+  } else {
+    // No outputs - pass null pointer
+    output_ptrs_array = llvm::ConstantPointerNull::get(ptr_ty);
+  }
+
+  // Call runtime: int32_t LyraFscanf(void* engine, int32_t fd,
+  //   LyraStringHandle format, int32_t output_count, void** output_ptrs)
+  llvm::Value* items_read = builder.CreateCall(
+      context.GetLyraFscanf(),
+      {context.GetEnginePointer(), *desc_or_err, *format_or_err,
+       output_count_val, output_ptrs_array});
+
+  // Stage return (items_read) to tmp, then commit if statement form
+  if (call.ret) {
+    auto ret_tmp_ptr = context.GetPlacePointer(call.ret->tmp);
+    if (!ret_tmp_ptr) return std::unexpected(ret_tmp_ptr.error());
+    builder.CreateStore(items_read, *ret_tmp_ptr);
+
+    // Commit only if statement form (dest has value)
+    if (call.ret->dest.has_value()) {
+      auto result = CommitValue(
+          context, *call.ret->dest, items_read, call.ret->type,
+          OwnershipPolicy::kMove);
+      if (!result) return result;
+    }
+  }
+
+  // Commit writebacks ONLY for outputs that were successfully matched.
+  // The return value (items_read) indicates how many outputs were assigned.
+  // Only commit writeback[i] if i < items_read.
+  if (!call.writebacks.empty()) {
+    auto* func = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock* merge_bb =
+        llvm::BasicBlock::Create(builder.getContext(), "fscanf_merge", func);
+
+    for (size_t i = 0; i < call.writebacks.size(); ++i) {
+      const auto& wb = call.writebacks[i];
+
+      // Create conditional: commit only if items_read > i
+      llvm::BasicBlock* commit_bb = llvm::BasicBlock::Create(
+          builder.getContext(), std::format("fscanf_commit_{}", i), func);
+      llvm::BasicBlock* skip_bb =
+          (i + 1 < call.writebacks.size())
+              ? llvm::BasicBlock::Create(
+                    builder.getContext(), std::format("fscanf_skip_{}", i),
+                    func)
+              : merge_bb;
+
+      llvm::Value* threshold = llvm::ConstantInt::get(i32_ty, i);
+      llvm::Value* should_commit =
+          builder.CreateICmpSGT(items_read, threshold, "should_commit");
+      builder.CreateCondBr(should_commit, commit_bb, skip_bb);
+
+      // Commit block
+      builder.SetInsertPoint(commit_bb);
+      auto output_llvm_type = context.GetPlaceLlvmType(wb.tmp);
+      if (!output_llvm_type) return std::unexpected(output_llvm_type.error());
+      auto output_tmp_ptr = context.GetPlacePointer(wb.tmp);
+      if (!output_tmp_ptr) return std::unexpected(output_tmp_ptr.error());
+      llvm::Value* output_val =
+          builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
+      auto commit_result = CommitValue(
+          context, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
+      if (!commit_result) return commit_result;
+
+      // After commit, continue to next check or merge
+      if (i + 1 < call.writebacks.size()) {
+        builder.CreateBr(skip_bb);
+        builder.SetInsertPoint(skip_bb);
+      } else {
+        builder.CreateBr(merge_bb);
+      }
+    }
+
+    builder.SetInsertPoint(merge_bb);
+  }
+
   return {};
 }
 

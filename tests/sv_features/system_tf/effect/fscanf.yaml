@@ -1,0 +1,378 @@
+feature: file_io
+description: Tests for $fscanf formatted file input system function
+
+cases:
+  - name: decimal_integer
+    description: Read decimal integer with %d
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int val;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "%d", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "123"
+    expect:
+      variables:
+        count: 1
+        val: 123
+
+  - name: negative_decimal
+    description: Read negative decimal integer
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int val;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "%d", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "-45"
+    expect:
+      variables:
+        count: 1
+        val: -45
+
+  - name: hex_integer
+    description: Read hexadecimal with %h
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [31:0] val;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "%h", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "1a2b"
+    expect:
+      variables:
+        count: 1
+        val: 0x1a2b
+
+  - name: binary_integer
+    description: Read binary with %b
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [7:0] val;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "%b", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "1010"
+    expect:
+      variables:
+        count: 1
+        val: 10
+
+  - name: octal_integer
+    description: Read octal with %o
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [15:0] val;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "%o", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "777"
+    expect:
+      variables:
+        count: 1
+        val: 511
+
+  - name: string_read
+    description: Read string with %s (tests count only, string verification not supported)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            string val;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "%s", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "hello world"
+    expect:
+      variables:
+        count: 1
+
+  - name: char_read
+    description: Read single character with %c
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [7:0] val;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "%c", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "abc"
+    expect:
+      variables:
+        count: 1
+        val: 97
+
+  - name: multiple_values
+    description: Read multiple values with format string
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int val1;
+            string val2;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "%d %s", val1, val2);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "42 hello"
+    expect:
+      variables:
+        count: 2
+        val1: 42
+
+  - name: whitespace_handling
+    description: Whitespace in format skips input whitespace
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int val;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, " %d", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "   123"
+    expect:
+      variables:
+        count: 1
+        val: 123
+
+  - name: literal_match_success
+    description: Literal characters must match exactly
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int val;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "x=%d", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "x=42"
+    expect:
+      variables:
+        count: 1
+        val: 42
+
+  - name: literal_match_failure
+    description: Literal mismatch returns 0
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int val;
+            int count;
+            initial begin
+              val = 99;
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "x=%d", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "y=42"
+    expect:
+      variables:
+        count: 0
+        val: 99
+
+  - name: eof_before_first_match
+    description: EOF before first conversion returns -1
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int val;
+            int count;
+            initial begin
+              val = 99;
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "%d", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: ""
+    expect:
+      variables:
+        count: -1
+        val: 99
+
+  - name: partial_match
+    description: Partial match returns count of successful assignments
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int val1, val2;
+            int count;
+            initial begin
+              val1 = 99;
+              val2 = 99;
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "%d %d", val1, val2);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "123 abc"
+    expect:
+      variables:
+        count: 1
+        val1: 123
+        val2: 99
+
+  - name: invalid_fd_returns_zero
+    description: Invalid fd returns 0
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int val;
+            int count;
+            initial begin
+              val = 99;
+              count = $fscanf(0, "%d", val);
+            end
+          endmodule
+    expect:
+      variables:
+        count: 0
+        val: 99
+
+  - name: closed_fd_returns_zero
+    description: Closed fd returns 0
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int val;
+            int count;
+            initial begin
+              val = 99;
+              fd = $fopen("data.txt", "r");
+              $fclose(fd);
+              count = $fscanf(fd, "%d", val);
+            end
+          endmodule
+      - name: data.txt
+        content: "123"
+    expect:
+      variables:
+        count: 0
+        val: 99
+
+  - name: mcd_rejected
+    description: MCD descriptor returns 0 (MCD is write-only)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int mcd;
+            int val;
+            int count;
+            initial begin
+              val = 99;
+              mcd = $fopen("test.txt");
+              count = $fscanf(mcd, "%d", val);
+              $fclose(mcd);
+            end
+          endmodule
+    expect:
+      variables:
+        count: 0
+        val: 99
+
+  - name: percent_literal
+    description: Double percent matches literal percent
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            int val;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fscanf(fd, "%%=%d", val);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "%=42"
+    expect:
+      variables:
+        count: 1
+        val: 42

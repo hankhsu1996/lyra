@@ -128,6 +128,14 @@ struct FreadData {
   auto operator==(const FreadData&) const -> bool = default;
 };
 
+struct FscanfData {
+  ExpressionId descriptor;            // File descriptor
+  ExpressionId format;                // Format string expression
+  std::vector<ExpressionId> outputs;  // Output lvalue arguments
+
+  auto operator==(const FscanfData&) const -> bool = default;
+};
+
 struct RuntimeQueryData {
   RuntimeQueryKind kind;
 
@@ -190,8 +198,8 @@ struct SystemCmdData {
 using SystemCallExpressionData = std::variant<
     DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
     TestPlusargsData, ValuePlusargsData, MemIOData, FopenData, FcloseData,
-    FflushData, FgetcData, UngetcData, FgetsData, FreadData, RuntimeQueryData,
-    TimeFormatData, MonitorSystemCallData, MonitorControlData, RandomData,
-    ArrayQueryData, SystemCmdData>;
+    FflushData, FgetcData, UngetcData, FgetsData, FreadData, FscanfData,
+    RuntimeQueryData, TimeFormatData, MonitorSystemCallData, MonitorControlData,
+    RandomData, ArrayQueryData, SystemCmdData>;
 
 }  // namespace lyra::hir

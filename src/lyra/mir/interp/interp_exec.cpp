@@ -22,6 +22,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/memfile.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/plusargs.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
@@ -675,6 +676,10 @@ auto Interpreter::ExecSystemTfEffect(
       throw common::InternalError(
           "ExecSystemTfEffect",
           "$fread should be lowered via Call, not SystemTfEffect");
+    case SystemTfOpcode::kFscanf:
+      throw common::InternalError(
+          "ExecSystemTfEffect",
+          "$fscanf should be lowered via Call, not SystemTfEffect");
   }
   throw common::InternalError("ExecSystemTfEffect", "unhandled SystemTfOpcode");
 }
@@ -899,6 +904,8 @@ auto Interpreter::ExecSystemTfCall(
       return ExecFgetsCall(state, call);
     case SystemTfOpcode::kFread:
       return ExecFreadCall(state, call);
+    case SystemTfOpcode::kFscanf:
+      return ExecFscanfCall(state, call);
     default:
       throw common::InternalError(
           "ExecSystemTfCall", std::format(
@@ -921,84 +928,48 @@ auto Interpreter::ExecValuePlusargsCall(ProcessState& state, const Call& call)
     throw common::InternalError(
         "ExecValuePlusargsCall", "query operand is not a string");
   }
-  std::string_view query = AsString(query_val).value;
-
-  // Helper: strip '+' prefix from a plusarg
-  auto get_content = [](std::string_view arg) -> std::string_view {
-    if (arg.starts_with('+')) {
-      return arg.substr(1);
-    }
-    return arg;
-  };
-
-  // Parse format string: "PREFIX%<spec>" -> prefix + spec char
-  auto percent_pos = query.find('%');
+  std::string_view format = AsString(query_val).value;
 
   // Get output writeback info
   const auto& wb = call.writebacks[0];
   PlaceId output_tmp = wb.tmp;
   PlaceId output_dest = wb.dest;
 
-  if (percent_pos == std::string_view::npos) {
-    // No format specifier, treat as test (no match)
-    for (const auto& arg : plusargs_) {
-      std::string_view content = get_content(arg);
-      if (content.starts_with(query)) {
-        return CommitValuePlusargsResult(
-            state, call, MakeIntegralSigned(1, 32), std::nullopt, output_tmp,
-            output_dest);
-      }
+  // Parse format to determine type
+  auto [prefix, spec] = common::ParsePlusargsFormat(format);
+
+  // Try integer match (%d)
+  if (spec == 'd' || spec == 'D') {
+    int32_t parsed_value = 0;
+    int32_t found = common::MatchPlusargsInt(plusargs_, format, &parsed_value);
+    if (found != 0) {
+      return CommitValuePlusargsResult(
+          state, call, MakeIntegralSigned(1, 32),
+          MakeIntegralSigned(parsed_value, 32), output_tmp, output_dest);
     }
     return CommitValuePlusargsResult(
         state, call, MakeIntegralSigned(0, 32), std::nullopt, output_tmp,
         output_dest);
   }
 
-  std::string_view prefix = query.substr(0, percent_pos);
-  char spec = '\0';
-  size_t spec_pos = percent_pos + 1;
-  if (spec_pos < query.size()) {
-    spec = query[spec_pos];
-    // Skip leading '0' in format specifier (e.g., %0d -> %d)
-    if (spec == '0' && spec_pos + 1 < query.size()) {
-      spec = query[spec_pos + 1];
-    }
-  }
-
-  for (const auto& arg : plusargs_) {
-    std::string_view content = get_content(arg);
-    if (!content.starts_with(prefix)) {
-      continue;
-    }
-    std::string_view remainder = content.substr(prefix.size());
-
-    // Parse based on format specifier
-    if (spec == 'd' || spec == 'D') {
-      int32_t parsed_value = 0;
-      auto [ptr, ec] = std::from_chars(
-          remainder.data(), remainder.data() + remainder.size(), parsed_value);
-      if (ec != std::errc{}) {
-        parsed_value = 0;  // Conversion failed
-      }
+  // Try string match (%s)
+  if (spec == 's' || spec == 'S') {
+    std::string parsed_str;
+    int32_t found = common::MatchPlusargsString(plusargs_, format, &parsed_str);
+    if (found != 0) {
       return CommitValuePlusargsResult(
           state, call, MakeIntegralSigned(1, 32),
-          MakeIntegralSigned(parsed_value, 32), output_tmp, output_dest);
+          MakeString(std::move(parsed_str)), output_tmp, output_dest);
     }
-    if (spec == 's' || spec == 'S') {
-      return CommitValuePlusargsResult(
-          state, call, MakeIntegralSigned(1, 32),
-          MakeString(std::string(remainder)), output_tmp, output_dest);
-    }
-
-    // Unsupported format spec - match but don't write
     return CommitValuePlusargsResult(
-        state, call, MakeIntegralSigned(1, 32), std::nullopt, output_tmp,
+        state, call, MakeIntegralSigned(0, 32), std::nullopt, output_tmp,
         output_dest);
   }
 
-  // No match found
+  // No format specifier or unsupported - treat as test
+  int32_t found = common::TestPlusargs(plusargs_, prefix);
   return CommitValuePlusargsResult(
-      state, call, MakeIntegralSigned(0, 32), std::nullopt, output_tmp,
+      state, call, MakeIntegralSigned(found, 32), std::nullopt, output_tmp,
       output_dest);
 }
 
@@ -1260,6 +1231,80 @@ auto Interpreter::ExecFreadCall(ProcessState& state, const Call& call)
   }
 
   return {};
+}
+
+auto Interpreter::ExecFscanfCall(ProcessState& state, const Call& call)
+    -> Result<void> {
+  // Shape: in_args[0]=descriptor, in_args[1]=format
+  //        ret=count, writebacks[0..N]=outputs
+
+  // Helper to return result count
+  auto return_count = [&](int32_t count) -> Result<void> {
+    RuntimeValue count_val = MakeIntegralSigned(count, 32);
+    if (call.ret) {
+      auto store_result = StoreToPlace(state, call.ret->tmp, Clone(count_val));
+      if (!store_result) {
+        return std::unexpected(std::move(store_result).error());
+      }
+      if (call.ret->dest.has_value()) {
+        return StoreToPlace(state, *call.ret->dest, std::move(count_val));
+      }
+    }
+    return {};
+  };
+
+  // Evaluate descriptor
+  auto desc_result = EvalOperand(state, call.in_args[0]);
+  if (!desc_result) return std::unexpected(desc_result.error());
+  if (!IsIntegral(*desc_result)) return return_count(0);
+  const auto& desc_int = AsIntegral(*desc_result);
+  auto descriptor =
+      static_cast<int32_t>(desc_int.value.empty() ? 0 : desc_int.value[0]);
+
+  // Evaluate format string
+  auto format_result = EvalOperand(state, call.in_args[1]);
+  if (!format_result) return std::unexpected(format_result.error());
+  if (!IsString(*format_result)) return return_count(0);
+  const std::string& format_str = AsString(*format_result).value;
+
+  // Track output index and any errors during callback
+  size_t output_idx = 0;
+  std::optional<Diagnostic> callback_error;
+
+  // Use FileManager::Fscanf for the actual scanning
+  int32_t items_matched = file_manager_.Fscanf(
+      descriptor, format_str, [&](const runtime::ScanResult& result) {
+        if (callback_error) return;                        // Already failed
+        if (output_idx >= call.writebacks.size()) return;  // No more outputs
+
+        const auto& wb = call.writebacks[output_idx];
+        RuntimeValue rv;
+
+        if (result.IsInt()) {
+          rv = MakeIntegralSigned(result.AsInt(), 32);
+        } else {
+          rv = MakeString(result.AsString());
+        }
+
+        auto store_tmp = StoreToPlace(state, wb.tmp, Clone(rv));
+        if (!store_tmp) {
+          callback_error = std::move(store_tmp).error();
+          return;
+        }
+        auto store_dest = StoreToPlace(state, wb.dest, std::move(rv));
+        if (!store_dest) {
+          callback_error = std::move(store_dest).error();
+          return;
+        }
+
+        ++output_idx;
+      });
+
+  if (callback_error) {
+    return std::unexpected(*callback_error);
+  }
+
+  return return_count(items_matched);
 }
 
 namespace {

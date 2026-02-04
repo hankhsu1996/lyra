@@ -268,6 +268,9 @@ class Interpreter {
   // Execute $fread via unified Call
   auto ExecFreadCall(ProcessState& state, const Call& call) -> Result<void>;
 
+  // Execute $fscanf via unified Call
+  auto ExecFscanfCall(ProcessState& state, const Call& call) -> Result<void>;
+
   // Helper to commit $value$plusargs results with staging
   auto CommitValuePlusargsResult(
       ProcessState& state, const Call& call, RuntimeValue success,

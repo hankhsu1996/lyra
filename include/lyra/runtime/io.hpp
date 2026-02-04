@@ -149,4 +149,18 @@ auto LyraFread(
     void* engine, int32_t descriptor, void* target, int32_t element_width,
     int32_t stride_bytes, int32_t is_memory, int64_t start_index,
     int64_t max_count, int64_t element_count) -> int32_t;
+
+// $fscanf - formatted file input
+// - engine: pointer to Engine (for FileManager access)
+// - descriptor: file descriptor (MCD returns 0 - write-only)
+// - format: format string handle
+// - output_count: number of output arguments (0-16)
+// - output_ptrs: array of pointers to output storage
+// Returns: number of successfully matched items, 0 on error, -1 on
+// EOF-before-first.
+// Supported conversions: %d, %h, %x, %b, %o, %c, %s, %%
+// Output type is inferred from format specifier: integral or string handle.
+auto LyraFscanf(
+    void* engine, int32_t descriptor, LyraStringHandle format,
+    int32_t output_count, void** output_ptrs) -> int32_t;
 }

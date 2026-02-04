@@ -859,6 +859,35 @@ auto LowerSystemCall(
         {{target_lv.place, target_type, mir::PassMode::kOut}});
   }
 
+  // $fscanf -> unified Call with SystemTfOpcode (formatted file input)
+  if (const auto* fscanf_data = std::get_if<hir::FscanfData>(&data)) {
+    Result<mir::Operand> desc_result =
+        LowerExpression(fscanf_data->descriptor, builder);
+    if (!desc_result) return std::unexpected(desc_result.error());
+    Result<mir::Operand> format_result =
+        LowerExpression(fscanf_data->format, builder);
+    if (!format_result) return std::unexpected(format_result.error());
+
+    Context& ctx = builder.GetContext();
+
+    // Lower all output lvalues and build writebacks
+    std::vector<std::tuple<mir::PlaceId, TypeId, mir::PassMode>> writebacks;
+    for (const auto& output : fscanf_data->outputs) {
+      Result<LvalueResult> output_lv_result = LowerLvalue(output, builder);
+      if (!output_lv_result) return std::unexpected(output_lv_result.error());
+      const hir::Expression& out_expr = (*ctx.hir_arena)[output];
+      writebacks.emplace_back(
+          output_lv_result->place, out_expr.type, mir::PassMode::kOut);
+    }
+
+    // Emit unified Call with:
+    // in_args: [descriptor, format]
+    // writebacks: all output lvalues
+    return builder.EmitSystemTfCallExpr(
+        SystemTfOpcode::kFscanf, {*desc_result, *format_result}, expr.type,
+        std::move(writebacks));
+  }
+
   // $system -> SystemCmdRvalueInfo (side-effecting shell command)
   if (const auto* system_cmd = std::get_if<hir::SystemCmdData>(&data)) {
     Context& ctx = builder.GetContext();

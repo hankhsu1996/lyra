@@ -3,11 +3,14 @@
 #include <array>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
+#include <string_view>
+#include <variant>
 
 namespace lyra::runtime {
 
@@ -17,6 +20,26 @@ struct StreamTargets {
   bool include_stdout = false;
   std::array<std::ostream*, 30> file_streams{};
   int file_stream_count = 0;
+};
+
+// Result of a single $fscanf conversion.
+// Type determined by format specifier: %d/%h/%x/%b/%o -> kInt, %s -> kString,
+// %c -> kChar.
+struct ScanResult {
+  std::variant<int64_t, std::string> value;
+
+  [[nodiscard]] auto IsInt() const -> bool {
+    return std::holds_alternative<int64_t>(value);
+  }
+  [[nodiscard]] auto IsString() const -> bool {
+    return std::holds_alternative<std::string>(value);
+  }
+  [[nodiscard]] auto AsInt() const -> int64_t {
+    return std::get<int64_t>(value);
+  }
+  [[nodiscard]] auto AsString() const -> const std::string& {
+    return std::get<std::string>(value);
+  }
 };
 
 // Manages open file handles for $fopen/$fclose system tasks.
@@ -83,9 +106,23 @@ class FileManager {
   auto FreadBytes(int32_t descriptor, uint8_t* out, size_t max_bytes)
       -> int32_t;
 
+  // Check if an FD descriptor is valid and open for reading.
+  // Returns false for MCD descriptors, invalid descriptors, or closed files.
+  auto IsFdOpen(int32_t descriptor) -> bool;
+
   // Decode descriptor and collect target output streams.
   // MCD bit 0 = stdout; bits 1-30 = MCD channels; bit 31 = FD mode.
   auto CollectStreams(uint32_t descriptor) -> StreamTargets;
+
+  // Formatted file input ($fscanf).
+  // Parses format string and reads values from file. For each successfully
+  // scanned value, calls emit(result). Supports: %d, %h/%x, %b, %o, %c, %s, %%.
+  // Returns: number of items matched (>=0), or -1 for EOF-before-first-match.
+  // MCD descriptors always return 0 (write-only).
+  using ScanEmitCallback = std::function<void(const ScanResult&)>;
+  auto Fscanf(
+      int32_t descriptor, std::string_view format, ScanEmitCallback emit)
+      -> int32_t;
 
  private:
   static constexpr int kMaxMcdBit = 30;

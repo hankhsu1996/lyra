@@ -1070,4 +1070,20 @@ auto Context::GetLyraFread() -> llvm::Function* {
   return lyra_fread_;
 }
 
+auto Context::GetLyraFscanf() -> llvm::Function* {
+  if (lyra_fscanf_ == nullptr) {
+    // int32_t LyraFscanf(ptr engine, int32_t descriptor, ptr format,
+    //                    int32_t output_count, ptr output_ptrs)
+    // LyraStringHandle is void* so we use ptr_ty for format
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        i32_ty, {ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty}, false);
+    lyra_fscanf_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFscanf",
+        llvm_module_.get());
+  }
+  return lyra_fscanf_;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

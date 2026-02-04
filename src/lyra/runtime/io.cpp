@@ -504,3 +504,37 @@ extern "C" auto LyraFread(
 
   return total_bytes_read;
 }
+
+extern "C" auto LyraFscanf(
+    void* engine_ptr, int32_t descriptor, LyraStringHandle format,
+    int32_t output_count, void** output_ptrs) -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  auto& file_manager = engine->GetFileManager();
+
+  // Get format string
+  std::string_view format_str = LyraStringAsView(format);
+
+  // Track output index
+  int32_t output_idx = 0;
+
+  // Use FileManager::Fscanf for the actual scanning
+  return file_manager.Fscanf(
+      descriptor, format_str, [&](const lyra::runtime::ScanResult& result) {
+        if (output_idx >= output_count) return;  // No more outputs
+
+        void* output_ptr = output_ptrs[output_idx];
+
+        if (result.IsInt()) {
+          // Store as int32_t (matches MIR interpreter behavior)
+          *static_cast<int32_t*>(output_ptr) =
+              static_cast<int32_t>(result.AsInt());
+        } else {
+          // Store as string handle
+          const std::string& str = result.AsString();
+          *static_cast<LyraStringHandle*>(output_ptr) = LyraStringFromLiteral(
+              str.data(), static_cast<int64_t>(str.size()));
+        }
+
+        ++output_idx;
+      });
+}

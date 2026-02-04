@@ -964,6 +964,39 @@ struct LowerVisitor {
                     .is_memory = is_memory,
                     .target_type = target_type}}});
       }
+      case FileIoKind::kScanf: {
+        // $fscanf(fd, format, outputs...)
+        hir::ExpressionId descriptor =
+            LowerExpression(*call->arguments()[0], view);
+        if (!descriptor) {
+          return hir::kInvalidExpressionId;
+        }
+        hir::ExpressionId format = LowerExpression(*call->arguments()[1], view);
+        if (!format) {
+          return hir::kInvalidExpressionId;
+        }
+
+        // Remaining arguments are output lvalues
+        std::vector<hir::ExpressionId> outputs;
+        for (size_t i = 2; i < call->arguments().size(); ++i) {
+          hir::ExpressionId output =
+              UnwrapOutputArgument(call->arguments()[i], view);
+          if (!output) {
+            return hir::kInvalidExpressionId;
+          }
+          outputs.push_back(output);
+        }
+
+        return Ctx()->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kSystemCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::SystemCallExpressionData{hir::FscanfData{
+                    .descriptor = descriptor,
+                    .format = format,
+                    .outputs = std::move(outputs)}}});
+      }
     }
     throw common::InternalError("LowerSystemCall", "unhandled FileIoKind");
   }

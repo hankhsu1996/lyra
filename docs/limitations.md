@@ -1,4 +1,4 @@
-# Limitations
+#Limitations
 
 Current SystemVerilog features not yet supported.
 
@@ -161,7 +161,10 @@ Not yet supported:
 ## Operators
 
 - Case equality (`===`, `!==`)
-- Variable-count replication (`{n{expr}}` where `n` is not a constant)
+- Variable-count replication (`{
+n {
+  expr
+}}` where `n` is not a constant)
 
 ## Wildcard Equality and Inside Operator
 
@@ -194,7 +197,7 @@ Supported:
 - `$timeformat` - configure `%t` output format
 - `$timeunit`, `$timeprecision`, `$printtimescale` - timescale queries
 - `$readmemh`, `$readmemb`, `$writememh`, `$writememb` - memory file I/O (2-state only)
-- `$fopen`, `$fclose`, `$fflush`, `$fgetc`, `$ungetc` - file I/O (MCD and FD modes)
+- `$fopen`, `$fclose`, `$fflush`, `$fgetc`, `$ungetc`, `$fgets`, `$fscanf`, `$fread` - file I/O (MCD and FD modes)
 - `$fdisplay`, `$fdisplayb`, `$fdisplayo`, `$fdisplayh` - file output with newline
 - `$fwrite`, `$fwriteb`, `$fwriteo`, `$fwriteh` - file output without newline
 - `$fstrobe`, `$fstrobeb`, `$fstrobeo`, `$fstrobeh` - postponed file output
@@ -213,7 +216,6 @@ Supported:
 
 Not yet supported:
 
-- `$fgets`, `$fscanf`, `$fread` - file reading
 - `$sscanf` - string scanning
 - `$fseek`, `$ftell`, `$rewind`, `$feof`, `$ferror` - file positioning and status
 - VCD tasks (21.7): `$dumpfile`, `$dumpvars`, `$dumpoff`, `$dumpon`, `$dumpall`, `$dumplimit`, `$dumpflush`, `$dumpports*`

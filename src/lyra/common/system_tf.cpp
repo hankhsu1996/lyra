@@ -126,6 +126,17 @@ constexpr std::array kMetadataTable = std::to_array<SystemTfMetadata>({
     .max_args = 4,
     .out_arg_index = 0,  // First arg is output (target lvalue)
   },
+  // kFscanf: $fscanf(fd, format, outputs...) -> int32 count
+  {
+    .opcode = SystemTfOpcode::kFscanf,
+    .name = "$fscanf",
+    .family = SystemTfFamily::kFileIO,
+    .role = SystemTfRole::kMixed,  // Reads file + writes to outputs + returns
+    .result_conv = ResultConvention::kIntegral,
+    .min_args = 2,
+    .max_args = -1,  // Variadic
+    .out_arg_index = -1,  // Multiple output args (starting at arg 2)
+  },
 });
 // clang-format on
 
@@ -138,6 +149,7 @@ constexpr std::array kNameTable = std::to_array<std::pair<std::string_view, Syst
   {"$fgets", SystemTfOpcode::kFgets},
   {"$fopen", SystemTfOpcode::kFopen},
   {"$fread", SystemTfOpcode::kFread},
+  {"$fscanf", SystemTfOpcode::kFscanf},
   {"$random", SystemTfOpcode::kRandom},
   {"$ungetc", SystemTfOpcode::kUngetc},
   {"$urandom", SystemTfOpcode::kUrandom},
@@ -183,6 +195,8 @@ auto ToString(SystemTfOpcode op) -> const char* {
       return "$fgets";
     case SystemTfOpcode::kFread:
       return "$fread";
+    case SystemTfOpcode::kFscanf:
+      return "$fscanf";
     case SystemTfOpcode::kValuePlusargs:
       return "$value$plusargs";
     case SystemTfOpcode::kRandom:

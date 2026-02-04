@@ -139,6 +139,7 @@ class Context {
   [[nodiscard]] auto GetLyraUngetc() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFgets() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFread() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraFscanf() -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -469,6 +470,7 @@ class Context {
   llvm::Function* lyra_ungetc_ = nullptr;
   llvm::Function* lyra_fgets_ = nullptr;
   llvm::Function* lyra_fread_ = nullptr;
+  llvm::Function* lyra_fscanf_ = nullptr;
 
   // Maps PlaceRootKey to its LLVM alloca storage.
   // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root
