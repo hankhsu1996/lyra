@@ -755,8 +755,7 @@ auto LowerSystemCall(
         .operands = {*desc_result},
         .info = mir::SystemTfRvalueInfo{.opcode = SystemTfOpcode::kFgetc},
     };
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
-    return mir::Operand::Use(tmp);
+    return builder.EmitValueTemp(expr.type, std::move(rvalue));
   }
 
   // $ungetc -> SystemTfRvalueInfo (modifies file state)
@@ -773,8 +772,7 @@ auto LowerSystemCall(
         .operands = {*char_result, *desc_result},
         .info = mir::SystemTfRvalueInfo{.opcode = SystemTfOpcode::kUngetc},
     };
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
-    return mir::Operand::Use(tmp);
+    return builder.EmitValueTemp(expr.type, std::move(rvalue));
   }
 
   // $system -> SystemCmdRvalueInfo (side-effecting shell command)
@@ -794,8 +792,7 @@ auto LowerSystemCall(
     }
 
     mir::Rvalue rvalue{.operands = {}, .info = std::move(info)};
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
-    return mir::Operand::Use(tmp);
+    return builder.EmitValueTemp(expr.type, std::move(rvalue));
   }
 
   // Array query functions -> ArrayQueryRvalueInfo
@@ -927,8 +924,7 @@ auto LowerSystemCall(
         .operands = {*array_result, *dim_result},
         .info = std::move(info),
     };
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
-    return mir::Operand::Use(tmp);
+    return builder.EmitValueTemp(expr.type, std::move(rvalue));
   }
 
   // Effect system calls ($display, etc.) are handled in statement.cpp.
