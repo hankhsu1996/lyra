@@ -343,4 +343,85 @@ auto LowerBitCastRvalue(
   return RvalueValue::TwoState(result);
 }
 
+auto LowerTimeToTicks64(Context& context, llvm::Value* time_value)
+    -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+  auto* double_ty = llvm::Type::getDoubleTy(llvm_ctx);
+
+  llvm::Type* val_type = time_value->getType();
+
+  // Integer path: zext/trunc to i64
+  if (val_type->isIntegerTy()) {
+    unsigned width = val_type->getIntegerBitWidth();
+    if (width < 64) {
+      return builder.CreateZExt(time_value, i64_ty, "time.zext");
+    }
+    if (width > 64) {
+      // Truncation for >64 bit integers is acceptable for time values.
+      // Time widths >64 are rare; if needed, consider saturating instead.
+      return builder.CreateTrunc(time_value, i64_ty, "time.trunc");
+    }
+    return time_value;
+  }
+
+  // Real path: use control flow to avoid FPToUI on invalid inputs (poison
+  // avoidance). POISON AVOIDANCE: FPToUI on NaN/Inf/out-of-range produces
+  // poison in LLVM IR. We use control flow (branches + PHI) to ensure FPToUI
+  // only executes on valid inputs. This mirrors the semantic layer's explicit
+  // branching and avoids poison propagation.
+  if (val_type->isFloatingPointTy()) {
+    llvm::Value* dval = time_value;
+    if (val_type->isFloatTy()) {
+      dval = builder.CreateFPExt(time_value, double_ty, "time.fpext");
+    }
+
+    // Constants
+    auto* zero_fp = llvm::ConstantFP::get(double_ty, 0.0);
+    auto* max_fp =
+        llvm::ConstantFP::get(double_ty, static_cast<double>(UINT64_MAX));
+    auto* i64_zero = llvm::ConstantInt::get(i64_ty, 0);
+    auto* i64_max = llvm::ConstantInt::get(i64_ty, UINT64_MAX);
+
+    // Get current function and create basic blocks
+    llvm::Function* func = builder.GetInsertBlock()->getParent();
+    auto* check_over_bb =
+        llvm::BasicBlock::Create(llvm_ctx, "time.check_over", func);
+    auto* convert_bb = llvm::BasicBlock::Create(llvm_ctx, "time.convert", func);
+    auto* merge_bb = llvm::BasicBlock::Create(llvm_ctx, "time.merge", func);
+
+    // Check: NaN || negative (includes -Inf) => return 0
+    auto* is_nan = builder.CreateFCmpUNO(dval, dval, "time.isnan");
+    auto* is_neg = builder.CreateFCmpOLT(dval, zero_fp, "time.isneg");
+    auto* is_nan_or_neg = builder.CreateOr(is_nan, is_neg, "time.invalid_lo");
+    // Capture block right before branch to ensure correct PHI predecessor
+    auto* nan_neg_bb = builder.GetInsertBlock();
+    builder.CreateCondBr(is_nan_or_neg, merge_bb, check_over_bb);
+
+    // check_over_bb: value is valid and >= 0, check if > max (+Inf saturates to
+    // MAX)
+    builder.SetInsertPoint(check_over_bb);
+    auto* is_over = builder.CreateFCmpOGT(dval, max_fp, "time.isover");
+    builder.CreateCondBr(is_over, merge_bb, convert_bb);
+
+    // convert_bb: value is in valid range [0, UINT64_MAX], safe to FPToUI
+    builder.SetInsertPoint(convert_bb);
+    auto* converted = builder.CreateFPToUI(dval, i64_ty, "time.fptoui");
+    builder.CreateBr(merge_bb);
+
+    // merge_bb: PHI to select result
+    builder.SetInsertPoint(merge_bb);
+    auto* phi = builder.CreatePHI(i64_ty, 3, "time.result");
+    phi->addIncoming(i64_zero, nan_neg_bb);    // NaN or negative => 0
+    phi->addIncoming(i64_max, check_over_bb);  // over max (+Inf) => UINT64_MAX
+    phi->addIncoming(converted, convert_bb);   // in-range => FPToUI result
+
+    return phi;
+  }
+
+  throw common::InternalError(
+      "LowerTimeToTicks64", "expected integer or real time value type");
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

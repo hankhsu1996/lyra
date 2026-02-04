@@ -18,4 +18,9 @@ auto LowerBitCastRvalue(
     Context& context, const mir::Rvalue& rvalue, TypeId destination_type)
     -> Result<RvalueValue>;
 
+// Convert time value (integer or real) to u64 ticks for %t formatting.
+// Real values: truncate toward zero (LRM 21.2.1.2), clamp to [0, UINT64_MAX].
+auto LowerTimeToTicks64(Context& context, llvm::Value* time_value)
+    -> llvm::Value*;
+
 }  // namespace lyra::lowering::mir_to_llvm
