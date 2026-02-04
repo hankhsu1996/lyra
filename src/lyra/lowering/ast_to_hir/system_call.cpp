@@ -17,6 +17,7 @@
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
@@ -62,14 +63,6 @@ auto RadixToFormatKind(PrintRadix radix) -> FormatKind {
       return FormatKind::kHex;
   }
   return FormatKind::kDecimal;
-}
-
-auto IsRootExpression(const slang::ast::Expression& expr) -> bool {
-  if (expr.kind != slang::ast::ExpressionKind::ArbitrarySymbol) {
-    return false;
-  }
-  return expr.as<slang::ast::ArbitrarySymbolExpression>().symbol->kind ==
-         slang::ast::SymbolKind::Root;
 }
 
 // Check if a type is eligible for $monitor (can be snapshotted).
@@ -1014,20 +1007,52 @@ struct LowerVisitor {
       }
     } else {
       const auto* arg_expr = call->arguments()[0];
-      if (!IsRootExpression(*arg_expr)) {
+      if (arg_expr->kind != slang::ast::ExpressionKind::ArbitrarySymbol) {
         Ctx()->ErrorFmt(
             span,
-            "$printtimescale argument must be $root "
-            "(hierarchical paths not supported)");
+            "$printtimescale argument must be a module instance, $root, "
+            "or $unit");
         return hir::kInvalidExpressionId;
       }
-      scope_name = "$root";
-      if (!Ctx()->cached_global_precision) {
-        Ctx()->cached_global_precision =
-            ComputeGlobalPrecision(sys_info.scope->getCompilation());
+      const auto& arg = arg_expr->as<slang::ast::ArbitrarySymbolExpression>();
+      const auto& sym = *arg.symbol;
+
+      switch (sym.kind) {
+        case slang::ast::SymbolKind::Root:
+          scope_name = "$root";
+          if (!Ctx()->cached_global_precision) {
+            Ctx()->cached_global_precision =
+                ComputeGlobalPrecision(sys_info.scope->getCompilation());
+          }
+          unit_power = *Ctx()->cached_global_precision;
+          prec_power = *Ctx()->cached_global_precision;
+          break;
+        case slang::ast::SymbolKind::CompilationUnit: {
+          scope_name = "$unit";
+          auto ts = sym.as<slang::ast::CompilationUnitSymbol>().getTimeScale();
+          if (ts) {
+            unit_power = TimeScaleValueToPower(ts->base);
+            prec_power = TimeScaleValueToPower(ts->precision);
+          }
+          break;
+        }
+        case slang::ast::SymbolKind::Instance: {
+          const auto& inst = sym.as<slang::ast::InstanceSymbol>();
+          scope_name = inst.name;
+          auto ts = inst.body.getTimeScale();
+          if (ts) {
+            unit_power = TimeScaleValueToPower(ts->base);
+            prec_power = TimeScaleValueToPower(ts->precision);
+          }
+          break;
+        }
+        default:
+          Ctx()->ErrorFmt(
+              span,
+              "$printtimescale argument must be a module instance, $root, "
+              "or $unit");
+          return hir::kInvalidExpressionId;
       }
-      unit_power = *Ctx()->cached_global_precision;
-      prec_power = *Ctx()->cached_global_precision;
     }
 
     std::string message = FormatTimescale(scope_name, unit_power, prec_power);

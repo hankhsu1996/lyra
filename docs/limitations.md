@@ -192,11 +192,7 @@ Supported:
 - `$finish`, `$stop`, `$exit` - simulation control
 - `$time`, `$stime`, `$realtime` - simulation time (with timescale scaling)
 - `$timeformat` - configure `%t` output format
-- `$timeunit`, `$timeprecision` - query module timescale
-- `$timeunit($root)`, `$timeprecision($root)` - query global precision
-- `$timeunit($unit)`, `$timeprecision($unit)` - query compilation unit timescale
-- `$timeunit(path)`, `$timeprecision(path)` - query instance timescale via hierarchical path
-- `$printtimescale`, `$printtimescale($root)` - print timescale info
+- `$timeunit`, `$timeprecision`, `$printtimescale` - timescale queries
 - `$readmemh`, `$readmemb`, `$writememh`, `$writememb` - memory file I/O (2-state only)
 - `$fopen`, `$fclose`, `$fflush` - file I/O (MCD and FD modes)
 - `$fdisplay`, `$fdisplayb`, `$fdisplayo`, `$fdisplayh` - file output with newline
@@ -222,7 +218,6 @@ Not yet supported:
 - `$sscanf` - string scanning
 - `$fseek`, `$ftell`, `$rewind`, `$feof`, `$ferror` - file positioning and status
 - VCD tasks (21.7): `$dumpfile`, `$dumpvars`, `$dumpoff`, `$dumpon`, `$dumpall`, `$dumplimit`, `$dumpflush`, `$dumpports*`
-- `$printtimescale(path)` - hierarchical path variant
 - `$cast` - dynamic type casting
 - Bit vector functions (20.9): `$countbits`, `$countones`, `$onehot`, `$onehot0`, `$isunknown`
 - Assertion control tasks (20.11): `$asserton`, `$assertoff`, `$assertkill`, `$assertcontrol`, `$assertpasson`, `$assertpassoff`, `$assertfailon`, `$assertfailoff`, `$assertnonvacuouson`, `$assertvacuousoff`
