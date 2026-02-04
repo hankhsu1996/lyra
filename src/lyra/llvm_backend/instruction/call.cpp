@@ -13,10 +13,8 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/abi_check.hpp"
 #include "lyra/llvm_backend/commit.hpp"
-#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -241,9 +239,9 @@ auto LowerValuePlusargsCall(Context& context, const mir::Call& call)
   auto query_or_err = LowerOperand(context, call.in_args[0]);
   if (!query_or_err) return std::unexpected(query_or_err.error());
 
-  // Get output tmp pointer
+  // Get output tmp pointer (kStaged: tmp is present)
   const auto& wb = call.writebacks[0];
-  auto output_tmp_ptr = context.GetPlacePointer(wb.tmp);
+  auto output_tmp_ptr = context.GetPlacePointer(*wb.tmp);
   if (!output_tmp_ptr) return std::unexpected(output_tmp_ptr.error());
 
   // Determine output kind and call runtime helper
@@ -284,7 +282,7 @@ auto LowerValuePlusargsCall(Context& context, const mir::Call& call)
   builder.CreateCondBr(is_match, commit_bb, merge_bb);
 
   builder.SetInsertPoint(commit_bb);
-  auto output_llvm_type = context.GetPlaceLlvmType(wb.tmp);
+  auto output_llvm_type = context.GetPlaceLlvmType(*wb.tmp);
   if (!output_llvm_type) return std::unexpected(output_llvm_type.error());
   llvm::Value* output_val =
       builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
@@ -317,9 +315,9 @@ auto LowerFgetsCall(Context& context, const mir::Call& call) -> Result<void> {
   auto desc_or_err = LowerOperand(context, call.in_args[0]);
   if (!desc_or_err) return std::unexpected(desc_or_err.error());
 
-  // Get output tmp pointer
+  // Get output tmp pointer (kStaged: tmp is present)
   const auto& wb = call.writebacks[0];
-  auto output_tmp_ptr = context.GetPlacePointer(wb.tmp);
+  auto output_tmp_ptr = context.GetPlacePointer(*wb.tmp);
   if (!output_tmp_ptr) return std::unexpected(output_tmp_ptr.error());
 
   // Call runtime: int32_t LyraFgets(void* engine, int32_t fd,
@@ -344,7 +342,7 @@ auto LowerFgetsCall(Context& context, const mir::Call& call) -> Result<void> {
   }
 
   // Always commit the string writeback (fgets always writes, even on error)
-  auto output_llvm_type = context.GetPlaceLlvmType(wb.tmp);
+  auto output_llvm_type = context.GetPlaceLlvmType(*wb.tmp);
   if (!output_llvm_type) return std::unexpected(output_llvm_type.error());
   llvm::Value* output_val =
       builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);
@@ -385,10 +383,29 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
   auto count_or_err = LowerOperand(context, call.in_args[4]);
   if (!count_or_err) return std::unexpected(count_or_err.error());
 
-  // Get target pointer from dest (where we write results)
   const auto& wb = call.writebacks[0];
-  auto target_ptr = context.GetPlacePointer(wb.dest);
-  if (!target_ptr) return std::unexpected(target_ptr.error());
+
+  // Select target pointer based on writeback kind:
+  // kStaged: runtime writes to tmp, then we commit tmp -> dest.
+  // kDirectToDest: runtime writes directly to dest (bulk-write pattern).
+  llvm::Value* target_ptr_val = nullptr;
+  if (wb.kind == mir::WritebackKind::kStaged) {
+    if (!wb.tmp.has_value()) {
+      throw common::InternalError(
+          "LowerFreadCall", "kStaged writeback must have tmp");
+    }
+    auto tmp_ptr = context.GetPlacePointer(*wb.tmp);
+    if (!tmp_ptr) return std::unexpected(tmp_ptr.error());
+    target_ptr_val = *tmp_ptr;
+  } else {
+    if (wb.tmp.has_value()) {
+      throw common::InternalError(
+          "LowerFreadCall", "kDirectToDest writeback must not have tmp");
+    }
+    auto dest_ptr = context.GetPlacePointer(wb.dest);
+    if (!dest_ptr) return std::unexpected(dest_ptr.error());
+    target_ptr_val = *dest_ptr;
+  }
 
   // Get type info for target
   TypeId target_type = wb.type;
@@ -398,8 +415,8 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
   auto* i32_ty = llvm::Type::getInt32Ty(builder.getContext());
   auto* i64_ty = llvm::Type::getInt64Ty(builder.getContext());
 
-  llvm::Value* stride_bytes;
-  llvm::Value* element_count;
+  llvm::Value* stride_bytes = nullptr;
+  llvm::Value* element_count = nullptr;
 
   if (ty.Kind() == TypeKind::kUnpackedArray) {
     // Memory variant: get element type info
@@ -440,7 +457,7 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
   //   int64_t element_count)
   llvm::Value* bytes_read = builder.CreateCall(
       context.GetLyraFread(),
-      {context.GetEnginePointer(), *desc_or_err, *target_ptr, *width_or_err,
+      {context.GetEnginePointer(), *desc_or_err, target_ptr_val, *width_or_err,
        stride_bytes, *is_mem_or_err, start_i64, count_i64, element_count});
 
   // Stage return (bytes_read) to tmp, then commit if statement form
@@ -458,7 +475,17 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
     }
   }
 
-  // No writeback commit needed - runtime writes directly to target
+  // Commit writeback based on kind
+  if (wb.kind == mir::WritebackKind::kStaged) {
+    // kStaged: load from tmp, commit to dest
+    auto output_llvm_type = context.GetPlaceLlvmType(*wb.tmp);
+    if (!output_llvm_type) return std::unexpected(output_llvm_type.error());
+    llvm::Value* output_val =
+        builder.CreateLoad(*output_llvm_type, target_ptr_val);
+    return CommitValue(
+        context, wb.dest, output_val, wb.type, OwnershipPolicy::kMove);
+  }
+  // kDirectToDest: runtime wrote directly, no commit needed
   return {};
 }
 
@@ -483,7 +510,7 @@ auto LowerFscanfCall(Context& context, const mir::Call& call) -> Result<void> {
   auto* ptr_ty = llvm::PointerType::getUnqual(builder.getContext());
 
   // Build array of output tmp pointers on the stack
-  int32_t output_count = static_cast<int32_t>(call.writebacks.size());
+  auto output_count = static_cast<int32_t>(call.writebacks.size());
   llvm::Value* output_count_val = llvm::ConstantInt::get(i32_ty, output_count);
 
   llvm::Value* output_ptrs_array = nullptr;
@@ -500,11 +527,11 @@ auto LowerFscanfCall(Context& context, const mir::Call& call) -> Result<void> {
     // the unknown plane is 0 (meaning known/2-state values).
     for (int32_t i = 0; i < output_count; ++i) {
       const auto& wb = call.writebacks[static_cast<size_t>(i)];
-      auto tmp_ptr = context.GetPlacePointer(wb.tmp);
+      auto tmp_ptr = context.GetPlacePointer(*wb.tmp);
       if (!tmp_ptr) return std::unexpected(tmp_ptr.error());
 
       // Zero-initialize the tmp location
-      auto tmp_llvm_type = context.GetPlaceLlvmType(wb.tmp);
+      auto tmp_llvm_type = context.GetPlaceLlvmType(*wb.tmp);
       if (!tmp_llvm_type) return std::unexpected(tmp_llvm_type.error());
       llvm::Constant* zero = llvm::Constant::getNullValue(*tmp_llvm_type);
       builder.CreateStore(zero, *tmp_ptr);
@@ -568,9 +595,9 @@ auto LowerFscanfCall(Context& context, const mir::Call& call) -> Result<void> {
 
       // Commit block
       builder.SetInsertPoint(commit_bb);
-      auto output_llvm_type = context.GetPlaceLlvmType(wb.tmp);
+      auto output_llvm_type = context.GetPlaceLlvmType(*wb.tmp);
       if (!output_llvm_type) return std::unexpected(output_llvm_type.error());
-      auto output_tmp_ptr = context.GetPlacePointer(wb.tmp);
+      auto output_tmp_ptr = context.GetPlacePointer(*wb.tmp);
       if (!output_tmp_ptr) return std::unexpected(output_tmp_ptr.error());
       llvm::Value* output_val =
           builder.CreateLoad(*output_llvm_type, *output_tmp_ptr);

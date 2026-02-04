@@ -16,6 +16,7 @@
 
 #include <fmt/core.h>
 
+#include "lyra/common/binary_pack.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/memfile.hpp"
 #include "lyra/runtime/engine.hpp"
@@ -441,32 +442,32 @@ extern "C" auto LyraFread(
   auto bytes_per_elem = static_cast<size_t>((element_width + 7) / 8);
   auto stride = static_cast<size_t>(stride_bytes);
 
+  // Helper to pack big-endian buffer into a target memory location.
+  // Converts to little-endian word array, then memcpys into dest.
+  // Masks to element_width bits to handle non-byte-aligned widths (e.g. 9-bit).
+  auto elem_bits = static_cast<size_t>(element_width);
+  auto pack_to_dest = [&](std::span<const uint8_t> src,
+                          std::span<uint8_t> dest) {
+    std::ranges::fill(dest, 0);
+    auto words =
+        lyra::common::PackBigEndianToWords(src, bytes_per_elem, elem_bits);
+    std::memcpy(
+        dest.data(), words.data(),
+        std::min(bytes_per_elem, words.size() * sizeof(uint64_t)));
+  };
+
   // Buffer for reading bytes
   std::vector<uint8_t> buffer(bytes_per_elem);
   int32_t total_bytes_read = 0;
-
-  // Helper to pack buffer into target location (big-endian)
-  auto pack_big_endian = [&](std::span<uint8_t> dest) {
-    // Big-endian: buffer[0] is MSB, so it goes to highest byte position
-    // Target is little-endian (x86), so we reverse the byte order
-    // Zero the destination first (in case bytes_per_elem < stride)
-    std::fill(dest.begin(), dest.end(), 0);
-    // Copy bytes in reverse order (big-endian to little-endian)
-    for (size_t i = 0; i < bytes_per_elem; ++i) {
-      dest[bytes_per_elem - 1 - i] = buffer[i];
-    }
-  };
 
   if (is_memory == 0) {
     // Integral variant: read bytes_per_elem bytes into target
     int32_t bytes_read = engine->GetFileManager().FreadBytes(
         descriptor, buffer.data(), bytes_per_elem);
     if (bytes_read > 0) {
-      // Zero remaining bytes if partial read
-      if (static_cast<size_t>(bytes_read) < bytes_per_elem) {
-        std::fill(buffer.begin() + bytes_read, buffer.end(), 0);
-      }
-      pack_big_endian(std::span(static_cast<uint8_t*>(target), stride));
+      pack_to_dest(
+          std::span(buffer).first(static_cast<size_t>(bytes_read)),
+          std::span(static_cast<uint8_t*>(target), stride));
       total_bytes_read = bytes_read;
     }
   } else {
@@ -495,9 +496,11 @@ extern "C" auto LyraFread(
       }
 
       // Pack into element at idx
-      pack_big_endian(
-          std::span(static_cast<uint8_t*>(target), stride * element_count)
-              .subspan(idx * stride, stride));
+      pack_to_dest(
+          std::span(buffer), std::span(
+                                 static_cast<uint8_t*>(target),
+                                 stride * static_cast<size_t>(element_count))
+                                 .subspan(idx * stride, stride));
       total_bytes_read += bytes_read;
     }
   }
@@ -516,13 +519,14 @@ extern "C" auto LyraFscanf(
 
   // Track output index
   int32_t output_idx = 0;
+  auto outputs = std::span(output_ptrs, static_cast<size_t>(output_count));
 
   // Use FileManager::Fscanf for the actual scanning
   return file_manager.Fscanf(
       descriptor, format_str, [&](const lyra::runtime::ScanResult& result) {
-        if (output_idx >= output_count) return;  // No more outputs
+        if (static_cast<size_t>(output_idx) >= outputs.size()) return;
 
-        void* output_ptr = output_ptrs[output_idx];
+        void* output_ptr = outputs[static_cast<size_t>(output_idx)];
 
         if (result.IsInt()) {
           // Store as int32_t (matches MIR interpreter behavior)

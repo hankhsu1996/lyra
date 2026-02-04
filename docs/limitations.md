@@ -1,4 +1,4 @@
-#Limitations
+# Limitations
 
 Current SystemVerilog features not yet supported.
 
@@ -161,10 +161,7 @@ Not yet supported:
 ## Operators
 
 - Case equality (`===`, `!==`)
-- Variable-count replication (`{
-n {
-  expr
-}}` where `n` is not a constant)
+- Variable-count replication (`{n{expr}}` where `n` is not a constant)
 
 ## Wildcard Equality and Inside Operator
 
@@ -283,3 +280,13 @@ See [scheduling.md](scheduling.md) for implemented regions.
   string s;
   $sformat(s, fmt, 42);  // Works in both interpreter and codegen
   ```
+
+## Bulk-Write Notification Gap
+
+System functions that write directly to memory backing store (`$readmemh`, `$readmemb`, `$writememh`, `$writememb`, `$fread` memory variant) bypass the normal CommitValue/notify path. This means:
+
+- Value changes from these operations do **not** trigger `@(posedge/negedge)` events
+- `$monitor` does **not** detect changes made by bulk-write operations
+- Continuous assignments sensitive to bulk-written memory are **not** re-evaluated
+
+This is consistent across both the MIR interpreter and LLVM backend. The bulk-write pattern writes directly to the destination backing store for performance (avoiding per-element staging and commit overhead for potentially thousands of elements).

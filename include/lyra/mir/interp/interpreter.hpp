@@ -323,7 +323,7 @@ class Interpreter {
       -> Result<std::vector<RuntimeValue>>;
 
   // Bind edge args to block params (temps defined at block entry)
-  void BindBlockParams(
+  static void BindBlockParams(
       ProcessState& state, const BasicBlock& block,
       std::vector<RuntimeValue> edge_args);
 

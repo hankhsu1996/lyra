@@ -814,7 +814,7 @@ auto LowerSystemCall(
     // We encode is_memory and element_width as compile-time constants
     // to let the runtime know how to read data.
     const Type& ty = (*ctx.type_arena)[target_type];
-    int32_t element_width;
+    int32_t element_width = 0;
     if (fread_data->is_memory) {
       // Memory variant: get element width from array element type
       const auto& arr = ty.AsUnpackedArray();
@@ -853,10 +853,14 @@ auto LowerSystemCall(
     // Emit unified Call with:
     // in_args: [descriptor, element_width, is_memory, start, count]
     // writebacks: target (where data is written)
+    // Memory variant uses kDirectToDest: runtime writes directly to backing
+    // store via raw pointer, following the $readmemh bulk-write pattern.
+    auto wb_kind = fread_data->is_memory ? mir::WritebackKind::kDirectToDest
+                                         : mir::WritebackKind::kStaged;
     return builder.EmitSystemTfCallExpr(
         SystemTfOpcode::kFread,
         {*desc_result, width_op, is_mem_op, start_op, count_op}, expr.type,
-        {{target_lv.place, target_type, mir::PassMode::kOut}});
+        {{target_lv.place, target_type, mir::PassMode::kOut, wb_kind}});
   }
 
   // $fscanf -> unified Call with SystemTfOpcode (formatted file input)

@@ -202,6 +202,34 @@ cases:
         m0: 0x41424344
         m1: 0xFFFFFFFF
 
+  - name: memory_9bit_golden
+    description: "Golden test for 9-bit memory (2 bytes per element, non-multiple-of-8)"
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [8:0] mem [0:1];
+            int bytes_read;
+            int m0, m1;
+            initial begin
+              mem[0] = 9'h000;
+              mem[1] = 9'h000;
+              fd = $fopen("data.txt", "r");
+              bytes_read = $fread(mem, fd);
+              $fclose(fd);
+              m0 = int'(mem[0]);
+              m1 = int'(mem[1]);
+            end
+          endmodule
+      - name: data.txt
+        content: "AaBb"
+    expect:
+      variables:
+        bytes_read: 4
+        m0: 353
+        m1: 98
+
   - name: invalid_fd_returns_zero
     description: Invalid fd returns 0
     files:

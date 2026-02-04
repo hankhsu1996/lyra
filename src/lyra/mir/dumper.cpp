@@ -296,9 +296,15 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
               const char* mode_str = "out";
               if (wb.mode == PassMode::kInOut) mode_str = "inout";
               if (wb.mode == PassMode::kRef) mode_str = "ref";
-              writebacks += std::format(
-                  "{}[{}]: {} -> {}", mode_str, wb.arg_index,
-                  FormatPlace(wb.tmp), FormatPlace(wb.dest));
+              if (wb.kind == WritebackKind::kDirectToDest) {
+                writebacks += std::format(
+                    "{}[{}]: direct -> {}", mode_str, wb.arg_index,
+                    FormatPlace(wb.dest));
+              } else {
+                writebacks += std::format(
+                    "{}[{}]: {} -> {}", mode_str, wb.arg_index,
+                    FormatPlace(*wb.tmp), FormatPlace(wb.dest));
+              }
             }
 
             // Build output string

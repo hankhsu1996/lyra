@@ -225,9 +225,11 @@ struct LocalInitCollector {
               if (i.ret) {
                 Visit(arena[i.ret->tmp], arena);
               }
-              // Visit writeback tmps
+              // Visit writeback tmps (kDirectToDest has no tmp)
               for (const auto& wb : i.writebacks) {
-                Visit(arena[wb.tmp], arena);
+                if (wb.tmp.has_value()) {
+                  Visit(arena[*wb.tmp], arena);
+                }
               }
               // Visit input args
               for (const auto& arg : i.in_args) {

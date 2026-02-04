@@ -301,7 +301,7 @@ auto MirBuilder::EnsurePlaceCached(
   // kUseTemp: memoize by (temp_id, type)
   if (operand.kind == mir::Operand::Kind::kUseTemp) {
     mir::TempId temp_id = std::get<mir::TempId>(operand.payload);
-    PlaceMaterializationCache::Key key{temp_id.value, type};
+    PlaceMaterializationCache::Key key{.temp_id = temp_id.value, .type = type};
     auto it = cache.map.find(key);
     if (it != cache.map.end()) {
       return it->second;
@@ -382,8 +382,26 @@ auto MirBuilder::EmitSystemTfCallExpr(
     TypeId return_type,
     std::vector<std::tuple<mir::PlaceId, TypeId, mir::PassMode>> writebacks)
     -> mir::Operand {
+  // Delegate to 4-tuple overload with kStaged default
+  std::vector<
+      std::tuple<mir::PlaceId, TypeId, mir::PassMode, mir::WritebackKind>>
+      full_writebacks;
+  full_writebacks.reserve(writebacks.size());
+  for (auto& [dest, type, mode] : writebacks) {
+    full_writebacks.emplace_back(dest, type, mode, mir::WritebackKind::kStaged);
+  }
+  return EmitSystemTfCallExpr(
+      opcode, std::move(in_args), return_type, std::move(full_writebacks));
+}
+
+auto MirBuilder::EmitSystemTfCallExpr(
+    SystemTfOpcode opcode, std::vector<mir::Operand> in_args,
+    TypeId return_type,
+    std::vector<
+        std::tuple<mir::PlaceId, TypeId, mir::PassMode, mir::WritebackKind>>
+        writebacks) -> mir::Operand {
   // Validate no Ref mode
-  for (const auto& [dest, type, mode] : writebacks) {
+  for (const auto& [dest, type, mode, kind] : writebacks) {
     if (mode == mir::PassMode::kRef) {
       throw common::InternalError(
           "EmitSystemTfCallExpr", "Ref parameters not yet supported");
@@ -398,17 +416,22 @@ auto MirBuilder::EmitSystemTfCallExpr(
       .type = return_type,
   };
 
-  // Build writebacks with staging temps
+  // Build writebacks: allocate staging temp for kStaged, nullopt for
+  // kDirectToDest
   std::vector<mir::CallWriteback> wb_outputs;
   for (size_t i = 0; i < writebacks.size(); ++i) {
-    auto [dest, type, mode] = writebacks[i];
-    mir::PlaceId tmp = ctx_->AllocTemp(type);
+    auto [dest, type, mode, kind] = writebacks[i];
+    std::optional<mir::PlaceId> tmp =
+        (kind == mir::WritebackKind::kDirectToDest)
+            ? std::nullopt
+            : std::optional{ctx_->AllocTemp(type)};
     wb_outputs.push_back(
         mir::CallWriteback{
             .tmp = tmp,
             .dest = dest,
             .type = type,
             .mode = mode,
+            .kind = kind,
             .arg_index = static_cast<int32_t>(i),
         });
   }

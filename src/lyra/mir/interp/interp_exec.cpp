@@ -16,6 +16,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/binary_pack.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
@@ -42,7 +43,6 @@
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/file_manager.hpp"
-#include "lyra/semantic/format.hpp"
 
 namespace lyra::mir::interp {
 
@@ -864,7 +864,7 @@ auto Interpreter::ExecUserCall(
     }
 
     // Stage to tmp first, then commit to dest
-    auto store_tmp = StoreToPlace(state, wb->tmp, Clone(output_val));
+    auto store_tmp = StoreToPlace(state, *wb->tmp, Clone(output_val));
     if (!store_tmp) {
       return std::unexpected(std::move(store_tmp).error());
     }
@@ -930,9 +930,9 @@ auto Interpreter::ExecValuePlusargsCall(ProcessState& state, const Call& call)
   }
   std::string_view format = AsString(query_val).value;
 
-  // Get output writeback info
+  // Get output writeback info (kStaged: tmp is present)
   const auto& wb = call.writebacks[0];
-  PlaceId output_tmp = wb.tmp;
+  PlaceId output_tmp = *wb.tmp;
   PlaceId output_dest = wb.dest;
 
   // Parse format to determine type
@@ -1056,7 +1056,7 @@ auto Interpreter::ExecFgetsCall(ProcessState& state, const Call& call)
   // 2. Stage writeback (str_output) to tmp, then commit to dest
   const auto& wb = call.writebacks[0];
   RuntimeValue str_val = MakeString(std::move(str_out));
-  auto store_tmp = StoreToPlace(state, wb.tmp, Clone(str_val));
+  auto store_tmp = StoreToPlace(state, *wb.tmp, Clone(str_val));
   if (!store_tmp) {
     return std::unexpected(std::move(store_tmp).error());
   }
@@ -1096,8 +1096,7 @@ auto Interpreter::ExecFreadCall(ProcessState& state, const Call& call)
   // Evaluate element_width (compile-time constant)
   auto width_result = EvalOperand(state, call.in_args[1]);
   if (!width_result) return std::unexpected(width_result.error());
-  int32_t element_width =
-      static_cast<int32_t>(AsIntegral(*width_result).value[0]);
+  auto element_width = static_cast<int32_t>(AsIntegral(*width_result).value[0]);
 
   // Evaluate is_memory (compile-time constant)
   auto is_mem_result = EvalOperand(state, call.in_args[2]);
@@ -1108,14 +1107,14 @@ auto Interpreter::ExecFreadCall(ProcessState& state, const Call& call)
   auto start_result = EvalOperand(state, call.in_args[3]);
   if (!start_result) return std::unexpected(start_result.error());
   // Sign-extend from 32-bit: cast to int32_t first, then to int64_t
-  int64_t start_index = static_cast<int64_t>(
+  auto start_index = static_cast<int64_t>(
       static_cast<int32_t>(AsIntegral(*start_result).value[0]));
 
   // Evaluate count (-1 = not specified)
   auto count_result = EvalOperand(state, call.in_args[4]);
   if (!count_result) return std::unexpected(count_result.error());
   // Sign-extend from 32-bit: cast to int32_t first, then to int64_t
-  int64_t max_count = static_cast<int64_t>(
+  auto max_count = static_cast<int64_t>(
       static_cast<int32_t>(AsIntegral(*count_result).value[0]));
 
   // Calculate bytes per element (ceil(element_width / 8))
@@ -1131,37 +1130,22 @@ auto Interpreter::ExecFreadCall(ProcessState& state, const Call& call)
         file_manager_.FreadBytes(descriptor, buffer.data(), bytes_per_elem);
 
     if (bytes_read > 0) {
-      // Pack big-endian: first byte is MSB
-      // Convert to little-endian word array for MakeIntegralWide
-      size_t num_words = (bytes_per_elem + 7) / 8;
-      std::vector<uint64_t> words(num_words, 0);
-
-      // Big-endian: buffer[0] is MSB of result
-      // We need to place bits correctly: buffer[0] -> highest bits
-      for (int32_t i = 0; i < bytes_read; ++i) {
-        // Byte i of buffer goes to bit position (bytes_per_elem - 1 - i) * 8
-        size_t bit_pos = (bytes_per_elem - 1 - static_cast<size_t>(i)) * 8;
-        size_t word_idx = bit_pos / 64;
-        size_t bit_in_word = bit_pos % 64;
-        if (word_idx < words.size()) {
-          words[word_idx] |=
-              static_cast<uint64_t>(buffer[static_cast<size_t>(i)])
-              << bit_in_word;
-        }
-      }
-
+      auto words = common::PackBigEndianToWords(
+          std::span(buffer).first(static_cast<size_t>(bytes_read)),
+          bytes_per_elem, static_cast<size_t>(element_width));
       RuntimeValue integral_val = MakeIntegralWide(
           words.data(), words.size(), static_cast<uint32_t>(element_width));
       total_bytes_read = bytes_read;
 
-      // Stage and commit
-      auto store_tmp = StoreToPlace(state, wb.tmp, Clone(integral_val));
+      // kStaged: stage to tmp, then commit to dest
+      auto store_tmp = StoreToPlace(state, *wb.tmp, Clone(integral_val));
       if (!store_tmp) return std::unexpected(store_tmp.error());
       auto store_dest = StoreToPlace(state, wb.dest, std::move(integral_val));
       if (!store_dest) return std::unexpected(store_dest.error());
     }
   } else {
-    // Memory variant: read into array elements
+    // Memory variant (kDirectToDest): write directly to dest via WritePlace.
+    // No tmp staging - follows the $readmemh bulk-write pattern.
     auto write_result = WritePlace(state, wb.dest);
     if (!write_result) return std::unexpected(write_result.error());
     if (!IsArray(write_result->get())) {
@@ -1198,26 +1182,13 @@ auto Interpreter::ExecFreadCall(ProcessState& state, const Call& call)
         break;
       }
 
-      // Pack big-endian into integral value
-      size_t num_words = (bytes_per_elem + 7) / 8;
-      std::vector<uint64_t> words(num_words, 0);
-
-      for (size_t i = 0; i < bytes_per_elem; ++i) {
-        size_t bit_pos = (bytes_per_elem - 1 - i) * 8;
-        size_t word_idx = bit_pos / 64;
-        size_t bit_in_word = bit_pos % 64;
-        if (word_idx < words.size()) {
-          words[word_idx] |= static_cast<uint64_t>(elem_buffer[i])
-                             << bit_in_word;
-        }
-      }
-
+      auto words = common::PackBigEndianToWords(
+          std::span(elem_buffer), bytes_per_elem,
+          static_cast<size_t>(element_width));
       elements[idx] = MakeIntegralWide(
           words.data(), words.size(), static_cast<uint32_t>(element_width));
       total_bytes_read += bytes_read;
     }
-    // Note: For memory variant, we write directly to dest via WritePlace.
-    // The tmp staging is not used for in-place array modifications.
   }
 
   // Commit return value (bytes_read)
@@ -1286,7 +1257,7 @@ auto Interpreter::ExecFscanfCall(ProcessState& state, const Call& call)
           rv = MakeString(result.AsString());
         }
 
-        auto store_tmp = StoreToPlace(state, wb.tmp, Clone(rv));
+        auto store_tmp = StoreToPlace(state, *wb.tmp, Clone(rv));
         if (!store_tmp) {
           callback_error = std::move(store_tmp).error();
           return;

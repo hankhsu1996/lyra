@@ -676,7 +676,9 @@ auto CollectProcessPlaces(const mir::Process& process)
                 }
                 // Collect writeback tmps (not dests)
                 for (const auto& wb : call.writebacks) {
-                  places.insert(wb.tmp);
+                  if (wb.tmp.has_value()) {
+                    places.insert(*wb.tmp);
+                  }
                 }
                 // Collect input args
                 for (const auto& arg : call.in_args) {
