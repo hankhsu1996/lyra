@@ -28,6 +28,7 @@
 #include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
+#include "lyra/lowering/hir_to_mir/materialize_cache.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/call.hpp"
@@ -45,13 +46,19 @@ namespace lyra::lowering::hir_to_mir {
 //
 // Leaf expressions (constants, name refs) produce Operands directly.
 // Non-leaf expressions (unary, binary, calls) always materialize their
-// result into a temp via EmitTemp, then return Use(temp).
+// result into a temp via EmitPlaceTemp, then return Use(temp).
 //
 // This avoids value identity issues (MIR has no SSA) and keeps the lowering
 // uniform. Future expression kinds (casts, selects, bit-slices) should
 // follow the same pattern.
 
 namespace {
+
+// Forward declaration for recursive lowering with cache.
+// All internal helpers call this; the public LowerExpression creates the cache.
+auto LowerExpressionImpl(
+    hir::ExpressionId expr_id, MirBuilder& builder,
+    PlaceMaterializationCache& cache) -> Result<mir::Operand>;
 
 auto LowerConstant(const hir::ConstantExpressionData& data, MirBuilder& builder)
     -> mir::Operand {
@@ -311,7 +318,7 @@ auto LowerIncrementDecrement(
       .info = mir::BinaryRvalueInfo{.op = bin_op},
   };
   mir::PlaceId new_value =
-      builder.EmitTemp(expr.type, std::move(compute_rvalue));
+      builder.EmitPlaceTemp(expr.type, std::move(compute_rvalue));
 
   // 5. Write back to target with guarded assign for OOB safety
   if (target.IsAlwaysValid()) {
@@ -332,16 +339,19 @@ auto LowerIncrementDecrement(
 // Similar to LowerIncrementDecrement but uses the user-provided operand.
 auto LowerCompoundAssignment(
     const hir::CompoundAssignmentExpressionData& data,
-    const hir::Expression& expr, MirBuilder& builder) -> Result<mir::Operand> {
+    const hir::Expression& expr, MirBuilder& builder,
+    PlaceMaterializationCache& cache) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
-  // 1. Lower target as lvalue (evaluates index expressions once)
+  // 1. Lower target as lvalue (evaluates index expressions once, separate
+  // scope)
   Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
   if (!target_result) return std::unexpected(target_result.error());
   LvalueResult target = *target_result;
 
   // 2. Lower the RHS operand
-  Result<mir::Operand> rhs_result = LowerExpression(data.operand, builder);
+  Result<mir::Operand> rhs_result =
+      LowerExpressionImpl(data.operand, builder, cache);
   if (!rhs_result) return std::unexpected(rhs_result.error());
   mir::Operand rhs = *rhs_result;
 
@@ -384,7 +394,7 @@ auto LowerCompoundAssignment(
       .info = mir::BinaryRvalueInfo{.op = mir_op},
   };
   mir::PlaceId new_value =
-      builder.EmitTemp(expr.type, std::move(compute_rvalue));
+      builder.EmitPlaceTemp(expr.type, std::move(compute_rvalue));
 
   // 6. Write back to target with guarded assign for OOB safety
   if (target.IsAlwaysValid()) {
@@ -400,13 +410,16 @@ auto LowerCompoundAssignment(
 
 auto LowerUnary(
     const hir::UnaryExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   // Desugar increment/decrement operators into read-modify-write sequence
+  // Note: LowerIncrementDecrement uses LowerLvalue, which has separate scope
   if (IsIncrementOrDecrement(data.op)) {
     return LowerIncrementDecrement(data, expr, builder);
   }
 
-  Result<mir::Operand> operand_result = LowerExpression(data.operand, builder);
+  Result<mir::Operand> operand_result =
+      LowerExpressionImpl(data.operand, builder, cache);
   if (!operand_result) return std::unexpected(operand_result.error());
   mir::Operand operand = *operand_result;
 
@@ -415,18 +428,20 @@ auto LowerUnary(
       .info = mir::UnaryRvalueInfo{.op = MapUnaryOp(data.op)},
   };
 
-  mir::PlaceId temp_id = builder.EmitTemp(expr.type, std::move(rvalue));
-  return mir::Operand::Use(temp_id);
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerBinary(
     const hir::BinaryExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
-  Result<mir::Operand> lhs_result = LowerExpression(data.lhs, builder);
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
+  Result<mir::Operand> lhs_result =
+      LowerExpressionImpl(data.lhs, builder, cache);
   if (!lhs_result) return std::unexpected(lhs_result.error());
   mir::Operand lhs = *lhs_result;
 
-  Result<mir::Operand> rhs_result = LowerExpression(data.rhs, builder);
+  Result<mir::Operand> rhs_result =
+      LowerExpressionImpl(data.rhs, builder, cache);
   if (!rhs_result) return std::unexpected(rhs_result.error());
   mir::Operand rhs = *rhs_result;
 
@@ -441,18 +456,13 @@ auto LowerBinary(
   };
   mir::BinaryOp mir_op = select_mir_op();
 
-  mir::Rvalue rvalue{
-      .operands = {lhs, rhs},
-      .info = mir::BinaryRvalueInfo{.op = mir_op},
-  };
-
-  mir::PlaceId temp_id = builder.EmitTemp(expr.type, std::move(rvalue));
-  return mir::Operand::Use(temp_id);
+  return builder.EmitBinary(mir_op, lhs, rhs, expr.type);
 }
 
 auto LowerCast(
     const hir::CastExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   // Invariant: caller dispatched based on CastExpressionData
   if (expr.kind != hir::ExpressionKind::kCast) {
     throw common::InternalError("LowerCast", "expected kCast expression kind");
@@ -522,14 +532,15 @@ auto LowerCast(
             .info = mir::ConcatRvalueInfo{.result_type = expr.type},
         };
         return mir::Operand::Use(
-            builder.EmitTemp(expr.type, std::move(rvalue)));
+            builder.EmitPlaceTemp(expr.type, std::move(rvalue)));
       }
     }
   }
 
   // Lower operand first. Note: current lowering is structure-preserving (no
   // rewriting), so we can safely read source type from HIR after lowering.
-  Result<mir::Operand> operand_result = LowerExpression(data.operand, builder);
+  Result<mir::Operand> operand_result =
+      LowerExpressionImpl(data.operand, builder, cache);
   if (!operand_result) return std::unexpected(operand_result.error());
   mir::Operand operand = *operand_result;
 
@@ -547,15 +558,16 @@ auto LowerCast(
               .source_type = source_type, .target_type = target_type},
   };
 
-  mir::PlaceId temp_id = builder.EmitTemp(expr.type, std::move(rvalue));
-  return mir::Operand::Use(temp_id);
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerBitCast(
     const hir::BitCastExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   // Lower operand
-  Result<mir::Operand> operand_result = LowerExpression(data.operand, builder);
+  Result<mir::Operand> operand_result =
+      LowerExpressionImpl(data.operand, builder, cache);
   if (!operand_result) return std::unexpected(operand_result.error());
   mir::Operand operand = *operand_result;
 
@@ -571,13 +583,13 @@ auto LowerBitCast(
               .source_type = source_type, .target_type = target_type},
   };
 
-  mir::PlaceId temp_id = builder.EmitTemp(expr.type, std::move(rvalue));
-  return mir::Operand::Use(temp_id);
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerSystemCall(
     const hir::SystemCallExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   // Handle SFormatSystemCallData in expression context ($sformatf)
   if (const auto* sformat = std::get_if<hir::SFormatSystemCallData>(&data)) {
     Context& ctx = builder.GetContext();
@@ -602,7 +614,7 @@ auto LowerSystemCall(
                   .module_timeunit_power = hir_op.module_timeunit_power});
         } else {
           Result<mir::Operand> operand_result =
-              LowerExpression(*hir_op.value, builder);
+              LowerExpressionImpl(*hir_op.value, builder, cache);
           if (!operand_result) return std::unexpected(operand_result.error());
           mir::Operand operand = *operand_result;
           const hir::Expression& val_expr = (*ctx.hir_arena)[*hir_op.value];
@@ -623,7 +635,8 @@ auto LowerSystemCall(
       std::vector<mir::Operand> operands;
       operands.reserve(sformat->args.size());
       for (hir::ExpressionId arg_id : sformat->args) {
-        Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+        Result<mir::Operand> arg_result =
+            LowerExpressionImpl(arg_id, builder, cache);
         if (!arg_result) return std::unexpected(arg_result.error());
         operands.push_back(*arg_result);
       }
@@ -631,7 +644,7 @@ auto LowerSystemCall(
           mir::Rvalue{.operands = std::move(operands), .info = std::move(info)};
     }
 
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    mir::PlaceId tmp = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);
   }
 
@@ -639,7 +652,7 @@ auto LowerSystemCall(
   if (const auto* test_pa = std::get_if<hir::TestPlusargsData>(&data)) {
     Context& ctx = builder.GetContext();
     Result<mir::Operand> query_result =
-        LowerExpression(test_pa->query, builder);
+        LowerExpressionImpl(test_pa->query, builder, cache);
     if (!query_result) return std::unexpected(query_result.error());
     mir::Operand query_op = *query_result;
     const hir::Expression& query_expr = (*ctx.hir_arena)[test_pa->query];
@@ -652,14 +665,15 @@ auto LowerSystemCall(
                         .operand = std::move(query_op),
                         .type = query_expr.type}},
     };
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    mir::PlaceId tmp = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);
   }
 
   // $value$plusargs -> unified Call with SystemTfOpcode
+  // Note: LowerLvalue has separate cache scope
   if (const auto* val_pa = std::get_if<hir::ValuePlusargsData>(&data)) {
     Result<mir::Operand> format_result =
-        LowerExpression(val_pa->format, builder);
+        LowerExpressionImpl(val_pa->format, builder, cache);
     if (!format_result) return std::unexpected(format_result.error());
     mir::Operand format_op = *format_result;
     Result<LvalueResult> output_lv_result =
@@ -681,7 +695,7 @@ auto LowerSystemCall(
   if (const auto* fopen_data = std::get_if<hir::FopenData>(&data)) {
     Context& ctx = builder.GetContext();
     Result<mir::Operand> filename_result =
-        LowerExpression(fopen_data->filename, builder);
+        LowerExpressionImpl(fopen_data->filename, builder, cache);
     if (!filename_result) return std::unexpected(filename_result.error());
     const hir::Expression& filename_expr =
         (*ctx.hir_arena)[fopen_data->filename];
@@ -696,7 +710,7 @@ auto LowerSystemCall(
 
     if (fopen_data->mode) {
       Result<mir::Operand> mode_result =
-          LowerExpression(*fopen_data->mode, builder);
+          LowerExpressionImpl(*fopen_data->mode, builder, cache);
       if (!mode_result) return std::unexpected(mode_result.error());
       const hir::Expression& mode_expr = (*ctx.hir_arena)[*fopen_data->mode];
       info.mode = mir::TypedOperand{
@@ -704,7 +718,7 @@ auto LowerSystemCall(
     }
 
     mir::Rvalue rvalue{.operands = {}, .info = std::move(info)};
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    mir::PlaceId tmp = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);
   }
 
@@ -714,7 +728,7 @@ auto LowerSystemCall(
         .operands = {},
         .info = mir::RuntimeQueryRvalueInfo{.kind = query->kind},
     };
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    mir::PlaceId tmp = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);
   }
 
@@ -727,7 +741,7 @@ auto LowerSystemCall(
         .operands = {},
         .info = mir::SystemTfRvalueInfo{.opcode = opcode},
     };
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
+    mir::PlaceId tmp = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
     return mir::Operand::Use(tmp);
   }
 
@@ -741,8 +755,7 @@ auto LowerSystemCall(
         .operands = {*desc_result},
         .info = mir::SystemTfRvalueInfo{.opcode = SystemTfOpcode::kFgetc},
     };
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
-    return mir::Operand::Use(tmp);
+    return builder.EmitValueTemp(expr.type, std::move(rvalue));
   }
 
   // $ungetc -> SystemTfRvalueInfo (modifies file state)
@@ -759,8 +772,7 @@ auto LowerSystemCall(
         .operands = {*char_result, *desc_result},
         .info = mir::SystemTfRvalueInfo{.opcode = SystemTfOpcode::kUngetc},
     };
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
-    return mir::Operand::Use(tmp);
+    return builder.EmitValueTemp(expr.type, std::move(rvalue));
   }
 
   // $system -> SystemCmdRvalueInfo (side-effecting shell command)
@@ -780,8 +792,7 @@ auto LowerSystemCall(
     }
 
     mir::Rvalue rvalue{.operands = {}, .info = std::move(info)};
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
-    return mir::Operand::Use(tmp);
+    return builder.EmitValueTemp(expr.type, std::move(rvalue));
   }
 
   // Array query functions -> ArrayQueryRvalueInfo
@@ -913,8 +924,7 @@ auto LowerSystemCall(
         .operands = {*array_result, *dim_result},
         .info = std::move(info),
     };
-    mir::PlaceId tmp = builder.EmitTemp(expr.type, std::move(rvalue));
-    return mir::Operand::Use(tmp);
+    return builder.EmitValueTemp(expr.type, std::move(rvalue));
   }
 
   // Effect system calls ($display, etc.) are handled in statement.cpp.
@@ -925,14 +935,16 @@ auto LowerSystemCall(
 
 auto LowerAssignment(
     const hir::AssignmentExpressionData& data, const hir::Expression& /*expr*/,
-    MirBuilder& builder) -> Result<mir::Operand> {
-  // Lower target as lvalue
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
+  // Lower target as lvalue (separate cache scope)
   Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
   if (!target_result) return std::unexpected(target_result.error());
   LvalueResult target = *target_result;
 
   // Lower value as rvalue
-  Result<mir::Operand> value_result = LowerExpression(data.value, builder);
+  Result<mir::Operand> value_result =
+      LowerExpressionImpl(data.value, builder, cache);
   if (!value_result) return std::unexpected(value_result.error());
   mir::Operand value = *value_result;
 
@@ -950,32 +962,34 @@ auto LowerAssignment(
   return value;
 }
 
-// Lower ternary operator (a ? b : c) to control flow.
+// Lower ternary operator (a ? b : c) to control flow with SSA block args.
 // We use branches instead of a select instruction to ensure short-circuit
 // evaluation - only the taken arm is evaluated. This matters when arms have
 // side effects or access potentially invalid places.
 //
-// Lowering:
-//   result = _
+// SSA-by-construction lowering:
 //   branch cond -> then_bb, else_bb
-//   then_bb: result = then_val; jump merge_bb
-//   else_bb: result = else_val; jump merge_bb
-//   merge_bb: (continue here)
+//   then_bb: then_val = ...; jump merge_bb(then_val)
+//   else_bb: else_val = ...; jump merge_bb(else_val)
+//   merge_bb(result: T): (continue here, result is SSA temp)
+//
+// The merge block has a single parameter (result temp_id) that receives
+// values from both predecessors via edge args. This makes the temp SSA
+// by construction - exactly one definition (the block param).
 auto LowerConditional(
     const hir::ConditionalExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
-  // 1. Allocate result temp BEFORE branching (dominates both arms and merge)
-  mir::PlaceId result = ctx.AllocTemp(expr.type);
-
-  // 2. Lower condition (must not emit terminator - currently safe since
+  // 1. Lower condition (must not emit terminator - currently safe since
   //    logical ops use binary instructions, not control flow)
-  Result<mir::Operand> cond_result = LowerExpression(data.condition, builder);
+  Result<mir::Operand> cond_result =
+      LowerExpressionImpl(data.condition, builder, cache);
   if (!cond_result) return std::unexpected(cond_result.error());
   mir::Operand cond = *cond_result;
 
-  // 3. EmitBranch requires Use operand; materialize if needed
+  // 2. EmitBranch requires Use operand; materialize if needed
   //    Use condition's type (not expr.type) for the temp
   if (cond.kind != mir::Operand::Kind::kUse) {
     const hir::Expression& cond_expr = (*ctx.hir_arena)[data.condition];
@@ -984,43 +998,48 @@ auto LowerConditional(
     cond = mir::Operand::Use(temp);
   }
 
-  // 4. Create blocks and emit branch (terminates current block)
+  // 3. Create blocks: then, else, and merge with 1 param for the result
   BlockIndex then_bb = builder.CreateBlock();
   BlockIndex else_bb = builder.CreateBlock();
-  BlockIndex merge_bb = builder.CreateBlock();
+  auto [merge_bb, merge_temps] = builder.CreateBlockWithParams({expr.type});
+  int result_temp_id = merge_temps[0];
+
+  // 4. Emit branch (terminates current block)
   builder.EmitBranch(cond, then_bb, else_bb);
 
-  // 5. Then block: lower then_expr HERE (short-circuit), assign, terminate
+  // 5. Then block: lower then_expr HERE (short-circuit), jump with value
   builder.SetCurrentBlock(then_bb);
-  Result<mir::Operand> then_result = LowerExpression(data.then_expr, builder);
+  Result<mir::Operand> then_result =
+      LowerExpressionImpl(data.then_expr, builder, cache);
   if (!then_result) return std::unexpected(then_result.error());
   mir::Operand then_val = *then_result;
-  builder.EmitAssign(result, std::move(then_val));
-  builder.EmitJump(merge_bb);
+  builder.EmitJump(merge_bb, {std::move(then_val)});
 
-  // 6. Else block: lower else_expr HERE (short-circuit), assign, terminate
+  // 6. Else block: lower else_expr HERE (short-circuit), jump with value
   builder.SetCurrentBlock(else_bb);
-  Result<mir::Operand> else_result = LowerExpression(data.else_expr, builder);
+  Result<mir::Operand> else_result =
+      LowerExpressionImpl(data.else_expr, builder, cache);
   if (!else_result) return std::unexpected(else_result.error());
   mir::Operand else_val = *else_result;
-  builder.EmitAssign(result, std::move(else_val));
-  builder.EmitJump(merge_bb);
+  builder.EmitJump(merge_bb, {std::move(else_val)});
 
-  // 7. Continue in merge block
+  // 7. Continue in merge block; result is the block param (SSA temp)
   builder.SetCurrentBlock(merge_bb);
-  return mir::Operand::Use(result);
+  return mir::Operand::UseTemp(result_temp_id);
 }
 
 auto LowerStructLiteral(
     const hir::StructLiteralExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
   const Type& type_info = (*ctx.type_arena)[expr.type];
 
   std::vector<mir::Operand> operands;
   operands.reserve(data.field_values.size());
   for (hir::ExpressionId field_id : data.field_values) {
-    Result<mir::Operand> field_result = LowerExpression(field_id, builder);
+    Result<mir::Operand> field_result =
+        LowerExpressionImpl(field_id, builder, cache);
     if (!field_result) return std::unexpected(field_result.error());
     operands.push_back(*field_result);
   }
@@ -1032,7 +1051,8 @@ auto LowerStructLiteral(
         .operands = std::move(operands),
         .info = mir::ConcatRvalueInfo{.result_type = expr.type},
     };
-    return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+    return mir::Operand::Use(
+        builder.EmitPlaceTemp(expr.type, std::move(rvalue)));
   }
 
   // Unpacked struct: aggregate construction
@@ -1040,12 +1060,13 @@ auto LowerStructLiteral(
       .operands = std::move(operands),
       .info = mir::AggregateRvalueInfo{.result_type = expr.type},
   };
-  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+  return mir::Operand::Use(builder.EmitPlaceTemp(expr.type, std::move(rvalue)));
 }
 
 auto LowerCall(
     const hir::CallExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Resolve mir::FunctionId from symbol (throws if not found)
@@ -1069,7 +1090,8 @@ auto LowerCall(
     switch (param.kind) {
       case mir::PassingKind::kValue: {
         // Input parameter: lower as expression (by value)
-        Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+        Result<mir::Operand> arg_result =
+            LowerExpressionImpl(arg_id, builder, cache);
         if (!arg_result) return std::unexpected(arg_result.error());
         in_args.push_back(*arg_result);
         break;
@@ -1079,6 +1101,7 @@ auto LowerCall(
         // Output/inout parameter: lower as lvalue to get destination PlaceId.
         // Callee receives a pointer to the destination; for inout, callee reads
         // the initial value from that pointer. We do NOT add to in_args here.
+        // Note: LowerLvalue has separate cache scope
         Result<LvalueResult> lv_result = LowerLvalue(arg_id, builder);
         if (!lv_result) return std::unexpected(lv_result.error());
 
@@ -1105,14 +1128,16 @@ auto LowerCall(
 
 auto LowerNewArray(
     const hir::NewArrayExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   std::vector<mir::Operand> operands;
-  Result<mir::Operand> size_result = LowerExpression(data.size_expr, builder);
+  Result<mir::Operand> size_result =
+      LowerExpressionImpl(data.size_expr, builder, cache);
   if (!size_result) return std::unexpected(size_result.error());
   operands.push_back(*size_result);
   if (data.init_expr) {
     Result<mir::Operand> init_result =
-        LowerExpression(*data.init_expr, builder);
+        LowerExpressionImpl(*data.init_expr, builder, cache);
     if (!init_result) return std::unexpected(init_result.error());
     operands.push_back(*init_result);
   }
@@ -1127,17 +1152,19 @@ auto LowerNewArray(
               .enum_type = std::nullopt},
   };
 
-  mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+  mir::PlaceId temp = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
   return mir::Operand::Use(temp);
 }
 
 auto LowerArrayLiteral(
     const hir::ArrayLiteralExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   std::vector<mir::Operand> operands;
   operands.reserve(data.elements.size());
   for (hir::ExpressionId elem_id : data.elements) {
-    Result<mir::Operand> elem_result = LowerExpression(elem_id, builder);
+    Result<mir::Operand> elem_result =
+        LowerExpressionImpl(elem_id, builder, cache);
     if (!elem_result) return std::unexpected(elem_result.error());
     operands.push_back(*elem_result);
   }
@@ -1146,19 +1173,20 @@ auto LowerArrayLiteral(
       .operands = std::move(operands),
       .info = mir::AggregateRvalueInfo{.result_type = expr.type},
   };
-  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+  return mir::Operand::Use(builder.EmitPlaceTemp(expr.type, std::move(rvalue)));
 }
 
 auto LowerBuiltinMethodCall(
     const hir::BuiltinMethodCallExpressionData& data,
-    const hir::Expression& expr, MirBuilder& builder) -> Result<mir::Operand> {
+    const hir::Expression& expr, MirBuilder& builder,
+    PlaceMaterializationCache& cache) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
   const hir::Expression& receiver_expr = (*ctx.hir_arena)[data.receiver];
 
   switch (data.method) {
     case hir::BuiltinMethod::kSize: {
       Result<mir::Operand> receiver_result =
-          LowerExpression(data.receiver, builder);
+          LowerExpressionImpl(data.receiver, builder, cache);
       if (!receiver_result) return std::unexpected(receiver_result.error());
       mir::Operand receiver = *receiver_result;
       // Determine which size method based on receiver type
@@ -1175,14 +1203,14 @@ auto LowerBuiltinMethodCall(
                   .receiver = std::nullopt,
                   .enum_type = std::nullopt},
       };
-      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+      mir::PlaceId temp = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
       return mir::Operand::Use(temp);
     }
 
     case hir::BuiltinMethod::kPopBack:
     case hir::BuiltinMethod::kPopFront: {
       // Pop methods mutate the receiver AND return a value
-      // Need receiver as PlaceId for mutation
+      // Need receiver as PlaceId for mutation (LowerLvalue has separate scope)
       Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
       if (!lv_result) return std::unexpected(lv_result.error());
       LvalueResult lv = *lv_result;
@@ -1196,12 +1224,14 @@ auto LowerBuiltinMethodCall(
 
     case hir::BuiltinMethod::kPushBack:
     case hir::BuiltinMethod::kPushFront: {
+      // Note: LowerLvalue has separate cache scope
       Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
       if (!lv_result) return std::unexpected(lv_result.error());
       LvalueResult lv = *lv_result;
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
-        Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+        Result<mir::Operand> arg_result =
+            LowerExpressionImpl(arg_id, builder, cache);
         if (!arg_result) return std::unexpected(arg_result.error());
         operands.push_back(*arg_result);
       }
@@ -1215,12 +1245,14 @@ auto LowerBuiltinMethodCall(
     }
 
     case hir::BuiltinMethod::kInsert: {
+      // Note: LowerLvalue has separate cache scope
       Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
       if (!lv_result) return std::unexpected(lv_result.error());
       LvalueResult lv = *lv_result;
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
-        Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+        Result<mir::Operand> arg_result =
+            LowerExpressionImpl(arg_id, builder, cache);
         if (!arg_result) return std::unexpected(arg_result.error());
         operands.push_back(*arg_result);
       }
@@ -1231,12 +1263,14 @@ auto LowerBuiltinMethodCall(
     }
 
     case hir::BuiltinMethod::kDelete: {
+      // Note: LowerLvalue has separate cache scope
       Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
       if (!lv_result) return std::unexpected(lv_result.error());
       LvalueResult lv = *lv_result;
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
-        Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+        Result<mir::Operand> arg_result =
+            LowerExpressionImpl(arg_id, builder, cache);
         if (!arg_result) return std::unexpected(arg_result.error());
         operands.push_back(*arg_result);
       }
@@ -1260,7 +1294,7 @@ auto LowerBuiltinMethodCall(
     case hir::BuiltinMethod::kEnumPrev: {
       // operands[0] = receiver value
       Result<mir::Operand> receiver_result =
-          LowerExpression(data.receiver, builder);
+          LowerExpressionImpl(data.receiver, builder, cache);
       if (!receiver_result) return std::unexpected(receiver_result.error());
       mir::Operand receiver_val = *receiver_result;
       std::vector<mir::Operand> operands = {receiver_val};
@@ -1268,7 +1302,7 @@ auto LowerBuiltinMethodCall(
       // operands[1] = optional step N
       if (!data.args.empty()) {
         Result<mir::Operand> step_result =
-            LowerExpression(data.args[0], builder);
+            LowerExpressionImpl(data.args[0], builder, cache);
         if (!step_result) return std::unexpected(step_result.error());
         operands.push_back(*step_result);
       }
@@ -1295,14 +1329,14 @@ auto LowerBuiltinMethodCall(
                   .enum_type = enum_type_id},
       };
 
-      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+      mir::PlaceId temp = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
       return mir::Operand::Use(temp);
     }
 
     case hir::BuiltinMethod::kEnumName: {
       // operands[0] = receiver value
       Result<mir::Operand> receiver_result =
-          LowerExpression(data.receiver, builder);
+          LowerExpressionImpl(data.receiver, builder, cache);
       if (!receiver_result) return std::unexpected(receiver_result.error());
       mir::Operand receiver_val = *receiver_result;
 
@@ -1324,25 +1358,12 @@ auto LowerBuiltinMethodCall(
                   .enum_type = enum_type_id},
       };
 
-      mir::PlaceId temp = builder.EmitTemp(expr.type, std::move(rvalue));
+      mir::PlaceId temp = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
       return mir::Operand::Use(temp);
     }
   }
   throw common::InternalError(
       "LowerBuiltinMethodCall", "unknown builtin method");
-}
-
-// Get the base place from an operand, materializing to temp if needed.
-auto GetOrMaterializePlace(
-    mir::Operand& operand, TypeId type, MirBuilder& builder) -> mir::PlaceId {
-  if (operand.kind == mir::Operand::Kind::kUse) {
-    return std::get<mir::PlaceId>(operand.payload);
-  }
-  if (operand.kind == mir::Operand::Kind::kConst) {
-    return builder.EmitTempAssign(type, operand);
-  }
-  throw common::InternalError(
-      "GetOrMaterializePlace", "unexpected operand kind");
 }
 
 // Check if index type is 4-state (has X/Z bits).
@@ -1435,15 +1456,18 @@ auto EmitBitSelectOffset(
 
 auto LowerPackedElementSelect(
     const hir::PackedElementSelectExpressionData& data,
-    const hir::Expression& expr, MirBuilder& builder) -> Result<mir::Operand> {
+    const hir::Expression& expr, MirBuilder& builder,
+    PlaceMaterializationCache& cache) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Lower base and index expressions
-  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  Result<mir::Operand> base_result =
+      LowerExpressionImpl(data.base, builder, cache);
   if (!base_result) return std::unexpected(base_result.error());
   mir::Operand base_operand = *base_result;
 
-  Result<mir::Operand> index_result = LowerExpression(data.index, builder);
+  Result<mir::Operand> index_result =
+      LowerExpressionImpl(data.index, builder, cache);
   if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = *index_result;
 
@@ -1457,9 +1481,9 @@ auto LowerPackedElementSelect(
   auto [offset, valid] = EmitPackedElementOffset(
       index_operand, index_expr.type, base_type, builder);
 
-  // Get base as Place
+  // Get base as Place (memoize UseTemp -> PlaceTemp materialization)
   mir::PlaceId base_place =
-      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+      builder.EnsurePlaceCached(base_expr.type, base_operand, cache);
 
   // Create BitRangeProjection (address-only)
   mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
@@ -1475,15 +1499,18 @@ auto LowerPackedElementSelect(
 
 auto LowerBitSelect(
     const hir::BitSelectExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Lower base and index expressions
-  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  Result<mir::Operand> base_result =
+      LowerExpressionImpl(data.base, builder, cache);
   if (!base_result) return std::unexpected(base_result.error());
   mir::Operand base_operand = *base_result;
 
-  Result<mir::Operand> index_result = LowerExpression(data.index, builder);
+  Result<mir::Operand> index_result =
+      LowerExpressionImpl(data.index, builder, cache);
   if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = *index_result;
 
@@ -1496,9 +1523,9 @@ auto LowerBitSelect(
   auto [offset, valid] =
       EmitBitSelectOffset(index_operand, index_expr.type, base_type, builder);
 
-  // Get base as Place
+  // Get base as Place (memoize UseTemp -> PlaceTemp materialization)
   mir::PlaceId base_place =
-      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+      builder.EnsurePlaceCached(base_expr.type, base_operand, cache);
 
   // Create BitRangeProjection (width=1)
   mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
@@ -1513,11 +1540,13 @@ auto LowerBitSelect(
 
 auto LowerRangeSelect(
     const hir::RangeSelectExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Lower base expression
-  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  Result<mir::Operand> base_result =
+      LowerExpressionImpl(data.base, builder, cache);
   if (!base_result) return std::unexpected(base_result.error());
   mir::Operand base_operand = *base_result;
 
@@ -1562,9 +1591,9 @@ auto LowerRangeSelect(
   mir::Operand offset =
       mir::Operand::Const(MakeIntegralConst(bit_offset, ctx.GetOffsetType()));
 
-  // Get base as Place
+  // Get base as Place (memoize UseTemp -> PlaceTemp materialization)
   mir::PlaceId base_place =
-      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+      builder.EnsurePlaceCached(base_expr.type, base_operand, cache);
 
   if (bit_offset < 0 || static_cast<uint32_t>(bit_offset) + width >
                             PackedBitWidth(base_type, *ctx.type_arena)) {
@@ -1700,15 +1729,18 @@ auto EmitIndexedPartSelectOffset(
 
 auto LowerIndexedPartSelect(
     const hir::IndexedPartSelectExpressionData& data,
-    const hir::Expression& expr, MirBuilder& builder) -> Result<mir::Operand> {
+    const hir::Expression& expr, MirBuilder& builder,
+    PlaceMaterializationCache& cache) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Lower base and index expressions
-  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  Result<mir::Operand> base_result =
+      LowerExpressionImpl(data.base, builder, cache);
   if (!base_result) return std::unexpected(base_result.error());
   mir::Operand base_operand = *base_result;
 
-  Result<mir::Operand> index_result = LowerExpression(data.index, builder);
+  Result<mir::Operand> index_result =
+      LowerExpressionImpl(data.index, builder, cache);
   if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = *index_result;
 
@@ -1722,9 +1754,9 @@ auto LowerIndexedPartSelect(
       index_operand, index_expr.type, base_type, data.width, data.ascending,
       builder);
 
-  // Get base as Place
+  // Get base as Place (memoize UseTemp -> PlaceTemp materialization)
   mir::PlaceId base_place =
-      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+      builder.EnsurePlaceCached(base_expr.type, base_operand, cache);
 
   // Create BitRangeProjection
   mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
@@ -1740,11 +1772,13 @@ auto LowerIndexedPartSelect(
 
 auto LowerPackedFieldAccess(
     const hir::PackedFieldAccessExpressionData& data,
-    const hir::Expression& expr, MirBuilder& builder) -> Result<mir::Operand> {
+    const hir::Expression& expr, MirBuilder& builder,
+    PlaceMaterializationCache& cache) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   // Lower base expression
-  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  Result<mir::Operand> base_result =
+      LowerExpressionImpl(data.base, builder, cache);
   if (!base_result) return std::unexpected(base_result.error());
   mir::Operand base_operand = *base_result;
 
@@ -1755,9 +1789,9 @@ auto LowerPackedFieldAccess(
   mir::Operand offset = mir::Operand::Const(
       MakeIntegralConst(data.bit_offset, ctx.GetOffsetType()));
 
-  // Get base as Place
+  // Get base as Place (memoize UseTemp -> PlaceTemp materialization)
   mir::PlaceId base_place =
-      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+      builder.EnsurePlaceCached(base_expr.type, base_operand, cache);
 
   const Type& base_type = (*ctx.type_arena)[base_expr.type];
   if (data.bit_offset + data.bit_width >
@@ -1781,7 +1815,8 @@ auto LowerPackedFieldAccess(
 
 auto LowerConcat(
     const hir::ConcatExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   const Context& ctx = builder.GetContext();
   const auto& types = *ctx.type_arena;
 
@@ -1798,7 +1833,7 @@ auto LowerConcat(
 
     if (result_is_packed && !operand_is_packed) {
       Result<mir::Operand> op_result =
-          LowerExpression(data.operands[0], builder);
+          LowerExpressionImpl(data.operands[0], builder, cache);
       if (!op_result) return std::unexpected(op_result.error());
 
       mir::Rvalue rvalue{
@@ -1807,14 +1842,14 @@ auto LowerConcat(
               mir::CastRvalueInfo{
                   .source_type = operand_expr.type, .target_type = expr.type},
       };
-      return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+      return builder.EmitValueTemp(expr.type, std::move(rvalue));
     }
   }
 
   std::vector<mir::Operand> operands;
   operands.reserve(data.operands.size());
   for (hir::ExpressionId op_id : data.operands) {
-    Result<mir::Operand> op_result = LowerExpression(op_id, builder);
+    Result<mir::Operand> op_result = LowerExpressionImpl(op_id, builder, cache);
     if (!op_result) return std::unexpected(op_result.error());
     operands.push_back(*op_result);
   }
@@ -1823,25 +1858,28 @@ auto LowerConcat(
       .operands = std::move(operands),
       .info = mir::ConcatRvalueInfo{.result_type = expr.type},
   };
-  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerReplicate(
     const hir::ReplicateExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
-  Result<mir::Operand> elem_result = LowerExpression(data.element, builder);
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
+  Result<mir::Operand> elem_result =
+      LowerExpressionImpl(data.element, builder, cache);
   if (!elem_result) return std::unexpected(elem_result.error());
 
   mir::Rvalue rvalue{
       .operands = {*elem_result},
       .info = mir::ReplicateRvalueInfo{
           .result_type = expr.type, .count = data.count}};
-  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerMathCall(
     const hir::MathCallExpressionData& data, const hir::Expression& expr,
-    MirBuilder& builder) -> Result<mir::Operand> {
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   int expected_arity = GetMathFnArity(data.fn);
   if (std::cmp_not_equal(data.args.size(), expected_arity)) {
     throw common::InternalError(
@@ -1854,7 +1892,8 @@ auto LowerMathCall(
   std::vector<mir::Operand> operands;
   operands.reserve(data.args.size());
   for (hir::ExpressionId arg_id : data.args) {
-    Result<mir::Operand> arg_result = LowerExpression(arg_id, builder);
+    Result<mir::Operand> arg_result =
+        LowerExpressionImpl(arg_id, builder, cache);
     if (!arg_result) return std::unexpected(arg_result.error());
     operands.push_back(*arg_result);
   }
@@ -1863,25 +1902,28 @@ auto LowerMathCall(
       .operands = std::move(operands),
       .info = mir::MathCallRvalueInfo{.fn = data.fn},
   };
-  return mir::Operand::Use(builder.EmitTemp(expr.type, std::move(rvalue)));
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerElementAccessRvalue(
-    const hir::ElementAccessExpressionData& data, MirBuilder& builder)
-    -> Result<mir::Operand> {
+    const hir::ElementAccessExpressionData& data, MirBuilder& builder,
+    PlaceMaterializationCache& cache) -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
-  Result<mir::Operand> base_result = LowerExpression(data.base, builder);
+  Result<mir::Operand> base_result =
+      LowerExpressionImpl(data.base, builder, cache);
   if (!base_result) return std::unexpected(base_result.error());
   mir::Operand base_operand = *base_result;
 
-  Result<mir::Operand> index_result = LowerExpression(data.index, builder);
+  Result<mir::Operand> index_result =
+      LowerExpressionImpl(data.index, builder, cache);
   if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = *index_result;
 
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
+  // Use EnsurePlaceCached for memoization (6th projection-base site)
   mir::PlaceId base_place =
-      GetOrMaterializePlace(base_operand, base_expr.type, builder);
+      builder.EnsurePlaceCached(base_expr.type, base_operand, cache);
 
   const Type& base_type = (*ctx.type_arena)[base_expr.type];
   if (base_type.Kind() != TypeKind::kUnpackedArray &&
@@ -1922,10 +1964,11 @@ auto LowerMaterializeInitializer(
   return mir::Operand::Use(temp);
 }
 
-}  // namespace
-
-auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
-    -> Result<mir::Operand> {
+// Main internal lowering implementation with cache.
+// All recursive calls must go through this function (not the public wrapper).
+auto LowerExpressionImpl(
+    hir::ExpressionId expr_id, MirBuilder& builder,
+    PlaceMaterializationCache& cache) -> Result<mir::Operand> {
   const hir::Expression& expr = (*builder.GetContext().hir_arena)[expr_id];
 
   return std::visit(
@@ -1936,27 +1979,27 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<T, hir::NameRefExpressionData>) {
           return LowerNameRef(data, builder);
         } else if constexpr (std::is_same_v<T, hir::UnaryExpressionData>) {
-          return LowerUnary(data, expr, builder);
+          return LowerUnary(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<T, hir::BinaryExpressionData>) {
-          return LowerBinary(data, expr, builder);
+          return LowerBinary(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<T, hir::CastExpressionData>) {
-          return LowerCast(data, expr, builder);
+          return LowerCast(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<T, hir::BitCastExpressionData>) {
-          return LowerBitCast(data, expr, builder);
+          return LowerBitCast(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<T, hir::SystemCallExpressionData>) {
-          return LowerSystemCall(data, expr, builder);
+          return LowerSystemCall(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::ConditionalExpressionData>) {
-          return LowerConditional(data, expr, builder);
+          return LowerConditional(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<T, hir::AssignmentExpressionData>) {
-          return LowerAssignment(data, expr, builder);
+          return LowerAssignment(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::CompoundAssignmentExpressionData>) {
-          return LowerCompoundAssignment(data, expr, builder);
+          return LowerCompoundAssignment(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::ElementAccessExpressionData>) {
           // TODO(hankhsu): Use GuardedUse for OOB-safe reads
-          return LowerElementAccessRvalue(data, builder);
+          return LowerElementAccessRvalue(data, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::MemberAccessExpressionData>) {
           Context& ctx = builder.GetContext();
@@ -1971,10 +2014,10 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
                   "MemberAccessExpression",
                   "field_index out of range for struct literal");
             }
-            return LowerExpression(
-                lit->field_values[data.field_index], builder);
+            return LowerExpressionImpl(
+                lit->field_values[data.field_index], builder, cache);
           }
-          // Addressable base - use existing lvalue+load path
+          // Addressable base - use existing lvalue+load path (separate scope)
           Result<LvalueResult> lv_result = LowerLvalue(expr_id, builder);
           if (!lv_result) return std::unexpected(lv_result.error());
           LvalueResult lv = *lv_result;
@@ -1982,47 +2025,48 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::UnionMemberAccessExpressionData>) {
           // Union member access - always valid (member index is compile-time)
+          // Note: LowerLvalue has separate cache scope
           Result<LvalueResult> lv_result = LowerLvalue(expr_id, builder);
           if (!lv_result) return std::unexpected(lv_result.error());
           LvalueResult lv = *lv_result;
           return mir::Operand::Use(lv.place);
         } else if constexpr (std::is_same_v<
                                  T, hir::StructLiteralExpressionData>) {
-          return LowerStructLiteral(data, expr, builder);
+          return LowerStructLiteral(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::ArrayLiteralExpressionData>) {
-          return LowerArrayLiteral(data, expr, builder);
+          return LowerArrayLiteral(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<T, hir::CallExpressionData>) {
-          return LowerCall(data, expr, builder);
+          return LowerCall(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<T, hir::NewArrayExpressionData>) {
-          return LowerNewArray(data, expr, builder);
+          return LowerNewArray(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::BuiltinMethodCallExpressionData>) {
-          return LowerBuiltinMethodCall(data, expr, builder);
+          return LowerBuiltinMethodCall(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedElementSelectExpressionData>) {
-          return LowerPackedElementSelect(data, expr, builder);
+          return LowerPackedElementSelect(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<T, hir::BitSelectExpressionData>) {
-          return LowerBitSelect(data, expr, builder);
+          return LowerBitSelect(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::RangeSelectExpressionData>) {
-          return LowerRangeSelect(data, expr, builder);
+          return LowerRangeSelect(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::IndexedPartSelectExpressionData>) {
-          return LowerIndexedPartSelect(data, expr, builder);
+          return LowerIndexedPartSelect(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedFieldAccessExpressionData>) {
-          return LowerPackedFieldAccess(data, expr, builder);
+          return LowerPackedFieldAccess(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<T, hir::ConcatExpressionData>) {
-          return LowerConcat(data, expr, builder);
+          return LowerConcat(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<T, hir::ReplicateExpressionData>) {
-          return LowerReplicate(data, expr, builder);
+          return LowerReplicate(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::HierarchicalRefExpressionData>) {
           mir::PlaceId place_id = builder.GetContext().LookupPlace(data.target);
           return mir::Operand::Use(place_id);
         } else if constexpr (std::is_same_v<T, hir::MathCallExpressionData>) {
-          return LowerMathCall(data, expr, builder);
+          return LowerMathCall(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T,
                                  hir::MaterializeInitializerExpressionData>) {
@@ -2033,6 +2077,15 @@ auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
         }
       },
       expr.data);
+}
+
+}  // namespace
+
+// Public entry point: creates fresh cache and delegates to implementation.
+auto LowerExpression(hir::ExpressionId expr_id, MirBuilder& builder)
+    -> Result<mir::Operand> {
+  PlaceMaterializationCache cache;
+  return LowerExpressionImpl(expr_id, builder, cache);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -1,0 +1,451 @@
+feature: value_temp_expansion
+description: ValueTemp (DefineTemp) expansion for general expression intermediates
+
+cases:
+  # Deep expression chains - arithmetic operations use ValueTemp
+  - name: deep_arithmetic_chain
+    sv: |
+      module Test;
+        int a, b, c, d, result;
+        initial begin
+          a = 1; b = 2; c = 3; d = 4;
+          // Deep arithmetic chain using ValueTemp intermediates
+          result = ((a + b) * (c - d)) + ((a | b) ^ (c & d));
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: deep_bitwise_chain
+    sv: |
+      module Test;
+        int a, b, c, d;
+        int result;
+        initial begin
+          a = 240; b = 15; c = 170; d = 85;
+          // Deep bitwise chain: (240 & 15) = 0, (170 ^ 85) = 255
+          // (0 | 255) = 255
+          // (240 | 170) = 250, (15 | 85) = 95
+          // (250 & 95) = 90
+          // 255 + 90 = 345
+          result = ((a & b) | (c ^ d)) + ((a | c) & (b | d));
+        end
+      endmodule
+    expect:
+      variables:
+        result: 345
+
+  - name: nested_cast_chain
+    sv: |
+      module Test;
+        bit [15:0] x;
+        int y;
+        longint result;
+        initial begin
+          x = 16'h1234;
+          y = 5;
+          // Cast chain: bit[16] -> int (implicit) + int -> longint
+          result = longint'(int'(x) + y);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 4665
+
+  # Comparison operators - single-bit ValueTemp
+  - name: comparison_assignment_and_branch
+    sv: |
+      module Test;
+        int a, b;
+        logic cmp_result;
+        int branch_result;
+        initial begin
+          a = 5; b = 3;
+          // Assignment of comparison result
+          cmp_result = (a > b);
+          // Comparison in branch condition
+          branch_result = 0;
+          if (a < b) branch_result = 1;
+          else branch_result = 2;
+        end
+      endmodule
+    expect:
+      variables:
+        cmp_result: 1
+        branch_result: 2
+
+  - name: chained_comparison_logic
+    sv: |
+      module Test;
+        int a, b, c;
+        logic r1, r2, combined;
+        initial begin
+          a = 1; b = 2; c = 3;
+          // Multiple comparisons combined with logic ops
+          r1 = (a < b);
+          r2 = (b < c);
+          combined = r1 && r2;
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 1
+        r2: 1
+        combined: 1
+
+  # Unary operators - ValueTemp intermediates
+  - name: unary_chain
+    sv: |
+      module Test;
+        int a;
+        int result;
+        initial begin
+          a = 5;
+          // Unary chain: -(-a) = a
+          result = -(-a);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 5
+
+  - name: bitwise_not_chain
+    sv: |
+      module Test;
+        bit [7:0] a;
+        int result;
+        initial begin
+          a = 8'hAA;
+          // Double bitwise not: ~(~a) = a
+          result = ~(~a);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 170
+
+  # Index validity - ValueTemp for bounds checking
+  - name: dynamic_index_with_expression
+    sv: |
+      module Test;
+        bit [7:0] arr [0:3];
+        int i, j;
+        int result;
+        initial begin
+          arr[0] = 8'h10;
+          arr[1] = 8'h20;
+          arr[2] = 8'h30;
+          arr[3] = 8'h40;
+          i = 1; j = 1;
+          // Index is expression result (ValueTemp)
+          result = arr[i + j];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 48
+
+  # Binary operations on different types
+  - name: mixed_type_operations
+    sv: |
+      module Test;
+        bit [7:0] x;
+        int y;
+        longint result;
+        initial begin
+          x = 8'hFF;
+          y = 100;
+          // Mixed types: x extended to int, then to longint
+          result = x * y;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 25500
+
+  # Expression results used for index calculation
+  - name: expression_as_array_index
+    sv: |
+      module Test;
+        int arr [0:9];
+        int base, offset;
+        int result;
+        initial begin
+          for (int i = 0; i < 10; i++) arr[i] = i * 10;
+          base = 2;
+          offset = 3;
+          // (base + offset) produces ValueTemp, used as index
+          result = arr[base + offset];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 50
+
+  # Nested ternary with comparisons
+  - name: nested_ternary_comparisons
+    sv: |
+      module Test;
+        int a, b, c;
+        int result;
+        initial begin
+          a = 5; b = 3; c = 7;
+          // Comparisons produce ValueTemps, ternary uses them
+          result = (a > b) ? ((a < c) ? 100 : 200) : 300;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 100
+
+  # Reduction operators producing ValueTemp
+  - name: reduction_operators
+    sv: |
+      module Test;
+        bit [7:0] val;
+        logic and_result, or_result, xor_result;
+        initial begin
+          val = 8'hFF;
+          and_result = &val;  // All 1s -> 1
+          or_result = |val;   // Any 1 -> 1
+          xor_result = ^val;  // Even 1s -> 0
+        end
+      endmodule
+    expect:
+      variables:
+        and_result: 1
+        or_result: 1
+        xor_result: 0
+
+  # Shift operations producing ValueTemp
+  - name: shift_expression_chain
+    sv: |
+      module Test;
+        int x, y, shift_amt;
+        int result;
+        initial begin
+          x = 16; y = 2; shift_amt = 3;
+          // (x >> y) produces ValueTemp, then shifted again
+          result = (x >> y) << shift_amt;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 32
+
+  # Division/modulo with casts
+  - name: division_with_casts
+    sv: |
+      module Test;
+        bit [15:0] dividend;
+        int divisor;
+        int quotient, remainder;
+        initial begin
+          dividend = 16'd100;
+          divisor = 7;
+          // Cast produces ValueTemp, then division
+          quotient = int'(dividend) / divisor;
+          remainder = int'(dividend) % divisor;
+        end
+      endmodule
+    expect:
+      variables:
+        quotient: 14
+        remainder: 2
+
+  # Concat as projection base - triggers materialization
+  # {8'hAB, 8'hCD} = 16'hABCD, bits [11:8] = 0xB
+  - name: concat_projection_base
+    sv: |
+      module Test;
+        bit [7:0] a, b;
+        bit [3:0] result;
+        initial begin
+          a = 8'hAB;
+          b = 8'hCD;
+          result = {a, b}[11:8];  // Concat used as range-select base
+        end
+      endmodule
+    expect:
+      variables:
+        result: "4'hB"
+
+  # Replicate as projection base
+  # {4{4'hA}} = 16'hAAAA, bits [15:8] = 0xAA
+  - name: replicate_projection_base
+    sv: |
+      module Test;
+        bit [3:0] x;
+        bit [7:0] result;
+        initial begin
+          x = 4'hA;
+          result = {4{x}}[15:8];  // Replicate used as range-select base
+        end
+      endmodule
+    expect:
+      variables:
+        result: "8'hAA"
+
+  # Concat with bit select
+  # {4'b1010, 4'b0101} = 8'b10100101, bit[5] = 1
+  - name: concat_bit_select
+    sv: |
+      module Test;
+        bit [3:0] a, b;
+        bit result;
+        initial begin
+          a = 4'b1010;
+          b = 4'b0101;
+          result = {a, b}[5];  // Bit select on concat
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # 2-state to 4-state implicit conversion - regression for ValueTemp representation
+  # Exercises that 2s->4s assignment conversion produces correct {val, zero}
+  - name: two_state_to_four_state_assignment
+    sv: |
+      module Test;
+        int a;              // 2-state signed
+        logic [31:0] out;   // 4-state target
+        int result;
+        initial begin
+          a = -1;
+          // 2-state to 4-state implicit conversion
+          out = a;
+          result = out;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -1
+
+  # 2s->4s in expression chain - ensures 4-state intermediate
+  - name: two_state_to_four_state_expression
+    sv: |
+      module Test;
+        bit [7:0] x;        // 2-state
+        logic [15:0] y;     // 4-state
+        int result;
+        initial begin
+          x = 8'hAB;
+          // 2-state assigned to 4-state, then addition
+          y = x + 16'd1;
+          result = y;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 172
+
+  # Routing test: LowerRangeSelect with UseTemp base (concat)
+  - name: range_select_concat_base
+    description: |
+      Routing test: verifies LowerRangeSelect with UseTemp base.
+      Concat {a,b} produces UseTemp; range select [11:8] triggers LowerRangeSelect.
+      Note: Separate concat expressions produce distinct temp_ids, so memoization
+      cache hit is not exercised; this validates routing and correctness only.
+    sv: |
+      module Test;
+        bit [7:0] a, b;
+        bit [3:0] r1, r2;
+        initial begin
+          a = 8'hAB;
+          b = 8'hCD;
+          // {a,b} = 16'hABCD
+          r1 = {a, b}[11:8];  // 0xB
+          r2 = {a, b}[7:4];   // 0xC
+        end
+      endmodule
+    expect:
+      variables:
+        r1: "4'hB"
+        r2: "4'hC"
+
+  # Routing test: LowerBitSelect with UseTemp base (replicate)
+  - name: bit_select_replicate_base
+    description: |
+      Routing test: verifies LowerBitSelect with UseTemp base.
+      Replicate {4{x}} produces UseTemp; bit select [0] triggers LowerBitSelect.
+      Note: Separate replicate expressions produce distinct temp_ids, so memoization
+      cache hit is not exercised; this validates routing and correctness only.
+    sv: |
+      module Test;
+        bit [3:0] x;
+        bit b1, b2;
+        initial begin
+          x = 4'hA;  // 4'b1010
+          // {4{x}} = 16'hAAAA = 16'b1010_1010_1010_1010
+          b1 = {4{x}}[0];   // bit 0 = 0
+          b2 = {4{x}}[15];  // bit 15 = 1
+        end
+      endmodule
+    expect:
+      variables:
+        b1: 0
+        b2: 1
+
+  # Routing test: LowerIndexedPartSelect with UseTemp base (concat)
+  - name: indexed_part_select_concat_base
+    description: |
+      Routing test: verifies LowerIndexedPartSelect with UseTemp base.
+      Concat {a,b} produces UseTemp; indexed part-select [idx+:4] triggers
+      LowerIndexedPartSelect.
+      Note: Separate concat expressions produce distinct temp_ids, so memoization
+      cache hit is not exercised; this validates routing and correctness only.
+    sv: |
+      module Test;
+        bit [7:0] a, b;
+        bit [3:0] r1, r2;
+        int idx;
+        initial begin
+          a = 8'hAB;
+          b = 8'hCD;
+          idx = 4;
+          // {a,b} = 16'hABCD
+          r1 = {a, b}[idx +: 4];  // bits [7:4] = 0xC
+          r2 = {a, b}[idx+4 +: 4]; // bits [11:8] = 0xB
+        end
+      endmodule
+    expect:
+      variables:
+        r1: "4'hC"
+        r2: "4'hB"
+
+  # Routing test: LowerPackedElementSelect with UseTemp base
+  # Exercises: LowerPackedElementSelect (packed 2D array with dynamic index)
+  - name: packed_element_select_usetemp_base
+    description: |
+      Routing test: verifies LowerPackedElementSelect with UseTemp base.
+      Function call returns packed 2D array (bit[1:0][7:0]), producing UseTemp.
+      Dynamic indexing on packed array type triggers LowerPackedElementSelect
+      (as opposed to BitSelect for 1D integral, or ElementAccessRvalue for unpacked).
+      Note: Separate function calls produce distinct temp_ids, so memoization
+      cache hit is not exercised; this validates routing and correctness only.
+    sv: |
+      module Test;
+        bit [7:0] e1, e2;
+        int i;
+
+        // Function returning packed 2D array: 2 elements of 8-bit each
+        function automatic bit [1:0][7:0] make_packed();
+          bit [1:0][7:0] result;
+          result = 16'hABCD;  // [1]=0xAB (high), [0]=0xCD (low)
+          return result;
+        endfunction
+
+        initial begin
+          i = 0;
+          // Function call produces UseTemp of packed array type
+          // Dynamic index on packed 2D array triggers LowerPackedElementSelect
+          e1 = make_packed()[i];      // [0] = 0xCD
+          e2 = make_packed()[i+1];    // [1] = 0xAB
+        end
+      endmodule
+    expect:
+      variables:
+        e1: "8'hCD"
+        e2: "8'hAB"

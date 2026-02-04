@@ -160,12 +160,8 @@ auto LowerElementAccessLvalue(
     throw common::InternalError(
         "LowerElementAccessLvalue", "base is not an array or queue");
   }
-  if (index_operand.kind != mir::Operand::Kind::kConst &&
-      index_operand.kind != mir::Operand::Kind::kUse) {
-    throw common::InternalError(
-        "LowerElementAccessLvalue", "index operand must be Const or Use");
-  }
 
+  // Normalize the index (may create ValueTemp via EmitCast/EmitBinary)
   const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
   index_operand = NormalizeUnpackedIndex(
       index_operand, index_expr.type, base_type, builder);

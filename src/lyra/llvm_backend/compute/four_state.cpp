@@ -54,6 +54,11 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
             const Type& type = types[type_id];
             return IsPacked(type) && IsPackedFourState(type, types);
           },
+          [&](mir::TempId temp_id) -> bool {
+            TypeId type_id = context.GetTempType(temp_id.value);
+            const Type& type = types[type_id];
+            return IsPacked(type) && IsPackedFourState(type, types);
+          },
       },
       operand.payload);
 }

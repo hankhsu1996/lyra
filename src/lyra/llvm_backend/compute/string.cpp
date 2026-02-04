@@ -55,6 +55,9 @@ auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
             const auto& place = arena[place_id];
             return mir::TypeOfPlace(types, place);
           },
+          [&](mir::TempId temp_id) -> TypeId {
+            return context.GetTempType(temp_id.value);
+          },
       },
       operand.payload);
 }

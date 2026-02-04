@@ -39,6 +39,21 @@ namespace lyra::mir {
 
 namespace {
 
+// Format an operand for terminator dumping (simplified format)
+auto FormatTermOperand(const Operand& op) -> std::string {
+  switch (op.kind) {
+    case Operand::Kind::kUse:
+      return std::format("%{}", std::get<PlaceId>(op.payload).value);
+    case Operand::Kind::kUseTemp:
+      return std::format("$t{}", std::get<TempId>(op.payload).value);
+    case Operand::Kind::kConst:
+      return "const";
+    case Operand::Kind::kPoison:
+      return "poison";
+  }
+  return "?";
+}
+
 auto FormatTerminator(const Terminator& term) -> std::string {
   return std::visit(
       [](const auto& t) -> std::string {
@@ -47,10 +62,11 @@ auto FormatTerminator(const Terminator& term) -> std::string {
           return std::format("jump bb{}", t.target.value);
         } else if constexpr (std::is_same_v<T, Branch>) {
           return std::format(
-              "branch %{} bb{}, bb{}", t.condition.value, t.then_target.value,
-              t.else_target.value);
+              "branch {} bb{}, bb{}", FormatTermOperand(t.condition),
+              t.then_target.value, t.else_target.value);
         } else if constexpr (std::is_same_v<T, Switch>) {
-          std::string result = std::format("switch %{} [", t.selector.value);
+          std::string result =
+              std::format("switch {} [", FormatTermOperand(t.selector));
           for (size_t i = 0; i < t.targets.size(); ++i) {
             if (i > 0) {
               result += ", ";
@@ -70,7 +86,7 @@ auto FormatTerminator(const Terminator& term) -> std::string {
             if (i > 0) {
               result += ", ";
             }
-            result += std::format("%{}", t.conditions[i].value);
+            result += FormatTermOperand(t.conditions[i]);
           }
           result += ") -> [";
           for (size_t i = 0; i < t.targets.size(); ++i) {
@@ -309,6 +325,8 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
                   "builtin_call {}({}, {})\n", static_cast<int>(i.method),
                   FormatPlace(i.receiver), args);
             }
+          } else if constexpr (std::is_same_v<T, DefineTemp>) {
+            *out_ << std::format("#t{} = {}\n", i.temp_id, FormatRhs(i.rhs));
           }
         },
         stmt.data);
@@ -349,6 +367,10 @@ auto Dumper::FormatIndexOperand(const Operand& op) const -> std::string {
           break;
       }
       return std::format("{}{}", prefix, place.root.id);
+    }
+    case Operand::Kind::kUseTemp: {
+      TempId temp_id = std::get<TempId>(op.payload);
+      return std::format("#t{}", temp_id.value);
     }
     case Operand::Kind::kPoison:
       return "poison";
@@ -452,6 +474,10 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
         result += FormatProjection(proj);
       }
       return std::format("use({})", result);
+    }
+    case Operand::Kind::kUseTemp: {
+      TempId temp_id = std::get<TempId>(op.payload);
+      return std::format("use(#t{})", temp_id.value);
     }
     case Operand::Kind::kPoison:
       return "poison";

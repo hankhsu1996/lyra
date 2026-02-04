@@ -145,6 +145,25 @@ auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
 auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::StructType*;
 
+// Get the LLVM type for passing a MIR type by value.
+// Used by: function signature construction, call-site coercion, BindTemp
+// invariant.
+//
+// Returns:
+//   - ptr for handle types (string, dynamic array, queue)
+//   - double/float for real/shortreal
+//   - iN for 2-state packed integrals
+//   - {iN, iN} for 4-state packed integrals
+//   - nullptr for aggregates (unpacked array/struct/union) - caller uses
+//   out-param
+//
+// Throws InternalError for:
+//   - void type (cannot be passed by value)
+//   - unsupported type kinds
+auto GetLlvmAbiTypeForValue(
+    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
+    -> llvm::Type*;
+
 // Build SlotInfo list from design's slot_table.
 // This derives type metadata (kind, width, signedness) for
 // runtime/initialization.

@@ -8,6 +8,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/interp/frame.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -16,8 +17,10 @@
 namespace lyra::mir::interp {
 
 // Gets the TypeId of an Operand.
+// Requires Frame because kUseTemp operands need type lookup from frame storage.
 inline auto TypeOfOperand(
-    const Operand& op, const Arena& arena, const TypeArena& types) -> TypeId {
+    const Operand& op, const Arena& arena, const TypeArena& types,
+    const Frame& frame) -> TypeId {
   switch (op.kind) {
     case Operand::Kind::kConst:
       return std::get<Constant>(op.payload).type;
@@ -26,10 +29,14 @@ inline auto TypeOfOperand(
       const auto& place = arena[place_id];
       return TypeOfPlace(types, place);
     }
+    case Operand::Kind::kUseTemp: {
+      int temp_id = std::get<TempId>(op.payload).value;
+      return frame.GetTempType(temp_id);
+    }
     case Operand::Kind::kPoison:
       return TypeId{};
   }
-  return TypeId{};
+  throw common::InternalError("TypeOfOperand", "unhandled operand kind");
 }
 
 // Checks if a type is signed (handles both kIntegral and packed types).

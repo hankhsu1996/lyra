@@ -23,6 +23,9 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+// Forward declaration for cache type (definition in materialize_cache.hpp)
+struct PlaceMaterializationCache;
+
 // Builder-local block index. Used during construction to reference blocks
 // before they are materialized into the Arena.
 struct BlockIndex {
@@ -48,8 +51,32 @@ class MirBuilder {
   void EmitAssign(mir::PlaceId target, mir::Operand source);
   void EmitAssign(mir::PlaceId target, mir::Rvalue value);
   void EmitEffect(mir::EffectOp op);
-  auto EmitTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId;
-  auto EmitTempAssign(TypeId type, mir::Operand source) -> mir::PlaceId;
+
+  // Allocate PlaceTemp from Rvalue and emit Assign to initialize.
+  auto EmitPlaceTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId;
+
+  // Emit DefineTemp statement and return UseTemp operand.
+  // For expression intermediates - no alloca, no storage.
+  auto EmitValueTemp(TypeId type, mir::Rvalue value) -> mir::Operand;
+  auto EmitValueTempAssign(TypeId type, mir::Operand source) -> mir::Operand;
+
+  // Allocate PlaceTemp from Operand. ALWAYS allocates - no caching.
+  auto MaterializeOperandToPlace(TypeId type, mir::Operand value)
+      -> mir::PlaceId;
+
+  // Return existing PlaceId if kUse, otherwise materialize to new PlaceTemp.
+  // kUse: returns place directly (caller ensures type matches base place type)
+  // kConst/kUseTemp: allocates fresh PlaceTemp (no caching)
+  auto MaterializeIfNeededToPlace(TypeId type, mir::Operand operand)
+      -> mir::PlaceId;
+
+  // Memoized materialization for projection bases.
+  // kUse: returns place directly
+  // kUseTemp: memoizes by (temp_id, type) to avoid duplicate allocations
+  // kConst: materializes without memoization
+  auto EnsurePlaceCached(
+      TypeId type, mir::Operand operand, PlaceMaterializationCache& cache)
+      -> mir::PlaceId;
 
   // Emit a Call instruction for user function invocation.
   // If return_type is void, dest is nullopt. Otherwise allocates temp.
@@ -150,7 +177,7 @@ class MirBuilder {
   void EmitUniqueDispatch(
       mir::DispatchQualifier qualifier,
       mir::DispatchStatementKind statement_kind,
-      const std::vector<mir::PlaceId>& conditions,
+      const std::vector<mir::Operand>& conditions,
       const std::vector<std::function<void()>>& bodies,
       std::function<void()> else_body, bool has_else);
 
@@ -170,15 +197,31 @@ class MirBuilder {
   // Low-level CFG primitives (for special cases like loops, delays, waits).
   // Prefer high-level primitives when possible.
   auto CreateBlock() -> BlockIndex;
+
+  // Create a block with parameters that define SSA temps at block entry.
+  // Returns the block index and the temp_ids for each parameter.
+  // Callers use UseTemp(temp_id) to reference these temps.
+  auto CreateBlockWithParams(std::vector<TypeId> param_types)
+      -> std::pair<BlockIndex, std::vector<int>>;
+
   void SetCurrentBlock(BlockIndex block);
   [[nodiscard]] auto CurrentBlock() const -> BlockIndex;
 
-  void EmitJump(BlockIndex target);
+  // Emit jump with optional edge args for target block params.
+  void EmitJump(BlockIndex target, std::vector<mir::Operand> args = {});
+
+  // Emit branch with optional edge args for each target's block params.
+  void EmitBranch(
+      mir::Operand cond, BlockIndex then_bb,
+      std::vector<mir::Operand> then_args, BlockIndex else_bb,
+      std::vector<mir::Operand> else_args);
+
+  // Legacy overload without edge args (for backward compatibility).
   void EmitBranch(mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb);
   void EmitQualifiedDispatch(
       mir::DispatchQualifier qualifier,
       mir::DispatchStatementKind statement_kind,
-      const std::vector<mir::PlaceId>& conditions,
+      const std::vector<mir::Operand>& conditions,
       const std::vector<BlockIndex>& targets, bool has_else);
   void EmitReturn(mir::Operand value);
   void EmitRepeat();
@@ -248,6 +291,7 @@ class MirBuilder {
   void ClearInsertionPoint();
 
   struct BlockBuilder {
+    std::vector<mir::BlockParam> params;
     std::vector<mir::Statement> statements;
     std::optional<mir::Terminator> terminator;
   };

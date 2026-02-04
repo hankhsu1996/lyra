@@ -188,6 +188,9 @@ auto GetOperandPackedWidth(Context& context, const mir::Operand& operand)
             const auto& place = arena[place_id];
             return mir::TypeOfPlace(types, place);
           },
+          [&](mir::TempId temp_id) -> TypeId {
+            return context.GetTempType(temp_id.value);
+          },
       },
       operand.payload);
   return PackedBitWidth(types[type_id], types);

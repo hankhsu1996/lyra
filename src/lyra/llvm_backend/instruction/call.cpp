@@ -13,10 +13,13 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/abi_check.hpp"
 #include "lyra/llvm_backend/commit.hpp"
+#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/mir/arena.hpp"
@@ -79,11 +82,24 @@ auto LowerUserCall(
     const auto& param = func.signature.params[param_idx];
 
     if (param.kind == mir::PassingKind::kValue) {
-      // Input parameter: pass value
+      // Input parameter: pass value coerced to expected ABI type
       if (in_arg_idx >= call.in_args.size()) {
         throw common::InternalError("LowerUserCall", "in_args underflow");
       }
-      auto val_result = LowerOperandRaw(context, call.in_args[in_arg_idx]);
+
+      // Compute expected LLVM type using centralized ABI mapping
+      llvm::Type* expected_type = GetLlvmAbiTypeForValue(
+          context.GetLlvmContext(), param.type, context.GetTypeArena());
+      if (expected_type == nullptr) {
+        throw common::InternalError(
+            "LowerUserCall",
+            std::format(
+                "aggregate type {} cannot be passed by value in call",
+                param.type.value));
+      }
+
+      auto val_result = LowerOperandAsStorage(
+          context, call.in_args[in_arg_idx], expected_type);
       if (!val_result) return std::unexpected(val_result.error());
       args.push_back(*val_result);
       ++in_arg_idx;

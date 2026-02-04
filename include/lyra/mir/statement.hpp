@@ -90,9 +90,20 @@ struct BuiltinCall {
   std::vector<Operand> args;
 };
 
+// DefineTemp: define an SSA temp value (no storage).
+// The temp_id is bound to the computed rhs value.
+// Use Operand::UseTemp(temp_id) to reference this temp.
+// INVARIANT: temp_id must be allocated as TempKind::kValue.
+struct DefineTemp {
+  int temp_id;        // SSA temp id being defined
+  TypeId type;        // Type of the value (must match temp_metadata[temp_id])
+  RightHandSide rhs;  // Computation that produces the value
+};
+
 // Statement data variant.
 using StatementData = std::variant<
-    Assign, GuardedAssign, Effect, DeferredAssign, Call, BuiltinCall>;
+    Assign, GuardedAssign, Effect, DeferredAssign, Call, BuiltinCall,
+    DefineTemp>;
 
 // A statement that does not affect control flow.
 // - Assign, GuardedAssign, DeferredAssign write to a Place

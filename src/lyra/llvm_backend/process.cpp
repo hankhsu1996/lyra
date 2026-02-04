@@ -19,9 +19,12 @@
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/Support/Alignment.h>
+#include <llvm/Support/raw_ostream.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
@@ -47,22 +50,157 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-auto LoadConditionAsI1(Context& context, mir::PlaceId place_id)
+// =============================================================================
+// Block Params and PHI Wiring
+// =============================================================================
+//
+// MIR block params model SSA phi-like values at CFG join points (e.g., ternary
+// merge blocks). LLVM lowering creates PHI nodes for these params.
+//
+// Why we pre-create PHIs and wire later:
+// 1. PHIs must be at the start of their block (LLVM requirement)
+// 2. Incoming values come from predecessor blocks that are lowered later
+// 3. We can't add PHI incoming values until predecessors exist
+//
+// Lifecycle:
+// 1. SetupBlockParamPhis: Create PHIs at block entry, bind temp_ids
+// 2. Lower blocks: Terminators record pending edges via LowerJump/LowerBranch
+// 3. WirePhiIncomingEdges: Add incoming values from pending edges
+// 4. ValidatePhiWiring: Verify every PHI has correct predecessor count
+//
+// Edge args are lowered BEFORE the terminator is created (while still in the
+// predecessor block) to ensure loads happen in the correct block context.
+// =============================================================================
+
+// Tracks PHI nodes for block params and pending incoming edges.
+// Used to defer PHI wiring until all blocks are lowered.
+struct PhiWiringState {
+  // Map from (block_index, param_index) to the PHI node
+  std::unordered_map<uint64_t, llvm::PHINode*> phis;
+
+  // Pending edges: (predecessor_block, successor_block_index, arg_values)
+  struct PendingEdge {
+    llvm::BasicBlock* pred;
+    size_t succ_idx;
+    std::vector<llvm::Value*> args;
+  };
+  std::vector<PendingEdge> pending_edges;
+
+  static auto MakeKey(size_t block_idx, size_t param_idx) -> uint64_t {
+    return (static_cast<uint64_t>(block_idx) << 32) |
+           static_cast<uint64_t>(param_idx);
+  }
+
+  // Validate that all PHIs have been properly wired.
+  // For each block with params, verify each PHI has incoming values from
+  // all LLVM predecessors. Call this AFTER wiring but BEFORE LLVM verify.
+  void ValidatePhiWiring(
+      const std::vector<llvm::BasicBlock*>& llvm_blocks,
+      std::string_view func_name) const {
+    for (const auto& [key, phi] : phis) {
+      size_t block_idx = key >> 32;
+      size_t param_idx = key & 0xFFFFFFFF;
+      llvm::BasicBlock* bb = llvm_blocks[block_idx];
+
+      // Count LLVM predecessors
+      size_t pred_count = 0;
+      for (auto it = llvm::pred_begin(bb); it != llvm::pred_end(bb); ++it) {
+        ++pred_count;
+      }
+
+      size_t incoming_count = phi->getNumIncomingValues();
+      if (incoming_count != pred_count) {
+        // Build list of predecessors for error message
+        std::string preds;
+        for (auto it = llvm::pred_begin(bb); it != llvm::pred_end(bb); ++it) {
+          if (!preds.empty()) preds += ", ";
+          preds += (*it)->getName().str();
+        }
+
+        std::string incoming_preds;
+        for (unsigned i = 0; i < phi->getNumIncomingValues(); ++i) {
+          if (!incoming_preds.empty()) incoming_preds += ", ";
+          incoming_preds += phi->getIncomingBlock(i)->getName().str();
+        }
+
+        throw common::InternalError(
+            "PHI wiring",
+            std::format(
+                "function '{}' block {} param {}: PHI has {} incoming values "
+                "but block has {} predecessors. LLVM preds: [{}], PHI preds: "
+                "[{}]",
+                func_name, block_idx, param_idx, incoming_count, pred_count,
+                preds, incoming_preds));
+      }
+    }
+  }
+
+  // Wire up PHI incoming values from pending edges.
+  // Call this after all blocks have been lowered.
+  void WireIncomingEdges() {
+    for (const auto& edge : pending_edges) {
+      for (size_t j = 0; j < edge.args.size(); ++j) {
+        auto* phi = phis[MakeKey(edge.succ_idx, j)];
+        phi->addIncoming(edge.args[j], edge.pred);
+      }
+    }
+  }
+};
+
+// Create PHI nodes for all blocks with params and bind their temp_ids.
+// Must be called after ClearTemps() and before lowering any blocks.
+// Returns the PhiWiringState to be used for recording edges and wiring.
+auto SetupBlockParamPhis(
+    Context& context, const std::vector<mir::BasicBlock>& mir_blocks,
+    const std::vector<llvm::BasicBlock*>& llvm_blocks)
+    -> Result<PhiWiringState> {
+  auto& builder = context.GetBuilder();
+  PhiWiringState phi_state;
+
+  for (size_t i = 0; i < mir_blocks.size(); ++i) {
+    const auto& block = mir_blocks[i];
+    if (!block.params.empty()) {
+      // Insert PHIs at the start of the block
+      builder.SetInsertPoint(llvm_blocks[i], llvm_blocks[i]->begin());
+      for (size_t j = 0; j < block.params.size(); ++j) {
+        const auto& param = block.params[j];
+        auto llvm_ty_or_err = GetLlvmTypeForType(context, param.type);
+        if (!llvm_ty_or_err) return std::unexpected(llvm_ty_or_err.error());
+        auto* phi =
+            builder.CreatePHI(*llvm_ty_or_err, 2, std::format("phi{}", j));
+        phi_state.phis[PhiWiringState::MakeKey(i, j)] = phi;
+        // Bind the temp_id to this PHI value with its MIR type
+        context.BindTemp(param.temp_id, phi, param.type);
+      }
+    }
+  }
+  return phi_state;
+}
+
+// Verify LLVM function and throw InternalError on failure.
+// Provides detailed error message with function name and verification output.
+void VerifyLlvmFunction(llvm::Function* func, const char* caller) {
+  std::string err_str;
+  llvm::raw_string_ostream err_stream(err_str);
+  if (llvm::verifyFunction(*func, &err_stream)) {
+    throw common::InternalError(
+        caller, std::format(
+                    "LLVM IR verification failed for '{}': {}",
+                    func->getName().str(), err_str));
+  }
+}
+
+auto LoadConditionAsI1(Context& context, const mir::Operand& operand)
     -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
-  auto cond_ptr_or_err = context.GetPlacePointer(place_id);
-  if (!cond_ptr_or_err) return std::unexpected(cond_ptr_or_err.error());
-  llvm::Value* cond_ptr = *cond_ptr_or_err;
-
-  auto cond_type_or_err = context.GetPlaceLlvmType(place_id);
-  if (!cond_type_or_err) return std::unexpected(cond_type_or_err.error());
-  llvm::Type* cond_type = *cond_type_or_err;
-
-  llvm::Value* cond_val = builder.CreateLoad(cond_type, cond_ptr, "cond");
+  // Lower the operand to get the condition value
+  auto cond_val_or_err = LowerOperandRaw(context, operand);
+  if (!cond_val_or_err) return std::unexpected(cond_val_or_err.error());
+  llvm::Value* cond_val = *cond_val_or_err;
 
   // 4-state struct: extract known-true bits (a & ~b)
-  if (cond_type->isStructTy()) {
+  if (cond_val->getType()->isStructTy()) {
     auto* a = builder.CreateExtractValue(cond_val, 0, "cond.a");
     auto* b = builder.CreateExtractValue(cond_val, 1, "cond.b");
     auto* not_b = builder.CreateNot(b, "cond.notb");
@@ -82,20 +220,88 @@ auto LoadConditionAsI1(Context& context, mir::PlaceId place_id)
   return cond_val;
 }
 
-void LowerJump(
+// Lower edge args to LLVM values with full type representation.
+// Uses LowerOperandRaw (not LowerOperand) to preserve 4-state structure.
+// PHI nodes expect the full type representation, not just the "known-true"
+// value.
+auto LowerEdgeArgs(Context& context, const std::vector<mir::Operand>& args)
+    -> Result<std::vector<llvm::Value*>> {
+  std::vector<llvm::Value*> llvm_args;
+  llvm_args.reserve(args.size());
+  for (const auto& arg : args) {
+    auto val_or_err = LowerOperandRaw(context, arg);
+    if (!val_or_err) return std::unexpected(val_or_err.error());
+    llvm_args.push_back(*val_or_err);
+  }
+  return llvm_args;
+}
+
+auto LowerJump(
     Context& context, const mir::Jump& jump,
-    const std::vector<llvm::BasicBlock*>& blocks) {
+    const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
+    -> Result<void> {
+  auto* current_bb = context.GetBuilder().GetInsertBlock();
+
+  // Lower edge args BEFORE creating the terminator (they may emit loads)
+  std::vector<llvm::Value*> arg_values;
+  if (!jump.args.empty()) {
+    auto args_or_err = LowerEdgeArgs(context, jump.args);
+    if (!args_or_err) return std::unexpected(args_or_err.error());
+    arg_values = std::move(*args_or_err);
+  }
+
+  // Create the branch terminator
   context.GetBuilder().CreateBr(blocks[jump.target.value]);
+
+  // Record edge args for PHI wiring (using pre-lowered values)
+  if (!arg_values.empty()) {
+    phi_state.pending_edges.push_back(
+        {.pred = current_bb,
+         .succ_idx = static_cast<size_t>(jump.target.value),
+         .args = std::move(arg_values)});
+  }
+  return {};
 }
 
 auto LowerBranch(
     Context& context, const mir::Branch& branch,
-    const std::vector<llvm::BasicBlock*>& blocks) -> Result<void> {
+    const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
+    -> Result<void> {
+  auto* current_bb = context.GetBuilder().GetInsertBlock();
   auto cond_or_err = LoadConditionAsI1(context, branch.condition);
   if (!cond_or_err) return std::unexpected(cond_or_err.error());
+
+  // Lower edge args BEFORE creating the branch (while still in predecessor)
+  std::vector<llvm::Value*> then_llvm_args;
+  std::vector<llvm::Value*> else_llvm_args;
+  if (!branch.then_args.empty()) {
+    auto args_or_err = LowerEdgeArgs(context, branch.then_args);
+    if (!args_or_err) return std::unexpected(args_or_err.error());
+    then_llvm_args = std::move(*args_or_err);
+  }
+  if (!branch.else_args.empty()) {
+    auto args_or_err = LowerEdgeArgs(context, branch.else_args);
+    if (!args_or_err) return std::unexpected(args_or_err.error());
+    else_llvm_args = std::move(*args_or_err);
+  }
+
   context.GetBuilder().CreateCondBr(
       *cond_or_err, blocks[branch.then_target.value],
       blocks[branch.else_target.value]);
+
+  // Record edge args for PHI wiring
+  if (!then_llvm_args.empty()) {
+    phi_state.pending_edges.push_back(
+        {.pred = current_bb,
+         .succ_idx = static_cast<size_t>(branch.then_target.value),
+         .args = std::move(then_llvm_args)});
+  }
+  if (!else_llvm_args.empty()) {
+    phi_state.pending_edges.push_back(
+        {.pred = current_bb,
+         .succ_idx = static_cast<size_t>(branch.else_target.value),
+         .args = std::move(else_llvm_args)});
+  }
   return {};
 }
 
@@ -272,8 +478,8 @@ auto LowerQualifiedDispatch(
   // Load all conditions as i1
   std::vector<llvm::Value*> conds;
   conds.reserve(dispatch.conditions.size());
-  for (auto place_id : dispatch.conditions) {
-    auto cond_or_err = LoadConditionAsI1(context, place_id);
+  for (const auto& cond_op : dispatch.conditions) {
+    auto cond_or_err = LoadConditionAsI1(context, cond_op);
     if (!cond_or_err) return std::unexpected(cond_or_err.error());
     conds.push_back(*cond_or_err);
   }
@@ -347,8 +553,8 @@ auto LowerQualifiedDispatch(
 
 auto LowerTerminator(
     Context& context, const mir::Terminator& term,
-    const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block)
-    -> Result<void> {
+    const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block,
+    PhiWiringState& phi_state) -> Result<void> {
   // Set origin for error reporting.
   // OriginScope preserves outer (function/process) origin if term.origin is
   // Invalid.
@@ -357,11 +563,10 @@ auto LowerTerminator(
   return std::visit(
       common::Overloaded{
           [&](const mir::Jump& t) -> Result<void> {
-            LowerJump(context, t, blocks);
-            return {};
+            return LowerJump(context, t, blocks, phi_state);
           },
           [&](const mir::Branch& t) -> Result<void> {
-            return LowerBranch(context, t, blocks);
+            return LowerBranch(context, t, blocks, phi_state);
           },
           [&](const mir::Return&) -> Result<void> {
             LowerReturn(context, exit_block);
@@ -461,32 +666,82 @@ auto GenerateProcessFunction(
       context.GetProcessStateType(), state_arg, 1, "frame_ptr");
   context.SetFramePointer(frame_ptr);
 
+  // Collect actual resume targets: blocks that are jumped to after Delay/Wait.
+  // bb0 is always accessible (initial execution) but handled as the default
+  // case.
+  std::vector<size_t> resume_targets;
+  for (const auto& block : process.blocks) {
+    std::visit(
+        [&](const auto& term) {
+          using T = std::decay_t<decltype(term)>;
+          if constexpr (std::is_same_v<T, mir::Delay>) {
+            resume_targets.push_back(term.resume.value);
+          } else if constexpr (std::is_same_v<T, mir::Wait>) {
+            resume_targets.push_back(term.resume.value);
+          }
+          // Repeat doesn't have an explicit resume target in terminator
+        },
+        block.terminator.data);
+  }
+
+  // Assert: resume target blocks (and bb0) must NOT have block params.
+  // Resume edges are additional predecessors that can't provide PHI incoming
+  // values.
+  if (!process.blocks[0].params.empty()) {
+    throw common::InternalError(
+        "GenerateProcessFunction", std::format(
+                                       "entry block 0 has {} params; entry "
+                                       "block must have no block params",
+                                       process.blocks[0].params.size()));
+  }
+  for (size_t target : resume_targets) {
+    if (!process.blocks[target].params.empty()) {
+      throw common::InternalError(
+          "GenerateProcessFunction",
+          std::format(
+              "resume target block {} has {} params; resume targets must have "
+              "no block params",
+              target, process.blocks[target].params.size()));
+    }
+  }
+
   // Create switch with bb0 as default (initial execution)
   auto* sw = builder.CreateSwitch(
       resume_block_arg, llvm_blocks[0],
-      static_cast<unsigned>(process.blocks.size()));
+      static_cast<unsigned>(resume_targets.size()));
 
-  // Add cases for each block (block 0 is already the default)
-  for (size_t i = 0; i < process.blocks.size(); ++i) {
-    sw->addCase(llvm::ConstantInt::get(i32_ty, i), llvm_blocks[i]);
+  // Add cases only for actual resume targets (bb0 is the default, not a case)
+  for (size_t target : resume_targets) {
+    sw->addCase(
+        llvm::ConstantInt::get(i32_ty, static_cast<uint64_t>(target)),
+        llvm_blocks[target]);
   }
+
+  // Clear stale temp bindings and setup PHI nodes for block params
+  context.ClearTemps();
+  auto phi_state_or_err =
+      SetupBlockParamPhis(context, process.blocks, llvm_blocks);
+  if (!phi_state_or_err) return std::unexpected(phi_state_or_err.error());
+  auto& phi_state = *phi_state_or_err;
 
   // Lower each MIR block
   for (size_t i = 0; i < process.blocks.size(); ++i) {
     const auto& block = process.blocks[i];
     builder.SetInsertPoint(llvm_blocks[i]);
 
-    // Lower all instructions
     for (const auto& instruction : block.statements) {
       auto result = LowerStatement(context, instruction);
       if (!result) return std::unexpected(result.error());
     }
 
-    // Lower terminator
-    auto term_result =
-        LowerTerminator(context, block.terminator, llvm_blocks, exit_block);
+    auto term_result = LowerTerminator(
+        context, block.terminator, llvm_blocks, exit_block, phi_state);
     if (!term_result) return std::unexpected(term_result.error());
   }
+
+  // Wire PHI incoming edges and validate
+  phi_state.WireIncomingEdges();
+  phi_state.ValidatePhiWiring(llvm_blocks, func->getName().str());
 
   // Exit block: just return
   builder.SetInsertPoint(exit_block);
@@ -498,6 +753,7 @@ auto GenerateProcessFunction(
   context.SetFramePointer(nullptr);
   context.SetEnginePointer(nullptr);
 
+  VerifyLlvmFunction(func, "GenerateProcessFunction");
   return func;
 }
 
@@ -736,6 +992,10 @@ struct PlaceCollector {
                 for (const auto& arg : data.args) {
                   CollectFromOperand(arg, arena);
                 }
+              } else if constexpr (std::is_same_v<T, mir::DefineTemp>) {
+                // DefineTemp doesn't create place storage; only visit RHS
+                // operands
+                CollectFromRhs(data.rhs, arena);
               }
             },
             inst.data);
@@ -744,18 +1004,33 @@ struct PlaceCollector {
       std::visit(
           [&](const auto& term) {
             using T = std::decay_t<decltype(term)>;
-            if constexpr (std::is_same_v<T, mir::Branch>) {
-              // Branch::condition is PlaceId
-              CollectFromPlace(term.condition, arena);
+            if constexpr (std::is_same_v<T, mir::Jump>) {
+              // Jump::args are edge arguments for block params
+              for (const auto& arg : term.args) {
+                CollectFromOperand(arg, arena);
+              }
+            } else if constexpr (std::is_same_v<T, mir::Branch>) {
+              // Branch::condition is Operand
+              CollectFromOperand(term.condition, arena);
+              // Branch edge args for block params
+              for (const auto& arg : term.then_args) {
+                CollectFromOperand(arg, arena);
+              }
+              for (const auto& arg : term.else_args) {
+                CollectFromOperand(arg, arena);
+              }
             } else if constexpr (std::is_same_v<T, mir::Return>) {
               // Return::value is optional<Operand>
               if (term.value.has_value()) {
                 CollectFromOperand(*term.value, arena);
               }
+            } else if constexpr (std::is_same_v<T, mir::Switch>) {
+              // Switch::selector is Operand
+              CollectFromOperand(term.selector, arena);
             } else if constexpr (std::is_same_v<T, mir::QualifiedDispatch>) {
-              // QualifiedDispatch::conditions is vector<PlaceId>
-              for (auto cond : term.conditions) {
-                CollectFromPlace(cond, arena);
+              // QualifiedDispatch::conditions is vector<Operand>
+              for (const auto& cond : term.conditions) {
+                CollectFromOperand(cond, arena);
               }
             }
           },
@@ -864,7 +1139,15 @@ auto DefineMonitorCheckThunk(
          llvm::ConstantInt::get(llvm::Type::getInt1Ty(llvm_ctx), 0)});
   }
 
+  // Clear stale temp bindings and setup PHI nodes for block params
+  context.ClearTemps();
+  auto phi_state_or_err =
+      SetupBlockParamPhis(context, func.blocks, llvm_blocks);
+  if (!phi_state_or_err) return std::unexpected(phi_state_or_err.error());
+  auto& phi_state = *phi_state_or_err;
+
   // Jump to first MIR block to evaluate expressions
+  builder.SetInsertPoint(entry_block);
   builder.CreateBr(llvm_blocks[func.entry.value]);
 
   // Lower MIR blocks, skip DisplayEffect (we'll handle it at
@@ -890,11 +1173,10 @@ auto DefineMonitorCheckThunk(
     auto term_result = std::visit(
         common::Overloaded{
             [&](const mir::Jump& t) -> Result<void> {
-              LowerJump(context, t, llvm_blocks);
-              return {};
+              return LowerJump(context, t, llvm_blocks, phi_state);
             },
             [&](const mir::Branch& t) -> Result<void> {
-              return LowerBranch(context, t, llvm_blocks);
+              return LowerBranch(context, t, llvm_blocks, phi_state);
             },
             [&](const mir::Return&) -> Result<void> {
               // At Return: evaluate operands from check thunk's DisplayEffect
@@ -1014,6 +1296,10 @@ auto DefineMonitorCheckThunk(
     if (!term_result) return std::unexpected(term_result.error());
   }
 
+  // Wire PHI incoming edges and validate
+  phi_state.WireIncomingEdges();
+  phi_state.ValidatePhiWiring(llvm_blocks, llvm_func->getName().str());
+
   // Print block: lower DisplayEffect and update prev_buffer
   builder.SetInsertPoint(print_block);
 
@@ -1049,6 +1335,8 @@ auto DefineMonitorCheckThunk(
   // Exit block
   builder.SetInsertPoint(exit_block);
   builder.CreateRetVoid();
+
+  VerifyLlvmFunction(llvm_func, "DefineMonitorCheckThunk");
 
   context.EndFunction();
   context.SetDesignPointer(nullptr);
@@ -1388,7 +1676,15 @@ auto DefineUserFunction(
     }
   }
 
+  // Clear stale temp bindings and setup PHI nodes for block params
+  context.ClearTemps();
+  auto phi_state_or_err =
+      SetupBlockParamPhis(context, func.blocks, llvm_blocks);
+  if (!phi_state_or_err) return std::unexpected(phi_state_or_err.error());
+  auto& phi_state = *phi_state_or_err;
+
   // Jump to first MIR block
+  builder.SetInsertPoint(entry_block);
   builder.CreateBr(llvm_blocks[func.entry.value]);
 
   // Lower each MIR block
@@ -1408,11 +1704,10 @@ auto DefineUserFunction(
     auto term_result = std::visit(
         common::Overloaded{
             [&](const mir::Jump& t) -> Result<void> {
-              LowerJump(context, t, llvm_blocks);
-              return {};
+              return LowerJump(context, t, llvm_blocks, phi_state);
             },
             [&](const mir::Branch& t) -> Result<void> {
-              return LowerBranch(context, t, llvm_blocks);
+              return LowerBranch(context, t, llvm_blocks, phi_state);
             },
             [&](const mir::Return& t) -> Result<void> {
               // Handle return value based on return policy
@@ -1465,6 +1760,10 @@ auto DefineUserFunction(
     if (!term_result) return std::unexpected(term_result.error());
   }
 
+  // Wire PHI incoming edges and validate
+  phi_state.WireIncomingEdges();
+  phi_state.ValidatePhiWiring(llvm_blocks, llvm_func->getName().str());
+
   // Exit block: return the value
   builder.SetInsertPoint(exit_block);
 
@@ -1502,6 +1801,8 @@ auto DefineUserFunction(
         builder.CreateLoad(llvm_func->getReturnType(), return_value_ptr, "ret");
     builder.CreateRet(ret_val);
   }
+
+  VerifyLlvmFunction(llvm_func, "DefineUserFunction");
 
   // Clean up function scope
   context.EndFunction();

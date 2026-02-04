@@ -217,6 +217,7 @@ auto LowerStrobeEffect(
       .next_temp_id = 0,
       .local_types = {},
       .temp_types = {},
+      .temp_metadata = {},
       .builtin_types = original_ctx.builtin_types,
       .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
       .return_slot = std::nullopt,
@@ -259,6 +260,7 @@ auto LowerStrobeEffect(
       .blocks = std::move(blocks),
       .local_types = std::move(thunk_ctx.local_types),
       .temp_types = std::move(thunk_ctx.temp_types),
+      .temp_metadata = std::move(thunk_ctx.temp_metadata),
       .param_local_slots = {},
       .param_origins = {},
   };
@@ -409,7 +411,7 @@ auto LowerSFormatEffect(
 
   // Get string type from the output expression (output is always a string)
   const hir::Expression& out_expr = (*ctx.hir_arena)[*data.output];
-  mir::PlaceId tmp = builder.EmitTemp(out_expr.type, std::move(rvalue));
+  mir::PlaceId tmp = builder.EmitPlaceTemp(out_expr.type, std::move(rvalue));
 
   // Assign to output
   Result<LvalueResult> target_result = LowerLvalue(*data.output, builder);
@@ -499,6 +501,7 @@ auto LowerMonitorCheckThunk(
       .next_temp_id = 0,
       .local_types = {},
       .temp_types = {},
+      .temp_metadata = {},
       .builtin_types = original_ctx.builtin_types,
       .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
       .return_slot = std::nullopt,
@@ -540,6 +543,7 @@ auto LowerMonitorCheckThunk(
       .blocks = std::move(blocks),
       .local_types = std::move(thunk_ctx.local_types),
       .temp_types = std::move(thunk_ctx.temp_types),
+      .temp_metadata = std::move(thunk_ctx.temp_metadata),
       .param_local_slots = {},
       .param_origins = {},
   };
@@ -573,6 +577,7 @@ auto LowerMonitorSetupThunk(
       .next_temp_id = 0,
       .local_types = {},
       .temp_types = {},
+      .temp_metadata = {},
       .builtin_types = original_ctx.builtin_types,
       .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
       .return_slot = std::nullopt,
@@ -616,6 +621,7 @@ auto LowerMonitorSetupThunk(
       .blocks = std::move(blocks),
       .local_types = std::move(thunk_ctx.local_types),
       .temp_types = std::move(thunk_ctx.temp_types),
+      .temp_metadata = std::move(thunk_ctx.temp_metadata),
       .param_local_slots = {},
       .param_origins = {},
   };
@@ -875,32 +881,35 @@ auto FlattenIfElseChain(
   return result;
 }
 
-// Materialize condition to a PlaceId (for EmitBranch/QualifiedDispatch).
+// Materialize condition to an Operand (for EmitBranch/QualifiedDispatch).
+// Returns Use or UseTemp operands directly; materializes constants to temps.
 auto MaterializeCondition(hir::ExpressionId cond_expr_id, MirBuilder& builder)
-    -> Result<mir::PlaceId> {
+    -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
   Result<mir::Operand> cond_result = LowerExpression(cond_expr_id, builder);
   if (!cond_result) return std::unexpected(cond_result.error());
   mir::Operand cond = *cond_result;
 
-  if (cond.kind == mir::Operand::Kind::kUse) {
-    return std::get<mir::PlaceId>(cond.payload);
+  // Use and UseTemp operands can be used directly as branch conditions
+  if (cond.kind == mir::Operand::Kind::kUse ||
+      cond.kind == mir::Operand::Kind::kUseTemp) {
+    return cond;
   }
+  // Other operands (constants) need to be materialized to a temp
   const hir::Expression& cond_expr = (*ctx.hir_arena)[cond_expr_id];
   mir::PlaceId temp = ctx.AllocTemp(cond_expr.type);
   builder.EmitAssign(temp, std::move(cond));
-  return temp;
+  return mir::Operand::Use(temp);
 }
 
 // Standard if-else lowering without qualifiers.
 auto LowerConditionalNone(
     const hir::ConditionalStatementData& data, MirBuilder& builder)
     -> Result<void> {
-  Result<mir::PlaceId> cond_result =
+  Result<mir::Operand> cond_result =
       MaterializeCondition(data.condition, builder);
   if (!cond_result) return std::unexpected(cond_result.error());
-  mir::PlaceId cond_place = *cond_result;
-  mir::Operand cond = mir::Operand::Use(cond_place);
+  mir::Operand cond = *cond_result;
 
   // Use a result holder to capture errors from callbacks
   Result<void> callback_result;
@@ -940,12 +949,12 @@ auto LowerConditionalPriority(
   for (const auto& pair : pairs) {
     conditions.emplace_back([&builder, &callback_result,
                              cond_id = pair.condition]() {
-      Result<mir::PlaceId> cond_result = MaterializeCondition(cond_id, builder);
+      Result<mir::Operand> cond_result = MaterializeCondition(cond_id, builder);
       if (!cond_result) {
         callback_result = std::unexpected(cond_result.error());
         return mir::Operand::Use(mir::kInvalidPlaceId);  // Will be ignored
       }
-      return mir::Operand::Use(*cond_result);
+      return *cond_result;
     });
   }
 
@@ -998,12 +1007,12 @@ auto LowerConditionalUnique(
   bool has_else = flat.else_body.has_value();
 
   // Evaluate all conditions upfront
-  std::vector<mir::PlaceId> condition_places;
+  std::vector<mir::Operand> condition_operands;
   for (const auto& pair : pairs) {
-    Result<mir::PlaceId> cond_result =
+    Result<mir::Operand> cond_result =
         MaterializeCondition(pair.condition, builder);
     if (!cond_result) return std::unexpected(cond_result.error());
-    condition_places.push_back(*cond_result);
+    condition_operands.push_back(*cond_result);
   }
 
   // Use a result holder to capture errors from callbacks
@@ -1026,7 +1035,7 @@ auto LowerConditionalUnique(
           : mir::DispatchQualifier::kUnique0;
 
   builder.EmitUniqueDispatch(
-      qualifier, mir::DispatchStatementKind::kIf, condition_places, bodies,
+      qualifier, mir::DispatchStatementKind::kIf, condition_operands, bodies,
       [&]() {
         if (callback_result && flat.else_body.has_value()) {
           callback_result = LowerStatement(*flat.else_body, builder);
@@ -1151,22 +1160,22 @@ auto LowerCaseUnique(
   Context& ctx = builder.GetContext();
   bool has_default = data.default_statement.has_value();
 
-  // Evaluate all predicates upfront and materialize to places
-  std::vector<mir::PlaceId> item_conditions;
+  // Evaluate all predicates upfront
+  std::vector<mir::Operand> item_conditions;
   for (const auto& item : data.items) {
     auto pred_result = LowerExpression(item.predicate, builder);
     if (!pred_result) return std::unexpected(pred_result.error());
     mir::Operand pred = std::move(*pred_result);
 
-    // Materialize to place if needed
-    mir::PlaceId pred_place;
-    if (pred.kind == mir::Operand::Kind::kUse) {
-      pred_place = std::get<mir::PlaceId>(pred.payload);
+    // Use and UseTemp can be used directly; materialize constants to temps
+    if (pred.kind == mir::Operand::Kind::kUse ||
+        pred.kind == mir::Operand::Kind::kUseTemp) {
+      item_conditions.push_back(std::move(pred));
     } else {
-      pred_place = ctx.AllocTemp(ctx.GetBitType());
+      mir::PlaceId pred_place = ctx.AllocTemp(ctx.GetBitType());
       builder.EmitAssign(pred_place, std::move(pred));
+      item_conditions.push_back(mir::Operand::Use(pred_place));
     }
-    item_conditions.push_back(pred_place);
   }
 
   // Build body callbacks with error capture
@@ -1455,7 +1464,8 @@ auto LowerRepeatLoop(
       .operands = {mir::Operand::Use(counter), mir::Operand::Const(zero)},
       .info = mir::BinaryRvalueInfo{.op = cmp_op},
   };
-  mir::PlaceId cmp_result = builder.EmitTemp(cond_type, std::move(cmp_rvalue));
+  mir::PlaceId cmp_result =
+      builder.EmitPlaceTemp(cond_type, std::move(cmp_rvalue));
   builder.EmitBranch(mir::Operand::Use(cmp_result), body_bb, exit_bb);
 
   // 4. Body block
@@ -1476,7 +1486,7 @@ auto LowerRepeatLoop(
       .info = mir::BinaryRvalueInfo{.op = mir::BinaryOp::kSubtract},
   };
   mir::PlaceId new_count =
-      builder.EmitTemp(count_expr.type, std::move(dec_rvalue));
+      builder.EmitPlaceTemp(count_expr.type, std::move(dec_rvalue));
   builder.EmitAssign(counter, mir::Operand::Use(new_count));
   builder.EmitJump(cond_bb);
 
@@ -1582,7 +1592,7 @@ auto LowerStatement(hir::StatementId stmt_id, MirBuilder& builder)
                 .operands = std::move(format_operands),
                 .info = std::move(info)};
             mir::PlaceId msg_place =
-                builder.EmitTemp(ctx.GetStringType(), std::move(rvalue));
+                builder.EmitPlaceTemp(ctx.GetStringType(), std::move(rvalue));
             message = mir::Operand::Use(msg_place);
           }
 

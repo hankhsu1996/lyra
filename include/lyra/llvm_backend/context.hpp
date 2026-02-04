@@ -346,6 +346,20 @@ class Context {
   // Check if a function uses out-param calling convention (managed return).
   [[nodiscard]] auto FunctionUsesSret(mir::FunctionId func_id) const -> bool;
 
+  // SSA temp management (for block params and temps defined by statements)
+  // BindTemp: define an SSA temp value with its MIR type.
+  // Must be called exactly once per temp_id. Binding an already-bound temp_id
+  // is an InternalError.
+  void BindTemp(int temp_id, llvm::Value* v, TypeId type);
+  // ReadTemp: get the LLVM value for an SSA temp.
+  // Reading an unbound temp_id is an InternalError.
+  [[nodiscard]] auto ReadTemp(int temp_id) const -> llvm::Value*;
+  // GetTempType: get the MIR TypeId for an SSA temp.
+  // Reading an unbound temp_id is an InternalError.
+  [[nodiscard]] auto GetTempType(int temp_id) const -> TypeId;
+  // ClearTemps: clear all temp bindings (called at function start)
+  void ClearTemps();
+
  private:
   // Commit-module-only methods (accessed via friend class commit::Access)
   // Get unified write target (pointer + signal_id) from a place.
@@ -501,6 +515,12 @@ class Context {
   // Just stores check_thunk reference; layout is looked up from
   // monitor_layouts_.
   absl::flat_hash_map<mir::FunctionId, MonitorSetupInfo> monitor_setup_infos_;
+
+  // SSA temp bindings: temp_id -> {llvm::Value*, TypeId}
+  // Temps defined by block params (PHI nodes) or statements.
+  // Both maps are kept in sync; presence in one implies presence in the other.
+  absl::flat_hash_map<int, llvm::Value*> temp_values_;
+  absl::flat_hash_map<int, TypeId> temp_types_;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -62,18 +62,30 @@ auto Context::AllocLocal(SymbolId sym, TypeId type) -> LocalAllocation {
 }
 
 auto Context::AllocTemp(TypeId type) -> mir::PlaceId {
+  int temp_id = next_temp_id++;
   mir::Place place{
       .root =
           mir::PlaceRoot{
               .kind = mir::PlaceRoot::Kind::kTemp,
-              .id = next_temp_id++,
+              .id = temp_id,
               .type = type,
           },
       .projections = {},
   };
   // Populate type table during allocation, not post-collection
   temp_types.push_back(type);
+  // Record in temp_metadata as PlaceTemp
+  temp_metadata.push_back({.kind = mir::TempKind::kPlace, .type = type});
   return mir_arena->AddPlace(std::move(place));
+}
+
+auto Context::AllocValueTemp(TypeId type) -> int {
+  int temp_id = next_temp_id++;
+  // Populate deprecated type table for compatibility
+  temp_types.push_back(type);
+  // Record in temp_metadata as ValueTemp
+  temp_metadata.push_back({.kind = mir::TempKind::kValue, .type = type});
+  return temp_id;
 }
 
 auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {

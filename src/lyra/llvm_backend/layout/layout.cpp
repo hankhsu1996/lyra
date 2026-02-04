@@ -60,6 +60,58 @@ auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
   return llvm::StructType::get(ctx, {elem, elem});
 }
 
+auto GetLlvmAbiTypeForValue(
+    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
+    -> llvm::Type* {
+  const auto& type = types[type_id];
+
+  // Handle types (passed as ptr handle value)
+  if (type.Kind() == TypeKind::kString ||
+      type.Kind() == TypeKind::kDynamicArray ||
+      type.Kind() == TypeKind::kQueue) {
+    return llvm::PointerType::getUnqual(ctx);
+  }
+
+  // Floating point
+  if (type.Kind() == TypeKind::kReal) {
+    return llvm::Type::getDoubleTy(ctx);
+  }
+  if (type.Kind() == TypeKind::kShortReal) {
+    return llvm::Type::getFloatTy(ctx);
+  }
+
+  // Packed integrals (2-state or 4-state)
+  if (IsPacked(type)) {
+    uint32_t width = PackedBitWidth(type, types);
+    if (IsPackedFourState(type, types)) {
+      return GetFourStateStructType(ctx, width);
+    }
+    return GetLlvmStorageType(ctx, width);
+  }
+
+  // Aggregates (unpacked array/struct/union) - not passable by value
+  // Return nullptr; caller must handle via out-param or error
+  if (type.Kind() == TypeKind::kUnpackedArray ||
+      type.Kind() == TypeKind::kUnpackedStruct ||
+      type.Kind() == TypeKind::kUnpackedUnion) {
+    return nullptr;
+  }
+
+  // Void - cannot be passed by value (throw, don't return nullptr)
+  if (type.Kind() == TypeKind::kVoid) {
+    throw common::InternalError(
+        "GetLlvmAbiTypeForValue",
+        std::format("void type {} cannot be passed by value", type_id.value));
+  }
+
+  // Unsupported type kind (throw, don't return nullptr)
+  throw common::InternalError(
+      "GetLlvmAbiTypeForValue",
+      std::format(
+          "unsupported type kind {} for type {}", static_cast<int>(type.Kind()),
+          type_id.value));
+}
+
 namespace {
 
 // Forward declaration for recursive call in BuildUnpackedStructType
@@ -640,13 +692,27 @@ auto CollectProcessPlaces(const mir::Process& process)
                   CollectPlaceFromOperand(arg, places);
                 }
               },
+              [&](const mir::DefineTemp& dt) {
+                // DefineTemp doesn't create place storage; only visit RHS
+                CollectPlacesFromRhs(dt.rhs, places);
+              },
           },
           instr.data);
     }
 
     std::visit(
         common::Overloaded{
-            [&](const mir::Branch& b) { places.insert(b.condition); },
+            [&](const mir::Branch& b) {
+              CollectPlaceFromOperand(b.condition, places);
+            },
+            [&](const mir::Switch& s) {
+              CollectPlaceFromOperand(s.selector, places);
+            },
+            [&](const mir::QualifiedDispatch& qd) {
+              for (const auto& cond : qd.conditions) {
+                CollectPlaceFromOperand(cond, places);
+              }
+            },
             [](const auto&) {},
         },
         block.terminator.data);

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <vector>
 
+#include "lyra/common/type.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 
 namespace lyra::mir::interp {
@@ -12,12 +13,15 @@ namespace lyra::mir::interp {
 class Frame {
  public:
   // Construct with pre-initialized storage vectors.
-  Frame(std::vector<RuntimeValue> locals, std::vector<RuntimeValue> temps);
+  Frame(
+      std::vector<RuntimeValue> locals, std::vector<RuntimeValue> temps,
+      std::vector<TypeId> temp_types);
 
   [[nodiscard]] auto GetLocal(int id) -> RuntimeValue&;
   [[nodiscard]] auto GetLocal(int id) const -> const RuntimeValue&;
   [[nodiscard]] auto GetTemp(int id) -> RuntimeValue&;
   [[nodiscard]] auto GetTemp(int id) const -> const RuntimeValue&;
+  [[nodiscard]] auto GetTempType(int id) const -> TypeId;
 
   [[nodiscard]] auto NumLocals() const -> size_t {
     return locals_.size();
@@ -29,6 +33,7 @@ class Frame {
  private:
   std::vector<RuntimeValue> locals_;
   std::vector<RuntimeValue> temps_;
+  std::vector<TypeId> temp_types_;
 };
 
 }  // namespace lyra::mir::interp

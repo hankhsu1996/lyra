@@ -23,6 +23,7 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/interp/frame_temps.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
@@ -39,15 +40,22 @@ namespace lyra::mir::interp {
 
 namespace {
 
-// Collects storage requirements and type information for locals, temps, and
-// design slots.
+// LocalInitCollector: Collects local variable types needed for Frame
+// initialization.
 //
-// INVARIANT: This assumes all storage is discoverable via instruction operands.
-// Any MIR feature that introduces implicit storage (e.g., call frames, hidden
-// temporaries) will require revisiting this logic.
-struct StorageCollector {
+// Collects:
+//   - local_types: Types for each local variable slot (for default-init)
+//   - design_types: Types for each design state slot (for DesignState init)
+//
+// Does NOT collect:
+//   - temp_types: Temps come exclusively from process.temp_metadata /
+//   func.temp_metadata
+//
+// Rationale: Locals and design slots are derived from statement/place
+// visitation. Temps have authoritative metadata frozen at HIR->MIR lowering
+// time.
+struct LocalInitCollector {
   std::vector<TypeId> local_types;
-  std::vector<TypeId> temp_types;
   std::vector<TypeId> design_types;
 
   void VisitRoot(const PlaceRoot& root) {
@@ -63,13 +71,7 @@ struct StorageCollector {
         break;
       }
       case PlaceRoot::Kind::kTemp: {
-        auto idx = static_cast<size_t>(root.id);
-        if (idx >= temp_types.size()) {
-          temp_types.resize(idx + 1, kInvalidTypeId);
-        }
-        if (!temp_types[idx]) {
-          temp_types[idx] = root.type;
-        }
+        // Temps are handled by process.temp_metadata, not collected here
         break;
       }
       case PlaceRoot::Kind::kDesign: {
@@ -108,6 +110,7 @@ struct StorageCollector {
       PlaceId place_id = std::get<PlaceId>(op.payload);
       Visit(arena[place_id], arena);
     }
+    // UseTemp: temps are handled by process.temp_metadata, not collected here
   }
 
   void Visit(const Rvalue& rv, const Arena& arena) {
@@ -119,6 +122,10 @@ struct StorageCollector {
       if (info->receiver) {
         Visit(arena[*info->receiver], arena);
       }
+    }
+    // Visit place inside GuardedUse (may have projections with temp operands)
+    if (const auto* info = std::get_if<GuardedUseRvalueInfo>(&rv.info)) {
+      Visit(arena[info->place], arena);
     }
     // Visit operands stored in info structs (TypedOperand)
     if (const auto* info = std::get_if<TestPlusargsRvalueInfo>(&rv.info)) {
@@ -236,8 +243,53 @@ struct StorageCollector {
                 Visit(arg, arena);
               }
             },
+            [&](const DefineTemp&) {
+              // DefineTemp defines a ValueTemp - temps are handled by
+              // process.temp_metadata, not collected here
+            },
         },
         stmt.data);
+  }
+
+  // Visit terminator for edge args
+  void VisitTerminator(const Terminator& term, const Arena& arena) {
+    std::visit(
+        common::Overloaded{
+            [&](const Jump& t) {
+              for (const auto& arg : t.args) {
+                Visit(arg, arena);
+              }
+            },
+            [&](const Branch& t) {
+              Visit(t.condition, arena);
+              for (const auto& arg : t.then_args) {
+                Visit(arg, arena);
+              }
+              for (const auto& arg : t.else_args) {
+                Visit(arg, arena);
+              }
+            },
+            [&](const Switch& t) { Visit(t.selector, arena); },
+            [&](const QualifiedDispatch& t) {
+              for (const auto& cond : t.conditions) {
+                Visit(cond, arena);
+              }
+            },
+            [](const Delay&) {},
+            [](const Wait&) {},
+            [&](const Return& t) {
+              if (t.value) {
+                Visit(*t.value, arena);
+              }
+            },
+            [&](const Finish& t) {
+              if (t.message) {
+                Visit(*t.message, arena);
+              }
+            },
+            [](const Repeat&) {},
+        },
+        term.data);
   }
 };
 
@@ -248,12 +300,16 @@ auto CreateProcessState(
     DesignState* design_state) -> ProcessState {
   const auto& process = arena[process_id];
 
-  // Scan all blocks to collect local/temp storage requirements and types
-  StorageCollector collector;
+  // Scan all blocks to collect local storage requirements and types.
+  // Temps come from process.temp_metadata (authoritative source).
+  LocalInitCollector collector;
   for (const BasicBlock& block : process.blocks) {
+    // Collect places used in statements
     for (const auto& stmt : block.statements) {
       collector.Visit(stmt, arena);
     }
+    // Collect places used in terminator edge args
+    collector.VisitTerminator(block.terminator, arena);
   }
 
   // Initialize locals with default values based on their types
@@ -264,19 +320,15 @@ auto CreateProcessState(
         type_id ? CreateDefaultValue(types, type_id) : RuntimeValue{});
   }
 
-  // Initialize temps with default values based on their types
-  std::vector<RuntimeValue> temps;
-  temps.reserve(collector.temp_types.size());
-  for (TypeId type_id : collector.temp_types) {
-    temps.push_back(
-        type_id ? CreateDefaultValue(types, type_id) : RuntimeValue{});
-  }
+  // Initialize temps from canonical process.temp_metadata
+  auto [temps, temp_types] = BuildFrameTemps(process.temp_metadata, types);
 
   return ProcessState{
       .process = process_id,
       .current_block = process.entry,
       .instruction_index = 0,
-      .frame = Frame(std::move(locals), std::move(temps)),
+      .frame =
+          Frame(std::move(locals), std::move(temps), std::move(temp_types)),
       .design_state = design_state,
       .status = ProcessStatus::kRunning,
       .instance_id = process.owner_instance_id,
@@ -285,38 +337,34 @@ auto CreateProcessState(
   };
 }
 
+// Helper to visit all blocks in a process for design state collection
+void VisitProcessBlocks(
+    LocalInitCollector& collector, const Process& process, const Arena& arena) {
+  for (const BasicBlock& block : process.blocks) {
+    for (const auto& stmt : block.statements) {
+      collector.Visit(stmt, arena);
+    }
+    collector.VisitTerminator(block.terminator, arena);
+  }
+}
+
 auto CreateDesignState(
     const Arena& arena, const TypeArena& types, const Design& design)
     -> DesignState {
   // Collect design slot types by scanning all processes
-  StorageCollector collector;
+  LocalInitCollector collector;
   for (const auto& element : design.elements) {
     if (const auto* module = std::get_if<Module>(&element)) {
       for (ProcessId process_id : module->processes) {
-        const auto& process = arena[process_id];
-        for (const BasicBlock& block : process.blocks) {
-          for (const auto& stmt : block.statements) {
-            collector.Visit(stmt, arena);
-          }
-        }
+        VisitProcessBlocks(collector, arena[process_id], arena);
       }
     }
   }
   for (ProcessId process_id : design.init_processes) {
-    const auto& process = arena[process_id];
-    for (const BasicBlock& block : process.blocks) {
-      for (const auto& inst : block.statements) {
-        collector.Visit(inst, arena);
-      }
-    }
+    VisitProcessBlocks(collector, arena[process_id], arena);
   }
   for (ProcessId process_id : design.connection_processes) {
-    const auto& process = arena[process_id];
-    for (const BasicBlock& block : process.blocks) {
-      for (const auto& inst : block.statements) {
-        collector.Visit(inst, arena);
-      }
-    }
+    VisitProcessBlocks(collector, arena[process_id], arena);
   }
 
   // Initialize design storage with default values based on types

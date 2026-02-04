@@ -128,6 +128,10 @@ auto LowerOperandRaw(Context& context, const mir::Operand& operand)
             }
             return context.LoadPlaceValue(place_id);
           },
+          [&context](mir::TempId temp_id) -> Result<llvm::Value*> {
+            // Look up SSA temp value from context
+            return context.ReadTemp(temp_id.value);
+          },
       },
       operand.payload);
 }

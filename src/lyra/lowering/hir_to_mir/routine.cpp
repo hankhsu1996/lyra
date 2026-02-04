@@ -179,6 +179,7 @@ auto LowerFunctionBody(
       .blocks = std::move(blocks),
       .local_types = std::move(ctx.local_types),
       .temp_types = std::move(ctx.temp_types),
+      .temp_metadata = std::move(ctx.temp_metadata),
       .param_local_slots = std::move(param_local_slots),
       .param_origins = {},
       .origin = common::OriginId::Invalid(),

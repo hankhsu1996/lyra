@@ -48,6 +48,9 @@ auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
             const auto& place = arena[place_id];
             return mir::TypeOfPlace(types, place);
           },
+          [&](mir::TempId temp_id) -> TypeId {
+            return context.GetTempType(temp_id.value);
+          },
       },
       operand.payload);
 }
@@ -79,6 +82,11 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
           [&](mir::PlaceId place_id) {
             const auto& place = arena[place_id];
             TypeId type_id = mir::TypeOfPlace(types, place);
+            const Type& type = types[type_id];
+            return IsPacked(type) && IsPackedFourState(type, types);
+          },
+          [&](mir::TempId temp_id) -> bool {
+            TypeId type_id = context.GetTempType(temp_id.value);
             const Type& type = types[type_id];
             return IsPacked(type) && IsPackedFourState(type, types);
           },

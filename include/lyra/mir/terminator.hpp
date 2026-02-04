@@ -16,18 +16,21 @@ namespace lyra::mir {
 // Unconditional jump to a single target.
 struct Jump {
   BasicBlockId target;
+  std::vector<Operand> args;  // Values for target.params (edge args for SSA)
 };
 
 // Conditional branch based on a boolean condition.
 struct Branch {
-  PlaceId condition;
+  Operand condition;  // Can be Use (place) or UseTemp (value)
   BasicBlockId then_target;
+  std::vector<Operand> then_args;  // Values for then_target.params
   BasicBlockId else_target;
+  std::vector<Operand> else_args;  // Values for else_target.params
 };
 
 // Multi-way switch based on selector value.
 struct Switch {
-  PlaceId selector;
+  Operand selector;                   // Can be Use (place) or UseTemp (value)
   std::vector<BasicBlockId> targets;  // Index targets + default (last)
 };
 
@@ -55,7 +58,7 @@ enum class DispatchStatementKind : uint8_t {
 struct QualifiedDispatch {
   DispatchQualifier qualifier;
   DispatchStatementKind statement_kind;
-  std::vector<PlaceId> conditions;    // Pre-evaluated condition results
+  std::vector<Operand> conditions;    // Pre-evaluated condition results
   std::vector<BasicBlockId> targets;  // One per condition + else (last)
   bool has_else;                      // Suppresses no-match warning for kUnique
 };

@@ -16,6 +16,7 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
@@ -97,14 +98,19 @@ auto LoadFourStateOperand(Context& context, const mir::Operand& operand)
   const auto& types = context.GetTypeArena();
 
   bool is_four_state = std::visit(
-      [&](const auto& payload) -> bool {
-        using T = std::decay_t<decltype(payload)>;
-        if constexpr (std::is_same_v<T, Constant>) {
-          return IsTypeFourState(types, payload.type);
-        } else {
-          const auto& place = arena[payload];
-          return IsTypeFourState(types, mir::TypeOfPlace(types, place));
-        }
+      common::Overloaded{
+          [&](const Constant& c) -> bool {
+            return IsTypeFourState(types, c.type);
+          },
+          [&](mir::PlaceId place_id) -> bool {
+            const auto& place = arena[place_id];
+            return IsTypeFourState(types, mir::TypeOfPlace(types, place));
+          },
+          [&](mir::TempId temp_id) -> bool {
+            // Look up the MIR type (source of truth), not the LLVM type
+            TypeId type = context.GetTempType(temp_id.value);
+            return IsTypeFourState(types, type);
+          },
       },
       operand.payload);
 
@@ -148,6 +154,7 @@ auto LowerCastRvalue(
     uint32_t bit_width = PackedBitWidth(tgt_type, types);
     llvm::Type* result_type =
         llvm::Type::getIntNTy(context.GetLlvmContext(), bit_width);
+    bool tgt_is_4s = IsPackedFourState(tgt_type, types);
 
     // Try constant-folding for compile-time strings
     const auto* constant = std::get_if<Constant>(&source_operand.payload);
@@ -165,8 +172,13 @@ auto LowerCastRvalue(
           auto byte_val = static_cast<uint8_t>(str[i]);
           packed_val |= llvm::APInt(bit_width, byte_val) << bit_offset;
         }
-        return RvalueValue::TwoState(
-            llvm::ConstantInt::get(context.GetLlvmContext(), packed_val));
+        llvm::Value* result =
+            llvm::ConstantInt::get(context.GetLlvmContext(), packed_val);
+        if (tgt_is_4s) {
+          auto* zero = llvm::ConstantInt::get(result_type, 0);
+          return RvalueValue::FourState(result, zero);
+        }
+        return RvalueValue::TwoState(result);
       }
     }
 
@@ -187,6 +199,10 @@ auto LowerCastRvalue(
     // Load the result
     llvm::Value* result =
         builder.CreateLoad(result_type, alloca, "str.topacked");
+    if (tgt_is_4s) {
+      auto* zero = llvm::ConstantInt::get(result_type, 0);
+      return RvalueValue::FourState(result, zero);
+    }
     return RvalueValue::TwoState(result);
   }
 
@@ -255,6 +271,12 @@ auto LowerCastRvalue(
     }
 
     result = ApplyWidthMask(context, result, bit_width);
+
+    if (tgt_is_4s) {
+      // Float -> 4s: unknown plane is all zeros (value is fully known)
+      auto* zero = llvm::ConstantInt::get(elem_type, 0);
+      return RvalueValue::FourState(result, zero);
+    }
     return RvalueValue::TwoState(result);
   }
 
@@ -288,6 +310,12 @@ auto LowerCastRvalue(
 
   llvm::Value* result = ExtOrTrunc(builder, source, elem_type, is_signed);
   result = ApplyWidthMask(context, result, bit_width);
+
+  if (tgt_is_4s) {
+    // 2s -> 4s: unknown plane is all zeros (value is fully known)
+    auto* zero = llvm::ConstantInt::get(elem_type, 0);
+    return RvalueValue::FourState(result, zero);
+  }
   return RvalueValue::TwoState(result);
 }
 
@@ -320,6 +348,7 @@ auto LowerBitCastRvalue(
   llvm::Value* src = *src_or_err;
 
   llvm::Value* result = nullptr;
+  bool tgt_is_4s = IsPacked(tgt_type) && IsPackedFourState(tgt_type, types);
 
   if (src_type.Kind() == TypeKind::kReal && is_packed_integral(tgt_type)) {
     result =
@@ -340,6 +369,10 @@ auto LowerBitCastRvalue(
     llvm_unreachable("invalid bitcast types");
   }
 
+  if (tgt_is_4s) {
+    auto* zero = llvm::ConstantInt::get(result->getType(), 0);
+    return RvalueValue::FourState(result, zero);
+  }
   return RvalueValue::TwoState(result);
 }
 
