@@ -24,6 +24,7 @@ using semantic::MakeArray;
 using semantic::MakeIntegral;
 using semantic::MakeIntegralFromConstant;
 using semantic::MakeIntegralSigned;
+using semantic::MakeIntegralWide;
 using semantic::MakeIntegralX;
 using semantic::MakeReal;
 using semantic::MakeShortReal;

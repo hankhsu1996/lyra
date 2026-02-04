@@ -320,7 +320,7 @@ auto IsSelectorType(const Type& type) -> bool {
 
 // Get the TypeId for an operand (for type checking edge args)
 auto GetOperandType(
-    const Operand& op, const std::vector<BasicBlock>& blocks,
+    const Operand& op, [[maybe_unused]] const std::vector<BasicBlock>& blocks,
     const Arena& arena, const TypeArena& types,
     const std::unordered_map<int, TempDefinition>& defined_temps) -> TypeId {
   return std::visit(
@@ -594,12 +594,29 @@ void VerifyStatementPlaceTemps(
               }
             }
             for (size_t i = 0; i < call.writebacks.size(); ++i) {
-              verify_place(
-                  call.writebacks[i].tmp,
-                  std::format("Call.writebacks[{}].tmp", i));
-              verify_place(
-                  call.writebacks[i].dest,
-                  std::format("Call.writebacks[{}].dest", i));
+              const auto& wb = call.writebacks[i];
+              if (wb.kind == WritebackKind::kStaged) {
+                // kStaged: tmp must be present
+                if (!wb.tmp.has_value()) {
+                  throw common::InternalError(
+                      "VerifyMir", std::format(
+                                       "Call.writebacks[{}]: kStaged requires "
+                                       "tmp to be present",
+                                       i));
+                }
+                verify_place(
+                    *wb.tmp, std::format("Call.writebacks[{}].tmp", i));
+              } else {
+                // kDirectToDest: tmp must be absent
+                if (wb.tmp.has_value()) {
+                  throw common::InternalError(
+                      "VerifyMir", std::format(
+                                       "Call.writebacks[{}]: kDirectToDest "
+                                       "requires tmp to be nullopt",
+                                       i));
+                }
+              }
+              verify_place(wb.dest, std::format("Call.writebacks[{}].dest", i));
             }
           },
           [&](const BuiltinCall& bcall) {
@@ -626,7 +643,7 @@ void VerifyStatementPlaceTemps(
 // if needed).
 void VerifyIntraBlockDefOrder(
     const BasicBlock& block, size_t block_idx,
-    const std::vector<TempMetadata>& temp_metadata,
+    [[maybe_unused]] const std::vector<TempMetadata>& temp_metadata,
     std::string_view routine_kind) {
   // Initialize available temps with block params
   std::unordered_set<int> available_temps;

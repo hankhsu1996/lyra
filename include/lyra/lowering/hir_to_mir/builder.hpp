@@ -136,11 +136,21 @@ class MirBuilder {
   // Emit unified Call for system TF (expression form).
   // Allocates staging temps for return and writebacks.
   // Returns Use(ret.tmp) for caller to assign to real dest.
+  // Writeback tuple: (dest, type, pass_mode) - defaults to kStaged.
   auto EmitSystemTfCallExpr(
       SystemTfOpcode opcode, std::vector<mir::Operand> in_args,
       TypeId return_type,
       std::vector<std::tuple<mir::PlaceId, TypeId, mir::PassMode>> writebacks)
       -> mir::Operand;
+
+  // Overload with explicit WritebackKind per writeback.
+  // Use when at least one writeback is kDirectToDest.
+  auto EmitSystemTfCallExpr(
+      SystemTfOpcode opcode, std::vector<mir::Operand> in_args,
+      TypeId return_type,
+      std::vector<
+          std::tuple<mir::PlaceId, TypeId, mir::PassMode, mir::WritebackKind>>
+          writebacks) -> mir::Operand;
 
   // High-level control flow primitives.
   // These own all CFG mechanics: block creation, branches, reachability joins.

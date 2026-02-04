@@ -18,6 +18,7 @@
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/plusargs.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
@@ -339,6 +340,21 @@ auto Interpreter::EvalRvalue(
                 int32_t result = file_manager_.Ungetc(ch, desc);
                 return MakeIntegralSigned(result, 32);
               }
+              case SystemTfOpcode::kFgets:
+                throw common::InternalError(
+                    "EvalRvalue:SystemTf",
+                    "$fgets should be lowered via Call, not "
+                    "SystemTfRvalueInfo");
+              case SystemTfOpcode::kFread:
+                throw common::InternalError(
+                    "EvalRvalue:SystemTf",
+                    "$fread should be lowered via Call, not "
+                    "SystemTfRvalueInfo");
+              case SystemTfOpcode::kFscanf:
+                throw common::InternalError(
+                    "EvalRvalue:SystemTf",
+                    "$fscanf should be lowered via Call, not "
+                    "SystemTfRvalueInfo");
             }
             throw common::InternalError(
                 "EvalRvalue:SystemTf", "unhandled SystemTfOpcode");
@@ -898,24 +914,9 @@ auto Interpreter::EvalTestPlusargs(
     return std::unexpected(std::move(query_val_result).error());
   }
   std::string query_str = CoerceToString(*query_val_result, "EvalTestPlusargs");
-  std::string_view query = query_str;
 
-  // Helper: strip '+' prefix from a plusarg
-  auto get_content = [](std::string_view arg) -> std::string_view {
-    if (arg.starts_with('+')) {
-      return arg.substr(1);
-    }
-    return arg;
-  };
-
-  // $test$plusargs: prefix match
-  for (const auto& arg : plusargs_) {
-    std::string_view content = get_content(arg);
-    if (content.starts_with(query)) {
-      return MakeIntegralSigned(1, 32);
-    }
-  }
-  return MakeIntegralSigned(0, 32);
+  int32_t found = common::TestPlusargs(plusargs_, query_str);
+  return MakeIntegralSigned(found, 32);
 }
 
 auto Interpreter::EvalFopen(ProcessState& state, const FopenRvalueInfo& info)

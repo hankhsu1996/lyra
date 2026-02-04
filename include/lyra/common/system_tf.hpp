@@ -32,6 +32,9 @@ enum class SystemTfOpcode : uint16_t {
   kFflush = 2,
   kFgetc = 3,
   kUngetc = 4,
+  kFgets = 8,
+  kFread = 9,
+  kFscanf = 10,
   // Query
   kValuePlusargs = 5,
   // Random

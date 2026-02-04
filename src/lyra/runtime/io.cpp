@@ -16,6 +16,7 @@
 
 #include <fmt/core.h>
 
+#include "lyra/common/binary_pack.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/memfile.hpp"
 #include "lyra/runtime/engine.hpp"
@@ -210,6 +211,17 @@ extern "C" auto LyraUngetc(
     void* engine_ptr, int32_t character, int32_t descriptor) -> int32_t {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   return engine->GetFileManager().Ungetc(character, descriptor);
+}
+
+extern "C" auto LyraFgets(
+    void* engine_ptr, int32_t descriptor, LyraStringHandle* str_out)
+    -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  std::string result;
+  int32_t count = engine->GetFileManager().Fgets(descriptor, result);
+  *str_out =
+      LyraStringFromLiteral(result.data(), static_cast<int64_t>(result.size()));
+  return count;
 }
 
 extern "C" void LyraFflush(
@@ -418,4 +430,115 @@ extern "C" void LyraWritemem(
     }
     addr += step;
   }
+}
+
+extern "C" auto LyraFread(
+    void* engine_ptr, int32_t descriptor, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t is_memory, int64_t start_index,
+    int64_t max_count, int64_t element_count) -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+
+  // Calculate bytes per element (ceil(element_width / 8))
+  auto bytes_per_elem = static_cast<size_t>((element_width + 7) / 8);
+  auto stride = static_cast<size_t>(stride_bytes);
+
+  // Helper to pack big-endian buffer into a target memory location.
+  // Converts to little-endian word array, then memcpys into dest.
+  // Masks to element_width bits to handle non-byte-aligned widths (e.g. 9-bit).
+  auto elem_bits = static_cast<size_t>(element_width);
+  auto pack_to_dest = [&](std::span<const uint8_t> src,
+                          std::span<uint8_t> dest) {
+    std::ranges::fill(dest, 0);
+    auto words =
+        lyra::common::PackBigEndianToWords(src, bytes_per_elem, elem_bits);
+    std::memcpy(
+        dest.data(), words.data(),
+        std::min(bytes_per_elem, words.size() * sizeof(uint64_t)));
+  };
+
+  // Buffer for reading bytes
+  std::vector<uint8_t> buffer(bytes_per_elem);
+  int32_t total_bytes_read = 0;
+
+  if (is_memory == 0) {
+    // Integral variant: read bytes_per_elem bytes into target
+    int32_t bytes_read = engine->GetFileManager().FreadBytes(
+        descriptor, buffer.data(), bytes_per_elem);
+    if (bytes_read > 0) {
+      pack_to_dest(
+          std::span(buffer).first(static_cast<size_t>(bytes_read)),
+          std::span(static_cast<uint8_t*>(target), stride));
+      total_bytes_read = bytes_read;
+    }
+  } else {
+    // Memory variant: read into array elements
+    // Determine start and count
+    size_t start_idx = (start_index < 0) ? 0 : static_cast<size_t>(start_index);
+    size_t count = (max_count < 0) ? static_cast<size_t>(element_count)
+                                   : static_cast<size_t>(max_count);
+
+    // Validate start
+    if (start_idx >= static_cast<size_t>(element_count)) {
+      return 0;  // OOB start
+    }
+
+    // Limit count to available elements
+    size_t end_idx =
+        std::min(start_idx + count, static_cast<size_t>(element_count));
+
+    for (size_t idx = start_idx; idx < end_idx; ++idx) {
+      int32_t bytes_read = engine->GetFileManager().FreadBytes(
+          descriptor, buffer.data(), bytes_per_elem);
+
+      if (static_cast<size_t>(bytes_read) < bytes_per_elem) {
+        // Partial element - stop at element boundary
+        break;
+      }
+
+      // Pack into element at idx
+      pack_to_dest(
+          std::span(buffer), std::span(
+                                 static_cast<uint8_t*>(target),
+                                 stride * static_cast<size_t>(element_count))
+                                 .subspan(idx * stride, stride));
+      total_bytes_read += bytes_read;
+    }
+  }
+
+  return total_bytes_read;
+}
+
+extern "C" auto LyraFscanf(
+    void* engine_ptr, int32_t descriptor, LyraStringHandle format,
+    int32_t output_count, void** output_ptrs) -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  auto& file_manager = engine->GetFileManager();
+
+  // Get format string
+  std::string_view format_str = LyraStringAsView(format);
+
+  // Track output index
+  int32_t output_idx = 0;
+  auto outputs = std::span(output_ptrs, static_cast<size_t>(output_count));
+
+  // Use FileManager::Fscanf for the actual scanning
+  return file_manager.Fscanf(
+      descriptor, format_str, [&](const lyra::runtime::ScanResult& result) {
+        if (static_cast<size_t>(output_idx) >= outputs.size()) return;
+
+        void* output_ptr = outputs[static_cast<size_t>(output_idx)];
+
+        if (result.IsInt()) {
+          // Store as int32_t (matches MIR interpreter behavior)
+          *static_cast<int32_t*>(output_ptr) =
+              static_cast<int32_t>(result.AsInt());
+        } else {
+          // Store as string handle
+          const std::string& str = result.AsString();
+          *static_cast<LyraStringHandle*>(output_ptr) = LyraStringFromLiteral(
+              str.data(), static_cast<int64_t>(str.size()));
+        }
+
+        ++output_idx;
+      });
 }

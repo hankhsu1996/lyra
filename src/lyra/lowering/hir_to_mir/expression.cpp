@@ -775,6 +775,123 @@ auto LowerSystemCall(
     return builder.EmitValueTemp(expr.type, std::move(rvalue));
   }
 
+  // $fgets -> unified Call with SystemTfOpcode (reads file, writes to string)
+  if (const auto* fgets_data = std::get_if<hir::FgetsData>(&data)) {
+    Result<mir::Operand> desc_result =
+        LowerExpression(fgets_data->descriptor, builder);
+    if (!desc_result) return std::unexpected(desc_result.error());
+    Result<LvalueResult> output_lv_result =
+        LowerLvalue(fgets_data->str_output, builder);
+    if (!output_lv_result) return std::unexpected(output_lv_result.error());
+    LvalueResult output_lv = *output_lv_result;
+
+    Context& ctx = builder.GetContext();
+    const hir::Expression& out_expr = (*ctx.hir_arena)[fgets_data->str_output];
+    TypeId output_type = out_expr.type;
+
+    // Emit unified Call - returns char count via staging temp
+    return builder.EmitSystemTfCallExpr(
+        SystemTfOpcode::kFgets, {*desc_result}, expr.type,
+        {{output_lv.place, output_type, mir::PassMode::kOut}});
+  }
+
+  // $fread -> unified Call with SystemTfOpcode (reads binary file)
+  if (const auto* fread_data = std::get_if<hir::FreadData>(&data)) {
+    Result<mir::Operand> desc_result =
+        LowerExpression(fread_data->descriptor, builder);
+    if (!desc_result) return std::unexpected(desc_result.error());
+    Result<LvalueResult> target_lv_result =
+        LowerLvalue(fread_data->target, builder);
+    if (!target_lv_result) return std::unexpected(target_lv_result.error());
+    LvalueResult target_lv = *target_lv_result;
+
+    Context& ctx = builder.GetContext();
+    TypeId target_type = fread_data->target_type;
+    TypeId i32_type = ctx.GetOffsetType();
+
+    // Build operands: [descriptor, target_type_width, is_memory,
+    //                  start_or_-1, count_or_-1]
+    // We encode is_memory and element_width as compile-time constants
+    // to let the runtime know how to read data.
+    const Type& ty = (*ctx.type_arena)[target_type];
+    int32_t element_width = 0;
+    if (fread_data->is_memory) {
+      // Memory variant: get element width from array element type
+      const auto& arr = ty.AsUnpackedArray();
+      element_width = static_cast<int32_t>(
+          PackedBitWidth((*ctx.type_arena)[arr.element_type], *ctx.type_arena));
+    } else {
+      // Integral variant: use type's packed bit width
+      element_width = static_cast<int32_t>(PackedBitWidth(ty, *ctx.type_arena));
+    }
+
+    // Create constant operands for type info
+    mir::Operand width_op =
+        mir::Operand::Const(MakeIntegralConst(element_width, i32_type));
+    mir::Operand is_mem_op = mir::Operand::Const(
+        MakeIntegralConst(fread_data->is_memory ? 1 : 0, i32_type));
+
+    // Optional start/count with -1 sentinel for "not specified"
+    mir::Operand start_op;
+    if (fread_data->start) {
+      Result<mir::Operand> s = LowerExpression(*fread_data->start, builder);
+      if (!s) return std::unexpected(s.error());
+      start_op = *s;
+    } else {
+      start_op = mir::Operand::Const(MakeIntegralConst(-1, i32_type));
+    }
+
+    mir::Operand count_op;
+    if (fread_data->count) {
+      Result<mir::Operand> c = LowerExpression(*fread_data->count, builder);
+      if (!c) return std::unexpected(c.error());
+      count_op = *c;
+    } else {
+      count_op = mir::Operand::Const(MakeIntegralConst(-1, i32_type));
+    }
+
+    // Emit unified Call with:
+    // in_args: [descriptor, element_width, is_memory, start, count]
+    // writebacks: target (where data is written)
+    // Memory variant uses kDirectToDest: runtime writes directly to backing
+    // store via raw pointer, following the $readmemh bulk-write pattern.
+    auto wb_kind = fread_data->is_memory ? mir::WritebackKind::kDirectToDest
+                                         : mir::WritebackKind::kStaged;
+    return builder.EmitSystemTfCallExpr(
+        SystemTfOpcode::kFread,
+        {*desc_result, width_op, is_mem_op, start_op, count_op}, expr.type,
+        {{target_lv.place, target_type, mir::PassMode::kOut, wb_kind}});
+  }
+
+  // $fscanf -> unified Call with SystemTfOpcode (formatted file input)
+  if (const auto* fscanf_data = std::get_if<hir::FscanfData>(&data)) {
+    Result<mir::Operand> desc_result =
+        LowerExpression(fscanf_data->descriptor, builder);
+    if (!desc_result) return std::unexpected(desc_result.error());
+    Result<mir::Operand> format_result =
+        LowerExpression(fscanf_data->format, builder);
+    if (!format_result) return std::unexpected(format_result.error());
+
+    Context& ctx = builder.GetContext();
+
+    // Lower all output lvalues and build writebacks
+    std::vector<std::tuple<mir::PlaceId, TypeId, mir::PassMode>> writebacks;
+    for (const auto& output : fscanf_data->outputs) {
+      Result<LvalueResult> output_lv_result = LowerLvalue(output, builder);
+      if (!output_lv_result) return std::unexpected(output_lv_result.error());
+      const hir::Expression& out_expr = (*ctx.hir_arena)[output];
+      writebacks.emplace_back(
+          output_lv_result->place, out_expr.type, mir::PassMode::kOut);
+    }
+
+    // Emit unified Call with:
+    // in_args: [descriptor, format]
+    // writebacks: all output lvalues
+    return builder.EmitSystemTfCallExpr(
+        SystemTfOpcode::kFscanf, {*desc_result, *format_result}, expr.type,
+        std::move(writebacks));
+  }
+
   // $system -> SystemCmdRvalueInfo (side-effecting shell command)
   if (const auto* system_cmd = std::get_if<hir::SystemCmdData>(&data)) {
     Context& ctx = builder.GetContext();

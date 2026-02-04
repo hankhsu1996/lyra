@@ -1,0 +1,192 @@
+feature: file_io
+description: Tests for $fgets line reading system function
+
+cases:
+  - name: basic_line_read
+    description: Read a single line from file
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            string s;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fgets(s, fd);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "Hello\nWorld\n"
+    expect:
+      variables:
+        count: 6
+
+  - name: multiple_lines
+    description: Read multiple lines sequentially
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            string s;
+            int c1, c2, c3;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              c1 = $fgets(s, fd);
+              c2 = $fgets(s, fd);
+              c3 = $fgets(s, fd);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "one\ntwo\nthree\n"
+    expect:
+      variables:
+        c1: 4
+        c2: 4
+        c3: 6
+
+  - name: last_line_no_newline
+    description: Last line without trailing newline
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            string s;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fgets(s, fd);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "abc"
+    expect:
+      variables:
+        count: 3
+
+  - name: eof_returns_zero
+    description: EOF at start returns 0
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            string s;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              count = $fgets(s, fd);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: ""
+    expect:
+      variables:
+        count: 0
+
+  - name: read_past_eof
+    description: Second read after content returns 0
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            string s;
+            int c1, c2;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              c1 = $fgets(s, fd);
+              c2 = $fgets(s, fd);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "abc"
+    expect:
+      variables:
+        c1: 3
+        c2: 0
+
+  - name: invalid_fd_returns_zero
+    description: Invalid fd returns 0
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            string s;
+            int count;
+            initial begin
+              count = $fgets(s, 0);
+            end
+          endmodule
+    expect:
+      variables:
+        count: 0
+
+  - name: closed_fd_returns_zero
+    description: Closed fd returns 0
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            string s;
+            int count;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              $fclose(fd);
+              count = $fgets(s, fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "abc"
+    expect:
+      variables:
+        count: 0
+
+  - name: mcd_rejected
+    description: MCD descriptor returns 0 (MCD is write-only)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int mcd;
+            string s;
+            int count;
+            initial begin
+              mcd = $fopen("test.txt");
+              count = $fgets(s, mcd);
+              $fclose(mcd);
+            end
+          endmodule
+    expect:
+      variables:
+        count: 0
+
+  - name: ungetc_integration
+    description: Pushed character appears first in fgets result
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            string s;
+            int count, r;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              r = $ungetc(72, fd);  // 'H' = 72
+              count = $fgets(s, fd);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "ello"
+    expect:
+      variables:
+        count: 5

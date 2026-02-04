@@ -1,0 +1,287 @@
+feature: file_io
+description: Tests for $fread binary file reading system function
+
+cases:
+  - name: integral_32bit_ascii
+    description: Read 4 ASCII bytes into 32-bit integral (big-endian)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [31:0] val;
+            int bytes_read;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              bytes_read = $fread(val, fd);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "ABCD"
+    expect:
+      variables:
+        bytes_read: 4
+        val: 0x41424344
+
+  - name: integral_8bit_ascii
+    description: Read 1 ASCII byte into 8-bit variable
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [7:0] val;
+            int bytes_read;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              bytes_read = $fread(val, fd);
+              $fclose(fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "X"
+    expect:
+      variables:
+        bytes_read: 1
+        val: 0x58
+
+  - name: memory_8bit_elements
+    description: Read ASCII into 8-bit memory (1 byte per element)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [7:0] mem [0:2];
+            int bytes_read;
+            logic [7:0] m0, m1, m2;
+            initial begin
+              // Initialize array elements first
+              mem[0] = 8'h00;
+              mem[1] = 8'h00;
+              mem[2] = 8'h00;
+              fd = $fopen("data.txt", "r");
+              bytes_read = $fread(mem, fd);
+              $fclose(fd);
+              m0 = mem[0];
+              m1 = mem[1];
+              m2 = mem[2];
+            end
+          endmodule
+      - name: data.txt
+        content: "abc"
+    expect:
+      variables:
+        bytes_read: 3
+        m0: 0x61
+        m1: 0x62
+        m2: 0x63
+
+  - name: memory_32bit_elements
+    description: Read ASCII into 32-bit memory (4 bytes per element, big-endian)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [31:0] mem [0:1];
+            int bytes_read;
+            logic [31:0] m0, m1;
+            initial begin
+              // Initialize array elements first
+              mem[0] = 32'h00000000;
+              mem[1] = 32'h00000000;
+              fd = $fopen("data.txt", "r");
+              bytes_read = $fread(mem, fd);
+              $fclose(fd);
+              m0 = mem[0];
+              m1 = mem[1];
+            end
+          endmodule
+      - name: data.txt
+        content: "ABCDEFGH"
+    expect:
+      variables:
+        bytes_read: 8
+        m0: 0x41424344
+        m1: 0x45464748
+
+  - name: memory_with_start
+    description: Read with explicit start index
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [7:0] mem [0:3];
+            int bytes_read;
+            logic [7:0] m0, m1, m2, m3;
+            initial begin
+              mem[0] = 8'hFF;
+              mem[1] = 8'hFF;
+              fd = $fopen("data.txt", "r");
+              bytes_read = $fread(mem, fd, 2);
+              $fclose(fd);
+              m0 = mem[0];
+              m1 = mem[1];
+              m2 = mem[2];
+              m3 = mem[3];
+            end
+          endmodule
+      - name: data.txt
+        content: "xy"
+    expect:
+      variables:
+        bytes_read: 2
+        m0: 0xFF
+        m1: 0xFF
+        m2: 0x78
+        m3: 0x79
+
+  - name: memory_with_count
+    description: Read with count limit
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [7:0] mem [0:4];
+            int bytes_read;
+            logic [7:0] m0, m1, m2, m3, m4;
+            initial begin
+              mem[2] = 8'hFF;
+              mem[3] = 8'hFF;
+              mem[4] = 8'hFF;
+              fd = $fopen("data.txt", "r");
+              bytes_read = $fread(mem, fd, 0, 2);
+              $fclose(fd);
+              m0 = mem[0];
+              m1 = mem[1];
+              m2 = mem[2];
+              m3 = mem[3];
+              m4 = mem[4];
+            end
+          endmodule
+      - name: data.txt
+        content: "abcde"
+    expect:
+      variables:
+        bytes_read: 2
+        m0: 0x61
+        m1: 0x62
+        m2: 0xFF
+        m3: 0xFF
+        m4: 0xFF
+
+  - name: partial_element_stops
+    description: Partial element not written (element boundary policy)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [31:0] mem [0:1];
+            int bytes_read;
+            logic [31:0] m0, m1;
+            initial begin
+              mem[0] = 32'hFFFFFFFF;
+              mem[1] = 32'hFFFFFFFF;
+              fd = $fopen("data.txt", "r");
+              bytes_read = $fread(mem, fd);
+              $fclose(fd);
+              m0 = mem[0];
+              m1 = mem[1];
+            end
+          endmodule
+      - name: data.txt
+        content: "ABCDE"
+    expect:
+      variables:
+        bytes_read: 4
+        m0: 0x41424344
+        m1: 0xFFFFFFFF
+
+  - name: memory_9bit_golden
+    description: "Golden test for 9-bit memory (2 bytes per element, non-multiple-of-8)"
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [8:0] mem [0:1];
+            int bytes_read;
+            int m0, m1;
+            initial begin
+              mem[0] = 9'h000;
+              mem[1] = 9'h000;
+              fd = $fopen("data.txt", "r");
+              bytes_read = $fread(mem, fd);
+              $fclose(fd);
+              m0 = int'(mem[0]);
+              m1 = int'(mem[1]);
+            end
+          endmodule
+      - name: data.txt
+        content: "AaBb"
+    expect:
+      variables:
+        bytes_read: 4
+        m0: 353
+        m1: 98
+
+  - name: invalid_fd_returns_zero
+    description: Invalid fd returns 0
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            logic [31:0] val;
+            int bytes_read;
+            initial begin
+              bytes_read = $fread(val, 0);
+            end
+          endmodule
+    expect:
+      variables:
+        bytes_read: 0
+
+  - name: closed_fd_returns_zero
+    description: Closed fd returns 0
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [31:0] val;
+            int bytes_read;
+            initial begin
+              fd = $fopen("data.txt", "r");
+              $fclose(fd);
+              bytes_read = $fread(val, fd);
+            end
+          endmodule
+      - name: data.txt
+        content: "ABCD"
+    expect:
+      variables:
+        bytes_read: 0
+
+  - name: mcd_rejected
+    description: MCD descriptor returns 0 (MCD is write-only)
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int mcd;
+            logic [31:0] val;
+            int bytes_read;
+            initial begin
+              mcd = $fopen("test.txt");
+              bytes_read = $fread(val, mcd);
+              $fclose(mcd);
+            end
+          endmodule
+    expect:
+      variables:
+        bytes_read: 0

@@ -49,24 +49,47 @@ struct CallReturn {
   TypeId type;                  // Return type
 };
 
-// Writeback binding: stages an output parameter through explicit temp.
+// How the backend handles data flow for a writeback parameter.
+enum class WritebackKind : uint8_t {
+  // Default: call writes to tmp staging area, then backend commits tmp->dest.
+  // Used for most system TFs ($value$plusargs, $fgets, $fscanf).
+  kStaged,
+
+  // Runtime writes directly to dest via raw pointer; no tmp alloca, no commit.
+  // Used for bulk memory operations ($fread memory variant) where staging
+  // through tmp would be wasteful and the operation follows the $readmemh
+  // pattern of direct backing-store mutation.
+  kDirectToDest,
+};
+
+// Writeback binding: routes an output parameter to its destination.
 //
-// Contract:
-// - tmp: MIR-visible PlaceId where call writes output (staging)
+// Two modes controlled by WritebackKind:
+//
+// STAGED (default):
+//   Call writes to tmp (via out-param pointer).
+//   After call: CommitValue(dest, Load(tmp), type, kMove).
+//   Backend allocates tmp as local storage.
+//   Invariant: tmp.has_value() == true.
+//
+// DIRECT-TO-DEST:
+//   Runtime receives dest pointer directly and writes in-place.
+//   No tmp is allocated; no commit step.
+//   Follows the bulk-write pattern used by $readmemh/$writemem.
+//   Invariant: tmp == std::nullopt.
+//
+// Common fields:
 // - dest: final destination Place for the output
 // - type: output type for dispatch and ownership handling
 // - mode: Out or InOut (Ref fails loud)
 // - arg_index: formal parameter index (for ordering and debugging)
-//
-// Execution flow:
-// 1. Call writes to tmp (via out-param pointer)
-// 2. After call: CommitValue(dest, Load(tmp), type, kMove)
 struct CallWriteback {
-  PlaceId tmp;                     // Staging temp (MIR-visible, preallocated)
+  std::optional<PlaceId> tmp;      // Staging temp (nullopt for kDirectToDest)
   PlaceId dest;                    // Final destination
   TypeId type;                     // Output type
   PassMode mode = PassMode::kOut;  // Out or InOut
-  int32_t arg_index = 0;           // Formal param index (for commit ordering)
+  WritebackKind kind = WritebackKind::kStaged;  // Staging vs direct write
+  int32_t arg_index = 0;  // Formal param index (for commit ordering)
 };
 
 }  // namespace lyra::mir
