@@ -15,7 +15,7 @@ cases:
       time: 0
       stdout:
         contains:
-          - "Time scale of (Test) is 1ps / 1ps"
+          - "Time scale of 'Test' is 1ps / 1ps"
 
   # Explicit timescale 1ns / 1ps
   - name: printtimescale_1ns_1ps
@@ -31,7 +31,7 @@ cases:
       time: 0
       stdout:
         contains:
-          - "Time scale of (Test) is 1ns / 1ps"
+          - "Time scale of 'Test' is 1ns / 1ps"
 
   # Explicit timescale 1ms / 1us
   - name: printtimescale_1ms_1us
@@ -47,7 +47,7 @@ cases:
       time: 0
       stdout:
         contains:
-          - "Time scale of (Test) is 1ms / 1us"
+          - "Time scale of 'Test' is 1ms / 1us"
 
   # Explicit timescale 10ns / 1ns
   - name: printtimescale_10ns_1ns
@@ -63,7 +63,7 @@ cases:
       time: 0
       stdout:
         contains:
-          - "Time scale of (Test) is 10ns / 1ns"
+          - "Time scale of 'Test' is 10ns / 1ns"
 
   # Explicit timescale 100ps / 1ps
   - name: printtimescale_100ps_1ps
@@ -79,7 +79,7 @@ cases:
       time: 0
       stdout:
         contains:
-          - "Time scale of (Test) is 100ps / 1ps"
+          - "Time scale of 'Test' is 100ps / 1ps"
 
   # $printtimescale($root) - prints global precision
   # Global precision is 1ps (finest precision, default)
@@ -95,7 +95,7 @@ cases:
       time: 0
       stdout:
         contains:
-          - "Time scale of ($root) is 1ps / 1ps"
+          - "Time scale of '$root' is 1ps / 1ps"
 
   # $printtimescale($root) with explicit timescale
   # Global precision should be 1ns (the timeprecision)
@@ -112,7 +112,7 @@ cases:
       time: 0
       stdout:
         contains:
-          - "Time scale of ($root) is 1ns / 1ns"
+          - "Time scale of '$root' is 1ns / 1ns"
 
   # Both $printtimescale() and $printtimescale($root) in same module
   - name: printtimescale_both
@@ -129,8 +129,8 @@ cases:
       time: 0
       stdout:
         contains:
-          - "Time scale of (Test) is 1us / 1ns"
-          - "Time scale of ($root) is 1ns / 1ns"
+          - "Time scale of 'Test' is 1us / 1ns"
+          - "Time scale of '$root' is 1ns / 1ns"
 
   # Different module name
   - name: printtimescale_different_module_name
@@ -146,4 +146,73 @@ cases:
       time: 0
       stdout:
         contains:
-          - "Time scale of (MyDut) is 1ns / 1ps"
+          - "Time scale of 'MyDut' is 1ns / 1ps"
+
+  # $printtimescale($unit) - compilation unit timescale
+  # Uses timeunit/timeprecision statements at compilation unit scope
+  - name: printtimescale_unit
+    description: $printtimescale($unit) prints compilation unit timescale
+    sv: |
+      timeunit 1us;
+      timeprecision 1ns;
+      module Test;
+        initial begin
+          $printtimescale($unit);
+        end
+      endmodule
+    expect:
+      time: 0
+      stdout:
+        contains:
+          - "Time scale of '$unit' is 1us / 1ns"
+
+  # $printtimescale(instance) - hierarchical path
+  - name: printtimescale_hier_path
+    description: $printtimescale(instance) prints instance's timescale
+    sv: |
+      `timescale 1ns / 1ps
+      module Inner;
+      endmodule
+
+      `timescale 1us / 1ns
+      module Test;
+        Inner inner_inst();
+        initial begin
+          $printtimescale(inner_inst);
+        end
+      endmodule
+    expect:
+      time: 0
+      stdout:
+        contains:
+          - "Time scale of 'inner_inst' is 1ns / 1ps"
+
+  # All four $printtimescale variants together
+  - name: printtimescale_all_variants
+    description: All $printtimescale variants in hierarchical design
+    sv: |
+      timeunit 1ms;
+      timeprecision 1us;
+
+      `timescale 1ns / 1ps
+      module Inner;
+      endmodule
+
+      `timescale 1us / 1ns
+      module Test;
+        Inner inner_inst();
+        initial begin
+          $printtimescale();
+          $printtimescale($root);
+          $printtimescale($unit);
+          $printtimescale(inner_inst);
+        end
+      endmodule
+    expect:
+      time: 0
+      stdout:
+        contains:
+          - "Time scale of 'Test' is 1us / 1ns"
+          - "Time scale of '$root' is 1ps / 1ps"
+          - "Time scale of '$unit' is 1ms / 1us"
+          - "Time scale of 'inner_inst' is 1ns / 1ps"

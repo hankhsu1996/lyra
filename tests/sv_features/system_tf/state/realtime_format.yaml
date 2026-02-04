@@ -1,0 +1,72 @@
+feature: realtime_time_format
+description: Tests for $realtime with %t format specifier
+
+cases:
+  - name: realtime_percent_t_basic
+    description: Basic %t formatting of $realtime
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          $timeformat(-9, 0, " ns", 10);
+          #10;
+          $display("Time: %t", $realtime);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["10 ns"]
+
+  - name: realtime_percent_t_multi_timescale
+    description: "%t with $realtime across different timescales (original crash case)"
+    sv: |
+      `timescale 1ns / 1ps
+      module Inner;
+        initial begin
+          #5000;
+          $display("Inner: %t", $realtime);
+        end
+      endmodule
+
+      `timescale 1us / 1ns
+      module Test;
+        Inner inner_inst();
+        initial begin
+          $timeformat(-9, 0, " ns", 10);
+          #2;
+          $display("Test: %t", $realtime);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["Inner:", "Test:"]
+
+  - name: realtime_percent_t_timescale_conversion
+    description: "$realtime returns correctly scaled time with %t"
+    sv: |
+      `timescale 1us / 1ns
+      module Test;
+        initial begin
+          $timeformat(-6, 0, " us", 10);
+          #5;
+          $display("After 5us: %t", $realtime);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["5 us"]
+
+  - name: realtime_percent_t_mixed
+    description: "Both $time and $realtime with %t in same display"
+    sv: |
+      `timescale 1ns / 1ps
+      module Test;
+        initial begin
+          $timeformat(-9, 0, " ns", 10);
+          #100;
+          $display("time=%t realtime=%t", $time, $realtime);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains: ["time=", "realtime=", "100 ns"]

@@ -192,9 +192,7 @@ Supported:
 - `$finish`, `$stop`, `$exit` - simulation control
 - `$time`, `$stime`, `$realtime` - simulation time (with timescale scaling)
 - `$timeformat` - configure `%t` output format
-- `$timeunit`, `$timeprecision` - query module timescale
-- `$timeunit($root)`, `$timeprecision($root)` - query global precision
-- `$printtimescale`, `$printtimescale($root)` - print timescale info
+- `$timeunit`, `$timeprecision`, `$printtimescale` - timescale queries
 - `$readmemh`, `$readmemb`, `$writememh`, `$writememb` - memory file I/O (2-state only)
 - `$fopen`, `$fclose`, `$fflush` - file I/O (MCD and FD modes)
 - `$fdisplay`, `$fdisplayb`, `$fdisplayo`, `$fdisplayh` - file output with newline
@@ -220,9 +218,6 @@ Not yet supported:
 - `$sscanf` - string scanning
 - `$fseek`, `$ftell`, `$rewind`, `$feof`, `$ferror` - file positioning and status
 - VCD tasks (21.7): `$dumpfile`, `$dumpvars`, `$dumpoff`, `$dumpon`, `$dumpall`, `$dumplimit`, `$dumpflush`, `$dumpports*`
-- `$printtimescale(path)` - hierarchical path variant (requires hierarchy)
-- `$timeunit(path)`, `$timeprecision(path)` - hierarchical path variants (requires hierarchy)
-- `$timeunit($unit)`, `$timeprecision($unit)` - compilation unit variants
 - `$cast` - dynamic type casting
 - Bit vector functions (20.9): `$countbits`, `$countones`, `$onehot`, `$onehot0`, `$isunknown`
 - Assertion control tasks (20.11): `$asserton`, `$assertoff`, `$assertkill`, `$assertcontrol`, `$assertpasson`, `$assertpassoff`, `$assertfailon`, `$assertfailoff`, `$assertnonvacuouson`, `$assertvacuousoff`
@@ -239,12 +234,11 @@ Supported:
 
 - `` `timescale `` directive with delay scaling
 - Per-module time unit and precision
+- `timeunit` / `timeprecision` statements (module scope and compilation unit scope)
+- Hierarchical designs with different timescales per instance
 
 Not yet supported:
 
-- `timeunit` / `timeprecision` statements (alternative to directive)
-- Hierarchical designs with different timescales per instance
-- `$unit` compilation unit timescale
 - Real number delays (e.g., `#1.5`)
 
 ## Scheduling Regions

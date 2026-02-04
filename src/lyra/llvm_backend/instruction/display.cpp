@@ -18,6 +18,7 @@
 #include "lyra/common/severity.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
+#include "lyra/llvm_backend/compute/cast.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
@@ -187,12 +188,11 @@ auto LowerTimeOp(Context& context, const mir::FormatOp& op) -> Result<void> {
   if (op.value.has_value()) {
     auto value_or_err = LowerOperand(context, *op.value);
     if (!value_or_err) return std::unexpected(value_or_err.error());
-    llvm::Value* value = *value_or_err;
+    // %t MUST convert via LowerTimeToTicks64 - handles both int and real types,
+    // enforces ticks64 invariant. No direct getIntegerBitWidth() assumptions.
+    llvm::Value* ticks = LowerTimeToTicks64(context, *value_or_err);
     auto* alloca = builder.CreateAlloca(i64_ty);
-    if (value->getType()->getIntegerBitWidth() < 64) {
-      value = builder.CreateZExt(value, i64_ty);
-    }
-    builder.CreateStore(value, alloca);
+    builder.CreateStore(ticks, alloca);
     data_ptr = alloca;
   } else {
     data_ptr = null_ptr;

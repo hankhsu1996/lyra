@@ -16,6 +16,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
+#include "lyra/llvm_backend/compute/cast.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/emit_string_conv.hpp"
@@ -144,6 +145,36 @@ auto LowerFormatOpToBuffer(
             return {};
           });
     }
+    return {};
+  }
+
+  // %t special case: MUST use LowerTimeToTicks64 to handle both int and real
+  // operands. No direct getIntegerBitWidth() assumptions allowed for time
+  // formatting.
+  if (op.kind == FormatKind::kTime && op.value.has_value()) {
+    auto value_or_err = LowerOperand(context, *op.value);
+    if (!value_or_err) return std::unexpected(value_or_err.error());
+
+    llvm::Value* ticks = LowerTimeToTicks64(context, *value_or_err);
+    auto* alloca = builder.CreateAlloca(i64_ty);
+    builder.CreateStore(ticks, alloca);
+
+    // Note: value_kind is ignored by runtime for FormatKind::kTime (dispatch on
+    // format kind takes precedence in FormatRuntimeValue). Passing kIntegral is
+    // safe.
+    builder.CreateCall(
+        context.GetLyraStringFormatValue(),
+        {buf, llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind)),
+         llvm::ConstantInt::get(
+             i32_ty,
+             static_cast<int32_t>(runtime::RuntimeValueKind::kIntegral)),
+         alloca, llvm::ConstantInt::get(i32_ty, 64),
+         llvm::ConstantInt::get(i1_ty, 0),
+         llvm::ConstantInt::get(i32_ty, op.mods.width.value_or(-1)),
+         llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1)),
+         llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0),
+         llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0), null_ptr,
+         null_ptr});
     return {};
   }
 

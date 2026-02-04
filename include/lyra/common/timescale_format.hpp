@@ -66,12 +66,12 @@ inline auto PowerToString(int power) -> std::string {
 }
 
 /// Format a timescale message for $printtimescale output.
-/// Returns: "Time scale of (<scope_name>) is <unit> / <prec>" (no newline)
+/// Returns: "Time scale of '<scope_name>' is <unit> / <prec>" (no newline)
 inline auto FormatTimescale(
     std::string_view scope_name, int unit_power, int prec_power)
     -> std::string {
   return std::format(
-      "Time scale of ({}) is {} / {}", scope_name, PowerToString(unit_power),
+      "Time scale of '{}' is {} / {}", scope_name, PowerToString(unit_power),
       PowerToString(prec_power));
 }
 

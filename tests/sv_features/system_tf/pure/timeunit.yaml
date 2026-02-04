@@ -405,3 +405,84 @@ cases:
       stdout:
         contains:
           - "unit=-12, prec=-12"
+
+  # Hierarchical path argument tests - query timescale of specific instance
+
+  - name: timeunit_hier_path
+    description: $timeunit(instance) returns that instance's time unit
+    sv: |
+      `timescale 1ns / 1ps
+      module Inner;
+      endmodule
+
+      `timescale 1us / 1ns
+      module Test;
+        Inner inner_inst();
+        int u;
+        initial begin
+          u = $timeunit(inner_inst);
+        end
+      endmodule
+    expect:
+      variables:
+        u: -9
+
+  - name: timeprecision_hier_path
+    description: $timeprecision(instance) returns that instance's precision
+    sv: |
+      `timescale 1ns / 1ps
+      module Inner;
+      endmodule
+
+      `timescale 1us / 1ns
+      module Test;
+        Inner inner_inst();
+        int p;
+        initial begin
+          p = $timeprecision(inner_inst);
+        end
+      endmodule
+    expect:
+      variables:
+        p: -12
+
+  - name: timeunit_hier_path_display
+    description: $timeunit and $timeprecision with hierarchical path in $display
+    sv: |
+      `timescale 10ns / 100ps
+      module Child;
+      endmodule
+
+      `timescale 1ms / 1us
+      module Test;
+        Child child_inst();
+        initial begin
+          $display("child unit=%0d, child prec=%0d", $timeunit(child_inst), $timeprecision(child_inst));
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "child unit=-8, child prec=-10"
+
+  - name: timeunit_hier_vs_local
+    description: Hierarchical path returns different timescale than local module
+    sv: |
+      `timescale 1ps / 1ps
+      module Inner;
+      endmodule
+
+      `timescale 1us / 1ns
+      module Test;
+        Inner inner_inst();
+        int local_u;
+        int inner_u;
+        initial begin
+          local_u = $timeunit;
+          inner_u = $timeunit(inner_inst);
+        end
+      endmodule
+    expect:
+      variables:
+        local_u: -6
+        inner_u: -12
