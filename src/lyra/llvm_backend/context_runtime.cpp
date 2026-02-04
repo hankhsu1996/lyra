@@ -1035,4 +1035,39 @@ auto Context::GetLyraUngetc() -> llvm::Function* {
   return lyra_ungetc_;
 }
 
+auto Context::GetLyraFgets() -> llvm::Function* {
+  if (lyra_fgets_ == nullptr) {
+    // int32_t LyraFgets(ptr engine, int32_t descriptor, ptr str_out)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type =
+        llvm::FunctionType::get(i32_ty, {ptr_ty, i32_ty, ptr_ty}, false);
+    lyra_fgets_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFgets",
+        llvm_module_.get());
+  }
+  return lyra_fgets_;
+}
+
+auto Context::GetLyraFread() -> llvm::Function* {
+  if (lyra_fread_ == nullptr) {
+    // int32_t LyraFread(ptr engine, int32_t descriptor, ptr target,
+    //                   int32_t element_width, int32_t stride_bytes,
+    //                   int32_t is_memory, int64_t start_index,
+    //                   int64_t max_count, int64_t element_count)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        i32_ty,
+        {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty,
+         i64_ty},
+        false);
+    lyra_fread_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraFread",
+        llvm_module_.get());
+  }
+  return lyra_fread_;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

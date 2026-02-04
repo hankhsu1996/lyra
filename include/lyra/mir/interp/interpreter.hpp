@@ -262,6 +262,12 @@ class Interpreter {
   auto ExecValuePlusargsCall(ProcessState& state, const Call& call)
       -> Result<void>;
 
+  // Execute $fgets via unified Call
+  auto ExecFgetsCall(ProcessState& state, const Call& call) -> Result<void>;
+
+  // Execute $fread via unified Call
+  auto ExecFreadCall(ProcessState& state, const Call& call) -> Result<void>;
+
   // Helper to commit $value$plusargs results with staging
   auto CommitValuePlusargsResult(
       ProcessState& state, const Call& call, RuntimeValue success,

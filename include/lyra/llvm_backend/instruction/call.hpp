@@ -22,4 +22,12 @@ auto LowerCall(Context& context, const mir::Call& call) -> Result<void>;
 auto LowerValuePlusargsCall(Context& context, const mir::Call& call)
     -> Result<void>;
 
+// Lower $fgets via unified Call.
+// Exposed for testing and internal use.
+auto LowerFgetsCall(Context& context, const mir::Call& call) -> Result<void>;
+
+// Lower $fread via unified Call.
+// Exposed for testing and internal use.
+auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void>;
+
 }  // namespace lyra::lowering::mir_to_llvm

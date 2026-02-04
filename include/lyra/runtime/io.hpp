@@ -77,6 +77,13 @@ auto LyraFgetc(void* engine, int32_t descriptor) -> int32_t;
 // c == -1 returns -1. Only one character of pushback guaranteed.
 auto LyraUngetc(void* engine, int32_t character, int32_t descriptor) -> int32_t;
 
+// $fgets - read line from file into string
+// Returns number of characters read on success, 0 on error/EOF.
+// Reads until: newline (included), EOF, or I/O error.
+// str_out: pointer to LyraStringHandle that will be set to the result string.
+auto LyraFgets(void* engine, int32_t descriptor, LyraStringHandle* str_out)
+    -> int32_t;
+
 // Write formatted message to file descriptor(s).
 // - engine: pointer to Engine (for FileManager access)
 // - descriptor: MCD or FD descriptor (0 = no-op, silently ignored)
@@ -124,4 +131,22 @@ void LyraWritemem(
 // - engine: pointer to Engine (for instance path lookup)
 // - instance_id: index into instance_paths (from process's owner_instance_id)
 void LyraPrintModulePath(void* engine, uint32_t instance_id);
+
+// $fread - read binary data from file
+// - engine: pointer to Engine (for FileManager access)
+// - descriptor: file descriptor (MCD returns 0 - write-only)
+// - target: pointer to storage (single integral or array start)
+// - element_width: bit width of each element (must be > 0)
+// - stride_bytes: bytes between consecutive elements (from LLVM DataLayout)
+// - is_memory: 1 = memory variant (array), 0 = integral variant
+// - start_index: starting array index (-1 = use lowest declared index)
+// - max_count: maximum elements to read (-1 = read until array full or EOF)
+// - element_count: total array size (for bounds checking)
+// Returns: number of bytes read on success, 0 on error.
+// Data is read big-endian: first byte fills MSB of each element.
+// Partial elements are not written (stops at element boundary).
+auto LyraFread(
+    void* engine, int32_t descriptor, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t is_memory, int64_t start_index,
+    int64_t max_count, int64_t element_count) -> int32_t;
 }

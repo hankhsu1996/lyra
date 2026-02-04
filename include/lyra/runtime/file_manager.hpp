@@ -71,6 +71,18 @@ class FileManager {
   // guaranteed. MCD descriptors always return -1.
   auto Ungetc(int32_t character, int32_t descriptor) -> int32_t;
 
+  // Read line from file into string. Returns number of characters read on
+  // success, 0 on error/EOF. Reads until: str capacity filled, newline
+  // (included in result), or EOF. MCD descriptors always return 0.
+  auto Fgets(int32_t descriptor, std::string& out) -> int32_t;
+
+  // Read binary data from file. Returns number of bytes read on success,
+  // 0 on error. MCD descriptors always return 0.
+  // max_bytes: maximum number of bytes to read
+  // out: output buffer (must be at least max_bytes in size)
+  auto FreadBytes(int32_t descriptor, uint8_t* out, size_t max_bytes)
+      -> int32_t;
+
   // Decode descriptor and collect target output streams.
   // MCD bit 0 = stdout; bits 1-30 = MCD channels; bit 31 = FD mode.
   auto CollectStreams(uint32_t descriptor) -> StreamTargets;

@@ -35,6 +35,14 @@ auto LowerSystemTfRvalue(
       throw common::InternalError(
           "LowerSystemTfRvalue",
           "$value$plusargs should be lowered via Call, not SystemTfRvalueInfo");
+    case SystemTfOpcode::kFgets:
+      throw common::InternalError(
+          "LowerSystemTfRvalue",
+          "$fgets should be lowered via Call, not SystemTfRvalueInfo");
+    case SystemTfOpcode::kFread:
+      throw common::InternalError(
+          "LowerSystemTfRvalue",
+          "$fread should be lowered via Call, not SystemTfRvalueInfo");
     case SystemTfOpcode::kRandom: {
       auto& builder = context.GetBuilder();
       llvm::Value* result = builder.CreateCall(
@@ -125,6 +133,14 @@ auto LowerSystemTfEffect(Context& context, const mir::SystemTfEffect& effect)
       throw common::InternalError(
           "LowerSystemTfEffect",
           "$value$plusargs should be lowered via Call, not SystemTfEffect");
+    case SystemTfOpcode::kFgets:
+      throw common::InternalError(
+          "LowerSystemTfEffect",
+          "$fgets should be lowered via Call, not SystemTfEffect");
+    case SystemTfOpcode::kFread:
+      throw common::InternalError(
+          "LowerSystemTfEffect",
+          "$fread should be lowered via Call, not SystemTfEffect");
     case SystemTfOpcode::kRandom:
       throw common::InternalError(
           "LowerSystemTfEffect", "$random is an rvalue, not an effect");

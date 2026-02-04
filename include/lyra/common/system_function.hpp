@@ -67,8 +67,17 @@ struct TimeFunctionInfo {
   TimeKind kind;
 };
 
-// File I/O functions ($fopen, $fclose, $fflush, $fgetc, $ungetc)
-enum class FileIoKind : uint8_t { kOpen, kClose, kFlush, kGetc, kUngetc };
+// File I/O functions ($fopen, $fclose, $fflush, $fgetc, $ungetc, $fgets,
+// $fread)
+enum class FileIoKind : uint8_t {
+  kOpen,
+  kClose,
+  kFlush,
+  kGetc,
+  kUngetc,
+  kGets,
+  kRead
+};
 struct FileIoFunctionInfo {
   FileIoKind kind;
 };
@@ -217,6 +226,8 @@ inline constexpr std::array kSystemFunctions = std::to_array<SystemFunctionInfo>
   {.name = "$fflush", .min_args = 0, .max_args = 1, .payload = FileIoFunctionInfo{.kind = FileIoKind::kFlush}},
   {.name = "$fgetc",  .min_args = 1, .max_args = 1, .payload = FileIoFunctionInfo{.kind = FileIoKind::kGetc}},
   {.name = "$ungetc", .min_args = 2, .max_args = 2, .payload = FileIoFunctionInfo{.kind = FileIoKind::kUngetc}},
+  {.name = "$fgets",  .min_args = 2, .max_args = 2, .payload = FileIoFunctionInfo{.kind = FileIoKind::kGets}},
+  {.name = "$fread",  .min_args = 2, .max_args = 4, .payload = FileIoFunctionInfo{.kind = FileIoKind::kRead}},
 
   // Memory file I/O
   {.name = "$readmemh",  .min_args = 2, .max_args = 4, .payload = MemIoFunctionInfo{.kind = MemIoKind::kReadMemH}},

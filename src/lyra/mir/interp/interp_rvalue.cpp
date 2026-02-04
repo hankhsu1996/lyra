@@ -339,6 +339,16 @@ auto Interpreter::EvalRvalue(
                 int32_t result = file_manager_.Ungetc(ch, desc);
                 return MakeIntegralSigned(result, 32);
               }
+              case SystemTfOpcode::kFgets:
+                throw common::InternalError(
+                    "EvalRvalue:SystemTf",
+                    "$fgets should be lowered via Call, not "
+                    "SystemTfRvalueInfo");
+              case SystemTfOpcode::kFread:
+                throw common::InternalError(
+                    "EvalRvalue:SystemTf",
+                    "$fread should be lowered via Call, not "
+                    "SystemTfRvalueInfo");
             }
             throw common::InternalError(
                 "EvalRvalue:SystemTf", "unhandled SystemTfOpcode");

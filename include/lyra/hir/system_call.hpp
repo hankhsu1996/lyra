@@ -110,6 +110,24 @@ struct UngetcData {
   auto operator==(const UngetcData&) const -> bool = default;
 };
 
+struct FgetsData {
+  ExpressionId str_output;  // The string lvalue to write into
+  ExpressionId descriptor;
+
+  auto operator==(const FgetsData&) const -> bool = default;
+};
+
+struct FreadData {
+  ExpressionId target;                // The lvalue to write into
+  ExpressionId descriptor;            // File descriptor
+  std::optional<ExpressionId> start;  // Start index (for memory only)
+  std::optional<ExpressionId> count;  // Count (for memory only)
+  bool is_memory;                     // true = memory, false = integral
+  TypeId target_type;                 // For element width extraction
+
+  auto operator==(const FreadData&) const -> bool = default;
+};
+
 struct RuntimeQueryData {
   RuntimeQueryKind kind;
 
@@ -172,8 +190,8 @@ struct SystemCmdData {
 using SystemCallExpressionData = std::variant<
     DisplaySystemCallData, SeveritySystemCallData, SFormatSystemCallData,
     TestPlusargsData, ValuePlusargsData, MemIOData, FopenData, FcloseData,
-    FflushData, FgetcData, UngetcData, RuntimeQueryData, TimeFormatData,
-    MonitorSystemCallData, MonitorControlData, RandomData, ArrayQueryData,
-    SystemCmdData>;
+    FflushData, FgetcData, UngetcData, FgetsData, FreadData, RuntimeQueryData,
+    TimeFormatData, MonitorSystemCallData, MonitorControlData, RandomData,
+    ArrayQueryData, SystemCmdData>;
 
 }  // namespace lyra::hir

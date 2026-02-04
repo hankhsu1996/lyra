@@ -661,6 +661,20 @@ auto Interpreter::ExecSystemTfEffect(
     case SystemTfOpcode::kUrandom:
       throw common::InternalError(
           "ExecSystemTfEffect", "$urandom is an rvalue, not an effect");
+    case SystemTfOpcode::kFgetc:
+      throw common::InternalError(
+          "ExecSystemTfEffect", "$fgetc is an rvalue, not an effect");
+    case SystemTfOpcode::kUngetc:
+      throw common::InternalError(
+          "ExecSystemTfEffect", "$ungetc is an rvalue, not an effect");
+    case SystemTfOpcode::kFgets:
+      throw common::InternalError(
+          "ExecSystemTfEffect",
+          "$fgets should be lowered via Call, not SystemTfEffect");
+    case SystemTfOpcode::kFread:
+      throw common::InternalError(
+          "ExecSystemTfEffect",
+          "$fread should be lowered via Call, not SystemTfEffect");
   }
   throw common::InternalError("ExecSystemTfEffect", "unhandled SystemTfOpcode");
 }
@@ -881,6 +895,10 @@ auto Interpreter::ExecSystemTfCall(
   switch (opcode) {
     case SystemTfOpcode::kValuePlusargs:
       return ExecValuePlusargsCall(state, call);
+    case SystemTfOpcode::kFgets:
+      return ExecFgetsCall(state, call);
+    case SystemTfOpcode::kFread:
+      return ExecFreadCall(state, call);
     default:
       throw common::InternalError(
           "ExecSystemTfCall", std::format(
@@ -1009,6 +1027,236 @@ auto Interpreter::CommitValuePlusargsResult(
       return std::unexpected(std::move(store_result).error());
     }
     return StoreToPlace(state, output_dest, std::move(*parsed_value));
+  }
+
+  return {};
+}
+
+auto Interpreter::ExecFgetsCall(ProcessState& state, const Call& call)
+    -> Result<void> {
+  // Shape: in_args[0]=descriptor, ret=char_count, writebacks[0]=str_output
+
+  // Evaluate descriptor operand
+  auto desc_val_result = EvalOperand(state, call.in_args[0]);
+  if (!desc_val_result) {
+    return std::unexpected(std::move(desc_val_result).error());
+  }
+  auto& desc_val = *desc_val_result;
+  if (!IsIntegral(desc_val)) {
+    // Invalid descriptor: return 0 (error)
+    RuntimeValue zero = MakeIntegralSigned(0, 32);
+    if (call.ret) {
+      auto store_result = StoreToPlace(state, call.ret->tmp, Clone(zero));
+      if (!store_result) {
+        return std::unexpected(std::move(store_result).error());
+      }
+      if (call.ret->dest.has_value()) {
+        return StoreToPlace(state, *call.ret->dest, std::move(zero));
+      }
+    }
+    return {};
+  }
+
+  const auto& desc_int = AsIntegral(desc_val);
+  auto descriptor =
+      static_cast<int32_t>(desc_int.value.empty() ? 0 : desc_int.value[0]);
+
+  // Call FileManager::Fgets
+  std::string str_out;
+  int32_t count = file_manager_.Fgets(descriptor, str_out);
+
+  // Commit the results
+  // 1. Stage return (count) to tmp, then commit if statement form
+  RuntimeValue count_val = MakeIntegralSigned(count, 32);
+  if (call.ret) {
+    auto store_result = StoreToPlace(state, call.ret->tmp, Clone(count_val));
+    if (!store_result) {
+      return std::unexpected(std::move(store_result).error());
+    }
+    if (call.ret->dest.has_value()) {
+      auto store_dest =
+          StoreToPlace(state, *call.ret->dest, std::move(count_val));
+      if (!store_dest) {
+        return std::unexpected(std::move(store_dest).error());
+      }
+    }
+  }
+
+  // 2. Stage writeback (str_output) to tmp, then commit to dest
+  const auto& wb = call.writebacks[0];
+  RuntimeValue str_val = MakeString(std::move(str_out));
+  auto store_tmp = StoreToPlace(state, wb.tmp, Clone(str_val));
+  if (!store_tmp) {
+    return std::unexpected(std::move(store_tmp).error());
+  }
+  return StoreToPlace(state, wb.dest, std::move(str_val));
+}
+
+auto Interpreter::ExecFreadCall(ProcessState& state, const Call& call)
+    -> Result<void> {
+  // Shape: in_args[0]=descriptor, in_args[1]=element_width,
+  // in_args[2]=is_memory
+  //        in_args[3]=start, in_args[4]=count
+  //        ret=bytes_read, writebacks[0]=target
+
+  // Helper to return error (bytes_read = 0)
+  auto return_error = [&]() -> Result<void> {
+    RuntimeValue zero = MakeIntegralSigned(0, 32);
+    if (call.ret) {
+      auto store_result = StoreToPlace(state, call.ret->tmp, Clone(zero));
+      if (!store_result) {
+        return std::unexpected(std::move(store_result).error());
+      }
+      if (call.ret->dest.has_value()) {
+        return StoreToPlace(state, *call.ret->dest, std::move(zero));
+      }
+    }
+    return {};
+  };
+
+  // Evaluate descriptor
+  auto desc_result = EvalOperand(state, call.in_args[0]);
+  if (!desc_result) return std::unexpected(desc_result.error());
+  if (!IsIntegral(*desc_result)) return return_error();
+  const auto& desc_int = AsIntegral(*desc_result);
+  auto descriptor =
+      static_cast<int32_t>(desc_int.value.empty() ? 0 : desc_int.value[0]);
+
+  // Evaluate element_width (compile-time constant)
+  auto width_result = EvalOperand(state, call.in_args[1]);
+  if (!width_result) return std::unexpected(width_result.error());
+  int32_t element_width =
+      static_cast<int32_t>(AsIntegral(*width_result).value[0]);
+
+  // Evaluate is_memory (compile-time constant)
+  auto is_mem_result = EvalOperand(state, call.in_args[2]);
+  if (!is_mem_result) return std::unexpected(is_mem_result.error());
+  bool is_memory = AsIntegral(*is_mem_result).value[0] != 0;
+
+  // Evaluate start (-1 = not specified)
+  auto start_result = EvalOperand(state, call.in_args[3]);
+  if (!start_result) return std::unexpected(start_result.error());
+  // Sign-extend from 32-bit: cast to int32_t first, then to int64_t
+  int64_t start_index = static_cast<int64_t>(
+      static_cast<int32_t>(AsIntegral(*start_result).value[0]));
+
+  // Evaluate count (-1 = not specified)
+  auto count_result = EvalOperand(state, call.in_args[4]);
+  if (!count_result) return std::unexpected(count_result.error());
+  // Sign-extend from 32-bit: cast to int32_t first, then to int64_t
+  int64_t max_count = static_cast<int64_t>(
+      static_cast<int32_t>(AsIntegral(*count_result).value[0]));
+
+  // Calculate bytes per element (ceil(element_width / 8))
+  size_t bytes_per_elem = (static_cast<size_t>(element_width) + 7) / 8;
+
+  const auto& wb = call.writebacks[0];
+  int32_t total_bytes_read = 0;
+
+  if (!is_memory) {
+    // Integral variant: read bytes_per_elem bytes into a single integral
+    std::vector<uint8_t> buffer(bytes_per_elem);
+    int32_t bytes_read =
+        file_manager_.FreadBytes(descriptor, buffer.data(), bytes_per_elem);
+
+    if (bytes_read > 0) {
+      // Pack big-endian: first byte is MSB
+      // Convert to little-endian word array for MakeIntegralWide
+      size_t num_words = (bytes_per_elem + 7) / 8;
+      std::vector<uint64_t> words(num_words, 0);
+
+      // Big-endian: buffer[0] is MSB of result
+      // We need to place bits correctly: buffer[0] -> highest bits
+      for (int32_t i = 0; i < bytes_read; ++i) {
+        // Byte i of buffer goes to bit position (bytes_per_elem - 1 - i) * 8
+        size_t bit_pos = (bytes_per_elem - 1 - static_cast<size_t>(i)) * 8;
+        size_t word_idx = bit_pos / 64;
+        size_t bit_in_word = bit_pos % 64;
+        if (word_idx < words.size()) {
+          words[word_idx] |=
+              static_cast<uint64_t>(buffer[static_cast<size_t>(i)])
+              << bit_in_word;
+        }
+      }
+
+      RuntimeValue integral_val = MakeIntegralWide(
+          words.data(), words.size(), static_cast<uint32_t>(element_width));
+      total_bytes_read = bytes_read;
+
+      // Stage and commit
+      auto store_tmp = StoreToPlace(state, wb.tmp, Clone(integral_val));
+      if (!store_tmp) return std::unexpected(store_tmp.error());
+      auto store_dest = StoreToPlace(state, wb.dest, std::move(integral_val));
+      if (!store_dest) return std::unexpected(store_dest.error());
+    }
+  } else {
+    // Memory variant: read into array elements
+    auto write_result = WritePlace(state, wb.dest);
+    if (!write_result) return std::unexpected(write_result.error());
+    if (!IsArray(write_result->get())) {
+      return return_error();
+    }
+    auto& arr = AsArray(write_result->get());
+    auto& elements = arr.elements;
+
+    if (elements.empty()) {
+      return return_error();  // Empty array
+    }
+
+    // Determine start and count
+    size_t start_idx = (start_index < 0) ? 0 : static_cast<size_t>(start_index);
+    size_t count =
+        (max_count < 0) ? elements.size() : static_cast<size_t>(max_count);
+
+    // Validate start
+    if (start_idx >= elements.size()) {
+      return return_error();  // OOB start
+    }
+
+    // Limit count to available elements
+    size_t end_idx = std::min(start_idx + count, elements.size());
+
+    std::vector<uint8_t> elem_buffer(bytes_per_elem);
+    for (size_t idx = start_idx; idx < end_idx; ++idx) {
+      // Read bytes for one element
+      int32_t bytes_read = file_manager_.FreadBytes(
+          descriptor, elem_buffer.data(), bytes_per_elem);
+
+      if (static_cast<size_t>(bytes_read) < bytes_per_elem) {
+        // Partial element - stop at element boundary (don't update this elem)
+        break;
+      }
+
+      // Pack big-endian into integral value
+      size_t num_words = (bytes_per_elem + 7) / 8;
+      std::vector<uint64_t> words(num_words, 0);
+
+      for (size_t i = 0; i < bytes_per_elem; ++i) {
+        size_t bit_pos = (bytes_per_elem - 1 - i) * 8;
+        size_t word_idx = bit_pos / 64;
+        size_t bit_in_word = bit_pos % 64;
+        if (word_idx < words.size()) {
+          words[word_idx] |= static_cast<uint64_t>(elem_buffer[i])
+                             << bit_in_word;
+        }
+      }
+
+      elements[idx] = MakeIntegralWide(
+          words.data(), words.size(), static_cast<uint32_t>(element_width));
+      total_bytes_read += bytes_read;
+    }
+    // Note: For memory variant, we write directly to dest via WritePlace.
+    // The tmp staging is not used for in-place array modifications.
+  }
+
+  // Commit return value (bytes_read)
+  RuntimeValue bytes_val = MakeIntegralSigned(total_bytes_read, 32);
+  if (call.ret) {
+    auto store_result = StoreToPlace(state, call.ret->tmp, Clone(bytes_val));
+    if (!store_result) return std::unexpected(store_result.error());
+    if (call.ret->dest.has_value()) {
+      return StoreToPlace(state, *call.ret->dest, std::move(bytes_val));
+    }
   }
 
   return {};

@@ -890,6 +890,80 @@ struct LowerVisitor {
                 .data = hir::SystemCallExpressionData{hir::UngetcData{
                     .character = character, .descriptor = descriptor}}});
       }
+      case FileIoKind::kGets: {
+        // $fgets(str, fd): str is output lvalue, fd is file descriptor
+        hir::ExpressionId str_output =
+            UnwrapOutputArgument(call->arguments()[0], view);
+        if (!str_output) {
+          return hir::kInvalidExpressionId;
+        }
+        hir::ExpressionId descriptor =
+            LowerExpression(*call->arguments()[1], view);
+        if (!descriptor) {
+          return hir::kInvalidExpressionId;
+        }
+        return Ctx()->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kSystemCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::SystemCallExpressionData{hir::FgetsData{
+                    .str_output = str_output, .descriptor = descriptor}}});
+      }
+      case FileIoKind::kRead: {
+        // $fread(target, fd [, start [, count]])
+        hir::ExpressionId target =
+            UnwrapOutputArgument(call->arguments()[0], view);
+        if (!target) {
+          return hir::kInvalidExpressionId;
+        }
+        hir::ExpressionId descriptor =
+            LowerExpression(*call->arguments()[1], view);
+        if (!descriptor) {
+          return hir::kInvalidExpressionId;
+        }
+
+        // Get target type to determine if memory or integral variant
+        const hir::Expression& target_expr = (*Ctx()->hir_arena)[target];
+        TypeId target_type = target_expr.type;
+        const Type& ty = (*Ctx()->type_arena)[target_type];
+        bool is_memory = ty.Kind() == TypeKind::kUnpackedArray;
+
+        // Optional start and count (for memory variant only)
+        std::optional<hir::ExpressionId> start;
+        std::optional<hir::ExpressionId> count;
+        if (call->arguments().size() >= 3) {
+          // Check if start is EmptyArgument (omitted via , ,)
+          const auto* arg2 = call->arguments()[2];
+          if (arg2->kind != slang::ast::ExpressionKind::EmptyArgument) {
+            hir::ExpressionId s = LowerExpression(*arg2, view);
+            if (!s) {
+              return hir::kInvalidExpressionId;
+            }
+            start = s;
+          }
+        }
+        if (call->arguments().size() >= 4) {
+          hir::ExpressionId c = LowerExpression(*call->arguments()[3], view);
+          if (!c) {
+            return hir::kInvalidExpressionId;
+          }
+          count = c;
+        }
+
+        return Ctx()->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kSystemCall,
+                .type = result_type,
+                .span = span,
+                .data = hir::SystemCallExpressionData{hir::FreadData{
+                    .target = target,
+                    .descriptor = descriptor,
+                    .start = start,
+                    .count = count,
+                    .is_memory = is_memory,
+                    .target_type = target_type}}});
+      }
     }
     throw common::InternalError("LowerSystemCall", "unhandled FileIoKind");
   }

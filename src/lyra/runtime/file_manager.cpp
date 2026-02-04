@@ -187,6 +187,91 @@ auto FileManager::Ungetc(int32_t character, int32_t descriptor) -> int32_t {
   return stored;
 }
 
+auto FileManager::Fgets(int32_t descriptor, std::string& out) -> int32_t {
+  out.clear();
+  auto udesc = static_cast<uint32_t>(descriptor);
+
+  // MCD is write-only, return 0 (error)
+  if (!IsFdDescriptor(udesc)) {
+    return 0;
+  }
+
+  int32_t index = DecodeFdIndex(udesc);
+  auto it = fd_table_.find(index);
+  if (it == fd_table_.end() || !it->second.stream ||
+      !it->second.stream->is_open()) {
+    return 0;
+  }
+
+  FdEntry& entry = it->second;
+
+  // Read characters until newline or EOF
+  int32_t count = 0;
+  while (true) {
+    int ch;
+
+    // Check pushback first
+    if (entry.pushback.has_value()) {
+      ch = *entry.pushback;
+      entry.pushback.reset();
+    } else {
+      ch = entry.stream->get();
+      if (ch == std::char_traits<char>::eof()) {
+        break;  // EOF reached
+      }
+    }
+
+    out += static_cast<char>(ch);
+    ++count;
+
+    // Stop if we hit a newline
+    if (ch == '\n') {
+      break;
+    }
+  }
+
+  return count;
+}
+
+auto FileManager::FreadBytes(int32_t descriptor, uint8_t* out, size_t max_bytes)
+    -> int32_t {
+  auto udesc = static_cast<uint32_t>(descriptor);
+
+  // MCD is write-only, return 0 (error)
+  if (!IsFdDescriptor(udesc)) {
+    return 0;
+  }
+
+  int32_t index = DecodeFdIndex(udesc);
+  auto it = fd_table_.find(index);
+  if (it == fd_table_.end() || !it->second.stream ||
+      !it->second.stream->is_open()) {
+    return 0;
+  }
+
+  FdEntry& entry = it->second;
+  int32_t bytes_read = 0;
+
+  while (static_cast<size_t>(bytes_read) < max_bytes) {
+    int ch;
+
+    // Check pushback first
+    if (entry.pushback.has_value()) {
+      ch = *entry.pushback;
+      entry.pushback.reset();
+    } else {
+      ch = entry.stream->get();
+      if (ch == std::char_traits<char>::eof()) {
+        break;  // EOF reached
+      }
+    }
+
+    out[bytes_read++] = static_cast<uint8_t>(ch);
+  }
+
+  return bytes_read;
+}
+
 auto FileManager::CollectStreams(uint32_t descriptor) -> StreamTargets {
   StreamTargets targets;
 
