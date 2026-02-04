@@ -558,8 +558,7 @@ auto LowerCast(
               .source_type = source_type, .target_type = target_type},
   };
 
-  mir::PlaceId temp_id = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
-  return mir::Operand::Use(temp_id);
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerBitCast(
@@ -584,8 +583,7 @@ auto LowerBitCast(
               .source_type = source_type, .target_type = target_type},
   };
 
-  mir::PlaceId temp_id = builder.EmitPlaceTemp(expr.type, std::move(rvalue));
-  return mir::Operand::Use(temp_id);
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerSystemCall(
@@ -1908,7 +1906,7 @@ auto LowerMathCall(
       .operands = std::move(operands),
       .info = mir::MathCallRvalueInfo{.fn = data.fn},
   };
-  return mir::Operand::Use(builder.EmitPlaceTemp(expr.type, std::move(rvalue)));
+  return builder.EmitValueTemp(expr.type, std::move(rvalue));
 }
 
 auto LowerElementAccessRvalue(
