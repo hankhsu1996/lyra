@@ -340,3 +340,112 @@ cases:
     expect:
       variables:
         result: 172
+
+  # Routing test: LowerRangeSelect with UseTemp base (concat)
+  - name: range_select_concat_base
+    description: |
+      Routing test: verifies LowerRangeSelect with UseTemp base.
+      Concat {a,b} produces UseTemp; range select [11:8] triggers LowerRangeSelect.
+      Note: Separate concat expressions produce distinct temp_ids, so memoization
+      cache hit is not exercised; this validates routing and correctness only.
+    sv: |
+      module Test;
+        bit [7:0] a, b;
+        bit [3:0] r1, r2;
+        initial begin
+          a = 8'hAB;
+          b = 8'hCD;
+          // {a,b} = 16'hABCD
+          r1 = {a, b}[11:8];  // 0xB
+          r2 = {a, b}[7:4];   // 0xC
+        end
+      endmodule
+    expect:
+      variables:
+        r1: "4'hB"
+        r2: "4'hC"
+
+  # Routing test: LowerBitSelect with UseTemp base (replicate)
+  - name: bit_select_replicate_base
+    description: |
+      Routing test: verifies LowerBitSelect with UseTemp base.
+      Replicate {4{x}} produces UseTemp; bit select [0] triggers LowerBitSelect.
+      Note: Separate replicate expressions produce distinct temp_ids, so memoization
+      cache hit is not exercised; this validates routing and correctness only.
+    sv: |
+      module Test;
+        bit [3:0] x;
+        bit b1, b2;
+        initial begin
+          x = 4'hA;  // 4'b1010
+          // {4{x}} = 16'hAAAA = 16'b1010_1010_1010_1010
+          b1 = {4{x}}[0];   // bit 0 = 0
+          b2 = {4{x}}[15];  // bit 15 = 1
+        end
+      endmodule
+    expect:
+      variables:
+        b1: 0
+        b2: 1
+
+  # Routing test: LowerIndexedPartSelect with UseTemp base (concat)
+  - name: indexed_part_select_concat_base
+    description: |
+      Routing test: verifies LowerIndexedPartSelect with UseTemp base.
+      Concat {a,b} produces UseTemp; indexed part-select [idx+:4] triggers
+      LowerIndexedPartSelect.
+      Note: Separate concat expressions produce distinct temp_ids, so memoization
+      cache hit is not exercised; this validates routing and correctness only.
+    sv: |
+      module Test;
+        bit [7:0] a, b;
+        bit [3:0] r1, r2;
+        int idx;
+        initial begin
+          a = 8'hAB;
+          b = 8'hCD;
+          idx = 4;
+          // {a,b} = 16'hABCD
+          r1 = {a, b}[idx +: 4];  // bits [7:4] = 0xC
+          r2 = {a, b}[idx+4 +: 4]; // bits [11:8] = 0xB
+        end
+      endmodule
+    expect:
+      variables:
+        r1: "4'hC"
+        r2: "4'hB"
+
+  # Routing test: LowerPackedElementSelect with UseTemp base
+  # Exercises: LowerPackedElementSelect (packed 2D array with dynamic index)
+  - name: packed_element_select_usetemp_base
+    description: |
+      Routing test: verifies LowerPackedElementSelect with UseTemp base.
+      Function call returns packed 2D array (bit[1:0][7:0]), producing UseTemp.
+      Dynamic indexing on packed array type triggers LowerPackedElementSelect
+      (as opposed to BitSelect for 1D integral, or ElementAccessRvalue for unpacked).
+      Note: Separate function calls produce distinct temp_ids, so memoization
+      cache hit is not exercised; this validates routing and correctness only.
+    sv: |
+      module Test;
+        bit [7:0] e1, e2;
+        int i;
+
+        // Function returning packed 2D array: 2 elements of 8-bit each
+        function automatic bit [1:0][7:0] make_packed();
+          bit [1:0][7:0] result;
+          result = 16'hABCD;  // [1]=0xAB (high), [0]=0xCD (low)
+          return result;
+        endfunction
+
+        initial begin
+          i = 0;
+          // Function call produces UseTemp of packed array type
+          // Dynamic index on packed 2D array triggers LowerPackedElementSelect
+          e1 = make_packed()[i];      // [0] = 0xCD
+          e2 = make_packed()[i+1];    // [1] = 0xAB
+        end
+      endmodule
+    expect:
+      variables:
+        e1: "8'hCD"
+        e2: "8'hAB"
