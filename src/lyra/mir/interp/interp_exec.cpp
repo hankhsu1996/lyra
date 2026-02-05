@@ -564,7 +564,17 @@ auto Interpreter::ExecMemIOEffect(
     }
 
     // Write back the modified array
-    return StoreToPlace(state, mem_io.target, std::move(arr_val));
+    auto store_result = StoreToPlace(state, mem_io.target, std::move(arr_val));
+    if (!store_result) return store_result;
+
+    // Emit MemoryDirty trace event
+    if (trace_manager_ != nullptr && trace_manager_->IsEnabled()) {
+      const auto& place = (*arena_)[mem_io.target];
+      if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
+        trace_manager_->EmitMemoryDirty(static_cast<uint32_t>(place.root.id));
+      }
+    }
+    return {};
   }
 
   // Write mode: read array and write to file
@@ -1188,6 +1198,14 @@ auto Interpreter::ExecFreadCall(ProcessState& state, const Call& call)
       elements[idx] = MakeIntegralWide(
           words.data(), words.size(), static_cast<uint32_t>(element_width));
       total_bytes_read += bytes_read;
+    }
+
+    // Emit MemoryDirty trace event for bulk memory write
+    if (trace_manager_ != nullptr && trace_manager_->IsEnabled()) {
+      const auto& place = (*arena_)[wb.dest];
+      if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
+        trace_manager_->EmitMemoryDirty(static_cast<uint32_t>(place.root.id));
+      }
     }
   }
 

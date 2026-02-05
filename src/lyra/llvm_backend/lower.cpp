@@ -510,12 +510,14 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     }
 
     // Call multi-process scheduler
+    auto* i1_ty = llvm::Type::getInt1Ty(ctx);
     builder.CreateCall(
         context.GetLyraRunSimulation(),
         {funcs_array, states_array,
          llvm::ConstantInt::get(i32_ty, num_module_processes), plusargs_array,
          llvm::ConstantInt::get(i32_ty, num_plusargs), instance_paths_array,
-         llvm::ConstantInt::get(i32_ty, num_instance_paths)});
+         llvm::ConstantInt::get(i32_ty, num_instance_paths),
+         llvm::ConstantInt::get(i1_ty, input.enable_trace ? 1 : 0)});
   }
 
   // Branch to exit block

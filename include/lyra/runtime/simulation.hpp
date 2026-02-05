@@ -37,7 +37,7 @@ void LyraRunProcessSync(LyraProcessFunc process, void* state);
 void LyraRunSimulation(
     LyraProcessFunc* processes, void** states, uint32_t num_processes,
     const char** plusargs, uint32_t num_plusargs, const char** instance_paths,
-    uint32_t num_instance_paths);
+    uint32_t num_instance_paths, bool enable_trace);
 
 // $test$plusargs: prefix match against plusargs.
 // Query is LyraStringHandle (matches SV string operand lowering).
@@ -147,6 +147,10 @@ void LyraMonitorRegister(
 // - engine_ptr: pointer to Engine
 // - enabled: true to enable, false to disable
 void LyraMonitorSetEnabled(void* engine_ptr, bool enabled);
+
+// Emit a MemoryDirty trace event for bulk memory operations ($readmem, $fread).
+// No-op if engine is null or tracing is disabled.
+void LyraTraceMemoryDirty(void* engine_ptr, uint32_t slot_id);
 
 // Signal notification for aggregate assignments (struct/array with managed
 // fields). Used after field-by-field assignment to design slots. Guarantees

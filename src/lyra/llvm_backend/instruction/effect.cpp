@@ -478,6 +478,7 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
 
         if (mem_io.is_read) {
           builder.CreateCall(context.GetLyraReadmem(), args);
+          EmitTraceMemoryDirtyIfDesignSlot(context, mem_io.target);
         } else {
           builder.CreateCall(context.GetLyraWritemem(), args);
         }

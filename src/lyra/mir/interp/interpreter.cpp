@@ -414,7 +414,8 @@ auto RunSimulation(
     const Design& design, const Arena& mir_arena, const TypeArena& types,
     std::ostream* output, std::span<const std::string> plusargs,
     const std::filesystem::path& fs_base_dir, bool enable_system,
-    const lowering::DiagnosticContext* diag_ctx) -> SimulationResult {
+    const lowering::DiagnosticContext* diag_ctx, bool enable_trace)
+    -> SimulationResult {
   // Initialize runtime state (same API as LLVM backend uses)
   LyraInitRuntime(fs_base_dir.c_str());
 
@@ -439,6 +440,9 @@ auto RunSimulation(
       std::vector<std::string>(plusargs.begin(), plusargs.end()));
   interp.SetFsBaseDir(fs_base_dir);
   interp.SetEnableSystem(enable_system);
+
+  // Trace support: TraceManager lives on the Engine, but interpreter needs a
+  // pointer for MemoryDirty emission. Set up after Engine is created below.
 
   // Extract instance paths for %m support (needed before running any processes)
   // Only the interpreter needs instance paths for MIR backend; Engine's
@@ -536,6 +540,12 @@ auto RunSimulation(
         *reason_result);
   });
 
+  // Enable tracing if requested
+  if (enable_trace) {
+    engine.GetTraceManager().SetEnabled(true);
+    interp.SetTraceManager(&engine.GetTraceManager());
+  }
+
   // Schedule initial processes
   for (ProcessId proc_id : process_info->initial_processes) {
     engine.ScheduleInitial(
@@ -555,6 +565,11 @@ auto RunSimulation(
     return SimulationResult{
         .exit_code = 1,
         .error_message = std::format("runtime error: {}", e.what())};
+  }
+
+  // Print trace summary if tracing was enabled
+  if (enable_trace) {
+    engine.GetTraceManager().PrintSummary();
   }
 
   // Check if callback encountered an error

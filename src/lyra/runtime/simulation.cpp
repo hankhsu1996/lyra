@@ -22,6 +22,7 @@
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/suspend_record.hpp"
+#include "lyra/trace/trace_manager.hpp"
 
 namespace {
 
@@ -212,7 +213,8 @@ void SetupAndRunSimulation(
 extern "C" void LyraRunSimulation(
     LyraProcessFunc* processes, void** states_raw, uint32_t num_processes,
     const char** plusargs_raw, uint32_t num_plusargs,
-    const char** instance_paths_raw, uint32_t num_instance_paths) {
+    const char** instance_paths_raw, uint32_t num_instance_paths,
+    bool enable_trace) {
   auto states = std::span(states_raw, num_processes);
   auto procs = std::span(processes, num_processes);
 
@@ -239,7 +241,13 @@ extern "C" void LyraRunSimulation(
   lyra::runtime::Engine engine(
       MakeProcessRunner(procs, states), std::span(plusargs_vec),
       std::move(instance_paths_vec));
+  if (enable_trace) {
+    engine.GetTraceManager().SetEnabled(true);
+  }
   SetupAndRunSimulation(engine, states, num_processes);
+  if (enable_trace) {
+    engine.GetTraceManager().PrintSummary();
+  }
 }
 
 extern "C" auto LyraPlusargsTest(void* engine_ptr, LyraStringHandle query)
@@ -285,6 +293,11 @@ extern "C" void LyraStorePacked(
   if (value_changed && engine_ptr != nullptr) {
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
     engine->RecordSignalUpdate(signal_id, old_lsb, new_lsb, value_changed);
+    if (engine->GetTraceManager().IsEnabled()) {
+      engine->GetTraceManager().EmitValueChange(
+          signal_id,
+          lyra::trace::TraceManager::SnapshotPacked(slot_ptr, byte_size));
+    }
   }
 }
 
@@ -301,6 +314,10 @@ extern "C" void LyraStoreString(
     bool new_lsb = (new_str != nullptr);
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
     engine->RecordSignalUpdate(signal_id, old_lsb, new_lsb, value_changed);
+    if (engine->GetTraceManager().IsEnabled()) {
+      engine->GetTraceManager().EmitValueChange(
+          signal_id, lyra::trace::TraceManager::SnapshotString(new_str));
+    }
   }
 }
 
@@ -415,6 +432,13 @@ extern "C" void LyraMonitorRegister(
 extern "C" void LyraMonitorSetEnabled(void* engine_ptr, bool enabled) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   engine->SetMonitorEnabled(enabled);
+}
+
+extern "C" void LyraTraceMemoryDirty(void* engine_ptr, uint32_t slot_id) {
+  if (engine_ptr == nullptr) return;
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  if (!engine->GetTraceManager().IsEnabled()) return;
+  engine->GetTraceManager().EmitMemoryDirty(slot_id);
 }
 
 extern "C" void LyraNotifySignal(

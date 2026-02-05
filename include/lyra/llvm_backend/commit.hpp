@@ -95,6 +95,10 @@ auto CommitArrayFieldByField(
     Context& ctx, mir::PlaceId target, mir::PlaceId source,
     TypeId array_type_id, OwnershipPolicy policy) -> Result<void>;
 
+// Emit LyraTraceMemoryDirty call if target is a design slot.
+// No-op if target is not a design slot (non-design targets are not traced).
+void EmitTraceMemoryDirtyIfDesignSlot(Context& ctx, mir::PlaceId target);
+
 namespace detail {
 
 // Field-level store for struct field-by-field assignment.

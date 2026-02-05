@@ -27,6 +27,7 @@ struct CompilationInput {
   int verbose = 0;                     // Verbosity level (0-3)
   int stats_top_n = -1;        // LLVM stats: -1=off, 0=summary, >0=top N
   bool enable_system = false;  // Security: $system disabled by default
+  bool enable_trace = false;   // Enable simulation tracing
 };
 
 struct ParseResult {

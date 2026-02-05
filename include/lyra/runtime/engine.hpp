@@ -22,6 +22,7 @@
 #include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/file_manager.hpp"
+#include "lyra/trace/trace_manager.hpp"
 
 namespace lyra::runtime {
 
@@ -141,6 +142,11 @@ class Engine {
   // Get file manager for $fopen/$fclose operations.
   [[nodiscard]] auto GetFileManager() -> FileManager& {
     return file_manager_;
+  }
+
+  // Get trace manager for event recording.
+  [[nodiscard]] auto GetTraceManager() -> trace::TraceManager& {
+    return trace_manager_;
   }
 
   // Get hierarchical path for an instance (%m support).
@@ -270,6 +276,9 @@ class Engine {
   // PRNG state for $random/$urandom. LCG with glibc constants.
   // Initial seed = 1 for deterministic reproducibility.
   uint32_t prng_state_ = 1;
+
+  // Trace event manager (disabled by default, zero overhead when off).
+  trace::TraceManager trace_manager_;
 };
 
 }  // namespace lyra::runtime

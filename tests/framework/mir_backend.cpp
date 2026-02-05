@@ -26,6 +26,7 @@
 #include "lyra/mir/interp/interpreter.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/simulation.hpp"
 #include "tests/framework/jit_backend.hpp"
 #include "tests/framework/runner_common.hpp"
@@ -257,6 +258,11 @@ auto RunMirInterpreter(
   }
 
   // Run with Engine-based scheduler for proper delay handling
+  // OutputSinkScope captures trace summary output from PrintSummary (which uses
+  // WriteOutput). Interpreter $display goes to output_stream directly.
+  std::string trace_output;
+  runtime::OutputSinkScope sink_scope(
+      [&trace_output](std::string_view text) { trace_output.append(text); });
   try {
     runtime::Engine engine([&](runtime::Engine& eng,
                                runtime::ProcessHandle handle,
@@ -312,6 +318,12 @@ auto RunMirInterpreter(
           reason);
     });
 
+    // Enable tracing if requested
+    if (test_case.trace) {
+      engine.GetTraceManager().SetEnabled(true);
+      interpreter.SetTraceManager(&engine.GetTraceManager());
+    }
+
     // Schedule initial processes
     for (mir::ProcessId proc_id : process_info->initial_processes) {
       const auto& proc = (*mir_result->mir_arena)[proc_id];
@@ -323,13 +335,18 @@ auto RunMirInterpreter(
 
     // Run simulation
     engine.Run();
+
+    // Print trace summary (captured via OutputSinkScope below)
+    if (test_case.trace) {
+      engine.GetTraceManager().PrintSummary();
+    }
   } catch (const std::exception& e) {
     result.error_message = std::string("Runtime error: ") + e.what();
     return result;
   }
 
   result.success = true;
-  result.captured_output = output_stream.str();
+  result.captured_output = output_stream.str() + trace_output;
 
   // Extract final variable values for assertions
   for (const auto& [name, expected] : test_case.expected_values) {

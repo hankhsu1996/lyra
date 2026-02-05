@@ -175,6 +175,8 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .help(
           "Enable SystemVerilog $system shell command execution (SECURITY: "
           "disabled by default)");
+  cmd.add_argument("--trace").default_value(false).implicit_value(true).help(
+      "Enable simulation tracing (event recording)");
 }
 
 auto BuildInput(
@@ -309,6 +311,9 @@ auto BuildInput(
 
   // Security: $system execution (CLI only, default disabled)
   input.enable_system = cmd.get<bool>("--enable-system");
+
+  // Tracing (CLI only)
+  input.enable_trace = cmd.get<bool>("--trace");
 
   return input;
 }
