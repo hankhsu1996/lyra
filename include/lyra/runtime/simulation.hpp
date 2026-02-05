@@ -148,10 +148,6 @@ void LyraMonitorRegister(
 // - enabled: true to enable, false to disable
 void LyraMonitorSetEnabled(void* engine_ptr, bool enabled);
 
-// Emit a MemoryDirty trace event for bulk memory operations ($readmem, $fread).
-// No-op if engine is null or tracing is disabled.
-void LyraTraceMemoryDirty(void* engine_ptr, uint32_t slot_id);
-
 // Signal notification for aggregate assignments (struct/array with managed
 // fields). Used after field-by-field assignment to design slots. Guarantees
 // level-sensitive re-evaluation (always_comb, always @(*), always @(sig));

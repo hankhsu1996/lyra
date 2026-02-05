@@ -434,13 +434,6 @@ extern "C" void LyraMonitorSetEnabled(void* engine_ptr, bool enabled) {
   engine->SetMonitorEnabled(enabled);
 }
 
-extern "C" void LyraTraceMemoryDirty(void* engine_ptr, uint32_t slot_id) {
-  if (engine_ptr == nullptr) return;
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  if (!engine->GetTraceManager().IsEnabled()) return;
-  engine->GetTraceManager().EmitMemoryDirty(slot_id);
-}
-
 extern "C" void LyraNotifySignal(
     void* engine_ptr, const void* slot_ptr, uint32_t signal_id) {
   if (engine_ptr == nullptr || slot_ptr == nullptr) return;

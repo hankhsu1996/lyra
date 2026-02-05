@@ -41,4 +41,8 @@ struct ResumePoint {
 // NotifyChange, Subscribe, and NBA commit all use the same ID space.
 using SignalId = uint32_t;
 
+// Sentinel for "no design slot" in ABI parameters.
+// Lowering passes this when a target is not a design slot (e.g., local/temp).
+inline constexpr uint32_t kNoSlotId = UINT32_MAX;
+
 }  // namespace lyra::runtime

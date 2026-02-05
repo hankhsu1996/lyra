@@ -20,6 +20,7 @@
 #include "lyra/common/format.hpp"
 #include "lyra/common/memfile.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/marshal.hpp"
 #include "lyra/runtime/output_sink.hpp"
@@ -261,10 +262,11 @@ extern "C" void LyraFWrite(
 }
 
 extern "C" void LyraReadmem(
-    LyraStringHandle filename_handle, void* target, int32_t element_width,
-    int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
-    int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
-    bool is_hex, int32_t element_kind) {
+    void* engine_ptr, LyraStringHandle filename_handle, void* target,
+    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
+    int32_t element_count, int64_t min_addr, int64_t current_addr,
+    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind,
+    uint32_t slot_id) {
   // Sanity checks
   if (element_width <= 0 || stride_bytes <= 0 || value_size_bytes <= 0 ||
       element_count <= 0) {
@@ -314,6 +316,7 @@ extern "C" void LyraReadmem(
   std::span<uint8_t> target_span(static_cast<uint8_t*>(target), total_bytes);
 
   // Store callback - maps SV address to storage index with bounds check
+  bool wrote_any = false;
   auto store = [&](std::string_view token, int64_t addr) {
     // Bounds check before computing storage index
     if (addr < min_addr || addr > max_addr) {
@@ -342,6 +345,7 @@ extern "C" void LyraReadmem(
       std::memset(
           target_span.subspan(offset + value_size).data(), 0, value_size);
     }
+    wrote_any = true;
   };
 
   // Forward to canonical parser (step handles direction)
@@ -350,6 +354,14 @@ extern "C" void LyraReadmem(
       task_name, store);
   if (!result.success) {
     fmt::print(stderr, "{}: {}\n", task_name, result.error);
+  }
+
+  if (wrote_any && slot_id != lyra::runtime::kNoSlotId &&
+      engine_ptr != nullptr) {
+    auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+    if (engine->GetTraceManager().IsEnabled()) {
+      engine->GetTraceManager().EmitMemoryDirty(slot_id);
+    }
   }
 }
 
@@ -435,7 +447,7 @@ extern "C" void LyraWritemem(
 extern "C" auto LyraFread(
     void* engine_ptr, int32_t descriptor, void* target, int32_t element_width,
     int32_t stride_bytes, int32_t is_memory, int64_t start_index,
-    int64_t max_count, int64_t element_count) -> int32_t {
+    int64_t max_count, int64_t element_count, uint32_t slot_id) -> int32_t {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
 
   // Calculate bytes per element (ceil(element_width / 8))
@@ -502,6 +514,14 @@ extern "C" auto LyraFread(
                                  stride * static_cast<size_t>(element_count))
                                  .subspan(idx * stride, stride));
       total_bytes_read += bytes_read;
+    }
+  }
+
+  if (total_bytes_read > 0 && slot_id != lyra::runtime::kNoSlotId &&
+      engine_ptr != nullptr) {
+    auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+    if (engine->GetTraceManager().IsEnabled()) {
+      engine->GetTraceManager().EmitMemoryDirty(slot_id);
     }
   }
 

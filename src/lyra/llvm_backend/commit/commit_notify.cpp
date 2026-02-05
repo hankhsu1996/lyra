@@ -65,6 +65,11 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
        llvm::ConstantInt::get(i32_ty, *signal_id_opt)});
 }
 
+auto GetDesignSlotId(Context& ctx, mir::PlaceId target)
+    -> std::optional<uint32_t> {
+  return commit::Access::GetCanonicalRootSignalId(ctx, target);
+}
+
 auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> uint32_t {
   auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
   if (!signal_id_opt.has_value()) {
