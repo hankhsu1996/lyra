@@ -3,10 +3,13 @@
 #include <cstdio>
 #include <format>
 #include <string>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
 #include <fmt/core.h>
+#include <llvm/Support/Error.h>
+#include <llvm/Support/TimeProfiler.h>
 
 #include "frontend.hpp"
 #include "llvm_stats.hpp"
@@ -34,6 +37,41 @@ void PrintMirStats(
       stats.mir_stmts);
   std::fflush(sink);
 }
+
+// RAII guard for LLVM time-trace profiling.
+// Initializes the profiler on construction; writes JSON and cleans up on
+// destruction (even if JIT compilation fails).
+class TimeTraceGuard {
+ public:
+  explicit TimeTraceGuard(bool enabled) : enabled_(enabled) {
+    if (enabled_) {
+      llvm::timeTraceProfilerInitialize(500, "lyra");
+    }
+  }
+
+  ~TimeTraceGuard() {
+    if (!enabled_) return;
+    auto filename =
+        std::format("lyra-jit-{}.time-trace.json", static_cast<int>(getpid()));
+    if (auto err = llvm::timeTraceProfilerWrite(filename, "lyra")) {
+      fmt::print(
+          stderr, "[lyra] warning: failed to write time-trace: {}\n",
+          llvm::toString(std::move(err)));
+    } else {
+      fmt::print(stderr, "[lyra] time-trace written to {}\n", filename);
+    }
+    std::fflush(stderr);
+    llvm::timeTraceProfilerCleanup();
+  }
+
+  TimeTraceGuard(const TimeTraceGuard&) = delete;
+  auto operator=(const TimeTraceGuard&) -> TimeTraceGuard& = delete;
+  TimeTraceGuard(TimeTraceGuard&&) = delete;
+  auto operator=(TimeTraceGuard&&) -> TimeTraceGuard& = delete;
+
+ private:
+  bool enabled_;
+};
 
 }  // namespace
 
@@ -92,6 +130,7 @@ auto RunJit(const CompilationInput& input) -> int {
   }
 
   // Phase 1: JIT compilation
+  TimeTraceGuard time_trace_guard(input.time_trace);
   std::expected<lowering::mir_to_llvm::JitSession, std::string> session;
   {
     PhaseTimer timer(vlog, "jit_compile");
@@ -108,6 +147,15 @@ auto RunJit(const CompilationInput& input) -> int {
     PrintMirStats(compilation.mir.stats);
     vlog.PrintPhaseSummary();
     PrintLlvmStats(llvm_stats, input.stats_top_n);
+    const auto& jt = session->timings();
+    if (jt.complete) {
+      fmt::print(
+          stderr,
+          "[lyra][stats][jit] create_jit={:.3f}s load_runtime={:.3f}s "
+          "add_ir={:.3f}s lookup_main={:.3f}s\n",
+          jt.create_jit, jt.load_runtime, jt.add_ir, jt.lookup_main);
+      std::fflush(stderr);
+    }
   }
 
   // Phase 2: simulation
