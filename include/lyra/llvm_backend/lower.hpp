@@ -77,6 +77,7 @@ struct LoweringInput {
   std::string fs_base_dir;            // Base directory for file I/O (absolute)
   std::vector<std::string> plusargs;  // Command-line plusargs for $plusargs
   bool enable_trace = false;          // Enable simulation tracing
+  bool debug_dump_slot_meta = false;  // Dump slot metadata (test-only)
 };
 
 struct LoweringResult {

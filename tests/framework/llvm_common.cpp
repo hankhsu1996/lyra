@@ -199,6 +199,7 @@ auto PrepareLlvmModule(
       .fs_base_dir = fs_base_dir,
       .plusargs = test_case.plusargs,
       .enable_trace = test_case.trace,
+      .debug_dump_slot_meta = test_case.dump_slot_meta,
   };
 
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);

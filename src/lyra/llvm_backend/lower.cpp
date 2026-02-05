@@ -13,7 +13,9 @@
 
 #include <llvm/ADT/StringMap.h>
 #include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Constant.h>
 #include <llvm/IR/Constants.h>
+#include <llvm/IR/DataLayout.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
@@ -39,6 +41,8 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/statement.hpp"
+#include "lyra/runtime/slot_meta.hpp"
+#include "lyra/runtime/slot_meta_abi.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -95,6 +99,131 @@ void SetHostDataLayout(llvm::Module& module) {
 
   module.setTargetTriple(triple);
   module.setDataLayout(tm->createDataLayout());
+}
+
+// Classify a design slot's storage kind from its TypeId.
+auto ClassifySlotStorageKind(TypeId type_id, const TypeArena& types)
+    -> runtime::SlotStorageKind {
+  const Type& type = types[type_id];
+  switch (type.Kind()) {
+    case TypeKind::kString:
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+      return runtime::SlotStorageKind::kHandle;
+    case TypeKind::kUnpackedArray:
+    case TypeKind::kUnpackedStruct:
+    case TypeKind::kUnpackedUnion:
+      return runtime::SlotStorageKind::kAggregate;
+    default:
+      break;
+  }
+  if (IsPacked(type) && IsFourStateType(type_id, types)) {
+    return runtime::SlotStorageKind::kPacked4;
+  }
+  return runtime::SlotStorageKind::kPacked2;
+}
+
+// Build the slot metadata global constant table.
+// Returns {constant_ptr, slot_count}. If no slots, returns {null, 0}.
+struct SlotMetaTableResult {
+  llvm::Constant* table_ptr;
+  uint32_t count;
+};
+
+auto EmitSlotMetaTable(
+    Context& context, const std::vector<SlotInfo>& slots,
+    const DesignLayout& design_layout, const llvm::DataLayout& dl,
+    const TypeArena& types) -> SlotMetaTableResult {
+  if (slots.empty()) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+    return {
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)),
+        0};
+  }
+
+  auto* design_struct = design_layout.llvm_type;
+  const llvm::StructLayout* sl = dl.getStructLayout(design_struct);
+  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+
+  std::vector<llvm::Constant*> words;
+  words.reserve(slots.size() * runtime::slot_meta_abi::kStride);
+
+  for (const auto& slot : slots) {
+    auto it = design_layout.slot_to_field.find(slot.slot_id);
+    if (it == design_layout.slot_to_field.end()) {
+      throw common::InternalError(
+          "EmitSlotMetaTable",
+          std::format("slot_id {} not in design layout", slot.slot_id.value));
+    }
+    uint32_t field_idx = it->second;
+    auto* field_type = design_struct->getElementType(field_idx);
+
+    uint64_t raw_base_off = sl->getElementOffset(field_idx);
+    uint64_t raw_total_bytes = dl.getTypeAllocSize(field_type);
+    if (raw_base_off > UINT32_MAX || raw_total_bytes > UINT32_MAX) {
+      throw common::InternalError(
+          "EmitSlotMetaTable", "DesignState exceeds 4GB (not supported)");
+    }
+    auto base_off = static_cast<uint32_t>(raw_base_off);
+    auto total_bytes = static_cast<uint32_t>(raw_total_bytes);
+
+    auto kind = ClassifySlotStorageKind(slot.type_id, types);
+    auto kind_val = static_cast<uint32_t>(kind);
+
+    uint32_t value_off = 0;
+    uint32_t value_bytes = 0;
+    uint32_t unk_off = 0;
+    uint32_t unk_bytes = 0;
+
+    if (kind == runtime::SlotStorageKind::kPacked4) {
+      auto* four_state = llvm::dyn_cast<llvm::StructType>(field_type);
+      if (four_state == nullptr) {
+        throw common::InternalError(
+            "EmitSlotMetaTable", std::format(
+                                     "expected StructType for kPacked4 slot {}",
+                                     slot.slot_id.value));
+      }
+      const llvm::StructLayout* fs_layout = dl.getStructLayout(four_state);
+      uint64_t raw_value_off = fs_layout->getElementOffset(0);
+      uint64_t raw_value_bytes =
+          dl.getTypeAllocSize(four_state->getElementType(0));
+      uint64_t raw_unk_off = fs_layout->getElementOffset(1);
+      uint64_t raw_unk_bytes =
+          dl.getTypeAllocSize(four_state->getElementType(1));
+
+      if (raw_value_off > UINT32_MAX || raw_value_bytes > UINT32_MAX ||
+          raw_unk_off > UINT32_MAX || raw_unk_bytes > UINT32_MAX) {
+        throw common::InternalError(
+            "EmitSlotMetaTable",
+            "4-state plane layout exceeds 4GB (not supported)");
+      }
+      value_off = static_cast<uint32_t>(raw_value_off);
+      value_bytes = static_cast<uint32_t>(raw_value_bytes);
+      unk_off = static_cast<uint32_t>(raw_unk_off);
+      unk_bytes = static_cast<uint32_t>(raw_unk_bytes);
+    }
+
+    words.push_back(llvm::ConstantInt::get(i32_ty, base_off));
+    words.push_back(llvm::ConstantInt::get(i32_ty, total_bytes));
+    words.push_back(llvm::ConstantInt::get(i32_ty, kind_val));
+    words.push_back(llvm::ConstantInt::get(i32_ty, value_off));
+    words.push_back(llvm::ConstantInt::get(i32_ty, value_bytes));
+    words.push_back(llvm::ConstantInt::get(i32_ty, unk_off));
+    words.push_back(llvm::ConstantInt::get(i32_ty, unk_bytes));
+  }
+
+  auto* array_type = llvm::ArrayType::get(i32_ty, words.size());
+  auto* initializer = llvm::ConstantArray::get(array_type, words);
+  auto* global_var = new llvm::GlobalVariable(
+      context.GetModule(), array_type, true, llvm::GlobalValue::InternalLinkage,
+      initializer, "__lyra_slot_meta_table");
+
+  // GEP to first element: [N x i32]* -> i32*
+  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+  auto* table_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+      array_type, global_var, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+
+  return {table_ptr, static_cast<uint32_t>(slots.size())};
 }
 
 // Initialize DesignState: zero everything, apply 4-state patches, then handle
@@ -509,6 +638,11 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
           llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
     }
 
+    // Build slot metadata table
+    auto [meta_table, meta_count] = EmitSlotMetaTable(
+        context, slot_info, layout.design, mod.getDataLayout(),
+        *input.type_arena);
+
     // Call multi-process scheduler
     auto* i1_ty = llvm::Type::getInt1Ty(ctx);
     builder.CreateCall(
@@ -516,7 +650,10 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
         {funcs_array, states_array,
          llvm::ConstantInt::get(i32_ty, num_module_processes), plusargs_array,
          llvm::ConstantInt::get(i32_ty, num_plusargs), instance_paths_array,
-         llvm::ConstantInt::get(i32_ty, num_instance_paths),
+         llvm::ConstantInt::get(i32_ty, num_instance_paths), meta_table,
+         llvm::ConstantInt::get(i32_ty, meta_count),
+         llvm::ConstantInt::get(i32_ty, runtime::slot_meta_abi::kVersion),
+         llvm::ConstantInt::get(i1_ty, input.debug_dump_slot_meta ? 1 : 0),
          llvm::ConstantInt::get(i1_ty, input.enable_trace ? 1 : 0)});
   }
 
