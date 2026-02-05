@@ -95,9 +95,10 @@ auto CommitArrayFieldByField(
     Context& ctx, mir::PlaceId target, mir::PlaceId source,
     TypeId array_type_id, OwnershipPolicy policy) -> Result<void>;
 
-// Emit LyraTraceMemoryDirty call if target is a design slot.
-// No-op if target is not a design slot (non-design targets are not traced).
-void EmitTraceMemoryDirtyIfDesignSlot(Context& ctx, mir::PlaceId target);
+// Resolve design slot ID for a target place (after alias resolution).
+// Returns slot_id if design slot, nullopt if not.
+auto GetDesignSlotId(Context& ctx, mir::PlaceId target)
+    -> std::optional<uint32_t>;
 
 namespace detail {
 

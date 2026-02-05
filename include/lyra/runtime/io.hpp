@@ -95,6 +95,7 @@ void LyraFWrite(
     bool add_newline);
 
 // $readmemh/$readmemb: read memory file into array
+// - engine_ptr: pointer to Engine (for trace emission)
 // - filename: string handle for filename
 // - target: pointer to array storage
 // - element_width: bit width of each element (for parsing, must be > 0)
@@ -108,16 +109,18 @@ void LyraFWrite(
 // - step: +1 for ascending, -1 for descending progression
 // - is_hex: true = hex format, false = binary format
 // - element_kind: MemElementKind cast to int32_t
+// - slot_id: design slot ID for trace (kNoSlotId if not a design slot)
 //
 // Storage ABI: 2-state elements are packed integrals stored in power-of-2
 // rounded bytes. 4-state elements are struct {value, x_mask} where each plane
 // uses the same power-of-2 storage type. Lowering computes all parameters;
 // runtime has zero semantic decisions.
 void LyraReadmem(
-    LyraStringHandle filename, void* target, int32_t element_width,
-    int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
-    int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
-    bool is_hex, int32_t element_kind);
+    void* engine_ptr, LyraStringHandle filename, void* target,
+    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
+    int32_t element_count, int64_t min_addr, int64_t current_addr,
+    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind,
+    uint32_t slot_id);
 
 // $writememh/$writememb: write array to memory file
 // Parameters match LyraReadmem, but source is read-only.
@@ -142,13 +145,14 @@ void LyraPrintModulePath(void* engine, uint32_t instance_id);
 // - start_index: starting array index (-1 = use lowest declared index)
 // - max_count: maximum elements to read (-1 = read until array full or EOF)
 // - element_count: total array size (for bounds checking)
+// - slot_id: design slot ID for trace (kNoSlotId if not a design slot)
 // Returns: number of bytes read on success, 0 on error.
 // Data is read big-endian: first byte fills MSB of each element.
 // Partial elements are not written (stops at element boundary).
 auto LyraFread(
     void* engine, int32_t descriptor, void* target, int32_t element_width,
     int32_t stride_bytes, int32_t is_memory, int64_t start_index,
-    int64_t max_count, int64_t element_count) -> int32_t;
+    int64_t max_count, int64_t element_count, uint32_t slot_id) -> int32_t;
 
 // $fscanf - formatted file input
 // - engine: pointer to Engine (for FileManager access)

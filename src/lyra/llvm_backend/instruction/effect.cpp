@@ -28,6 +28,7 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place_type.hpp"
+#include "lyra/runtime/engine_types.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -457,29 +458,50 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
   llvm::Value* current_addr = (step > 0) ? low : high;
   llvm::Value* final_addr = (step > 0) ? high : low;
 
+  // Resolve slot_id for readmem trace emission (writemem doesn't need it)
+  uint32_t readmem_slot_id = lyra::runtime::kNoSlotId;
+  if (mem_io.is_read) {
+    readmem_slot_id = GetDesignSlotId(context, mem_io.target)
+                          .value_or(lyra::runtime::kNoSlotId);
+  }
+
   // Lower filename and emit runtime call with automatic handle release
   return WithStringHandle(
       context, mem_io.filename.operand, mem_io.filename.type,
       [&](llvm::Value* filename_handle) -> Result<void> {
-        std::vector<llvm::Value*> args = {
-            filename_handle,
-            target_ptr,
-            llvm::ConstantInt::get(i32_ty, element_width),
-            llvm::ConstantInt::get(i32_ty, stride_bytes),
-            llvm::ConstantInt::get(i32_ty, value_size_bytes),
-            llvm::ConstantInt::get(i32_ty, element_count),
-            llvm::ConstantInt::get(i64_ty, min_addr),
-            current_addr,
-            final_addr,
-            llvm::ConstantInt::get(i64_ty, step),
-            llvm::ConstantInt::get(i1_ty, mem_io.is_hex ? 1 : 0),
-            llvm::ConstantInt::get(i32_ty, element_kind),
-        };
-
         if (mem_io.is_read) {
+          std::vector<llvm::Value*> args = {
+              context.GetEnginePointer(),
+              filename_handle,
+              target_ptr,
+              llvm::ConstantInt::get(i32_ty, element_width),
+              llvm::ConstantInt::get(i32_ty, stride_bytes),
+              llvm::ConstantInt::get(i32_ty, value_size_bytes),
+              llvm::ConstantInt::get(i32_ty, element_count),
+              llvm::ConstantInt::get(i64_ty, min_addr),
+              current_addr,
+              final_addr,
+              llvm::ConstantInt::get(i64_ty, step),
+              llvm::ConstantInt::get(i1_ty, mem_io.is_hex ? 1 : 0),
+              llvm::ConstantInt::get(i32_ty, element_kind),
+              llvm::ConstantInt::get(i32_ty, readmem_slot_id),
+          };
           builder.CreateCall(context.GetLyraReadmem(), args);
-          EmitTraceMemoryDirtyIfDesignSlot(context, mem_io.target);
         } else {
+          std::vector<llvm::Value*> args = {
+              filename_handle,
+              target_ptr,
+              llvm::ConstantInt::get(i32_ty, element_width),
+              llvm::ConstantInt::get(i32_ty, stride_bytes),
+              llvm::ConstantInt::get(i32_ty, value_size_bytes),
+              llvm::ConstantInt::get(i32_ty, element_count),
+              llvm::ConstantInt::get(i64_ty, min_addr),
+              current_addr,
+              final_addr,
+              llvm::ConstantInt::get(i64_ty, step),
+              llvm::ConstantInt::get(i1_ty, mem_io.is_hex ? 1 : 0),
+              llvm::ConstantInt::get(i32_ty, element_kind),
+          };
           builder.CreateCall(context.GetLyraWritemem(), args);
         }
         return {};

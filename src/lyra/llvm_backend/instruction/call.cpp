@@ -24,6 +24,7 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/statement.hpp"
+#include "lyra/runtime/engine_types.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -451,14 +452,22 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
   llvm::Value* start_i64 = builder.CreateSExt(*start_or_err, i64_ty);
   llvm::Value* count_i64 = builder.CreateSExt(*count_or_err, i64_ty);
 
+  // Resolve slot_id for trace: real ID for kDirectToDest, kNoSlotId for kStaged
+  uint32_t fread_slot_id = lyra::runtime::kNoSlotId;
+  if (wb.kind == mir::WritebackKind::kDirectToDest) {
+    fread_slot_id =
+        GetDesignSlotId(context, wb.dest).value_or(lyra::runtime::kNoSlotId);
+  }
+
   // Call runtime: int32_t LyraFread(void* engine, int32_t descriptor,
   //   void* target, int32_t element_width, int32_t stride_bytes,
   //   int32_t is_memory, int64_t start_index, int64_t max_count,
-  //   int64_t element_count)
+  //   int64_t element_count, uint32_t slot_id)
   llvm::Value* bytes_read = builder.CreateCall(
       context.GetLyraFread(),
       {context.GetEnginePointer(), *desc_or_err, target_ptr_val, *width_or_err,
-       stride_bytes, *is_mem_or_err, start_i64, count_i64, element_count});
+       stride_bytes, *is_mem_or_err, start_i64, count_i64, element_count,
+       llvm::ConstantInt::get(i32_ty, fread_slot_id)});
 
   // Stage return (bytes_read) to tmp, then commit if statement form
   if (call.ret) {
@@ -473,11 +482,6 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
           OwnershipPolicy::kMove);
       if (!result) return result;
     }
-  }
-
-  // Emit MemoryDirty trace event for kDirectToDest (bulk memory write)
-  if (wb.kind == mir::WritebackKind::kDirectToDest) {
-    EmitTraceMemoryDirtyIfDesignSlot(context, wb.dest);
   }
 
   // Commit writeback based on kind
