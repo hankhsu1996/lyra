@@ -7,6 +7,7 @@
 #include <expected>
 #include <format>
 #include <functional>
+#include <initializer_list>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -59,6 +60,20 @@ namespace {
 auto LowerExpressionImpl(
     hir::ExpressionId expr_id, MirBuilder& builder,
     PlaceMaterializationCache& cache) -> Result<mir::Operand>;
+
+// Fix up UseTemp operands that became invalid after a block change.
+// When a sub-expression (e.g., ternary) creates new blocks, previously
+// lowered operands may refer to temps defined in a prior block.
+// This threads those values through block params so they're available
+// in the current block.
+void FixupOperandsAfterBlockChange(
+    MirBuilder& builder, BlockIndex before,
+    std::initializer_list<mir::Operand*> operands) {
+  if (builder.CurrentBlock() == before) return;
+  for (mir::Operand* op : operands) {
+    *op = builder.ThreadValueToCurrentBlock(*op);
+  }
+}
 
 auto LowerConstant(const hir::ConstantExpressionData& data, MirBuilder& builder)
     -> mir::Operand {
@@ -440,10 +455,12 @@ auto LowerBinary(
   if (!lhs_result) return std::unexpected(lhs_result.error());
   mir::Operand lhs = *lhs_result;
 
+  BlockIndex before_rhs = builder.CurrentBlock();
   Result<mir::Operand> rhs_result =
       LowerExpressionImpl(data.rhs, builder, cache);
   if (!rhs_result) return std::unexpected(rhs_result.error());
   mir::Operand rhs = *rhs_result;
+  FixupOperandsAfterBlockChange(builder, before_rhs, {&lhs});
 
   auto select_mir_op = [&]() -> mir::BinaryOp {
     if (IsRelationalOp(data.op)) {
@@ -763,13 +780,16 @@ auto LowerSystemCall(
     Result<mir::Operand> char_result =
         LowerExpression(ungetc->character, builder);
     if (!char_result) return std::unexpected(char_result.error());
+    mir::Operand char_op = *char_result;
 
+    BlockIndex before_desc = builder.CurrentBlock();
     Result<mir::Operand> desc_result =
         LowerExpression(ungetc->descriptor, builder);
     if (!desc_result) return std::unexpected(desc_result.error());
+    FixupOperandsAfterBlockChange(builder, before_desc, {&char_op});
 
     mir::Rvalue rvalue{
-        .operands = {*char_result, *desc_result},
+        .operands = {char_op, *desc_result},
         .info = mir::SystemTfRvalueInfo{.opcode = SystemTfOpcode::kUngetc},
     };
     return builder.EmitValueTemp(expr.type, std::move(rvalue));
@@ -1130,6 +1150,10 @@ auto LowerConditional(
       LowerExpressionImpl(data.then_expr, builder, cache);
   if (!then_result) return std::unexpected(then_result.error());
   mir::Operand then_val = *then_result;
+  // Cast to ternary result type if needed (then_expr type may differ, e.g.,
+  // range select produces a structurally equivalent but distinct TypeId).
+  const hir::Expression& then_expr = (*ctx.hir_arena)[data.then_expr];
+  then_val = builder.EmitCast(std::move(then_val), then_expr.type, expr.type);
   builder.EmitJump(merge_bb, {std::move(then_val)});
 
   // 6. Else block: lower else_expr HERE (short-circuit), jump with value
@@ -1138,6 +1162,8 @@ auto LowerConditional(
       LowerExpressionImpl(data.else_expr, builder, cache);
   if (!else_result) return std::unexpected(else_result.error());
   mir::Operand else_val = *else_result;
+  const hir::Expression& else_expr = (*ctx.hir_arena)[data.else_expr];
+  else_val = builder.EmitCast(std::move(else_val), else_expr.type, expr.type);
   builder.EmitJump(merge_bb, {std::move(else_val)});
 
   // 7. Continue in merge block; result is the block param (SSA temp)
@@ -1155,9 +1181,15 @@ auto LowerStructLiteral(
   std::vector<mir::Operand> operands;
   operands.reserve(data.field_values.size());
   for (hir::ExpressionId field_id : data.field_values) {
+    BlockIndex before = builder.CurrentBlock();
     Result<mir::Operand> field_result =
         LowerExpressionImpl(field_id, builder, cache);
     if (!field_result) return std::unexpected(field_result.error());
+    if (builder.CurrentBlock() != before) {
+      for (auto& op : operands) {
+        op = builder.ThreadValueToCurrentBlock(op);
+      }
+    }
     operands.push_back(*field_result);
   }
 
@@ -1206,10 +1238,15 @@ auto LowerCall(
 
     switch (param.kind) {
       case mir::PassingKind::kValue: {
-        // Input parameter: lower as expression (by value)
+        BlockIndex before = builder.CurrentBlock();
         Result<mir::Operand> arg_result =
             LowerExpressionImpl(arg_id, builder, cache);
         if (!arg_result) return std::unexpected(arg_result.error());
+        if (builder.CurrentBlock() != before) {
+          for (auto& op : in_args) {
+            op = builder.ThreadValueToCurrentBlock(op);
+          }
+        }
         in_args.push_back(*arg_result);
         break;
       }
@@ -1253,9 +1290,15 @@ auto LowerNewArray(
   if (!size_result) return std::unexpected(size_result.error());
   operands.push_back(*size_result);
   if (data.init_expr) {
+    BlockIndex before = builder.CurrentBlock();
     Result<mir::Operand> init_result =
         LowerExpressionImpl(*data.init_expr, builder, cache);
     if (!init_result) return std::unexpected(init_result.error());
+    if (builder.CurrentBlock() != before) {
+      for (auto& op : operands) {
+        op = builder.ThreadValueToCurrentBlock(op);
+      }
+    }
     operands.push_back(*init_result);
   }
 
@@ -1280,9 +1323,15 @@ auto LowerArrayLiteral(
   std::vector<mir::Operand> operands;
   operands.reserve(data.elements.size());
   for (hir::ExpressionId elem_id : data.elements) {
+    BlockIndex before = builder.CurrentBlock();
     Result<mir::Operand> elem_result =
         LowerExpressionImpl(elem_id, builder, cache);
     if (!elem_result) return std::unexpected(elem_result.error());
+    if (builder.CurrentBlock() != before) {
+      for (auto& op : operands) {
+        op = builder.ThreadValueToCurrentBlock(op);
+      }
+    }
     operands.push_back(*elem_result);
   }
 
@@ -1347,9 +1396,15 @@ auto LowerBuiltinMethodCall(
       LvalueResult lv = *lv_result;
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
+        BlockIndex before = builder.CurrentBlock();
         Result<mir::Operand> arg_result =
             LowerExpressionImpl(arg_id, builder, cache);
         if (!arg_result) return std::unexpected(arg_result.error());
+        if (builder.CurrentBlock() != before) {
+          for (auto& op : operands) {
+            op = builder.ThreadValueToCurrentBlock(op);
+          }
+        }
         operands.push_back(*arg_result);
       }
 
@@ -1368,9 +1423,15 @@ auto LowerBuiltinMethodCall(
       LvalueResult lv = *lv_result;
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
+        BlockIndex before = builder.CurrentBlock();
         Result<mir::Operand> arg_result =
             LowerExpressionImpl(arg_id, builder, cache);
         if (!arg_result) return std::unexpected(arg_result.error());
+        if (builder.CurrentBlock() != before) {
+          for (auto& op : operands) {
+            op = builder.ThreadValueToCurrentBlock(op);
+          }
+        }
         operands.push_back(*arg_result);
       }
 
@@ -1386,9 +1447,15 @@ auto LowerBuiltinMethodCall(
       LvalueResult lv = *lv_result;
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
+        BlockIndex before = builder.CurrentBlock();
         Result<mir::Operand> arg_result =
             LowerExpressionImpl(arg_id, builder, cache);
         if (!arg_result) return std::unexpected(arg_result.error());
+        if (builder.CurrentBlock() != before) {
+          for (auto& op : operands) {
+            op = builder.ThreadValueToCurrentBlock(op);
+          }
+        }
         operands.push_back(*arg_result);
       }
 
@@ -1583,10 +1650,12 @@ auto LowerPackedElementSelect(
   if (!base_result) return std::unexpected(base_result.error());
   mir::Operand base_operand = *base_result;
 
+  BlockIndex before_index = builder.CurrentBlock();
   Result<mir::Operand> index_result =
       LowerExpressionImpl(data.index, builder, cache);
   if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = *index_result;
+  FixupOperandsAfterBlockChange(builder, before_index, {&base_operand});
 
   // Get type info
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
@@ -1626,10 +1695,12 @@ auto LowerBitSelect(
   if (!base_result) return std::unexpected(base_result.error());
   mir::Operand base_operand = *base_result;
 
+  BlockIndex before_index = builder.CurrentBlock();
   Result<mir::Operand> index_result =
       LowerExpressionImpl(data.index, builder, cache);
   if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = *index_result;
+  FixupOperandsAfterBlockChange(builder, before_index, {&base_operand});
 
   // Get type info
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
@@ -1856,10 +1927,12 @@ auto LowerIndexedPartSelect(
   if (!base_result) return std::unexpected(base_result.error());
   mir::Operand base_operand = *base_result;
 
+  BlockIndex before_index = builder.CurrentBlock();
   Result<mir::Operand> index_result =
       LowerExpressionImpl(data.index, builder, cache);
   if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = *index_result;
+  FixupOperandsAfterBlockChange(builder, before_index, {&base_operand});
 
   // Get type info
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
@@ -1966,8 +2039,14 @@ auto LowerConcat(
   std::vector<mir::Operand> operands;
   operands.reserve(data.operands.size());
   for (hir::ExpressionId op_id : data.operands) {
+    BlockIndex before = builder.CurrentBlock();
     Result<mir::Operand> op_result = LowerExpressionImpl(op_id, builder, cache);
     if (!op_result) return std::unexpected(op_result.error());
+    if (builder.CurrentBlock() != before) {
+      for (auto& op : operands) {
+        op = builder.ThreadValueToCurrentBlock(op);
+      }
+    }
     operands.push_back(*op_result);
   }
 
@@ -2009,9 +2088,15 @@ auto LowerMathCall(
   std::vector<mir::Operand> operands;
   operands.reserve(data.args.size());
   for (hir::ExpressionId arg_id : data.args) {
+    BlockIndex before = builder.CurrentBlock();
     Result<mir::Operand> arg_result =
         LowerExpressionImpl(arg_id, builder, cache);
     if (!arg_result) return std::unexpected(arg_result.error());
+    if (builder.CurrentBlock() != before) {
+      for (auto& op : operands) {
+        op = builder.ThreadValueToCurrentBlock(op);
+      }
+    }
     operands.push_back(*arg_result);
   }
 
@@ -2032,10 +2117,12 @@ auto LowerElementAccessRvalue(
   if (!base_result) return std::unexpected(base_result.error());
   mir::Operand base_operand = *base_result;
 
+  BlockIndex before_index = builder.CurrentBlock();
   Result<mir::Operand> index_result =
       LowerExpressionImpl(data.index, builder, cache);
   if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = *index_result;
+  FixupOperandsAfterBlockChange(builder, before_index, {&base_operand});
 
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];
   // Use EnsurePlaceCached for memoization (6th projection-base site)

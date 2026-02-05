@@ -21,9 +21,22 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+struct JitSession::Impl {
+  std::unique_ptr<llvm::orc::LLJIT> jit;
+  int (*entry_fn)() = nullptr;
+};
+
+JitSession::JitSession() = default;
+JitSession::~JitSession() = default;
+JitSession::JitSession(JitSession&&) noexcept = default;
+JitSession& JitSession::operator=(JitSession&&) noexcept = default;
+
+auto JitSession::Run() -> int {
+  return impl_->entry_fn();
+}
+
 namespace {
 
-// Map OptLevel to LLVM codegen optimization level.
 auto ToCodeGenOpt(OptLevel level) -> llvm::CodeGenOpt::Level {
   switch (level) {
     case OptLevel::kO0:
@@ -38,7 +51,6 @@ auto ToCodeGenOpt(OptLevel level) -> llvm::CodeGenOpt::Level {
   throw common::InternalError("ToCodeGenOpt", "unknown OptLevel");
 }
 
-// Initialize LLVM native targets (thread-safe, once per process).
 void InitializeLlvm() {
   static std::once_flag flag;
   std::call_once(flag, [] {
@@ -48,16 +60,19 @@ void InitializeLlvm() {
   });
 }
 
-// Execute with given symbol resolution strategy.
-// If runtime_path is provided, load symbols from that library.
-// Otherwise, resolve symbols from the host process.
-auto ExecuteWithOrcJitImpl(
+// Core JIT compilation logic. Returns the LLJIT instance and entry function.
+// Caller is responsible for wrapping into JitSession.
+struct CompileResult {
+  std::unique_ptr<llvm::orc::LLJIT> jit;
+  int (*entry_fn)() = nullptr;
+};
+
+auto CompileJitImpl(
     LoweringResult& result,
     const std::optional<std::filesystem::path>& runtime_path,
-    OptLevel opt_level) -> std::expected<int, std::string> {
+    OptLevel opt_level) -> std::expected<CompileResult, std::string> {
   InitializeLlvm();
 
-  // Create LLJIT instance
   auto jtmb = llvm::orc::JITTargetMachineBuilder::detectHost();
   if (!jtmb) {
     return std::unexpected(
@@ -74,10 +89,8 @@ auto ExecuteWithOrcJitImpl(
             "failed to create JIT: {}", llvm::toString(jit.takeError())));
   }
 
-  // Add symbol generator for runtime functions
   auto& dylib = (*jit)->getMainJITDylib();
   if (runtime_path) {
-    // Load runtime library from shared object file
     auto gen = llvm::orc::DynamicLibrarySearchGenerator::Load(
         runtime_path->string().c_str(),
         (*jit)->getDataLayout().getGlobalPrefix());
@@ -89,8 +102,6 @@ auto ExecuteWithOrcJitImpl(
     }
     dylib.addGenerator(std::move(*gen));
   } else {
-    // Resolve symbols from the host process (for tests where runtime is
-    // statically linked)
     auto gen = llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
         (*jit)->getDataLayout().getGlobalPrefix());
     if (!gen) {
@@ -110,29 +121,27 @@ auto ExecuteWithOrcJitImpl(
   const auto& jit_dl = (*jit)->getDataLayout();
   if (module_dl.isDefault()) {
     throw common::InternalError(
-        "ExecuteWithOrcJitImpl", "module DataLayout not set before lowering");
+        "CompileJitImpl", "module DataLayout not set before lowering");
   }
   if (module_dl != jit_dl) {
     throw common::InternalError(
-        "ExecuteWithOrcJitImpl",
+        "CompileJitImpl",
         std::format(
             "module DataLayout mismatch: module='{}', jit='{}'",
             module_dl.getStringRepresentation(),
             jit_dl.getStringRepresentation()));
   }
 
-  // Create thread-safe context and module (takes ownership)
+  // Transfer module ownership to JIT
   llvm::orc::ThreadSafeContext tsc(std::move(result.context));
   auto tsm = llvm::orc::ThreadSafeModule(std::move(result.module), tsc);
-
-  // Add module to JIT
   if (auto err = (*jit)->addIRModule(std::move(tsm))) {
     return std::unexpected(
         std::format(
             "failed to add module: {}", llvm::toString(std::move(err))));
   }
 
-  // Lookup and call main (Lyra-internal entry point, not user-accessible)
+  // Symbol lookup triggers JIT compilation of the module
   auto main_sym = (*jit)->lookup("main");
   if (!main_sym) {
     return std::unexpected(
@@ -141,21 +150,50 @@ auto ExecuteWithOrcJitImpl(
             llvm::toString(main_sym.takeError())));
   }
 
-  auto* main_fn = main_sym->toPtr<int()>();
-  return main_fn();
+  return CompileResult{
+      .jit = std::move(*jit),
+      .entry_fn = main_sym->toPtr<int()>(),
+  };
 }
 
 }  // namespace
 
+auto CompileJit(
+    LoweringResult& result, const std::filesystem::path& runtime_path,
+    OptLevel opt_level) -> std::expected<JitSession, std::string> {
+  auto cr = CompileJitImpl(result, runtime_path, opt_level);
+  if (!cr) return std::unexpected(cr.error());
+  JitSession session;
+  session.impl_ = std::make_unique<JitSession::Impl>();
+  session.impl_->jit = std::move(cr->jit);
+  session.impl_->entry_fn = cr->entry_fn;
+  return session;
+}
+
+auto CompileJitInProcess(LoweringResult& result, OptLevel opt_level)
+    -> std::expected<JitSession, std::string> {
+  auto cr = CompileJitImpl(result, std::nullopt, opt_level);
+  if (!cr) return std::unexpected(cr.error());
+  JitSession session;
+  session.impl_ = std::make_unique<JitSession::Impl>();
+  session.impl_->jit = std::move(cr->jit);
+  session.impl_->entry_fn = cr->entry_fn;
+  return session;
+}
+
 auto ExecuteWithOrcJit(
     LoweringResult& result, const std::filesystem::path& runtime_path,
     OptLevel opt_level) -> std::expected<int, std::string> {
-  return ExecuteWithOrcJitImpl(result, runtime_path, opt_level);
+  auto session = CompileJit(result, runtime_path, opt_level);
+  if (!session) return std::unexpected(session.error());
+  return session->Run();
 }
 
 auto ExecuteWithOrcJitInProcess(LoweringResult& result, OptLevel opt_level)
     -> std::expected<int, std::string> {
-  return ExecuteWithOrcJitImpl(result, std::nullopt, opt_level);
+  auto session = CompileJitInProcess(result, opt_level);
+  if (!session) return std::unexpected(session.error());
+  return session->Run();
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

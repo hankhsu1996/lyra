@@ -1,7 +1,11 @@
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 
+#include <cstddef>
 #include <expected>
+#include <format>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 
@@ -16,31 +20,68 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/package.hpp"
+#include "lyra/mir/routine.hpp"
 #include "lyra/mir/verify.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+auto ProcessKindStr(mir::ProcessKind kind) -> std::string_view {
+  switch (kind) {
+    case mir::ProcessKind::kOnce:
+      return "initial";
+    case mir::ProcessKind::kLooping:
+      return "always";
+    case mir::ProcessKind::kFinal:
+      return "final";
+  }
+  return "process";
+}
+
 // Verify all MIR produced by lowering. Called once at the end of the pipeline.
 // Failures throw InternalError (compiler bug - we emitted invalid MIR).
 void VerifyLoweredMir(
     const mir::Design& design, const mir::Arena& arena,
     const TypeArena& type_arena) {
-  for (const auto& element : design.elements) {
+  for (size_t ei = 0; ei < design.elements.size(); ++ei) {
+    const auto& element = design.elements[ei];
     std::visit(
         common::Overloaded{
             [&](const mir::Module& mod) {
-              for (mir::FunctionId fid : mod.functions) {
-                mir::VerifyFunction(arena[fid], arena, type_arena);
+              // Derive instance path from first process (all share same owner).
+              std::string_view module_path;
+              if (!mod.processes.empty()) {
+                const auto& first = arena[mod.processes[0]];
+                module_path =
+                    design.instance_table.GetPath(first.owner_instance_id);
               }
-              for (mir::ProcessId pid : mod.processes) {
-                mir::VerifyProcess(arena[pid], arena, type_arena);
+              for (size_t fi = 0; fi < mod.functions.size(); ++fi) {
+                std::string label =
+                    module_path.empty()
+                        ? std::format("element[{}]: function[{}]", ei, fi)
+                        : std::format("{}: function[{}]", module_path, fi);
+                mir::VerifyFunction(
+                    arena[mod.functions[fi]], arena, type_arena, label);
+              }
+              for (size_t pi = 0; pi < mod.processes.size(); ++pi) {
+                const auto& proc = arena[mod.processes[pi]];
+                std::string label = module_path.empty()
+                                        ? std::format(
+                                              "element[{}]: {}[{}]", ei,
+                                              ProcessKindStr(proc.kind), pi)
+                                        : std::format(
+                                              "{}: {}[{}]", module_path,
+                                              ProcessKindStr(proc.kind), pi);
+                mir::VerifyProcess(proc, arena, type_arena, label);
               }
             },
             [&](const mir::Package& pkg) {
-              for (mir::FunctionId fid : pkg.functions) {
-                mir::VerifyFunction(arena[fid], arena, type_arena);
+              for (size_t fi = 0; fi < pkg.functions.size(); ++fi) {
+                std::string label =
+                    std::format("element[{}]: function[{}]", ei, fi);
+                mir::VerifyFunction(
+                    arena[pkg.functions[fi]], arena, type_arena, label);
               }
             },
         },

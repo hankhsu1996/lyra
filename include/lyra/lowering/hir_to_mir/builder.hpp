@@ -4,6 +4,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <unordered_set>
 #include <vector>
 
 #include "lyra/common/origin_id.hpp"
@@ -36,6 +37,13 @@ struct BlockIndex {
 
 inline constexpr BlockIndex kInvalidBlockIndex{
     std::numeric_limits<uint32_t>::max()};
+
+// Predecessor edge: records how control flows into a block.
+// Built incrementally in EmitTerm; used by ThreadValueToCurrentBlock.
+struct PredEdge {
+  BlockIndex pred_block;
+  enum Kind { kJump, kBranchThen, kBranchElse } kind;
+};
 
 // Loop context for break/continue lowering.
 struct LoopContext {
@@ -290,6 +298,12 @@ class MirBuilder {
   // Used by lvalue lowering to attach origins to projections.
   auto RecordProjectionOrigin(hir::ExpressionId expr_id) -> common::OriginId;
 
+  // Thread a UseTemp operand from a predecessor block to the current block.
+  // If the temp was defined in a different block, adds a block param and
+  // patches predecessor terminators to carry the value as an edge arg.
+  // Non-UseTemp operands (kUse, kConst, kPoison) are returned unchanged.
+  auto ThreadValueToCurrentBlock(mir::Operand op) -> mir::Operand;
+
   // Returns true if there is a valid insertion point (current block exists
   // and has no terminator yet). Used for fallthrough detection and control
   // flow decisions.
@@ -304,6 +318,7 @@ class MirBuilder {
     std::vector<mir::BlockParam> params;
     std::vector<mir::Statement> statements;
     std::optional<mir::Terminator> terminator;
+    std::unordered_set<int> defined_temps;
   };
 
   // Centralized instruction emission - all EmitX instructions delegate here.
@@ -327,6 +342,7 @@ class MirBuilder {
   OriginMap* origin_map_;
   BlockIndex current_block_;
   std::vector<BlockBuilder> blocks_;
+  std::vector<std::vector<PredEdge>> pred_edges_;
   std::vector<LoopContext> loop_stack_;
   common::OriginId current_origin_ = common::OriginId::Invalid();
   std::optional<InstructionHirSource>

@@ -84,32 +84,37 @@ auto RunJit(const CompilationInput& input) -> int {
     return 1;
   }
 
-  // Collect LLVM stats BEFORE JIT (module is consumed by JIT execution)
+  // Collect LLVM stats BEFORE JIT (module is consumed during compilation)
   bool emit_stats = input.stats_top_n >= 0;
   LlvmStats llvm_stats;
   if (emit_stats) {
     llvm_stats = CollectLlvmStats(*llvm_result->module);
   }
 
-  std::expected<int, std::string> exec_result;
+  // Phase 1: JIT compilation
+  std::expected<lowering::mir_to_llvm::JitSession, std::string> session;
   {
-    PhaseTimer timer(vlog, "jit", true);
-    exec_result = lowering::mir_to_llvm::ExecuteWithOrcJit(
+    PhaseTimer timer(vlog, "jit_compile");
+    session = lowering::mir_to_llvm::CompileJit(
         *llvm_result, runtime_path, input.opt_level);
   }
-  if (!exec_result) {
-    PrintError(std::format("JIT execution failed: {}", exec_result.error()));
+  if (!session) {
+    PrintError(std::format("JIT compilation failed: {}", session.error()));
     return 1;
   }
 
-  // Stats output AFTER all phases complete (so JIT timing is included)
+  // Print ALL compilation stats BEFORE simulation (survives timeout)
   if (emit_stats) {
     PrintMirStats(compilation.mir.stats);
     vlog.PrintPhaseSummary();
     PrintLlvmStats(llvm_stats, input.stats_top_n);
   }
 
-  return *exec_result;
+  // Phase 2: simulation
+  {
+    PhaseTimer timer(vlog, "sim", true);
+    return session->Run();
+  }
 }
 
 }  // namespace lyra::driver

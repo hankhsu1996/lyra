@@ -136,6 +136,11 @@ void MirBuilder::EmitInst(InstT inst) {
         *current_hir_source_);
   }
 
+  // Track defined temps for cross-block threading.
+  if constexpr (std::is_same_v<InstT, mir::DefineTemp>) {
+    block.defined_temps.insert(inst.temp_id);
+  }
+
   block.statements.push_back(
       mir::Statement{.data = std::move(inst), .origin = origin});
 }
@@ -167,6 +172,29 @@ void MirBuilder::EmitTerm(TermT term) {
         *current_hir_source_);
   }
 
+  // Record predecessor edges for cross-block threading.
+  if constexpr (std::is_same_v<TermT, mir::Jump>) {
+    pred_edges_[term.target.value].push_back({current_block_, PredEdge::kJump});
+  } else if constexpr (std::is_same_v<TermT, mir::Branch>) {
+    pred_edges_[term.then_target.value].push_back(
+        {current_block_, PredEdge::kBranchThen});
+    pred_edges_[term.else_target.value].push_back(
+        {current_block_, PredEdge::kBranchElse});
+  } else if constexpr (std::is_same_v<TermT, mir::Switch>) {
+    for (const auto& target : term.targets) {
+      pred_edges_[target.value].push_back({current_block_, PredEdge::kJump});
+    }
+  } else if constexpr (std::is_same_v<TermT, mir::QualifiedDispatch>) {
+    for (const auto& target : term.targets) {
+      pred_edges_[target.value].push_back({current_block_, PredEdge::kJump});
+    }
+  } else if constexpr (std::is_same_v<TermT, mir::Delay>) {
+    pred_edges_[term.resume.value].push_back({current_block_, PredEdge::kJump});
+  } else if constexpr (std::is_same_v<TermT, mir::Wait>) {
+    pred_edges_[term.resume.value].push_back({current_block_, PredEdge::kJump});
+  }
+  // Return, Finish, Repeat have no successor edges.
+
   block.terminator = mir::Terminator{.data = std::move(term), .origin = origin};
 }
 
@@ -177,6 +205,7 @@ auto MirBuilder::CreateBlock() -> BlockIndex {
   }
   BlockIndex idx{static_cast<uint32_t>(blocks_.size())};
   blocks_.emplace_back();
+  pred_edges_.emplace_back();
   return idx;
 }
 
@@ -188,17 +217,18 @@ auto MirBuilder::CreateBlockWithParams(std::vector<TypeId> param_types)
   }
   BlockIndex idx{static_cast<uint32_t>(blocks_.size())};
   blocks_.emplace_back();
+  pred_edges_.emplace_back();
 
   std::vector<int> temp_ids;
   temp_ids.reserve(param_types.size());
   for (TypeId ty : param_types) {
-    // Use AllocValueTemp to properly record in temp_metadata
     int temp_id = ctx_->AllocValueTemp(ty);
     blocks_[idx.value].params.push_back(
         mir::BlockParam{
             .temp_id = temp_id,
             .type = ty,
         });
+    blocks_[idx.value].defined_temps.insert(temp_id);
     temp_ids.push_back(temp_id);
   }
   return {idx, temp_ids};
@@ -853,6 +883,39 @@ void MirBuilder::EmitTerminate(std::optional<mir::Finish> info) {
     // Only explicit $finish/$stop/$fatal should use Finish terminator.
     EmitTerm(mir::Return{.value = std::nullopt});
   }
+}
+
+auto MirBuilder::ThreadValueToCurrentBlock(mir::Operand op) -> mir::Operand {
+  if (op.kind != mir::Operand::Kind::kUseTemp) {
+    return op;
+  }
+  int temp_id = std::get<mir::TempId>(op.payload).value;
+  if (blocks_[current_block_.value].defined_temps.contains(temp_id)) {
+    return op;
+  }
+
+  TypeId type = ctx_->temp_metadata[temp_id].type;
+  int new_temp = ctx_->AllocValueTemp(type);
+  blocks_[current_block_.value].params.push_back(
+      mir::BlockParam{.temp_id = new_temp, .type = type});
+  blocks_[current_block_.value].defined_temps.insert(new_temp);
+
+  for (auto& edge : pred_edges_[current_block_.value]) {
+    auto& pred_term = blocks_[edge.pred_block.value].terminator->data;
+    switch (edge.kind) {
+      case PredEdge::kJump:
+        std::get<mir::Jump>(pred_term).args.push_back(op);
+        break;
+      case PredEdge::kBranchThen:
+        std::get<mir::Branch>(pred_term).then_args.push_back(op);
+        break;
+      case PredEdge::kBranchElse:
+        std::get<mir::Branch>(pred_term).else_args.push_back(op);
+        break;
+    }
+  }
+
+  return mir::Operand::UseTemp(new_temp);
 }
 
 void MirBuilder::EmitImplicitReturn(TypeId return_type) {

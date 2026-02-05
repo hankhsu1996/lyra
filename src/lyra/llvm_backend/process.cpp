@@ -141,6 +141,21 @@ struct PhiWiringState {
     for (const auto& edge : pending_edges) {
       for (size_t j = 0; j < edge.args.size(); ++j) {
         auto* phi = phis[MakeKey(edge.succ_idx, j)];
+        if (phi->getType() != edge.args[j]->getType()) {
+          std::string phi_type_str;
+          llvm::raw_string_ostream phi_os(phi_type_str);
+          phi->getType()->print(phi_os);
+          std::string arg_type_str;
+          llvm::raw_string_ostream arg_os(arg_type_str);
+          edge.args[j]->getType()->print(arg_os);
+          throw common::InternalError(
+              "PHI wiring",
+              std::format(
+                  "block {} param {}: PHI type ({}) != incoming value type "
+                  "({}) from pred '{}'",
+                  edge.succ_idx, j, phi_type_str, arg_type_str,
+                  edge.pred->getName().str()));
+        }
         phi->addIncoming(edge.args[j], edge.pred);
       }
     }

@@ -410,13 +410,15 @@ void VerifySelectorType(
 // - kPoison: not allowed (should never reach lowering)
 void VerifyEdgeArgKind(
     const Operand& arg, size_t arg_idx, size_t src_block_idx,
-    size_t target_block_idx, std::string_view edge_desc) {
+    size_t target_block_idx, std::string_view edge_desc,
+    std::string_view routine_kind) {
   if (arg.kind == Operand::Kind::kPoison) {
     throw common::InternalError(
         "MIR verify",
         std::format(
-            "block {}: {} to block {}: arg[{}] is Poison (invalid operand)",
-            src_block_idx, edge_desc, target_block_idx, arg_idx));
+            "{}: block {}: {} to block {}: arg[{}] is Poison (invalid "
+            "operand)",
+            routine_kind, src_block_idx, edge_desc, target_block_idx, arg_idx));
   }
   // kConst, kUse, kUseTemp are all allowed.
   // Note: kUse (PlaceId) may emit loads in predecessor block - this is legal.
@@ -428,7 +430,8 @@ void VerifyEdgeArgs(
     const std::vector<BasicBlock>& blocks, const Arena& arena,
     const TypeArena& types,
     const std::unordered_map<int, TempDefinition>& defined_temps,
-    std::string_view edge_desc, size_t src_block_idx) {
+    std::string_view edge_desc, size_t src_block_idx,
+    std::string_view routine_kind) {
   const auto& target_block = blocks[target_block_idx];
   const auto& params = target_block.params;
 
@@ -436,14 +439,15 @@ void VerifyEdgeArgs(
     throw common::InternalError(
         "MIR verify",
         std::format(
-            "block {}: {} to block {}: arg count ({}) != param count ({})",
-            src_block_idx, edge_desc, target_block_idx, args.size(),
-            params.size()));
+            "{}: block {}: {} to block {}: arg count ({}) != param count ({})",
+            routine_kind, src_block_idx, edge_desc, target_block_idx,
+            args.size(), params.size()));
   }
 
   for (size_t i = 0; i < args.size(); ++i) {
     // Verify operand kind is allowed
-    VerifyEdgeArgKind(args[i], i, src_block_idx, target_block_idx, edge_desc);
+    VerifyEdgeArgKind(
+        args[i], i, src_block_idx, target_block_idx, edge_desc, routine_kind);
 
     // Verify type matches
     TypeId arg_type =
@@ -453,9 +457,10 @@ void VerifyEdgeArgs(
       throw common::InternalError(
           "MIR verify",
           std::format(
-              "block {}: {} to block {}: arg[{}] type ({}) != param type ({})",
-              src_block_idx, edge_desc, target_block_idx, i, arg_type.value,
-              param_type.value));
+              "{}: block {}: {} to block {}: arg[{}] type ({}) != param type "
+              "({})",
+              routine_kind, src_block_idx, edge_desc, target_block_idx, i,
+              arg_type.value, param_type.value));
     }
   }
 }
@@ -500,12 +505,18 @@ void VerifyOperandDefBeforeUse(
     std::string_view routine_kind) {
   if (const auto* temp_id = std::get_if<TempId>(&op.payload)) {
     if (!available_temps.contains(temp_id->value)) {
+      std::string avail_str;
+      for (int t : available_temps) {
+        if (!avail_str.empty()) avail_str += ",";
+        avail_str += std::to_string(t);
+      }
       throw common::InternalError(
           "MIR verify",
           std::format(
               "{}: block {} stmt {}: {}: UseTemp({}) used before definition "
-              "in same block",
-              routine_kind, block_idx, stmt_idx, context, temp_id->value));
+              "in same block (available: [{}])",
+              routine_kind, block_idx, stmt_idx, context, temp_id->value,
+              avail_str));
     }
   }
 }
@@ -739,7 +750,7 @@ void VerifyBlockParamsAndEdgeArgs(
             [&](const Jump& jump) {
               VerifyEdgeArgs(
                   jump.args, jump.target.value, blocks, arena, types,
-                  defined_temps, "Jump", i);
+                  defined_temps, "Jump", i, routine_kind);
               for (size_t j = 0; j < jump.args.size(); ++j) {
                 VerifyUseTempDefined(
                     jump.args[j], defined_temps, temp_metadata, i,
@@ -759,10 +770,10 @@ void VerifyBlockParamsAndEdgeArgs(
                   "Branch.condition", routine_kind);
               VerifyEdgeArgs(
                   branch.then_args, branch.then_target.value, blocks, arena,
-                  types, defined_temps, "Branch.then", i);
+                  types, defined_temps, "Branch.then", i, routine_kind);
               VerifyEdgeArgs(
                   branch.else_args, branch.else_target.value, blocks, arena,
-                  types, defined_temps, "Branch.else", i);
+                  types, defined_temps, "Branch.else", i, routine_kind);
               for (size_t j = 0; j < branch.then_args.size(); ++j) {
                 VerifyUseTempDefined(
                     branch.then_args[j], defined_temps, temp_metadata, i,
@@ -812,27 +823,27 @@ void VerifyBlockParamsAndEdgeArgs(
 }  // namespace
 
 void VerifyFunction(
-    const Function& func, const Arena& arena, const TypeArena& types) {
+    const Function& func, const Arena& arena, const TypeArena& types,
+    std::string_view label) {
   VerifyParamLocalSlots(func);
 
   const Type& ret_type = types[func.signature.return_type];
   bool is_void = ret_type.Kind() == TypeKind::kVoid;
-  VerifyReturnInvariants(func.blocks, is_void, "function");
+  VerifyReturnInvariants(func.blocks, is_void, label);
 
   // Verify block params, edge args, temp_metadata consistency, and
   // def-before-use
   VerifyBlockParamsAndEdgeArgs(
-      func.blocks, arena, types, func.temp_metadata, "function");
+      func.blocks, arena, types, func.temp_metadata, label);
 }
 
 void VerifyProcess(
-    const Process& proc, const Arena& arena, const TypeArena& types) {
-  VerifyReturnInvariants(proc.blocks, true, "process");
+    const Process& proc, const Arena& arena, const TypeArena& types,
+    std::string_view label) {
+  VerifyReturnInvariants(proc.blocks, true, label);
 
-  // Verify block params, edge args, temp_metadata consistency, and
-  // def-before-use
   VerifyBlockParamsAndEdgeArgs(
-      proc.blocks, arena, types, proc.temp_metadata, "process");
+      proc.blocks, arena, types, proc.temp_metadata, label);
 }
 
 }  // namespace lyra::mir

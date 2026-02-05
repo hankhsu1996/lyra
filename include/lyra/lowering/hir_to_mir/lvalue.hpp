@@ -36,12 +36,17 @@ inline auto IsAlwaysValid(const mir::Operand& validity) -> bool {
 // - Index contains X/Z bits
 // Callers use GuardedUse/GuardedAssign to implement OOB-safe operations.
 //
+// INVARIANT: validity is always block-stable (kConst or kUse, never kUseTemp).
+// UseTemps are block-local SSA; callers may lower expressions that create
+// blocks (e.g., ternary), which would invalidate UseTemp operands. Lvalue
+// lowering materializes non-constant validity to a place to prevent this.
+//
 // TODO(hankhsu): Extend validity tracking to unpacked/dynamic arrays and
 // queues. Currently only packed arrays track validity; other array types need
 // OOB handling added in lowering (emit GuardedUse/GuardedAssign).
 struct LvalueResult {
   mir::PlaceId place;
-  mir::Operand validity;  // 1-bit 2-state bool, or constant 1 if always valid
+  mir::Operand validity;  // 1-bit 2-state bool: kConst(1) or kUse(place)
 
   // Check if this lvalue is always valid (no runtime guarding needed).
   [[nodiscard]] auto IsAlwaysValid() const -> bool {

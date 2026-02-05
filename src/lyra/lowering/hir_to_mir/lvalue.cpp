@@ -45,6 +45,19 @@ auto MakeAlwaysValid(MirBuilder& builder) -> mir::Operand {
   return mir::Operand::Const(MakeIntegralConst(1, bool_type));
 }
 
+// Ensure validity operand is block-stable (kConst or kUse, never kUseTemp).
+// UseTemps are block-local SSA values that become stale when blocks change.
+// Callers of LowerLvalue may lower expressions that create blocks (e.g.,
+// ternary), so validity must survive across block boundaries.
+auto MaterializeValidity(mir::Operand validity, MirBuilder& builder)
+    -> mir::Operand {
+  if (validity.kind != mir::Operand::Kind::kUseTemp) return validity;
+  TypeId bool_type = builder.GetContext().GetBitType();
+  mir::PlaceId temp = builder.GetContext().AllocTemp(bool_type);
+  builder.EmitAssign(temp, std::move(validity));
+  return mir::Operand::Use(temp);
+}
+
 // Check if validity is constant 1 (always valid).
 auto IsAlwaysValid(const mir::Operand& validity) -> bool {
   if (validity.kind != mir::Operand::Kind::kConst) {
@@ -296,7 +309,7 @@ auto LowerPackedElementSelectLvalue(
 
   return LvalueResult{
       .place = result_place,
-      .validity = total_validity,
+      .validity = MaterializeValidity(total_validity, builder),
   };
 }
 
@@ -445,7 +458,7 @@ auto LowerIndexedPartSelectLvalue(
 
   return LvalueResult{
       .place = result_place,
-      .validity = total_validity,
+      .validity = MaterializeValidity(total_validity, builder),
   };
 }
 

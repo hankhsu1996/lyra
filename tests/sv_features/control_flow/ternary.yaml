@@ -102,3 +102,135 @@ cases:
     expect:
       variables:
         a: 99
+
+  - name: nested_in_binary
+    description: Ternary as operand of binary - UseTemp threading across blocks
+    sv: |
+      module Test;
+        int a, b, c, result;
+        initial begin
+          a = 10;
+          b = 20;
+          c = 30;
+          result = a + (1 ? b : c);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 30
+
+  - name: nested_in_index
+    description: Ternary as array index - UseTemp threading for base
+    sv: |
+      module Test;
+        int arr [3];
+        int result;
+        initial begin
+          arr[0] = 100;
+          arr[1] = 200;
+          arr[2] = 300;
+          result = arr[1 ? 1 : 0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 200
+
+  - name: both_sides_conditional
+    description: Both binary operands are ternaries - double block change
+    sv: |
+      module Test;
+        int a, b, c, d, e, f, result;
+        initial begin
+          a = 1; b = 10; c = 20;
+          d = 0; e = 30; f = 40;
+          result = (a ? b : c) + (d ? e : f);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 50
+
+  - name: width_mismatch
+    description: Different-width operands (12-bit vs 16-bit) - zero-extends narrow
+    sv: |
+      module Test;
+        logic [15:0] result;
+        logic [11:0] narrow;
+        logic [15:0] wide;
+        initial begin
+          narrow = 12'hABC;
+          wide = 16'h1234;
+          result = 1 ? narrow : wide;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 2748
+
+  - name: four_state_two_state
+    description: 2-state vs 4-state operands - cast adds zero unknown plane
+    sv: |
+      module Test;
+        logic [7:0] result;
+        bit [7:0] two_state;
+        logic [7:0] four_state;
+        initial begin
+          two_state = 8'hAB;
+          four_state = 8'hCD;
+          result = 1 ? two_state : four_state;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 171
+
+  - name: signed_unsigned
+    description: Signedness mismatch - mixed signedness yields unsigned result
+    sv: |
+      module Test;
+        int result;
+        int signed_val;
+        bit [31:0] unsigned_val;
+        initial begin
+          signed_val = -1;
+          unsigned_val = 100;
+          result = 0 ? signed_val : unsigned_val;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 100
+
+  - name: width_12bit_phi
+    description: Non-power-of-2 width through ternary PHI (i12->i16 storage rounding)
+    sv: |
+      module Test;
+        logic [11:0] result;
+        logic [7:0] narrow;
+        logic [11:0] wide;
+        initial begin
+          narrow = 8'hAB;
+          wide = 12'h123;
+          result = 1 ? narrow : wide;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 171
+
+  - name: concat_with_ternary
+    description: Concat where one operand is a ternary - UseTemp threading across blocks
+    sv: |
+      module Test;
+        logic [15:0] result;
+        logic [7:0] a, b;
+        initial begin
+          a = 8'hAB;
+          b = 8'hCD;
+          result = {a, (1 ? b : 8'h00)};
+        end
+      endmodule
+    expect:
+      variables:
+        result: 43981
