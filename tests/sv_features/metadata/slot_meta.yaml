@@ -1,0 +1,106 @@
+feature: metadata
+description: Tests for design slot metadata registry
+
+cases:
+  - name: slot-meta-packed4
+    description: 4-state logic variable has packed4 metadata
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a = 8'h42;
+        end
+      endmodule
+    dump_slot_meta: true
+    expect:
+      stdout:
+        contains:
+          - "__LYRA_SLOT_META__: version=1"
+          - "kind=packed4"
+          - "value_off="
+          - "unk_off="
+
+  - name: slot-meta-packed2
+    description: 2-state bit variable has packed2 metadata
+    sv: |
+      module Test;
+        bit [7:0] a;
+        initial begin
+          a = 8'h42;
+        end
+      endmodule
+    dump_slot_meta: true
+    expect:
+      stdout:
+        contains:
+          - "kind=packed2"
+        not_contains:
+          - "unk_off="
+
+  - name: slot-meta-handle
+    description: String variable has handle metadata
+    sv: |
+      module Test;
+        string s;
+        initial begin
+          s = "hello";
+        end
+      endmodule
+    dump_slot_meta: true
+    expect:
+      stdout:
+        contains:
+          - "kind=handle"
+          - "total_bytes=8"
+
+  - name: slot-meta-multiple-kinds
+    description: Mixed slot types all represented with correct kinds
+    sv: |
+      module Test;
+        logic [7:0] a;
+        bit [15:0] b;
+        string s;
+        initial begin
+          a = 8'h01;
+          b = 16'h0002;
+          s = "x";
+        end
+      endmodule
+    dump_slot_meta: true
+    expect:
+      stdout:
+        contains:
+          - "kind=packed4"
+          - "kind=packed2"
+          - "kind=handle"
+
+  - name: slot-meta-not-dumped-by-default
+    description: No slot meta output when dump flag is not set
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a = 8'h42;
+        end
+      endmodule
+    expect:
+      stdout:
+        not_contains:
+          - "__LYRA_SLOT_META__"
+
+  - name: slot-meta-orthogonal-to-trace
+    description: Dump slot meta without trace; no trace output appears
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a = 8'h42;
+        end
+      endmodule
+    dump_slot_meta: true
+    expect:
+      stdout:
+        contains:
+          - "__LYRA_SLOT_META__:"
+        not_contains:
+          - "__LYRA_TRACE__"

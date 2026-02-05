@@ -20,6 +20,8 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/output_sink.hpp"
+#include "lyra/runtime/slot_meta.hpp"
+#include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/trace/trace_manager.hpp"
@@ -214,7 +216,8 @@ extern "C" void LyraRunSimulation(
     LyraProcessFunc* processes, void** states_raw, uint32_t num_processes,
     const char** plusargs_raw, uint32_t num_plusargs,
     const char** instance_paths_raw, uint32_t num_instance_paths,
-    bool enable_trace) {
+    const uint32_t* slot_meta_words, uint32_t num_slot_metas,
+    uint32_t slot_meta_version, bool dump_slot_meta, bool enable_trace) {
   auto states = std::span(states_raw, num_processes);
   auto procs = std::span(processes, num_processes);
 
@@ -241,6 +244,20 @@ extern "C" void LyraRunSimulation(
   lyra::runtime::Engine engine(
       MakeProcessRunner(procs, states), std::span(plusargs_vec),
       std::move(instance_paths_vec));
+  if (slot_meta_words != nullptr && num_slot_metas > 0) {
+    if (slot_meta_version != lyra::runtime::slot_meta_abi::kVersion) {
+      throw lyra::common::InternalError(
+          "LyraRunSimulation",
+          std::format(
+              "slot_meta version mismatch: got {}, expected {}",
+              slot_meta_version, lyra::runtime::slot_meta_abi::kVersion));
+    }
+    engine.InitSlotMeta(
+        lyra::runtime::SlotMetaRegistry(slot_meta_words, num_slot_metas));
+  }
+  if (dump_slot_meta) {
+    engine.GetSlotMetaRegistry().DumpSummary();
+  }
   if (enable_trace) {
     engine.GetTraceManager().SetEnabled(true);
   }

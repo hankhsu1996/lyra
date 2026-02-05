@@ -22,6 +22,7 @@
 #include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/file_manager.hpp"
+#include "lyra/runtime/slot_meta.hpp"
 #include "lyra/trace/trace_manager.hpp"
 
 namespace lyra::runtime {
@@ -147,6 +148,19 @@ class Engine {
   // Get trace manager for event recording.
   [[nodiscard]] auto GetTraceManager() -> trace::TraceManager& {
     return trace_manager_;
+  }
+
+  // One-time init for slot metadata registry.
+  void InitSlotMeta(SlotMetaRegistry&& registry) {
+    if (slot_meta_registry_.IsPopulated()) {
+      throw common::InternalError(
+          "Engine::InitSlotMeta", "slot meta already initialized");
+    }
+    slot_meta_registry_ = std::move(registry);
+  }
+
+  [[nodiscard]] auto GetSlotMetaRegistry() const -> const SlotMetaRegistry& {
+    return slot_meta_registry_;
   }
 
   // Get hierarchical path for an instance (%m support).
@@ -276,6 +290,9 @@ class Engine {
   // PRNG state for $random/$urandom. LCG with glibc constants.
   // Initial seed = 1 for deterministic reproducibility.
   uint32_t prng_state_ = 1;
+
+  // Slot metadata registry (empty until populated by JIT codegen).
+  SlotMetaRegistry slot_meta_registry_;
 
   // Trace event manager (disabled by default, zero overhead when off).
   trace::TraceManager trace_manager_;

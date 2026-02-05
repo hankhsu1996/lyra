@@ -37,8 +37,9 @@ struct TestCase {
   std::optional<uint64_t> expected_time;
   std::optional<ExpectedOutput> expected_stdout;
   std::map<std::string, ExpectedOutput> expected_files;
-  bool pedantic = false;  // Strict LRM compliance mode for this test
-  bool trace = false;     // Enable simulation tracing for this test
+  bool pedantic = false;        // Strict LRM compliance mode for this test
+  bool trace = false;           // Enable simulation tracing for this test
+  bool dump_slot_meta = false;  // Dump slot metadata registry (test-only)
   [[nodiscard]] auto IsMultiFile() const -> bool {
     return !files.empty();
   }
