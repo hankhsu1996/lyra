@@ -38,19 +38,19 @@ auto RunMir(const CompilationInput& input) -> int {
     return 1;
   }
 
+  // Print compile-pipeline stats before simulation (survives timeout)
+  if (input.stats_top_n >= 0) {
+    PrintMirStats(compilation->mir.stats);
+    vlog.PrintPhaseSummary();
+  }
+
   mir::interp::SimulationResult result;
   {
-    PhaseTimer timer(vlog, "run");
+    PhaseTimer timer(vlog, "run", true);
     result = mir::interp::RunSimulation(
         compilation->mir.design, *compilation->mir.mir_arena,
         *compilation->hir.type_arena, &std::cout, input.plusargs,
         input.fs_base_dir, input.enable_system, nullptr, input.enable_trace);
-  }
-
-  // Stats output AFTER all phases complete
-  if (input.stats_top_n >= 0) {
-    PrintMirStats(compilation->mir.stats);
-    vlog.PrintPhaseSummary();
   }
 
   if (!result.error_message.empty()) {

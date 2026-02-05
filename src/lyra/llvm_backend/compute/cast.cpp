@@ -24,6 +24,7 @@
 #include "lyra/llvm_backend/compute/ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/emit_string_conv.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -260,7 +261,7 @@ auto LowerCastRvalue(
 
     uint32_t bit_width = GetTargetBitWidth(types, destination_type);
     llvm::Type* elem_type =
-        llvm::Type::getIntNTy(context.GetLlvmContext(), bit_width);
+        GetLlvmStorageType(context.GetLlvmContext(), bit_width);
 
     bool is_signed = IsSignedIntegral(types, destination_type);
     llvm::Value* result = nullptr;
@@ -283,7 +284,7 @@ auto LowerCastRvalue(
   // Int -> Int
   uint32_t bit_width = GetTargetBitWidth(types, destination_type);
   llvm::Type* elem_type =
-      llvm::Type::getIntNTy(context.GetLlvmContext(), bit_width);
+      GetLlvmStorageType(context.GetLlvmContext(), bit_width);
 
   bool is_signed = IsSignedIntegral(types, info.source_type);
   uint32_t source_bits = GetSemanticBitWidth(types, info.source_type);

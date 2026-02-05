@@ -3,10 +3,13 @@
 #include <cstdio>
 #include <format>
 #include <string>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
 #include <fmt/core.h>
+#include <llvm/Support/Error.h>
+#include <llvm/Support/TimeProfiler.h>
 
 #include "frontend.hpp"
 #include "llvm_stats.hpp"
@@ -34,6 +37,41 @@ void PrintMirStats(
       stats.mir_stmts);
   std::fflush(sink);
 }
+
+// RAII guard for LLVM time-trace profiling.
+// Initializes the profiler on construction; writes JSON and cleans up on
+// destruction (even if JIT compilation fails).
+class TimeTraceGuard {
+ public:
+  explicit TimeTraceGuard(bool enabled) : enabled_(enabled) {
+    if (enabled_) {
+      llvm::timeTraceProfilerInitialize(500, "lyra");
+    }
+  }
+
+  ~TimeTraceGuard() {
+    if (!enabled_) return;
+    auto filename =
+        std::format("lyra-jit-{}.time-trace.json", static_cast<int>(getpid()));
+    if (auto err = llvm::timeTraceProfilerWrite(filename, "lyra")) {
+      fmt::print(
+          stderr, "[lyra] warning: failed to write time-trace: {}\n",
+          llvm::toString(std::move(err)));
+    } else {
+      fmt::print(stderr, "[lyra] time-trace written to {}\n", filename);
+    }
+    std::fflush(stderr);
+    llvm::timeTraceProfilerCleanup();
+  }
+
+  TimeTraceGuard(const TimeTraceGuard&) = delete;
+  auto operator=(const TimeTraceGuard&) -> TimeTraceGuard& = delete;
+  TimeTraceGuard(TimeTraceGuard&&) = delete;
+  auto operator=(TimeTraceGuard&&) -> TimeTraceGuard& = delete;
+
+ private:
+  bool enabled_;
+};
 
 }  // namespace
 
@@ -84,32 +122,47 @@ auto RunJit(const CompilationInput& input) -> int {
     return 1;
   }
 
-  // Collect LLVM stats BEFORE JIT (module is consumed by JIT execution)
+  // Collect LLVM stats BEFORE JIT (module is consumed during compilation)
   bool emit_stats = input.stats_top_n >= 0;
   LlvmStats llvm_stats;
   if (emit_stats) {
     llvm_stats = CollectLlvmStats(*llvm_result->module);
   }
 
-  std::expected<int, std::string> exec_result;
+  // Phase 1: JIT compilation
+  TimeTraceGuard time_trace_guard(input.time_trace);
+  std::expected<lowering::mir_to_llvm::JitSession, std::string> session;
   {
-    PhaseTimer timer(vlog, "jit", true);
-    exec_result = lowering::mir_to_llvm::ExecuteWithOrcJit(
+    PhaseTimer timer(vlog, "jit_compile");
+    session = lowering::mir_to_llvm::CompileJit(
         *llvm_result, runtime_path, input.opt_level);
   }
-  if (!exec_result) {
-    PrintError(std::format("JIT execution failed: {}", exec_result.error()));
+  if (!session) {
+    PrintError(std::format("JIT compilation failed: {}", session.error()));
     return 1;
   }
 
-  // Stats output AFTER all phases complete (so JIT timing is included)
+  // Print ALL compilation stats BEFORE simulation (survives timeout)
   if (emit_stats) {
     PrintMirStats(compilation.mir.stats);
     vlog.PrintPhaseSummary();
     PrintLlvmStats(llvm_stats, input.stats_top_n);
+    const auto& jt = session->timings();
+    if (jt.complete) {
+      fmt::print(
+          stderr,
+          "[lyra][stats][jit] create_jit={:.3f}s load_runtime={:.3f}s "
+          "add_ir={:.3f}s lookup_main={:.3f}s\n",
+          jt.create_jit, jt.load_runtime, jt.add_ir, jt.lookup_main);
+      std::fflush(stderr);
+    }
   }
 
-  return *exec_result;
+  // Phase 2: simulation
+  {
+    PhaseTimer timer(vlog, "sim", true);
+    return session->Run();
+  }
 }
 
 }  // namespace lyra::driver

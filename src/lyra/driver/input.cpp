@@ -177,6 +177,10 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
           "disabled by default)");
   cmd.add_argument("--trace").default_value(false).implicit_value(true).help(
       "Enable simulation tracing (event recording)");
+  cmd.add_argument("--llvm-time-trace")
+      .default_value(false)
+      .implicit_value(true)
+      .help("Write LLVM time-trace profile to lyra-jit-<PID>.time-trace.json");
 }
 
 auto BuildInput(
@@ -314,6 +318,9 @@ auto BuildInput(
 
   // Tracing (CLI only)
   input.enable_trace = cmd.get<bool>("--trace");
+
+  // LLVM time-trace profiling (CLI only)
+  input.time_trace = cmd.get<bool>("--llvm-time-trace");
 
   return input;
 }

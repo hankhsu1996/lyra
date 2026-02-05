@@ -28,6 +28,7 @@ struct CompilationInput {
   int stats_top_n = -1;        // LLVM stats: -1=off, 0=summary, >0=top N
   bool enable_system = false;  // Security: $system disabled by default
   bool enable_trace = false;   // Enable simulation tracing
+  bool time_trace = false;     // LLVM time-trace profiling
 };
 
 struct ParseResult {

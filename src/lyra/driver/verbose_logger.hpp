@@ -47,9 +47,9 @@ class VerboseLogger {
 
  private:
   // Fixed phase order for deterministic output.
-  static constexpr std::array<std::string_view, 7> kPhaseOrder = {
-      "parse",      "elaborate", "lower_hir", "lower_mir",
-      "lower_llvm", "jit",       "run"};
+  static constexpr std::array<std::string_view, 6> kPhaseOrder = {
+      "parse",     "elaborate",  "lower_hir",
+      "lower_mir", "lower_llvm", "jit_compile"};
 
   int level_;
   FILE* sink_;

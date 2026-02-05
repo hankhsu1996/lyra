@@ -124,6 +124,9 @@ auto LowerAssignment(
   builder.EmitBranch(cond, store_bb, merge_bb);
 
   builder.SetCurrentBlock(store_bb);
+  // Thread value through: it may be a UseTemp from before the guard blocks
+  // (e.g., if LowerExpression created blocks for a ternary expression).
+  value = builder.ThreadValueToCurrentBlock(std::move(value));
   builder.EmitAssign(target.place, std::move(value));
   builder.EmitJump(merge_bb);
 
