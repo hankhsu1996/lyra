@@ -22,6 +22,7 @@
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/runtime/file_manager.hpp"
+#include "lyra/trace/trace_manager.hpp"
 
 namespace lyra::mir::interp {
 
@@ -137,6 +138,11 @@ class Interpreter {
   // Security: Enable $system shell command execution (disabled by default)
   void SetEnableSystem(bool enable) {
     enable_system_ = enable;
+  }
+
+  // Set trace manager for event recording (nullable, no tracing if null).
+  void SetTraceManager(trace::TraceManager* mgr) {
+    trace_manager_ = mgr;
   }
 
   // Execute process to completion. Returns final status.
@@ -343,6 +349,9 @@ class Interpreter {
 
   // Security: $system execution gate (default disabled)
   bool enable_system_ = false;
+
+  // Trace manager for event recording (nullable, no tracing if null).
+  trace::TraceManager* trace_manager_ = nullptr;
 };
 
 // Helper: Create ProcessState for a given process.
@@ -386,6 +395,7 @@ auto RunSimulation(
     const Design& design, const Arena& mir_arena, const TypeArena& types,
     std::ostream* output, std::span<const std::string> plusargs,
     const std::filesystem::path& fs_base_dir, bool enable_system = false,
-    const lowering::DiagnosticContext* diag_ctx = nullptr) -> SimulationResult;
+    const lowering::DiagnosticContext* diag_ctx = nullptr,
+    bool enable_trace = false) -> SimulationResult;
 
 }  // namespace lyra::mir::interp

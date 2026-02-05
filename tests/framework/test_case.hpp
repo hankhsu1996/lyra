@@ -38,6 +38,7 @@ struct TestCase {
   std::optional<ExpectedOutput> expected_stdout;
   std::map<std::string, ExpectedOutput> expected_files;
   bool pedantic = false;  // Strict LRM compliance mode for this test
+  bool trace = false;     // Enable simulation tracing for this test
   [[nodiscard]] auto IsMultiFile() const -> bool {
     return !files.empty();
   }

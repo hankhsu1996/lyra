@@ -1,0 +1,92 @@
+feature: trace
+description: Tests for simulation tracing subsystem
+
+cases:
+  - name: trace-summary-appears
+    description: Trace summary line appears when trace is enabled
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a = 8'h42;
+          $display("done");
+        end
+      endmodule
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "__LYRA_TRACE__:"
+          - "time_advances="
+          - "value_changes="
+
+  - name: trace-disabled-no-output
+    description: No trace output when trace is disabled
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a = 8'h42;
+          $display("done");
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "done"
+        not_contains:
+          - "__LYRA_TRACE__"
+
+  - name: trace-time-advance
+    description: TimeAdvance event at time 0 is recorded
+    sv: |
+      module Test;
+        initial begin
+          $display("ok");
+        end
+      endmodule
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "ok"
+          - "time_advances=1"
+
+  - name: trace-multi-time
+    description: Multiple time slots produce multiple TimeAdvance events
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a = 8'h01;
+          #10;
+          a = 8'h02;
+          $display("done");
+        end
+      endmodule
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "time_advances=2"
+          - "value_changes="
+
+  - name: trace-string-value-change
+    description: String design slot with tracing enabled (exercises SnapshotString on JIT/LLI)
+    sv: |
+      module Test;
+        string s;
+        initial begin
+          s = "hello";
+          $display("s=%s", s);
+        end
+      endmodule
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "s=hello"
+          - "__LYRA_TRACE__:"
+          - "value_changes="

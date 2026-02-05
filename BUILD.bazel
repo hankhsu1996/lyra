@@ -54,8 +54,14 @@ cc_library(
 
 cc_library(
     name = "runtime",
-    srcs = glob(["src/lyra/runtime/*.cpp"]),
-    hdrs = glob(["include/lyra/runtime/*.hpp"]),
+    srcs = glob([
+        "src/lyra/runtime/*.cpp",
+        "src/lyra/trace/*.cpp",
+    ]),
+    hdrs = glob([
+        "include/lyra/runtime/*.hpp",
+        "include/lyra/trace/*.hpp",
+    ]),
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [

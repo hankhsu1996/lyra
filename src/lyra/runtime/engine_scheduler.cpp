@@ -255,6 +255,10 @@ void Engine::ExecuteTimeSlot() {
 }
 
 auto Engine::Run(SimTime max_time) -> SimTime {
+  if (trace_manager_.IsEnabled()) {
+    trace_manager_.EmitTimeAdvance(current_time_);
+  }
+
   while (!finished_ && current_time_ <= max_time) {
     ExecuteTimeSlot();
 
@@ -271,6 +275,10 @@ auto Engine::Run(SimTime max_time) -> SimTime {
 
     if (current_time_ > max_time) {
       break;
+    }
+
+    if (trace_manager_.IsEnabled()) {
+      trace_manager_.EmitTimeAdvance(current_time_);
     }
 
     for (auto& event : it->second) {

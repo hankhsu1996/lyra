@@ -317,7 +317,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     ValidateKeys(
         node,
         {"name", "description", "sv", "files", "plusargs", "param_overrides",
-         "pedantic", "expect"},
+         "pedantic", "trace", "expect"},
         case_context, path);
 
     // Single-file format: sv: |
@@ -360,6 +360,11 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     // Pedantic mode
     if (node["pedantic"]) {
       test_case.pedantic = node["pedantic"].as<bool>();
+    }
+
+    // Trace mode
+    if (node["trace"]) {
+      test_case.trace = node["trace"].as<bool>();
     }
 
     // Parse unified expect: block

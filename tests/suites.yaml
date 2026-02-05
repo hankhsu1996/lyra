@@ -20,6 +20,7 @@ suites:
       - processes/
       - scheduling/
       - system_tf/
+      - trace/
     exclude_regex:
       - system_tf/pure/array_query\.yaml  # MIR-only (LLVM backend unsupported)
       - system_tf/effect/system_cmd\.yaml  # MIR-only ($system not in LLVM)
@@ -39,6 +40,7 @@ suites:
       - processes/
       - scheduling/
       - system_tf/
+      - trace/
     exclude_regex:
       - system_tf/pure/array_query\.yaml  # MIR-only (LLVM backend unsupported)
       - system_tf/effect/system_cmd\.yaml  # MIR-only ($system not in LLVM)
@@ -57,3 +59,4 @@ suites:
       - system_tf/effect/
       - system_tf/pure/
       - system_tf/state/random\.yaml
+      - trace/

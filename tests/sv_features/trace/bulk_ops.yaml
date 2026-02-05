@@ -1,0 +1,81 @@
+feature: trace_bulk
+description: Tests for tracing bulk memory operations (readmem, fread)
+
+cases:
+  - name: readmemh-memory-dirty
+    description: $readmemh emits one MemoryDirty event
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            logic [7:0] mem [0:3];
+            initial begin
+              $readmemh("data.hex", mem);
+              $display("done");
+            end
+          endmodule
+      - name: data.hex
+        content: |
+          01
+          02
+          03
+          04
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "__LYRA_TRACE__:"
+          - "memory_dirty=1"
+
+  - name: readmemb-memory-dirty
+    description: $readmemb emits one MemoryDirty event
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            logic [3:0] mem [0:1];
+            initial begin
+              $readmemb("data.bin", mem);
+              $display("done");
+            end
+          endmodule
+      - name: data.bin
+        content: |
+          0101
+          1010
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "memory_dirty=1"
+
+  - name: fread-memory-dirty
+    description: $fread into unpacked array (memory variant, kDirectToDest) emits one MemoryDirty
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            int fd;
+            logic [7:0] mem [0:2];
+            int bytes_read;
+            initial begin
+              mem[0] = 8'h00;
+              mem[1] = 8'h00;
+              mem[2] = 8'h00;
+              fd = $fopen("data.txt", "r");
+              bytes_read = $fread(mem, fd);
+              $fclose(fd);
+              $display("bytes=%0d m0=%0d m1=%0d m2=%0d", bytes_read, mem[0], mem[1], mem[2]);
+            end
+          endmodule
+      - name: data.txt
+        content: "abc"
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "bytes=3 m0=97 m1=98 m2=99"
+          - "__LYRA_TRACE__:"
+          - "memory_dirty=1"

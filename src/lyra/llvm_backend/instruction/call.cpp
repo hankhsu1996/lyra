@@ -475,6 +475,11 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
     }
   }
 
+  // Emit MemoryDirty trace event for kDirectToDest (bulk memory write)
+  if (wb.kind == mir::WritebackKind::kDirectToDest) {
+    EmitTraceMemoryDirtyIfDesignSlot(context, wb.dest);
+  }
+
   // Commit writeback based on kind
   if (wb.kind == mir::WritebackKind::kStaged) {
     // kStaged: load from tmp, commit to dest
