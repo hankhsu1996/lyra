@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/runtime/engine_types.hpp"
@@ -19,9 +20,9 @@ struct SubscriptionNode {
 
   // Observation region within the slot (relative to SlotMeta::base_off).
   // byte_offset: start of observed range within the slot.
-  // byte_size:   number of bytes in the observed range.
+  // byte_size:   number of bytes in the observed range (always > 0).
   //   kAnyChange:         SlotMeta::total_bytes (full-slot byte comparison).
-  //   kPosedge/kNegedge:  0 (uses last_bit + bit_index instead).
+  //   kPosedge/kNegedge:  1 (one byte containing the observed bit).
   uint32_t byte_offset = 0;
   uint32_t byte_size = 0;
   uint8_t bit_index = 0;
@@ -36,15 +37,15 @@ struct SubscriptionNode {
   // scalars). Heap-allocated for larger regions (freed by Engine::FreeNode).
   static constexpr uint32_t kInlineSnapshotCap = 16;
   std::array<uint8_t, kInlineSnapshotCap> snapshot_inline{};
-  uint8_t* snapshot_heap = nullptr;
+  std::vector<uint8_t> snapshot_heap;
 
   [[nodiscard]] auto SnapshotData() -> uint8_t* {
     return byte_size <= kInlineSnapshotCap ? snapshot_inline.data()
-                                           : snapshot_heap;
+                                           : snapshot_heap.data();
   }
   [[nodiscard]] auto SnapshotData() const -> const uint8_t* {
     return byte_size <= kInlineSnapshotCap ? snapshot_inline.data()
-                                           : snapshot_heap;
+                                           : snapshot_heap.data();
   }
 
   // Links for signal's waiter list (doubly linked for O(1) removal)

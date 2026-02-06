@@ -79,6 +79,11 @@ class Engine {
       ProcessHandle handle, ResumePoint resume, SignalId signal,
       common::EdgeKind edge);
 
+  // Subscribe with explicit observation byte range within the slot.
+  void Subscribe(
+      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size);
+
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.
   void ScheduleNextDelta(ProcessHandle handle, ResumePoint resume);
@@ -152,7 +157,12 @@ class Engine {
       throw common::InternalError(
           "Engine::InitSlotMeta", "slot meta already initialized");
     }
-    update_set_.Init(registry.Size());
+    std::vector<uint32_t> sizes;
+    sizes.reserve(registry.Size());
+    for (uint32_t i = 0; i < registry.Size(); ++i) {
+      sizes.push_back(registry.Get(i).total_bytes);
+    }
+    update_set_.Init(registry.Size(), sizes);
     slot_meta_registry_ = std::move(registry);
   }
 
@@ -167,6 +177,11 @@ class Engine {
   // design - both identify the same design slot. Callers may pass either type.
   void MarkSlotDirty(uint32_t slot_id) {
     update_set_.MarkDirty(slot_id);
+  }
+
+  // Mark a byte range within a slot as dirty.
+  void MarkDirtyRange(uint32_t slot_id, uint32_t byte_off, uint32_t byte_size) {
+    update_set_.MarkDirtyRange(slot_id, byte_off, byte_size);
   }
 
   [[nodiscard]] auto GetSlotMetaRegistry() const -> const SlotMetaRegistry& {
