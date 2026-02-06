@@ -2,8 +2,8 @@ feature: trace_bulk
 description: Tests for tracing bulk memory operations (readmem, fread)
 
 cases:
-  - name: readmemh-memory-dirty
-    description: $readmemh emits one MemoryDirty event
+  - name: readmemh-value-change
+    description: $readmemh marks slot dirty, appears as ValueChange at flush
     files:
       - name: test.sv
         content: |
@@ -26,10 +26,13 @@ cases:
         contains:
           - "done"
           - "__LYRA_TRACE__:"
+          - "value_changes="
+          - "memory_dirty=0"
+        not_contains:
           - "memory_dirty=1"
 
-  - name: readmemb-memory-dirty
-    description: $readmemb emits one MemoryDirty event
+  - name: readmemb-value-change
+    description: $readmemb marks slot dirty, appears as ValueChange at flush
     files:
       - name: test.sv
         content: |
@@ -49,10 +52,13 @@ cases:
       stdout:
         contains:
           - "done"
+          - "value_changes="
+          - "memory_dirty=0"
+        not_contains:
           - "memory_dirty=1"
 
-  - name: fread-memory-dirty
-    description: $fread into unpacked array (memory variant, kDirectToDest) emits one MemoryDirty
+  - name: fread-value-change
+    description: $fread into unpacked array (memory variant, kDirectToDest) produces ValueChange
     files:
       - name: test.sv
         content: |
@@ -78,4 +84,7 @@ cases:
         contains:
           - "bytes=3 m0=97 m1=98 m2=99"
           - "__LYRA_TRACE__:"
+          - "value_changes="
+          - "memory_dirty=0"
+        not_contains:
           - "memory_dirty=1"

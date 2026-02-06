@@ -359,9 +359,7 @@ extern "C" void LyraReadmem(
   if (wrote_any && slot_id != lyra::runtime::kNoSlotId &&
       engine_ptr != nullptr) {
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    if (engine->GetTraceManager().IsEnabled()) {
-      engine->GetTraceManager().EmitMemoryDirty(slot_id);
-    }
+    engine->MarkSlotDirty(slot_id);
   }
 }
 
@@ -519,10 +517,7 @@ extern "C" auto LyraFread(
 
   if (total_bytes_read > 0 && slot_id != lyra::runtime::kNoSlotId &&
       engine_ptr != nullptr) {
-    auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    if (engine->GetTraceManager().IsEnabled()) {
-      engine->GetTraceManager().EmitMemoryDirty(slot_id);
-    }
+    engine->MarkSlotDirty(slot_id);
   }
 
   return total_bytes_read;

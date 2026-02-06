@@ -1,0 +1,86 @@
+feature: trace_update_set
+description: Tests for deferred trace via UpdateSet flush
+
+cases:
+  - name: scalar-flush
+    description: Scalar write produces ValueChange at end-of-time-slot flush
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a = 8'h42;
+          $display("done");
+        end
+      endmodule
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "value_changes="
+        not_contains:
+          - "memory_dirty=1"
+
+  - name: nba-flush
+    description: NBA write produces ValueChange (previously untraced gap)
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a <= 8'h42;
+          #1;
+          $display("done");
+        end
+      endmodule
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "value_changes="
+
+  - name: mixed-scalar-bulk
+    description: Scalar + readmem in same time slot, each changed slot emits once
+    files:
+      - name: test.sv
+        content: |
+          module Test;
+            logic [7:0] a;
+            logic [7:0] mem [0:1];
+            initial begin
+              a = 8'hFF;
+              $readmemh("data.hex", mem);
+              $display("done");
+            end
+          endmodule
+      - name: data.hex
+        content: |
+          AA
+          BB
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "value_changes="
+        not_contains:
+          - "memory_dirty=1"
+
+  - name: last-writer-wins
+    description: Multiple writes to same slot in one time slot produce one snapshot
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a = 8'h01;
+          a = 8'h02;
+          a = 8'h03;
+          $display("done");
+        end
+      endmodule
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "__LYRA_TRACE__:"

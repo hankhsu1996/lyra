@@ -15,7 +15,7 @@ cases:
     expect:
       stdout:
         contains:
-          - "__LYRA_SLOT_META__: version=1"
+          - "__LYRA_SLOT_META__: version=2"
           - "kind=packed4"
           - "value_off="
           - "unk_off="
@@ -37,8 +37,8 @@ cases:
         not_contains:
           - "unk_off="
 
-  - name: slot-meta-handle
-    description: String variable has handle metadata
+  - name: slot-meta-string
+    description: String variable has string metadata
     sv: |
       module Test;
         string s;
@@ -50,7 +50,7 @@ cases:
     expect:
       stdout:
         contains:
-          - "kind=handle"
+          - "kind=string"
           - "total_bytes=8"
 
   - name: slot-meta-multiple-kinds
@@ -72,7 +72,7 @@ cases:
         contains:
           - "kind=packed4"
           - "kind=packed2"
-          - "kind=handle"
+          - "kind=string"
 
   - name: slot-meta-not-dumped-by-default
     description: No slot meta output when dump flag is not set

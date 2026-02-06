@@ -24,7 +24,6 @@
 #include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/suspend_record.hpp"
-#include "lyra/trace/trace_manager.hpp"
 
 namespace {
 
@@ -201,6 +200,26 @@ void SetupAndRunSimulation(
     header->engine_ptr = &engine;
   }
 
+  // Set design state base for flush-based trace snapshots.
+  // Codegen invariant: all process states share the same DesignState pointer.
+  if (!states.empty()) {
+    const auto* first_header = static_cast<const StateHeader*>(states[0]);
+    void* design_base = first_header->design_ptr;
+
+    for (size_t i = 1; i < states.size(); ++i) {
+      const auto* header = static_cast<const StateHeader*>(states[i]);
+      if (header->design_ptr != design_base) {
+        throw lyra::common::InternalError(
+            "SetupAndRunSimulation",
+            std::format(
+                "design_ptr mismatch: states[0]={} vs states[{}]={}",
+                design_base, i, header->design_ptr));
+      }
+    }
+
+    engine.SetDesignStateBase(design_base);
+  }
+
   for (uint32_t i = 0; i < num_processes; ++i) {
     engine.ScheduleInitial(
         lyra::runtime::ProcessHandle{.process_id = i, .instance_id = 0});
@@ -310,11 +329,7 @@ extern "C" void LyraStorePacked(
   if (value_changed && engine_ptr != nullptr) {
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
     engine->RecordSignalUpdate(signal_id, old_lsb, new_lsb, value_changed);
-    if (engine->GetTraceManager().IsEnabled()) {
-      engine->GetTraceManager().EmitValueChange(
-          signal_id,
-          lyra::trace::TraceManager::SnapshotPacked(slot_ptr, byte_size));
-    }
+    engine->MarkSlotDirty(signal_id);
   }
 }
 
@@ -331,10 +346,7 @@ extern "C" void LyraStoreString(
     bool new_lsb = (new_str != nullptr);
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
     engine->RecordSignalUpdate(signal_id, old_lsb, new_lsb, value_changed);
-    if (engine->GetTraceManager().IsEnabled()) {
-      engine->GetTraceManager().EmitValueChange(
-          signal_id, lyra::trace::TraceManager::SnapshotString(new_str));
-    }
+    engine->MarkSlotDirty(signal_id);
   }
 }
 
@@ -462,6 +474,7 @@ extern "C" void LyraNotifySignal(
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   // Value-changed notify only: old_lsb = new_lsb = lsb (no edge)
   engine->RecordSignalUpdate(signal_id, lsb, lsb, true);
+  engine->MarkSlotDirty(signal_id);
 }
 
 extern "C" auto LyraRandom(void* engine_ptr) -> int32_t {

@@ -6,7 +6,8 @@ namespace lyra::runtime::slot_meta_abi {
 
 // ABI version. Bumped when field layout changes.
 // Codegen passes this to LyraRunSimulation; runtime validates before parsing.
-inline constexpr uint32_t kVersion = 1;
+// v2: Split kHandle(2) into kString(2) + kHandle(3), renumber kAggregate to 4.
+inline constexpr uint32_t kVersion = 2;
 
 // Number of uint32_t words per row.
 inline constexpr uint32_t kStride = 7;
