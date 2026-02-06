@@ -19,6 +19,7 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/slot_meta.hpp"
+#include "lyra/runtime/update_set.hpp"
 
 namespace lyra::runtime {
 
@@ -33,8 +34,8 @@ auto Engine::AllocNode() -> SubscriptionNode* {
 }
 
 void Engine::FreeNode(SubscriptionNode* node) {
-  delete[] node->snapshot_heap;
-  node->snapshot_heap = nullptr;
+  node->snapshot_heap.clear();
+  node->snapshot_heap.shrink_to_fit();
   free_list_.push_back(node);
 }
 
@@ -158,20 +159,6 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
 void Engine::Subscribe(
     ProcessHandle handle, ResumePoint resume, SignalId signal,
     common::EdgeKind edge) {
-  if (finished_) {
-    return;
-  }
-
-  auto& proc_state = process_states_[handle];
-
-  if (!CheckSubscriptionLimits(proc_state)) {
-    return;
-  }
-
-  auto* node = AllocNode();
-  *node = SubscriptionNode{
-      .handle = handle, .resume = resume, .edge = edge, .signal = signal};
-
   // Lifecycle invariant: Subscribe() only called during Run(), after
   // SetDesignStateBase() and InitSlotMeta().
   if (design_state_base_ == nullptr) {
@@ -184,30 +171,82 @@ void Engine::Subscribe(
   }
 
   const auto& meta = slot_meta_registry_.Get(signal);
+  uint32_t obs_size =
+      (edge == common::EdgeKind::kAnyChange) ? meta.total_bytes : 1;
+  Subscribe(handle, resume, signal, edge, 0, obs_size);
+}
+
+void Engine::Subscribe(
+    ProcessHandle handle, ResumePoint resume, SignalId signal,
+    common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size) {
+  if (finished_) {
+    return;
+  }
+
+  // Lifecycle invariant: Subscribe() only called during Run(), after
+  // SetDesignStateBase() and InitSlotMeta().
+  if (design_state_base_ == nullptr) {
+    throw common::InternalError(
+        "Engine::Subscribe", "Subscribe before SetDesignStateBase");
+  }
+  if (!slot_meta_registry_.IsPopulated()) {
+    throw common::InternalError(
+        "Engine::Subscribe", "Subscribe before InitSlotMeta");
+  }
+
+  auto& proc_state = process_states_[handle];
+
+  if (!CheckSubscriptionLimits(proc_state)) {
+    return;
+  }
+
+  const auto& meta = slot_meta_registry_.Get(signal);
+
+  // Range validation.
+  if (byte_size == 0) {
+    throw common::InternalError("Engine::Subscribe", "byte_size must be > 0");
+  }
+  if (static_cast<uint64_t>(byte_offset) + static_cast<uint64_t>(byte_size) >
+      meta.total_bytes) {
+    throw common::InternalError(
+        "Engine::Subscribe", "observation range exceeds slot size");
+  }
+
+  // Sub-slot edge observation not yet supported.
+  if (edge != common::EdgeKind::kAnyChange &&
+      (byte_offset != 0 || byte_size != 1)) {
+    throw common::InternalError(
+        "Engine::Subscribe",
+        "edge subscriptions require byte_offset=0, byte_size=1");
+  }
+
+  auto* node = AllocNode();
+  *node = SubscriptionNode{};
+  node->handle = handle;
+  node->resume = resume;
+  node->edge = edge;
+  node->signal = signal;
+
   std::span design_state(
       static_cast<const uint8_t*>(design_state_base_),
       slot_meta_registry_.MaxExtent());
 
-  // Initialize per-subscription observation metadata and snapshot.
-  node->byte_offset = 0;
+  node->byte_offset = byte_offset;
   if (edge == common::EdgeKind::kAnyChange) {
-    // Full-slot byte-range observation: compare all bytes to detect any change.
-    node->byte_size = meta.total_bytes;
+    node->byte_size = byte_size;
     node->bit_index = 0;
-    const auto* src = &design_state[meta.base_off];
-    if (meta.total_bytes <= SubscriptionNode::kInlineSnapshotCap) {
-      std::memcpy(node->snapshot_inline.data(), src, meta.total_bytes);
+    const auto* src = &design_state[meta.base_off + byte_offset];
+    if (byte_size <= SubscriptionNode::kInlineSnapshotCap) {
+      std::memcpy(node->snapshot_inline.data(), src, byte_size);
     } else {
-      node->snapshot_heap = new uint8_t[meta.total_bytes];
-      std::memcpy(node->snapshot_heap, src, meta.total_bytes);
+      node->snapshot_heap.resize(byte_size);
+      std::memcpy(node->snapshot_heap.data(), src, byte_size);
     }
   } else {
-    // Single-bit observation for kPosedge/kNegedge.
-    node->byte_size = 0;
+    node->byte_size = byte_size;
     node->bit_index = 0;
     node->last_bit =
-        (design_state[meta.base_off + node->byte_offset] >> node->bit_index) &
-        1;
+        (design_state[meta.base_off + byte_offset] >> node->bit_index) & 1;
   }
 
   auto& sw = signal_waiters_[signal];
@@ -254,10 +293,17 @@ void Engine::FlushSignalUpdates() {
     auto it = signal_waiters_.find(slot_id);
     if (it == signal_waiters_.end()) continue;
 
+    auto dirty_ranges = update_set_.DeltaRangesFor(slot_id);
     const auto& meta = slot_meta_registry_.Get(slot_id);
 
     for (auto* node = it->second.head; node != nullptr;) {
       auto* next = node->signal_next;
+
+      // Range intersection filter: skip if no dirty range overlaps observation.
+      if (!RangesOverlap(dirty_ranges, node->byte_offset, node->byte_size)) {
+        node = next;
+        continue;
+      }
 
       bool should_wake = false;
       if (node->edge == common::EdgeKind::kAnyChange) {
