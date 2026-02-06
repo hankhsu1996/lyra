@@ -39,26 +39,23 @@ void PrintMirStats(
 }
 
 // RAII guard for LLVM time-trace profiling.
-// Initializes the profiler on construction; writes JSON and cleans up on
-// destruction (even if JIT compilation fails).
 class TimeTraceGuard {
  public:
   explicit TimeTraceGuard(bool enabled) : enabled_(enabled) {
-    if (enabled_) {
-      llvm::timeTraceProfilerInitialize(500, "lyra");
-    }
+    if (!enabled_) return;
+    llvm::timeTraceProfilerInitialize(500, "lyra");
+    filename_ =
+        std::format("lyra-jit-{}.time-trace.json", static_cast<int>(getpid()));
   }
 
   ~TimeTraceGuard() {
     if (!enabled_) return;
-    auto filename =
-        std::format("lyra-jit-{}.time-trace.json", static_cast<int>(getpid()));
-    if (auto err = llvm::timeTraceProfilerWrite(filename, "lyra")) {
+    if (auto err = llvm::timeTraceProfilerWrite(filename_, "lyra")) {
       fmt::print(
           stderr, "[lyra] warning: failed to write time-trace: {}\n",
           llvm::toString(std::move(err)));
     } else {
-      fmt::print(stderr, "[lyra] time-trace written to {}\n", filename);
+      fmt::print(stderr, "[lyra] time-trace written to {}\n", filename_);
     }
     std::fflush(stderr);
     llvm::timeTraceProfilerCleanup();
@@ -71,6 +68,7 @@ class TimeTraceGuard {
 
  private:
   bool enabled_;
+  std::string filename_;
 };
 
 }  // namespace
@@ -129,33 +127,59 @@ auto RunJit(const CompilationInput& input) -> int {
     llvm_stats = CollectLlvmStats(*llvm_result->module);
   }
 
+  // Print pre-JIT stats now so they survive if JIT times out.
+  if (emit_stats) {
+    PrintMirStats(compilation.mir.stats);
+    vlog.PrintPhaseSummary();
+    PrintLlvmStats(llvm_stats, input.stats_top_n);
+  }
+
   // Phase 1: JIT compilation
   TimeTraceGuard time_trace_guard(input.time_trace);
   std::expected<lowering::mir_to_llvm::JitSession, std::string> session;
   {
     PhaseTimer timer(vlog, "jit_compile");
     session = lowering::mir_to_llvm::CompileJit(
-        *llvm_result, runtime_path, input.opt_level);
+        *llvm_result, runtime_path, input.opt_level, emit_stats);
   }
   if (!session) {
     PrintError(std::format("JIT compilation failed: {}", session.error()));
     return 1;
   }
 
-  // Print ALL compilation stats BEFORE simulation (survives timeout)
+  // Print JIT/ORC stats after compilation.
   if (emit_stats) {
-    PrintMirStats(compilation.mir.stats);
-    vlog.PrintPhaseSummary();
-    PrintLlvmStats(llvm_stats, input.stats_top_n);
-    const auto& jt = session->timings();
+    const auto& jt = session->Timings();
     if (jt.complete) {
       fmt::print(
           stderr,
           "[lyra][stats][jit] create_jit={:.3f}s load_runtime={:.3f}s "
-          "add_ir={:.3f}s lookup_main={:.3f}s\n",
-          jt.create_jit, jt.load_runtime, jt.add_ir, jt.lookup_main);
+          "add_ir={:.3f}s lookup_main={:.3f}s "
+          "codegen={:.3f}s linking={:.3f}s",
+          jt.create_jit, jt.load_runtime, jt.add_ir, jt.lookup_main, jt.codegen,
+          jt.linking);
+      if (jt.has_link_detail) {
+        fmt::print(
+            stderr,
+            " link_graph={:.3f}s link_alloc={:.3f}s"
+            " link_fixup={:.3f}s link_finalize={:.3f}s",
+            jt.link_graph, jt.link_alloc, jt.link_fixup, jt.link_finalize);
+      }
+      fmt::print(stderr, "\n");
       std::fflush(stderr);
     }
+    const auto& orc = session->OrcStats();
+    fmt::print(
+        stderr, "[lyra][stats][orc] linker={} objects={} obj_bytes={}",
+        orc.linker_backend, orc.object_count, orc.total_object_bytes);
+    if (orc.relocation_count > 0) {
+      fmt::print(
+          stderr, " relocs={} syms={} sections={} blocks={}",
+          orc.relocation_count, orc.symbol_count, orc.section_count,
+          orc.block_count);
+    }
+    fmt::print(stderr, "\n");
+    std::fflush(stderr);
   }
 
   // Phase 2: simulation
