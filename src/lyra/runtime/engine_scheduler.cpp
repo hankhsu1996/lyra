@@ -11,6 +11,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/trace_flush.hpp"
 
 namespace lyra::runtime {
 
@@ -208,6 +209,7 @@ void Engine::ExecuteRegion(Region region) {
             static_cast<const uint8_t*>(slot_base_ptrs_.at(unique_slots[i]));
         bool new_bit0 = (*base & 1) != 0;
         RecordSignalUpdate(unique_slots[i], old_bit0[i] != 0, new_bit0, true);
+        MarkSlotDirty(unique_slots[i]);
       }
       break;
     }
@@ -252,6 +254,7 @@ void Engine::ExecuteTimeSlot() {
   }
 
   ExecutePostponedRegion();
+  FlushDirtySlots();
 }
 
 auto Engine::Run(SimTime max_time) -> SimTime {
@@ -288,6 +291,15 @@ auto Engine::Run(SimTime max_time) -> SimTime {
   }
 
   return current_time_;
+}
+
+void Engine::FlushDirtySlots() {
+  if (trace_manager_.IsEnabled() && !update_set_.IsEmpty() &&
+      design_state_base_ != nullptr) {
+    FlushDirtySlotsToTrace(
+        trace_manager_, slot_meta_registry_, design_state_base_, update_set_);
+  }
+  update_set_.Clear();
 }
 
 }  // namespace lyra::runtime

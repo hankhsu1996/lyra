@@ -107,6 +107,7 @@ auto ClassifySlotStorageKind(TypeId type_id, const TypeArena& types)
   const Type& type = types[type_id];
   switch (type.Kind()) {
     case TypeKind::kString:
+      return runtime::SlotStorageKind::kString;
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
       return runtime::SlotStorageKind::kHandle;
@@ -137,8 +138,9 @@ auto EmitSlotMetaTable(
   if (slots.empty()) {
     auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
     return {
-        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)),
-        0};
+        .table_ptr = llvm::ConstantPointerNull::get(
+            llvm::cast<llvm::PointerType>(ptr_ty)),
+        .count = 0};
   }
 
   auto* design_struct = design_layout.llvm_type;
@@ -223,7 +225,7 @@ auto EmitSlotMetaTable(
   auto* table_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
       array_type, global_var, llvm::ArrayRef<llvm::Constant*>{zero, zero});
 
-  return {table_ptr, static_cast<uint32_t>(slots.size())};
+  return {.table_ptr = table_ptr, .count = static_cast<uint32_t>(slots.size())};
 }
 
 // Initialize DesignState: zero everything, apply 4-state patches, then handle

@@ -1,7 +1,9 @@
 #include "lyra/runtime/slot_meta.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <format>
+#include <span>
 #include <string_view>
 
 #include "lyra/common/internal_error.hpp"
@@ -18,6 +20,8 @@ auto KindName(SlotStorageKind kind) -> std::string_view {
       return "packed2";
     case SlotStorageKind::kPacked4:
       return "packed4";
+    case SlotStorageKind::kString:
+      return "string";
     case SlotStorageKind::kHandle:
       return "handle";
     case SlotStorageKind::kAggregate:
@@ -31,12 +35,16 @@ auto KindName(SlotStorageKind kind) -> std::string_view {
 SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
   slots_.reserve(count);
 
+  std::span<const uint32_t> table(
+      words, static_cast<size_t>(count) * slot_meta_abi::kStride);
+
   for (uint32_t i = 0; i < count; ++i) {
-    const uint32_t* row =
-        words + static_cast<size_t>(i) * slot_meta_abi::kStride;
+    auto row = table.subspan(
+        static_cast<size_t>(i) * slot_meta_abi::kStride,
+        slot_meta_abi::kStride);
 
     uint32_t raw_kind = row[slot_meta_abi::kFieldKind];
-    if (raw_kind > 3) {
+    if (raw_kind > 4) {
       throw common::InternalError(
           "SlotMetaRegistry",
           std::format("unknown kind {} for slot {}", raw_kind, i));
@@ -82,6 +90,8 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
       }
     }
 
+    max_extent_ = std::max(max_extent_, base_off + total_bytes);
+
     slots_.push_back(
         SlotMeta{
             .base_off = base_off,
@@ -110,6 +120,10 @@ auto SlotMetaRegistry::Get(uint32_t slot_id) const -> const SlotMeta& {
 
 auto SlotMetaRegistry::Size() const -> uint32_t {
   return static_cast<uint32_t>(slots_.size());
+}
+
+auto SlotMetaRegistry::MaxExtent() const -> uint32_t {
+  return max_extent_;
 }
 
 auto SlotMetaRegistry::IsPopulated() const -> bool {

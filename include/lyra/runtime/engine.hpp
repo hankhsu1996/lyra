@@ -23,6 +23,7 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/slot_meta.hpp"
+#include "lyra/runtime/update_set.hpp"
 #include "lyra/trace/trace_manager.hpp"
 
 namespace lyra::runtime {
@@ -156,7 +157,24 @@ class Engine {
       throw common::InternalError(
           "Engine::InitSlotMeta", "slot meta already initialized");
     }
+    update_set_.Init(registry.Size());
     slot_meta_registry_ = std::move(registry);
+  }
+
+  // Set once at simulation init. All process states share the same DesignState
+  // pointer (codegen invariant: one DesignState per LyraRunSimulation call).
+  void SetDesignStateBase(void* base) {
+    design_state_base_ = base;
+  }
+
+  // Mark slot dirty for deferred trace snapshot.
+  // Note: SignalId == slot_id in the current runtime. This equivalence is by
+  // design - both identify the same design slot. Callers may pass either type.
+  // Guarded internally by trace-enabled check.
+  void MarkSlotDirty(uint32_t slot_id) {
+    if (trace_manager_.IsEnabled()) {
+      update_set_.MarkDirty(slot_id);
+    }
   }
 
   [[nodiscard]] auto GetSlotMetaRegistry() const -> const SlotMetaRegistry& {
@@ -209,6 +227,7 @@ class Engine {
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
   void ExecutePostponedRegion();
+  void FlushDirtySlots();
 
   // Subscription management
   void ClearProcessSubscriptions(ProcessHandle handle);
@@ -296,6 +315,12 @@ class Engine {
 
   // Trace event manager (disabled by default, zero overhead when off).
   trace::TraceManager trace_manager_;
+
+  // Flush-based trace snapshot support.
+  // design_state_base_: base pointer for DesignState (set once at init).
+  // update_set_: tracks dirty slots within a time slot for deferred snapshot.
+  void* design_state_base_ = nullptr;
+  UpdateSet update_set_;
 };
 
 }  // namespace lyra::runtime

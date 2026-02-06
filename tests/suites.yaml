@@ -62,3 +62,6 @@ suites:
       - system_tf/pure/
       - system_tf/state/random\.yaml
       - trace/
+    exclude_regex:
+      - trace/bulk_ops\.yaml # JIT-only (requires flush-based trace via UpdateSet)
+      - trace/update_set\.yaml # JIT-only (requires UpdateSet)

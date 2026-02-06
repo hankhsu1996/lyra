@@ -11,14 +11,17 @@ namespace lyra::runtime {
 //               (2-state int, real, shortreal)
 //   kPacked4:   snapshotable bytes, two planes (value + unknown)
 //               as laid out in DesignState (4-state int)
-//   kHandle:    pointer-sized opaque handle (string, dynamic array, queue)
+//   kString:    pointer-sized handle, deep snapshot via LyraStringAsView
+//   kHandle:    pointer-sized opaque handle (dynamic array, queue)
+//               identity tracking only (raw pointer bytes)
 //   kAggregate: composite blob, snapshot entire total_bytes,
 //               planes not applicable (unpacked array/struct/union)
 enum class SlotStorageKind : uint8_t {
   kPacked2 = 0,
   kPacked4 = 1,
-  kHandle = 2,
-  kAggregate = 3,
+  kString = 2,
+  kHandle = 3,
+  kAggregate = 4,
 };
 
 // Byte-level layout of value and unknown planes within a kPacked4 slot.
@@ -55,6 +58,7 @@ class SlotMetaRegistry {
 
   [[nodiscard]] auto Size() const -> uint32_t;
   [[nodiscard]] auto IsPopulated() const -> bool;
+  [[nodiscard]] auto MaxExtent() const -> uint32_t;
 
   // Machine-stable dump to WriteOutput. Includes version and count header.
   // Called right after registry construction, before simulation runs.
@@ -62,6 +66,7 @@ class SlotMetaRegistry {
 
  private:
   std::vector<SlotMeta> slots_;
+  uint32_t max_extent_ = 0;
 };
 
 }  // namespace lyra::runtime
