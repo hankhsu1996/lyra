@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <format>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -15,6 +18,7 @@
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/slot_meta.hpp"
 
 namespace lyra::runtime {
 
@@ -29,6 +33,8 @@ auto Engine::AllocNode() -> SubscriptionNode* {
 }
 
 void Engine::FreeNode(SubscriptionNode* node) {
+  delete[] node->snapshot_heap;
+  node->snapshot_heap = nullptr;
   free_list_.push_back(node);
 }
 
@@ -166,6 +172,44 @@ void Engine::Subscribe(
   *node = SubscriptionNode{
       .handle = handle, .resume = resume, .edge = edge, .signal = signal};
 
+  // Lifecycle invariant: Subscribe() only called during Run(), after
+  // SetDesignStateBase() and InitSlotMeta().
+  if (design_state_base_ == nullptr) {
+    throw common::InternalError(
+        "Engine::Subscribe", "Subscribe before SetDesignStateBase");
+  }
+  if (!slot_meta_registry_.IsPopulated()) {
+    throw common::InternalError(
+        "Engine::Subscribe", "Subscribe before InitSlotMeta");
+  }
+
+  const auto& meta = slot_meta_registry_.Get(signal);
+  std::span design_state(
+      static_cast<const uint8_t*>(design_state_base_),
+      slot_meta_registry_.MaxExtent());
+
+  // Initialize per-subscription observation metadata and snapshot.
+  node->byte_offset = 0;
+  if (edge == common::EdgeKind::kAnyChange) {
+    // Full-slot byte-range observation: compare all bytes to detect any change.
+    node->byte_size = meta.total_bytes;
+    node->bit_index = 0;
+    const auto* src = &design_state[meta.base_off];
+    if (meta.total_bytes <= SubscriptionNode::kInlineSnapshotCap) {
+      std::memcpy(node->snapshot_inline.data(), src, meta.total_bytes);
+    } else {
+      node->snapshot_heap = new uint8_t[meta.total_bytes];
+      std::memcpy(node->snapshot_heap, src, meta.total_bytes);
+    }
+  } else {
+    // Single-bit observation for kPosedge/kNegedge.
+    node->byte_size = 0;
+    node->bit_index = 0;
+    node->last_bit =
+        (design_state[meta.base_off + node->byte_offset] >> node->bit_index) &
+        1;
+  }
+
   auto& sw = signal_waiters_[signal];
   node->signal_next = sw.head;
   node->signal_prev = nullptr;
@@ -184,65 +228,61 @@ void Engine::Subscribe(
   ++live_subscription_count_;
 }
 
-void Engine::RecordSignalUpdate(
-    SignalId signal, bool old_lsb, bool new_lsb, bool value_changed) {
-  if (finished_) {
-    return;
-  }
-
-  auto& record = pending_edges_[signal];
-
-  if (!record.initialized) {
-    // First update for this signal in this delta: capture initial LSB
-    record.initialized = true;
-    record.prev_lsb = old_lsb;
-  }
-
-  // Detect edge from prev_lsb to new_lsb
-  if (!record.prev_lsb && new_lsb) {
-    record.saw_posedge = true;
-  }
-  if (record.prev_lsb && !new_lsb) {
-    record.saw_negedge = true;
-  }
-
-  // Update prev_lsb for next update in this delta
-  record.prev_lsb = new_lsb;
-
-  // Accumulate value_changed (never invent change events)
-  record.value_changed |= value_changed;
-}
-
-auto Engine::EvaluateEdgeFromRecord(
-    common::EdgeKind edge, const EdgeRecord& record) -> bool {
-  switch (edge) {
-    case common::EdgeKind::kPosedge:
-      return record.saw_posedge;
-    case common::EdgeKind::kNegedge:
-      return record.saw_negedge;
-    case common::EdgeKind::kAnyChange:
-      return record.value_changed;
-  }
-  std::unreachable();
-}
-
 void Engine::FlushSignalUpdates() {
-  if (pending_edges_.empty() || finished_) {
+  if (finished_) {
+    update_set_.ClearDelta();
     return;
   }
 
-  for (const auto& [signal, record] : pending_edges_) {
-    auto it = signal_waiters_.find(signal);
-    if (it == signal_waiters_.end()) {
-      continue;
-    }
+  // Guard: MIR path has no slot meta / design state.
+  if (!slot_meta_registry_.IsPopulated() || design_state_base_ == nullptr) {
+    update_set_.ClearDelta();
+    return;
+  }
+
+  auto newly_dirty = update_set_.DeltaDirtySlots();
+  if (newly_dirty.empty()) {
+    update_set_.ClearDelta();
+    return;
+  }
+
+  std::span design_state(
+      static_cast<const uint8_t*>(design_state_base_),
+      slot_meta_registry_.MaxExtent());
+
+  for (uint32_t slot_id : newly_dirty) {
+    auto it = signal_waiters_.find(slot_id);
+    if (it == signal_waiters_.end()) continue;
+
+    const auto& meta = slot_meta_registry_.Get(slot_id);
 
     for (auto* node = it->second.head; node != nullptr;) {
       auto* next = node->signal_next;
 
-      if (EvaluateEdgeFromRecord(node->edge, record)) {
-        auto& proc_state = process_states_[node->handle];
+      bool should_wake = false;
+      if (node->edge == common::EdgeKind::kAnyChange) {
+        // Byte-range comparison: compare observed region against snapshot.
+        const auto* current = &design_state[meta.base_off + node->byte_offset];
+        auto* snapshot = node->SnapshotData();
+        if (std::memcmp(current, snapshot, node->byte_size) != 0) {
+          should_wake = true;
+          std::memcpy(snapshot, current, node->byte_size);
+        }
+      } else {
+        // Per-bit comparison for kPosedge/kNegedge.
+        uint8_t current_bit =
+            (design_state[meta.base_off + node->byte_offset] >>
+             node->bit_index) &
+            1;
+        if (node->last_bit != current_bit) {
+          should_wake =
+              EvaluateEdge(node->edge, node->last_bit != 0, current_bit != 0);
+          node->last_bit = current_bit;
+        }
+      }
 
+      if (should_wake) {
+        auto& proc_state = process_states_[node->handle];
         if (!proc_state.is_enqueued) {
           next_delta_queue_.push_back(
               ScheduledEvent{.handle = node->handle, .resume = node->resume});
@@ -254,7 +294,7 @@ void Engine::FlushSignalUpdates() {
     }
   }
 
-  pending_edges_.clear();
+  update_set_.ClearDelta();
 }
 
 }  // namespace lyra::runtime

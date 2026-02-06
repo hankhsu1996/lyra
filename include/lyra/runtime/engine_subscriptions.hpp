@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/runtime/engine_types.hpp"
@@ -14,6 +16,36 @@ struct SubscriptionNode {
   ResumePoint resume;
   common::EdgeKind edge = common::EdgeKind::kAnyChange;
   SignalId signal = 0;  // For removal from signal's list
+
+  // Observation region within the slot (relative to SlotMeta::base_off).
+  // byte_offset: start of observed range within the slot.
+  // byte_size:   number of bytes in the observed range.
+  //   kAnyChange:         SlotMeta::total_bytes (full-slot byte comparison).
+  //   kPosedge/kNegedge:  0 (uses last_bit + bit_index instead).
+  uint32_t byte_offset = 0;
+  uint32_t byte_size = 0;
+  uint8_t bit_index = 0;
+
+  // Per-subscription snapshot.
+  // kPosedge/kNegedge: single bit stored in last_bit.
+  // kAnyChange:        byte-range snapshot via SnapshotData().
+  uint8_t last_bit = 0;
+
+  // Small-buffer-optimized snapshot for kAnyChange byte-range comparison.
+  // Inline for observed regions <= kInlineSnapshotCap bytes (covers most
+  // scalars). Heap-allocated for larger regions (freed by Engine::FreeNode).
+  static constexpr uint32_t kInlineSnapshotCap = 16;
+  std::array<uint8_t, kInlineSnapshotCap> snapshot_inline{};
+  uint8_t* snapshot_heap = nullptr;
+
+  [[nodiscard]] auto SnapshotData() -> uint8_t* {
+    return byte_size <= kInlineSnapshotCap ? snapshot_inline.data()
+                                           : snapshot_heap;
+  }
+  [[nodiscard]] auto SnapshotData() const -> const uint8_t* {
+    return byte_size <= kInlineSnapshotCap ? snapshot_inline.data()
+                                           : snapshot_heap;
+  }
 
   // Links for signal's waiter list (doubly linked for O(1) removal)
   SubscriptionNode* signal_prev = nullptr;
@@ -35,16 +67,6 @@ struct ProcessState {
   bool is_enqueued = false;  // De-dup flag for next-delta queue
   size_t subscription_count = 0;
   SubscriptionNode* subscription_head = nullptr;
-};
-
-// Per-signal edge accumulator for delta-level coalescing.
-// Tracks all edge transitions within a single delta cycle.
-struct EdgeRecord {
-  bool initialized = false;    // First update sets prev_lsb
-  bool prev_lsb = false;       // LSB after last update in this delta
-  bool saw_posedge = false;    // Any 0->1 transition occurred
-  bool saw_negedge = false;    // Any 1->0 transition occurred
-  bool value_changed = false;  // Any full-value change occurred
 };
 
 }  // namespace lyra::runtime

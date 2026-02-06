@@ -92,11 +92,6 @@ class Engine {
   // Callback executes at end of time slot with final signal values.
   void SchedulePostponed(PostponedCallback callback, void* design_state);
 
-  // Record a signal update for delta-level coalescing.
-  // Edge detection is deferred until FlushSignalUpdates() at delta boundary.
-  void RecordSignalUpdate(
-      SignalId signal, bool old_lsb, bool new_lsb, bool value_changed);
-
   // Flush all pending signal updates, waking subscribed processes.
   // Called at delta boundaries (after active/inactive regions, after NBA).
   void FlushSignalUpdates();
@@ -167,14 +162,11 @@ class Engine {
     design_state_base_ = base;
   }
 
-  // Mark slot dirty for deferred trace snapshot.
+  // Mark slot dirty for scheduler wakeup and deferred trace snapshot.
   // Note: SignalId == slot_id in the current runtime. This equivalence is by
   // design - both identify the same design slot. Callers may pass either type.
-  // Guarded internally by trace-enabled check.
   void MarkSlotDirty(uint32_t slot_id) {
-    if (trace_manager_.IsEnabled()) {
-      update_set_.MarkDirty(slot_id);
-    }
+    update_set_.MarkDirty(slot_id);
   }
 
   [[nodiscard]] auto GetSlotMetaRegistry() const -> const SlotMetaRegistry& {
@@ -243,8 +235,6 @@ class Engine {
   // Edge evaluation helpers
   static auto EvaluateEdge(common::EdgeKind edge, bool old_lsb, bool new_lsb)
       -> bool;
-  static auto EvaluateEdgeFromRecord(
-      common::EdgeKind edge, const EdgeRecord& record) -> bool;
 
   ProcessRunner runner_;
   SimTime current_time_ = 0;
@@ -265,17 +255,10 @@ class Engine {
   // NBA queue: deferred writes committed in ExecuteRegion(kNBA)
   std::vector<NbaEntry> nba_queue_;
 
-  // Slot ID -> base pointer registry (populated lazily via ScheduleNba).
-  // Pointers are read-only (used for bit0 snapshot in NBA commit).
-  absl::flat_hash_map<uint32_t, const void*> slot_base_ptrs_;
-
   // Trigger subscriptions: signal -> waiting processes (intrusive linked lists)
   absl::flat_hash_map<SignalId, SignalWaiters> signal_waiters_;
   absl::flat_hash_map<ProcessHandle, ProcessState, ProcessHandleHash>
       process_states_;
-
-  // Delta-level edge coalescing: signal -> accumulated edges this delta
-  absl::flat_hash_map<SignalId, EdgeRecord> pending_edges_;
 
   // Node pool: deque owns memory (stable pointers), free_list_ tracks reusable
   std::deque<SubscriptionNode> node_pool_;
@@ -316,9 +299,10 @@ class Engine {
   // Trace event manager (disabled by default, zero overhead when off).
   trace::TraceManager trace_manager_;
 
-  // Flush-based trace snapshot support.
+  // Shared dirty tracking for scheduler wakeup and trace snapshots.
   // design_state_base_: base pointer for DesignState (set once at init).
-  // update_set_: tracks dirty slots within a time slot for deferred snapshot.
+  // update_set_: tracks dirty slots (per-delta for scheduler, per-time-slot
+  // for trace).
   void* design_state_base_ = nullptr;
   UpdateSet update_set_;
 };

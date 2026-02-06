@@ -1,6 +1,5 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -96,14 +95,6 @@ void Engine::ScheduleNba(
         "Engine::ScheduleNba", "null pointer or zero byte_size");
   }
 
-  auto [it, inserted] =
-      slot_base_ptrs_.emplace(notify_slot_id, notify_base_ptr);
-  if (!inserted && it->second != notify_base_ptr) {
-    throw common::InternalError(
-        "Engine::ScheduleNba",
-        "slot_id mapped to different base_ptr (codegen bug)");
-  }
-
   auto val_span = std::span(static_cast<const uint8_t*>(value_ptr), byte_size);
   auto mask_span = std::span(static_cast<const uint8_t*>(mask_ptr), byte_size);
   nba_queue_.push_back(
@@ -150,30 +141,11 @@ void Engine::ExecuteRegion(Region region) {
       if (nba_queue_.empty()) {
         break;
       }
-
-      std::vector<uint32_t> unique_slots;
-      unique_slots.reserve(nba_queue_.size());
-      for (const auto& entry : nba_queue_) {
-        unique_slots.push_back(entry.notify_slot_id);
-      }
-      std::ranges::sort(unique_slots);
-      auto [erase_begin, erase_end] = std::ranges::unique(unique_slots);
-      unique_slots.erase(erase_begin, erase_end);
-
-      std::vector<uint8_t> old_bit0(unique_slots.size());
-      for (size_t i = 0; i < unique_slots.size(); ++i) {
-        const auto* base =
-            static_cast<const uint8_t*>(slot_base_ptrs_.at(unique_slots[i]));
-        old_bit0[i] = (*base & 1) != 0 ? 1 : 0;
-      }
-
-      std::vector<uint8_t> slot_changed(unique_slots.size(), 0);
       for (const auto& entry : nba_queue_) {
         if (entry.value.size() != entry.byte_size ||
             entry.mask.size() != entry.byte_size) {
           throw common::InternalError(
-              "Engine::ExecuteRegion(kNBA)",
-              "value/mask size mismatch with byte_size");
+              "Engine::ExecuteRegion(kNBA)", "value/mask size mismatch");
         }
         auto target_span =
             std::span(static_cast<uint8_t*>(entry.write_ptr), entry.byte_size);
@@ -188,29 +160,10 @@ void Engine::ExecuteRegion(Region region) {
           target_span[i] = new_byte;
         }
         if (changed) {
-          auto slot_it =
-              std::ranges::lower_bound(unique_slots, entry.notify_slot_id);
-          if (slot_it == unique_slots.end() ||
-              *slot_it != entry.notify_slot_id) {
-            throw common::InternalError(
-                "Engine::ExecuteRegion(kNBA)",
-                "notify_slot_id not found in unique_slots");
-          }
-          slot_changed[slot_it - unique_slots.begin()] = 1;
+          MarkSlotDirty(entry.notify_slot_id);
         }
       }
       nba_queue_.clear();
-
-      for (size_t i = 0; i < unique_slots.size(); ++i) {
-        if (slot_changed[i] == 0) {
-          continue;
-        }
-        const auto* base =
-            static_cast<const uint8_t*>(slot_base_ptrs_.at(unique_slots[i]));
-        bool new_bit0 = (*base & 1) != 0;
-        RecordSignalUpdate(unique_slots[i], old_bit0[i] != 0, new_bit0, true);
-        MarkSlotDirty(unique_slots[i]);
-      }
       break;
     }
   }

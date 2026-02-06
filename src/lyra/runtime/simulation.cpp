@@ -318,17 +318,11 @@ extern "C" auto LyraPlusargsValueString(
 extern "C" void LyraStorePacked(
     void* engine_ptr, void* slot_ptr, const void* new_value_ptr,
     uint32_t byte_size, uint32_t signal_id) {
-  auto* slot_bytes = static_cast<uint8_t*>(slot_ptr);
-  const auto* new_bytes = static_cast<const uint8_t*>(new_value_ptr);
-
-  bool old_lsb = (*slot_bytes & 1) != 0;
   bool value_changed = std::memcmp(slot_ptr, new_value_ptr, byte_size) != 0;
   std::memcpy(slot_ptr, new_value_ptr, byte_size);
-  bool new_lsb = (*new_bytes & 1) != 0;
 
   if (value_changed && engine_ptr != nullptr) {
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    engine->RecordSignalUpdate(signal_id, old_lsb, new_lsb, value_changed);
     engine->MarkSlotDirty(signal_id);
   }
 }
@@ -342,10 +336,7 @@ extern "C" void LyraStoreString(
   *str_slot = new_str;
 
   if (value_changed && engine_ptr != nullptr) {
-    bool old_lsb = (old_str != nullptr);
-    bool new_lsb = (new_str != nullptr);
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    engine->RecordSignalUpdate(signal_id, old_lsb, new_lsb, value_changed);
     engine->MarkSlotDirty(signal_id);
   }
 }
@@ -467,13 +458,7 @@ extern "C" void LyraNotifySignal(
     void* engine_ptr, const void* slot_ptr, uint32_t signal_id) {
   if (engine_ptr == nullptr || slot_ptr == nullptr) return;
 
-  // Read LSB from first byte for best-effort edge detection
-  const auto* bytes = static_cast<const uint8_t*>(slot_ptr);
-  bool lsb = (*bytes & 1) != 0;
-
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  // Value-changed notify only: old_lsb = new_lsb = lsb (no edge)
-  engine->RecordSignalUpdate(signal_id, lsb, lsb, true);
   engine->MarkSlotDirty(signal_id);
 }
 
