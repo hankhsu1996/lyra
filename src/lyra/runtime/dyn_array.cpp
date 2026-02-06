@@ -232,10 +232,7 @@ extern "C" void LyraStoreDynArray(
   *handle_slot = new_handle;
 
   if (value_changed && engine_ptr != nullptr) {
-    bool old_lsb = (old_handle != nullptr);
-    bool new_lsb = (new_handle != nullptr);
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    engine->RecordSignalUpdate(signal_id, old_lsb, new_lsb, value_changed);
     engine->MarkSlotDirty(signal_id);
   }
 }

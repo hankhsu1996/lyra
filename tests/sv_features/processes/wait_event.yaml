@@ -308,3 +308,40 @@ cases:
       variables:
         sum: 40
       time: 0
+
+  - name: anychange_bit0_stable
+    description: |
+      Regression test: kAnyChange must fire when value changes but bit0 is
+      unchanged (e.g. 1 -> 3 both have bit0=1). Verifies that the scheduler
+      uses full byte-range comparison, not single-bit observation.
+    sv: |
+      module Test;
+        int a, seen;
+        initial begin
+          a = 1;
+          #1 a = 3;
+        end
+        always @(a) seen = a;
+      endmodule
+    expect:
+      variables:
+        seen: 3
+      time: 1
+
+  - name: anychange_bit0_stable_always_comb
+    description: |
+      Regression test: always_comb must re-evaluate when input changes
+      without affecting bit0 (e.g. 2 -> 4, both have bit0=0).
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 2;
+          #1 a = 4;
+        end
+        always_comb b = a + 10;
+      endmodule
+    expect:
+      variables:
+        b: 14
+      time: 1
