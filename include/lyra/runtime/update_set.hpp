@@ -41,6 +41,11 @@ class UpdateSet {
   void MarkDirtyRange(uint32_t slot_id, uint32_t off, uint32_t size);
 
   // Mark an entire slot as dirty. Wrapper for MarkDirtyRange with full slot.
+  // INVARIANT: Always produces a full-slot entry [0, slot_size) in
+  // delta_slot_ranges_. This guarantees RangesOverlap returns true for any
+  // sub-range observation, so no subscription is incorrectly skipped.
+  // PR3 will add precise dirty ranges on the write side; until then, all
+  // mutations go through MarkDirty (full-slot).
   void MarkDirty(uint32_t slot_id) {
     if (slot_id < slot_sizes_.size()) {
       MarkDirtyRange(slot_id, 0, slot_sizes_[slot_id]);

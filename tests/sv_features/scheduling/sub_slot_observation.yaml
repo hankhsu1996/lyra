@@ -1,0 +1,97 @@
+feature: sub_slot_observation
+description: |
+  Tests for sub-slot observation byte-range narrowing. When always_comb reads
+  a struct field or constant-indexed array element, the subscription should
+  observe only that sub-range. Correctness is verified by checking that the
+  always_comb re-evaluates when the observed element changes.
+
+cases:
+  - name: array_element_sensitivity
+    description: always_comb reading arr[2] re-evaluates when arr[2] changes
+    sv: |
+      module Test;
+        int arr[4];
+        int result;
+
+        always_comb result = arr[2];
+
+        initial begin
+          if (result != 0) $fatal(1, "expected 0 initially, got %0d", result);
+          arr[0] = 10;
+          #1;
+          if (result != 0) $fatal(1, "arr[0] write changed result to %0d", result);
+          arr[1] = 20;
+          #1;
+          if (result != 0) $fatal(1, "arr[1] write changed result to %0d", result);
+          arr[2] = 42;
+          #1;
+          if (result != 42) $fatal(1, "expected 42, got %0d", result);
+          arr[3] = 99;
+          #1;
+          if (result != 42) $fatal(1, "arr[3] write changed result to %0d", result);
+          arr[2] = 100;
+          #1;
+          if (result != 100) $fatal(1, "expected 100, got %0d", result);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: struct_field_sensitivity
+    description: always_comb reading s.x and s.y tracks fields independently
+    sv: |
+      module Test;
+        typedef struct { int x; int y; } point_t;
+        point_t s;
+        int out_x, out_y;
+
+        always_comb out_x = s.x;
+        always_comb out_y = s.y;
+
+        initial begin
+          s.x = 10;
+          #1;
+          if (out_x != 10) $fatal(1, "expected out_x=10, got %0d", out_x);
+          if (out_y != 0) $fatal(1, "expected out_y=0, got %0d", out_y);
+          s.y = 20;
+          #1;
+          if (out_x != 10) $fatal(1, "expected out_x=10, got %0d", out_x);
+          if (out_y != 20) $fatal(1, "expected out_y=20, got %0d", out_y);
+          s.x = 30;
+          s.y = 40;
+          #1;
+          if (out_x != 30) $fatal(1, "expected out_x=30, got %0d", out_x);
+          if (out_y != 40) $fatal(1, "expected out_y=40, got %0d", out_y);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: mixed_array_and_scalar
+    description: Process reads both arr[1] and a scalar, both trigger correctly
+    sv: |
+      module Test;
+        int arr[3];
+        int scalar;
+        int result;
+
+        always_comb result = arr[1] + scalar;
+
+        initial begin
+          arr[1] = 10;
+          #1;
+          if (result != 10) $fatal(1, "expected 10, got %0d", result);
+          scalar = 5;
+          #1;
+          if (result != 15) $fatal(1, "expected 15, got %0d", result);
+          arr[1] = 20;
+          scalar = 3;
+          #1;
+          if (result != 23) $fatal(1, "expected 23, got %0d", result);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"

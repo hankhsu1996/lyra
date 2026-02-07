@@ -137,6 +137,14 @@ struct SlotInfo {
   SlotTypeInfo type_info{};  // For variable registration (width, signedness)
 };
 
+// Get the LLVM type for a TypeId. Handles all type kinds: integrals, reals,
+// packed types, unpacked arrays/structs/unions, handles
+// (string/dynarray/queue). Used by layout computation and observation range
+// resolution.
+auto GetLlvmTypeForTypeId(
+    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
+    -> llvm::Type*;
+
 // Get the LLVM storage type for an integral type, rounding up to power-of-2.
 auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::Type*;

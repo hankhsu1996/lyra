@@ -1,7 +1,8 @@
 #include "lyra/mir/sensitivity.hpp"
 
 #include <cstdint>
-#include <unordered_set>
+#include <optional>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -22,25 +23,89 @@ namespace lyra::mir {
 
 namespace {
 
+// Per-slot observation tracking. For each design slot, we track all distinct
+// observed places. A nullopt entry means "full slot" and subsumes all sub-range
+// observations.
+struct ObservationSet {
+  // Key: slot_id. Value: list of observed PlaceIds (nullopt = full slot).
+  std::unordered_map<uint32_t, std::vector<std::optional<PlaceId>>> entries;
+
+  void Add(uint32_t slot_id, std::optional<PlaceId> place_id) {
+    auto& vec = entries[slot_id];
+
+    // If we already have a full-slot observation, no need to add more.
+    for (const auto& entry : vec) {
+      if (!entry.has_value()) return;
+    }
+
+    // If adding a full-slot observation, clear all sub-range entries.
+    if (!place_id.has_value()) {
+      vec.clear();
+      vec.push_back(std::nullopt);
+      return;
+    }
+
+    // Dedup identical PlaceIds.
+    for (const auto& entry : vec) {
+      if (entry.has_value() && entry->value == place_id->value) return;
+    }
+
+    vec.push_back(place_id);
+  }
+};
+
+// Check if all projections in a place are statically resolvable for
+// observation narrowing. Returns true only for chains consisting of
+// FieldProjection and constant-index IndexProjection.
+auto HasStaticObservation(const Place& place) -> bool {
+  if (place.projections.empty()) return false;
+
+  for (const auto& proj : place.projections) {
+    bool is_static = std::visit(
+        common::Overloaded{
+            [](const FieldProjection&) { return true; },
+            [](const IndexProjection& idx) {
+              return idx.index.kind == Operand::Kind::kConst;
+            },
+            [](const BitRangeProjection&) { return false; },
+            [](const SliceProjection&) { return false; },
+            [](const DerefProjection&) { return false; },
+            [](const UnionMemberProjection&) { return false; },
+        },
+        proj.info);
+    if (!is_static) return false;
+  }
+  return true;
+}
+
 void CollectFromOperand(
-    const Operand& op, const Arena& arena, std::unordered_set<uint32_t>& seen);
+    const Operand& op, const Arena& arena, ObservationSet& obs);
 
 void CollectFromPlace(
-    const Place& place, const Arena& arena,
-    std::unordered_set<uint32_t>& seen) {
+    PlaceId place_id, const Place& place, const Arena& arena,
+    ObservationSet& obs) {
   if (place.root.kind != PlaceRoot::Kind::kDesign) {
     return;
   }
-  seen.insert(static_cast<uint32_t>(place.root.id));
+  auto slot_id = static_cast<uint32_t>(place.root.id);
 
+  if (HasStaticObservation(place)) {
+    obs.Add(slot_id, place_id);
+  } else {
+    obs.Add(slot_id, std::nullopt);
+  }
+
+  // Continue collecting sub-reads from projection operands (e.g., dynamic
+  // index expressions reference other design variables that are also
+  // sensitivity triggers).
   for (const auto& proj : place.projections) {
     std::visit(
         common::Overloaded{
             [&](const IndexProjection& idx) {
-              CollectFromOperand(idx.index, arena, seen);
+              CollectFromOperand(idx.index, arena, obs);
             },
             [&](const BitRangeProjection& br) {
-              CollectFromOperand(br.bit_offset, arena, seen);
+              CollectFromOperand(br.bit_offset, arena, obs);
             },
             [](const FieldProjection&) {},
             [](const SliceProjection&) {},
@@ -52,33 +117,32 @@ void CollectFromPlace(
 }
 
 void CollectFromOperand(
-    const Operand& op, const Arena& arena, std::unordered_set<uint32_t>& seen) {
+    const Operand& op, const Arena& arena, ObservationSet& obs) {
   if (op.kind != Operand::Kind::kUse) {
     return;
   }
   auto place_id = std::get<PlaceId>(op.payload);
-  CollectFromPlace(arena[place_id], arena, seen);
+  CollectFromPlace(place_id, arena[place_id], arena, obs);
 }
 
 void CollectFromRhs(
-    const RightHandSide& rhs, const Arena& arena,
-    std::unordered_set<uint32_t>& seen);
+    const RightHandSide& rhs, const Arena& arena, ObservationSet& obs);
 
 void CollectFromRvalue(
-    const Rvalue& rvalue, const Arena& arena,
-    std::unordered_set<uint32_t>& seen) {
+    const Rvalue& rvalue, const Arena& arena, ObservationSet& obs) {
   for (const auto& op : rvalue.operands) {
-    CollectFromOperand(op, arena, seen);
+    CollectFromOperand(op, arena, obs);
   }
 
   std::visit(
       common::Overloaded{
           [&](const GuardedUseRvalueInfo& info) {
-            CollectFromPlace(arena[info.place], arena, seen);
+            CollectFromPlace(info.place, arena[info.place], arena, obs);
           },
           [&](const BuiltinCallRvalueInfo& info) {
             if (info.receiver.has_value()) {
-              CollectFromPlace(arena[*info.receiver], arena, seen);
+              CollectFromPlace(
+                  *info.receiver, arena[*info.receiver], arena, obs);
             }
           },
           [](const UnaryRvalueInfo&) {},
@@ -91,12 +155,12 @@ void CollectFromRvalue(
           [](const ReplicateRvalueInfo&) {},
           [](const SFormatRvalueInfo&) {},
           [&](const TestPlusargsRvalueInfo& info) {
-            CollectFromOperand(info.query.operand, arena, seen);
+            CollectFromOperand(info.query.operand, arena, obs);
           },
           [&](const FopenRvalueInfo& info) {
-            CollectFromOperand(info.filename.operand, arena, seen);
+            CollectFromOperand(info.filename.operand, arena, obs);
             if (info.mode) {
-              CollectFromOperand(info.mode->operand, arena, seen);
+              CollectFromOperand(info.mode->operand, arena, obs);
             }
           },
           [](const RuntimeQueryRvalueInfo&) {},
@@ -105,7 +169,7 @@ void CollectFromRvalue(
           [](const ArrayQueryRvalueInfo&) {},
           [&](const SystemCmdRvalueInfo& info) {
             if (info.command) {
-              CollectFromOperand(info.command->operand, arena, seen);
+              CollectFromOperand(info.command->operand, arena, obs);
             }
           },
       },
@@ -113,61 +177,54 @@ void CollectFromRvalue(
 }
 
 void CollectFromRhs(
-    const RightHandSide& rhs, const Arena& arena,
-    std::unordered_set<uint32_t>& seen) {
+    const RightHandSide& rhs, const Arena& arena, ObservationSet& obs) {
   std::visit(
       common::Overloaded{
-          [&](const Operand& op) { CollectFromOperand(op, arena, seen); },
-          [&](const Rvalue& rv) { CollectFromRvalue(rv, arena, seen); },
+          [&](const Operand& op) { CollectFromOperand(op, arena, obs); },
+          [&](const Rvalue& rv) { CollectFromRvalue(rv, arena, obs); },
       },
       rhs);
 }
 
 void CollectFromStatement(
-    const Statement& stmt, const Arena& arena,
-    std::unordered_set<uint32_t>& seen) {
+    const Statement& stmt, const Arena& arena, ObservationSet& obs) {
   std::visit(
       common::Overloaded{
-          [&](const Assign& assign) {
-            CollectFromRhs(assign.rhs, arena, seen);
-          },
+          [&](const Assign& assign) { CollectFromRhs(assign.rhs, arena, obs); },
           [&](const GuardedAssign& ga) {
-            CollectFromRhs(ga.rhs, arena, seen);
-            CollectFromOperand(ga.guard, arena, seen);
+            CollectFromRhs(ga.rhs, arena, obs);
+            CollectFromOperand(ga.guard, arena, obs);
           },
           [](const Effect&) {},
-          [&](const DeferredAssign& da) {
-            CollectFromRhs(da.rhs, arena, seen);
-          },
+          [&](const DeferredAssign& da) { CollectFromRhs(da.rhs, arena, obs); },
           [&](const Call& call) {
             for (const auto& arg : call.in_args) {
-              CollectFromOperand(arg, arena, seen);
+              CollectFromOperand(arg, arena, obs);
             }
           },
           [&](const BuiltinCall& bcall) {
             for (const auto& arg : bcall.args) {
-              CollectFromOperand(arg, arena, seen);
+              CollectFromOperand(arg, arena, obs);
             }
           },
-          [&](const DefineTemp& dt) { CollectFromRhs(dt.rhs, arena, seen); },
+          [&](const DefineTemp& dt) { CollectFromRhs(dt.rhs, arena, obs); },
       },
       stmt.data);
 }
 
 void CollectFromTerminator(
-    const Terminator& term, const Arena& arena,
-    std::unordered_set<uint32_t>& seen) {
+    const Terminator& term, const Arena& arena, ObservationSet& obs) {
   std::visit(
       common::Overloaded{
           [&](const Branch& branch) {
-            CollectFromOperand(branch.condition, arena, seen);
+            CollectFromOperand(branch.condition, arena, obs);
           },
           [&](const Switch& sw) {
-            CollectFromOperand(sw.selector, arena, seen);
+            CollectFromOperand(sw.selector, arena, obs);
           },
           [&](const QualifiedDispatch& qd) {
             for (const auto& cond : qd.conditions) {
-              CollectFromOperand(cond, arena, seen);
+              CollectFromOperand(cond, arena, obs);
             }
           },
           [](const Jump&) {},
@@ -184,20 +241,23 @@ void CollectFromTerminator(
 
 auto CollectSensitivity(const Process& process, const Arena& arena)
     -> std::vector<WaitTrigger> {
-  std::unordered_set<uint32_t> seen;
+  ObservationSet obs;
 
   for (const auto& block : process.blocks) {
     for (const auto& stmt : block.statements) {
-      CollectFromStatement(stmt, arena, seen);
+      CollectFromStatement(stmt, arena, obs);
     }
-    CollectFromTerminator(block.terminator, arena, seen);
+    CollectFromTerminator(block.terminator, arena, obs);
   }
 
   std::vector<WaitTrigger> triggers;
-  triggers.reserve(seen.size());
-  for (uint32_t slot : seen) {
-    triggers.push_back(
-        {.signal = SlotId{slot}, .edge = common::EdgeKind::kAnyChange});
+  for (const auto& [slot_id, places] : obs.entries) {
+    for (const auto& place : places) {
+      triggers.push_back(
+          {.signal = SlotId{slot_id},
+           .edge = common::EdgeKind::kAnyChange,
+           .observed_place = place});
+    }
   }
   return triggers;
 }

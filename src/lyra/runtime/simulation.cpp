@@ -67,9 +67,14 @@ void HandleSuspendRecord(
       }
       auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
       for (const auto& trigger : triggers) {
-        eng.Subscribe(
-            handle, resume, trigger.signal_id,
-            static_cast<lyra::common::EdgeKind>(trigger.edge));
+        auto edge = static_cast<lyra::common::EdgeKind>(trigger.edge);
+        if (trigger.byte_size > 0) {
+          eng.Subscribe(
+              handle, resume, trigger.signal_id, edge, trigger.byte_offset,
+              trigger.byte_size);
+        } else {
+          eng.Subscribe(handle, resume, trigger.signal_id, edge);
+        }
       }
       break;
     }

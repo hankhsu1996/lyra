@@ -73,6 +73,12 @@ struct Delay {
 struct WaitTrigger {
   SlotId signal;
   common::EdgeKind edge = common::EdgeKind::kAnyChange;
+  // Optional place reference for sub-slot observation narrowing.
+  // Set by sensitivity analysis when the observed sub-range is statically known
+  // (e.g., struct field, constant array index). LLVM lowering resolves to
+  // (byte_offset, byte_size) via DataLayout.
+  // nullopt = observe full slot (backward-compatible default).
+  std::optional<PlaceId> observed_place;
 };
 
 // Event wait suspension (requires scheduler).
