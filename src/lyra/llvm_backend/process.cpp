@@ -13,6 +13,7 @@
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
+#include <llvm/IR/DataLayout.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Instructions.h>
@@ -368,6 +369,67 @@ void LowerDelay(
   builder.CreateBr(exit_block);
 }
 
+struct ObservationRange {
+  uint32_t byte_offset = 0;
+  uint32_t byte_size = 0;  // 0 = full slot
+};
+
+auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
+    -> ObservationRange {
+  if (!trigger.observed_place) return {};
+
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
+  const auto& design = context.GetMirDesign();
+  auto& llvm_ctx = context.GetLlvmContext();
+  const llvm::DataLayout& dl = context.GetModule().getDataLayout();
+
+  const auto& place = arena[*trigger.observed_place];
+  TypeId current_type = design.slot_table[trigger.signal.value];
+  uint64_t byte_offset = 0;
+
+  for (const auto& proj : place.projections) {
+    auto* current_llvm_type =
+        GetLlvmTypeForTypeId(llvm_ctx, current_type, types);
+
+    auto ok = std::visit(
+        common::Overloaded{
+            [&](const mir::FieldProjection& fp) -> bool {
+              auto* st = llvm::cast<llvm::StructType>(current_llvm_type);
+              const auto* sl = dl.getStructLayout(st);
+              byte_offset += sl->getElementOffset(fp.field_index);
+              const auto& info = types[current_type].AsUnpackedStruct();
+              current_type = info.fields[fp.field_index].type;
+              return true;
+            },
+            [&](const mir::IndexProjection& ip) -> bool {
+              if (ip.index.kind != mir::Operand::Kind::kConst) return false;
+              const auto& constant = std::get<Constant>(ip.index.payload);
+              const auto& integral = std::get<IntegralConstant>(constant.value);
+              auto index = static_cast<uint64_t>(integral.value[0]);
+              const auto& arr_info = types[current_type].AsUnpackedArray();
+              auto* elem_llvm_type =
+                  GetLlvmTypeForTypeId(llvm_ctx, arr_info.element_type, types);
+              uint64_t elem_size = dl.getTypeAllocSize(elem_llvm_type);
+              byte_offset += index * elem_size;
+              current_type = arr_info.element_type;
+              return true;
+            },
+            [&](const auto&) -> bool { return false; },
+        },
+        proj.info);
+
+    if (!ok) return {};
+  }
+
+  auto* leaf_llvm_type = GetLlvmTypeForTypeId(llvm_ctx, current_type, types);
+  uint64_t leaf_size = dl.getTypeAllocSize(leaf_llvm_type);
+  return {
+      .byte_offset = static_cast<uint32_t>(byte_offset),
+      .byte_size = static_cast<uint32_t>(leaf_size),
+  };
+}
+
 // Helper to fill trigger array at a given base pointer
 void FillTriggerArray(
     Context& context, llvm::Value* base_ptr, llvm::Type* trigger_type,
@@ -390,13 +452,22 @@ void FillTriggerArray(
     builder.CreateStore(
         llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(triggers[i].edge)),
         edge_ptr);
+
+    // Write byte_offset (field 3) and byte_size (field 4)
+    auto range = ResolveObservationRange(context, triggers[i]);
+    auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 3);
+    builder.CreateStore(
+        llvm::ConstantInt::get(i32_ty, range.byte_offset), offset_ptr);
+    auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+    builder.CreateStore(
+        llvm::ConstantInt::get(i32_ty, range.byte_size), size_ptr);
   }
 }
 
 auto LowerWait(
     Context& context, const mir::Wait& wait, llvm::BasicBlock* exit_block)
     -> Result<void> {
-  static_assert(sizeof(runtime::WaitTriggerRecord) == 8);
+  static_assert(sizeof(runtime::WaitTriggerRecord) == 16);
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -406,9 +477,11 @@ auto LowerWait(
 
   auto num_triggers = static_cast<uint32_t>(wait.triggers.size());
 
-  // WaitTriggerRecord layout: {i32 signal_id, i8 edge, [3 x i8] padding}
+  // WaitTriggerRecord layout:
+  // {i32 signal_id, i8 edge, [3 x i8] padding, i32 byte_offset, i32 byte_size}
   auto* trigger_type = llvm::StructType::get(
-      llvm_ctx, {i32_ty, i8_ty, llvm::ArrayType::get(i8_ty, 3)});
+      llvm_ctx,
+      {i32_ty, i8_ty, llvm::ArrayType::get(i8_ty, 3), i32_ty, i32_ty});
 
   // Compile-time branching: different codegen for small vs large trigger counts
   if (num_triggers <= runtime::kInlineTriggerCapacity) {

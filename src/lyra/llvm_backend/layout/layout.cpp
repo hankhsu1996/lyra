@@ -114,10 +114,10 @@ auto GetLlvmAbiTypeForValue(
 
 namespace {
 
-// Forward declaration for recursive call in BuildUnpackedStructType
-auto GetLlvmTypeForTypeId(
-    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
-    -> llvm::Type*;
+// GetLlvmTypeForTypeId is declared in the header (layout.hpp) and defined
+// below (outside this anonymous namespace). Forward-declared here so
+// BuildUnpackedStructType can call it recursively.
+using ::lyra::lowering::mir_to_llvm::GetLlvmTypeForTypeId;
 
 // Compute allocation size for a type in bytes (for union storage calculation)
 auto ComputeAllocSize(
@@ -298,8 +298,8 @@ auto BuildUnpackedStructType(
   return llvm::StructType::get(ctx, field_types);
 }
 
-// Get the LLVM type for a TypeId - exhaustive switch for fail-fast on
-// unsupported types
+}  // namespace
+
 auto GetLlvmTypeForTypeId(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
     -> llvm::Type* {
@@ -359,6 +359,8 @@ auto GetLlvmTypeForTypeId(
   // Unreachable - all cases handled above
   throw common::InternalError("GetLlvmTypeForTypeId", "unreachable");
 }
+
+namespace {
 
 // Get semantic width for a packed 4-state type.
 // Precondition: type is a packed 4-state type (integral, packed array/struct,

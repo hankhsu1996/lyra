@@ -19,7 +19,14 @@ struct WaitTriggerRecord {
   uint32_t signal_id = 0;
   uint8_t edge = 0;  // common::EdgeKind
   std::array<uint8_t, 3> padding = {};
+  uint32_t byte_offset = 0;  // Observation start within slot
+  uint32_t byte_size = 0;    // Observation size; 0 = full slot
 };
+
+static_assert(
+    sizeof(WaitTriggerRecord) == 16, "WaitTriggerRecord size mismatch");
+static_assert(
+    alignof(WaitTriggerRecord) == 4, "WaitTriggerRecord alignment mismatch");
 
 // Performance knob: triggers <= this use inline storage (no heap).
 // NOT a hard limit - larger lists use heap allocation.
