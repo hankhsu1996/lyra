@@ -96,10 +96,17 @@ struct LinkProgress {
   Clock::time_point graph_ready;
   Clock::time_point alloc_done;
   Clock::time_point fixup_done;
+  Clock::time_point emitted;  // After finalization (notifyEmitted callback)
   int relocation_count = 0;
   int symbol_count = 0;
   int section_count = 0;
   int block_count = 0;
+
+  // Finalization diagnostics: collected in PostFixupPasses (just before
+  // finalize). Segments = distinct {MemProt, MemLifetimePolicy} groups,
+  // each receiving one mprotect call.  Bytes = total block content.
+  int finalize_segments = 0;
+  int64_t finalize_bytes = 0;
 };
 
 // JITLink plugin that records sub-phase timings and graph counters.
@@ -147,11 +154,39 @@ class ProfilingPlugin : public llvm::orc::ObjectLinkingLayer::Plugin {
         });
 
     config.PostFixupPasses.push_back(
-        [this](llvm::jitlink::LinkGraph&) -> llvm::Error {
+        [this](llvm::jitlink::LinkGraph& g) -> llvm::Error {
           std::lock_guard lock(progress_->mutex);
           progress_->fixup_done = Clock::now();
+
+          // Count distinct memory segments (protection groups) that will each
+          // get a separate mprotect call during finalization.  This mirrors
+          // BasicLayout's segment grouping: {MemProt, MemLifetimePolicy}.
+          // Also accumulate total block bytes per segment.
+          uint32_t seen_groups = 0;  // Bit-set over AllocGroup::Id (max 32)
+          for (const auto& sec : g.sections()) {
+            if (sec.blocks().empty()) continue;
+            auto mlp = sec.getMemLifetimePolicy();
+            if (mlp == llvm::orc::MemLifetimePolicy::NoAlloc) continue;
+            uint8_t group_id =
+                static_cast<uint8_t>(sec.getMemProt()) |
+                (static_cast<uint8_t>(static_cast<bool>(mlp)) << 3);
+            seen_groups |= (1U << group_id);
+            for (const auto* block : sec.blocks()) {
+              progress_->finalize_bytes +=
+                  static_cast<int64_t>(block->getSize());
+            }
+          }
+          progress_->finalize_segments += __builtin_popcount(seen_groups);
           return llvm::Error::success();
         });
+  }
+
+  auto notifyEmitted(llvm::orc::MaterializationResponsibility& mr)
+      -> llvm::Error override {
+    (void)mr;
+    std::lock_guard lock(progress_->mutex);
+    progress_->emitted = Clock::now();
+    return llvm::Error::success();
   }
 
   auto notifyFailed(llvm::orc::MaterializationResponsibility& mr)
@@ -435,6 +470,19 @@ auto CompileJitImpl(
             .count();
     timings.link_finalize =
         std::chrono::duration<double>(lookup_end - progress.fixup_done).count();
+
+    // Break down link_finalize into permission application vs overhead.
+    // notifyEmitted fires after finalization (mprotect) completes but before
+    // lookup returns. This gives us: fixup_done -> emitted (perm) and
+    // emitted -> lookup_end (symbol registration / overhead).
+    if (progress.emitted != Clock::time_point{}) {
+      timings.finalize_perm =
+          std::chrono::duration<double>(progress.emitted - progress.fixup_done)
+              .count();
+      timings.finalize_overhead =
+          std::chrono::duration<double>(lookup_end - progress.emitted).count();
+    }
+
     timings.has_link_detail = true;
   }
   timings.complete = true;
@@ -447,6 +495,8 @@ auto CompileJitImpl(
   orc_stats.symbol_count = progress.symbol_count;
   orc_stats.section_count = progress.section_count;
   orc_stats.block_count = progress.block_count;
+  orc_stats.finalize_segments = progress.finalize_segments;
+  orc_stats.finalize_bytes = progress.finalize_bytes;
 
   return CompileResult{
       .jit = std::move(*jit),

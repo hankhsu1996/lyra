@@ -21,6 +21,7 @@
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
+#include "process_stats.hpp"
 #include "runtime_path.hpp"
 #include "verbose_logger.hpp"
 
@@ -130,7 +131,12 @@ auto RunLli(const CompilationInput& input) -> int {
   }
 
   if (input.stats_top_n >= 0) {
-    PrintLlvmStats(*llvm_result->module, input.stats_top_n);
+    LlvmStats llvm_stats_data = CollectLlvmStats(*llvm_result->module);
+    PrintLlvmStats(llvm_stats_data, input.stats_top_n);
+    PrintProcessStats(
+        compilation.mir.design, *compilation.mir.mir_arena,
+        compilation.mir.origin_map, *compilation.hir.hir_arena,
+        *compilation.hir.source_manager, llvm_stats_data);
   }
 
   std::string ir_path = CreateTempFile(".ll");
