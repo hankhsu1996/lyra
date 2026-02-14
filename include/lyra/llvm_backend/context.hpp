@@ -357,6 +357,8 @@ class Context {
   // ReadTemp: get the LLVM value for an SSA temp.
   // Reading an unbound temp_id is an InternalError.
   [[nodiscard]] auto ReadTemp(int temp_id) const -> llvm::Value*;
+  // HasTemp: check if a temp_id is bound.
+  [[nodiscard]] auto HasTemp(int temp_id) const -> bool;
   // GetTempType: get the MIR TypeId for an SSA temp.
   // Reading an unbound temp_id is an InternalError.
   [[nodiscard]] auto GetTempType(int temp_id) const -> TypeId;

@@ -340,6 +340,10 @@ auto Context::ReadTemp(int temp_id) const -> llvm::Value* {
   return it->second;
 }
 
+auto Context::HasTemp(int temp_id) const -> bool {
+  return temp_values_.contains(temp_id);
+}
+
 auto Context::GetTempType(int temp_id) const -> TypeId {
   auto it = temp_types_.find(temp_id);
   if (it == temp_types_.end()) {

@@ -54,9 +54,11 @@ struct ObservationSet {
   }
 };
 
-// Check if all projections in a place are statically resolvable for
-// observation narrowing. Returns true only for chains consisting of
-// FieldProjection and constant-index IndexProjection.
+// Check if all projections in a place are potentially resolvable for
+// observation narrowing. Accepts FieldProjection and IndexProjection with
+// constant or temp indices (temps may resolve to constants at LLVM lowering
+// time). The LLVM backend's ResolveByteRange determines actual constness;
+// non-constant temps safely fall back to full-slot observation.
 auto HasStaticObservation(const Place& place) -> bool {
   if (place.projections.empty()) return false;
 
@@ -65,7 +67,8 @@ auto HasStaticObservation(const Place& place) -> bool {
         common::Overloaded{
             [](const FieldProjection&) { return true; },
             [](const IndexProjection& idx) {
-              return idx.index.kind == Operand::Kind::kConst;
+              return idx.index.kind == Operand::Kind::kConst ||
+                     idx.index.kind == Operand::Kind::kUseTemp;
             },
             [](const BitRangeProjection&) { return false; },
             [](const SliceProjection&) { return false; },

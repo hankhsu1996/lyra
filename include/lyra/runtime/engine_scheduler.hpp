@@ -23,11 +23,12 @@ struct ScheduledEvent {
 
 // NBA queue entry: deferred write with byte-level masking.
 struct NbaEntry {
-  void* write_ptr;             // Exact write address
-  uint32_t byte_size;          // Size of write region at write_ptr
-  uint32_t notify_slot_id;     // Slot ID for trigger lookup
-  std::vector<uint8_t> value;  // New value bytes (storage layout)
-  std::vector<uint8_t> mask;   // Byte mask (0 = preserve, 0xFF = overwrite)
+  void* write_ptr;              // Exact write address
+  const void* notify_base_ptr;  // Slot root pointer (for offset computation)
+  uint32_t byte_size;           // Size of write region at write_ptr
+  uint32_t notify_slot_id;      // Slot ID for trigger lookup
+  std::vector<uint8_t> value;   // New value bytes (storage layout)
+  std::vector<uint8_t> mask;    // Byte mask (0 = preserve, 0xFF = overwrite)
 };
 
 // Forward declaration for callback

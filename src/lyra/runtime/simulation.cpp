@@ -322,13 +322,18 @@ extern "C" auto LyraPlusargsValueString(
 
 extern "C" void LyraStorePacked(
     void* engine_ptr, void* slot_ptr, const void* new_value_ptr,
-    uint32_t byte_size, uint32_t signal_id) {
+    uint32_t byte_size, uint32_t signal_id, uint32_t dirty_off,
+    uint32_t dirty_size) {
   bool value_changed = std::memcmp(slot_ptr, new_value_ptr, byte_size) != 0;
   std::memcpy(slot_ptr, new_value_ptr, byte_size);
 
   if (value_changed && engine_ptr != nullptr) {
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    engine->MarkSlotDirty(signal_id);
+    if (dirty_size > 0) {
+      engine->MarkDirtyRange(signal_id, dirty_off, dirty_size);
+    } else {
+      engine->MarkSlotDirty(signal_id);
+    }
   }
 }
 

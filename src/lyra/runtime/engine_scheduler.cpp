@@ -14,6 +14,27 @@
 
 namespace lyra::runtime {
 
+namespace {
+
+// Fast-fail validation: notify_base_ptr must be the true slot root,
+// not a projected sub-field pointer. Catches codegen bugs where
+// write_ptr is passed instead of the slot base.
+void ValidateSlotRootPointer(
+    const void* ptr, uint32_t slot_id, const SlotMetaRegistry& registry,
+    const void* design_state_base, const char* caller) {
+  if (!registry.IsPopulated() || design_state_base == nullptr) {
+    return;
+  }
+  const auto* expected = static_cast<const uint8_t*>(design_state_base) +
+                         registry.Get(slot_id).base_off;
+  if (static_cast<const uint8_t*>(ptr) != expected) {
+    throw common::InternalError(
+        caller, "pointer does not match slot root address");
+  }
+}
+
+}  // namespace
+
 void Engine::ScheduleInitial(ProcessHandle handle) {
   active_queue_.push_back(
       ScheduledEvent{
@@ -95,11 +116,16 @@ void Engine::ScheduleNba(
         "Engine::ScheduleNba", "null pointer or zero byte_size");
   }
 
+  ValidateSlotRootPointer(
+      notify_base_ptr, notify_slot_id, slot_meta_registry_, design_state_base_,
+      "Engine::ScheduleNba");
+
   auto val_span = std::span(static_cast<const uint8_t*>(value_ptr), byte_size);
   auto mask_span = std::span(static_cast<const uint8_t*>(mask_ptr), byte_size);
   nba_queue_.push_back(
       NbaEntry{
           .write_ptr = write_ptr,
+          .notify_base_ptr = notify_base_ptr,
           .byte_size = byte_size,
           .notify_slot_id = notify_slot_id,
           .value = std::vector<uint8_t>(val_span.begin(), val_span.end()),
@@ -160,7 +186,16 @@ void Engine::ExecuteRegion(Region region) {
           target_span[i] = new_byte;
         }
         if (changed) {
-          MarkSlotDirty(entry.notify_slot_id);
+          if (static_cast<const uint8_t*>(entry.write_ptr) <
+              static_cast<const uint8_t*>(entry.notify_base_ptr)) {
+            throw common::InternalError(
+                "Engine::ExecuteRegion(kNBA)",
+                "write_ptr before notify_base_ptr");
+          }
+          auto diff = static_cast<uint32_t>(
+              static_cast<const uint8_t*>(entry.write_ptr) -
+              static_cast<const uint8_t*>(entry.notify_base_ptr));
+          MarkDirtyRange(entry.notify_slot_id, diff, entry.byte_size);
         }
       }
       nba_queue_.clear();

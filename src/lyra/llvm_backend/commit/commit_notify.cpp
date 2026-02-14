@@ -35,7 +35,8 @@ void CommitNotifyUnionMemcpyIfDesignSlot(
       {ctx.GetEnginePointer(), wt.ptr,
        wt.ptr,  // For unions, source = target after memcpy
        llvm::ConstantInt::get(i32_ty, byte_size),
-       llvm::ConstantInt::get(i32_ty, *wt.canonical_signal_id)});
+       llvm::ConstantInt::get(i32_ty, *wt.canonical_signal_id),
+       llvm::ConstantInt::get(i32_ty, 0), llvm::ConstantInt::get(i32_ty, 0)});
 }
 
 void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {

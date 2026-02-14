@@ -15,6 +15,8 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Type.h>
 
+#include "lyra/common/constant.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
@@ -358,6 +360,71 @@ auto GetLlvmTypeForTypeId(
 
   // Unreachable - all cases handled above
   throw common::InternalError("GetLlvmTypeForTypeId", "unreachable");
+}
+
+auto ResolveByteRange(
+    llvm::LLVMContext& llvm_ctx, const llvm::DataLayout& dl,
+    const TypeArena& types, const mir::Place& place, TypeId root_type,
+    const IndexResolver& resolve_index) -> ByteRange {
+  if (place.projections.empty()) {
+    return {.kind = RangeKind::kFullSlot};
+  }
+
+  TypeId current_type = root_type;
+  uint64_t byte_offset = 0;
+
+  for (const auto& proj : place.projections) {
+    auto* current_llvm_type =
+        GetLlvmTypeForTypeId(llvm_ctx, current_type, types);
+
+    auto ok = std::visit(
+        common::Overloaded{
+            [&](const mir::FieldProjection& fp) -> bool {
+              auto* st = llvm::cast<llvm::StructType>(current_llvm_type);
+              const auto* sl = dl.getStructLayout(st);
+              byte_offset += sl->getElementOffset(fp.field_index);
+              const auto& info = types[current_type].AsUnpackedStruct();
+              current_type = info.fields[fp.field_index].type;
+              return true;
+            },
+            [&](const mir::IndexProjection& ip) -> bool {
+              auto type_kind = types[current_type].Kind();
+              if (type_kind == TypeKind::kDynamicArray ||
+                  type_kind == TypeKind::kQueue) {
+                return false;
+              }
+              std::optional<uint64_t> index;
+              if (ip.index.kind == mir::Operand::Kind::kConst) {
+                const auto& constant = std::get<Constant>(ip.index.payload);
+                const auto& integral =
+                    std::get<IntegralConstant>(constant.value);
+                index = static_cast<uint64_t>(integral.value[0]);
+              } else if (resolve_index) {
+                index = resolve_index(ip.index);
+              }
+              if (!index) return false;
+              const auto& arr_info = types[current_type].AsUnpackedArray();
+              auto* elem_llvm_type =
+                  GetLlvmTypeForTypeId(llvm_ctx, arr_info.element_type, types);
+              uint64_t elem_size = dl.getTypeAllocSize(elem_llvm_type);
+              byte_offset += *index * elem_size;
+              current_type = arr_info.element_type;
+              return true;
+            },
+            [&](const auto&) -> bool { return false; },
+        },
+        proj.info);
+
+    if (!ok) return {.kind = RangeKind::kFullSlot};
+  }
+
+  auto* leaf_llvm_type = GetLlvmTypeForTypeId(llvm_ctx, current_type, types);
+  uint64_t leaf_size = dl.getTypeAllocSize(leaf_llvm_type);
+  return {
+      .kind = RangeKind::kPrecise,
+      .byte_offset = static_cast<uint32_t>(byte_offset),
+      .byte_size = static_cast<uint32_t>(leaf_size),
+  };
 }
 
 namespace {
