@@ -52,9 +52,12 @@ void StoreDesignWithNotify(
 
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   builder.CreateCall(
-      ctx.GetLyraStorePacked(), {ctx.GetEnginePointer(), target.ptr, temp,
-                                 llvm::ConstantInt::get(i32_ty, byte_size),
-                                 llvm::ConstantInt::get(i32_ty, signal_id)});
+      ctx.GetLyraStorePacked(),
+      {ctx.GetEnginePointer(), target.ptr, temp,
+       llvm::ConstantInt::get(i32_ty, byte_size),
+       llvm::ConstantInt::get(i32_ty, signal_id),
+       llvm::ConstantInt::get(i32_ty, target.dirty_off),
+       llvm::ConstantInt::get(i32_ty, target.dirty_size)});
 }
 
 }  // namespace

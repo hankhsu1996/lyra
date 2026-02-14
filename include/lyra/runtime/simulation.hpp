@@ -72,9 +72,12 @@ void LyraSuspendRepeat(void* state);
 // - new_value_ptr: pointer to the new value to store
 // - byte_size: size of the value in bytes
 // - signal_id: slot ID for notification
+// - dirty_off: byte offset within slot for dirty range (0 = start)
+// - dirty_size: dirty range size; 0 = full slot, > 0 = precise byte range
 void LyraStorePacked(
     void* engine_ptr, void* slot_ptr, const void* new_value_ptr,
-    uint32_t byte_size, uint32_t signal_id);
+    uint32_t byte_size, uint32_t signal_id, uint32_t dirty_off,
+    uint32_t dirty_size);
 
 // Store a string value to a design slot with change notification.
 // - engine_ptr: pointer to Engine

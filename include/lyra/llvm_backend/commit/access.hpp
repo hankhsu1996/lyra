@@ -23,6 +23,8 @@ struct WriteTarget {
   llvm::Value* ptr = nullptr;  // Pointer to canonical storage
   std::optional<uint32_t>
       canonical_signal_id;  // Root slot ID, nullopt if not design
+  uint32_t dirty_off = 0;   // Byte offset within slot (write-side dirty range)
+  uint32_t dirty_size = 0;  // 0 = full slot; > 0 = precise byte range
 };
 
 namespace commit {

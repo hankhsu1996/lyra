@@ -321,15 +321,7 @@ auto LowerDeferredAssignBitRange(
         "LowerDeferredAssignBitRange", "BitRange on non-scalar base type");
   }
 
-  llvm::Value* notify_base_ptr = ptr;  // BitRange shares root pointer
-
-  // If there's an IndexProjection before the BitRange, notify_base is root
-  for (const auto& proj : place.projections) {
-    if (std::holds_alternative<mir::IndexProjection>(proj.info)) {
-      notify_base_ptr = GetDesignRootPointer(context, deferred.dest);
-      break;
-    }
-  }
+  llvm::Value* notify_base_ptr = GetDesignRootPointer(context, deferred.dest);
 
   if (IsFourStateScalarStruct(base_type)) {
     // 4-state base: mask both planes
@@ -481,7 +473,7 @@ auto LowerDeferredAssignDirect(
   auto write_ptr_or_err = context.GetPlacePointer(deferred.dest);
   if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
-  llvm::Value* notify_base_ptr = write_ptr;
+  llvm::Value* notify_base_ptr = GetDesignRootPointer(context, deferred.dest);
 
   return EmitDeferredStoreCore(
       context, deferred, shape, write_ptr, notify_base_ptr, signal_id);

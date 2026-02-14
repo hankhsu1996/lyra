@@ -69,6 +69,203 @@ cases:
     expect:
       stdout: "PASS\n"
 
+  - name: blocking_no_wakeup_array
+    description: |
+      Blocking assign to arr[0] must not wake process observing arr[2].
+      $display inside always_comb makes wakeups directly observable.
+    sv: |
+      module Test;
+        int arr[4];
+        int result;
+
+        always_comb begin
+          result = arr[2];
+          $display("comb_eval arr[2]=%0d", arr[2]);
+        end
+
+        initial begin
+          arr[2] = 42;
+          #1;
+          arr[0] = 99;
+          #1;
+          arr[2] = 55;
+          #1;
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "comb_eval arr[2]=0"
+          - "comb_eval arr[2]=42"
+          - "comb_eval arr[2]=55"
+          - "PASS"
+        not_contains:
+          - "comb_eval arr[2]=42\ncomb_eval arr[2]=42"
+
+  - name: blocking_no_wakeup_struct
+    description: |
+      Blocking assign to s.y must not wake process observing s.x.
+    sv: |
+      module Test;
+        typedef struct { int x; int y; int z; } triple_t;
+        triple_t s;
+        int result;
+
+        always_comb begin
+          result = s.x;
+          $display("comb_eval s.x=%0d", s.x);
+        end
+
+        initial begin
+          s.x = 10;
+          #1;
+          s.y = 20;
+          #1;
+          s.z = 30;
+          #1;
+          s.x = 40;
+          #1;
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "comb_eval s.x=0"
+          - "comb_eval s.x=10"
+          - "comb_eval s.x=40"
+          - "PASS"
+        not_contains:
+          - "comb_eval s.x=10\ncomb_eval s.x=10"
+
+  - name: nba_no_wakeup_array
+    description: |
+      NBA to arr[0] must not wake process observing arr[2].
+    sv: |
+      module Test;
+        int arr[4];
+        int result;
+
+        always_comb begin
+          result = arr[2];
+          $display("comb_eval arr[2]=%0d", arr[2]);
+        end
+
+        initial begin
+          arr[2] <= 42;
+          #1;
+          arr[0] <= 99;
+          #1;
+          arr[2] <= 55;
+          #1;
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "comb_eval arr[2]=0"
+          - "comb_eval arr[2]=42"
+          - "comb_eval arr[2]=55"
+          - "PASS"
+        not_contains:
+          - "comb_eval arr[2]=42\ncomb_eval arr[2]=42"
+
+  - name: nba_no_wakeup_struct
+    description: |
+      NBA to s.y must not wake process observing s.x.
+    sv: |
+      module Test;
+        typedef struct { int x; int y; } pair_t;
+        pair_t s;
+        int result;
+
+        always_comb begin
+          result = s.x;
+          $display("comb_eval s.x=%0d", s.x);
+        end
+
+        initial begin
+          s.x <= 10;
+          #1;
+          s.y <= 20;
+          #1;
+          s.x <= 30;
+          #1;
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "comb_eval s.x=0"
+          - "comb_eval s.x=10"
+          - "comb_eval s.x=30"
+          - "PASS"
+        not_contains:
+          - "comb_eval s.x=10\ncomb_eval s.x=10"
+
+  - name: nested_struct_array_blocking
+    description: |
+      Blocking assign to structs[0].x must not wake process observing structs[1].x.
+      Tests multi-step projection chain (IndexProjection + FieldProjection).
+    sv: |
+      module Test;
+        typedef struct { int x; int y; } pair_t;
+        pair_t structs[2];
+        int result;
+
+        always_comb begin
+          result = structs[1].x;
+          $display("comb_eval structs[1].x=%0d", structs[1].x);
+        end
+
+        initial begin
+          structs[1].x = 55;
+          #1;
+          structs[0].x = 99;
+          #1;
+          structs[0].y = 88;
+          #1;
+          structs[1].x = 77;
+          #1;
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "comb_eval structs[1].x=0"
+          - "comb_eval structs[1].x=55"
+          - "comb_eval structs[1].x=77"
+          - "PASS"
+        not_contains:
+          - "comb_eval structs[1].x=55\ncomb_eval structs[1].x=55"
+
+  - name: dynamic_index_falls_back_to_full_slot
+    description: |
+      Dynamic index write must fall back to full-slot dirty marking.
+      Process observing arr[2] must still wake (conservative correctness).
+    sv: |
+      module Test;
+        int arr[4];
+        int result;
+        int idx;
+
+        always_comb result = arr[2];
+
+        initial begin
+          idx = 2;
+          arr[idx] = 42;
+          #1;
+          if (result != 42) $fatal(1, "expected 42, got %0d", result);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
   - name: mixed_array_and_scalar
     description: Process reads both arr[1] and a scalar, both trigger correctly
     sv: |

@@ -265,13 +265,34 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
 
   // Determine canonical_signal_id from the SAME resolved root
   std::optional<uint32_t> signal_id;
+  uint32_t dirty_off = 0;
+  uint32_t dirty_size = 0;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kDesign) {
     signal_id = static_cast<uint32_t>(resolved.root.id);
+    auto resolver = [this](const mir::Operand& op) -> std::optional<uint64_t> {
+      if (op.kind != mir::Operand::Kind::kUseTemp) return std::nullopt;
+      auto temp_id = std::get<mir::TempId>(op.payload);
+      if (!HasTemp(temp_id.value)) return std::nullopt;
+      auto* val = ReadTemp(temp_id.value);
+      if (const auto* ci = llvm::dyn_cast<llvm::ConstantInt>(val)) {
+        return ci->getZExtValue();
+      }
+      return std::nullopt;
+    };
+    auto range = ResolveByteRange(
+        *llvm_context_, llvm_module_->getDataLayout(), types_, resolved,
+        design_.slot_table[*signal_id], resolver);
+    if (range.kind == RangeKind::kPrecise) {
+      dirty_off = range.byte_offset;
+      dirty_size = range.byte_size;
+    }
   }
 
   return WriteTarget{
       .ptr = *ptr_or_err,
       .canonical_signal_id = signal_id,
+      .dirty_off = dirty_off,
+      .dirty_size = dirty_size,
   };
 }
 

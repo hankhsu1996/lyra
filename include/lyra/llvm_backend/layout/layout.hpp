@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -14,6 +16,7 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -201,5 +204,36 @@ auto BuildLayout(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
     const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx,
     const llvm::DataLayout& dl) -> Layout;
+
+// Discriminant for byte range resolution results.
+// kPrecise: exact byte range known (FieldProjection + const IndexProjection).
+// kFullSlot: projection chain not fully resolvable; caller must mark full slot.
+enum class RangeKind { kPrecise, kFullSlot };
+
+// Byte range within a design slot, resolved from a MIR Place projection chain.
+struct ByteRange {
+  RangeKind kind = RangeKind::kFullSlot;
+  uint32_t byte_offset = 0;
+  uint32_t byte_size = 0;
+};
+
+// Callback to resolve an Operand to a constant uint64 index value.
+// Returns nullopt if the operand cannot be resolved to a compile-time constant.
+// Used to look through kUseTemp operands (e.g., cast of a constant).
+using IndexResolver =
+    std::function<std::optional<uint64_t>(const mir::Operand&)>;
+
+// Resolve a Place's projection chain to a byte range within its root slot.
+// Supports multi-step chains of FieldProjection and const IndexProjection.
+// Returns kFullSlot for dynamic indices, BitRange, Slice, Deref, Union, or
+// empty projection chains.
+//
+// The optional resolve_index callback handles kUseTemp operands that are
+// ultimately constants (e.g., a cast of a literal). When provided, it is
+// called for IndexProjection operands that are not kConst.
+auto ResolveByteRange(
+    llvm::LLVMContext& llvm_ctx, const llvm::DataLayout& dl,
+    const TypeArena& types, const mir::Place& place, TypeId root_type,
+    const IndexResolver& resolve_index = nullptr) -> ByteRange;
 
 }  // namespace lyra::lowering::mir_to_llvm

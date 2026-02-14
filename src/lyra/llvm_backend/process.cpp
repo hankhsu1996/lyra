@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -22,6 +23,7 @@
 #include <llvm/IR/Value.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Support/Alignment.h>
+#include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
@@ -379,55 +381,27 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
   if (!trigger.observed_place) return {};
 
   const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
-  const auto& design = context.GetMirDesign();
-  auto& llvm_ctx = context.GetLlvmContext();
-  const llvm::DataLayout& dl = context.GetModule().getDataLayout();
-
   const auto& place = arena[*trigger.observed_place];
-  TypeId current_type = design.slot_table[trigger.signal.value];
-  uint64_t byte_offset = 0;
+  TypeId root_type = context.GetMirDesign().slot_table[trigger.signal.value];
 
-  for (const auto& proj : place.projections) {
-    auto* current_llvm_type =
-        GetLlvmTypeForTypeId(llvm_ctx, current_type, types);
-
-    auto ok = std::visit(
-        common::Overloaded{
-            [&](const mir::FieldProjection& fp) -> bool {
-              auto* st = llvm::cast<llvm::StructType>(current_llvm_type);
-              const auto* sl = dl.getStructLayout(st);
-              byte_offset += sl->getElementOffset(fp.field_index);
-              const auto& info = types[current_type].AsUnpackedStruct();
-              current_type = info.fields[fp.field_index].type;
-              return true;
-            },
-            [&](const mir::IndexProjection& ip) -> bool {
-              if (ip.index.kind != mir::Operand::Kind::kConst) return false;
-              const auto& constant = std::get<Constant>(ip.index.payload);
-              const auto& integral = std::get<IntegralConstant>(constant.value);
-              auto index = static_cast<uint64_t>(integral.value[0]);
-              const auto& arr_info = types[current_type].AsUnpackedArray();
-              auto* elem_llvm_type =
-                  GetLlvmTypeForTypeId(llvm_ctx, arr_info.element_type, types);
-              uint64_t elem_size = dl.getTypeAllocSize(elem_llvm_type);
-              byte_offset += index * elem_size;
-              current_type = arr_info.element_type;
-              return true;
-            },
-            [&](const auto&) -> bool { return false; },
-        },
-        proj.info);
-
-    if (!ok) return {};
-  }
-
-  auto* leaf_llvm_type = GetLlvmTypeForTypeId(llvm_ctx, current_type, types);
-  uint64_t leaf_size = dl.getTypeAllocSize(leaf_llvm_type);
-  return {
-      .byte_offset = static_cast<uint32_t>(byte_offset),
-      .byte_size = static_cast<uint32_t>(leaf_size),
+  auto resolver =
+      [&context](const mir::Operand& op) -> std::optional<uint64_t> {
+    if (op.kind != mir::Operand::Kind::kUseTemp) return std::nullopt;
+    auto temp_id = std::get<mir::TempId>(op.payload);
+    if (!context.HasTemp(temp_id.value)) return std::nullopt;
+    auto* val = context.ReadTemp(temp_id.value);
+    if (const auto* ci = llvm::dyn_cast<llvm::ConstantInt>(val)) {
+      return ci->getZExtValue();
+    }
+    return std::nullopt;
   };
+  auto range = ResolveByteRange(
+      context.GetLlvmContext(), context.GetModule().getDataLayout(),
+      context.GetTypeArena(), place, root_type, resolver);
+  if (range.kind == RangeKind::kPrecise) {
+    return {.byte_offset = range.byte_offset, .byte_size = range.byte_size};
+  }
+  return {};
 }
 
 // Helper to fill trigger array at a given base pointer

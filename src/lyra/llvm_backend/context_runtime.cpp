@@ -355,12 +355,13 @@ auto Context::GetLyraFreeTriggers() -> llvm::Function* {
 auto Context::GetLyraStorePacked() -> llvm::Function* {
   if (lyra_store_packed_ == nullptr) {
     // void LyraStorePacked(ptr engine, ptr slot, ptr new_value,
-    //                      i32 byte_size, i32 signal_id)
+    //                      i32 byte_size, i32 signal_id,
+    //                      i32 dirty_off, i32 dirty_size)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty}, false);
+        {ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty}, false);
     lyra_store_packed_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraStorePacked",
         llvm_module_.get());
