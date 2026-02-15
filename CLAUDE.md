@@ -14,6 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/mir-design.md`               | MIR layer design (execution semantics)               |
 | `docs/llvm-backend.md`             | MIR -> LLVM lowering strategy                        |
 | `docs/runtime.md`                  | Simulation engine, scheduling, backend-agnostic API  |
+| `docs/change-propagation.md`       | Dirty tracking, subscriptions, wakeup filtering      |
 | `docs/type-system.md`              | Type interning, type kinds, 4-state representation   |
 | `docs/parameterized-modules.md`    | Module parameters, template specialization, strings  |
 | `docs/module-hierarchy.md`         | Module hierarchy support (MIR, codegen, interpreter) |

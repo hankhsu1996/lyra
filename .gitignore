@@ -20,6 +20,9 @@
 *.swo
 *~
 
+# Documents
+*.pdf
+
 # Operating System files
 .DS_Store
 Thumbs.db
