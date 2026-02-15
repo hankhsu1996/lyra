@@ -143,7 +143,7 @@ FlushSignalUpdates runs at two points per delta iteration to separate blocking-s
 
 **Trace**: Uses time-slot-level dirty sets (which slots changed), not byte-range dirty sets. Sub-slot precision only affects wakeup filtering.
 
-**Edge subscriptions**: kPosedge/kNegedge require `byte_size=1` at subscription time. The runtime samples the bit at `bit_index` (0-7) within the observation byte at `byte_offset`. For root-signal edges this is byte 0, bit 0. For constant bit-selects (e.g., `@(posedge bus[11])`), `byte_offset` and `bit_index` are derived from the bit position within the packed storage.
+**Edge subscriptions**: kPosedge/kNegedge require `byte_size=1` at subscription time. The runtime samples the bit at `bit_index` (0-7) within the observation byte at `byte_offset`. For root-signal edges this is byte 0, bit 0. For packed single-bit sub-expressions -- constant bit-selects (e.g., `@(posedge bus[11])`), single-bit packed struct fields (e.g., `@(posedge s.flag)`), and single-bit constant range/part-selects (e.g., `@(posedge bus[3:3])`) -- `byte_offset` and `bit_index` are derived from the bit position within the packed storage. All these forms produce a `BitRangeProjection` with `width=1`.
 
 ## Worked Example
 
