@@ -1430,6 +1430,20 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
             break;
         }
 
+        if (edge != hir::EventEdgeKind::kNone &&
+            sig_event.expr.kind != slang::ast::ExpressionKind::NamedValue &&
+            sig_event.expr.kind !=
+                slang::ast::ExpressionKind::HierarchicalValue) {
+          ctx->sink->Unsupported(
+              span,
+              "edge triggers (@posedge/@negedge) are only supported on "
+              "plain signal variables; sub-expressions (struct fields, "
+              "array elements, part-selects) are not supported; use @(*) "
+              "or @(signal) for level-sensitive observation",
+              UnsupportedCategory::kFeature);
+          return hir::kInvalidStatementId;
+        }
+
         std::vector<hir::EventTrigger> triggers;
         triggers.push_back({.signal = signal_expr, .edge = edge});
 
@@ -1495,6 +1509,21 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
               edge = hir::EventEdgeKind::kBothEdges;
               break;
           }
+
+          if (edge != hir::EventEdgeKind::kNone &&
+              sig_event.expr.kind != slang::ast::ExpressionKind::NamedValue &&
+              sig_event.expr.kind !=
+                  slang::ast::ExpressionKind::HierarchicalValue) {
+            ctx->sink->Unsupported(
+                span,
+                "edge triggers (@posedge/@negedge) are only supported on "
+                "plain signal variables; sub-expressions (struct fields, "
+                "array elements, part-selects) are not supported; use @(*) "
+                "or @(signal) for level-sensitive observation",
+                UnsupportedCategory::kFeature);
+            return hir::kInvalidStatementId;
+          }
+
           triggers.push_back({.signal = signal_expr, .edge = edge});
         }
 

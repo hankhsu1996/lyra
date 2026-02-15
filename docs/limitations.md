@@ -257,6 +257,8 @@ See [scheduling.md](scheduling.md) for implemented regions.
   - Array element access (`arr[i]` where `i` is out of range)
   - Bit/part select (`vec[i]`, `vec[i+:w]`, `vec[i-:w]` where the selection extends beyond the vector bounds)
 
+- **Edge-trigger granularity**: `@(posedge ...)` / `@(negedge ...)` sample bit 0 of the subscribed slot. Edge triggers on sub-expressions (struct fields, array elements, part-selects) are rejected at compile time. Use `@(*)` or `@(signal)` for level-sensitive observation of non-root expressions.
+
 - **Unique/priority violation reporting**: LRM 12.4.2.1 specifies that `unique`/`priority`/`unique0` violation reports should be deferred to the Observed region with "zero-delay glitch immunity" - violations are flushed if the process re-triggers before the Observed region. Lyra reports violations immediately via `$warning`, which may produce spurious reports in `always_comb` blocks with combinational feedback loops. Per-process violation tracking and `$assertcontrol` are not supported.
 
 ## $monitor Limitations
@@ -280,13 +282,3 @@ See [scheduling.md](scheduling.md) for implemented regions.
   string s;
   $sformat(s, fmt, 42);  // Works in both interpreter and codegen
   ```
-
-## Bulk-Write Notification Gap
-
-System functions that write directly to memory backing store (`$readmemh`, `$readmemb`, `$writememh`, `$writememb`, `$fread` memory variant) bypass the normal CommitValue/notify path. This means:
-
-- Value changes from these operations do **not** trigger `@(posedge/negedge)` events
-- `$monitor` does **not** detect changes made by bulk-write operations
-- Continuous assignments sensitive to bulk-written memory are **not** re-evaluated
-
-This is consistent across both the MIR interpreter and LLVM backend. The bulk-write pattern writes directly to the destination backing store for performance (avoiding per-element staging and commit overhead for potentially thousands of elements).
