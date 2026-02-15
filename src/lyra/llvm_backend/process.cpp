@@ -405,6 +405,13 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
         .byte_size = range.byte_size,
         .bit_index = range.bit_index};
   }
+  if (trigger.edge != common::EdgeKind::kAnyChange) {
+    throw common::InternalError(
+        "ResolveObservationRange",
+        "sub-slot edge observation resolved to full-slot fallback; "
+        "the projection chain could not be resolved to a precise "
+        "byte range");
+  }
   return {};
 }
 

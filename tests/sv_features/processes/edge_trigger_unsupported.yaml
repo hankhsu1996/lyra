@@ -1,29 +1,29 @@
 feature: edge trigger rejection on unsupported sub-expressions
 description: >
   Edge triggers (@posedge/@negedge) support plain signal variables, constant
-  bit-selects on packed types, single-bit packed struct fields, and single-bit
-  constant range/part-selects. Other sub-expressions are rejected at compile
-  time.
+  bit-selects on packed types, single-bit struct fields (packed and unpacked),
+  constant-index unpacked array elements (single-bit), and single-bit constant
+  range/part-selects. Other sub-expressions are rejected at compile time.
 
 cases:
-  - name: posedge_unpacked_struct_field
-    description: "@(posedge s.x) on unpacked struct should be rejected"
+  - name: posedge_multibit_unpacked_struct_field
+    description: "@(posedge s.data) on multi-bit unpacked struct field should be rejected"
     sv: |
       module Test;
-        typedef struct { logic x; logic y; } pair_t;
+        typedef struct { logic [7:0] data; logic flag; } pair_t;
         pair_t s;
         initial begin
-          @(posedge s.x);
+          @(posedge s.data);
           $finish;
         end
       endmodule
     expect:
       error:
         contains:
-          - "edge triggers on non-packed-struct member access are not supported"
+          - "edge triggers on multi-bit struct fields are not supported"
 
-  - name: negedge_unpacked_array_element
-    description: "@(negedge arr[0]) on unpacked array should be rejected"
+  - name: negedge_multibit_unpacked_array_element
+    description: "@(negedge arr[0]) on multi-bit unpacked array element should be rejected"
     sv: |
       module Test;
         logic [7:0] arr [0:3];
@@ -35,7 +35,53 @@ cases:
     expect:
       error:
         contains:
-          - "edge triggers on unpacked array elements are not supported"
+          - "edge triggers on multi-bit unpacked array elements are not supported"
+
+  - name: dynamic_unpacked_array_edge
+    description: "@(posedge arr[i]) with dynamic index on unpacked array should be rejected"
+    sv: |
+      module Test;
+        logic arr [0:3];
+        int i = 0;
+        initial begin
+          @(posedge arr[i]);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "dynamic unpacked array index edge triggers are not supported"
+
+  - name: out_of_range_unpacked_array_edge
+    description: "@(posedge arr[99]) out-of-range constant on unpacked array should be rejected"
+    sv: |
+      module Test;
+        logic arr [0:3];
+        initial begin
+          @(posedge arr[99]);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "edge trigger array index is out of range"
+
+  - name: dynamic_array_element_edge
+    description: "@(posedge d[0]) on dynamic array element should be rejected"
+    sv: |
+      module Test;
+        logic d[];
+        initial begin
+          @(posedge d[0]);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "edge triggers on dynamic array/queue elements are not supported"
 
   - name: posedge_part_select
     description: "@(posedge bus[3:0]) should be rejected -- multi-bit range select"

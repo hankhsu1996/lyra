@@ -51,7 +51,8 @@ namespace {
 
 // Validates edge trigger expressions (posedge/negedge/edge).
 // Accepts: NamedValue, HierarchicalValue, constant bit-selects on packed types,
-// single-bit packed struct fields, single-bit constant range/part selects.
+// single-bit struct fields (packed or unpacked), constant-index unpacked array
+// elements (single-bit), single-bit constant range/part selects.
 // Returns true if valid (fall through to create trigger), false if rejected.
 bool ValidateEdgeTriggerExpression(
     const slang::ast::Expression& expr, hir::EventEdgeKind edge,
@@ -109,11 +110,44 @@ bool ValidateEdgeTriggerExpression(
           UnsupportedCategory::kFeature);
       return false;
     }
+    // Unpacked fixed-size array: accept constant index to 1-bit element.
+    if (base_type.isFixedSize()) {
+      if (expr.type->getBitWidth() != 1) {
+        ctx->sink->Unsupported(
+            span,
+            "edge triggers on multi-bit unpacked array elements are not "
+            "supported; only single-bit elements are allowed",
+            UnsupportedCategory::kFeature);
+        return false;
+      }
+      const auto* cv = select.selector().getConstant();
+      if (cv == nullptr || cv->bad() || !cv->isInteger()) {
+        ctx->sink->Unsupported(
+            span,
+            "dynamic unpacked array index edge triggers are not "
+            "supported; use a constant index",
+            UnsupportedCategory::kFeature);
+        return false;
+      }
+      const auto& idx = cv->integer();
+      if (idx.hasUnknown()) {
+        ctx->sink->Unsupported(
+            span, "edge trigger array index is out of range",
+            UnsupportedCategory::kFeature);
+        return false;
+      }
+      auto idx_val = idx.as<int64_t>();
+      auto range = base_type.getFixedRange();
+      if (!idx_val || *idx_val < range.lower() || *idx_val > range.upper()) {
+        ctx->sink->Unsupported(
+            span, "edge trigger array index is out of range",
+            UnsupportedCategory::kFeature);
+        return false;
+      }
+      return true;
+    }
     ctx->sink->Unsupported(
-        span,
-        "edge triggers on unpacked array elements are not "
-        "supported; use @(*) or @(signal) for "
-        "level-sensitive observation",
+        span, "edge triggers on dynamic array/queue elements are not supported",
         UnsupportedCategory::kFeature);
     return false;
   }
@@ -121,10 +155,11 @@ bool ValidateEdgeTriggerExpression(
   if (expr.kind == ExpressionKind::MemberAccess) {
     const auto& access = expr.as<slang::ast::MemberAccessExpression>();
     const auto& base_type = access.value().type->getCanonicalType();
-    if (base_type.kind != slang::ast::SymbolKind::PackedStructType) {
+    if (base_type.kind != slang::ast::SymbolKind::PackedStructType &&
+        base_type.kind != slang::ast::SymbolKind::UnpackedStructType) {
       ctx->sink->Unsupported(
           span,
-          "edge triggers on non-packed-struct member access are not "
+          "edge triggers on non-struct member access are not "
           "supported; use @(*) or @(signal) for level-sensitive "
           "observation",
           UnsupportedCategory::kFeature);
@@ -230,9 +265,10 @@ bool ValidateEdgeTriggerExpression(
   ctx->sink->Unsupported(
       span,
       "edge triggers (@posedge/@negedge) are only supported on plain "
-      "signal variables, constant bit-selects, single-bit packed struct "
-      "fields, and single-bit constant part-selects; use @(*) or "
-      "@(signal) for level-sensitive observation",
+      "signal variables, constant bit-selects, single-bit struct fields, "
+      "constant-index unpacked array elements (single-bit), and single-bit "
+      "constant part-selects; use @(*) or @(signal) for level-sensitive "
+      "observation",
       UnsupportedCategory::kFeature);
   return false;
 }

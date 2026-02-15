@@ -1582,6 +1582,36 @@ auto LowerEventWait(
                                  .bit_offset = storage_offset,
                                  .width = 1,
                                  .element_type = hir_expr.type}});
+    } else if (
+        hir_trigger.edge != hir::EventEdgeKind::kNone &&
+        (hir_expr.kind == hir::ExpressionKind::kElementAccess ||
+         hir_expr.kind == hir::ExpressionKind::kMemberAccess)) {
+      // Unpacked array element or unpacked struct field edge trigger.
+      // LowerExpression emits IndexProjection/FieldProjection to select
+      // the unpacked leaf. For Phase A, the leaf is 1-bit, so we append
+      // BitRangeProjection{bit_offset=0, width=1} to target bit 0.
+      // Only for edge-triggered waits; level-sensitive waits observe the
+      // whole leaf and fall through to the generic path.
+      auto signal_result = LowerExpression(hir_trigger.signal, builder);
+      if (!signal_result) return std::unexpected(signal_result.error());
+      mir::Operand signal_op = std::move(*signal_result);
+      if (signal_op.kind != mir::Operand::Kind::kUse) {
+        throw common::InternalError(
+            "LowerEventWait",
+            "unpacked sub-expression base must be a design variable");
+      }
+      auto base_place_id = std::get<mir::PlaceId>(signal_op.payload);
+
+      TypeId offset_type = ctx.GetOffsetType();
+      mir::Operand storage_offset =
+          mir::Operand::Const(MakeIntConstant(0, offset_type));
+
+      place_id = ctx.mir_arena->DerivePlace(
+          base_place_id, mir::Projection{
+                             .info = mir::BitRangeProjection{
+                                 .bit_offset = storage_offset,
+                                 .width = 1,
+                                 .element_type = hir_expr.type}});
     } else {
       auto signal_result = LowerExpression(hir_trigger.signal, builder);
       if (!signal_result) return std::unexpected(signal_result.error());

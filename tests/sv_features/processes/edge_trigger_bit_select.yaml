@@ -1,8 +1,9 @@
-feature: edge trigger on packed single-bit sub-expressions
+feature: edge trigger on single-bit sub-expressions
 description: >
-  Edge triggers (@posedge/@negedge) on constant bit-selects, single-bit packed
-  struct fields, and single-bit constant range/part-selects within packed
-  values. The runtime samples the specific bit, not bit 0 of the slot root.
+  Edge triggers (@posedge/@negedge) on constant bit-selects, single-bit struct
+  fields (packed and unpacked), constant-index unpacked array elements
+  (single-bit), and single-bit constant range/part-selects. The runtime samples
+  the specific bit, not bit 0 of the slot root.
 
 cases:
   - name: posedge_bit3
@@ -256,6 +257,158 @@ cases:
           $finish;
         end
         initial #5 bus = 8'b0001_0000;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_unpacked_array_element
+    description: "@(posedge arr[0]) on unpacked array of 1-bit elements"
+    sv: |
+      module Test;
+        logic arr [0:3];
+        int result = 0;
+        initial begin
+          arr[0] = 0;
+          arr[1] = 0;
+          arr[2] = 0;
+          arr[3] = 0;
+          @(posedge arr[0]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[0] = 1;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: no_false_trigger_unpacked_array
+    description: "@(posedge arr[0]) must NOT wake when arr[1] changes"
+    sv: |
+      module Test;
+        logic arr [0:3];
+        int result = 0;
+        initial begin
+          arr[0] = 0;
+          arr[1] = 0;
+          arr[2] = 0;
+          arr[3] = 0;
+          @(posedge arr[0]);
+          result = 1;
+          $finish;
+        end
+        initial begin
+          #5 arr[1] = 1;
+          #5 arr[0] = 1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_unpacked_array_nonzero_index
+    description: "@(posedge arr[2]) triggers on element 2"
+    sv: |
+      module Test;
+        logic arr [0:3];
+        int result = 0;
+        initial begin
+          arr[0] = 0;
+          arr[1] = 0;
+          arr[2] = 0;
+          arr[3] = 0;
+          @(posedge arr[2]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[2] = 1;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_unpacked_array_descending_range
+    description: "@(posedge arr[0]) on descending [3:0] range"
+    sv: |
+      module Test;
+        logic arr [3:0];
+        int result = 0;
+        initial begin
+          arr[0] = 0;
+          arr[1] = 0;
+          arr[2] = 0;
+          arr[3] = 0;
+          @(posedge arr[0]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[0] = 1;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_unpacked_struct_field
+    description: "@(posedge s.flag) on single-bit unpacked struct field"
+    sv: |
+      module Test;
+        typedef struct { logic flag; logic [7:0] data; } s_t;
+        s_t s;
+        int result = 0;
+        initial begin
+          s.flag = 0;
+          s.data = 0;
+          @(posedge s.flag);
+          result = 1;
+          $finish;
+        end
+        initial #5 s.flag = 1;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: no_false_trigger_unpacked_struct
+    description: "@(posedge s.flag) must NOT wake when s.data changes"
+    sv: |
+      module Test;
+        typedef struct { logic flag; logic [7:0] data; } s_t;
+        s_t s;
+        int result = 0;
+        initial begin
+          s.flag = 0;
+          s.data = 0;
+          @(posedge s.flag);
+          result = 1;
+          $finish;
+        end
+        initial begin
+          #5 s.data = 8'hFF;
+          #5 s.flag = 1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: event_list_unpacked
+    description: "@(posedge clk or negedge arr[0]) in event list"
+    sv: |
+      module Test;
+        bit clk = 0;
+        logic arr [0:3];
+        int result = 0;
+        initial begin
+          arr[0] = 1;
+          arr[1] = 0;
+          arr[2] = 0;
+          arr[3] = 0;
+          @(posedge clk or negedge arr[0]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[0] = 0;
       endmodule
     expect:
       variables:
