@@ -522,77 +522,169 @@ void FillTriggerArray(
   }
 }
 
-// Fill late-bound trigger record array for dynamic-index edge triggers.
-void FillLateBoundArray(
-    Context& context, llvm::Value* base_ptr, llvm::Type* lb_type,
-    llvm::Type* array_type, const std::vector<mir::WaitTrigger>& triggers) {
+// Emitted data for late-bound triggers: headers, plan_ops pool, dep_slots pool.
+struct LateBoundEmitResult {
+  llvm::Value* headers_ptr = nullptr;
+  uint32_t num_headers = 0;
+  llvm::Value* plan_ops_ptr = nullptr;
+  uint32_t num_plan_ops = 0;
+  llvm::Value* dep_slots_ptr = nullptr;
+  uint32_t num_dep_slots = 0;
+};
+
+// Emit late-bound data arrays for dynamic-index edge triggers.
+auto EmitLateBoundData(
+    Context& context, const std::vector<mir::WaitTrigger>& triggers)
+    -> LateBoundEmitResult {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i16_ty = llvm::Type::getInt16Ty(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
 
-  uint32_t lb_idx = 0;
+  // Collect late-bound triggers with dep_slots (need runtime rebinding).
+  struct LbEntry {
+    uint32_t trigger_idx;
+    const mir::LateBoundIndex* lb;
+  };
+  std::vector<LbEntry> entries;
+  uint32_t total_plan_ops = 0;
+  uint32_t total_dep_slots = 0;
   for (uint32_t i = 0; i < triggers.size(); ++i) {
     if (!triggers[i].late_bound) continue;
     const auto& lb = *triggers[i].late_bound;
-    // Skip local-index entries (no rebind subscription needed).
-    if (lb.index_slot == mir::kInvalidSlotId) continue;
+    if (lb.dep_slots.empty()) continue;
+    entries.push_back({i, &lb});
+    total_plan_ops += static_cast<uint32_t>(lb.plan.size());
+    total_dep_slots += static_cast<uint32_t>(lb.dep_slots.size());
+  }
 
-    auto* elem_ptr =
-        builder.CreateConstGEP2_32(array_type, base_ptr, 0, lb_idx);
+  if (entries.empty()) return {};
 
-    // trigger_index (field 0)
-    auto* f0 = builder.CreateStructGEP(lb_type, elem_ptr, 0);
-    builder.CreateStore(llvm::ConstantInt::get(i32_ty, i), f0);
+  auto num_headers = static_cast<uint32_t>(entries.size());
 
-    // index_slot_id (field 1)
-    auto* f1 = builder.CreateStructGEP(lb_type, elem_ptr, 1);
-    builder.CreateStore(
-        llvm::ConstantInt::get(i32_ty, lb.index_slot.value), f1);
+  // LateBoundHeader: {i32, i16, i16, i16, i16, i32, i32, i32} = 24 bytes
+  static_assert(sizeof(runtime::LateBoundHeader) == 24);
+  auto* hdr_type = llvm::StructType::get(
+      llvm_ctx,
+      {i32_ty, i16_ty, i16_ty, i16_ty, i16_ty, i32_ty, i32_ty, i32_ty});
+  auto* hdr_array_type = llvm::ArrayType::get(hdr_type, num_headers);
+  auto* hdr_alloca =
+      builder.CreateAlloca(hdr_array_type, nullptr, "lb_headers");
 
-    // index_byte_offset (field 2)
-    auto* f2 = builder.CreateStructGEP(lb_type, elem_ptr, 2);
-    builder.CreateStore(
-        llvm::ConstantInt::get(i32_ty, lb.index_byte_offset), f2);
+  // IndexPlanOp: {i8, i8, i8, i8, i32, i32, i32, i64} = 24 bytes
+  static_assert(sizeof(runtime::IndexPlanOp) == 24);
+  auto* plan_op_type = llvm::StructType::get(
+      llvm_ctx, {i8_ty, i8_ty, i8_ty, i8_ty, i32_ty, i32_ty, i32_ty, i64_ty});
 
-    // index_byte_size (field 3)
-    auto* f3 = builder.CreateStructGEP(lb_type, elem_ptr, 3);
-    builder.CreateStore(llvm::ConstantInt::get(i32_ty, lb.index_byte_size), f3);
+  llvm::Value* plan_ops_alloca = nullptr;
+  if (total_plan_ops > 0) {
+    auto* plan_array_type = llvm::ArrayType::get(plan_op_type, total_plan_ops);
+    plan_ops_alloca =
+        builder.CreateAlloca(plan_array_type, nullptr, "lb_plan_ops");
+  }
 
-    // index_base (field 4)
-    auto* f4 = builder.CreateStructGEP(lb_type, elem_ptr, 4);
+  llvm::Value* dep_slots_alloca = nullptr;
+  if (total_dep_slots > 0) {
+    auto* dep_array_type = llvm::ArrayType::get(i32_ty, total_dep_slots);
+    dep_slots_alloca =
+        builder.CreateAlloca(dep_array_type, nullptr, "lb_dep_slots");
+  }
+
+  // Fill data.
+  uint32_t plan_offset = 0;
+  uint32_t dep_offset = 0;
+  for (uint32_t h = 0; h < num_headers; ++h) {
+    const auto& entry = entries[h];
+    const auto& lb = *entry.lb;
+
+    auto plan_count = static_cast<uint16_t>(lb.plan.size());
+    auto dep_count = static_cast<uint16_t>(lb.dep_slots.size());
+
+    // Fill header.
+    auto* hdr_ptr =
+        builder.CreateConstGEP2_32(hdr_array_type, hdr_alloca, 0, h);
+
+    auto* f0 = builder.CreateStructGEP(hdr_type, hdr_ptr, 0);
+    builder.CreateStore(llvm::ConstantInt::get(i32_ty, entry.trigger_idx), f0);
+    auto* f1 = builder.CreateStructGEP(hdr_type, hdr_ptr, 1);
+    builder.CreateStore(llvm::ConstantInt::get(i16_ty, plan_offset), f1);
+    auto* f2 = builder.CreateStructGEP(hdr_type, hdr_ptr, 2);
+    builder.CreateStore(llvm::ConstantInt::get(i16_ty, plan_count), f2);
+    auto* f3 = builder.CreateStructGEP(hdr_type, hdr_ptr, 3);
+    builder.CreateStore(llvm::ConstantInt::get(i16_ty, dep_offset), f3);
+    auto* f4 = builder.CreateStructGEP(hdr_type, hdr_ptr, 4);
+    builder.CreateStore(llvm::ConstantInt::get(i16_ty, dep_count), f4);
+    auto* f5 = builder.CreateStructGEP(hdr_type, hdr_ptr, 5);
     builder.CreateStore(
         llvm::ConstantInt::get(
             i32_ty, static_cast<uint32_t>(lb.mapping.index_base)),
-        f4);
-
-    // index_step (field 5)
-    auto* f5 = builder.CreateStructGEP(lb_type, elem_ptr, 5);
-    builder.CreateStore(
-        llvm::ConstantInt::get(
-            i8_ty, static_cast<uint8_t>(lb.mapping.index_step)),
         f5);
-
-    // index_bit_width (field 6)
-    auto* f6 = builder.CreateStructGEP(lb_type, elem_ptr, 6);
-    builder.CreateStore(llvm::ConstantInt::get(i8_ty, lb.index_bit_width), f6);
-
-    // index_is_signed (field 7)
-    auto* f7 = builder.CreateStructGEP(lb_type, elem_ptr, 7);
+    auto* f6 = builder.CreateStructGEP(hdr_type, hdr_ptr, 6);
     builder.CreateStore(
         llvm::ConstantInt::get(
-            i8_ty, static_cast<uint8_t>(lb.index_is_signed ? 1 : 0)),
-        f7);
-
-    // padding (field 8) -- skip
-
-    // total_bits (field 9)
-    auto* f9 = builder.CreateStructGEP(lb_type, elem_ptr, 9);
+            i32_ty, static_cast<uint32_t>(lb.mapping.index_step)),
+        f6);
+    auto* f7 = builder.CreateStructGEP(hdr_type, hdr_ptr, 7);
     builder.CreateStore(
-        llvm::ConstantInt::get(i32_ty, lb.mapping.total_bits), f9);
+        llvm::ConstantInt::get(i32_ty, lb.mapping.total_bits), f7);
 
-    ++lb_idx;
+    // Fill plan ops.
+    if (plan_ops_alloca != nullptr) {
+      auto* plan_array_type =
+          llvm::ArrayType::get(plan_op_type, total_plan_ops);
+      for (uint32_t p = 0; p < lb.plan.size(); ++p) {
+        const auto& op = lb.plan[p];
+        auto* op_ptr = builder.CreateConstGEP2_32(
+            plan_array_type, plan_ops_alloca, 0, plan_offset + p);
+
+        auto* pf0 = builder.CreateStructGEP(plan_op_type, op_ptr, 0);
+        builder.CreateStore(
+            llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(op.kind)), pf0);
+        auto* pf1 = builder.CreateStructGEP(plan_op_type, op_ptr, 1);
+        builder.CreateStore(llvm::ConstantInt::get(i8_ty, op.bit_width), pf1);
+        auto* pf2 = builder.CreateStructGEP(plan_op_type, op_ptr, 2);
+        builder.CreateStore(llvm::ConstantInt::get(i8_ty, op.is_signed), pf2);
+        auto* pf3 = builder.CreateStructGEP(plan_op_type, op_ptr, 3);
+        builder.CreateStore(llvm::ConstantInt::get(i8_ty, op.byte_size), pf3);
+        auto* pf4 = builder.CreateStructGEP(plan_op_type, op_ptr, 4);
+        builder.CreateStore(llvm::ConstantInt::get(i32_ty, op.slot_id), pf4);
+        auto* pf5 = builder.CreateStructGEP(plan_op_type, op_ptr, 5);
+        builder.CreateStore(
+            llvm::ConstantInt::get(i32_ty, op.byte_offset), pf5);
+        auto* pf6 = builder.CreateStructGEP(plan_op_type, op_ptr, 6);
+        builder.CreateStore(llvm::ConstantInt::get(i32_ty, op.padding), pf6);
+        auto* pf7 = builder.CreateStructGEP(plan_op_type, op_ptr, 7);
+        builder.CreateStore(
+            llvm::ConstantInt::get(
+                i64_ty, static_cast<uint64_t>(op.const_value)),
+            pf7);
+      }
+    }
+
+    // Fill dep slots.
+    if (dep_slots_alloca != nullptr) {
+      auto* dep_array_type = llvm::ArrayType::get(i32_ty, total_dep_slots);
+      for (uint32_t d = 0; d < lb.dep_slots.size(); ++d) {
+        auto* slot_ptr = builder.CreateConstGEP2_32(
+            dep_array_type, dep_slots_alloca, 0, dep_offset + d);
+        builder.CreateStore(
+            llvm::ConstantInt::get(i32_ty, lb.dep_slots[d].value), slot_ptr);
+      }
+    }
+
+    plan_offset += plan_count;
+    dep_offset += dep_count;
   }
+
+  return {
+      .headers_ptr = hdr_alloca,
+      .num_headers = num_headers,
+      .plan_ops_ptr = plan_ops_alloca,
+      .num_plan_ops = total_plan_ops,
+      .dep_slots_ptr = dep_slots_alloca,
+      .num_dep_slots = total_dep_slots};
 }
 
 auto LowerWait(
@@ -615,14 +707,8 @@ auto LowerWait(
       llvm_ctx,
       {i32_ty, i8_ty, i8_ty, llvm::ArrayType::get(i8_ty, 2), i32_ty, i32_ty});
 
-  // Count late-bound triggers that need runtime rebind subscriptions.
-  // Local-index triggers (kInvalidSlotId) use the dynamic codegen path
-  // but don't need LateBoundTriggerRecords at runtime.
-  uint32_t num_late_bound = 0;
-  for (const auto& t : wait.triggers) {
-    if (t.late_bound && t.late_bound->index_slot != mir::kInvalidSlotId)
-      ++num_late_bound;
-  }
+  // Emit late-bound data (headers + plan ops pool + dep slots pool).
+  auto lb_data = EmitLateBoundData(context, wait.triggers);
 
   // Compile-time branching: different codegen for small vs large trigger counts
   if (num_triggers <= runtime::kInlineTriggerCapacity) {
@@ -636,27 +722,19 @@ auto LowerWait(
         context, triggers_alloca, trigger_type, fixed_array_type,
         wait.triggers);
 
-    if (num_late_bound > 0) {
-      // LateBoundTriggerRecord layout:
-      // {i32 trigger_index, i32 index_slot_id, i32 index_byte_offset,
-      //  i32 index_byte_size, i32 index_base, i8 index_step,
-      //  i8 index_bit_width, i8 index_is_signed, i8 padding, i32 total_bits}
-      static_assert(sizeof(runtime::LateBoundTriggerRecord) == 28);
-      auto* lb_type = llvm::StructType::get(
-          llvm_ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i8_ty, i8_ty,
-                     i8_ty, i8_ty, i32_ty});
-      auto* lb_array_type = llvm::ArrayType::get(lb_type, num_late_bound);
-      auto* lb_alloca =
-          builder.CreateAlloca(lb_array_type, nullptr, "late_bound");
-      FillLateBoundArray(
-          context, lb_alloca, lb_type, lb_array_type, wait.triggers);
-
+    if (lb_data.num_headers > 0) {
+      auto* null_ptr = llvm::ConstantPointerNull::get(
+          llvm::PointerType::getUnqual(llvm_ctx));
       builder.CreateCall(
           context.GetLyraSuspendWaitWithLateBound(),
           {context.GetStatePointer(),
            llvm::ConstantInt::get(i32_ty, wait.resume.value), triggers_alloca,
-           llvm::ConstantInt::get(i32_ty, num_triggers), lb_alloca,
-           llvm::ConstantInt::get(i32_ty, num_late_bound)});
+           llvm::ConstantInt::get(i32_ty, num_triggers), lb_data.headers_ptr,
+           llvm::ConstantInt::get(i32_ty, lb_data.num_headers),
+           lb_data.plan_ops_ptr != nullptr ? lb_data.plan_ops_ptr : null_ptr,
+           llvm::ConstantInt::get(i32_ty, lb_data.num_plan_ops),
+           lb_data.dep_slots_ptr != nullptr ? lb_data.dep_slots_ptr : null_ptr,
+           llvm::ConstantInt::get(i32_ty, lb_data.num_dep_slots)});
     } else {
       builder.CreateCall(
           context.GetLyraSuspendWait(),
@@ -674,23 +752,19 @@ auto LowerWait(
     FillTriggerArray(
         context, heap_ptr, trigger_type, array_type, wait.triggers);
 
-    if (num_late_bound > 0) {
-      static_assert(sizeof(runtime::LateBoundTriggerRecord) == 28);
-      auto* lb_type = llvm::StructType::get(
-          llvm_ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i8_ty,
-                     llvm::ArrayType::get(i8_ty, 3), i32_ty});
-      auto* lb_array_type = llvm::ArrayType::get(lb_type, num_late_bound);
-      auto* lb_alloca =
-          builder.CreateAlloca(lb_array_type, nullptr, "late_bound");
-      FillLateBoundArray(
-          context, lb_alloca, lb_type, lb_array_type, wait.triggers);
-
+    if (lb_data.num_headers > 0) {
+      auto* null_ptr = llvm::ConstantPointerNull::get(
+          llvm::PointerType::getUnqual(llvm_ctx));
       builder.CreateCall(
           context.GetLyraSuspendWaitWithLateBound(),
           {context.GetStatePointer(),
            llvm::ConstantInt::get(i32_ty, wait.resume.value), heap_ptr,
-           llvm::ConstantInt::get(i32_ty, num_triggers), lb_alloca,
-           llvm::ConstantInt::get(i32_ty, num_late_bound)});
+           llvm::ConstantInt::get(i32_ty, num_triggers), lb_data.headers_ptr,
+           llvm::ConstantInt::get(i32_ty, lb_data.num_headers),
+           lb_data.plan_ops_ptr != nullptr ? lb_data.plan_ops_ptr : null_ptr,
+           llvm::ConstantInt::get(i32_ty, lb_data.num_plan_ops),
+           lb_data.dep_slots_ptr != nullptr ? lb_data.dep_slots_ptr : null_ptr,
+           llvm::ConstantInt::get(i32_ty, lb_data.num_dep_slots)});
     } else {
       builder.CreateCall(
           context.GetLyraSuspendWait(),

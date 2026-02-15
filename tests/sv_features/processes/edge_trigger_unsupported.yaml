@@ -1,26 +1,9 @@
 feature: edge trigger rejection on unsupported sub-expressions
 description: >
-  Edge triggers on compound-expression indices, dynamic array/queue elements,
-  and dynamic unpacked array indices are rejected at compile time.
+  Edge triggers on division in index expressions, dynamic array/queue elements,
+  dynamic unpacked array indices, and wide index variables are rejected at compile time.
 
 cases:
-  - name: compound_index_rejected
-    description: "@(posedge bus[i+j]) with compound expression should be rejected"
-    sv: |
-      module Test;
-        logic [7:0] bus;
-        int i = 1;
-        int j = 2;
-        initial begin
-          @(posedge bus[i+j]);
-          $finish;
-        end
-      endmodule
-    expect:
-      error:
-        contains:
-          - "dynamic index edge triggers currently require the index to be a single variable"
-
   - name: dynamic_unpacked_array_edge
     description: "@(posedge arr[i]) with dynamic index on unpacked array should be rejected"
     sv: |
@@ -36,22 +19,6 @@ cases:
       error:
         contains:
           - "dynamic unpacked array index edge triggers are not supported"
-
-  - name: dynamic_indexed_part_select_edge
-    description: "@(posedge bus[i +: 1]) with variable index should be rejected"
-    sv: |
-      module Test;
-        logic [7:0] bus;
-        int i = 3;
-        initial begin
-          @(posedge bus[i +: 1]);
-          $finish;
-        end
-      endmodule
-    expect:
-      error:
-        contains:
-          - "dynamic indexed part-select edge triggers are not supported"
 
   - name: dynamic_array_element_edge
     description: "@(posedge d[0]) on dynamic array element should be rejected"
@@ -83,3 +50,19 @@ cases:
       error:
         contains:
           - "dynamic index edge triggers require index width <= 64 bits"
+
+  - name: divide_in_index_rejected
+    description: "@(posedge bus[i/2]) with division in index should be rejected"
+    sv: |
+      module Test;
+        logic [7:0] bus;
+        int i = 4;
+        initial begin
+          @(posedge bus[i/2]);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "unsupported operator in dynamic index edge trigger expression"

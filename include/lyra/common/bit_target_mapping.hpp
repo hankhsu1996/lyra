@@ -10,7 +10,7 @@ namespace lyra::runtime {
 // Computed once at lowering time. Used identically by codegen and runtime.
 struct BitTargetMapping {
   int32_t index_base = 0;
-  int8_t index_step = 1;
+  int32_t index_step = 1;
   uint32_t total_bits = 0;
 };
 

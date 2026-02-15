@@ -18,6 +18,7 @@
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/index_plan.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/update_set.hpp"
 
@@ -37,6 +38,9 @@ void Engine::FreeNode(SubscriptionNode* node) {
   node->snapshot_heap.clear();
   node->snapshot_heap.shrink_to_fit();
   node->rebind_target = nullptr;
+  node->plan_ref = {};
+  node->rebind_mapping = {};
+  node->last_rebind_epoch = 0;
   free_list_.push_back(node);
 }
 
@@ -164,6 +168,7 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
 
   proc_it->second.subscription_head = nullptr;
   proc_it->second.subscription_count = 0;
+  proc_it->second.plan_pool.ops.clear();
 }
 
 auto Engine::Subscribe(
@@ -285,10 +290,9 @@ auto Engine::Subscribe(
 }
 
 void Engine::SubscribeRebind(
-    ProcessHandle handle, ResumePoint resume, SignalId index_signal,
-    SubscriptionNode* target_node, BitTargetMapping mapping,
-    uint32_t index_byte_offset, uint32_t index_byte_size,
-    uint8_t index_bit_width, bool index_is_signed) {
+    ProcessHandle handle, ResumePoint resume, SubscriptionNode* target_node,
+    std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
+    std::span<const uint32_t> dep_slots) {
   if (finished_) return;
 
   if (design_state_base_ == nullptr) {
@@ -301,133 +305,97 @@ void Engine::SubscribeRebind(
   }
 
   auto& proc_state = process_states_[handle];
-  if (!CheckSubscriptionLimits(proc_state)) return;
 
-  const auto& meta = slot_meta_registry_.Get(index_signal);
+  // Store plan in process's pool and set target_node's plan_ref.
+  auto plan_start = static_cast<uint32_t>(proc_state.plan_pool.ops.size());
+  proc_state.plan_pool.ops.insert(
+      proc_state.plan_pool.ops.end(), plan.begin(), plan.end());
+  target_node->plan_ref = {
+      .start = plan_start, .count = static_cast<uint16_t>(plan.size())};
+  target_node->rebind_mapping = mapping;
 
-  auto* node = AllocNode();
-  *node = SubscriptionNode{};
-  node->handle = handle;
-  node->resume = resume;
-  node->edge = common::EdgeKind::kAnyChange;
-  node->signal = index_signal;
+  // Create a rebind node for each dep slot.
+  for (uint32_t dep_slot : dep_slots) {
+    if (!CheckSubscriptionLimits(proc_state)) return;
 
-  // AnyChange on full index slot for rebind detection.
-  node->byte_offset = 0;
-  node->byte_size = meta.total_bytes;
-  node->bit_index = 0;
+    const auto& meta = slot_meta_registry_.Get(dep_slot);
 
-  // Capture initial snapshot.
-  std::span design_state(
-      static_cast<const uint8_t*>(design_state_base_),
-      slot_meta_registry_.MaxExtent());
-  const auto* src = &design_state[meta.base_off];
-  if (meta.total_bytes <= SubscriptionNode::kInlineSnapshotCap) {
-    std::memcpy(node->snapshot_inline.data(), src, meta.total_bytes);
-  } else {
-    node->snapshot_heap.resize(meta.total_bytes);
-    std::memcpy(node->snapshot_heap.data(), src, meta.total_bytes);
+    auto* node = AllocNode();
+    *node = SubscriptionNode{};
+    node->handle = handle;
+    node->resume = resume;
+    node->edge = common::EdgeKind::kAnyChange;
+    node->signal = dep_slot;
+
+    // AnyChange on full dep slot for rebind detection.
+    node->byte_offset = 0;
+    node->byte_size = meta.total_bytes;
+    node->bit_index = 0;
+
+    // Capture initial snapshot.
+    std::span design_state(
+        static_cast<const uint8_t*>(design_state_base_),
+        slot_meta_registry_.MaxExtent());
+    const auto* src = &design_state[meta.base_off];
+    if (meta.total_bytes <= SubscriptionNode::kInlineSnapshotCap) {
+      std::memcpy(node->snapshot_inline.data(), src, meta.total_bytes);
+    } else {
+      node->snapshot_heap.resize(meta.total_bytes);
+      std::memcpy(node->snapshot_heap.data(), src, meta.total_bytes);
+    }
+
+    // Set rebind fields.
+    node->rebind_target = target_node;
+
+    // Link into rebind waiter list (not normal waiter list).
+    auto& sw = signal_waiters_[dep_slot];
+    node->signal_next = sw.rebind_head;
+    node->signal_prev = nullptr;
+    if (sw.rebind_head != nullptr) {
+      sw.rebind_head->signal_prev = node;
+    }
+    sw.rebind_head = node;
+    if (sw.rebind_tail == nullptr) {
+      sw.rebind_tail = node;
+    }
+
+    // Link into process list.
+    node->process_next = proc_state.subscription_head;
+    proc_state.subscription_head = node;
+
+    ++proc_state.subscription_count;
+    ++live_subscription_count_;
   }
-
-  // Set rebind fields.
-  node->rebind_target = target_node;
-  node->rebind_mapping = mapping;
-  node->index_slot_id = index_signal;
-  node->index_byte_offset = index_byte_offset;
-  node->index_byte_size = index_byte_size;
-  node->index_bit_width = index_bit_width;
-  node->index_is_signed = index_is_signed;
-
-  // Link into rebind waiter list (not normal waiter list).
-  auto& sw = signal_waiters_[index_signal];
-  node->signal_next = sw.rebind_head;
-  node->signal_prev = nullptr;
-  if (sw.rebind_head != nullptr) {
-    sw.rebind_head->signal_prev = node;
-  }
-  sw.rebind_head = node;
-  if (sw.rebind_tail == nullptr) {
-    sw.rebind_tail = node;
-  }
-
-  // Link into process list.
-  node->process_next = proc_state.subscription_head;
-  proc_state.subscription_head = node;
-
-  ++proc_state.subscription_count;
-  ++live_subscription_count_;
 
   // Initial rebind: validate codegen-computed target against runtime state.
   // Catches X/Z indices at initial suspend time.
-  RebindSubscription(node);
+  RebindSubscription(target_node);
 }
 
-namespace {
+void Engine::RebindSubscription(SubscriptionNode* target) {
+  // Epoch guard: skip if already rebound this flush cycle.
+  if (target->last_rebind_epoch == flush_epoch_) return;
+  target->last_rebind_epoch = flush_epoch_;
 
-// Read an integer value from design state at the given slot/offset/size.
-// Masks to actual bit_width and sign-extends if is_signed.
-auto ReadIndexValue(
-    const void* design_state_base, const SlotMetaRegistry& registry,
-    uint32_t slot_id, uint32_t byte_offset, uint32_t byte_size,
-    uint32_t bit_width, bool is_signed) -> int64_t {
-  if (byte_size == 0 || byte_size > 8) {
-    throw common::InternalError(
-        "ReadIndexValue",
-        std::format("invariant violated: byte_size={}", byte_size));
-  }
-  const auto& meta = registry.Get(slot_id);
-  const auto* base =
-      static_cast<const uint8_t*>(design_state_base) + meta.base_off;
-  uint64_t v = 0;
-  std::memcpy(&v, base + byte_offset, byte_size);
-  // Mask to actual bit width.
-  if (bit_width > 0 && bit_width < 64) {
-    v &= (uint64_t{1} << bit_width) - 1;
-  }
-  // Sign-extend from bit_width if signed, else already zero-extended.
-  if (is_signed && bit_width > 0 && bit_width < 64) {
-    uint64_t sign_bit = uint64_t{1} << (bit_width - 1);
-    v = (v ^ sign_bit) - sign_bit;
-  }
-  return static_cast<int64_t>(v);
-}
+  const auto& mapping = target->rebind_mapping;
 
-// Check if a 4-state index variable has X/Z bits in its unknown plane.
-auto HasUnknownBits(
-    const void* design_state_base, const SlotMetaRegistry& registry,
-    uint32_t slot_id, uint32_t byte_offset, uint32_t byte_size) -> bool {
-  const auto& meta = registry.Get(slot_id);
-  if (meta.kind != SlotStorageKind::kPacked4) return false;
-  const auto* unk = static_cast<const uint8_t*>(design_state_base) +
-                    meta.base_off + meta.planes.unk_off + byte_offset;
-  for (uint32_t i = 0; i < byte_size; ++i) {
-    if (unk[i] != 0) return true;
-  }
-  return false;
-}
+  // Resolve plan from the process's pool.
+  auto& proc_state = process_states_[target->handle];
+  auto plan_span = std::span<const IndexPlanOp>(
+      proc_state.plan_pool.ops.data() + target->plan_ref.start,
+      target->plan_ref.count);
 
-}  // namespace
+  bool has_xz = false;
+  int64_t index_val = EvaluateIndexPlan(
+      design_state_base_, slot_meta_registry_, plan_span, &has_xz);
 
-void Engine::RebindSubscription(SubscriptionNode* rebind_node) {
-  auto* target = rebind_node->rebind_target;
-  const auto& mapping = rebind_node->rebind_mapping;
-
-  // Check for X/Z bits in the index variable. If present, deactivate the
-  // edge subscription. When X/Z clears, the next rebind will re-activate.
-  if (HasUnknownBits(
-          design_state_base_, slot_meta_registry_, rebind_node->index_slot_id,
-          rebind_node->index_byte_offset, rebind_node->index_byte_size)) {
+  if (has_xz) {
     target->is_active = false;
     return;
   }
 
-  int64_t index_val = ReadIndexValue(
-      design_state_base_, slot_meta_registry_, rebind_node->index_slot_id,
-      rebind_node->index_byte_offset, rebind_node->index_byte_size,
-      rebind_node->index_bit_width, rebind_node->index_is_signed);
-
   int64_t logical_offset =
-      (index_val - mapping.index_base) * mapping.index_step;
+      static_cast<int64_t>(index_val - mapping.index_base) * mapping.index_step;
 
   if (logical_offset < 0 ||
       static_cast<uint64_t>(logical_offset) >= mapping.total_bits) {
@@ -441,9 +409,6 @@ void Engine::RebindSubscription(SubscriptionNode* rebind_node) {
   uint8_t new_bit_index = static_cast<uint8_t>(bit % 8);
 
   // Get old bit value at the new position for correct edge detection.
-  // The edge sub's snapshot_inline[0] has the byte from subscribe time
-  // or last flush. If the new position is in the same byte, extract the
-  // old bit from the snapshot. Otherwise, use current design state.
   const auto& meta = slot_meta_registry_.Get(target->signal);
   const auto* base = static_cast<const uint8_t*>(design_state_base_);
   if (new_byte_offset == target->byte_offset) {
@@ -475,13 +440,16 @@ void Engine::FlushSignalUpdates() {
     return;
   }
 
+  // Increment flush epoch for rebind deduplication.
+  ++flush_epoch_;
+
   std::span design_state(
       static_cast<const uint8_t*>(design_state_base_),
       slot_meta_registry_.MaxExtent());
 
   // Pass 1: Rebind phase -- update late-bound targets before edge checks.
-  // When an index variable changes, we re-read it and recompute the edge
-  // subscription's byte_offset/bit_index via the affine mapping.
+  // When a dep slot changes, we re-evaluate the index plan and recompute the
+  // edge subscription's byte_offset/bit_index via the affine mapping.
   for (uint32_t slot_id : newly_dirty) {
     auto it = signal_waiters_.find(slot_id);
     if (it == signal_waiters_.end()) continue;
@@ -494,7 +462,7 @@ void Engine::FlushSignalUpdates() {
       auto* snapshot = node->SnapshotData();
       if (std::memcmp(current, snapshot, node->byte_size) != 0) {
         std::memcpy(snapshot, current, node->byte_size);
-        RebindSubscription(node);
+        RebindSubscription(node->rebind_target);
       }
       node = next;
     }

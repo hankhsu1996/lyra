@@ -8,8 +8,21 @@
 #include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/index_plan.hpp"
 
 namespace lyra::runtime {
+
+// Reference into a process's IndexPlanPool.
+struct IndexPlanRef {
+  uint32_t start = 0;
+  uint16_t count = 0;
+};
+
+// Per-process plan storage. Stable spans -- not invalidated until
+// ClearProcessSubscriptions.
+struct IndexPlanPool {
+  std::vector<IndexPlanOp> ops;
+};
 
 // Subscription node - doubly linked in signal's list, singly linked in
 // process's list. Each subscription is linked into two lists for O(1) removal.
@@ -54,17 +67,16 @@ struct SubscriptionNode {
   // Set to false when rebind detects OOB or X index.
   bool is_active = true;
 
-  // Late-bound rebinding (only set on rebind subscription nodes).
-  // rebind_target points to the edge subscription that this rebind controls.
-  // Pointer lifetime: both nodes belong to the same process and are removed
-  // atomically by ClearProcessSubscriptions.
+  // Late-bound rebinding fields.
+  // For rebind nodes: rebind_target points to the edge subscription.
+  // For edge target nodes: plan_ref + rebind_mapping define the expression.
   SubscriptionNode* rebind_target = nullptr;
+  IndexPlanRef plan_ref = {};
   BitTargetMapping rebind_mapping = {};
-  uint32_t index_slot_id = 0;
-  uint32_t index_byte_offset = 0;
-  uint32_t index_byte_size = 0;
-  uint8_t index_bit_width = 0;   // Actual SV bit width (1-64)
-  bool index_is_signed = false;  // SV type signedness
+
+  // Epoch guard: prevents redundant re-evaluations when multiple dep slots
+  // change in the same delta.
+  uint32_t last_rebind_epoch = 0;
 
   // Links for signal's waiter list (doubly linked for O(1) removal).
   // Normal subscriptions use head/tail; rebind subscriptions use
@@ -92,6 +104,7 @@ struct ProcessState {
   bool is_enqueued = false;  // De-dup flag for next-delta queue
   size_t subscription_count = 0;
   SubscriptionNode* subscription_head = nullptr;
+  IndexPlanPool plan_pool;
 };
 
 }  // namespace lyra::runtime

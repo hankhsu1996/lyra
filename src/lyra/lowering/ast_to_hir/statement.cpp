@@ -13,6 +13,7 @@
 #include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
@@ -48,6 +49,81 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
+
+// Validates an index expression for use in dynamic edge triggers.
+// Recursively accepts: variables, constants, +, -, *, &, |, ^, <<, >>,
+// unary -, ~, and implicit conversion expressions.
+// Rejects: division, modulo, function calls, ternary, etc.
+// Each leaf variable must have bit width <= 64.
+bool ValidateIndexExpression(
+    const slang::ast::Expression& expr, SourceSpan span, Context* ctx) {
+  using slang::ast::BinaryOperator;
+  using slang::ast::ExpressionKind;
+  using slang::ast::UnaryOperator;
+
+  switch (expr.kind) {
+    case ExpressionKind::NamedValue:
+    case ExpressionKind::HierarchicalValue: {
+      if (expr.type->getBitWidth() > 64) {
+        ctx->sink->Unsupported(
+            span,
+            "dynamic index edge triggers require index width "
+            "<= 64 bits",
+            UnsupportedCategory::kFeature);
+        return false;
+      }
+      return true;
+    }
+    case ExpressionKind::IntegerLiteral:
+      return true;
+    case ExpressionKind::BinaryOp: {
+      const auto& bin = expr.as<slang::ast::BinaryExpression>();
+      switch (bin.op) {
+        case BinaryOperator::Add:
+        case BinaryOperator::Subtract:
+        case BinaryOperator::Multiply:
+        case BinaryOperator::BinaryAnd:
+        case BinaryOperator::BinaryOr:
+        case BinaryOperator::BinaryXor:
+        case BinaryOperator::LogicalShiftLeft:
+        case BinaryOperator::LogicalShiftRight:
+        case BinaryOperator::ArithmeticShiftLeft:
+        case BinaryOperator::ArithmeticShiftRight:
+          return ValidateIndexExpression(bin.left(), span, ctx) &&
+                 ValidateIndexExpression(bin.right(), span, ctx);
+        default:
+          ctx->sink->Unsupported(
+              span,
+              "unsupported operator in dynamic index edge trigger expression",
+              UnsupportedCategory::kFeature);
+          return false;
+      }
+    }
+    case ExpressionKind::UnaryOp: {
+      const auto& unary = expr.as<slang::ast::UnaryExpression>();
+      switch (unary.op) {
+        case UnaryOperator::Minus:
+        case UnaryOperator::BitwiseNot:
+          return ValidateIndexExpression(unary.operand(), span, ctx);
+        default:
+          ctx->sink->Unsupported(
+              span,
+              "unsupported operator in dynamic index edge trigger expression",
+              UnsupportedCategory::kFeature);
+          return false;
+      }
+    }
+    case ExpressionKind::Conversion: {
+      const auto& conv = expr.as<slang::ast::ConversionExpression>();
+      return ValidateIndexExpression(conv.operand(), span, ctx);
+    }
+    default:
+      ctx->sink->Unsupported(
+          span, "unsupported expression in dynamic index edge trigger",
+          UnsupportedCategory::kFeature);
+      return false;
+  }
+}
 
 // Validates edge trigger expressions (posedge/negedge/edge).
 // Accepts: NamedValue, HierarchicalValue, constant bit/element-selects on
@@ -93,27 +169,8 @@ bool ValidateEdgeTriggerExpression(
             "for the packed type width");
         return false;
       }
-      // Dynamic bit-select: accept if the index is a single variable.
-      // Compound expressions (i+j, func(x)) are rejected (Phase 1).
-      auto selector_kind = select.selector().kind;
-      if (selector_kind == ExpressionKind::NamedValue ||
-          selector_kind == ExpressionKind::HierarchicalValue) {
-        if (select.selector().type->getBitWidth() > 64) {
-          ctx->sink->Unsupported(
-              span,
-              "dynamic index edge triggers require index width "
-              "<= 64 bits",
-              UnsupportedCategory::kFeature);
-          return false;
-        }
-        return true;
-      }
-      ctx->sink->Unsupported(
-          span,
-          "dynamic index edge triggers currently require the index to be a "
-          "single variable",
-          UnsupportedCategory::kFeature);
-      return false;
+      // Dynamic bit-select: accept if the index expression is supported.
+      return ValidateIndexExpression(select.selector(), span, ctx);
     }
     // Unpacked fixed-size array: accept constant index (any element width).
     if (base_type.isFixedSize()) {
@@ -231,47 +288,44 @@ bool ValidateEdgeTriggerExpression(
       }
       return true;
     }
-    // Indexed part-select: require constant index
+    // Indexed part-select: accept constant or dynamic index.
     const auto* cv = select.left().getConstant();
-    if (cv == nullptr || cv->bad() || !cv->isInteger()) {
-      ctx->sink->Unsupported(
-          span,
-          "dynamic indexed part-select edge triggers are not "
-          "supported; use a constant index",
-          UnsupportedCategory::kFeature);
-      return false;
-    }
-    const auto& idx = cv->integer();
-    if (idx.hasUnknown()) {
-      ctx->sink->Error(
-          span,
-          "edge trigger part-select index is out of range "
-          "for the packed type width");
-      return false;
-    }
-    auto idx_val = idx.as<int64_t>();
-    auto range = base_type.getFixedRange();
-    if (!idx_val || *idx_val < range.lower() || *idx_val > range.upper()) {
-      ctx->sink->Error(
-          span,
-          "edge trigger part-select index is out of range "
-          "for the packed type width");
-      return false;
-    }
-    if (selection_kind == slang::ast::RangeSelectionKind::IndexedDown) {
-      auto bit_width = static_cast<int64_t>(expr.type->getBitWidth());
-      if (bit_width > 1) {
-        auto lsb_val = *idx_val - (bit_width - 1);
-        if (lsb_val < range.lower()) {
-          ctx->sink->Error(
-              span,
-              "edge trigger part-select LSB is out of range "
-              "for the packed type width");
-          return false;
+    if (cv != nullptr && !cv->bad() && cv->isInteger()) {
+      // Constant index: validate range statically.
+      const auto& idx = cv->integer();
+      if (idx.hasUnknown()) {
+        ctx->sink->Error(
+            span,
+            "edge trigger part-select index is out of range "
+            "for the packed type width");
+        return false;
+      }
+      auto idx_val = idx.as<int64_t>();
+      auto range = base_type.getFixedRange();
+      if (!idx_val || *idx_val < range.lower() || *idx_val > range.upper()) {
+        ctx->sink->Error(
+            span,
+            "edge trigger part-select index is out of range "
+            "for the packed type width");
+        return false;
+      }
+      if (selection_kind == slang::ast::RangeSelectionKind::IndexedDown) {
+        auto bit_width = static_cast<int64_t>(expr.type->getBitWidth());
+        if (bit_width > 1) {
+          auto lsb_val = *idx_val - (bit_width - 1);
+          if (lsb_val < range.lower()) {
+            ctx->sink->Error(
+                span,
+                "edge trigger part-select LSB is out of range "
+                "for the packed type width");
+            return false;
+          }
         }
       }
+      return true;
     }
-    return true;
+    // Dynamic index: validate the index expression.
+    return ValidateIndexExpression(select.left(), span, ctx);
   }
 
   ctx->sink->Unsupported(

@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "lyra/runtime/index_plan.hpp"
+
 namespace lyra::runtime {
 
 // Suspend tag - matches SuspendReason variant index for consistency.
@@ -38,27 +40,37 @@ static_assert(
     offsetof(WaitTriggerRecord, byte_size) == 12,
     "WaitTriggerRecord byte_size offset mismatch");
 
-// Late-bound trigger record for dynamic-index edge triggers.
-// Pairs with a WaitTriggerRecord to create a rebind subscription at runtime.
-struct LateBoundTriggerRecord {
+// Late-bound header for dynamic-index edge triggers.
+// References into plan_ops and dep_slots pools via start/count spans.
+struct LateBoundHeader {
   uint32_t trigger_index = 0;
-  uint32_t index_slot_id = 0;
-  uint32_t index_byte_offset = 0;
-  uint32_t index_byte_size = 0;
+  uint16_t plan_ops_start = 0;
+  uint16_t plan_ops_count = 0;
+  uint16_t dep_slots_start = 0;
+  uint16_t dep_slots_count = 0;
   int32_t index_base = 0;
-  int8_t index_step = 1;
-  uint8_t index_bit_width = 0;  // Actual SV bit width (1-64)
-  uint8_t index_is_signed = 0;  // SV type signedness
-  uint8_t padding = 0;
+  int32_t index_step = 1;
   uint32_t total_bits = 0;
 };
 
+static_assert(sizeof(LateBoundHeader) == 24, "LateBoundHeader size mismatch");
 static_assert(
-    sizeof(LateBoundTriggerRecord) == 28,
-    "LateBoundTriggerRecord size mismatch");
+    alignof(LateBoundHeader) == 4, "LateBoundHeader alignment mismatch");
 static_assert(
-    alignof(LateBoundTriggerRecord) == 4,
-    "LateBoundTriggerRecord alignment mismatch");
+    offsetof(LateBoundHeader, plan_ops_start) == 4,
+    "LateBoundHeader plan_ops_start offset mismatch");
+static_assert(
+    offsetof(LateBoundHeader, dep_slots_start) == 8,
+    "LateBoundHeader dep_slots_start offset mismatch");
+static_assert(
+    offsetof(LateBoundHeader, index_base) == 12,
+    "LateBoundHeader index_base offset mismatch");
+static_assert(
+    offsetof(LateBoundHeader, index_step) == 16,
+    "LateBoundHeader index_step offset mismatch");
+static_assert(
+    offsetof(LateBoundHeader, total_bits) == 20,
+    "LateBoundHeader total_bits offset mismatch");
 
 // Performance knob: triggers <= this use inline storage (no heap).
 // NOT a hard limit - larger lists use heap allocation.
@@ -84,7 +96,11 @@ struct SuspendRecord {
   uint32_t num_triggers = 0;                  // For kWait
   WaitTriggerRecord* triggers_ptr = nullptr;  // Single source of truth
   uint32_t num_late_bound = 0;                // For kWait (late-bound triggers)
-  LateBoundTriggerRecord* late_bound_ptr = nullptr;
+  LateBoundHeader* late_bound_ptr = nullptr;
+  uint32_t num_plan_ops = 0;
+  IndexPlanOp* plan_ops_ptr = nullptr;
+  uint32_t num_dep_slots = 0;
+  uint32_t* dep_slots_ptr = nullptr;
   std::array<WaitTriggerRecord, kInlineTriggerCapacity> inline_triggers = {};
 };
 

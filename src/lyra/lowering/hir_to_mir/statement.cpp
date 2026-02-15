@@ -1,7 +1,9 @@
 #include "lyra/lowering/hir_to_mir/statement.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <expected>
+#include <format>
 #include <functional>
 #include <optional>
 #include <type_traits>
@@ -13,6 +15,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/index_plan.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
@@ -1378,6 +1381,136 @@ auto MakeIntConstant(uint64_t value, TypeId type) -> Constant {
   return Constant{.type = type, .value = std::move(ic)};
 }
 
+// Recursively walk an HIR index expression and build IndexPlanOp bytecode.
+// Returns true if all leaves are constants or design-state slots.
+// Returns false if a local variable is encountered in a compound expression.
+auto BuildIndexPlan(
+    hir::ExpressionId expr_id, Context& ctx,
+    std::vector<runtime::IndexPlanOp>& plan, std::vector<mir::SlotId>& deps)
+    -> bool {
+  const auto& expr = (*ctx.hir_arena)[expr_id];
+
+  switch (expr.kind) {
+    case hir::ExpressionKind::kConstant: {
+      const auto& cdata = std::get<hir::ConstantExpressionData>(expr.data);
+      const Constant& constant = (*ctx.constant_arena)[cdata.constant];
+      const auto& ic = std::get<IntegralConstant>(constant.value);
+      int64_t val = 0;
+      if (!ic.value.empty()) {
+        val = static_cast<int64_t>(ic.value[0]);
+      }
+      plan.push_back(runtime::IndexPlanOp::MakeConst(val));
+      return true;
+    }
+    case hir::ExpressionKind::kNameRef: {
+      const auto& name_data = std::get<hir::NameRefExpressionData>(expr.data);
+      auto place_id = ctx.LookupPlace(name_data.symbol);
+      const auto& place = (*ctx.mir_arena)[place_id];
+      if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
+        auto slot = mir::SlotId{static_cast<uint32_t>(place.root.id)};
+        const Type& idx_type = (*ctx.type_arena)[expr.type];
+        uint32_t bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
+        bool is_signed = IsPackedSigned(idx_type, *ctx.type_arena);
+        uint32_t byte_size = (bit_width + 7) / 8;
+        plan.push_back(
+            runtime::IndexPlanOp::MakeReadSlot(
+                slot.value, 0, static_cast<uint8_t>(byte_size),
+                static_cast<uint8_t>(bit_width), is_signed));
+        deps.push_back(slot);
+        return true;
+      }
+      // Local variable -- not supported in compound expressions.
+      return false;
+    }
+    case hir::ExpressionKind::kHierarchicalRef: {
+      const auto& href_data =
+          std::get<hir::HierarchicalRefExpressionData>(expr.data);
+      auto place_id = ctx.LookupPlace(href_data.target);
+      const auto& place = (*ctx.mir_arena)[place_id];
+      if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
+        auto slot = mir::SlotId{static_cast<uint32_t>(place.root.id)};
+        const Type& idx_type = (*ctx.type_arena)[expr.type];
+        uint32_t bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
+        bool is_signed = IsPackedSigned(idx_type, *ctx.type_arena);
+        uint32_t byte_size = (bit_width + 7) / 8;
+        plan.push_back(
+            runtime::IndexPlanOp::MakeReadSlot(
+                slot.value, 0, static_cast<uint8_t>(byte_size),
+                static_cast<uint8_t>(bit_width), is_signed));
+        deps.push_back(slot);
+        return true;
+      }
+      return false;
+    }
+    case hir::ExpressionKind::kBinaryOp: {
+      const auto& bin_data = std::get<hir::BinaryExpressionData>(expr.data);
+      if (!BuildIndexPlan(bin_data.lhs, ctx, plan, deps)) return false;
+      if (!BuildIndexPlan(bin_data.rhs, ctx, plan, deps)) return false;
+      runtime::IndexPlanOp::Kind op_kind;
+      switch (bin_data.op) {
+        case hir::BinaryOp::kAdd:
+          op_kind = runtime::IndexPlanOp::Kind::kAdd;
+          break;
+        case hir::BinaryOp::kSubtract:
+          op_kind = runtime::IndexPlanOp::Kind::kSub;
+          break;
+        case hir::BinaryOp::kMultiply:
+          op_kind = runtime::IndexPlanOp::Kind::kMul;
+          break;
+        case hir::BinaryOp::kBitwiseAnd:
+          op_kind = runtime::IndexPlanOp::Kind::kAnd;
+          break;
+        case hir::BinaryOp::kBitwiseOr:
+          op_kind = runtime::IndexPlanOp::Kind::kOr;
+          break;
+        case hir::BinaryOp::kBitwiseXor:
+          op_kind = runtime::IndexPlanOp::Kind::kXor;
+          break;
+        case hir::BinaryOp::kLogicalShiftLeft:
+        case hir::BinaryOp::kArithmeticShiftLeft:
+          op_kind = runtime::IndexPlanOp::Kind::kShl;
+          break;
+        case hir::BinaryOp::kLogicalShiftRight:
+          op_kind = runtime::IndexPlanOp::Kind::kLShr;
+          break;
+        case hir::BinaryOp::kArithmeticShiftRight:
+          op_kind = runtime::IndexPlanOp::Kind::kAShr;
+          break;
+        default:
+          return false;
+      }
+      plan.push_back(runtime::IndexPlanOp::MakeBinaryOp(op_kind));
+      return true;
+    }
+    case hir::ExpressionKind::kUnaryOp: {
+      const auto& unary_data = std::get<hir::UnaryExpressionData>(expr.data);
+      if (unary_data.op == hir::UnaryOp::kMinus) {
+        plan.push_back(runtime::IndexPlanOp::MakeConst(0));
+        if (!BuildIndexPlan(unary_data.operand, ctx, plan, deps)) return false;
+        plan.push_back(
+            runtime::IndexPlanOp::MakeBinaryOp(
+                runtime::IndexPlanOp::Kind::kSub));
+        return true;
+      }
+      if (unary_data.op == hir::UnaryOp::kBitwiseNot) {
+        if (!BuildIndexPlan(unary_data.operand, ctx, plan, deps)) return false;
+        plan.push_back(runtime::IndexPlanOp::MakeConst(-1));
+        plan.push_back(
+            runtime::IndexPlanOp::MakeBinaryOp(
+                runtime::IndexPlanOp::Kind::kXor));
+        return true;
+      }
+      return false;
+    }
+    case hir::ExpressionKind::kCast: {
+      const auto& cast_data = std::get<hir::CastExpressionData>(expr.data);
+      return BuildIndexPlan(cast_data.operand, ctx, plan, deps);
+    }
+    default:
+      return false;
+  }
+}
+
 auto LowerEventWait(
     const hir::EventWaitStatementData& data, MirBuilder& builder)
     -> Result<void> {
@@ -1493,59 +1626,49 @@ auto LowerEventWait(
         }
         mapping.total_bits = total_bits;
 
-        // Default: local/temp index (no rebinding needed at runtime).
-        // kInvalidSlotId signals codegen to use the dynamic path but tells
-        // the runtime not to create a rebind subscription.
-        late_bound_info = mir::LateBoundIndex{
-            .index_slot = mir::kInvalidSlotId,
-            .index_byte_offset = 0,
-            .index_byte_size = 0,
-            .index_bit_width = 0,
-            .index_is_signed = false,
-            .mapping = mapping};
+        // Build index plan from the HIR index expression.
+        std::vector<runtime::IndexPlanOp> plan;
+        std::vector<mir::SlotId> deps;
+        bool plan_ok = BuildIndexPlan(index_id, ctx, plan, deps);
 
-        // Override with design-state slot info if applicable.
-        // Design-state indices get rebind subscriptions at runtime.
-        if (index_expr.kind == hir::ExpressionKind::kNameRef) {
-          const auto& name_data =
-              std::get<hir::NameRefExpressionData>(index_expr.data);
-          auto index_place_id = ctx.LookupPlace(name_data.symbol);
-          const auto& index_place = (*ctx.mir_arena)[index_place_id];
-          if (index_place.root.kind == mir::PlaceRoot::Kind::kDesign) {
-            auto idx_slot =
-                mir::SlotId{static_cast<uint32_t>(index_place.root.id)};
-            const Type& idx_type = (*ctx.type_arena)[index_expr.type];
-            uint32_t idx_bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
-            bool idx_is_signed = IsPackedSigned(idx_type, *ctx.type_arena);
-            uint32_t idx_byte_size = (idx_bit_width + 7) / 8;
-            late_bound_info = mir::LateBoundIndex{
-                .index_slot = idx_slot,
-                .index_byte_offset = 0,
-                .index_byte_size = idx_byte_size,
-                .index_bit_width = idx_bit_width,
-                .index_is_signed = idx_is_signed,
-                .mapping = mapping};
-          }
-        } else if (index_expr.kind == hir::ExpressionKind::kHierarchicalRef) {
-          const auto& href_data =
-              std::get<hir::HierarchicalRefExpressionData>(index_expr.data);
-          auto index_place_id = ctx.LookupPlace(href_data.target);
-          const auto& index_place = (*ctx.mir_arena)[index_place_id];
-          if (index_place.root.kind == mir::PlaceRoot::Kind::kDesign) {
-            auto idx_slot =
-                mir::SlotId{static_cast<uint32_t>(index_place.root.id)};
-            const Type& idx_type = (*ctx.type_arena)[index_expr.type];
-            uint32_t idx_bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
-            bool idx_is_signed = IsPackedSigned(idx_type, *ctx.type_arena);
-            uint32_t idx_byte_size = (idx_bit_width + 7) / 8;
-            late_bound_info = mir::LateBoundIndex{
-                .index_slot = idx_slot,
-                .index_byte_offset = 0,
-                .index_byte_size = idx_byte_size,
-                .index_bit_width = idx_bit_width,
-                .index_is_signed = idx_is_signed,
-                .mapping = mapping};
-          }
+        if (!plan_ok && !deps.empty()) {
+          throw common::InternalError(
+              "LowerEventWait",
+              "compound index mixes local and design-state variables");
+        }
+
+        if (plan.size() > runtime::kMaxPlanOps) {
+          throw common::InternalError(
+              "LowerEventWait",
+              std::format(
+                  "index expression too complex for edge trigger "
+                  "({} ops, max {})",
+                  plan.size(), runtime::kMaxPlanOps));
+        }
+
+        if (plan_ok && !deps.empty()) {
+          // Deduplicate dep_slots.
+          std::sort(deps.begin(), deps.end(), [](mir::SlotId a, mir::SlotId b) {
+            return a.value < b.value;
+          });
+          deps.erase(
+              std::unique(
+                  deps.begin(), deps.end(),
+                  [](mir::SlotId a, mir::SlotId b) {
+                    return a.value == b.value;
+                  }),
+              deps.end());
+
+          late_bound_info = mir::LateBoundIndex{
+              .plan = std::move(plan),
+              .dep_slots = std::move(deps),
+              .mapping = mapping};
+        } else {
+          // Local-only index: no rebinding needed.
+          // dep_slots empty signals codegen to use dynamic path but skip
+          // runtime rebind subscriptions.
+          late_bound_info = mir::LateBoundIndex{
+              .plan = {}, .dep_slots = {}, .mapping = mapping};
         }
       }
 
@@ -1648,10 +1771,10 @@ auto LowerEventWait(
       // For +: the index IS the LSB; for -: the LSB is index-(width-1).
       // Edge triggers observe the LSB (width=1); level-sensitive observes
       // the full part-select range.
-      const auto& data =
+      const auto& ips_data =
           std::get<hir::IndexedPartSelectExpressionData>(hir_expr.data);
 
-      auto base_result = LowerExpression(data.base, builder);
+      auto base_result = LowerExpression(ips_data.base, builder);
       if (!base_result) return std::unexpected(base_result.error());
       mir::Operand base_op = std::move(*base_result);
       if (base_op.kind != mir::Operand::Kind::kUse) {
@@ -1661,22 +1784,22 @@ auto LowerEventWait(
       }
       auto base_place_id = std::get<mir::PlaceId>(base_op.payload);
 
-      auto index_result = LowerExpression(data.index, builder);
+      auto index_result = LowerExpression(ips_data.index, builder);
       if (!index_result) return std::unexpected(index_result.error());
       mir::Operand index_op = std::move(*index_result);
 
       // For descending part-select (-:), compute LSB = index - (width - 1).
       mir::Operand lsb_index = index_op;
-      if (!data.ascending && data.width > 1) {
+      if (!ips_data.ascending && ips_data.width > 1) {
         TypeId offset_type = ctx.GetOffsetType();
         auto width_minus_one = mir::Operand::Const(MakeIntConstant(
-            static_cast<uint64_t>(data.width - 1), offset_type));
+            static_cast<uint64_t>(ips_data.width - 1), offset_type));
         lsb_index = builder.EmitBinary(
             mir::BinaryOp::kSubtract, index_op, width_minus_one, offset_type);
       }
 
       // Normalize LSB index to storage offset.
-      const auto& base_expr = (*ctx.hir_arena)[data.base];
+      const auto& base_expr = (*ctx.hir_arena)[ips_data.base];
       const Type& base_type = (*ctx.type_arena)[base_expr.type];
       mir::Operand storage_offset = lsb_index;
       if (base_type.Kind() == TypeKind::kPackedArray) {
@@ -1697,8 +1820,85 @@ auto LowerEventWait(
         }
       }
 
+      // Check if index is dynamic for late-bound edge triggers.
+      const auto& ips_index_expr = (*ctx.hir_arena)[ips_data.index];
+      bool ips_is_dynamic =
+          (ips_index_expr.kind != hir::ExpressionKind::kConstant);
+
+      if (ips_is_dynamic && hir_trigger.edge != hir::EventEdgeKind::kNone) {
+        runtime::BitTargetMapping mapping;
+        uint32_t total_bits = PackedBitWidth(base_type, *ctx.type_arena);
+
+        if (base_type.Kind() == TypeKind::kPackedArray) {
+          const auto& range = base_type.AsPackedArray().range;
+          if (range.IsDescending()) {
+            mapping.index_base = range.Lower();
+            mapping.index_step = 1;
+          } else {
+            mapping.index_base = range.Upper();
+            mapping.index_step = -1;
+          }
+        } else {
+          mapping.index_base = 0;
+          mapping.index_step = 1;
+        }
+        mapping.total_bits = total_bits;
+
+        // Build index plan. For ascending (+:), plan evaluates to the SV index
+        // (same as bus[i]). For descending (-:), plan evaluates to i-(w-1).
+        std::vector<runtime::IndexPlanOp> plan;
+        std::vector<mir::SlotId> deps;
+        bool plan_ok = BuildIndexPlan(ips_data.index, ctx, plan, deps);
+
+        if (plan_ok && !ips_data.ascending && ips_data.width > 1) {
+          // Append: MakeConst(width-1), MakeBinaryOp(kSub)
+          plan.push_back(
+              runtime::IndexPlanOp::MakeConst(
+                  static_cast<int64_t>(ips_data.width - 1)));
+          plan.push_back(
+              runtime::IndexPlanOp::MakeBinaryOp(
+                  runtime::IndexPlanOp::Kind::kSub));
+        }
+
+        if (!plan_ok && !deps.empty()) {
+          throw common::InternalError(
+              "LowerEventWait",
+              "compound index mixes local and design-state variables");
+        }
+
+        if (plan.size() > runtime::kMaxPlanOps) {
+          throw common::InternalError(
+              "LowerEventWait",
+              std::format(
+                  "index expression too complex for edge trigger "
+                  "({} ops, max {})",
+                  plan.size(), runtime::kMaxPlanOps));
+        }
+
+        if (plan_ok && !deps.empty()) {
+          std::sort(deps.begin(), deps.end(), [](mir::SlotId a, mir::SlotId b) {
+            return a.value < b.value;
+          });
+          deps.erase(
+              std::unique(
+                  deps.begin(), deps.end(),
+                  [](mir::SlotId a, mir::SlotId b) {
+                    return a.value == b.value;
+                  }),
+              deps.end());
+
+          late_bound_info = mir::LateBoundIndex{
+              .plan = std::move(plan),
+              .dep_slots = std::move(deps),
+              .mapping = mapping};
+        } else {
+          late_bound_info = mir::LateBoundIndex{
+              .plan = {}, .dep_slots = {}, .mapping = mapping};
+        }
+      }
+
       uint32_t proj_width =
-          (hir_trigger.edge != hir::EventEdgeKind::kNone) ? 1 : data.width;
+          (hir_trigger.edge != hir::EventEdgeKind::kNone) ? 1 : ips_data.width;
 
       place_id = ctx.mir_arena->DerivePlace(
           base_place_id, mir::Projection{
