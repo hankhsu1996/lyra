@@ -1918,10 +1918,94 @@ auto LowerEventWait(
       const auto& base_expr = (*ctx.hir_arena)[elem_data.base];
       const Type& base_type = (*ctx.type_arena)[base_expr.type];
 
-      bool is_dynamic = (index_expr.kind != hir::ExpressionKind::kConstant) &&
+      bool is_container = base_type.Kind() == TypeKind::kDynamicArray ||
+                          base_type.Kind() == TypeKind::kQueue;
+      bool is_dynamic = !is_container &&
+                        (index_expr.kind != hir::ExpressionKind::kConstant) &&
                         base_type.Kind() == TypeKind::kUnpackedArray;
 
-      if (is_dynamic) {
+      if (is_container) {
+        // Dynamic array/queue element edge trigger.
+        // Lower base to get container slot, lower index for suspend-time
+        // evaluation, build LateBoundIndex with is_container=true.
+        auto base_result = LowerExpression(elem_data.base, builder);
+        if (!base_result) return std::unexpected(base_result.error());
+        mir::Operand base_op = std::move(*base_result);
+        if (base_op.kind != mir::Operand::Kind::kUse) {
+          throw common::InternalError(
+              "LowerEventWait", "container base must be a design variable");
+        }
+        auto base_place_id = std::get<mir::PlaceId>(base_op.payload);
+
+        auto index_result = LowerExpression(elem_data.index, builder);
+        if (!index_result) return std::unexpected(index_result.error());
+        mir::Operand index_op = std::move(*index_result);
+
+        // Store index in BitRangeProjection for codegen to read.
+        place_id = ctx.mir_arena->DerivePlace(
+            base_place_id, mir::Projection{
+                               .info = mir::BitRangeProjection{
+                                   .bit_offset = index_op,
+                                   .width = 1,
+                                   .element_type = hir_expr.type}});
+
+        TypeId elem_type_id = (base_type.Kind() == TypeKind::kDynamicArray)
+                                  ? base_type.AsDynamicArray().element_type
+                                  : base_type.AsQueue().element_type;
+
+        runtime::BitTargetMapping mapping;
+        mapping.index_base = 0;
+        mapping.index_step = 1;
+        mapping.total_bits = 0;  // Unused for containers.
+
+        std::vector<runtime::IndexPlanOp> plan;
+        std::vector<mir::SlotId> deps;
+        bool plan_ok = BuildIndexPlan(elem_data.index, ctx, plan, deps);
+
+        if (!plan_ok && !deps.empty()) {
+          throw common::InternalError(
+              "LowerEventWait",
+              "compound index mixes local and design-state variables");
+        }
+
+        if (plan.size() > runtime::kMaxPlanOps) {
+          throw common::InternalError(
+              "LowerEventWait",
+              std::format(
+                  "index expression too complex for edge trigger "
+                  "({} ops, max {})",
+                  plan.size(), runtime::kMaxPlanOps));
+        }
+
+        if (plan_ok && !deps.empty()) {
+          std::sort(deps.begin(), deps.end(), [](mir::SlotId a, mir::SlotId b) {
+            return a.value < b.value;
+          });
+          deps.erase(
+              std::unique(
+                  deps.begin(), deps.end(),
+                  [](mir::SlotId a, mir::SlotId b) {
+                    return a.value == b.value;
+                  }),
+              deps.end());
+
+          late_bound_info = mir::LateBoundIndex{
+              .plan = std::move(plan),
+              .dep_slots = std::move(deps),
+              .mapping = mapping,
+              .element_type = elem_type_id,
+              .num_elements = 0,
+              .is_container = true};
+        } else {
+          late_bound_info = mir::LateBoundIndex{
+              .plan = {},
+              .dep_slots = {},
+              .mapping = mapping,
+              .element_type = elem_type_id,
+              .num_elements = 0,
+              .is_container = true};
+        }
+      } else if (is_dynamic) {
         // Dynamic unpacked: lower base array to get root slot, lower
         // index expression for suspend-time target computation, and
         // build index plan for runtime rebinding (design-state indices).
@@ -1993,15 +2077,15 @@ auto LowerEventWait(
               .plan = std::move(plan),
               .dep_slots = std::move(deps),
               .mapping = mapping,
-              .unpacked_element_type = arr_info.element_type,
-              .unpacked_num_elements = arr_info.range.Size()};
+              .element_type = arr_info.element_type,
+              .num_elements = arr_info.range.Size()};
         } else {
           late_bound_info = mir::LateBoundIndex{
               .plan = {},
               .dep_slots = {},
               .mapping = mapping,
-              .unpacked_element_type = arr_info.element_type,
-              .unpacked_num_elements = arr_info.range.Size()};
+              .element_type = arr_info.element_type,
+              .num_elements = arr_info.range.Size()};
         }
       } else {
         // Constant index or non-unpacked: lower whole expression,

@@ -192,8 +192,13 @@ bool ValidateEdgeTriggerExpression(
       // Dynamic index: same validation as packed (compound allowed).
       return ValidateIndexExpression(select.selector(), span, ctx);
     }
+    // Dynamic array or queue: accept if index expression is valid.
+    if (base_type.kind == slang::ast::SymbolKind::DynamicArrayType ||
+        base_type.isQueue()) {
+      return ValidateIndexExpression(select.selector(), span, ctx);
+    }
     ctx->sink->Unsupported(
-        span, "edge triggers on dynamic array/queue elements are not supported",
+        span, "edge triggers on this array type are not supported",
         UnsupportedCategory::kFeature);
     return false;
   }

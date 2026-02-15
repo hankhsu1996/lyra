@@ -1,24 +1,9 @@
 feature: edge trigger rejection on unsupported sub-expressions
 description: >
-  Edge triggers on division in index expressions, dynamic array/queue elements,
-  and wide index variables are rejected at compile time.
+  Edge triggers on division in index expressions and wide index variables
+  are rejected at compile time.
 
 cases:
-  - name: dynamic_array_element_edge
-    description: "@(posedge d[0]) on dynamic array element should be rejected"
-    sv: |
-      module Test;
-        logic d[];
-        initial begin
-          @(posedge d[0]);
-          $finish;
-        end
-      endmodule
-    expect:
-      error:
-        contains:
-          - "edge triggers on dynamic array/queue elements are not supported"
-
   - name: wide_index_rejected
     description: "@(posedge bus[i]) with 128-bit index should be rejected"
     sv: |

@@ -67,6 +67,13 @@ struct SubscriptionNode {
   // Set to false when rebind detects OOB or X index.
   bool is_active = true;
 
+  // Container element mode. UINT32_MAX = normal DesignState subscription.
+  // Otherwise = base_off of handle slot in DesignState.
+  uint32_t container_base_off = UINT32_MAX;
+  uint32_t container_elem_stride = 0;
+  int64_t container_sv_index = 0;
+  uint64_t container_epoch = 0;
+
   // Late-bound rebinding fields.
   // For rebind nodes: rebind_target points to the edge subscription.
   // For edge target nodes: plan_ref + rebind_mapping define the expression.

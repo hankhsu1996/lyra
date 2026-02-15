@@ -4,6 +4,8 @@
 #include <span>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+
 namespace lyra::runtime {
 
 // Byte range within a slot that was modified.
@@ -69,6 +71,14 @@ class UpdateSet {
     return delta_slot_ranges_[slot_id];
   }
 
+  // Mark a heap-relative byte range as dirty for a container slot.
+  // size==0 means "full backing buffer dirty" (overlap with everything).
+  void MarkExternalDirtyRange(uint32_t slot_id, uint32_t off, uint32_t size);
+
+  // Get external dirty ranges for scheduler. Empty if no external dirty.
+  [[nodiscard]] auto DeltaExternalRangesFor(uint32_t slot_id) const
+      -> std::span<const DirtyRange>;
+
   // Called at each delta boundary (by FlushSignalUpdates).
   // O(delta_dirty_count), NOT O(slot_count).
   void ClearDelta();
@@ -100,6 +110,10 @@ class UpdateSet {
   // Each inner vector is sorted by off, non-overlapping (merged on insert).
   // Cleared by ClearDelta(). Canonical semantic dirty data for scheduler.
   std::vector<std::vector<DirtyRange>> delta_slot_ranges_;
+
+  // External dirty ranges (heap-relative) for container element subscriptions.
+  // Sparse: only slots with external dirty facts have entries.
+  absl::flat_hash_map<uint32_t, std::vector<DirtyRange>> delta_external_ranges_;
 };
 
 }  // namespace lyra::runtime

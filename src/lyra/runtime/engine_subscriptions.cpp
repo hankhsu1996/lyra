@@ -15,6 +15,7 @@
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/runtime/dyn_array_data.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_types.hpp"
@@ -37,6 +38,10 @@ auto Engine::AllocNode() -> SubscriptionNode* {
 void Engine::FreeNode(SubscriptionNode* node) {
   node->snapshot_heap.clear();
   node->snapshot_heap.shrink_to_fit();
+  node->container_base_off = UINT32_MAX;
+  node->container_elem_stride = 0;
+  node->container_sv_index = 0;
+  node->container_epoch = 0;
   node->rebind_target = nullptr;
   node->plan_ref = {};
   node->rebind_mapping = {};
@@ -289,6 +294,90 @@ auto Engine::Subscribe(
   return node;
 }
 
+auto Engine::SubscribeContainerElement(
+    ProcessHandle handle, ResumePoint resume, SignalId signal,
+    common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride)
+    -> SubscriptionNode* {
+  if (finished_) return nullptr;
+
+  if (design_state_base_ == nullptr) {
+    throw common::InternalError(
+        "Engine::SubscribeContainerElement",
+        "SubscribeContainerElement before SetDesignStateBase");
+  }
+  if (!slot_meta_registry_.IsPopulated()) {
+    throw common::InternalError(
+        "Engine::SubscribeContainerElement",
+        "SubscribeContainerElement before InitSlotMeta");
+  }
+
+  auto& proc_state = process_states_[handle];
+  if (!CheckSubscriptionLimits(proc_state)) return nullptr;
+
+  const auto& meta = slot_meta_registry_.Get(signal);
+
+  auto* node = AllocNode();
+  *node = SubscriptionNode{};
+  node->handle = handle;
+  node->resume = resume;
+  node->edge = edge;
+  node->signal = signal;
+  node->byte_size = 1;
+  node->bit_index = 0;
+  node->container_base_off = meta.base_off;
+  node->container_elem_stride = elem_stride;
+  node->container_sv_index = sv_index;
+
+  // Chase handle from DesignState.
+  const auto* base = static_cast<const uint8_t*>(design_state_base_);
+  void* handle_ptr = nullptr;
+  std::memcpy(&handle_ptr, base + meta.base_off, sizeof(void*));
+
+  if (handle_ptr == nullptr) {
+    node->is_active = false;
+    node->byte_offset = 0;
+    node->container_epoch = 0;
+  } else {
+    const auto* arr = static_cast<const DynArrayData*>(handle_ptr);
+    if (arr->magic != DynArrayData::kMagic) {
+      throw common::InternalError(
+          "Engine::SubscribeContainerElement", "invalid container magic");
+    }
+    node->container_epoch = arr->epoch;
+
+    if (arr->data == nullptr || sv_index < 0 || sv_index >= arr->size) {
+      node->is_active = false;
+      node->byte_offset = 0;
+    } else {
+      node->is_active = true;
+      auto byte_off = static_cast<uint32_t>(sv_index) * elem_stride;
+      node->byte_offset = byte_off;
+      const auto* elem = static_cast<const uint8_t*>(arr->data) + byte_off;
+      node->last_bit = elem[0] & 1;
+      node->snapshot_inline[0] = elem[0];
+    }
+  }
+
+  // Link into signal's waiter list.
+  auto& sw = signal_waiters_[signal];
+  node->signal_next = sw.head;
+  node->signal_prev = nullptr;
+  if (sw.head != nullptr) {
+    sw.head->signal_prev = node;
+  }
+  sw.head = node;
+  if (sw.tail == nullptr) {
+    sw.tail = node;
+  }
+
+  node->process_next = proc_state.subscription_head;
+  proc_state.subscription_head = node;
+
+  ++proc_state.subscription_count;
+  ++live_subscription_count_;
+  return node;
+}
+
 void Engine::SubscribeRebind(
     ProcessHandle handle, ResumePoint resume, SubscriptionNode* target_node,
     std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
@@ -394,6 +483,40 @@ void Engine::RebindSubscription(SubscriptionNode* target) {
     return;
   }
 
+  // Container path: chase handle from DesignState, read from heap.
+  if (target->container_base_off != UINT32_MAX) {
+    const auto* base = static_cast<const uint8_t*>(design_state_base_);
+    void* handle_ptr = nullptr;
+    std::memcpy(&handle_ptr, base + target->container_base_off, sizeof(void*));
+
+    if (handle_ptr == nullptr) {
+      target->is_active = false;
+      return;
+    }
+    const auto* arr = static_cast<const DynArrayData*>(handle_ptr);
+    if (arr->magic != DynArrayData::kMagic) {
+      throw common::InternalError(
+          "RebindSubscription", "invalid container magic");
+    }
+    target->container_sv_index = index_val;
+    target->container_epoch = arr->epoch;
+    if (arr->data == nullptr || index_val < 0 || index_val >= arr->size) {
+      target->is_active = false;
+      return;
+    }
+    target->is_active = true;
+    auto new_byte_offset =
+        static_cast<uint32_t>(index_val) * target->container_elem_stride;
+    target->byte_offset = new_byte_offset;
+    target->bit_index = 0;
+    // Always read from heap (content may have changed even if offset same).
+    const auto* elem = static_cast<const uint8_t*>(arr->data) + new_byte_offset;
+    target->last_bit = elem[0] & 1;
+    target->snapshot_inline[0] = elem[0];
+    return;
+  }
+
+  // Packed/unpacked DesignState path.
   int64_t logical_offset =
       static_cast<int64_t>(index_val - mapping.index_base) * mapping.index_step;
 
@@ -474,11 +597,120 @@ void Engine::FlushSignalUpdates() {
     if (it == signal_waiters_.end()) continue;
 
     auto dirty_ranges = update_set_.DeltaRangesFor(slot_id);
+    auto external_ranges = update_set_.DeltaExternalRangesFor(slot_id);
     const auto& meta = slot_meta_registry_.Get(slot_id);
 
     for (auto* node = it->second.head; node != nullptr;) {
       auto* next = node->signal_next;
 
+      // Container element subscription path.
+      if (node->container_base_off != UINT32_MAX) {
+        if (!node->is_active) {
+          // Inactive container sub: try OOB reactivation.
+          // Skip if rebind set inactive this cycle (X/Z).
+          if (node->last_rebind_epoch == flush_epoch_) {
+            node = next;
+            continue;
+          }
+          // Range overlap filter for inactive subs.
+          // When external ranges are present, use precise filtering.
+          // When absent (element write via LyraStorePacked), fall through
+          // since the slot is dirty and heap content may have changed.
+          if (!external_ranges.empty()) {
+            auto candidate_off = static_cast<uint32_t>(std::max(
+                                     int64_t{0}, node->container_sv_index)) *
+                                 node->container_elem_stride;
+            if (!RangesOverlap(external_ranges, candidate_off, 1)) {
+              node = next;
+              continue;
+            }
+          }
+          // Chase handle, check if now in-range.
+          void* handle_ptr = nullptr;
+          std::memcpy(
+              &handle_ptr, &design_state[node->container_base_off],
+              sizeof(void*));
+          if (handle_ptr == nullptr) {
+            node = next;
+            continue;
+          }
+          const auto* arr = static_cast<const DynArrayData*>(handle_ptr);
+          if (arr->magic != DynArrayData::kMagic) {
+            throw common::InternalError(
+                "FlushSignalUpdates", "invalid container magic");
+          }
+          int64_t idx = node->container_sv_index;
+          if (arr->data == nullptr || idx < 0 || idx >= arr->size) {
+            node = next;
+            continue;
+          }
+          // Reactivate: capture snapshot, no edge trigger.
+          node->is_active = true;
+          node->container_epoch = arr->epoch;
+          auto byte_off =
+              static_cast<uint32_t>(idx) * node->container_elem_stride;
+          node->byte_offset = byte_off;
+          const auto* elem = static_cast<const uint8_t*>(arr->data) + byte_off;
+          node->last_bit = elem[0] & 1;
+          node->snapshot_inline[0] = elem[0];
+          node = next;
+          continue;
+        }
+
+        // Active container sub: range overlap filter.
+        // When external ranges are present, use precise filtering.
+        // When absent (element write via LyraStorePacked), fall through.
+        if (!external_ranges.empty() &&
+            !RangesOverlap(external_ranges, node->byte_offset, 1)) {
+          node = next;
+          continue;
+        }
+        // Chase handle, read from heap.
+        void* handle_ptr = nullptr;
+        std::memcpy(
+            &handle_ptr, &design_state[node->container_base_off],
+            sizeof(void*));
+        if (handle_ptr == nullptr) {
+          node->is_active = false;
+          node = next;
+          continue;
+        }
+        const auto* arr = static_cast<const DynArrayData*>(handle_ptr);
+        if (arr->magic != DynArrayData::kMagic) {
+          throw common::InternalError(
+              "FlushSignalUpdates", "invalid container magic");
+        }
+        int64_t idx = node->container_sv_index;
+        if (arr->data == nullptr || idx < 0 || idx >= arr->size) {
+          node->is_active = false;
+          node->container_epoch = arr->epoch;
+          node = next;
+          continue;
+        }
+        node->container_epoch = arr->epoch;
+        const auto* elem =
+            static_cast<const uint8_t*>(arr->data) + node->byte_offset;
+        uint8_t current_bit = (elem[0] >> node->bit_index) & 1;
+        bool should_wake = false;
+        if (node->last_bit != current_bit) {
+          should_wake =
+              EvaluateEdge(node->edge, node->last_bit != 0, current_bit != 0);
+          node->last_bit = current_bit;
+        }
+        node->snapshot_inline[0] = elem[0];
+        if (should_wake) {
+          auto& proc_state = process_states_[node->handle];
+          if (!proc_state.is_enqueued) {
+            next_delta_queue_.push_back(
+                ScheduledEvent{.handle = node->handle, .resume = node->resume});
+            proc_state.is_enqueued = true;
+          }
+        }
+        node = next;
+        continue;
+      }
+
+      // Normal DesignState subscription path.
       if (!node->is_active) {
         node = next;
         continue;

@@ -51,9 +51,10 @@ struct LateBoundHeader {
   int32_t index_base = 0;
   int32_t index_step = 1;
   uint32_t total_bits = 0;
+  uint32_t container_elem_stride = 0;  // 0 = not container, >0 = container mode
 };
 
-static_assert(sizeof(LateBoundHeader) == 24, "LateBoundHeader size mismatch");
+static_assert(sizeof(LateBoundHeader) == 28, "LateBoundHeader size mismatch");
 static_assert(
     alignof(LateBoundHeader) == 4, "LateBoundHeader alignment mismatch");
 static_assert(
@@ -71,6 +72,9 @@ static_assert(
 static_assert(
     offsetof(LateBoundHeader, total_bits) == 20,
     "LateBoundHeader total_bits offset mismatch");
+static_assert(
+    offsetof(LateBoundHeader, container_elem_stride) == 24,
+    "LateBoundHeader container_elem_stride offset mismatch");
 
 // Performance knob: triggers <= this use inline storage (no heap).
 // NOT a hard limit - larger lists use heap allocation.

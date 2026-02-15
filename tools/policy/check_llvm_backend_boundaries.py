@@ -38,6 +38,7 @@ STORE_GETTERS = [
     "GetLyraStorePacked",
     "GetLyraStoreDynArray",
     "GetLyraStoreString",
+    "GetLyraNotifyContainerMutation",
 ]
 
 LIFECYCLE_GETTERS = [

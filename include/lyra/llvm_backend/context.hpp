@@ -106,6 +106,7 @@ class Context {
   [[nodiscard]] auto GetLyraDynArrayDelete() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayRelease() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreDynArray() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraNotifyContainerMutation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayCloneElem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayDestroyElem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraQueuePushBack() -> llvm::Function*;
@@ -440,6 +441,7 @@ class Context {
   llvm::Function* lyra_dynarray_delete_ = nullptr;
   llvm::Function* lyra_dynarray_release_ = nullptr;
   llvm::Function* lyra_store_dynarray_ = nullptr;
+  llvm::Function* lyra_notify_container_mutation_ = nullptr;
   llvm::Function* lyra_dynarray_clone_elem_ = nullptr;
   llvm::Function* lyra_dynarray_destroy_elem_ = nullptr;
   llvm::Function* lyra_queue_push_back_ = nullptr;

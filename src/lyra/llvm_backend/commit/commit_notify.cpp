@@ -48,22 +48,14 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
   }
 
   auto& builder = ctx.GetBuilder();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
   auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
 
-  auto recv_ptr_or_err = ctx.GetPlacePointer(target);
-  if (!recv_ptr_or_err) {
-    throw common::InternalError(
-        "CommitNotifyMutationIfDesignSlot",
-        "failed to get target place pointer");
-  }
-  llvm::Value* recv_ptr = *recv_ptr_or_err;
-
-  llvm::Value* handle = builder.CreateLoad(ptr_ty, recv_ptr, "notify.h");
+  // kStructural = 1, off = 0, size = 0
   builder.CreateCall(
-      ctx.GetLyraStoreDynArray(),
-      {ctx.GetEnginePointer(), recv_ptr, handle,
-       llvm::ConstantInt::get(i32_ty, *signal_id_opt)});
+      ctx.GetLyraNotifyContainerMutation(),
+      {ctx.GetEnginePointer(), llvm::ConstantInt::get(i32_ty, *signal_id_opt),
+       llvm::ConstantInt::get(i32_ty, 1), llvm::ConstantInt::get(i32_ty, 0),
+       llvm::ConstantInt::get(i32_ty, 0)});
 }
 
 auto GetDesignSlotId(Context& ctx, mir::PlaceId target)

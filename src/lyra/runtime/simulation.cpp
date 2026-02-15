@@ -13,6 +13,7 @@
 
 #include <fmt/core.h>
 
+#include "absl/container/flat_hash_map.h"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -74,11 +75,33 @@ void HandleSuspendRecord(
         edge_nodes.resize(suspend->num_triggers, nullptr);
       }
 
+      // Pre-scan: build container stride map from late-bound headers.
+      absl::flat_hash_map<uint32_t, uint32_t> container_strides;
+      if (has_late_bound) {
+        auto headers =
+            std::span(suspend->late_bound_ptr, suspend->num_late_bound);
+        for (const auto& hdr : headers) {
+          if (hdr.container_elem_stride > 0) {
+            container_strides[hdr.trigger_index] = hdr.container_elem_stride;
+          }
+        }
+      }
+
       for (uint32_t i = 0; i < triggers.size(); ++i) {
         const auto& trigger = triggers[i];
         auto edge = static_cast<lyra::common::EdgeKind>(trigger.edge);
         lyra::runtime::SubscriptionNode* node = nullptr;
-        if (trigger.byte_size == UINT32_MAX) {
+
+        auto cs_it = container_strides.find(i);
+        if (cs_it != container_strides.end()) {
+          // Container element trigger.
+          int64_t sv_index =
+              (trigger.byte_size == UINT32_MAX)
+                  ? -1
+                  : static_cast<int64_t>(trigger.byte_offset / cs_it->second);
+          node = eng.SubscribeContainerElement(
+              handle, resume, trigger.signal_id, edge, sv_index, cs_it->second);
+        } else if (trigger.byte_size == UINT32_MAX) {
           // OOB dynamic edge trigger: UINT32_MAX is the codegen sentinel.
           // Create a valid but inactive subscription at bit 0.
           node =
@@ -108,6 +131,10 @@ void HandleSuspendRecord(
           if (hdr.trigger_index >= suspend->num_triggers) continue;
           auto* target = edge_nodes[hdr.trigger_index];
           if (target == nullptr) continue;
+          // Skip rebind for headers with no dep slots (e.g., container
+          // triggers with local-variable index). These don't need runtime
+          // rebinding since the index can't change while suspended.
+          if (hdr.dep_slots_count == 0) continue;
           lyra::runtime::BitTargetMapping mapping{
               .index_base = hdr.index_base,
               .index_step = hdr.index_step,
@@ -594,6 +621,35 @@ extern "C" auto LyraRandom(void* engine_ptr) -> int32_t {
 extern "C" auto LyraUrandom(void* engine_ptr) -> uint32_t {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   return engine->Urandom();
+}
+
+extern "C" void LyraNotifyContainerMutation(
+    void* engine_ptr, uint32_t signal_id, uint32_t kind, uint32_t off,
+    uint32_t size) {
+  if (engine_ptr == nullptr) return;
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->MarkSlotDirty(signal_id);
+  switch (kind) {
+    case 0:  // kElementWrite
+      if (size == 0) {
+        throw lyra::common::InternalError(
+            "LyraNotifyContainerMutation", "element write size must be > 0");
+      }
+      engine->MarkExternalDirtyRange(signal_id, off, size);
+      break;
+    case 1:  // kStructural
+    case 2:  // kDelete
+      if (off != 0 || size != 0) {
+        throw lyra::common::InternalError(
+            "LyraNotifyContainerMutation",
+            "structural/delete must have off=0, size=0");
+      }
+      engine->MarkExternalDirtyRange(signal_id, 0, 0);
+      break;
+    default:
+      throw lyra::common::InternalError(
+          "LyraNotifyContainerMutation", "unknown mutation kind");
+  }
 }
 
 extern "C" void LyraApply4StatePatches8(

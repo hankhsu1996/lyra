@@ -87,6 +87,13 @@ class Engine {
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
       uint8_t bit_index = 0) -> SubscriptionNode*;
 
+  // Subscribe to a container (dynamic array/queue) element edge trigger.
+  // Chases the handle from DesignState, validates magic, performs OOB check.
+  auto SubscribeContainerElement(
+      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride)
+      -> SubscriptionNode*;
+
   // Create rebind subscriptions for a late-bound edge trigger. For each dep
   // slot, an AnyChange rebind node is created. When any dep changes, the plan
   // is re-evaluated and the edge target's byte_offset/bit_index are updated.
@@ -193,6 +200,12 @@ class Engine {
   // Mark a byte range within a slot as dirty.
   void MarkDirtyRange(uint32_t slot_id, uint32_t byte_off, uint32_t byte_size) {
     update_set_.MarkDirtyRange(slot_id, byte_off, byte_size);
+  }
+
+  // Mark a heap-relative byte range as dirty for a container slot.
+  void MarkExternalDirtyRange(
+      uint32_t slot_id, uint32_t byte_off, uint32_t byte_size) {
+    update_set_.MarkExternalDirtyRange(slot_id, byte_off, byte_size);
   }
 
   [[nodiscard]] auto GetSlotMetaRegistry() const -> const SlotMetaRegistry& {
