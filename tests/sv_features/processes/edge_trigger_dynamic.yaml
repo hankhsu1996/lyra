@@ -1,0 +1,193 @@
+feature: dynamic-index edge triggers via late-bound subscription rebinding
+description: >
+  Edge triggers on packed bit-selects with dynamic (runtime variable) index.
+  @(posedge bus[i]) where i is a design-state or local variable. At suspend time,
+  codegen evaluates i and computes the concrete bit target. If i is design-state,
+  runtime creates a rebind subscription that re-targets the edge subscription when
+  i changes.
+
+cases:
+  - name: posedge_dynamic_bit_select
+    description: "@(posedge bus[i]) with i=3 wakes when bit 3 transitions 0->1"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int i = 3;
+        int result = 0;
+        initial begin
+          @(posedge bus[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'b0000_1000;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: negedge_dynamic_bit_select
+    description: "@(negedge bus[i]) with i=3 detects 1->0 on bit 3"
+    sv: |
+      module Test;
+        logic [7:0] bus = 8'b0000_1000;
+        int i = 3;
+        int result = 0;
+        initial begin
+          @(negedge bus[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'b0000_0000;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: no_false_trigger
+    description: "change a different bit from the one being watched; must NOT wake"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int i = 3;
+        int result = 0;
+        initial begin
+          @(posedge bus[i]);
+          result = 1;
+          $finish;
+        end
+        initial begin
+          #5 bus = 8'b0000_0001;
+          #5 bus = 8'b0000_1000;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: event_list_with_dynamic
+    description: "@(posedge clk or posedge bus[i]) -- clk fires first"
+    sv: |
+      module Test;
+        bit clk = 0;
+        logic [7:0] bus = 0;
+        int i = 3;
+        int result = 0;
+        initial begin
+          @(posedge clk or posedge bus[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 clk = 1;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dynamic_index_changes_between_waits
+    description: "i changes between consecutive waits; second wait targets new bit"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int i = 3;
+        int result = 0;
+        initial begin
+          @(posedge bus[i]);
+          result = result + 1;
+          i = 0;
+          @(posedge bus[i]);
+          result = result + 1;
+          $finish;
+        end
+        initial begin
+          #5 bus = 8'b0000_1000;
+          #5 bus = 8'b0000_1001;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 2
+
+  - name: same_delta_rebind
+    description: "i and bus change in same delta; rebind-first semantics"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int i = 3;
+        int result = 0;
+        initial begin
+          @(posedge bus[i]);
+          result = 1;
+          $finish;
+        end
+        initial begin
+          #5;
+          i = 5;
+          bus = 8'b0010_0000;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: oob_index_no_trigger
+    description: "i out of range -> no spurious trigger, then finish via separate path"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int i = 100;
+        int result = 0;
+        initial begin
+          fork
+            begin
+              @(posedge bus[i]);
+              result = 1;
+            end
+            begin
+              #5 bus = 8'hFF;
+              #10 $finish;
+            end
+          join_any
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: oob_then_inrange
+    description: "i goes OOB then returns in-range; triggering works again"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int i = 100;
+        int result = 0;
+        initial begin
+          @(posedge bus[i]);
+          result = 1;
+          $finish;
+        end
+        initial begin
+          #5 i = 3;
+          #5 bus = 8'b0000_1000;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: local_index
+    description: "i is a local variable; works without rebinding"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int result = 0;
+        initial begin
+          int i = 3;
+          @(posedge bus[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'b0000_1000;
+      endmodule
+    expect:
+      variables:
+        result: 1

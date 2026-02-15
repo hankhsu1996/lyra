@@ -313,6 +313,22 @@ auto Context::GetLyraSuspendWait() -> llvm::Function* {
   return lyra_suspend_wait_;
 }
 
+auto Context::GetLyraSuspendWaitWithLateBound() -> llvm::Function* {
+  if (lyra_suspend_wait_with_late_bound_ == nullptr) {
+    // void LyraSuspendWaitWithLateBound(ptr state, i32 resume_block,
+    //     ptr triggers, i32 num_triggers, ptr late_bound, i32 num_late_bound)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}, false);
+    lyra_suspend_wait_with_late_bound_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage,
+        "LyraSuspendWaitWithLateBound", llvm_module_.get());
+  }
+  return lyra_suspend_wait_with_late_bound_;
+}
+
 auto Context::GetLyraSuspendRepeat() -> llvm::Function* {
   if (lyra_suspend_repeat_ == nullptr) {
     // void LyraSuspendRepeat(ptr state)

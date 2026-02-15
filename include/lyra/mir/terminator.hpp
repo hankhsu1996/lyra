@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/termination_kind.hpp"
@@ -69,6 +70,17 @@ struct Delay {
   BasicBlockId resume = {};  // Block to resume after delay
 };
 
+// Late-bound index metadata for dynamic-index edge triggers.
+// Carries the index variable location and affine mapping from SV index to
+// storage bit. Used by LLVM codegen to emit dynamic byte_offset computation
+// and by runtime to create rebind subscriptions.
+struct LateBoundIndex {
+  SlotId index_slot;
+  uint32_t index_byte_offset = 0;
+  uint32_t index_byte_size = 0;  // 1/2/4/8
+  runtime::BitTargetMapping mapping;
+};
+
 // A single trigger in a Wait terminator.
 struct WaitTrigger {
   SlotId signal;
@@ -79,6 +91,10 @@ struct WaitTrigger {
   // (byte_offset, byte_size) via DataLayout.
   // nullopt = observe full slot (backward-compatible default).
   std::optional<PlaceId> observed_place;
+  // Optional late-bound index for dynamic bit-select edge triggers.
+  // When set, codegen emits dynamic byte_offset/bit_index computation and
+  // runtime creates a rebind subscription on the index variable's slot.
+  std::optional<LateBoundIndex> late_bound;
 };
 
 // Event wait suspension (requires scheduler).

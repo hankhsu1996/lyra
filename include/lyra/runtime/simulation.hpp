@@ -63,6 +63,9 @@ void LyraSuspendDelay(void* state, uint64_t ticks, uint32_t resume_block);
 void LyraSuspendWait(
     void* state, uint32_t resume_block, const void* triggers,
     uint32_t num_triggers);
+void LyraSuspendWaitWithLateBound(
+    void* state, uint32_t resume_block, const void* triggers,
+    uint32_t num_triggers, const void* late_bound, uint32_t num_late_bound);
 void LyraSuspendRepeat(void* state);
 
 // Store a packed (integer/packed-array) value to a design slot with change

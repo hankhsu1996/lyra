@@ -75,15 +75,27 @@ class Engine {
 
   // Subscribe to signal edge. Process resumes when signal changes.
   // Called by interpreter/codegen when process hits a Wait terminator.
-  void Subscribe(
+  // Returns the created SubscriptionNode, or nullptr if subscription failed.
+  auto Subscribe(
       ProcessHandle handle, ResumePoint resume, SignalId signal,
-      common::EdgeKind edge);
+      common::EdgeKind edge) -> SubscriptionNode*;
 
   // Subscribe with explicit observation byte range within the slot.
-  void Subscribe(
+  // Returns the created SubscriptionNode, or nullptr if subscription failed.
+  auto Subscribe(
       ProcessHandle handle, ResumePoint resume, SignalId signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
-      uint8_t bit_index = 0);
+      uint8_t bit_index = 0) -> SubscriptionNode*;
+
+  // Create a rebind subscription on index_signal that tracks changes to the
+  // index variable. When index_signal changes, the rebind logic re-reads the
+  // index, recomputes the edge target via affine mapping, and updates
+  // target_node in-place. The rebind node is linked into the rebind waiter
+  // list (separate from normal subscriptions) for two-pass flush ordering.
+  void SubscribeRebind(
+      ProcessHandle handle, ResumePoint resume, SignalId index_signal,
+      SubscriptionNode* target_node, BitTargetMapping mapping,
+      uint32_t index_byte_offset, uint32_t index_byte_size);
 
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.
@@ -241,6 +253,9 @@ class Engine {
   void ClearProcessSubscriptions(ProcessHandle handle);
   auto AllocNode() -> SubscriptionNode*;
   void FreeNode(SubscriptionNode* node);
+
+  // Late-bound rebinding: re-read index value, recompute edge target.
+  void RebindSubscription(SubscriptionNode* rebind_node);
 
   // Resource limit checking
   auto CheckSubscriptionLimits(const ProcessState& proc_state) -> bool;
