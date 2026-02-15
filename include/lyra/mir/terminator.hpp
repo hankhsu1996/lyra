@@ -79,6 +79,11 @@ struct LateBoundIndex {
   std::vector<runtime::IndexPlanOp> plan;  // Expression bytecode
   std::vector<SlotId> dep_slots;           // Design-state slots to subscribe
   runtime::BitTargetMapping mapping;
+  // Unpacked array edge trigger. When set, mapping.index_step is a direction
+  // sign (+1/-1), NOT the final bit stride. Codegen multiplies by
+  // element_bit_stride from DataLayout to produce the final index_step.
+  std::optional<TypeId> unpacked_element_type;
+  uint32_t unpacked_num_elements = 0;
 };
 
 // A single trigger in a Wait terminator.

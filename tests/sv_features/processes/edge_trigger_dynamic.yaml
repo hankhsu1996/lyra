@@ -342,3 +342,168 @@ cases:
     expect:
       variables:
         result: 1
+
+  - name: posedge_dynamic_unpacked_1bit
+    description: "@(posedge arr[i]) with 1-bit elements, ascending range"
+    sv: |
+      module Test;
+        logic arr [0:3];
+        int i = 2;
+        int result = 0;
+        initial begin
+          arr = '{0, 0, 0, 0};
+          @(posedge arr[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[2] = 1;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_dynamic_unpacked_multibit
+    description: "@(posedge arr[i]) with 8-bit elements, ascending range"
+    sv: |
+      module Test;
+        logic [7:0] arr [0:3];
+        int i = 1;
+        int result = 0;
+        initial begin
+          arr = '{0, 0, 0, 0};
+          @(posedge arr[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[1] = 8'h01;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: compound_index_unpacked
+    description: "@(posedge arr[i+j]) compound index on unpacked array"
+    sv: |
+      module Test;
+        logic arr [0:3];
+        int i = 1;
+        int j = 1;
+        int result = 0;
+        initial begin
+          arr = '{0, 0, 0, 0};
+          @(posedge arr[i+j]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[2] = 1;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: descending_range_unpacked_high
+    description: "@(posedge arr[i]) descending range, i=3 maps to physical elem 0"
+    sv: |
+      module Test;
+        logic arr [3:0];
+        int i = 3;
+        int result = 0;
+        initial begin
+          arr = '{0, 0, 0, 0};
+          @(posedge arr[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[3] = 1;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: descending_range_unpacked_low
+    description: "@(posedge arr[i]) descending range, i=0 maps to physical elem 3"
+    sv: |
+      module Test;
+        logic arr [3:0];
+        int i = 0;
+        int result = 0;
+        initial begin
+          arr = '{0, 0, 0, 0};
+          @(posedge arr[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[0] = 1;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: descending_multibit_lsb
+    description: "descending + multi-bit: toggle LSB triggers, toggle bit 1 does not"
+    sv: |
+      module Test;
+        logic [7:0] arr [3:0];
+        int i = 0;
+        int result = 0;
+        initial begin
+          arr = '{0, 0, 0, 0};
+          @(posedge arr[i]);
+          result = 1;
+          $finish;
+        end
+        initial begin
+          #5 arr[0] = 8'h02;
+          #5 arr[0] = 8'h01;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: local_index_unpacked
+    description: "local variable index on unpacked array; no rebinding needed"
+    sv: |
+      module Test;
+        logic [7:0] arr [0:3];
+        int result = 0;
+        initial begin
+          int i = 2;
+          arr = '{0, 0, 0, 0};
+          @(posedge arr[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[2] = 8'h01;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: oob_unpacked_inactive
+    description: "OOB dynamic index silently deactivates (no crash, no false wake)"
+    sv: |
+      module Test;
+        logic arr [0:3];
+        int i = 100;
+        int result = 0;
+        initial begin
+          arr = '{0, 0, 0, 0};
+          fork
+            begin
+              @(posedge arr[i]);
+              result = 1;
+            end
+            begin
+              #5 arr[0] = 1;
+              #5 arr[1] = 1;
+              #5 arr[2] = 1;
+              #5 arr[3] = 1;
+              #10 $finish;
+            end
+          join_any
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0

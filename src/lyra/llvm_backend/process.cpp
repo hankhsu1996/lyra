@@ -480,6 +480,79 @@ void EmitDynamicBitTarget(
   builder.CreateStore(sel_byte_size, size_ptr);
 }
 
+// Emit IR to compute dynamic byte_offset/bit_index for an unpacked array
+// element edge trigger. Reads the SV index from the observed_place's
+// BitRangeProjection, applies the affine mapping with element_bit_stride
+// computed from DataLayout, and stores results into WaitTriggerRecord fields.
+void EmitDynamicUnpackedBitTarget(
+    Context& context, llvm::Value* elem_ptr, llvm::Type* trigger_type,
+    const mir::WaitTrigger& trigger) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+
+  // Read the SV index from the observed_place's BitRangeProjection.
+  const auto& arena = context.GetMirArena();
+  const auto& place = arena[*trigger.observed_place];
+  const auto& last_proj = place.projections.back();
+  const auto& bit_range = std::get<mir::BitRangeProjection>(last_proj.info);
+
+  auto offset_or_err = LowerOperand(context, bit_range.bit_offset);
+  if (!offset_or_err) {
+    throw common::InternalError(
+        "EmitDynamicUnpackedBitTarget", "failed to lower index operand");
+  }
+  auto* sv_index = builder.CreateSExtOrTrunc(*offset_or_err, i64_ty, "ua.idx");
+
+  // Compute element_bit_stride from DataLayout.
+  const auto& lb = *trigger.late_bound;
+  auto* elem_llvm_type = GetLlvmTypeForTypeId(
+      llvm_ctx, *lb.unpacked_element_type, context.GetTypeArena());
+  const auto& dl = context.GetModule().getDataLayout();
+  auto elem_alloc = static_cast<uint32_t>(dl.getTypeAllocSize(elem_llvm_type));
+  uint32_t element_bit_stride = elem_alloc * 8;
+  uint32_t total_bits = lb.unpacked_num_elements * element_bit_stride;
+
+  // Apply affine mapping: logical_bit = (sv_index - index_base) * index_step
+  // where index_step is direction_sign * element_bit_stride.
+  auto* index_base = llvm::ConstantInt::get(i64_ty, lb.mapping.index_base);
+  auto* diff = builder.CreateSub(sv_index, index_base, "ua.diff");
+  int32_t scaled_step =
+      lb.mapping.index_step * static_cast<int32_t>(element_bit_stride);
+  auto* step = llvm::ConstantInt::getSigned(i64_ty, scaled_step);
+  auto* logical_bit = builder.CreateMul(diff, step, "ua.logbit");
+
+  // Bounds check: 0 <= logical_bit < total_bits.
+  auto* total = llvm::ConstantInt::get(i64_ty, total_bits);
+  auto* zero_64 = llvm::ConstantInt::get(i64_ty, 0);
+  auto* ge_zero = builder.CreateICmpSGE(logical_bit, zero_64, "ua.ge0");
+  auto* lt_total = builder.CreateICmpSLT(logical_bit, total, "ua.lt_total");
+  auto* in_bounds = builder.CreateAnd(ge_zero, lt_total, "ua.inbounds");
+
+  // Compute byte_offset (bit_index is always 0 for byte-aligned elements).
+  auto* eight = llvm::ConstantInt::get(i64_ty, 8);
+  auto* byte_off_64 = builder.CreateSDiv(logical_bit, eight, "ua.byteoff");
+  auto* byte_off_32 = builder.CreateTrunc(byte_off_64, i32_ty);
+
+  // Select: in-bounds -> computed, OOB -> UINT32_MAX sentinel.
+  auto* zero_32 = llvm::ConstantInt::get(i32_ty, 0);
+  auto* zero_8 = llvm::ConstantInt::get(i8_ty, 0);
+  auto* one_32 = llvm::ConstantInt::get(i32_ty, 1);
+  auto* oob_sentinel = llvm::ConstantInt::get(i32_ty, UINT32_MAX);
+  auto* sel_byte_off = builder.CreateSelect(in_bounds, byte_off_32, zero_32);
+  auto* sel_byte_size = builder.CreateSelect(in_bounds, one_32, oob_sentinel);
+
+  // Store into WaitTriggerRecord fields.
+  auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
+  builder.CreateStore(zero_8, bit_idx_ptr);
+  auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+  builder.CreateStore(sel_byte_off, offset_ptr);
+  auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
+  builder.CreateStore(sel_byte_size, size_ptr);
+}
+
 // Helper to fill trigger array at a given base pointer
 void FillTriggerArray(
     Context& context, llvm::Value* base_ptr, llvm::Type* trigger_type,
@@ -503,7 +576,14 @@ void FillTriggerArray(
         llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(triggers[i].edge)),
         edge_ptr);
 
-    if (triggers[i].late_bound) {
+    if (triggers[i].late_bound &&
+        triggers[i].late_bound->unpacked_element_type) {
+      // Dynamic unpacked array element: compute initial target from the
+      // SV index evaluated at suspend time. For design-state indices,
+      // RebindSubscription will update the target when the index changes.
+      EmitDynamicUnpackedBitTarget(
+          context, elem_ptr, trigger_type, triggers[i]);
+    } else if (triggers[i].late_bound) {
       // Dynamic bit-select: emit IR to compute target at suspend time.
       EmitDynamicBitTarget(context, elem_ptr, trigger_type, triggers[i]);
     } else {
@@ -616,6 +696,19 @@ auto EmitLateBoundData(
     builder.CreateStore(llvm::ConstantInt::get(i16_ty, dep_offset), f3);
     auto* f4 = builder.CreateStructGEP(hdr_type, hdr_ptr, 4);
     builder.CreateStore(llvm::ConstantInt::get(i16_ty, dep_count), f4);
+    int32_t index_step = lb.mapping.index_step;
+    uint32_t total_bits = lb.mapping.total_bits;
+    if (lb.unpacked_element_type) {
+      auto* elem_type = GetLlvmTypeForTypeId(
+          llvm_ctx, *lb.unpacked_element_type, context.GetTypeArena());
+      const auto& dl = context.GetModule().getDataLayout();
+      auto elem_alloc = static_cast<uint32_t>(dl.getTypeAllocSize(elem_type));
+      uint32_t element_bit_stride = elem_alloc * 8;
+      index_step =
+          lb.mapping.index_step * static_cast<int32_t>(element_bit_stride);
+      total_bits = lb.unpacked_num_elements * element_bit_stride;
+    }
+
     auto* f5 = builder.CreateStructGEP(hdr_type, hdr_ptr, 5);
     builder.CreateStore(
         llvm::ConstantInt::get(
@@ -623,12 +716,9 @@ auto EmitLateBoundData(
         f5);
     auto* f6 = builder.CreateStructGEP(hdr_type, hdr_ptr, 6);
     builder.CreateStore(
-        llvm::ConstantInt::get(
-            i32_ty, static_cast<uint32_t>(lb.mapping.index_step)),
-        f6);
+        llvm::ConstantInt::get(i32_ty, static_cast<uint32_t>(index_step)), f6);
     auto* f7 = builder.CreateStructGEP(hdr_type, hdr_ptr, 7);
-    builder.CreateStore(
-        llvm::ConstantInt::get(i32_ty, lb.mapping.total_bits), f7);
+    builder.CreateStore(llvm::ConstantInt::get(i32_ty, total_bits), f7);
 
     // Fill plan ops.
     if (plan_ops_alloca != nullptr) {
