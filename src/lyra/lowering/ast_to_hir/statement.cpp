@@ -172,29 +172,25 @@ bool ValidateEdgeTriggerExpression(
       // Dynamic bit-select: accept if the index expression is supported.
       return ValidateIndexExpression(select.selector(), span, ctx);
     }
-    // Unpacked fixed-size array: accept constant index (any element width).
+    // Unpacked fixed-size array: accept constant or dynamic index.
     if (base_type.isFixedSize()) {
       const auto* cv = select.selector().getConstant();
-      if (cv == nullptr || cv->bad() || !cv->isInteger()) {
-        ctx->sink->Unsupported(
-            span,
-            "dynamic unpacked array index edge triggers are not "
-            "supported; use a constant index",
-            UnsupportedCategory::kFeature);
-        return false;
+      if (cv != nullptr && !cv->bad() && cv->isInteger()) {
+        const auto& idx = cv->integer();
+        if (idx.hasUnknown()) {
+          ctx->sink->Error(span, "edge trigger array index is out of range");
+          return false;
+        }
+        auto idx_val = idx.as<int64_t>();
+        auto range = base_type.getFixedRange();
+        if (!idx_val || *idx_val < range.lower() || *idx_val > range.upper()) {
+          ctx->sink->Error(span, "edge trigger array index is out of range");
+          return false;
+        }
+        return true;
       }
-      const auto& idx = cv->integer();
-      if (idx.hasUnknown()) {
-        ctx->sink->Error(span, "edge trigger array index is out of range");
-        return false;
-      }
-      auto idx_val = idx.as<int64_t>();
-      auto range = base_type.getFixedRange();
-      if (!idx_val || *idx_val < range.lower() || *idx_val > range.upper()) {
-        ctx->sink->Error(span, "edge trigger array index is out of range");
-        return false;
-      }
-      return true;
+      // Dynamic index: same validation as packed (compound allowed).
+      return ValidateIndexExpression(select.selector(), span, ctx);
     }
     ctx->sink->Unsupported(
         span, "edge triggers on dynamic array/queue elements are not supported",

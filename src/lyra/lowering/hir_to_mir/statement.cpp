@@ -1908,15 +1908,132 @@ auto LowerEventWait(
                                  .element_type = hir_expr.type}});
     } else if (
         hir_trigger.edge != hir::EventEdgeKind::kNone &&
-        (hir_expr.kind == hir::ExpressionKind::kElementAccess ||
-         hir_expr.kind == hir::ExpressionKind::kMemberAccess)) {
-      // Unpacked array element or unpacked struct field edge trigger.
-      // LowerExpression emits IndexProjection/FieldProjection to select
-      // the unpacked leaf. We append BitRangeProjection{bit_offset=0,
-      // width=1} to sample bit 0 (LSB) for edge detection, matching
-      // packed multi-bit semantics. Only for edge-triggered waits;
-      // level-sensitive waits observe the whole leaf and fall through
-      // to the generic path.
+        hir_expr.kind == hir::ExpressionKind::kElementAccess) {
+      // Unpacked array element edge trigger.
+      // For dynamic index: build late-bound index plan for runtime rebinding.
+      // For constant index: lower normally + BitRangeProjection for LSB.
+      const auto& elem_data =
+          std::get<hir::ElementAccessExpressionData>(hir_expr.data);
+      const auto& index_expr = (*ctx.hir_arena)[elem_data.index];
+      const auto& base_expr = (*ctx.hir_arena)[elem_data.base];
+      const Type& base_type = (*ctx.type_arena)[base_expr.type];
+
+      bool is_dynamic = (index_expr.kind != hir::ExpressionKind::kConstant) &&
+                        base_type.Kind() == TypeKind::kUnpackedArray;
+
+      if (is_dynamic) {
+        // Dynamic unpacked: lower base array to get root slot, lower
+        // index expression for suspend-time target computation, and
+        // build index plan for runtime rebinding (design-state indices).
+        auto base_result = LowerExpression(elem_data.base, builder);
+        if (!base_result) return std::unexpected(base_result.error());
+        mir::Operand base_op = std::move(*base_result);
+        if (base_op.kind != mir::Operand::Kind::kUse) {
+          throw common::InternalError(
+              "LowerEventWait",
+              "unpacked array base must be a design variable");
+        }
+        auto base_place_id = std::get<mir::PlaceId>(base_op.payload);
+
+        // Lower the index expression so codegen can compute the initial
+        // target at suspend time (needed for local-variable indices
+        // where no rebind subscription exists).
+        auto index_result = LowerExpression(elem_data.index, builder);
+        if (!index_result) return std::unexpected(index_result.error());
+        mir::Operand index_op = std::move(*index_result);
+
+        // Store the SV index in a BitRangeProjection. Codegen reads
+        // this value and multiplies by element_bit_stride to compute
+        // the actual byte_offset.
+        place_id = ctx.mir_arena->DerivePlace(
+            base_place_id, mir::Projection{
+                               .info = mir::BitRangeProjection{
+                                   .bit_offset = index_op,
+                                   .width = 1,
+                                   .element_type = hir_expr.type}});
+
+        const auto& arr_info = base_type.AsUnpackedArray();
+        runtime::BitTargetMapping mapping;
+        mapping.index_base = arr_info.range.left;
+        mapping.index_step = arr_info.range.IsDescending() ? -1 : 1;
+        mapping.total_bits = 0;  // Codegen fills from DataLayout.
+
+        std::vector<runtime::IndexPlanOp> plan;
+        std::vector<mir::SlotId> deps;
+        bool plan_ok = BuildIndexPlan(elem_data.index, ctx, plan, deps);
+
+        if (!plan_ok && !deps.empty()) {
+          throw common::InternalError(
+              "LowerEventWait",
+              "compound index mixes local and design-state variables");
+        }
+
+        if (plan.size() > runtime::kMaxPlanOps) {
+          throw common::InternalError(
+              "LowerEventWait",
+              std::format(
+                  "index expression too complex for edge trigger "
+                  "({} ops, max {})",
+                  plan.size(), runtime::kMaxPlanOps));
+        }
+
+        if (plan_ok && !deps.empty()) {
+          std::sort(deps.begin(), deps.end(), [](mir::SlotId a, mir::SlotId b) {
+            return a.value < b.value;
+          });
+          deps.erase(
+              std::unique(
+                  deps.begin(), deps.end(),
+                  [](mir::SlotId a, mir::SlotId b) {
+                    return a.value == b.value;
+                  }),
+              deps.end());
+
+          late_bound_info = mir::LateBoundIndex{
+              .plan = std::move(plan),
+              .dep_slots = std::move(deps),
+              .mapping = mapping,
+              .unpacked_element_type = arr_info.element_type,
+              .unpacked_num_elements = arr_info.range.Size()};
+        } else {
+          late_bound_info = mir::LateBoundIndex{
+              .plan = {},
+              .dep_slots = {},
+              .mapping = mapping,
+              .unpacked_element_type = arr_info.element_type,
+              .unpacked_num_elements = arr_info.range.Size()};
+        }
+      } else {
+        // Constant index or non-unpacked: lower whole expression,
+        // append BitRangeProjection for LSB sampling.
+        auto signal_result = LowerExpression(hir_trigger.signal, builder);
+        if (!signal_result) return std::unexpected(signal_result.error());
+        mir::Operand signal_op = std::move(*signal_result);
+        if (signal_op.kind != mir::Operand::Kind::kUse) {
+          throw common::InternalError(
+              "LowerEventWait",
+              "unpacked sub-expression base must be a design variable");
+        }
+        auto base_place_id = std::get<mir::PlaceId>(signal_op.payload);
+
+        TypeId offset_type = ctx.GetOffsetType();
+        mir::Operand storage_offset =
+            mir::Operand::Const(MakeIntConstant(0, offset_type));
+
+        place_id = ctx.mir_arena->DerivePlace(
+            base_place_id, mir::Projection{
+                               .info = mir::BitRangeProjection{
+                                   .bit_offset = storage_offset,
+                                   .width = 1,
+                                   .element_type = hir_expr.type}});
+      }
+    } else if (
+        hir_trigger.edge != hir::EventEdgeKind::kNone &&
+        hir_expr.kind == hir::ExpressionKind::kMemberAccess) {
+      // Unpacked struct field edge trigger.
+      // LowerExpression emits FieldProjection to select the unpacked leaf.
+      // We append BitRangeProjection{bit_offset=0, width=1} to sample
+      // bit 0 (LSB) for edge detection.
       auto signal_result = LowerExpression(hir_trigger.signal, builder);
       if (!signal_result) return std::unexpected(signal_result.error());
       mir::Operand signal_op = std::move(*signal_result);

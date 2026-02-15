@@ -1,25 +1,9 @@
 feature: edge trigger rejection on unsupported sub-expressions
 description: >
   Edge triggers on division in index expressions, dynamic array/queue elements,
-  dynamic unpacked array indices, and wide index variables are rejected at compile time.
+  and wide index variables are rejected at compile time.
 
 cases:
-  - name: dynamic_unpacked_array_edge
-    description: "@(posedge arr[i]) with dynamic index on unpacked array should be rejected"
-    sv: |
-      module Test;
-        logic arr [0:3];
-        int i = 0;
-        initial begin
-          @(posedge arr[i]);
-          $finish;
-        end
-      endmodule
-    expect:
-      error:
-        contains:
-          - "dynamic unpacked array index edge triggers are not supported"
-
   - name: dynamic_array_element_edge
     description: "@(posedge d[0]) on dynamic array element should be rejected"
     sv: |
