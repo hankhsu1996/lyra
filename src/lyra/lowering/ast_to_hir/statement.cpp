@@ -52,9 +52,9 @@ namespace {
 // Validates edge trigger expressions (posedge/negedge/edge).
 // Accepts: NamedValue, HierarchicalValue, constant bit/element-selects on
 // packed types (any width), packed struct fields (any width), constant-index
-// unpacked array elements (single-bit), unpacked struct fields (single-bit),
+// unpacked array elements (any width), unpacked struct fields (any width),
 // constant range/part-selects on packed types (any width).
-// Edge behavior on multi-bit packed sub-expressions samples expr[0] (LSB).
+// Edge behavior on multi-bit sub-expressions samples expr[0] (LSB).
 // Returns true if valid (fall through to create trigger), false if rejected.
 bool ValidateEdgeTriggerExpression(
     const slang::ast::Expression& expr, hir::EventEdgeKind edge,
@@ -103,16 +103,8 @@ bool ValidateEdgeTriggerExpression(
           UnsupportedCategory::kFeature);
       return false;
     }
-    // Unpacked fixed-size array: accept constant index to 1-bit element.
+    // Unpacked fixed-size array: accept constant index (any element width).
     if (base_type.isFixedSize()) {
-      if (expr.type->getBitWidth() != 1) {
-        ctx->sink->Unsupported(
-            span,
-            "edge triggers on multi-bit unpacked array elements are not "
-            "supported; only single-bit elements are allowed",
-            UnsupportedCategory::kFeature);
-        return false;
-      }
       const auto* cv = select.selector().getConstant();
       if (cv == nullptr || cv->bad() || !cv->isInteger()) {
         ctx->sink->Unsupported(
@@ -158,15 +150,6 @@ bool ValidateEdgeTriggerExpression(
           UnsupportedCategory::kFeature);
       return false;
     }
-    if (base_type.kind == slang::ast::SymbolKind::UnpackedStructType &&
-        expr.type->getBitWidth() != 1) {
-      ctx->sink->Unsupported(
-          span,
-          "edge triggers on multi-bit unpacked struct fields are not "
-          "supported; only single-bit fields are allowed",
-          UnsupportedCategory::kFeature);
-      return false;
-    }
     return true;
   }
 
@@ -185,7 +168,9 @@ bool ValidateEdgeTriggerExpression(
     auto selection_kind = select.getSelectionKind();
     if (selection_kind == slang::ast::RangeSelectionKind::Simple) {
       // Both bounds are constant for simple range selects.
-      // Verify the single-bit index is within the base range.
+      // Verify both bounds are within the base range.
+      auto range = base_type.getFixedRange();
+
       const auto* left_cv = select.left().getConstant();
       if (left_cv == nullptr || left_cv->bad() || !left_cv->isInteger()) {
         ctx->sink->Unsupported(
@@ -196,7 +181,7 @@ bool ValidateEdgeTriggerExpression(
         return false;
       }
       const auto& left_idx = left_cv->integer();
-      if (left_idx.hasUnknown() || left_idx.isNegative()) {
+      if (left_idx.hasUnknown()) {
         ctx->sink->Unsupported(
             span,
             "edge trigger range-select index is out of range "
@@ -205,8 +190,36 @@ bool ValidateEdgeTriggerExpression(
         return false;
       }
       auto left_val = left_idx.as<int64_t>();
-      auto range = base_type.getFixedRange();
       if (!left_val || *left_val < range.lower() || *left_val > range.upper()) {
+        ctx->sink->Unsupported(
+            span,
+            "edge trigger range-select index is out of range "
+            "for the packed type width",
+            UnsupportedCategory::kFeature);
+        return false;
+      }
+
+      const auto* right_cv = select.right().getConstant();
+      if (right_cv == nullptr || right_cv->bad() || !right_cv->isInteger()) {
+        ctx->sink->Unsupported(
+            span,
+            "edge trigger range-select index is out of range "
+            "for the packed type width",
+            UnsupportedCategory::kFeature);
+        return false;
+      }
+      const auto& right_idx = right_cv->integer();
+      if (right_idx.hasUnknown()) {
+        ctx->sink->Unsupported(
+            span,
+            "edge trigger range-select index is out of range "
+            "for the packed type width",
+            UnsupportedCategory::kFeature);
+        return false;
+      }
+      auto right_val = right_idx.as<int64_t>();
+      if (!right_val || *right_val < range.lower() ||
+          *right_val > range.upper()) {
         ctx->sink->Unsupported(
             span,
             "edge trigger range-select index is out of range "
@@ -227,7 +240,7 @@ bool ValidateEdgeTriggerExpression(
       return false;
     }
     const auto& idx = cv->integer();
-    if (idx.hasUnknown() || idx.isNegative()) {
+    if (idx.hasUnknown()) {
       ctx->sink->Unsupported(
           span,
           "edge trigger part-select index is out of range "
@@ -266,8 +279,8 @@ bool ValidateEdgeTriggerExpression(
       span,
       "edge triggers (@posedge/@negedge) are only supported on plain "
       "signal variables, constant bit/element-selects on packed types, "
-      "packed struct fields, single-bit unpacked struct fields, "
-      "constant-index unpacked array elements (single-bit), and "
+      "packed struct fields, unpacked struct fields, "
+      "constant-index unpacked array elements, and "
       "constant range/part-selects on packed types; use @(*) or @(signal) "
       "for level-sensitive observation",
       UnsupportedCategory::kFeature);

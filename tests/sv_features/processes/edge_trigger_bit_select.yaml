@@ -1,10 +1,10 @@
-feature: edge trigger on packed sub-expressions
+feature: edge trigger on sub-expressions
 description: >
   Edge triggers (@posedge/@negedge) on constant bit/element-selects on packed
   types, packed struct fields (any width), constant-index unpacked array elements
-  (single-bit), unpacked struct fields (single-bit), and constant range/part-
-  selects on packed types. For multi-bit packed sub-expressions, edge behavior
-  samples the expression LSB (expr[0]). Level-sensitive waits observe the full
+  (any width), unpacked struct fields (any width), and constant range/part-
+  selects on packed types. For multi-bit sub-expressions, edge behavior samples
+  the expression LSB (expr[0]). Level-sensitive waits observe the full
   expression.
 
 cases:
@@ -574,6 +574,115 @@ cases:
           $finish;
         end
         initial #5 arr[0] = 8'h80;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_multibit_unpacked_array_element
+    description: "@(posedge arr[0]) on multi-bit unpacked array element wakes on LSB 0->1"
+    sv: |
+      module Test;
+        logic [7:0] arr [0:3];
+        int result = 0;
+        initial begin
+          arr[0] = 0;
+          arr[1] = 0;
+          arr[2] = 0;
+          arr[3] = 0;
+          @(posedge arr[0]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[0] = 8'h01;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_multibit_unpacked_struct_field
+    description: "@(posedge s.data) on multi-bit unpacked struct field wakes on LSB 0->1"
+    sv: |
+      module Test;
+        typedef struct { logic [7:0] data; logic flag; } s_t;
+        s_t s;
+        int result = 0;
+        initial begin
+          s.data = 0;
+          s.flag = 0;
+          @(posedge s.data);
+          result = 1;
+          $finish;
+        end
+        initial #5 s.data = 8'h01;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: no_false_trigger_multibit_unpacked_array
+    description: "@(posedge arr[0]) must NOT wake when only non-LSB bits change, then LSB change wakes"
+    sv: |
+      module Test;
+        logic [7:0] arr [0:3];
+        int result = 0;
+        initial begin
+          arr[0] = 0;
+          arr[1] = 0;
+          arr[2] = 0;
+          arr[3] = 0;
+          @(posedge arr[0]);
+          result = 1;
+          $finish;
+        end
+        initial begin
+          #5 arr[0] = 8'h80;
+          #5 arr[0] = 8'h81;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: no_false_trigger_multibit_unpacked_struct
+    description: "@(posedge s.data) must NOT wake when only non-LSB bits change, then LSB change wakes"
+    sv: |
+      module Test;
+        typedef struct { logic [7:0] data; logic flag; } s_t;
+        s_t s;
+        int result = 0;
+        initial begin
+          s.data = 0;
+          s.flag = 0;
+          @(posedge s.data);
+          result = 1;
+          $finish;
+        end
+        initial begin
+          #5 s.data = 8'hFE;
+          #5 s.data = 8'hFF;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_unpacked_array_negative_index
+    description: "@(posedge arr[-1]) on fixed array with negative bound accepted and works"
+    sv: |
+      module Test;
+        logic [7:0] arr [-1:2];
+        int result = 0;
+        initial begin
+          arr[-1] = 0;
+          arr[0] = 0;
+          arr[1] = 0;
+          arr[2] = 0;
+          @(posedge arr[-1]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[-1] = 8'h01;
       endmodule
     expect:
       variables:
