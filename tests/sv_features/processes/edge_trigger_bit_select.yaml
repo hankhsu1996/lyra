@@ -1,6 +1,7 @@
-feature: edge trigger on constant bit-select
+feature: edge trigger on packed single-bit sub-expressions
 description: >
-  Edge triggers (@posedge/@negedge) on constant bit-selects within packed
+  Edge triggers (@posedge/@negedge) on constant bit-selects, single-bit packed
+  struct fields, and single-bit constant range/part-selects within packed
   values. The runtime samples the specific bit, not bit 0 of the slot root.
 
 cases:
@@ -133,3 +134,129 @@ cases:
     expect:
       variables:
         count: 2
+
+  - name: posedge_packed_struct_field
+    description: "@(posedge s.a) on a single-bit packed struct field"
+    sv: |
+      module Test;
+        typedef struct packed { logic a; logic [6:0] b; } pkt_t;
+        pkt_t s = 8'h00;
+        int result = 0;
+        initial begin
+          @(posedge s.a);
+          result = 1;
+          $finish;
+        end
+        initial #5 s = 8'h80;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: no_false_trigger_struct_field
+    description: "@(posedge s.a) must NOT wake when only s.b changes"
+    sv: |
+      module Test;
+        typedef struct packed { logic a; logic [6:0] b; } pkt_t;
+        pkt_t s = 8'h00;
+        int result = 0;
+        initial begin
+          @(posedge s.a);
+          result = 1;
+          $finish;
+        end
+        initial begin
+          #5 s = 8'h01;
+          #5 s = 8'h80;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_indexed_part_select_up
+    description: "@(posedge bus[3 +: 1]) wakes on bit 3 transition"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int result = 0;
+        initial begin
+          @(posedge bus[3 +: 1]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'b0000_1000;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_indexed_part_select_down
+    description: "@(posedge bus[3 -: 1]) wakes on bit 3 transition"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int result = 0;
+        initial begin
+          @(posedge bus[3 -: 1]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'b0000_1000;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_range_select_single
+    description: "@(posedge bus[3:3]) wakes on bit 3 transition"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int result = 0;
+        initial begin
+          @(posedge bus[3:3]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'b0000_1000;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: event_list_with_struct_field_edge
+    description: "@(posedge clk or negedge s.a) verifies event-list validation"
+    sv: |
+      module Test;
+        typedef struct packed { logic a; logic [6:0] b; } pkt_t;
+        bit clk = 0;
+        pkt_t s = 8'h80;
+        int result = 0;
+        initial begin
+          @(posedge clk or negedge s.a);
+          result = 1;
+          $finish;
+        end
+        initial #5 s = 8'h00;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_range_select_single_ascending_base
+    description: "@(posedge bus[3:3]) on ascending [0:7] maps to correct storage bit"
+    sv: |
+      module Test;
+        logic [0:7] bus = 0;
+        int result = 0;
+        initial begin
+          @(posedge bus[3:3]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'b0001_0000;
+      endmodule
+    expect:
+      variables:
+        result: 1
