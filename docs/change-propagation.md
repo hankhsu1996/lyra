@@ -143,7 +143,7 @@ FlushSignalUpdates runs at two points per delta iteration to separate blocking-s
 
 **Trace**: Uses time-slot-level dirty sets (which slots changed), not byte-range dirty sets. Sub-slot precision only affects wakeup filtering.
 
-**Edge subscriptions**: kPosedge/kNegedge currently require `byte_offset=0` and `byte_size=1` at subscription time. The runtime samples bit 0 of that byte (slot LSB in current usage).
+**Edge subscriptions**: kPosedge/kNegedge require `byte_size=1` at subscription time. The runtime samples the bit at `bit_index` (0-7) within the observation byte at `byte_offset`. For root-signal edges this is byte 0, bit 0. For constant bit-selects (e.g., `@(posedge bus[11])`), `byte_offset` and `bit_index` are derived from the bit position within the packed storage.
 
 ## Worked Example
 
@@ -155,7 +155,7 @@ FlushSignalUpdates runs at two points per delta iteration to separate blocking-s
 
 ## Not In Scope
 
-- Part-select / packed bit-select (sub-byte granularity)
+- Part-select / packed range-select (sub-byte granularity beyond single-bit)
 - 4-state plane-aware byte mapping
 - Multi-threaded scheduling
 - Dynamic dirty range compaction

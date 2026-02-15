@@ -71,7 +71,7 @@ void HandleSuspendRecord(
         if (trigger.byte_size > 0) {
           eng.Subscribe(
               handle, resume, trigger.signal_id, edge, trigger.byte_offset,
-              trigger.byte_size);
+              trigger.byte_size, trigger.bit_index);
         } else {
           eng.Subscribe(handle, resume, trigger.signal_id, edge);
         }

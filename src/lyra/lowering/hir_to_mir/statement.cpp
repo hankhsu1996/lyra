@@ -1386,14 +1386,82 @@ auto LowerEventWait(
 
   std::vector<mir::WaitTrigger> triggers;
   for (const auto& hir_trigger : data.triggers) {
-    auto signal_result = LowerExpression(hir_trigger.signal, builder);
-    if (!signal_result) return std::unexpected(signal_result.error());
-    mir::Operand signal_op = std::move(*signal_result);
-    if (signal_op.kind != mir::Operand::Kind::kUse) {
-      throw common::InternalError(
-          "LowerEventWait", "event trigger signal must be a design variable");
+    const auto& hir_expr = (*ctx.hir_arena)[hir_trigger.signal];
+    mir::PlaceId place_id;
+
+    if (hir_expr.kind == hir::ExpressionKind::kPackedElementSelect ||
+        hir_expr.kind == hir::ExpressionKind::kBitSelect) {
+      // Bit-select edge trigger: lower base to get design place,
+      // then add BitRangeProjection for the storage bit offset.
+      hir::ExpressionId base_id;
+      hir::ExpressionId index_id;
+      if (hir_expr.kind == hir::ExpressionKind::kPackedElementSelect) {
+        const auto& sel_data =
+            std::get<hir::PackedElementSelectExpressionData>(hir_expr.data);
+        base_id = sel_data.base;
+        index_id = sel_data.index;
+      } else {
+        const auto& sel_data =
+            std::get<hir::BitSelectExpressionData>(hir_expr.data);
+        base_id = sel_data.base;
+        index_id = sel_data.index;
+      }
+
+      auto base_result = LowerExpression(base_id, builder);
+      if (!base_result) return std::unexpected(base_result.error());
+      mir::Operand base_op = std::move(*base_result);
+      if (base_op.kind != mir::Operand::Kind::kUse) {
+        throw common::InternalError(
+            "LowerEventWait", "bit-select base must be a design variable");
+      }
+      auto base_place_id = std::get<mir::PlaceId>(base_op.payload);
+
+      auto index_result = LowerExpression(index_id, builder);
+      if (!index_result) return std::unexpected(index_result.error());
+      mir::Operand index_op = std::move(*index_result);
+
+      // Normalize source-level index to storage bit offset.
+      // Packed arrays have declared ranges (e.g. [15:8]); the storage
+      // offset is relative to lower bound for descending ranges.
+      // Integrals/packed structs use implicit [width-1:0], so offset=index.
+      const auto& base_expr = (*ctx.hir_arena)[base_id];
+      const Type& base_type = (*ctx.type_arena)[base_expr.type];
+      mir::Operand storage_offset = index_op;
+      if (base_type.Kind() == TypeKind::kPackedArray) {
+        const auto& range = base_type.AsPackedArray().range;
+        TypeId offset_type = ctx.GetOffsetType();
+        if (range.IsDescending()) {
+          if (range.Lower() != 0) {
+            auto lower_const = mir::Operand::Const(MakeIntConstant(
+                static_cast<uint64_t>(range.Lower()), offset_type));
+            storage_offset = builder.EmitBinary(
+                mir::BinaryOp::kSubtract, index_op, lower_const, offset_type);
+          }
+        } else {
+          auto upper_const = mir::Operand::Const(MakeIntConstant(
+              static_cast<uint64_t>(range.Upper()), offset_type));
+          storage_offset = builder.EmitBinary(
+              mir::BinaryOp::kSubtract, upper_const, index_op, offset_type);
+        }
+      }
+
+      place_id = ctx.mir_arena->DerivePlace(
+          base_place_id, mir::Projection{
+                             .info = mir::BitRangeProjection{
+                                 .bit_offset = storage_offset,
+                                 .width = 1,
+                                 .element_type = hir_expr.type}});
+    } else {
+      auto signal_result = LowerExpression(hir_trigger.signal, builder);
+      if (!signal_result) return std::unexpected(signal_result.error());
+      mir::Operand signal_op = std::move(*signal_result);
+      if (signal_op.kind != mir::Operand::Kind::kUse) {
+        throw common::InternalError(
+            "LowerEventWait", "event trigger signal must be a design variable");
+      }
+      place_id = std::get<mir::PlaceId>(signal_op.payload);
     }
-    auto place_id = std::get<mir::PlaceId>(signal_op.payload);
+
     const auto& place = (*ctx.mir_arena)[place_id];
     if (place.root.kind != mir::PlaceRoot::Kind::kDesign) {
       throw common::InternalError(
@@ -1401,11 +1469,20 @@ auto LowerEventWait(
     }
     auto slot_id = mir::SlotId{static_cast<uint32_t>(place.root.id)};
 
+    std::optional<mir::PlaceId> obs_place;
+    if (!place.projections.empty()) {
+      obs_place = place_id;
+    }
+
     if (hir_trigger.edge == hir::EventEdgeKind::kBothEdges) {
       triggers.push_back(
-          {.signal = slot_id, .edge = common::EdgeKind::kPosedge});
+          {.signal = slot_id,
+           .edge = common::EdgeKind::kPosedge,
+           .observed_place = obs_place});
       triggers.push_back(
-          {.signal = slot_id, .edge = common::EdgeKind::kNegedge});
+          {.signal = slot_id,
+           .edge = common::EdgeKind::kNegedge,
+           .observed_place = obs_place});
     } else {
       common::EdgeKind edge = common::EdgeKind::kAnyChange;
       switch (hir_trigger.edge) {
@@ -1421,7 +1498,8 @@ auto LowerEventWait(
         case hir::EventEdgeKind::kBothEdges:
           break;  // Already handled above
       }
-      triggers.push_back({.signal = slot_id, .edge = edge});
+      triggers.push_back(
+          {.signal = slot_id, .edge = edge, .observed_place = obs_place});
     }
   }
 

@@ -215,6 +215,7 @@ struct ByteRange {
   RangeKind kind = RangeKind::kFullSlot;
   uint32_t byte_offset = 0;
   uint32_t byte_size = 0;
+  uint8_t bit_index = 0;  // Bit position within byte_offset (edge triggers)
 };
 
 // Callback to resolve an Operand to a constant uint64 index value.

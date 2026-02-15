@@ -82,7 +82,8 @@ class Engine {
   // Subscribe with explicit observation byte range within the slot.
   void Subscribe(
       ProcessHandle handle, ResumePoint resume, SignalId signal,
-      common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size);
+      common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
+      uint8_t bit_index = 0);
 
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.

@@ -17,8 +17,9 @@ enum class SuspendTag : uint8_t {
 
 struct WaitTriggerRecord {
   uint32_t signal_id = 0;
-  uint8_t edge = 0;  // common::EdgeKind
-  std::array<uint8_t, 3> padding = {};
+  uint8_t edge = 0;       // common::EdgeKind
+  uint8_t bit_index = 0;  // Bit position within observed byte (edge triggers)
+  std::array<uint8_t, 2> padding = {};
   uint32_t byte_offset = 0;  // Observation start within slot
   uint32_t byte_size = 0;    // Observation size; 0 = full slot
 };
@@ -27,6 +28,15 @@ static_assert(
     sizeof(WaitTriggerRecord) == 16, "WaitTriggerRecord size mismatch");
 static_assert(
     alignof(WaitTriggerRecord) == 4, "WaitTriggerRecord alignment mismatch");
+static_assert(
+    offsetof(WaitTriggerRecord, bit_index) == 5,
+    "WaitTriggerRecord bit_index offset mismatch");
+static_assert(
+    offsetof(WaitTriggerRecord, byte_offset) == 8,
+    "WaitTriggerRecord byte_offset offset mismatch");
+static_assert(
+    offsetof(WaitTriggerRecord, byte_size) == 12,
+    "WaitTriggerRecord byte_size offset mismatch");
 
 // Performance knob: triggers <= this use inline storage (no heap).
 // NOT a hard limit - larger lists use heap allocation.

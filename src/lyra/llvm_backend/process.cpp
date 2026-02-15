@@ -374,6 +374,7 @@ void LowerDelay(
 struct ObservationRange {
   uint32_t byte_offset = 0;
   uint32_t byte_size = 0;  // 0 = full slot
+  uint8_t bit_index = 0;
 };
 
 auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
@@ -399,7 +400,10 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
       context.GetLlvmContext(), context.GetModule().getDataLayout(),
       context.GetTypeArena(), place, root_type, resolver);
   if (range.kind == RangeKind::kPrecise) {
-    return {.byte_offset = range.byte_offset, .byte_size = range.byte_size};
+    return {
+        .byte_offset = range.byte_offset,
+        .byte_size = range.byte_size,
+        .bit_index = range.bit_index};
   }
   return {};
 }
@@ -427,12 +431,15 @@ void FillTriggerArray(
         llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(triggers[i].edge)),
         edge_ptr);
 
-    // Write byte_offset (field 3) and byte_size (field 4)
+    // Write bit_index (field 2), byte_offset (field 4), byte_size (field 5)
     auto range = ResolveObservationRange(context, triggers[i]);
-    auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 3);
+    auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
+    builder.CreateStore(
+        llvm::ConstantInt::get(i8_ty, range.bit_index), bit_idx_ptr);
+    auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
     builder.CreateStore(
         llvm::ConstantInt::get(i32_ty, range.byte_offset), offset_ptr);
-    auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+    auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
     builder.CreateStore(
         llvm::ConstantInt::get(i32_ty, range.byte_size), size_ptr);
   }
@@ -452,10 +459,11 @@ auto LowerWait(
   auto num_triggers = static_cast<uint32_t>(wait.triggers.size());
 
   // WaitTriggerRecord layout:
-  // {i32 signal_id, i8 edge, [3 x i8] padding, i32 byte_offset, i32 byte_size}
+  // {i32 signal_id, i8 edge, i8 bit_index, [2 x i8] padding, i32 byte_offset,
+  //  i32 byte_size}
   auto* trigger_type = llvm::StructType::get(
       llvm_ctx,
-      {i32_ty, i8_ty, llvm::ArrayType::get(i8_ty, 3), i32_ty, i32_ty});
+      {i32_ty, i8_ty, i8_ty, llvm::ArrayType::get(i8_ty, 2), i32_ty, i32_ty});
 
   // Compile-time branching: different codegen for small vs large trigger counts
   if (num_triggers <= runtime::kInlineTriggerCapacity) {

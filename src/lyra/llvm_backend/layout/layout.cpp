@@ -372,6 +372,8 @@ auto ResolveByteRange(
 
   TypeId current_type = root_type;
   uint64_t byte_offset = 0;
+  uint8_t bit_index = 0;
+  bool is_bit_range = false;
 
   for (const auto& proj : place.projections) {
     auto* current_llvm_type =
@@ -411,6 +413,27 @@ auto ResolveByteRange(
               current_type = arr_info.element_type;
               return true;
             },
+            [&](const mir::BitRangeProjection& br) -> bool {
+              if (br.width != 1) return false;
+              std::optional<int64_t> bit_off;
+              if (br.bit_offset.kind == mir::Operand::Kind::kConst) {
+                const auto& constant =
+                    std::get<Constant>(br.bit_offset.payload);
+                const auto& integral =
+                    std::get<IntegralConstant>(constant.value);
+                bit_off = static_cast<int64_t>(integral.value[0]);
+              } else if (resolve_index) {
+                if (auto resolved = resolve_index(br.bit_offset)) {
+                  bit_off = static_cast<int64_t>(*resolved);
+                }
+              }
+              if (!bit_off || *bit_off < 0) return false;
+              const auto bit = static_cast<uint64_t>(*bit_off);
+              byte_offset += bit / 8;
+              bit_index = static_cast<uint8_t>(bit % 8);
+              is_bit_range = true;
+              return true;
+            },
             [&](const auto&) -> bool { return false; },
         },
         proj.info);
@@ -418,12 +441,18 @@ auto ResolveByteRange(
     if (!ok) return {.kind = RangeKind::kFullSlot};
   }
 
-  auto* leaf_llvm_type = GetLlvmTypeForTypeId(llvm_ctx, current_type, types);
-  uint64_t leaf_size = dl.getTypeAllocSize(leaf_llvm_type);
+  if (byte_offset > UINT32_MAX) return {.kind = RangeKind::kFullSlot};
+
+  uint32_t leaf_byte_size = 1;
+  if (!is_bit_range) {
+    auto* leaf_llvm_type = GetLlvmTypeForTypeId(llvm_ctx, current_type, types);
+    leaf_byte_size = static_cast<uint32_t>(dl.getTypeAllocSize(leaf_llvm_type));
+  }
   return {
       .kind = RangeKind::kPrecise,
       .byte_offset = static_cast<uint32_t>(byte_offset),
-      .byte_size = static_cast<uint32_t>(leaf_size),
+      .byte_size = leaf_byte_size,
+      .bit_index = bit_index,
   };
 }
 
