@@ -377,8 +377,8 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       const auto& expect = node["expect"];
       auto expect_context = std::format("expect in {}", case_context);
       ValidateKeys(
-          expect, {"variables", "time", "stdout", "files"}, expect_context,
-          path);
+          expect, {"variables", "time", "stdout", "files", "error"},
+          expect_context, path);
 
       // expect.variables: {var: value, ...}
       if (expect["variables"]) {
@@ -413,6 +413,13 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
           test_case.expected_files[filename] =
               ParseExpectedOutput(pair.second, file_context, path);
         }
+      }
+
+      // expect.error: string OR {contains: [...], not_contains: [...]}
+      if (expect["error"]) {
+        test_case.expected_error = ParseExpectedOutput(
+            expect["error"], std::format("expect.error in {}", case_context),
+            path);
       }
     }
 

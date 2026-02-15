@@ -28,6 +28,15 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
   switch (backend) {
     case BackendKind::kMir: {
       auto result = RunMirInterpreter(test_case, work_directory);
+
+      if (test_case.expected_error.has_value()) {
+        ASSERT_FALSE(result.success)
+            << "[" << test_case.source_yaml
+            << "] Expected compilation error but succeeded";
+        AssertOutput(result.error_message, *test_case.expected_error);
+        break;
+      }
+
       ASSERT_TRUE(result.success)
           << "[" << test_case.source_yaml << "] " << result.error_message;
 
@@ -60,6 +69,15 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
       }
 
       auto result = RunJitBackend(test_case, work_directory);
+
+      if (test_case.expected_error.has_value()) {
+        ASSERT_FALSE(result.success)
+            << "[" << test_case.source_yaml
+            << "] Expected compilation error but succeeded";
+        AssertOutput(result.error_message, *test_case.expected_error);
+        break;
+      }
+
       ASSERT_TRUE(result.success)
           << "[" << test_case.source_yaml << "] " << result.error_message;
 
@@ -88,6 +106,15 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
       }
 
       auto result = RunLliBackend(test_case, work_directory);
+
+      if (test_case.expected_error.has_value()) {
+        ASSERT_FALSE(result.success)
+            << "[" << test_case.source_yaml
+            << "] Expected compilation error but succeeded";
+        AssertOutput(result.error_message, *test_case.expected_error);
+        break;
+      }
+
       ASSERT_TRUE(result.success)
           << "[" << test_case.source_yaml << "] " << result.error_message;
 
