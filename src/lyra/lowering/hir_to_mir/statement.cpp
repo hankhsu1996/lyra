@@ -1391,8 +1391,10 @@ auto LowerEventWait(
 
     if (hir_expr.kind == hir::ExpressionKind::kPackedElementSelect ||
         hir_expr.kind == hir::ExpressionKind::kBitSelect) {
-      // Bit-select edge trigger: lower base to get design place,
+      // Packed element/bit-select: lower base to get design place,
       // then add BitRangeProjection for the storage bit offset.
+      // For multi-bit elements, edge triggers observe the LSB (width=1);
+      // level-sensitive triggers observe the full element.
       hir::ExpressionId base_id;
       hir::ExpressionId index_id;
       if (hir_expr.kind == hir::ExpressionKind::kPackedElementSelect) {
@@ -1420,7 +1422,7 @@ auto LowerEventWait(
       if (!index_result) return std::unexpected(index_result.error());
       mir::Operand index_op = std::move(*index_result);
 
-      // Normalize source-level index to storage bit offset.
+      // Normalize source-level index to storage element offset.
       // Packed arrays have declared ranges (e.g. [15:8]); the storage
       // offset is relative to lower bound for descending ranges.
       // Integrals/packed structs use implicit [width-1:0], so offset=index.
@@ -1445,14 +1447,34 @@ auto LowerEventWait(
         }
       }
 
+      // For multi-bit elements, convert element index to bit offset.
+      uint32_t element_bit_width = 1;
+      if (hir_expr.kind == hir::ExpressionKind::kPackedElementSelect) {
+        element_bit_width =
+            PackedBitWidth((*ctx.type_arena)[hir_expr.type], *ctx.type_arena);
+      }
+      if (element_bit_width > 1) {
+        TypeId offset_type = ctx.GetOffsetType();
+        auto width_const = mir::Operand::Const(MakeIntConstant(
+            static_cast<uint64_t>(element_bit_width), offset_type));
+        storage_offset = builder.EmitBinary(
+            mir::BinaryOp::kMultiply, storage_offset, width_const, offset_type);
+      }
+
+      uint32_t proj_width = (hir_trigger.edge != hir::EventEdgeKind::kNone)
+                                ? 1
+                                : element_bit_width;
+
       place_id = ctx.mir_arena->DerivePlace(
           base_place_id, mir::Projection{
                              .info = mir::BitRangeProjection{
                                  .bit_offset = storage_offset,
-                                 .width = 1,
+                                 .width = proj_width,
                                  .element_type = hir_expr.type}});
     } else if (hir_expr.kind == hir::ExpressionKind::kPackedFieldAccess) {
-      // Packed struct field edge trigger: constant bit offset from field.
+      // Packed struct field: constant bit offset from field.
+      // For multi-bit fields, edge triggers observe the LSB (width=1);
+      // level-sensitive triggers observe the full field.
       const auto& data =
           std::get<hir::PackedFieldAccessExpressionData>(hir_expr.data);
 
@@ -1470,14 +1492,21 @@ auto LowerEventWait(
       mir::Operand storage_offset = mir::Operand::Const(
           MakeIntConstant(static_cast<uint64_t>(data.bit_offset), offset_type));
 
+      uint32_t field_bit_width =
+          PackedBitWidth((*ctx.type_arena)[hir_expr.type], *ctx.type_arena);
+      uint32_t proj_width =
+          (hir_trigger.edge != hir::EventEdgeKind::kNone) ? 1 : field_bit_width;
+
       place_id = ctx.mir_arena->DerivePlace(
           base_place_id, mir::Projection{
                              .info = mir::BitRangeProjection{
                                  .bit_offset = storage_offset,
-                                 .width = 1,
+                                 .width = proj_width,
                                  .element_type = hir_expr.type}});
     } else if (hir_expr.kind == hir::ExpressionKind::kRangeSelect) {
-      // Constant range select edge trigger (width must be 1).
+      // Constant range select: compute LSB storage offset.
+      // For multi-bit ranges, edge triggers observe the LSB (width=1);
+      // level-sensitive triggers observe the full range.
       const auto& data =
           std::get<hir::RangeSelectExpressionData>(hir_expr.data);
 
@@ -1492,11 +1521,8 @@ auto LowerEventWait(
 
       int32_t select_lower = std::min(data.left, data.right);
       int32_t select_upper = std::max(data.left, data.right);
-      auto width = static_cast<uint32_t>(select_upper - select_lower + 1);
-      if (width != 1) {
-        throw common::InternalError(
-            "LowerEventWait", "range select edge trigger must have width 1");
-      }
+      auto select_width =
+          static_cast<uint32_t>(select_upper - select_lower + 1);
 
       const auto& base_expr = (*ctx.hir_arena)[data.base];
       const Type& base_type = (*ctx.type_arena)[base_expr.type];
@@ -1524,21 +1550,22 @@ auto LowerEventWait(
       mir::Operand storage_offset = mir::Operand::Const(
           MakeIntConstant(static_cast<uint64_t>(bit_offset), offset_type));
 
+      uint32_t proj_width =
+          (hir_trigger.edge != hir::EventEdgeKind::kNone) ? 1 : select_width;
+
       place_id = ctx.mir_arena->DerivePlace(
           base_place_id, mir::Projection{
                              .info = mir::BitRangeProjection{
                                  .bit_offset = storage_offset,
-                                 .width = 1,
+                                 .width = proj_width,
                                  .element_type = hir_expr.type}});
     } else if (hir_expr.kind == hir::ExpressionKind::kIndexedPartSelect) {
-      // Indexed part-select edge trigger (width must be 1, index constant).
+      // Indexed part-select: compute LSB storage offset.
+      // For +: the index IS the LSB; for -: the LSB is index-(width-1).
+      // Edge triggers observe the LSB (width=1); level-sensitive observes
+      // the full part-select range.
       const auto& data =
           std::get<hir::IndexedPartSelectExpressionData>(hir_expr.data);
-      if (data.width != 1) {
-        throw common::InternalError(
-            "LowerEventWait",
-            "indexed part-select edge trigger must have width 1");
-      }
 
       auto base_result = LowerExpression(data.base, builder);
       if (!base_result) return std::unexpected(base_result.error());
@@ -1554,10 +1581,20 @@ auto LowerEventWait(
       if (!index_result) return std::unexpected(index_result.error());
       mir::Operand index_op = std::move(*index_result);
 
-      // Normalize using the same logic as bit-select.
+      // For descending part-select (-:), compute LSB = index - (width - 1).
+      mir::Operand lsb_index = index_op;
+      if (!data.ascending && data.width > 1) {
+        TypeId offset_type = ctx.GetOffsetType();
+        auto width_minus_one = mir::Operand::Const(MakeIntConstant(
+            static_cast<uint64_t>(data.width - 1), offset_type));
+        lsb_index = builder.EmitBinary(
+            mir::BinaryOp::kSubtract, index_op, width_minus_one, offset_type);
+      }
+
+      // Normalize LSB index to storage offset.
       const auto& base_expr = (*ctx.hir_arena)[data.base];
       const Type& base_type = (*ctx.type_arena)[base_expr.type];
-      mir::Operand storage_offset = index_op;
+      mir::Operand storage_offset = lsb_index;
       if (base_type.Kind() == TypeKind::kPackedArray) {
         const auto& range = base_type.AsPackedArray().range;
         TypeId offset_type = ctx.GetOffsetType();
@@ -1566,21 +1603,24 @@ auto LowerEventWait(
             auto lower_const = mir::Operand::Const(MakeIntConstant(
                 static_cast<uint64_t>(range.Lower()), offset_type));
             storage_offset = builder.EmitBinary(
-                mir::BinaryOp::kSubtract, index_op, lower_const, offset_type);
+                mir::BinaryOp::kSubtract, lsb_index, lower_const, offset_type);
           }
         } else {
           auto upper_const = mir::Operand::Const(MakeIntConstant(
               static_cast<uint64_t>(range.Upper()), offset_type));
           storage_offset = builder.EmitBinary(
-              mir::BinaryOp::kSubtract, upper_const, index_op, offset_type);
+              mir::BinaryOp::kSubtract, upper_const, lsb_index, offset_type);
         }
       }
+
+      uint32_t proj_width =
+          (hir_trigger.edge != hir::EventEdgeKind::kNone) ? 1 : data.width;
 
       place_id = ctx.mir_arena->DerivePlace(
           base_place_id, mir::Projection{
                              .info = mir::BitRangeProjection{
                                  .bit_offset = storage_offset,
-                                 .width = 1,
+                                 .width = proj_width,
                                  .element_type = hir_expr.type}});
     } else if (
         hir_trigger.edge != hir::EventEdgeKind::kNone &&

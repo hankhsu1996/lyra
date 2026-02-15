@@ -143,7 +143,7 @@ FlushSignalUpdates runs at two points per delta iteration to separate blocking-s
 
 **Trace**: Uses time-slot-level dirty sets (which slots changed), not byte-range dirty sets. Sub-slot precision only affects wakeup filtering.
 
-**Edge subscriptions**: kPosedge/kNegedge require `byte_size=1` at subscription time. The runtime samples the bit at `bit_index` (0-7) within the observation byte at `byte_offset`. For root-signal edges this is byte 0, bit 0. For packed single-bit sub-expressions -- constant bit-selects (e.g., `@(posedge bus[11])`), single-bit packed struct fields (e.g., `@(posedge s.flag)`), and single-bit constant range/part-selects (e.g., `@(posedge bus[3:3])`) -- `byte_offset` and `bit_index` are derived from the bit position within the packed storage. For unpacked sub-expressions -- constant-index unpacked array elements (e.g., `@(posedge arr[0])`) and single-bit unpacked struct fields (e.g., `@(posedge s.flag)`) -- the projection chain includes IndexProjection/FieldProjection followed by BitRangeProjection{width=1} to target bit 0 of the unpacked leaf. All these forms produce a `BitRangeProjection` with `width=1`.
+**Edge subscriptions**: kPosedge/kNegedge require `byte_size=1` at subscription time. The runtime samples the bit at `bit_index` (0-7) within the observation byte at `byte_offset`. For root-signal edges this is byte 0, bit 0. For packed sub-expressions -- constant bit/element-selects (e.g., `@(posedge bus[11])`, `@(posedge bus[1])` on multi-dimensional packed arrays), packed struct fields (e.g., `@(posedge s.flag)`, `@(posedge s.b)` where `b` is multi-bit), and constant range/part-selects (e.g., `@(posedge bus[7:4])`, `@(posedge bus[3 +: 4])`) -- `byte_offset` and `bit_index` are derived from the LSB bit position within the packed storage. Multi-bit packed sub-expressions use `expr[0]` (the LSB) for edge detection. For unpacked sub-expressions -- constant-index unpacked array elements (e.g., `@(posedge arr[0])`) and single-bit unpacked struct fields (e.g., `@(posedge s.flag)`) -- the projection chain includes IndexProjection/FieldProjection followed by BitRangeProjection{width=1} to target bit 0 of the unpacked leaf. All edge-triggered forms produce a `BitRangeProjection` with `width=1`. Level-sensitive waits (`@(expr)` with no edge) use the full element/field width, which may fall back to full-slot observation for multi-bit ranges.
 
 ## Worked Example
 
@@ -155,7 +155,7 @@ FlushSignalUpdates runs at two points per delta iteration to separate blocking-s
 
 ## Not In Scope
 
-- Part-select / packed range-select (sub-byte granularity beyond single-bit)
+- Multi-bit sub-byte observation ranges (multi-bit packed edge triggers observe only the LSB bit)
 - 4-state plane-aware byte mapping
 - Multi-threaded scheduling
 - Dynamic dirty range compaction
