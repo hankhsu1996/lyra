@@ -1500,6 +1500,8 @@ auto LowerEventWait(
             .index_slot = mir::kInvalidSlotId,
             .index_byte_offset = 0,
             .index_byte_size = 0,
+            .index_bit_width = 0,
+            .index_is_signed = false,
             .mapping = mapping};
 
         // Override with design-state slot info if applicable.
@@ -1514,11 +1516,14 @@ auto LowerEventWait(
                 mir::SlotId{static_cast<uint32_t>(index_place.root.id)};
             const Type& idx_type = (*ctx.type_arena)[index_expr.type];
             uint32_t idx_bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
+            bool idx_is_signed = IsPackedSigned(idx_type, *ctx.type_arena);
             uint32_t idx_byte_size = (idx_bit_width + 7) / 8;
             late_bound_info = mir::LateBoundIndex{
                 .index_slot = idx_slot,
                 .index_byte_offset = 0,
                 .index_byte_size = idx_byte_size,
+                .index_bit_width = idx_bit_width,
+                .index_is_signed = idx_is_signed,
                 .mapping = mapping};
           }
         } else if (index_expr.kind == hir::ExpressionKind::kHierarchicalRef) {
@@ -1531,11 +1536,14 @@ auto LowerEventWait(
                 mir::SlotId{static_cast<uint32_t>(index_place.root.id)};
             const Type& idx_type = (*ctx.type_arena)[index_expr.type];
             uint32_t idx_bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
+            bool idx_is_signed = IsPackedSigned(idx_type, *ctx.type_arena);
             uint32_t idx_byte_size = (idx_bit_width + 7) / 8;
             late_bound_info = mir::LateBoundIndex{
                 .index_slot = idx_slot,
                 .index_byte_offset = 0,
                 .index_byte_size = idx_byte_size,
+                .index_bit_width = idx_bit_width,
+                .index_is_signed = idx_is_signed,
                 .mapping = mapping};
           }
         }

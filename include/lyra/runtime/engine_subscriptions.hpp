@@ -62,7 +62,9 @@ struct SubscriptionNode {
   BitTargetMapping rebind_mapping = {};
   uint32_t index_slot_id = 0;
   uint32_t index_byte_offset = 0;
-  uint32_t index_byte_size = 0;  // 1/2/4/8
+  uint32_t index_byte_size = 0;
+  uint8_t index_bit_width = 0;   // Actual SV bit width (1-64)
+  bool index_is_signed = false;  // SV type signedness
 
   // Links for signal's waiter list (doubly linked for O(1) removal).
   // Normal subscriptions use head/tail; rebind subscriptions use

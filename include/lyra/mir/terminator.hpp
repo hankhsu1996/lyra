@@ -77,7 +77,9 @@ struct Delay {
 struct LateBoundIndex {
   SlotId index_slot;
   uint32_t index_byte_offset = 0;
-  uint32_t index_byte_size = 0;  // 1/2/4/8
+  uint32_t index_byte_size = 0;
+  uint32_t index_bit_width = 0;  // Actual SV bit width (1-64)
+  bool index_is_signed = false;  // SV type signedness
   runtime::BitTargetMapping mapping;
 };
 
