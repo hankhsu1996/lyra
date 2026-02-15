@@ -18,6 +18,13 @@ auto GetFsBaseDir() -> const std::filesystem::path&;
 // - resume_block: which basic block to start execution from
 using LyraProcessFunc = void (*)(void* state, uint32_t resume_block);
 
+// Container mutation kind for LyraNotifyContainerMutation.
+enum class ContainerMutationKind : uint32_t {
+  kElementWrite = 0,
+  kStructural = 1,
+  kDelete = 2,
+};
+
 extern "C" {
 
 // Run a process synchronously to completion (for init processes).
@@ -184,4 +191,11 @@ void LyraApply4StatePatches32(
     void* base, const uint64_t* offsets, const uint32_t* masks, uint64_t count);
 void LyraApply4StatePatches64(
     void* base, const uint64_t* offsets, const uint64_t* masks, uint64_t count);
+
+// Notify engine of a container (dynamic array/queue) mutation.
+// kind: ContainerMutationKind (0=element write, 1=structural, 2=delete)
+// off/size: heap-relative byte range (kElementWrite only; 0/0 for others)
+void LyraNotifyContainerMutation(
+    void* engine_ptr, uint32_t signal_id, uint32_t kind, uint32_t off,
+    uint32_t size);
 }

@@ -108,6 +108,8 @@ Multi-step chains work (e.g., `structs[1].x`) as long as every step is supported
 | LyraNotifySignal (aggregate notify)      | Full-slot                        | Aggregate updates                         |
 | LyraReadmem / LyraFread (memory variant) | Full-slot                        | Bulk I/O                                  |
 | LyraStoreString / LyraStoreDynArray      | Full-slot                        | Handle-based types                        |
+| LyraNotifyContainerMutation (element)    | Precise external range           | Container element writes                  |
+| LyraNotifyContainerMutation (structural) | Full-external `(0,0)`            | Container push/pop/insert/delete/resize   |
 | Union memcpy                             | Full-slot                        | Overlapping storage                       |
 
 ### NBA pointer subtraction
@@ -154,6 +156,14 @@ FlushSignalUpdates runs at two points per delta iteration to separate blocking-s
 3. **Storage (byte_offset, bit_index)**: Runtime divides logical bit offset by 8. For unpacked array elements, `bit_index` is always 0 (byte-aligned elements).
 
 **Unpacked element LSB sampling**: Edge triggers on unpacked array elements sample bit 0 of the element's packed storage (`expr[0]`). This is the first byte at the element's base address with `bit_index = 0`. For multi-bit elements (e.g., `logic [7:0]`), only a transition on the LSB triggers the edge; changes to higher bits do not.
+
+**Container element subscriptions**: Dynamic arrays and queues store a `void*` handle in DesignState pointing to a heap-allocated `DynArrayData` structure. Edge triggers on container elements (e.g., `@(posedge d[i])`, `@(posedge q[i])`) use container-mode subscriptions that chase the handle to read element data from the heap.
+
+Container subscriptions use **external dirty ranges** -- heap-relative byte ranges tracked separately from DesignState ranges in UpdateSet. Element writes produce precise external ranges (`off = index * elem_stride, size = elem_stride`). Structural mutations (push/pop/insert/delete/resize) produce full-external-dirty `(off=0, size=0)`. The `(0,0)` sentinel overlaps all external subscriptions on that slot, analogous to full-slot dirty for DesignState.
+
+`DynArrayData` carries a `magic` field (validated on every handle chase) and an `epoch` counter (incremented by runtime on structural mutations). Magic prevents UAF on freed handles; epoch is stored on subscription nodes for future staleness detection.
+
+Container subscription flush: Pass 1 rebinds always read from the heap (element content may change even if byte_offset is unchanged). Pass 2 filters active subs via external range overlap before chasing the handle. Inactive subs (OOB index) attempt reactivation only when external dirty ranges overlap their candidate offset. Reactivation captures a snapshot but does not trigger an edge.
 
 ## Worked Example
 

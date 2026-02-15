@@ -587,6 +587,22 @@ auto Context::GetLyraStoreDynArray() -> llvm::Function* {
   return lyra_store_dynarray_;
 }
 
+auto Context::GetLyraNotifyContainerMutation() -> llvm::Function* {
+  if (lyra_notify_container_mutation_ == nullptr) {
+    // void LyraNotifyContainerMutation(ptr engine, i32 signal_id,
+    //                                  i32 kind, i32 off, i32 size)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty}, false);
+    lyra_notify_container_mutation_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraNotifyContainerMutation",
+        llvm_module_.get());
+  }
+  return lyra_notify_container_mutation_;
+}
+
 auto Context::GetLyraDynArrayCloneElem() -> llvm::Function* {
   if (lyra_dynarray_clone_elem_ == nullptr) {
     // void LyraDynArrayCloneElem(ptr dst, ptr src)

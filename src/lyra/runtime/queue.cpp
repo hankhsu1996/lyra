@@ -74,6 +74,7 @@ extern "C" void LyraQueuePushBack(
   auto* dst = static_cast<char*>(arr->data) + (arr->size * arr->elem_size);
   CloneElement(arr, dst, elem);
   arr->size++;
+  ++arr->epoch;
 
   TruncateFromBack(arr, max_bound);
 }
@@ -93,6 +94,7 @@ extern "C" void LyraQueuePushFront(
   }
   CloneElement(arr, arr->data, elem);
   arr->size++;
+  ++arr->epoch;
 
   TruncateFromBack(arr, max_bound);
 }
@@ -109,6 +111,7 @@ extern "C" void LyraQueuePopBack(LyraDynArrayHandle q, void* out_elem) {
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   auto* src = static_cast<char*>(arr->data) + (arr->size * arr->elem_size);
   std::memcpy(out_elem, src, static_cast<size_t>(arr->elem_size));
+  ++arr->epoch;
 }
 
 extern "C" void LyraQueuePopFront(LyraDynArrayHandle q, void* out_elem) {
@@ -130,6 +133,7 @@ extern "C" void LyraQueuePopFront(LyraDynArrayHandle q, void* out_elem) {
         static_cast<char*>(arr->data) + arr->elem_size,
         static_cast<size_t>(arr->size) * arr->elem_size);
   }
+  ++arr->epoch;
 }
 
 extern "C" void LyraQueueInsert(
@@ -155,6 +159,7 @@ extern "C" void LyraQueueInsert(
   }
   CloneElement(arr, insert_ptr, elem);
   arr->size++;
+  ++arr->epoch;
 
   TruncateFromBack(arr, max_bound);
 }
@@ -180,4 +185,5 @@ extern "C" void LyraQueueDeleteAt(LyraDynArrayHandle q, int64_t index) {
         static_cast<size_t>(tail_count) * arr->elem_size);
   }
   arr->size--;
+  ++arr->epoch;
 }

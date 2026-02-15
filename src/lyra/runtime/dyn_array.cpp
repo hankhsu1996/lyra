@@ -60,6 +60,8 @@ extern "C" auto LyraDynArrayNew(
 
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   auto* arr = new LyraDynArrayData();
+  arr->magic = LyraDynArrayData::kMagic;
+  arr->epoch = 0;
   arr->size = size;
   arr->elem_size = elem_size;
   arr->clone_fn = clone_fn;
@@ -98,6 +100,8 @@ extern "C" auto LyraDynArrayNewCopy(
 
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   auto* arr = new LyraDynArrayData();
+  arr->magic = LyraDynArrayData::kMagic;
+  arr->epoch = 0;
   arr->size = size;
   arr->elem_size = elem_size;
   arr->clone_fn = clone_fn;
@@ -172,6 +176,8 @@ extern "C" auto LyraDynArrayClone(LyraDynArrayHandle src)
 
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   auto* arr = new LyraDynArrayData();
+  arr->magic = LyraDynArrayData::kMagic;
+  arr->epoch = 0;
   arr->size = s->size;
   arr->elem_size = s->elem_size;
   arr->clone_fn = s->clone_fn;
@@ -209,6 +215,7 @@ extern "C" void LyraDynArrayDelete(LyraDynArrayHandle arr) {
   std::free(a->data);
   a->data = nullptr;
   a->size = 0;
+  ++a->epoch;
 }
 
 extern "C" void LyraDynArrayRelease(LyraDynArrayHandle arr) {
@@ -219,6 +226,7 @@ extern "C" void LyraDynArrayRelease(LyraDynArrayHandle arr) {
   DestroyElements(a);
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc)
   std::free(a->data);
+  a->magic = LyraDynArrayData::kPoison;
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   delete a;
 }

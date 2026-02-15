@@ -507,3 +507,200 @@ cases:
     expect:
       variables:
         result: 0
+
+  - name: posedge_dynamic_array_basic
+    description: "@(posedge d[i]) triggers when selected element's LSB rises"
+    sv: |
+      module Test;
+        logic [7:0] d[];
+        int i = 1;
+        int result = 0;
+        initial begin
+          d = new[4];
+          d[0] = 0; d[1] = 0; d[2] = 0; d[3] = 0;
+        end
+        initial begin
+          @(posedge d[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 d[1] = 8'hFF;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dynamic_array_no_false_trigger
+    description: "Writing a different element must NOT wake the process"
+    sv: |
+      module Test;
+        logic [7:0] d[];
+        int i = 2;
+        int result = 0;
+        initial begin
+          d = new[4];
+          d[0] = 0; d[1] = 0; d[2] = 0; d[3] = 0;
+        end
+        initial begin
+          @(posedge d[i]);
+          result = 1;
+        end
+        initial begin
+          #5 d[0] = 8'hFF;
+          #5 d[1] = 8'hFF;
+          #5 d[3] = 8'hFF;
+          #5 $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: dynamic_array_index_change
+    description: "Index changes between waits; second wait targets new element"
+    sv: |
+      module Test;
+        logic [7:0] d[];
+        int i = 0;
+        int count = 0;
+        initial begin
+          d = new[4];
+          d[0] = 0; d[1] = 0; d[2] = 0; d[3] = 0;
+        end
+        initial begin
+          @(posedge d[i]);
+          count = count + 1;
+          i = 2;
+          @(posedge d[i]);
+          count = count + 1;
+        end
+        initial begin
+          #5 d[0] = 1;
+          #5 d[2] = 1;
+          #5 $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 2
+
+  - name: dynamic_array_oob_inactive
+    description: "OOB index does not crash and does not trigger"
+    sv: |
+      module Test;
+        logic [7:0] d[];
+        int i = 10;
+        int result = 0;
+        initial begin
+          d = new[4];
+          d[0] = 0; d[1] = 0; d[2] = 0; d[3] = 0;
+        end
+        initial begin
+          @(posedge d[i]);
+          result = 1;
+        end
+        initial begin
+          #5 d[0] = 8'hFF;
+          #5 d[1] = 8'hFF;
+          #5 $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: dynamic_array_local_index
+    description: "Local variable index; no rebinding needed"
+    sv: |
+      module Test;
+        logic [7:0] d[];
+        int result = 0;
+        initial begin
+          d = new[4];
+          d[0] = 0; d[1] = 0; d[2] = 0; d[3] = 0;
+        end
+        initial begin
+          int j = 3;
+          #1;
+          @(posedge d[j]);
+          result = 1;
+          $finish;
+        end
+        initial #5 d[3] = 1;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dynamic_array_compound_index
+    description: "@(posedge d[i+j]) compound index expression"
+    sv: |
+      module Test;
+        logic [7:0] d[];
+        int i = 1;
+        int j = 2;
+        int result = 0;
+        initial begin
+          d = new[4];
+          d[0] = 0; d[1] = 0; d[2] = 0; d[3] = 0;
+        end
+        initial begin
+          @(posedge d[i+j]);
+          result = 1;
+          $finish;
+        end
+        initial #5 d[3] = 1;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: queue_posedge_basic
+    description: "@(posedge q[i]) on queue element"
+    sv: |
+      module Test;
+        logic [7:0] q[$];
+        int i = 1;
+        int result = 0;
+        initial begin
+          q.push_back(0);
+          q.push_back(0);
+          q.push_back(0);
+        end
+        initial begin
+          @(posedge q[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 q[1] = 8'hFF;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: queue_oob_after_pop
+    description: "Pop shrinks queue; watched index becomes OOB; no false wake"
+    sv: |
+      module Test;
+        logic [7:0] q[$];
+        int i = 2;
+        int result = 0;
+        initial begin
+          q.push_back(0);
+          q.push_back(0);
+          q.push_back(0);
+        end
+        initial begin
+          @(posedge q[i]);
+          result = 1;
+        end
+        initial begin
+          #5 q.pop_back();
+          #5 q[0] = 8'hFF;
+          #5 q[1] = 8'hFF;
+          #5 $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0

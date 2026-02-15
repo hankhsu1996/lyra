@@ -15,6 +15,8 @@ auto RangesOverlap(
   uint64_t obs_end =
       static_cast<uint64_t>(obs_off) + static_cast<uint64_t>(obs_size);
   for (const auto& r : dirty) {
+    // Full-dirty sentinel: size==0 means entire buffer is dirty.
+    if (r.size == 0) return true;
     uint64_t r_end =
         static_cast<uint64_t>(r.off) + static_cast<uint64_t>(r.size);
     if (r.off < obs_end && obs_off < r_end) return true;
@@ -67,12 +69,48 @@ void UpdateSet::MarkDirtyRange(uint32_t slot_id, uint32_t off, uint32_t size) {
   InsertAndMerge(delta_slot_ranges_[slot_id], off, size);
 }
 
+void UpdateSet::MarkExternalDirtyRange(
+    uint32_t slot_id, uint32_t off, uint32_t size) {
+  if (slot_id >= seen_.size()) return;
+
+  // Slot-level dedup (same as MarkDirtyRange).
+  if (seen_[slot_id] == 0) {
+    seen_[slot_id] = 1;
+    dirty_list_.push_back(slot_id);
+  }
+  if (delta_seen_[slot_id] == 0) {
+    delta_seen_[slot_id] = 1;
+    delta_dirty_.push_back(slot_id);
+  }
+
+  auto& ranges = delta_external_ranges_[slot_id];
+  if (size == 0) {
+    // Full-dirty sentinel: replace all with (0,0).
+    ranges.clear();
+    ranges.push_back(DirtyRange{.off = 0, .size = 0});
+    return;
+  }
+
+  // Skip if already full-dirty.
+  if (!ranges.empty() && ranges[0].size == 0) return;
+
+  InsertAndMerge(ranges, off, size);
+}
+
+auto UpdateSet::DeltaExternalRangesFor(uint32_t slot_id) const
+    -> std::span<const DirtyRange> {
+  auto it = delta_external_ranges_.find(slot_id);
+  if (it == delta_external_ranges_.end()) return {};
+  return it->second;
+}
+
 void UpdateSet::ClearDelta() {
   for (uint32_t id : delta_dirty_) {
     delta_slot_ranges_[id].clear();
     delta_seen_[id] = 0;
   }
   delta_dirty_.clear();
+  delta_external_ranges_.clear();
 }
 
 void UpdateSet::Clear() {
