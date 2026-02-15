@@ -50,9 +50,11 @@ namespace lyra::lowering::ast_to_hir {
 namespace {
 
 // Validates edge trigger expressions (posedge/negedge/edge).
-// Accepts: NamedValue, HierarchicalValue, constant bit-selects on packed types,
-// single-bit struct fields (packed or unpacked), constant-index unpacked array
-// elements (single-bit), single-bit constant range/part selects.
+// Accepts: NamedValue, HierarchicalValue, constant bit/element-selects on
+// packed types (any width), packed struct fields (any width), constant-index
+// unpacked array elements (single-bit), unpacked struct fields (single-bit),
+// constant range/part-selects on packed types (any width).
+// Edge behavior on multi-bit packed sub-expressions samples expr[0] (LSB).
 // Returns true if valid (fall through to create trigger), false if rejected.
 bool ValidateEdgeTriggerExpression(
     const slang::ast::Expression& expr, hir::EventEdgeKind edge,
@@ -70,15 +72,6 @@ bool ValidateEdgeTriggerExpression(
     const auto& select = expr.as<slang::ast::ElementSelectExpression>();
     const auto& base_type = select.value().type->getCanonicalType();
     if (base_type.isIntegral() || base_type.isPackedArray()) {
-      if (expr.type->getBitWidth() != 1) {
-        ctx->sink->Unsupported(
-            span,
-            "edge triggers on multi-bit packed element "
-            "selects are not supported; only single-bit "
-            "selects are allowed",
-            UnsupportedCategory::kFeature);
-        return false;
-      }
       const auto* cv = select.selector().getConstant();
       if (cv != nullptr && !cv->bad() && cv->isInteger()) {
         const auto& idx = cv->integer();
@@ -165,10 +158,11 @@ bool ValidateEdgeTriggerExpression(
           UnsupportedCategory::kFeature);
       return false;
     }
-    if (expr.type->getBitWidth() != 1) {
+    if (base_type.kind == slang::ast::SymbolKind::UnpackedStructType &&
+        expr.type->getBitWidth() != 1) {
       ctx->sink->Unsupported(
           span,
-          "edge triggers on multi-bit struct fields are not "
+          "edge triggers on multi-bit unpacked struct fields are not "
           "supported; only single-bit fields are allowed",
           UnsupportedCategory::kFeature);
       return false;
@@ -185,14 +179,6 @@ bool ValidateEdgeTriggerExpression(
           "edge triggers on non-packed range selects are not "
           "supported; use @(*) or @(signal) for level-sensitive "
           "observation",
-          UnsupportedCategory::kFeature);
-      return false;
-    }
-    if (expr.type->getBitWidth() != 1) {
-      ctx->sink->Unsupported(
-          span,
-          "edge triggers on multi-bit range selects are not "
-          "supported; only single-bit selects are allowed",
           UnsupportedCategory::kFeature);
       return false;
     }
@@ -259,16 +245,31 @@ bool ValidateEdgeTriggerExpression(
           UnsupportedCategory::kFeature);
       return false;
     }
+    if (selection_kind == slang::ast::RangeSelectionKind::IndexedDown) {
+      auto bit_width = static_cast<int64_t>(expr.type->getBitWidth());
+      if (bit_width > 1) {
+        auto lsb_val = *idx_val - (bit_width - 1);
+        if (lsb_val < range.lower()) {
+          ctx->sink->Unsupported(
+              span,
+              "edge trigger part-select LSB is out of range "
+              "for the packed type width",
+              UnsupportedCategory::kFeature);
+          return false;
+        }
+      }
+    }
     return true;
   }
 
   ctx->sink->Unsupported(
       span,
       "edge triggers (@posedge/@negedge) are only supported on plain "
-      "signal variables, constant bit-selects, single-bit struct fields, "
-      "constant-index unpacked array elements (single-bit), and single-bit "
-      "constant part-selects; use @(*) or @(signal) for level-sensitive "
-      "observation",
+      "signal variables, constant bit/element-selects on packed types, "
+      "packed struct fields, single-bit unpacked struct fields, "
+      "constant-index unpacked array elements (single-bit), and "
+      "constant range/part-selects on packed types; use @(*) or @(signal) "
+      "for level-sensitive observation",
       UnsupportedCategory::kFeature);
   return false;
 }

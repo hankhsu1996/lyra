@@ -1,9 +1,11 @@
-feature: edge trigger on single-bit sub-expressions
+feature: edge trigger on packed sub-expressions
 description: >
-  Edge triggers (@posedge/@negedge) on constant bit-selects, single-bit struct
-  fields (packed and unpacked), constant-index unpacked array elements
-  (single-bit), and single-bit constant range/part-selects. The runtime samples
-  the specific bit, not bit 0 of the slot root.
+  Edge triggers (@posedge/@negedge) on constant bit/element-selects on packed
+  types, packed struct fields (any width), constant-index unpacked array elements
+  (single-bit), unpacked struct fields (single-bit), and constant range/part-
+  selects on packed types. For multi-bit packed sub-expressions, edge behavior
+  samples the expression LSB (expr[0]). Level-sensitive waits observe the full
+  expression.
 
 cases:
   - name: posedge_bit3
@@ -409,6 +411,169 @@ cases:
           $finish;
         end
         initial #5 arr[0] = 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_multibit_packed_element
+    description: "@(posedge bus[1]) on packed array with multi-bit elements wakes on element LSB 0->1"
+    sv: |
+      module Test;
+        logic [1:0][7:0] bus = 16'h0000;
+        int result = 0;
+        initial begin
+          @(posedge bus[1]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus[1] = 8'h01;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_multibit_packed_struct_field
+    description: "@(posedge s.b) on multi-bit packed struct field wakes on field LSB 0->1"
+    sv: |
+      module Test;
+        typedef struct packed { logic a; logic [6:0] b; } pkt_t;
+        pkt_t s = 8'h00;
+        int result = 0;
+        initial begin
+          @(posedge s.b);
+          result = 1;
+          $finish;
+        end
+        initial #5 s = 8'h01;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_multibit_range_select
+    description: "@(posedge bus[7:4]) wakes when LSB (bit 4) transitions 0->1"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int result = 0;
+        initial begin
+          @(posedge bus[7:4]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'h10;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: no_false_trigger_multibit_range
+    description: "@(posedge bus[7:4]) must NOT wake when only bus[3:0] changes"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int result = 0;
+        initial begin
+          @(posedge bus[7:4]);
+          result = 1;
+          $finish;
+        end
+        initial begin
+          #5 bus = 8'h0F;
+          #5 bus = 8'h10;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_multibit_part_select_ascending
+    description: "@(posedge bus[3 +: 4]) wakes when LSB (bit 3) transitions 0->1"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int result = 0;
+        initial begin
+          @(posedge bus[3 +: 4]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'h08;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_multibit_part_select_descending
+    description: "@(posedge bus[6 -: 4]) wakes when LSB (bit 3) transitions 0->1"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int result = 0;
+        initial begin
+          @(posedge bus[6 -: 4]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'h08;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: compound_edge_multibit_packed_field
+    description: "@(posedge clk or negedge s.b) with multi-bit packed field in event list"
+    sv: |
+      module Test;
+        typedef struct packed { logic a; logic [6:0] b; } pkt_t;
+        bit clk = 0;
+        pkt_t s = 8'h01;
+        int result = 0;
+        initial begin
+          @(posedge clk or negedge s.b);
+          result = 1;
+          $finish;
+        end
+        initial #5 s = 8'h00;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: level_sensitive_multibit_unpacked_member_not_bit0_only
+    description: "@(s.data) level-sensitive must wake on non-bit0 changes (NOT narrowed to expr[0])"
+    sv: |
+      module Test;
+        typedef struct { logic [7:0] data; logic flag; } s_t;
+        s_t s;
+        int result = 0;
+        initial begin
+          s.data = 0;
+          s.flag = 0;
+          @(s.data);
+          result = 1;
+          $finish;
+        end
+        initial #5 s.data = 8'h80;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: level_sensitive_multibit_unpacked_element_not_bit0_only
+    description: "@(arr[0]) level-sensitive must wake on non-bit0 changes (NOT narrowed to expr[0])"
+    sv: |
+      module Test;
+        logic [7:0] arr [0:3];
+        int result = 0;
+        initial begin
+          arr[0] = 0;
+          @(arr[0]);
+          result = 1;
+          $finish;
+        end
+        initial #5 arr[0] = 8'h80;
       endmodule
     expect:
       variables:

@@ -1,9 +1,10 @@
 feature: edge trigger rejection on unsupported sub-expressions
 description: >
   Edge triggers (@posedge/@negedge) support plain signal variables, constant
-  bit-selects on packed types, single-bit struct fields (packed and unpacked),
-  constant-index unpacked array elements (single-bit), and single-bit constant
-  range/part-selects. Other sub-expressions are rejected at compile time.
+  bit/element-selects on packed types, packed struct fields, single-bit unpacked
+  struct fields, constant-index unpacked array elements (single-bit), and
+  constant range/part-selects on packed types. Other sub-expressions are
+  rejected at compile time.
 
 cases:
   - name: posedge_multibit_unpacked_struct_field
@@ -20,7 +21,7 @@ cases:
     expect:
       error:
         contains:
-          - "edge triggers on multi-bit struct fields are not supported"
+          - "edge triggers on multi-bit unpacked struct fields are not supported"
 
   - name: negedge_multibit_unpacked_array_element
     description: "@(negedge arr[0]) on multi-bit unpacked array element should be rejected"
@@ -83,38 +84,6 @@ cases:
         contains:
           - "edge triggers on dynamic array/queue elements are not supported"
 
-  - name: posedge_part_select
-    description: "@(posedge bus[3:0]) should be rejected -- multi-bit range select"
-    sv: |
-      module Test;
-        logic [7:0] bus;
-        initial begin
-          @(posedge bus[3:0]);
-          $finish;
-        end
-      endmodule
-    expect:
-      error:
-        contains:
-          - "edge triggers on multi-bit range selects are not supported"
-
-  - name: compound_edge_multibit_struct_field
-    description: "@(posedge clk or negedge s.b) rejected -- s.b is multi-bit"
-    sv: |
-      module Test;
-        typedef struct packed { logic x; logic [6:0] b; } pkt_t;
-        bit clk = 0;
-        pkt_t s;
-        initial begin
-          @(posedge clk or negedge s.b);
-          $finish;
-        end
-      endmodule
-    expect:
-      error:
-        contains:
-          - "edge triggers on multi-bit struct fields are not supported"
-
   - name: dynamic_bit_select_edge
     description: "@(posedge bus[i]) with variable index should be rejected"
     sv: |
@@ -146,37 +115,6 @@ cases:
         contains:
           - "edge trigger bit-select index is out of range"
 
-  - name: multi_bit_packed_element_select_edge
-    description: "@(posedge bus[1]) on packed array with multi-bit elements should be rejected"
-    sv: |
-      module Test;
-        logic [1:0][7:0] bus;
-        initial begin
-          @(posedge bus[1]);
-          $finish;
-        end
-      endmodule
-    expect:
-      error:
-        contains:
-          - "edge triggers on multi-bit packed element selects are not supported"
-
-  - name: posedge_packed_struct_multibit_field
-    description: "@(posedge s.b) on multi-bit packed struct field should be rejected"
-    sv: |
-      module Test;
-        typedef struct packed { logic a; logic [6:0] b; } pkt_t;
-        pkt_t s;
-        initial begin
-          @(posedge s.b);
-          $finish;
-        end
-      endmodule
-    expect:
-      error:
-        contains:
-          - "edge triggers on multi-bit struct fields are not supported"
-
   - name: out_of_range_range_select_edge
     description: "@(posedge bus[9:9]) on 8-bit value should be rejected"
     sv: |
@@ -207,6 +145,21 @@ cases:
       error:
         contains:
           - "dynamic indexed part-select edge triggers are not supported"
+
+  - name: out_of_range_descending_part_select_lsb
+    description: "@(posedge bus[1 -: 4]) rejected -- LSB (1-3=-2) is out of range"
+    sv: |
+      module Test;
+        logic [7:0] bus;
+        initial begin
+          @(posedge bus[1 -: 4]);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "edge trigger part-select LSB is out of range"
 
   - name: posedge_plain_signal
     description: "@(posedge clk) on a plain scalar signal should work (positive control)"
