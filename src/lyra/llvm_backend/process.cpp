@@ -573,12 +573,23 @@ void FillLateBoundArray(
             i8_ty, static_cast<uint8_t>(lb.mapping.index_step)),
         f5);
 
-    // padding (field 6) -- skip
+    // index_bit_width (field 6)
+    auto* f6 = builder.CreateStructGEP(lb_type, elem_ptr, 6);
+    builder.CreateStore(llvm::ConstantInt::get(i8_ty, lb.index_bit_width), f6);
 
-    // total_bits (field 7)
+    // index_is_signed (field 7)
     auto* f7 = builder.CreateStructGEP(lb_type, elem_ptr, 7);
     builder.CreateStore(
-        llvm::ConstantInt::get(i32_ty, lb.mapping.total_bits), f7);
+        llvm::ConstantInt::get(
+            i8_ty, static_cast<uint8_t>(lb.index_is_signed ? 1 : 0)),
+        f7);
+
+    // padding (field 8) -- skip
+
+    // total_bits (field 9)
+    auto* f9 = builder.CreateStructGEP(lb_type, elem_ptr, 9);
+    builder.CreateStore(
+        llvm::ConstantInt::get(i32_ty, lb.mapping.total_bits), f9);
 
     ++lb_idx;
   }
@@ -629,11 +640,11 @@ auto LowerWait(
       // LateBoundTriggerRecord layout:
       // {i32 trigger_index, i32 index_slot_id, i32 index_byte_offset,
       //  i32 index_byte_size, i32 index_base, i8 index_step,
-      //  [3 x i8] padding, i32 total_bits}
+      //  i8 index_bit_width, i8 index_is_signed, i8 padding, i32 total_bits}
       static_assert(sizeof(runtime::LateBoundTriggerRecord) == 28);
       auto* lb_type = llvm::StructType::get(
-          llvm_ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i8_ty,
-                     llvm::ArrayType::get(i8_ty, 3), i32_ty});
+          llvm_ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i8_ty, i8_ty,
+                     i8_ty, i8_ty, i32_ty});
       auto* lb_array_type = llvm::ArrayType::get(lb_type, num_late_bound);
       auto* lb_alloca =
           builder.CreateAlloca(lb_array_type, nullptr, "late_bound");

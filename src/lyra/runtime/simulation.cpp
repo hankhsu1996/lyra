@@ -110,7 +110,8 @@ void HandleSuspendRecord(
               .total_bits = lb.total_bits};
           eng.SubscribeRebind(
               handle, resume, lb.index_slot_id, target, mapping,
-              lb.index_byte_offset, lb.index_byte_size);
+              lb.index_byte_offset, lb.index_byte_size, lb.index_bit_width,
+              lb.index_is_signed != 0);
         }
       }
       break;

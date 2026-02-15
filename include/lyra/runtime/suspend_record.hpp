@@ -44,10 +44,12 @@ struct LateBoundTriggerRecord {
   uint32_t trigger_index = 0;
   uint32_t index_slot_id = 0;
   uint32_t index_byte_offset = 0;
-  uint32_t index_byte_size = 0;  // 1/2/4/8
+  uint32_t index_byte_size = 0;
   int32_t index_base = 0;
   int8_t index_step = 1;
-  uint8_t padding[3] = {};
+  uint8_t index_bit_width = 0;  // Actual SV bit width (1-64)
+  uint8_t index_is_signed = 0;  // SV type signedness
+  uint8_t padding = 0;
   uint32_t total_bits = 0;
 };
 

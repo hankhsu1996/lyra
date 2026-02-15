@@ -98,6 +98,14 @@ bool ValidateEdgeTriggerExpression(
       auto selector_kind = select.selector().kind;
       if (selector_kind == ExpressionKind::NamedValue ||
           selector_kind == ExpressionKind::HierarchicalValue) {
+        if (select.selector().type->getBitWidth() > 64) {
+          ctx->sink->Unsupported(
+              span,
+              "dynamic index edge triggers require index width "
+              "<= 64 bits",
+              UnsupportedCategory::kFeature);
+          return false;
+        }
         return true;
       }
       ctx->sink->Unsupported(

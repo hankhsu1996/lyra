@@ -95,7 +95,8 @@ class Engine {
   void SubscribeRebind(
       ProcessHandle handle, ResumePoint resume, SignalId index_signal,
       SubscriptionNode* target_node, BitTargetMapping mapping,
-      uint32_t index_byte_offset, uint32_t index_byte_size);
+      uint32_t index_byte_offset, uint32_t index_byte_size,
+      uint8_t index_bit_width, bool index_is_signed);
 
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.

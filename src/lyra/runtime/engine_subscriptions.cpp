@@ -287,7 +287,8 @@ auto Engine::Subscribe(
 void Engine::SubscribeRebind(
     ProcessHandle handle, ResumePoint resume, SignalId index_signal,
     SubscriptionNode* target_node, BitTargetMapping mapping,
-    uint32_t index_byte_offset, uint32_t index_byte_size) {
+    uint32_t index_byte_offset, uint32_t index_byte_size,
+    uint8_t index_bit_width, bool index_is_signed) {
   if (finished_) return;
 
   if (design_state_base_ == nullptr) {
@@ -334,6 +335,8 @@ void Engine::SubscribeRebind(
   node->index_slot_id = index_signal;
   node->index_byte_offset = index_byte_offset;
   node->index_byte_size = index_byte_size;
+  node->index_bit_width = index_bit_width;
+  node->index_is_signed = index_is_signed;
 
   // Link into rebind waiter list (not normal waiter list).
   auto& sw = signal_waiters_[index_signal];
@@ -353,44 +356,54 @@ void Engine::SubscribeRebind(
 
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+
+  // Initial rebind: validate codegen-computed target against runtime state.
+  // Catches X/Z indices at initial suspend time.
+  RebindSubscription(node);
 }
 
 namespace {
 
-// Read a signed integer value from design state at the given slot/offset/size.
+// Read an integer value from design state at the given slot/offset/size.
+// Masks to actual bit_width and sign-extends if is_signed.
 auto ReadIndexValue(
     const void* design_state_base, const SlotMetaRegistry& registry,
-    uint32_t slot_id, uint32_t byte_offset, uint32_t byte_size) -> int64_t {
+    uint32_t slot_id, uint32_t byte_offset, uint32_t byte_size,
+    uint32_t bit_width, bool is_signed) -> int64_t {
+  if (byte_size == 0 || byte_size > 8) {
+    throw common::InternalError(
+        "ReadIndexValue",
+        std::format("invariant violated: byte_size={}", byte_size));
+  }
   const auto& meta = registry.Get(slot_id);
   const auto* base =
       static_cast<const uint8_t*>(design_state_base) + meta.base_off;
-  std::span bytes(base + byte_offset, byte_size);
-  switch (byte_size) {
-    case 1: {
-      int8_t v = 0;
-      std::memcpy(&v, bytes.data(), 1);
-      return v;
-    }
-    case 2: {
-      int16_t v = 0;
-      std::memcpy(&v, bytes.data(), 2);
-      return v;
-    }
-    case 4: {
-      int32_t v = 0;
-      std::memcpy(&v, bytes.data(), 4);
-      return v;
-    }
-    case 8: {
-      int64_t v = 0;
-      std::memcpy(&v, bytes.data(), 8);
-      return v;
-    }
-    default:
-      throw common::InternalError(
-          "ReadIndexValue",
-          std::format("unsupported index byte_size: {}", byte_size));
+  uint64_t v = 0;
+  std::memcpy(&v, base + byte_offset, byte_size);
+  // Mask to actual bit width.
+  if (bit_width > 0 && bit_width < 64) {
+    v &= (uint64_t{1} << bit_width) - 1;
   }
+  // Sign-extend from bit_width if signed, else already zero-extended.
+  if (is_signed && bit_width > 0 && bit_width < 64) {
+    uint64_t sign_bit = uint64_t{1} << (bit_width - 1);
+    v = (v ^ sign_bit) - sign_bit;
+  }
+  return static_cast<int64_t>(v);
+}
+
+// Check if a 4-state index variable has X/Z bits in its unknown plane.
+auto HasUnknownBits(
+    const void* design_state_base, const SlotMetaRegistry& registry,
+    uint32_t slot_id, uint32_t byte_offset, uint32_t byte_size) -> bool {
+  const auto& meta = registry.Get(slot_id);
+  if (meta.kind != SlotStorageKind::kPacked4) return false;
+  const auto* unk = static_cast<const uint8_t*>(design_state_base) +
+                    meta.base_off + meta.planes.unk_off + byte_offset;
+  for (uint32_t i = 0; i < byte_size; ++i) {
+    if (unk[i] != 0) return true;
+  }
+  return false;
 }
 
 }  // namespace
@@ -399,9 +412,19 @@ void Engine::RebindSubscription(SubscriptionNode* rebind_node) {
   auto* target = rebind_node->rebind_target;
   const auto& mapping = rebind_node->rebind_mapping;
 
+  // Check for X/Z bits in the index variable. If present, deactivate the
+  // edge subscription. When X/Z clears, the next rebind will re-activate.
+  if (HasUnknownBits(
+          design_state_base_, slot_meta_registry_, rebind_node->index_slot_id,
+          rebind_node->index_byte_offset, rebind_node->index_byte_size)) {
+    target->is_active = false;
+    return;
+  }
+
   int64_t index_val = ReadIndexValue(
       design_state_base_, slot_meta_registry_, rebind_node->index_slot_id,
-      rebind_node->index_byte_offset, rebind_node->index_byte_size);
+      rebind_node->index_byte_offset, rebind_node->index_byte_size,
+      rebind_node->index_bit_width, rebind_node->index_is_signed);
 
   int64_t logical_offset =
       (index_val - mapping.index_base) * mapping.index_step;

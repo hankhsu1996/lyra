@@ -67,3 +67,19 @@ cases:
       error:
         contains:
           - "edge triggers on dynamic array/queue elements are not supported"
+
+  - name: wide_index_rejected
+    description: "@(posedge bus[i]) with 128-bit index should be rejected"
+    sv: |
+      module Test;
+        logic [255:0] bus;
+        logic [127:0] i = 0;
+        initial begin
+          @(posedge bus[i]);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "dynamic index edge triggers require index width <= 64 bits"

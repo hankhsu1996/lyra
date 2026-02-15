@@ -191,3 +191,39 @@ cases:
     expect:
       variables:
         result: 1
+
+  - name: odd_width_index
+    description: "24-bit index (non-power-of-2 byte_size=3) works correctly"
+    sv: |
+      module Test;
+        logic [31:0] bus = 0;
+        logic [23:0] i = 24'd3;
+        int result = 0;
+        initial begin
+          @(posedge bus[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 32'b0000_0000_0000_0000_0000_0000_0000_1000;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: unsigned_high_bit_index
+    description: "unsigned 8-bit index >= 128 is not treated as negative"
+    sv: |
+      module Test;
+        bit [255:0] bus = 0;
+        bit [7:0] i = 8'd200;
+        int result = 0;
+        initial begin
+          @(posedge bus[i]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus[200] = 1'b1;
+      endmodule
+    expect:
+      variables:
+        result: 1
