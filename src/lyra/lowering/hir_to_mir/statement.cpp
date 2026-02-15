@@ -1388,6 +1388,7 @@ auto LowerEventWait(
   for (const auto& hir_trigger : data.triggers) {
     const auto& hir_expr = (*ctx.hir_arena)[hir_trigger.signal];
     mir::PlaceId place_id;
+    std::optional<mir::LateBoundIndex> late_bound_info;
 
     if (hir_expr.kind == hir::ExpressionKind::kPackedElementSelect ||
         hir_expr.kind == hir::ExpressionKind::kBitSelect) {
@@ -1464,6 +1465,81 @@ auto LowerEventWait(
       uint32_t proj_width = (hir_trigger.edge != hir::EventEdgeKind::kNone)
                                 ? 1
                                 : element_bit_width;
+
+      // Check if index is dynamic (not a constant) for late-bound edge
+      // triggers. The HIR index expression determines whether we need
+      // rebinding.
+      const auto& index_expr = (*ctx.hir_arena)[index_id];
+      bool is_dynamic_index =
+          (index_expr.kind != hir::ExpressionKind::kConstant);
+
+      if (is_dynamic_index && hir_trigger.edge != hir::EventEdgeKind::kNone) {
+        // Compute BitTargetMapping from the base array's declared range.
+        runtime::BitTargetMapping mapping;
+        uint32_t total_bits = PackedBitWidth(base_type, *ctx.type_arena);
+
+        if (base_type.Kind() == TypeKind::kPackedArray) {
+          const auto& range = base_type.AsPackedArray().range;
+          if (range.IsDescending()) {
+            mapping.index_base = range.Lower();
+            mapping.index_step = 1;
+          } else {
+            mapping.index_base = range.Upper();
+            mapping.index_step = -1;
+          }
+        } else {
+          mapping.index_base = 0;
+          mapping.index_step = 1;
+        }
+        mapping.total_bits = total_bits;
+
+        // Default: local/temp index (no rebinding needed at runtime).
+        // kInvalidSlotId signals codegen to use the dynamic path but tells
+        // the runtime not to create a rebind subscription.
+        late_bound_info = mir::LateBoundIndex{
+            .index_slot = mir::kInvalidSlotId,
+            .index_byte_offset = 0,
+            .index_byte_size = 0,
+            .mapping = mapping};
+
+        // Override with design-state slot info if applicable.
+        // Design-state indices get rebind subscriptions at runtime.
+        if (index_expr.kind == hir::ExpressionKind::kNameRef) {
+          const auto& name_data =
+              std::get<hir::NameRefExpressionData>(index_expr.data);
+          auto index_place_id = ctx.LookupPlace(name_data.symbol);
+          const auto& index_place = (*ctx.mir_arena)[index_place_id];
+          if (index_place.root.kind == mir::PlaceRoot::Kind::kDesign) {
+            auto idx_slot =
+                mir::SlotId{static_cast<uint32_t>(index_place.root.id)};
+            const Type& idx_type = (*ctx.type_arena)[index_expr.type];
+            uint32_t idx_bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
+            uint32_t idx_byte_size = (idx_bit_width + 7) / 8;
+            late_bound_info = mir::LateBoundIndex{
+                .index_slot = idx_slot,
+                .index_byte_offset = 0,
+                .index_byte_size = idx_byte_size,
+                .mapping = mapping};
+          }
+        } else if (index_expr.kind == hir::ExpressionKind::kHierarchicalRef) {
+          const auto& href_data =
+              std::get<hir::HierarchicalRefExpressionData>(index_expr.data);
+          auto index_place_id = ctx.LookupPlace(href_data.target);
+          const auto& index_place = (*ctx.mir_arena)[index_place_id];
+          if (index_place.root.kind == mir::PlaceRoot::Kind::kDesign) {
+            auto idx_slot =
+                mir::SlotId{static_cast<uint32_t>(index_place.root.id)};
+            const Type& idx_type = (*ctx.type_arena)[index_expr.type];
+            uint32_t idx_bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
+            uint32_t idx_byte_size = (idx_bit_width + 7) / 8;
+            late_bound_info = mir::LateBoundIndex{
+                .index_slot = idx_slot,
+                .index_byte_offset = 0,
+                .index_byte_size = idx_byte_size,
+                .mapping = mapping};
+          }
+        }
+      }
 
       place_id = ctx.mir_arena->DerivePlace(
           base_place_id, mir::Projection{
@@ -1680,11 +1756,13 @@ auto LowerEventWait(
       triggers.push_back(
           {.signal = slot_id,
            .edge = common::EdgeKind::kPosedge,
-           .observed_place = obs_place});
+           .observed_place = obs_place,
+           .late_bound = late_bound_info});
       triggers.push_back(
           {.signal = slot_id,
            .edge = common::EdgeKind::kNegedge,
-           .observed_place = obs_place});
+           .observed_place = obs_place,
+           .late_bound = late_bound_info});
     } else {
       common::EdgeKind edge = common::EdgeKind::kAnyChange;
       switch (hir_trigger.edge) {
@@ -1701,7 +1779,10 @@ auto LowerEventWait(
           break;  // Already handled above
       }
       triggers.push_back(
-          {.signal = slot_id, .edge = edge, .observed_place = obs_place});
+          {.signal = slot_id,
+           .edge = edge,
+           .observed_place = obs_place,
+           .late_bound = late_bound_info});
     }
   }
 

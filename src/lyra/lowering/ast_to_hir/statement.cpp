@@ -93,10 +93,17 @@ bool ValidateEdgeTriggerExpression(
             "for the packed type width");
         return false;
       }
+      // Dynamic bit-select: accept if the index is a single variable.
+      // Compound expressions (i+j, func(x)) are rejected (Phase 1).
+      auto selector_kind = select.selector().kind;
+      if (selector_kind == ExpressionKind::NamedValue ||
+          selector_kind == ExpressionKind::HierarchicalValue) {
+        return true;
+      }
       ctx->sink->Unsupported(
           span,
-          "dynamic bit-select edge triggers are not "
-          "supported; use a constant index",
+          "dynamic index edge triggers currently require the index to be a "
+          "single variable",
           UnsupportedCategory::kFeature);
       return false;
     }

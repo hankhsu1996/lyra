@@ -36,6 +36,7 @@ auto Engine::AllocNode() -> SubscriptionNode* {
 void Engine::FreeNode(SubscriptionNode* node) {
   node->snapshot_heap.clear();
   node->snapshot_heap.shrink_to_fit();
+  node->rebind_target = nullptr;
   free_list_.push_back(node);
 }
 
@@ -95,6 +96,10 @@ void Engine::PrintTopWaiters(size_t count) {
     for (auto* node = sw.head; node != nullptr; node = node->signal_next) {
       ++n;
     }
+    for (auto* node = sw.rebind_head; node != nullptr;
+         node = node->signal_next) {
+      ++n;
+    }
     waiter_counts.emplace_back(signal, n);
   }
 
@@ -126,18 +131,23 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
     if (sig_it != signal_waiters_.end()) {
       auto& sw = sig_it->second;
 
+      // Rebind nodes use rebind_head/rebind_tail; normal nodes use head/tail.
+      bool is_rebind = (node->rebind_target != nullptr);
+      auto*& list_head = is_rebind ? sw.rebind_head : sw.head;
+      auto*& list_tail = is_rebind ? sw.rebind_tail : sw.tail;
+
       if (node->signal_prev != nullptr) {
         node->signal_prev->signal_next = node->signal_next;
       } else {
-        sw.head = node->signal_next;
+        list_head = node->signal_next;
       }
       if (node->signal_next != nullptr) {
         node->signal_next->signal_prev = node->signal_prev;
       } else {
-        sw.tail = node->signal_prev;
+        list_tail = node->signal_prev;
       }
 
-      if (sw.head == nullptr) {
+      if (sw.head == nullptr && sw.rebind_head == nullptr) {
         signal_waiters_.erase(sig_it);
       }
     }
@@ -156,9 +166,9 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
   proc_it->second.subscription_count = 0;
 }
 
-void Engine::Subscribe(
+auto Engine::Subscribe(
     ProcessHandle handle, ResumePoint resume, SignalId signal,
-    common::EdgeKind edge) {
+    common::EdgeKind edge) -> SubscriptionNode* {
   // Lifecycle invariant: Subscribe() only called during Run(), after
   // SetDesignStateBase() and InitSlotMeta().
   if (design_state_base_ == nullptr) {
@@ -173,15 +183,15 @@ void Engine::Subscribe(
   const auto& meta = slot_meta_registry_.Get(signal);
   uint32_t obs_size =
       (edge == common::EdgeKind::kAnyChange) ? meta.total_bytes : 1;
-  Subscribe(handle, resume, signal, edge, 0, obs_size);
+  return Subscribe(handle, resume, signal, edge, 0, obs_size);
 }
 
-void Engine::Subscribe(
+auto Engine::Subscribe(
     ProcessHandle handle, ResumePoint resume, SignalId signal,
     common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
-    uint8_t bit_index) {
+    uint8_t bit_index) -> SubscriptionNode* {
   if (finished_) {
-    return;
+    return nullptr;
   }
 
   // Lifecycle invariant: Subscribe() only called during Run(), after
@@ -198,7 +208,7 @@ void Engine::Subscribe(
   auto& proc_state = process_states_[handle];
 
   if (!CheckSubscriptionLimits(proc_state)) {
-    return;
+    return nullptr;
   }
 
   const auto& meta = slot_meta_registry_.Get(signal);
@@ -249,6 +259,10 @@ void Engine::Subscribe(
     node->bit_index = bit_index;
     node->last_bit =
         (design_state[meta.base_off + byte_offset] >> bit_index) & 1;
+    // Save full byte for same-delta rebinding: if a rebind moves the
+    // subscription to a different bit in the same byte, we need the old
+    // byte to extract the correct old bit value for edge detection.
+    node->snapshot_inline[0] = design_state[meta.base_off + byte_offset];
   }
 
   auto& sw = signal_waiters_[signal];
@@ -267,6 +281,157 @@ void Engine::Subscribe(
 
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  return node;
+}
+
+void Engine::SubscribeRebind(
+    ProcessHandle handle, ResumePoint resume, SignalId index_signal,
+    SubscriptionNode* target_node, BitTargetMapping mapping,
+    uint32_t index_byte_offset, uint32_t index_byte_size) {
+  if (finished_) return;
+
+  if (design_state_base_ == nullptr) {
+    throw common::InternalError(
+        "Engine::SubscribeRebind", "SubscribeRebind before SetDesignStateBase");
+  }
+  if (!slot_meta_registry_.IsPopulated()) {
+    throw common::InternalError(
+        "Engine::SubscribeRebind", "SubscribeRebind before InitSlotMeta");
+  }
+
+  auto& proc_state = process_states_[handle];
+  if (!CheckSubscriptionLimits(proc_state)) return;
+
+  const auto& meta = slot_meta_registry_.Get(index_signal);
+
+  auto* node = AllocNode();
+  *node = SubscriptionNode{};
+  node->handle = handle;
+  node->resume = resume;
+  node->edge = common::EdgeKind::kAnyChange;
+  node->signal = index_signal;
+
+  // AnyChange on full index slot for rebind detection.
+  node->byte_offset = 0;
+  node->byte_size = meta.total_bytes;
+  node->bit_index = 0;
+
+  // Capture initial snapshot.
+  std::span design_state(
+      static_cast<const uint8_t*>(design_state_base_),
+      slot_meta_registry_.MaxExtent());
+  const auto* src = &design_state[meta.base_off];
+  if (meta.total_bytes <= SubscriptionNode::kInlineSnapshotCap) {
+    std::memcpy(node->snapshot_inline.data(), src, meta.total_bytes);
+  } else {
+    node->snapshot_heap.resize(meta.total_bytes);
+    std::memcpy(node->snapshot_heap.data(), src, meta.total_bytes);
+  }
+
+  // Set rebind fields.
+  node->rebind_target = target_node;
+  node->rebind_mapping = mapping;
+  node->index_slot_id = index_signal;
+  node->index_byte_offset = index_byte_offset;
+  node->index_byte_size = index_byte_size;
+
+  // Link into rebind waiter list (not normal waiter list).
+  auto& sw = signal_waiters_[index_signal];
+  node->signal_next = sw.rebind_head;
+  node->signal_prev = nullptr;
+  if (sw.rebind_head != nullptr) {
+    sw.rebind_head->signal_prev = node;
+  }
+  sw.rebind_head = node;
+  if (sw.rebind_tail == nullptr) {
+    sw.rebind_tail = node;
+  }
+
+  // Link into process list.
+  node->process_next = proc_state.subscription_head;
+  proc_state.subscription_head = node;
+
+  ++proc_state.subscription_count;
+  ++live_subscription_count_;
+}
+
+namespace {
+
+// Read a signed integer value from design state at the given slot/offset/size.
+auto ReadIndexValue(
+    const void* design_state_base, const SlotMetaRegistry& registry,
+    uint32_t slot_id, uint32_t byte_offset, uint32_t byte_size) -> int64_t {
+  const auto& meta = registry.Get(slot_id);
+  const auto* base =
+      static_cast<const uint8_t*>(design_state_base) + meta.base_off;
+  std::span bytes(base + byte_offset, byte_size);
+  switch (byte_size) {
+    case 1: {
+      int8_t v = 0;
+      std::memcpy(&v, bytes.data(), 1);
+      return v;
+    }
+    case 2: {
+      int16_t v = 0;
+      std::memcpy(&v, bytes.data(), 2);
+      return v;
+    }
+    case 4: {
+      int32_t v = 0;
+      std::memcpy(&v, bytes.data(), 4);
+      return v;
+    }
+    case 8: {
+      int64_t v = 0;
+      std::memcpy(&v, bytes.data(), 8);
+      return v;
+    }
+    default:
+      throw common::InternalError(
+          "ReadIndexValue",
+          std::format("unsupported index byte_size: {}", byte_size));
+  }
+}
+
+}  // namespace
+
+void Engine::RebindSubscription(SubscriptionNode* rebind_node) {
+  auto* target = rebind_node->rebind_target;
+  const auto& mapping = rebind_node->rebind_mapping;
+
+  int64_t index_val = ReadIndexValue(
+      design_state_base_, slot_meta_registry_, rebind_node->index_slot_id,
+      rebind_node->index_byte_offset, rebind_node->index_byte_size);
+
+  int64_t logical_offset =
+      (index_val - mapping.index_base) * mapping.index_step;
+
+  if (logical_offset < 0 ||
+      static_cast<uint64_t>(logical_offset) >= mapping.total_bits) {
+    target->is_active = false;
+    return;
+  }
+
+  target->is_active = true;
+  auto bit = static_cast<uint64_t>(logical_offset);
+  uint32_t new_byte_offset = static_cast<uint32_t>(bit / 8);
+  uint8_t new_bit_index = static_cast<uint8_t>(bit % 8);
+
+  // Get old bit value at the new position for correct edge detection.
+  // The edge sub's snapshot_inline[0] has the byte from subscribe time
+  // or last flush. If the new position is in the same byte, extract the
+  // old bit from the snapshot. Otherwise, use current design state.
+  const auto& meta = slot_meta_registry_.Get(target->signal);
+  const auto* base = static_cast<const uint8_t*>(design_state_base_);
+  if (new_byte_offset == target->byte_offset) {
+    target->last_bit = (target->snapshot_inline[0] >> new_bit_index) & 1;
+  } else {
+    target->last_bit =
+        (base[meta.base_off + new_byte_offset] >> new_bit_index) & 1;
+    target->snapshot_inline[0] = base[meta.base_off + new_byte_offset];
+  }
+  target->byte_offset = new_byte_offset;
+  target->bit_index = new_bit_index;
 }
 
 void Engine::FlushSignalUpdates() {
@@ -291,6 +456,28 @@ void Engine::FlushSignalUpdates() {
       static_cast<const uint8_t*>(design_state_base_),
       slot_meta_registry_.MaxExtent());
 
+  // Pass 1: Rebind phase -- update late-bound targets before edge checks.
+  // When an index variable changes, we re-read it and recompute the edge
+  // subscription's byte_offset/bit_index via the affine mapping.
+  for (uint32_t slot_id : newly_dirty) {
+    auto it = signal_waiters_.find(slot_id);
+    if (it == signal_waiters_.end()) continue;
+
+    const auto& meta = slot_meta_registry_.Get(slot_id);
+
+    for (auto* node = it->second.rebind_head; node != nullptr;) {
+      auto* next = node->signal_next;
+      const auto* current = &design_state[meta.base_off + node->byte_offset];
+      auto* snapshot = node->SnapshotData();
+      if (std::memcmp(current, snapshot, node->byte_size) != 0) {
+        std::memcpy(snapshot, current, node->byte_size);
+        RebindSubscription(node);
+      }
+      node = next;
+    }
+  }
+
+  // Pass 2: Edge/wake phase -- existing logic, with is_active check.
   for (uint32_t slot_id : newly_dirty) {
     auto it = signal_waiters_.find(slot_id);
     if (it == signal_waiters_.end()) continue;
@@ -300,6 +487,11 @@ void Engine::FlushSignalUpdates() {
 
     for (auto* node = it->second.head; node != nullptr;) {
       auto* next = node->signal_next;
+
+      if (!node->is_active) {
+        node = next;
+        continue;
+      }
 
       // Range intersection filter: skip if no dirty range overlaps observation.
       if (!RangesOverlap(dirty_ranges, node->byte_offset, node->byte_size)) {
@@ -318,15 +510,15 @@ void Engine::FlushSignalUpdates() {
         }
       } else {
         // Per-bit comparison for kPosedge/kNegedge.
-        uint8_t current_bit =
-            (design_state[meta.base_off + node->byte_offset] >>
-             node->bit_index) &
-            1;
+        uint8_t current_byte = design_state[meta.base_off + node->byte_offset];
+        uint8_t current_bit = (current_byte >> node->bit_index) & 1;
         if (node->last_bit != current_bit) {
           should_wake =
               EvaluateEdge(node->edge, node->last_bit != 0, current_bit != 0);
           node->last_bit = current_bit;
         }
+        // Update byte snapshot for potential rebinding.
+        node->snapshot_inline[0] = current_byte;
       }
 
       if (should_wake) {

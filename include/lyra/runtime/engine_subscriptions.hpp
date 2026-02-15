@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/runtime/engine_types.hpp"
 
@@ -48,7 +49,24 @@ struct SubscriptionNode {
                                            : snapshot_heap.data();
   }
 
-  // Links for signal's waiter list (doubly linked for O(1) removal)
+  // Edge subscription activation state.
+  // When false, FlushSignalUpdates skips edge evaluation entirely.
+  // Set to false when rebind detects OOB or X index.
+  bool is_active = true;
+
+  // Late-bound rebinding (only set on rebind subscription nodes).
+  // rebind_target points to the edge subscription that this rebind controls.
+  // Pointer lifetime: both nodes belong to the same process and are removed
+  // atomically by ClearProcessSubscriptions.
+  SubscriptionNode* rebind_target = nullptr;
+  BitTargetMapping rebind_mapping = {};
+  uint32_t index_slot_id = 0;
+  uint32_t index_byte_offset = 0;
+  uint32_t index_byte_size = 0;  // 1/2/4/8
+
+  // Links for signal's waiter list (doubly linked for O(1) removal).
+  // Normal subscriptions use head/tail; rebind subscriptions use
+  // rebind_head/rebind_tail. Distinguish by checking rebind_target != nullptr.
   SubscriptionNode* signal_prev = nullptr;
   SubscriptionNode* signal_next = nullptr;
 
@@ -58,9 +76,13 @@ struct SubscriptionNode {
 };
 
 // Signal's waiter list head/tail pointers.
+// Normal subscriptions are linked via head/tail.
+// Rebind subscriptions are linked via rebind_head/rebind_tail (separate list).
 struct SignalWaiters {
   SubscriptionNode* head = nullptr;
   SubscriptionNode* tail = nullptr;
+  SubscriptionNode* rebind_head = nullptr;
+  SubscriptionNode* rebind_tail = nullptr;
 };
 
 // Per-process state (keyed by ProcessHandle).

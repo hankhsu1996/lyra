@@ -1,24 +1,25 @@
 feature: edge trigger rejection on unsupported sub-expressions
 description: >
-  Edge triggers on dynamic selects, dynamic array/queue elements, and dynamic
-  unpacked array indices are rejected at compile time.
+  Edge triggers on compound-expression indices, dynamic array/queue elements,
+  and dynamic unpacked array indices are rejected at compile time.
 
 cases:
-  - name: dynamic_bit_select_edge
-    description: "@(posedge bus[i]) with variable index should be rejected"
+  - name: compound_index_rejected
+    description: "@(posedge bus[i+j]) with compound expression should be rejected"
     sv: |
       module Test;
         logic [7:0] bus;
-        int i = 3;
+        int i = 1;
+        int j = 2;
         initial begin
-          @(posedge bus[i]);
+          @(posedge bus[i+j]);
           $finish;
         end
       endmodule
     expect:
       error:
         contains:
-          - "dynamic bit-select edge triggers are not supported"
+          - "dynamic index edge triggers currently require the index to be a single variable"
 
   - name: dynamic_unpacked_array_edge
     description: "@(posedge arr[i]) with dynamic index on unpacked array should be rejected"

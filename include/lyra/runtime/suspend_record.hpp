@@ -38,6 +38,26 @@ static_assert(
     offsetof(WaitTriggerRecord, byte_size) == 12,
     "WaitTriggerRecord byte_size offset mismatch");
 
+// Late-bound trigger record for dynamic-index edge triggers.
+// Pairs with a WaitTriggerRecord to create a rebind subscription at runtime.
+struct LateBoundTriggerRecord {
+  uint32_t trigger_index = 0;
+  uint32_t index_slot_id = 0;
+  uint32_t index_byte_offset = 0;
+  uint32_t index_byte_size = 0;  // 1/2/4/8
+  int32_t index_base = 0;
+  int8_t index_step = 1;
+  uint8_t padding[3] = {};
+  uint32_t total_bits = 0;
+};
+
+static_assert(
+    sizeof(LateBoundTriggerRecord) == 28,
+    "LateBoundTriggerRecord size mismatch");
+static_assert(
+    alignof(LateBoundTriggerRecord) == 4,
+    "LateBoundTriggerRecord alignment mismatch");
+
 // Performance knob: triggers <= this use inline storage (no heap).
 // NOT a hard limit - larger lists use heap allocation.
 static constexpr uint32_t kInlineTriggerCapacity = 32;
@@ -61,6 +81,8 @@ struct SuspendRecord {
   uint32_t resume_block = 0;                  // For kDelay, kWait, kRepeat
   uint32_t num_triggers = 0;                  // For kWait
   WaitTriggerRecord* triggers_ptr = nullptr;  // Single source of truth
+  uint32_t num_late_bound = 0;                // For kWait (late-bound triggers)
+  LateBoundTriggerRecord* late_bound_ptr = nullptr;
   std::array<WaitTriggerRecord, kInlineTriggerCapacity> inline_triggers = {};
 };
 

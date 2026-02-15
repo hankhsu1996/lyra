@@ -87,6 +87,7 @@ class Context {
   [[nodiscard]] auto GetLyraPlusargsValueString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSuspendDelay() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSuspendWait() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraSuspendWaitWithLateBound() -> llvm::Function*;
   [[nodiscard]] auto GetLyraSuspendRepeat() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAllocTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFreeTriggers() -> llvm::Function*;
@@ -420,6 +421,7 @@ class Context {
   llvm::Function* lyra_plusargs_value_string_ = nullptr;
   llvm::Function* lyra_suspend_delay_ = nullptr;
   llvm::Function* lyra_suspend_wait_ = nullptr;
+  llvm::Function* lyra_suspend_wait_with_late_bound_ = nullptr;
   llvm::Function* lyra_suspend_repeat_ = nullptr;
   llvm::Function* lyra_alloc_triggers_ = nullptr;
   llvm::Function* lyra_free_triggers_ = nullptr;

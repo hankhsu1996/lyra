@@ -59,21 +59,58 @@ void HandleSuspendRecord(
       break;
 
     case lyra::runtime::SuspendTag::kWait: {
-      // Debug invariant: triggers_ptr must be valid if num_triggers > 0
       if (suspend->num_triggers > 0 && suspend->triggers_ptr == nullptr) {
         throw lyra::common::InternalError(
             "HandleSuspendRecord",
             "triggers_ptr null with non-zero num_triggers");
       }
       auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
-      for (const auto& trigger : triggers) {
+
+      // Collect created subscription nodes for late-bound rebinding.
+      std::vector<lyra::runtime::SubscriptionNode*> edge_nodes;
+      bool has_late_bound =
+          suspend->num_late_bound > 0 && suspend->late_bound_ptr != nullptr;
+      if (has_late_bound) {
+        edge_nodes.resize(suspend->num_triggers, nullptr);
+      }
+
+      for (uint32_t i = 0; i < triggers.size(); ++i) {
+        const auto& trigger = triggers[i];
         auto edge = static_cast<lyra::common::EdgeKind>(trigger.edge);
-        if (trigger.byte_size > 0) {
-          eng.Subscribe(
+        lyra::runtime::SubscriptionNode* node = nullptr;
+        if (trigger.byte_size == UINT32_MAX) {
+          // OOB dynamic edge trigger: UINT32_MAX is the codegen sentinel.
+          // Create a valid but inactive subscription at bit 0.
+          node =
+              eng.Subscribe(handle, resume, trigger.signal_id, edge, 0, 1, 0);
+          if (node != nullptr) node->is_active = false;
+        } else if (trigger.byte_size > 0) {
+          node = eng.Subscribe(
               handle, resume, trigger.signal_id, edge, trigger.byte_offset,
               trigger.byte_size, trigger.bit_index);
         } else {
-          eng.Subscribe(handle, resume, trigger.signal_id, edge);
+          node = eng.Subscribe(handle, resume, trigger.signal_id, edge);
+        }
+        if (has_late_bound) {
+          edge_nodes[i] = node;
+        }
+      }
+
+      // Create rebind subscriptions for late-bound triggers.
+      if (has_late_bound) {
+        auto late_bounds =
+            std::span(suspend->late_bound_ptr, suspend->num_late_bound);
+        for (const auto& lb : late_bounds) {
+          if (lb.trigger_index >= suspend->num_triggers) continue;
+          auto* target = edge_nodes[lb.trigger_index];
+          if (target == nullptr) continue;
+          lyra::runtime::BitTargetMapping mapping{
+              .index_base = lb.index_base,
+              .index_step = lb.index_step,
+              .total_bits = lb.total_bits};
+          eng.SubscribeRebind(
+              handle, resume, lb.index_slot_id, target, mapping,
+              lb.index_byte_offset, lb.index_byte_size);
         }
       }
       break;
@@ -96,6 +133,12 @@ void ReleaseTriggerOverflow(lyra::runtime::SuspendRecord* suspend) {
   }
   suspend->num_triggers = 0;
   suspend->triggers_ptr = nullptr;
+  if (suspend->late_bound_ptr != nullptr) {
+    delete[] suspend
+        ->late_bound_ptr;  // NOLINT(cppcoreguidelines-owning-memory)
+  }
+  suspend->num_late_bound = 0;
+  suspend->late_bound_ptr = nullptr;
 }
 
 void SuspendReset(lyra::runtime::SuspendRecord* suspend) {
@@ -148,6 +191,40 @@ extern "C" void LyraSuspendWait(
     std::memcpy(
         suspend->triggers_ptr, triggers,
         num_triggers * sizeof(lyra::runtime::WaitTriggerRecord));
+  }
+}
+
+extern "C" void LyraSuspendWaitWithLateBound(
+    void* state, uint32_t resume_block, const void* triggers,
+    uint32_t num_triggers, const void* late_bound, uint32_t num_late_bound) {
+  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+  ReleaseTriggerOverflow(suspend);
+
+  suspend->tag = lyra::runtime::SuspendTag::kWait;
+  suspend->resume_block = resume_block;
+  suspend->num_triggers = num_triggers;
+
+  if (num_triggers <= lyra::runtime::kInlineTriggerCapacity) {
+    suspend->triggers_ptr = suspend->inline_triggers.data();
+  } else {
+    suspend->triggers_ptr = new lyra::runtime::WaitTriggerRecord[num_triggers];
+  }
+
+  if (num_triggers > 0) {
+    std::memcpy(
+        suspend->triggers_ptr, triggers,
+        num_triggers * sizeof(lyra::runtime::WaitTriggerRecord));
+  }
+
+  suspend->num_late_bound = num_late_bound;
+  if (num_late_bound > 0 && late_bound != nullptr) {
+    suspend->late_bound_ptr =
+        new lyra::runtime::LateBoundTriggerRecord[num_late_bound];
+    std::memcpy(
+        suspend->late_bound_ptr, late_bound,
+        num_late_bound * sizeof(lyra::runtime::LateBoundTriggerRecord));
+  } else {
+    suspend->late_bound_ptr = nullptr;
   }
 }
 

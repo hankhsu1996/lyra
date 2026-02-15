@@ -415,6 +415,71 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
   return {};
 }
 
+// Emit IR to compute dynamic byte_offset/bit_index from the observed_place's
+// storage offset. Uses the already-lowered MIR storage_offset operand and
+// emits bounds checking. Stores results into the WaitTriggerRecord fields.
+// On OOB, byte_size=0 is stored as a sentinel for the runtime.
+void EmitDynamicBitTarget(
+    Context& context, llvm::Value* elem_ptr, llvm::Type* trigger_type,
+    const mir::WaitTrigger& trigger) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+
+  // Get storage bit offset from the observed_place's BitRangeProjection.
+  const auto& arena = context.GetMirArena();
+  const auto& place = arena[*trigger.observed_place];
+  const auto& last_proj = place.projections.back();
+  const auto& bit_range = std::get<mir::BitRangeProjection>(last_proj.info);
+
+  // Lower the bit_offset operand to get the LLVM Value.
+  auto offset_or_err = LowerOperand(context, bit_range.bit_offset);
+  if (!offset_or_err) {
+    throw common::InternalError(
+        "EmitDynamicBitTarget", "failed to lower storage offset operand");
+  }
+  auto* offset_val = *offset_or_err;
+  auto* offset_i64 =
+      builder.CreateSExtOrTrunc(offset_val, i64_ty, "idx.offset");
+
+  // Bounds check: 0 <= offset < total_bits.
+  const auto& lb = *trigger.late_bound;
+  auto* total_bits = llvm::ConstantInt::get(i64_ty, lb.mapping.total_bits);
+  auto* zero_64 = llvm::ConstantInt::get(i64_ty, 0);
+  auto* ge_zero = builder.CreateICmpSGE(offset_i64, zero_64, "idx.ge0");
+  auto* lt_total =
+      builder.CreateICmpSLT(offset_i64, total_bits, "idx.lt_total");
+  auto* in_bounds = builder.CreateAnd(ge_zero, lt_total, "idx.inbounds");
+
+  // Compute byte_offset and bit_index.
+  auto* eight = llvm::ConstantInt::get(i64_ty, 8);
+  auto* byte_off_64 = builder.CreateSDiv(offset_i64, eight, "idx.byteoff");
+  auto* bit_idx_64 = builder.CreateSRem(offset_i64, eight, "idx.bitidx");
+  auto* byte_off_32 = builder.CreateTrunc(byte_off_64, i32_ty);
+  auto* bit_idx_8 = builder.CreateTrunc(bit_idx_64, i8_ty);
+
+  // Select: in-bounds -> computed values, OOB -> UINT32_MAX sentinel.
+  // byte_size=0 already means "full slot" in the ABI, so we use UINT32_MAX
+  // as a distinct OOB sentinel that the runtime recognizes.
+  auto* zero_32 = llvm::ConstantInt::get(i32_ty, 0);
+  auto* zero_8 = llvm::ConstantInt::get(i8_ty, 0);
+  auto* one_32 = llvm::ConstantInt::get(i32_ty, 1);
+  auto* oob_sentinel = llvm::ConstantInt::get(i32_ty, UINT32_MAX);
+  auto* sel_byte_off = builder.CreateSelect(in_bounds, byte_off_32, zero_32);
+  auto* sel_bit_idx = builder.CreateSelect(in_bounds, bit_idx_8, zero_8);
+  auto* sel_byte_size = builder.CreateSelect(in_bounds, one_32, oob_sentinel);
+
+  // Store into WaitTriggerRecord fields.
+  auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
+  builder.CreateStore(sel_bit_idx, bit_idx_ptr);
+  auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+  builder.CreateStore(sel_byte_off, offset_ptr);
+  auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
+  builder.CreateStore(sel_byte_size, size_ptr);
+}
+
 // Helper to fill trigger array at a given base pointer
 void FillTriggerArray(
     Context& context, llvm::Value* base_ptr, llvm::Type* trigger_type,
@@ -438,17 +503,84 @@ void FillTriggerArray(
         llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(triggers[i].edge)),
         edge_ptr);
 
-    // Write bit_index (field 2), byte_offset (field 4), byte_size (field 5)
-    auto range = ResolveObservationRange(context, triggers[i]);
-    auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
+    if (triggers[i].late_bound) {
+      // Dynamic bit-select: emit IR to compute target at suspend time.
+      EmitDynamicBitTarget(context, elem_ptr, trigger_type, triggers[i]);
+    } else {
+      // Static path: resolve observation range at compile time.
+      auto range = ResolveObservationRange(context, triggers[i]);
+      auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
+      builder.CreateStore(
+          llvm::ConstantInt::get(i8_ty, range.bit_index), bit_idx_ptr);
+      auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+      builder.CreateStore(
+          llvm::ConstantInt::get(i32_ty, range.byte_offset), offset_ptr);
+      auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
+      builder.CreateStore(
+          llvm::ConstantInt::get(i32_ty, range.byte_size), size_ptr);
+    }
+  }
+}
+
+// Fill late-bound trigger record array for dynamic-index edge triggers.
+void FillLateBoundArray(
+    Context& context, llvm::Value* base_ptr, llvm::Type* lb_type,
+    llvm::Type* array_type, const std::vector<mir::WaitTrigger>& triggers) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  uint32_t lb_idx = 0;
+  for (uint32_t i = 0; i < triggers.size(); ++i) {
+    if (!triggers[i].late_bound) continue;
+    const auto& lb = *triggers[i].late_bound;
+    // Skip local-index entries (no rebind subscription needed).
+    if (lb.index_slot == mir::kInvalidSlotId) continue;
+
+    auto* elem_ptr =
+        builder.CreateConstGEP2_32(array_type, base_ptr, 0, lb_idx);
+
+    // trigger_index (field 0)
+    auto* f0 = builder.CreateStructGEP(lb_type, elem_ptr, 0);
+    builder.CreateStore(llvm::ConstantInt::get(i32_ty, i), f0);
+
+    // index_slot_id (field 1)
+    auto* f1 = builder.CreateStructGEP(lb_type, elem_ptr, 1);
     builder.CreateStore(
-        llvm::ConstantInt::get(i8_ty, range.bit_index), bit_idx_ptr);
-    auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+        llvm::ConstantInt::get(i32_ty, lb.index_slot.value), f1);
+
+    // index_byte_offset (field 2)
+    auto* f2 = builder.CreateStructGEP(lb_type, elem_ptr, 2);
     builder.CreateStore(
-        llvm::ConstantInt::get(i32_ty, range.byte_offset), offset_ptr);
-    auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
+        llvm::ConstantInt::get(i32_ty, lb.index_byte_offset), f2);
+
+    // index_byte_size (field 3)
+    auto* f3 = builder.CreateStructGEP(lb_type, elem_ptr, 3);
+    builder.CreateStore(llvm::ConstantInt::get(i32_ty, lb.index_byte_size), f3);
+
+    // index_base (field 4)
+    auto* f4 = builder.CreateStructGEP(lb_type, elem_ptr, 4);
     builder.CreateStore(
-        llvm::ConstantInt::get(i32_ty, range.byte_size), size_ptr);
+        llvm::ConstantInt::get(
+            i32_ty, static_cast<uint32_t>(lb.mapping.index_base)),
+        f4);
+
+    // index_step (field 5)
+    auto* f5 = builder.CreateStructGEP(lb_type, elem_ptr, 5);
+    builder.CreateStore(
+        llvm::ConstantInt::get(
+            i8_ty, static_cast<uint8_t>(lb.mapping.index_step)),
+        f5);
+
+    // padding (field 6) -- skip
+
+    // total_bits (field 7)
+    auto* f7 = builder.CreateStructGEP(lb_type, elem_ptr, 7);
+    builder.CreateStore(
+        llvm::ConstantInt::get(i32_ty, lb.mapping.total_bits), f7);
+
+    ++lb_idx;
   }
 }
 
@@ -472,6 +604,15 @@ auto LowerWait(
       llvm_ctx,
       {i32_ty, i8_ty, i8_ty, llvm::ArrayType::get(i8_ty, 2), i32_ty, i32_ty});
 
+  // Count late-bound triggers that need runtime rebind subscriptions.
+  // Local-index triggers (kInvalidSlotId) use the dynamic codegen path
+  // but don't need LateBoundTriggerRecords at runtime.
+  uint32_t num_late_bound = 0;
+  for (const auto& t : wait.triggers) {
+    if (t.late_bound && t.late_bound->index_slot != mir::kInvalidSlotId)
+      ++num_late_bound;
+  }
+
   // Compile-time branching: different codegen for small vs large trigger counts
   if (num_triggers <= runtime::kInlineTriggerCapacity) {
     // Small path: fixed-size stack allocation (never dynamic alloca)
@@ -484,11 +625,34 @@ auto LowerWait(
         context, triggers_alloca, trigger_type, fixed_array_type,
         wait.triggers);
 
-    builder.CreateCall(
-        context.GetLyraSuspendWait(),
-        {context.GetStatePointer(),
-         llvm::ConstantInt::get(i32_ty, wait.resume.value), triggers_alloca,
-         llvm::ConstantInt::get(i32_ty, num_triggers)});
+    if (num_late_bound > 0) {
+      // LateBoundTriggerRecord layout:
+      // {i32 trigger_index, i32 index_slot_id, i32 index_byte_offset,
+      //  i32 index_byte_size, i32 index_base, i8 index_step,
+      //  [3 x i8] padding, i32 total_bits}
+      static_assert(sizeof(runtime::LateBoundTriggerRecord) == 28);
+      auto* lb_type = llvm::StructType::get(
+          llvm_ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i8_ty,
+                     llvm::ArrayType::get(i8_ty, 3), i32_ty});
+      auto* lb_array_type = llvm::ArrayType::get(lb_type, num_late_bound);
+      auto* lb_alloca =
+          builder.CreateAlloca(lb_array_type, nullptr, "late_bound");
+      FillLateBoundArray(
+          context, lb_alloca, lb_type, lb_array_type, wait.triggers);
+
+      builder.CreateCall(
+          context.GetLyraSuspendWaitWithLateBound(),
+          {context.GetStatePointer(),
+           llvm::ConstantInt::get(i32_ty, wait.resume.value), triggers_alloca,
+           llvm::ConstantInt::get(i32_ty, num_triggers), lb_alloca,
+           llvm::ConstantInt::get(i32_ty, num_late_bound)});
+    } else {
+      builder.CreateCall(
+          context.GetLyraSuspendWait(),
+          {context.GetStatePointer(),
+           llvm::ConstantInt::get(i32_ty, wait.resume.value), triggers_alloca,
+           llvm::ConstantInt::get(i32_ty, num_triggers)});
+    }
   } else {
     // Large path: runtime allocates scratch buffer, we fill it, runtime copies
     auto* heap_ptr = builder.CreateCall(
@@ -499,11 +663,30 @@ auto LowerWait(
     FillTriggerArray(
         context, heap_ptr, trigger_type, array_type, wait.triggers);
 
-    builder.CreateCall(
-        context.GetLyraSuspendWait(),
-        {context.GetStatePointer(),
-         llvm::ConstantInt::get(i32_ty, wait.resume.value), heap_ptr,
-         llvm::ConstantInt::get(i32_ty, num_triggers)});
+    if (num_late_bound > 0) {
+      static_assert(sizeof(runtime::LateBoundTriggerRecord) == 28);
+      auto* lb_type = llvm::StructType::get(
+          llvm_ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i8_ty,
+                     llvm::ArrayType::get(i8_ty, 3), i32_ty});
+      auto* lb_array_type = llvm::ArrayType::get(lb_type, num_late_bound);
+      auto* lb_alloca =
+          builder.CreateAlloca(lb_array_type, nullptr, "late_bound");
+      FillLateBoundArray(
+          context, lb_alloca, lb_type, lb_array_type, wait.triggers);
+
+      builder.CreateCall(
+          context.GetLyraSuspendWaitWithLateBound(),
+          {context.GetStatePointer(),
+           llvm::ConstantInt::get(i32_ty, wait.resume.value), heap_ptr,
+           llvm::ConstantInt::get(i32_ty, num_triggers), lb_alloca,
+           llvm::ConstantInt::get(i32_ty, num_late_bound)});
+    } else {
+      builder.CreateCall(
+          context.GetLyraSuspendWait(),
+          {context.GetStatePointer(),
+           llvm::ConstantInt::get(i32_ty, wait.resume.value), heap_ptr,
+           llvm::ConstantInt::get(i32_ty, num_triggers)});
+    }
 
     // Free scratch buffer (runtime already copied to SuspendRecord storage)
     builder.CreateCall(context.GetLyraFreeTriggers(), {heap_ptr});
