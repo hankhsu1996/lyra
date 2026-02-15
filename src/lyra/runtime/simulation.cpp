@@ -98,20 +98,26 @@ void HandleSuspendRecord(
 
       // Create rebind subscriptions for late-bound triggers.
       if (has_late_bound) {
-        auto late_bounds =
+        auto headers =
             std::span(suspend->late_bound_ptr, suspend->num_late_bound);
-        for (const auto& lb : late_bounds) {
-          if (lb.trigger_index >= suspend->num_triggers) continue;
-          auto* target = edge_nodes[lb.trigger_index];
+        auto all_plan_ops =
+            std::span(suspend->plan_ops_ptr, suspend->num_plan_ops);
+        auto all_dep_slots =
+            std::span(suspend->dep_slots_ptr, suspend->num_dep_slots);
+        for (const auto& hdr : headers) {
+          if (hdr.trigger_index >= suspend->num_triggers) continue;
+          auto* target = edge_nodes[hdr.trigger_index];
           if (target == nullptr) continue;
           lyra::runtime::BitTargetMapping mapping{
-              .index_base = lb.index_base,
-              .index_step = lb.index_step,
-              .total_bits = lb.total_bits};
+              .index_base = hdr.index_base,
+              .index_step = hdr.index_step,
+              .total_bits = hdr.total_bits};
+          auto plan_ops =
+              all_plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
+          auto dep_slots =
+              all_dep_slots.subspan(hdr.dep_slots_start, hdr.dep_slots_count);
           eng.SubscribeRebind(
-              handle, resume, lb.index_slot_id, target, mapping,
-              lb.index_byte_offset, lb.index_byte_size, lb.index_bit_width,
-              lb.index_is_signed != 0);
+              handle, resume, target, plan_ops, mapping, dep_slots);
         }
       }
       break;
@@ -140,6 +146,16 @@ void ReleaseTriggerOverflow(lyra::runtime::SuspendRecord* suspend) {
   }
   suspend->num_late_bound = 0;
   suspend->late_bound_ptr = nullptr;
+  if (suspend->plan_ops_ptr != nullptr) {
+    delete[] suspend->plan_ops_ptr;  // NOLINT(cppcoreguidelines-owning-memory)
+  }
+  suspend->num_plan_ops = 0;
+  suspend->plan_ops_ptr = nullptr;
+  if (suspend->dep_slots_ptr != nullptr) {
+    delete[] suspend->dep_slots_ptr;  // NOLINT(cppcoreguidelines-owning-memory)
+  }
+  suspend->num_dep_slots = 0;
+  suspend->dep_slots_ptr = nullptr;
 }
 
 void SuspendReset(lyra::runtime::SuspendRecord* suspend) {
@@ -197,7 +213,9 @@ extern "C" void LyraSuspendWait(
 
 extern "C" void LyraSuspendWaitWithLateBound(
     void* state, uint32_t resume_block, const void* triggers,
-    uint32_t num_triggers, const void* late_bound, uint32_t num_late_bound) {
+    uint32_t num_triggers, const void* headers, uint32_t num_headers,
+    const void* plan_ops, uint32_t num_plan_ops, const void* dep_slots,
+    uint32_t num_dep_slots) {
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
   ReleaseTriggerOverflow(suspend);
 
@@ -217,15 +235,33 @@ extern "C" void LyraSuspendWaitWithLateBound(
         num_triggers * sizeof(lyra::runtime::WaitTriggerRecord));
   }
 
-  suspend->num_late_bound = num_late_bound;
-  if (num_late_bound > 0 && late_bound != nullptr) {
-    suspend->late_bound_ptr =
-        new lyra::runtime::LateBoundTriggerRecord[num_late_bound];
+  suspend->num_late_bound = num_headers;
+  if (num_headers > 0 && headers != nullptr) {
+    suspend->late_bound_ptr = new lyra::runtime::LateBoundHeader[num_headers];
     std::memcpy(
-        suspend->late_bound_ptr, late_bound,
-        num_late_bound * sizeof(lyra::runtime::LateBoundTriggerRecord));
+        suspend->late_bound_ptr, headers,
+        num_headers * sizeof(lyra::runtime::LateBoundHeader));
   } else {
     suspend->late_bound_ptr = nullptr;
+  }
+
+  suspend->num_plan_ops = num_plan_ops;
+  if (num_plan_ops > 0 && plan_ops != nullptr) {
+    suspend->plan_ops_ptr = new lyra::runtime::IndexPlanOp[num_plan_ops];
+    std::memcpy(
+        suspend->plan_ops_ptr, plan_ops,
+        num_plan_ops * sizeof(lyra::runtime::IndexPlanOp));
+  } else {
+    suspend->plan_ops_ptr = nullptr;
+  }
+
+  suspend->num_dep_slots = num_dep_slots;
+  if (num_dep_slots > 0 && dep_slots != nullptr) {
+    suspend->dep_slots_ptr = new uint32_t[num_dep_slots];
+    std::memcpy(
+        suspend->dep_slots_ptr, dep_slots, num_dep_slots * sizeof(uint32_t));
+  } else {
+    suspend->dep_slots_ptr = nullptr;
   }
 }
 

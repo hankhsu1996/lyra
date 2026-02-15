@@ -7,6 +7,7 @@
 
 #include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/common/index_plan.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/termination_kind.hpp"
 #include "lyra/mir/handle.hpp"
@@ -71,15 +72,12 @@ struct Delay {
 };
 
 // Late-bound index metadata for dynamic-index edge triggers.
-// Carries the index variable location and affine mapping from SV index to
-// storage bit. Used by LLVM codegen to emit dynamic byte_offset computation
-// and by runtime to create rebind subscriptions.
+// Carries the expression plan (bytecode) to evaluate the index at runtime,
+// the set of design-state slots the expression depends on (for rebind
+// subscriptions), and the affine mapping from SV index to storage bit.
 struct LateBoundIndex {
-  SlotId index_slot;
-  uint32_t index_byte_offset = 0;
-  uint32_t index_byte_size = 0;
-  uint32_t index_bit_width = 0;  // Actual SV bit width (1-64)
-  bool index_is_signed = false;  // SV type signedness
+  std::vector<runtime::IndexPlanOp> plan;  // Expression bytecode
+  std::vector<SlotId> dep_slots;           // Design-state slots to subscribe
   runtime::BitTargetMapping mapping;
 };
 

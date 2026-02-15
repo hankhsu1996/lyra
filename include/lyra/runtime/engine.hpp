@@ -87,16 +87,13 @@ class Engine {
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
       uint8_t bit_index = 0) -> SubscriptionNode*;
 
-  // Create a rebind subscription on index_signal that tracks changes to the
-  // index variable. When index_signal changes, the rebind logic re-reads the
-  // index, recomputes the edge target via affine mapping, and updates
-  // target_node in-place. The rebind node is linked into the rebind waiter
-  // list (separate from normal subscriptions) for two-pass flush ordering.
+  // Create rebind subscriptions for a late-bound edge trigger. For each dep
+  // slot, an AnyChange rebind node is created. When any dep changes, the plan
+  // is re-evaluated and the edge target's byte_offset/bit_index are updated.
   void SubscribeRebind(
-      ProcessHandle handle, ResumePoint resume, SignalId index_signal,
-      SubscriptionNode* target_node, BitTargetMapping mapping,
-      uint32_t index_byte_offset, uint32_t index_byte_size,
-      uint8_t index_bit_width, bool index_is_signed);
+      ProcessHandle handle, ResumePoint resume, SubscriptionNode* target_node,
+      std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
+      std::span<const uint32_t> dep_slots);
 
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.
@@ -320,6 +317,10 @@ class Engine {
   // Active monitor state ($monitor). Only one can be active at a time.
   // Checked after all strobe callbacks complete in ExecutePostponedRegion.
   std::optional<MonitorState> active_monitor_;
+
+  // Flush epoch: incremented at start of each FlushSignalUpdates.
+  // Used by rebind epoch guard to avoid redundant re-evaluations.
+  uint32_t flush_epoch_ = 1;
 
   // PRNG state for $random/$urandom. LCG with glibc constants.
   // Initial seed = 1 for deterministic reproducibility.
