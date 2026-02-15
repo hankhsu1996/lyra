@@ -1628,10 +1628,11 @@ auto LowerEventWait(
          hir_expr.kind == hir::ExpressionKind::kMemberAccess)) {
       // Unpacked array element or unpacked struct field edge trigger.
       // LowerExpression emits IndexProjection/FieldProjection to select
-      // the unpacked leaf. For Phase A, the leaf is 1-bit, so we append
-      // BitRangeProjection{bit_offset=0, width=1} to target bit 0.
-      // Only for edge-triggered waits; level-sensitive waits observe the
-      // whole leaf and fall through to the generic path.
+      // the unpacked leaf. We append BitRangeProjection{bit_offset=0,
+      // width=1} to sample bit 0 (LSB) for edge detection, matching
+      // packed multi-bit semantics. Only for edge-triggered waits;
+      // level-sensitive waits observe the whole leaf and fall through
+      // to the generic path.
       auto signal_result = LowerExpression(hir_trigger.signal, builder);
       if (!signal_result) return std::unexpected(signal_result.error());
       mir::Operand signal_op = std::move(*signal_result);
