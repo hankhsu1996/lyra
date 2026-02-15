@@ -43,7 +43,9 @@ Time Slot N:
   +-> Active    (blocking assignments, $display)
   |   Inactive  (#0 delays, same time slot)
   +-- NBA       (nonblocking assignment commits)
-      [repeat until all empty]
+  FlushSignalUpdates after Active/Inactive
+  FlushSignalUpdates after NBA
+  if next-delta queue not empty: repeat Active/Inactive/NBA in Time Slot N
 
 Advance to Time Slot N+1
 ```
@@ -52,8 +54,9 @@ Key behaviors:
 
 - Active region loops until empty before moving to Inactive
 - Inactive events move to Active (not executed directly)
+- FlushSignalUpdates runs after Active/Inactive and after NBA
 - NBA commits all deferred writes, may wake triggered processes
-- Time advances only when all regions are empty
+- Time advances only when no more delta work remains in the current slot
 
 ## Engine API
 
@@ -63,6 +66,7 @@ Key behaviors:
 - `Delay(handle, resume, ticks)` - Reschedule after N ticks
 - `DelayZero(handle, resume)` - Reschedule to inactive region (same time)
 - `Subscribe(handle, resume, signal, edge)` - Wait for signal edge
+- `Subscribe(handle, resume, signal, edge, byte_offset, byte_size)` - Wait on an observation sub-range
 
 **Simulation control:**
 
@@ -70,18 +74,25 @@ Key behaviors:
 - `CurrentTime()` - Get current simulation time
 
 **Edge types:** `kPosedge`, `kNegedge`, `kAnyChange`
+Current runtime constraint: edge subscriptions use a single sampled bit (`byte_offset=0`, `byte_size=1`, bit 0).
 
 ## LLVM Integration
 
 LLVM-generated code calls the runtime via C ABI:
 
 ```cpp
-// Generated code calls these (extern "C" with PascalCase naming)
-void LyraDelay(ProcessState* state, uint64_t ticks);
-void LyraSubscribe(ProcessState* state, SignalId signal, EdgeKind edge);
+// Generated code suspends processes through these C ABI helpers.
+void LyraSuspendDelay(void* state, uint64_t ticks, uint32_t resume_block);
+void LyraSuspendWait(
+    void* state, uint32_t resume_block, const void* triggers,
+    uint32_t num_triggers);
 ```
 
 Process state is passed by pointer; generated code stores/restores locals to the state struct at suspension points.
+
+## Change Propagation
+
+The engine tracks which slots changed (dirty ranges) and which bytes each process observes (observation ranges), then uses range overlap filtering and snapshot comparison to determine wakeups. See [change-propagation.md](change-propagation.md) for the full pipeline, contracts, and byte-range precision.
 
 ## Not In Scope
 

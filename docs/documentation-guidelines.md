@@ -3,7 +3,7 @@
 ## Core Principles
 
 1. **Concise over complete** - Capture decisions and rationale, not implementation details
-2. **No code unless necessary** - If explanation suffices, skip the example. Use minimal effective examples when needed.
+2. **No code unless necessary** - If explanation suffices, skip the example. Use minimal effective examples when needed. Include minimal pseudo/code snippets when required to remove ambiguity in contracts or invariants.
 3. **Integrate, don't append** - Each edit should reorganize, not just add to the end
 4. **One topic per document** - If a document covers unrelated concerns, split it
 5. **ASCII only** - Use `->` not Unicode arrows, `|` and `+` for diagrams, no special characters
