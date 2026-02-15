@@ -75,25 +75,22 @@ bool ValidateEdgeTriggerExpression(
       const auto* cv = select.selector().getConstant();
       if (cv != nullptr && !cv->bad() && cv->isInteger()) {
         const auto& idx = cv->integer();
-        if (!idx.hasUnknown() && !idx.isNegative()) {
-          auto idx_val = idx.as<int64_t>();
-          auto range = base_type.getFixedRange();
-          if (idx_val && *idx_val >= range.lower() &&
-              *idx_val <= range.upper()) {
-            return true;
-          }
-          ctx->sink->Unsupported(
+        if (idx.hasUnknown()) {
+          ctx->sink->Error(
               span,
               "edge trigger bit-select index is out of range "
-              "for the packed type width",
-              UnsupportedCategory::kFeature);
+              "for the packed type width");
           return false;
         }
-        ctx->sink->Unsupported(
+        auto idx_val = idx.as<int64_t>();
+        auto range = base_type.getFixedRange();
+        if (idx_val && *idx_val >= range.lower() && *idx_val <= range.upper()) {
+          return true;
+        }
+        ctx->sink->Error(
             span,
             "edge trigger bit-select index is out of range "
-            "for the packed type width",
-            UnsupportedCategory::kFeature);
+            "for the packed type width");
         return false;
       }
       ctx->sink->Unsupported(
@@ -116,17 +113,13 @@ bool ValidateEdgeTriggerExpression(
       }
       const auto& idx = cv->integer();
       if (idx.hasUnknown()) {
-        ctx->sink->Unsupported(
-            span, "edge trigger array index is out of range",
-            UnsupportedCategory::kFeature);
+        ctx->sink->Error(span, "edge trigger array index is out of range");
         return false;
       }
       auto idx_val = idx.as<int64_t>();
       auto range = base_type.getFixedRange();
       if (!idx_val || *idx_val < range.lower() || *idx_val > range.upper()) {
-        ctx->sink->Unsupported(
-            span, "edge trigger array index is out of range",
-            UnsupportedCategory::kFeature);
+        ctx->sink->Error(span, "edge trigger array index is out of range");
         return false;
       }
       return true;
@@ -173,58 +166,52 @@ bool ValidateEdgeTriggerExpression(
 
       const auto* left_cv = select.left().getConstant();
       if (left_cv == nullptr || left_cv->bad() || !left_cv->isInteger()) {
-        ctx->sink->Unsupported(
+        ctx->sink->Error(
             span,
             "edge trigger range-select index is out of range "
-            "for the packed type width",
-            UnsupportedCategory::kFeature);
+            "for the packed type width");
         return false;
       }
       const auto& left_idx = left_cv->integer();
       if (left_idx.hasUnknown()) {
-        ctx->sink->Unsupported(
+        ctx->sink->Error(
             span,
             "edge trigger range-select index is out of range "
-            "for the packed type width",
-            UnsupportedCategory::kFeature);
+            "for the packed type width");
         return false;
       }
       auto left_val = left_idx.as<int64_t>();
       if (!left_val || *left_val < range.lower() || *left_val > range.upper()) {
-        ctx->sink->Unsupported(
+        ctx->sink->Error(
             span,
             "edge trigger range-select index is out of range "
-            "for the packed type width",
-            UnsupportedCategory::kFeature);
+            "for the packed type width");
         return false;
       }
 
       const auto* right_cv = select.right().getConstant();
       if (right_cv == nullptr || right_cv->bad() || !right_cv->isInteger()) {
-        ctx->sink->Unsupported(
+        ctx->sink->Error(
             span,
             "edge trigger range-select index is out of range "
-            "for the packed type width",
-            UnsupportedCategory::kFeature);
+            "for the packed type width");
         return false;
       }
       const auto& right_idx = right_cv->integer();
       if (right_idx.hasUnknown()) {
-        ctx->sink->Unsupported(
+        ctx->sink->Error(
             span,
             "edge trigger range-select index is out of range "
-            "for the packed type width",
-            UnsupportedCategory::kFeature);
+            "for the packed type width");
         return false;
       }
       auto right_val = right_idx.as<int64_t>();
       if (!right_val || *right_val < range.lower() ||
           *right_val > range.upper()) {
-        ctx->sink->Unsupported(
+        ctx->sink->Error(
             span,
             "edge trigger range-select index is out of range "
-            "for the packed type width",
-            UnsupportedCategory::kFeature);
+            "for the packed type width");
         return false;
       }
       return true;
@@ -241,21 +228,19 @@ bool ValidateEdgeTriggerExpression(
     }
     const auto& idx = cv->integer();
     if (idx.hasUnknown()) {
-      ctx->sink->Unsupported(
+      ctx->sink->Error(
           span,
           "edge trigger part-select index is out of range "
-          "for the packed type width",
-          UnsupportedCategory::kFeature);
+          "for the packed type width");
       return false;
     }
     auto idx_val = idx.as<int64_t>();
     auto range = base_type.getFixedRange();
     if (!idx_val || *idx_val < range.lower() || *idx_val > range.upper()) {
-      ctx->sink->Unsupported(
+      ctx->sink->Error(
           span,
           "edge trigger part-select index is out of range "
-          "for the packed type width",
-          UnsupportedCategory::kFeature);
+          "for the packed type width");
       return false;
     }
     if (selection_kind == slang::ast::RangeSelectionKind::IndexedDown) {
@@ -263,11 +248,10 @@ bool ValidateEdgeTriggerExpression(
       if (bit_width > 1) {
         auto lsb_val = *idx_val - (bit_width - 1);
         if (lsb_val < range.lower()) {
-          ctx->sink->Unsupported(
+          ctx->sink->Error(
               span,
               "edge trigger part-select LSB is out of range "
-              "for the packed type width",
-              UnsupportedCategory::kFeature);
+              "for the packed type width");
           return false;
         }
       }
