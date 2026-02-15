@@ -257,7 +257,7 @@ See [scheduling.md](scheduling.md) for implemented regions.
   - Array element access (`arr[i]` where `i` is out of range)
   - Bit/part select (`vec[i]`, `vec[i+:w]`, `vec[i-:w]` where the selection extends beyond the vector bounds)
 
-- **Edge-trigger granularity**: `@(posedge ...)` / `@(negedge ...)` sample bit 0 of the subscribed slot. Edge triggers on sub-expressions (struct fields, array elements, part-selects) are rejected at compile time. Use `@(*)` or `@(signal)` for level-sensitive observation of non-root expressions.
+- **Edge-trigger granularity**: `@(posedge ...)` / `@(negedge ...)` support plain signal variables and constant bit-selects on packed types (e.g., `@(posedge bus[3])`). Edge triggers on dynamic bit-selects, range selects, struct fields, and unpacked array elements are rejected at compile time. Use `@(*)` or `@(signal)` for level-sensitive observation of unsupported sub-expressions.
 
 - **Unique/priority violation reporting**: LRM 12.4.2.1 specifies that `unique`/`priority`/`unique0` violation reports should be deferred to the Observed region with "zero-delay glitch immunity" - violations are flushed if the process re-triggers before the Observed region. Lyra reports violations immediately via `$warning`, which may produce spurious reports in `always_comb` blocks with combinational feedback loops. Per-process violation tracking and `$assertcontrol` are not supported.
 

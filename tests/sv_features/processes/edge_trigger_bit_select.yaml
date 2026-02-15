@@ -1,0 +1,135 @@
+feature: edge trigger on constant bit-select
+description: >
+  Edge triggers (@posedge/@negedge) on constant bit-selects within packed
+  values. The runtime samples the specific bit, not bit 0 of the slot root.
+
+cases:
+  - name: posedge_bit3
+    description: "@(posedge bus[3]) wakes when bit 3 transitions 0->1"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int result = 0;
+        initial begin
+          @(posedge bus[3]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'b0000_1000;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: no_false_trigger
+    description: "@(posedge bus[3]) must NOT wake when only bit 0 changes"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int result = 0;
+        initial begin
+          @(posedge bus[3]);
+          result = 1;
+          $finish;
+        end
+        initial begin
+          #5 bus = 8'b0000_0001;
+          #5 bus = 8'b0000_1000;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+      stdout:
+        not_contains:
+          - "time 5"
+
+  - name: negedge_bit
+    description: "@(negedge bus[3]) detects 1->0 on bit 3"
+    sv: |
+      module Test;
+        logic [7:0] bus = 8'b0000_1000;
+        int result = 0;
+        initial begin
+          @(negedge bus[3]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'b0000_0000;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: high_bit
+    description: "@(posedge bus[11]) on a 16-bit value (byte_offset=1, bit_index=3)"
+    sv: |
+      module Test;
+        logic [15:0] bus = 0;
+        int result = 0;
+        initial begin
+          @(posedge bus[11]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 16'h0800;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: nonzero_based_range
+    description: "@(posedge bus[12]) on logic [15:8] maps to correct storage bit"
+    sv: |
+      module Test;
+        logic [15:8] bus = 8'h00;
+        int result = 0;
+        initial begin
+          @(posedge bus[12]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'h10;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_root_unchanged
+    description: "@(posedge clk) on a plain scalar still works (regression control)"
+    sv: |
+      module Test;
+        bit clk = 0;
+        int result = 0;
+        initial begin
+          @(posedge clk);
+          result = 42;
+          $finish;
+        end
+        initial #5 clk = 1;
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: both_edges_bit_select
+    description: "@(edge bus[3]) triggers on both 0->1 and 1->0"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int count = 0;
+        initial begin
+          @(edge bus[3]);
+          count = count + 1;
+          @(edge bus[3]);
+          count = count + 1;
+          $finish;
+        end
+        initial begin
+          #5 bus = 8'b0000_1000;
+          #5 bus = 8'b0000_0000;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 2

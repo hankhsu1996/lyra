@@ -15,6 +15,7 @@
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/statements/ConditionalStatements.h>
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
@@ -1434,14 +1435,75 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
             sig_event.expr.kind != slang::ast::ExpressionKind::NamedValue &&
             sig_event.expr.kind !=
                 slang::ast::ExpressionKind::HierarchicalValue) {
-          ctx->sink->Unsupported(
-              span,
-              "edge triggers (@posedge/@negedge) are only supported on "
-              "plain signal variables; sub-expressions (struct fields, "
-              "array elements, part-selects) are not supported; use @(*) "
-              "or @(signal) for level-sensitive observation",
-              UnsupportedCategory::kFeature);
-          return hir::kInvalidStatementId;
+          if (sig_event.expr.kind ==
+              slang::ast::ExpressionKind::ElementSelect) {
+            const auto& select =
+                sig_event.expr.as<slang::ast::ElementSelectExpression>();
+            const auto& base_type = select.value().type->getCanonicalType();
+            if (base_type.isIntegral() || base_type.isPackedArray()) {
+              if (sig_event.expr.type->getBitWidth() != 1) {
+                ctx->sink->Unsupported(
+                    span,
+                    "edge triggers on multi-bit packed element "
+                    "selects are not supported; only single-bit "
+                    "selects are allowed",
+                    UnsupportedCategory::kFeature);
+                return hir::kInvalidStatementId;
+              }
+              const auto* cv = select.selector().getConstant();
+              if (cv != nullptr && !cv->bad() && cv->isInteger()) {
+                const auto& idx = cv->integer();
+                if (!idx.hasUnknown() && !idx.isNegative()) {
+                  auto idx_val = idx.as<int64_t>();
+                  auto range = base_type.getFixedRange();
+                  if (idx_val && *idx_val >= range.lower() &&
+                      *idx_val <= range.upper()) {
+                    // Constant bit-select in range - allowed for edge
+                    // triggers. Fall through to create the trigger.
+                  } else {
+                    ctx->sink->Unsupported(
+                        span,
+                        "edge trigger bit-select index is out of range "
+                        "for the packed type width",
+                        UnsupportedCategory::kFeature);
+                    return hir::kInvalidStatementId;
+                  }
+                } else {
+                  ctx->sink->Unsupported(
+                      span,
+                      "edge trigger bit-select index is out of range "
+                      "for the packed type width",
+                      UnsupportedCategory::kFeature);
+                  return hir::kInvalidStatementId;
+                }
+              } else {
+                ctx->sink->Unsupported(
+                    span,
+                    "dynamic bit-select edge triggers are not "
+                    "supported; use a constant index",
+                    UnsupportedCategory::kFeature);
+                return hir::kInvalidStatementId;
+              }
+            } else {
+              ctx->sink->Unsupported(
+                  span,
+                  "edge triggers on unpacked array elements are not "
+                  "supported; use @(*) or @(signal) for "
+                  "level-sensitive observation",
+                  UnsupportedCategory::kFeature);
+              return hir::kInvalidStatementId;
+            }
+          } else {
+            ctx->sink->Unsupported(
+                span,
+                "edge triggers (@posedge/@negedge) are only supported "
+                "on plain signal variables or constant bit-selects; "
+                "sub-expressions (struct fields, part-selects) are not "
+                "supported; use @(*) or @(signal) for level-sensitive "
+                "observation",
+                UnsupportedCategory::kFeature);
+            return hir::kInvalidStatementId;
+          }
         }
 
         std::vector<hir::EventTrigger> triggers;
@@ -1514,14 +1576,75 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
               sig_event.expr.kind != slang::ast::ExpressionKind::NamedValue &&
               sig_event.expr.kind !=
                   slang::ast::ExpressionKind::HierarchicalValue) {
-            ctx->sink->Unsupported(
-                span,
-                "edge triggers (@posedge/@negedge) are only supported on "
-                "plain signal variables; sub-expressions (struct fields, "
-                "array elements, part-selects) are not supported; use @(*) "
-                "or @(signal) for level-sensitive observation",
-                UnsupportedCategory::kFeature);
-            return hir::kInvalidStatementId;
+            if (sig_event.expr.kind ==
+                slang::ast::ExpressionKind::ElementSelect) {
+              const auto& select =
+                  sig_event.expr.as<slang::ast::ElementSelectExpression>();
+              const auto& base_type = select.value().type->getCanonicalType();
+              if (base_type.isIntegral() || base_type.isPackedArray()) {
+                if (sig_event.expr.type->getBitWidth() != 1) {
+                  ctx->sink->Unsupported(
+                      span,
+                      "edge triggers on multi-bit packed element "
+                      "selects are not supported; only single-bit "
+                      "selects are allowed",
+                      UnsupportedCategory::kFeature);
+                  return hir::kInvalidStatementId;
+                }
+                const auto* cv = select.selector().getConstant();
+                if (cv != nullptr && !cv->bad() && cv->isInteger()) {
+                  const auto& idx = cv->integer();
+                  if (!idx.hasUnknown() && !idx.isNegative()) {
+                    auto idx_val = idx.as<int64_t>();
+                    auto range = base_type.getFixedRange();
+                    if (idx_val && *idx_val >= range.lower() &&
+                        *idx_val <= range.upper()) {
+                      // Constant bit-select in range - allowed for edge
+                      // triggers. Fall through to create the trigger.
+                    } else {
+                      ctx->sink->Unsupported(
+                          span,
+                          "edge trigger bit-select index is out of range "
+                          "for the packed type width",
+                          UnsupportedCategory::kFeature);
+                      return hir::kInvalidStatementId;
+                    }
+                  } else {
+                    ctx->sink->Unsupported(
+                        span,
+                        "edge trigger bit-select index is out of range "
+                        "for the packed type width",
+                        UnsupportedCategory::kFeature);
+                    return hir::kInvalidStatementId;
+                  }
+                } else {
+                  ctx->sink->Unsupported(
+                      span,
+                      "dynamic bit-select edge triggers are not "
+                      "supported; use a constant index",
+                      UnsupportedCategory::kFeature);
+                  return hir::kInvalidStatementId;
+                }
+              } else {
+                ctx->sink->Unsupported(
+                    span,
+                    "edge triggers on unpacked array elements are not "
+                    "supported; use @(*) or @(signal) for "
+                    "level-sensitive observation",
+                    UnsupportedCategory::kFeature);
+                return hir::kInvalidStatementId;
+              }
+            } else {
+              ctx->sink->Unsupported(
+                  span,
+                  "edge triggers (@posedge/@negedge) are only supported "
+                  "on plain signal variables or constant bit-selects; "
+                  "sub-expressions (struct fields, part-selects) are not "
+                  "supported; use @(*) or @(signal) for level-sensitive "
+                  "observation",
+                  UnsupportedCategory::kFeature);
+              return hir::kInvalidStatementId;
+            }
           }
 
           triggers.push_back({.signal = signal_expr, .edge = edge});

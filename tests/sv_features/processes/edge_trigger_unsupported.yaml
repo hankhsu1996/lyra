@@ -1,12 +1,13 @@
-feature: edge trigger rejection on non-root expressions
+feature: edge trigger rejection on unsupported sub-expressions
 description: >
-  Edge triggers (@posedge/@negedge) only support plain signal variables.
-  Sub-expressions (struct fields, array elements, part-selects) are rejected
-  at compile time because the runtime samples bit 0 of the slot root.
+  Edge triggers (@posedge/@negedge) support plain signal variables and
+  constant bit-selects on packed types. Other sub-expressions (struct fields,
+  unpacked array elements, part-selects, dynamic bit-selects) are rejected
+  at compile time.
 
 cases:
   - name: posedge_struct_field
-    description: "@(posedge s.x) should be rejected -- struct field is not a root variable"
+    description: "@(posedge s.x) should be rejected -- struct field member access"
     sv: |
       module Test;
         typedef struct packed { logic x; logic y; } pair_t;
@@ -19,10 +20,10 @@ cases:
     expect:
       error:
         contains:
-          - "edge triggers (@posedge/@negedge) are only supported on plain signal variables"
+          - "edge triggers (@posedge/@negedge) are only supported on plain signal variables or constant bit-selects"
 
-  - name: negedge_array_element
-    description: "@(negedge arr[0]) should be rejected -- array element is not a root variable"
+  - name: negedge_unpacked_array_element
+    description: "@(negedge arr[0]) on unpacked array should be rejected"
     sv: |
       module Test;
         logic [7:0] arr [0:3];
@@ -34,10 +35,10 @@ cases:
     expect:
       error:
         contains:
-          - "edge triggers (@posedge/@negedge) are only supported on plain signal variables"
+          - "edge triggers on unpacked array elements are not supported"
 
   - name: posedge_part_select
-    description: "@(posedge bus[3:0]) should be rejected -- part-select is not a root variable"
+    description: "@(posedge bus[3:0]) should be rejected -- part-select is not supported"
     sv: |
       module Test;
         logic [7:0] bus;
@@ -49,10 +50,10 @@ cases:
     expect:
       error:
         contains:
-          - "edge triggers (@posedge/@negedge) are only supported on plain signal variables"
+          - "edge triggers (@posedge/@negedge) are only supported on plain signal variables or constant bit-selects"
 
   - name: compound_edge_struct_field
-    description: "@(posedge clk or negedge s.x) should be rejected -- s.x is not a root variable"
+    description: "@(posedge clk or negedge s.x) should be rejected -- s.x is not supported"
     sv: |
       module Test;
         typedef struct packed { logic x; logic y; } pair_t;
@@ -66,7 +67,53 @@ cases:
     expect:
       error:
         contains:
-          - "edge triggers (@posedge/@negedge) are only supported on plain signal variables"
+          - "edge triggers (@posedge/@negedge) are only supported on plain signal variables or constant bit-selects"
+
+  - name: dynamic_bit_select_edge
+    description: "@(posedge bus[i]) with variable index should be rejected"
+    sv: |
+      module Test;
+        logic [7:0] bus;
+        int i = 3;
+        initial begin
+          @(posedge bus[i]);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "dynamic bit-select edge triggers are not supported"
+
+  - name: out_of_range_bit_select_edge
+    description: "@(posedge bus[100]) on 8-bit value should be rejected"
+    sv: |
+      module Test;
+        logic [7:0] bus;
+        initial begin
+          @(posedge bus[100]);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "edge trigger bit-select index is out of range"
+
+  - name: multi_bit_packed_element_select_edge
+    description: "@(posedge bus[1]) on packed array with multi-bit elements should be rejected"
+    sv: |
+      module Test;
+        logic [1:0][7:0] bus;
+        initial begin
+          @(posedge bus[1]);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "edge triggers on multi-bit packed element selects are not supported"
 
   - name: posedge_plain_signal
     description: "@(posedge clk) on a plain scalar signal should work (positive control)"

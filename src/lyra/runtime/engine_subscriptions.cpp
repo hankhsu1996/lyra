@@ -178,7 +178,8 @@ void Engine::Subscribe(
 
 void Engine::Subscribe(
     ProcessHandle handle, ResumePoint resume, SignalId signal,
-    common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size) {
+    common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
+    uint8_t bit_index) {
   if (finished_) {
     return;
   }
@@ -212,12 +213,13 @@ void Engine::Subscribe(
         "Engine::Subscribe", "observation range exceeds slot size");
   }
 
-  // Sub-slot edge observation not yet supported.
-  if (edge != common::EdgeKind::kAnyChange &&
-      (byte_offset != 0 || byte_size != 1)) {
+  if (edge != common::EdgeKind::kAnyChange && byte_size != 1) {
     throw common::InternalError(
-        "Engine::Subscribe",
-        "edge subscriptions require byte_offset=0, byte_size=1");
+        "Engine::Subscribe", "edge subscriptions require byte_size=1");
+  }
+  if (edge != common::EdgeKind::kAnyChange && bit_index > 7) {
+    throw common::InternalError(
+        "Engine::Subscribe", "bit_index must be in [0,7]");
   }
 
   auto* node = AllocNode();
@@ -244,9 +246,9 @@ void Engine::Subscribe(
     }
   } else {
     node->byte_size = byte_size;
-    node->bit_index = 0;
+    node->bit_index = bit_index;
     node->last_bit =
-        (design_state[meta.base_off + byte_offset] >> node->bit_index) & 1;
+        (design_state[meta.base_off + byte_offset] >> bit_index) & 1;
   }
 
   auto& sw = signal_waiters_[signal];
