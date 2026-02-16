@@ -70,7 +70,8 @@ auto GetLlvmAbiTypeForValue(
   // Handle types (passed as ptr handle value)
   if (type.Kind() == TypeKind::kString ||
       type.Kind() == TypeKind::kDynamicArray ||
-      type.Kind() == TypeKind::kQueue) {
+      type.Kind() == TypeKind::kQueue ||
+      type.Kind() == TypeKind::kAssociativeArray) {
     return llvm::PointerType::getUnqual(ctx);
   }
 
@@ -187,6 +188,11 @@ auto ComputeAlignment(
       }
       return max_align;
     }
+    case TypeKind::kString:
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+    case TypeKind::kAssociativeArray:
+      return 8;  // pointer alignment
     default:
       return 1;
   }
@@ -271,6 +277,11 @@ auto ComputeAllocSize(
       // Round up to alignment
       return (max_size + max_align - 1) / max_align * max_align;
     }
+    case TypeKind::kString:
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue:
+    case TypeKind::kAssociativeArray:
+      return 8;  // pointer size
     default:
       throw common::InternalError(
           "ComputeAllocSize",
@@ -352,9 +363,7 @@ auto GetLlvmTypeForTypeId(
       return BuildUnpackedUnionType(ctx, type_id, types);
 
     case TypeKind::kAssociativeArray:
-      throw common::InternalError(
-          "GetLlvmTypeForTypeId",
-          "associative arrays not supported in LLVM backend");
+      return llvm::PointerType::getUnqual(ctx);
 
     case TypeKind::kVoid:
       throw common::InternalError(

@@ -40,8 +40,27 @@ struct CanonResult {
   CanonKeyPayload payload;
 };
 
+// Raw canonicalization: value/xz words in LSW-first order.
+// Both MIR (via CanonicalizeKey wrapper) and LLVM (via store-to-alloca) use
+// this. xz_words may be null (2-state key).
+auto CanonicalizeKeyRaw(
+    const uint64_t* value_words, const uint64_t* xz_words, uint32_t num_words,
+    const KeySpec& spec) -> CanonResult;
+
+// String key canonicalization.
+auto CanonicalizeKeyString(const char* str_data, uint32_t str_len)
+    -> CanonResult;
+
+// RuntimeValue wrapper: extracts words and delegates to CanonicalizeKeyRaw.
 auto CanonicalizeKey(const semantic::RuntimeValue& value, const KeySpec& spec)
     -> CanonResult;
+
+// Write canonical key payload into raw words (for LLVM iteration output).
+// out_words must have capacity for at least ceil(spec.bit_width/64) words.
+void KeyPayloadToRaw(
+    const CanonKeyPayload& payload, const KeySpec& spec, uint64_t* out_words,
+    uint32_t num_words);
+
 auto KeyPayloadToRuntimeValue(
     const CanonKeyPayload& payload, const KeySpec& spec)
     -> semantic::RuntimeValue;

@@ -17,12 +17,13 @@ namespace detail {
 
 // Destroy helpers (defined in lifecycle_*.cpp files)
 void DestroyString(Context& ctx, llvm::Value* ptr);
-void DestroyContainer(Context& ctx, llvm::Value* ptr);
+void DestroyContainer(Context& ctx, llvm::Value* ptr, TypeId type_id);
 void DestroyStruct(Context& ctx, llvm::Value* ptr, TypeId type_id);
 
 // Clone helpers (defined in lifecycle_*.cpp files)
 auto CloneString(Context& ctx, llvm::Value* handle) -> llvm::Value*;
-auto CloneContainer(Context& ctx, llvm::Value* handle) -> llvm::Value*;
+auto CloneContainer(Context& ctx, llvm::Value* handle, TypeId type_id)
+    -> llvm::Value*;
 
 // MoveCleanup leaf helpers (defined in lifecycle_*.cpp files)
 void MoveCleanupString(Context& ctx, llvm::Value* ptr);
@@ -64,7 +65,8 @@ void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id) {
 
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
-      detail::DestroyContainer(ctx, ptr);
+    case TypeKind::kAssociativeArray:
+      detail::DestroyContainer(ctx, ptr, type_id);
       return;
 
     case TypeKind::kUnpackedStruct:
@@ -74,10 +76,6 @@ void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id) {
     case TypeKind::kUnpackedArray:
       detail::DestroyArray(ctx, ptr, type_id);
       return;
-
-    case TypeKind::kAssociativeArray:
-      throw common::InternalError(
-          "Destroy", "associative arrays not supported in LLVM backend");
 
     default:
       // TypeContainsManaged returned true but we don't handle this kind.
@@ -107,7 +105,8 @@ auto CloneLeafValue(Context& ctx, llvm::Value* value, TypeId type_id)
 
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
-      return detail::CloneContainer(ctx, value);
+    case TypeKind::kAssociativeArray:
+      return detail::CloneContainer(ctx, value, type_id);
 
     case TypeKind::kUnpackedStruct:
       throw common::InternalError(
@@ -118,10 +117,6 @@ auto CloneLeafValue(Context& ctx, llvm::Value* value, TypeId type_id)
       throw common::InternalError(
           "CloneLeafValue",
           "unpacked arrays must be cloned via CopyInit (element-by-element)");
-
-    case TypeKind::kAssociativeArray:
-      throw common::InternalError(
-          "CloneLeafValue", "associative arrays not supported in LLVM backend");
 
     default:
       // TypeContainsManaged returned true but we don't handle this kind.
@@ -153,6 +148,7 @@ void CopyInit(
 
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
+    case TypeKind::kAssociativeArray:
       detail::CopyInitContainer(ctx, dst_ptr, src_ptr, type_id);
       return;
 
@@ -163,10 +159,6 @@ void CopyInit(
     case TypeKind::kUnpackedArray:
       detail::CopyInitArray(ctx, dst_ptr, src_ptr, type_id);
       return;
-
-    case TypeKind::kAssociativeArray:
-      throw common::InternalError(
-          "CopyInit", "associative arrays not supported in LLVM backend");
 
     default:
       throw common::InternalError(
@@ -208,6 +200,7 @@ void MoveInit(
 
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
+    case TypeKind::kAssociativeArray:
       detail::MoveInitContainer(ctx, dst_ptr, src_ptr);
       return;
 
@@ -218,10 +211,6 @@ void MoveInit(
     case TypeKind::kUnpackedArray:
       detail::MoveInitArray(ctx, dst_ptr, src_ptr, type_id);
       return;
-
-    case TypeKind::kAssociativeArray:
-      throw common::InternalError(
-          "MoveInit", "associative arrays not supported in LLVM backend");
 
     default:
       throw common::InternalError(
@@ -260,6 +249,7 @@ void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id) {
 
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
+    case TypeKind::kAssociativeArray:
       detail::MoveCleanupContainer(ctx, src_ptr);
       return;
 
@@ -270,10 +260,6 @@ void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id) {
     case TypeKind::kUnpackedArray:
       detail::MoveCleanupArray(ctx, src_ptr, type_id);
       return;
-
-    case TypeKind::kAssociativeArray:
-      throw common::InternalError(
-          "MoveCleanup", "associative arrays not supported in LLVM backend");
 
     default:
       // TypeContainsManaged returned true but we don't handle this kind.

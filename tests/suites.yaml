@@ -25,7 +25,6 @@ suites:
     exclude_regex:
       - system_tf/pure/array_query\.yaml # MIR-only (LLVM backend unsupported)
       - system_tf/effect/system_cmd\.yaml # MIR-only ($system not in LLVM)
-      - datatypes/unpacked/assoc_arrays\.yaml # MIR-only (AA not in LLVM)
 
   lli_dev:
     backend: lli
@@ -47,7 +46,6 @@ suites:
     exclude_regex:
       - system_tf/pure/array_query\.yaml # MIR-only (LLVM backend unsupported)
       - system_tf/effect/system_cmd\.yaml # MIR-only ($system not in LLVM)
-      - datatypes/unpacked/assoc_arrays\.yaml # MIR-only (AA not in LLVM)
 
   mir_dev:
     backend: mir

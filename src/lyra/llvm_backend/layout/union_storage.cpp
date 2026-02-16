@@ -82,7 +82,8 @@ auto BuildLlvmTypeForTypeIdNoUnion(
     return llvm::ArrayType::get(elem, info.range.Size());
   }
   if (type.Kind() == TypeKind::kDynamicArray ||
-      type.Kind() == TypeKind::kQueue) {
+      type.Kind() == TypeKind::kQueue ||
+      type.Kind() == TypeKind::kAssociativeArray) {
     return llvm::PointerType::getUnqual(ctx);
   }
   if (type.Kind() == TypeKind::kReal) {
@@ -131,7 +132,8 @@ auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id)
     return llvm::ArrayType::get(*elem, info.range.Size());
   }
   if (type.Kind() == TypeKind::kDynamicArray ||
-      type.Kind() == TypeKind::kQueue) {
+      type.Kind() == TypeKind::kQueue ||
+      type.Kind() == TypeKind::kAssociativeArray) {
     return llvm::PointerType::getUnqual(context.GetLlvmContext());
   }
   if (type.Kind() == TypeKind::kReal) {

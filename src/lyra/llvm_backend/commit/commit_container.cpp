@@ -16,10 +16,10 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-// Store a dynamic array handle to a WriteTarget.
+// Store a container handle to a WriteTarget.
 // Handles destroy-old, store-new, and notify if design place.
 // The new_handle must already have the correct ownership (cloned if needed).
-void StoreDynArrayToWriteTarget(
+void StoreContainerToWriteTarget(
     Context& ctx, llvm::Value* new_handle, const WriteTarget& wt,
     TypeId type_id) {
   auto& builder = ctx.GetBuilder();
@@ -27,13 +27,19 @@ void StoreDynArrayToWriteTarget(
 
   if (wt.canonical_signal_id.has_value()) {
     // Design slot: load old first, then atomic store+notify, then release old
-    auto* old_handle = builder.CreateLoad(ptr_ty, wt.ptr, "da.old");
+    auto* old_handle = builder.CreateLoad(ptr_ty, wt.ptr, "ctr.old");
     auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
     builder.CreateCall(
         ctx.GetLyraStoreDynArray(),
         {ctx.GetEnginePointer(), wt.ptr, new_handle,
          llvm::ConstantInt::get(i32_ty, *wt.canonical_signal_id)});
-    builder.CreateCall(ctx.GetLyraDynArrayRelease(), {old_handle});
+
+    const auto& types = ctx.GetTypeArena();
+    if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
+      builder.CreateCall(ctx.GetLyraAssocRelease(), {old_handle});
+    } else {
+      builder.CreateCall(ctx.GetLyraDynArrayRelease(), {old_handle});
+    }
   } else {
     // Non-design: destroy old, store new
     Destroy(ctx, wt.ptr, type_id);
@@ -51,11 +57,9 @@ auto CommitContainerValue(
   const auto& types = ctx.GetTypeArena();
   const Type& type = types[type_id];
 
-  // HARD REQUIREMENT: Only kDynamicArray and kQueue use this path.
-  // If ManagedKind::kContainer expands to other types, they need their own
-  // path.
   if (type.Kind() != TypeKind::kDynamicArray &&
-      type.Kind() != TypeKind::kQueue) {
+      type.Kind() != TypeKind::kQueue &&
+      type.Kind() != TypeKind::kAssociativeArray) {
     throw common::InternalError(
         "CommitContainerValue", "called with non-container type");
   }
@@ -64,7 +68,7 @@ auto CommitContainerValue(
     handle = CloneLeafValue(ctx, handle, type_id);
   }
   // kMove: handle already has ownership, no clone needed
-  StoreDynArrayToWriteTarget(ctx, handle, wt, type_id);
+  StoreContainerToWriteTarget(ctx, handle, wt, type_id);
   return {};
 }
 

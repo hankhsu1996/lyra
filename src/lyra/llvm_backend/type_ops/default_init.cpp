@@ -125,7 +125,8 @@ void EmitSVDefaultInitImpl(
 
     case TypeKind::kString:
     case TypeKind::kDynamicArray:
-    case TypeKind::kQueue: {
+    case TypeKind::kQueue:
+    case TypeKind::kAssociativeArray: {
       // Pointer defaults to null. Skip store if already zeroed since LLVM
       // null pointer is all-zero bits on all supported targets.
       if (!already_zeroed) {
@@ -356,11 +357,6 @@ void EmitSVDefaultInitImpl(
       }
       return;
     }
-
-    case TypeKind::kAssociativeArray:
-      throw common::InternalError(
-          "EmitSVDefaultInit",
-          "associative arrays not supported in LLVM backend");
 
     default:
       throw common::InternalError(

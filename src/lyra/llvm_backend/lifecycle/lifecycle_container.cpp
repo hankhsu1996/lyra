@@ -19,13 +19,25 @@ auto GetContainerHandleType(Context& ctx) -> llvm::Type* {
 
 }  // namespace
 
-void DestroyContainer(Context& ctx, llvm::Value* ptr) {
+void DestroyContainer(Context& ctx, llvm::Value* ptr, TypeId type_id) {
+  auto& builder = ctx.GetBuilder();
   auto* handle_ty = GetContainerHandleType(ctx);
-  auto* handle = ctx.GetBuilder().CreateLoad(handle_ty, ptr, "destroy.da");
-  ctx.GetBuilder().CreateCall(ctx.GetLyraDynArrayRelease(), {handle});
+  auto* handle = builder.CreateLoad(handle_ty, ptr, "destroy.ctr");
+
+  const auto& types = ctx.GetTypeArena();
+  if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
+    builder.CreateCall(ctx.GetLyraAssocRelease(), {handle});
+  } else {
+    builder.CreateCall(ctx.GetLyraDynArrayRelease(), {handle});
+  }
 }
 
-auto CloneContainer(Context& ctx, llvm::Value* handle) -> llvm::Value* {
+auto CloneContainer(Context& ctx, llvm::Value* handle, TypeId type_id)
+    -> llvm::Value* {
+  const auto& types = ctx.GetTypeArena();
+  if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
+    return ctx.GetBuilder().CreateCall(ctx.GetLyraAssocClone(), {handle});
+  }
   return ctx.GetBuilder().CreateCall(ctx.GetLyraDynArrayClone(), {handle});
 }
 
@@ -53,9 +65,11 @@ void CopyInitContainer(
       cloned = builder.CreateCall(ctx.GetLyraDynArrayClone(), {src_handle});
       break;
     case TypeKind::kQueue:
-      // Queue clone is not yet implemented.
       throw common::InternalError(
           "CopyInitContainer", "queue clone is not implemented");
+    case TypeKind::kAssociativeArray:
+      cloned = builder.CreateCall(ctx.GetLyraAssocClone(), {src_handle});
+      break;
     default:
       throw common::InternalError(
           "CopyInitContainer", "unexpected type kind for container");
