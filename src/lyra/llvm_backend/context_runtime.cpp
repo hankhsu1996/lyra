@@ -188,6 +188,20 @@ auto Context::GetLyraStringFromPacked() -> llvm::Function* {
   return lyra_string_from_packed_;
 }
 
+auto Context::GetLyraStringGetView() -> llvm::Function* {
+  if (lyra_string_get_view_ == nullptr) {
+    // void LyraStringGetView(ptr handle, ptr out_ptr, ptr out_len)
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type =
+        llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty, ptr_ty}, false);
+    lyra_string_get_view_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringGetView",
+        llvm_module_.get());
+  }
+  return lyra_string_get_view_;
+}
+
 auto Context::GetLyraPackedFromString() -> llvm::Function* {
   if (lyra_packed_from_string_ == nullptr) {
     // void LyraPackedFromString(ptr handle, ptr out_data, i32 bit_width)
@@ -1146,6 +1160,238 @@ auto Context::GetLyraConnectionKernel() -> llvm::Function* {
         llvm_module_.get());
   }
   return lyra_connection_kernel_;
+}
+
+auto Context::GetLyraAssocNew() -> llvm::Function* {
+  if (lyra_assoc_new_ == nullptr) {
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        ptr_ty, {i32_ty, i32_ty, i32_ty, i32_ty, i32_ty}, false);
+    lyra_assoc_new_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocNew",
+        llvm_module_.get());
+  }
+  return lyra_assoc_new_;
+}
+
+auto Context::GetLyraAssocRelease() -> llvm::Function* {
+  if (lyra_assoc_release_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_assoc_release_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocRelease",
+        llvm_module_.get());
+  }
+  return lyra_assoc_release_;
+}
+
+auto Context::GetLyraAssocClone() -> llvm::Function* {
+  if (lyra_assoc_clone_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    lyra_assoc_clone_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocClone",
+        llvm_module_.get());
+  }
+  return lyra_assoc_clone_;
+}
+
+auto Context::GetLyraAssocGet() -> llvm::Function* {
+  if (lyra_assoc_get_ == nullptr) {
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        i32_ty, {ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty}, false);
+    lyra_assoc_get_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocGet",
+        llvm_module_.get());
+  }
+  return lyra_assoc_get_;
+}
+
+auto Context::GetLyraAssocSet() -> llvm::Function* {
+  if (lyra_assoc_set_ == nullptr) {
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        i32_ty, {ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty}, false);
+    lyra_assoc_set_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocSet",
+        llvm_module_.get());
+  }
+  return lyra_assoc_set_;
+}
+
+auto Context::GetLyraAssocExists() -> llvm::Function* {
+  if (lyra_assoc_exists_ == nullptr) {
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        i32_ty, {ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty}, false);
+    lyra_assoc_exists_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocExists",
+        llvm_module_.get());
+  }
+  return lyra_assoc_exists_;
+}
+
+auto Context::GetLyraAssocDeleteKey() -> llvm::Function* {
+  if (lyra_assoc_delete_key_ == nullptr) {
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        i32_ty, {ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty}, false);
+    lyra_assoc_delete_key_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocDeleteKey",
+        llvm_module_.get());
+  }
+  return lyra_assoc_delete_key_;
+}
+
+auto Context::GetLyraAssocDeleteAll() -> llvm::Function* {
+  if (lyra_assoc_delete_all_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_assoc_delete_all_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocDeleteAll",
+        llvm_module_.get());
+  }
+  return lyra_assoc_delete_all_;
+}
+
+auto Context::GetLyraAssocSize() -> llvm::Function* {
+  if (lyra_assoc_size_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i64_ty, {ptr_ty}, false);
+    lyra_assoc_size_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocSize",
+        llvm_module_.get());
+  }
+  return lyra_assoc_size_;
+}
+
+auto Context::GetLyraAssocFirst() -> llvm::Function* {
+  if (lyra_assoc_first_ == nullptr) {
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty}, false);
+    lyra_assoc_first_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocFirst",
+        llvm_module_.get());
+  }
+  return lyra_assoc_first_;
+}
+
+auto Context::GetLyraAssocLast() -> llvm::Function* {
+  if (lyra_assoc_last_ == nullptr) {
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty}, false);
+    lyra_assoc_last_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocLast",
+        llvm_module_.get());
+  }
+  return lyra_assoc_last_;
+}
+
+auto Context::GetLyraAssocNext() -> llvm::Function* {
+  if (lyra_assoc_next_ == nullptr) {
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty}, false);
+    lyra_assoc_next_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocNext",
+        llvm_module_.get());
+  }
+  return lyra_assoc_next_;
+}
+
+auto Context::GetLyraAssocPrev() -> llvm::Function* {
+  if (lyra_assoc_prev_ == nullptr) {
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty}, false);
+    lyra_assoc_prev_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocPrev",
+        llvm_module_.get());
+  }
+  return lyra_assoc_prev_;
+}
+
+auto Context::GetLyraAssocSnapshotCreate() -> llvm::Function* {
+  if (lyra_assoc_snapshot_create_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    lyra_assoc_snapshot_create_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocSnapshotCreate",
+        llvm_module_.get());
+  }
+  return lyra_assoc_snapshot_create_;
+}
+
+auto Context::GetLyraAssocSnapshotSize() -> llvm::Function* {
+  if (lyra_assoc_snapshot_size_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i64_ty, {ptr_ty}, false);
+    lyra_assoc_snapshot_size_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocSnapshotSize",
+        llvm_module_.get());
+  }
+  return lyra_assoc_snapshot_size_;
+}
+
+auto Context::GetLyraAssocSnapshotKeyAt() -> llvm::Function* {
+  if (lyra_assoc_snapshot_key_at_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i64_ty, ptr_ty}, false);
+    lyra_assoc_snapshot_key_at_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocSnapshotKeyAt",
+        llvm_module_.get());
+  }
+  return lyra_assoc_snapshot_key_at_;
+}
+
+auto Context::GetLyraAssocSnapshotRelease() -> llvm::Function* {
+  if (lyra_assoc_snapshot_release_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_assoc_snapshot_release_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocSnapshotRelease",
+        llvm_module_.get());
+  }
+  return lyra_assoc_snapshot_release_;
+}
+
+auto Context::GetLyraAssocCloneElem() -> llvm::Function* {
+  if (lyra_assoc_clone_elem_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+    lyra_assoc_clone_elem_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocCloneElem",
+        llvm_module_.get());
+  }
+  return lyra_assoc_clone_elem_;
+}
+
+auto Context::GetLyraAssocDestroyElem() -> llvm::Function* {
+  if (lyra_assoc_destroy_elem_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+    lyra_assoc_destroy_elem_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraAssocDestroyElem",
+        llvm_module_.get());
+  }
+  return lyra_assoc_destroy_elem_;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

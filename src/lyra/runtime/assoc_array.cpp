@@ -71,59 +71,32 @@ auto CanonKeyLess::operator()(
 
 // --- Canonicalization ---
 
-auto CanonicalizeKey(const RuntimeValue& value, const KeySpec& spec)
+auto CanonicalizeKeyString(const char* str_data, uint32_t str_len)
     -> CanonResult {
-  if (spec.kind == KeySpec::Kind::kString) {
-    if (!IsString(value)) {
-      throw common::InternalError(
-          "CanonicalizeKey", "expected string value for string key");
-    }
-    return CanonResult{
-        .status = KeyStatus::kOk,
-        .payload = CanonKeyPayload{.str_value = AsString(value).value}};
-  }
+  return CanonResult{
+      .status = KeyStatus::kOk,
+      .payload = CanonKeyPayload{.str_value = std::string(str_data, str_len)}};
+}
 
-  // Integral key
-  if (!IsIntegral(value)) {
-    throw common::InternalError(
-        "CanonicalizeKey", "expected integral value for integral key");
-  }
-  const auto& integral = AsIntegral(value);
-
+auto CanonicalizeKeyRaw(
+    const uint64_t* value_words, const uint64_t* xz_words, uint32_t num_words,
+    const KeySpec& spec) -> CanonResult {
   // Check for X/Z
-  for (uint64_t unk : integral.unknown) {
-    if (unk != 0) {
-      return CanonResult{.status = KeyStatus::kHasXZ, .payload = {}};
-    }
-  }
-
-  // Canonicalize to spec.bit_width: sign-extend if signed, then mask top word.
-  uint32_t num_words = (spec.bit_width + 63) / 64;
-  std::vector<uint64_t> words(num_words, 0);
-  size_t src_words = integral.value.size();
-  for (size_t i = 0; i < std::min<size_t>(src_words, num_words); ++i) {
-    words[i] = integral.value[i];
-  }
-
-  // Sign-extend if the source value is narrower than the key type.
-  if (spec.is_signed && src_words > 0 && src_words <= num_words) {
-    uint32_t src_bits = integral.bit_width;
-    if (src_bits < spec.bit_width) {
-      uint32_t src_top_bits = src_bits % 64;
-      if (src_top_bits == 0) src_top_bits = 64;
-      uint64_t src_msw = integral.value[src_words - 1];
-      bool negative = (src_msw & (1ULL << (src_top_bits - 1))) != 0;
-      if (negative) {
-        // Fill remaining bits in the source top word
-        if (src_top_bits < 64) {
-          words[src_words - 1] |= ~((1ULL << src_top_bits) - 1);
-        }
-        // Fill remaining words above the source
-        for (size_t i = src_words; i < num_words; ++i) {
-          words[i] = ~uint64_t{0};
-        }
+  if (xz_words != nullptr) {
+    for (uint32_t i = 0; i < num_words; ++i) {
+      if (xz_words[i] != 0) {
+        return CanonResult{.status = KeyStatus::kHasXZ, .payload = {}};
       }
     }
+  }
+
+  // Copy value words into canonical-width payload.
+  // Caller is responsible for sign-extension if source is narrower than key.
+  uint32_t dst_words = (spec.bit_width + 63) / 64;
+  std::vector<uint64_t> words(dst_words, 0);
+  uint32_t copy_count = std::min(num_words, dst_words);
+  for (uint32_t i = 0; i < copy_count; ++i) {
+    words[i] = value_words[i];
   }
 
   // Mask unused bits in top word to ensure canonical form
@@ -135,6 +108,69 @@ auto CanonicalizeKey(const RuntimeValue& value, const KeySpec& spec)
   return CanonResult{
       .status = KeyStatus::kOk,
       .payload = CanonKeyPayload{.int_words = std::move(words)}};
+}
+
+auto CanonicalizeKey(const RuntimeValue& value, const KeySpec& spec)
+    -> CanonResult {
+  if (spec.kind == KeySpec::Kind::kString) {
+    if (!IsString(value)) {
+      throw common::InternalError(
+          "CanonicalizeKey", "expected string value for string key");
+    }
+    const auto& str = AsString(value).value;
+    return CanonicalizeKeyString(str.data(), static_cast<uint32_t>(str.size()));
+  }
+
+  // Integral key
+  if (!IsIntegral(value)) {
+    throw common::InternalError(
+        "CanonicalizeKey", "expected integral value for integral key");
+  }
+  const auto& integral = AsIntegral(value);
+
+  // Sign-extend if source is narrower than key type before passing to raw.
+  uint32_t num_words = static_cast<uint32_t>(integral.value.size());
+  uint32_t dst_words = (spec.bit_width + 63) / 64;
+  const uint64_t* xz_words =
+      integral.unknown.empty() ? nullptr : integral.unknown.data();
+
+  if (spec.is_signed && integral.bit_width < spec.bit_width && num_words > 0) {
+    // Need sign-extension: copy into a temporary buffer
+    std::vector<uint64_t> extended(dst_words, 0);
+    for (uint32_t i = 0; i < std::min(num_words, dst_words); ++i) {
+      extended[i] = integral.value[i];
+    }
+    uint32_t src_top_bits = integral.bit_width % 64;
+    if (src_top_bits == 0) src_top_bits = 64;
+    uint32_t src_top_word = (integral.bit_width - 1) / 64;
+    uint64_t src_msw = integral.value[src_top_word];
+    bool negative = (src_msw & (1ULL << (src_top_bits - 1))) != 0;
+    if (negative) {
+      if (src_top_bits < 64) {
+        extended[src_top_word] |= ~((1ULL << src_top_bits) - 1);
+      }
+      for (uint32_t i = src_top_word + 1; i < dst_words; ++i) {
+        extended[i] = ~uint64_t{0};
+      }
+    }
+    return CanonicalizeKeyRaw(extended.data(), xz_words, dst_words, spec);
+  }
+
+  return CanonicalizeKeyRaw(integral.value.data(), xz_words, num_words, spec);
+}
+
+void KeyPayloadToRaw(
+    const CanonKeyPayload& payload, const KeySpec& spec, uint64_t* out_words,
+    uint32_t num_words) {
+  uint32_t copy_count =
+      std::min(num_words, static_cast<uint32_t>(payload.int_words.size()));
+  for (uint32_t i = 0; i < copy_count; ++i) {
+    out_words[i] = payload.int_words[i];
+  }
+  for (uint32_t i = copy_count; i < num_words; ++i) {
+    out_words[i] = 0;
+  }
+  (void)spec;
 }
 
 auto KeyPayloadToRuntimeValue(

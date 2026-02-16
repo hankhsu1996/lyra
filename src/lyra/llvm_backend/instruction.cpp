@@ -8,6 +8,7 @@
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/instruction/assoc_op.hpp"
 #include "lyra/llvm_backend/instruction/builtin_call.hpp"
 #include "lyra/llvm_backend/instruction/call.hpp"
 #include "lyra/llvm_backend/instruction/deferred_assign.hpp"
@@ -73,15 +74,8 @@ auto LowerStatement(Context& context, const mir::Statement& statement)
             context.BindTemp(dt.temp_id, val, dt.type);
             return {};
           },
-          [](const mir::AssocOp&) -> Result<void> {
-            return std::unexpected(
-                Diagnostic{
-                    .primary = {
-                        .kind = DiagKind::kUnsupported,
-                        .span = UnknownSpan{},
-                        .message = "associative arrays require the MIR "
-                                   "backend (use --backend=mir)",
-                        .category = UnsupportedCategory::kFeature}});
+          [&](const mir::AssocOp& op) -> Result<void> {
+            return LowerAssocOp(context, op);
           },
       },
       statement.data);

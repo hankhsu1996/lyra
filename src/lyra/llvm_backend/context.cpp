@@ -62,7 +62,6 @@ auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
 
   if (type.Kind() == TypeKind::kDynamicArray ||
       type.Kind() == TypeKind::kQueue) {
-    // Nested dynamic array or queue: element is a pointer
     auto ptr_size =
         static_cast<int32_t>(llvm_module_->getDataLayout().getPointerSize());
     return ElemOpsInfo{
@@ -70,6 +69,18 @@ auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {
         .elem_llvm_type = ptr_ty,
         .clone_fn = GetLyraDynArrayCloneElem(),
         .destroy_fn = GetLyraDynArrayDestroyElem(),
+        .needs_clone = true,
+    };
+  }
+
+  if (type.Kind() == TypeKind::kAssociativeArray) {
+    auto ptr_size =
+        static_cast<int32_t>(llvm_module_->getDataLayout().getPointerSize());
+    return ElemOpsInfo{
+        .elem_size = ptr_size,
+        .elem_llvm_type = ptr_ty,
+        .clone_fn = GetLyraAssocCloneElem(),
+        .destroy_fn = GetLyraAssocDestroyElem(),
         .needs_clone = true,
     };
   }
@@ -222,7 +233,8 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
   } else if (
       type.Kind() == TypeKind::kString ||
       type.Kind() == TypeKind::kDynamicArray ||
-      type.Kind() == TypeKind::kQueue) {
+      type.Kind() == TypeKind::kQueue ||
+      type.Kind() == TypeKind::kAssociativeArray) {
     llvm_type = llvm::PointerType::getUnqual(*llvm_context_);
   } else if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);

@@ -79,6 +79,7 @@ class Context {
   [[nodiscard]] auto GetLyraStringRelease() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringConcat() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStringFromPacked() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStringGetView() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPackedFromString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunSimulation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunProcessSync() -> llvm::Function*;
@@ -143,6 +144,25 @@ class Context {
   [[nodiscard]] auto GetLyraFread() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFscanf() -> llvm::Function*;
   [[nodiscard]] auto GetLyraConnectionKernel() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocNew() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocRelease() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocClone() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocGet() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocSet() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocExists() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocDeleteKey() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocDeleteAll() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocSize() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocFirst() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocLast() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocNext() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocPrev() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocSnapshotCreate() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocSnapshotSize() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocSnapshotKeyAt() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocSnapshotRelease() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocCloneElem() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraAssocDestroyElem() -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -415,6 +435,7 @@ class Context {
   llvm::Function* lyra_string_release_ = nullptr;
   llvm::Function* lyra_string_concat_ = nullptr;
   llvm::Function* lyra_string_from_packed_ = nullptr;
+  llvm::Function* lyra_string_get_view_ = nullptr;
   llvm::Function* lyra_packed_from_string_ = nullptr;
   llvm::Function* lyra_run_simulation_ = nullptr;
   llvm::Function* lyra_run_process_sync_ = nullptr;
@@ -479,6 +500,25 @@ class Context {
   llvm::Function* lyra_fread_ = nullptr;
   llvm::Function* lyra_fscanf_ = nullptr;
   llvm::Function* lyra_connection_kernel_ = nullptr;
+  llvm::Function* lyra_assoc_new_ = nullptr;
+  llvm::Function* lyra_assoc_release_ = nullptr;
+  llvm::Function* lyra_assoc_clone_ = nullptr;
+  llvm::Function* lyra_assoc_get_ = nullptr;
+  llvm::Function* lyra_assoc_set_ = nullptr;
+  llvm::Function* lyra_assoc_exists_ = nullptr;
+  llvm::Function* lyra_assoc_delete_key_ = nullptr;
+  llvm::Function* lyra_assoc_delete_all_ = nullptr;
+  llvm::Function* lyra_assoc_size_ = nullptr;
+  llvm::Function* lyra_assoc_first_ = nullptr;
+  llvm::Function* lyra_assoc_last_ = nullptr;
+  llvm::Function* lyra_assoc_next_ = nullptr;
+  llvm::Function* lyra_assoc_prev_ = nullptr;
+  llvm::Function* lyra_assoc_snapshot_create_ = nullptr;
+  llvm::Function* lyra_assoc_snapshot_size_ = nullptr;
+  llvm::Function* lyra_assoc_snapshot_key_at_ = nullptr;
+  llvm::Function* lyra_assoc_snapshot_release_ = nullptr;
+  llvm::Function* lyra_assoc_clone_elem_ = nullptr;
+  llvm::Function* lyra_assoc_destroy_elem_ = nullptr;
 
   // Maps PlaceRootKey to its LLVM alloca storage.
   // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root

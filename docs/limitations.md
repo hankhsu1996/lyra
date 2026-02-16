@@ -12,7 +12,7 @@ Supported:
 - Unpacked fixed-size arrays (multi-dimensional, initialization patterns)
 - Dynamic arrays (`.size()`, `.delete()`, `new[size]`, multi-dimensional)
 - Queues (bounded/unbounded, `.push_*()`, `.pop_*()`, `.insert()`, `.size()`, `.delete()`)
-- Associative arrays (MIR interpreter only, `--backend=mir`)
+- Associative arrays (int/string keys, `foreach`, `first`/`next`/`prev`/`last`, deep copy)
 - `real`, `shortreal`, `string`
 - `typedef` / type aliases
 - `enum` types (named and anonymous)
@@ -21,7 +21,6 @@ Supported:
 Not yet supported:
 
 - `class` types
-- Associative arrays in LLVM/JIT backend (supported in MIR interpreter)
 - Unpacked unions with 4-state fields: default initialization uses zero-fill instead of X encoding
 
 ## Nets
@@ -147,7 +146,7 @@ Not yet supported:
 ## Statements
 
 - `case inside` - pattern matching
-- `foreach` - unpacked arrays, dynamic arrays, queues (multi-dimensional and skipped dimensions supported), associative arrays (MIR only, snapshot semantics)
+- `foreach` - unpacked arrays, dynamic arrays, queues (multi-dimensional and skipped dimensions supported), associative arrays (snapshot semantics)
 - `wait(expr)` - wait statements
 - `->` - event triggers
 - `fork`/`join` - parallel blocks
