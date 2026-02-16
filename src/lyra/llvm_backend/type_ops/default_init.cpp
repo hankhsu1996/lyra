@@ -357,6 +357,11 @@ void EmitSVDefaultInitImpl(
       return;
     }
 
+    case TypeKind::kAssociativeArray:
+      throw common::InternalError(
+          "EmitSVDefaultInit",
+          "associative arrays not supported in LLVM backend");
+
     default:
       throw common::InternalError(
           "EmitSVDefaultInitImpl",

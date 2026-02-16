@@ -249,6 +249,35 @@ struct LocalInitCollector {
               // DefineTemp defines a ValueTemp - temps are handled by
               // process.temp_metadata, not collected here
             },
+            [&](const AssocOp& aop) {
+              Visit(arena[aop.receiver], arena);
+              std::visit(
+                  [&](const auto& op) {
+                    using T = std::decay_t<decltype(op)>;
+                    if constexpr (requires { op.dest; }) {
+                      Visit(arena[op.dest], arena);
+                    }
+                    if constexpr (requires { op.key; }) {
+                      Visit(op.key, arena);
+                    }
+                    if constexpr (requires { op.value; }) {
+                      Visit(op.value, arena);
+                    }
+                    if constexpr (requires { op.out_key; }) {
+                      Visit(arena[op.out_key], arena);
+                    }
+                    if constexpr (requires { op.dest_found; }) {
+                      Visit(arena[op.dest_found], arena);
+                    }
+                    if constexpr (requires { op.key_place; }) {
+                      Visit(arena[op.key_place], arena);
+                    }
+                    if constexpr (requires { op.dest_keys; }) {
+                      Visit(arena[op.dest_keys], arena);
+                    }
+                  },
+                  aop.data);
+            },
         },
         stmt.data);
   }

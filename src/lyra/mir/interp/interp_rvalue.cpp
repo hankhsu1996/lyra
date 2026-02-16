@@ -33,6 +33,7 @@
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/runtime/assoc_array_heap.hpp"
 
 namespace lyra::mir::interp {
 
@@ -122,6 +123,8 @@ auto CreateDefaultValue(const TypeArena& types, TypeId type_id)
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
       return MakeArray({});
+    case TypeKind::kAssociativeArray:
+      return MakeAssocHandle(runtime::kNullAssocHandle);
     case TypeKind::kEnum: {
       uint32_t bit_width = PackedBitWidth(type, types);
       if (IsPackedFourState(type, types)) {

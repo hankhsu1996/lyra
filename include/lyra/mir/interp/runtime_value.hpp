@@ -21,6 +21,7 @@ using RuntimeValue = semantic::RuntimeValue;
 // Re-export factory functions
 using semantic::Clone;
 using semantic::MakeArray;
+using semantic::MakeAssocHandle;
 using semantic::MakeIntegral;
 using semantic::MakeIntegralFromConstant;
 using semantic::MakeIntegralSigned;
@@ -34,6 +35,7 @@ using semantic::MakeUnion;
 
 // Re-export type checks
 using semantic::IsArray;
+using semantic::IsAssocArray;
 using semantic::IsIntegral;
 using semantic::IsReal;
 using semantic::IsShortReal;
@@ -43,6 +45,7 @@ using semantic::IsUnion;
 
 // Re-export accessors
 using semantic::AsArray;
+using semantic::AsAssocHandle;
 using semantic::AsIntegral;
 using semantic::AsReal;
 using semantic::AsShortReal;

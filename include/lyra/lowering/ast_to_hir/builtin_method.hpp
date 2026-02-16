@@ -14,6 +14,7 @@ enum class ContainerKind {
   kDynamicArray,
   kQueue,
   kEnum,
+  kAssociativeArray,
 };
 
 // Builtin method kind (shared across container types where applicable).
@@ -32,6 +33,13 @@ enum class BuiltinMethodKind {
   kEnumNext,   // runtime
   kEnumPrev,   // runtime
   kEnumName,   // runtime
+  // Associative array methods
+  kAssocExists,
+  kAssocFirst,
+  kAssocLast,
+  kAssocNext,
+  kAssocPrev,
+  kAssocNum,
 };
 
 // Whether the method returns a value or is void.

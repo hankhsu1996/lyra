@@ -264,6 +264,10 @@ void MirBuilder::EmitEffect(mir::EffectOp op) {
   EmitInst(mir::Effect{.op = std::move(op)});
 }
 
+void MirBuilder::EmitAssocOp(mir::AssocOp op) {
+  EmitInst(std::move(op));
+}
+
 auto MirBuilder::EmitPlaceTemp(TypeId type, mir::Rvalue value) -> mir::PlaceId {
   mir::PlaceId temp = ctx_->AllocTemp(type);
   EmitAssign(temp, std::move(value));

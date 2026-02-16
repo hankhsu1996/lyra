@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -107,6 +108,9 @@ class MirBuilder {
   auto EmitBuiltinCall(
       mir::BuiltinMethod method, mir::PlaceId receiver,
       std::vector<mir::Operand> args, TypeId return_type) -> mir::Operand;
+
+  // Emit an AssocOp instruction (associative array operation).
+  void EmitAssocOp(mir::AssocOp op);
 
   // Emit a unary operation and materialize to temp.
   auto EmitUnary(mir::UnaryOp op, mir::Operand operand, TypeId result_type)

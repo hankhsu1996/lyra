@@ -645,6 +645,35 @@ void VerifyStatementPlaceTemps(
             // CollectValueTempDefinitions
             verify_rhs_places(dt.rhs, "DefineTemp.rhs");
           },
+          [&](const AssocOp& aop) {
+            verify_place(aop.receiver, "AssocOp.receiver");
+            std::visit(
+                [&](const auto& op) {
+                  using T = std::decay_t<decltype(op)>;
+                  if constexpr (requires { op.dest; }) {
+                    verify_place(op.dest, "AssocOp.dest");
+                  }
+                  if constexpr (requires { op.key; }) {
+                    verify_operand_place(op.key, "AssocOp.key");
+                  }
+                  if constexpr (requires { op.value; }) {
+                    verify_operand_place(op.value, "AssocOp.value");
+                  }
+                  if constexpr (requires { op.out_key; }) {
+                    verify_place(op.out_key, "AssocOp.out_key");
+                  }
+                  if constexpr (requires { op.dest_found; }) {
+                    verify_place(op.dest_found, "AssocOp.dest_found");
+                  }
+                  if constexpr (requires { op.key_place; }) {
+                    verify_place(op.key_place, "AssocOp.key_place");
+                  }
+                  if constexpr (requires { op.dest_keys; }) {
+                    verify_place(op.dest_keys, "AssocOp.dest_keys");
+                  }
+                },
+                aop.data);
+          },
       },
       stmt.data);
 }
@@ -710,6 +739,23 @@ void VerifyIntraBlockDefOrder(
                   dt.rhs, available_temps, block_idx, stmt_idx, routine_kind);
               // Then add this temp to available set
               available_temps.insert(dt.temp_id);
+            },
+            [&](const AssocOp& aop) {
+              std::visit(
+                  [&](const auto& op) {
+                    using T = std::decay_t<decltype(op)>;
+                    if constexpr (requires { op.key; }) {
+                      VerifyOperandDefBeforeUse(
+                          op.key, available_temps, block_idx, stmt_idx, "key",
+                          routine_kind);
+                    }
+                    if constexpr (requires { op.value; }) {
+                      VerifyOperandDefBeforeUse(
+                          op.value, available_temps, block_idx, stmt_idx,
+                          "value", routine_kind);
+                    }
+                  },
+                  aop.data);
             },
         },
         stmt.data);

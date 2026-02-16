@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/common/origin_id.hpp"
+#include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/effect.hpp"
@@ -103,7 +104,7 @@ struct DefineTemp {
 // Statement data variant.
 using StatementData = std::variant<
     Assign, GuardedAssign, Effect, DeferredAssign, Call, BuiltinCall,
-    DefineTemp>;
+    DefineTemp, AssocOp>;
 
 // A statement that does not affect control flow.
 // - Assign, GuardedAssign, DeferredAssign write to a Place

@@ -14,6 +14,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/interp/frame.hpp"
@@ -21,6 +22,7 @@
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/runtime/assoc_array_heap.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/trace/trace_manager.hpp"
 
@@ -287,6 +289,9 @@ class Interpreter {
   auto ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
       -> Result<void>;
 
+  // Execute AssocOp instruction (associative array operations)
+  auto ExecAssocOp(ProcessState& state, const AssocOp& op) -> Result<void>;
+
   // Format display ops to string (no newline appended).
   auto FormatDisplayOps(
       const ProcessState& state, std::span<const FormatOp> ops)
@@ -342,6 +347,9 @@ class Interpreter {
   runtime::FileManager file_manager_;
   uint64_t simulation_time_ = 0;
   std::filesystem::path fs_base_dir_;
+
+  // Heap-owned associative array objects. Handles stored in RuntimeValue.
+  runtime::AssocArrayHeap aa_heap_;
 
   // PRNG state for $random/$urandom. LCG with glibc constants.
   // Same algorithm as Engine to ensure matching behavior.

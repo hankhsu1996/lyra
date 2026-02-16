@@ -1,0 +1,512 @@
+feature: datatypes_assoc_arrays
+description: Associative arrays (IEEE 1800-2023 Section 7.8)
+
+cases:
+  - name: write_read_int_key
+    description: Write and read with integer keys
+    sv: |
+      module Test;
+        int a;
+        int b;
+        initial begin
+          int aa[int];
+          aa[10] = 42;
+          aa[20] = 99;
+          a = aa[10];
+          b = aa[20];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 42
+        b: 99
+
+  - name: write_read_string_key
+    description: Write and read with string keys
+    sv: |
+      module Test;
+        int a;
+        int b;
+        initial begin
+          int aa[string];
+          aa["hello"] = 1;
+          aa["world"] = 2;
+          a = aa["hello"];
+          b = aa["world"];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 1
+        b: 2
+
+  - name: read_miss_default
+    description: Reading missing key returns default (0 for 2-state)
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          result = aa[999];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: read_miss_4state
+    description: Reading missing key returns X for 4-state
+    sv: |
+      module Test;
+        logic [3:0] result;
+        initial begin
+          logic [3:0] aa[int];
+          result = aa[0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: "4'bxxxx"
+
+  - name: write_overwrite
+    description: Writing same key overwrites previous value
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          aa[1] = 10;
+          aa[1] = 20;
+          result = aa[1];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 20
+
+  - name: variable_key
+    description: Access with variable key expression
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          int k;
+          aa[5] = 77;
+          k = 5;
+          result = aa[k];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 77
+
+  - name: wildcard_key
+    description: Wildcard [*] uses int (32-bit signed) key
+    sv: |
+      module Test;
+        int a;
+        int b;
+        initial begin
+          int aa[*];
+          aa[1] = 10;
+          aa[2] = 20;
+          a = aa[1];
+          b = aa[2];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 10
+        b: 20
+
+  - name: size_empty
+    description: Empty AA has size 0
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          result = aa.size();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: size_after_insert
+    description: Size reflects inserted entries
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          aa[1] = 10;
+          aa[2] = 20;
+          aa[3] = 30;
+          result = aa.size();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 3
+
+  - name: num_method
+    description: num() is alias for size()
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          aa[1] = 10;
+          aa[2] = 20;
+          result = aa.num();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 2
+
+  - name: delete_all
+    description: delete() removes all entries
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          aa[1] = 10;
+          aa[2] = 20;
+          aa.delete();
+          result = aa.size();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: delete_key
+    description: delete(key) removes specific entry
+    sv: |
+      module Test;
+        int size;
+        int remaining;
+        initial begin
+          int aa[int];
+          aa[1] = 10;
+          aa[2] = 20;
+          aa.delete(1);
+          size = aa.size();
+          remaining = aa[2];
+        end
+      endmodule
+    expect:
+      variables:
+        size: 1
+        remaining: 20
+
+  - name: exists_found
+    description: exists() returns 1 for present key
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          aa[5] = 42;
+          result = aa.exists(5);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: exists_not_found
+    description: exists() returns 0 for missing key
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          aa[5] = 42;
+          result = aa.exists(99);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: first_last
+    description: first() and last() return min/max keys
+    sv: |
+      module Test;
+        int first_key;
+        int last_key;
+        int f_ok;
+        int l_ok;
+        initial begin
+          int aa[int];
+          aa[30] = 1;
+          aa[10] = 2;
+          aa[20] = 3;
+          f_ok = aa.first(first_key);
+          l_ok = aa.last(last_key);
+        end
+      endmodule
+    expect:
+      variables:
+        first_key: 10
+        last_key: 30
+        f_ok: 1
+        l_ok: 1
+
+  - name: next_prev_order
+    description: next() and prev() traverse in sorted order
+    sv: |
+      module Test;
+        int k1;
+        int k2;
+        int k3;
+        int ok1;
+        int ok2;
+        int ok3;
+        initial begin
+          int aa[int];
+          int k;
+          aa[30] = 1;
+          aa[10] = 2;
+          aa[20] = 3;
+          aa.first(k);
+          k1 = k;
+          ok1 = aa.next(k);
+          k2 = k;
+          ok2 = aa.next(k);
+          k3 = k;
+          ok3 = aa.next(k);
+        end
+      endmodule
+    expect:
+      variables:
+        k1: 10
+        k2: 20
+        k3: 30
+        ok1: 1
+        ok2: 1
+        ok3: 0
+
+  - name: first_empty
+    description: first() returns 0 on empty AA
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          int k;
+          result = aa.first(k);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: string_key_order
+    description: String keys iterate in lexicographic order
+    sv: |
+      module Test;
+        int v1;
+        int v2;
+        int v3;
+        initial begin
+          int aa[string];
+          string k;
+          aa["cherry"] = 3;
+          aa["apple"] = 1;
+          aa["banana"] = 2;
+          aa.first(k);
+          v1 = aa[k];
+          aa.next(k);
+          v2 = aa[k];
+          aa.next(k);
+          v3 = aa[k];
+        end
+      endmodule
+    expect:
+      variables:
+        v1: 1
+        v2: 2
+        v3: 3
+
+  - name: subfield_write
+    description: Copy-in/copy-out for struct element subfield write
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          typedef struct { int x; int y; } point_t;
+          point_t aa[int];
+          aa[0] = '{x: 1, y: 2};
+          aa[0].x = 10;
+          result = aa[0].x;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10
+
+  - name: compound_assignment
+    description: Compound assignment on AA element (aa[k] += v)
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          aa[1] = 10;
+          aa[1] += 5;
+          result = aa[1];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 15
+
+  - name: foreach_int_keys
+    description: Foreach iterates in sorted key order (snapshot)
+    sv: |
+      module Test;
+        int k1;
+        int k2;
+        int k3;
+        initial begin
+          int aa[int];
+          int keys[$];
+          aa[3] = 30;
+          aa[1] = 10;
+          aa[2] = 20;
+          foreach (aa[k]) begin
+            keys.push_back(k);
+          end
+          k1 = keys[0];
+          k2 = keys[1];
+          k3 = keys[2];
+        end
+      endmodule
+    expect:
+      variables:
+        k1: 1
+        k2: 2
+        k3: 3
+
+  - name: foreach_empty
+    description: Foreach on empty AA executes zero iterations
+    sv: |
+      module Test;
+        int count;
+        initial begin
+          int aa[int];
+          count = 0;
+          foreach (aa[k]) begin
+            count = count + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        count: 0
+
+  - name: foreach_with_element_access
+    description: Foreach body can access AA elements via loop key
+    sv: |
+      module Test;
+        int total;
+        initial begin
+          int aa[int];
+          aa[1] = 10;
+          aa[2] = 20;
+          aa[3] = 30;
+          total = 0;
+          foreach (aa[k]) begin
+            total = total + aa[k];
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        total: 60
+
+  - name: foreach_delete_during
+    description: Deleting during foreach does not affect iteration (snapshot)
+    sv: |
+      module Test;
+        int count;
+        initial begin
+          int aa[int];
+          aa[1] = 10;
+          aa[2] = 20;
+          aa[3] = 30;
+          count = 0;
+          foreach (aa[k]) begin
+            aa.delete(k);
+            count = count + 1;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        count: 3
+
+  - name: assignment_deep_copy
+    description: Assignment creates independent deep copy
+    sv: |
+      module Test;
+        int a;
+        int b;
+        initial begin
+          int aa1[int];
+          int aa2[int];
+          aa1[1] = 10;
+          aa2 = aa1;
+          aa1[1] = 99;
+          a = aa1[1];
+          b = aa2[1];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 99
+        b: 10
+
+  - name: signed_key_narrow_expr
+    description: Signed narrow key expression sign-extends to key width
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int aa[int];
+          byte k;
+          k = -1;
+          aa[k] = 42;
+          result = aa[-1];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: nested_aa_deep_copy
+    description: AA-valued element is deep-copied on AssocSet
+    sv: |
+      module Test;
+        int a;
+        int b;
+        initial begin
+          int inner[int];
+          int outer[int][int];
+          inner[1] = 10;
+          outer[0] = inner;
+          inner[1] = 99;
+          a = inner[1];
+          b = outer[0][1];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 99
+        b: 10

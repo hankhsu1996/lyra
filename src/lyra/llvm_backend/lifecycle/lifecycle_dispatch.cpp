@@ -75,6 +75,10 @@ void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id) {
       detail::DestroyArray(ctx, ptr, type_id);
       return;
 
+    case TypeKind::kAssociativeArray:
+      throw common::InternalError(
+          "Destroy", "associative arrays not supported in LLVM backend");
+
     default:
       // TypeContainsManaged returned true but we don't handle this kind.
       // This is a bug: either TypeContainsManaged is wrong, or we're missing
@@ -114,6 +118,10 @@ auto CloneLeafValue(Context& ctx, llvm::Value* value, TypeId type_id)
       throw common::InternalError(
           "CloneLeafValue",
           "unpacked arrays must be cloned via CopyInit (element-by-element)");
+
+    case TypeKind::kAssociativeArray:
+      throw common::InternalError(
+          "CloneLeafValue", "associative arrays not supported in LLVM backend");
 
     default:
       // TypeContainsManaged returned true but we don't handle this kind.
@@ -155,6 +163,10 @@ void CopyInit(
     case TypeKind::kUnpackedArray:
       detail::CopyInitArray(ctx, dst_ptr, src_ptr, type_id);
       return;
+
+    case TypeKind::kAssociativeArray:
+      throw common::InternalError(
+          "CopyInit", "associative arrays not supported in LLVM backend");
 
     default:
       throw common::InternalError(
@@ -207,6 +219,10 @@ void MoveInit(
       detail::MoveInitArray(ctx, dst_ptr, src_ptr, type_id);
       return;
 
+    case TypeKind::kAssociativeArray:
+      throw common::InternalError(
+          "MoveInit", "associative arrays not supported in LLVM backend");
+
     default:
       throw common::InternalError(
           "MoveInit", std::format(
@@ -254,6 +270,10 @@ void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id) {
     case TypeKind::kUnpackedArray:
       detail::MoveCleanupArray(ctx, src_ptr, type_id);
       return;
+
+    case TypeKind::kAssociativeArray:
+      throw common::InternalError(
+          "MoveCleanup", "associative arrays not supported in LLVM backend");
 
     default:
       // TypeContainsManaged returned true but we don't handle this kind.

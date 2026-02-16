@@ -133,7 +133,7 @@ inline auto ComputePackedFillShape(
 // Managed types: string, dynamic array, queue.
 inline auto IsManagedKind(TypeKind kind) -> bool {
   return kind == TypeKind::kString || kind == TypeKind::kDynamicArray ||
-         kind == TypeKind::kQueue;
+         kind == TypeKind::kQueue || kind == TypeKind::kAssociativeArray;
 }
 
 namespace detail {

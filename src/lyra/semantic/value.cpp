@@ -332,6 +332,10 @@ auto MakeUnion(RuntimeIntegral storage_bits) -> RuntimeValue {
   return u;
 }
 
+auto MakeAssocHandle(runtime::AssocArrayHandle handle) -> RuntimeValue {
+  return handle;
+}
+
 auto Clone(const RuntimeValue& v) -> RuntimeValue {
   return std::visit(
       [](const auto& val) -> RuntimeValue {
@@ -365,6 +369,8 @@ auto Clone(const RuntimeValue& v) -> RuntimeValue {
           auto copy = std::make_unique<RuntimeUnion>();
           copy->storage_bits = val->storage_bits;
           return copy;
+        } else if constexpr (std::is_same_v<T, runtime::AssocArrayHandle>) {
+          return val;  // Shallow copy of handle; deep copy is explicit via heap
         }
       },
       v);
@@ -396,6 +402,14 @@ auto IsArray(const RuntimeValue& v) -> bool {
 
 auto IsUnion(const RuntimeValue& v) -> bool {
   return std::holds_alternative<std::unique_ptr<RuntimeUnion>>(v);
+}
+
+auto IsAssocArray(const RuntimeValue& v) -> bool {
+  return std::holds_alternative<runtime::AssocArrayHandle>(v);
+}
+
+auto AsAssocHandle(const RuntimeValue& v) -> runtime::AssocArrayHandle {
+  return std::get<runtime::AssocArrayHandle>(v);
 }
 
 auto AsIntegral(RuntimeValue& v) -> RuntimeIntegral& {
@@ -491,6 +505,8 @@ auto ToString(const RuntimeValue& v) -> std::string {
           return result;
         } else if constexpr (std::is_same_v<T, std::unique_ptr<RuntimeUnion>>) {
           return std::format("<union[{}]>", ToHexString(val->storage_bits));
+        } else if constexpr (std::is_same_v<T, runtime::AssocArrayHandle>) {
+          return std::format("<assoc_array#{}>", val.id);
         }
       },
       v);

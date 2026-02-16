@@ -70,6 +70,7 @@ enum class TypeKind {
   kUnpackedUnion,
   kDynamicArray,
   kQueue,
+  kAssociativeArray,
   kEnum,
 };
 
@@ -99,6 +100,8 @@ inline auto ToString(TypeKind kind) -> std::string {
       return "dynamic_array";
     case TypeKind::kQueue:
       return "queue";
+    case TypeKind::kAssociativeArray:
+      return "associative_array";
     case TypeKind::kEnum:
       return "enum";
   }
@@ -163,6 +166,18 @@ struct QueueInfo {
   template <typename H>
   friend auto AbslHashValue(H h, const QueueInfo& info) -> H {
     return H::combine(std::move(h), info.element_type, info.max_bound);
+  }
+};
+
+struct AssociativeArrayInfo {
+  TypeId element_type;
+  TypeId key_type;  // kInvalidTypeId for wildcard [*]
+
+  auto operator==(const AssociativeArrayInfo&) const -> bool = default;
+
+  template <typename H>
+  friend auto AbslHashValue(H h, const AssociativeArrayInfo& info) -> H {
+    return H::combine(std::move(h), info.element_type, info.key_type);
   }
 };
 
@@ -266,7 +281,7 @@ struct UnpackedUnionInfo {
 using TypePayload = std::variant<
     std::monostate, IntegralInfo, PackedArrayInfo, PackedStructInfo,
     UnpackedArrayInfo, UnpackedStructInfo, UnpackedUnionInfo, DynamicArrayInfo,
-    QueueInfo, EnumInfo>;
+    QueueInfo, AssociativeArrayInfo, EnumInfo>;
 
 struct TypeKey {
   TypeKind kind = TypeKind::kVoid;
@@ -293,6 +308,7 @@ class Type {
   static auto UnpackedUnion(UnpackedUnionInfo info) -> Type;
   static auto DynamicArray(TypeId element) -> Type;
   static auto Queue(TypeId element, uint32_t max_bound) -> Type;
+  static auto AssociativeArray(TypeId element, TypeId key) -> Type;
   static auto Enum(EnumInfo info) -> Type;
 
   [[nodiscard]] auto Kind() const -> TypeKind {
@@ -308,6 +324,7 @@ class Type {
   [[nodiscard]] auto AsUnpackedUnion() const -> const UnpackedUnionInfo&;
   [[nodiscard]] auto AsDynamicArray() const -> const DynamicArrayInfo&;
   [[nodiscard]] auto AsQueue() const -> const QueueInfo&;
+  [[nodiscard]] auto AsAssociativeArray() const -> const AssociativeArrayInfo&;
   [[nodiscard]] auto AsEnum() const -> const EnumInfo&;
 
   auto operator==(const Type& other) const -> bool = default;
@@ -383,6 +400,13 @@ inline auto Type::Queue(TypeId element, uint32_t max_bound) -> Type {
   Type t;
   t.kind_ = TypeKind::kQueue;
   t.payload_ = QueueInfo{.element_type = element, .max_bound = max_bound};
+  return t;
+}
+
+inline auto Type::AssociativeArray(TypeId element, TypeId key) -> Type {
+  Type t;
+  t.kind_ = TypeKind::kAssociativeArray;
+  t.payload_ = AssociativeArrayInfo{.element_type = element, .key_type = key};
   return t;
 }
 
@@ -465,6 +489,15 @@ inline auto Type::AsQueue() const -> const QueueInfo& {
   return std::get<QueueInfo>(payload_);
 }
 
+inline auto Type::AsAssociativeArray() const -> const AssociativeArrayInfo& {
+  if (kind_ != TypeKind::kAssociativeArray) {
+    throw common::InternalError(
+        "Type::AsAssociativeArray",
+        std::format("expected AssociativeArray, got {}", ToString(kind_)));
+  }
+  return std::get<AssociativeArrayInfo>(payload_);
+}
+
 inline auto Type::AsEnum() const -> const EnumInfo& {
   if (kind_ != TypeKind::kEnum) {
     throw common::InternalError(
@@ -531,6 +564,14 @@ inline auto ToString(const Type& type) -> std::string {
       }
       return std::format(
           "type#{}[$:{}]", info.element_type.value, info.max_bound);
+    }
+    case TypeKind::kAssociativeArray: {
+      const auto& info = type.AsAssociativeArray();
+      if (!info.key_type) {
+        return std::format("type#{}[*]", info.element_type.value);
+      }
+      return std::format(
+          "type#{}[type#{}]", info.element_type.value, info.key_type.value);
     }
     case TypeKind::kEnum: {
       const auto& info = type.AsEnum();
