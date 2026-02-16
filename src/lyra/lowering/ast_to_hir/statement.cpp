@@ -1262,10 +1262,222 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       const auto& fs = stmt.as<slang::ast::ForeachLoopStatement>();
       SourceSpan span = ctx->SpanOf(stmt.sourceRange);
 
-      // Reject associative arrays
+      // Associative arrays: snapshot-based desugaring.
+      // foreach (aa[k]) { body; }  desugars to:
+      //   { auto __keys = aa.__snapshot();
+      //     for (int __i = 0; __i < __keys.size(); __i++) {
+      //       key_type k = __keys[__i]; body; } }
       if (fs.arrayRef.type->isAssociativeArray()) {
-        ctx->sink->Error(span, "foreach over associative arrays not supported");
-        return hir::kInvalidStatementId;
+        // AA foreach must have exactly one dimension
+        if (fs.loopDims.size() != 1 || fs.loopDims[0].loopVar == nullptr) {
+          ctx->sink->Error(
+              span,
+              "associative array foreach requires exactly "
+              "one loop variable");
+          return hir::kInvalidStatementId;
+        }
+
+        ScopeGuard scope_guard(registrar, ScopeKind::kBlock);
+
+        // Lower AA expression
+        hir::ExpressionId aa_expr = lower_expr(fs.arrayRef);
+        if (!aa_expr) return hir::kInvalidStatementId;
+
+        // Determine key type from AA info
+        TypeId aa_type = LowerType(*fs.arrayRef.type, span, ctx);
+        if (!aa_type) return hir::kInvalidStatementId;
+        const auto& aa_info = (*ctx->type_arena)[aa_type].AsAssociativeArray();
+        TypeId key_type_id = aa_info.key_type;
+        // Wildcard [*] uses int (32-bit signed)
+        if (!key_type_id) {
+          key_type_id = ctx->type_arena->Intern(
+              TypeKind::kIntegral,
+              IntegralInfo{
+                  .bit_width = 32, .is_signed = true, .is_four_state = false});
+        }
+
+        // Create dynamic array type for snapshot keys
+        TypeId keys_array_type = ctx->type_arena->Intern(
+            TypeKind::kDynamicArray,
+            DynamicArrayInfo{.element_type = key_type_id});
+
+        // Emit snapshot: __keys = aa.__snapshot()
+        hir::ExpressionId snapshot_call = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kBuiltinMethodCall,
+                .type = keys_array_type,
+                .span = span,
+                .data = hir::BuiltinMethodCallExpressionData{
+                    .receiver = aa_expr,
+                    .method = hir::BuiltinMethod::kAssocSnapshot,
+                    .args = {}}});
+
+        SymbolId keys_sym = registrar.RegisterSynthetic(
+            ctx->MakeTempName("aa_keys"), SymbolKind::kVariable,
+            keys_array_type);
+
+        hir::StatementId keys_decl = ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kVariableDeclaration,
+                .span = span,
+                .data = hir::VariableDeclarationStatementData{
+                    .symbol = keys_sym,
+                    .initializer = hir::RValue::Expression(snapshot_call)}});
+
+        // Declare key loop variable
+        TypeId key_var_type =
+            LowerType(fs.loopDims[0].loopVar->getType(), span, ctx);
+        if (!key_var_type) return hir::kInvalidStatementId;
+
+        SymbolId key_sym = registrar.Register(
+            *fs.loopDims[0].loopVar, SymbolKind::kVariable, key_var_type,
+            StorageClass::kLocalStorage);
+
+        hir::StatementId key_decl = ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kVariableDeclaration,
+                .span = span,
+                .data = hir::VariableDeclarationStatementData{
+                    .symbol = key_sym, .initializer = std::nullopt}});
+
+        // Create __i loop index variable (int type)
+        TypeId int_type = ctx->type_arena->Intern(
+            TypeKind::kIntegral,
+            IntegralInfo{
+                .bit_width = 32, .is_signed = true, .is_four_state = false});
+
+        SymbolId idx_sym = registrar.RegisterSynthetic(
+            ctx->MakeTempName("aa_idx"), SymbolKind::kVariable, int_type);
+
+        hir::StatementId idx_decl = ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kVariableDeclaration,
+                .span = span,
+                .data = hir::VariableDeclarationStatementData{
+                    .symbol = idx_sym, .initializer = std::nullopt}});
+
+        // Lower body
+        auto body_result = LowerStatement(fs.body, lowerer);
+        if (!body_result.has_value()) {
+          ctx->sink->Error(span, "foreach loop body cannot be empty");
+          return hir::kInvalidStatementId;
+        }
+        if (!*body_result) return hir::kInvalidStatementId;
+
+        // Build: k = __keys[__i]
+        hir::ExpressionId keys_ref = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kNameRef,
+                .type = keys_array_type,
+                .span = span,
+                .data = hir::NameRefExpressionData{.symbol = keys_sym}});
+
+        hir::ExpressionId idx_ref = MakeNameRef(idx_sym, int_type, span, ctx);
+
+        hir::ExpressionId key_element = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kElementAccess,
+                .type = key_type_id,
+                .span = span,
+                .data = hir::ElementAccessExpressionData{
+                    .base = keys_ref, .index = idx_ref}});
+
+        hir::ExpressionId key_ref =
+            MakeNameRef(key_sym, key_var_type, span, ctx);
+
+        hir::ExpressionId key_assign = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kAssignment,
+                .type = key_var_type,
+                .span = span,
+                .data = hir::AssignmentExpressionData{
+                    .target = key_ref,
+                    .value = key_element,
+                    .is_non_blocking = false}});
+
+        hir::StatementId key_assign_stmt = ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kExpression,
+                .span = span,
+                .data =
+                    hir::ExpressionStatementData{.expression = key_assign}});
+
+        // Build loop body: { k = __keys[__i]; user_body }
+        hir::StatementId loop_body = ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kBlock,
+                .span = span,
+                .data = hir::BlockStatementData{
+                    .statements = {key_assign_stmt, *body_result}}});
+
+        // Build: __keys.size()
+        hir::ExpressionId keys_ref2 = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kNameRef,
+                .type = keys_array_type,
+                .span = span,
+                .data = hir::NameRefExpressionData{.symbol = keys_sym}});
+
+        hir::ExpressionId size_call = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kBuiltinMethodCall,
+                .type = int_type,
+                .span = span,
+                .data = hir::BuiltinMethodCallExpressionData{
+                    .receiver = keys_ref2,
+                    .method = hir::BuiltinMethod::kSize,
+                    .args = {}}});
+
+        // Build for loop: for (__i = 0; __i < size; __i++)
+        hir::ExpressionId idx_ref2 = MakeNameRef(idx_sym, int_type, span, ctx);
+
+        TypeId bool_type = ctx->type_arena->Intern(
+            TypeKind::kIntegral,
+            IntegralInfo{
+                .bit_width = 1, .is_signed = false, .is_four_state = false});
+
+        hir::ExpressionId condition = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kBinaryOp,
+                .type = bool_type,
+                .span = span,
+                .data = hir::BinaryExpressionData{
+                    .op = hir::BinaryOp::kLessThan,
+                    .lhs = idx_ref2,
+                    .rhs = size_call}});
+
+        hir::ExpressionId idx_ref3 = MakeNameRef(idx_sym, int_type, span, ctx);
+        hir::ExpressionId step = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kUnaryOp,
+                .type = int_type,
+                .span = span,
+                .data = hir::UnaryExpressionData{
+                    .op = hir::UnaryOp::kPostincrement, .operand = idx_ref3}});
+
+        hir::ExpressionId init_val = MakeIntConstant(0, int_type, span, ctx);
+
+        // Build init assignment: __i = 0
+        hir::ExpressionId init_idx_ref =
+            MakeNameRef(idx_sym, int_type, span, ctx);
+        hir::ExpressionId init_assign = ctx->hir_arena->AddExpression(
+            hir::Expression{
+                .kind = hir::ExpressionKind::kAssignment,
+                .type = int_type,
+                .span = span,
+                .data = hir::AssignmentExpressionData{
+                    .target = init_idx_ref, .value = init_val}});
+
+        hir::StatementId for_loop =
+            BuildForLoop(init_assign, condition, step, loop_body, span, ctx);
+
+        // Wrap everything in a block
+        return ctx->hir_arena->AddStatement(
+            hir::Statement{
+                .kind = hir::StatementKind::kBlock,
+                .span = span,
+                .data = hir::BlockStatementData{
+                    .statements = {keys_decl, key_decl, idx_decl, for_loop}}});
       }
 
       // Count active dimensions (non-skipped)

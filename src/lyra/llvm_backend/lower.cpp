@@ -115,6 +115,10 @@ auto ClassifySlotStorageKind(TypeId type_id, const TypeArena& types)
     case TypeKind::kUnpackedStruct:
     case TypeKind::kUnpackedUnion:
       return runtime::SlotStorageKind::kAggregate;
+    case TypeKind::kAssociativeArray:
+      throw common::InternalError(
+          "ClassifySlotStorageKind",
+          "associative arrays not supported in LLVM backend");
     default:
       break;
   }

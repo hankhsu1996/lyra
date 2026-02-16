@@ -245,6 +245,35 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
     }
   }
 
+  // Must check before isUnpackedArray() - associative arrays are a subset
+  if (canonical.isAssociativeArray()) {
+    const auto& assoc = canonical.as<slang::ast::AssociativeArrayType>();
+    TypeId element = LowerType(assoc.elementType, source, ctx);
+    if (!element) {
+      return kInvalidTypeId;
+    }
+    TypeId key_type = kInvalidTypeId;
+    if (assoc.indexType != nullptr) {
+      // Validate key type: must be integral, string, or enum
+      key_type = LowerType(*assoc.indexType, source, ctx);
+      if (!key_type) {
+        return kInvalidTypeId;
+      }
+      const auto& lowered_key = (*ctx->type_arena)[key_type];
+      if (lowered_key.Kind() != TypeKind::kIntegral &&
+          lowered_key.Kind() != TypeKind::kString &&
+          lowered_key.Kind() != TypeKind::kEnum) {
+        ctx->sink->Error(
+            source,
+            "associative array key type must be integral, string, or enum");
+        return kInvalidTypeId;
+      }
+    }
+    return ctx->type_arena->Intern(
+        TypeKind::kAssociativeArray,
+        AssociativeArrayInfo{.element_type = element, .key_type = key_type});
+  }
+
   // Must check before isUnpackedArray() - dynamic arrays are a subset
   if (canonical.kind == slang::ast::SymbolKind::DynamicArrayType) {
     const auto& dynamic = canonical.as<slang::ast::DynamicArrayType>();

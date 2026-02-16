@@ -211,6 +211,19 @@ void CollectFromStatement(
             }
           },
           [&](const DefineTemp& dt) { CollectFromRhs(dt.rhs, arena, obs); },
+          [&](const AssocOp& aop) {
+            std::visit(
+                [&](const auto& op) {
+                  using T = std::decay_t<decltype(op)>;
+                  if constexpr (requires { op.key; }) {
+                    CollectFromOperand(op.key, arena, obs);
+                  }
+                  if constexpr (requires { op.value; }) {
+                    CollectFromOperand(op.value, arena, obs);
+                  }
+                },
+                aop.data);
+          },
       },
       stmt.data);
 }

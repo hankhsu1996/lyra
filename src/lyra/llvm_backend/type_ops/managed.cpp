@@ -12,6 +12,7 @@ auto GetManagedKind(TypeKind kind) -> ManagedKind {
       return ManagedKind::kString;
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
+    case TypeKind::kAssociativeArray:
       return ManagedKind::kContainer;
     default:
       return ManagedKind::kNone;

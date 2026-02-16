@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/assoc_array_handle.hpp"
 #include "lyra/common/constant.hpp"
 
 namespace lyra::semantic {
@@ -44,7 +45,8 @@ struct RuntimeUnion;
 using RuntimeValue = std::variant<
     std::monostate, RuntimeIntegral, RuntimeString, RuntimeReal,
     RuntimeShortReal, std::unique_ptr<RuntimeStruct>,
-    std::unique_ptr<RuntimeArray>, std::unique_ptr<RuntimeUnion>>;
+    std::unique_ptr<RuntimeArray>, std::unique_ptr<RuntimeUnion>,
+    runtime::AssocArrayHandle>;
 
 struct RuntimeStruct {
   std::vector<RuntimeValue> fields;
@@ -85,6 +87,7 @@ auto MakeShortReal(float value) -> RuntimeValue;
 auto MakeStruct(std::vector<RuntimeValue> fields) -> RuntimeValue;
 auto MakeArray(std::vector<RuntimeValue> elements) -> RuntimeValue;
 auto MakeUnion(RuntimeIntegral storage_bits) -> RuntimeValue;
+auto MakeAssocHandle(runtime::AssocArrayHandle handle) -> RuntimeValue;
 
 // Deep copy
 auto Clone(const RuntimeValue& v) -> RuntimeValue;
@@ -97,6 +100,7 @@ auto IsShortReal(const RuntimeValue& v) -> bool;
 auto IsStruct(const RuntimeValue& v) -> bool;
 auto IsArray(const RuntimeValue& v) -> bool;
 auto IsUnion(const RuntimeValue& v) -> bool;
+auto IsAssocArray(const RuntimeValue& v) -> bool;
 
 // Accessors (assert correct type)
 auto AsIntegral(RuntimeValue& v) -> RuntimeIntegral&;
@@ -113,6 +117,7 @@ auto AsArray(RuntimeValue& v) -> RuntimeArray&;
 auto AsArray(const RuntimeValue& v) -> const RuntimeArray&;
 auto AsUnion(RuntimeValue& v) -> RuntimeUnion&;
 auto AsUnion(const RuntimeValue& v) -> const RuntimeUnion&;
+auto AsAssocHandle(const RuntimeValue& v) -> runtime::AssocArrayHandle;
 
 // Conversion to printable string (for $display)
 auto ToString(const RuntimeValue& v) -> std::string;

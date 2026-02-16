@@ -298,7 +298,7 @@ auto LowerIncrementDecrement(
   // 1. Lower operand as lvalue
   Result<LvalueResult> target_result = LowerLvalue(data.operand, builder);
   if (!target_result) return std::unexpected(target_result.error());
-  LvalueResult target = *target_result;
+  LvalueResult target = std::move(*target_result);
 
   // 2. Type validation (defensive - Slang already checked)
   const Type& type = (*ctx.type_arena)[expr.type];
@@ -343,6 +343,16 @@ auto LowerIncrementDecrement(
         target.place, mir::Operand::Use(new_value), target.validity);
   }
 
+  // Writeback for AA compound access (aa[k]++)
+  if (target.writeback) {
+    auto wb = std::move(target.writeback);
+    builder.EmitAssocOp(
+        mir::AssocOp{
+            .receiver = wb->aa_place,
+            .data = mir::AssocSet{
+                .key = wb->key, .value = mir::Operand::Use(wb->temp_place)}});
+  }
+
   // 6. Return appropriate value
   bool is_pre =
       (data.op == hir::UnaryOp::kPreincrement ||
@@ -362,7 +372,7 @@ auto LowerCompoundAssignment(
   // scope)
   Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
   if (!target_result) return std::unexpected(target_result.error());
-  LvalueResult target = *target_result;
+  LvalueResult target = std::move(*target_result);
 
   // 2. Lower the RHS operand
   Result<mir::Operand> rhs_result =
@@ -417,6 +427,16 @@ auto LowerCompoundAssignment(
   } else {
     builder.EmitGuardedAssign(
         target.place, mir::Operand::Use(new_value), target.validity);
+  }
+
+  // Writeback for AA compound access (aa[k] += v)
+  if (target.writeback) {
+    auto wb = std::move(target.writeback);
+    builder.EmitAssocOp(
+        mir::AssocOp{
+            .receiver = wb->aa_place,
+            .data = mir::AssocSet{
+                .key = wb->key, .value = mir::Operand::Use(wb->temp_place)}});
   }
 
   // 7. Return new value (compound assignment yields the new value)
@@ -696,7 +716,7 @@ auto LowerSystemCall(
     Result<LvalueResult> output_lv_result =
         LowerLvalue(val_pa->output, builder);
     if (!output_lv_result) return std::unexpected(output_lv_result.error());
-    LvalueResult output_lv = *output_lv_result;
+    LvalueResult output_lv = std::move(*output_lv_result);
 
     Context& ctx = builder.GetContext();
     const hir::Expression& out_expr = (*ctx.hir_arena)[val_pa->output];
@@ -803,7 +823,7 @@ auto LowerSystemCall(
     Result<LvalueResult> output_lv_result =
         LowerLvalue(fgets_data->str_output, builder);
     if (!output_lv_result) return std::unexpected(output_lv_result.error());
-    LvalueResult output_lv = *output_lv_result;
+    LvalueResult output_lv = std::move(*output_lv_result);
 
     Context& ctx = builder.GetContext();
     const hir::Expression& out_expr = (*ctx.hir_arena)[fgets_data->str_output];
@@ -823,7 +843,7 @@ auto LowerSystemCall(
     Result<LvalueResult> target_lv_result =
         LowerLvalue(fread_data->target, builder);
     if (!target_lv_result) return std::unexpected(target_lv_result.error());
-    LvalueResult target_lv = *target_lv_result;
+    LvalueResult target_lv = std::move(*target_lv_result);
 
     Context& ctx = builder.GetContext();
     TypeId target_type = fread_data->target_type;
@@ -1074,10 +1094,40 @@ auto LowerAssignment(
     const hir::AssignmentExpressionData& data, const hir::Expression& /*expr*/,
     MirBuilder& builder, PlaceMaterializationCache& cache)
     -> Result<mir::Operand> {
+  Context& ctx = builder.GetContext();
+
+  // Check for direct AA element assignment: aa[k] = v
+  // Detect before LowerLvalue to avoid unnecessary copy-in.
+  const hir::Expression& target_expr = (*ctx.hir_arena)[data.target];
+  if (const auto* elem_data =
+          std::get_if<hir::ElementAccessExpressionData>(&target_expr.data)) {
+    const hir::Expression& base_expr = (*ctx.hir_arena)[elem_data->base];
+    const Type& base_type = (*ctx.type_arena)[base_expr.type];
+    if (base_type.Kind() == TypeKind::kAssociativeArray) {
+      // Lower base as lvalue
+      Result<LvalueResult> base_lv = LowerLvalue(elem_data->base, builder);
+      if (!base_lv) return std::unexpected(base_lv.error());
+      // Lower key
+      Result<mir::Operand> key_result =
+          LowerExpressionImpl(elem_data->index, builder, cache);
+      if (!key_result) return std::unexpected(key_result.error());
+      // Lower value
+      Result<mir::Operand> value_result =
+          LowerExpressionImpl(data.value, builder, cache);
+      if (!value_result) return std::unexpected(value_result.error());
+      builder.EmitAssocOp(
+          mir::AssocOp{
+              .receiver = base_lv->place,
+              .data =
+                  mir::AssocSet{.key = *key_result, .value = *value_result}});
+      return *value_result;
+    }
+  }
+
   // Lower target as lvalue (separate cache scope)
   Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
   if (!target_result) return std::unexpected(target_result.error());
-  LvalueResult target = *target_result;
+  LvalueResult target = std::move(*target_result);
 
   // Lower value as rvalue
   Result<mir::Operand> value_result =
@@ -1093,6 +1143,16 @@ auto LowerAssignment(
   } else {
     // Guarded assign: only write if guard is true (OOB/X/Z = no-op)
     builder.EmitGuardedAssign(target.place, value, target.validity);
+  }
+
+  // Writeback for AA compound access (aa[k].field = v)
+  if (target.writeback) {
+    auto wb = std::move(target.writeback);
+    builder.EmitAssocOp(
+        mir::AssocOp{
+            .receiver = wb->aa_place,
+            .data = mir::AssocSet{
+                .key = wb->key, .value = mir::Operand::Use(wb->temp_place)}});
   }
 
   // Return the value (assignment expression yields the assigned value)
@@ -1351,12 +1411,22 @@ auto LowerBuiltinMethodCall(
 
   switch (data.method) {
     case hir::BuiltinMethod::kSize: {
+      const Type& receiver_type = (*ctx.type_arena)[receiver_expr.type];
+      // AA size/num -> AssocNum
+      if (receiver_type.Kind() == TypeKind::kAssociativeArray) {
+        Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
+        if (!lv_result) return std::unexpected(lv_result.error());
+        mir::PlaceId dest = ctx.AllocTemp(expr.type);
+        builder.EmitAssocOp(
+            mir::AssocOp{
+                .receiver = lv_result->place,
+                .data = mir::AssocNum{.dest = dest}});
+        return mir::Operand::Use(dest);
+      }
       Result<mir::Operand> receiver_result =
           LowerExpressionImpl(data.receiver, builder, cache);
       if (!receiver_result) return std::unexpected(receiver_result.error());
       mir::Operand receiver = *receiver_result;
-      // Determine which size method based on receiver type
-      const Type& receiver_type = (*ctx.type_arena)[receiver_expr.type];
       mir::BuiltinMethod method = (receiver_type.Kind() == TypeKind::kQueue)
                                       ? mir::BuiltinMethod::kQueueSize
                                       : mir::BuiltinMethod::kArraySize;
@@ -1379,7 +1449,7 @@ auto LowerBuiltinMethodCall(
       // Need receiver as PlaceId for mutation (LowerLvalue has separate scope)
       Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
       if (!lv_result) return std::unexpected(lv_result.error());
-      LvalueResult lv = *lv_result;
+      LvalueResult lv = std::move(*lv_result);
 
       mir::BuiltinMethod method = (data.method == hir::BuiltinMethod::kPopBack)
                                       ? mir::BuiltinMethod::kQueuePopBack
@@ -1393,7 +1463,7 @@ auto LowerBuiltinMethodCall(
       // Note: LowerLvalue has separate cache scope
       Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
       if (!lv_result) return std::unexpected(lv_result.error());
-      LvalueResult lv = *lv_result;
+      LvalueResult lv = std::move(*lv_result);
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
         BlockIndex before = builder.CurrentBlock();
@@ -1420,7 +1490,7 @@ auto LowerBuiltinMethodCall(
       // Note: LowerLvalue has separate cache scope
       Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
       if (!lv_result) return std::unexpected(lv_result.error());
-      LvalueResult lv = *lv_result;
+      LvalueResult lv = std::move(*lv_result);
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
         BlockIndex before = builder.CurrentBlock();
@@ -1441,10 +1511,31 @@ auto LowerBuiltinMethodCall(
     }
 
     case hir::BuiltinMethod::kDelete: {
+      const Type& receiver_type = (*ctx.type_arena)[receiver_expr.type];
+      // AA delete: delete() or delete(key)
+      if (receiver_type.Kind() == TypeKind::kAssociativeArray) {
+        Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
+        if (!lv_result) return std::unexpected(lv_result.error());
+        if (data.args.empty()) {
+          builder.EmitAssocOp(
+              mir::AssocOp{
+                  .receiver = lv_result->place, .data = mir::AssocDelete{}});
+        } else {
+          Result<mir::Operand> key_result =
+              LowerExpressionImpl(data.args[0], builder, cache);
+          if (!key_result) return std::unexpected(key_result.error());
+          builder.EmitAssocOp(
+              mir::AssocOp{
+                  .receiver = lv_result->place,
+                  .data = mir::AssocDeleteKey{.key = *key_result}});
+        }
+        return mir::Operand::Poison();
+      }
+
       // Note: LowerLvalue has separate cache scope
       Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
       if (!lv_result) return std::unexpected(lv_result.error());
-      LvalueResult lv = *lv_result;
+      LvalueResult lv = std::move(*lv_result);
       std::vector<mir::Operand> operands;
       for (hir::ExpressionId arg_id : data.args) {
         BlockIndex before = builder.CurrentBlock();
@@ -1460,7 +1551,6 @@ auto LowerBuiltinMethodCall(
       }
 
       // Determine method: kArrayDelete, kQueueDelete, or kQueueDeleteAt
-      const Type& receiver_type = (*ctx.type_arena)[receiver_expr.type];
       mir::BuiltinMethod method = mir::BuiltinMethod::kArrayDelete;
       if (receiver_type.Kind() == TypeKind::kDynamicArray) {
         method = mir::BuiltinMethod::kArrayDelete;
@@ -1472,6 +1562,83 @@ auto LowerBuiltinMethodCall(
 
       return builder.EmitBuiltinCall(
           method, lv.place, std::move(operands), expr.type);
+    }
+
+    case hir::BuiltinMethod::kAssocExists: {
+      // receiver as lvalue (AA place), key as rvalue
+      Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
+      if (!lv_result) return std::unexpected(lv_result.error());
+      std::vector<mir::Operand> operands;
+      for (hir::ExpressionId arg_id : data.args) {
+        Result<mir::Operand> arg_result =
+            LowerExpressionImpl(arg_id, builder, cache);
+        if (!arg_result) return std::unexpected(arg_result.error());
+        operands.push_back(*arg_result);
+      }
+      mir::PlaceId dest = ctx.AllocTemp(expr.type);
+      builder.EmitAssocOp(
+          mir::AssocOp{
+              .receiver = lv_result->place,
+              .data = mir::AssocExists{.dest = dest, .key = operands[0]}});
+      return mir::Operand::Use(dest);
+    }
+
+    case hir::BuiltinMethod::kAssocFirst:
+    case hir::BuiltinMethod::kAssocLast: {
+      Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
+      if (!lv_result) return std::unexpected(lv_result.error());
+      // key ref arg: lower as lvalue
+      Result<LvalueResult> key_lv = LowerLvalue(data.args[0], builder);
+      if (!key_lv) return std::unexpected(key_lv.error());
+      mir::PlaceId dest = ctx.AllocTemp(expr.type);
+      if (data.method == hir::BuiltinMethod::kAssocFirst) {
+        builder.EmitAssocOp(
+            mir::AssocOp{
+                .receiver = lv_result->place,
+                .data = mir::AssocIterFirst{
+                    .dest_found = dest, .out_key = key_lv->place}});
+      } else {
+        builder.EmitAssocOp(
+            mir::AssocOp{
+                .receiver = lv_result->place,
+                .data = mir::AssocIterLast{
+                    .dest_found = dest, .out_key = key_lv->place}});
+      }
+      return mir::Operand::Use(dest);
+    }
+
+    case hir::BuiltinMethod::kAssocNext:
+    case hir::BuiltinMethod::kAssocPrev: {
+      Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
+      if (!lv_result) return std::unexpected(lv_result.error());
+      Result<LvalueResult> key_lv = LowerLvalue(data.args[0], builder);
+      if (!key_lv) return std::unexpected(key_lv.error());
+      mir::PlaceId dest = ctx.AllocTemp(expr.type);
+      if (data.method == hir::BuiltinMethod::kAssocNext) {
+        builder.EmitAssocOp(
+            mir::AssocOp{
+                .receiver = lv_result->place,
+                .data = mir::AssocIterNext{
+                    .dest_found = dest, .key_place = key_lv->place}});
+      } else {
+        builder.EmitAssocOp(
+            mir::AssocOp{
+                .receiver = lv_result->place,
+                .data = mir::AssocIterPrev{
+                    .dest_found = dest, .key_place = key_lv->place}});
+      }
+      return mir::Operand::Use(dest);
+    }
+
+    case hir::BuiltinMethod::kAssocSnapshot: {
+      Result<LvalueResult> lv_result = LowerLvalue(data.receiver, builder);
+      if (!lv_result) return std::unexpected(lv_result.error());
+      mir::PlaceId dest = ctx.AllocTemp(expr.type);
+      builder.EmitAssocOp(
+          mir::AssocOp{
+              .receiver = lv_result->place,
+              .data = mir::AssocSnapshot{.dest_keys = dest}});
+      return mir::Operand::Use(dest);
     }
 
     case hir::BuiltinMethod::kEnumNext:
@@ -2130,6 +2297,18 @@ auto LowerElementAccessRvalue(
       builder.EnsurePlaceCached(base_expr.type, base_operand, cache);
 
   const Type& base_type = (*ctx.type_arena)[base_expr.type];
+
+  // Associative array: emit AssocGet
+  if (base_type.Kind() == TypeKind::kAssociativeArray) {
+    const auto& aa_info = base_type.AsAssociativeArray();
+    mir::PlaceId dest = ctx.AllocTemp(aa_info.element_type);
+    builder.EmitAssocOp(
+        mir::AssocOp{
+            .receiver = base_place,
+            .data = mir::AssocGet{.dest = dest, .key = index_operand}});
+    return mir::Operand::Use(dest);
+  }
+
   if (base_type.Kind() != TypeKind::kUnpackedArray &&
       base_type.Kind() != TypeKind::kDynamicArray &&
       base_type.Kind() != TypeKind::kQueue) {
@@ -2224,7 +2403,7 @@ auto LowerExpressionImpl(
           // Addressable base - use existing lvalue+load path (separate scope)
           Result<LvalueResult> lv_result = LowerLvalue(expr_id, builder);
           if (!lv_result) return std::unexpected(lv_result.error());
-          LvalueResult lv = *lv_result;
+          LvalueResult lv = std::move(*lv_result);
           return mir::Operand::Use(lv.place);
         } else if constexpr (std::is_same_v<
                                  T, hir::UnionMemberAccessExpressionData>) {
@@ -2232,7 +2411,7 @@ auto LowerExpressionImpl(
           // Note: LowerLvalue has separate cache scope
           Result<LvalueResult> lv_result = LowerLvalue(expr_id, builder);
           if (!lv_result) return std::unexpected(lv_result.error());
-          LvalueResult lv = *lv_result;
+          LvalueResult lv = std::move(*lv_result);
           return mir::Operand::Use(lv.place);
         } else if constexpr (std::is_same_v<
                                  T, hir::StructLiteralExpressionData>) {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <variant>
 
 #include "lyra/common/constant.hpp"
@@ -44,9 +45,19 @@ inline auto IsAlwaysValid(const mir::Operand& validity) -> bool {
 // TODO(hankhsu): Extend validity tracking to unpacked/dynamic arrays and
 // queues. Currently only packed arrays track validity; other array types need
 // OOB handling added in lowering (emit GuardedUse/GuardedAssign).
+// Writeback token for associative array copy-in/copy-out.
+// Produced by lvalue lowering when target is `aa[k].field` (compound access).
+// Consumed by assignment lowering to write back the modified element.
+struct AssocWriteBack {
+  mir::PlaceId aa_place;
+  mir::Operand key;
+  mir::PlaceId temp_place;
+};
+
 struct LvalueResult {
   mir::PlaceId place;
   mir::Operand validity;  // 1-bit 2-state bool: kConst(1) or kUse(place)
+  std::unique_ptr<AssocWriteBack> writeback;
 
   // Check if this lvalue is always valid (no runtime guarding needed).
   [[nodiscard]] auto IsAlwaysValid() const -> bool {

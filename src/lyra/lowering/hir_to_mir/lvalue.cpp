@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/expression.hpp"
+#include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
@@ -159,7 +160,7 @@ auto LowerElementAccessLvalue(
 
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
   if (!base_result) return std::unexpected(base_result.error());
-  LvalueResult base = *base_result;
+  LvalueResult base = std::move(*base_result);
   auto index_result = LowerExpression(data.index, builder);
   if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = std::move(*index_result);
@@ -167,6 +168,23 @@ auto LowerElementAccessLvalue(
   const mir::Place& base_place = (*ctx.mir_arena)[base.place];
   TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
   const Type& base_type = (*ctx.type_arena)[base_type_id];
+
+  // Associative array: copy-in via AssocGet, attach writeback token.
+  if (base_type.Kind() == TypeKind::kAssociativeArray) {
+    const auto& aa_info = base_type.AsAssociativeArray();
+    mir::PlaceId temp = ctx.AllocTemp(aa_info.element_type);
+    builder.EmitAssocOp(
+        mir::AssocOp{
+            .receiver = base.place,
+            .data = mir::AssocGet{.dest = temp, .key = index_operand}});
+    return LvalueResult{
+        .place = temp,
+        .validity = base.validity,
+        .writeback = std::make_unique<AssocWriteBack>(AssocWriteBack{
+            .aa_place = base.place, .key = index_operand, .temp_place = temp}),
+    };
+  }
+
   if (base_type.Kind() != TypeKind::kUnpackedArray &&
       base_type.Kind() != TypeKind::kDynamicArray &&
       base_type.Kind() != TypeKind::kQueue) {
@@ -203,7 +221,7 @@ auto LowerMemberAccessLvalue(
 
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
   if (!base_result) return std::unexpected(base_result.error());
-  LvalueResult base = *base_result;
+  LvalueResult base = std::move(*base_result);
 
   const mir::Place& base_place = (*ctx.mir_arena)[base.place];
   TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
@@ -221,10 +239,12 @@ auto LowerMemberAccessLvalue(
   mir::PlaceId result_place =
       ctx.mir_arena->DerivePlace(base.place, std::move(proj));
 
-  // Field access is always valid - validity inherited from base
+  // Field access is always valid - validity inherited from base.
+  // Writeback propagated from base (for AA copy-in/copy-out).
   return LvalueResult{
       .place = result_place,
       .validity = base.validity,
+      .writeback = std::move(base.writeback),
   };
 }
 
@@ -235,7 +255,7 @@ auto LowerUnionMemberAccessLvalue(
 
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
   if (!base_result) return std::unexpected(base_result.error());
-  LvalueResult base = *base_result;
+  LvalueResult base = std::move(*base_result);
 
   const mir::Place& base_place = (*ctx.mir_arena)[base.place];
   TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
@@ -270,7 +290,7 @@ auto LowerPackedElementSelectLvalue(
 
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
   if (!base_result) return std::unexpected(base_result.error());
-  LvalueResult base = *base_result;
+  LvalueResult base = std::move(*base_result);
   auto index_result = LowerExpression(data.index, builder);
   if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = std::move(*index_result);
@@ -421,7 +441,7 @@ auto LowerIndexedPartSelectLvalue(
   // Lower base as lvalue (recursive)
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
   if (!base_result) return std::unexpected(base_result.error());
-  LvalueResult base = *base_result;
+  LvalueResult base = std::move(*base_result);
 
   // Lower index as expression
   auto index_result = LowerExpression(data.index, builder);
@@ -469,7 +489,7 @@ auto LowerPackedFieldAccessLvalue(
 
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
   if (!base_result) return std::unexpected(base_result.error());
-  LvalueResult base = *base_result;
+  LvalueResult base = std::move(*base_result);
 
   // Create constant offset operand
   TypeId offset_type = ctx.GetOffsetType();
@@ -506,7 +526,7 @@ auto LowerRangeSelectLvalue(
   // Lower base as lvalue (recursive)
   Result<LvalueResult> base_result = LowerLvalue(data.base, builder);
   if (!base_result) return std::unexpected(base_result.error());
-  LvalueResult base = *base_result;
+  LvalueResult base = std::move(*base_result);
 
   // Get base type info
   const hir::Expression& base_expr = (*ctx.hir_arena)[data.base];

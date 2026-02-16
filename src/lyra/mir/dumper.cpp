@@ -333,6 +333,8 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
             }
           } else if constexpr (std::is_same_v<T, DefineTemp>) {
             *out_ << std::format("#t{} = {}\n", i.temp_id, FormatRhs(i.rhs));
+          } else if constexpr (std::is_same_v<T, AssocOp>) {
+            *out_ << std::format("assoc_op {}\n", FormatPlace(i.receiver));
           }
         },
         stmt.data);

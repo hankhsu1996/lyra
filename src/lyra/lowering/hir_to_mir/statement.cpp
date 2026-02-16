@@ -100,7 +100,7 @@ auto LowerAssignment(
     -> Result<void> {
   Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
   if (!target_result) return std::unexpected(target_result.error());
-  LvalueResult target = *target_result;
+  LvalueResult target = std::move(*target_result);
 
   Result<mir::Operand> value_result = LowerExpression(data.value, builder);
   if (!value_result) return std::unexpected(value_result.error());
@@ -422,7 +422,7 @@ auto LowerSFormatEffect(
   // Assign to output
   Result<LvalueResult> target_result = LowerLvalue(*data.output, builder);
   if (!target_result) return std::unexpected(target_result.error());
-  LvalueResult target = *target_result;
+  LvalueResult target = std::move(*target_result);
   builder.EmitAssign(target.place, mir::Operand::Use(tmp));
   return {};
 }
@@ -696,7 +696,7 @@ auto LowerMemIOEffect(const hir::MemIOData& data, MirBuilder& builder)
 
   Result<LvalueResult> target_result = LowerLvalue(data.target, builder);
   if (!target_result) return std::unexpected(target_result.error());
-  LvalueResult target = *target_result;
+  LvalueResult target = std::move(*target_result);
   const hir::Expression& target_expr = (*ctx.hir_arena)[data.target];
 
   std::optional<mir::Operand> start_addr;

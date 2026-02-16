@@ -73,6 +73,16 @@ auto LowerStatement(Context& context, const mir::Statement& statement)
             context.BindTemp(dt.temp_id, val, dt.type);
             return {};
           },
+          [](const mir::AssocOp&) -> Result<void> {
+            return std::unexpected(
+                Diagnostic{
+                    .primary = {
+                        .kind = DiagKind::kUnsupported,
+                        .span = UnknownSpan{},
+                        .message = "associative arrays require the MIR "
+                                   "backend (use --backend=mir)",
+                        .category = UnsupportedCategory::kFeature}});
+          },
       },
       statement.data);
 }

@@ -56,6 +56,8 @@ auto ClassifyBuiltinMethod(const slang::ast::CallExpression& call)
     container = ContainerKind::kQueue;
   } else if (receiver_type.isEnum()) {
     container = ContainerKind::kEnum;
+  } else if (receiver_type.isAssociativeArray()) {
+    container = ContainerKind::kAssociativeArray;
   }
 
   if (!container) {
@@ -117,6 +119,52 @@ auto ClassifyBuiltinMethod(const slang::ast::CallExpression& call)
           .method = BuiltinMethodKind::kInsert,
           .return_kind = ReturnKind::kVoid,
           .has_side_effect = true};
+    }
+  }
+
+  // Associative array methods.
+  if (*container == ContainerKind::kAssociativeArray) {
+    if (name == "exists") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kAssocExists,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
+    }
+    if (name == "first") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kAssocFirst,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
+    }
+    if (name == "last") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kAssocLast,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
+    }
+    if (name == "next") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kAssocNext,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
+    }
+    if (name == "prev") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kAssocPrev,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
+    }
+    if (name == "num") {
+      return BuiltinMethodInfo{
+          .container = *container,
+          .method = BuiltinMethodKind::kAssocNum,
+          .return_kind = ReturnKind::kValue,
+          .has_side_effect = false};
     }
   }
 
@@ -365,6 +413,84 @@ auto LowerBuiltinMethodCall(
         }
         args.push_back(step);
       }
+      break;
+    }
+
+    case BuiltinMethodKind::kAssocExists: {
+      // exists(key) -> int (0 or 1)
+      hir_method = hir::BuiltinMethod::kAssocExists;
+      result_type = ctx->type_arena->Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 32, .is_signed = true, .is_four_state = false});
+      // key arg
+      if (call.arguments().size() != 2) {
+        ctx->sink->Error(span, "exists() requires exactly one argument");
+        return hir::kInvalidExpressionId;
+      }
+      hir::ExpressionId key = LowerExpression(*call.arguments()[1], view);
+      if (!key) return hir::kInvalidExpressionId;
+      args.push_back(key);
+      break;
+    }
+
+    case BuiltinMethodKind::kAssocNum: {
+      hir_method = hir::BuiltinMethod::kSize;
+      result_type = ctx->type_arena->Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 32, .is_signed = true, .is_four_state = false});
+      break;
+    }
+
+    case BuiltinMethodKind::kAssocFirst:
+    case BuiltinMethodKind::kAssocLast: {
+      // first(ref key) / last(ref key) -> int (0 or 1)
+      if (info.method == BuiltinMethodKind::kAssocFirst) {
+        hir_method = hir::BuiltinMethod::kAssocFirst;
+      } else {
+        hir_method = hir::BuiltinMethod::kAssocLast;
+      }
+      result_type = ctx->type_arena->Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 32, .is_signed = true, .is_four_state = false});
+      // key ref arg
+      if (call.arguments().size() != 2) {
+        ctx->sink->Error(
+            span, std::format(
+                      "{}() requires exactly one argument",
+                      call.getSubroutineName()));
+        return hir::kInvalidExpressionId;
+      }
+      hir::ExpressionId key = LowerExpression(*call.arguments()[1], view);
+      if (!key) return hir::kInvalidExpressionId;
+      args.push_back(key);
+      break;
+    }
+
+    case BuiltinMethodKind::kAssocNext:
+    case BuiltinMethodKind::kAssocPrev: {
+      if (info.method == BuiltinMethodKind::kAssocNext) {
+        hir_method = hir::BuiltinMethod::kAssocNext;
+      } else {
+        hir_method = hir::BuiltinMethod::kAssocPrev;
+      }
+      result_type = ctx->type_arena->Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 32, .is_signed = true, .is_four_state = false});
+      // key ref arg
+      if (call.arguments().size() != 2) {
+        ctx->sink->Error(
+            span, std::format(
+                      "{}() requires exactly one argument",
+                      call.getSubroutineName()));
+        return hir::kInvalidExpressionId;
+      }
+      hir::ExpressionId key = LowerExpression(*call.arguments()[1], view);
+      if (!key) return hir::kInvalidExpressionId;
+      args.push_back(key);
       break;
     }
 

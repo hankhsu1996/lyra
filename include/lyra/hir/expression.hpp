@@ -182,6 +182,13 @@ enum class BuiltinMethod {
   kEnumNext,
   kEnumPrev,
   kEnumName,
+  // Associative array methods
+  kAssocExists,
+  kAssocFirst,
+  kAssocLast,
+  kAssocNext,
+  kAssocPrev,
+  kAssocSnapshot,  // Internal: collect sorted keys into array (for foreach)
 };
 
 struct NewArrayExpressionData {

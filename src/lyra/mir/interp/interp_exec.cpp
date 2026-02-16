@@ -42,6 +42,8 @@
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
+#include "lyra/runtime/assoc_array.hpp"
+#include "lyra/runtime/assoc_array_heap.hpp"
 #include "lyra/runtime/file_manager.hpp"
 
 namespace lyra::mir::interp {
@@ -186,6 +188,13 @@ auto Interpreter::ExecAssign(ProcessState& state, const Assign& assign)
             if (!value_result) {
               return std::unexpected(std::move(value_result).error());
             }
+            // Deep-copy AA handles on assignment (Lyra-defined semantics)
+            if (IsAssocArray(*value_result)) {
+              auto h = AsAssocHandle(*value_result);
+              if (h) {
+                *value_result = MakeAssocHandle(aa_heap_.DeepCopy(h));
+              }
+            }
             return StoreToPlace(state, assign.dest, std::move(*value_result));
           },
           [&](const Rvalue& rvalue) -> Result<void> {
@@ -193,6 +202,13 @@ auto Interpreter::ExecAssign(ProcessState& state, const Assign& assign)
             auto value_result = EvalRvalue(state, rvalue, result_type);
             if (!value_result) {
               return std::unexpected(std::move(value_result).error());
+            }
+            // Deep-copy AA handles on assignment (Lyra-defined semantics)
+            if (IsAssocArray(*value_result)) {
+              auto h = AsAssocHandle(*value_result);
+              if (h) {
+                *value_result = MakeAssocHandle(aa_heap_.DeepCopy(h));
+              }
             }
             return StoreToPlace(state, assign.dest, std::move(*value_result));
           },
@@ -1472,6 +1488,165 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
   }
 }
 
+auto Interpreter::ExecAssocOp(ProcessState& state, const AssocOp& op)
+    -> Result<void> {
+  // Read receiver handle. Lazy-allocate if null.
+  auto receiver_read = ReadPlace(state, op.receiver);
+  if (!receiver_read) return std::unexpected(std::move(receiver_read).error());
+
+  auto handle = AsAssocHandle(*receiver_read);
+  if (!handle) {
+    // Lazy-allocate: determine key spec from receiver type
+    TypeId receiver_type = TypeOfPlace(*types_, (*arena_)[op.receiver]);
+    const auto& aa_info = (*types_)[receiver_type].AsAssociativeArray();
+    runtime::KeySpec spec = runtime::MakeKeySpec(aa_info.key_type, *types_);
+    handle = aa_heap_.Allocate(spec);
+    // Store handle back to receiver place
+    auto store_result =
+        StoreToPlace(state, op.receiver, MakeAssocHandle(handle));
+    if (!store_result) return std::unexpected(std::move(store_result).error());
+  }
+
+  auto& obj = aa_heap_.Get(handle);
+  const auto& key_spec = obj.GetKeySpec();
+
+  return std::visit(
+      common::Overloaded{
+          [&](const AssocGet& get) -> Result<void> {
+            auto key_val = EvalOperand(state, get.key);
+            if (!key_val) return std::unexpected(std::move(key_val).error());
+            auto canon = runtime::CanonicalizeKey(*key_val, key_spec);
+            if (canon.status == runtime::KeyStatus::kHasXZ) {
+              // X/Z key: write default value
+              TypeId receiver_type =
+                  TypeOfPlace(*types_, (*arena_)[op.receiver]);
+              TypeId elem_type =
+                  (*types_)[receiver_type].AsAssociativeArray().element_type;
+              return StoreToPlace(
+                  state, get.dest, CreateDefaultValue(*types_, elem_type));
+            }
+            const auto* found = obj.Find(canon.payload);
+            if (found != nullptr) {
+              return StoreToPlace(state, get.dest, Clone(*found));
+            }
+            TypeId receiver_type = TypeOfPlace(*types_, (*arena_)[op.receiver]);
+            TypeId elem_type =
+                (*types_)[receiver_type].AsAssociativeArray().element_type;
+            return StoreToPlace(
+                state, get.dest, CreateDefaultValue(*types_, elem_type));
+          },
+          [&](const AssocSet& set) -> Result<void> {
+            auto key_val = EvalOperand(state, set.key);
+            if (!key_val) return std::unexpected(std::move(key_val).error());
+            auto canon = runtime::CanonicalizeKey(*key_val, key_spec);
+            if (canon.status == runtime::KeyStatus::kHasXZ) {
+              return {};  // X/Z key: no-op
+            }
+            auto value = EvalOperand(state, set.value);
+            if (!value) return std::unexpected(std::move(value).error());
+            // Deep-copy AA handles for value semantics (nested AAs)
+            if (IsAssocArray(*value)) {
+              auto h = AsAssocHandle(*value);
+              if (h) {
+                *value = MakeAssocHandle(aa_heap_.DeepCopy(h));
+              }
+            }
+            obj.Set(std::move(canon.payload), std::move(*value));
+            return {};
+          },
+          [&](const AssocExists& exists) -> Result<void> {
+            auto key_val = EvalOperand(state, exists.key);
+            if (!key_val) return std::unexpected(std::move(key_val).error());
+            auto canon = runtime::CanonicalizeKey(*key_val, key_spec);
+            int result = 0;
+            if (canon.status == runtime::KeyStatus::kOk) {
+              result = obj.Exists(canon.payload) ? 1 : 0;
+            }
+            return StoreToPlace(state, exists.dest, MakeIntegral(result, 32));
+          },
+          [&](const AssocDelete& /*del*/) -> Result<void> {
+            obj.Delete();
+            return {};
+          },
+          [&](const AssocDeleteKey& del) -> Result<void> {
+            auto key_val = EvalOperand(state, del.key);
+            if (!key_val) return std::unexpected(std::move(key_val).error());
+            auto canon = runtime::CanonicalizeKey(*key_val, key_spec);
+            if (canon.status == runtime::KeyStatus::kOk) {
+              obj.DeleteKey(canon.payload);
+            }
+            return {};
+          },
+          [&](const AssocNum& num) -> Result<void> {
+            return StoreToPlace(state, num.dest, MakeIntegral(obj.Num(), 32));
+          },
+          [&](const AssocIterFirst& iter) -> Result<void> {
+            auto first = obj.First();
+            if (first) {
+              auto rv = runtime::KeyPayloadToRuntimeValue(*first, key_spec);
+              auto store = StoreToPlace(state, iter.out_key, std::move(rv));
+              if (!store) return std::unexpected(std::move(store).error());
+              return StoreToPlace(state, iter.dest_found, MakeIntegral(1, 32));
+            }
+            return StoreToPlace(state, iter.dest_found, MakeIntegral(0, 32));
+          },
+          [&](const AssocIterLast& iter) -> Result<void> {
+            auto last = obj.Last();
+            if (last) {
+              auto rv = runtime::KeyPayloadToRuntimeValue(*last, key_spec);
+              auto store = StoreToPlace(state, iter.out_key, std::move(rv));
+              if (!store) return std::unexpected(std::move(store).error());
+              return StoreToPlace(state, iter.dest_found, MakeIntegral(1, 32));
+            }
+            return StoreToPlace(state, iter.dest_found, MakeIntegral(0, 32));
+          },
+          [&](const AssocIterNext& iter) -> Result<void> {
+            auto current = ReadPlace(state, iter.key_place);
+            if (!current) return std::unexpected(std::move(current).error());
+            auto canon = runtime::CanonicalizeKey(*current, key_spec);
+            if (canon.status == runtime::KeyStatus::kHasXZ) {
+              return StoreToPlace(state, iter.dest_found, MakeIntegral(0, 32));
+            }
+            auto next = obj.Next(canon.payload);
+            if (next) {
+              auto rv = runtime::KeyPayloadToRuntimeValue(*next, key_spec);
+              auto store = StoreToPlace(state, iter.key_place, std::move(rv));
+              if (!store) return std::unexpected(std::move(store).error());
+              return StoreToPlace(state, iter.dest_found, MakeIntegral(1, 32));
+            }
+            return StoreToPlace(state, iter.dest_found, MakeIntegral(0, 32));
+          },
+          [&](const AssocIterPrev& iter) -> Result<void> {
+            auto current = ReadPlace(state, iter.key_place);
+            if (!current) return std::unexpected(std::move(current).error());
+            auto canon = runtime::CanonicalizeKey(*current, key_spec);
+            if (canon.status == runtime::KeyStatus::kHasXZ) {
+              return StoreToPlace(state, iter.dest_found, MakeIntegral(0, 32));
+            }
+            auto prev = obj.Prev(canon.payload);
+            if (prev) {
+              auto rv = runtime::KeyPayloadToRuntimeValue(*prev, key_spec);
+              auto store = StoreToPlace(state, iter.key_place, std::move(rv));
+              if (!store) return std::unexpected(std::move(store).error());
+              return StoreToPlace(state, iter.dest_found, MakeIntegral(1, 32));
+            }
+            return StoreToPlace(state, iter.dest_found, MakeIntegral(0, 32));
+          },
+          [&](const AssocSnapshot& snap) -> Result<void> {
+            auto keys = obj.SnapshotKeys();
+            std::vector<RuntimeValue> elements;
+            elements.reserve(keys.size());
+            for (auto& key : keys) {
+              elements.push_back(
+                  runtime::KeyPayloadToRuntimeValue(key, key_spec));
+            }
+            return StoreToPlace(
+                state, snap.dest_keys, MakeArray(std::move(elements)));
+          },
+      },
+      op.data);
+}
+
 auto Interpreter::ExecStatement(ProcessState& state, const Statement& stmt)
     -> Result<void> {
   std::optional<Diagnostic> error;
@@ -1504,6 +1679,11 @@ auto Interpreter::ExecStatement(ProcessState& state, const Statement& stmt)
           }
         } else if constexpr (std::is_same_v<T, BuiltinCall>) {
           auto result = ExecBuiltinCall(state, i);
+          if (!result) {
+            error = std::move(result).error();
+          }
+        } else if constexpr (std::is_same_v<T, AssocOp>) {
+          auto result = ExecAssocOp(state, i);
           if (!result) {
             error = std::move(result).error();
           }

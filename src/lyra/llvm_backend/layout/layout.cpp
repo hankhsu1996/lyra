@@ -351,6 +351,11 @@ auto GetLlvmTypeForTypeId(
     case TypeKind::kUnpackedUnion:
       return BuildUnpackedUnionType(ctx, type_id, types);
 
+    case TypeKind::kAssociativeArray:
+      throw common::InternalError(
+          "GetLlvmTypeForTypeId",
+          "associative arrays not supported in LLVM backend");
+
     case TypeKind::kVoid:
       throw common::InternalError(
           "GetLlvmTypeForTypeId",
@@ -795,6 +800,35 @@ auto CollectProcessPlaces(const mir::Process& process)
               [&](const mir::DefineTemp& dt) {
                 // DefineTemp doesn't create place storage; only visit RHS
                 CollectPlacesFromRhs(dt.rhs, places);
+              },
+              [&](const mir::AssocOp& aop) {
+                places.insert(aop.receiver);
+                std::visit(
+                    [&](const auto& op) {
+                      using T = std::decay_t<decltype(op)>;
+                      if constexpr (requires { op.dest; }) {
+                        places.insert(op.dest);
+                      }
+                      if constexpr (requires { op.key; }) {
+                        CollectPlaceFromOperand(op.key, places);
+                      }
+                      if constexpr (requires { op.value; }) {
+                        CollectPlaceFromOperand(op.value, places);
+                      }
+                      if constexpr (requires { op.out_key; }) {
+                        places.insert(op.out_key);
+                      }
+                      if constexpr (requires { op.dest_found; }) {
+                        places.insert(op.dest_found);
+                      }
+                      if constexpr (requires { op.key_place; }) {
+                        places.insert(op.key_place);
+                      }
+                      if constexpr (requires { op.dest_keys; }) {
+                        places.insert(op.dest_keys);
+                      }
+                    },
+                    aop.data);
               },
           },
           instr.data);
