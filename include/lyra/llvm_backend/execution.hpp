@@ -23,9 +23,10 @@ struct JitCompileTimings {
   double link_fixup = 0.0;     // Resolve + copy + fixup
   double link_finalize = 0.0;  // Memory finalization (total)
   double finalize_perm = 0.0;  // fixup_done -> emitted (mprotect + finalize)
-  double finalize_overhead = 0.0;  // emitted -> lookup_end (symbol registration)
-  bool complete = false;           // True only if all phases succeeded
-  bool has_link_detail = false;    // True when JITLink sub-phase data available
+  double finalize_overhead =
+      0.0;                       // emitted -> lookup_end (symbol registration)
+  bool complete = false;         // True only if all phases succeeded
+  bool has_link_detail = false;  // True when JITLink sub-phase data available
 };
 
 // ORC JIT statistics for diagnosing link-time costs.

@@ -1169,7 +1169,7 @@ auto GenerateProcessFunction(
       llvm::Type::getVoidTy(llvm_ctx), {ptr_ty, i32_ty}, false);
 
   auto* func = llvm::Function::Create(
-      fn_type, llvm::Function::ExternalLinkage, name, &module);
+      fn_type, llvm::Function::InternalLinkage, name, &module);
 
   // Name the arguments
   auto* state_arg = func->getArg(0);
