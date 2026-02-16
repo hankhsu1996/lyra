@@ -299,6 +299,30 @@ extern "C" void LyraSuspendRepeat(void* state) {
   suspend->resume_block = 0;
 }
 
+extern "C" void LyraConnectionKernel(void* state, uint32_t /*resume_block*/) {
+  auto* header = static_cast<StateHeader*>(state);
+  auto* desc = reinterpret_cast<lyra::runtime::ConnectionDescriptor*>(
+      static_cast<char*>(state) + sizeof(StateHeader));
+
+  auto* design = static_cast<char*>(header->design_ptr);
+
+  // Copy src -> dst with change detection via LyraStorePacked
+  LyraStorePacked(
+      header->engine_ptr, design + desc->dst_byte_offset,
+      design + desc->src_byte_offset, desc->byte_size, desc->dst_slot_id, 0, 0);
+
+  // Setup trigger and suspend
+  lyra::runtime::WaitTriggerRecord trigger{
+      .signal_id = desc->trigger_slot_id,
+      .edge = desc->trigger_edge,
+      .bit_index = desc->trigger_bit_index,
+      .padding = {},
+      .byte_offset = desc->trigger_byte_offset,
+      .byte_size = desc->trigger_byte_size,
+  };
+  LyraSuspendWait(state, 0, &trigger, 1);
+}
+
 extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
   // Entry block is always block 0 (ABI contract with process generation)
   constexpr uint32_t kEntryBlock = 0;

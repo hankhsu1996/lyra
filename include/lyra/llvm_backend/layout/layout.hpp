@@ -11,6 +11,7 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 
+#include "lyra/common/edge_kind.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
@@ -102,6 +103,19 @@ struct ProcessLayout {
   llvm::StructType* state_type = nullptr;
 };
 
+// Entry for a connection process that has been kernelized.
+// Instead of generating a per-process LLVM function, these share a single
+// runtime kernel (LyraConnectionKernel) parameterized by a descriptor.
+struct ConnectionKernelEntry {
+  mir::ProcessId process_id;
+  mir::SlotId src_slot;
+  mir::SlotId dst_slot;
+  mir::SlotId trigger_slot;
+  common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
+  // Optional observed place for sub-slot trigger narrowing
+  std::optional<mir::PlaceId> trigger_observed_place;
+};
+
 // Complete layout for entire module
 struct Layout {
   DesignLayout design;
@@ -112,6 +126,8 @@ struct Layout {
   std::vector<mir::ProcessId> process_ids;
   // Boundary marker: number of init processes at start of process_ids
   size_t num_init_processes = 0;
+  // Connection processes that use the shared runtime kernel
+  std::vector<ConnectionKernelEntry> connection_kernel_entries;
   // ProcessStateHeader type: {SuspendRecord, DesignState*}
   llvm::StructType* header_type = nullptr;
   // SuspendRecord type (opaque blob matching C++ struct size)
