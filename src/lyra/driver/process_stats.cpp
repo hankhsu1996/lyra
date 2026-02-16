@@ -13,9 +13,13 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/hir/routine.hpp"
+#include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
+#include "lyra/mir/statement.hpp"
+#include "lyra/mir/terminator.hpp"
 
 namespace lyra::driver {
 
@@ -114,8 +118,9 @@ void PrintProcessStats(
     FILE* sink) {
   // Reconstruct process ordering (same as BuildLayout):
   // 1. init_processes
-  // 2. connection_processes
+  // 2. non-kernelized connection_processes
   // 3. module processes (non-final)
+  // Kernelized connections share a runtime kernel and have no LLVM function.
   std::vector<mir::ProcessId> process_ids;
 
   for (mir::ProcessId pid : design.init_processes) {
@@ -123,10 +128,45 @@ void PrintProcessStats(
   }
   size_t num_init = process_ids.size();
 
+  // Count kernelized vs non-kernelized connections.
+  // A connection is kernelizable if it has 1 block, 1 Assign stmt with
+  // design-slot source/dest (no projections), and a Wait with 1 non-late-bound
+  // trigger.
+  size_t num_kernelized = 0;
   for (mir::ProcessId pid : design.connection_processes) {
-    process_ids.push_back(pid);
+    const auto& process = arena[pid];
+    bool kernelizable = false;
+    if (process.blocks.size() == 1) {
+      const auto& block = process.blocks[0];
+      if (block.statements.size() == 1) {
+        const auto* assign =
+            std::get_if<mir::Assign>(&block.statements[0].data);
+        const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+        if (assign != nullptr && wait != nullptr &&
+            wait->triggers.size() == 1 &&
+            !wait->triggers[0].late_bound.has_value()) {
+          const auto& dest = arena[assign->dest];
+          const auto* rhs_op = std::get_if<mir::Operand>(&assign->rhs);
+          if (dest.root.kind == mir::PlaceRoot::Kind::kDesign &&
+              dest.projections.empty() && rhs_op != nullptr &&
+              rhs_op->kind == mir::Operand::Kind::kUse) {
+            auto src_pid = std::get<mir::PlaceId>(rhs_op->payload);
+            const auto& src = arena[src_pid];
+            if (src.root.kind == mir::PlaceRoot::Kind::kDesign &&
+                src.projections.empty()) {
+              kernelizable = true;
+            }
+          }
+        }
+      }
+    }
+    if (kernelizable) {
+      ++num_kernelized;
+    } else {
+      process_ids.push_back(pid);
+    }
   }
-  size_t num_connection = process_ids.size() - num_init;
+  size_t num_connection = design.connection_processes.size();
 
   for (const auto& element : design.elements) {
     if (!std::holds_alternative<mir::Module>(element)) {
@@ -139,7 +179,8 @@ void PrintProcessStats(
       }
     }
   }
-  size_t num_module = process_ids.size() - num_init - num_connection;
+  size_t num_module =
+      process_ids.size() - num_init - (num_connection - num_kernelized);
 
   // Build LLVM stats lookup: function name -> stats
   std::unordered_map<std::string, const LlvmFunctionStats*> llvm_lookup;
@@ -188,7 +229,8 @@ void PrintProcessStats(
     total_proc_insts += llvm_insts;
 
     // Count by kind
-    if (i >= num_init && i < num_init + num_connection) {
+    size_t num_non_kernelized_conn = num_connection - num_kernelized;
+    if (i >= num_init && i < num_init + num_non_kernelized_conn) {
       ++count_connection;
     } else if (hir_kind) {
       switch (*hir_kind) {
@@ -229,8 +271,14 @@ void PrintProcessStats(
 
   // Print summary
   fmt::print(
-      sink, "[lyra][stats][proc] total={} init={} connection={} module={}\n",
-      process_ids.size(), num_init, num_connection, num_module);
+      sink,
+      "[lyra][stats][proc] total={} init={} connection={} "
+      "kernelized={} module={}\n",
+      process_ids.size() + num_kernelized, num_init, num_connection,
+      num_kernelized, num_module);
+
+  // Include kernelized connections in the connection count
+  count_connection += static_cast<uint32_t>(num_kernelized);
 
   // Print kind breakdown
   fmt::print(
@@ -264,8 +312,9 @@ void PrintProcessStats(
   for (int rank = 0; rank < top_n; ++rank) {
     const auto& e = entries[sorted_indices[rank]];
     std::string kind_str;
+    size_t num_non_kern_conn = num_connection - num_kernelized;
     if (e.layout_index >= num_init &&
-        e.layout_index < num_init + num_connection) {
+        e.layout_index < num_init + num_non_kern_conn) {
       kind_str = "connection";
     } else if (e.hir_kind) {
       kind_str = HirProcessKindName(*e.hir_kind);

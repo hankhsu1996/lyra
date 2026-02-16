@@ -43,6 +43,7 @@
 #include "lyra/mir/statement.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
+#include "lyra/runtime/suspend_record.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -566,13 +567,19 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   }
 
   // Phase 2: Module processes through scheduler
-  auto num_module_processes =
+  auto num_regular_module =
       static_cast<uint32_t>(process_funcs.size() - num_init);
+  auto num_kernelized =
+      static_cast<uint32_t>(layout.connection_kernel_entries.size());
+  auto num_module_processes = num_regular_module + num_kernelized;
 
   if (num_module_processes > 0) {
     std::vector<llvm::Value*> module_states;
     module_states.reserve(num_module_processes);
+    std::vector<llvm::Value*> module_funcs;
+    module_funcs.reserve(num_module_processes);
 
+    // Regular module processes (including non-kernelized connections)
     for (size_t i = num_init; i < process_funcs.size(); ++i) {
       const auto& proc_layout = layout.processes[i];
 
@@ -582,6 +589,121 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       InitializeProcessState(
           context, process_state, design_state, proc_layout, i);
       module_states.push_back(process_state);
+      module_funcs.push_back(process_funcs[i]);
+    }
+
+    // Kernelized connection processes: shared kernel + per-process descriptor
+    if (num_kernelized > 0) {
+      auto* kernel_func = context.GetLyraConnectionKernel();
+      auto* header_type = context.GetHeaderType();
+      auto& dl = mod.getDataLayout();
+      auto* design_struct = layout.design.llvm_type;
+      const llvm::StructLayout* design_sl = dl.getStructLayout(design_struct);
+
+      // Build connection kernel state type:
+      // {ProcessStateHeader, ConnectionDescriptor}
+      // ConnectionDescriptor is 32 bytes, 4-byte aligned
+      auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+      auto* desc_type =
+          llvm::ArrayType::get(i8_ty, sizeof(runtime::ConnectionDescriptor));
+      auto* conn_state_type = llvm::StructType::create(
+          ctx, {header_type, desc_type}, "ConnectionKernelState");
+
+      for (uint32_t ki = 0; ki < num_kernelized; ++ki) {
+        const auto& entry = layout.connection_kernel_entries[ki];
+
+        auto* conn_state = builder.CreateAlloca(
+            conn_state_type, nullptr, std::format("conn_state_{}", ki));
+
+        // Zero-initialize
+        EmitMemsetZero(context, conn_state, conn_state_type);
+
+        // Set design pointer in header (field 0 -> field 1)
+        auto* hdr_ptr = builder.CreateStructGEP(conn_state_type, conn_state, 0);
+        auto* design_ptr_ptr = builder.CreateStructGEP(header_type, hdr_ptr, 1);
+        builder.CreateStore(design_state, design_ptr_ptr);
+
+        // Fill ConnectionDescriptor fields
+        auto* desc_ptr =
+            builder.CreateStructGEP(conn_state_type, conn_state, 1);
+
+        // Compute byte offsets from DesignLayout
+        auto src_it = layout.design.slot_to_field.find(entry.src_slot);
+        auto dst_it = layout.design.slot_to_field.find(entry.dst_slot);
+        if (src_it == layout.design.slot_to_field.end() ||
+            dst_it == layout.design.slot_to_field.end()) {
+          throw common::InternalError(
+              "LowerMirToLlvm",
+              "kernelized connection slot not in design layout");
+        }
+
+        uint32_t src_field = src_it->second;
+        uint32_t dst_field = dst_it->second;
+        auto src_offset =
+            static_cast<uint32_t>(design_sl->getElementOffset(src_field));
+        auto dst_offset =
+            static_cast<uint32_t>(design_sl->getElementOffset(dst_field));
+        auto* dst_field_type = design_struct->getElementType(dst_field);
+        auto byte_size =
+            static_cast<uint32_t>(dl.getTypeAllocSize(dst_field_type));
+
+        // Resolve trigger byte range
+        uint32_t trigger_byte_offset = 0;
+        uint32_t trigger_byte_size = 0;
+        uint8_t trigger_bit_index = 0;
+        if (entry.trigger_observed_place) {
+          auto trigger_slot_it =
+              layout.design.slot_to_field.find(entry.trigger_slot);
+          if (trigger_slot_it != layout.design.slot_to_field.end()) {
+            TypeId trigger_root_type =
+                input.design->slot_table[trigger_slot_it->first.value];
+            const auto& trigger_place =
+                (*input.mir_arena)[*entry.trigger_observed_place];
+            auto range = ResolveByteRange(
+                ctx, dl, *input.type_arena, trigger_place, trigger_root_type);
+            if (range.kind == RangeKind::kPrecise) {
+              trigger_byte_offset = range.byte_offset;
+              trigger_byte_size = range.byte_size;
+              trigger_bit_index = range.bit_index;
+            }
+          }
+        }
+
+        // Build the descriptor struct in memory using i32 stores
+        // ConnectionDescriptor layout (all uint32_t except padding area):
+        // [0]  src_byte_offset
+        // [4]  dst_byte_offset
+        // [8]  byte_size
+        // [12] dst_slot_id
+        // [16] trigger_slot_id
+        // [20] trigger_edge (u8) + trigger_bit_index (u8) + padding (u16)
+        // [24] trigger_byte_offset
+        // [28] trigger_byte_size
+        auto store_u32 = [&](uint32_t offset, uint32_t value) {
+          auto* field_ptr =
+              builder.CreateGEP(i8_ty, desc_ptr, {builder.getInt32(offset)});
+          builder.CreateStore(builder.getInt32(value), field_ptr);
+        };
+        auto store_u8 = [&](uint32_t offset, uint8_t value) {
+          auto* field_ptr =
+              builder.CreateGEP(i8_ty, desc_ptr, {builder.getInt32(offset)});
+          builder.CreateStore(builder.getInt8(value), field_ptr);
+        };
+
+        store_u32(0, src_offset);
+        store_u32(4, dst_offset);
+        store_u32(8, byte_size);
+        store_u32(12, entry.dst_slot.value);
+        store_u32(16, entry.trigger_slot.value);
+        store_u8(20, static_cast<uint8_t>(entry.trigger_edge));
+        store_u8(21, trigger_bit_index);
+        // padding bytes at 22-23 already zero from memset
+        store_u32(24, trigger_byte_offset);
+        store_u32(28, trigger_byte_size);
+
+        module_states.push_back(conn_state);
+        module_funcs.push_back(kernel_func);
+      }
     }
 
     // Build function pointer and state pointer arrays for scheduler
@@ -595,7 +717,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     for (uint32_t i = 0; i < num_module_processes; ++i) {
       auto* func_slot =
           builder.CreateGEP(ptr_ty, funcs_array, {builder.getInt32(i)});
-      builder.CreateStore(process_funcs[num_init + i], func_slot);
+      builder.CreateStore(module_funcs[i], func_slot);
 
       auto* state_slot =
           builder.CreateGEP(ptr_ty, states_array, {builder.getInt32(i)});

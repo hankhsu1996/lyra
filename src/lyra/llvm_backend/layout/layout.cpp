@@ -861,6 +861,84 @@ auto CollectFrameRoots(
   return result;
 }
 
+// Check if a connection process can be kernelized (single Assign + Wait with
+// 1 trigger, source is a design slot read, dest is a design slot write).
+auto TryKernelizeConnection(
+    const mir::Process& process, const mir::Arena& arena)
+    -> std::optional<ConnectionKernelEntry> {
+  // Must have exactly 1 basic block
+  if (process.blocks.size() != 1) {
+    return std::nullopt;
+  }
+  const auto& block = process.blocks[0];
+
+  // Must have exactly 1 statement (the Assign)
+  if (block.statements.size() != 1) {
+    return std::nullopt;
+  }
+
+  // Statement must be an Assign
+  const auto* assign = std::get_if<mir::Assign>(&block.statements[0].data);
+  if (assign == nullptr) {
+    return std::nullopt;
+  }
+
+  // Dest must be a design slot (PlaceRoot::kDesign, no projections)
+  const auto& dest_place = arena[assign->dest];
+  if (dest_place.root.kind != mir::PlaceRoot::Kind::kDesign) {
+    return std::nullopt;
+  }
+  if (!dest_place.projections.empty()) {
+    return std::nullopt;
+  }
+
+  // RHS must be an Operand (not Rvalue)
+  const auto* rhs_operand = std::get_if<mir::Operand>(&assign->rhs);
+  if (rhs_operand == nullptr) {
+    return std::nullopt;
+  }
+
+  // RHS operand must be a Use (place read)
+  if (rhs_operand->kind != mir::Operand::Kind::kUse) {
+    return std::nullopt;
+  }
+
+  // Source must be a design slot (no projections)
+  auto src_place_id = std::get<mir::PlaceId>(rhs_operand->payload);
+  const auto& src_place = arena[src_place_id];
+  if (src_place.root.kind != mir::PlaceRoot::Kind::kDesign) {
+    return std::nullopt;
+  }
+  if (!src_place.projections.empty()) {
+    return std::nullopt;
+  }
+
+  // Terminator must be a Wait with exactly 1 trigger
+  const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+  if (wait == nullptr) {
+    return std::nullopt;
+  }
+  if (wait->triggers.size() != 1) {
+    return std::nullopt;
+  }
+
+  const auto& trigger = wait->triggers[0];
+
+  // No late-bound triggers
+  if (trigger.late_bound.has_value()) {
+    return std::nullopt;
+  }
+
+  return ConnectionKernelEntry{
+      .process_id = {},  // Set by caller
+      .src_slot = mir::SlotId{static_cast<uint32_t>(src_place.root.id)},
+      .dst_slot = mir::SlotId{static_cast<uint32_t>(dest_place.root.id)},
+      .trigger_slot = trigger.signal,
+      .trigger_edge = trigger.edge,
+      .trigger_observed_place = trigger.observed_place,
+  };
+}
+
 // Build SuspendRecord as opaque blob - suspend helpers own the layout.
 auto BuildSuspendRecordType(llvm::LLVMContext& ctx) -> llvm::StructType* {
   static_assert(
@@ -1063,9 +1141,16 @@ auto BuildLayout(
 
   // Phase 2: Collect connection processes (scheduled, always_comb semantics)
   // These implement port drive bindings (kDriveParentToChild,
-  // kDriveChildToParent)
+  // kDriveChildToParent). Kernelizable ones are separated out.
   for (mir::ProcessId proc_id : design.connection_processes) {
-    layout.process_ids.push_back(proc_id);
+    const auto& process = arena[proc_id];
+    auto entry = TryKernelizeConnection(process, arena);
+    if (entry) {
+      entry->process_id = proc_id;
+      layout.connection_kernel_entries.push_back(*entry);
+    } else {
+      layout.process_ids.push_back(proc_id);
+    }
   }
 
   // Phase 3: Collect module processes (run through scheduler)
