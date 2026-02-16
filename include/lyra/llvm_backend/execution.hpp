@@ -16,12 +16,15 @@ struct JitCompileTimings {
   double load_runtime = 0.0;
   double add_ir = 0.0;
   double lookup_main = 0.0;
-  double codegen = 0.0;          // Object emission (inside lookup_main)
-  double linking = 0.0;          // JIT linking/relocation (inside lookup_main)
-  double link_graph = 0.0;       // Object parsing to LinkGraph
-  double link_alloc = 0.0;       // Prune + memory allocation
-  double link_fixup = 0.0;       // Resolve + copy + fixup
-  double link_finalize = 0.0;    // Memory finalization
+  double codegen = 0.0;        // Object emission (inside lookup_main)
+  double linking = 0.0;        // JIT linking/relocation (inside lookup_main)
+  double link_graph = 0.0;     // Object parsing to LinkGraph
+  double link_alloc = 0.0;     // Prune + memory allocation
+  double link_fixup = 0.0;     // Resolve + copy + fixup
+  double link_finalize = 0.0;  // Memory finalization (total)
+  double finalize_perm = 0.0;  // fixup_done -> emitted (mprotect + finalize)
+  double finalize_overhead =
+      0.0;                       // emitted -> lookup_end (symbol registration)
   bool complete = false;         // True only if all phases succeeded
   bool has_link_detail = false;  // True when JITLink sub-phase data available
 };
@@ -35,6 +38,8 @@ struct JitOrcStats {
   int symbol_count = 0;            // Defined + external symbols
   int section_count = 0;           // LinkGraph sections
   int block_count = 0;             // LinkGraph blocks
+  int finalize_segments = 0;       // Distinct mprotect groups at finalize time
+  int64_t finalize_bytes = 0;      // Total block content bytes at finalize time
 };
 
 // Holds compiled JIT state. Must stay alive during simulation

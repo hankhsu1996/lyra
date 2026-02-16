@@ -20,6 +20,7 @@
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
+#include "process_stats.hpp"
 #include "runtime_path.hpp"
 #include "verbose_logger.hpp"
 
@@ -132,6 +133,10 @@ auto RunJit(const CompilationInput& input) -> int {
     PrintMirStats(compilation.mir.stats);
     vlog.PrintPhaseSummary();
     PrintLlvmStats(llvm_stats, input.stats_top_n);
+    PrintProcessStats(
+        compilation.mir.design, *compilation.mir.mir_arena,
+        compilation.mir.origin_map, *compilation.hir.hir_arena,
+        *compilation.hir.source_manager, llvm_stats);
   }
 
   // Phase 1: JIT compilation
@@ -164,6 +169,11 @@ auto RunJit(const CompilationInput& input) -> int {
             " link_graph={:.3f}s link_alloc={:.3f}s"
             " link_fixup={:.3f}s link_finalize={:.3f}s",
             jt.link_graph, jt.link_alloc, jt.link_fixup, jt.link_finalize);
+        if (jt.finalize_perm > 0.0 || jt.finalize_overhead > 0.0) {
+          fmt::print(
+              stderr, " finalize_perm={:.3f}s finalize_overhead={:.3f}s",
+              jt.finalize_perm, jt.finalize_overhead);
+        }
       }
       fmt::print(stderr, "\n");
       std::fflush(stderr);
@@ -177,6 +187,11 @@ auto RunJit(const CompilationInput& input) -> int {
           stderr, " relocs={} syms={} sections={} blocks={}",
           orc.relocation_count, orc.symbol_count, orc.section_count,
           orc.block_count);
+    }
+    if (orc.finalize_segments > 0) {
+      fmt::print(
+          stderr, " finalize_segments={} finalize_bytes={}",
+          orc.finalize_segments, orc.finalize_bytes);
     }
     fmt::print(stderr, "\n");
     std::fflush(stderr);
