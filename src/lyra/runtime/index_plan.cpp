@@ -1,5 +1,6 @@
 #include "lyra/runtime/index_plan.hpp"
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <format>
@@ -12,7 +13,7 @@ namespace lyra::runtime {
 
 auto EvaluateIndexPlan(
     const void* design_state_base, const SlotMetaRegistry& registry,
-    std::span<const IndexPlanOp> plan, bool* has_xz) -> int64_t {
+    std::span<const IndexPlanOp> plan, bool* should_deactivate) -> int64_t {
   if (plan.empty()) {
     throw common::InternalError("EvaluateIndexPlan", "empty plan");
   }
@@ -23,8 +24,14 @@ auto EvaluateIndexPlan(
             "plan too large: {} ops (max {})", plan.size(), kMaxPlanOps));
   }
 
-  int64_t stack[kMaxPlanStackDepth];
+  std::array<int64_t, kMaxPlanStackDepth> stack{};
   uint32_t sp = 0;
+
+  auto ds = std::span(
+      static_cast<const uint8_t*>(design_state_base),
+      // Upper bound: we only access via meta.base_off + byte_offset + byte_size
+      // which is always within design state. Use a large sentinel.
+      std::numeric_limits<size_t>::max());
 
   for (const auto& op : plan) {
     switch (op.kind) {
@@ -35,21 +42,19 @@ auto EvaluateIndexPlan(
         const auto& meta = registry.Get(op.slot_id);
         // Check for X/Z bits.
         if (meta.kind == SlotStorageKind::kPacked4) {
-          const auto* unk = static_cast<const uint8_t*>(design_state_base) +
-                            meta.base_off + meta.planes.unk_off +
-                            op.byte_offset;
+          auto unk =
+              ds.subspan(meta.base_off + meta.planes.unk_off + op.byte_offset);
           for (uint8_t i = 0; i < op.byte_size; ++i) {
             if (unk[i] != 0) {
-              *has_xz = true;
+              *should_deactivate = true;
               return 0;
             }
           }
         }
         // Read value.
-        const auto* base =
-            static_cast<const uint8_t*>(design_state_base) + meta.base_off;
+        auto base = ds.subspan(meta.base_off);
         uint64_t v = 0;
-        std::memcpy(&v, base + op.byte_offset, op.byte_size);
+        std::memcpy(&v, &base[op.byte_offset], op.byte_size);
         // Mask to bit_width.
         if (op.bit_width > 0 && op.bit_width < 64) {
           v &= (uint64_t{1} << op.bit_width) - 1;
@@ -59,14 +64,14 @@ auto EvaluateIndexPlan(
           uint64_t sign_bit = uint64_t{1} << (op.bit_width - 1);
           v = (v ^ sign_bit) - sign_bit;
         }
-        stack[sp++] = static_cast<int64_t>(v);
+        stack.at(sp++) = static_cast<int64_t>(v);
         break;
       }
       case IndexPlanOp::Kind::kConst: {
         if (sp >= kMaxPlanStackDepth) {
           throw common::InternalError("EvaluateIndexPlan", "stack overflow");
         }
-        stack[sp++] = op.const_value;
+        stack.at(sp++) = op.const_value;
         break;
       }
       case IndexPlanOp::Kind::kAdd: {
@@ -74,8 +79,8 @@ auto EvaluateIndexPlan(
           throw common::InternalError(
               "EvaluateIndexPlan", "stack underflow on kAdd");
         }
-        int64_t rhs = stack[--sp];
-        stack[sp - 1] += rhs;
+        int64_t rhs = stack.at(--sp);
+        stack.at(sp - 1) += rhs;
         break;
       }
       case IndexPlanOp::Kind::kSub: {
@@ -83,8 +88,8 @@ auto EvaluateIndexPlan(
           throw common::InternalError(
               "EvaluateIndexPlan", "stack underflow on kSub");
         }
-        int64_t rhs = stack[--sp];
-        stack[sp - 1] -= rhs;
+        int64_t rhs = stack.at(--sp);
+        stack.at(sp - 1) -= rhs;
         break;
       }
       case IndexPlanOp::Kind::kMul: {
@@ -92,8 +97,8 @@ auto EvaluateIndexPlan(
           throw common::InternalError(
               "EvaluateIndexPlan", "stack underflow on kMul");
         }
-        int64_t rhs = stack[--sp];
-        stack[sp - 1] *= rhs;
+        int64_t rhs = stack.at(--sp);
+        stack.at(sp - 1) *= rhs;
         break;
       }
       case IndexPlanOp::Kind::kAnd: {
@@ -101,8 +106,8 @@ auto EvaluateIndexPlan(
           throw common::InternalError(
               "EvaluateIndexPlan", "stack underflow on kAnd");
         }
-        int64_t rhs = stack[--sp];
-        stack[sp - 1] &= rhs;
+        int64_t rhs = stack.at(--sp);
+        stack.at(sp - 1) &= rhs;
         break;
       }
       case IndexPlanOp::Kind::kOr: {
@@ -110,8 +115,8 @@ auto EvaluateIndexPlan(
           throw common::InternalError(
               "EvaluateIndexPlan", "stack underflow on kOr");
         }
-        int64_t rhs = stack[--sp];
-        stack[sp - 1] |= rhs;
+        int64_t rhs = stack.at(--sp);
+        stack.at(sp - 1) |= rhs;
         break;
       }
       case IndexPlanOp::Kind::kXor: {
@@ -119,8 +124,8 @@ auto EvaluateIndexPlan(
           throw common::InternalError(
               "EvaluateIndexPlan", "stack underflow on kXor");
         }
-        int64_t rhs = stack[--sp];
-        stack[sp - 1] ^= rhs;
+        int64_t rhs = stack.at(--sp);
+        stack.at(sp - 1) ^= rhs;
         break;
       }
       case IndexPlanOp::Kind::kShl: {
@@ -128,10 +133,10 @@ auto EvaluateIndexPlan(
           throw common::InternalError(
               "EvaluateIndexPlan", "stack underflow on kShl");
         }
-        int64_t rhs = stack[--sp];
+        int64_t rhs = stack.at(--sp);
         auto shift = static_cast<uint64_t>(rhs) & 63;
-        stack[sp - 1] =
-            static_cast<int64_t>(static_cast<uint64_t>(stack[sp - 1]) << shift);
+        stack.at(sp - 1) = static_cast<int64_t>(
+            static_cast<uint64_t>(stack.at(sp - 1)) << shift);
         break;
       }
       case IndexPlanOp::Kind::kLShr: {
@@ -139,10 +144,10 @@ auto EvaluateIndexPlan(
           throw common::InternalError(
               "EvaluateIndexPlan", "stack underflow on kLShr");
         }
-        int64_t rhs = stack[--sp];
+        int64_t rhs = stack.at(--sp);
         auto shift = static_cast<uint64_t>(rhs) & 63;
-        stack[sp - 1] =
-            static_cast<int64_t>(static_cast<uint64_t>(stack[sp - 1]) >> shift);
+        stack.at(sp - 1) = static_cast<int64_t>(
+            static_cast<uint64_t>(stack.at(sp - 1)) >> shift);
         break;
       }
       case IndexPlanOp::Kind::kAShr: {
@@ -150,9 +155,65 @@ auto EvaluateIndexPlan(
           throw common::InternalError(
               "EvaluateIndexPlan", "stack underflow on kAShr");
         }
-        int64_t rhs = stack[--sp];
+        int64_t rhs = stack.at(--sp);
         auto shift = static_cast<uint64_t>(rhs) & 63;
-        stack[sp - 1] >>= static_cast<int>(shift);
+        stack.at(sp - 1) >>= static_cast<int>(shift);
+        break;
+      }
+      case IndexPlanOp::Kind::kDivS: {
+        if (sp < 2) {
+          throw common::InternalError(
+              "EvaluateIndexPlan", "stack underflow on kDivS");
+        }
+        int64_t rhs = stack.at(--sp);
+        if (rhs == 0) {
+          *should_deactivate = true;
+          return 0;
+        }
+        stack.at(sp - 1) /= rhs;
+        break;
+      }
+      case IndexPlanOp::Kind::kDivU: {
+        if (sp < 2) {
+          throw common::InternalError(
+              "EvaluateIndexPlan", "stack underflow on kDivU");
+        }
+        int64_t rhs = stack.at(--sp);
+        if (rhs == 0) {
+          *should_deactivate = true;
+          return 0;
+        }
+        stack.at(sp - 1) = static_cast<int64_t>(
+            static_cast<uint64_t>(stack.at(sp - 1)) /
+            static_cast<uint64_t>(rhs));
+        break;
+      }
+      case IndexPlanOp::Kind::kModS: {
+        if (sp < 2) {
+          throw common::InternalError(
+              "EvaluateIndexPlan", "stack underflow on kModS");
+        }
+        int64_t rhs = stack.at(--sp);
+        if (rhs == 0) {
+          *should_deactivate = true;
+          return 0;
+        }
+        stack.at(sp - 1) %= rhs;
+        break;
+      }
+      case IndexPlanOp::Kind::kModU: {
+        if (sp < 2) {
+          throw common::InternalError(
+              "EvaluateIndexPlan", "stack underflow on kModU");
+        }
+        int64_t rhs = stack.at(--sp);
+        if (rhs == 0) {
+          *should_deactivate = true;
+          return 0;
+        }
+        stack.at(sp - 1) = static_cast<int64_t>(
+            static_cast<uint64_t>(stack.at(sp - 1)) %
+            static_cast<uint64_t>(rhs));
         break;
       }
     }
@@ -163,7 +224,7 @@ auto EvaluateIndexPlan(
         "EvaluateIndexPlan",
         std::format("stack has {} elements after evaluation (expected 1)", sp));
   }
-  return stack[0];
+  return stack.at(0);
 }
 
 }  // namespace lyra::runtime

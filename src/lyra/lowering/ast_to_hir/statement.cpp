@@ -55,8 +55,8 @@ namespace {
 // unary -, ~, and implicit conversion expressions.
 // Rejects: division, modulo, function calls, ternary, etc.
 // Each leaf variable must have bit width <= 64.
-bool ValidateIndexExpression(
-    const slang::ast::Expression& expr, SourceSpan span, Context* ctx) {
+auto ValidateIndexExpression(
+    const slang::ast::Expression& expr, SourceSpan span, Context* ctx) -> bool {
   using slang::ast::BinaryOperator;
   using slang::ast::ExpressionKind;
   using slang::ast::UnaryOperator;
@@ -87,6 +87,8 @@ bool ValidateIndexExpression(
         case BinaryOperator::BinaryXor:
         case BinaryOperator::LogicalShiftLeft:
         case BinaryOperator::LogicalShiftRight:
+        case BinaryOperator::Divide:
+        case BinaryOperator::Mod:
         case BinaryOperator::ArithmeticShiftLeft:
         case BinaryOperator::ArithmeticShiftRight:
           return ValidateIndexExpression(bin.left(), span, ctx) &&
@@ -132,9 +134,9 @@ bool ValidateIndexExpression(
 // constant range/part-selects on packed types (any width).
 // Edge behavior on multi-bit sub-expressions samples expr[0] (LSB).
 // Returns true if valid (fall through to create trigger), false if rejected.
-bool ValidateEdgeTriggerExpression(
+auto ValidateEdgeTriggerExpression(
     const slang::ast::Expression& expr, hir::EventEdgeKind edge,
-    SourceSpan span, Context* ctx) {
+    SourceSpan span, Context* ctx) -> bool {
   using slang::ast::ExpressionKind;
 
   // No validation needed for level-sensitive or plain signals.
@@ -196,6 +198,13 @@ bool ValidateEdgeTriggerExpression(
     if (base_type.kind == slang::ast::SymbolKind::DynamicArrayType ||
         base_type.isQueue()) {
       return ValidateIndexExpression(select.selector(), span, ctx);
+    }
+    if (base_type.isAssociativeArray()) {
+      ctx->sink->Unsupported(
+          span,
+          "edge triggers on associative array elements are not yet supported",
+          UnsupportedCategory::kFeature);
+      return false;
     }
     ctx->sink->Unsupported(
         span, "edge triggers on this array type are not supported",

@@ -24,6 +24,10 @@ struct IndexPlanOp {
     kShl = 8,
     kLShr = 9,
     kAShr = 10,
+    kDivS = 11,
+    kDivU = 12,
+    kModS = 13,
+    kModU = 14,
   };
 
   Kind kind = Kind::kConst;

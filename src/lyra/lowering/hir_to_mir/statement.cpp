@@ -1446,7 +1446,7 @@ auto BuildIndexPlan(
       const auto& bin_data = std::get<hir::BinaryExpressionData>(expr.data);
       if (!BuildIndexPlan(bin_data.lhs, ctx, plan, deps)) return false;
       if (!BuildIndexPlan(bin_data.rhs, ctx, plan, deps)) return false;
-      runtime::IndexPlanOp::Kind op_kind;
+      auto op_kind = runtime::IndexPlanOp::Kind::kConst;
       switch (bin_data.op) {
         case hir::BinaryOp::kAdd:
           op_kind = runtime::IndexPlanOp::Kind::kAdd;
@@ -1476,6 +1476,20 @@ auto BuildIndexPlan(
         case hir::BinaryOp::kArithmeticShiftRight:
           op_kind = runtime::IndexPlanOp::Kind::kAShr;
           break;
+        case hir::BinaryOp::kDivide: {
+          const Type& result_type = (*ctx.type_arena)[expr.type];
+          bool is_signed = IsPackedSigned(result_type, *ctx.type_arena);
+          op_kind = is_signed ? runtime::IndexPlanOp::Kind::kDivS
+                              : runtime::IndexPlanOp::Kind::kDivU;
+          break;
+        }
+        case hir::BinaryOp::kMod: {
+          const Type& result_type = (*ctx.type_arena)[expr.type];
+          bool is_signed = IsPackedSigned(result_type, *ctx.type_arena);
+          op_kind = is_signed ? runtime::IndexPlanOp::Kind::kModS
+                              : runtime::IndexPlanOp::Kind::kModU;
+          break;
+        }
         default:
           return false;
       }
@@ -1648,27 +1662,25 @@ auto LowerEventWait(
 
         if (plan_ok && !deps.empty()) {
           // Deduplicate dep_slots.
-          std::sort(deps.begin(), deps.end(), [](mir::SlotId a, mir::SlotId b) {
-            return a.value < b.value;
-          });
-          deps.erase(
-              std::unique(
-                  deps.begin(), deps.end(),
-                  [](mir::SlotId a, mir::SlotId b) {
-                    return a.value == b.value;
-                  }),
-              deps.end());
+          std::ranges::sort(deps, {}, &mir::SlotId::value);
+          auto [first, last] =
+              std::ranges::unique(deps, {}, &mir::SlotId::value);
+          deps.erase(first, last);
 
           late_bound_info = mir::LateBoundIndex{
               .plan = std::move(plan),
               .dep_slots = std::move(deps),
-              .mapping = mapping};
+              .mapping = mapping,
+              .element_type = {}};
         } else {
           // Local-only index: no rebinding needed.
           // dep_slots empty signals codegen to use dynamic path but skip
           // runtime rebind subscriptions.
           late_bound_info = mir::LateBoundIndex{
-              .plan = {}, .dep_slots = {}, .mapping = mapping};
+              .plan = {},
+              .dep_slots = {},
+              .mapping = mapping,
+              .element_type = {}};
         }
       }
 
@@ -1876,24 +1888,22 @@ auto LowerEventWait(
         }
 
         if (plan_ok && !deps.empty()) {
-          std::sort(deps.begin(), deps.end(), [](mir::SlotId a, mir::SlotId b) {
-            return a.value < b.value;
-          });
-          deps.erase(
-              std::unique(
-                  deps.begin(), deps.end(),
-                  [](mir::SlotId a, mir::SlotId b) {
-                    return a.value == b.value;
-                  }),
-              deps.end());
+          std::ranges::sort(deps, {}, &mir::SlotId::value);
+          auto [first, last] =
+              std::ranges::unique(deps, {}, &mir::SlotId::value);
+          deps.erase(first, last);
 
           late_bound_info = mir::LateBoundIndex{
               .plan = std::move(plan),
               .dep_slots = std::move(deps),
-              .mapping = mapping};
+              .mapping = mapping,
+              .element_type = {}};
         } else {
           late_bound_info = mir::LateBoundIndex{
-              .plan = {}, .dep_slots = {}, .mapping = mapping};
+              .plan = {},
+              .dep_slots = {},
+              .mapping = mapping,
+              .element_type = {}};
         }
       }
 
@@ -1978,16 +1988,10 @@ auto LowerEventWait(
         }
 
         if (plan_ok && !deps.empty()) {
-          std::sort(deps.begin(), deps.end(), [](mir::SlotId a, mir::SlotId b) {
-            return a.value < b.value;
-          });
-          deps.erase(
-              std::unique(
-                  deps.begin(), deps.end(),
-                  [](mir::SlotId a, mir::SlotId b) {
-                    return a.value == b.value;
-                  }),
-              deps.end());
+          std::ranges::sort(deps, {}, &mir::SlotId::value);
+          auto [first, last] =
+              std::ranges::unique(deps, {}, &mir::SlotId::value);
+          deps.erase(first, last);
 
           late_bound_info = mir::LateBoundIndex{
               .plan = std::move(plan),
@@ -2062,16 +2066,10 @@ auto LowerEventWait(
         }
 
         if (plan_ok && !deps.empty()) {
-          std::sort(deps.begin(), deps.end(), [](mir::SlotId a, mir::SlotId b) {
-            return a.value < b.value;
-          });
-          deps.erase(
-              std::unique(
-                  deps.begin(), deps.end(),
-                  [](mir::SlotId a, mir::SlotId b) {
-                    return a.value == b.value;
-                  }),
-              deps.end());
+          std::ranges::sort(deps, {}, &mir::SlotId::value);
+          auto [first, last] =
+              std::ranges::unique(deps, {}, &mir::SlotId::value);
+          deps.erase(first, last);
 
           late_bound_info = mir::LateBoundIndex{
               .plan = std::move(plan),
