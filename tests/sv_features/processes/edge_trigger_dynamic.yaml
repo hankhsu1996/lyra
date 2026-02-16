@@ -704,3 +704,112 @@ cases:
     expect:
       variables:
         result: 0
+
+  # Division and modulo in index expressions
+
+  - name: posedge_divide_const
+    description: "@(posedge bus[i/2]) with i=6 targets bit 3"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int i = 6;
+        int result = 0;
+        initial begin
+          @(posedge bus[i/2]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'b0000_1000;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: posedge_modulo_const
+    description: "@(posedge bus[i%4]) with i=7 targets bit 3"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int i = 7;
+        int result = 0;
+        initial begin
+          @(posedge bus[i%4]);
+          result = 1;
+          $finish;
+        end
+        initial #5 bus = 8'b0000_1000;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: divide_by_zero_inactive
+    description: "Divisor becomes zero via rebind; subscription deactivates, no crash"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int i = 6;
+        int j = 2;
+        int result = 0;
+        initial begin
+          fork
+            begin
+              @(posedge bus[i/j]);
+              result = 1;
+            end
+            begin
+              #5 j = 0;
+              #5 bus = 8'hFF;
+              #10 $finish;
+            end
+          join_any
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: divide_variable_divisor_rebind
+    description: "Divisor changes trigger rebind to new target bit"
+    sv: |
+      module Test;
+        logic [7:0] bus = 0;
+        int i = 6;
+        int j = 2;
+        int count = 0;
+        initial begin
+          @(posedge bus[i/j]);
+          count = count + 1;
+          j = 3;
+          @(posedge bus[i/j]);
+          count = count + 1;
+          $finish;
+        end
+        initial begin
+          #5 bus[3] = 1'b1;
+          #5 bus[3] = 1'b0;
+          #5 bus[3] = 1'b1;
+          #5 bus[2] = 1'b1;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 2
+
+  # Error cases
+
+  - name: wide_index_rejected
+    description: "@(posedge bus[i]) with 128-bit index should be rejected"
+    sv: |
+      module Test;
+        logic [255:0] bus;
+        logic [127:0] i = 0;
+        initial begin
+          @(posedge bus[i]);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "dynamic index edge triggers require index width <= 64 bits"

@@ -329,9 +329,11 @@ auto Engine::SubscribeContainerElement(
   node->container_sv_index = sv_index;
 
   // Chase handle from DesignState.
-  const auto* base = static_cast<const uint8_t*>(design_state_base_);
+  auto ds = std::span(
+      static_cast<const uint8_t*>(design_state_base_),
+      meta.base_off + sizeof(void*));
   void* handle_ptr = nullptr;
-  std::memcpy(&handle_ptr, base + meta.base_off, sizeof(void*));
+  std::memcpy(&handle_ptr, &ds[meta.base_off], sizeof(void*));
 
   if (handle_ptr == nullptr) {
     node->is_active = false;
@@ -352,9 +354,10 @@ auto Engine::SubscribeContainerElement(
       node->is_active = true;
       auto byte_off = static_cast<uint32_t>(sv_index) * elem_stride;
       node->byte_offset = byte_off;
-      const auto* elem = static_cast<const uint8_t*>(arr->data) + byte_off;
-      node->last_bit = elem[0] & 1;
-      node->snapshot_inline[0] = elem[0];
+      auto elem = std::span(
+          static_cast<const uint8_t*>(arr->data), byte_off + elem_stride);
+      node->last_bit = elem[byte_off] & 1;
+      node->snapshot_inline[0] = elem[byte_off];
     }
   }
 
@@ -461,36 +464,39 @@ void Engine::SubscribeRebind(
   RebindSubscription(target_node);
 }
 
-void Engine::RebindSubscription(SubscriptionNode* target) {
+void Engine::RebindSubscription(SubscriptionNode* rebind_node) {
   // Epoch guard: skip if already rebound this flush cycle.
-  if (target->last_rebind_epoch == flush_epoch_) return;
-  target->last_rebind_epoch = flush_epoch_;
+  if (rebind_node->last_rebind_epoch == flush_epoch_) return;
+  rebind_node->last_rebind_epoch = flush_epoch_;
 
-  const auto& mapping = target->rebind_mapping;
+  const auto& mapping = rebind_node->rebind_mapping;
 
   // Resolve plan from the process's pool.
-  auto& proc_state = process_states_[target->handle];
-  auto plan_span = std::span<const IndexPlanOp>(
-      proc_state.plan_pool.ops.data() + target->plan_ref.start,
-      target->plan_ref.count);
+  auto& proc_state = process_states_[rebind_node->handle];
+  auto all_ops = std::span<const IndexPlanOp>(proc_state.plan_pool.ops);
+  auto plan_span =
+      all_ops.subspan(rebind_node->plan_ref.start, rebind_node->plan_ref.count);
 
-  bool has_xz = false;
+  bool should_deactivate = false;
   int64_t index_val = EvaluateIndexPlan(
-      design_state_base_, slot_meta_registry_, plan_span, &has_xz);
+      design_state_base_, slot_meta_registry_, plan_span, &should_deactivate);
 
-  if (has_xz) {
-    target->is_active = false;
+  if (should_deactivate) {
+    rebind_node->is_active = false;
     return;
   }
 
   // Container path: chase handle from DesignState, read from heap.
-  if (target->container_base_off != UINT32_MAX) {
-    const auto* base = static_cast<const uint8_t*>(design_state_base_);
+  if (rebind_node->container_base_off != UINT32_MAX) {
+    auto ds = std::span(
+        static_cast<const uint8_t*>(design_state_base_),
+        rebind_node->container_base_off + sizeof(void*));
     void* handle_ptr = nullptr;
-    std::memcpy(&handle_ptr, base + target->container_base_off, sizeof(void*));
+    std::memcpy(
+        &handle_ptr, &ds[rebind_node->container_base_off], sizeof(void*));
 
     if (handle_ptr == nullptr) {
-      target->is_active = false;
+      rebind_node->is_active = false;
       return;
     }
     const auto* arr = static_cast<const DynArrayData*>(handle_ptr);
@@ -498,21 +504,23 @@ void Engine::RebindSubscription(SubscriptionNode* target) {
       throw common::InternalError(
           "RebindSubscription", "invalid container magic");
     }
-    target->container_sv_index = index_val;
-    target->container_epoch = arr->epoch;
+    rebind_node->container_sv_index = index_val;
+    rebind_node->container_epoch = arr->epoch;
     if (arr->data == nullptr || index_val < 0 || index_val >= arr->size) {
-      target->is_active = false;
+      rebind_node->is_active = false;
       return;
     }
-    target->is_active = true;
+    rebind_node->is_active = true;
     auto new_byte_offset =
-        static_cast<uint32_t>(index_val) * target->container_elem_stride;
-    target->byte_offset = new_byte_offset;
-    target->bit_index = 0;
+        static_cast<uint32_t>(index_val) * rebind_node->container_elem_stride;
+    rebind_node->byte_offset = new_byte_offset;
+    rebind_node->bit_index = 0;
     // Always read from heap (content may have changed even if offset same).
-    const auto* elem = static_cast<const uint8_t*>(arr->data) + new_byte_offset;
-    target->last_bit = elem[0] & 1;
-    target->snapshot_inline[0] = elem[0];
+    auto heap = std::span(
+        static_cast<const uint8_t*>(arr->data),
+        new_byte_offset + rebind_node->container_elem_stride);
+    rebind_node->last_bit = heap[new_byte_offset] & 1;
+    rebind_node->snapshot_inline[0] = heap[new_byte_offset];
     return;
   }
 
@@ -522,27 +530,30 @@ void Engine::RebindSubscription(SubscriptionNode* target) {
 
   if (logical_offset < 0 ||
       static_cast<uint64_t>(logical_offset) >= mapping.total_bits) {
-    target->is_active = false;
+    rebind_node->is_active = false;
     return;
   }
 
-  target->is_active = true;
+  rebind_node->is_active = true;
   auto bit = static_cast<uint64_t>(logical_offset);
-  uint32_t new_byte_offset = static_cast<uint32_t>(bit / 8);
-  uint8_t new_bit_index = static_cast<uint8_t>(bit % 8);
+  auto new_byte_offset = static_cast<uint32_t>(bit / 8);
+  auto new_bit_index = static_cast<uint8_t>(bit % 8);
 
   // Get old bit value at the new position for correct edge detection.
-  const auto& meta = slot_meta_registry_.Get(target->signal);
-  const auto* base = static_cast<const uint8_t*>(design_state_base_);
-  if (new_byte_offset == target->byte_offset) {
-    target->last_bit = (target->snapshot_inline[0] >> new_bit_index) & 1;
+  const auto& meta = slot_meta_registry_.Get(rebind_node->signal);
+  auto ds = std::span(
+      static_cast<const uint8_t*>(design_state_base_),
+      meta.base_off + new_byte_offset + 1);
+  if (new_byte_offset == rebind_node->byte_offset) {
+    rebind_node->last_bit =
+        (rebind_node->snapshot_inline[0] >> new_bit_index) & 1;
   } else {
-    target->last_bit =
-        (base[meta.base_off + new_byte_offset] >> new_bit_index) & 1;
-    target->snapshot_inline[0] = base[meta.base_off + new_byte_offset];
+    rebind_node->last_bit =
+        (ds[meta.base_off + new_byte_offset] >> new_bit_index) & 1;
+    rebind_node->snapshot_inline[0] = ds[meta.base_off + new_byte_offset];
   }
-  target->byte_offset = new_byte_offset;
-  target->bit_index = new_bit_index;
+  rebind_node->byte_offset = new_byte_offset;
+  rebind_node->bit_index = new_bit_index;
 }
 
 void Engine::FlushSignalUpdates() {
@@ -650,9 +661,11 @@ void Engine::FlushSignalUpdates() {
           auto byte_off =
               static_cast<uint32_t>(idx) * node->container_elem_stride;
           node->byte_offset = byte_off;
-          const auto* elem = static_cast<const uint8_t*>(arr->data) + byte_off;
-          node->last_bit = elem[0] & 1;
-          node->snapshot_inline[0] = elem[0];
+          auto heap_data = std::span(
+              static_cast<const uint8_t*>(arr->data),
+              byte_off + node->container_elem_stride);
+          node->last_bit = heap_data[byte_off] & 1;
+          node->snapshot_inline[0] = heap_data[byte_off];
           node = next;
           continue;
         }
@@ -688,16 +701,18 @@ void Engine::FlushSignalUpdates() {
           continue;
         }
         node->container_epoch = arr->epoch;
-        const auto* elem =
-            static_cast<const uint8_t*>(arr->data) + node->byte_offset;
-        uint8_t current_bit = (elem[0] >> node->bit_index) & 1;
+        auto heap_data = std::span(
+            static_cast<const uint8_t*>(arr->data),
+            node->byte_offset + node->container_elem_stride);
+        uint8_t current_bit =
+            (heap_data[node->byte_offset] >> node->bit_index) & 1;
         bool should_wake = false;
         if (node->last_bit != current_bit) {
           should_wake =
               EvaluateEdge(node->edge, node->last_bit != 0, current_bit != 0);
           node->last_bit = current_bit;
         }
-        node->snapshot_inline[0] = elem[0];
+        node->snapshot_inline[0] = heap_data[node->byte_offset];
         if (should_wake) {
           auto& proc_state = process_states_[node->handle];
           if (!proc_state.is_enqueued) {
