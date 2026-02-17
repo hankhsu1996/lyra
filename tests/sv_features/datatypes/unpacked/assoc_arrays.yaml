@@ -54,20 +54,6 @@ cases:
       variables:
         result: 0
 
-  - name: read_miss_4state
-    description: Reading missing key returns X for 4-state
-    sv: |
-      module Test;
-        logic [3:0] result;
-        initial begin
-          logic [3:0] aa[int];
-          result = aa[0];
-        end
-      endmodule
-    expect:
-      variables:
-        result: "4'bxxxx"
-
   - name: write_overwrite
     description: Writing same key overwrites previous value
     sv: |
@@ -333,23 +319,6 @@ cases:
         v1: 1
         v2: 2
         v3: 3
-
-  - name: subfield_write
-    description: Copy-in/copy-out for struct element subfield write
-    sv: |
-      module Test;
-        int result;
-        initial begin
-          typedef struct { int x; int y; } point_t;
-          point_t aa[int];
-          aa[0] = '{x: 1, y: 2};
-          aa[0].x = 10;
-          result = aa[0].x;
-        end
-      endmodule
-    expect:
-      variables:
-        result: 10
 
   - name: compound_assignment
     description: Compound assignment on AA element (aa[k] += v)

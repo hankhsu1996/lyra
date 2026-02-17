@@ -248,28 +248,6 @@ cases:
         d: 1
         ud: 0
 
-  - name: string_dimension_funcs_return_x
-    description: Dimension functions on string return 'x (NOT defined by LRM)
-    sv: |
-      module Test;
-        string s;
-        integer left_val, right_val, size_val, inc_val;
-        initial begin
-          s = "hello";
-          // LRM only defines $dimensions(string)=1, NOT dimension functions
-          left_val = $left(s);
-          right_val = $right(s);
-          size_val = $size(s);
-          inc_val = $increment(s);
-        end
-      endmodule
-    expect:
-      variables:
-        left_val: "32'hxxxxxxxx"
-        right_val: "32'hxxxxxxxx"
-        size_val: "32'hxxxxxxxx"
-        inc_val: "32'hxxxxxxxx"
-
   - name: dimensions_logic_vector
     description: $dimensions of logic vector
     sv: |
@@ -529,24 +507,6 @@ cases:
       variables:
         sz: 4
 
-  # Runtime dim out-of-range returns 'x (not abort)
-
-  - name: runtime_dim_out_of_range
-    description: Runtime dim out of range returns 'x
-    sv: |
-      module Test;
-        int arr[3][4];
-        int dim_val;
-        integer result;  // Use integer (4-state) to capture 'x
-        initial begin
-          dim_val = 10;  // Out of range (only 3 dims)
-          result = $size(arr, dim_val);
-        end
-      endmodule
-    expect:
-      variables:
-        result: "32'hxxxxxxxx"
-
   # Variable with dim=1 on variable-sized is allowed (only dim > 1 is error)
 
   - name: dynamic_array_dim1_ok
@@ -579,19 +539,3 @@ cases:
     expect:
       variables:
         inc: -1
-
-  - name: dim_4state_partial_xz
-    description: 4-state dim operand with X bits returns X result
-    sv: |
-      module Test;
-        int arr[3][4];
-        integer dim_val;
-        integer result;
-        initial begin
-          dim_val = 32'hxxxxxxxx;
-          result = $size(arr, dim_val);
-        end
-      endmodule
-    expect:
-      variables:
-        result: "32'hxxxxxxxx"

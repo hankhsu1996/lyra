@@ -1,0 +1,57 @@
+feature: assignment_pattern_multibit_four_state
+description: >
+  Multi-bit default pattern tests requiring 4-state (X/Z) semantics.
+  Excluded from --two-state suite.
+
+cases:
+  - name: unbased_unsized_x
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: 'x};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "xxxx\n"
+
+  - name: unbased_unsized_z
+    sv: |
+      module Test;
+        initial begin
+          logic [3:0] x = '{default: 'z};
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout: "zzzz\n"
+
+  - name: unbased_x_multidim
+    description: "'x fills each 4-bit element with X"
+    sv: |
+      module Test;
+        initial begin
+          logic [1:0][3:0] arr = '{default: 'x};
+          if (arr[0] === 4'bxxxx && arr[1] === 4'bxxxx)
+            $display("PASS");
+          else
+            $display("FAIL");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: unbased_z_multidim
+    description: "'z fills each 4-bit element with Z"
+    sv: |
+      module Test;
+        initial begin
+          logic [1:0][3:0] arr = '{default: 'z};
+          if (arr[0] === 4'bzzzz && arr[1] === 4'bzzzz)
+            $display("PASS");
+          else
+            $display("FAIL");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"

@@ -1,0 +1,36 @@
+feature: default_init_two_state_only
+description: >
+  Semantic diff: --two-state forces all types to 2-state layout.
+  Logic types that normally X-initialize instead zero-initialize.
+  These tests ONLY pass under --two-state; they fail in default mode.
+
+cases:
+  - name: logic_default_zero
+    description: Uninitialized logic defaults to 0 (not X) in two-state mode
+    sv: |
+      module Test;
+        logic [7:0] result;
+        initial begin
+          // no assignment - default value
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: logic_array_default_zero
+    description: Uninitialized logic array elements default to 0 in two-state mode
+    sv: |
+      module Test;
+        logic [7:0] arr[3];
+        int a;
+        int b;
+        initial begin
+          a = arr[0];
+          b = arr[2];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 0
+        b: 0

@@ -3,6 +3,12 @@
 # Suites define backend + test selection (closed contracts for CI).
 # Patterns are regex substrings matched against relative paths.
 # Empty include_regex = all YAML files. Exclude wins over include.
+#
+# Naming convention for test files:
+#   *_four_state.yaml      - 4-state only (excluded from jit_two_state)
+#   *_two_state.yaml       - Cross-mode invariant (runs in BOTH modes)
+#   *_two_state_only.yaml  - Semantic diff (excluded from jit_dev)
+#   four_state/*.yaml      - 4-state only directory (excluded from jit_two_state)
 
 suites:
   jit_dev:
@@ -22,6 +28,8 @@ suites:
       - scheduling/
       - system_tf/
       - trace/
+    exclude_regex:
+      - two_state_only\.yaml # Two-state semantic diff only
 
   lli_dev:
     backend: lli
@@ -40,45 +48,35 @@ suites:
       - scheduling/
       - system_tf/
       - trace/
+    exclude_regex:
+      - two_state_only\.yaml # Two-state semantic diff only
 
   # Two-state regression suite: runs JIT with --two-state (all types forced
-  # to 2-state LLVM representation). Covers layout, compute, commit, display,
-  # and scheduling paths to prevent half-switch regressions.
-  #
-  # Selection: explicit include list (not all-minus-excludes) while the feature
-  # stabilizes. Once stable (~2-3 weeks), flip to jit_dev's include list with
-  # exclude_regex for 4-state-dependent tests. The exclude list is the spec:
-  # keep it as small as possible.
-  #
-  # 4-state-dependent tests (must stay excluded under two-state):
-  #   - casez/casex (wildcard matching depends on X/Z bits)
-  #   - ===/!== with X operands (identity comparison needs unknown plane)
-  #   - Tests that assert X-initialized values (e.g., result: "8'hxx")
+  # to 2-state LLVM representation). Uses same test scope as jit_dev minus
+  # tests that depend on 4-state semantics (X/Z values, casez/casex patterns,
+  # identity comparisons with unknown bits).
   jit_two_state:
     backend: jit
     two_state: true
     include_regex:
-      # Packed logic assignments and bit-range operations
-      - datatypes/packed/packed_integral_default\.yaml
-      - datatypes/packed/indexed_part_select\.yaml
-      - datatypes/packed/packed_struct\.yaml
-      # Operators (2-state compatible only)
-      - operators/binary_two_state\.yaml
-      - operators/unary_two_state\.yaml
-      - operators/concat\.yaml
-      # Control flow (guarded assigns, ternary)
-      - control_flow/ternary\.yaml
-      - control_flow/conditional\.yaml
-      - control_flow/for\.yaml
-      # Function calls
-      - functions/basic\.yaml
-      - functions/nested_calls\.yaml
-      # Display formatting
-      - system_tf/pure/conversions\.yaml
-      - system_tf/pure/sformat\.yaml
-      # Scheduling and edge triggers
-      - scheduling/nba_packed\.yaml
-      - scheduling/sub_slot_observation\.yaml
+      - control_flow/
+      - datatypes/
+      - directives/
+      - functions/
+      - generate/
+      - hierarchy/
+      - lifecycle/
+      - metadata/
+      - operators/
+      - packages/
+      - processes/
+      - scheduling/
+      - system_tf/
+      - trace/
+    exclude_regex:
+      - four_state                        # All 4-state-dependent tests
+      # TODO: dynamic array/queue query bugs under --two-state (not 4-state related)
+      - system_tf/pure/array_query\.yaml
 
   mir_dev:
     backend: mir
@@ -98,3 +96,4 @@ suites:
     exclude_regex:
       - trace/bulk_ops\.yaml # JIT-only (requires flush-based trace via UpdateSet)
       - trace/update_set\.yaml # JIT-only (requires UpdateSet)
+      - two_state_only\.yaml # Two-state semantic diff only

@@ -110,6 +110,16 @@ jobs:
           fi
           bazel test //tests:jit_dev_tests $RBE_FLAGS --test_output=errors --verbose_failures
 
+      - name: Test (JIT Two-State)
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          RBE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel test //tests:jit_two_state_tests $RBE_FLAGS --test_output=errors --verbose_failures
+
   # This job always runs and reports success when build is skipped
   # Required for branch protection rules that require this check
   build-status:

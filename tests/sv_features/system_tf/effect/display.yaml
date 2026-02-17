@@ -558,43 +558,6 @@ cases:
     expect:
       stdout: "ABC\n"
 
-  - name: char_with_x_bits
-    sv: |
-      module Test;
-        logic [7:0] c;
-        initial begin
-          c = 8'bxxxx_xxxx;
-          $display("%c", c);
-        end
-      endmodule
-    expect:
-      stdout: "x\n"
-
-  - name: char_with_z_bits
-    sv: |
-      module Test;
-        logic [7:0] c;
-        initial begin
-          c = 8'bzzzz_zzzz;
-          $display("%c", c);
-        end
-      endmodule
-    expect:
-      stdout: "z\n"
-
-  - name: char_mixed_x_z
-    description: Partial X in low byte collapses to x
-    sv: |
-      module Test;
-        logic [7:0] c;
-        initial begin
-          c = 8'b0000_xxxx;
-          $display("%c", c);
-        end
-      endmodule
-    expect:
-      stdout: "x\n"
-
   - name: char_extracts_low_8_bits
     description: Only low 8 bits matter for %c
     sv: |

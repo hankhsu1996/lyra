@@ -1,0 +1,34 @@
+feature: display_two_state_only
+description: >
+  Semantic diff: --two-state forces all types to 2-state layout.
+  Uninitialized logic displays as 0 instead of X.
+  These tests ONLY pass under --two-state; they fail in default mode.
+
+cases:
+  - name: display_uninit_logic_hex
+    description: $display %h on uninitialized logic shows 00 (not xx) in two-state
+    sv: |
+      module Test;
+        logic [7:0] x;
+        initial begin
+          $display("%h", x);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "00"
+
+  - name: display_uninit_logic_binary
+    description: $display %b on uninitialized logic shows 0s (not xs) in two-state
+    sv: |
+      module Test;
+        logic [3:0] x;
+        initial begin
+          $display("%b", x);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "0000"

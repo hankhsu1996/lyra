@@ -1,0 +1,18 @@
+feature: case_equality_four_state
+description: >
+  Case equality (===/!==) tests requiring 4-state (X/Z) semantics.
+  Excluded from --two-state suite.
+
+cases:
+  - name: case_equal_mixed_mismatch
+    description: 4'b10xz === 4'b10x1 returns 0 (z vs 1 mismatch)
+    sv: |
+      module Test;
+        logic [3:0] a = 4'b10xz;
+        logic [3:0] b = 4'b10x1;
+        int result;
+        initial result = (a === b) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 0
