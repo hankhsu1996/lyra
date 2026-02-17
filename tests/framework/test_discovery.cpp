@@ -1,6 +1,7 @@
 #include "tests/framework/test_discovery.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -30,16 +31,30 @@ auto ContainsParentReference(const std::filesystem::path& path) -> bool {
   });
 }
 
+// Filenames that represent mode variants rather than feature names.
+// When a YAML file has one of these stems, the category comes from
+// the parent directory path instead of the filename.
+constexpr std::array<std::string_view, 3> kModeFilenames = {
+    "default", "four_state", "two_state_only"};
+
 // Extract category from YAML path relative to yaml_directory.
-// Uses full relative path with "/" replaced by "_" for uniqueness.
-// e.g., "operators/binary.yaml" -> "operators_binary"
-// e.g., "datatypes/arrays/packed.yaml" -> "datatypes_arrays_packed"
+// For mode files (default.yaml, four_state.yaml, two_state_only.yaml),
+// uses the parent directory path as the category.
+// For other files, uses the full path without extension.
+// e.g., "operators/binary/default.yaml" -> "operators_binary"
+// e.g., "operators/binary/four_state.yaml" -> "operators_binary"
+// e.g., "system_tf/effect/readmem_2state/default.yaml"
+//    -> "system_tf_effect_readmem_2state"
 auto ExtractCategory(
     const std::filesystem::path& yaml_path,
     const std::filesystem::path& yaml_directory) -> std::string {
   auto relative = yaml_path.lexically_relative(yaml_directory);
-  auto without_extension = relative.replace_extension("");
-  std::string result = without_extension.string();
+  auto stem = relative.stem().string();
+  bool is_mode_file = std::ranges::any_of(
+      kModeFilenames, [&](std::string_view m) { return stem == m; });
+  std::string result = is_mode_file
+                           ? relative.parent_path().generic_string()
+                           : relative.replace_extension("").generic_string();
   std::ranges::replace(result, '/', '_');
   return result;
 }
