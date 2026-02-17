@@ -94,8 +94,5 @@ suites:
       - ^system_tf/effect/
       - ^system_tf/pure/
       - ^system_tf/state/random/
-      - ^trace/
     exclude_regex:
-      - trace/bulk_ops/ # JIT-only (requires flush-based trace via UpdateSet)
-      - trace/update_set/ # JIT-only (requires UpdateSet)
       - two_state_only\.yaml$ # Two-state semantic diff only
