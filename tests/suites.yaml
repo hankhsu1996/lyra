@@ -4,11 +4,10 @@
 # Patterns are regex substrings matched against relative paths.
 # Empty include_regex = all YAML files. Exclude wins over include.
 #
-# Naming convention for test files:
-#   *_four_state.yaml      - 4-state only (excluded from jit_two_state)
-#   *_two_state.yaml       - Cross-mode invariant (runs in BOTH modes)
-#   *_two_state_only.yaml  - Semantic diff (excluded from jit_dev)
-#   four_state/*.yaml      - 4-state only directory (excluded from jit_two_state)
+# Directory convention for test files:
+#   feature/default.yaml         - Default tests (runs in all suites)
+#   feature/four_state.yaml      - 4-state only (excluded from jit_two_state)
+#   feature/two_state_only.yaml  - Semantic diff (excluded from jit_dev)
 
 suites:
   jit_dev:
@@ -29,7 +28,7 @@ suites:
       - system_tf/
       - trace/
     exclude_regex:
-      - two_state_only\.yaml # Two-state semantic diff only
+      - two_state_only\.yaml$ # Two-state semantic diff only
 
   lli_dev:
     backend: lli
@@ -49,7 +48,7 @@ suites:
       - system_tf/
       - trace/
     exclude_regex:
-      - two_state_only\.yaml # Two-state semantic diff only
+      - two_state_only\.yaml$ # Two-state semantic diff only
 
   # Two-state regression suite: runs JIT with --two-state (all types forced
   # to 2-state LLVM representation). Uses same test scope as jit_dev minus
@@ -74,26 +73,26 @@ suites:
       - system_tf/
       - trace/
     exclude_regex:
-      - four_state                        # All 4-state-dependent tests
+      - four_state\.yaml$ # All 4-state-dependent tests
       # TODO: dynamic array/queue query bugs under --two-state (not 4-state related)
-      - system_tf/pure/array_query\.yaml
+      - system_tf/pure/array_query/default\.yaml$
 
   mir_dev:
     backend: mir
     include_regex:
-      - control_flow/
-      - datatypes/
-      - functions/
-      - generate/
-      - hierarchy/refs/
-      - lifecycle/
-      - operators/
-      - packages/
-      - system_tf/effect/
-      - system_tf/pure/
-      - system_tf/state/random\.yaml
-      - trace/
+      - ^control_flow/
+      - ^datatypes/
+      - ^functions/
+      - ^generate/
+      - ^hierarchy/refs/
+      - ^lifecycle/
+      - ^operators/
+      - ^packages/
+      - ^system_tf/effect/
+      - ^system_tf/pure/
+      - ^system_tf/state/random/
+      - ^trace/
     exclude_regex:
-      - trace/bulk_ops\.yaml # JIT-only (requires flush-based trace via UpdateSet)
-      - trace/update_set\.yaml # JIT-only (requires UpdateSet)
-      - two_state_only\.yaml # Two-state semantic diff only
+      - trace/bulk_ops/ # JIT-only (requires flush-based trace via UpdateSet)
+      - trace/update_set/ # JIT-only (requires UpdateSet)
+      - two_state_only\.yaml$ # Two-state semantic diff only
