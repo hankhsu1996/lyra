@@ -22,8 +22,6 @@ suites:
       - scheduling/
       - system_tf/
       - trace/
-    exclude_regex:
-      - system_tf/effect/system_cmd\.yaml # MIR-only ($system not in LLVM)
 
   lli_dev:
     backend: lli
@@ -42,8 +40,6 @@ suites:
       - scheduling/
       - system_tf/
       - trace/
-    exclude_regex:
-      - system_tf/effect/system_cmd\.yaml # MIR-only ($system not in LLVM)
 
   # Two-state regression suite: runs JIT with --two-state (all types forced
   # to 2-state LLVM representation). Covers layout, compute, commit, display,

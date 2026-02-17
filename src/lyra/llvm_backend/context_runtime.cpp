@@ -225,15 +225,13 @@ auto Context::GetLyraRunSimulation() -> llvm::Function* {
     //                        const uint32_t* slot_meta_words,
     //                        uint32_t num_slot_metas,
     //                        uint32_t slot_meta_version,
-    //                        i1 dump_slot_meta,
-    //                        i1 enable_trace)
+    //                        uint32_t feature_flags)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
         {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-         i32_ty, i1_ty, i1_ty},
+         i32_ty, i32_ty},
         false);
     lyra_run_simulation_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulation",
@@ -1392,6 +1390,19 @@ auto Context::GetLyraAssocDestroyElem() -> llvm::Function* {
         llvm_module_.get());
   }
   return lyra_assoc_destroy_elem_;
+}
+
+auto Context::GetLyraSystemCmd() -> llvm::Function* {
+  if (lyra_system_cmd_ == nullptr) {
+    // int32_t LyraSystemCmd(ptr engine, ptr cmd_handle)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty}, false);
+    lyra_system_cmd_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraSystemCmd",
+        llvm_module_.get());
+  }
+  return lyra_system_cmd_;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

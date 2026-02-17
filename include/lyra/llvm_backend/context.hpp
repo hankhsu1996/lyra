@@ -175,6 +175,7 @@ class Context {
   [[nodiscard]] auto GetLyraAssocSnapshotRelease() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAssocCloneElem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAssocDestroyElem() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraSystemCmd() -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -532,6 +533,7 @@ class Context {
   llvm::Function* lyra_assoc_snapshot_release_ = nullptr;
   llvm::Function* lyra_assoc_clone_elem_ = nullptr;
   llvm::Function* lyra_assoc_destroy_elem_ = nullptr;
+  llvm::Function* lyra_system_cmd_ = nullptr;
 
   // Maps PlaceRootKey to its LLVM alloca storage.
   // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root

@@ -19,6 +19,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -406,7 +407,7 @@ extern "C" void LyraRunSimulation(
     const char** plusargs_raw, uint32_t num_plusargs,
     const char** instance_paths_raw, uint32_t num_instance_paths,
     const uint32_t* slot_meta_words, uint32_t num_slot_metas,
-    uint32_t slot_meta_version, bool dump_slot_meta, bool enable_trace) {
+    uint32_t slot_meta_version, uint32_t feature_flags) {
   auto states = std::span(states_raw, num_processes);
   auto procs = std::span(processes, num_processes);
 
@@ -430,9 +431,12 @@ extern "C" void LyraRunSimulation(
     }
   }
 
+  using lyra::runtime::FeatureFlag;
+  auto flags = static_cast<FeatureFlag>(feature_flags);
+
   lyra::runtime::Engine engine(
       MakeProcessRunner(procs, states), std::span(plusargs_vec),
-      std::move(instance_paths_vec));
+      std::move(instance_paths_vec), feature_flags);
   if (slot_meta_words != nullptr && num_slot_metas > 0) {
     if (slot_meta_version != lyra::runtime::slot_meta_abi::kVersion) {
       throw lyra::common::InternalError(
@@ -444,14 +448,14 @@ extern "C" void LyraRunSimulation(
     engine.InitSlotMeta(
         lyra::runtime::SlotMetaRegistry(slot_meta_words, num_slot_metas));
   }
-  if (dump_slot_meta) {
+  if (HasFlag(flags, FeatureFlag::kDumpSlotMeta)) {
     engine.GetSlotMetaRegistry().DumpSummary();
   }
-  if (enable_trace) {
+  if (HasFlag(flags, FeatureFlag::kEnableTrace)) {
     engine.GetTraceManager().SetEnabled(true);
   }
   SetupAndRunSimulation(engine, states, num_processes);
-  if (enable_trace) {
+  if (HasFlag(flags, FeatureFlag::kEnableTrace)) {
     engine.GetTraceManager().PrintSummary();
   }
 }
@@ -483,6 +487,20 @@ extern "C" auto LyraPlusargsValueString(
         result_str.data(), static_cast<int64_t>(result_str.size()));
   }
   return found;
+}
+
+extern "C" auto LyraSystemCmd(void* engine_ptr, LyraStringHandle cmd_handle)
+    -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  if (!engine->IsFeatureEnabled(lyra::runtime::FeatureFlag::kEnableSystem)) {
+    return -1;
+  }
+  if (cmd_handle == nullptr) {
+    return static_cast<int32_t>(std::system(nullptr));
+  }
+  std::string_view sv = LyraStringAsView(cmd_handle);
+  std::string cmd(sv);
+  return static_cast<int32_t>(std::system(cmd.c_str()));
 }
 
 extern "C" void LyraStorePacked(

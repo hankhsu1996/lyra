@@ -26,6 +26,7 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
+#include "lyra/runtime/feature_flags.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
 
@@ -190,6 +191,14 @@ auto PrepareLlvmModule(
       work_directory.empty()
           ? std::filesystem::absolute(std::filesystem::current_path()).string()
           : std::filesystem::absolute(work_directory).string();
+  uint32_t feature_flags = 0;
+  if (test_case.trace) {
+    feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
+  }
+  if (test_case.dump_slot_meta) {
+    feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDumpSlotMeta);
+  }
+
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,
       .mir_arena = mir_result->mir_arena.get(),
@@ -198,8 +207,7 @@ auto PrepareLlvmModule(
       .hooks = g_hooks_holder->hooks.get(),
       .fs_base_dir = fs_base_dir,
       .plusargs = test_case.plusargs,
-      .enable_trace = test_case.trace,
-      .debug_dump_slot_meta = test_case.dump_slot_meta,
+      .feature_flags = feature_flags,
       .force_two_state = force_two_state,
   };
 

@@ -45,8 +45,8 @@ void LyraRunSimulation(
     LyraProcessFunc* processes, void** states, uint32_t num_processes,
     const char** plusargs, uint32_t num_plusargs, const char** instance_paths,
     uint32_t num_instance_paths, const uint32_t* slot_meta_words,
-    uint32_t num_slot_metas, uint32_t slot_meta_version, bool dump_slot_meta,
-    bool enable_trace);
+    uint32_t num_slot_metas, uint32_t slot_meta_version,
+    uint32_t feature_flags);
 
 // $test$plusargs: prefix match against plusargs.
 // Query is LyraStringHandle (matches SV string operand lowering).
@@ -63,6 +63,11 @@ auto LyraPlusargsValueInt(
 auto LyraPlusargsValueString(
     void* engine_ptr, LyraStringHandle format, LyraStringHandle* output)
     -> int32_t;
+
+// $system shell command execution (IEEE 1800-2023 20.18.1).
+// cmd_handle: LyraStringHandle for command string; nullptr = no-arg form.
+// Returns -1 if system execution is disabled (FeatureFlag::kEnableSystem).
+auto LyraSystemCmd(void* engine_ptr, LyraStringHandle cmd_handle) -> int32_t;
 
 // Suspend helpers - own the SuspendRecord layout, called by LLVM-generated
 // code. state: pointer to ProcessState (SuspendRecord is at offset 0).
