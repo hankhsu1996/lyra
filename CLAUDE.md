@@ -88,13 +88,13 @@ Run a specific test file without modifying suite definitions:
 ```bash
 # MIR backend
 bazel test //tests:mir_dev_tests \
-  --test_arg=--test_file=control_flow/conditionals.yaml \
+  --test_arg=--test_file=control_flow/conditional/default.yaml \
   --test_arg=--backend=mir \
   --test_output=errors
 
 # JIT backend
 bazel test //tests:jit_dev_tests \
-  --test_arg=--test_file=operators/binary.yaml \
+  --test_arg=--test_file=operators/binary/two_state.yaml \
   --test_arg=--backend=jit \
   --test_output=errors
 ```
