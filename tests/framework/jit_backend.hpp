@@ -4,7 +4,9 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <vector>
 
+#include "lyra/common/mutation_event.hpp"
 #include "tests/framework/test_case.hpp"
 #include "tests/framework/test_value.hpp"
 
@@ -17,6 +19,7 @@ struct TestResult {
   std::string captured_output;
   std::map<std::string, TestValue> variables;
   uint64_t final_time = 0;
+  std::vector<common::MutationEvent> mutation_events;
 };
 
 // Run test using JIT backend (in-process ORC JIT).

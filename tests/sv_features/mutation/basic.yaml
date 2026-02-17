@@ -1,0 +1,36 @@
+feature: mutation/basic
+description: Value write change-fact emission
+
+cases:
+  - name: scalar_write
+    sv: |
+      module top;
+        int x;
+        initial begin
+          x = 42;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 42
+      mutations:
+        min_count: 1
+        contains_kind: [value_write]
+
+  - name: multi_write
+    sv: |
+      module top;
+        int a, b;
+        initial begin
+          a = 1;
+          b = 2;
+          a = 3;
+        end
+      endmodule
+    expect:
+      variables:
+        a: 3
+        b: 2
+      mutations:
+        min_count: 3
+        contains_kind: [value_write]

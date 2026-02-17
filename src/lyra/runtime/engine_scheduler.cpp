@@ -5,9 +5,12 @@
 #include <format>
 #include <span>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/mutation_event.hpp"
+#include "lyra/common/range_set.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/trace_flush.hpp"
@@ -288,6 +291,21 @@ void Engine::FlushDirtySlots() {
         trace_manager_, slot_meta_registry_, design_state_base_, update_set_);
   }
   update_set_.Clear();
+}
+
+void Engine::OnMutation(const common::MutationEvent& event) {
+  if (const auto* slot = std::get_if<common::DesignSlotId>(&event.root)) {
+    if (event.ranges.IsFullExtent()) {
+      update_set_.MarkSlotDirty(slot->value, event.kind, event.epoch_effect);
+    } else {
+      for (const auto& r : event.ranges.Ranges()) {
+        update_set_.MarkDirtyRange(
+            slot->value, r.offset, r.size, event.kind, event.epoch_effect);
+      }
+    }
+    return;
+  }
+  // HeapObjId: NYI -- future heap-level UpdateSet tracking.
 }
 
 }  // namespace lyra::runtime

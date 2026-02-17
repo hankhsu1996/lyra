@@ -25,6 +25,11 @@ struct ExpectedOutput {
   }
 };
 
+struct MutationExpectation {
+  std::optional<size_t> min_count;
+  std::vector<std::string> contains_kind;  // "value_write", "structural", etc.
+};
+
 struct TestCase {
   std::string name;
   std::string feature;
@@ -38,6 +43,7 @@ struct TestCase {
   std::optional<ExpectedOutput> expected_stdout;
   std::map<std::string, ExpectedOutput> expected_files;
   std::optional<ExpectedOutput> expected_error;  // Expected compilation error
+  std::optional<MutationExpectation> expected_mutations;
   bool pedantic = false;        // Strict LRM compliance mode for this test
   bool trace = false;           // Enable simulation tracing for this test
   bool dump_slot_meta = false;  // Dump slot metadata registry (test-only)

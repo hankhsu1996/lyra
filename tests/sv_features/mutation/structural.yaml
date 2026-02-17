@@ -1,0 +1,39 @@
+feature: mutation/structural
+description: Container structural change-fact emission
+
+cases:
+  - name: queue_push_pop
+    sv: |
+      module top;
+        int q[$];
+        int result;
+        initial begin
+          q.push_back(10);
+          q.push_back(20);
+          result = q.pop_front();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10
+      mutations:
+        min_count: 3
+        contains_kind: [structural_realloc, structural_no_realloc]
+
+  - name: queue_delete
+    sv: |
+      module top;
+        int q[$];
+        int sz;
+        initial begin
+          q.push_back(1);
+          q.push_back(2);
+          q.delete();
+          sz = q.size();
+        end
+      endmodule
+    expect:
+      variables:
+        sz: 0
+      mutations:
+        contains_kind: [structural_no_realloc]

@@ -22,6 +22,7 @@
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/memfile.hpp"
+#include "lyra/common/mutation_event.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/plusargs.hpp"
 #include "lyra/common/severity.hpp"
@@ -583,13 +584,7 @@ auto Interpreter::ExecMemIOEffect(
     auto store_result = StoreToPlace(state, mem_io.target, std::move(arr_val));
     if (!store_result) return store_result;
 
-    // Emit MemoryDirty trace event
-    if (trace_manager_ != nullptr && trace_manager_->IsEnabled()) {
-      const auto& place = (*arena_)[mem_io.target];
-      if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
-        trace_manager_->EmitMemoryDirty(static_cast<uint32_t>(place.root.id));
-      }
-    }
+    EmitMutation(mem_io.target, common::MutationKind::kBulkInit);
     return {};
   }
 
@@ -1172,7 +1167,8 @@ auto Interpreter::ExecFreadCall(ProcessState& state, const Call& call)
   } else {
     // Memory variant (kDirectToDest): write directly to dest via WritePlace.
     // No tmp staging - follows the $readmemh bulk-write pattern.
-    auto write_result = WritePlace(state, wb.dest);
+    auto write_result =
+        WritePlace(state, wb.dest, common::MutationKind::kBulkInit);
     if (!write_result) return std::unexpected(write_result.error());
     if (!IsArray(write_result->get())) {
       return return_error();
@@ -1216,13 +1212,7 @@ auto Interpreter::ExecFreadCall(ProcessState& state, const Call& call)
       total_bytes_read += bytes_read;
     }
 
-    // Emit MemoryDirty trace event for bulk memory write
-    if (trace_manager_ != nullptr && trace_manager_->IsEnabled()) {
-      const auto& place = (*arena_)[wb.dest];
-      if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
-        trace_manager_->EmitMemoryDirty(static_cast<uint32_t>(place.root.id));
-      }
-    }
+    EmitMutation(wb.dest, common::MutationKind::kBulkInit);
   }
 
   // Commit return value (bytes_read)
@@ -1331,7 +1321,8 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
     -> Result<void> {
   switch (call.method) {
     case BuiltinMethod::kQueuePopBack: {
-      auto write_result = WritePlace(state, call.receiver);
+      auto write_result = WritePlace(
+          state, call.receiver, common::MutationKind::kStructuralNoRealloc);
       if (!write_result) {
         return std::unexpected(std::move(write_result).error());
       }
@@ -1354,7 +1345,8 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
     }
 
     case BuiltinMethod::kQueuePopFront: {
-      auto write_result = WritePlace(state, call.receiver);
+      auto write_result = WritePlace(
+          state, call.receiver, common::MutationKind::kStructuralNoRealloc);
       if (!write_result) {
         return std::unexpected(std::move(write_result).error());
       }
@@ -1377,7 +1369,9 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
     }
 
     case BuiltinMethod::kQueuePushBack: {
-      auto write_result = WritePlace(state, call.receiver);
+      auto write_result = WritePlace(
+          state, call.receiver, common::MutationKind::kStructuralRealloc,
+          common::EpochEffect::kBump);
       if (!write_result) {
         return std::unexpected(std::move(write_result).error());
       }
@@ -1396,7 +1390,9 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
     }
 
     case BuiltinMethod::kQueuePushFront: {
-      auto write_result = WritePlace(state, call.receiver);
+      auto write_result = WritePlace(
+          state, call.receiver, common::MutationKind::kStructuralRealloc,
+          common::EpochEffect::kBump);
       if (!write_result) {
         return std::unexpected(std::move(write_result).error());
       }
@@ -1426,7 +1422,9 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
         return {};  // X/Z -> no-op
       }
       auto idx = *idx_opt;
-      auto write_result = WritePlace(state, call.receiver);
+      auto write_result = WritePlace(
+          state, call.receiver, common::MutationKind::kStructuralRealloc,
+          common::EpochEffect::kBump);
       if (!write_result) {
         return std::unexpected(std::move(write_result).error());
       }
@@ -1447,9 +1445,20 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
       return {};
     }
 
-    case BuiltinMethod::kArrayDelete:
+    case BuiltinMethod::kArrayDelete: {
+      auto write_result = WritePlace(
+          state, call.receiver, common::MutationKind::kStructuralNoRealloc,
+          common::EpochEffect::kInvalidate);
+      if (!write_result) {
+        return std::unexpected(std::move(write_result).error());
+      }
+      AsArray(write_result->get()).elements.clear();
+      return {};
+    }
+
     case BuiltinMethod::kQueueDelete: {
-      auto write_result = WritePlace(state, call.receiver);
+      auto write_result = WritePlace(
+          state, call.receiver, common::MutationKind::kStructuralNoRealloc);
       if (!write_result) {
         return std::unexpected(std::move(write_result).error());
       }
@@ -1469,7 +1478,8 @@ auto Interpreter::ExecBuiltinCall(ProcessState& state, const BuiltinCall& call)
         return {};  // X/Z -> no-op
       }
       auto idx = *idx_opt;
-      auto write_result = WritePlace(state, call.receiver);
+      auto write_result = WritePlace(
+          state, call.receiver, common::MutationKind::kStructuralNoRealloc);
       if (!write_result) {
         return std::unexpected(std::move(write_result).error());
       }
@@ -1552,6 +1562,7 @@ auto Interpreter::ExecAssocOp(ProcessState& state, const AssocOp& op)
               }
             }
             obj.Set(std::move(canon.payload), std::move(*value));
+            EmitHeapMutation(handle.id, common::MutationKind::kValueWrite);
             return {};
           },
           [&](const AssocExists& exists) -> Result<void> {
@@ -1566,6 +1577,9 @@ auto Interpreter::ExecAssocOp(ProcessState& state, const AssocOp& op)
           },
           [&](const AssocDelete& /*del*/) -> Result<void> {
             obj.Delete();
+            EmitHeapMutation(
+                handle.id, common::MutationKind::kStructuralNoRealloc,
+                common::EpochEffect::kInvalidate);
             return {};
           },
           [&](const AssocDeleteKey& del) -> Result<void> {
@@ -1574,6 +1588,9 @@ auto Interpreter::ExecAssocOp(ProcessState& state, const AssocOp& op)
             auto canon = runtime::CanonicalizeKey(*key_val, key_spec);
             if (canon.status == runtime::KeyStatus::kOk) {
               obj.DeleteKey(canon.payload);
+              EmitHeapMutation(
+                  handle.id, common::MutationKind::kStructuralNoRealloc,
+                  common::EpochEffect::kInvalidate);
             }
             return {};
           },

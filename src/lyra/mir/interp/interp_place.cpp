@@ -8,6 +8,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/mutation_event.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -24,6 +25,30 @@
 #include "lyra/mir/place.hpp"
 
 namespace lyra::mir::interp {
+
+void Interpreter::EmitMutation(
+    PlaceId place_id, common::MutationKind kind, common::EpochEffect epoch) {
+  if (!mutation_sink_) return;
+  const auto& place = (*arena_)[place_id];
+  if (place.root.kind != PlaceRoot::Kind::kDesign) return;
+  common::MutationEvent event;
+  event.root = common::DesignSlotId{static_cast<uint32_t>(place.root.id)};
+  event.kind = kind;
+  event.epoch_effect = epoch;
+  event.ranges.MarkFullExtent();
+  mutation_sink_(event);
+}
+
+void Interpreter::EmitHeapMutation(
+    uint32_t handle_id, common::MutationKind kind, common::EpochEffect epoch) {
+  if (!mutation_sink_) return;
+  common::MutationEvent event;
+  event.root = common::HeapObjId{handle_id};
+  event.kind = kind;
+  event.epoch_effect = epoch;
+  event.ranges.MarkFullExtent();
+  mutation_sink_(event);
+}
 
 namespace {
 
@@ -540,8 +565,10 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
   return Clone(*loc.base);
 }
 
-auto Interpreter::WritePlace(ProcessState& state, PlaceId place_id)
-    -> Result<std::reference_wrapper<RuntimeValue>> {
+auto Interpreter::WritePlace(
+    ProcessState& state, PlaceId place_id, common::MutationKind kind,
+    common::EpochEffect epoch) -> Result<std::reference_wrapper<RuntimeValue>> {
+  EmitMutation(place_id, kind, epoch);
   const auto& place = (*arena_)[place_id];
   auto& root_value = ResolveRootMut(state, place.root);
 
@@ -573,6 +600,7 @@ auto Interpreter::StoreToPlace(
 
   if (place.projections.empty()) {
     root_value = std::move(value);
+    EmitMutation(place_id, common::MutationKind::kValueWrite);
     return {};
   }
 
@@ -623,6 +651,7 @@ auto Interpreter::StoreToPlace(
   } else {
     *loc.base = std::move(value);
   }
+  EmitMutation(place_id, common::MutationKind::kValueWrite);
   return {};
 }
 

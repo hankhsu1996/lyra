@@ -14,6 +14,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/mutation_event.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -470,8 +471,7 @@ auto RunSimulation(
   interp.SetFsBaseDir(fs_base_dir);
   interp.SetEnableSystem(enable_system);
 
-  // Trace support: TraceManager lives on the Engine, but interpreter needs a
-  // pointer for MemoryDirty emission. Set up after Engine is created below.
+  // MutationSink wired after Engine is created below.
 
   // Extract instance paths for %m support (needed before running any processes)
   // Only the interpreter needs instance paths for MIR backend; Engine's
@@ -569,10 +569,14 @@ auto RunSimulation(
         *reason_result);
   });
 
+  // Wire mutation sink to route changes to Engine's UpdateSet
+  interp.SetMutationSink([&engine](const common::MutationEvent& event) {
+    engine.OnMutation(event);
+  });
+
   // Enable tracing if requested
   if (enable_trace) {
     engine.GetTraceManager().SetEnabled(true);
-    interp.SetTraceManager(&engine.GetTraceManager());
   }
 
   // Schedule initial processes

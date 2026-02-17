@@ -5,20 +5,10 @@
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "lyra/common/mutation_event.hpp"
+#include "lyra/common/range_set.hpp"
 
 namespace lyra::runtime {
-
-// Byte range within a slot that was modified.
-struct DirtyRange {
-  uint32_t off;
-  uint32_t size;
-};
-
-// Check if any dirty range overlaps the observation region [obs_off, obs_off +
-// obs_size). Dirty ranges must be sorted by off (as maintained by UpdateSet).
-auto RangesOverlap(
-    std::span<const DirtyRange> dirty, uint32_t obs_off, uint32_t obs_size)
-    -> bool;
 
 // Sparse dirty slot tracking with O(1) dedup and per-slot byte-range tracking.
 // Maintains dual dirty lists: dirty_list_ accumulates across the time slot
@@ -40,17 +30,21 @@ class UpdateSet {
   // Mark a byte range within a slot as dirty.
   // Strict validation when initialized: size must be > 0, range must not
   // exceed slot size. Safe no-op if not initialized or slot_id OOB.
-  void MarkDirtyRange(uint32_t slot_id, uint32_t off, uint32_t size);
+  void MarkDirtyRange(
+      uint32_t slot_id, uint32_t off, uint32_t size,
+      common::MutationKind kind = common::MutationKind::kValueWrite,
+      common::EpochEffect epoch = common::EpochEffect::kNone);
 
   // Mark an entire slot as dirty. Wrapper for MarkDirtyRange with full slot.
   // INVARIANT: Always produces a full-slot entry [0, slot_size) in
-  // delta_slot_ranges_. This guarantees RangesOverlap returns true for any
+  // delta_slot_ranges_. This guarantees Overlaps() returns true for any
   // sub-range observation, so no subscription is incorrectly skipped.
-  // PR3 will add precise dirty ranges on the write side; until then, all
-  // mutations go through MarkDirty (full-slot).
-  void MarkDirty(uint32_t slot_id) {
+  void MarkSlotDirty(
+      uint32_t slot_id,
+      common::MutationKind kind = common::MutationKind::kValueWrite,
+      common::EpochEffect epoch = common::EpochEffect::kNone) {
     if (slot_id < slot_sizes_.size()) {
-      MarkDirtyRange(slot_id, 0, slot_sizes_[slot_id]);
+      MarkDirtyRange(slot_id, 0, slot_sizes_[slot_id], kind, epoch);
     }
   }
 
@@ -64,20 +58,41 @@ class UpdateSet {
     return delta_dirty_;
   }
 
-  // Merged dirty ranges for a slot in the current delta. Empty if OOB.
+  // Merged dirty ranges for a slot in the current delta.
   [[nodiscard]] auto DeltaRangesFor(uint32_t slot_id) const
-      -> std::span<const DirtyRange> {
-    if (slot_id >= delta_slot_ranges_.size()) return {};
+      -> const common::RangeSet& {
+    if (slot_id >= delta_slot_ranges_.size()) {
+      static const common::RangeSet empty;
+      return empty;
+    }
     return delta_slot_ranges_[slot_id];
+  }
+
+  // Per-slot max mutation kind in current delta.
+  [[nodiscard]] auto DeltaKindFor(uint32_t slot_id) const
+      -> common::MutationKind {
+    if (slot_id >= delta_slot_kinds_.size()) {
+      return common::MutationKind::kValueWrite;
+    }
+    return delta_slot_kinds_[slot_id];
+  }
+
+  // Per-slot max epoch effect in current delta.
+  [[nodiscard]] auto DeltaEpochFor(uint32_t slot_id) const
+      -> common::EpochEffect {
+    if (slot_id >= delta_slot_epochs_.size()) {
+      return common::EpochEffect::kNone;
+    }
+    return delta_slot_epochs_[slot_id];
   }
 
   // Mark a heap-relative byte range as dirty for a container slot.
   // size==0 means "full backing buffer dirty" (overlap with everything).
   void MarkExternalDirtyRange(uint32_t slot_id, uint32_t off, uint32_t size);
 
-  // Get external dirty ranges for scheduler. Empty if no external dirty.
+  // Get external dirty ranges for scheduler. Returns empty RangeSet if none.
   [[nodiscard]] auto DeltaExternalRangesFor(uint32_t slot_id) const
-      -> std::span<const DirtyRange>;
+      -> const common::RangeSet&;
 
   // Called at each delta boundary (by FlushSignalUpdates).
   // O(delta_dirty_count), NOT O(slot_count).
@@ -93,11 +108,6 @@ class UpdateSet {
   }
 
  private:
-  // Sorted insert + in-place merge of overlapping/adjacent ranges.
-  // Postcondition: ranges sorted by off, non-overlapping, non-adjacent.
-  static void InsertAndMerge(
-      std::vector<DirtyRange>& ranges, uint32_t off, uint32_t size);
-
   std::vector<uint32_t> dirty_list_;
   std::vector<uint8_t> seen_;
   std::vector<uint32_t> delta_dirty_;
@@ -107,13 +117,18 @@ class UpdateSet {
   std::vector<uint32_t> slot_sizes_;
 
   // Per-slot delta dirty ranges. Indexed by slot_id.
-  // Each inner vector is sorted by off, non-overlapping (merged on insert).
   // Cleared by ClearDelta(). Canonical semantic dirty data for scheduler.
-  std::vector<std::vector<DirtyRange>> delta_slot_ranges_;
+  std::vector<common::RangeSet> delta_slot_ranges_;
+
+  // Per-slot max mutation kind in current delta. Indexed by slot_id.
+  std::vector<common::MutationKind> delta_slot_kinds_;
+
+  // Per-slot max epoch effect in current delta. Indexed by slot_id.
+  std::vector<common::EpochEffect> delta_slot_epochs_;
 
   // External dirty ranges (heap-relative) for container element subscriptions.
   // Sparse: only slots with external dirty facts have entries.
-  absl::flat_hash_map<uint32_t, std::vector<DirtyRange>> delta_external_ranges_;
+  absl::flat_hash_map<uint32_t, common::RangeSet> delta_external_ranges_;
 };
 
 }  // namespace lyra::runtime
