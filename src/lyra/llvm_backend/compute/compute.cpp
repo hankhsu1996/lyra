@@ -14,6 +14,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/compute/aggregate.hpp"
+#include "lyra/llvm_backend/compute/array_query.hpp"
 #include "lyra/llvm_backend/compute/builtin.hpp"
 #include "lyra/llvm_backend/compute/cast.hpp"
 #include "lyra/llvm_backend/compute/driver.hpp"
@@ -173,14 +174,8 @@ auto LowerRvalue(
           [&](const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
             return LowerSystemTfRvalue(context, rvalue, info);
           },
-          [&](const mir::ArrayQueryRvalueInfo&) -> Result<RvalueValue> {
-            return std::unexpected(
-                context.GetDiagnosticContext().MakeUnsupported(
-                    context.GetCurrentOrigin(),
-                    "array query functions ($left, $right, etc.) are not "
-                    "supported "
-                    "in the LLVM backend; use MIR interpreter instead",
-                    UnsupportedCategory::kFeature));
+          [&](const mir::ArrayQueryRvalueInfo& info) -> Result<RvalueValue> {
+            return LowerArrayQueryRvalue(context, rvalue, info, result_type);
           },
           [&](const mir::SystemCmdRvalueInfo&) -> Result<RvalueValue> {
             return std::unexpected(

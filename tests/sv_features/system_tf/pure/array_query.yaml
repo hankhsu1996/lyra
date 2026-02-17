@@ -563,3 +563,35 @@ cases:
     expect:
       variables:
         sz: 5
+
+  - name: queue_increment
+    description: $increment of queue is always -1
+    sv: |
+      module Test;
+        int q[$];
+        int inc;
+        initial begin
+          q.push_back(10);
+          q.push_back(20);
+          inc = $increment(q);
+        end
+      endmodule
+    expect:
+      variables:
+        inc: -1
+
+  - name: dim_4state_partial_xz
+    description: 4-state dim operand with X bits returns X result
+    sv: |
+      module Test;
+        int arr[3][4];
+        integer dim_val;
+        integer result;
+        initial begin
+          dim_val = 32'hxxxxxxxx;
+          result = $size(arr, dim_val);
+        end
+      endmodule
+    expect:
+      variables:
+        result: "32'hxxxxxxxx"
