@@ -21,13 +21,13 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/ops.hpp"
 #include "lyra/llvm_backend/compute/result.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
@@ -46,18 +46,18 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
       common::Overloaded{
           [&](const Constant& c) {
             const Type& type = types[c.type];
-            return IsPacked(type) && IsPackedFourState(type, types);
+            return IsPacked(type) && context.IsPackedFourState(type);
           },
           [&](mir::PlaceId place_id) {
             const auto& place = arena[place_id];
             TypeId type_id = mir::TypeOfPlace(types, place);
             const Type& type = types[type_id];
-            return IsPacked(type) && IsPackedFourState(type, types);
+            return IsPacked(type) && context.IsPackedFourState(type);
           },
           [&](mir::TempId temp_id) -> bool {
             TypeId type_id = context.GetTempType(temp_id.value);
             const Type& type = types[type_id];
-            return IsPacked(type) && IsPackedFourState(type, types);
+            return IsPacked(type) && context.IsPackedFourState(type);
           },
       },
       operand.payload);

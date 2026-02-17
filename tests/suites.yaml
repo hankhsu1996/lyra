@@ -45,6 +45,45 @@ suites:
     exclude_regex:
       - system_tf/effect/system_cmd\.yaml # MIR-only ($system not in LLVM)
 
+  # Two-state regression suite: runs JIT with --two-state (all types forced
+  # to 2-state LLVM representation). Covers layout, compute, commit, display,
+  # and scheduling paths to prevent half-switch regressions.
+  #
+  # Selection: explicit include list (not all-minus-excludes) while the feature
+  # stabilizes. Once stable (~2-3 weeks), flip to jit_dev's include list with
+  # exclude_regex for 4-state-dependent tests. The exclude list is the spec:
+  # keep it as small as possible.
+  #
+  # 4-state-dependent tests (must stay excluded under two-state):
+  #   - casez/casex (wildcard matching depends on X/Z bits)
+  #   - ===/!== with X operands (identity comparison needs unknown plane)
+  #   - Tests that assert X-initialized values (e.g., result: "8'hxx")
+  jit_two_state:
+    backend: jit
+    two_state: true
+    include_regex:
+      # Packed logic assignments and bit-range operations
+      - datatypes/packed/packed_integral_default\.yaml
+      - datatypes/packed/indexed_part_select\.yaml
+      - datatypes/packed/packed_struct\.yaml
+      # Operators (2-state compatible only)
+      - operators/binary_two_state\.yaml
+      - operators/unary_two_state\.yaml
+      - operators/concat\.yaml
+      # Control flow (guarded assigns, ternary)
+      - control_flow/ternary\.yaml
+      - control_flow/conditional\.yaml
+      - control_flow/for\.yaml
+      # Function calls
+      - functions/basic\.yaml
+      - functions/nested_calls\.yaml
+      # Display formatting
+      - system_tf/pure/conversions\.yaml
+      - system_tf/pure/sformat\.yaml
+      # Scheduling and edge triggers
+      - scheduling/nba_packed\.yaml
+      - scheduling/sub_slot_observation\.yaml
+
   mir_dev:
     backend: mir
     include_regex:

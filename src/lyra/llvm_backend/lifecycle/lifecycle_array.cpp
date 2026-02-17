@@ -81,7 +81,7 @@ void DestroyArray(Context& ctx, llvm::Value* array_ptr, TypeId array_type_id) {
   const auto& arr_info = type.AsUnpackedArray();
   TypeId elem_type_id = arr_info.element_type;
 
-  if (!TypeContainsManaged(elem_type_id, types)) {
+  if (!mir_to_llvm::TypeContainsManaged(elem_type_id, types)) {
     return;
   }
 
@@ -99,7 +99,7 @@ void MoveCleanupArray(
   const auto& arr_info = type.AsUnpackedArray();
   TypeId elem_type_id = arr_info.element_type;
 
-  if (!TypeContainsManaged(elem_type_id, types)) {
+  if (!mir_to_llvm::TypeContainsManaged(elem_type_id, types)) {
     return;
   }
 

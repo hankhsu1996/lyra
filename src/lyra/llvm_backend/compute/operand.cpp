@@ -17,8 +17,9 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -222,8 +223,7 @@ auto LowerConstant(Context& context, const Constant& constant)
             // 4-state type: always create {value, unknown} struct
             // Type determines LLVM shape, not whether value has unknown bits.
             // Uses the same canonical predicate as IsOperandFourState.
-            if (IsPacked(type) &&
-                IsPackedFourState(type, context.GetTypeArena())) {
+            if (IsPacked(type) && context.IsPackedFourState(type)) {
               llvm::APInt unknown_ap =
                   integral.IsKnown() ? llvm::APInt::getZero(bit_width)
                                      : llvm::APInt(bit_width, integral.unknown);
@@ -247,8 +247,12 @@ auto LowerConstant(Context& context, const Constant& constant)
                   struct_type, {val_const, unk_const});
             }
 
-            // 2-state constant: simple integer
-            return llvm::ConstantInt::get(llvm_ctx, value_ap);
+            // 2-state constant: use storage-width integer (power-of-2
+            // rounded) to match slot layout and PHI types.
+            auto* storage_type = GetLlvmStorageType(llvm_ctx, bit_width);
+            uint32_t storage_width = storage_type->getIntegerBitWidth();
+            return llvm::ConstantInt::get(
+                storage_type, value_ap.zextOrTrunc(storage_width));
           },
           [&](const StringConstant& str) -> Result<llvm::Value*> {
             auto& builder = context.GetBuilder();

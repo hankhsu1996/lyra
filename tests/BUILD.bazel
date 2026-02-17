@@ -46,6 +46,20 @@ cc_test(
     ],
 )
 
+# JIT two-state suite - regression tests for --two-state mode
+cc_test(
+    name = "jit_two_state_tests",
+    srcs = ["main.cpp"],
+    args = ["--suite=jit_two_state"],
+    data = [
+        "suites.yaml",
+    ] + glob(["sv_features/**/*.yaml"]),
+    deps = [
+        ":test_framework",
+        "@googletest//:gtest",
+    ],
+)
+
 # LLI development suite - out-of-process LLI execution (for debugging/comparison)
 cc_test(
     name = "lli_dev_tests",

@@ -17,11 +17,11 @@
 #include "lyra/common/format.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/cast.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/marshal.hpp"
@@ -238,7 +238,7 @@ auto LowerValueOp(Context& context, const mir::FormatOp& op) -> Result<void> {
     if (ty.Kind() == TypeKind::kIntegral) {
       width = static_cast<int32_t>(ty.AsIntegral().bit_width);
       is_signed = ty.AsIntegral().is_signed;
-      is_four_state = ty.AsIntegral().is_four_state;
+      is_four_state = context.IsPackedFourState(ty);
     } else if (ty.Kind() == TypeKind::kReal) {
       value_kind = runtime::RuntimeValueKind::kReal64;
       width = 64;
@@ -248,7 +248,7 @@ auto LowerValueOp(Context& context, const mir::FormatOp& op) -> Result<void> {
     } else if (IsPacked(ty)) {
       width = static_cast<int32_t>(PackedBitWidth(ty, types));
       is_signed = IsPackedSigned(ty, types);
-      is_four_state = IsPackedFourState(ty, types);
+      is_four_state = context.IsPackedFourState(ty);
     }
   }
 

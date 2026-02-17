@@ -37,6 +37,7 @@
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
@@ -103,7 +104,8 @@ void SetHostDataLayout(llvm::Module& module) {
 }
 
 // Classify a design slot's storage kind from its TypeId.
-auto ClassifySlotStorageKind(TypeId type_id, const TypeArena& types)
+auto ClassifySlotStorageKind(
+    TypeId type_id, const TypeArena& types, bool force_two_state)
     -> runtime::SlotStorageKind {
   const Type& type = types[type_id];
   switch (type.Kind()) {
@@ -121,7 +123,7 @@ auto ClassifySlotStorageKind(TypeId type_id, const TypeArena& types)
     default:
       break;
   }
-  if (IsPacked(type) && IsFourStateType(type_id, types)) {
+  if (IsPacked(type) && IsFourState(type_id, types, force_two_state)) {
     return runtime::SlotStorageKind::kPacked4;
   }
   return runtime::SlotStorageKind::kPacked2;
@@ -172,7 +174,8 @@ auto EmitSlotMetaTable(
     auto base_off = static_cast<uint32_t>(raw_base_off);
     auto total_bytes = static_cast<uint32_t>(raw_total_bytes);
 
-    auto kind = ClassifySlotStorageKind(slot.type_id, types);
+    auto kind =
+        ClassifySlotStorageKind(slot.type_id, types, context.IsForceTwoState());
     auto kind_val = static_cast<uint32_t>(kind);
 
     uint32_t value_off = 0;
@@ -238,23 +241,27 @@ void InitializeDesignState(
     const std::vector<SlotInfo>& slots, const FourStatePatchTable& patches) {
   auto& builder = context.GetBuilder();
   auto* design_type = context.GetDesignStateType();
-  const auto& types = context.GetTypeArena();
+  bool force_two_state = context.IsForceTwoState();
 
   // 1. Zero-initialize via memset (avoids LLVM assertion on wide aggregates)
   EmitMemsetZero(context, design_state, design_type);
+
+  // In two-state mode, memset(0) is sufficient (no 4-state patches or init)
+  if (force_two_state) return;
 
   // 2. Apply scalar 4-state patches via runtime helper (O(1) IR calls)
   EmitApply4StatePatches(context, design_state, patches, "design");
 
   // 3. Handle composite 4-state fields (arrays, structs with 4-state content)
   //    These cannot be patched and need the recursive init path.
+  const auto& types = context.GetTypeArena();
   for (const auto& slot : slots) {
     // Skip if not 4-state at all
-    if (!IsFourStateType(slot.type_id, types)) {
+    if (!context.IsFourState(slot.type_id)) {
       continue;
     }
     // Skip if scalar patchable (already handled by patch table)
-    if (IsScalarPatchable(slot.type_id, types)) {
+    if (IsScalarPatchable(slot.type_id, types, force_two_state)) {
       continue;
     }
     // Composite 4-state: use recursive init
@@ -275,7 +282,7 @@ void InitializeProcessState(
   auto& builder = context.GetBuilder();
   auto* state_type = proc_layout.state_type;
   auto* header_type = context.GetHeaderType();
-  const auto& types = context.GetTypeArena();
+  bool force_two_state = context.IsForceTwoState();
 
   // 1. Zero-initialize via memset (avoids LLVM assertion on wide aggregates)
   EmitMemsetZero(context, process_state, state_type);
@@ -284,6 +291,9 @@ void InitializeProcessState(
   auto* header_ptr = builder.CreateStructGEP(state_type, process_state, 0);
   auto* design_ptr_ptr = builder.CreateStructGEP(header_type, header_ptr, 1);
   builder.CreateStore(design_state, design_ptr_ptr);
+
+  // In two-state mode, memset(0) is sufficient (no 4-state patches or init)
+  if (force_two_state) return;
 
   // 3. Apply scalar 4-state patches to frame via runtime helper
   //    Note: patches are relative to frame base, not process_state base
@@ -296,14 +306,15 @@ void InitializeProcessState(
       context, frame_ptr, frame_layout.four_state_patches, frame_prefix);
 
   // 4. Handle composite 4-state fields (arrays, structs with 4-state content)
+  const auto& types = context.GetTypeArena();
   for (uint32_t i = 0; i < frame_layout.root_types.size(); ++i) {
     TypeId type_id = frame_layout.root_types[i];
     // Skip if not 4-state at all
-    if (!IsFourStateType(type_id, types)) {
+    if (!context.IsFourState(type_id)) {
       continue;
     }
     // Skip if scalar patchable (already handled by patch table)
-    if (IsScalarPatchable(type_id, types)) {
+    if (IsScalarPatchable(type_id, types, force_two_state)) {
       continue;
     }
     // Composite 4-state: use recursive init
@@ -392,18 +403,21 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   // memset length).
   SetHostDataLayout(*module);
 
+  bool force_two_state = input.force_two_state;
+
   // Build slot info from design's slot_table (MIR is single source of truth)
-  auto slot_info = BuildSlotInfoFromDesign(*input.design, *input.type_arena);
+  auto slot_info = BuildSlotInfoFromDesign(
+      *input.design, *input.type_arena, force_two_state);
 
   // Build layout first (pure analysis, no LLVM IR emission)
   Layout layout = BuildLayout(
       *input.design, *input.mir_arena, *input.type_arena, slot_info, *llvm_ctx,
-      module->getDataLayout());
+      module->getDataLayout(), force_two_state);
 
   // Create context with layout
   Context context(
       *input.design, *input.mir_arena, *input.type_arena, layout,
-      std::move(llvm_ctx), std::move(module), input.diag_ctx);
+      std::move(llvm_ctx), std::move(module), input.diag_ctx, force_two_state);
 
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
@@ -662,7 +676,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
             const auto& trigger_place =
                 (*input.mir_arena)[*entry.trigger_observed_place];
             auto range = ResolveByteRange(
-                ctx, dl, *input.type_arena, trigger_place, trigger_root_type);
+                ctx, dl, *input.type_arena, trigger_place, trigger_root_type,
+                nullptr, force_two_state);
             if (range.kind == RangeKind::kPrecise) {
               trigger_byte_offset = range.byte_offset;
               trigger_byte_size = range.byte_size;

@@ -16,10 +16,10 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -73,7 +73,7 @@ void EmitSVDefaultInitImpl(
   switch (type.Kind()) {
     case TypeKind::kIntegral: {
       uint32_t bit_width = type.AsIntegral().bit_width;
-      if (type.AsIntegral().is_four_state) {
+      if (ctx.IsPackedFourState(type)) {
         // 4-state: must write X encoding (value=0, unknown=mask)
         // CONTRACT: ptr must point to storage with {iN,iN} layout matching
         // GetPlaceLlvmType4State(bit_width). Callers obtain ptr via typed GEP
@@ -141,7 +141,7 @@ void EmitSVDefaultInitImpl(
     case TypeKind::kPackedStruct:
     case TypeKind::kEnum: {
       uint32_t width = PackedBitWidth(type, types);
-      if (IsPackedFourState(type, types)) {
+      if (ctx.IsPackedFourState(type)) {
         // 4-state packed: must write X encoding
         // CONTRACT: ptr must point to storage with {iN,iN} layout matching
         // GetPlaceLlvmType4State(width). Callers obtain ptr via typed GEP
@@ -200,7 +200,7 @@ void EmitSVDefaultInitImpl(
 
       // Check if this array contains 4-state elements that need X encoding.
       // If not, memset(0) is sufficient and we avoid creating new basic blocks.
-      if (!IsFourStateType(info.element_type, types)) {
+      if (!ctx.IsFourState(info.element_type)) {
         if (!already_zeroed) {
           EmitMemsetZeroLocal(ctx, ptr, array_llvm_type);
         }
@@ -230,7 +230,7 @@ void EmitSVDefaultInitImpl(
               builder.CreateConstGEP2_32(array_llvm_type, ptr, 0, i);
 
           if (elem_type.Kind() == TypeKind::kIntegral &&
-              elem_type.AsIntegral().is_four_state) {
+              ctx.IsPackedFourState(elem_type)) {
             // 4-state scalar: only write unknown plane (value plane already 0)
             auto* struct_type =
                 llvm::dyn_cast<llvm::StructType>(elem_llvm_type);
@@ -284,7 +284,7 @@ void EmitSVDefaultInitImpl(
           array_llvm_type, ptr, {builder.getInt32(0), phi}, "arr.init.elem");
 
       if (elem_type.Kind() == TypeKind::kIntegral &&
-          elem_type.AsIntegral().is_four_state) {
+          ctx.IsPackedFourState(elem_type)) {
         // 4-state scalar: only write unknown plane (value plane already 0)
         auto* struct_type = llvm::dyn_cast<llvm::StructType>(elem_llvm_type);
         // Validate 4-state layout: must be {iN, iN} struct

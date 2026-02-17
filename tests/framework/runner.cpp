@@ -14,7 +14,8 @@
 
 namespace lyra::test {
 
-void RunTestCase(const TestCase& test_case, BackendKind backend) {
+void RunTestCase(
+    const TestCase& test_case, BackendKind backend, bool force_two_state) {
   // Runner owns the work directory lifetime. Created when the test needs
   // file I/O (multi-file sources or file content assertions).
   std::optional<ScopedTempDirectory> workdir_guard;
@@ -68,7 +69,7 @@ void RunTestCase(const TestCase& test_case, BackendKind backend) {
         GTEST_SKIP() << "JIT backend does not support file assertions";
       }
 
-      auto result = RunJitBackend(test_case, work_directory);
+      auto result = RunJitBackend(test_case, work_directory, force_two_state);
 
       if (test_case.expected_error.has_value()) {
         ASSERT_FALSE(result.success)

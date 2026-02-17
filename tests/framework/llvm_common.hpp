@@ -30,7 +30,8 @@ struct LlvmPreparationResult {
 // Handles AST -> HIR -> MIR -> LLVM lowering with test hooks for variable
 // inspection. work_directory is used for file I/O tests.
 auto PrepareLlvmModule(
-    const TestCase& test_case, const std::filesystem::path& work_directory)
+    const TestCase& test_case, const std::filesystem::path& work_directory,
+    bool force_two_state = false)
     -> std::expected<LlvmPreparationResult, std::string>;
 
 }  // namespace lyra::test

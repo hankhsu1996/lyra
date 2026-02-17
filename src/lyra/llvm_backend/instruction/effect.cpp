@@ -14,7 +14,6 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/abi_check.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
@@ -24,6 +23,7 @@
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -343,7 +343,7 @@ auto LowerFillPackedEffect(Context& context, const mir::FillPackedEffect& fill)
       .total_bits = fill.total_bits,
       .element_bits = fill.unit_bits,
       .element_count = fill.count,
-      .is_four_state = IsPackedFourState(target_type, types),
+      .is_four_state = context.IsPackedFourState(target_type),
       .storage_type = *storage_type_result,
   };
 
@@ -394,7 +394,7 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
   }
 
   // Determine if 4-state
-  bool is_four_state = IsPackedFourState(elem_type, types);
+  bool is_four_state = context.IsPackedFourState(elem_type);
 
   // Extract type info
   auto element_width = static_cast<int32_t>(PackedBitWidth(elem_type, types));

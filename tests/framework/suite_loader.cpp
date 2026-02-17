@@ -83,6 +83,10 @@ auto LoadSuite(
     }
     suite.backend = ParseBackendKind(suite_node["backend"].as<std::string>());
 
+    if (suite_node["two_state"]) {
+      suite.force_two_state = suite_node["two_state"].as<bool>();
+    }
+
     if (suite_node["include_regex"]) {
       for (const auto& pattern : suite_node["include_regex"]) {
         auto pat = pattern.as<std::string>();

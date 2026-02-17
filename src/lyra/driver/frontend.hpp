@@ -29,6 +29,7 @@ struct CompilationInput {
   bool enable_system = false;  // Security: $system disabled by default
   bool enable_trace = false;   // Enable simulation tracing
   bool time_trace = false;     // LLVM time-trace profiling
+  bool two_state = false;      // Force 2-state LLVM representation
 };
 
 struct ParseResult {

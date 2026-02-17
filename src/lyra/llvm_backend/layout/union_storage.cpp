@@ -13,9 +13,9 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -144,7 +144,7 @@ auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id)
   }
   if (IsPacked(type)) {
     auto bit_width = PackedBitWidth(type, types);
-    if (IsPackedFourState(type, types)) {
+    if (context.IsPackedFourState(type)) {
       auto* plane_type =
           GetLlvmStorageType(context.GetLlvmContext(), bit_width);
       return llvm::StructType::get(

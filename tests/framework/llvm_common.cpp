@@ -107,8 +107,8 @@ thread_local std::unique_ptr<HooksHolder> g_hooks_holder;
 }  // namespace
 
 auto PrepareLlvmModule(
-    const TestCase& test_case, const std::filesystem::path& work_directory)
-    -> std::expected<LlvmPreparationResult, std::string> {
+    const TestCase& test_case, const std::filesystem::path& work_directory,
+    bool force_two_state) -> std::expected<LlvmPreparationResult, std::string> {
   // Parse test case using slang
   auto parse_result = ParseTestCase(test_case, work_directory);
   if (!parse_result.Success()) {
@@ -200,6 +200,7 @@ auto PrepareLlvmModule(
       .plusargs = test_case.plusargs,
       .enable_trace = test_case.trace,
       .debug_dump_slot_meta = test_case.dump_slot_meta,
+      .force_two_state = force_two_state,
   };
 
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);

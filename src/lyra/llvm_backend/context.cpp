@@ -24,12 +24,12 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
@@ -43,11 +43,12 @@ Context::Context(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
     const Layout& layout, std::unique_ptr<llvm::LLVMContext> llvm_ctx,
     std::unique_ptr<llvm::Module> module,
-    const lowering::DiagnosticContext* diag_ctx)
+    const lowering::DiagnosticContext* diag_ctx, bool force_two_state)
     : design_(design),
       arena_(arena),
       types_(types),
       layout_(layout),
+      force_two_state_(force_two_state),
       llvm_context_(std::move(llvm_ctx)),
       llvm_module_(std::move(module)),
       builder_(*llvm_context_),
@@ -221,7 +222,7 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
   llvm::Type* llvm_type = nullptr;
   if (type.Kind() == TypeKind::kIntegral) {
     uint32_t bit_width = type.AsIntegral().bit_width;
-    if (type.AsIntegral().is_four_state) {
+    if (mir_to_llvm::IsPackedFourState(type, types_, force_two_state_)) {
       llvm_type = GetFourStateStructType(*llvm_context_, bit_width);
     } else {
       llvm_type = GetLlvmStorageType(*llvm_context_, bit_width);
@@ -238,7 +239,7 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
     llvm_type = llvm::PointerType::getUnqual(*llvm_context_);
   } else if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
-    if (IsPackedFourState(type, types_)) {
+    if (mir_to_llvm::IsPackedFourState(type, types_, force_two_state_)) {
       llvm_type = GetFourStateStructType(*llvm_context_, width);
     } else {
       llvm_type = GetLlvmStorageType(*llvm_context_, width);
@@ -324,7 +325,7 @@ void Context::BindTemp(int temp_id, llvm::Value* v, TypeId type) {
   //
   // GetLlvmAbiTypeForValue returns storage types (i8 for 1-bit), but temps
   // use semantic types (i1 for 1-bit). The key invariant is 2s vs 4s.
-  bool mir_is_4s = IsTypeFourState(types_, type);
+  bool mir_is_4s = IsTypeFourState(types_, type, force_two_state_);
   bool llvm_is_struct = v->getType()->isStructTy();
   if (mir_is_4s != llvm_is_struct) {
     throw common::InternalError(
@@ -517,7 +518,8 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
         param.kind == mir::PassingKind::kInOut) {
       param_ty = ptr_ty;  // Pointer to destination (direct passing)
     } else {
-      param_ty = GetLlvmAbiTypeForValue(*llvm_context_, param.type, types_);
+      param_ty = GetLlvmAbiTypeForValue(
+          *llvm_context_, param.type, types_, force_two_state_);
       if (param_ty == nullptr) {
         return std::unexpected(
             GetDiagnosticContext().MakeUnsupported(
@@ -544,8 +546,8 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
     if (ret_type.Kind() == TypeKind::kVoid) {
       llvm_ret_type = llvm::Type::getVoidTy(*llvm_context_);
     } else {
-      llvm_ret_type =
-          GetLlvmAbiTypeForValue(*llvm_context_, sig.return_type, types_);
+      llvm_ret_type = GetLlvmAbiTypeForValue(
+          *llvm_context_, sig.return_type, types_, force_two_state_);
       if (llvm_ret_type == nullptr) {
         return std::unexpected(
             GetDiagnosticContext().MakeUnsupported(

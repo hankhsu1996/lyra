@@ -18,13 +18,13 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/emit_string_conv.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -98,19 +98,21 @@ auto LoadFourStateOperand(Context& context, const mir::Operand& operand)
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
 
+  bool force_2s = context.IsForceTwoState();
   bool is_four_state = std::visit(
       common::Overloaded{
           [&](const Constant& c) -> bool {
-            return IsTypeFourState(types, c.type);
+            return IsTypeFourState(types, c.type, force_2s);
           },
           [&](mir::PlaceId place_id) -> bool {
             const auto& place = arena[place_id];
-            return IsTypeFourState(types, mir::TypeOfPlace(types, place));
+            return IsTypeFourState(
+                types, mir::TypeOfPlace(types, place), force_2s);
           },
           [&](mir::TempId temp_id) -> bool {
             // Look up the MIR type (source of truth), not the LLVM type
             TypeId type = context.GetTempType(temp_id.value);
-            return IsTypeFourState(types, type);
+            return IsTypeFourState(types, type, force_2s);
           },
       },
       operand.payload);
@@ -155,7 +157,7 @@ auto LowerCastRvalue(
     uint32_t bit_width = PackedBitWidth(tgt_type, types);
     llvm::Type* result_type =
         llvm::Type::getIntNTy(context.GetLlvmContext(), bit_width);
-    bool tgt_is_4s = IsPackedFourState(tgt_type, types);
+    bool tgt_is_4s = context.IsPackedFourState(tgt_type);
 
     // Try constant-folding for compile-time strings
     const auto* constant = std::get_if<Constant>(&source_operand.payload);
@@ -209,8 +211,8 @@ auto LowerCastRvalue(
 
   bool src_is_float = IsRealKind(src_type.Kind());
   bool tgt_is_float = IsRealKind(tgt_type.Kind());
-  bool src_is_4s = IsPacked(src_type) && IsPackedFourState(src_type, types);
-  bool tgt_is_4s = IsPacked(tgt_type) && IsPackedFourState(tgt_type, types);
+  bool src_is_4s = IsPacked(src_type) && context.IsPackedFourState(src_type);
+  bool tgt_is_4s = IsPacked(tgt_type) && context.IsPackedFourState(tgt_type);
 
   // Float -> Float
   if (src_is_float && tgt_is_float) {
@@ -349,7 +351,7 @@ auto LowerBitCastRvalue(
   llvm::Value* src = *src_or_err;
 
   llvm::Value* result = nullptr;
-  bool tgt_is_4s = IsPacked(tgt_type) && IsPackedFourState(tgt_type, types);
+  bool tgt_is_4s = IsPacked(tgt_type) && context.IsPackedFourState(tgt_type);
 
   if (src_type.Kind() == TypeKind::kReal && is_packed_integral(tgt_type)) {
     result =

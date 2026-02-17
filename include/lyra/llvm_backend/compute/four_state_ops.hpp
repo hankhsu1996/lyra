@@ -15,7 +15,8 @@ struct FourStateValue {
 };
 
 // Type queries (no Context needed)
-auto IsTypeFourState(const TypeArena& types, TypeId type_id) -> bool;
+auto IsTypeFourState(
+    const TypeArena& types, TypeId type_id, bool force_two_state) -> bool;
 
 // Extract value and unknown planes from a 4-state struct {iN, iN}
 auto ExtractFourState(llvm::IRBuilderBase& builder, llvm::Value* struct_val)

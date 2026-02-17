@@ -188,6 +188,10 @@ auto CommitPackedValue(
   llvm::Type* storage_type = *storage_type_or_err;
 
   if (storage_type->isStructTy()) {
+    if (ctx.IsForceTwoState()) {
+      throw common::InternalError(
+          "CommitPackedValue", "four-state struct storage in two-state mode");
+    }
     return StoreFourStateRaw(
         ctx, wt, raw, llvm::cast<llvm::StructType>(storage_type));
   }
