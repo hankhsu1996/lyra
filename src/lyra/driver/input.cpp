@@ -184,7 +184,7 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
   cmd.add_argument("--two-state")
       .default_value(false)
       .implicit_value(true)
-      .help("Force 2-state LLVM representation (no X encoding)");
+      .help("[Experimental] Force 2-state LLVM representation (no X encoding)");
 }
 
 auto BuildInput(

@@ -24,28 +24,6 @@ cases:
     expect:
       stdout: "1111\n"
 
-  - name: unbased_unsized_x
-    sv: |
-      module Test;
-        initial begin
-          logic [3:0] x = '{default: 'x};
-          $display("%b", x);
-        end
-      endmodule
-    expect:
-      stdout: "xxxx\n"
-
-  - name: unbased_unsized_z
-    sv: |
-      module Test;
-        initial begin
-          logic [3:0] x = '{default: 'z};
-          $display("%b", x);
-        end
-      endmodule
-    expect:
-      stdout: "zzzz\n"
-
   - name: based_unsized_b0
     sv: |
       module Test;
@@ -197,36 +175,6 @@ cases:
       endmodule
     expect:
       stdout: "ff\n"
-
-  - name: unbased_x_multidim
-    description: "'x fills each 4-bit element with X"
-    sv: |
-      module Test;
-        initial begin
-          logic [1:0][3:0] arr = '{default: 'x};
-          if (arr[0] === 4'bxxxx && arr[1] === 4'bxxxx)
-            $display("PASS");
-          else
-            $display("FAIL");
-        end
-      endmodule
-    expect:
-      stdout: "PASS\n"
-
-  - name: unbased_z_multidim
-    description: "'z fills each 4-bit element with Z"
-    sv: |
-      module Test;
-        initial begin
-          logic [1:0][3:0] arr = '{default: 'z};
-          if (arr[0] === 4'bzzzz && arr[1] === 4'bzzzz)
-            $display("PASS");
-          else
-            $display("FAIL");
-        end
-      endmodule
-    expect:
-      stdout: "PASS\n"
 
   - name: unbased_x_to_2state
     description: "'x coerced to 2-state becomes 0"

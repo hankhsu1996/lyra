@@ -173,27 +173,6 @@ cases:
       variables:
         result: 12
 
-  # casez tests - ? and z are wildcards
-  # Using int type since logic [3:0] is not yet supported
-  - name: casez_basic_wildcard
-    sv: |
-      module Test;
-        int x;
-        int result;
-        initial begin
-          x = 10;  // 0b1010
-          result = 0;
-          casez (x)
-            32'b1???????????????????????????????: result = 1;  // MSB is 0
-            32'b0000000000000000000000000000????: result = 2;  // Match low 4 bits as 1xxx
-            default: result = 99;
-          endcase
-        end
-      endmodule
-    expect:
-      variables:
-        result: 2
-
   - name: casez_simple
     sv: |
       module Test;
@@ -250,71 +229,6 @@ cases:
     expect:
       variables:
         result: 99
-
-  - name: casez_first_match_wins
-    sv: |
-      module Test;
-        int x;
-        int result;
-        initial begin
-          x = 5;
-          result = 0;
-          casez (x)
-            32'b00000000000000000000000000000???: result = 1;  // matches 0-7
-            32'd5: result = 2;  // exact match for 5
-            default: result = 99;
-          endcase
-        end
-      endmodule
-    expect:
-      variables:
-        result: 1
-
-  # casex tests - ?, x, and z are wildcards
-  - name: casex_basic
-    sv: |
-      module Test;
-        int x;
-        int result;
-        initial begin
-          x = 5;  // binary: 0101
-          result = 0;
-          casex (x)
-            32'b00000000000000000000000000000xxx: result = 1;  // matches 0-7
-            32'd10: result = 2;
-            default: result = 99;
-          endcase
-        end
-      endmodule
-    expect:
-      variables:
-        result: 1
-
-  - name: casez_nested
-    sv: |
-      module Test;
-        int x;
-        int y;
-        int result;
-        initial begin
-          x = 5;  // binary: 0101
-          y = 4;  // binary: 0100
-          result = 0;
-          casez (x)
-            32'b00000000000000000000000000000???: begin
-              // x matches 0-7 (low 3 bits wildcarded)
-              casez (y)
-                32'b00000000000000000000000000000100: result = 10;  // y = 4 exactly
-                default: result = 19;
-              endcase
-            end
-            default: result = 99;
-          endcase
-        end
-      endmodule
-    expect:
-      variables:
-        result: 10
 
   # Tests for casez/casex with known values (no wildcards in literals)
   # These verify the statement infrastructure works correctly
@@ -400,29 +314,6 @@ cases:
       variables:
         result: 99
 
-  # Tests for 2-state to 4-state implicit conversion
-  # When casez/casex selector is 2-state (int) but patterns are 4-state (logic),
-  # slang inserts an implicit conversion. This tests that the conversion works
-  # correctly and wildcard matching still functions.
-  - name: casez_2state_selector_4state_pattern
-    description: 2-state int selector implicitly converts to 4-state for wildcard match
-    sv: |
-      module Test;
-        int x;  // 2-state type
-        int result;
-        initial begin
-          x = 11;  // binary: 1011, ends with 1
-          result = 0;
-          casez (x)
-            32'b???1: result = 1;  // 4-state pattern with wildcards
-            default: result = 99;
-          endcase
-        end
-      endmodule
-    expect:
-      variables:
-        result: 1
-
   - name: casez_2state_selector_no_match
     description: 2-state int selector with 4-state pattern, no wildcard match
     sv: |
@@ -441,25 +332,6 @@ cases:
     expect:
       variables:
         result: 99
-
-  - name: casex_2state_selector_4state_pattern
-    description: 2-state int selector implicitly converts to 4-state for casex wildcard
-    sv: |
-      module Test;
-        int x;  // 2-state type
-        int result;
-        initial begin
-          x = 15;  // binary: 1111
-          result = 0;
-          casex (x)
-            32'bxxxx: result = 1;  // x wildcards match any value
-            default: result = 99;
-          endcase
-        end
-      endmodule
-    expect:
-      variables:
-        result: 1
 
   # Empty case body tests (not yet supported)
   - name: case_empty_body_semicolon

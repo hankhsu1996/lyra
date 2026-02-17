@@ -1,0 +1,45 @@
+feature: metadata_four_state
+description: >
+  Slot metadata tests that assert 4-state layout (packed4 kind).
+  In --two-state mode, logic types use packed2 layout instead.
+  Excluded from --two-state suite.
+
+cases:
+  - name: slot-meta-packed4
+    description: 4-state logic variable has packed4 metadata
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a = 8'h42;
+        end
+      endmodule
+    dump_slot_meta: true
+    expect:
+      stdout:
+        contains:
+          - "__LYRA_SLOT_META__: version=2"
+          - "kind=packed4"
+          - "value_off="
+          - "unk_off="
+
+  - name: slot-meta-multiple-kinds
+    description: Mixed slot types all represented with correct kinds
+    sv: |
+      module Test;
+        logic [7:0] a;
+        bit [15:0] b;
+        string s;
+        initial begin
+          a = 8'h01;
+          b = 16'h0002;
+          s = "x";
+        end
+      endmodule
+    dump_slot_meta: true
+    expect:
+      stdout:
+        contains:
+          - "kind=packed4"
+          - "kind=packed2"
+          - "kind=string"

@@ -297,8 +297,6 @@ auto LowerDeferredAssignBitRange(
     Context& context, const mir::DeferredAssign& deferred, uint32_t signal_id)
     -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& arena = context.GetMirArena();
-  const auto& place = arena[deferred.dest];
 
   auto br_result = context.ComposeBitRange(deferred.dest);
   if (!br_result) return std::unexpected(br_result.error());

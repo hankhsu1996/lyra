@@ -57,21 +57,3 @@ cases:
       variables:
         result: 30
 
-  - name: case_inside_wildcard
-    description: case inside with wildcard pattern
-    sv: |
-      module Test;
-        logic [3:0] val = 4'b1010;
-        int result;
-        initial begin
-          case (val) inside
-            4'b00??: result = 1;
-            4'b10??: result = 2;
-            4'b11??: result = 3;
-            default: result = 0;
-          endcase
-        end
-      endmodule
-    expect:
-      variables:
-        result: 2

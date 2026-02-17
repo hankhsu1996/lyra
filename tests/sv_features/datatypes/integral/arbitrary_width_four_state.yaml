@@ -1,0 +1,36 @@
+feature: arbitrary_width_four_state
+description: >
+  Arbitrary-width bit vector tests requiring 4-state (X/Z) semantics.
+  Excluded from --two-state suite.
+
+cases:
+  - name: logic_signed_4bit
+    sv: |
+      module Test;
+        logic signed [3:0] a;
+        int result;
+        initial begin
+          a = -5;  // 4-bit: 1011 = -5
+          result = a;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -5
+
+  - name: logic_signed_4s_to_4s_widen
+    description: "4-state signed widen: value plane sign-extends, unknown stays zero"
+    sv: |
+      module Test;
+        logic signed [3:0] a;
+        logic signed [31:0] b;
+        int result;
+        initial begin
+          a = -5;  // 4-bit: 1011
+          b = a;   // 4s->4s widen path
+          result = b;
+        end
+      endmodule
+    expect:
+      variables:
+        result: -5

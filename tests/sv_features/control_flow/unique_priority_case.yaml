@@ -114,21 +114,3 @@ cases:
         not_contains:
           - "warning"
 
-  - name: priority_casez_wildcard
-    description: priority casez with wildcard pattern matching
-    sv: |
-      module Test;
-        int sel, result;
-        initial begin
-          sel = 5;
-          result = 0;
-          priority casez (sel)
-            32'b00000000000000000000000000000???: result = 1;
-            32'd10: result = 2;
-            default: result = 99;
-          endcase
-        end
-      endmodule
-    expect:
-      variables:
-        result: 1

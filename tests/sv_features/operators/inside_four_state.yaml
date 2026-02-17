@@ -1,0 +1,35 @@
+feature: inside_operator_four_state
+description: >
+  Inside operator tests with X/Z wildcard patterns.
+  Excluded from --two-state suite.
+
+cases:
+  - name: inside_wildcard_pattern
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b1010;
+        int result;
+        initial result = (val inside {4'b10zz}) ? 1 : 0;
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: inside_xz_literal_as_wildcard
+    description: |
+      SEMANTIC DEVIATION: X/Z literals treated as wildcard patterns.
+      Slang converts ? to z at parse time, so we cannot distinguish
+      4'b10?? from 4'b10zz. We intentionally treat both as wildcards.
+    sv: |
+      module Test;
+        logic [3:0] val = 4'b1011;
+        int r1, r2;
+        initial begin
+          r1 = (val inside {4'b10zz}) ? 1 : 0;
+          r2 = (val inside {4'b10xx}) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 1
+        r2: 1
