@@ -40,6 +40,7 @@ inline auto ParseBackendKind(std::string_view backend_string) -> BackendKind {
 struct Suite {
   std::string name;
   BackendKind backend;
+  bool force_two_state = false;
   std::vector<std::regex> include_regex;  // Compiled regex patterns
   std::vector<std::regex> exclude_regex;  // Compiled regex patterns
 };

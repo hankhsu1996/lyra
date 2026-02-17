@@ -97,6 +97,7 @@ auto RunJit(const CompilationInput& input) -> int {
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = input.plusargs,
       .enable_trace = input.enable_trace,
+      .force_two_state = input.two_state,
   };
 
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;

@@ -161,8 +161,8 @@ struct SlotInfo {
 // (string/dynarray/queue). Used by layout computation and observation range
 // resolution.
 auto GetLlvmTypeForTypeId(
-    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
-    -> llvm::Type*;
+    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types,
+    bool force_two_state) -> llvm::Type*;
 
 // Get the LLVM storage type for an integral type, rounding up to power-of-2.
 auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
@@ -188,20 +188,22 @@ auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
 //   - void type (cannot be passed by value)
 //   - unsupported type kinds
 auto GetLlvmAbiTypeForValue(
-    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
-    -> llvm::Type*;
+    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types,
+    bool force_two_state) -> llvm::Type*;
 
 // Build SlotInfo list from design's slot_table.
 // This derives type metadata (kind, width, signedness) for
 // runtime/initialization.
-auto BuildSlotInfoFromDesign(const mir::Design& design, const TypeArena& types)
+auto BuildSlotInfoFromDesign(
+    const mir::Design& design, const TypeArena& types, bool force_two_state)
     -> std::vector<SlotInfo>;
 
 // Check if a type is "scalar patchable" - i.e., maps to a single 4-state
 // storage object (struct {iW, iW} where W is 8/16/32/64).
 // These types can be initialized via the patch table optimization.
 // Types that return false must use the existing recursive init path.
-auto IsScalarPatchable(TypeId type_id, const TypeArena& types) -> bool;
+auto IsScalarPatchable(
+    TypeId type_id, const TypeArena& types, bool force_two_state) -> bool;
 
 // Build complete layout from MIR design.
 // This is a pure analysis pass that creates LLVM types but does NOT emit IR.
@@ -219,7 +221,7 @@ auto IsScalarPatchable(TypeId type_id, const TypeArena& types) -> bool;
 auto BuildLayout(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
     const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx,
-    const llvm::DataLayout& dl) -> Layout;
+    const llvm::DataLayout& dl, bool force_two_state) -> Layout;
 
 // Discriminant for byte range resolution results.
 // kPrecise: exact byte range known (FieldProjection + const IndexProjection).
@@ -251,6 +253,6 @@ using IndexResolver =
 auto ResolveByteRange(
     llvm::LLVMContext& llvm_ctx, const llvm::DataLayout& dl,
     const TypeArena& types, const mir::Place& place, TypeId root_type,
-    const IndexResolver& resolve_index = nullptr) -> ByteRange;
+    const IndexResolver& resolve_index, bool force_two_state) -> ByteRange;
 
 }  // namespace lyra::lowering::mir_to_llvm

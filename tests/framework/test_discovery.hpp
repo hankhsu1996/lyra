@@ -20,6 +20,7 @@ struct CommandLineArgs {
 // Result of resolving args to test configuration
 struct TestConfiguration {
   BackendKind backend;
+  bool force_two_state = false;
   std::vector<std::filesystem::path> yaml_paths;
   std::filesystem::path yaml_directory;  // Base path for relative calculations
 };

@@ -50,7 +50,7 @@ void Destroy(Context& ctx, llvm::Value* ptr, TypeId type_id) {
   const auto& types = ctx.GetTypeArena();
 
   // Early exit for POD types
-  if (!TypeContainsManaged(type_id, types)) {
+  if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
     return;
   }
 
@@ -93,7 +93,7 @@ auto CloneLeafValue(Context& ctx, llvm::Value* value, TypeId type_id)
   const auto& types = ctx.GetTypeArena();
 
   // Early exit for non-managed types: return value unchanged
-  if (!TypeContainsManaged(type_id, types)) {
+  if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
     return value;
   }
 
@@ -133,7 +133,7 @@ void CopyInit(
   const auto& types = ctx.GetTypeArena();
 
   // POD types: simple load + store
-  if (!TypeContainsManaged(type_id, types)) {
+  if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
     detail::CopyInitPod(ctx, dst_ptr, src_ptr, type_id);
     return;
   }
@@ -185,7 +185,7 @@ void MoveInit(
   const auto& types = ctx.GetTypeArena();
 
   // POD types: simple load + store (no cleanup needed)
-  if (!TypeContainsManaged(type_id, types)) {
+  if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
     detail::CopyInitPod(ctx, dst_ptr, src_ptr, type_id);
     return;
   }
@@ -235,7 +235,7 @@ void MoveCleanup(Context& ctx, llvm::Value* src_ptr, TypeId type_id) {
   const auto& types = ctx.GetTypeArena();
 
   // Early exit for POD types
-  if (!TypeContainsManaged(type_id, types)) {
+  if (!mir_to_llvm::TypeContainsManaged(type_id, types)) {
     return;
   }
 

@@ -13,6 +13,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
@@ -41,7 +42,8 @@ class Context {
       const TypeArena& types, const Layout& layout,
       std::unique_ptr<llvm::LLVMContext> llvm_ctx,
       std::unique_ptr<llvm::Module> module,
-      const lowering::DiagnosticContext* diag_ctx);
+      const lowering::DiagnosticContext* diag_ctx,
+      bool force_two_state = false);
 
   [[nodiscard]] auto GetLlvmContext() -> llvm::LLVMContext& {
     return *llvm_context_;
@@ -64,6 +66,16 @@ class Context {
   }
   [[nodiscard]] auto GetLayout() const -> const Layout& {
     return layout_;
+  }
+
+  [[nodiscard]] auto IsForceTwoState() const -> bool {
+    return force_two_state_;
+  }
+  [[nodiscard]] auto IsFourState(TypeId type_id) const -> bool {
+    return mir_to_llvm::IsFourState(type_id, types_, force_two_state_);
+  }
+  [[nodiscard]] auto IsPackedFourState(const Type& type) const -> bool {
+    return mir_to_llvm::IsPackedFourState(type, types_, force_two_state_);
   }
 
   [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
@@ -413,6 +425,7 @@ class Context {
   const mir::Arena& arena_;
   const TypeArena& types_;
   const Layout& layout_;
+  bool force_two_state_ = false;
 
   std::unique_ptr<llvm::LLVMContext> llvm_context_;
   std::unique_ptr<llvm::Module> llvm_module_;

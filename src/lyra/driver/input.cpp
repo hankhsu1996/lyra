@@ -181,6 +181,10 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .default_value(false)
       .implicit_value(true)
       .help("Write LLVM time-trace profile to lyra-jit-<PID>.time-trace.json");
+  cmd.add_argument("--two-state")
+      .default_value(false)
+      .implicit_value(true)
+      .help("Force 2-state LLVM representation (no X encoding)");
 }
 
 auto BuildInput(
@@ -321,6 +325,9 @@ auto BuildInput(
 
   // LLVM time-trace profiling (CLI only)
   input.time_trace = cmd.get<bool>("--llvm-time-trace");
+
+  // Two-state mode (CLI only)
+  input.two_state = cmd.get<bool>("--two-state");
 
   return input;
 }

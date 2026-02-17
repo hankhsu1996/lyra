@@ -140,26 +140,35 @@ struct PhiWiringState {
 
   // Wire up PHI incoming values from pending edges.
   // Call this after all blocks have been lowered.
-  void WireIncomingEdges() {
+  void WireIncomingEdges(llvm::IRBuilder<>& builder) {
     for (const auto& edge : pending_edges) {
       for (size_t j = 0; j < edge.args.size(); ++j) {
         auto* phi = phis[MakeKey(edge.succ_idx, j)];
-        if (phi->getType() != edge.args[j]->getType()) {
-          std::string phi_type_str;
-          llvm::raw_string_ostream phi_os(phi_type_str);
-          phi->getType()->print(phi_os);
-          std::string arg_type_str;
-          llvm::raw_string_ostream arg_os(arg_type_str);
-          edge.args[j]->getType()->print(arg_os);
-          throw common::InternalError(
-              "PHI wiring",
-              std::format(
-                  "block {} param {}: PHI type ({}) != incoming value type "
-                  "({}) from pred '{}'",
-                  edge.succ_idx, j, phi_type_str, arg_type_str,
-                  edge.pred->getName().str()));
+        llvm::Value* arg = edge.args[j];
+        if (phi->getType() != arg->getType()) {
+          // Coerce integer width mismatches (storage rounding differences
+          // between place loads, constants, and compute results in 2-state
+          // mode).
+          if (phi->getType()->isIntegerTy() && arg->getType()->isIntegerTy()) {
+            builder.SetInsertPoint(edge.pred->getTerminator());
+            arg = builder.CreateZExtOrTrunc(arg, phi->getType(), "phi.coerce");
+          } else {
+            std::string phi_type_str;
+            llvm::raw_string_ostream phi_os(phi_type_str);
+            phi->getType()->print(phi_os);
+            std::string arg_type_str;
+            llvm::raw_string_ostream arg_os(arg_type_str);
+            arg->getType()->print(arg_os);
+            throw common::InternalError(
+                "PHI wiring",
+                std::format(
+                    "block {} param {}: PHI type ({}) != incoming value type "
+                    "({}) from pred '{}'",
+                    edge.succ_idx, j, phi_type_str, arg_type_str,
+                    edge.pred->getName().str()));
+          }
         }
-        phi->addIncoming(edge.args[j], edge.pred);
+        phi->addIncoming(arg, edge.pred);
       }
     }
   }
@@ -398,7 +407,8 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
   };
   auto range = ResolveByteRange(
       context.GetLlvmContext(), context.GetModule().getDataLayout(),
-      context.GetTypeArena(), place, root_type, resolver);
+      context.GetTypeArena(), place, root_type, resolver,
+      context.IsForceTwoState());
   if (range.kind == RangeKind::kPrecise) {
     return {
         .byte_offset = range.byte_offset,
@@ -508,8 +518,9 @@ void EmitDynamicUnpackedBitTarget(
 
   // Compute element_bit_stride from DataLayout.
   const auto& lb = *trigger.late_bound;
-  auto* elem_llvm_type =
-      GetLlvmTypeForTypeId(llvm_ctx, *lb.element_type, context.GetTypeArena());
+  auto* elem_llvm_type = GetLlvmTypeForTypeId(
+      llvm_ctx, *lb.element_type, context.GetTypeArena(),
+      context.IsForceTwoState());
   const auto& dl = context.GetModule().getDataLayout();
   auto elem_alloc = static_cast<uint32_t>(dl.getTypeAllocSize(elem_llvm_type));
   uint32_t element_bit_stride = elem_alloc * 8;
@@ -583,8 +594,9 @@ void EmitDynamicContainerTarget(
   }
   auto* sv_index = builder.CreateSExtOrTrunc(*offset_or_err, i64_ty, "ct.idx");
 
-  auto* elem_llvm_type =
-      GetLlvmTypeForTypeId(llvm_ctx, *lb.element_type, context.GetTypeArena());
+  auto* elem_llvm_type = GetLlvmTypeForTypeId(
+      llvm_ctx, *lb.element_type, context.GetTypeArena(),
+      context.IsForceTwoState());
   const auto& dl = context.GetModule().getDataLayout();
   auto elem_stride = static_cast<uint32_t>(dl.getTypeAllocSize(elem_llvm_type));
 
@@ -807,13 +819,15 @@ auto EmitLateBoundData(
     uint32_t container_elem_stride = 0;
     if (lb.is_container && lb.element_type) {
       auto* elem_type = GetLlvmTypeForTypeId(
-          llvm_ctx, *lb.element_type, context.GetTypeArena());
+          llvm_ctx, *lb.element_type, context.GetTypeArena(),
+          context.IsForceTwoState());
       const auto& dl = context.GetModule().getDataLayout();
       container_elem_stride =
           static_cast<uint32_t>(dl.getTypeAllocSize(elem_type));
     } else if (lb.element_type && !lb.is_container) {
       auto* elem_type = GetLlvmTypeForTypeId(
-          llvm_ctx, *lb.element_type, context.GetTypeArena());
+          llvm_ctx, *lb.element_type, context.GetTypeArena(),
+          context.IsForceTwoState());
       const auto& dl = context.GetModule().getDataLayout();
       auto elem_alloc = static_cast<uint32_t>(dl.getTypeAllocSize(elem_type));
       uint32_t element_bit_stride = elem_alloc * 8;
@@ -1291,7 +1305,7 @@ auto GenerateProcessFunction(
   }
 
   // Wire PHI incoming edges and validate
-  phi_state.WireIncomingEdges();
+  phi_state.WireIncomingEdges(context.GetBuilder());
   phi_state.ValidatePhiWiring(llvm_blocks, func->getName().str());
 
   // Exit block: just return
@@ -1851,7 +1865,7 @@ auto DefineMonitorCheckThunk(
   }
 
   // Wire PHI incoming edges and validate
-  phi_state.WireIncomingEdges();
+  phi_state.WireIncomingEdges(context.GetBuilder());
   phi_state.ValidatePhiWiring(llvm_blocks, llvm_func->getName().str());
 
   // Print block: lower DisplayEffect and update prev_buffer
@@ -2315,7 +2329,7 @@ auto DefineUserFunction(
   }
 
   // Wire PHI incoming edges and validate
-  phi_state.WireIncomingEdges();
+  phi_state.WireIncomingEdges(context.GetBuilder());
   phi_state.ValidatePhiWiring(llvm_blocks, llvm_func->getName().str());
 
   // Exit block: return the value

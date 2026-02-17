@@ -78,6 +78,7 @@ struct LoweringInput {
   std::vector<std::string> plusargs;  // Command-line plusargs for $plusargs
   bool enable_trace = false;          // Enable simulation tracing
   bool debug_dump_slot_meta = false;  // Dump slot metadata (test-only)
+  bool force_two_state = false;       // Force 2-state LLVM representation
 };
 
 struct LoweringResult {

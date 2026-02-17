@@ -17,10 +17,10 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -175,7 +175,7 @@ auto LowerEnumNextPrevValue(
   }
 
   uint32_t bit_width = PackedBitWidth(enum_type, types);
-  if (IsPackedFourState(enum_type, types)) {
+  if (context.IsPackedFourState(enum_type)) {
     throw common::InternalError(
         "LowerEnumNextPrev", "4-state enums not supported");
   }
@@ -277,7 +277,7 @@ auto LowerEnumNameValue(
   const Type& enum_type = types[enum_type_id];
   const auto& enum_info = enum_type.AsEnum();
   auto member_count = static_cast<uint32_t>(enum_info.members.size());
-  if (IsPackedFourState(enum_type, types)) {
+  if (context.IsPackedFourState(enum_type)) {
     throw common::InternalError("LowerEnumName", "4-state enums not supported");
   }
 

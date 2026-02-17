@@ -344,6 +344,83 @@ def check_layout_boundaries(repo_root: Path) -> list[str]:
     return errors
 
 
+TYPE_QUERY_HPP = "include/lyra/llvm_backend/type_query.hpp"
+
+# Patterns that must go through type_query.hpp wrappers in backend code.
+# The wrappers respect force_two_state mode.
+FOUR_STATE_FORBIDDEN_PATTERNS = [
+    (re.compile(r'\bIsFourStateType\s*\('), "IsFourStateType("),
+    # Only catch direct type field access (AsIntegral().is_four_state).
+    # Struct field reads/writes on SlotTypeInfo, PlaceTypeInfo,
+    # PackedComputeContext are safe since those values are computed
+    # through the wrapper functions.
+    (re.compile(r'AsIntegral\(\)\.is_four_state'), "AsIntegral().is_four_state"),
+]
+
+# IsPackedFourState( without a bool third arg - detect the common:: overload.
+# The wrapper overload has 3 args (type, arena, force_two_state). We detect
+# the 2-arg common:: overload by checking for the function name. Since both
+# the common:: and wrapper versions are called IsPackedFourState, we need a
+# heuristic: the wrapper is always in namespace mir_to_llvm and typically
+# called via ctx.IsPackedFourState(). We forbid the free-function call pattern
+# common::IsPackedFourState( as well as bare IsPackedFourState(type, types)
+# that doesn't have a bool third argument. For simplicity, we just check that
+# files include type_query.hpp and don't use the common:: qualified form.
+FOUR_STATE_COMMON_PATTERN = re.compile(r'\bcommon::IsPackedFourState\s*\(')
+
+
+def is_type_query_hpp(rel_path: str) -> bool:
+    """Check if this is the type_query.hpp wrapper header."""
+    return rel_path == TYPE_QUERY_HPP
+
+
+def check_four_state_wrappers(repo_root: Path) -> list[str]:
+    """Check that backend code uses type_query.hpp wrappers for 4-state checks.
+
+    Scope: all .cpp and .hpp under src/lyra/llvm_backend/ and
+    include/lyra/llvm_backend/ (excluding type_query.hpp itself and
+    common/ headers which define the wrapped functions).
+    """
+    errors = []
+
+    # Check .cpp files
+    llvm_backend_src = repo_root / "src/lyra/llvm_backend"
+    for cpp in llvm_backend_src.rglob("*.cpp"):
+        rel_path = cpp.relative_to(repo_root).as_posix()
+        content = cpp.read_text()
+        lines = content.split('\n')
+
+        for lineno, line in enumerate(lines, 1):
+            code = strip_comment(line)
+            for pattern, token in FOUR_STATE_FORBIDDEN_PATTERNS:
+                if pattern.search(code):
+                    errors.append(f"  {rel_path}:{lineno}: {token}")
+            if FOUR_STATE_COMMON_PATTERN.search(code):
+                errors.append(
+                    f"  {rel_path}:{lineno}: common::IsPackedFourState(")
+
+    # Check .hpp files (excluding type_query.hpp)
+    llvm_backend_inc = repo_root / "include/lyra/llvm_backend"
+    if llvm_backend_inc.exists():
+        for hpp in llvm_backend_inc.rglob("*.hpp"):
+            rel_path = hpp.relative_to(repo_root).as_posix()
+            if is_type_query_hpp(rel_path):
+                continue
+            content = hpp.read_text()
+            lines = content.split('\n')
+
+            for lineno, line in enumerate(lines, 1):
+                code = strip_comment(line)
+                for pattern, token in FOUR_STATE_FORBIDDEN_PATTERNS:
+                    if pattern.search(code):
+                        errors.append(f"  {rel_path}:{lineno}: {token}")
+                if FOUR_STATE_COMMON_PATTERN.search(code):
+                    errors.append(
+                        f"  {rel_path}:{lineno}: common::IsPackedFourState(")
+
+    return errors
+
+
 def check_instruction_boundaries(repo_root: Path) -> list[str]:
     """Check that instruction/ module doesn't include commit internals.
 
@@ -452,6 +529,37 @@ def run_self_tests() -> bool:
         print("SELF-TEST FAILED: GetPlacePointer pattern doesn't match expected code")
         return False
 
+    # Test 6: Four-state wrapper detection
+    test_code4 = "if (IsFourStateType(type_id, types)) {"
+    found = False
+    for pattern, _ in FOUR_STATE_FORBIDDEN_PATTERNS:
+        if pattern.search(test_code4):
+            found = True
+            break
+    if not found:
+        print("SELF-TEST FAILED: IsFourStateType pattern not detected")
+        return False
+
+    test_code5 = "bool fs = type.AsIntegral().is_four_state;"
+    found = False
+    for pattern, _ in FOUR_STATE_FORBIDDEN_PATTERNS:
+        if pattern.search(test_code5):
+            found = True
+            break
+    if not found:
+        print("SELF-TEST FAILED: .is_four_state pattern not detected")
+        return False
+
+    test_code6 = "common::IsPackedFourState(type, types)"
+    if not FOUR_STATE_COMMON_PATTERN.search(test_code6):
+        print("SELF-TEST FAILED: common::IsPackedFourState pattern not detected")
+        return False
+
+    # Verify type_query.hpp is recognized
+    if not is_type_query_hpp("include/lyra/llvm_backend/type_query.hpp"):
+        print("SELF-TEST FAILED: type_query.hpp not recognized")
+        return False
+
     return True
 
 
@@ -470,10 +578,11 @@ def main() -> int:
     compute_errors = check_compute_boundaries(repo_root)
     layout_errors = check_layout_boundaries(repo_root)
     instruction_errors = check_instruction_boundaries(repo_root)
+    four_state_errors = check_four_state_wrappers(repo_root)
 
     all_errors = (store_errors + commit_errors + isdesign_errors +
                   writetarget_errors + compute_errors + layout_errors +
-                  instruction_errors)
+                  instruction_errors + four_state_errors)
 
     if all_errors:
         if store_errors:
@@ -516,6 +625,12 @@ def main() -> int:
             print("ERROR: instruction/ module includes commit internals (should go through type_ops):")
             print()
             for e in instruction_errors:
+                print(e)
+            print()
+        if four_state_errors:
+            print("ERROR: Direct 4-state calls in LLVM backend (use type_query.hpp wrappers):")
+            print()
+            for e in four_state_errors:
                 print(e)
             print()
         print("This script enforces LLVM backend module boundaries.")

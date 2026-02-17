@@ -7,8 +7,8 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -42,7 +42,7 @@ auto GetTypeInfoFromType(Context& context, TypeId type_id)
   return PlaceTypeInfo{
       .kind = PlaceKind::kIntegral,
       .bit_width = PackedBitWidth(type, types),
-      .is_four_state = IsPackedFourState(type, types),
+      .is_four_state = context.IsPackedFourState(type),
   };
 }
 
@@ -69,7 +69,7 @@ auto GetLlvmTypeForType(Context& context, TypeId type_id)
   if (info.is_four_state) {
     return context.GetPlaceLlvmType4State(info.bit_width);
   }
-  return llvm::Type::getIntNTy(context.GetLlvmContext(), info.bit_width);
+  return GetLlvmStorageType(context.GetLlvmContext(), info.bit_width);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

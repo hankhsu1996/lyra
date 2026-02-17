@@ -89,7 +89,8 @@ auto LowerUserCall(
 
       // Compute expected LLVM type using centralized ABI mapping
       llvm::Type* expected_type = GetLlvmAbiTypeForValue(
-          context.GetLlvmContext(), param.type, context.GetTypeArena());
+          context.GetLlvmContext(), param.type, context.GetTypeArena(),
+          context.IsForceTwoState());
       if (expected_type == nullptr) {
         throw common::InternalError(
             "LowerUserCall",

@@ -24,7 +24,7 @@ auto AssignStruct(
   const auto& types = context.GetTypeArena();
 
   // Container handles (dynarray/queue) require deep copy not yet implemented
-  if (TypeContainsManaged(struct_type_id, types) &&
+  if (mir_to_llvm::TypeContainsManaged(struct_type_id, types) &&
       !NeedsFieldByField(struct_type_id, types)) {
     // Contains containers but not strings - this is the deferred case
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(

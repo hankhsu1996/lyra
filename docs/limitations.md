@@ -282,3 +282,19 @@ See [scheduling.md](scheduling.md) for implemented regions.
   string s;
   $sformat(s, fmt, 42);  // Works in both interpreter and codegen
   ```
+
+## Two-State Mode (Experimental)
+
+`lyra run --two-state` forces all types to use 2-state LLVM representation (`iN` instead of `{iN, iN}` struct). This eliminates the unknown plane, reducing IR by ~40% and codegen time by ~24% on synthesizable RTL.
+
+Behavioral differences from default mode:
+
+- **X initialization becomes 0**: uninitialized `logic` variables start at `0`, not `x`
+- **No X/Z propagation**: operations never produce or consume unknown bits
+- **casez/casex**: wildcard matching against X/Z pattern bits may not work correctly
+- **`===`/`!==`**: case equality with X operands always compares as zero
+- **`$display` of uninitialized values**: shows `00` instead of `xx`
+
+Intended use: synthesizable RTL where X-propagation is unnecessary (e.g., Ibex). Not suitable for verification testbenches that rely on X-detection or 4-state semantics.
+
+Only affects the LLVM JIT backend. MIR interpreter is unaffected.

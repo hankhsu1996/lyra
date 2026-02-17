@@ -34,7 +34,7 @@ void ForEachManagedFieldPtr(
 
   for (size_t i = 0; i < struct_info.fields.size(); ++i) {
     const auto& field = struct_info.fields[i];
-    if (TypeContainsManaged(field.type, types)) {
+    if (mir_to_llvm::TypeContainsManaged(field.type, types)) {
       auto field_idx = static_cast<unsigned>(i);
       llvm::Value* field_ptr = ctx.GetBuilder().CreateStructGEP(
           llvm_struct_type, struct_ptr, field_idx);

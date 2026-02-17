@@ -7,16 +7,17 @@
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto IsTypeFourState(const TypeArena& types, TypeId type_id) -> bool {
+auto IsTypeFourState(
+    const TypeArena& types, TypeId type_id, bool force_two_state) -> bool {
   const Type& type = types[type_id];
   if (!IsPacked(type)) {
     return false;
   }
-  return IsPackedFourState(type, types);
+  return mir_to_llvm::IsPackedFourState(type, types, force_two_state);
 }
 
 auto ExtractFourState(llvm::IRBuilderBase& builder, llvm::Value* struct_val)

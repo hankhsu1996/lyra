@@ -22,12 +22,12 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
@@ -281,7 +281,7 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
     };
     auto range = ResolveByteRange(
         *llvm_context_, llvm_module_->getDataLayout(), types_, resolved,
-        design_.slot_table[*signal_id], resolver);
+        design_.slot_table[*signal_id], resolver, force_two_state_);
     if (range.kind == RangeKind::kPrecise) {
       dirty_off = range.byte_offset;
       dirty_size = range.byte_size;
@@ -316,7 +316,7 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
 
   if (type.Kind() == TypeKind::kIntegral) {
     uint32_t bit_width = type.AsIntegral().bit_width;
-    if (type.AsIntegral().is_four_state) {
+    if (mir_to_llvm::IsPackedFourState(type, types_, force_two_state_)) {
       return GetFourStateStructType(*llvm_context_, bit_width);
     }
     return GetLlvmStorageType(*llvm_context_, bit_width);
@@ -335,7 +335,7 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   }
   if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
-    if (IsPackedFourState(type, types_)) {
+    if (mir_to_llvm::IsPackedFourState(type, types_, force_two_state_)) {
       return GetFourStateStructType(*llvm_context_, width);
     }
     return GetLlvmStorageType(*llvm_context_, width);

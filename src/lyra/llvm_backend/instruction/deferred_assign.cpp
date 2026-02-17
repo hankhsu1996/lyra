@@ -13,7 +13,6 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/instruction/assign_core.hpp"
@@ -72,9 +71,7 @@ auto ClassifyDeferredStore(Context& context, mir::PlaceId dest)
   bool is_scalar_mir = IsPacked(type);
 
   if (is_scalar_mir) {
-    bool is_four_state = (type.Kind() == TypeKind::kIntegral)
-                             ? type.AsIntegral().is_four_state
-                             : IsPackedFourState(type, types);
+    bool is_four_state = context.IsPackedFourState(type);
     uint32_t bit_width = (type.Kind() == TypeKind::kIntegral)
                              ? type.AsIntegral().bit_width
                              : PackedBitWidth(type, types);

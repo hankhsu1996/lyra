@@ -13,7 +13,6 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
@@ -24,6 +23,7 @@
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/type_ops/dispatch.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -255,7 +255,7 @@ auto LowerRvalueAssign(
   llvm::Value* unknown = rv_result->unknown;
 
   // For packed 4-state, pack value + unknown into struct before storing
-  if (IsPacked(type) && IsPackedFourState(type, types)) {
+  if (IsPacked(type) && context.IsPackedFourState(type)) {
     auto storage_type_or_err = context.GetPlaceLlvmType(target);
     if (!storage_type_or_err)
       return std::unexpected(storage_type_or_err.error());

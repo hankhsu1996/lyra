@@ -7,10 +7,10 @@
 
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
+#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm::detail {
@@ -31,7 +31,7 @@ auto LowerRhsRaw(
             if (!rv_result) return std::unexpected(rv_result.error());
             // For 4-state, pack into struct
             if (IsPacked(types[result_type]) &&
-                IsPackedFourState(types[result_type], types)) {
+                context.IsPackedFourState(types[result_type])) {
               auto storage_type_or_err = context.GetPlaceLlvmType(target);
               if (!storage_type_or_err)
                 return std::unexpected(storage_type_or_err.error());
