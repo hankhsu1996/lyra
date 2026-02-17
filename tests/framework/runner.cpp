@@ -1,9 +1,13 @@
 #include "tests/framework/runner.hpp"
 
+#include <algorithm>
 #include <filesystem>
+#include <format>
 #include <gtest/gtest.h>
 #include <optional>
+#include <string>
 
+#include "lyra/common/mutation_event.hpp"
 #include "tests/framework/assertions.hpp"
 #include "tests/framework/jit_backend.hpp"
 #include "tests/framework/lli_backend.hpp"
@@ -60,6 +64,54 @@ void RunTestCase(
       // Check expected files
       if (!test_case.expected_files.empty()) {
         AssertFiles(work_directory, test_case.expected_files);
+      }
+
+      // Check expected mutations
+      if (test_case.expected_mutations.has_value()) {
+        const auto& me = *test_case.expected_mutations;
+        if (me.min_count.has_value()) {
+          EXPECT_GE(result.mutation_events.size(), *me.min_count)
+              << "[" << test_case.source_yaml << "] Expected at least "
+              << *me.min_count << " mutation events, got "
+              << result.mutation_events.size();
+        }
+        for (const auto& kind_str : me.contains_kind) {
+          bool found = false;
+          if (kind_str == "value_write") {
+            found = std::ranges::any_of(
+                result.mutation_events, [](const common::MutationEvent& e) {
+                  return e.kind == common::MutationKind::kValueWrite;
+                });
+          } else if (kind_str == "bulk_init") {
+            found = std::ranges::any_of(
+                result.mutation_events, [](const common::MutationEvent& e) {
+                  return e.kind == common::MutationKind::kBulkInit;
+                });
+          } else if (kind_str == "structural_realloc") {
+            found = std::ranges::any_of(
+                result.mutation_events, [](const common::MutationEvent& e) {
+                  return e.kind == common::MutationKind::kStructuralRealloc;
+                });
+          } else if (kind_str == "structural_no_realloc") {
+            found = std::ranges::any_of(
+                result.mutation_events, [](const common::MutationEvent& e) {
+                  return e.kind == common::MutationKind::kStructuralNoRealloc;
+                });
+          } else if (kind_str == "structural") {
+            // Backward compat: matches either structural kind.
+            found = std::ranges::any_of(
+                result.mutation_events, [](const common::MutationEvent& e) {
+                  return e.kind == common::MutationKind::kStructuralNoRealloc ||
+                         e.kind == common::MutationKind::kStructuralRealloc;
+                });
+          } else {
+            FAIL() << "[" << test_case.source_yaml
+                   << "] Unknown mutation kind: " << kind_str;
+          }
+          EXPECT_TRUE(found)
+              << "[" << test_case.source_yaml << "] Expected mutation kind '"
+              << kind_str << "' not found";
+        }
       }
       break;
     }

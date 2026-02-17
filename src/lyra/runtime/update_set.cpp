@@ -6,24 +6,10 @@
 #include <vector>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/mutation_event.hpp"
+#include "lyra/common/range_set.hpp"
 
 namespace lyra::runtime {
-
-auto RangesOverlap(
-    std::span<const DirtyRange> dirty, uint32_t obs_off, uint32_t obs_size)
-    -> bool {
-  uint64_t obs_end =
-      static_cast<uint64_t>(obs_off) + static_cast<uint64_t>(obs_size);
-  for (const auto& r : dirty) {
-    // Full-dirty sentinel: size==0 means entire buffer is dirty.
-    if (r.size == 0) return true;
-    uint64_t r_end =
-        static_cast<uint64_t>(r.off) + static_cast<uint64_t>(r.size);
-    if (r.off < obs_end && obs_off < r_end) return true;
-    if (r.off >= obs_end) break;
-  }
-  return false;
-}
 
 void UpdateSet::Init(
     uint32_t slot_count, std::span<const uint32_t> slot_sizes) {
@@ -40,9 +26,13 @@ void UpdateSet::Init(
   delta_dirty_.reserve(std::min(slot_count, uint32_t{256}));
   slot_sizes_.assign(slot_sizes.begin(), slot_sizes.end());
   delta_slot_ranges_.resize(slot_count);
+  delta_slot_kinds_.assign(slot_count, common::MutationKind::kValueWrite);
+  delta_slot_epochs_.assign(slot_count, common::EpochEffect::kNone);
 }
 
-void UpdateSet::MarkDirtyRange(uint32_t slot_id, uint32_t off, uint32_t size) {
+void UpdateSet::MarkDirtyRange(
+    uint32_t slot_id, uint32_t off, uint32_t size, common::MutationKind kind,
+    common::EpochEffect epoch) {
   if (slot_id >= seen_.size()) return;
 
   if (size == 0) {
@@ -66,7 +56,15 @@ void UpdateSet::MarkDirtyRange(uint32_t slot_id, uint32_t off, uint32_t size) {
   }
 
   // Range storage + merge (canonical data).
-  InsertAndMerge(delta_slot_ranges_[slot_id], off, size);
+  delta_slot_ranges_[slot_id].Insert(off, size);
+
+  // Lattice join for kind and epoch.
+  if (kind > delta_slot_kinds_[slot_id]) {
+    delta_slot_kinds_[slot_id] = kind;
+  }
+  if (epoch > delta_slot_epochs_[slot_id]) {
+    delta_slot_epochs_[slot_id] = epoch;
+  }
 }
 
 void UpdateSet::MarkExternalDirtyRange(
@@ -83,30 +81,34 @@ void UpdateSet::MarkExternalDirtyRange(
     delta_dirty_.push_back(slot_id);
   }
 
-  auto& ranges = delta_external_ranges_[slot_id];
+  auto& range_set = delta_external_ranges_[slot_id];
   if (size == 0) {
-    // Full-dirty sentinel: replace all with (0,0).
-    ranges.clear();
-    ranges.push_back(DirtyRange{.off = 0, .size = 0});
+    // Full-dirty sentinel.
+    range_set.MarkFullExtent();
     return;
   }
 
   // Skip if already full-dirty.
-  if (!ranges.empty() && ranges[0].size == 0) return;
+  if (range_set.IsFullExtent()) return;
 
-  InsertAndMerge(ranges, off, size);
+  range_set.Insert(off, size);
 }
 
 auto UpdateSet::DeltaExternalRangesFor(uint32_t slot_id) const
-    -> std::span<const DirtyRange> {
+    -> const common::RangeSet& {
   auto it = delta_external_ranges_.find(slot_id);
-  if (it == delta_external_ranges_.end()) return {};
+  if (it == delta_external_ranges_.end()) {
+    static const common::RangeSet empty;
+    return empty;
+  }
   return it->second;
 }
 
 void UpdateSet::ClearDelta() {
   for (uint32_t id : delta_dirty_) {
-    delta_slot_ranges_[id].clear();
+    delta_slot_ranges_[id].Clear();
+    delta_slot_kinds_[id] = common::MutationKind::kValueWrite;
+    delta_slot_epochs_[id] = common::EpochEffect::kNone;
     delta_seen_[id] = 0;
   }
   delta_dirty_.clear();
@@ -119,48 +121,6 @@ void UpdateSet::Clear() {
   }
   dirty_list_.clear();
   ClearDelta();
-}
-
-void UpdateSet::InsertAndMerge(
-    std::vector<DirtyRange>& ranges, uint32_t off, uint32_t size) {
-  uint64_t new_start = off;
-  uint64_t new_end = static_cast<uint64_t>(off) + static_cast<uint64_t>(size);
-
-  // Find first range whose end >= new_start (could overlap or be adjacent).
-  auto it = ranges.begin();
-  while (it != ranges.end()) {
-    uint64_t r_end =
-        static_cast<uint64_t>(it->off) + static_cast<uint64_t>(it->size);
-    if (r_end >= new_start) break;
-    ++it;
-  }
-
-  // If no existing range overlaps/adjoins, insert before it.
-  if (it == ranges.end() || static_cast<uint64_t>(it->off) > new_end) {
-    ranges.insert(it, DirtyRange{.off = off, .size = size});
-    return;
-  }
-
-  // Merge: extend the found range to cover the union.
-  new_start = std::min(new_start, static_cast<uint64_t>(it->off));
-  uint64_t r_end =
-      static_cast<uint64_t>(it->off) + static_cast<uint64_t>(it->size);
-  new_end = std::max(new_end, r_end);
-
-  // Absorb subsequent overlapping/adjacent ranges.
-  auto merge_end = it + 1;
-  while (merge_end != ranges.end() &&
-         static_cast<uint64_t>(merge_end->off) <= new_end) {
-    uint64_t me = static_cast<uint64_t>(merge_end->off) +
-                  static_cast<uint64_t>(merge_end->size);
-    new_end = std::max(new_end, me);
-    ++merge_end;
-  }
-
-  // Write merged range and erase absorbed entries.
-  it->off = static_cast<uint32_t>(new_start);
-  it->size = static_cast<uint32_t>(new_end - new_start);
-  ranges.erase(it + 1, merge_end);
 }
 
 }  // namespace lyra::runtime

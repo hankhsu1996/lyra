@@ -377,7 +377,8 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       const auto& expect = node["expect"];
       auto expect_context = std::format("expect in {}", case_context);
       ValidateKeys(
-          expect, {"variables", "time", "stdout", "files", "error"},
+          expect,
+          {"variables", "time", "stdout", "files", "error", "mutations"},
           expect_context, path);
 
       // expect.variables: {var: value, ...}
@@ -413,6 +414,27 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
           test_case.expected_files[filename] =
               ParseExpectedOutput(pair.second, file_context, path);
         }
+      }
+
+      // expect.mutations: {min_count: N, contains_kind: [...]}
+      if (expect["mutations"]) {
+        const auto& mutations = expect["mutations"];
+        ValidateKeys(
+            mutations, {"min_count", "contains_kind"},
+            std::format("expect.mutations in {}", case_context), path);
+        MutationExpectation me;
+        if (mutations["min_count"]) {
+          me.min_count = mutations["min_count"].as<size_t>();
+        }
+        if (mutations["contains_kind"]) {
+          ValidateIsSequence(
+              mutations["contains_kind"], "contains_kind",
+              std::format("expect.mutations in {}", case_context), path);
+          for (const auto& item : mutations["contains_kind"]) {
+            me.contains_kind.push_back(item.as<std::string>());
+          }
+        }
+        test_case.expected_mutations = me;
       }
 
       // expect.error: string OR {contains: [...], not_contains: [...]}

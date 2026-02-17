@@ -1,0 +1,28 @@
+feature: mutation/bulk_ops
+description: Bulk init change-fact emission
+
+cases:
+  - name: readmemh
+    files:
+      - name: test.sv
+        content: |
+          module top;
+            logic [7:0] mem [0:1];
+            logic [7:0] a0, a1;
+            initial begin
+              $readmemh("data.hex", mem);
+              a0 = mem[0];
+              a1 = mem[1];
+            end
+          endmodule
+      - name: data.hex
+        content: |
+          FF
+          AB
+    expect:
+      variables:
+        a0: 0xFF
+        a1: 0xAB
+      mutations:
+        min_count: 1
+        contains_kind: [bulk_init, value_write]

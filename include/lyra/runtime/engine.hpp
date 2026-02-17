@@ -17,6 +17,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/mutation_event.hpp"
 #include "lyra/common/time_format.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
@@ -192,11 +193,14 @@ class Engine {
     design_state_base_ = base;
   }
 
+  // Route a MutationEvent to the UpdateSet (design slots only; heap NYI).
+  void OnMutation(const common::MutationEvent& event);
+
   // Mark slot dirty for scheduler wakeup and deferred trace snapshot.
   // Note: SignalId == slot_id in the current runtime. This equivalence is by
   // design - both identify the same design slot. Callers may pass either type.
   void MarkSlotDirty(uint32_t slot_id) {
-    update_set_.MarkDirty(slot_id);
+    update_set_.MarkSlotDirty(slot_id);
   }
 
   // Mark a byte range within a slot as dirty.

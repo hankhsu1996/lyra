@@ -17,6 +17,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/mutation_event.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
@@ -261,6 +262,7 @@ auto RunMirInterpreter(
   // OutputSinkScope captures trace summary output from PrintSummary (which uses
   // WriteOutput). Interpreter $display goes to output_stream directly.
   std::string trace_output;
+  std::vector<common::MutationEvent> mutation_events;
   runtime::OutputSinkScope sink_scope(
       [&trace_output](std::string_view text) { trace_output.append(text); });
   try {
@@ -318,10 +320,16 @@ auto RunMirInterpreter(
           reason);
     });
 
+    // Wire mutation sink: record events and route to Engine
+    interpreter.SetMutationSink(
+        [&engine, &mutation_events](const common::MutationEvent& event) {
+          mutation_events.push_back(event);
+          engine.OnMutation(event);
+        });
+
     // Enable tracing if requested
     if (test_case.trace) {
       engine.GetTraceManager().SetEnabled(true);
-      interpreter.SetTraceManager(&engine.GetTraceManager());
     }
 
     // Schedule initial processes
@@ -347,6 +355,7 @@ auto RunMirInterpreter(
 
   result.success = true;
   result.captured_output = output_stream.str() + trace_output;
+  result.mutation_events = std::move(mutation_events);
 
   // Extract final variable values for assertions
   for (const auto& [name, expected] : test_case.expected_values) {

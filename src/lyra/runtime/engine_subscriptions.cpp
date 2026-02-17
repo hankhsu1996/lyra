@@ -607,8 +607,8 @@ void Engine::FlushSignalUpdates() {
     auto it = signal_waiters_.find(slot_id);
     if (it == signal_waiters_.end()) continue;
 
-    auto dirty_ranges = update_set_.DeltaRangesFor(slot_id);
-    auto external_ranges = update_set_.DeltaExternalRangesFor(slot_id);
+    const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
+    const auto& external_ranges = update_set_.DeltaExternalRangesFor(slot_id);
     const auto& meta = slot_meta_registry_.Get(slot_id);
 
     for (auto* node = it->second.head; node != nullptr;) {
@@ -627,11 +627,11 @@ void Engine::FlushSignalUpdates() {
           // When external ranges are present, use precise filtering.
           // When absent (element write via LyraStorePacked), fall through
           // since the slot is dirty and heap content may have changed.
-          if (!external_ranges.empty()) {
+          if (!external_ranges.IsEmpty()) {
             auto candidate_off = static_cast<uint32_t>(std::max(
                                      int64_t{0}, node->container_sv_index)) *
                                  node->container_elem_stride;
-            if (!RangesOverlap(external_ranges, candidate_off, 1)) {
+            if (!external_ranges.Overlaps(candidate_off, 1)) {
               node = next;
               continue;
             }
@@ -673,8 +673,8 @@ void Engine::FlushSignalUpdates() {
         // Active container sub: range overlap filter.
         // When external ranges are present, use precise filtering.
         // When absent (element write via LyraStorePacked), fall through.
-        if (!external_ranges.empty() &&
-            !RangesOverlap(external_ranges, node->byte_offset, 1)) {
+        if (!external_ranges.IsEmpty() &&
+            !external_ranges.Overlaps(node->byte_offset, 1)) {
           node = next;
           continue;
         }
@@ -732,7 +732,7 @@ void Engine::FlushSignalUpdates() {
       }
 
       // Range intersection filter: skip if no dirty range overlaps observation.
-      if (!RangesOverlap(dirty_ranges, node->byte_offset, node->byte_size)) {
+      if (!dirty_ranges.Overlaps(node->byte_offset, node->byte_size)) {
         node = next;
         continue;
       }

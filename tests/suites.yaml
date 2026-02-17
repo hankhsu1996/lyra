@@ -21,6 +21,7 @@ suites:
       - hierarchy/
       - lifecycle/
       - metadata/
+      - mutation/
       - operators/
       - packages/
       - processes/
@@ -41,6 +42,7 @@ suites:
       - hierarchy/
       - lifecycle/
       - metadata/
+      - mutation/
       - operators/
       - packages/
       - processes/
@@ -86,6 +88,7 @@ suites:
       - ^generate/
       - ^hierarchy/refs/
       - ^lifecycle/
+      - ^mutation/
       - ^operators/
       - ^packages/
       - ^system_tf/effect/

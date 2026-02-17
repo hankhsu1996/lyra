@@ -10,6 +10,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/mutation_event.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -24,7 +25,6 @@
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/runtime/assoc_array_heap.hpp"
 #include "lyra/runtime/file_manager.hpp"
-#include "lyra/trace/trace_manager.hpp"
 
 namespace lyra::mir::interp {
 
@@ -142,9 +142,9 @@ class Interpreter {
     enable_system_ = enable;
   }
 
-  // Set trace manager for event recording (nullable, no tracing if null).
-  void SetTraceManager(trace::TraceManager* mgr) {
-    trace_manager_ = mgr;
+  // Set mutation sink for change-fact reporting.
+  void SetMutationSink(common::MutationSink sink) {
+    mutation_sink_ = std::move(sink);
   }
 
   // Execute process to completion. Returns final status.
@@ -224,8 +224,11 @@ class Interpreter {
   auto ReadPlace(const ProcessState& state, PlaceId place_id)
       -> Result<RuntimeValue>;
 
-  // Resolve Place for writing (fails if place ends with BitRange)
-  auto WritePlace(ProcessState& state, PlaceId place_id)
+  // Resolve Place for writing (fails if place ends with BitRange).
+  // Emits a mutation event with the given kind before returning.
+  auto WritePlace(
+      ProcessState& state, PlaceId place_id, common::MutationKind kind,
+      common::EpochEffect epoch = common::EpochEffect::kNone)
       -> Result<std::reference_wrapper<RuntimeValue>>;
 
   // Store a value to a place (handles BitRange via read-modify-write)
@@ -358,8 +361,18 @@ class Interpreter {
   // Security: $system execution gate (default disabled)
   bool enable_system_ = false;
 
-  // Trace manager for event recording (nullable, no tracing if null).
-  trace::TraceManager* trace_manager_ = nullptr;
+  // Mutation sink for change-fact reporting (nullable).
+  common::MutationSink mutation_sink_;
+
+  // Emit a mutation event for the given design-slot place.
+  void EmitMutation(
+      PlaceId place_id, common::MutationKind kind,
+      common::EpochEffect epoch = common::EpochEffect::kNone);
+
+  // Emit a mutation event for a heap-backed object (associative arrays).
+  void EmitHeapMutation(
+      uint32_t handle_id, common::MutationKind kind,
+      common::EpochEffect epoch = common::EpochEffect::kNone);
 };
 
 // Helper: Create ProcessState for a given process.
