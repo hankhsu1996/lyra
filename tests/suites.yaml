@@ -76,8 +76,6 @@ suites:
       - trace/
     exclude_regex:
       - four_state\.yaml$ # All 4-state-dependent tests
-      # TODO: dynamic array/queue query bugs under --two-state (not 4-state related)
-      - system_tf/pure/array_query/default\.yaml$
 
   mir_dev:
     backend: mir
@@ -94,8 +92,5 @@ suites:
       - ^system_tf/effect/
       - ^system_tf/pure/
       - ^system_tf/state/random/
-      - ^trace/
     exclude_regex:
-      - trace/bulk_ops/ # JIT-only (requires flush-based trace via UpdateSet)
-      - trace/update_set/ # JIT-only (requires UpdateSet)
       - two_state_only\.yaml$ # Two-state semantic diff only
