@@ -177,13 +177,26 @@ auto LowerRvalue(
           [&](const mir::ArrayQueryRvalueInfo& info) -> Result<RvalueValue> {
             return LowerArrayQueryRvalue(context, rvalue, info, result_type);
           },
-          [&](const mir::SystemCmdRvalueInfo&) -> Result<RvalueValue> {
-            return std::unexpected(
-                context.GetDiagnosticContext().MakeUnsupported(
-                    context.GetCurrentOrigin(),
-                    "$system is not supported in the LLVM backend; use MIR "
-                    "interpreter instead",
-                    UnsupportedCategory::kFeature));
+          [&](const mir::SystemCmdRvalueInfo& info) -> Result<RvalueValue> {
+            auto& builder = context.GetBuilder();
+            auto* engine = context.GetEnginePointer();
+            llvm::Value* result = nullptr;
+            if (!info.command) {
+              auto* null_ptr = llvm::ConstantPointerNull::get(
+                  llvm::PointerType::getUnqual(context.GetLlvmContext()));
+              result = builder.CreateCall(
+                  context.GetLyraSystemCmd(), {engine, null_ptr});
+            } else {
+              auto status = WithStringHandle(
+                  context, info.command->operand, info.command->type,
+                  [&](llvm::Value* handle) -> Result<void> {
+                    result = builder.CreateCall(
+                        context.GetLyraSystemCmd(), {engine, handle});
+                    return {};
+                  });
+              if (!status) return std::unexpected(status.error());
+            }
+            return RvalueValue::TwoState(result);
           },
       },
       rvalue.info);

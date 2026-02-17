@@ -18,6 +18,7 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
+#include "lyra/runtime/feature_flags.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
 #include "process_stats.hpp"
@@ -89,6 +90,14 @@ auto RunJit(const CompilationInput& input) -> int {
       &compilation.mir.origin_map, compilation.hir.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
+  uint32_t feature_flags = 0;
+  if (input.enable_trace) {
+    feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
+  }
+  if (input.enable_system) {
+    feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableSystem);
+  }
+
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &compilation.mir.design,
       .mir_arena = compilation.mir.mir_arena.get(),
@@ -96,7 +105,7 @@ auto RunJit(const CompilationInput& input) -> int {
       .diag_ctx = &diag_ctx,
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = input.plusargs,
-      .enable_trace = input.enable_trace,
+      .feature_flags = feature_flags,
       .force_two_state = input.two_state,
   };
 

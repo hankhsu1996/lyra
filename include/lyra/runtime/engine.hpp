@@ -21,6 +21,7 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/update_set.hpp"
@@ -49,10 +50,11 @@ class Engine {
  public:
   explicit Engine(
       ProcessRunner runner, std::span<const std::string> plusargs = {},
-      std::vector<std::string> instance_paths = {})
+      std::vector<std::string> instance_paths = {}, uint32_t feature_flags = 0)
       : runner_(std::move(runner)),
         plusargs_(plusargs.begin(), plusargs.end()),
-        instance_paths_(std::move(instance_paths)) {
+        instance_paths_(std::move(instance_paths)),
+        feature_flags_(feature_flags) {
   }
 
   ~Engine() = default;
@@ -254,6 +256,11 @@ class Engine {
   [[nodiscard]] auto Random() -> int32_t;
   [[nodiscard]] auto Urandom() -> uint32_t;
 
+  // Feature flag query for optional runtime behaviors ($system, etc.).
+  [[nodiscard]] auto IsFeatureEnabled(FeatureFlag flag) const -> bool {
+    return HasFlag(static_cast<FeatureFlag>(feature_flags_), flag);
+  }
+
  private:
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
@@ -338,6 +345,9 @@ class Engine {
   // PRNG state for $random/$urandom. LCG with glibc constants.
   // Initial seed = 1 for deterministic reproducibility.
   uint32_t prng_state_ = 1;
+
+  // Feature flags for optional runtime behaviors (see FeatureFlag enum).
+  uint32_t feature_flags_ = 0;
 
   // Slot metadata registry (empty until populated by JIT codegen).
   SlotMetaRegistry slot_meta_registry_;
