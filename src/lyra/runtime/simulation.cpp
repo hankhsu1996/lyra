@@ -612,6 +612,40 @@ extern "C" void LyraSetTimeFormat(
       units, precision, suffix != nullptr ? suffix : "", min_width);
 }
 
+extern "C" auto LyraResolveBaseDir(const char* argv0) -> const char* {
+  static std::string resolved;
+
+  // Priority 1: explicit env var (set by `lyra run` for temp-dir bundles)
+  if (const char* env = std::getenv("LYRA_FS_BASE_DIR");
+      env != nullptr && env[0] != '\0') {
+    resolved = env;
+    return resolved.c_str();
+  }
+
+  // Priority 2: derive bundle root from executable path
+  // Assumes bundle layout: <root>/bin/<exe> (produced by `lyra compile`)
+  if (argv0 != nullptr && argv0[0] != '\0') {
+    std::error_code ec;
+    auto exe_path = std::filesystem::canonical(argv0, ec);
+    if (ec) {
+      // canonical requires the file to exist; try absolute as fallback
+      // (handles relative argv0 in PATH-resolved scenarios)
+      exe_path = std::filesystem::absolute(argv0, ec);
+    }
+    if (!ec) {
+      auto bundle_root = exe_path.parent_path().parent_path();
+      resolved = bundle_root.string();
+      return resolved.c_str();
+    }
+  }
+
+  // Fallback: current working directory
+  std::error_code ec;
+  auto cwd = std::filesystem::current_path(ec);
+  resolved = ec ? "." : cwd.string();
+  return resolved.c_str();
+}
+
 extern "C" void LyraInitRuntime(const char* fs_base_dir) {
   std::filesystem::path base(fs_base_dir);
   if (!base.is_absolute()) {

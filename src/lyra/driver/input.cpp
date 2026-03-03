@@ -19,12 +19,13 @@
 namespace lyra::driver {
 
 auto ParseBackend(const std::string& s) -> lyra::Result<Backend> {
+  if (s == "aot") return Backend::kAot;
   if (s == "jit") return Backend::kJit;
   if (s == "lli") return Backend::kLli;
   if (s == "mir") return Backend::kMir;
   return std::unexpected(
       Diagnostic::HostError(
-          "unknown backend '" + s + "', use 'jit', 'lli', or 'mir'"));
+          "unknown backend '" + s + "', use 'aot', 'jit', 'lli', or 'mir'"));
 }
 
 auto ParseDumpFormat(const std::string& s) -> lyra::Result<DumpFormat> {

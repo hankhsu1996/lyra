@@ -525,12 +525,22 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     process_funcs.push_back(*func_result);
   }
 
-  // Create main function: int main()
-  // Note: "main" is a compiler-owned symbol synthesized by Lyra as the
-  // simulation entry point. User code cannot define main() - it is reserved.
-  // This is the contract between the compiler and the jit/lli backends.
-  // If user-defined main() becomes possible later, rename to "lyra_entry".
-  auto* main_type = llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx), false);
+  // Create main function.
+  // kEmbeddedPlusargs: int main() - plusargs baked into IR
+  // kArgvForwarding: int main(int argc, char** argv) - plusargs from CLI
+  // Note: In LLVM opaque pointer mode (17+), all pointers are `ptr`.
+  // The `ptr` for argv represents `char**`; GEPs use element type `ptr`
+  // to step by sizeof(pointer), correctly indexing the argv array.
+  bool argv_forwarding = input.main_abi == MainAbi::kArgvForwarding;
+  llvm::FunctionType* main_type = nullptr;
+  if (argv_forwarding) {
+    auto* i32_ty_main = llvm::Type::getInt32Ty(ctx);
+    auto* ptr_ty_main = llvm::PointerType::getUnqual(ctx);
+    main_type =
+        llvm::FunctionType::get(i32_ty_main, {i32_ty_main, ptr_ty_main}, false);
+  } else {
+    main_type = llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx), false);
+  }
   auto* main_func = llvm::Function::Create(
       main_type, llvm::Function::ExternalLinkage, "main", &mod);
 
@@ -547,8 +557,17 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       context, design_state, slot_info, layout.design.four_state_patches);
 
   // Initialize runtime state (reset time tracker, set fs_base_dir)
-  auto* fs_base_dir_str =
-      builder.CreateGlobalStringPtr(input.fs_base_dir, "fs_base_dir");
+  llvm::Value* fs_base_dir_str = nullptr;
+  if (argv_forwarding) {
+    // AOT: resolve base dir from argv[0] (bundle root) or LYRA_FS_BASE_DIR env
+    auto* argv0 = builder.CreateLoad(
+        llvm::PointerType::getUnqual(ctx), main_func->getArg(1), "argv0");
+    fs_base_dir_str =
+        builder.CreateCall(context.GetLyraResolveBaseDir(), {argv0});
+  } else {
+    fs_base_dir_str =
+        builder.CreateGlobalStringPtr(input.fs_base_dir, "fs_base_dir");
+  }
   builder.CreateCall(context.GetLyraInitRuntime(), {fs_base_dir_str});
 
   // Hook: after design state and runtime are initialized
@@ -742,21 +761,40 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     }
 
     // Build plusargs array for $test$plusargs and $value$plusargs
-    auto num_plusargs = static_cast<uint32_t>(input.plusargs.size());
     llvm::Value* plusargs_array = nullptr;
-    if (num_plusargs > 0) {
-      plusargs_array = builder.CreateAlloca(
-          ptr_ty, llvm::ConstantInt::get(i32_ty, num_plusargs), "plusargs");
-      for (uint32_t i = 0; i < num_plusargs; ++i) {
-        auto* plusarg_str = builder.CreateGlobalStringPtr(
-            input.plusargs[i], std::format("plusarg_{}", i));
-        auto* slot =
-            builder.CreateGEP(ptr_ty, plusargs_array, {builder.getInt32(i)});
-        builder.CreateStore(plusarg_str, slot);
-      }
+    llvm::Value* num_plusargs_val = nullptr;
+    if (argv_forwarding) {
+      // AOT: plusargs come from argv[1:] at runtime
+      auto* argc_val = main_func->getArg(0);
+      auto* argv_val = main_func->getArg(1);
+      // Clamp to 0 if argc < 1 (practically impossible but defensive)
+      auto* argc_minus_1 =
+          builder.CreateSub(argc_val, llvm::ConstantInt::get(i32_ty, 1));
+      auto* is_positive = builder.CreateICmpSGT(
+          argc_minus_1, llvm::ConstantInt::get(i32_ty, 0));
+      num_plusargs_val = builder.CreateSelect(
+          is_positive, argc_minus_1, llvm::ConstantInt::get(i32_ty, 0),
+          "num_plusargs");
+      plusargs_array = builder.CreateGEP(
+          ptr_ty, argv_val, {llvm::ConstantInt::get(i32_ty, 1)}, "plusargs");
     } else {
-      plusargs_array =
-          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+      // JIT: plusargs baked into IR as global string constants
+      auto num_plusargs = static_cast<uint32_t>(input.plusargs.size());
+      num_plusargs_val = llvm::ConstantInt::get(i32_ty, num_plusargs);
+      if (num_plusargs > 0) {
+        plusargs_array = builder.CreateAlloca(
+            ptr_ty, llvm::ConstantInt::get(i32_ty, num_plusargs), "plusargs");
+        for (uint32_t i = 0; i < num_plusargs; ++i) {
+          auto* plusarg_str = builder.CreateGlobalStringPtr(
+              input.plusargs[i], std::format("plusarg_{}", i));
+          auto* slot =
+              builder.CreateGEP(ptr_ty, plusargs_array, {builder.getInt32(i)});
+          builder.CreateStore(plusarg_str, slot);
+        }
+      } else {
+        plusargs_array = llvm::ConstantPointerNull::get(
+            llvm::cast<llvm::PointerType>(ptr_ty));
+      }
     }
 
     // Build instance paths array for %m support
@@ -789,7 +827,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
         context.GetLyraRunSimulation(),
         {funcs_array, states_array,
          llvm::ConstantInt::get(i32_ty, num_module_processes), plusargs_array,
-         llvm::ConstantInt::get(i32_ty, num_plusargs), instance_paths_array,
+         num_plusargs_val, instance_paths_array,
          llvm::ConstantInt::get(i32_ty, num_instance_paths), meta_table,
          llvm::ConstantInt::get(i32_ty, meta_count),
          llvm::ConstantInt::get(i32_ty, runtime::slot_meta_abi::kVersion),
