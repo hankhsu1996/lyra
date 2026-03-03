@@ -79,13 +79,23 @@ auto RunCommand(const std::vector<std::string>& args) -> RunResult {
   return {.exit_code = exit_code, .captured_stderr = std::move(captured)};
 }
 
-auto FindCC() -> std::filesystem::path {
-  // Check CC environment variable first
+auto FindCC(bool allow_ambient_search) -> std::filesystem::path {
+  // Check LYRA_CC environment variable first (explicit override)
+  if (const char* lyra_cc = std::getenv("LYRA_CC")) {
+    auto result = RunCommand({lyra_cc, "--version"});
+    if (result.exit_code == 0) {
+      return lyra_cc;
+    }
+  }
+  // Check CC environment variable
   if (const char* cc_env = std::getenv("CC")) {
     auto result = RunCommand({cc_env, "--version"});
     if (result.exit_code == 0) {
       return cc_env;
     }
+  }
+  if (!allow_ambient_search) {
+    return {};
   }
   // Try clang first (better C++23 support), then cc, then gcc
   for (const char* name : {"clang", "cc", "gcc"}) {
@@ -99,11 +109,12 @@ auto FindCC() -> std::filesystem::path {
 
 }  // namespace
 
-auto DetectToolchain() -> std::expected<Toolchain, std::string> {
-  auto cc = FindCC();
+auto DetectToolchain(bool allow_ambient_search)
+    -> std::expected<Toolchain, std::string> {
+  auto cc = FindCC(allow_ambient_search);
   if (cc.empty()) {
     return std::unexpected(
-        "no C compiler found; install clang or gcc, or set CC");
+        "no C compiler found; set LYRA_CC or CC, or install clang/gcc");
   }
   return Toolchain{
       .cc_path = std::move(cc),

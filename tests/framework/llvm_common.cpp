@@ -1,12 +1,19 @@
 #include "tests/framework/llvm_common.hpp"
 
+#include <array>
+#include <cerrno>
+#include <cstring>
 #include <expected>
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <poll.h>
+#include <spawn.h>
 #include <sstream>
 #include <string>
+#include <sys/wait.h>
 #include <type_traits>
+#include <unistd.h>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -106,6 +113,141 @@ struct HooksHolder {
 thread_local std::unique_ptr<HooksHolder> g_hooks_holder;
 
 }  // namespace
+
+auto FindRuntimeLibrary() -> std::optional<std::filesystem::path> {
+  constexpr std::string_view kLibName = "liblyra_runtime.so";
+
+  // Prefer Bazel runfiles env vars (works in RBE and local)
+  const char* test_srcdir = std::getenv("TEST_SRCDIR");
+  const char* test_workspace = std::getenv("TEST_WORKSPACE");
+  if (test_srcdir != nullptr && test_workspace != nullptr) {
+    auto runfiles_path =
+        std::filesystem::path(test_srcdir) / test_workspace / kLibName;
+    if (std::filesystem::exists(runfiles_path)) {
+      return runfiles_path;
+    }
+  }
+
+  // Fallback: resolve from executable path
+  std::filesystem::path exe_path;
+  try {
+    exe_path = std::filesystem::read_symlink("/proc/self/exe");
+  } catch (const std::filesystem::filesystem_error&) {
+    return std::nullopt;
+  }
+
+  auto runfiles_path = std::filesystem::path(exe_path.string() + ".runfiles") /
+                       "_main" / kLibName;
+  if (std::filesystem::exists(runfiles_path)) {
+    return runfiles_path;
+  }
+
+  auto sibling_path = exe_path.parent_path() / kLibName;
+  if (std::filesystem::exists(sibling_path)) {
+    return sibling_path;
+  }
+
+  return std::nullopt;
+}
+
+auto RunSubprocess(
+    const std::filesystem::path& exe, std::span<const std::string> args)
+    -> SubprocessResult {
+  // Create pipes for stdout and stderr
+  std::array<int, 2> stdout_pipe{};
+  std::array<int, 2> stderr_pipe{};
+  if (pipe(stdout_pipe.data()) != 0) {
+    return {.exit_code = -1, .stderr_text = "failed to create stdout pipe"};
+  }
+  if (pipe(stderr_pipe.data()) != 0) {
+    close(stdout_pipe[0]);
+    close(stdout_pipe[1]);
+    return {.exit_code = -1, .stderr_text = "failed to create stderr pipe"};
+  }
+
+  posix_spawn_file_actions_t actions{};
+  posix_spawn_file_actions_init(&actions);
+  posix_spawn_file_actions_adddup2(&actions, stdout_pipe[1], STDOUT_FILENO);
+  posix_spawn_file_actions_adddup2(&actions, stderr_pipe[1], STDERR_FILENO);
+  posix_spawn_file_actions_addclose(&actions, stdout_pipe[0]);
+  posix_spawn_file_actions_addclose(&actions, stdout_pipe[1]);
+  posix_spawn_file_actions_addclose(&actions, stderr_pipe[0]);
+  posix_spawn_file_actions_addclose(&actions, stderr_pipe[1]);
+
+  // Build argv: [exe, args..., nullptr]
+  std::string exe_str = exe.string();
+  std::vector<char*> argv;
+  argv.reserve(args.size() + 2);
+  argv.push_back(exe_str.data());
+  // Store string copies so pointers remain valid
+  std::vector<std::string> arg_copies(args.begin(), args.end());
+  for (auto& arg : arg_copies) {
+    argv.push_back(arg.data());
+  }
+  argv.push_back(nullptr);
+
+  pid_t pid = 0;
+  // NOLINTNEXTLINE(misc-include-cleaner) - environ is from unistd.h
+  int spawn_result = posix_spawnp(
+      &pid, exe_str.c_str(), &actions, nullptr, argv.data(), environ);
+  posix_spawn_file_actions_destroy(&actions);
+
+  // Close write ends in parent
+  close(stdout_pipe[1]);
+  close(stderr_pipe[1]);
+
+  if (spawn_result != 0) {
+    close(stdout_pipe[0]);
+    close(stderr_pipe[0]);
+    return {
+        .exit_code = -1,
+        .stderr_text = std::format(
+            "posix_spawnp failed: {}", std::strerror(spawn_result))};
+  }
+
+  // Read stdout and stderr concurrently using poll
+  std::string stdout_text;
+  std::string stderr_text;
+  std::array<struct pollfd, 2> fds{};
+  fds[0] = {.fd = stdout_pipe[0], .events = POLLIN, .revents = 0};
+  fds[1] = {.fd = stderr_pipe[0], .events = POLLIN, .revents = 0};
+  int open_fds = 2;
+
+  std::array<char, 4096> buffer{};
+  while (open_fds > 0) {
+    int ready = poll(fds.data(), fds.size(), -1);
+    if (ready < 0) {
+      break;
+    }
+    for (auto& fd : fds) {
+      if (fd.fd < 0) {
+        continue;
+      }
+      if ((fd.revents & (POLLIN | POLLHUP)) != 0) {
+        ssize_t n = read(fd.fd, buffer.data(), buffer.size());
+        if (n > 0) {
+          auto& target = (fd.fd == stdout_pipe[0]) ? stdout_text : stderr_text;
+          target.append(buffer.data(), static_cast<size_t>(n));
+        } else {
+          close(fd.fd);
+          fd.fd = -1;
+          --open_fds;
+        }
+      }
+    }
+  }
+
+  int status = 0;
+  if (waitpid(pid, &status, 0) == -1) {
+    return {.exit_code = -1, .stderr_text = "waitpid failed"};
+  }
+
+  int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+  return {
+      .exit_code = exit_code,
+      .stdout_text = std::move(stdout_text),
+      .stderr_text = std::move(stderr_text)};
+}
 
 auto PrepareLlvmModule(
     const TestCase& test_case, const std::filesystem::path& work_directory,

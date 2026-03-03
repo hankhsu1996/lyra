@@ -8,6 +8,7 @@
 #include <string>
 
 #include "lyra/common/mutation_event.hpp"
+#include "tests/framework/aot_backend.hpp"
 #include "tests/framework/assertions.hpp"
 #include "tests/framework/jit_backend.hpp"
 #include "tests/framework/lli_backend.hpp"
@@ -159,6 +160,43 @@ void RunTestCase(
       }
 
       auto result = RunLliBackend(test_case, work_directory);
+
+      if (test_case.expected_error.has_value()) {
+        ASSERT_FALSE(result.success)
+            << "[" << test_case.source_yaml
+            << "] Expected compilation error but succeeded";
+        AssertOutput(result.error_message, *test_case.expected_error);
+        break;
+      }
+
+      ASSERT_TRUE(result.success)
+          << "[" << test_case.source_yaml << "] " << result.error_message;
+
+      // Check expected variables
+      if (!test_case.expected_values.empty()) {
+        AssertVariables(
+            result.variables, test_case.expected_values, test_case.source_yaml);
+      }
+
+      // Check expected time
+      if (test_case.expected_time.has_value()) {
+        EXPECT_EQ(result.final_time, *test_case.expected_time)
+            << "[" << test_case.source_yaml << "] Time mismatch";
+      }
+
+      // Check expected stdout
+      if (test_case.expected_stdout.has_value()) {
+        AssertOutput(result.captured_output, test_case.expected_stdout.value());
+      }
+      break;
+    }
+
+    case BackendKind::kAot: {
+      if (!test_case.expected_files.empty()) {
+        GTEST_SKIP() << "AOT backend does not support file assertions";
+      }
+
+      auto result = RunAotBackend(test_case, work_directory);
 
       if (test_case.expected_error.has_value()) {
         ASSERT_FALSE(result.success)

@@ -31,6 +31,55 @@ suites:
     exclude_regex:
       - two_state_only\.yaml$ # Two-state semantic diff only
 
+  aot_dev:
+    backend: aot
+    include_regex:
+      - control_flow/
+      - datatypes/
+      - directives/
+      - functions/
+      - generate/
+      - hierarchy/
+      - lifecycle/
+      - metadata/
+      - mutation/
+      - operators/
+      - packages/
+      - processes/
+      - scheduling/
+      - system_tf/
+      - trace/
+    exclude_regex:
+      - two_state_only\.yaml$ # Two-state semantic diff only
+
+  # AOT smoke suite - small, stable subset for fast PR gating.
+  # Keep ~20-40 YAML files max. Tighten patterns if they expand.
+  aot_smoke:
+    backend: aot
+    include_regex:
+      - ^control_flow/conditional/
+      - ^control_flow/for/
+      - ^datatypes/integral/variables/
+      - ^datatypes/packed/packed_struct/
+      - ^datatypes/unpacked/dynamic_arrays/
+      - ^directives/timescale/
+      - ^functions/basic/
+      - ^generate/generate/
+      - ^hierarchy/instantiation/
+      - ^hierarchy/ports/output_ports/
+      - ^lifecycle/copy_assign/
+      - ^operators/compound_assignment/
+      - ^operators/concat/
+      - ^packages/basic/
+      - ^processes/initial/
+      - ^processes/non_blocking/
+      - ^scheduling/nba_ordering/
+      - ^system_tf/effect/display/
+      - ^system_tf/pure/conversions/
+      - ^trace/basic/
+    exclude_regex:
+      - two_state_only\.yaml$
+
   lli_dev:
     backend: lli
     include_regex:
