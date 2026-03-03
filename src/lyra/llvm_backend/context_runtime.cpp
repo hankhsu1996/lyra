@@ -476,6 +476,18 @@ auto Context::GetLyraInitRuntime() -> llvm::Function* {
   return lyra_init_runtime_;
 }
 
+auto Context::GetLyraResolveBaseDir() -> llvm::Function* {
+  if (lyra_resolve_base_dir_ == nullptr) {
+    // const char* LyraResolveBaseDir(const char* argv0)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    lyra_resolve_base_dir_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraResolveBaseDir",
+        llvm_module_.get());
+  }
+  return lyra_resolve_base_dir_;
+}
+
 auto Context::GetLyraReportTime() -> llvm::Function* {
   if (lyra_report_time_ == nullptr) {
     auto* fn_type =

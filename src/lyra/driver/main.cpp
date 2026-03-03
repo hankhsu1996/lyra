@@ -11,13 +11,17 @@
 #include <utility>
 #include <vector>
 
+#include <fmt/core.h>
+
 #include "check.hpp"
 #include "commands.hpp"
+#include "compile.hpp"
 #include "dump.hpp"
 #include "input.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "print.hpp"
+#include "run_aot.hpp"
 #include "run_jit.hpp"
 #include "run_lli.hpp"
 #include "run_mir.hpp"
@@ -59,8 +63,8 @@ auto main(int argc, char* argv[]) -> int {
   argparse::ArgumentParser run_cmd("run");
   run_cmd.add_description("Run simulation");
   run_cmd.add_argument("--backend")
-      .default_value(std::string("jit"))
-      .help("Execution backend: jit (default), lli, or mir");
+      .default_value(std::string("aot"))
+      .help("Execution backend: aot (default), jit, lli, or mir");
   lyra::driver::AddCompilationFlags(run_cmd);
   run_cmd.add_argument("files").remaining().help(
       "Source files (uses lyra.toml if not specified)");
@@ -78,6 +82,17 @@ auto main(int argc, char* argv[]) -> int {
   dump_cmd.add_argument("files").remaining().help(
       "Source files (uses lyra.toml if not specified)");
 
+  argparse::ArgumentParser compile_cmd("compile");
+  compile_cmd.add_description("Compile to a native executable");
+  compile_cmd.add_argument("-o", "--output")
+      .default_value(std::string("out"))
+      .help("Output directory (default: out/)");
+  compile_cmd.add_argument("--name").help(
+      "Executable name (default: top module name)");
+  lyra::driver::AddCompilationFlags(compile_cmd);
+  compile_cmd.add_argument("files").remaining().help(
+      "Source files (uses lyra.toml if not specified)");
+
   argparse::ArgumentParser init_cmd("init");
   init_cmd.add_description("Create a new Lyra project");
   init_cmd.add_argument("name").nargs(0, 1).help("Project name");
@@ -87,6 +102,7 @@ auto main(int argc, char* argv[]) -> int {
       .help("Overwrite existing lyra.toml");
 
   program.add_subparser(run_cmd);
+  program.add_subparser(compile_cmd);
   program.add_subparser(check_cmd);
   program.add_subparser(dump_cmd);
   program.add_subparser(init_cmd);
@@ -137,6 +153,8 @@ auto main(int argc, char* argv[]) -> int {
       input->plusargs = std::move(plusargs);
 
       switch (*backend) {
+        case lyra::driver::Backend::kAot:
+          return lyra::driver::RunAot(*input);
         case lyra::driver::Backend::kJit:
           return lyra::driver::RunJit(*input);
         case lyra::driver::Backend::kLli:
@@ -144,6 +162,28 @@ auto main(int argc, char* argv[]) -> int {
         case lyra::driver::Backend::kMir:
           return lyra::driver::RunMir(*input);
       }
+    }
+
+    if (program.is_subcommand_used("compile")) {
+      auto input = prepare(compile_cmd);
+      if (!input) return 1;
+
+      std::string exe_name;
+      if (auto name = compile_cmd.present<std::string>("--name")) {
+        exe_name = *name;
+      } else {
+        exe_name = input->top.empty() ? "simulation" : input->top;
+      }
+
+      lyra::driver::CompileOptions compile_options{
+          .output_dir =
+              std::filesystem::path(compile_cmd.get<std::string>("-o")),
+          .name = exe_name,
+      };
+      auto compile_result = lyra::driver::Compile(*input, compile_options);
+      if (!compile_result) return compile_result.error();
+      fmt::print(stderr, "compiled: {}\n", compile_result->string());
+      return 0;
     }
 
     if (program.is_subcommand_used("check")) {

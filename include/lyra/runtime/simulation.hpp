@@ -144,6 +144,12 @@ void LyraSetTimeFormat(
     void* engine_ptr, int8_t units, int32_t precision, const char* suffix,
     int32_t min_width);
 
+// Resolve the base directory for relative file I/O.
+// Checks LYRA_FS_BASE_DIR env var first, then derives from argv[0]
+// (bundle root = dirname(dirname(realpath(argv0)))).
+// Returns a pointer to static storage (valid until next call).
+auto LyraResolveBaseDir(const char* argv0) -> const char*;
+
 // Initialize runtime state (call before running processes).
 // fs_base_dir: absolute path for relative file I/O resolution.
 void LyraInitRuntime(const char* fs_base_dir);

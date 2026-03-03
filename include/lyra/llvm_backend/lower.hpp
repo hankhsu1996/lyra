@@ -68,6 +68,17 @@ class SimulationHooks {
   }
 };
 
+// How the synthesized main() receives plusargs.
+enum class MainAbi {
+  // JIT/test mode: plusargs are baked into IR as global string constants.
+  // main() takes no arguments: int main().
+  kEmbeddedPlusargs,
+
+  // AOT mode: main(argc, argv) forwards argv[1:] as plusargs.
+  // fs_base_dir uses CWD at runtime instead of compile-time value.
+  kArgvForwarding,
+};
+
 struct LoweringInput {
   const mir::Design* design = nullptr;
   const mir::Arena* mir_arena = nullptr;
@@ -78,6 +89,7 @@ struct LoweringInput {
   std::vector<std::string> plusargs;  // Command-line plusargs for $plusargs
   uint32_t feature_flags = 0;         // FeatureFlag bitmask for runtime
   bool force_two_state = false;       // Force 2-state LLVM representation
+  MainAbi main_abi = MainAbi::kEmbeddedPlusargs;
 };
 
 struct LoweringResult {
