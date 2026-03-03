@@ -43,15 +43,17 @@ warnings = ["no-unused"]       # Optional: warning control
 
 ## Commands
 
-| Command                  | Description                            |
-| ------------------------ | -------------------------------------- |
-| `lyra init [name]`       | Create a new project                   |
-| `lyra run [files]`       | Run simulation (LLVM backend, default) |
-| `lyra run --backend=mir` | Run simulation via MIR interpreter     |
-| `lyra check [files]`     | Check source files for errors          |
-| `lyra dump hir [files]`  | Dump HIR representation                |
-| `lyra dump mir [files]`  | Dump MIR representation                |
-| `lyra dump llvm [files]` | Dump LLVM IR                           |
+| Command                  | Description                        |
+| ------------------------ | ---------------------------------- |
+| `lyra init [name]`       | Create a new project               |
+| `lyra run [files]`       | Run simulation (AOT, default)      |
+| `lyra run --backend=jit` | Run simulation via JIT (dev-only)  |
+| `lyra run --backend=mir` | Run simulation via MIR interpreter |
+| `lyra compile [files]`   | Compile to native executable       |
+| `lyra check [files]`     | Check source files for errors      |
+| `lyra dump hir [files]`  | Dump HIR representation            |
+| `lyra dump mir [files]`  | Dump MIR representation            |
+| `lyra dump llvm [files]` | Dump LLVM IR                       |
 
 Commands can use either `lyra.toml` or CLI arguments (or both).
 
@@ -167,14 +169,17 @@ Like `run`, accepts `--top`, `-I`, `-D`, `-W`, and positional files.
 
 ## Backends
 
-Two execution backends:
+Three execution backends. See [execution-modes.md](execution-modes.md) for
+architectural details.
 
-| Backend        | Path                        | Use Case                      |
-| -------------- | --------------------------- | ----------------------------- |
-| LLVM (default) | AST -> HIR -> MIR -> LLVM   | Production path               |
-| MIR            | AST -> HIR -> MIR -> Interp | Development, full feature set |
+| Backend       | Flag            | Use Case                      |
+| ------------- | --------------- | ----------------------------- |
+| AOT (default) | `--backend=aot` | Production path               |
+| JIT           | `--backend=jit` | Developer iteration, dev-only |
+| MIR           | `--backend=mir` | MIR debugging, process-local  |
 
-The LLVM backend is the default. The MIR interpreter (`--backend=mir`) supports the full feature set and is useful for development and testing.
+AOT and JIT share the same LLVM codegen pipeline (`LowerMirToLlvm`). AOT
+compiles to a native executable; JIT compiles and runs in-process.
 
 ## Strictness Modes
 
@@ -194,5 +199,7 @@ pedantic = true
 ## Design Decisions
 
 - **Dual mode**: Commands work with lyra.toml, CLI arguments, or both
-- **Default backend**: LLVM (production path)
-- **MIR backend**: Full feature support, accessed via `--backend=mir`
+- **Default backend**: AOT (production path, compile to native executable)
+- **JIT backend**: Dev-only, accessed via `--backend=jit`
+- **MIR backend**: Debug-only, process-local, accessed via `--backend=mir`
+- **`run` semantics**: Always means "execute", backend is an implementation detail
