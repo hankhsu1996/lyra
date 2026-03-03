@@ -9,17 +9,28 @@ milestone assignments.
 
 Tags: `[codegen]` `[runtime]` `[aot]` `[perf]` `[tests]` `[examples]`
 
-## RISC-V CPU example broken [examples] [codegen]
+## Init IR explosion [codegen] [perf] [aot]
 
-Both AOT and JIT produce `x3 = X, expected 55` for sum_test and fib_test. The
-register file reads back X instead of the computed value. Same failure on both
-backends -- shared codegen or runtime issue, not AOT-specific.
+`main` function dominates instruction count. On RISC-V CPU example (87
+functions, 12.9K insts), `main` is 2579 insts (20%). On Ibex-scale designs
+(~1351 functions, ~290K insts), the ratio is worse and JIT codegen takes 55+
+seconds.
 
-**Fix shape**: Debug by dumping register file writes and reads. Compare against
-Verilator trace. May be a sensitivity list issue, an NBA ordering issue, or an
-init-time X-taint problem.
+Design-state initialization is fully unrolled -- every field gets an individual
+store. Large arrays and structs produce linear sequences of `store` instructions
+instead of `memset`/`memcpy`/loop patterns.
 
-**Done**: `lyra -C examples/riscv-cpu run` prints `Results: 2 passed, 0 failed`.
+**Fix shape**:
+
+- Zero-init with `memset` (already zeroinit'd, most fields are zero)
+- 4-state X patches via `LyraApply4StatePatches*` (already exists for unknowns)
+- Non-zero constants via `memcpy` from a global constant blob
+- Large repeated patterns via loop codegen
+- Factor `main` into `top_init()` + per-module `init_<N>()` functions
+
+**Done**: `main` instruction count drops below 500 on RISC-V CPU example.
+`--stats` shows init functions outside the top 5 for designs with >50
+processes.
 
 ## AOT test coverage [tests] [aot]
 

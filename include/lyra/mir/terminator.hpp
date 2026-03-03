@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <variant>
 #include <vector>
 
@@ -9,6 +10,7 @@
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/index_plan.hpp"
 #include "lyra/common/origin_id.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/common/termination_kind.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -142,5 +144,76 @@ struct Terminator {
   TerminatorData data;
   common::OriginId origin = common::OriginId::Invalid();
 };
+
+// A control-flow edge: target block + values passed to its block params.
+struct TerminatorSuccessor {
+  BasicBlockId target;
+  std::span<const Operand> args;
+};
+
+// Iterate every control-flow successor edge with its edge args.
+template <typename F>
+void ForEachSuccessor(const Terminator& term, const F& func) {
+  std::visit(
+      common::Overloaded{
+          [&](const Jump& j) {
+            func(TerminatorSuccessor{.target = j.target, .args = j.args});
+          },
+          [&](const Branch& b) {
+            func(
+                TerminatorSuccessor{
+                    .target = b.then_target, .args = b.then_args});
+            func(
+                TerminatorSuccessor{
+                    .target = b.else_target, .args = b.else_args});
+          },
+          [&](const Switch& s) {
+            for (auto t : s.targets) {
+              func(TerminatorSuccessor{.target = t, .args = {}});
+            }
+          },
+          [&](const QualifiedDispatch& qd) {
+            for (auto t : qd.targets) {
+              func(TerminatorSuccessor{.target = t, .args = {}});
+            }
+          },
+          [&](const Delay& d) {
+            func(TerminatorSuccessor{.target = d.resume, .args = {}});
+          },
+          [&](const Wait& w) {
+            func(TerminatorSuccessor{.target = w.resume, .args = {}});
+          },
+          [](const Return&) {},
+          [](const Finish&) {},
+          [](const Repeat&) {},
+      },
+      term.data);
+}
+
+// Iterate every operand local to the terminator (not an edge arg).
+template <typename F>
+void ForEachLocalOperand(const Terminator& term, const F& func) {
+  std::visit(
+      common::Overloaded{
+          [](const Jump&) {},
+          [&](const Branch& b) { func(b.condition); },
+          [&](const Switch& s) { func(s.selector); },
+          [&](const QualifiedDispatch& qd) {
+            for (const auto& c : qd.conditions) {
+              func(c);
+            }
+          },
+          [](const Delay&) {},
+          [](const Wait&) {},
+          [&](const Return& r) {
+            if (r.value) func(*r.value);
+          },
+          [&](const Finish& f) {
+            if (f.message) func(*f.message);
+          },
+          [](const Repeat&) {},
+      },
+      term.data);
+}
 
 }  // namespace lyra::mir
