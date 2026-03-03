@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <exception>
+#include <format>
 #include <gtest/gtest.h>
 #include <iostream>
 #include <span>
@@ -76,6 +77,31 @@ auto main(int argc, char** argv) -> int {
   // Load test configuration and cases
   try {
     auto configuration = lyra::test::GetTestConfiguration(args);
+
+    // Framework-level sharding: deterministic filter over sorted YAML paths
+    if (!args.shard_count.empty()) {
+      auto shard_count = std::stoi(args.shard_count);
+      auto shard_index =
+          args.shard_index.empty() ? 0 : std::stoi(args.shard_index);
+      if (shard_count < 1) {
+        throw std::runtime_error("--shard_count must be >= 1");
+      }
+      if (shard_index < 0 || shard_index >= shard_count) {
+        throw std::runtime_error(
+            std::format(
+                "--shard_index={} out of range [0, {})", shard_index,
+                shard_count));
+      }
+      auto& paths = configuration.yaml_paths;
+      std::vector<std::filesystem::path> filtered;
+      for (size_t i = 0; i < paths.size(); ++i) {
+        if (static_cast<int>(i % shard_count) == shard_index) {
+          filtered.push_back(std::move(paths[i]));
+        }
+      }
+      paths = std::move(filtered);
+    }
+
     lyra::test::g_test_cases = lyra::test::LoadTestCases(
         configuration.yaml_paths, configuration.yaml_directory);
     lyra::test::g_backend = configuration.backend;

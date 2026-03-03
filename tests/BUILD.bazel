@@ -60,6 +60,55 @@ cc_test(
     ],
 )
 
+# AOT development suite - full AOT pipeline (compile > link > execute)
+cc_test(
+    name = "aot_dev_tests",
+    srcs = ["main.cpp"],
+    args = ["--suite=aot_dev"],
+    data = [
+        "suites.yaml",
+        "//:liblyra_runtime.so",
+    ] + glob(["sv_features/**/*.yaml"]),
+    deps = [
+        ":test_framework",
+        "@googletest//:gtest",
+    ],
+)
+
+# AOT smoke suite - small, stable subset for fast PR gating
+cc_test(
+    name = "aot_smoke_tests",
+    srcs = ["main.cpp"],
+    args = ["--suite=aot_smoke"],
+    data = [
+        "suites.yaml",
+        "//:liblyra_runtime.so",
+    ] + glob(["sv_features/**/*.yaml"]),
+    deps = [
+        ":test_framework",
+        "@googletest//:gtest",
+    ],
+)
+
+# AOT sharded targets for parallel CI on main
+[cc_test(
+    name = "aot_dev_tests_shard%d" % i,
+    srcs = ["main.cpp"],
+    args = [
+        "--suite=aot_dev",
+        "--shard_count=4",
+        "--shard_index=%d" % i,
+    ],
+    data = [
+        "suites.yaml",
+        "//:liblyra_runtime.so",
+    ] + glob(["sv_features/**/*.yaml"]),
+    deps = [
+        ":test_framework",
+        "@googletest//:gtest",
+    ],
+) for i in range(4)]
+
 # LLI development suite - out-of-process LLI execution (for debugging/comparison)
 cc_test(
     name = "lli_dev_tests",

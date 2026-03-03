@@ -25,8 +25,11 @@ struct LinkError {
   std::string stderr;   // Raw stderr from the linker
 };
 
-// Detect the host toolchain (finds cc or clang).
-auto DetectToolchain() -> std::expected<Toolchain, std::string>;
+// Detect the host toolchain.
+// Resolution order: LYRA_CC env > CC env > PATH search (clang, cc, gcc).
+// Set allow_ambient_search=false to skip PATH search (LYRA_CC/CC only).
+auto DetectToolchain(bool allow_ambient_search = true)
+    -> std::expected<Toolchain, std::string>;
 
 // Link an object file into an executable, placing the result in a bundle:
 //   output_dir/bin/<name>

@@ -52,7 +52,11 @@ auto ParseArgs(std::span<char*> argv)
     if (TryParseFlag(arg, next_arg, "suite", args.suite, consumed_next) ||
         TryParseFlag(arg, next_arg, "backend", args.backend, consumed_next) ||
         TryParseFlag(
-            arg, next_arg, "test_file", args.test_file, consumed_next)) {
+            arg, next_arg, "test_file", args.test_file, consumed_next) ||
+        TryParseFlag(
+            arg, next_arg, "shard_count", args.shard_count, consumed_next) ||
+        TryParseFlag(
+            arg, next_arg, "shard_index", args.shard_index, consumed_next)) {
       if (consumed_next) {
         ++i;  // Skip the value we consumed
       }

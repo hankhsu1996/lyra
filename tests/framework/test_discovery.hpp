@@ -15,6 +15,8 @@ struct CommandLineArgs {
   std::string suite;
   std::string backend;
   std::string test_file;
+  std::string shard_count;  // Framework-level sharding (0 = disabled)
+  std::string shard_index;  // 0-based shard index
 };
 
 // Result of resolving args to test configuration

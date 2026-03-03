@@ -14,6 +14,7 @@ enum class BackendKind {
   kMir,  // MIR interpreter
   kJit,  // In-process ORC JIT
   kLli,  // Out-of-process LLI interpreter (for debugging/comparison)
+  kAot,  // AOT compile + link + subprocess execution
 };
 
 // Parse backend kind from string (case-sensitive: "mir", "jit", "lli")
@@ -26,6 +27,9 @@ inline auto ParseBackendKind(std::string_view backend_string) -> BackendKind {
   }
   if (backend_string == "lli") {
     return BackendKind::kLli;
+  }
+  if (backend_string == "aot") {
+    return BackendKind::kAot;
   }
   throw std::runtime_error("Unknown backend: " + std::string(backend_string));
 }

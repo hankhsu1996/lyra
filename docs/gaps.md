@@ -21,19 +21,6 @@ init-time X-taint problem.
 
 **Done**: `lyra -C examples/riscv-cpu run` prints `Results: 2 passed, 0 failed`.
 
-## AOT test coverage [tests] [aot]
-
-No CI job validates AOT. The `jit_dev_tests` and `mir_dev_tests` suites exist
-but there is no `aot_dev_tests` suite.
-
-**Fix shape**:
-
-- Add `aot_dev` suite to `tests/suites.yaml` (same test files as `jit_dev`)
-- Add `//tests:aot_dev_tests` target to `tests/BUILD.bazel`
-- Add AOT test step to `.github/workflows/bazel-build.yml`
-
-**Done**: `bazel test //tests:aot_dev_tests` runs in CI and passes.
-
 ## Performance validation [perf] [tests]
 
 No automated tracking of compile time, runtime, or IR size. No way to detect
