@@ -230,27 +230,13 @@ void CollectFromStatement(
 
 void CollectFromTerminator(
     const Terminator& term, const Arena& arena, ObservationSet& obs) {
-  std::visit(
-      common::Overloaded{
-          [&](const Branch& branch) {
-            CollectFromOperand(branch.condition, arena, obs);
-          },
-          [&](const Switch& sw) {
-            CollectFromOperand(sw.selector, arena, obs);
-          },
-          [&](const QualifiedDispatch& qd) {
-            for (const auto& cond : qd.conditions) {
-              CollectFromOperand(cond, arena, obs);
-            }
-          },
-          [](const Jump&) {},
-          [](const Delay&) {},
-          [](const Wait&) {},
-          [](const Return&) {},
-          [](const Finish&) {},
-          [](const Repeat&) {},
-      },
-      term.data);
+  auto collect = [&](const Operand& op) { CollectFromOperand(op, arena, obs); };
+  ForEachLocalOperand(term, collect);
+  ForEachSuccessor(term, [&](const TerminatorSuccessor& succ) {
+    for (const auto& arg : succ.args) {
+      collect(arg);
+    }
+  });
 }
 
 }  // namespace

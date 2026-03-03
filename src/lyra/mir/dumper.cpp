@@ -59,11 +59,34 @@ auto FormatTerminator(const Terminator& term) -> std::string {
       [](const auto& t) -> std::string {
         using T = std::decay_t<decltype(t)>;
         if constexpr (std::is_same_v<T, Jump>) {
-          return std::format("jump bb{}", t.target.value);
+          std::string result = std::format("jump bb{}", t.target.value);
+          if (!t.args.empty()) {
+            result += "(";
+            for (size_t i = 0; i < t.args.size(); ++i) {
+              if (i > 0) result += ", ";
+              result += FormatTermOperand(t.args[i]);
+            }
+            result += ")";
+          }
+          return result;
         } else if constexpr (std::is_same_v<T, Branch>) {
+          auto format_target = [](BasicBlockId target,
+                                  const std::vector<Operand>& args) {
+            std::string s = std::format("bb{}", target.value);
+            if (!args.empty()) {
+              s += "(";
+              for (size_t i = 0; i < args.size(); ++i) {
+                if (i > 0) s += ", ";
+                s += FormatTermOperand(args[i]);
+              }
+              s += ")";
+            }
+            return s;
+          };
           return std::format(
-              "branch {} bb{}, bb{}", FormatTermOperand(t.condition),
-              t.then_target.value, t.else_target.value);
+              "branch {} {}, {}", FormatTermOperand(t.condition),
+              format_target(t.then_target, t.then_args),
+              format_target(t.else_target, t.else_args));
         } else if constexpr (std::is_same_v<T, Switch>) {
           std::string result =
               std::format("switch {} [", FormatTermOperand(t.selector));

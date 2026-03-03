@@ -1,0 +1,81 @@
+feature: hierarchy_ternary_in_submodule
+description: Tests ternary sensitivity via edge args in submodule processes
+
+cases:
+  - name: always_comb_ternary_true_arm
+    description: Submodule always_comb ternary, sel=1, parent changes true-arm input
+    sv: |
+      module Mux(input int a, input int b, input bit sel, output int result);
+        always_comb result = sel ? a : b;
+      endmodule
+
+      module Top;
+        int a, b, out;
+        bit sel;
+        Mux m(.a(a), .b(b), .sel(sel), .result(out));
+
+        initial begin
+          sel = 1; a = 0; b = 0;
+          #1;
+          $display("out=%0d", out);
+          a = 42;
+          #1;
+          $display("out=%0d", out);
+        end
+      endmodule
+    expect:
+      stdout: |
+        out=0
+        out=42
+
+  - name: always_comb_ternary_false_arm
+    description: Submodule always_comb ternary, sel=0, parent changes false-arm input
+    sv: |
+      module Mux(input int a, input int b, input bit sel, output int result);
+        always_comb result = sel ? a : b;
+      endmodule
+
+      module Top;
+        int a, b, out;
+        bit sel;
+        Mux m(.a(a), .b(b), .sel(sel), .result(out));
+
+        initial begin
+          sel = 0; a = 0; b = 0;
+          #1;
+          $display("out=%0d", out);
+          b = 77;
+          #1;
+          $display("out=%0d", out);
+        end
+      endmodule
+    expect:
+      stdout: |
+        out=0
+        out=77
+
+  - name: continuous_assign_ternary_in_child
+    description: Submodule continuous assign ternary, parent changes selected arm
+    sv: |
+      module Mux(input int a, input int b, input bit sel, output int result);
+        assign result = sel ? a : b;
+      endmodule
+
+      module Top;
+        int a, b, out;
+        bit sel;
+        Mux m(.a(a), .b(b), .sel(sel), .result(out));
+
+        initial begin
+          sel = 1; a = 10; b = 20;
+          #1;
+          $display("out=%0d", out);
+          a = 55;
+          #1;
+          $display("out=%0d", out);
+        end
+      endmodule
+    expect:
+      stdout: |
+        out=10
+        out=55

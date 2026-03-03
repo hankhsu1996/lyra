@@ -66,6 +66,28 @@ cases:
         b=2
         b=10
 
+  - name: ternary_sensitivity
+    description: Ternary edge args are tracked in sensitivity (sel constant, value changes)
+    sv: |
+      module Test;
+        int a, b, y;
+        bit sel;
+        assign sel = 1;
+        assign y = sel ? a : b;
+        initial begin
+          a = 0; b = 0;
+          #1;
+          $display("y=%0d", y);
+          a = 99;
+          #1;
+          $display("y=%0d", y);
+        end
+      endmodule
+    expect:
+      stdout: |
+        y=0
+        y=99
+
   - name: constant_rhs
     description: Constant RHS (no sensitivity) should not cause infinite loop
     sv: |
