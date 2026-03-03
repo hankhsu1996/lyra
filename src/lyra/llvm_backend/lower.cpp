@@ -1,5 +1,6 @@
 #include "lyra/llvm_backend/lower.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -31,7 +32,6 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
@@ -609,60 +609,208 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   auto num_module_processes = num_regular_module + num_kernelized;
 
   if (num_module_processes > 0) {
-    std::vector<llvm::Value*> module_states;
-    module_states.reserve(num_module_processes);
-    std::vector<llvm::Value*> module_funcs;
-    module_funcs.reserve(num_module_processes);
+    auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+    const auto& dl = mod.getDataLayout();
+    auto* header_type = context.GetHeaderType();
 
-    // Regular module processes (including non-kernelized connections)
+    // Compute packed process state buffer layout.
+    // All regular module process frames are packed into a single alloca,
+    // replacing N allocas + N memsets with 1 alloca + 1 memset.
+    struct ProcessInitDesc {
+      uint64_t offset;      // Byte offset into packed buffer
+      uint64_t size;        // State type alloc size
+      size_t layout_index;  // Index into layout.processes
+      bool has_4state_patches;
+      bool has_composite_4state;
+    };
+
+    std::vector<ProcessInitDesc> proc_descs;
+    proc_descs.reserve(num_regular_module);
+    uint64_t packed_buffer_size = 0;
+    uint64_t max_align = 16;
+
     for (size_t i = num_init; i < process_funcs.size(); ++i) {
       const auto& proc_layout = layout.processes[i];
+      auto* state_type = proc_layout.state_type;
+      uint64_t size = dl.getTypeAllocSize(state_type);
+      uint64_t align = dl.getABITypeAlign(state_type).value();
+      max_align = std::max(max_align, align);
 
-      auto* process_state = builder.CreateAlloca(
-          proc_layout.state_type, nullptr, std::format("process_state_{}", i));
+      // Align offset
+      packed_buffer_size = (packed_buffer_size + align - 1) & ~(align - 1);
 
-      InitializeProcessState(
-          context, process_state, design_state, proc_layout, i);
-      module_states.push_back(process_state);
-      module_funcs.push_back(process_funcs[i]);
+      // Check for 4-state work
+      bool has_patches = !context.IsForceTwoState() &&
+                         !proc_layout.frame.four_state_patches.IsEmpty();
+      bool has_composite = false;
+      if (!context.IsForceTwoState()) {
+        const auto& types = context.GetTypeArena();
+        for (TypeId type_id : proc_layout.frame.root_types) {
+          if (context.IsFourState(type_id) &&
+              !IsScalarPatchable(type_id, types, force_two_state)) {
+            has_composite = true;
+            break;
+          }
+        }
+      }
+
+      proc_descs.push_back({
+          .offset = packed_buffer_size,
+          .size = size,
+          .layout_index = i,
+          .has_4state_patches = has_patches,
+          .has_composite_4state = has_composite,
+      });
+      packed_buffer_size += size;
     }
 
-    // Kernelized connection processes: shared kernel + per-process descriptor
+    // Allocate states_array upfront (used by both init loops)
+    auto* states_array = builder.CreateAlloca(
+        ptr_ty, llvm::ConstantInt::get(i32_ty, num_module_processes),
+        "states_array");
+
+    // Allocate and zero-initialize the packed process state buffer
+    llvm::Value* packed_states = nullptr;
+    if (num_regular_module > 0) {
+      packed_states = builder.CreateAlloca(
+          i8_ty, builder.getInt64(packed_buffer_size), "packed_states");
+      if (auto* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(packed_states)) {
+        alloca_inst->setAlignment(llvm::Align(max_align));
+      }
+      builder.CreateMemSet(
+          packed_states, builder.getInt8(0), packed_buffer_size,
+          llvm::MaybeAlign(max_align));
+    }
+
+    // Initialize regular module process states from packed buffer.
+    // Emit a global offset table and use a loop for design pointer setup,
+    // with per-process 4-state patches handled separately (rare).
+    if (num_regular_module > 0) {
+      // Emit offset table as global constant: [N x i64]
+      auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+      std::vector<llvm::Constant*> offset_constants;
+      offset_constants.reserve(num_regular_module);
+      for (const auto& desc : proc_descs) {
+        offset_constants.push_back(llvm::ConstantInt::get(i64_ty, desc.offset));
+      }
+      auto* offset_array_type =
+          llvm::ArrayType::get(i64_ty, num_regular_module);
+      auto* offsets_global = new llvm::GlobalVariable(
+          mod, offset_array_type, true, llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantArray::get(offset_array_type, offset_constants),
+          "__lyra_proc_offsets");
+      offsets_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+      // Compute design pointer offset within ProcessState:
+      // header is field 0, design_ptr is field 1 within header
+      auto* header_llvm_type = context.GetHeaderType();
+      const llvm::StructLayout* hdr_sl = dl.getStructLayout(header_llvm_type);
+      uint64_t design_ptr_offset_in_header = hdr_sl->getElementOffset(1);
+
+      // Loop: for each regular process, compute state ptr, set design ptr
+      auto* proc_loop_preheader = builder.GetInsertBlock();
+      auto* proc_loop_header =
+          llvm::BasicBlock::Create(ctx, "proc_init_header", main_func);
+      auto* proc_loop_body =
+          llvm::BasicBlock::Create(ctx, "proc_init_body", main_func);
+      auto* proc_loop_exit =
+          llvm::BasicBlock::Create(ctx, "proc_init_exit", main_func);
+
+      builder.CreateBr(proc_loop_header);
+      builder.SetInsertPoint(proc_loop_header);
+
+      auto* proc_phi = builder.CreatePHI(i32_ty, 2, "proc_idx");
+      proc_phi->addIncoming(builder.getInt32(0), proc_loop_preheader);
+      auto* proc_cond =
+          builder.CreateICmpULT(proc_phi, builder.getInt32(num_regular_module));
+      builder.CreateCondBr(proc_cond, proc_loop_body, proc_loop_exit);
+
+      builder.SetInsertPoint(proc_loop_body);
+
+      // Load offset from table
+      auto* offset_ptr = builder.CreateGEP(
+          offset_array_type, offsets_global, {builder.getInt32(0), proc_phi});
+      auto* offset_val = builder.CreateLoad(i64_ty, offset_ptr);
+
+      // Compute state pointer
+      auto* state_ptr = builder.CreateGEP(i8_ty, packed_states, {offset_val});
+
+      // Set design pointer via byte offset (avoid per-type StructGEP)
+      auto* design_ptr_loc = builder.CreateGEP(
+          i8_ty, state_ptr, {builder.getInt64(design_ptr_offset_in_header)});
+      builder.CreateStore(design_state, design_ptr_loc);
+
+      // Store into states_array
+      auto* state_slot = builder.CreateGEP(ptr_ty, states_array, {proc_phi});
+      builder.CreateStore(state_ptr, state_slot);
+
+      auto* proc_next = builder.CreateAdd(proc_phi, builder.getInt32(1));
+      proc_phi->addIncoming(proc_next, proc_loop_body);
+      builder.CreateBr(proc_loop_header);
+
+      builder.SetInsertPoint(proc_loop_exit);
+    }
+
+    // Handle 4-state patches for processes that need them (rare, O(few))
+    for (uint32_t pi = 0; pi < num_regular_module; ++pi) {
+      const auto& desc = proc_descs[pi];
+      if (!desc.has_4state_patches && !desc.has_composite_4state) continue;
+
+      const auto& proc_layout = layout.processes[desc.layout_index];
+      auto* state_ptr = builder.CreateGEP(
+          i8_ty, packed_states, {builder.getInt64(desc.offset)});
+      auto* state_type = proc_layout.state_type;
+
+      if (desc.has_4state_patches) {
+        auto* frame_ptr = builder.CreateStructGEP(state_type, state_ptr, 1);
+        std::string prefix = std::format("frame.{}", desc.layout_index);
+        EmitApply4StatePatches(
+            context, frame_ptr, proc_layout.frame.four_state_patches, prefix);
+      }
+
+      if (desc.has_composite_4state) {
+        auto* frame_type = proc_layout.frame.llvm_type;
+        auto* frame_ptr = builder.CreateStructGEP(state_type, state_ptr, 1);
+        const auto& types = context.GetTypeArena();
+        for (uint32_t fi = 0; fi < proc_layout.frame.root_types.size(); ++fi) {
+          TypeId type_id = proc_layout.frame.root_types[fi];
+          if (!context.IsFourState(type_id)) continue;
+          if (IsScalarPatchable(type_id, types, force_two_state)) continue;
+          auto* field_ptr = builder.CreateStructGEP(frame_type, frame_ptr, fi);
+          EmitSVDefaultInitAfterZero(context, field_ptr, type_id);
+        }
+      }
+    }
+
+    // Kernelized connection processes: global descriptor table + loop
+    llvm::Value* conn_buffer = nullptr;
+    uint64_t conn_state_size = 0;
     if (num_kernelized > 0) {
-      auto* kernel_func = context.GetLyraConnectionKernel();
-      auto* header_type = context.GetHeaderType();
-      auto& dl = mod.getDataLayout();
       auto* design_struct = layout.design.llvm_type;
       const llvm::StructLayout* design_sl = dl.getStructLayout(design_struct);
 
-      // Build connection kernel state type:
-      // {ProcessStateHeader, ConnectionDescriptor}
-      // ConnectionDescriptor is 32 bytes, 4-byte aligned
-      auto* i8_ty = llvm::Type::getInt8Ty(ctx);
-      auto* desc_type =
-          llvm::ArrayType::get(i8_ty, sizeof(runtime::ConnectionDescriptor));
-      auto* conn_state_type = llvm::StructType::create(
-          ctx, {header_type, desc_type}, "ConnectionKernelState");
+      // Build connection descriptor constants (pre-compute all values as C++
+      // data, then emit as a single typed LLVM global constant array)
+      auto* i32_llvm = llvm::Type::getInt32Ty(ctx);
+      auto* i16_llvm = llvm::Type::getInt16Ty(ctx);
+      auto* i8_llvm = llvm::Type::getInt8Ty(ctx);
+
+      // ConnectionDescriptor LLVM struct type (mirrors C++ layout exactly)
+      auto* conn_desc_llvm_type = llvm::StructType::create(
+          ctx,
+          {i32_llvm, i32_llvm, i32_llvm,
+           i32_llvm,  // src/dst offset, size, dst_slot
+           i32_llvm, i8_llvm, i8_llvm,
+           i16_llvm,             // trigger_slot, edge, bit_idx, pad
+           i32_llvm, i32_llvm},  // trigger byte offset/size
+          "ConnectionDescriptor");
+
+      std::vector<llvm::Constant*> desc_constants;
+      desc_constants.reserve(num_kernelized);
 
       for (uint32_t ki = 0; ki < num_kernelized; ++ki) {
         const auto& entry = layout.connection_kernel_entries[ki];
 
-        auto* conn_state = builder.CreateAlloca(
-            conn_state_type, nullptr, std::format("conn_state_{}", ki));
-
-        // Zero-initialize
-        EmitMemsetZero(context, conn_state, conn_state_type);
-
-        // Set design pointer in header (field 0 -> field 1)
-        auto* hdr_ptr = builder.CreateStructGEP(conn_state_type, conn_state, 0);
-        auto* design_ptr_ptr = builder.CreateStructGEP(header_type, hdr_ptr, 1);
-        builder.CreateStore(design_state, design_ptr_ptr);
-
-        // Fill ConnectionDescriptor fields
-        auto* desc_ptr =
-            builder.CreateStructGEP(conn_state_type, conn_state, 1);
-
-        // Compute byte offsets from DesignLayout
         auto src_it = layout.design.slot_to_field.find(entry.src_slot);
         auto dst_it = layout.design.slot_to_field.find(entry.dst_slot);
         if (src_it == layout.design.slot_to_field.end() ||
@@ -682,7 +830,6 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
         auto byte_size =
             static_cast<uint32_t>(dl.getTypeAllocSize(dst_field_type));
 
-        // Resolve trigger byte range
         uint32_t trigger_byte_offset = 0;
         uint32_t trigger_byte_size = 0;
         uint8_t trigger_bit_index = 0;
@@ -705,59 +852,174 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
           }
         }
 
-        // Build the descriptor struct in memory using i32 stores
-        // ConnectionDescriptor layout (all uint32_t except padding area):
-        // [0]  src_byte_offset
-        // [4]  dst_byte_offset
-        // [8]  byte_size
-        // [12] dst_slot_id
-        // [16] trigger_slot_id
-        // [20] trigger_edge (u8) + trigger_bit_index (u8) + padding (u16)
-        // [24] trigger_byte_offset
-        // [28] trigger_byte_size
-        auto store_u32 = [&](uint32_t offset, uint32_t value) {
-          auto* field_ptr =
-              builder.CreateGEP(i8_ty, desc_ptr, {builder.getInt32(offset)});
-          builder.CreateStore(builder.getInt32(value), field_ptr);
-        };
-        auto store_u8 = [&](uint32_t offset, uint8_t value) {
-          auto* field_ptr =
-              builder.CreateGEP(i8_ty, desc_ptr, {builder.getInt32(offset)});
-          builder.CreateStore(builder.getInt8(value), field_ptr);
-        };
+        desc_constants.push_back(
+            llvm::ConstantStruct::get(
+                conn_desc_llvm_type,
+                {llvm::ConstantInt::get(i32_llvm, src_offset),
+                 llvm::ConstantInt::get(i32_llvm, dst_offset),
+                 llvm::ConstantInt::get(i32_llvm, byte_size),
+                 llvm::ConstantInt::get(i32_llvm, entry.dst_slot.value),
+                 llvm::ConstantInt::get(i32_llvm, entry.trigger_slot.value),
+                 llvm::ConstantInt::get(
+                     i8_llvm, static_cast<uint8_t>(entry.trigger_edge)),
+                 llvm::ConstantInt::get(i8_llvm, trigger_bit_index),
+                 llvm::ConstantInt::get(i16_llvm, 0),
+                 llvm::ConstantInt::get(i32_llvm, trigger_byte_offset),
+                 llvm::ConstantInt::get(i32_llvm, trigger_byte_size)}));
+      }
 
-        store_u32(0, src_offset);
-        store_u32(4, dst_offset);
-        store_u32(8, byte_size);
-        store_u32(12, entry.dst_slot.value);
-        store_u32(16, entry.trigger_slot.value);
-        store_u8(20, static_cast<uint8_t>(entry.trigger_edge));
-        store_u8(21, trigger_bit_index);
-        // padding bytes at 22-23 already zero from memset
-        store_u32(24, trigger_byte_offset);
-        store_u32(28, trigger_byte_size);
+      // Emit global constant table: @conn_descs = internal constant [N x
+      // %ConnDesc]
+      auto* desc_array_type =
+          llvm::ArrayType::get(conn_desc_llvm_type, num_kernelized);
+      auto* desc_table = new llvm::GlobalVariable(
+          mod, desc_array_type, true, llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantArray::get(desc_array_type, desc_constants),
+          "__lyra_conn_descs");
+      desc_table->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
-        module_states.push_back(conn_state);
-        module_funcs.push_back(kernel_func);
+      // Build connection kernel state type:
+      // {ProcessStateHeader, ConnectionDescriptor}
+      auto* raw_desc_type =
+          llvm::ArrayType::get(i8_ty, sizeof(runtime::ConnectionDescriptor));
+      auto* conn_state_type = llvm::StructType::create(
+          ctx, {header_type, raw_desc_type}, "ConnectionKernelState");
+
+      // Allocate all connection states in one packed buffer
+      conn_state_size = dl.getTypeAllocSize(conn_state_type);
+      uint64_t conn_state_align = dl.getABITypeAlign(conn_state_type).value();
+      uint64_t conn_buffer_size = conn_state_size * num_kernelized;
+
+      conn_buffer = builder.CreateAlloca(
+          i8_ty, builder.getInt64(conn_buffer_size), "conn_states");
+      if (auto* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(conn_buffer)) {
+        alloca_inst->setAlignment(llvm::Align(conn_state_align));
+      }
+      builder.CreateMemSet(
+          conn_buffer, builder.getInt8(0), conn_buffer_size,
+          llvm::MaybeAlign(conn_state_align));
+
+      // Descriptor copy size
+      uint64_t desc_copy_size = sizeof(runtime::ConnectionDescriptor);
+
+      // Loop: for each connection, set design pointer + memcpy descriptor
+      auto* loop_preheader = builder.GetInsertBlock();
+      auto* loop_header =
+          llvm::BasicBlock::Create(ctx, "conn_init_header", main_func);
+      auto* loop_body =
+          llvm::BasicBlock::Create(ctx, "conn_init_body", main_func);
+      auto* loop_exit =
+          llvm::BasicBlock::Create(ctx, "conn_init_exit", main_func);
+
+      builder.CreateBr(loop_header);
+      builder.SetInsertPoint(loop_header);
+
+      auto* phi = builder.CreatePHI(i32_ty, 2, "conn_idx");
+      phi->addIncoming(builder.getInt32(0), loop_preheader);
+      auto* cond = builder.CreateICmpULT(phi, builder.getInt32(num_kernelized));
+      builder.CreateCondBr(cond, loop_body, loop_exit);
+
+      builder.SetInsertPoint(loop_body);
+
+      // Compute state pointer: conn_buffer + i * conn_state_size
+      auto* idx_ext = builder.CreateZExt(phi, builder.getInt64Ty());
+      auto* state_byte_offset =
+          builder.CreateMul(idx_ext, builder.getInt64(conn_state_size));
+      auto* conn_state_ptr =
+          builder.CreateGEP(i8_ty, conn_buffer, {state_byte_offset});
+
+      // Set design pointer in header
+      auto* hdr_ptr =
+          builder.CreateStructGEP(conn_state_type, conn_state_ptr, 0);
+      auto* design_ptr_ptr = builder.CreateStructGEP(header_type, hdr_ptr, 1);
+      builder.CreateStore(design_state, design_ptr_ptr);
+
+      // Memcpy descriptor from global table
+      auto* desc_src_ptr = builder.CreateGEP(
+          desc_array_type, desc_table, {builder.getInt32(0), phi});
+      // The raw descriptor subobject in conn_state is at field 1
+      auto* desc_dst_ptr =
+          builder.CreateStructGEP(conn_state_type, conn_state_ptr, 1);
+      builder.CreateMemCpy(
+          desc_dst_ptr, llvm::MaybeAlign(4), desc_src_ptr, llvm::MaybeAlign(4),
+          desc_copy_size);
+
+      // Increment and branch back
+      auto* next_idx = builder.CreateAdd(phi, builder.getInt32(1));
+      phi->addIncoming(next_idx, loop_body);
+      builder.CreateBr(loop_header);
+
+      builder.SetInsertPoint(loop_exit);
+    }
+
+    // Build function pointer array as global constant
+    std::vector<llvm::Constant*> func_constants;
+    func_constants.reserve(num_module_processes);
+    for (size_t i = num_init; i < process_funcs.size(); ++i) {
+      func_constants.push_back(process_funcs[i]);
+    }
+    if (num_kernelized > 0) {
+      auto* kernel_func = context.GetLyraConnectionKernel();
+      for (uint32_t ki = 0; ki < num_kernelized; ++ki) {
+        func_constants.push_back(kernel_func);
       }
     }
 
-    // Build function pointer and state pointer arrays for scheduler
-    auto* funcs_array = builder.CreateAlloca(
-        ptr_ty, llvm::ConstantInt::get(i32_ty, num_module_processes),
-        "funcs_array");
-    auto* states_array = builder.CreateAlloca(
-        ptr_ty, llvm::ConstantInt::get(i32_ty, num_module_processes),
-        "states_array");
+    auto* func_array_type = llvm::ArrayType::get(ptr_ty, num_module_processes);
+    auto* funcs_global = new llvm::GlobalVariable(
+        mod, func_array_type, true, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantArray::get(func_array_type, func_constants),
+        "__lyra_module_funcs");
+    funcs_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
-    for (uint32_t i = 0; i < num_module_processes; ++i) {
-      auto* func_slot =
-          builder.CreateGEP(ptr_ty, funcs_array, {builder.getInt32(i)});
-      builder.CreateStore(module_funcs[i], func_slot);
+    // GEP to first element for scheduler
+    auto* funcs_array = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        func_array_type, funcs_global,
+        llvm::ArrayRef<llvm::Constant*>{
+            llvm::ConstantInt::get(i32_ty, 0),
+            llvm::ConstantInt::get(i32_ty, 0)});
 
-      auto* state_slot =
-          builder.CreateGEP(ptr_ty, states_array, {builder.getInt32(i)});
-      builder.CreateStore(module_states[i], state_slot);
+    // Connection state pointers via loop (from connection buffer, stride)
+    if (num_kernelized > 0) {
+      // Emit global offset table for connection state buffer strides
+      // All connection states have the same size, so compute: base + i * stride
+      auto* conn_loop_preheader = builder.GetInsertBlock();
+      auto* conn_states_header =
+          llvm::BasicBlock::Create(ctx, "conn_states_header", main_func);
+      auto* conn_states_body =
+          llvm::BasicBlock::Create(ctx, "conn_states_body", main_func);
+      auto* conn_states_exit =
+          llvm::BasicBlock::Create(ctx, "conn_states_exit", main_func);
+
+      builder.CreateBr(conn_states_header);
+      builder.SetInsertPoint(conn_states_header);
+
+      auto* cs_phi = builder.CreatePHI(i32_ty, 2, "cs_idx");
+      cs_phi->addIncoming(builder.getInt32(0), conn_loop_preheader);
+      auto* cs_cond =
+          builder.CreateICmpULT(cs_phi, builder.getInt32(num_kernelized));
+      builder.CreateCondBr(cs_cond, conn_states_body, conn_states_exit);
+
+      builder.SetInsertPoint(conn_states_body);
+
+      // Compute connection state pointer: conn_buffer + i * conn_state_size
+      auto* cs_idx_ext = builder.CreateZExt(cs_phi, builder.getInt64Ty());
+      auto* cs_byte_off =
+          builder.CreateMul(cs_idx_ext, builder.getInt64(conn_state_size));
+      auto* cs_state_ptr = builder.CreateGEP(i8_ty, conn_buffer, {cs_byte_off});
+
+      // Store into states_array at offset num_regular_module + i
+      auto* cs_array_idx =
+          builder.CreateAdd(cs_phi, builder.getInt32(num_regular_module));
+      auto* cs_state_slot =
+          builder.CreateGEP(ptr_ty, states_array, {cs_array_idx});
+      builder.CreateStore(cs_state_ptr, cs_state_slot);
+
+      auto* cs_next = builder.CreateAdd(cs_phi, builder.getInt32(1));
+      cs_phi->addIncoming(cs_next, conn_states_body);
+      builder.CreateBr(conn_states_header);
+
+      builder.SetInsertPoint(conn_states_exit);
     }
 
     // Build plusargs array for $test$plusargs and $value$plusargs
@@ -797,21 +1059,30 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       }
     }
 
-    // Build instance paths array for %m support
+    // Build instance paths array as global constant
     const auto& instance_entries = input.design->instance_table.entries;
     auto num_instance_paths = static_cast<uint32_t>(instance_entries.size());
     llvm::Value* instance_paths_array = nullptr;
     if (num_instance_paths > 0) {
-      instance_paths_array = builder.CreateAlloca(
-          ptr_ty, llvm::ConstantInt::get(i32_ty, num_instance_paths),
-          "instance_paths");
+      // Create global string constants for all paths
+      std::vector<llvm::Constant*> path_constants;
+      path_constants.reserve(num_instance_paths);
       for (uint32_t i = 0; i < num_instance_paths; ++i) {
         auto* path_str = builder.CreateGlobalStringPtr(
             instance_entries[i].full_path, std::format("inst_path_{}", i));
-        auto* slot = builder.CreateGEP(
-            ptr_ty, instance_paths_array, {builder.getInt32(i)});
-        builder.CreateStore(path_str, slot);
+        path_constants.push_back(llvm::cast<llvm::Constant>(path_str));
       }
+      auto* path_array_type = llvm::ArrayType::get(ptr_ty, num_instance_paths);
+      auto* paths_global = new llvm::GlobalVariable(
+          mod, path_array_type, true, llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantArray::get(path_array_type, path_constants),
+          "__lyra_instance_paths");
+      paths_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      instance_paths_array = llvm::ConstantExpr::getInBoundsGetElementPtr(
+          path_array_type, paths_global,
+          llvm::ArrayRef<llvm::Constant*>{
+              llvm::ConstantInt::get(i32_ty, 0),
+              llvm::ConstantInt::get(i32_ty, 0)});
     } else {
       instance_paths_array =
           llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));

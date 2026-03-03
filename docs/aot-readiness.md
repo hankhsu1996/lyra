@@ -38,19 +38,18 @@ AOT passes the same test corpus as JIT. Examples work end-to-end.
 Compile time and binary size are tracked. Regressions are caught.
 
 **Gate**: Benchmark script runs in CI. Init IR explosion is resolved for
-medium-size designs (RISC-V CPU level).
+medium-size designs (RISC-V CPU level). Init codegen is done (`main` 2579 ->
+165 insts on RISC-V CPU).
 
 **Gaps**:
 
-- Init IR explosion (P0)
 - Performance validation (P1)
 - Process duplication across instances (P2)
 
 **PR sequence**:
 
 1. Add IR size report to CI (observation only) -- establishes baseline
-2. Refactor init codegen -- biggest AOT compile-time win
-3. Process function sharing -- reduces binary size for multi-instance designs
+2. Process function sharing -- reduces binary size for multi-instance designs
 
 ### M3: JIT dev-only
 
@@ -73,7 +72,6 @@ Priority is top-to-bottom. Each PR should be independently mergeable.
 1. Fix RISC-V CPU example
 2. Add `aot_dev_tests` suite
 3. Add IR size / compile-time report (observation mode)
-4. Refactor init codegen (memset/memcpy/loop shape)
-5. X/Z init observability
-6. Process function sharing
-7. JIT dev-only documentation and CI changes
+4. X/Z init observability
+5. Process function sharing
+6. JIT dev-only documentation and CI changes
