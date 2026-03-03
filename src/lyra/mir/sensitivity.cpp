@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <type_traits>
 #include <unordered_map>
 #include <variant>
 #include <vector>
@@ -9,6 +10,7 @@
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"

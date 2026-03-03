@@ -9,6 +9,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -20,6 +21,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
@@ -33,6 +35,7 @@
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
+#include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/simulation.hpp"

@@ -9,6 +9,7 @@
 #include <functional>
 #include <initializer_list>
 #include <optional>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -25,12 +26,14 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/hir/expression.hpp"
+#include "lyra/hir/fwd.hpp"
 #include "lyra/hir/operator.hpp"
 #include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/materialize_cache.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
+#include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/effect.hpp"

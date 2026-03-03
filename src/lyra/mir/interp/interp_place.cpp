@@ -16,6 +16,7 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/interp/blob_codec.hpp"
+#include "lyra/mir/interp/frame.hpp"
 #include "lyra/mir/interp/interp_helpers.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
 #include "lyra/mir/interp/location.hpp"

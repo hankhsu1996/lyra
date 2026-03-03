@@ -1,6 +1,5 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <span>

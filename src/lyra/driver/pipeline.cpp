@@ -1,6 +1,7 @@
 #include "pipeline.hpp"
 
 #include <expected>
+#include <optional>
 #include <utility>
 
 #include "frontend.hpp"

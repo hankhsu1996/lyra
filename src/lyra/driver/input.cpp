@@ -1,5 +1,6 @@
 #include "input.hpp"
 
+#include <algorithm>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -15,6 +16,7 @@
 #include "config.hpp"
 #include "frontend.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/opt_level.hpp"
 
 namespace lyra::driver {
 

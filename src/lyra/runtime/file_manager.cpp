@@ -1,5 +1,6 @@
 #include "lyra/runtime/file_manager.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -8,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "lyra/runtime/simulation.hpp"

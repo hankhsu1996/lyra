@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/expression_call.hpp"
 
+#include <cstddef>
 #include <format>
 #include <utility>
 #include <variant>

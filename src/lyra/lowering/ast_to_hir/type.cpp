@@ -15,6 +15,7 @@
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/range.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"

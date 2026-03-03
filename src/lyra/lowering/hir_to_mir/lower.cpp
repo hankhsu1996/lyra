@@ -19,6 +19,7 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/package.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/verify.hpp"

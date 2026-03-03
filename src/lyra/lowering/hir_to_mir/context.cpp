@@ -11,6 +11,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::hir_to_mir {

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <expected>
 #include <utility>
 #include <variant>

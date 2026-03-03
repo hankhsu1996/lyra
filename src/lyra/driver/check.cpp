@@ -1,5 +1,7 @@
 #include "check.hpp"
 
+#include <optional>
+
 #include "frontend.hpp"
 #include "verbose_logger.hpp"
 
