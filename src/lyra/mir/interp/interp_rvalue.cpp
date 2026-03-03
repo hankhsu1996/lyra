@@ -6,12 +6,13 @@
 #include <format>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/common/array_query_kind.hpp"
+#include "lyra/common/assoc_array_handle.hpp"
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
@@ -33,7 +34,6 @@
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/rvalue.hpp"
-#include "lyra/runtime/assoc_array_heap.hpp"
 
 namespace lyra::mir::interp {
 

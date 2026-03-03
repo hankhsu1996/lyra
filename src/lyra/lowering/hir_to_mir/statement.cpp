@@ -11,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/edge_kind.hpp"
@@ -24,6 +25,8 @@
 #include "lyra/common/type_queries.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
+#include "lyra/hir/operator.hpp"
+#include "lyra/hir/rvalue.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/hir/system_call.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"

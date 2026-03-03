@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <memory>
 #include <type_traits>
 #include <utility>
 #include <variant>

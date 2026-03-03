@@ -14,6 +14,7 @@
 #include <fmt/core.h>
 
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/common/index_plan.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/dyn_array_data.hpp"
 #include "lyra/runtime/engine.hpp"

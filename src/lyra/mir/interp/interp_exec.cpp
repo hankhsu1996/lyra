@@ -30,6 +30,9 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/assoc_op.hpp"
+#include "lyra/mir/builtin.hpp"
+#include "lyra/mir/call.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/interp/format.hpp"
@@ -39,13 +42,16 @@
 #include "lyra/mir/interp/runtime_integral_ops.hpp"
 #include "lyra/mir/interp/runtime_real_ops.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/routine.hpp"
+#include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/assoc_array.hpp"
 #include "lyra/runtime/assoc_array_heap.hpp"
 #include "lyra/runtime/file_manager.hpp"
+#include "lyra/semantic/value.hpp"
 
 namespace lyra::mir::interp {
 

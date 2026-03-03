@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -19,11 +20,16 @@
 #include "lyra/lowering/hir_to_mir/materialize_cache.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/basic_block.hpp"
+#include "lyra/mir/builtin.hpp"
+#include "lyra/mir/call.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
+#include "lyra/mir/place.hpp"
+#include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"

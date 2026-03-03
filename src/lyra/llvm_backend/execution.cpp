@@ -2,10 +2,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -13,18 +15,22 @@
 #include <utility>
 
 #include <llvm/ExecutionEngine/JITLink/JITLink.h>
-#include <llvm/ExecutionEngine/Orc/ExecutorProcessControl.h>
+#include <llvm/ExecutionEngine/Orc/Core.h>
+#include <llvm/ExecutionEngine/Orc/ExecutionUtils.h>
 #include <llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
 #include <llvm/ExecutionEngine/Orc/ObjectTransformLayer.h>
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Support/Casting.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/TargetSelect.h>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/opt_level.hpp"
+#include "lyra/llvm_backend/lower.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -165,8 +171,10 @@ class ProfilingPlugin : public llvm::orc::ObjectLinkingLayer::Plugin {
           uint32_t seen_groups = 0;  // Bit-set over AllocGroup::Id (max 32)
           for (const auto& sec : g.sections()) {
             if (sec.blocks().empty()) continue;
-            auto mlp = sec.getMemLifetimePolicy();
-            if (mlp == llvm::orc::MemLifetimePolicy::NoAlloc) continue;
+            auto mlp =
+                sec.getMemLifetimePolicy();  // NOLINT(misc-include-cleaner)
+            if (mlp == llvm::orc::MemLifetimePolicy::NoAlloc)
+              continue;  // NOLINT(misc-include-cleaner)
             uint8_t group_id =
                 static_cast<uint8_t>(sec.getMemProt()) |
                 (static_cast<uint8_t>(static_cast<bool>(mlp)) << 3);

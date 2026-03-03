@@ -3,17 +3,23 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
 #include <vector>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/basic_block.hpp"
+#include "lyra/mir/call.hpp"
+#include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"

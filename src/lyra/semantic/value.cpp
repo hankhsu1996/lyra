@@ -14,6 +14,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/assoc_array_handle.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 

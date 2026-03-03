@@ -4,6 +4,7 @@
 #include <expected>
 #include <format>
 #include <span>
+#include <utility>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -22,6 +23,7 @@
 #include "lyra/llvm_backend/emit_string_conv.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/mir/operand.hpp"
 #include "lyra/runtime/marshal.hpp"
 
 namespace lyra::lowering::mir_to_llvm {

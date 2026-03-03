@@ -6,18 +6,24 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <format>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 #include <fmt/core.h>
 
 #include "absl/container/flat_hash_map.h"
+#include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/index_plan.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"

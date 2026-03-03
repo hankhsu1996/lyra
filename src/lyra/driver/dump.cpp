@@ -1,8 +1,11 @@
 #include "dump.hpp"
 
+#include <expected>
 #include <iostream>
+#include <optional>
 
 #include "frontend.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/hir/dumper.hpp"
 #include "lyra/llvm_backend/lower.hpp"

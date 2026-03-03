@@ -1,6 +1,5 @@
 #include "lyra/lowering/ast_to_hir/module.hpp"
 
-#include <format>
 #include <string>
 #include <utility>
 #include <vector>

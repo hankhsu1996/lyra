@@ -37,6 +37,7 @@
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
+#include "lyra/mir/instance.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 

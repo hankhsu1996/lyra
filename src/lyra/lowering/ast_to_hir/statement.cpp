@@ -25,6 +25,7 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/constant_arena.hpp"
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/scope_types.hpp"
@@ -40,6 +41,7 @@
 #include "lyra/hir/rvalue.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
+#include "lyra/lowering/ast_to_hir/detail/expression_lowering.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/pattern.hpp"

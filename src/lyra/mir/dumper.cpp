@@ -8,6 +8,7 @@
 #include <type_traits>
 #include <variant>
 
+#include "lyra/common/array_query_kind.hpp"
 #include "lyra/common/constant.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
@@ -19,8 +20,10 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/builtin.hpp"
+#include "lyra/mir/call.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -30,6 +33,7 @@
 #include "lyra/mir/package.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
+#include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"

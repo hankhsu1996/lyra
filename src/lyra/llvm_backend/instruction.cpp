@@ -1,6 +1,6 @@
+#include <expected>
 #include <variant>
 
-#include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
@@ -8,6 +8,7 @@
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/context_scope.hpp"
 #include "lyra/llvm_backend/instruction/assoc_op.hpp"
 #include "lyra/llvm_backend/instruction/builtin_call.hpp"
 #include "lyra/llvm_backend/instruction/call.hpp"
@@ -15,6 +16,9 @@
 #include "lyra/llvm_backend/instruction/effect.hpp"
 #include "lyra/llvm_backend/instruction/immediate_assign.hpp"
 #include "lyra/llvm_backend/statement.hpp"
+#include "lyra/mir/assoc_op.hpp"
+#include "lyra/mir/operand.hpp"
+#include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include <llvm/ADT/STLFunctionalExtras.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
