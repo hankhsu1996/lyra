@@ -340,17 +340,17 @@ void PrintProcessStats(
     fmt::print(sink, "\n");
   }
 
-  // Dedup summary: detect shared functions by name prefix.
-  // Each shared function = one dedup group. Wrappers = deduped process
-  // instances (thin forwarders to shared functions).
+  // Template summary: detect template functions by name prefix.
+  // Each template function = one template group. Wrappers = templated process
+  // instances (thin forwarders to template functions).
   {
-    uint32_t dedup_groups = 0;
+    uint32_t num_template_groups = 0;
     uint64_t shared_ir_insts = 0;
     uint32_t num_wrappers = 0;
     uint32_t num_nonshared = 0;
     for (const auto& fs : llvm_stats.func_stats) {
-      if (fs.name.starts_with("shared_proc_")) {
-        ++dedup_groups;
+      if (fs.name.starts_with("proc_template_")) {
+        ++num_template_groups;
         shared_ir_insts += fs.instructions;
       }
     }
@@ -368,9 +368,9 @@ void PrintProcessStats(
     }
     fmt::print(
         sink,
-        "[lyra][stats][proc] dedup: groups={} shared_ir_insts={} "
+        "[lyra][stats][proc] template: groups={} shared_ir_insts={} "
         "wrappers={} nonshared={}\n",
-        dedup_groups, shared_ir_insts, num_wrappers, num_nonshared);
+        num_template_groups, shared_ir_insts, num_wrappers, num_nonshared);
   }
 
   // Size distribution: median, p90, p99

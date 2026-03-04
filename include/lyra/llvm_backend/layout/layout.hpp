@@ -117,26 +117,36 @@ struct ConnectionKernelEntry {
   std::optional<mir::PlaceId> trigger_observed_place;
 };
 
-// One instance's participation in a dedup group.
-struct ProcessDedupInstance {
+// Identifies a module variant: a set of module instances whose processes are
+// ALL structurally identical (same template groups for every local process
+// index). Assigned by AssignModuleVariantIds after template group analysis.
+struct ModuleVariantId {
+  uint32_t value;
+  static constexpr uint32_t kNone = UINT32_MAX;
+  auto operator==(const ModuleVariantId&) const -> bool = default;
+};
+
+// One instance's participation in a template group.
+struct ProcessTemplateInstance {
   mir::ProcessId process_id;
   uint32_t instance_id;  // For %m support
   uint64_t
       base_byte_offset;   // Byte offset of instance's slot base in DesignState
   uint32_t base_slot_id;  // First slot ID of this instance
-  uint32_t signal_id_offset;  // base_slot_id - representative.base_slot_id
+  uint32_t signal_id_offset;  // base_slot_id - template_process.base_slot_id
+  ModuleVariantId variant_id{ModuleVariantId::kNone};
 };
 
 // A group of structurally identical processes across instances.
-// One shared function is generated; each instance gets a thin wrapper.
-struct ProcessDedupGroup {
-  mir::ProcessId representative;  // Lowest instance_id in group
-  std::vector<ProcessDedupInstance> instances;
-  size_t shared_layout_index;  // Into layout.processes (representative's)
-  // Relative byte offsets indexed by (slot_id - rep.base_slot_id).
-  // Sized to representative's slot_count. UINT64_MAX = unused.
+// One template function is generated; each instance gets a thin wrapper.
+struct ProcessTemplateGroup {
+  mir::ProcessId template_process;  // Lowest instance_id in group
+  std::vector<ProcessTemplateInstance> instances;
+  size_t template_layout_index;  // Into layout.processes (template's)
+  // Relative byte offsets indexed by (slot_id - template.base_slot_id).
+  // Sized to template process's slot_count. UINT64_MAX = unused.
   std::vector<uint64_t> rel_byte_offsets;
-  std::string shared_func_name;
+  std::string template_func_name;
 };
 
 // Complete layout for entire module
@@ -157,10 +167,15 @@ struct Layout {
   llvm::StructType* suspend_record_type = nullptr;
 
   // Process sharing groups (empty if no shareable processes found).
-  std::vector<ProcessDedupGroup> dedup_groups;
+  std::vector<ProcessTemplateGroup> template_groups;
   // Map from module-process index (i.e. index into process_ids starting at
-  // num_init_processes) to dedup_group index. SIZE_MAX if not deduped.
-  std::vector<size_t> process_dedup_map;
+  // num_init_processes) to template_group index. SIZE_MAX if not in a group.
+  std::vector<size_t> process_template_map;
+
+  // Per-instance module variant ID (parallel to module elements in
+  // design.elements). Instances with the same variant_id have identical
+  // template group assignments for ALL their local processes.
+  std::vector<ModuleVariantId> instance_variant_ids;
 };
 
 // Type kind for variable inspection (also used in layout)

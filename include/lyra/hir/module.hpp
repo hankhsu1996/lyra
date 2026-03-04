@@ -16,7 +16,7 @@ struct Module {
   std::vector<ProcessId> processes;
   std::vector<FunctionId> functions;
   std::vector<TaskId> tasks;
-  // In-run grouping key for process dedup pre-filtering.
+  // In-run grouping key for process template pre-filtering.
   // Assigned from DefinitionSymbol* during AST->HIR lowering.
   // NOT a stable identity -- valid only within a single compilation run.
   uint64_t module_def_key = 0;

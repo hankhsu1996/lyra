@@ -687,9 +687,9 @@ void FillTriggerArray(
 
     // Write signal_id (field 0)
     auto* signal_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 0);
-    if (context.IsSharedProcess()) {
+    if (context.IsTemplateProcess()) {
       uint32_t rel_signal =
-          triggers[i].signal.value - context.GetRepresentativeBaseSlotId();
+          triggers[i].signal.value - context.GetTemplateBaseSlotId();
       auto* abs_signal = builder.CreateAdd(
           context.GetSignalIdOffset(), builder.getInt32(rel_signal));
       builder.CreateStore(abs_signal, signal_ptr);
@@ -1407,7 +1407,7 @@ auto GenerateSharedProcessFunction(
   context.SetInstanceByteOffset(func->getArg(2));
   context.SetDynamicInstanceId(func->getArg(3));
   context.SetSignalIdOffset(func->getArg(4));
-  context.SetSharedProcess(true);
+  context.SetTemplateProcess(true);
 
   // Resume dispatch (same logic as GenerateProcessFunction)
   std::vector<size_t> resume_targets;
@@ -1464,7 +1464,7 @@ auto GenerateSharedProcessFunction(
   context.SetDesignPointer(nullptr);
   context.SetFramePointer(nullptr);
   context.SetEnginePointer(nullptr);
-  context.SetSharedProcess(false);
+  context.SetTemplateProcess(false);
   context.SetSlotsBasePointer(nullptr);
   context.SetInstanceByteOffset(nullptr);
   context.SetDynamicInstanceId(nullptr);
@@ -1476,7 +1476,7 @@ auto GenerateSharedProcessFunction(
 
 auto GenerateProcessWrapper(
     Context& context, llvm::Function* shared_fn,
-    const ProcessDedupInstance& instance, const std::string& name)
+    const ProcessTemplateInstance& instance, const std::string& name)
     -> llvm::Function* {
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();

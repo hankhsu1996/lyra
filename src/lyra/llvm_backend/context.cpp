@@ -392,12 +392,12 @@ auto Context::GetCurrentInstanceId() const -> uint32_t {
   return current_instance_id_;
 }
 
-void Context::SetSharedProcess(bool shared) {
-  is_shared_process_ = shared;
+void Context::SetTemplateProcess(bool shared) {
+  is_template_process_ = shared;
 }
 
-auto Context::IsSharedProcess() const -> bool {
-  return is_shared_process_;
+auto Context::IsTemplateProcess() const -> bool {
+  return is_template_process_;
 }
 
 void Context::SetSlotsBasePointer(llvm::Value* ptr) {
@@ -427,11 +427,11 @@ auto Context::GetDynamicInstanceId() const -> llvm::Value* {
 void Context::SetRelByteOffsets(
     std::vector<uint64_t> offsets, uint32_t base_slot_id) {
   rel_byte_offsets_ = std::move(offsets);
-  representative_base_slot_id_ = base_slot_id;
+  template_base_slot_id_ = base_slot_id;
 }
 
-auto Context::GetRepresentativeBaseSlotId() const -> uint32_t {
-  return representative_base_slot_id_;
+auto Context::GetTemplateBaseSlotId() const -> uint32_t {
+  return template_base_slot_id_;
 }
 
 void Context::SetStatePointer(llvm::Value* state_ptr) {

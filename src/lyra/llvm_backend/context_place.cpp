@@ -111,35 +111,7 @@ auto Context::ComputePlacePointer(
   // Get base pointer from root (resolved is already alias-resolved)
   llvm::Value* ptr = nullptr;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kDesign) {
-    if (design_ptr_ == nullptr) {
-      throw common::InternalError("llvm_backend", "design pointer not set");
-    }
-    if (is_shared_process_) {
-      // Shared process: use byte-offset GEP from slots_base_ptr
-      auto slot_id = static_cast<uint32_t>(resolved.root.id);
-      uint32_t rel_idx = slot_id - representative_base_slot_id_;
-      if (rel_idx >= rel_byte_offsets_.size() ||
-          rel_byte_offsets_[rel_idx] == UINT64_MAX) {
-        throw common::InternalError(
-            "ComputePlacePointer",
-            std::format(
-                "shared process: slot {} out of range (base={}, "
-                "table_size={})",
-                slot_id, representative_base_slot_id_,
-                rel_byte_offsets_.size()));
-      }
-      uint64_t rel_offset = rel_byte_offsets_[rel_idx];
-      auto* total_offset = builder_.CreateAdd(
-          instance_byte_offset_, builder_.getInt64(rel_offset));
-      ptr = builder_.CreateGEP(
-          llvm::Type::getInt8Ty(*llvm_context_), slots_base_ptr_, total_offset,
-          "design_slot_ptr");
-    } else {
-      auto slot_id = mir::SlotId{static_cast<uint32_t>(resolved.root.id)};
-      uint32_t field_index = GetDesignFieldIndex(slot_id);
-      ptr = builder_.CreateStructGEP(
-          GetDesignStateType(), design_ptr_, field_index, "design_slot_ptr");
-    }
+    ptr = GetDesignSlotPointer(static_cast<uint32_t>(resolved.root.id));
   } else {
     // Local/Temp places: check place_alias_ first (inout managed params),
     // then place_storage_ (regular allocas), then frame (processes).
@@ -291,8 +263,8 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
   uint32_t dirty_size = 0;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kDesign) {
     auto slot_id = static_cast<uint32_t>(resolved.root.id);
-    if (is_shared_process_) {
-      uint32_t rel_signal = slot_id - representative_base_slot_id_;
+    if (is_template_process_) {
+      uint32_t rel_signal = slot_id - template_base_slot_id_;
       auto* abs_signal =
           builder_.CreateAdd(signal_id_offset_, builder_.getInt32(rel_signal));
       signal_id = SignalIdExpr::Dynamic(abs_signal);
@@ -336,8 +308,8 @@ auto Context::GetCanonicalRootSignalId(mir::PlaceId place_id)
     return std::nullopt;
   }
   auto slot_id = static_cast<uint32_t>(resolved.root.id);
-  if (is_shared_process_) {
-    uint32_t rel_signal = slot_id - representative_base_slot_id_;
+  if (is_template_process_) {
+    uint32_t rel_signal = slot_id - template_base_slot_id_;
     auto* abs_signal =
         builder_.CreateAdd(signal_id_offset_, builder_.getInt32(rel_signal));
     return SignalIdExpr::Dynamic(abs_signal);
@@ -345,30 +317,40 @@ auto Context::GetCanonicalRootSignalId(mir::PlaceId place_id)
   return SignalIdExpr::Const(slot_id);
 }
 
-auto Context::GetDesignRootPointerShared(mir::PlaceId place_id)
-    -> llvm::Value* {
-  // Resolve aliases to find the actual root slot
+auto Context::GetDesignSlotPointer(uint32_t slot_id) -> llvm::Value* {
+  if (design_ptr_ == nullptr) {
+    throw common::InternalError("llvm_backend", "design pointer not set");
+  }
+  if (is_template_process_) {
+    uint32_t rel_idx = slot_id - template_base_slot_id_;
+    if (rel_idx >= rel_byte_offsets_.size() ||
+        rel_byte_offsets_[rel_idx] == UINT64_MAX) {
+      throw common::InternalError(
+          "GetDesignSlotPointer",
+          std::format(
+              "template process: slot {} out of range (base={}, "
+              "table_size={})",
+              slot_id, template_base_slot_id_, rel_byte_offsets_.size()));
+    }
+    uint64_t rel_offset = rel_byte_offsets_[rel_idx];
+    auto* total_offset = builder_.CreateAdd(
+        instance_byte_offset_, builder_.getInt64(rel_offset));
+    return builder_.CreateGEP(
+        llvm::Type::getInt8Ty(*llvm_context_), slots_base_ptr_, total_offset,
+        "design_slot_ptr");
+  }
+  uint32_t field_index = GetDesignFieldIndex(mir::SlotId{slot_id});
+  return builder_.CreateStructGEP(
+      GetDesignStateType(), design_ptr_, field_index, "design_slot_ptr");
+}
+
+auto Context::GetDesignRootPointer(mir::PlaceId place_id) -> llvm::Value* {
   mir::Place resolved = ResolveAliases(place_id);
   if (resolved.root.kind != mir::PlaceRoot::Kind::kDesign) {
     throw common::InternalError(
-        "GetDesignRootPointerShared",
-        "expected kDesign root for NBA notify base");
+        "GetDesignRootPointer", "expected kDesign root for NBA notify base");
   }
-  auto slot_id = static_cast<uint32_t>(resolved.root.id);
-  uint32_t rel_idx = slot_id - representative_base_slot_id_;
-  if (rel_idx >= rel_byte_offsets_.size()) {
-    throw common::InternalError(
-        "GetDesignRootPointerShared",
-        std::format(
-            "slot {} out of range (base={}, table_size={})", slot_id,
-            representative_base_slot_id_, rel_byte_offsets_.size()));
-  }
-  uint64_t rel_offset = rel_byte_offsets_[rel_idx];
-  auto* total_offset =
-      builder_.CreateAdd(instance_byte_offset_, builder_.getInt64(rel_offset));
-  return builder_.CreateGEP(
-      llvm::Type::getInt8Ty(*llvm_context_), slots_base_ptr_, total_offset,
-      "nba.base");
+  return GetDesignSlotPointer(static_cast<uint32_t>(resolved.root.id));
 }
 
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {

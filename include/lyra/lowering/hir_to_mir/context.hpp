@@ -70,7 +70,7 @@ struct DesignDeclarations {
   // Recorded in BFS elaboration order.
   std::vector<InstanceSlotRange> instance_slot_ranges;
   // Per-module-instance def keys (parallel to instance_slot_ranges).
-  // In-run grouping key for process dedup pre-filtering.
+  // In-run grouping key for process template pre-filtering.
   std::vector<uint64_t> module_def_keys;
 };
 

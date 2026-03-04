@@ -484,7 +484,8 @@ auto LowerDesign(
     elements.emplace_back(LowerPackage(*pkg, registrar, ctx));
   }
 
-  // Assign module_def_key from DefinitionSymbol* (cheap pre-filter for dedup).
+  // Assign module_def_key from DefinitionSymbol* (cheap pre-filter for template
+  // grouping).
   uint64_t next_def_key = 0;
   std::unordered_map<const slang::ast::DefinitionSymbol*, uint64_t> def_keys;
   for (const auto* instance : all_instances) {

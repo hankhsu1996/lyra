@@ -211,24 +211,6 @@ auto CoerceValueToShape(
   return nullptr;
 }
 
-// Get the root design slot pointer (before any projections) after alias
-// resolution. For shared processes, computes via byte-GEP from slots_base.
-auto GetDesignRootPointer(Context& context, mir::PlaceId place_id)
-    -> llvm::Value* {
-  SignalIdExpr signal_expr = GetSignalIdForNba(context, place_id);
-  if (signal_expr.IsConst()) {
-    auto slot_id = mir::SlotId{signal_expr.ConstValue()};
-    uint32_t field_index = context.GetDesignFieldIndex(slot_id);
-    return context.GetBuilder().CreateStructGEP(
-        context.GetDesignStateType(), context.GetDesignPointer(), field_index,
-        "nba.base");
-  }
-  // Shared process: compute root slot pointer via byte-GEP from slots_base.
-  // This is the same computation as ComputePlacePointer for kDesign roots
-  // with no projections.
-  return context.GetDesignRootPointerShared(place_id);
-}
-
 // Emit the LyraScheduleNba call with value/mask stored in allocas.
 void EmitScheduleNbaCall(
     Context& context, llvm::Value* write_ptr, llvm::Value* notify_base_ptr,
@@ -324,7 +306,7 @@ auto LowerDeferredAssignBitRange(
         "LowerDeferredAssignBitRange", "BitRange on non-scalar base type");
   }
 
-  llvm::Value* notify_base_ptr = GetDesignRootPointer(context, deferred.dest);
+  llvm::Value* notify_base_ptr = context.GetDesignRootPointer(deferred.dest);
 
   if (IsFourStateScalarStruct(base_type)) {
     // 4-state base: mask both planes
@@ -457,7 +439,7 @@ auto LowerDeferredAssignWithOobGuard(
   auto write_ptr_or_err = context.GetPlacePointer(deferred.dest);
   if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
-  llvm::Value* notify_base_ptr = GetDesignRootPointer(context, deferred.dest);
+  llvm::Value* notify_base_ptr = context.GetDesignRootPointer(deferred.dest);
 
   auto result = EmitDeferredStoreCore(
       context, deferred, shape, write_ptr, notify_base_ptr, signal_id);
@@ -476,7 +458,7 @@ auto LowerDeferredAssignDirect(
   auto write_ptr_or_err = context.GetPlacePointer(deferred.dest);
   if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
-  llvm::Value* notify_base_ptr = GetDesignRootPointer(context, deferred.dest);
+  llvm::Value* notify_base_ptr = context.GetDesignRootPointer(deferred.dest);
 
   return EmitDeferredStoreCore(
       context, deferred, shape, write_ptr, notify_base_ptr, signal_id);

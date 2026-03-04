@@ -329,7 +329,7 @@ void LowerModulePathOp(Context& context) {
   auto* engine_ptr = context.GetEnginePointer();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   llvm::Value* instance_id = nullptr;
-  if (context.IsSharedProcess()) {
+  if (context.IsTemplateProcess()) {
     instance_id = context.GetDynamicInstanceId();
   } else {
     instance_id =
