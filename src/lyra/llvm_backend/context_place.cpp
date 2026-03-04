@@ -322,6 +322,10 @@ auto Context::GetDesignSlotPointer(uint32_t slot_id) -> llvm::Value* {
     throw common::InternalError("llvm_backend", "design pointer not set");
   }
   if (is_template_process_) {
+    if (this_ptr_ == nullptr) {
+      throw common::InternalError(
+          "GetDesignSlotPointer", "this_ptr not set for template process");
+    }
     uint32_t rel_idx = slot_id - template_base_slot_id_;
     if (rel_idx >= rel_byte_offsets_.size() ||
         rel_byte_offsets_[rel_idx] == UINT64_MAX) {
@@ -333,11 +337,9 @@ auto Context::GetDesignSlotPointer(uint32_t slot_id) -> llvm::Value* {
               slot_id, template_base_slot_id_, rel_byte_offsets_.size()));
     }
     uint64_t rel_offset = rel_byte_offsets_[rel_idx];
-    auto* total_offset = builder_.CreateAdd(
-        instance_byte_offset_, builder_.getInt64(rel_offset));
     return builder_.CreateGEP(
-        llvm::Type::getInt8Ty(*llvm_context_), slots_base_ptr_, total_offset,
-        "design_slot_ptr");
+        llvm::Type::getInt8Ty(*llvm_context_), this_ptr_,
+        builder_.getInt64(rel_offset), "design_slot_ptr");
   }
   uint32_t field_index = GetDesignFieldIndex(mir::SlotId{slot_id});
   return builder_.CreateStructGEP(

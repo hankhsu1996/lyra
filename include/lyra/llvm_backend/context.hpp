@@ -255,8 +255,7 @@ class Context {
   // Template process mode (process sharing)
   void SetTemplateProcess(bool shared);
   [[nodiscard]] auto IsTemplateProcess() const -> bool;
-  void SetSlotsBasePointer(llvm::Value* ptr);
-  void SetInstanceByteOffset(llvm::Value* offset);
+  void SetThisPointer(llvm::Value* ptr);
   void SetDynamicInstanceId(llvm::Value* id);
   void SetSignalIdOffset(llvm::Value* offset);
   [[nodiscard]] auto GetSignalIdOffset() const -> llvm::Value*;
@@ -271,6 +270,11 @@ class Context {
   // place. Used by NBA path for notify_base_ptr.
   [[nodiscard]] auto GetDesignRootPointer(mir::PlaceId place_id)
       -> llvm::Value*;
+
+  // Emit GEPs and loads to extract design_ptr, engine_ptr, and frame_ptr from
+  // the process state argument, then cache them in the context via the setters
+  // below. Must be called once per process function entry block.
+  void EmitProcessStateSetup(llvm::Value* state_arg);
 
   // Cached pointers (computed in entry block, reused for all place accesses)
   // state_ptr: the function argument pointing to ProcessStateN
@@ -589,10 +593,9 @@ class Context {
 
   // Template process mode (process sharing)
   bool is_template_process_ = false;
-  llvm::Value* slots_base_ptr_ = nullptr;        // GEP(design_ptr, 0)
-  llvm::Value* instance_byte_offset_ = nullptr;  // i64 fn arg
-  llvm::Value* dynamic_instance_id_ = nullptr;   // i32 fn arg
-  llvm::Value* signal_id_offset_ = nullptr;      // i32 fn arg
+  llvm::Value* this_ptr_ = nullptr;  // Instance storage base pointer (fn arg)
+  llvm::Value* dynamic_instance_id_ = nullptr;  // i32 fn arg
+  llvm::Value* signal_id_offset_ = nullptr;     // i32 fn arg
   std::vector<uint64_t> rel_byte_offsets_;
   uint32_t template_base_slot_id_ = 0;
 

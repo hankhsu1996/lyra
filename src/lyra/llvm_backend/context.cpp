@@ -400,12 +400,8 @@ auto Context::IsTemplateProcess() const -> bool {
   return is_template_process_;
 }
 
-void Context::SetSlotsBasePointer(llvm::Value* ptr) {
-  slots_base_ptr_ = ptr;
-}
-
-void Context::SetInstanceByteOffset(llvm::Value* offset) {
-  instance_byte_offset_ = offset;
+void Context::SetThisPointer(llvm::Value* ptr) {
+  this_ptr_ = ptr;
 }
 
 void Context::SetDynamicInstanceId(llvm::Value* id) {
@@ -432,6 +428,33 @@ void Context::SetRelByteOffsets(
 
 auto Context::GetTemplateBaseSlotId() const -> uint32_t {
   return template_base_slot_id_;
+}
+
+void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
+  SetStatePointer(state_arg);
+
+  auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+
+  // state->header (field 0)
+  auto* header_ptr = builder_.CreateStructGEP(
+      GetProcessStateType(), state_arg, 0, "header_ptr");
+
+  // header->design (field 1)
+  auto* design_ptr_ptr = builder_.CreateStructGEP(
+      GetHeaderType(), header_ptr, 1, "design_ptr_ptr");
+  auto* design_ptr = builder_.CreateLoad(ptr_ty, design_ptr_ptr, "design_ptr");
+  SetDesignPointer(design_ptr);
+
+  // header->engine (field 2)
+  auto* engine_ptr_ptr = builder_.CreateStructGEP(
+      GetHeaderType(), header_ptr, 2, "engine_ptr_ptr");
+  auto* engine_ptr = builder_.CreateLoad(ptr_ty, engine_ptr_ptr, "engine_ptr");
+  SetEnginePointer(engine_ptr);
+
+  // state->frame (field 1)
+  auto* frame_ptr = builder_.CreateStructGEP(
+      GetProcessStateType(), state_arg, 1, "frame_ptr");
+  SetFramePointer(frame_ptr);
 }
 
 void Context::SetStatePointer(llvm::Value* state_ptr) {
