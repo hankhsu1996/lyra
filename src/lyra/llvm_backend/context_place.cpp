@@ -114,10 +114,32 @@ auto Context::ComputePlacePointer(
     if (design_ptr_ == nullptr) {
       throw common::InternalError("llvm_backend", "design pointer not set");
     }
-    auto slot_id = mir::SlotId{static_cast<uint32_t>(resolved.root.id)};
-    uint32_t field_index = GetDesignFieldIndex(slot_id);
-    ptr = builder_.CreateStructGEP(
-        GetDesignStateType(), design_ptr_, field_index, "design_slot_ptr");
+    if (is_shared_process_) {
+      // Shared process: use byte-offset GEP from slots_base_ptr
+      auto slot_id = static_cast<uint32_t>(resolved.root.id);
+      uint32_t rel_idx = slot_id - representative_base_slot_id_;
+      if (rel_idx >= rel_byte_offsets_.size() ||
+          rel_byte_offsets_[rel_idx] == UINT64_MAX) {
+        throw common::InternalError(
+            "ComputePlacePointer",
+            std::format(
+                "shared process: slot {} out of range (base={}, "
+                "table_size={})",
+                slot_id, representative_base_slot_id_,
+                rel_byte_offsets_.size()));
+      }
+      uint64_t rel_offset = rel_byte_offsets_[rel_idx];
+      auto* total_offset = builder_.CreateAdd(
+          instance_byte_offset_, builder_.getInt64(rel_offset));
+      ptr = builder_.CreateGEP(
+          llvm::Type::getInt8Ty(*llvm_context_), slots_base_ptr_, total_offset,
+          "design_slot_ptr");
+    } else {
+      auto slot_id = mir::SlotId{static_cast<uint32_t>(resolved.root.id)};
+      uint32_t field_index = GetDesignFieldIndex(slot_id);
+      ptr = builder_.CreateStructGEP(
+          GetDesignStateType(), design_ptr_, field_index, "design_slot_ptr");
+    }
   } else {
     // Local/Temp places: check place_alias_ first (inout managed params),
     // then place_storage_ (regular allocas), then frame (processes).
@@ -264,11 +286,19 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
   if (!ptr_or_err) return std::unexpected(ptr_or_err.error());
 
   // Determine canonical_signal_id from the SAME resolved root
-  std::optional<uint32_t> signal_id;
+  std::optional<SignalIdExpr> signal_id;
   uint32_t dirty_off = 0;
   uint32_t dirty_size = 0;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kDesign) {
-    signal_id = static_cast<uint32_t>(resolved.root.id);
+    auto slot_id = static_cast<uint32_t>(resolved.root.id);
+    if (is_shared_process_) {
+      uint32_t rel_signal = slot_id - representative_base_slot_id_;
+      auto* abs_signal =
+          builder_.CreateAdd(signal_id_offset_, builder_.getInt32(rel_signal));
+      signal_id = SignalIdExpr::Dynamic(abs_signal);
+    } else {
+      signal_id = SignalIdExpr::Const(slot_id);
+    }
     auto resolver = [this](const mir::Operand& op) -> std::optional<uint64_t> {
       if (op.kind != mir::Operand::Kind::kUseTemp) return std::nullopt;
       auto temp_id = std::get<mir::TempId>(op.payload);
@@ -281,7 +311,7 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
     };
     auto range = ResolveByteRange(
         *llvm_context_, llvm_module_->getDataLayout(), types_, resolved,
-        design_.slot_table[*signal_id], resolver, force_two_state_);
+        design_.slot_table[slot_id], resolver, force_two_state_);
     if (range.kind == RangeKind::kPrecise) {
       dirty_off = range.byte_offset;
       dirty_size = range.byte_size;
@@ -297,7 +327,7 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
 }
 
 auto Context::GetCanonicalRootSignalId(mir::PlaceId place_id)
-    -> std::optional<uint32_t> {
+    -> std::optional<SignalIdExpr> {
   // Resolve aliases first
   mir::Place resolved = ResolveAliases(place_id);
 
@@ -305,7 +335,40 @@ auto Context::GetCanonicalRootSignalId(mir::PlaceId place_id)
   if (resolved.root.kind != mir::PlaceRoot::Kind::kDesign) {
     return std::nullopt;
   }
-  return static_cast<uint32_t>(resolved.root.id);
+  auto slot_id = static_cast<uint32_t>(resolved.root.id);
+  if (is_shared_process_) {
+    uint32_t rel_signal = slot_id - representative_base_slot_id_;
+    auto* abs_signal =
+        builder_.CreateAdd(signal_id_offset_, builder_.getInt32(rel_signal));
+    return SignalIdExpr::Dynamic(abs_signal);
+  }
+  return SignalIdExpr::Const(slot_id);
+}
+
+auto Context::GetDesignRootPointerShared(mir::PlaceId place_id)
+    -> llvm::Value* {
+  // Resolve aliases to find the actual root slot
+  mir::Place resolved = ResolveAliases(place_id);
+  if (resolved.root.kind != mir::PlaceRoot::Kind::kDesign) {
+    throw common::InternalError(
+        "GetDesignRootPointerShared",
+        "expected kDesign root for NBA notify base");
+  }
+  auto slot_id = static_cast<uint32_t>(resolved.root.id);
+  uint32_t rel_idx = slot_id - representative_base_slot_id_;
+  if (rel_idx >= rel_byte_offsets_.size()) {
+    throw common::InternalError(
+        "GetDesignRootPointerShared",
+        std::format(
+            "slot {} out of range (base={}, table_size={})", slot_id,
+            representative_base_slot_id_, rel_byte_offsets_.size()));
+  }
+  uint64_t rel_offset = rel_byte_offsets_[rel_idx];
+  auto* total_offset =
+      builder_.CreateAdd(instance_byte_offset_, builder_.getInt64(rel_offset));
+  return builder_.CreateGEP(
+      llvm::Type::getInt8Ty(*llvm_context_), slots_base_ptr_, total_offset,
+      "nba.base");
 }
 
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {

@@ -89,6 +89,7 @@ struct LoweringInput {
   std::vector<std::string> plusargs;  // Command-line plusargs for $plusargs
   uint32_t feature_flags = 0;         // FeatureFlag bitmask for runtime
   bool force_two_state = false;       // Force 2-state LLVM representation
+  bool share_procs = false;           // Deduplicate identical module processes
   MainAbi main_abi = MainAbi::kEmbeddedPlusargs;
 };
 

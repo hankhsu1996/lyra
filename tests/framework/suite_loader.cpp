@@ -86,6 +86,9 @@ auto LoadSuite(
     if (suite_node["two_state"]) {
       suite.force_two_state = suite_node["two_state"].as<bool>();
     }
+    if (suite_node["share_procs"]) {
+      suite.share_procs = suite_node["share_procs"].as<bool>();
+    }
 
     if (suite_node["include_regex"]) {
       for (const auto& pattern : suite_node["include_regex"]) {

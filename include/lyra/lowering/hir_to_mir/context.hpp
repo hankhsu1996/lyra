@@ -48,6 +48,13 @@ using SymbolToMirFunctionMap =
 // Map module instance symbol -> index into InstanceTable (for %m support)
 using InstanceIndexMap = std::unordered_map<SymbolId, uint32_t, SymbolIdHash>;
 
+// Per-instance slot range within the design slot table.
+// Recorded during CollectDeclarations, parallel to module elements.
+struct InstanceSlotRange {
+  uint32_t slot_begin = 0;
+  uint32_t slot_count = 0;
+};
+
 struct DesignDeclarations {
   PlaceMap design_places;
   SymbolToMirFunctionMap functions;
@@ -59,6 +66,12 @@ struct DesignDeclarations {
   // Reverse lookup: module instance symbol -> instance table index.
   // Built from LoweringInput::instance_table during CollectDeclarations.
   InstanceIndexMap instance_indices;
+  // Per-module-instance slot ranges (parallel to module elements only).
+  // Recorded in BFS elaboration order.
+  std::vector<InstanceSlotRange> instance_slot_ranges;
+  // Per-module-instance def keys (parallel to instance_slot_ranges).
+  // In-run grouping key for process dedup pre-filtering.
+  std::vector<uint64_t> module_def_keys;
 };
 
 // Read-only view into declaration artifacts for lower-level helpers

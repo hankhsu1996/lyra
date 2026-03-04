@@ -687,8 +687,16 @@ void FillTriggerArray(
 
     // Write signal_id (field 0)
     auto* signal_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 0);
-    builder.CreateStore(
-        llvm::ConstantInt::get(i32_ty, triggers[i].signal.value), signal_ptr);
+    if (context.IsSharedProcess()) {
+      uint32_t rel_signal =
+          triggers[i].signal.value - context.GetRepresentativeBaseSlotId();
+      auto* abs_signal = builder.CreateAdd(
+          context.GetSignalIdOffset(), builder.getInt32(rel_signal));
+      builder.CreateStore(abs_signal, signal_ptr);
+    } else {
+      builder.CreateStore(
+          llvm::ConstantInt::get(i32_ty, triggers[i].signal.value), signal_ptr);
+    }
 
     // Write edge (field 1)
     auto* edge_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 1);
@@ -1328,6 +1336,175 @@ auto GenerateProcessFunction(
 
   VerifyLlvmFunction(func, "GenerateProcessFunction");
   return func;
+}
+
+auto GenerateSharedProcessFunction(
+    Context& context, const mir::Process& process, const std::string& name)
+    -> Result<llvm::Function*> {
+  OriginScope proc_scope(context, process.origin);
+
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto& module = context.GetModule();
+
+  // Shared function signature:
+  // void(ptr state, i32 resume, i64 base_byte_offset, i32 inst_id,
+  //      i32 signal_id_offset)
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+  auto* fn_type = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(llvm_ctx), {ptr_ty, i32_ty, i64_ty, i32_ty, i32_ty},
+      false);
+
+  auto* func = llvm::Function::Create(
+      fn_type, llvm::Function::InternalLinkage, name, &module);
+
+  func->getArg(0)->setName("state");
+  func->getArg(1)->setName("resume_block");
+  func->getArg(2)->setName("base_byte_offset");
+  func->getArg(3)->setName("inst_id");
+  func->getArg(4)->setName("signal_id_offset");
+
+  auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", func);
+  auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", func);
+
+  std::vector<llvm::BasicBlock*> llvm_blocks;
+  llvm_blocks.reserve(process.blocks.size());
+  for (size_t i = 0; i < process.blocks.size(); ++i) {
+    llvm_blocks.push_back(
+        llvm::BasicBlock::Create(llvm_ctx, std::format("bb{}", i), func));
+  }
+
+  auto& builder = context.GetBuilder();
+  builder.SetInsertPoint(entry_block);
+
+  context.SetStatePointer(func->getArg(0));
+
+  // Load pointers from state header (same as GenerateProcessFunction)
+  auto* header_ptr = builder.CreateStructGEP(
+      context.GetProcessStateType(), func->getArg(0), 0, "header_ptr");
+  auto* design_ptr_ptr = builder.CreateStructGEP(
+      context.GetHeaderType(), header_ptr, 1, "design_ptr_ptr");
+  auto* design_ptr = builder.CreateLoad(ptr_ty, design_ptr_ptr, "design_ptr");
+  context.SetDesignPointer(design_ptr);
+
+  auto* engine_ptr_ptr = builder.CreateStructGEP(
+      context.GetHeaderType(), header_ptr, 2, "engine_ptr_ptr");
+  auto* engine_ptr = builder.CreateLoad(ptr_ty, engine_ptr_ptr, "engine_ptr");
+  context.SetEnginePointer(engine_ptr);
+
+  auto* frame_ptr = builder.CreateStructGEP(
+      context.GetProcessStateType(), func->getArg(0), 1, "frame_ptr");
+  context.SetFramePointer(frame_ptr);
+
+  // Compute slots_base_ptr = GEP(design_ptr, 0) -- the slot table starts at
+  // field 0 in DesignState (no prefix fields).
+  auto* slots_base = builder.CreateStructGEP(
+      context.GetDesignStateType(), design_ptr, 0, "slots_base");
+  context.SetSlotsBasePointer(slots_base);
+
+  // Cache shared-mode arguments in context
+  context.SetInstanceByteOffset(func->getArg(2));
+  context.SetDynamicInstanceId(func->getArg(3));
+  context.SetSignalIdOffset(func->getArg(4));
+  context.SetSharedProcess(true);
+
+  // Resume dispatch (same logic as GenerateProcessFunction)
+  std::vector<size_t> resume_targets;
+  for (const auto& block : process.blocks) {
+    std::visit(
+        [&](const auto& term) {
+          using T = std::decay_t<decltype(term)>;
+          if constexpr (std::is_same_v<T, mir::Delay>) {
+            resume_targets.push_back(term.resume.value);
+          } else if constexpr (std::is_same_v<T, mir::Wait>) {
+            resume_targets.push_back(term.resume.value);
+          }
+        },
+        block.terminator.data);
+  }
+
+  auto* sw = builder.CreateSwitch(
+      func->getArg(1), llvm_blocks[0],
+      static_cast<unsigned>(resume_targets.size()));
+  for (size_t target : resume_targets) {
+    sw->addCase(
+        llvm::ConstantInt::get(i32_ty, static_cast<uint64_t>(target)),
+        llvm_blocks[target]);
+  }
+
+  context.ClearTemps();
+  auto phi_state_or_err =
+      SetupBlockParamPhis(context, process.blocks, llvm_blocks);
+  if (!phi_state_or_err) return std::unexpected(phi_state_or_err.error());
+  auto& phi_state = *phi_state_or_err;
+
+  for (size_t i = 0; i < process.blocks.size(); ++i) {
+    const auto& block = process.blocks[i];
+    builder.SetInsertPoint(llvm_blocks[i]);
+
+    for (const auto& instruction : block.statements) {
+      auto result = LowerStatement(context, instruction);
+      if (!result) return std::unexpected(result.error());
+    }
+
+    auto term_result = LowerTerminator(
+        context, block.terminator, llvm_blocks, exit_block, phi_state);
+    if (!term_result) return std::unexpected(term_result.error());
+  }
+
+  phi_state.WireIncomingEdges(context.GetBuilder());
+  phi_state.ValidatePhiWiring(llvm_blocks, func->getName().str());
+
+  builder.SetInsertPoint(exit_block);
+  builder.CreateRetVoid();
+
+  // Clear state
+  context.SetStatePointer(nullptr);
+  context.SetDesignPointer(nullptr);
+  context.SetFramePointer(nullptr);
+  context.SetEnginePointer(nullptr);
+  context.SetSharedProcess(false);
+  context.SetSlotsBasePointer(nullptr);
+  context.SetInstanceByteOffset(nullptr);
+  context.SetDynamicInstanceId(nullptr);
+  context.SetSignalIdOffset(nullptr);
+
+  VerifyLlvmFunction(func, "GenerateSharedProcessFunction");
+  return func;
+}
+
+auto GenerateProcessWrapper(
+    Context& context, llvm::Function* shared_fn,
+    const ProcessDedupInstance& instance, const std::string& name)
+    -> llvm::Function* {
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto& module = context.GetModule();
+
+  // Wrapper signature: void(ptr state, i32 resume) -- LyraProcessFunc ABI
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* fn_type = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(llvm_ctx), {ptr_ty, i32_ty}, false);
+
+  auto* wrapper = llvm::Function::Create(
+      fn_type, llvm::Function::InternalLinkage, name, &module);
+  wrapper->getArg(0)->setName("state");
+  wrapper->getArg(1)->setName("resume_block");
+
+  auto* entry = llvm::BasicBlock::Create(llvm_ctx, "entry", wrapper);
+  auto& builder = context.GetBuilder();
+  builder.SetInsertPoint(entry);
+
+  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+  builder.CreateCall(
+      shared_fn, {wrapper->getArg(0), wrapper->getArg(1),
+                  llvm::ConstantInt::get(i64_ty, instance.base_byte_offset),
+                  llvm::ConstantInt::get(i32_ty, instance.instance_id),
+                  llvm::ConstantInt::get(i32_ty, instance.signal_id_offset)});
+  builder.CreateRetVoid();
+
+  return wrapper;
 }
 
 auto DeclareUserFunction(

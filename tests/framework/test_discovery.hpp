@@ -23,6 +23,7 @@ struct CommandLineArgs {
 struct TestConfiguration {
   BackendKind backend;
   bool force_two_state = false;
+  bool share_procs = false;
   std::vector<std::filesystem::path> yaml_paths;
   std::filesystem::path yaml_directory;  // Base path for relative calculations
 };

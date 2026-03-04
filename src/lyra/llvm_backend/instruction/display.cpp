@@ -328,8 +328,13 @@ void LowerModulePathOp(Context& context) {
 
   auto* engine_ptr = context.GetEnginePointer();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  auto* instance_id =
-      llvm::ConstantInt::get(i32_ty, context.GetCurrentInstanceId());
+  llvm::Value* instance_id = nullptr;
+  if (context.IsSharedProcess()) {
+    instance_id = context.GetDynamicInstanceId();
+  } else {
+    instance_id =
+        llvm::ConstantInt::get(i32_ty, context.GetCurrentInstanceId());
+  }
 
   builder.CreateCall(
       context.GetLyraPrintModulePath(), {engine_ptr, instance_id});

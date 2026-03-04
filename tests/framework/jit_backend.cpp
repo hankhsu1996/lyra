@@ -17,12 +17,12 @@ namespace lyra::test {
 
 auto RunJitBackend(
     const TestCase& test_case, const std::filesystem::path& work_directory,
-    bool force_two_state) -> TestResult {
+    bool force_two_state, bool share_procs) -> TestResult {
   TestResult result;
 
   // Prepare LLVM module (AST -> HIR -> MIR -> LLVM)
-  auto prep_result =
-      PrepareLlvmModule(test_case, work_directory, force_two_state);
+  auto prep_result = PrepareLlvmModule(
+      test_case, work_directory, force_two_state, share_procs);
   if (!prep_result) {
     result.error_message = prep_result.error();
     return result;

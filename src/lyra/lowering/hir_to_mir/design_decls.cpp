@@ -63,6 +63,8 @@ auto CollectDeclarations(
   // Allocate module variable and net design places
   for (const auto& element : design.elements) {
     if (const auto* mod = std::get_if<hir::Module>(&element)) {
+      auto instance_slot_begin = static_cast<uint32_t>(next_slot);
+
       for (SymbolId var : mod->variables) {
         const Symbol& sym = (*input.symbol_table)[var];
         mir::Place place{
@@ -92,6 +94,12 @@ auto CollectDeclarations(
         decls.design_places[net] = mir_arena.AddPlace(std::move(place));
         decls.slot_table.push_back(sym.type);
       }
+
+      auto instance_slot_count =
+          static_cast<uint32_t>(next_slot) - instance_slot_begin;
+      decls.instance_slot_ranges.push_back(
+          {instance_slot_begin, instance_slot_count});
+      decls.module_def_keys.push_back(mod->module_def_key);
     }
   }
 

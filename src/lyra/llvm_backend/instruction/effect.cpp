@@ -306,9 +306,8 @@ auto LowerElementFillRuntime(
   // If design slot, notify after runtime write (use root_ptr, not val_ptr)
   if (planes.signal_id.has_value()) {
     builder.CreateCall(
-        ctx.GetLyraNotifySignal(),
-        {ctx.GetEnginePointer(), planes.root_ptr,
-         llvm::ConstantInt::get(i32_ty, *planes.signal_id)});
+        ctx.GetLyraNotifySignal(), {ctx.GetEnginePointer(), planes.root_ptr,
+                                    planes.signal_id->Emit(builder)});
   }
 
   return {};
@@ -459,10 +458,13 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
   llvm::Value* final_addr = (step > 0) ? high : low;
 
   // Resolve slot_id for readmem trace emission (writemem doesn't need it)
-  uint32_t readmem_slot_id = lyra::runtime::kNoSlotId;
+  llvm::Value* readmem_slot_id_val =
+      llvm::ConstantInt::get(i32_ty, lyra::runtime::kNoSlotId);
   if (mem_io.is_read) {
-    readmem_slot_id = GetDesignSlotId(context, mem_io.target)
-                          .value_or(lyra::runtime::kNoSlotId);
+    auto slot_expr = GetDesignSignalId(context, mem_io.target);
+    if (slot_expr.has_value()) {
+      readmem_slot_id_val = slot_expr->Emit(builder);
+    }
   }
 
   // Lower filename and emit runtime call with automatic handle release
@@ -484,7 +486,7 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
               llvm::ConstantInt::get(i64_ty, step),
               llvm::ConstantInt::get(i1_ty, mem_io.is_hex ? 1 : 0),
               llvm::ConstantInt::get(i32_ty, element_kind),
-              llvm::ConstantInt::get(i32_ty, readmem_slot_id),
+              readmem_slot_id_val,
           };
           builder.CreateCall(context.GetLyraReadmem(), args);
         } else {

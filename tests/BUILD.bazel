@@ -60,6 +60,20 @@ cc_test(
     ],
 )
 
+# Process dedup suite - JIT with --share-procs
+cc_test(
+    name = "jit_share_procs_tests",
+    srcs = ["main.cpp"],
+    args = ["--suite=jit_share_procs"],
+    data = [
+        "suites.yaml",
+    ] + glob(["sv_features/**/*.yaml"]),
+    deps = [
+        ":test_framework",
+        "@googletest//:gtest",
+    ],
+)
+
 # AOT development suite - full AOT pipeline (compile > link > execute)
 cc_test(
     name = "aot_dev_tests",

@@ -44,8 +44,6 @@ void StoreDesignWithNotify(
 
   auto byte_size = static_cast<uint32_t>(
       ctx.GetModule().getDataLayout().getTypeAllocSize(value_type));
-  auto signal_id = *target.canonical_signal_id;
-
   // Store new value to a temp alloca (notify helper reads from pointer)
   auto* temp = builder.CreateAlloca(value_type, nullptr, "notify_tmp");
   builder.CreateStore(new_value, temp);
@@ -55,7 +53,7 @@ void StoreDesignWithNotify(
       ctx.GetLyraStorePacked(),
       {ctx.GetEnginePointer(), target.ptr, temp,
        llvm::ConstantInt::get(i32_ty, byte_size),
-       llvm::ConstantInt::get(i32_ty, signal_id),
+       target.canonical_signal_id->Emit(builder),
        llvm::ConstantInt::get(i32_ty, target.dirty_off),
        llvm::ConstantInt::get(i32_ty, target.dirty_size)});
 }

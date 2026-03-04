@@ -108,6 +108,7 @@ auto RunJit(const CompilationInput& input) -> int {
       .plusargs = input.plusargs,
       .feature_flags = feature_flags,
       .force_two_state = input.two_state,
+      .share_procs = input.share_procs,
   };
 
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;

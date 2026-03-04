@@ -28,11 +28,9 @@ void StoreContainerToWriteTarget(
   if (wt.canonical_signal_id.has_value()) {
     // Design slot: load old first, then atomic store+notify, then release old
     auto* old_handle = builder.CreateLoad(ptr_ty, wt.ptr, "ctr.old");
-    auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
     builder.CreateCall(
-        ctx.GetLyraStoreDynArray(),
-        {ctx.GetEnginePointer(), wt.ptr, new_handle,
-         llvm::ConstantInt::get(i32_ty, *wt.canonical_signal_id)});
+        ctx.GetLyraStoreDynArray(), {ctx.GetEnginePointer(), wt.ptr, new_handle,
+                                     wt.canonical_signal_id->Emit(builder)});
 
     const auto& types = ctx.GetTypeArena();
     if (types[type_id].Kind() == TypeKind::kAssociativeArray) {

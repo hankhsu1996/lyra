@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -116,6 +117,28 @@ struct ConnectionKernelEntry {
   std::optional<mir::PlaceId> trigger_observed_place;
 };
 
+// One instance's participation in a dedup group.
+struct ProcessDedupInstance {
+  mir::ProcessId process_id;
+  uint32_t instance_id;  // For %m support
+  uint64_t
+      base_byte_offset;   // Byte offset of instance's slot base in DesignState
+  uint32_t base_slot_id;  // First slot ID of this instance
+  uint32_t signal_id_offset;  // base_slot_id - representative.base_slot_id
+};
+
+// A group of structurally identical processes across instances.
+// One shared function is generated; each instance gets a thin wrapper.
+struct ProcessDedupGroup {
+  mir::ProcessId representative;  // Lowest instance_id in group
+  std::vector<ProcessDedupInstance> instances;
+  size_t shared_layout_index;  // Into layout.processes (representative's)
+  // Relative byte offsets indexed by (slot_id - rep.base_slot_id).
+  // Sized to representative's slot_count. UINT64_MAX = unused.
+  std::vector<uint64_t> rel_byte_offsets;
+  std::string shared_func_name;
+};
+
 // Complete layout for entire module
 struct Layout {
   DesignLayout design;
@@ -132,6 +155,12 @@ struct Layout {
   llvm::StructType* header_type = nullptr;
   // SuspendRecord type (opaque blob matching C++ struct size)
   llvm::StructType* suspend_record_type = nullptr;
+
+  // Process deduplication groups (only populated when share_procs is true).
+  std::vector<ProcessDedupGroup> dedup_groups;
+  // Map from module-process index (i.e. index into process_ids starting at
+  // num_init_processes) to dedup_group index. SIZE_MAX if not deduped.
+  std::vector<size_t> process_dedup_map;
 };
 
 // Type kind for variable inspection (also used in layout)
@@ -221,7 +250,8 @@ auto IsScalarPatchable(
 auto BuildLayout(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
     const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx,
-    const llvm::DataLayout& dl, bool force_two_state) -> Layout;
+    const llvm::DataLayout& dl, bool force_two_state, bool share_procs = false)
+    -> Layout;
 
 // Discriminant for byte range resolution results.
 // kPrecise: exact byte range known (FieldProjection + const IndexProjection).

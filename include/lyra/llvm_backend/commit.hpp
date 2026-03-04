@@ -7,6 +7,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/mir/handle.hpp"
 
@@ -22,7 +23,7 @@ struct PackedPlanesPtr {
   llvm::Value* val_ptr = nullptr;   // Pointer to value plane (opaque ptr)
   llvm::Value* unk_ptr =
       nullptr;  // Pointer to unknown plane (null for 2-state)
-  std::optional<uint32_t> signal_id;  // For design-slot notification
+  std::optional<SignalIdExpr> signal_id;  // For design-slot notification
 };
 
 // Store raw value to target place with type-appropriate handling.
@@ -70,7 +71,7 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target);
 // NBA-specific signal_id extraction.
 // NBA always targets design slots, so fail-fast is correct behavior.
 // Throws InternalError if target is not a design slot.
-auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> uint32_t;
+auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> SignalIdExpr;
 
 // Null-out source managed fields if move from temp.
 // Policy gate: only acts if policy==kMove AND source place root is kTemp.
@@ -95,10 +96,10 @@ auto CommitArrayFieldByField(
     Context& ctx, mir::PlaceId target, mir::PlaceId source,
     TypeId array_type_id, OwnershipPolicy policy) -> Result<void>;
 
-// Resolve design slot ID for a target place (after alias resolution).
-// Returns slot_id if design slot, nullopt if not.
-auto GetDesignSlotId(Context& ctx, mir::PlaceId target)
-    -> std::optional<uint32_t>;
+// Resolve design signal ID for a target place (after alias resolution).
+// Returns SignalIdExpr if design slot, nullopt if not.
+auto GetDesignSignalId(Context& ctx, mir::PlaceId target)
+    -> std::optional<SignalIdExpr>;
 
 namespace detail {
 

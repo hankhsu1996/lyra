@@ -251,7 +251,8 @@ auto RunSubprocess(
 
 auto PrepareLlvmModule(
     const TestCase& test_case, const std::filesystem::path& work_directory,
-    bool force_two_state) -> std::expected<LlvmPreparationResult, std::string> {
+    bool force_two_state, bool share_procs)
+    -> std::expected<LlvmPreparationResult, std::string> {
   // Parse test case using slang
   auto parse_result = ParseTestCase(test_case, work_directory);
   if (!parse_result.Success()) {
@@ -351,6 +352,7 @@ auto PrepareLlvmModule(
       .plusargs = test_case.plusargs,
       .feature_flags = feature_flags,
       .force_two_state = force_two_state,
+      .share_procs = share_procs,
   };
 
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);

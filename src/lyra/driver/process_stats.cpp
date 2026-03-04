@@ -340,6 +340,32 @@ void PrintProcessStats(
     fmt::print(sink, "\n");
   }
 
+  // Dedup summary: detect shared functions by name prefix.
+  // Each shared function = one dedup group. Wrappers = deduped process
+  // instances (thin forwarders to shared functions).
+  {
+    uint32_t dedup_groups = 0;
+    uint64_t shared_ir_insts = 0;
+    uint32_t num_wrappers = 0;
+    for (const auto& fs : llvm_stats.func_stats) {
+      if (fs.name.starts_with("shared_proc_")) {
+        ++dedup_groups;
+        shared_ir_insts += fs.instructions;
+      }
+    }
+    // Count wrapper processes: deduped processes have tiny LLVM functions
+    for (const auto& e : entries) {
+      if (e.llvm_insts > 0 && e.llvm_insts <= 10) {
+        ++num_wrappers;
+      }
+    }
+    fmt::print(
+        sink,
+        "[lyra][stats][proc] dedup: groups={} shared_ir_insts={} "
+        "wrappers={}\n",
+        dedup_groups, shared_ir_insts, num_wrappers);
+  }
+
   // Size distribution: median, p90, p99
   if (!entries.empty()) {
     std::vector<uint64_t> sizes;

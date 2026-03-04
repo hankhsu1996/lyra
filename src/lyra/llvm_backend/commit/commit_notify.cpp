@@ -35,8 +35,8 @@ void CommitNotifyUnionMemcpyIfDesignSlot(
       {ctx.GetEnginePointer(), wt.ptr,
        wt.ptr,  // For unions, source = target after memcpy
        llvm::ConstantInt::get(i32_ty, byte_size),
-       llvm::ConstantInt::get(i32_ty, *wt.canonical_signal_id),
-       llvm::ConstantInt::get(i32_ty, 0), llvm::ConstantInt::get(i32_ty, 0)});
+       wt.canonical_signal_id->Emit(builder), llvm::ConstantInt::get(i32_ty, 0),
+       llvm::ConstantInt::get(i32_ty, 0)});
 }
 
 void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
@@ -53,17 +53,17 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
   // kStructural = 1, off = 0, size = 0
   builder.CreateCall(
       ctx.GetLyraNotifyContainerMutation(),
-      {ctx.GetEnginePointer(), llvm::ConstantInt::get(i32_ty, *signal_id_opt),
+      {ctx.GetEnginePointer(), signal_id_opt->Emit(builder),
        llvm::ConstantInt::get(i32_ty, 1), llvm::ConstantInt::get(i32_ty, 0),
        llvm::ConstantInt::get(i32_ty, 0)});
 }
 
-auto GetDesignSlotId(Context& ctx, mir::PlaceId target)
-    -> std::optional<uint32_t> {
+auto GetDesignSignalId(Context& ctx, mir::PlaceId target)
+    -> std::optional<SignalIdExpr> {
   return commit::Access::GetCanonicalRootSignalId(ctx, target);
 }
 
-auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> uint32_t {
+auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> SignalIdExpr {
   auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
   if (!signal_id_opt.has_value()) {
     throw common::InternalError(
@@ -86,12 +86,9 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
   }
 
   auto& builder = ctx.GetBuilder();
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
-
   builder.CreateCall(
-      ctx.GetLyraNotifySignal(),
-      {ctx.GetEnginePointer(), *target_ptr_or_err,
-       llvm::ConstantInt::get(i32_ty, *signal_id_opt)});
+      ctx.GetLyraNotifySignal(), {ctx.GetEnginePointer(), *target_ptr_or_err,
+                                  signal_id_opt->Emit(builder)});
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

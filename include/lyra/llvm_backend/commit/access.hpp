@@ -6,6 +6,7 @@
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -21,7 +22,7 @@ class Context;
 // This eliminates redundancy and the need for call-site mutation.
 struct WriteTarget {
   llvm::Value* ptr = nullptr;  // Pointer to canonical storage
-  std::optional<uint32_t>
+  std::optional<SignalIdExpr>
       canonical_signal_id;  // Root slot ID, nullopt if not design
   uint32_t dirty_off = 0;   // Byte offset within slot (write-side dirty range)
   uint32_t dirty_size = 0;  // 0 = full slot; > 0 = precise byte range
@@ -43,7 +44,7 @@ class Access {
   // Get the canonical root signal_id for a place (after alias resolution).
   // Returns nullopt if the resolved root is not a design slot.
   [[nodiscard]] static auto GetCanonicalRootSignalId(
-      Context& ctx, mir::PlaceId target) -> std::optional<uint32_t>;
+      Context& ctx, mir::PlaceId target) -> std::optional<SignalIdExpr>;
 
   // Check if a place targets a design slot (has signal_id after alias
   // resolution).
