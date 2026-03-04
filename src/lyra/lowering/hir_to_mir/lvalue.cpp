@@ -23,11 +23,13 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/expression.hpp"
 #include "lyra/mir/assoc_op.hpp"
+#include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
+#include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -97,6 +99,28 @@ auto IsFourStateIndex(TypeId index_type, const TypeArena& types) -> bool {
   return false;
 }
 
+// Emit X/Z knownness check for a 4-state index.
+// Returns 2-state bool: 1 if index has no X/Z bits, 0 if it does.
+// Uses EmitIndexValidity with bounds spanning the full signed range of the
+// index type, so the range check is trivially true and only check_known
+// does real work.
+auto EmitIsKnown(mir::Operand index, TypeId index_type, MirBuilder& builder)
+    -> mir::Operand {
+  const Context& ctx = builder.GetContext();
+  const Type& type = (*ctx.type_arena)[index_type];
+  uint32_t bit_width = PackedBitWidth(type, *ctx.type_arena);
+  if (bit_width == 0 || bit_width > 63) {
+    throw common::InternalError(
+        "EmitIsKnown",
+        std::format("unsupported index bit width: {}", bit_width));
+  }
+  // Full signed range for N-bit type: [-(2^(N-1)), 2^(N-1)-1]
+  // Safe: bit_width in [1, 63], so shift is in [0, 62].
+  int64_t lower = -(static_cast<int64_t>(1) << (bit_width - 1));
+  int64_t upper = (static_cast<int64_t>(1) << (bit_width - 1)) - 1;
+  return builder.EmitIndexValidity(index, lower, upper, true);
+}
+
 // Emit bounds and X/Z validity check for packed array index.
 auto EmitPackedIndexValidity(
     mir::Operand index, TypeId index_type, const Type& array_type,
@@ -143,6 +167,110 @@ auto EmitPackedElementOffset(
   }
   return offset;
 }
+
+}  // namespace
+
+auto EmitUnpackedIndexValidity(
+    mir::Operand index, TypeId index_type, mir::PlaceId base_place,
+    TypeId base_type_id, MirBuilder& builder) -> mir::Operand {
+  const Context& ctx = builder.GetContext();
+  const Type& base_type = (*ctx.type_arena)[base_type_id];
+  bool is_four_state = IsFourStateIndex(index_type, *ctx.type_arena);
+
+  switch (base_type.Kind()) {
+    case TypeKind::kUnpackedArray: {
+      // Check original index against declared bounds [Lower, Upper].
+      const auto& range = base_type.AsUnpackedArray().range;
+
+      // Constant-fold: if index is a compile-time constant and in bounds,
+      // skip runtime check. Constants cannot contain X/Z, so check_known
+      // is irrelevant.
+      if (index.kind == mir::Operand::Kind::kConst) {
+        const auto& constant = std::get<Constant>(index.payload);
+        const auto* ic = std::get_if<IntegralConstant>(&constant.value);
+        if (ic != nullptr && !ic->value.empty() && ic->value.size() == 1) {
+          uint64_t raw = ic->value[0];
+          // Sign-extend based on index type if signed.
+          const Type& idx_type = (*ctx.type_arena)[constant.type];
+          uint32_t bw = PackedBitWidth(idx_type, *ctx.type_arena);
+          int64_t idx_val = static_cast<int64_t>(raw);
+          if (bw > 0 && bw < 64 && IsPacked(idx_type) &&
+              IsPackedSigned(idx_type, *ctx.type_arena)) {
+            uint64_t sign_bit = 1ULL << (bw - 1);
+            if ((raw & sign_bit) != 0) {
+              raw |= ~((1ULL << bw) - 1);
+            }
+            idx_val = static_cast<int64_t>(raw);
+          }
+          if (idx_val >= range.Lower() && idx_val <= range.Upper()) {
+            return MakeAlwaysValid(builder);
+          }
+        }
+      }
+
+      return builder.EmitIndexValidity(
+          index, range.Lower(), range.Upper(), is_four_state);
+    }
+
+    case TypeKind::kDynamicArray:
+    case TypeKind::kQueue: {
+      TypeId bit_type = ctx.GetBitType();
+      TypeId offset_type = ctx.GetOffsetType();
+
+      // Step 1: X/Z knownness check (4-state indices only)
+      mir::Operand validity = MakeAlwaysValid(builder);
+      if (is_four_state) {
+        validity = EmitIsKnown(index, index_type, builder);
+      }
+
+      // Step 2: Cast index to 2-state offset type (collapses X/Z to 0)
+      mir::Operand index_2s = builder.EmitCast(index, index_type, offset_type);
+
+      // Step 3: Signed non-negative check
+      auto zero_const = mir::Operand::Const(MakeIntegralConst(0, offset_type));
+      mir::Operand nonneg = builder.EmitBinary(
+          mir::BinaryOp::kGreaterThanEqualSigned, index_2s, zero_const,
+          bit_type);
+
+      // Step 4: Unsigned bounds check (index < size)
+      mir::BuiltinMethod size_method = (base_type.Kind() == TypeKind::kQueue)
+                                           ? mir::BuiltinMethod::kQueueSize
+                                           : mir::BuiltinMethod::kArraySize;
+      mir::Rvalue size_rvalue{
+          .operands = {mir::Operand::Use(base_place)},
+          .info =
+              mir::BuiltinCallRvalueInfo{
+                  .method = size_method,
+                  .result_type = offset_type,
+                  .receiver = std::nullopt,
+                  .enum_type = std::nullopt},
+      };
+      mir::PlaceId size_place =
+          builder.EmitPlaceTemp(offset_type, std::move(size_rvalue));
+      mir::Operand size_op = mir::Operand::Use(size_place);
+
+      mir::Operand in_bounds = builder.EmitBinary(
+          mir::BinaryOp::kLessThan, index_2s, size_op, bit_type);
+
+      // Step 5: Compose: valid = nonneg && in_bounds && (is_known if 4-state)
+      mir::Operand result = builder.EmitBinary(
+          mir::BinaryOp::kLogicalAnd, nonneg, in_bounds, bit_type);
+      if (!hir_to_mir::IsAlwaysValid(validity)) {
+        result = builder.EmitBinary(
+            mir::BinaryOp::kLogicalAnd, result, validity, bit_type);
+      }
+      return result;
+    }
+
+    default:
+      throw common::InternalError(
+          "EmitUnpackedIndexValidity", std::format(
+                                           "unexpected base type kind: {}",
+                                           static_cast<int>(base_type.Kind())));
+  }
+}
+
+namespace {
 
 auto LowerNameRefLvalue(
     const hir::NameRefExpressionData& data, MirBuilder& builder)
@@ -193,8 +321,12 @@ auto LowerElementAccessLvalue(
         "LowerElementAccessLvalue", "base is not an array or queue");
   }
 
-  // Normalize the index (may create ValueTemp via EmitCast/EmitBinary)
+  // Compute validity against original index (before normalization).
   const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
+  mir::Operand our_validity = EmitUnpackedIndexValidity(
+      index_operand, index_expr.type, base.place, base_type_id, builder);
+
+  // Normalize index for addressing (after validity).
   index_operand = NormalizeUnpackedIndex(
       index_operand, index_expr.type, base_type, builder);
 
@@ -206,12 +338,11 @@ auto LowerElementAccessLvalue(
   mir::PlaceId result_place =
       ctx.mir_arena->DerivePlace(base.place, std::move(proj));
 
-  // Unpacked/dynamic array and queue access - validity inherited from base.
-  // TODO(hankhsu): Add OOB validity tracking for these array types.
-  // Per IEEE 1800-2023, OOB read -> X/0, OOB write -> no-op (same as packed).
+  mir::Operand total_validity =
+      ComposeValidity(base.validity, our_validity, builder);
   return LvalueResult{
       .place = result_place,
-      .validity = base.validity,
+      .validity = MaterializeValidity(total_validity, builder),
   };
 }
 

@@ -25,6 +25,7 @@
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
+#include "lyra/common/type_utils.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/operator.hpp"
@@ -75,6 +76,89 @@ void FixupOperandsAfterBlockChange(
   if (builder.CurrentBlock() == before) return;
   for (mir::Operand* op : operands) {
     *op = builder.ThreadValueToCurrentBlock(*op);
+  }
+}
+
+// Emit OOB default fill for a non-packed place that contains 4-state content.
+// Recursively walks the type structure and assigns all-X to packed 4-state
+// leaves. 2-state leaves and handles retain their zero-initialized default.
+void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
+  const Context& ctx = builder.GetContext();
+  const TypeArena& types = *ctx.type_arena;
+  const Type& type = types[type_id];
+
+  if (IsPacked(type)) {
+    if (IsPackedFourState(type, types)) {
+      uint32_t bw = PackedBitWidth(type, types);
+      IntegralConstant ic;
+      if (bw <= 64) {
+        ic.value.push_back(0);
+        ic.unknown.push_back(bw == 64 ? ~0ULL : (1ULL << bw) - 1);
+      } else {
+        // Multi-limb: fill all limbs with unknown bits.
+        uint32_t full_limbs = bw / 64;
+        uint32_t remaining = bw % 64;
+        for (uint32_t i = 0; i < full_limbs; ++i) {
+          ic.value.push_back(0);
+          ic.unknown.push_back(~0ULL);
+        }
+        if (remaining > 0) {
+          ic.value.push_back(0);
+          ic.unknown.push_back((1ULL << remaining) - 1);
+        }
+      }
+      auto constant = Constant{.type = type_id, .value = std::move(ic)};
+      builder.EmitAssign(place, mir::Operand::Const(std::move(constant)));
+    }
+    return;
+  }
+
+  switch (type.Kind()) {
+    case TypeKind::kUnpackedStruct: {
+      const auto& info = type.AsUnpackedStruct();
+      for (int i = 0; i < static_cast<int>(info.fields.size()); ++i) {
+        if (!IsFourStateType(info.fields[i].type, types)) continue;
+        mir::PlaceId field_place = ctx.mir_arena->DerivePlace(
+            place,
+            mir::Projection{.info = mir::FieldProjection{.field_index = i}});
+        EmitOOBDefault(field_place, info.fields[i].type, builder);
+      }
+      break;
+    }
+    case TypeKind::kUnpackedArray: {
+      const auto& info = type.AsUnpackedArray();
+      if (!IsFourStateType(info.element_type, types)) break;
+      TypeId offset_type = ctx.GetOffsetType();
+      for (int64_t idx = 0; idx < static_cast<int64_t>(info.range.Size());
+           ++idx) {
+        mir::Operand idx_op = mir::Operand::Const(
+            Constant{
+                .type = offset_type,
+                .value = IntegralConstant{
+                    .value = {static_cast<uint64_t>(idx)}, .unknown = {0}}});
+        mir::PlaceId elem_place = ctx.mir_arena->DerivePlace(
+            place,
+            mir::Projection{.info = mir::IndexProjection{.index = idx_op}});
+        EmitOOBDefault(elem_place, info.element_type, builder);
+      }
+      break;
+    }
+    case TypeKind::kUnpackedUnion: {
+      const auto& info = type.AsUnpackedUnion();
+      if (!info.storage_is_four_state) break;
+      // Union storage is a single blob; fill via its first 4-state member.
+      for (uint32_t i = 0; i < info.members.size(); ++i) {
+        if (!IsFourStateType(info.members[i].type, types)) continue;
+        mir::PlaceId member_place = ctx.mir_arena->DerivePlace(
+            place, mir::Projection{
+                       .info = mir::UnionMemberProjection{.member_index = i}});
+        EmitOOBDefault(member_place, info.members[i].type, builder);
+        break;
+      }
+      break;
+    }
+    default:
+      break;
   }
 }
 
@@ -1139,8 +1223,22 @@ auto LowerAssignment(
   mir::Operand value = *value_result;
 
   if (data.is_non_blocking) {
-    // Non-blocking: schedule for NBA region (validity handled in LLVM backend)
-    builder.EmitDeferredAssign(target.place, value);
+    if (target.IsAlwaysValid()) {
+      builder.EmitDeferredAssign(target.place, value);
+    } else {
+      // Guard NBA: only schedule if validity is true (OOB = no-op)
+      mir::Operand cond = builder.MaterializeForBranch(target.validity);
+      BlockIndex store_bb = builder.CreateBlock();
+      BlockIndex merge_bb = builder.CreateBlock();
+      builder.EmitBranch(cond, store_bb, merge_bb);
+
+      builder.SetCurrentBlock(store_bb);
+      value = builder.ThreadValueToCurrentBlock(std::move(value));
+      builder.EmitDeferredAssign(target.place, value);
+      builder.EmitJump(merge_bb);
+
+      builder.SetCurrentBlock(merge_bb);
+    }
   } else if (target.IsAlwaysValid()) {
     builder.EmitAssign(target.place, value);
   } else {
@@ -2278,8 +2376,9 @@ auto LowerMathCall(
 }
 
 auto LowerElementAccessRvalue(
-    const hir::ElementAccessExpressionData& data, MirBuilder& builder,
-    PlaceMaterializationCache& cache) -> Result<mir::Operand> {
+    const hir::ElementAccessExpressionData& data, const hir::Expression& expr,
+    MirBuilder& builder, PlaceMaterializationCache& cache)
+    -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
   Result<mir::Operand> base_result =
@@ -2319,7 +2418,12 @@ auto LowerElementAccessRvalue(
         "LowerElementAccessRvalue", "base is not an array or queue");
   }
 
+  // Compute validity against original index (before normalization).
   const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
+  mir::Operand validity = EmitUnpackedIndexValidity(
+      index_operand, index_expr.type, base_place, base_expr.type, builder);
+
+  // Normalize index for addressing (after validity).
   index_operand = NormalizeUnpackedIndex(
       index_operand, index_expr.type, base_type, builder);
 
@@ -2329,7 +2433,40 @@ auto LowerElementAccessRvalue(
   mir::PlaceId result_place =
       ctx.mir_arena->DerivePlace(base_place, std::move(proj));
 
-  return mir::Operand::Use(result_place);
+  if (IsAlwaysValid(validity)) {
+    return mir::Operand::Use(result_place);
+  }
+
+  // GuardedUse only works for packed types (LLVM backend uses integer ops).
+  // For non-packed types (e.g., dynamic array handle in multi-dim access),
+  // use a branch to guard the read and provide a default-initialized temp.
+  const Type& element_type = (*ctx.type_arena)[expr.type];
+  if (IsPacked(element_type)) {
+    return builder.EmitGuardedUse(validity, result_place, expr.type);
+  }
+
+  // Branch guard for non-packed element reads.
+  // OOB default: zero for 2-state / handles, X for 4-state sub-content.
+  mir::PlaceId result_temp = ctx.AllocTemp(expr.type);
+  mir::Operand cond = builder.MaterializeForBranch(validity);
+  BlockIndex read_bb = builder.CreateBlock();
+  BlockIndex oob_bb = builder.CreateBlock();
+  BlockIndex merge_bb = builder.CreateBlock();
+  builder.EmitBranch(cond, read_bb, oob_bb);
+
+  builder.SetCurrentBlock(read_bb);
+  builder.EmitAssign(result_temp, mir::Operand::Use(result_place));
+  builder.EmitJump(merge_bb);
+
+  // OOB path: fill 4-state sub-content with X (2-state stays zero).
+  builder.SetCurrentBlock(oob_bb);
+  if (IsFourStateType(expr.type, *ctx.type_arena)) {
+    EmitOOBDefault(result_temp, expr.type, builder);
+  }
+  builder.EmitJump(merge_bb);
+
+  builder.SetCurrentBlock(merge_bb);
+  return mir::Operand::Use(result_temp);
 }
 
 auto LowerMaterializeInitializer(
@@ -2384,8 +2521,7 @@ auto LowerExpressionImpl(
           return LowerCompoundAssignment(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::ElementAccessExpressionData>) {
-          // TODO(hankhsu): Use GuardedUse for OOB-safe reads
-          return LowerElementAccessRvalue(data, builder, cache);
+          return LowerElementAccessRvalue(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::MemberAccessExpressionData>) {
           Context& ctx = builder.GetContext();

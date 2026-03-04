@@ -1,0 +1,41 @@
+feature: oob_bounds_four_state
+description: >
+  OOB access tests requiring 4-state (X/Z) results.
+  Excluded from --two-state suite.
+
+cases:
+  - name: unpacked_fixed_oob_read_4state_returns_x
+    description: OOB read on unpacked array of 4-state type returns X
+    sv: |
+      module Test;
+        integer result;
+        initial begin
+          integer arr[4];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          arr[3] = 40;
+          result = arr[4];
+        end
+      endmodule
+    expect:
+      variables:
+        result: "32'hxxxxxxxx"
+
+  - name: dynamic_array_oob_read_4state_returns_x
+    description: OOB read on dynamic array of 4-state type returns X
+    sv: |
+      module Test;
+        integer result;
+        initial begin
+          integer arr[];
+          arr = new[3];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          result = arr[3];
+        end
+      endmodule
+    expect:
+      variables:
+        result: "32'hxxxxxxxx"

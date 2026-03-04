@@ -42,9 +42,6 @@ inline auto IsAlwaysValid(const mir::Operand& validity) -> bool {
 // blocks (e.g., ternary), which would invalidate UseTemp operands. Lvalue
 // lowering materializes non-constant validity to a place to prevent this.
 //
-// TODO(hankhsu): Extend validity tracking to unpacked/dynamic arrays and
-// queues. Currently only packed arrays track validity; other array types need
-// OOB handling added in lowering (emit GuardedUse/GuardedAssign).
 // Writeback token for associative array copy-in/copy-out.
 // Produced by lvalue lowering when target is `aa[k].field` (compound access).
 // Consumed by assignment lowering to write back the modified element.
@@ -83,6 +80,16 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
 auto NormalizeUnpackedIndex(
     mir::Operand index_operand, TypeId index_type, const Type& base_type,
     MirBuilder& builder) -> mir::Operand;
+
+// Emit bounds validity check for unpacked/dynamic/queue array element access.
+// Returns 2-state bool: 1 if index is in-bounds (and known for 4-state), 0
+// otherwise. Dispatches by array kind:
+// - kUnpackedArray: check original index against declared range
+// - kDynamicArray/kQueue: runtime size query + signed/unsigned checks
+// Takes original index (before normalization).
+auto EmitUnpackedIndexValidity(
+    mir::Operand index, TypeId index_type, mir::PlaceId base_place,
+    TypeId base_type_id, MirBuilder& builder) -> mir::Operand;
 
 struct Context;
 

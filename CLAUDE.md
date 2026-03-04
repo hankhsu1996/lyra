@@ -23,7 +23,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/string-types.md`             | String type handling, slang interaction              |
 | `docs/error-handling.md`           | Error types, when to use each                        |
 | `docs/execution-modes.md`          | AOT vs JIT vs MIR, shared pipeline, CLI semantics    |
-| `docs/gaps.md`                     | Work queue: codegen, runtime, toolchain issues       |
 | `docs/aot-readiness.md`            | AOT milestones, gates, and PR ordering               |
 | `docs/documentation-guidelines.md` | Documentation guidelines                             |
 
