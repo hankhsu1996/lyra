@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Document                           | Purpose                                              |
 | ---------------------------------- | ---------------------------------------------------- |
 | `docs/philosophy.md`               | North star, priorities, tradeoffs                    |
+| `docs/architecture-principles.md`  | Architectural north stars, structural rules          |
 | `docs/design-principles.md`        | Implementation guidelines, coding patterns           |
 | `docs/architecture.md`             | Component relationships, data flow                   |
 | `docs/pipeline-contract.md`        | Layer responsibilities, boundaries, correctness      |
