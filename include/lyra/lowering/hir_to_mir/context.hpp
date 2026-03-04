@@ -8,6 +8,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 
@@ -43,7 +44,7 @@ using SymbolToMirFunctionMap =
 //   - functions is complete for all package functions
 //   - All mir::FunctionIds in the map have frozen signatures in the arena
 //     (written by ReserveFunction at pre-allocation time)
-//   - slot_table.size() == num_design_slots
+//   - slots.size() == num_design_slots
 //   - No later phase may mutate any of the above
 // Map module instance symbol -> index into InstanceTable (for %m support)
 using InstanceIndexMap = std::unordered_map<SymbolId, uint32_t, SymbolIdHash>;
@@ -59,10 +60,10 @@ struct DesignDeclarations {
   PlaceMap design_places;
   SymbolToMirFunctionMap functions;
   size_t num_design_slots = 0;
-  // Slot table: indexed by design slot ID, contains TypeId for each slot.
-  // Ordering is ABI: packages first (in element order), then all module
-  // instances (in BFS elaboration order).
-  std::vector<TypeId> slot_table;
+  // Slot descriptors: indexed by design slot ID, contains type and kind for
+  // each slot. Ordering is ABI: packages first (in element order), then all
+  // module instances (in BFS elaboration order).
+  std::vector<mir::SlotDesc> slots;
   // Reverse lookup: module instance symbol -> instance table index.
   // Built from LoweringInput::instance_table during CollectDeclarations.
   InstanceIndexMap instance_indices;
@@ -72,6 +73,8 @@ struct DesignDeclarations {
   // Per-module-instance def keys (parallel to instance_slot_ranges).
   // In-run grouping key for process template pre-filtering.
   std::vector<uint64_t> module_def_keys;
+  // Per-module-instance param init entries (parallel to instance_slot_ranges).
+  std::vector<std::vector<mir::ParamInitEntry>> instance_param_inits;
 };
 
 // Read-only view into declaration artifacts for lower-level helpers
@@ -80,6 +83,7 @@ struct DesignDeclarations {
 struct DeclView {
   const PlaceMap* places;
   const SymbolToMirFunctionMap* functions;
+  const std::vector<mir::SlotDesc>* slots = nullptr;
 };
 
 // Result of AllocLocal - provides both the PlaceId and the local slot index.
@@ -131,6 +135,10 @@ struct Context {
   // Set by LowerFunctionBody for non-void functions; used by return lowering.
   std::optional<mir::PlaceId> return_slot;
   TypeId return_type = kInvalidTypeId;
+
+  // Design slot descriptors (read-only, owned by DesignDeclarations).
+  // Used to enforce write-protection on kParamConst slots at lvalue lowering.
+  const std::vector<mir::SlotDesc>* design_slots = nullptr;
 
   // Stats: count of MaterializeOperandToPlace calls (for --stats output).
   uint64_t materialize_count = 0;

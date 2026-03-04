@@ -46,7 +46,7 @@ auto CollectDeclarations(
             .projections = {},
         };
         decls.design_places[var] = mir_arena.AddPlace(std::move(place));
-        decls.slot_table.push_back(sym.type);
+        decls.slots.push_back({sym.type, mir::SlotKind::kVariable});
       }
 
       // Pre-allocate MIR function IDs with frozen signatures
@@ -77,7 +77,7 @@ auto CollectDeclarations(
             .projections = {},
         };
         decls.design_places[var] = mir_arena.AddPlace(std::move(place));
-        decls.slot_table.push_back(sym.type);
+        decls.slots.push_back({sym.type, mir::SlotKind::kVariable});
       }
 
       for (SymbolId net : mod->nets) {
@@ -92,7 +92,33 @@ auto CollectDeclarations(
             .projections = {},
         };
         decls.design_places[net] = mir_arena.AddPlace(std::move(place));
-        decls.slot_table.push_back(sym.type);
+        decls.slots.push_back({sym.type, mir::SlotKind::kNet});
+      }
+
+      std::vector<mir::ParamInitEntry> param_inits;
+      for (size_t pi = 0; pi < mod->param_slots.size(); ++pi) {
+        SymbolId param = mod->param_slots[pi];
+        const Symbol& sym = (*input.symbol_table)[param];
+        auto slot_id = static_cast<uint32_t>(next_slot);
+        mir::Place place{
+            .root =
+                mir::PlaceRoot{
+                    .kind = mir::PlaceRoot::Kind::kDesign,
+                    .id = next_slot++,
+                    .type = sym.type,
+                },
+            .projections = {},
+        };
+        decls.design_places[param] = mir_arena.AddPlace(std::move(place));
+        decls.slots.push_back({sym.type, mir::SlotKind::kParamConst});
+
+        if (pi < mod->param_init_values.size()) {
+          param_inits.push_back(
+              mir::ParamInitEntry{
+                  .slot_id = slot_id,
+                  .value = mod->param_init_values[pi],
+              });
+        }
       }
 
       auto instance_slot_count =
@@ -100,6 +126,7 @@ auto CollectDeclarations(
       decls.instance_slot_ranges.push_back(
           {instance_slot_begin, instance_slot_count});
       decls.module_def_keys.push_back(mod->module_def_key);
+      decls.instance_param_inits.push_back(std::move(param_inits));
     }
   }
 

@@ -283,7 +283,7 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
     };
     auto range = ResolveByteRange(
         *llvm_context_, llvm_module_->getDataLayout(), types_, resolved,
-        design_.slot_table[slot_id], resolver, force_two_state_);
+        design_.slots[slot_id].type, resolver, force_two_state_);
     if (range.kind == RangeKind::kPrecise) {
       dirty_off = range.byte_offset;
       dirty_size = range.byte_size;

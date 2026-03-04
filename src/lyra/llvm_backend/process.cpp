@@ -415,7 +415,7 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
 
   const auto& arena = context.GetMirArena();
   const auto& place = arena[*trigger.observed_place];
-  TypeId root_type = context.GetMirDesign().slot_table[trigger.signal.value];
+  TypeId root_type = context.GetMirDesign().slots[trigger.signal.value].type;
 
   auto resolver =
       [&context](const mir::Operand& op) -> std::optional<uint64_t> {

@@ -312,7 +312,7 @@ auto GetLlvmAbiTypeForValue(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types,
     bool force_two_state) -> llvm::Type*;
 
-// Build SlotInfo list from design's slot_table.
+// Build SlotInfo list from design's slots.
 // This derives type metadata (kind, width, signedness) for
 // runtime/initialization.
 auto BuildSlotInfoFromDesign(

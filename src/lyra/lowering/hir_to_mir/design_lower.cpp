@@ -38,7 +38,7 @@ auto LowerDesign(
 
   mir::Design result;
   result.num_design_slots = decls.num_design_slots;
-  result.slot_table = decls.slot_table;
+  result.slots = decls.slots;
   result.global_precision_power = input.global_precision_power;
   // Thread slot ranges and def keys for process template grouping in LLVM
   // backend
@@ -47,6 +47,7 @@ auto LowerDesign(
     result.instance_slot_ranges.push_back({range.slot_begin, range.slot_count});
   }
   result.module_def_keys = decls.module_def_keys;
+  result.instance_param_inits = decls.instance_param_inits;
   if (input.instance_table != nullptr) {
     result.instance_table = *input.instance_table;
   }
@@ -54,7 +55,9 @@ auto LowerDesign(
   // Lower package init processes
   // Collect dynamically generated functions (e.g., strobe thunks)
   DeclView init_view{
-      .places = &decls.design_places, .functions = &decls.functions};
+      .places = &decls.design_places,
+      .functions = &decls.functions,
+      .slots = &decls.slots};
   for (const auto& element : design.elements) {
     if (const auto* pkg = std::get_if<hir::Package>(&element)) {
       if (pkg->init_process) {

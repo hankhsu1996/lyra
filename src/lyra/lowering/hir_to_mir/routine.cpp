@@ -125,6 +125,7 @@ auto LowerFunctionBody(
       .symbol_to_mir_function = decl_view.functions,
       .return_slot = std::nullopt,
       .return_type = function.return_type,
+      .design_slots = decl_view.slots,
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map);

@@ -1100,10 +1100,10 @@ auto BuildSlotInfoFromDesign(
     const mir::Design& design, const TypeArena& types, bool force_two_state)
     -> std::vector<SlotInfo> {
   std::vector<SlotInfo> slots;
-  slots.reserve(design.slot_table.size());
+  slots.reserve(design.slots.size());
 
-  for (size_t i = 0; i < design.slot_table.size(); ++i) {
-    TypeId type_id = design.slot_table[i];
+  for (size_t i = 0; i < design.slots.size(); ++i) {
+    TypeId type_id = design.slots[i].type;
     const Type& type = types[type_id];
 
     SlotTypeInfo type_info{};
@@ -1253,7 +1253,7 @@ void BuildModuleVariants(
   // Pre-compute all instance base byte offsets.
   // Invariant: slot_id.value == LLVM struct field index
   // (BuildSlotInfoFromDesign creates slot IDs as sequential indices into
-  // slot_table, and BuildDesignLayout maps them 1:1 to struct fields). This
+  // slots, and BuildDesignLayout maps them 1:1 to struct fields). This
   // lets us use slot_begin directly as a struct element index.
   for (size_t mi = 0; mi < num_module_elements; ++mi) {
     uint32_t slot_begin = design.instance_slot_ranges[mi].slot_begin;

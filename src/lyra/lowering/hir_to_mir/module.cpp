@@ -48,7 +48,9 @@ auto LowerModule(
 
   // Phase 2: Lower function bodies (map is complete, recursion works)
   DeclView decl_view{
-      .places = &decls.design_places, .functions = &symbol_to_mir_function};
+      .places = &decls.design_places,
+      .functions = &symbol_to_mir_function,
+      .slots = &decls.slots};
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
