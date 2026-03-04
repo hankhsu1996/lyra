@@ -833,6 +833,15 @@ void MirBuilder::EmitBranch(
   EmitBranch(cond, then_bb, {}, else_bb, {});
 }
 
+auto MirBuilder::MaterializeForBranch(mir::Operand cond) -> mir::Operand {
+  if (cond.kind != mir::Operand::Kind::kConst) {
+    return cond;
+  }
+  mir::PlaceId temp = ctx_->AllocTemp(ctx_->GetBitType());
+  EmitAssign(temp, std::move(cond));
+  return mir::Operand::Use(temp);
+}
+
 void MirBuilder::EmitQualifiedDispatch(
     mir::DispatchQualifier qualifier, mir::DispatchStatementKind statement_kind,
     const std::vector<mir::Operand>& conditions,

@@ -240,6 +240,10 @@ class MirBuilder {
 
   // Legacy overload without edge args (for backward compatibility).
   void EmitBranch(mir::Operand cond, BlockIndex then_bb, BlockIndex else_bb);
+
+  // Materialize a condition operand for use in EmitBranch.
+  // EmitBranch requires kUse or kUseTemp; this spills kConst to a temp.
+  auto MaterializeForBranch(mir::Operand cond) -> mir::Operand;
   void EmitQualifiedDispatch(
       mir::DispatchQualifier qualifier,
       mir::DispatchStatementKind statement_kind,

@@ -1,0 +1,291 @@
+feature: oob_bounds
+description: Out-of-bounds access safety for unpacked arrays, dynamic arrays, and queues
+
+cases:
+  - name: unpacked_fixed_oob_read_returns_zero
+    description: OOB read on 2-state unpacked array returns 0
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[4];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          arr[3] = 40;
+          result = arr[4];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: unpacked_fixed_oob_write_noop
+    description: OOB write on unpacked array is a no-op
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[4];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          arr[3] = 40;
+          arr[4] = 999;
+          result = arr[0] + arr[1] + arr[2] + arr[3];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 100
+
+  - name: unpacked_fixed_negative_index_oob
+    description: Negative index treated as OOB
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[4];
+          int idx;
+          arr[0] = 42;
+          idx = -1;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: unpacked_fixed_nontrivial_range
+    description: Non-zero-based range bounds checking
+    sv: |
+      module Test;
+        int r1;
+        int r2;
+        int r3;
+        int r4;
+        initial begin
+          int arr[-1:6];
+          int i;
+          for (i = -1; i <= 6; i++)
+            arr[i] = i * 10;
+          r1 = arr[-1];
+          r2 = arr[6];
+          r3 = arr[-2];
+          r4 = arr[7];
+        end
+      endmodule
+    expect:
+      variables:
+        r1: -10
+        r2: 60
+        r3: 0
+        r4: 0
+
+  - name: unpacked_fixed_boundary_valid
+    description: Boundary element access is valid
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[4];
+          arr[3] = 77;
+          result = arr[3];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 77
+
+  - name: dynamic_array_oob_read
+    description: OOB read on dynamic array returns 0
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[];
+          arr = new[3];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          result = arr[3];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: dynamic_array_oob_write
+    description: OOB write on dynamic array is a no-op
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[];
+          arr = new[3];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          arr[3] = 999;
+          result = arr[0] + arr[1] + arr[2];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 60
+
+  - name: dynamic_array_negative_index
+    description: Negative index on dynamic array is OOB
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[];
+          int idx;
+          arr = new[3];
+          arr[0] = 42;
+          idx = -1;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: dynamic_array_empty_oob
+    description: Any access on empty dynamic array is OOB
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[];
+          arr = new[0];
+          result = arr[0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: queue_oob_read
+    description: OOB read on queue returns 0
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int q[$];
+          q.push_back(10);
+          q.push_back(20);
+          q.push_back(30);
+          result = q[3];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: queue_oob_write
+    description: OOB write on queue is a no-op
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int q[$];
+          q.push_back(10);
+          q.push_back(20);
+          q.push_back(30);
+          q[3] = 999;
+          result = q[0] + q[1] + q[2];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 60
+
+  - name: queue_negative_index
+    description: Negative index on queue is OOB
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int q[$];
+          int idx;
+          q.push_back(42);
+          idx = -1;
+          result = q[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: queue_empty_oob
+    description: Any access on empty queue is OOB
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int q[$];
+          result = q[0];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: dynamic_array_boundary_valid
+    description: index == size-1 is valid, index == size is OOB
+    sv: |
+      module Test;
+        int r1;
+        int r2;
+        initial begin
+          int arr[];
+          arr = new[3];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          r1 = arr[2];
+          r2 = arr[3];
+        end
+      endmodule
+    expect:
+      variables:
+        r1: 30
+        r2: 0
+
+  - name: unpacked_fixed_oob_read_4state_returns_x
+    description: OOB read on unpacked array of 4-state type returns X
+    sv: |
+      module Test;
+        integer result;
+        initial begin
+          integer arr[4];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          arr[3] = 40;
+          result = arr[4];
+        end
+      endmodule
+    expect:
+      variables:
+        result: "32'hxxxxxxxx"
+
+  - name: dynamic_array_oob_read_4state_returns_x
+    description: OOB read on dynamic array of 4-state type returns X
+    sv: |
+      module Test;
+        integer result;
+        initial begin
+          integer arr[];
+          arr = new[3];
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          result = arr[3];
+        end
+      endmodule
+    expect:
+      variables:
+        result: "32'hxxxxxxxx"
