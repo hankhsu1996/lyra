@@ -15,7 +15,7 @@ namespace lyra::lowering::ast_to_hir {
 enum class ParamRole : uint8_t { kShape, kValueOnly };
 
 // Classification of parameter roles across a design.
-// Keyed by ParameterSymbol pointer — stable within a compilation.
+// Keyed by ParameterSymbol pointer -- stable within a compilation.
 class ParamRoleTable {
  public:
   auto Lookup(const slang::ast::ParameterSymbol& p) const -> ParamRole;

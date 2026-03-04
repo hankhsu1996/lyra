@@ -49,7 +49,7 @@ struct ShapeParamCollector
     --procedural_depth;
   }
 
-  // Named value expressions — check if referencing a parameter.
+  // Named value expressions -- check if referencing a parameter.
   void handle(const slang::ast::NamedValueExpression& expr) {
     if (procedural_depth == 0) {
       if (expr.symbol.kind == slang::ast::SymbolKind::Parameter) {
