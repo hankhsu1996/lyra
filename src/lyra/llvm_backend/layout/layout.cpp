@@ -1157,12 +1157,12 @@ auto BuildSlotInfoFromDesign(
 struct ModuleProcessInfo {
   mir::ProcessId process_id;
   uint64_t module_def_key;
-  uint32_t local_process_index;  // Index within the module's process list
+  LocalProcIndex local_process_index;
   uint32_t slot_begin;
   uint32_t slot_count;
-  uint32_t instance_id;      // owner_instance_id from process
-  size_t process_ids_index;  // Index in layout.process_ids
-  size_t module_idx;         // Index into module element arrays
+  uint32_t instance_id;                  // owner_instance_id from process
+  LayoutProcessIndex process_ids_index;  // Index in layout.process_ids
+  ModuleIndex module_idx;
   const std::vector<mir::FunctionId>* module_functions = nullptr;
 };
 
@@ -1172,14 +1172,15 @@ void BuildModuleVariants(
   // Step 1: Build process info by walking module elements
 
   // Build process_id -> process_ids_index map (avoids O(N^2) linear scan)
-  std::unordered_map<uint32_t, size_t> pid_to_index;
+  std::unordered_map<uint32_t, LayoutProcessIndex> pid_to_index;
   for (size_t i = layout.num_init_processes; i < layout.process_ids.size();
        ++i) {
-    pid_to_index[layout.process_ids[i].value] = i;
+    pid_to_index[layout.process_ids[i].value] =
+        LayoutProcessIndex{static_cast<uint32_t>(i)};
   }
 
   std::vector<ModuleProcessInfo> all_module_procs;
-  size_t module_idx = 0;
+  uint32_t module_idx = 0;
   for (const auto& element : design.elements) {
     if (!std::holds_alternative<mir::Module>(element)) continue;
     const auto& mir_module = std::get<mir::Module>(element);
@@ -1200,18 +1201,17 @@ void BuildModuleVariants(
         ++local_idx;
         continue;
       }
-      size_t pid_idx = pid_it->second;
 
       all_module_procs.push_back(
           ModuleProcessInfo{
               .process_id = proc_id,
               .module_def_key = def_key,
-              .local_process_index = local_idx,
+              .local_process_index = LocalProcIndex{local_idx},
               .slot_begin = slot_begin,
               .slot_count = slot_count,
               .instance_id = process.owner_instance_id,
-              .process_ids_index = pid_idx,
-              .module_idx = module_idx,
+              .process_ids_index = pid_it->second,
+              .module_idx = ModuleIndex{module_idx},
               .module_functions = &mir_module.functions,
           });
       ++local_idx;
@@ -1228,14 +1228,14 @@ void BuildModuleVariants(
 
   // Builder-local: process_id -> template_id (used by Phase B to build variant
   // keys). Not stored in Layout -- variant routing is the sole source of truth.
-  std::unordered_map<uint32_t, size_t> proc_id_to_template;
+  std::unordered_map<uint32_t, TemplateId> proc_id_to_template;
 
   // Group by (module_def_key, local_process_index)
   std::map<std::pair<uint64_t, uint32_t>, std::vector<size_t>> candidate_groups;
   for (size_t i = 0; i < all_module_procs.size(); ++i) {
     const auto& info = all_module_procs[i];
-    candidate_groups[{info.module_def_key, info.local_process_index}].push_back(
-        i);
+    candidate_groups[{info.module_def_key, info.local_process_index.value}]
+        .push_back(i);
   }
 
   const auto* struct_layout = dl.getStructLayout(layout.design.llvm_type);
@@ -1299,12 +1299,14 @@ void BuildModuleVariants(
       const auto& rep = all_module_procs[rep_idx];
 
       // Verify frame layout compatibility
-      const auto& rep_frame = layout.processes[rep.process_ids_index].frame;
+      const auto& rep_frame =
+          layout.processes[rep.process_ids_index.value].frame;
       bool frames_compatible = true;
       for (size_t fi : fp_indices) {
         if (fi == rep_idx) continue;
         const auto& other_frame =
-            layout.processes[all_module_procs[fi].process_ids_index].frame;
+            layout.processes[all_module_procs[fi].process_ids_index.value]
+                .frame;
         if (other_frame.root_types != rep_frame.root_types) {
           frames_compatible = false;
           break;
@@ -1346,22 +1348,26 @@ void BuildModuleVariants(
       if (!offsets_compatible) continue;
 
       // Create ProcessTemplate
-      size_t template_id = layout.process_templates.size();
+      auto template_id =
+          TemplateId{static_cast<uint32_t>(layout.process_templates.size())};
       layout.process_templates.push_back(
           ProcessTemplate{
               .template_process = rep.process_id,
               .template_layout_index = rep.process_ids_index,
               .func_name = std::format(
-                  "proc_template_{}_{:x}", rep.local_process_index, fp),
+                  "proc_template_{}_{:x}", rep.local_process_index.value, fp),
               .template_base_slot_id = rep.slot_begin,
+              .representative_module_idx = rep.module_idx,
           });
 
       // Record membership for all instances in this group
       for (size_t fi : fp_indices) {
         const auto& info = all_module_procs[fi];
-        size_t map_idx = info.process_ids_index - layout.num_init_processes;
+        uint32_t map_idx = info.process_ids_index.value -
+                           static_cast<uint32_t>(layout.num_init_processes);
         layout.process_membership[map_idx] = ProcessMembership{
             .local_proc_idx = info.local_process_index,
+            .module_idx = info.module_idx,
         };
         proc_id_to_template[info.process_id.value] = template_id;
       }
@@ -1371,7 +1377,8 @@ void BuildModuleVariants(
   // Phase B: Build variants
 
   // Per module instance, build VariantKey from membership data
-  using VariantKey = std::vector<std::pair<uint32_t, std::optional<size_t>>>;
+  using VariantKey =
+      std::vector<std::pair<uint32_t, std::optional<TemplateId>>>;
   std::map<VariantKey, uint32_t> key_to_variant;
   uint32_t next_variant = 0;
 
@@ -1390,7 +1397,7 @@ void BuildModuleVariants(
       }
 
       // Look up this process's template assignment (if any)
-      std::optional<size_t> tmpl_id;
+      std::optional<TemplateId> tmpl_id;
       auto tmpl_it = proc_id_to_template.find(proc_id.value);
       if (tmpl_it != proc_id_to_template.end()) {
         tmpl_id = tmpl_it->second;
@@ -1453,6 +1460,64 @@ void BuildModuleVariants(
                                    layout.instance_variant_ids.size(),
                                    design.instance_slot_ranges.size()));
   }
+
+  // Post-build invariant: every membership entry must route through its
+  // variant.
+  for (size_t i = 0; i < layout.process_membership.size(); ++i) {
+    const auto& m = layout.process_membership[i];
+    if (!m) continue;
+    const auto& variant = layout.GetInstanceVariant(m->module_idx);
+    if (m->local_proc_idx.value >= variant.proc_template_ids.size() ||
+        !variant.proc_template_ids[m->local_proc_idx.value]) {
+      throw common::InternalError(
+          "BuildModuleVariants",
+          std::format(
+              "membership[{}] has local_proc_idx={} but variant has no "
+              "template at that index",
+              i, m->local_proc_idx.value));
+    }
+  }
+}
+
+auto Layout::RouteProcess(LayoutProcessIndex idx) const -> ProcessRoute {
+  if (idx.value < num_init_processes) {
+    return StandaloneRoute{};
+  }
+  if (process_membership.empty()) {
+    return StandaloneRoute{};
+  }
+  uint32_t map_idx = idx.value - static_cast<uint32_t>(num_init_processes);
+  if (map_idx >= process_membership.size() || !process_membership[map_idx]) {
+    return StandaloneRoute{};
+  }
+  const auto& m = *process_membership[map_idx];
+  const auto& variant = GetInstanceVariant(m.module_idx);
+  const auto& tmpl = variant.proc_template_ids[m.local_proc_idx.value];
+  if (!tmpl) {
+    throw common::InternalError(
+        "RouteProcess",
+        std::format(
+            "membership exists for process {} but variant has no template "
+            "at local_proc_idx {}",
+            idx.value, m.local_proc_idx.value));
+  }
+  return TemplatedRoute{
+      .template_id = *tmpl,
+      .module_idx = m.module_idx,
+      .local_proc_idx = m.local_proc_idx,
+  };
+}
+
+auto Layout::GetInstanceBaseByteOffset(ModuleIndex idx) const -> uint64_t {
+  return instance_base_byte_offsets[idx.value];
+}
+
+auto Layout::GetInstanceVariant(ModuleIndex idx) const -> const ModuleVariant& {
+  return variants[instance_variant_ids[idx.value].value];
+}
+
+auto Layout::GetInstanceVariantId(ModuleIndex idx) const -> ModuleVariantId {
+  return instance_variant_ids[idx.value];
 }
 
 auto BuildLayout(
