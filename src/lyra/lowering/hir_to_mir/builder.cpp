@@ -68,6 +68,22 @@ void VerifyRvalueInvariants(const mir::Rvalue& rv) {
       rv.info);
 }
 
+// Enforce read-only invariant: writing to a kParamConst design slot is a
+// compiler bug (params are initialized during instance construction, never
+// assigned by user code). Inspects place.root to catch both direct and
+// projected writes (field/index/range of a param slot).
+void CheckWriteableSlot(
+    mir::PlaceId place_id, const mir::Arena& arena, const Context& ctx) {
+  if (ctx.design_slots == nullptr) return;
+  const mir::Place& place = arena[place_id];
+  if (place.root.kind != mir::PlaceRoot::Kind::kDesign) return;
+  auto slot_id = static_cast<size_t>(place.root.id);
+  if (slot_id < ctx.design_slots->size() &&
+      (*ctx.design_slots)[slot_id].kind == mir::SlotKind::kParamConst) {
+    throw common::InternalError("EmitAssign", "write to read-only param slot");
+  }
+}
+
 }  // namespace
 
 MirBuilder::MirBuilder(mir::Arena* arena, Context* ctx, OriginMap* origin_map)
@@ -258,10 +274,12 @@ auto MirBuilder::CurrentBlock() const -> BlockIndex {
 }
 
 void MirBuilder::EmitAssign(mir::PlaceId target, mir::Operand source) {
+  CheckWriteableSlot(target, *arena_, *ctx_);
   EmitInst(mir::Assign{.dest = target, .rhs = std::move(source)});
 }
 
 void MirBuilder::EmitAssign(mir::PlaceId target, mir::Rvalue value) {
+  CheckWriteableSlot(target, *arena_, *ctx_);
   VerifyRvalueInvariants(value);
   EmitInst(mir::Assign{.dest = target, .rhs = std::move(value)});
 }
@@ -365,6 +383,10 @@ auto MirBuilder::EmitCallWithWritebacks(
     mir::FunctionId callee, std::vector<mir::Operand> in_args,
     std::vector<mir::CallWriteback> writebacks, TypeId return_type)
     -> mir::Operand {
+  for (const auto& wb : writebacks) {
+    CheckWriteableSlot(wb.dest, *arena_, *ctx_);
+  }
+
   const auto& types = *ctx_->type_arena;
   bool is_void = types[return_type].Kind() == TypeKind::kVoid;
 
@@ -440,8 +462,8 @@ auto MirBuilder::EmitSystemTfCallExpr(
     std::vector<
         std::tuple<mir::PlaceId, TypeId, mir::PassMode, mir::WritebackKind>>
         writebacks) -> mir::Operand {
-  // Validate no Ref mode
   for (const auto& [dest, type, mode, kind] : writebacks) {
+    CheckWriteableSlot(dest, *arena_, *ctx_);
     if (mode == mir::PassMode::kRef) {
       throw common::InternalError(
           "EmitSystemTfCallExpr", "Ref parameters not yet supported");
@@ -549,12 +571,14 @@ auto MirBuilder::EmitGuardedUse(
 
 void MirBuilder::EmitGuardedAssign(
     mir::PlaceId dest, mir::RightHandSide rhs, mir::Operand guard) {
+  CheckWriteableSlot(dest, *arena_, *ctx_);
   EmitInst(
       mir::GuardedAssign{
           .dest = dest, .rhs = std::move(rhs), .guard = std::move(guard)});
 }
 
 void MirBuilder::EmitDeferredAssign(mir::PlaceId dest, mir::RightHandSide rhs) {
+  CheckWriteableSlot(dest, *arena_, *ctx_);
   EmitInst(mir::DeferredAssign{.dest = dest, .rhs = std::move(rhs)});
 }
 

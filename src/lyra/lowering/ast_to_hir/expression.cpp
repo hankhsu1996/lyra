@@ -537,6 +537,27 @@ auto LowerExpression(
         return hir::kInvalidExpressionId;
       }
 
+      // Promoted params (kDesignStorage) skip constant folding -- they emit
+      // NameRef loads from runtime slots instead.
+      {
+        SymbolId promoted = registrar.Lookup(named.symbol);
+        if (promoted &&
+            (*ctx->symbol_table)[promoted].storage_class ==
+                StorageClass::kDesignStorage &&
+            (*ctx->symbol_table)[promoted].kind == SymbolKind::kParameter) {
+          TypeId type = LowerType(named.symbol.getType(), span, ctx);
+          if (!type) {
+            return hir::kInvalidExpressionId;
+          }
+          return ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kNameRef,
+                  .type = type,
+                  .span = span,
+                  .data = hir::NameRefExpressionData{.symbol = promoted}});
+        }
+      }
+
       // Try constant symbol resolution first (params, enum values, etc.).
       // Slang already has the constant value - we just ask for it.
       if (const auto* cv =
@@ -884,8 +905,24 @@ auto LowerExpression(
         return hir::kInvalidExpressionId;
       }
 
+      // Promoted params skip constant folding (same logic as NamedValue).
+      {
+        SymbolId promoted = registrar.Lookup(hier.symbol);
+        if (promoted &&
+            (*ctx->symbol_table)[promoted].storage_class ==
+                StorageClass::kDesignStorage &&
+            (*ctx->symbol_table)[promoted].kind == SymbolKind::kParameter) {
+          return ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kHierarchicalRef,
+                  .type = type,
+                  .span = span,
+                  .data =
+                      hir::HierarchicalRefExpressionData{.target = promoted}});
+        }
+      }
+
       // Try constant folding first (parameters, enum values).
-      // Parameters are kConstOnly - no runtime storage, so we must fold them.
       if (const auto* cv = TryGetConstantValue(hier.symbol, expr.sourceRange)) {
         if (cv->bad()) {
           ctx->ErrorFmt(

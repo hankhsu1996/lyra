@@ -22,7 +22,7 @@ class Context;
 // Information about a module variable for runtime inspection
 struct VariableInfo {
   std::string name;
-  size_t slot_id;  // Index into design.slot_table
+  size_t slot_id;  // Index into design.slots
 };
 
 // Abstract interface for simulation instrumentation hooks.

@@ -34,9 +34,11 @@
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/SubtargetFeature.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
@@ -393,6 +395,33 @@ void EmitVariableInspection(
   builder.CreateCall(context.GetLyraSnapshotVars());
 }
 
+void EmitParamInitStores(
+    Context& context, llvm::Value* design_state, const mir::Design& design) {
+  if (design.instance_param_inits.empty()) return;
+
+  auto& builder = context.GetBuilder();
+  auto* design_type = context.GetDesignStateType();
+
+  for (const auto& entries : design.instance_param_inits) {
+    for (const auto& entry : entries) {
+      auto slot_id = mir::SlotId{entry.slot_id};
+      uint32_t field_index = context.GetDesignFieldIndex(slot_id);
+      TypeId type_id = design.slots[entry.slot_id].type;
+
+      auto* slot_ptr =
+          builder.CreateStructGEP(design_type, design_state, field_index);
+
+      Constant constant{.type = type_id, .value = entry.value};
+      auto value_result = LowerConstant(context, constant);
+      if (!value_result) {
+        throw common::InternalError(
+            "EmitParamInitStores", "failed to materialize param constant");
+      }
+      builder.CreateStore(*value_result, slot_ptr);
+    }
+  }
+}
+
 void EmitTimeReport(Context& context) {
   context.GetBuilder().CreateCall(context.GetLyraReportTime());
 }
@@ -410,7 +439,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
 
   bool force_two_state = input.force_two_state;
 
-  // Build slot info from design's slot_table (MIR is single source of truth)
+  // Build slot info from design's slots (MIR is single source of truth)
   auto slot_info = BuildSlotInfoFromDesign(
       *input.design, *input.type_arena, force_two_state);
 
@@ -596,6 +625,11 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   // Initialize DesignState (zero + 4-state patches + composite 4-state init)
   InitializeDesignState(
       context, design_state, slot_info, layout.design.four_state_patches);
+
+  // Initialize promoted param slots with constant values.
+  // Must happen after InitializeDesignState (zero+4state patches)
+  // but before any process reads them.
+  EmitParamInitStores(context, design_state, *input.design);
 
   // Initialize runtime state (reset time tracker, set fs_base_dir)
   llvm::Value* fs_base_dir_str = nullptr;
@@ -878,7 +912,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
               layout.design.slot_to_field.find(entry.trigger_slot);
           if (trigger_slot_it != layout.design.slot_to_field.end()) {
             TypeId trigger_root_type =
-                input.design->slot_table[trigger_slot_it->first.value];
+                input.design->slots[trigger_slot_it->first.value].type;
             const auto& trigger_place =
                 (*input.mir_arena)[*entry.trigger_observed_place];
             auto range = ResolveByteRange(

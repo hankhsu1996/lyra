@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
@@ -14,6 +15,21 @@
 #include "lyra/mir/package.hpp"
 
 namespace lyra::mir {
+
+enum class SlotKind : uint8_t { kVariable, kNet, kParamConst };
+
+struct SlotDesc {
+  TypeId type;
+  SlotKind kind = SlotKind::kVariable;
+};
+
+// Initialization entry for a promoted parameter slot.
+// Slot is identified by absolute design slot index.
+// Type is read from design.slots[slot_id].type (single source of truth).
+struct ParamInitEntry {
+  uint32_t slot_id;
+  IntegralConstant value;
+};
 
 using DesignElement = std::variant<Module, Package>;
 
@@ -40,11 +56,11 @@ struct PortConnection {
 struct Design {
   std::vector<DesignElement> elements;
   size_t num_design_slots = 0;
-  // Slot table: indexed by design slot ID, contains TypeId for each slot.
-  // Ordering is ABI: packages first (in element order), then all module
-  // instances (in BFS elaboration order). slot_table.size() ==
-  // num_design_slots.
-  std::vector<TypeId> slot_table;
+  // Slot descriptors: indexed by design slot ID, contains type and kind for
+  // each slot. Ordering is ABI: packages first (in element order), then all
+  // module instances (in BFS elaboration order).
+  // slots.size() == num_design_slots.
+  std::vector<SlotDesc> slots;
   std::vector<ProcessId> init_processes;
   // Functions dynamically generated during lowering (e.g., strobe thunks from
   // init processes). These are not associated with any specific module.
@@ -81,6 +97,10 @@ struct Design {
   std::vector<InstanceSlotRange> instance_slot_ranges;
   // Per-module-instance def keys (parallel to instance_slot_ranges).
   std::vector<uint64_t> module_def_keys;
+
+  // Per-module-instance param init entries (parallel to instance_slot_ranges).
+  // instance_param_inits[module_idx] = entries for that instance.
+  std::vector<std::vector<ParamInitEntry>> instance_param_inits;
 };
 
 }  // namespace lyra::mir

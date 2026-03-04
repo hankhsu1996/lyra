@@ -27,7 +27,9 @@ auto LowerPackage(
 
   // Lower function bodies (IDs were pre-allocated in CollectDeclarations)
   DeclView decl_view{
-      .places = &decls.design_places, .functions = &decls.functions};
+      .places = &decls.design_places,
+      .functions = &decls.functions,
+      .slots = &decls.slots};
   for (hir::FunctionId hir_func_id : package.functions) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
     mir::FunctionId mir_func_id = decls.functions.at(hir_func.symbol);

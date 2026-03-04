@@ -35,6 +35,7 @@
 #include "lyra/lowering/ast_to_hir/generate.hpp"
 #include "lyra/lowering/ast_to_hir/module.hpp"
 #include "lyra/lowering/ast_to_hir/package.hpp"
+#include "lyra/lowering/ast_to_hir/param_role.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
@@ -50,7 +51,7 @@ namespace {
 // unused downstream but assigned for future use.
 void RegisterModuleDeclarations(
     const slang::ast::InstanceSymbol& instance, SymbolRegistrar& registrar,
-    Context* ctx) {
+    const ParamRoleTable& param_roles, Context* ctx) {
   const slang::ast::InstanceBodySymbol& body = instance.body;
   SourceSpan span = ctx->SpanOf(GetSourceRange(instance));
 
@@ -83,12 +84,16 @@ void RegisterModuleDeclarations(
     }
   }
 
-  // Register parameters (kConstOnly storage - no runtime storage)
+  // Register parameters.
+  // ValueOnly params get kDesignStorage (runtime slots for dedup).
+  // Shape params keep kConstOnly (no runtime storage, values folded).
   for (const auto* param : members.parameters) {
     TypeId type = LowerType(param->getType(), span, ctx);
     if (type) {
-      registrar.Register(
-          *param, SymbolKind::kParameter, type, StorageClass::kConstOnly);
+      StorageClass sc = param_roles.Lookup(*param) == ParamRole::kValueOnly
+                            ? StorageClass::kDesignStorage
+                            : StorageClass::kConstOnly;
+      registrar.Register(*param, SymbolKind::kParameter, type, sc);
     }
   }
 
@@ -467,9 +472,12 @@ auto LowerDesign(
     return a->getHierarchicalPath() < b->getHierarchicalPath();
   });
 
+  // Classify parameter roles (before Phase 0 so storage class is known).
+  ParamRoleTable param_roles = ClassifyParamRoles(all_instances);
+
   // Phase 0: Register all module declarations (creation allowed)
   for (const auto* instance : all_instances) {
-    RegisterModuleDeclarations(*instance, registrar, ctx);
+    RegisterModuleDeclarations(*instance, registrar, param_roles, ctx);
   }
 
   // Lower port bindings to HIR (after Phase 0, symbols are registered)

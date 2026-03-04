@@ -68,6 +68,7 @@ auto LowerProcess(
       .generated_functions = generated_functions,
       .return_slot = std::nullopt,
       .return_type = input.builtin_types.void_type,
+      .design_slots = decl_view.slots,
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map);

@@ -19,6 +19,7 @@
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/mutation_event.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
@@ -199,6 +200,9 @@ auto RunMirInterpreter(
       for (SymbolId net : mod->nets) {
         all_design_symbols.push_back(net);
       }
+      for (SymbolId param : mod->param_slots) {
+        all_design_symbols.push_back(param);
+      }
     }
   }
   if (all_design_symbols.size() != design_state.storage.size()) {
@@ -211,6 +215,19 @@ auto RunMirInterpreter(
     const auto& sym = (*mir_input.symbol_table)[all_design_symbols[i]];
     design_state.storage[i] =
         mir::interp::CreateDefaultValue(*hir_result.type_arena, sym.type);
+  }
+
+  // Initialize promoted param slots with constant values.
+  for (const auto& entries : mir_result->design.instance_param_inits) {
+    for (const auto& entry : entries) {
+      if (entry.slot_id < design_state.storage.size()) {
+        TypeId type_id = mir_result->design.slots[entry.slot_id].type;
+        uint32_t bit_width = PackedBitWidth(
+            (*hir_result.type_arena)[type_id], *hir_result.type_arena);
+        design_state.storage[entry.slot_id] =
+            mir::interp::MakeIntegralFromConstant(entry.value, bit_width);
+      }
+    }
   }
 
   // Run interpreter with output capture

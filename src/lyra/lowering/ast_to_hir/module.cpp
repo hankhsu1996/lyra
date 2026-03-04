@@ -7,6 +7,7 @@
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -21,6 +22,7 @@
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/hir/statement.hpp"
+#include "lyra/lowering/ast_to_hir/constant.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/generate.hpp"
@@ -46,6 +48,8 @@ auto LowerModule(
 
   std::vector<SymbolId> variables;
   std::vector<SymbolId> nets;
+  std::vector<SymbolId> param_slots;
+  std::vector<IntegralConstant> param_init_values;
   std::vector<hir::ProcessId> processes;
   std::vector<hir::FunctionId> functions;
   std::vector<hir::TaskId> tasks;
@@ -82,6 +86,17 @@ auto LowerModule(
       if (type) {
         SymbolId sym = registrar.Register(*net, SymbolKind::kNet, type);
         nets.push_back(sym);
+      }
+    }
+
+    // Phase 1c: Collect promoted parameters and capture constant values
+    for (const auto* param : members.parameters) {
+      SymbolId sym = registrar.Lookup(*param);
+      if (sym && (*ctx->symbol_table)[sym].storage_class ==
+                     StorageClass::kDesignStorage) {
+        param_slots.push_back(sym);
+        param_init_values.push_back(
+            LowerSVIntToIntegralConstant(param->getValue().integer()));
       }
     }
 
@@ -256,6 +271,8 @@ auto LowerModule(
       .span = span,
       .variables = std::move(variables),
       .nets = std::move(nets),
+      .param_slots = std::move(param_slots),
+      .param_init_values = std::move(param_init_values),
       .processes = std::move(processes),
       .functions = std::move(functions),
       .tasks = std::move(tasks),

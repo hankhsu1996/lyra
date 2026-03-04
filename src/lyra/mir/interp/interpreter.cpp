@@ -19,6 +19,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/assoc_op.hpp"
@@ -461,6 +462,19 @@ auto RunSimulation(
 
   // Create design state
   auto design_state = CreateDesignState(mir_arena, types, design);
+
+  // Initialize promoted param slots with constant values.
+  // Must happen after CreateDesignState (default-init) but before any process.
+  for (const auto& entries : design.instance_param_inits) {
+    for (const auto& entry : entries) {
+      if (entry.slot_id < design_state.storage.size()) {
+        TypeId type_id = design.slots[entry.slot_id].type;
+        uint32_t bit_width = PackedBitWidth(types[type_id], types);
+        design_state.storage[entry.slot_id] =
+            MakeIntegralFromConstant(entry.value, bit_width);
+      }
+    }
+  }
 
   // Create interpreter
   Interpreter interp(&mir_arena, &types, diag_ctx);
