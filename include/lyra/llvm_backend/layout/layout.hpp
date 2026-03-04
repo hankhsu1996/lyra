@@ -118,35 +118,40 @@ struct ConnectionKernelEntry {
 };
 
 // Identifies a module variant: a set of module instances whose processes are
-// ALL structurally identical (same template groups for every local process
-// index). Assigned by AssignModuleVariantIds after template group analysis.
+// ALL structurally identical (same template assignments for every local process
+// index). Assigned by BuildModuleVariants after template analysis.
 struct ModuleVariantId {
   uint32_t value;
   static constexpr uint32_t kNone = UINT32_MAX;
   auto operator==(const ModuleVariantId&) const -> bool = default;
 };
 
-// One instance's participation in a template group.
-struct ProcessTemplateInstance {
-  mir::ProcessId process_id;
-  uint32_t instance_id;  // For %m support
-  uint64_t
-      base_byte_offset;   // Byte offset of instance's slot base in DesignState
-  uint32_t base_slot_id;  // First slot ID of this instance
-  uint32_t signal_id_offset;  // base_slot_id - template_process.base_slot_id
-  ModuleVariantId variant_id{ModuleVariantId::kNone};
+// A deduped template function: one per fingerprint group across all instances.
+// Does NOT reference a specific variant (a template can span multiple
+// variants).
+struct ProcessTemplate {
+  mir::ProcessId template_process;  // Representative MIR process (lowest id)
+  size_t template_layout_index;     // Index into layout.processes
+  std::string func_name;            // proc_template_{idx}_{fp:x}
+  uint32_t template_base_slot_id;   // Representative's slot_begin
 };
 
-// A group of structurally identical processes across instances.
-// One template function is generated; each instance gets a thin wrapper.
-struct ProcessTemplateGroup {
-  mir::ProcessId template_process;  // Lowest instance_id in group
-  std::vector<ProcessTemplateInstance> instances;
-  size_t template_layout_index;  // Into layout.processes (template's)
-  // Relative byte offsets indexed by (slot_id - template.base_slot_id).
-  // Sized to template process's slot_count. UINT64_MAX = unused.
+// The "class object" for a module variant: owns slot layout and routes
+// processes to deduped template functions.
+struct ModuleVariant {
+  // Per local_proc_idx: index into process_templates, or nullopt (standalone).
+  std::vector<std::optional<size_t>> proc_template_ids;
+  // Slot layout for this_ptr + rel_offset addressing.
+  // Indexed by (slot_id - base_slot_id). Sized to slot_count.
   std::vector<uint64_t> rel_byte_offsets;
-  std::string template_func_name;
+};
+
+// Lightweight membership index: "is this process templated?"
+// Routing goes through ModuleVariant::proc_template_ids[local_proc_idx].
+// Per-instance data (instance_id, base_byte_offset, base_slot_id) is derived
+// at codegen time from existing design data -- no duplication.
+struct ProcessMembership {
+  uint32_t local_proc_idx;  // Position in module's process list
 };
 
 // Complete layout for entire module
@@ -166,15 +171,19 @@ struct Layout {
   // SuspendRecord type (opaque blob matching C++ struct size)
   llvm::StructType* suspend_record_type = nullptr;
 
-  // Process sharing groups (empty if no shareable processes found).
-  std::vector<ProcessTemplateGroup> template_groups;
-  // Map from module-process index (i.e. index into process_ids starting at
-  // num_init_processes) to template_group index. SIZE_MAX if not in a group.
-  std::vector<size_t> process_template_map;
+  // Deduped template functions (one per fingerprint group).
+  std::vector<ProcessTemplate> process_templates;
+  // Module variants (one per unique template assignment pattern).
+  std::vector<ModuleVariant> variants;
+  // Parallel to process_ids[num_init_processes..], nullopt = standalone.
+  std::vector<std::optional<ProcessMembership>> process_membership;
+  // Pre-computed byte offset of each instance's slot base in DesignState.
+  // Parallel to instance_variant_ids.
+  std::vector<uint64_t> instance_base_byte_offsets;
 
   // Per-instance module variant ID (parallel to module elements in
   // design.elements). Instances with the same variant_id have identical
-  // template group assignments for ALL their local processes.
+  // template assignments for ALL their local processes.
   std::vector<ModuleVariantId> instance_variant_ids;
 };
 

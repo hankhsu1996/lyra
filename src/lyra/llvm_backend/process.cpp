@@ -1444,8 +1444,8 @@ auto GenerateSharedProcessFunction(
 }
 
 auto GenerateProcessWrapper(
-    Context& context, llvm::Function* shared_fn,
-    const ProcessTemplateInstance& instance, const std::string& name)
+    Context& context, llvm::Function* shared_fn, uint32_t instance_id,
+    uint64_t base_byte_offset, uint32_t base_slot_id, const std::string& name)
     -> llvm::Function* {
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -1471,13 +1471,13 @@ auto GenerateProcessWrapper(
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
   auto* this_ptr = builder.CreateGEP(
-      i8_ty, design_ptr,
-      llvm::ConstantInt::get(i64_ty, instance.base_byte_offset), "this_ptr");
+      i8_ty, design_ptr, llvm::ConstantInt::get(i64_ty, base_byte_offset),
+      "this_ptr");
 
   builder.CreateCall(
       shared_fn, {wrapper->getArg(0), wrapper->getArg(1), this_ptr,
-                  llvm::ConstantInt::get(i32_ty, instance.instance_id),
-                  llvm::ConstantInt::get(i32_ty, instance.signal_id_offset)});
+                  llvm::ConstantInt::get(i32_ty, instance_id),
+                  llvm::ConstantInt::get(i32_ty, base_slot_id)});
   builder.CreateRetVoid();
 
   return wrapper;

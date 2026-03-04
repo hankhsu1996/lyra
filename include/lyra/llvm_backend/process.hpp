@@ -1,12 +1,12 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include <llvm/IR/Function.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -29,11 +29,11 @@ auto GenerateSharedProcessFunction(
     -> Result<llvm::Function*>;
 
 // Generate a thin wrapper that calls the template function with baked-in args.
-// Computes this_ptr = design_ptr + instance.base_byte_offset, then calls the
-// shared template function. Signature: void(ptr state, i32 resume).
+// Computes this_ptr = design_ptr + base_byte_offset, then calls the shared
+// template function. Signature: void(ptr state, i32 resume).
 auto GenerateProcessWrapper(
-    Context& context, llvm::Function* shared_fn,
-    const ProcessTemplateInstance& instance, const std::string& name)
+    Context& context, llvm::Function* shared_fn, uint32_t instance_id,
+    uint64_t base_byte_offset, uint32_t base_slot_id, const std::string& name)
     -> llvm::Function*;
 
 // Declare a user function without generating its body.

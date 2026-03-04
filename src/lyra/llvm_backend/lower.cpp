@@ -9,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -513,32 +514,44 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout.process_ids.size());
 
-  // Build template functions first (one per template group)
-  std::vector<llvm::Function*> group_shared_fns(layout.template_groups.size());
-  for (size_t g = 0; g < layout.template_groups.size(); ++g) {
-    const auto& group = layout.template_groups[g];
-    context.SetCurrentProcess(group.template_layout_index);
-
-    const auto& mir_process = (*input.mir_arena)[group.template_process];
-    context.SetCurrentInstanceId(mir_process.owner_instance_id);
-
-    // Configure template-mode context: find template process's base_slot_id
-    uint32_t rep_base_slot = 0;
-    for (const auto& inst : group.instances) {
-      if (inst.process_id == group.template_process) {
-        rep_base_slot = inst.base_slot_id;
-        break;
+  // Build instance_id -> module_idx map for template codegen
+  std::unordered_map<uint32_t, size_t> instance_id_to_module_idx;
+  {
+    size_t mod_idx = 0;
+    for (const auto& element : input.design->elements) {
+      if (!std::holds_alternative<mir::Module>(element)) continue;
+      const auto& mir_module = std::get<mir::Module>(element);
+      for (mir::ProcessId pid : mir_module.processes) {
+        const auto& proc = (*input.mir_arena)[pid];
+        instance_id_to_module_idx[proc.owner_instance_id] = mod_idx;
       }
+      ++mod_idx;
     }
-    context.SetRelByteOffsets(group.rel_byte_offsets, rep_base_slot);
-
-    auto func_result = GenerateSharedProcessFunction(
-        context, mir_process, group.template_func_name);
-    if (!func_result) return std::unexpected(func_result.error());
-    group_shared_fns[g] = *func_result;
   }
 
-  // Generate process functions (shared get wrappers, others get full codegen)
+  // Phase 1: Emit template functions (one per ProcessTemplate)
+  std::vector<llvm::Function*> template_fns(layout.process_templates.size());
+  for (size_t t = 0; t < layout.process_templates.size(); ++t) {
+    const auto& tmpl = layout.process_templates[t];
+    context.SetCurrentProcess(tmpl.template_layout_index);
+
+    const auto& mir_process = (*input.mir_arena)[tmpl.template_process];
+    context.SetCurrentInstanceId(mir_process.owner_instance_id);
+
+    // Look up variant for slot layout via representative's owner instance
+    uint32_t mod_idx = instance_id_to_module_idx[mir_process.owner_instance_id];
+    const auto& variant =
+        layout.variants[layout.instance_variant_ids[mod_idx].value];
+    context.SetRelByteOffsets(
+        variant.rel_byte_offsets, tmpl.template_base_slot_id);
+
+    auto func_result =
+        GenerateSharedProcessFunction(context, mir_process, tmpl.func_name);
+    if (!func_result) return std::unexpected(func_result.error());
+    template_fns[t] = *func_result;
+  }
+
+  // Phase 2: Emit per-process functions (wrappers vs standalone)
   size_t num_init = layout.num_init_processes;
   for (size_t i = 0; i < layout.process_ids.size(); ++i) {
     context.SetCurrentProcess(i);
@@ -547,35 +560,35 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     const auto& mir_process = (*input.mir_arena)[proc_id];
     context.SetCurrentInstanceId(mir_process.owner_instance_id);
 
-    // Check if this module process is in a template group
-    size_t group_idx = SIZE_MAX;
-    if (i >= num_init && !layout.process_template_map.empty()) {
+    if (i >= num_init && !layout.process_membership.empty()) {
       size_t map_idx = i - num_init;
-      if (map_idx < layout.process_template_map.size()) {
-        group_idx = layout.process_template_map[map_idx];
+      if (map_idx < layout.process_membership.size() &&
+          layout.process_membership[map_idx]) {
+        const auto& membership = *layout.process_membership[map_idx];
+
+        // Route through variant (single source of truth for template routing)
+        uint32_t mod_idx =
+            instance_id_to_module_idx[mir_process.owner_instance_id];
+        const auto& variant =
+            layout.variants[layout.instance_variant_ids[mod_idx].value];
+        size_t tmpl_id = *variant.proc_template_ids[membership.local_proc_idx];
+
+        uint64_t base_byte_offset = layout.instance_base_byte_offsets[mod_idx];
+        uint32_t base_slot_id =
+            input.design->instance_slot_ranges[mod_idx].slot_begin;
+
+        auto* wrapper = GenerateProcessWrapper(
+            context, template_fns[tmpl_id], mir_process.owner_instance_id,
+            base_byte_offset, base_slot_id, std::format("process_{}", i));
+        process_funcs.push_back(wrapper);
+        continue;
       }
     }
 
-    if (group_idx != SIZE_MAX) {
-      // Find this process's instance data in the group
-      const auto& group = layout.template_groups[group_idx];
-      const ProcessTemplateInstance* inst = nullptr;
-      for (const auto& di : group.instances) {
-        if (di.process_id == proc_id) {
-          inst = &di;
-          break;
-        }
-      }
-      auto* wrapper = GenerateProcessWrapper(
-          context, group_shared_fns[group_idx], *inst,
-          std::format("process_{}", i));
-      process_funcs.push_back(wrapper);
-    } else {
-      auto func_result = GenerateProcessFunction(
-          context, mir_process, std::format("process_{}", i));
-      if (!func_result) return std::unexpected(func_result.error());
-      process_funcs.push_back(*func_result);
-    }
+    auto func_result = GenerateProcessFunction(
+        context, mir_process, std::format("process_{}", i));
+    if (!func_result) return std::unexpected(func_result.error());
+    process_funcs.push_back(*func_result);
   }
 
   // Create main function.
