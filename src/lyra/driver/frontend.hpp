@@ -30,6 +30,7 @@ struct CompilationInput {
   bool enable_trace = false;   // Enable simulation tracing
   bool time_trace = false;     // LLVM time-trace profiling
   bool two_state = false;      // Force 2-state LLVM representation
+  std::optional<std::filesystem::path> stats_out_path;  // JSON stats output
 };
 
 struct ParseResult {

@@ -186,6 +186,9 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .default_value(false)
       .implicit_value(true)
       .help("[Experimental] Force 2-state LLVM representation (no X encoding)");
+  cmd.add_argument("--stats-out")
+      .metavar("PATH")
+      .help("Write structured JSON stats to PATH");
 }
 
 auto BuildInput(
@@ -329,6 +332,11 @@ auto BuildInput(
 
   // Two-state mode (CLI only)
   input.two_state = cmd.get<bool>("--two-state");
+
+  // Stats JSON output (CLI only)
+  if (auto path = cmd.present<std::string>("--stats-out")) {
+    input.stats_out_path = *path;
+  }
 
   return input;
 }

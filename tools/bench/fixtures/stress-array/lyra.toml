@@ -1,0 +1,6 @@
+[package]
+name = "stress-array"
+top = "Top"
+
+[sources]
+files = ["Top.sv"]
