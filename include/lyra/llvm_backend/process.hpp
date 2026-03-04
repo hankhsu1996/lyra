@@ -1,9 +1,12 @@
 #pragma once
 
+#include <string>
+
 #include <llvm/IR/Function.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -14,6 +17,21 @@ namespace lyra::lowering::mir_to_llvm {
 auto GenerateProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
     -> Result<llvm::Function*>;
+
+// Generate a shared process function with extra arguments for dedup.
+// Signature: void(ptr state, i32 resume, i64 base_offset, i32 inst_id,
+//                 i32 signal_offset)
+// The context must have shared-mode fields configured before calling.
+auto GenerateSharedProcessFunction(
+    Context& context, const mir::Process& process, const std::string& name)
+    -> Result<llvm::Function*>;
+
+// Generate a thin wrapper that calls the shared function with baked-in args.
+// Signature: void(ptr state, i32 resume) -- conforms to LyraProcessFunc ABI.
+auto GenerateProcessWrapper(
+    Context& context, llvm::Function* shared_fn,
+    const ProcessDedupInstance& instance, const std::string& name)
+    -> llvm::Function*;
 
 // Declare a user function without generating its body.
 // Used for two-pass generation to enable mutual recursion.

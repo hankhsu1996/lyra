@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <map>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -21,6 +22,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
+#include "lyra/llvm_backend/process_fingerprint.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
@@ -1151,6 +1153,195 @@ auto BuildSlotInfoFromDesign(
   return slots;
 }
 
+// Per-module-process info for dedup analysis.
+struct ModuleProcessInfo {
+  mir::ProcessId process_id;
+  uint64_t module_def_key;
+  uint32_t local_process_index;  // Index within the module's process list
+  uint32_t slot_begin;
+  uint32_t slot_count;
+  uint32_t instance_id;      // owner_instance_id from process
+  size_t process_ids_index;  // Index in layout.process_ids
+  const std::vector<mir::FunctionId>* module_functions = nullptr;
+};
+
+void BuildDedupGroups(
+    Layout& layout, const mir::Design& design, const mir::Arena& arena,
+    const TypeArena& types, const llvm::DataLayout& dl) {
+  // Step 1: Build process info by walking module elements
+  std::vector<ModuleProcessInfo> all_module_procs;
+  size_t module_idx = 0;
+  for (const auto& element : design.elements) {
+    if (!std::holds_alternative<mir::Module>(element)) continue;
+    const auto& mir_module = std::get<mir::Module>(element);
+    uint32_t slot_begin = design.instance_slot_ranges[module_idx].slot_begin;
+    uint32_t slot_count = design.instance_slot_ranges[module_idx].slot_count;
+    uint64_t def_key = design.module_def_keys[module_idx];
+
+    uint32_t local_idx = 0;
+    for (mir::ProcessId proc_id : mir_module.processes) {
+      const auto& process = arena[proc_id];
+      if (process.kind == mir::ProcessKind::kFinal) {
+        ++local_idx;
+        continue;
+      }
+
+      // Find this process's index in layout.process_ids
+      // (starts after num_init_processes)
+      size_t pid_idx = SIZE_MAX;
+      for (size_t i = layout.num_init_processes; i < layout.process_ids.size();
+           ++i) {
+        if (layout.process_ids[i] == proc_id) {
+          pid_idx = i;
+          break;
+        }
+      }
+      if (pid_idx == SIZE_MAX) {
+        ++local_idx;
+        continue;
+      }
+
+      all_module_procs.push_back(
+          ModuleProcessInfo{
+              .process_id = proc_id,
+              .module_def_key = def_key,
+              .local_process_index = local_idx,
+              .slot_begin = slot_begin,
+              .slot_count = slot_count,
+              .instance_id = process.owner_instance_id,
+              .process_ids_index = pid_idx,
+              .module_functions = &mir_module.functions,
+          });
+      ++local_idx;
+    }
+    ++module_idx;
+  }
+
+  // Initialize dedup map (all SIZE_MAX = not deduped)
+  size_t num_module_procs =
+      layout.process_ids.size() - layout.num_init_processes;
+  layout.process_dedup_map.assign(num_module_procs, SIZE_MAX);
+
+  // Step 2: Group by (module_def_key, local_process_index)
+  // Use std::map for deterministic ordering
+  std::map<std::pair<uint64_t, uint32_t>, std::vector<size_t>> candidate_groups;
+  for (size_t i = 0; i < all_module_procs.size(); ++i) {
+    const auto& info = all_module_procs[i];
+    candidate_groups[{info.module_def_key, info.local_process_index}].push_back(
+        i);
+  }
+
+  // Step 3: For each candidate group with size > 1, compute fingerprints
+  const auto* struct_layout = dl.getStructLayout(layout.design.llvm_type);
+
+  for (const auto& [key, indices] : candidate_groups) {
+    if (indices.size() < 2) continue;
+
+    // Compute fingerprints and split into sub-groups
+    std::map<uint64_t, std::vector<size_t>> fingerprint_groups;
+    for (size_t idx : indices) {
+      const auto& info = all_module_procs[idx];
+      const auto& process = arena[info.process_id];
+      uint64_t fp = ComputeProcessFingerprint(
+          process, arena, types, info.slot_begin, *info.module_functions);
+      fingerprint_groups[fp].push_back(idx);
+    }
+
+    // Step 4: For each fingerprint-matched sub-group with size > 1
+    for (const auto& [fp, fp_indices] : fingerprint_groups) {
+      if (fp_indices.size() < 2) continue;
+
+      // Select representative: lowest instance_id
+      size_t rep_idx = fp_indices[0];
+      for (size_t fi : fp_indices) {
+        if (all_module_procs[fi].instance_id <
+            all_module_procs[rep_idx].instance_id) {
+          rep_idx = fi;
+        }
+      }
+      const auto& rep = all_module_procs[rep_idx];
+
+      // Verify frame layout compatibility: all instances have same root_types
+      const auto& rep_frame = layout.processes[rep.process_ids_index].frame;
+      bool frames_compatible = true;
+      for (size_t fi : fp_indices) {
+        if (fi == rep_idx) continue;
+        const auto& other_frame =
+            layout.processes[all_module_procs[fi].process_ids_index].frame;
+        if (other_frame.root_types != rep_frame.root_types) {
+          frames_compatible = false;
+          break;
+        }
+      }
+      if (!frames_compatible) continue;
+
+      // Compute representative's base byte offset and per-slot rel offsets
+      uint64_t rep_base_offset =
+          struct_layout->getElementOffset(rep.slot_begin);
+      // Populate rel_byte_offsets for ALL slots in the instance range.
+      // Processes (and called user functions) may access any slot within
+      // the owning module instance, so we must cover the full range.
+      std::vector<uint64_t> rel_offsets(rep.slot_count);
+      for (uint32_t i = 0; i < rep.slot_count; ++i) {
+        uint64_t slot_offset =
+            struct_layout->getElementOffset(rep.slot_begin + i);
+        rel_offsets[i] = slot_offset - rep_base_offset;
+      }
+
+      // Verify byte-offset compatibility across all instances.
+      // All instances must have the same relative layout for each slot.
+      bool offsets_compatible = true;
+      for (size_t fi : fp_indices) {
+        if (fi == rep_idx) continue;
+        const auto& other = all_module_procs[fi];
+        uint64_t other_base = struct_layout->getElementOffset(other.slot_begin);
+        for (uint32_t i = 0; i < rep.slot_count; ++i) {
+          uint32_t other_slot = other.slot_begin + i;
+          uint64_t other_offset = struct_layout->getElementOffset(other_slot);
+          uint64_t other_rel = other_offset - other_base;
+          if (other_rel != rel_offsets[i]) {
+            offsets_compatible = false;
+            break;
+          }
+        }
+        if (!offsets_compatible) break;
+      }
+      if (!offsets_compatible) continue;
+
+      // Build the dedup group
+      ProcessDedupGroup group;
+      group.representative = rep.process_id;
+      group.shared_layout_index = rep.process_ids_index;
+      group.rel_byte_offsets = std::move(rel_offsets);
+      group.shared_func_name =
+          std::format("shared_proc_{}_{:x}", rep.local_process_index, fp);
+
+      for (size_t fi : fp_indices) {
+        const auto& info = all_module_procs[fi];
+        uint64_t inst_base = struct_layout->getElementOffset(info.slot_begin);
+        group.instances.push_back(
+            ProcessDedupInstance{
+                .process_id = info.process_id,
+                .instance_id = info.instance_id,
+                .base_byte_offset = inst_base,
+                .base_slot_id = info.slot_begin,
+                .signal_id_offset = info.slot_begin,
+            });
+      }
+
+      size_t group_idx = layout.dedup_groups.size();
+      layout.dedup_groups.push_back(std::move(group));
+
+      // Update dedup map for all instances in this group
+      for (size_t fi : fp_indices) {
+        const auto& info = all_module_procs[fi];
+        size_t map_idx = info.process_ids_index - layout.num_init_processes;
+        layout.process_dedup_map[map_idx] = group_idx;
+      }
+    }
+  }
+}
+
 auto BuildLayout(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
     const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx,
@@ -1220,6 +1411,10 @@ auto BuildLayout(
         ctx, layout.header_type, proc_layout.frame.llvm_type, i);
 
     layout.processes.push_back(std::move(proc_layout));
+  }
+
+  if (!design.instance_slot_ranges.empty()) {
+    BuildDedupGroups(layout, design, arena, types, dl);
   }
 
   return layout;

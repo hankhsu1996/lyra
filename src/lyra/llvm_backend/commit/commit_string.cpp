@@ -63,11 +63,9 @@ void StoreStringToWriteTarget(
 
   if (wt.canonical_signal_id.has_value()) {
     // Design slot: atomic store+notify
-    auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
     builder.CreateCall(
-        ctx.GetLyraStoreString(),
-        {ctx.GetEnginePointer(), wt.ptr, new_val,
-         llvm::ConstantInt::get(i32_ty, *wt.canonical_signal_id)});
+        ctx.GetLyraStoreString(), {ctx.GetEnginePointer(), wt.ptr, new_val,
+                                   wt.canonical_signal_id->Emit(builder)});
   } else {
     // Non-design: plain store
     builder.CreateStore(new_val, wt.ptr);

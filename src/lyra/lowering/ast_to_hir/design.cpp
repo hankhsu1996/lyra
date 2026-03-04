@@ -2,11 +2,13 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <format>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -482,10 +484,22 @@ auto LowerDesign(
     elements.emplace_back(LowerPackage(*pkg, registrar, ctx));
   }
 
+  // Assign module_def_key from DefinitionSymbol* (cheap pre-filter for dedup).
+  uint64_t next_def_key = 0;
+  std::unordered_map<const slang::ast::DefinitionSymbol*, uint64_t> def_keys;
+  for (const auto* instance : all_instances) {
+    const auto& def = instance->body.getDefinition();
+    auto [it, inserted] = def_keys.try_emplace(&def, next_def_key);
+    if (inserted) ++next_def_key;
+  }
+
   // Phase 1: Lower module bodies.
   // Port bindings are now handled at HIR->MIR level, not here.
   for (const auto* instance : all_instances) {
-    elements.emplace_back(LowerModule(*instance, registrar, ctx));
+    auto mod = LowerModule(*instance, registrar, ctx);
+    const auto& def = instance->body.getDefinition();
+    mod.module_def_key = def_keys[&def];
+    elements.emplace_back(std::move(mod));
   }
 
   // Build instance table for %m support.

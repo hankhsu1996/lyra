@@ -513,20 +513,69 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout.process_ids.size());
 
+  // Build shared functions first (one per dedup group)
+  std::vector<llvm::Function*> group_shared_fns(layout.dedup_groups.size());
+  for (size_t g = 0; g < layout.dedup_groups.size(); ++g) {
+    const auto& group = layout.dedup_groups[g];
+    context.SetCurrentProcess(group.shared_layout_index);
+
+    const auto& mir_process = (*input.mir_arena)[group.representative];
+    context.SetCurrentInstanceId(mir_process.owner_instance_id);
+
+    // Configure shared-mode context: find representative's base_slot_id
+    uint32_t rep_base_slot = 0;
+    for (const auto& inst : group.instances) {
+      if (inst.process_id == group.representative) {
+        rep_base_slot = inst.base_slot_id;
+        break;
+      }
+    }
+    context.SetRelByteOffsets(group.rel_byte_offsets, rep_base_slot);
+
+    auto func_result = GenerateSharedProcessFunction(
+        context, mir_process, group.shared_func_name);
+    if (!func_result) return std::unexpected(func_result.error());
+    group_shared_fns[g] = *func_result;
+  }
+
+  // Generate process functions (shared get wrappers, others get full codegen)
+  size_t num_init = layout.num_init_processes;
   for (size_t i = 0; i < layout.process_ids.size(); ++i) {
     context.SetCurrentProcess(i);
 
-    // Use the canonical process list from layout
     mir::ProcessId proc_id = layout.process_ids[i];
     const auto& mir_process = (*input.mir_arena)[proc_id];
-
-    // Set instance_id for %m support
     context.SetCurrentInstanceId(mir_process.owner_instance_id);
 
-    auto func_result = GenerateProcessFunction(
-        context, mir_process, std::format("process_{}", i));
-    if (!func_result) return std::unexpected(func_result.error());
-    process_funcs.push_back(*func_result);
+    // Check if this module process is in a dedup group
+    size_t group_idx = SIZE_MAX;
+    if (i >= num_init && !layout.process_dedup_map.empty()) {
+      size_t map_idx = i - num_init;
+      if (map_idx < layout.process_dedup_map.size()) {
+        group_idx = layout.process_dedup_map[map_idx];
+      }
+    }
+
+    if (group_idx != SIZE_MAX) {
+      // Find this process's instance data in the group
+      const auto& group = layout.dedup_groups[group_idx];
+      const ProcessDedupInstance* inst = nullptr;
+      for (const auto& di : group.instances) {
+        if (di.process_id == proc_id) {
+          inst = &di;
+          break;
+        }
+      }
+      auto* wrapper = GenerateProcessWrapper(
+          context, group_shared_fns[group_idx], *inst,
+          std::format("process_{}", i));
+      process_funcs.push_back(wrapper);
+    } else {
+      auto func_result = GenerateProcessFunction(
+          context, mir_process, std::format("process_{}", i));
+      if (!func_result) return std::unexpected(func_result.error());
+      process_funcs.push_back(*func_result);
+    }
   }
 
   // Create main function.
@@ -584,7 +633,6 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
 
   // Phase 1: Init processes (package variable initialization)
   // Run synchronously before scheduler, matching MIR interpreter behavior
-  size_t num_init = layout.num_init_processes;
   for (size_t i = 0; i < num_init; ++i) {
     const auto& proc_layout = layout.processes[i];
 

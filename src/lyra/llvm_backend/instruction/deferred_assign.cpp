@@ -14,6 +14,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
+#include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/instruction/assign_core.hpp"
 #include "lyra/mir/place.hpp"
@@ -211,22 +212,28 @@ auto CoerceValueToShape(
 }
 
 // Get the root design slot pointer (before any projections) after alias
-// resolution. Uses GetSignalIdForNba from commit module.
+// resolution. For shared processes, computes via byte-GEP from slots_base.
 auto GetDesignRootPointer(Context& context, mir::PlaceId place_id)
     -> llvm::Value* {
-  uint32_t signal_id = GetSignalIdForNba(context, place_id);
-  auto slot_id = mir::SlotId{signal_id};
-  uint32_t field_index = context.GetDesignFieldIndex(slot_id);
-  return context.GetBuilder().CreateStructGEP(
-      context.GetDesignStateType(), context.GetDesignPointer(), field_index,
-      "nba.base");
+  SignalIdExpr signal_expr = GetSignalIdForNba(context, place_id);
+  if (signal_expr.IsConst()) {
+    auto slot_id = mir::SlotId{signal_expr.ConstValue()};
+    uint32_t field_index = context.GetDesignFieldIndex(slot_id);
+    return context.GetBuilder().CreateStructGEP(
+        context.GetDesignStateType(), context.GetDesignPointer(), field_index,
+        "nba.base");
+  }
+  // Shared process: compute root slot pointer via byte-GEP from slots_base.
+  // This is the same computation as ComputePlacePointer for kDesign roots
+  // with no projections.
+  return context.GetDesignRootPointerShared(place_id);
 }
 
 // Emit the LyraScheduleNba call with value/mask stored in allocas.
 void EmitScheduleNbaCall(
     Context& context, llvm::Value* write_ptr, llvm::Value* notify_base_ptr,
     llvm::Value* value, llvm::Value* mask, llvm::Type* storage_type,
-    uint32_t signal_id) {
+    const SignalIdExpr& signal_id) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
@@ -243,7 +250,7 @@ void EmitScheduleNbaCall(
       context.GetLyraScheduleNba(),
       {context.GetEnginePointer(), write_ptr, notify_base_ptr, val_alloca,
        mask_alloca, llvm::ConstantInt::get(i32_ty, byte_size),
-       llvm::ConstantInt::get(i32_ty, signal_id)});
+       signal_id.Emit(builder)});
 }
 
 // Shared core for deferred store emission (used by Direct and WithOobGuard).
@@ -251,7 +258,8 @@ void EmitScheduleNbaCall(
 auto EmitDeferredStoreCore(
     Context& context, const mir::DeferredAssign& deferred,
     const StoreShape& shape, llvm::Value* write_ptr,
-    llvm::Value* notify_base_ptr, uint32_t signal_id) -> Result<void> {
+    llvm::Value* notify_base_ptr, const SignalIdExpr& signal_id)
+    -> Result<void> {
   auto& builder = context.GetBuilder();
 
   auto raw_or_err = LowerRhsRaw(context, deferred.rhs, deferred.dest);
@@ -286,7 +294,7 @@ auto EmitDeferredStoreCore(
       context.GetLyraScheduleNba(),
       {context.GetEnginePointer(), write_ptr, notify_base_ptr, val_alloca,
        mask_alloca, llvm::ConstantInt::get(i32_ty, byte_size),
-       llvm::ConstantInt::get(i32_ty, signal_id)});
+       signal_id.Emit(builder)});
 
   return {};
 }
@@ -294,8 +302,8 @@ auto EmitDeferredStoreCore(
 // BitRangeProjection NBA: partial bit-range writes with shifted value/mask.
 // Kept separate because it uses partial masks (not full-width).
 auto LowerDeferredAssignBitRange(
-    Context& context, const mir::DeferredAssign& deferred, uint32_t signal_id)
-    -> Result<void> {
+    Context& context, const mir::DeferredAssign& deferred,
+    const SignalIdExpr& signal_id) -> Result<void> {
   auto& builder = context.GetBuilder();
 
   auto br_result = context.ComposeBitRange(deferred.dest);
@@ -388,7 +396,7 @@ auto LowerDeferredAssignBitRange(
 // Uses StoreShape classification and EmitDeferredStoreCore.
 auto LowerDeferredAssignWithOobGuard(
     Context& context, const mir::DeferredAssign& deferred,
-    const StoreShape& shape, uint32_t signal_id) -> Result<void> {
+    const StoreShape& shape, const SignalIdExpr& signal_id) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& arena = context.GetMirArena();
@@ -464,7 +472,7 @@ auto LowerDeferredAssignWithOobGuard(
 // handling). Uses StoreShape classification and EmitDeferredStoreCore.
 auto LowerDeferredAssignDirect(
     Context& context, const mir::DeferredAssign& deferred,
-    const StoreShape& shape, uint32_t signal_id) -> Result<void> {
+    const StoreShape& shape, const SignalIdExpr& signal_id) -> Result<void> {
   auto write_ptr_or_err = context.GetPlacePointer(deferred.dest);
   if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
@@ -482,7 +490,7 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
 
   // Use canonical signal_id (after alias resolution) for notification
   // NBA is only valid for design places (GetSignalIdForNba throws if not)
-  uint32_t signal_id = GetSignalIdForNba(context, deferred.dest);
+  SignalIdExpr signal_id = GetSignalIdForNba(context, deferred.dest);
 
   // Case 1: BitRangeProjection - partial bit-range writes (keep separate)
   if (context.HasBitRangeProjection(deferred.dest)) {

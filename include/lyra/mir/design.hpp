@@ -71,6 +71,16 @@ struct Design {
   // Instance table for %m support.
   // Index = instance_id, same order as all_instances during elaboration.
   InstanceTable instance_table;
+
+  // Per-module-instance slot ranges (parallel to module elements only).
+  // Populated during HIR->MIR lowering from DesignDeclarations.
+  struct InstanceSlotRange {
+    uint32_t slot_begin = 0;
+    uint32_t slot_count = 0;
+  };
+  std::vector<InstanceSlotRange> instance_slot_ranges;
+  // Per-module-instance def keys (parallel to instance_slot_ranges).
+  std::vector<uint64_t> module_def_keys;
 };
 
 }  // namespace lyra::mir

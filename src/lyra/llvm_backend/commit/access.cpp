@@ -15,7 +15,7 @@ auto Access::GetWriteTarget(Context& ctx, mir::PlaceId target)
 }
 
 auto Access::GetCanonicalRootSignalId(Context& ctx, mir::PlaceId target)
-    -> std::optional<uint32_t> {
+    -> std::optional<SignalIdExpr> {
   return ctx.GetCanonicalRootSignalId(target);
 }
 

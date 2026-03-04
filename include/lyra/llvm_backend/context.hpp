@@ -11,6 +11,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
@@ -251,6 +252,23 @@ class Context {
   void SetCurrentInstanceId(uint32_t instance_id);
   [[nodiscard]] auto GetCurrentInstanceId() const -> uint32_t;
 
+  // Shared process mode (process dedup)
+  void SetSharedProcess(bool shared);
+  [[nodiscard]] auto IsSharedProcess() const -> bool;
+  void SetSlotsBasePointer(llvm::Value* ptr);
+  void SetInstanceByteOffset(llvm::Value* offset);
+  void SetDynamicInstanceId(llvm::Value* id);
+  void SetSignalIdOffset(llvm::Value* offset);
+  [[nodiscard]] auto GetSignalIdOffset() const -> llvm::Value*;
+  [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
+  void SetRelByteOffsets(std::vector<uint64_t> offsets, uint32_t base_slot_id);
+  [[nodiscard]] auto GetRepresentativeBaseSlotId() const -> uint32_t;
+
+  // Compute root slot pointer for shared process via byte-GEP from slots_base.
+  // Used by NBA path for notify_base_ptr.
+  [[nodiscard]] auto GetDesignRootPointerShared(mir::PlaceId place_id)
+      -> llvm::Value*;
+
   // Cached pointers (computed in entry block, reused for all place accesses)
   // state_ptr: the function argument pointing to ProcessStateN
   void SetStatePointer(llvm::Value* state_ptr);
@@ -414,7 +432,7 @@ class Context {
   // Resolves aliases, then returns the resolved root's slot ID.
   // Returns nullopt if the resolved root is not a design slot.
   [[nodiscard]] auto GetCanonicalRootSignalId(mir::PlaceId place_id)
-      -> std::optional<uint32_t>;
+      -> std::optional<SignalIdExpr>;
 
   // Internal helper: compute pointer from an already-resolved place.
   // The original_place_id is needed for frame field index lookup (for
@@ -565,6 +583,15 @@ class Context {
   llvm::Value* design_ptr_ = nullptr;
   llvm::Value* frame_ptr_ = nullptr;
   llvm::Value* engine_ptr_ = nullptr;
+
+  // Shared process mode (process dedup)
+  bool is_shared_process_ = false;
+  llvm::Value* slots_base_ptr_ = nullptr;        // GEP(design_ptr, 0)
+  llvm::Value* instance_byte_offset_ = nullptr;  // i64 fn arg
+  llvm::Value* dynamic_instance_id_ = nullptr;   // i32 fn arg
+  llvm::Value* signal_id_offset_ = nullptr;      // i32 fn arg
+  std::vector<uint64_t> rel_byte_offsets_;
+  uint32_t representative_base_slot_id_ = 0;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();

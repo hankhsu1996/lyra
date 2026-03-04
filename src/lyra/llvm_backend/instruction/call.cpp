@@ -454,10 +454,13 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
   llvm::Value* count_i64 = builder.CreateSExt(*count_or_err, i64_ty);
 
   // Resolve slot_id for trace: real ID for kDirectToDest, kNoSlotId for kStaged
-  uint32_t fread_slot_id = lyra::runtime::kNoSlotId;
+  llvm::Value* fread_slot_id_val =
+      llvm::ConstantInt::get(i32_ty, lyra::runtime::kNoSlotId);
   if (wb.kind == mir::WritebackKind::kDirectToDest) {
-    fread_slot_id =
-        GetDesignSlotId(context, wb.dest).value_or(lyra::runtime::kNoSlotId);
+    auto slot_expr = GetDesignSignalId(context, wb.dest);
+    if (slot_expr.has_value()) {
+      fread_slot_id_val = slot_expr->Emit(builder);
+    }
   }
 
   // Call runtime: int32_t LyraFread(void* engine, int32_t descriptor,
@@ -468,7 +471,7 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
       context.GetLyraFread(),
       {context.GetEnginePointer(), *desc_or_err, target_ptr_val, *width_or_err,
        stride_bytes, *is_mem_or_err, start_i64, count_i64, element_count,
-       llvm::ConstantInt::get(i32_ty, fread_slot_id)});
+       fread_slot_id_val});
 
   // Stage return (bytes_read) to tmp, then commit if statement form
   if (call.ret) {
