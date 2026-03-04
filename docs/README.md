@@ -5,8 +5,9 @@ Start here for an overview of Lyra's design and constraints.
 ## Getting Oriented
 
 - [philosophy.md](philosophy.md) - product priorities and tradeoffs
-- [architecture.md](architecture.md) - component boundaries and data flow
+- [architecture-principles.md](architecture-principles.md) - architectural north stars and structural rules
 - [design-principles.md](design-principles.md) - implementation guidelines
+- [architecture.md](architecture.md) - component boundaries and data flow
 - [pipeline-contract.md](pipeline-contract.md) - layer responsibilities and boundaries
 
 ## Language and Semantics

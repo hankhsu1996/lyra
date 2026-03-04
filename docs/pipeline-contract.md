@@ -45,6 +45,17 @@ MIR defines how the program executes. All semantic questions are answered here.
 
 LLVM IR is not where language semantics live.
 
+### Codegen -> Runtime
+
+| Must Do                             | Must NOT Do                        |
+| ----------------------------------- | ---------------------------------- |
+| Emit calls into runtime API         | Invent scheduling semantics        |
+| Load/store slots via this + offset  | Manage instance storage directly   |
+| Reference slots as instance-local   | Assume global flat slot addressing |
+| Delegate dirty/event/NBA to runtime | Implement tracing or subscription  |
+
+Runtime is the sole owner of instance storage, dirty tracking, subscriptions, event queues, and NBA machinery. Slot identity is instance-local: the addressing contract is `(Instance, LocalSlot)` via `this_ptr` + relative offset. Global slot numbering is an implementation detail, not an architectural contract.
+
 ## Information Flow
 
 These must flow end-to-end through the pipeline:
@@ -59,13 +70,15 @@ These must flow end-to-end through the pipeline:
 
 ## Forbidden Cross-Layer Behavior
 
-| Violation                 | Why It's Wrong                                |
-| ------------------------- | --------------------------------------------- |
-| LLVM fixes SV semantics   | Semantics must be fixed in MIR                |
-| MIR re-interprets syntax  | Syntax interpretation is HIR's job            |
-| HIR encodes execution     | Execution semantics belong in MIR             |
-| Post-HIR user diagnostics | All user errors caught at AST -> HIR boundary |
-| Backend creates types     | Types are language-level, owned by HIR        |
+| Violation                  | Why It's Wrong                                |
+| -------------------------- | --------------------------------------------- |
+| LLVM fixes SV semantics    | Semantics must be fixed in MIR                |
+| MIR re-interprets syntax   | Syntax interpretation is HIR's job            |
+| HIR encodes execution      | Execution semantics belong in MIR             |
+| Post-HIR user diagnostics  | All user errors caught at AST -> HIR boundary |
+| Backend creates types      | Types are language-level, owned by HIR        |
+| Backend manages storage    | Instance storage is owned by runtime          |
+| Backend invents scheduling | Scheduling semantics belong in runtime        |
 
 ## Error Boundaries
 

@@ -19,58 +19,23 @@ This reflects real pain with tools like Verilator: compile times reaching hours,
 
 ## Key Architectural Decisions
 
+These follow from the architectural north stars; see [architecture-principles.md](architecture-principles.md) for the reasoning behind each.
+
 ### LLVM IR Backend
 
-Primary backend generates LLVM IR.
-
-Reasons:
-
-- Native codegen with full optimization pipeline
-- Direct control over machine code generation
-- No dependency on external C++ compiler
-- IR designed for LLVM lowering (no function pointers, no VM bytecode)
+Primary backend generates LLVM IR. Native codegen with full optimization pipeline, no dependency on external C++ compiler.
 
 ### Elaboration Model
 
-Lyra uses compile-time elaboration via slang:
+Compile-time elaboration via slang: hierarchy resolution, legality checks, name resolution, type checking.
 
-- Slang elaborates hierarchy at compile time
-- Each variable gets a unique symbol pointer
-- Variable access: flat lookup by symbol (no instance traversal)
+### HIR/MIR as Templates
 
-Slang performs legality checks, name resolution, and validation.
-
-### HIR/MIR Role
-
-HIR/MIR are module templates, not elaborated instance graphs.
-
-They encode:
-
-- Parameter interfaces
-- Behavioral semantics (always/assign)
-- Scheduling semantics (comb/ff/NBA)
-
-They do not encode:
-
-- Fully elaborated instance graphs
-- Static per-instance specialization
-
-HIR is the high-level IR close to SystemVerilog semantics. MIR is the mid-level IR suitable for LLVM lowering.
+HIR/MIR represent module templates (compile per shape), not elaborated instance graphs. See [architecture-principles.md](architecture-principles.md) for the template-vs-instance design.
 
 ### Event-Driven Simulation (Default)
 
-Default mode:
-
-- Event-driven / process-driven simulation
-- No global flattening
-- No global topo sort
-- No whole-design static scheduling
-
-Optional fast modes (future):
-
-- Local comb sorting
-- Partial specialization
-- Hot-path optimization
+Event-driven / process-driven simulation. No global flattening, no global topo sort, no whole-design static scheduling.
 
 ## Constants and Parameters
 
