@@ -23,6 +23,7 @@
 #include "print.hpp"
 #include "process_stats.hpp"
 #include "runtime_path.hpp"
+#include "stats_report.hpp"
 #include "verbose_logger.hpp"
 
 namespace lyra::driver {
@@ -133,8 +134,9 @@ auto RunJit(const CompilationInput& input) -> int {
 
   // Collect LLVM stats BEFORE JIT (module is consumed during compilation)
   bool emit_stats = input.stats_top_n >= 0;
+  bool collect_stats = emit_stats || input.stats_out_path.has_value();
   LlvmStats llvm_stats;
-  if (emit_stats) {
+  if (collect_stats) {
     llvm_stats = CollectLlvmStats(*llvm_result->module);
   }
 
@@ -205,6 +207,19 @@ auto RunJit(const CompilationInput& input) -> int {
     }
     fmt::print(stderr, "\n");
     std::fflush(stderr);
+  }
+
+  // Write structured JSON stats
+  if (input.stats_out_path) {
+    StatsReport report{
+        .backend = StatsBackend::kJit,
+        .git_sha = ResolveGitSha(),
+        .vlog = &vlog,
+        .llvm = llvm_stats,
+        .mir = compilation.mir.stats,
+        .jit = session->Timings(),
+    };
+    WriteStatsJson(report, *input.stats_out_path);
   }
 
   // Phase 2: simulation

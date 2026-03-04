@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "frontend.hpp"
+#include "llvm_stats.hpp"
 #include "lyra/llvm_backend/emit.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/llvm_backend/toolchain.hpp"
@@ -15,6 +16,7 @@
 #include "pipeline.hpp"
 #include "print.hpp"
 #include "runtime_path.hpp"
+#include "stats_report.hpp"
 #include "verbose_logger.hpp"
 
 namespace lyra::driver {
@@ -47,7 +49,9 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
       .mir_arena = compilation.mir.mir_arena.get(),
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
+      .hooks = nullptr,
       .fs_base_dir = input.fs_base_dir.string(),
+      .plusargs = {},
       .feature_flags = feature_flags,
       .force_two_state = input.two_state,
       .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
@@ -61,6 +65,12 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
   if (!llvm_result) {
     PrintDiagnostic(llvm_result.error(), *compilation.hir.source_manager);
     return std::unexpected(1);
+  }
+
+  // Collect LLVM stats before module is consumed
+  LlvmStats llvm_stats;
+  if (input.stats_out_path) {
+    llvm_stats = CollectLlvmStats(*llvm_result->module);
   }
 
   // Create target machine for object emission
@@ -130,6 +140,19 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
     }
     PrintError(msg);
     return std::unexpected(1);
+  }
+
+  // Write structured JSON stats
+  if (input.stats_out_path) {
+    StatsReport report{
+        .backend = StatsBackend::kAot,
+        .git_sha = ResolveGitSha(),
+        .vlog = &vlog,
+        .llvm = llvm_stats,
+        .mir = compilation.mir.stats,
+        .jit = std::nullopt,
+    };
+    WriteStatsJson(report, *input.stats_out_path);
   }
 
   return *link_result;

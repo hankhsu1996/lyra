@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -41,16 +42,25 @@ class VerboseLogger {
   // Print phase summary line for --stats output.
   void PrintPhaseSummary(FILE* sink = stderr) const;
 
-  auto level() const -> int {
+  // Query a single phase's recorded duration (seconds).
+  // Linear scan is fine -- at most kPhaseOrder.size() entries.
+  auto PhaseDuration(std::string_view name) const -> std::optional<double> {
+    for (const auto& [k, v] : phase_durations_) {
+      if (k == name) return v;
+    }
+    return std::nullopt;
+  }
+
+  auto Level() const -> int {
     return level_;
   }
 
- private:
   // Fixed phase order for deterministic output.
-  static constexpr std::array<std::string_view, 6> kPhaseOrder = {
-      "parse",     "elaborate",  "lower_hir",
-      "lower_mir", "lower_llvm", "jit_compile"};
+  static constexpr std::array<std::string_view, 8> kPhaseOrder = {
+      "parse",      "elaborate", "lower_hir", "lower_mir",
+      "lower_llvm", "emit_obj",  "link",      "jit_compile"};
 
+ private:
   int level_;
   FILE* sink_;
   std::unordered_map<std::string, double> phase_durations_;
@@ -67,9 +77,9 @@ class PhaseTimer {
 
   // Non-copyable, non-movable (RAII resource)
   PhaseTimer(const PhaseTimer&) = delete;
-  PhaseTimer& operator=(const PhaseTimer&) = delete;
+  auto operator=(const PhaseTimer&) -> PhaseTimer& = delete;
   PhaseTimer(PhaseTimer&&) = delete;
-  PhaseTimer& operator=(PhaseTimer&&) = delete;
+  auto operator=(PhaseTimer&&) -> PhaseTimer& = delete;
 
  private:
   void HeartbeatLoop(std::stop_token stop_token);
