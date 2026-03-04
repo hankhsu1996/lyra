@@ -156,7 +156,7 @@ struct Layout {
   // SuspendRecord type (opaque blob matching C++ struct size)
   llvm::StructType* suspend_record_type = nullptr;
 
-  // Process deduplication groups (only populated when share_procs is true).
+  // Process sharing groups (empty if no shareable processes found).
   std::vector<ProcessDedupGroup> dedup_groups;
   // Map from module-process index (i.e. index into process_ids starting at
   // num_init_processes) to dedup_group index. SIZE_MAX if not deduped.
@@ -250,8 +250,7 @@ auto IsScalarPatchable(
 auto BuildLayout(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
     const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx,
-    const llvm::DataLayout& dl, bool force_two_state, bool share_procs = false)
-    -> Layout;
+    const llvm::DataLayout& dl, bool force_two_state) -> Layout;
 
 // Discriminant for byte range resolution results.
 // kPrecise: exact byte range known (FieldProjection + const IndexProjection).

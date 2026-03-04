@@ -9,7 +9,7 @@ namespace lyra::test {
 // Run a single test case with the specified backend
 void RunTestCase(
     const TestCase& test_case, BackendKind backend,
-    bool force_two_state = false, bool share_procs = false);
+    bool force_two_state = false);
 
 }  // namespace lyra::test
 

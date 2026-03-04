@@ -184,7 +184,6 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .diag_ctx = &diag_ctx,
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = {},  // Not needed for dump
-      .share_procs = input.share_procs,
   };
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
   {

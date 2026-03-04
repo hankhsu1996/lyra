@@ -347,23 +347,30 @@ void PrintProcessStats(
     uint32_t dedup_groups = 0;
     uint64_t shared_ir_insts = 0;
     uint32_t num_wrappers = 0;
+    uint32_t num_nonshared = 0;
     for (const auto& fs : llvm_stats.func_stats) {
       if (fs.name.starts_with("shared_proc_")) {
         ++dedup_groups;
         shared_ir_insts += fs.instructions;
       }
     }
-    // Count wrapper processes: deduped processes have tiny LLVM functions
-    for (const auto& e : entries) {
+    // Count wrapper and non-shared module processes.
+    // Wrappers have <=10 LLVM instructions (thin forwarders).
+    // Non-shared bodies have >10 instructions and are module processes
+    // (not init processes).
+    for (size_t idx = 0; idx < entries.size(); ++idx) {
+      const auto& e = entries[idx];
       if (e.llvm_insts > 0 && e.llvm_insts <= 10) {
         ++num_wrappers;
+      } else if (e.llvm_insts > 10 && idx >= num_init) {
+        ++num_nonshared;
       }
     }
     fmt::print(
         sink,
         "[lyra][stats][proc] dedup: groups={} shared_ir_insts={} "
-        "wrappers={}\n",
-        dedup_groups, shared_ir_insts, num_wrappers);
+        "wrappers={} nonshared={}\n",
+        dedup_groups, shared_ir_insts, num_wrappers, num_nonshared);
   }
 
   // Size distribution: median, p90, p99

@@ -416,7 +416,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   // Build layout first (pure analysis, no LLVM IR emission)
   Layout layout = BuildLayout(
       *input.design, *input.mir_arena, *input.type_arena, slot_info, *llvm_ctx,
-      module->getDataLayout(), force_two_state, input.share_procs);
+      module->getDataLayout(), force_two_state);
 
   // Create context with layout
   Context context(

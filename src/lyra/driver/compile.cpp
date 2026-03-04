@@ -54,7 +54,6 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
       .plusargs = {},
       .feature_flags = feature_flags,
       .force_two_state = input.two_state,
-      .share_procs = input.share_procs,
       .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
   };
 

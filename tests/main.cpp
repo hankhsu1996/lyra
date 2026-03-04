@@ -23,30 +23,25 @@ std::vector<TestCase> g_test_cases;
 BackendKind g_backend;
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 bool g_force_two_state = false;
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-bool g_share_procs = false;
 
 // Test fixture that references globally stored test case
 class SvFeatureTest : public testing::Test {
  public:
   SvFeatureTest(
-      const TestCase* test_case, BackendKind backend, bool force_two_state,
-      bool share_procs)
+      const TestCase* test_case, BackendKind backend, bool force_two_state)
       : test_case_(test_case),
         backend_(backend),
-        force_two_state_(force_two_state),
-        share_procs_(share_procs) {
+        force_two_state_(force_two_state) {
   }
 
   void TestBody() override {
-    RunTestCase(*test_case_, backend_, force_two_state_, share_procs_);
+    RunTestCase(*test_case_, backend_, force_two_state_);
   }
 
  private:
   const TestCase* test_case_;
   BackendKind backend_;
   bool force_two_state_;
-  bool share_procs_;
 };
 
 // Register tests dynamically using indices into global storage
@@ -59,7 +54,7 @@ void RegisterTests() {
         [i]() -> testing::Test* {
           // NOLINTNEXTLINE(cppcoreguidelines-owning-memory) - gtest owns ptr
           return new SvFeatureTest(
-              &g_test_cases[i], g_backend, g_force_two_state, g_share_procs);
+              &g_test_cases[i], g_backend, g_force_two_state);
         });
   }
 }
@@ -111,7 +106,6 @@ auto main(int argc, char** argv) -> int {
         configuration.yaml_paths, configuration.yaml_directory);
     lyra::test::g_backend = configuration.backend;
     lyra::test::g_force_two_state = configuration.force_two_state;
-    lyra::test::g_share_procs = configuration.share_procs;
 
     // Register tests dynamically with the configured backend
     lyra::test::RegisterTests();

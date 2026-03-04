@@ -1345,8 +1345,7 @@ void BuildDedupGroups(
 auto BuildLayout(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
     const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx,
-    const llvm::DataLayout& dl, bool force_two_state, bool share_procs)
-    -> Layout {
+    const llvm::DataLayout& dl, bool force_two_state) -> Layout {
   Layout layout;
 
   // Build runtime types
@@ -1414,8 +1413,7 @@ auto BuildLayout(
     layout.processes.push_back(std::move(proc_layout));
   }
 
-  // Build dedup groups if sharing is enabled
-  if (share_procs && !design.instance_slot_ranges.empty()) {
+  if (!design.instance_slot_ranges.empty()) {
     BuildDedupGroups(layout, design, arena, types, dl);
   }
 

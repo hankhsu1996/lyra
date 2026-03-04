@@ -155,7 +155,6 @@ auto GetTestConfiguration(const CommandLineArgs& args) -> TestConfiguration {
   return TestConfiguration{
       .backend = suite.backend,
       .force_two_state = suite.force_two_state,
-      .share_procs = suite.share_procs,
       .yaml_paths = yaml_paths,
       .yaml_directory = paths.yaml_directory,
   };

@@ -45,7 +45,6 @@ struct Suite {
   std::string name;
   BackendKind backend;
   bool force_two_state = false;
-  bool share_procs = false;
   std::vector<std::regex> include_regex;  // Compiled regex patterns
   std::vector<std::regex> exclude_regex;  // Compiled regex patterns
 };

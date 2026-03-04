@@ -128,19 +128,6 @@ suites:
       # TODO: dynamic array/queue query bugs under --two-state (not 4-state related)
       - system_tf/pure/array_query/default\.yaml$
 
-  # Process dedup suite: runs JIT with --share-procs to verify shared process
-  # codegen produces identical results. Uses hierarchy/ tests (multi-instance
-  # designs) plus processes/ and scheduling/ (NBA, event propagation).
-  jit_share_procs:
-    backend: jit
-    share_procs: true
-    include_regex:
-      - ^hierarchy/
-      - ^processes/
-      - ^scheduling/
-    exclude_regex:
-      - two_state_only\.yaml$
-
   mir_dev:
     backend: mir
     include_regex:
