@@ -514,34 +514,17 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout.process_ids.size());
 
-  // Build instance_id -> module_idx map for template codegen
-  std::unordered_map<uint32_t, size_t> instance_id_to_module_idx;
-  {
-    size_t mod_idx = 0;
-    for (const auto& element : input.design->elements) {
-      if (!std::holds_alternative<mir::Module>(element)) continue;
-      const auto& mir_module = std::get<mir::Module>(element);
-      for (mir::ProcessId pid : mir_module.processes) {
-        const auto& proc = (*input.mir_arena)[pid];
-        instance_id_to_module_idx[proc.owner_instance_id] = mod_idx;
-      }
-      ++mod_idx;
-    }
-  }
-
   // Phase 1: Emit template functions (one per ProcessTemplate)
   std::vector<llvm::Function*> template_fns(layout.process_templates.size());
   for (size_t t = 0; t < layout.process_templates.size(); ++t) {
     const auto& tmpl = layout.process_templates[t];
-    context.SetCurrentProcess(tmpl.template_layout_index);
+    context.SetCurrentProcess(tmpl.template_layout_index.value);
 
     const auto& mir_process = (*input.mir_arena)[tmpl.template_process];
     context.SetCurrentInstanceId(mir_process.owner_instance_id);
 
-    // Look up variant for slot layout via representative's owner instance
-    uint32_t mod_idx = instance_id_to_module_idx[mir_process.owner_instance_id];
     const auto& variant =
-        layout.variants[layout.instance_variant_ids[mod_idx].value];
+        layout.GetInstanceVariant(tmpl.representative_module_idx);
     context.SetRelByteOffsets(
         variant.rel_byte_offsets, tmpl.template_base_slot_id);
 
@@ -560,29 +543,21 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     const auto& mir_process = (*input.mir_arena)[proc_id];
     context.SetCurrentInstanceId(mir_process.owner_instance_id);
 
-    if (i >= num_init && !layout.process_membership.empty()) {
-      size_t map_idx = i - num_init;
-      if (map_idx < layout.process_membership.size() &&
-          layout.process_membership[map_idx]) {
-        const auto& membership = *layout.process_membership[map_idx];
+    auto route =
+        layout.RouteProcess(LayoutProcessIndex{static_cast<uint32_t>(i)});
+    if (auto* templated = std::get_if<TemplatedRoute>(&route)) {
+      uint64_t base_byte_offset =
+          layout.GetInstanceBaseByteOffset(templated->module_idx);
+      uint32_t base_slot_id =
+          input.design->instance_slot_ranges[templated->module_idx.value]
+              .slot_begin;
 
-        // Route through variant (single source of truth for template routing)
-        uint32_t mod_idx =
-            instance_id_to_module_idx[mir_process.owner_instance_id];
-        const auto& variant =
-            layout.variants[layout.instance_variant_ids[mod_idx].value];
-        size_t tmpl_id = *variant.proc_template_ids[membership.local_proc_idx];
-
-        uint64_t base_byte_offset = layout.instance_base_byte_offsets[mod_idx];
-        uint32_t base_slot_id =
-            input.design->instance_slot_ranges[mod_idx].slot_begin;
-
-        auto* wrapper = GenerateProcessWrapper(
-            context, template_fns[tmpl_id], mir_process.owner_instance_id,
-            base_byte_offset, base_slot_id, std::format("process_{}", i));
-        process_funcs.push_back(wrapper);
-        continue;
-      }
+      auto* wrapper = GenerateProcessWrapper(
+          context, template_fns[templated->template_id.value],
+          mir_process.owner_instance_id, base_byte_offset, base_slot_id,
+          std::format("process_{}", i));
+      process_funcs.push_back(wrapper);
+      continue;
     }
 
     auto func_result = GenerateProcessFunction(
