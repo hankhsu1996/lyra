@@ -61,6 +61,21 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
+// Load design_ptr from state->header.design without setting context pointers.
+// Used by the wrapper which only needs design_ptr to compute this_ptr.
+auto EmitLoadDesignPtr(Context& context, llvm::Value* state_arg)
+    -> llvm::Value* {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+
+  auto* header_ptr = builder.CreateStructGEP(
+      context.GetProcessStateType(), state_arg, 0, "header_ptr");
+  auto* design_ptr_ptr = builder.CreateStructGEP(
+      context.GetHeaderType(), header_ptr, 1, "design_ptr_ptr");
+  return builder.CreateLoad(ptr_ty, design_ptr_ptr, "design_ptr");
+}
+
 // =============================================================================
 // Block Params and PHI Wiring
 // =============================================================================
@@ -687,9 +702,9 @@ void FillTriggerArray(
 
     // Write signal_id (field 0)
     auto* signal_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 0);
-    if (context.IsSharedProcess()) {
+    if (context.IsTemplateProcess()) {
       uint32_t rel_signal =
-          triggers[i].signal.value - context.GetRepresentativeBaseSlotId();
+          triggers[i].signal.value - context.GetTemplateBaseSlotId();
       auto* abs_signal = builder.CreateAdd(
           context.GetSignalIdOffset(), builder.getInt32(rel_signal));
       builder.CreateStore(abs_signal, signal_ptr);
@@ -1224,28 +1239,7 @@ auto GenerateProcessFunction(
   // Entry block: set up cached pointers and switch dispatch
   builder.SetInsertPoint(entry_block);
 
-  // Set up context with state pointer
-  context.SetStatePointer(state_arg);
-
-  // Load design pointer from state->header.design
-  // state->header is field 0, header->design is field 1
-  auto* header_ptr = builder.CreateStructGEP(
-      context.GetProcessStateType(), state_arg, 0, "header_ptr");
-  auto* design_ptr_ptr = builder.CreateStructGEP(
-      context.GetHeaderType(), header_ptr, 1, "design_ptr_ptr");
-  auto* design_ptr = builder.CreateLoad(ptr_ty, design_ptr_ptr, "design_ptr");
-  context.SetDesignPointer(design_ptr);
-
-  // Load engine pointer from state->header.engine (field 2)
-  auto* engine_ptr_ptr = builder.CreateStructGEP(
-      context.GetHeaderType(), header_ptr, 2, "engine_ptr_ptr");
-  auto* engine_ptr = builder.CreateLoad(ptr_ty, engine_ptr_ptr, "engine_ptr");
-  context.SetEnginePointer(engine_ptr);
-
-  // Compute frame pointer: state->frame (field 1)
-  auto* frame_ptr = builder.CreateStructGEP(
-      context.GetProcessStateType(), state_arg, 1, "frame_ptr");
-  context.SetFramePointer(frame_ptr);
+  context.EmitProcessStateSetup(state_arg);
 
   // Collect actual resume targets: blocks that are jumped to after Delay/Wait.
   // bb0 is always accessible (initial execution) but handled as the default
@@ -1347,13 +1341,12 @@ auto GenerateSharedProcessFunction(
   auto& module = context.GetModule();
 
   // Shared function signature:
-  // void(ptr state, i32 resume, i64 base_byte_offset, i32 inst_id,
+  // void(ptr state, i32 resume, ptr this_ptr, i32 inst_id,
   //      i32 signal_id_offset)
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
   auto* fn_type = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(llvm_ctx), {ptr_ty, i32_ty, i64_ty, i32_ty, i32_ty},
+      llvm::Type::getVoidTy(llvm_ctx), {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty},
       false);
 
   auto* func = llvm::Function::Create(
@@ -1361,7 +1354,7 @@ auto GenerateSharedProcessFunction(
 
   func->getArg(0)->setName("state");
   func->getArg(1)->setName("resume_block");
-  func->getArg(2)->setName("base_byte_offset");
+  func->getArg(2)->setName("this_ptr");
   func->getArg(3)->setName("inst_id");
   func->getArg(4)->setName("signal_id_offset");
 
@@ -1378,36 +1371,13 @@ auto GenerateSharedProcessFunction(
   auto& builder = context.GetBuilder();
   builder.SetInsertPoint(entry_block);
 
-  context.SetStatePointer(func->getArg(0));
-
-  // Load pointers from state header (same as GenerateProcessFunction)
-  auto* header_ptr = builder.CreateStructGEP(
-      context.GetProcessStateType(), func->getArg(0), 0, "header_ptr");
-  auto* design_ptr_ptr = builder.CreateStructGEP(
-      context.GetHeaderType(), header_ptr, 1, "design_ptr_ptr");
-  auto* design_ptr = builder.CreateLoad(ptr_ty, design_ptr_ptr, "design_ptr");
-  context.SetDesignPointer(design_ptr);
-
-  auto* engine_ptr_ptr = builder.CreateStructGEP(
-      context.GetHeaderType(), header_ptr, 2, "engine_ptr_ptr");
-  auto* engine_ptr = builder.CreateLoad(ptr_ty, engine_ptr_ptr, "engine_ptr");
-  context.SetEnginePointer(engine_ptr);
-
-  auto* frame_ptr = builder.CreateStructGEP(
-      context.GetProcessStateType(), func->getArg(0), 1, "frame_ptr");
-  context.SetFramePointer(frame_ptr);
-
-  // Compute slots_base_ptr = GEP(design_ptr, 0) -- the slot table starts at
-  // field 0 in DesignState (no prefix fields).
-  auto* slots_base = builder.CreateStructGEP(
-      context.GetDesignStateType(), design_ptr, 0, "slots_base");
-  context.SetSlotsBasePointer(slots_base);
+  context.EmitProcessStateSetup(func->getArg(0));
 
   // Cache shared-mode arguments in context
-  context.SetInstanceByteOffset(func->getArg(2));
+  context.SetThisPointer(func->getArg(2));
   context.SetDynamicInstanceId(func->getArg(3));
   context.SetSignalIdOffset(func->getArg(4));
-  context.SetSharedProcess(true);
+  context.SetTemplateProcess(true);
 
   // Resume dispatch (same logic as GenerateProcessFunction)
   std::vector<size_t> resume_targets;
@@ -1464,9 +1434,8 @@ auto GenerateSharedProcessFunction(
   context.SetDesignPointer(nullptr);
   context.SetFramePointer(nullptr);
   context.SetEnginePointer(nullptr);
-  context.SetSharedProcess(false);
-  context.SetSlotsBasePointer(nullptr);
-  context.SetInstanceByteOffset(nullptr);
+  context.SetTemplateProcess(false);
+  context.SetThisPointer(nullptr);
   context.SetDynamicInstanceId(nullptr);
   context.SetSignalIdOffset(nullptr);
 
@@ -1476,7 +1445,7 @@ auto GenerateSharedProcessFunction(
 
 auto GenerateProcessWrapper(
     Context& context, llvm::Function* shared_fn,
-    const ProcessDedupInstance& instance, const std::string& name)
+    const ProcessTemplateInstance& instance, const std::string& name)
     -> llvm::Function* {
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -1496,10 +1465,17 @@ auto GenerateProcessWrapper(
   auto& builder = context.GetBuilder();
   builder.SetInsertPoint(entry);
 
+  auto* design_ptr = EmitLoadDesignPtr(context, wrapper->getArg(0));
+
+  // this_ptr = design_ptr + base_byte_offset
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+  auto* this_ptr = builder.CreateGEP(
+      i8_ty, design_ptr,
+      llvm::ConstantInt::get(i64_ty, instance.base_byte_offset), "this_ptr");
+
   builder.CreateCall(
-      shared_fn, {wrapper->getArg(0), wrapper->getArg(1),
-                  llvm::ConstantInt::get(i64_ty, instance.base_byte_offset),
+      shared_fn, {wrapper->getArg(0), wrapper->getArg(1), this_ptr,
                   llvm::ConstantInt::get(i32_ty, instance.instance_id),
                   llvm::ConstantInt::get(i32_ty, instance.signal_id_offset)});
   builder.CreateRetVoid();

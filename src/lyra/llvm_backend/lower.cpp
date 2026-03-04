@@ -513,19 +513,19 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout.process_ids.size());
 
-  // Build shared functions first (one per dedup group)
-  std::vector<llvm::Function*> group_shared_fns(layout.dedup_groups.size());
-  for (size_t g = 0; g < layout.dedup_groups.size(); ++g) {
-    const auto& group = layout.dedup_groups[g];
-    context.SetCurrentProcess(group.shared_layout_index);
+  // Build template functions first (one per template group)
+  std::vector<llvm::Function*> group_shared_fns(layout.template_groups.size());
+  for (size_t g = 0; g < layout.template_groups.size(); ++g) {
+    const auto& group = layout.template_groups[g];
+    context.SetCurrentProcess(group.template_layout_index);
 
-    const auto& mir_process = (*input.mir_arena)[group.representative];
+    const auto& mir_process = (*input.mir_arena)[group.template_process];
     context.SetCurrentInstanceId(mir_process.owner_instance_id);
 
-    // Configure shared-mode context: find representative's base_slot_id
+    // Configure template-mode context: find template process's base_slot_id
     uint32_t rep_base_slot = 0;
     for (const auto& inst : group.instances) {
-      if (inst.process_id == group.representative) {
+      if (inst.process_id == group.template_process) {
         rep_base_slot = inst.base_slot_id;
         break;
       }
@@ -533,7 +533,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     context.SetRelByteOffsets(group.rel_byte_offsets, rep_base_slot);
 
     auto func_result = GenerateSharedProcessFunction(
-        context, mir_process, group.shared_func_name);
+        context, mir_process, group.template_func_name);
     if (!func_result) return std::unexpected(func_result.error());
     group_shared_fns[g] = *func_result;
   }
@@ -547,19 +547,19 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     const auto& mir_process = (*input.mir_arena)[proc_id];
     context.SetCurrentInstanceId(mir_process.owner_instance_id);
 
-    // Check if this module process is in a dedup group
+    // Check if this module process is in a template group
     size_t group_idx = SIZE_MAX;
-    if (i >= num_init && !layout.process_dedup_map.empty()) {
+    if (i >= num_init && !layout.process_template_map.empty()) {
       size_t map_idx = i - num_init;
-      if (map_idx < layout.process_dedup_map.size()) {
-        group_idx = layout.process_dedup_map[map_idx];
+      if (map_idx < layout.process_template_map.size()) {
+        group_idx = layout.process_template_map[map_idx];
       }
     }
 
     if (group_idx != SIZE_MAX) {
       // Find this process's instance data in the group
-      const auto& group = layout.dedup_groups[group_idx];
-      const ProcessDedupInstance* inst = nullptr;
+      const auto& group = layout.template_groups[group_idx];
+      const ProcessTemplateInstance* inst = nullptr;
       for (const auto& di : group.instances) {
         if (di.process_id == proc_id) {
           inst = &di;

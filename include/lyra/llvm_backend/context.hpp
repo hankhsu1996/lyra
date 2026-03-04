@@ -252,22 +252,29 @@ class Context {
   void SetCurrentInstanceId(uint32_t instance_id);
   [[nodiscard]] auto GetCurrentInstanceId() const -> uint32_t;
 
-  // Shared process mode (process dedup)
-  void SetSharedProcess(bool shared);
-  [[nodiscard]] auto IsSharedProcess() const -> bool;
-  void SetSlotsBasePointer(llvm::Value* ptr);
-  void SetInstanceByteOffset(llvm::Value* offset);
+  // Template process mode (process sharing)
+  void SetTemplateProcess(bool shared);
+  [[nodiscard]] auto IsTemplateProcess() const -> bool;
+  void SetThisPointer(llvm::Value* ptr);
   void SetDynamicInstanceId(llvm::Value* id);
   void SetSignalIdOffset(llvm::Value* offset);
   [[nodiscard]] auto GetSignalIdOffset() const -> llvm::Value*;
   [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
   void SetRelByteOffsets(std::vector<uint64_t> offsets, uint32_t base_slot_id);
-  [[nodiscard]] auto GetRepresentativeBaseSlotId() const -> uint32_t;
+  [[nodiscard]] auto GetTemplateBaseSlotId() const -> uint32_t;
 
-  // Compute root slot pointer for shared process via byte-GEP from slots_base.
-  // Used by NBA path for notify_base_ptr.
-  [[nodiscard]] auto GetDesignRootPointerShared(mir::PlaceId place_id)
+  // Single GEP emitter for design slots. Handles template vs non-template.
+  [[nodiscard]] auto GetDesignSlotPointer(uint32_t slot_id) -> llvm::Value*;
+
+  // Resolve aliases + GetDesignSlotPointer. Returns root slot pointer for a
+  // place. Used by NBA path for notify_base_ptr.
+  [[nodiscard]] auto GetDesignRootPointer(mir::PlaceId place_id)
       -> llvm::Value*;
+
+  // Emit GEPs and loads to extract design_ptr, engine_ptr, and frame_ptr from
+  // the process state argument, then cache them in the context via the setters
+  // below. Must be called once per process function entry block.
+  void EmitProcessStateSetup(llvm::Value* state_arg);
 
   // Cached pointers (computed in entry block, reused for all place accesses)
   // state_ptr: the function argument pointing to ProcessStateN
@@ -584,14 +591,13 @@ class Context {
   llvm::Value* frame_ptr_ = nullptr;
   llvm::Value* engine_ptr_ = nullptr;
 
-  // Shared process mode (process dedup)
-  bool is_shared_process_ = false;
-  llvm::Value* slots_base_ptr_ = nullptr;        // GEP(design_ptr, 0)
-  llvm::Value* instance_byte_offset_ = nullptr;  // i64 fn arg
-  llvm::Value* dynamic_instance_id_ = nullptr;   // i32 fn arg
-  llvm::Value* signal_id_offset_ = nullptr;      // i32 fn arg
+  // Template process mode (process sharing)
+  bool is_template_process_ = false;
+  llvm::Value* this_ptr_ = nullptr;  // Instance storage base pointer (fn arg)
+  llvm::Value* dynamic_instance_id_ = nullptr;  // i32 fn arg
+  llvm::Value* signal_id_offset_ = nullptr;     // i32 fn arg
   std::vector<uint64_t> rel_byte_offsets_;
-  uint32_t representative_base_slot_id_ = 0;
+  uint32_t template_base_slot_id_ = 0;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();

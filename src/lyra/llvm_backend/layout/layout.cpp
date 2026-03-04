@@ -1153,7 +1153,7 @@ auto BuildSlotInfoFromDesign(
   return slots;
 }
 
-// Per-module-process info for dedup analysis.
+// Per-module-process info for template group analysis.
 struct ModuleProcessInfo {
   mir::ProcessId process_id;
   uint64_t module_def_key;
@@ -1165,7 +1165,7 @@ struct ModuleProcessInfo {
   const std::vector<mir::FunctionId>* module_functions = nullptr;
 };
 
-void BuildDedupGroups(
+void BuildTemplateGroups(
     Layout& layout, const mir::Design& design, const mir::Arena& arena,
     const TypeArena& types, const llvm::DataLayout& dl) {
   // Step 1: Build process info by walking module elements
@@ -1217,10 +1217,10 @@ void BuildDedupGroups(
     ++module_idx;
   }
 
-  // Initialize dedup map (all SIZE_MAX = not deduped)
+  // Initialize template map (all SIZE_MAX = not in a group)
   size_t num_module_procs =
       layout.process_ids.size() - layout.num_init_processes;
-  layout.process_dedup_map.assign(num_module_procs, SIZE_MAX);
+  layout.process_template_map.assign(num_module_procs, SIZE_MAX);
 
   // Step 2: Group by (module_def_key, local_process_index)
   // Use std::map for deterministic ordering
@@ -1251,7 +1251,7 @@ void BuildDedupGroups(
     for (const auto& [fp, fp_indices] : fingerprint_groups) {
       if (fp_indices.size() < 2) continue;
 
-      // Select representative: lowest instance_id
+      // Select template process: lowest instance_id
       size_t rep_idx = fp_indices[0];
       for (size_t fi : fp_indices) {
         if (all_module_procs[fi].instance_id <
@@ -1275,7 +1275,7 @@ void BuildDedupGroups(
       }
       if (!frames_compatible) continue;
 
-      // Compute representative's base byte offset and per-slot rel offsets
+      // Compute template process's base byte offset and per-slot rel offsets
       uint64_t rep_base_offset =
           struct_layout->getElementOffset(rep.slot_begin);
       // Populate rel_byte_offsets for ALL slots in the instance range.
@@ -1308,19 +1308,19 @@ void BuildDedupGroups(
       }
       if (!offsets_compatible) continue;
 
-      // Build the dedup group
-      ProcessDedupGroup group;
-      group.representative = rep.process_id;
-      group.shared_layout_index = rep.process_ids_index;
+      // Build the template group
+      ProcessTemplateGroup group;
+      group.template_process = rep.process_id;
+      group.template_layout_index = rep.process_ids_index;
       group.rel_byte_offsets = std::move(rel_offsets);
-      group.shared_func_name =
-          std::format("shared_proc_{}_{:x}", rep.local_process_index, fp);
+      group.template_func_name =
+          std::format("proc_template_{}_{:x}", rep.local_process_index, fp);
 
       for (size_t fi : fp_indices) {
         const auto& info = all_module_procs[fi];
         uint64_t inst_base = struct_layout->getElementOffset(info.slot_begin);
         group.instances.push_back(
-            ProcessDedupInstance{
+            ProcessTemplateInstance{
                 .process_id = info.process_id,
                 .instance_id = info.instance_id,
                 .base_byte_offset = inst_base,
@@ -1329,16 +1329,111 @@ void BuildDedupGroups(
             });
       }
 
-      size_t group_idx = layout.dedup_groups.size();
-      layout.dedup_groups.push_back(std::move(group));
+      size_t group_idx = layout.template_groups.size();
+      layout.template_groups.push_back(std::move(group));
 
-      // Update dedup map for all instances in this group
+      // Update template map for all instances in this group
       for (size_t fi : fp_indices) {
         const auto& info = all_module_procs[fi];
         size_t map_idx = info.process_ids_index - layout.num_init_processes;
-        layout.process_dedup_map[map_idx] = group_idx;
+        layout.process_template_map[map_idx] = group_idx;
       }
     }
+  }
+}
+
+// Sentinel for processes not in any template group.
+constexpr size_t kNotTemplated = SIZE_MAX;
+
+void AssignModuleVariantIds(
+    Layout& layout, const mir::Design& design, const mir::Arena& arena) {
+  // Count module elements
+  size_t num_module_elements = 0;
+  for (const auto& element : design.elements) {
+    if (std::holds_alternative<mir::Module>(element)) {
+      ++num_module_elements;
+    }
+  }
+  layout.instance_variant_ids.resize(
+      num_module_elements, ModuleVariantId{ModuleVariantId::kNone});
+
+  // Build per-instance template signature.
+  // Signature = vector of (local_process_index, template_group_index) for
+  // each non-final process in declaration order.
+  using Signature = std::vector<std::pair<uint32_t, size_t>>;
+  std::map<Signature, uint32_t> signature_to_variant;
+  uint32_t next_variant = 0;
+
+  size_t module_idx = 0;
+  for (const auto& element : design.elements) {
+    if (!std::holds_alternative<mir::Module>(element)) continue;
+    const auto& mir_module = std::get<mir::Module>(element);
+
+    Signature sig;
+    uint32_t local_idx = 0;
+    for (mir::ProcessId proc_id : mir_module.processes) {
+      const auto& process = arena[proc_id];
+      if (process.kind == mir::ProcessKind::kFinal) {
+        ++local_idx;
+        continue;
+      }
+
+      // Find this process in layout.process_ids to get its map index
+      size_t group_idx = kNotTemplated;
+      for (size_t i = layout.num_init_processes; i < layout.process_ids.size();
+           ++i) {
+        if (layout.process_ids[i] == proc_id) {
+          size_t map_idx = i - layout.num_init_processes;
+          if (map_idx < layout.process_template_map.size()) {
+            group_idx = layout.process_template_map[map_idx];
+          }
+          break;
+        }
+      }
+
+      sig.emplace_back(local_idx, group_idx);
+      ++local_idx;
+    }
+
+    auto [it, inserted] = signature_to_variant.emplace(sig, next_variant);
+    if (inserted) {
+      ++next_variant;
+    }
+    layout.instance_variant_ids[module_idx] = ModuleVariantId{it->second};
+    ++module_idx;
+  }
+
+  // Backfill variant_id into each ProcessTemplateInstance
+  // Build a map from ProcessId -> module element index
+  std::unordered_map<uint32_t, size_t> instance_id_to_module_idx;
+  module_idx = 0;
+  for (const auto& element : design.elements) {
+    if (!std::holds_alternative<mir::Module>(element)) continue;
+    const auto& mir_module = std::get<mir::Module>(element);
+    for (mir::ProcessId proc_id : mir_module.processes) {
+      const auto& process = arena[proc_id];
+      instance_id_to_module_idx[process.owner_instance_id] = module_idx;
+    }
+    ++module_idx;
+  }
+
+  for (auto& group : layout.template_groups) {
+    for (auto& inst : group.instances) {
+      auto it = instance_id_to_module_idx.find(inst.instance_id);
+      if (it != instance_id_to_module_idx.end()) {
+        inst.variant_id = layout.instance_variant_ids[it->second];
+      }
+    }
+  }
+
+  if (layout.instance_variant_ids.size() !=
+      design.instance_slot_ranges.size()) {
+    throw common::InternalError(
+        "AssignModuleVariantIds", std::format(
+                                      "instance_variant_ids.size()={} != "
+                                      "instance_slot_ranges.size()={}",
+                                      layout.instance_variant_ids.size(),
+                                      design.instance_slot_ranges.size()));
   }
 }
 
@@ -1414,7 +1509,8 @@ auto BuildLayout(
   }
 
   if (!design.instance_slot_ranges.empty()) {
-    BuildDedupGroups(layout, design, arena, types, dl);
+    BuildTemplateGroups(layout, design, arena, types, dl);
+    AssignModuleVariantIds(layout, design, arena);
   }
 
   return layout;

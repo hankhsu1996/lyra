@@ -40,7 +40,8 @@ auto LowerDesign(
   result.num_design_slots = decls.num_design_slots;
   result.slot_table = decls.slot_table;
   result.global_precision_power = input.global_precision_power;
-  // Thread slot ranges and def keys for process dedup in LLVM backend
+  // Thread slot ranges and def keys for process template grouping in LLVM
+  // backend
   result.instance_slot_ranges.reserve(decls.instance_slot_ranges.size());
   for (const auto& range : decls.instance_slot_ranges) {
     result.instance_slot_ranges.push_back({range.slot_begin, range.slot_count});

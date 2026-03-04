@@ -18,19 +18,22 @@ auto GenerateProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
     -> Result<llvm::Function*>;
 
-// Generate a shared process function with extra arguments for dedup.
-// Signature: void(ptr state, i32 resume, i64 base_offset, i32 inst_id,
+// Generate a template process function with extra arguments for sharing.
+// Signature: void(ptr state, i32 resume, ptr this_ptr, i32 inst_id,
 //                 i32 signal_offset)
-// The context must have shared-mode fields configured before calling.
+// this_ptr points to instance storage; the wrapper computes it from
+// design_ptr + base_byte_offset. The context must have template-mode fields
+// configured before calling.
 auto GenerateSharedProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
     -> Result<llvm::Function*>;
 
-// Generate a thin wrapper that calls the shared function with baked-in args.
-// Signature: void(ptr state, i32 resume) -- conforms to LyraProcessFunc ABI.
+// Generate a thin wrapper that calls the template function with baked-in args.
+// Computes this_ptr = design_ptr + instance.base_byte_offset, then calls the
+// shared template function. Signature: void(ptr state, i32 resume).
 auto GenerateProcessWrapper(
     Context& context, llvm::Function* shared_fn,
-    const ProcessDedupInstance& instance, const std::string& name)
+    const ProcessTemplateInstance& instance, const std::string& name)
     -> llvm::Function*;
 
 // Declare a user function without generating its body.
