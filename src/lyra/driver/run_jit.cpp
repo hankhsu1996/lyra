@@ -13,6 +13,7 @@
 
 #include "frontend.hpp"
 #include "llvm_stats.hpp"
+#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/llvm_backend/execution.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"

@@ -13,7 +13,7 @@
 
 #include "compile.hpp"
 #include "frontend.hpp"
-#include "print.hpp"
+#include "lyra/common/diagnostic/print.hpp"
 
 namespace lyra::driver {
 

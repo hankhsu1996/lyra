@@ -8,7 +8,7 @@
 #include <string>
 
 #include "argparse/argparse.hpp"
-#include "print.hpp"
+#include "lyra/common/diagnostic/print.hpp"
 
 namespace lyra::driver {
 namespace {

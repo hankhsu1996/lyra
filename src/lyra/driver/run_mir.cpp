@@ -6,10 +6,10 @@
 #include <fmt/core.h>
 
 #include "frontend.hpp"
+#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
 #include "pipeline.hpp"
-#include "print.hpp"
 #include "verbose_logger.hpp"
 
 namespace lyra::driver {

@@ -14,9 +14,8 @@
 #include <string_view>
 #include <vector>
 
-#include <fmt/core.h>
-
 #include "lyra/common/binary_pack.hpp"
+#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/memfile.hpp"
 #include "lyra/runtime/engine.hpp"
@@ -267,10 +266,13 @@ extern "C" void LyraReadmem(
     int32_t element_count, int64_t min_addr, int64_t current_addr,
     int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind,
     uint32_t slot_id) {
+  std::string_view task_name = is_hex ? "$readmemh" : "$readmemb";
+
   // Sanity checks
   if (element_width <= 0 || stride_bytes <= 0 || value_size_bytes <= 0 ||
       element_count <= 0) {
-    fmt::print(stderr, "$readmem: invalid element parameters\n");
+    lyra::PrintWarning(
+        std::format("{}: invalid element parameters", task_name));
     return;
   }
 
@@ -281,9 +283,10 @@ extern "C" void LyraReadmem(
                                 ? 2 * value_size_bytes
                                 : value_size_bytes;
   if (stride_bytes != expected_stride) {
-    fmt::print(
-        stderr, "$readmem: stride mismatch (got {}, expected {})\n",
-        stride_bytes, expected_stride);
+    lyra::PrintWarning(
+        std::format(
+            "{}: stride mismatch (got {}, expected {})", task_name,
+            stride_bytes, expected_stride));
     return;
   }
 
@@ -297,7 +300,8 @@ extern "C" void LyraReadmem(
 
   std::ifstream file(path);
   if (!file) {
-    fmt::print(stderr, "$readmem: cannot open file '{}'\n", filename);
+    lyra::PrintWarning(
+        std::format("{}: cannot open file '{}'", task_name, filename));
     return;
   }
 
@@ -308,8 +312,6 @@ extern "C" void LyraReadmem(
   auto bit_width = static_cast<size_t>(element_width);
   auto stride = static_cast<size_t>(stride_bytes);
   auto value_size = static_cast<size_t>(value_size_bytes);
-
-  std::string_view task_name = is_hex ? "$readmemh" : "$readmemb";
 
   // Create a span over the target storage for bounds-safe access
   auto total_bytes = static_cast<size_t>(element_count) * stride;
@@ -326,7 +328,8 @@ extern "C" void LyraReadmem(
     auto words_result =
         lyra::common::ParseMemTokenToWords(token, bit_width, is_hex);
     if (!words_result) {
-      fmt::print(stderr, "{}: {}\n", task_name, words_result.error());
+      lyra::PrintWarning(
+          std::format("{}: {}", task_name, words_result.error()));
       return;
     }
     const auto& words = *words_result;
@@ -353,7 +356,7 @@ extern "C" void LyraReadmem(
       content, is_hex, min_addr, max_addr, current_addr, final_addr, step,
       task_name, store);
   if (!result.success) {
-    fmt::print(stderr, "{}: {}\n", task_name, result.error);
+    lyra::PrintWarning(std::format("{}: {}", task_name, result.error));
   }
 
   if (wrote_any && slot_id != lyra::runtime::kNoSlotId &&
@@ -373,10 +376,13 @@ extern "C" void LyraWritemem(
     int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
     int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
     bool is_hex, int32_t element_kind) {
+  std::string_view task_name = is_hex ? "$writememh" : "$writememb";
+
   // Sanity checks
   if (element_width <= 0 || stride_bytes <= 0 || value_size_bytes <= 0 ||
       element_count <= 0) {
-    fmt::print(stderr, "$writemem: invalid element parameters\n");
+    lyra::PrintWarning(
+        std::format("{}: invalid element parameters", task_name));
     return;
   }
 
@@ -387,9 +393,10 @@ extern "C" void LyraWritemem(
                                 ? 2 * value_size_bytes
                                 : value_size_bytes;
   if (stride_bytes != expected_stride) {
-    fmt::print(
-        stderr, "$writemem: stride mismatch (got {}, expected {})\n",
-        stride_bytes, expected_stride);
+    lyra::PrintWarning(
+        std::format(
+            "{}: stride mismatch (got {}, expected {})", task_name,
+            stride_bytes, expected_stride));
     return;
   }
 
@@ -403,8 +410,9 @@ extern "C" void LyraWritemem(
 
   std::ofstream file(path);
   if (!file) {
-    fmt::print(
-        stderr, "$writemem: cannot open file '{}' for writing\n", filename);
+    lyra::PrintWarning(
+        std::format(
+            "{}: cannot open file '{}' for writing", task_name, filename));
     return;
   }
 

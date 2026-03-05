@@ -19,6 +19,7 @@
 #include "dump.hpp"
 #include "input.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "print.hpp"
 #include "run_aot.hpp"
@@ -110,7 +111,7 @@ auto main(int argc, char* argv[]) -> int {
   try {
     program.parse_args(args);
   } catch (const std::exception& err) {
-    lyra::driver::PrintError(err.what());
+    lyra::PrintError(err.what());
     std::cerr << program;
     return 1;
   }
@@ -120,7 +121,7 @@ auto main(int argc, char* argv[]) -> int {
     std::error_code ec;
     std::filesystem::current_path(*dir, ec);
     if (ec) {
-      lyra::driver::PrintError(
+      lyra::PrintError(
           std::format("cannot change to '{}': {}", *dir, ec.message()));
       return 1;
     }
