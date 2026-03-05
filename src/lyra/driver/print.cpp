@@ -14,6 +14,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/source_span.hpp"
@@ -57,24 +58,6 @@ auto DiagKindToStyle(DiagKind kind) -> fmt::text_style {
 }
 
 }  // namespace
-
-void PrintError(const std::string& message) {
-  fmt::print(
-      stderr, "{}: {} {}\n", fmt::styled("lyra", kToolStyle),
-      fmt::styled(
-          "error:",
-          fmt::fg(fmt::terminal_color::bright_red) | fmt::emphasis::bold),
-      fmt::styled(message, fmt::emphasis::bold));
-}
-
-void PrintWarning(const std::string& message) {
-  fmt::print(
-      stderr, "{}: {} {}\n", fmt::styled("lyra", kToolStyle),
-      fmt::styled(
-          "warning:",
-          fmt::fg(fmt::terminal_color::bright_yellow) | fmt::emphasis::bold),
-      fmt::styled(message, fmt::emphasis::bold));
-}
 
 // Print a single DiagItem with optional source context
 void PrintDiagItem(

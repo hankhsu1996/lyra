@@ -18,6 +18,7 @@
 
 #include "absl/container/flat_hash_map.h"
 #include "lyra/common/bit_target_mapping.hpp"
+#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/index_plan.hpp"
@@ -342,9 +343,10 @@ extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
 
   // Init processes must not suspend - they run to completion
   if (suspend->tag != lyra::runtime::SuspendTag::kFinished) {
-    fmt::println(
-        stderr, "error: init process suspended (tag={}), aborting",
-        static_cast<int>(suspend->tag));
+    lyra::PrintError(
+        std::format(
+            "init process suspended (tag={}), aborting",
+            static_cast<int>(suspend->tag)));
     std::abort();
   }
 }
