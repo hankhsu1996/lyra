@@ -28,7 +28,10 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"
+#include "lyra/runtime/loop_site_meta.hpp"
 #include "lyra/runtime/output_sink.hpp"
+#include "lyra/runtime/process_meta.hpp"
+#include "lyra/runtime/signal_dump.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/string.hpp"
@@ -401,10 +404,7 @@ extern "C" void LyraRunSimulation(
     LyraProcessFunc* processes, void** states_raw, uint32_t num_processes,
     const char** plusargs_raw, uint32_t num_plusargs,
     const char** instance_paths_raw, uint32_t num_instance_paths,
-    const uint32_t* slot_meta_words, uint32_t num_slot_metas,
-    uint32_t slot_meta_version, const void* conn_descs_raw,
-    uint32_t num_conn_descs, const uint32_t* comb_kernel_words,
-    uint32_t num_comb_kernel_words, uint32_t feature_flags) {
+    const LyraRuntimeAbi* abi) {
   auto states = std::span(states_raw, num_processes);
   auto procs = std::span(processes, num_processes);
 
@@ -428,41 +428,81 @@ extern "C" void LyraRunSimulation(
     }
   }
 
+  uint32_t feature_flags = (abi != nullptr) ? abi->feature_flags : 0;
   using lyra::runtime::FeatureFlag;
   auto flags = static_cast<FeatureFlag>(feature_flags);
 
   lyra::runtime::Engine engine(
       MakeProcessRunner(procs, states), std::span(plusargs_vec),
       std::move(instance_paths_vec), feature_flags);
-  if (slot_meta_words != nullptr && num_slot_metas > 0) {
-    if (slot_meta_version != lyra::runtime::slot_meta_abi::kVersion) {
+
+  if (abi != nullptr) {
+    if (abi->version != 1) {
       throw lyra::common::InternalError(
           "LyraRunSimulation",
-          std::format(
-              "slot_meta version mismatch: got {}, expected {}",
-              slot_meta_version, lyra::runtime::slot_meta_abi::kVersion));
+          std::format("unsupported RuntimeAbi version {}", abi->version));
     }
-    engine.InitSlotMeta(
-        lyra::runtime::SlotMetaRegistry(slot_meta_words, num_slot_metas));
+
+    // Slot metadata
+    if (abi->slot_meta_words != nullptr && abi->slot_meta_word_count > 0) {
+      engine.InitSlotMeta(
+          lyra::runtime::SlotMetaRegistry(
+              abi->slot_meta_words, abi->slot_meta_word_count));
+    }
+
+    // Process metadata
+    if (abi->process_meta_words != nullptr &&
+        abi->process_meta_word_count > 0) {
+      engine.InitProcessMeta(
+          lyra::runtime::ProcessMetaRegistry(
+              abi->process_meta_words, abi->process_meta_word_count,
+              abi->process_meta_string_pool,
+              abi->process_meta_string_pool_size));
+    }
+
+    // Loop site metadata
+    if (abi->loop_site_meta_words != nullptr &&
+        abi->loop_site_meta_word_count > 0) {
+      engine.InitLoopSiteMeta(
+          lyra::runtime::LoopSiteRegistry(
+              abi->loop_site_meta_words, abi->loop_site_meta_word_count,
+              abi->loop_site_meta_string_pool,
+              abi->loop_site_meta_string_pool_size));
+    }
+    // Connection descriptors
+    if (abi->conn_descs != nullptr && abi->num_conn_descs > 0) {
+      auto conn_descs = std::span(
+          static_cast<const lyra::runtime::ConnectionDescriptor*>(
+              abi->conn_descs),
+          abi->num_conn_descs);
+      engine.InitConnectionBatch(conn_descs);
+    }
+
+    // Comb kernel word table
+    if (abi->comb_kernel_words != nullptr && abi->num_comb_kernel_words > 0) {
+      engine.InitCombKernels(
+          std::span(abi->comb_kernel_words, abi->num_comb_kernel_words),
+          processes, states_raw);
+    }
   }
-  if (conn_descs_raw != nullptr && num_conn_descs > 0) {
-    auto conn_descs = std::span(
-        static_cast<const lyra::runtime::ConnectionDescriptor*>(conn_descs_raw),
-        num_conn_descs);
-    engine.InitConnectionBatch(conn_descs);
-  }
-  if (comb_kernel_words != nullptr && num_comb_kernel_words > 0) {
-    engine.InitCombKernels(
-        std::span(comb_kernel_words, num_comb_kernel_words), processes,
-        states_raw);
-  }
+
   if (HasFlag(flags, FeatureFlag::kDumpSlotMeta)) {
     engine.GetSlotMetaRegistry().DumpSummary();
+  }
+  if (HasFlag(flags, FeatureFlag::kDumpProcessMeta)) {
+    engine.GetProcessMetaRegistry().DumpSummary();
   }
   if (HasFlag(flags, FeatureFlag::kEnableTrace)) {
     engine.GetTraceManager().SetEnabled(true);
   }
+
+  // Install SIGUSR1 dump handler for last-resort visibility
+  lyra::runtime::InstallSignalDumpHandler(&engine);
+
   SetupAndRunSimulation(engine, states, num_processes);
+
+  lyra::runtime::RemoveSignalDumpHandler();
+
   if (HasFlag(flags, FeatureFlag::kEnableTrace)) {
     engine.GetTraceManager().PrintSummary();
   }

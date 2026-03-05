@@ -251,14 +251,16 @@ extern "C" void LyraStringFormatLiteral(
 }
 
 extern "C" void LyraStringFormatValue(
-    LyraStringFormatBuffer* buf, int32_t format, int32_t value_kind,
-    const void* data, int32_t width, bool is_signed, int32_t output_width,
-    int32_t precision, bool zero_pad, bool left_align, const void* /*x_mask*/,
-    const void* /*z_mask*/) {
+    LyraStringFormatBuffer* buf, void* engine_ptr, int32_t format,
+    int32_t value_kind, const void* data, int32_t width, bool is_signed,
+    int32_t output_width, int32_t precision, bool zero_pad, bool left_align,
+    const void* /*x_mask*/, const void* /*z_mask*/,
+    int8_t module_timeunit_power) {
   buf->data += lyra::runtime::FormatRuntimeValue(
       static_cast<lyra::FormatKind>(format),
       static_cast<lyra::runtime::RuntimeValueKind>(value_kind), data, width,
-      is_signed, output_width, precision, zero_pad, left_align);
+      is_signed, output_width, precision, zero_pad, left_align, engine_ptr,
+      module_timeunit_power);
 }
 
 extern "C" void LyraStringFormatString(

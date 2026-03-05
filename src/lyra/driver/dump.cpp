@@ -182,6 +182,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .mir_arena = mir_result->mir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = &diag_ctx,
+      .source_manager = hir_result.source_manager.get(),
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = {},  // Not needed for dump
   };

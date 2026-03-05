@@ -37,6 +37,8 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/source_manager.hpp"
+#include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -45,10 +47,16 @@
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
+#include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/routine.hpp"
 #include "lyra/mir/statement.hpp"
+#include "lyra/runtime/feature_flags.hpp"
+#include "lyra/runtime/loop_site_meta.hpp"
+#include "lyra/runtime/process_meta.hpp"
+#include "lyra/runtime/process_meta_abi.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/suspend_record.hpp"
@@ -239,6 +247,235 @@ auto EmitSlotMetaTable(
       array_type, global_var, llvm::ArrayRef<llvm::Constant*>{zero, zero});
 
   return {.table_ptr = table_ptr, .count = static_cast<uint32_t>(slots.size())};
+}
+
+// Map MIR ProcessKind to runtime ProcessKind.
+auto MapProcessKind(mir::ProcessKind kind) -> runtime::ProcessKind {
+  switch (kind) {
+    case mir::ProcessKind::kOnce:
+      return runtime::ProcessKind::kInitial;
+    case mir::ProcessKind::kFinal:
+      return runtime::ProcessKind::kFinal;
+    case mir::ProcessKind::kLooping:
+      return runtime::ProcessKind::kAlways;
+  }
+  return runtime::ProcessKind::kAlways;
+}
+
+// Resolve a process origin to file path, line, and col.
+struct ResolvedLoc {
+  std::string file;
+  uint32_t line = 0;
+  uint32_t col = 0;
+};
+
+auto ResolveProcessOrigin(
+    common::OriginId origin, const lowering::DiagnosticContext* diag_ctx,
+    const SourceManager* source_manager) -> ResolvedLoc {
+  if (diag_ctx == nullptr || source_manager == nullptr || !origin.IsValid()) {
+    return {};
+  }
+
+  // DiagnosticContext wraps ResolveToSpan, but we need to call it via the
+  // type-erased interface. Instead, try to resolve via the source_manager
+  // directly using knowledge of the OriginMap. For now, we don't have direct
+  // access to ResolveToSpan from DiagnosticContext. So we skip source location
+  // resolution and rely on instance path for process identity.
+  // TODO(hankhsu): Thread ResolveToSpan access for full source location.
+  return {};
+}
+
+// Build a string pool and process meta word table from the process list.
+// Returns {pool_global, pool_size, words_global, num_entries}.
+struct ProcessMetaTableResult {
+  llvm::Constant* pool_ptr;
+  uint32_t pool_size;
+  llvm::Constant* words_ptr;
+  uint32_t count;
+};
+
+auto EmitProcessMetaTable(
+    Context& context, const LoweringInput& input,
+    const std::vector<mir::ProcessId>& process_ids, size_t num_init)
+    -> ProcessMetaTableResult {
+  auto& ctx = context.GetLlvmContext();
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto null_ptr =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
+  // Only emit meta for module processes (skip init processes)
+  auto num_module = process_ids.size() - num_init;
+  if (num_module == 0) {
+    return {
+        .pool_ptr = null_ptr,
+        .pool_size = 0,
+        .words_ptr = null_ptr,
+        .count = 0};
+  }
+
+  // Build string pool: NUL-terminated strings for instance paths and file names
+  std::vector<char> pool;
+  pool.push_back('\0');  // Offset 0 = empty string
+
+  auto add_string = [&](const std::string& s) -> uint32_t {
+    if (s.empty()) return 0;
+    auto off = static_cast<uint32_t>(pool.size());
+    pool.insert(pool.end(), s.begin(), s.end());
+    pool.push_back('\0');
+    return off;
+  };
+
+  // Build word table
+  std::vector<llvm::Constant*> words;
+  words.reserve(num_module * runtime::process_meta_abi::kStride);
+
+  const auto& instance_entries = input.design->instance_table.entries;
+
+  for (size_t i = num_init; i < process_ids.size(); ++i) {
+    const auto& proc = (*input.mir_arena)[process_ids[i]];
+
+    // Instance path
+    std::string inst_path;
+    if (proc.owner_instance_id < instance_entries.size()) {
+      inst_path = instance_entries[proc.owner_instance_id].full_path;
+    }
+    uint32_t inst_off = add_string(inst_path);
+
+    // Process kind
+    auto kind = MapProcessKind(proc.kind);
+
+    // Source location
+    auto loc =
+        ResolveProcessOrigin(proc.origin, input.diag_ctx, input.source_manager);
+    uint32_t file_off = add_string(loc.file);
+
+    uint32_t kind_packed = static_cast<uint32_t>(kind);
+
+    words.push_back(llvm::ConstantInt::get(i32_ty, inst_off));
+    words.push_back(llvm::ConstantInt::get(i32_ty, kind_packed));
+    words.push_back(llvm::ConstantInt::get(i32_ty, file_off));
+    words.push_back(llvm::ConstantInt::get(i32_ty, loc.line));
+    words.push_back(llvm::ConstantInt::get(i32_ty, loc.col));
+  }
+
+  // Emit string pool as global constant
+  auto& mod = context.GetModule();
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  std::vector<llvm::Constant*> pool_bytes;
+  pool_bytes.reserve(pool.size());
+  for (char c : pool) {
+    pool_bytes.push_back(
+        llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(c)));
+  }
+  auto* pool_array_type = llvm::ArrayType::get(i8_ty, pool.size());
+  auto* pool_init = llvm::ConstantArray::get(pool_array_type, pool_bytes);
+  auto* pool_global = new llvm::GlobalVariable(
+      mod, pool_array_type, true, llvm::GlobalValue::InternalLinkage, pool_init,
+      "__lyra_process_meta_pool");
+
+  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+  auto* pool_gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
+      pool_array_type, pool_global,
+      llvm::ArrayRef<llvm::Constant*>{zero, zero});
+
+  // Emit words table as global constant
+  auto* words_array_type = llvm::ArrayType::get(i32_ty, words.size());
+  auto* words_init = llvm::ConstantArray::get(words_array_type, words);
+  auto* words_global = new llvm::GlobalVariable(
+      mod, words_array_type, true, llvm::GlobalValue::InternalLinkage,
+      words_init, "__lyra_process_meta_table");
+
+  auto* words_gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
+      words_array_type, words_global,
+      llvm::ArrayRef<llvm::Constant*>{zero, zero});
+
+  return {
+      .pool_ptr = pool_gep,
+      .pool_size = static_cast<uint32_t>(pool.size()),
+      .words_ptr = words_gep,
+      .count = static_cast<uint32_t>(num_module),
+  };
+}
+
+// Build a loop site metadata table from origins accumulated during codegen.
+// Same pattern as EmitProcessMetaTable.
+auto EmitLoopSiteMetaTable(Context& context, const LoweringInput& input)
+    -> ProcessMetaTableResult {
+  auto& ctx = context.GetLlvmContext();
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto null_ptr =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
+  const auto& origins = context.GetLoopSiteOrigins();
+  if (origins.empty()) {
+    return {
+        .pool_ptr = null_ptr,
+        .pool_size = 0,
+        .words_ptr = null_ptr,
+        .count = 0};
+  }
+
+  std::vector<char> pool;
+  pool.push_back('\0');
+
+  auto add_string = [&](const std::string& s) -> uint32_t {
+    if (s.empty()) return 0;
+    auto off = static_cast<uint32_t>(pool.size());
+    pool.insert(pool.end(), s.begin(), s.end());
+    pool.push_back('\0');
+    return off;
+  };
+
+  std::vector<llvm::Constant*> words;
+  words.reserve(origins.size() * runtime::loop_site_meta_abi::kStride);
+
+  for (const auto& origin : origins) {
+    auto loc =
+        ResolveProcessOrigin(origin, input.diag_ctx, input.source_manager);
+    uint32_t file_off = add_string(loc.file);
+
+    words.push_back(llvm::ConstantInt::get(i32_ty, file_off));
+    words.push_back(llvm::ConstantInt::get(i32_ty, loc.line));
+    words.push_back(llvm::ConstantInt::get(i32_ty, loc.col));
+  }
+
+  auto& mod = context.GetModule();
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  std::vector<llvm::Constant*> pool_bytes;
+  pool_bytes.reserve(pool.size());
+  for (char c : pool) {
+    pool_bytes.push_back(
+        llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(c)));
+  }
+  auto* pool_array_type = llvm::ArrayType::get(i8_ty, pool.size());
+  auto* pool_init = llvm::ConstantArray::get(pool_array_type, pool_bytes);
+  auto* pool_global = new llvm::GlobalVariable(
+      mod, pool_array_type, true, llvm::GlobalValue::InternalLinkage, pool_init,
+      "__lyra_loop_site_meta_pool");
+
+  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+  auto* pool_gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
+      pool_array_type, pool_global,
+      llvm::ArrayRef<llvm::Constant*>{zero, zero});
+
+  auto* words_array_type = llvm::ArrayType::get(i32_ty, words.size());
+  auto* words_init = llvm::ConstantArray::get(words_array_type, words);
+  auto* words_global = new llvm::GlobalVariable(
+      mod, words_array_type, true, llvm::GlobalValue::InternalLinkage,
+      words_init, "__lyra_loop_site_meta_table");
+
+  auto* words_gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
+      words_array_type, words_global,
+      llvm::ArrayRef<llvm::Constant*>{zero, zero});
+
+  return {
+      .pool_ptr = pool_gep,
+      .pool_size = static_cast<uint32_t>(pool.size()),
+      .words_ptr = words_gep,
+      .count = static_cast<uint32_t>(origins.size()),
+  };
 }
 
 // Initialize DesignState: zero everything, apply 4-state patches, then handle
@@ -453,6 +690,12 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       *input.design, *input.mir_arena, *input.type_arena, layout,
       std::move(llvm_ctx), std::move(module), input.diag_ctx, force_two_state);
 
+  // Gate loop guard emission via feature flag (opt-in).
+  bool loop_guard_enabled = runtime::HasFlag(
+      static_cast<runtime::FeatureFlag>(input.feature_flags),
+      runtime::FeatureFlag::kEnableLoopGuard);
+  context.SetLoopGuardEnabled(loop_guard_enabled);
+
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
@@ -652,6 +895,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
 
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
 
   // Phase 1: Init processes (package variable initialization)
   // Run synchronously before scheduler, matching MIR interpreter behavior
@@ -761,7 +1005,6 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     // with per-process 4-state patches handled separately (rare).
     if (num_regular_module > 0) {
       // Emit offset table as global constant: [N x i64]
-      auto* i64_ty = llvm::Type::getInt64Ty(ctx);
       std::vector<llvm::Constant*> offset_constants;
       offset_constants.reserve(num_regular_module);
       for (const auto& desc : proc_descs) {
@@ -1105,22 +1348,70 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
               llvm::ConstantInt::get(i32_ty, 0)});
     }
 
-    // Call multi-process scheduler
+    // Build process metadata table
+    auto proc_meta =
+        EmitProcessMetaTable(context, input, layout.process_ids, num_init);
+
+    // Build loop site metadata table (from origins accumulated during codegen)
+    auto loop_meta = EmitLoopSiteMetaTable(context, input);
+
+    // Build RuntimeAbi struct on the stack
+    auto* abi_struct_type = llvm::StructType::get(
+        ctx,
+        {i32_ty,   // version
+         ptr_ty,   // slot_meta_words
+         i32_ty,   // slot_meta_word_count
+         ptr_ty,   // process_meta_words
+         i32_ty,   // process_meta_word_count
+         ptr_ty,   // process_meta_string_pool
+         i32_ty,   // process_meta_string_pool_size
+         ptr_ty,   // loop_site_meta_words
+         i32_ty,   // loop_site_meta_word_count
+         ptr_ty,   // loop_site_meta_string_pool
+         i32_ty,   // loop_site_meta_string_pool_size
+         ptr_ty,   // conn_descs
+         i32_ty,   // num_conn_descs
+         ptr_ty,   // comb_kernel_words
+         i32_ty,   // num_comb_kernel_words
+         i32_ty},  // feature_flags
+        false);
+
+    auto* abi_alloca = builder.CreateAlloca(abi_struct_type, nullptr, "abi");
+
+    auto store_field = [&](unsigned idx, llvm::Value* val) {
+      auto* gep = builder.CreateStructGEP(abi_struct_type, abi_alloca, idx);
+      builder.CreateStore(val, gep);
+    };
+
     auto* conn_descs_arg = conn_desc_table_ptr != nullptr
                                ? conn_desc_table_ptr
                                : llvm::ConstantPointerNull::get(
                                      llvm::cast<llvm::PointerType>(ptr_ty));
+
+    store_field(0, llvm::ConstantInt::get(i32_ty, 1));  // version
+    store_field(1, meta_table);                         // slot_meta_words
+    store_field(2, llvm::ConstantInt::get(i32_ty, meta_count));
+    store_field(3, proc_meta.words_ptr);  // process_meta_words
+    store_field(4, llvm::ConstantInt::get(i32_ty, proc_meta.count));
+    store_field(5, proc_meta.pool_ptr);  // process_meta_pool
+    store_field(6, llvm::ConstantInt::get(i32_ty, proc_meta.pool_size));
+    store_field(7, loop_meta.words_ptr);  // loop_site_meta
+    store_field(8, llvm::ConstantInt::get(i32_ty, loop_meta.count));
+    store_field(9, loop_meta.pool_ptr);
+    store_field(10, llvm::ConstantInt::get(i32_ty, loop_meta.pool_size));
+    store_field(11, conn_descs_arg);  // conn_descs
+    store_field(12, llvm::ConstantInt::get(i32_ty, num_kernelized));
+    store_field(13, comb_words_ptr);  // comb_kernel_words
+    store_field(14, llvm::ConstantInt::get(i32_ty, comb_word_count));
+    store_field(15, llvm::ConstantInt::get(i32_ty, input.feature_flags));
+
+    // Call multi-process scheduler
     builder.CreateCall(
         context.GetLyraRunSimulation(),
         {funcs_array, states_array,
          llvm::ConstantInt::get(i32_ty, num_module_processes), plusargs_array,
          num_plusargs_val, instance_paths_array,
-         llvm::ConstantInt::get(i32_ty, num_instance_paths), meta_table,
-         llvm::ConstantInt::get(i32_ty, meta_count),
-         llvm::ConstantInt::get(i32_ty, runtime::slot_meta_abi::kVersion),
-         conn_descs_arg, llvm::ConstantInt::get(i32_ty, num_kernelized),
-         comb_words_ptr, llvm::ConstantInt::get(i32_ty, comb_word_count),
-         llvm::ConstantInt::get(i32_ty, input.feature_flags)});
+         llvm::ConstantInt::get(i32_ty, num_instance_paths), abi_alloca});
   }
 
   // Branch to exit block

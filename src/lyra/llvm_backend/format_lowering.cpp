@@ -125,9 +125,12 @@ auto LowerFormatOpToBuffer(
 
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* null_ptr = llvm::ConstantPointerNull::get(ptr_ty);
+  auto* engine_ptr = context.GetEnginePointer();
+  auto* timeunit_val = llvm::ConstantInt::get(i8_ty, op.module_timeunit_power);
 
   if (op.kind == FormatKind::kLiteral) {
     // Append literal string
@@ -166,7 +169,8 @@ auto LowerFormatOpToBuffer(
     // safe.
     builder.CreateCall(
         context.GetLyraStringFormatValue(),
-        {buf, llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind)),
+        {buf, engine_ptr,
+         llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind)),
          llvm::ConstantInt::get(
              i32_ty,
              static_cast<int32_t>(runtime::RuntimeValueKind::kIntegral)),
@@ -176,7 +180,7 @@ auto LowerFormatOpToBuffer(
          llvm::ConstantInt::get(i32_ty, op.mods.precision.value_or(-1)),
          llvm::ConstantInt::get(i1_ty, op.mods.zero_pad ? 1 : 0),
          llvm::ConstantInt::get(i1_ty, op.mods.left_align ? 1 : 0), null_ptr,
-         null_ptr});
+         null_ptr, timeunit_val});
     return {};
   }
 
@@ -263,9 +267,9 @@ auto LowerFormatOpToBuffer(
 
   builder.CreateCall(
       context.GetLyraStringFormatValue(),
-      {buf, format_val, value_kind_val, data_ptr, width_val, signed_val,
-       output_width_val, precision_val, zero_pad_val, left_align_val, null_ptr,
-       null_ptr});
+      {buf, engine_ptr, format_val, value_kind_val, data_ptr, width_val,
+       signed_val, output_width_val, precision_val, zero_pad_val,
+       left_align_val, null_ptr, null_ptr, timeunit_val});
 
   return {};
 }

@@ -92,7 +92,8 @@ auto RunJit(const CompilationInput& input) -> int {
       &compilation.mir.origin_map, compilation.hir.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
-  uint32_t feature_flags = 0;
+  uint32_t feature_flags =
+      runtime::ToUint32(runtime::FeatureFlag::kEnableLoopGuard);
   if (input.enable_trace) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
   }
@@ -105,6 +106,7 @@ auto RunJit(const CompilationInput& input) -> int {
       .mir_arena = compilation.mir.mir_arena.get(),
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
+      .source_manager = compilation.hir.source_manager.get(),
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = input.plusargs,
       .feature_flags = feature_flags,
