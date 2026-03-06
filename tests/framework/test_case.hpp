@@ -42,11 +42,13 @@ struct TestCase {
   std::optional<uint64_t> expected_time;
   std::optional<ExpectedOutput> expected_stdout;
   std::map<std::string, ExpectedOutput> expected_files;
+  std::optional<ExpectedOutput> expected_compiler_output;  // Compiler artifacts
   std::optional<ExpectedOutput> expected_error;  // Expected compilation error
   std::optional<MutationExpectation> expected_mutations;
   bool pedantic = false;        // Strict LRM compliance mode for this test
   bool trace = false;           // Enable simulation tracing for this test
   bool dump_slot_meta = false;  // Dump slot metadata registry (test-only)
+  bool dump_specialization_map = false;  // Dump specialization grouping
   [[nodiscard]] auto IsMultiFile() const -> bool {
     return !files.empty();
   }

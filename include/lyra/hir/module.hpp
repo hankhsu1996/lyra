@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "lyra/common/integral_constant.hpp"
+#include "lyra/common/module_identity.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/hir/fwd.hpp"
@@ -24,10 +25,7 @@ struct Module {
   std::vector<ProcessId> processes;
   std::vector<FunctionId> functions;
   std::vector<TaskId> tasks;
-  // In-run grouping key for process template pre-filtering.
-  // Assigned from DefinitionSymbol* during AST->HIR lowering.
-  // NOT a stable identity -- valid only within a single compilation run.
-  uint64_t module_def_key = 0;
+  common::ModuleDefId module_def_id;
 };
 
 }  // namespace lyra::hir

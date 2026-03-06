@@ -2,6 +2,7 @@
 
 #include <slang/ast/Compilation.h>
 
+#include "lyra/common/module_identity.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/mir/instance.hpp"
@@ -14,6 +15,7 @@ class SymbolRegistrar;
 struct DesignLoweringResult {
   hir::Design design;
   DesignBindingPlan binding_plan;
+  common::SpecializationMap specialization_map;
   mir::InstanceTable instance_table;  // For %m support
 };
 

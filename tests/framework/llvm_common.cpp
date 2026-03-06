@@ -22,6 +22,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/module_identity.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -275,6 +276,20 @@ auto PrepareLlvmModule(
     return std::unexpected("HIR lowering errors:\n" + error_stream.str());
   }
 
+  // Build specialization map dump (routed to TestResult::compiler_output)
+  std::string compiler_output;
+  if (test_case.dump_specialization_map) {
+    const auto& spec_map = hir_result.specialization_map;
+    compiler_output += std::format("spec_groups: {}\n", spec_map.groups.size());
+    for (size_t i = 0; i < spec_map.groups.size(); ++i) {
+      const auto& group = spec_map.groups[i];
+      compiler_output += std::format(
+          "spec[{}]: def={} fp=0x{:x} instances={}\n", i,
+          group.spec_id.def_id.value, group.spec_id.fingerprint.value,
+          group.instance_indices.size());
+    }
+  }
+
   // Lower HIR to MIR
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
@@ -379,6 +394,7 @@ auto PrepareLlvmModule(
       .origin_lookup = std::move(origin_lookup),
       .diag_ctx = std::move(diag_ctx),
       .llvm_result = std::move(*llvm_result),
+      .compiler_output = std::move(compiler_output),
   };
 }
 

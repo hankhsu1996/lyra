@@ -4,6 +4,7 @@
 #include <unordered_map>
 
 #include "lyra/common/constant_arena.hpp"
+#include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
@@ -70,9 +71,8 @@ struct DesignDeclarations {
   // Per-module-instance slot ranges (parallel to module elements only).
   // Recorded in BFS elaboration order.
   std::vector<InstanceSlotRange> instance_slot_ranges;
-  // Per-module-instance def keys (parallel to instance_slot_ranges).
-  // In-run grouping key for process template pre-filtering.
-  std::vector<uint64_t> module_def_keys;
+  // Per-module-instance def IDs (parallel to instance_slot_ranges).
+  std::vector<common::ModuleDefId> module_def_ids;
   // Per-module-instance param init entries (parallel to instance_slot_ranges).
   std::vector<std::vector<mir::ParamInitEntry>> instance_param_inits;
 };
