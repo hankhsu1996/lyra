@@ -106,8 +106,8 @@ struct ProcessLayout {
 };
 
 // Entry for a connection process that has been kernelized.
-// Instead of generating a per-process LLVM function, these share a single
-// runtime kernel (LyraConnectionKernel) parameterized by a descriptor.
+// Instead of generating a per-process LLVM function, these are batched
+// into a connection descriptor table evaluated inline by the engine.
 struct ConnectionKernelEntry {
   mir::ProcessId process_id;
   mir::SlotId src_slot;

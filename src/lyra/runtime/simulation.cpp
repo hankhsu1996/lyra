@@ -307,30 +307,6 @@ extern "C" void LyraSuspendRepeat(void* state) {
   suspend->resume_block = 0;
 }
 
-extern "C" void LyraConnectionKernel(void* state, uint32_t /*resume_block*/) {
-  auto* header = static_cast<StateHeader*>(state);
-  auto* desc = reinterpret_cast<lyra::runtime::ConnectionDescriptor*>(
-      static_cast<char*>(state) + sizeof(StateHeader));
-
-  auto* design = static_cast<char*>(header->design_ptr);
-
-  // Copy src -> dst with change detection via LyraStorePacked
-  LyraStorePacked(
-      header->engine_ptr, design + desc->dst_byte_offset,
-      design + desc->src_byte_offset, desc->byte_size, desc->dst_slot_id, 0, 0);
-
-  // Setup trigger and suspend
-  lyra::runtime::WaitTriggerRecord trigger{
-      .signal_id = desc->trigger_slot_id,
-      .edge = desc->trigger_edge,
-      .bit_index = desc->trigger_bit_index,
-      .padding = {},
-      .byte_offset = desc->trigger_byte_offset,
-      .byte_size = desc->trigger_byte_size,
-  };
-  LyraSuspendWait(state, 0, &trigger, 1);
-}
-
 extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
   // Entry block is always block 0 (ABI contract with process generation)
   constexpr uint32_t kEntryBlock = 0;
@@ -404,6 +380,11 @@ void SetupAndRunSimulation(
         lyra::runtime::ProcessHandle{.process_id = i, .instance_id = 0});
   }
 
+  // Propagate initial values through connection wiring before Run().
+  // Init processes have already set initial values (via LyraRunProcessSync);
+  // connections copy src->dst so downstream processes see correct values.
+  engine.EvaluateAllConnections();
+
   auto final_time = engine.Run();
   FinalTime() = std::max(FinalTime(), final_time);
 }
@@ -415,7 +396,8 @@ extern "C" void LyraRunSimulation(
     const char** plusargs_raw, uint32_t num_plusargs,
     const char** instance_paths_raw, uint32_t num_instance_paths,
     const uint32_t* slot_meta_words, uint32_t num_slot_metas,
-    uint32_t slot_meta_version, uint32_t feature_flags) {
+    uint32_t slot_meta_version, const void* conn_descs_raw,
+    uint32_t num_conn_descs, uint32_t feature_flags) {
   auto states = std::span(states_raw, num_processes);
   auto procs = std::span(processes, num_processes);
 
@@ -455,6 +437,12 @@ extern "C" void LyraRunSimulation(
     }
     engine.InitSlotMeta(
         lyra::runtime::SlotMetaRegistry(slot_meta_words, num_slot_metas));
+  }
+  if (conn_descs_raw != nullptr && num_conn_descs > 0) {
+    auto conn_descs = std::span(
+        static_cast<const lyra::runtime::ConnectionDescriptor*>(conn_descs_raw),
+        num_conn_descs);
+    engine.InitConnectionBatch(conn_descs);
   }
   if (HasFlag(flags, FeatureFlag::kDumpSlotMeta)) {
     engine.GetSlotMetaRegistry().DumpSummary();
