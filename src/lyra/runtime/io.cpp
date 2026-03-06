@@ -139,6 +139,17 @@ extern "C" void LyraPrintLiteral(const char* str) {
   lyra::runtime::WriteOutput(str);
 }
 
+extern "C" void LyraWarnRateLimited(const char* msg, uint32_t* counter_ptr) {
+  constexpr uint32_t kMaxWarnings = 10;
+  uint32_t count = *counter_ptr;
+  if (count >= kMaxWarnings) return;
+  *counter_ptr = count + 1;
+  lyra::runtime::WriteOutput(msg);
+  if (count + 1 == kMaxWarnings) {
+    lyra::runtime::WriteOutput("  (further identical warnings suppressed)\n");
+  }
+}
+
 extern "C" void LyraPrintValue(
     void* engine_ptr, int32_t format, int32_t value_kind, const void* data,
     int32_t width, bool is_signed, int32_t output_width, int32_t precision,

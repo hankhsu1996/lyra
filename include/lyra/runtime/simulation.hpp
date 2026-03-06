@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 
+#include "lyra/runtime/runtime_abi.hpp"
 #include "lyra/runtime/string.hpp"
 
 namespace lyra::runtime {
@@ -41,13 +42,11 @@ void LyraRunProcessSync(LyraProcessFunc process, void* state);
 // - num_plusargs: number of plusargs (0 if none)
 // - instance_paths: optional array of C strings for %m (nullptr if none)
 // - num_instance_paths: number of instance paths (0 if none)
+// - abi: versioned runtime descriptor with metadata tables and feature flags
 void LyraRunSimulation(
     LyraProcessFunc* processes, void** states, uint32_t num_processes,
     const char** plusargs, uint32_t num_plusargs, const char** instance_paths,
-    uint32_t num_instance_paths, const uint32_t* slot_meta_words,
-    uint32_t num_slot_metas, uint32_t slot_meta_version, const void* conn_descs,
-    uint32_t num_conn_descs, const uint32_t* comb_kernel_words,
-    uint32_t num_comb_kernel_words, uint32_t feature_flags);
+    uint32_t num_instance_paths, const LyraRuntimeAbi* abi);
 
 // $test$plusargs: prefix match against plusargs.
 // Query is LyraStringHandle (matches SV string operand lowering).

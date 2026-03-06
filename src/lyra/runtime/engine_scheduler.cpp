@@ -1,20 +1,26 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 
 #include <algorithm>
+#include <csetjmp>
 #include <cstdint>
 #include <cstring>
 #include <format>
 #include <span>
+#include <string>
+#include <unistd.h>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/mutation_event.hpp"
 #include "lyra/common/range_set.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/loop_budget.hpp"
 #include "lyra/runtime/trace_flush.hpp"
+#include "lyra/runtime/trap.hpp"
 
 namespace lyra::runtime {
 
@@ -141,9 +147,44 @@ void Engine::ScheduleNba(
       });
 }
 
+void Engine::RunOneActivation(const ScheduledEvent& event) {
+  uint32_t pid = event.handle.process_id;
+
+  // Update progress counters (signal-safe reads by SIGUSR1 handler).
+  last_process_id_.store(pid, std::memory_order_release);
+  activation_seq_.fetch_add(1, std::memory_order_release);
+  current_running_process_.store(pid, std::memory_order_release);
+  phase_.store(
+      static_cast<uint32_t>(Phase::kRunProcess), std::memory_order_release);
+
+  // Reset loop budget before each process activation.
+  LyraResetLoopBudget(kDefaultLoopBudget);
+
+  // INVARIANT: No RAII-managed resources between setjmp and runner_().
+  // longjmp must not cross locks, allocation scopes, or commit phases.
+  TrapFrame trap_frame{};
+  TrapFrame* prev_frame = GetTlsTrapFrame();
+  SetTlsTrapFrame(&trap_frame);
+  trap_frame.armed = true;
+
+  // NOLINTNEXTLINE(cert-err52-cpp)
+  if (setjmp(trap_frame.env) == 0) {
+    runner_(*this, event.handle, event.resume);
+  } else {
+    // Defensive clearing on trap: ensure stable state for diagnostics.
+    LyraResetLoopBudget(kDefaultLoopBudget);
+    HandleTrap(pid, trap_frame.payload);
+  }
+
+  SetTlsTrapFrame(prev_frame);
+  current_running_process_.store(UINT32_MAX, std::memory_order_release);
+  phase_.store(static_cast<uint32_t>(Phase::kIdle), std::memory_order_release);
+}
+
 void Engine::ExecuteRegion(Region region) {
   switch (region) {
     case Region::kActive: {
+      uint32_t active_iterations = 0;
       while (!finished_ && !active_queue_.empty()) {
         auto events = std::move(active_queue_);
         active_queue_.clear();
@@ -158,8 +199,20 @@ void Engine::ExecuteRegion(Region region) {
           }
 
           ClearProcessSubscriptions(event.handle);
-
-          runner_(*this, event.handle, event.resume);
+          RunOneActivation(event);
+        }
+        ++active_iterations;
+        if (active_iterations % 2 == 0) {
+          lyra::PrintWarning(
+              std::format(
+                  "active region: {} iterations at time {}, "
+                  "queue has {} events",
+                  active_iterations, current_time_, active_queue_.size()));
+        }
+        if (active_iterations >= 100) {
+          lyra::PrintError("active region runaway detected, aborting");
+          finished_ = true;
+          break;
         }
       }
       break;
@@ -228,6 +281,8 @@ void Engine::ExecutePostponedRegion() {
 }
 
 void Engine::ExecuteTimeSlot() {
+  uint32_t delta_count = 0;
+
   while (true) {
     while (!finished_ && (!active_queue_.empty() || !inactive_queue_.empty())) {
       ExecuteRegion(Region::kActive);
@@ -236,21 +291,48 @@ void Engine::ExecuteTimeSlot() {
       }
     }
 
+    phase_.store(
+        static_cast<uint32_t>(Phase::kFlushUpdates), std::memory_order_release);
     FlushAndPropagateConnections();  // Flush + connection propagation
 
+    phase_.store(
+        static_cast<uint32_t>(Phase::kCommitNba), std::memory_order_release);
     ExecuteRegion(Region::kNBA);
 
+    phase_.store(
+        static_cast<uint32_t>(Phase::kFlushUpdates), std::memory_order_release);
     FlushAndPropagateConnections();  // Flush + connection propagation
 
     if (finished_ || next_delta_queue_.empty()) {
       break;
     }
+
+    ++delta_count;
+    if (delta_count % 100 == 0) {
+      lyra::PrintWarning(
+          std::format(
+              "time {}: {} delta cycles, {} pending in next delta",
+              current_time_, delta_count, next_delta_queue_.size()));
+    }
+    if (delta_count >= 10000) {
+      lyra::PrintError(
+          std::format(
+              "delta cycle limit exceeded at time {}; "
+              "{} processes still pending",
+              current_time_, next_delta_queue_.size()));
+      finished_ = true;
+      break;
+    }
+
     active_queue_ = std::move(next_delta_queue_);
     next_delta_queue_.clear();
   }
 
+  phase_.store(
+      static_cast<uint32_t>(Phase::kPostponed), std::memory_order_release);
   ExecutePostponedRegion();
   FlushDirtySlots();
+  phase_.store(static_cast<uint32_t>(Phase::kIdle), std::memory_order_release);
 }
 
 auto Engine::Run(SimTime max_time) -> SimTime {
@@ -268,6 +350,9 @@ auto Engine::Run(SimTime max_time) -> SimTime {
     if (delay_queue_.empty()) {
       break;
     }
+
+    phase_.store(
+        static_cast<uint32_t>(Phase::kAdvanceTime), std::memory_order_release);
 
     auto it = delay_queue_.begin();
     current_time_ = it->first;
@@ -477,6 +562,136 @@ void Engine::OnMutation(const common::MutationEvent& event) {
     return;
   }
   // HeapObjId: NYI -- future heap-level UpdateSet tracking.
+}
+
+auto Engine::FormatProcess(uint32_t process_id) const -> std::string {
+  if (process_meta_.IsPopulated()) {
+    return process_meta_.Format(process_id);
+  }
+  return std::format("<process {}>", process_id);
+}
+
+namespace {
+
+// Async-signal-safe: write a string literal to fd.
+void SafeWrite(int fd, const char* str, size_t len) {
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
+  static_cast<void>(write(fd, str, len));
+}
+
+// Async-signal-safe: write a uint64 as decimal to fd.
+void SafeWriteU64(int fd, uint64_t val) {
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays)
+  char buf[20];
+  int pos = 19;
+  if (val == 0) {
+    buf[pos] = '0';
+    SafeWrite(fd, &buf[pos], 1);  // NOLINT
+    return;
+  }
+  while (val > 0) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+    buf[pos--] = static_cast<char>('0' + (val % 10));
+    val /= 10;
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  SafeWrite(fd, &buf[pos + 1], static_cast<size_t>(19 - pos));  // NOLINT
+}
+
+// Async-signal-safe: write process identity (name or <process N>).
+void SafeWriteProcess(int fd, uint32_t pid, const ProcessMetaRegistry& meta) {
+  if (pid == UINT32_MAX) {
+    SafeWrite(fd, "none", 4);
+    return;
+  }
+  if (meta.IsPopulated()) {
+    meta.WriteAsyncSignalSafe(fd, pid);
+  } else {
+    SafeWrite(fd, "<process ", 9);
+    SafeWriteU64(fd, pid);
+    SafeWrite(fd, ">", 1);
+  }
+}
+
+auto PhaseLabel(uint32_t phase) -> const char* {
+  switch (static_cast<Engine::Phase>(phase)) {
+    case Engine::Phase::kIdle:
+      return "Idle";
+    case Engine::Phase::kAdvanceTime:
+      return "AdvanceTime";
+    case Engine::Phase::kRunProcess:
+      return "RunProcess";
+    case Engine::Phase::kFlushUpdates:
+      return "FlushUpdates";
+    case Engine::Phase::kCommitNba:
+      return "CommitNba";
+    case Engine::Phase::kPostponed:
+      return "Postponed";
+  }
+  return "Unknown";
+}
+
+}  // namespace
+
+void Engine::DumpSchedulerStatusAsyncSignalSafe(int fd) const {
+  // All reads are relaxed - this is a best-effort snapshot from a signal
+  // handler. Values may be slightly stale but are always valid.
+  uint32_t phase = phase_.load(std::memory_order_relaxed);
+  uint64_t sim_time = current_time_;  // Not atomic, but read-only during dump
+  uint64_t seq = activation_seq_.load(std::memory_order_relaxed);
+  uint32_t current = current_running_process_.load(std::memory_order_relaxed);
+  uint32_t last = last_process_id_.load(std::memory_order_relaxed);
+
+  // Format: lyra: phase=X sim_time=T activations=N current=... last=...
+  SafeWrite(fd, "lyra: phase=", 12);
+  const char* label = PhaseLabel(phase);
+  size_t label_len = 0;
+  while (label[label_len] != '\0') ++label_len;  // NOLINT
+  SafeWrite(fd, label, label_len);
+
+  SafeWrite(fd, " sim_time=", 10);
+  SafeWriteU64(fd, sim_time);
+
+  SafeWrite(fd, " activations=", 13);
+  SafeWriteU64(fd, seq);
+
+  SafeWrite(fd, " current=", 9);
+  SafeWriteProcess(fd, current, process_meta_);
+
+  SafeWrite(fd, " last=", 6);
+  SafeWriteProcess(fd, last, process_meta_);
+
+  SafeWrite(fd, "\n", 1);
+}
+
+void Engine::HandleTrap(uint32_t process_id, const TrapPayload& payload) {
+  switch (payload.reason) {
+    case TrapReason::kLoopBudgetExceeded: {
+      std::string proc_str = FormatProcess(process_id);
+      std::string loc_str;
+      if (loop_site_meta_.IsPopulated() && payload.a < loop_site_meta_.Size()) {
+        loc_str = loop_site_meta_.Format(payload.a);
+      }
+
+      if (loc_str.empty()) {
+        lyra::PrintError(
+            std::format("loop iteration limit exceeded in {}", proc_str));
+      } else {
+        lyra::PrintError(
+            std::format(
+                "loop iteration limit exceeded in {} at {}", proc_str,
+                loc_str));
+      }
+
+      finished_ = true;
+      break;
+    }
+    case TrapReason::kUserFatal:
+    case TrapReason::kInternalError:
+      lyra::PrintError(std::format("trap in {}", FormatProcess(process_id)));
+      finished_ = true;
+      break;
+  }
 }
 
 }  // namespace lyra::runtime

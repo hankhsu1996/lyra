@@ -21,6 +21,19 @@ auto Context::GetLyraPrintLiteral() -> llvm::Function* {
   return lyra_print_literal_;
 }
 
+auto Context::GetLyraWarnRateLimited() -> llvm::Function* {
+  if (lyra_warn_rate_limited_ == nullptr) {
+    // void LyraWarnRateLimited(const char* msg, uint32_t* counter_ptr)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+    lyra_warn_rate_limited_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraWarnRateLimited",
+        llvm_module_.get());
+  }
+  return lyra_warn_rate_limited_;
+}
+
 auto Context::GetLyraPrintValue() -> llvm::Function* {
   if (lyra_print_value_ == nullptr) {
     // void LyraPrintValue(void* engine, int32_t format, int32_t value_kind,
@@ -222,18 +235,12 @@ auto Context::GetLyraRunSimulation() -> llvm::Function* {
     // void LyraRunSimulation(ptr* processes, ptr* states, uint32_t num,
     //                        const char** plusargs, uint32_t num_plusargs,
     //                        const char** instance_paths, uint32_t num_paths,
-    //                        const uint32_t* slot_meta_words,
-    //                        uint32_t num_slot_metas,
-    //                        uint32_t slot_meta_version,
-    //                        const void* conn_descs, uint32_t num_conn_descs,
-    //                        const uint32_t* comb_words, uint32_t
-    //                        num_comb_words, uint32_t feature_flags)
+    //                        const LyraRuntimeAbi* abi)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-         i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty},
+        {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty},
         false);
     lyra_run_simulation_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulation",
@@ -253,6 +260,34 @@ auto Context::GetLyraRunProcessSync() -> llvm::Function* {
         llvm_module_.get());
   }
   return lyra_run_process_sync_;
+}
+
+auto Context::GetLyraTrap() -> llvm::Function* {
+  if (lyra_trap_ == nullptr) {
+    // void LyraTrap(ptr engine, uint32_t reason, uint32_t a, uint32_t b)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty, i32_ty, i32_ty},
+        false);
+    lyra_trap_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraTrap",
+        llvm_module_.get());
+    lyra_trap_->setDoesNotReturn();
+  }
+  return lyra_trap_;
+}
+
+auto Context::GetLyraLoopBudgetPtr() -> llvm::Function* {
+  if (lyra_loop_budget_ptr_ == nullptr) {
+    // uint32_t* LyraLoopBudgetPtr()
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {}, false);
+    lyra_loop_budget_ptr_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraLoopBudgetPtr",
+        llvm_module_.get());
+  }
+  return lyra_loop_budget_ptr_;
 }
 
 auto Context::GetLyraPlusargsTest() -> llvm::Function* {
@@ -788,18 +823,20 @@ auto Context::GetLyraStringFormatLiteral() -> llvm::Function* {
 
 auto Context::GetLyraStringFormatValue() -> llvm::Function* {
   if (lyra_string_format_value_ == nullptr) {
-    // void LyraStringFormatValue(ptr buf, i32 format, i32 value_kind,
-    //                            ptr data, i32 width, i1 is_signed,
-    //                            i32 output_width, i32 precision,
+    // void LyraStringFormatValue(ptr buf, ptr engine, i32 format,
+    //                            i32 value_kind, ptr data, i32 width,
+    //                            i1 is_signed, i32 output_width, i32 precision,
     //                            i1 zero_pad, i1 left_align,
-    //                            ptr x_mask, ptr z_mask)
+    //                            ptr x_mask, ptr z_mask,
+    //                            i8 module_timeunit_power)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
+    auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty, i1_ty,
-         i1_ty, ptr_ty, ptr_ty},
+        {ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty, i1_ty, i32_ty, i32_ty,
+         i1_ty, i1_ty, ptr_ty, ptr_ty, i8_ty},
         false);
     lyra_string_format_value_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraStringFormatValue",

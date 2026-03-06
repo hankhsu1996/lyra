@@ -15,6 +15,10 @@ extern "C" {
 // Print a literal string (FormatKind::kLiteral only)
 void LyraPrintLiteral(const char* str);
 
+// Rate-limited warning: prints first N occurrences (per call site), then
+// suppresses. counter_ptr points to a per-site uint32_t global (init 0).
+void LyraWarnRateLimited(const char* msg, uint32_t* counter_ptr);
+
 // Print a formatted value (all FormatKind except kLiteral)
 // - engine: pointer to Engine (required for kTime, can be nullptr for others)
 // - format: FormatKind cast to int32_t (how to render)

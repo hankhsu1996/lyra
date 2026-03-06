@@ -33,6 +33,7 @@
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/index_plan.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
@@ -55,7 +56,9 @@
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
+#include "lyra/runtime/loop_budget.hpp"
 #include "lyra/runtime/suspend_record.hpp"
+#include "lyra/runtime/trap.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -284,6 +287,69 @@ auto LowerEdgeArgs(Context& context, const std::vector<mir::Operand>& args)
     llvm_args.push_back(*val_or_err);
   }
   return llvm_args;
+}
+
+// Check if a terminator has any back-edge targets (target index <= source
+// index).
+auto HasBackEdge(const mir::Terminator& term, size_t current_block_idx)
+    -> bool {
+  return std::visit(
+      common::Overloaded{
+          [&](const mir::Jump& t) -> bool {
+            return static_cast<size_t>(t.target.value) <= current_block_idx;
+          },
+          [&](const mir::Branch& t) -> bool {
+            return static_cast<size_t>(t.then_target.value) <=
+                       current_block_idx ||
+                   static_cast<size_t>(t.else_target.value) <=
+                       current_block_idx;
+          },
+          [](const auto&) -> bool { return false; },
+      },
+      term.data);
+}
+
+// Emit a loop budget guard before a back-edge terminator.
+// Decrements TLS budget, and if exhausted calls LyraTrap.
+void EmitLoopGuard(
+    Context& context, common::OriginId origin, llvm::Function* func) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  uint32_t site_id = context.RegisterLoopSite(origin);
+
+  // Get TLS budget pointer and decrement
+  auto* budget_ptr =
+      builder.CreateCall(context.GetLyraLoopBudgetPtr(), {}, "budget_ptr");
+  auto* budget = builder.CreateLoad(i32_ty, budget_ptr, "budget");
+  auto* new_budget = builder.CreateSub(
+      budget, llvm::ConstantInt::get(i32_ty, 1), "budget_dec");
+  builder.CreateStore(new_budget, budget_ptr);
+
+  auto* exhausted =
+      builder.CreateICmpEQ(new_budget, llvm::ConstantInt::get(i32_ty, 0));
+
+  auto* trap_bb = llvm::BasicBlock::Create(llvm_ctx, "loop_trap", func);
+  auto* continue_bb = llvm::BasicBlock::Create(llvm_ctx, "loop_continue", func);
+
+  builder.CreateCondBr(exhausted, trap_bb, continue_bb);
+
+  // Trap block: call LyraTrap and mark unreachable
+  builder.SetInsertPoint(trap_bb);
+  auto* engine_ptr = context.GetEnginePointer();
+  builder.CreateCall(
+      context.GetLyraTrap(),
+      {engine_ptr,
+       llvm::ConstantInt::get(
+           i32_ty,
+           static_cast<uint32_t>(runtime::TrapReason::kLoopBudgetExceeded)),
+       llvm::ConstantInt::get(i32_ty, site_id),
+       llvm::ConstantInt::get(i32_ty, 0)});
+  builder.CreateUnreachable();
+
+  // Continue block: terminator will be emitted here
+  builder.SetInsertPoint(continue_bb);
 }
 
 auto LowerJump(
@@ -1093,10 +1159,20 @@ auto LowerQualifiedDispatch(
     cnt = builder.CreateAdd(cnt, ext);
   }
 
+  // Helper: create a per-site uint32 global counter for rate-limited warnings.
+  auto make_warn_counter = [&](const char* name) -> llvm::GlobalVariable* {
+    auto* counter_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    return new llvm::GlobalVariable(
+        context.GetModule(), counter_ty, false,
+        llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantInt::get(counter_ty, 0), name);
+  };
+
   // Overlap warning: cnt > 1
   auto overlap_msg = ComputeOverlapMessage(dispatch);
   auto* overlap_str =
       builder.CreateGlobalStringPtr(overlap_msg, "qd.overlap.str");
+  auto* overlap_counter = make_warn_counter("qd.overlap.cnt");
   auto* after_overlap =
       llvm::BasicBlock::Create(llvm_ctx, "qd.after_overlap", func);
   auto* overlap_bb =
@@ -1106,7 +1182,8 @@ auto LowerQualifiedDispatch(
   builder.CreateCondBr(overlap_cond, overlap_bb, after_overlap);
 
   builder.SetInsertPoint(overlap_bb);
-  builder.CreateCall(context.GetLyraPrintLiteral(), {overlap_str});
+  builder.CreateCall(
+      context.GetLyraWarnRateLimited(), {overlap_str, overlap_counter});
   builder.CreateBr(after_overlap);
 
   builder.SetInsertPoint(after_overlap);
@@ -1117,6 +1194,7 @@ auto LowerQualifiedDispatch(
     auto nomatch_msg = ComputeNomatchMessage(dispatch);
     auto* nomatch_str =
         builder.CreateGlobalStringPtr(nomatch_msg, "qd.nomatch.str");
+    auto* nomatch_counter = make_warn_counter("qd.nomatch.cnt");
     auto* dispatch_bb = llvm::BasicBlock::Create(llvm_ctx, "qd.dispatch", func);
     auto* nomatch_bb =
         llvm::BasicBlock::Create(llvm_ctx, "qd.warn_nomatch", func);
@@ -1125,7 +1203,8 @@ auto LowerQualifiedDispatch(
     builder.CreateCondBr(nomatch_cond, nomatch_bb, dispatch_bb);
 
     builder.SetInsertPoint(nomatch_bb);
-    builder.CreateCall(context.GetLyraPrintLiteral(), {nomatch_str});
+    builder.CreateCall(
+        context.GetLyraWarnRateLimited(), {nomatch_str, nomatch_counter});
     builder.CreateBr(dispatch_bb);
 
     builder.SetInsertPoint(dispatch_bb);
@@ -1309,6 +1388,11 @@ auto GenerateProcessFunction(
       if (!result) return std::unexpected(result.error());
     }
 
+    // Emit loop guard before back-edge terminators
+    if (context.IsLoopGuardEnabled() && HasBackEdge(block.terminator, i)) {
+      EmitLoopGuard(context, block.terminator.origin, func);
+    }
+
     auto term_result = LowerTerminator(
         context, block.terminator, llvm_blocks, exit_block, phi_state);
     if (!term_result) return std::unexpected(term_result.error());
@@ -1416,6 +1500,11 @@ auto GenerateSharedProcessFunction(
     for (const auto& instruction : block.statements) {
       auto result = LowerStatement(context, instruction);
       if (!result) return std::unexpected(result.error());
+    }
+
+    // Emit loop guard before back-edge terminators
+    if (context.IsLoopGuardEnabled() && HasBackEdge(block.terminator, i)) {
+      EmitLoopGuard(context, block.terminator.origin, func);
     }
 
     auto term_result = LowerTerminator(

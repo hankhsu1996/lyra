@@ -117,6 +117,7 @@ auto RunLli(const CompilationInput& input) -> int {
       .mir_arena = compilation.mir.mir_arena.get(),
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
+      .source_manager = compilation.hir.source_manager.get(),
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = input.plusargs,
   };

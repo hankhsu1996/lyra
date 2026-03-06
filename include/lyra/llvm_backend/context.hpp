@@ -10,6 +10,7 @@
 #include <llvm/IR/Module.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
@@ -80,6 +81,7 @@ class Context {
   }
 
   [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraWarnRateLimited() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintValue() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintEnd() -> llvm::Function*;
@@ -96,6 +98,8 @@ class Context {
   [[nodiscard]] auto GetLyraPackedFromString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunSimulation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunProcessSync() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraTrap() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraLoopBudgetPtr() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPlusargsTest() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPlusargsValueInt() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPlusargsValueString() -> llvm::Function*;
@@ -411,6 +415,22 @@ class Context {
   // Check if a function uses out-param calling convention (managed return).
   [[nodiscard]] auto FunctionUsesSret(mir::FunctionId func_id) const -> bool;
 
+  // Loop guard gating: when false, no loop guards are emitted.
+  void SetLoopGuardEnabled(bool enabled) {
+    loop_guard_enabled_ = enabled;
+  }
+  [[nodiscard]] auto IsLoopGuardEnabled() const -> bool {
+    return loop_guard_enabled_;
+  }
+
+  // Loop site tracking for loop guard emission.
+  // Returns the assigned loop_site_id.
+  auto RegisterLoopSite(common::OriginId origin) -> uint32_t;
+  [[nodiscard]] auto GetLoopSiteOrigins() const
+      -> const std::vector<common::OriginId>& {
+    return loop_site_origins_;
+  }
+
   // SSA temp management (for block params and temps defined by statements)
   // BindTemp: define an SSA temp value with its MIR type.
   // Must be called exactly once per temp_id. Binding an already-bound temp_id
@@ -463,6 +483,7 @@ class Context {
   std::unique_ptr<llvm::IRBuilder<>> alloca_builder_;
 
   llvm::Function* lyra_print_literal_ = nullptr;
+  llvm::Function* lyra_warn_rate_limited_ = nullptr;
   llvm::Function* lyra_print_value_ = nullptr;
   llvm::Function* lyra_print_string_ = nullptr;
   llvm::Function* lyra_print_end_ = nullptr;
@@ -497,6 +518,8 @@ class Context {
   llvm::Function* lyra_init_runtime_ = nullptr;
   llvm::Function* lyra_resolve_base_dir_ = nullptr;
   llvm::Function* lyra_report_time_ = nullptr;
+  llvm::Function* lyra_trap_ = nullptr;
+  llvm::Function* lyra_loop_budget_ptr_ = nullptr;
   llvm::Function* lyra_dynarray_new_ = nullptr;
   llvm::Function* lyra_dynarray_new_copy_ = nullptr;
   llvm::Function* lyra_dynarray_size_ = nullptr;
@@ -625,6 +648,13 @@ class Context {
   // Both maps are kept in sync; presence in one implies presence in the other.
   absl::flat_hash_map<int, llvm::Value*> temp_values_;
   absl::flat_hash_map<int, TypeId> temp_types_;
+
+  // Loop guard gating (default: off; driver sets via kEnableLoopGuard).
+  bool loop_guard_enabled_ = false;
+
+  // Loop site origins accumulated during process codegen.
+  // Index = loop_site_id, value = origin of the back-edge terminator.
+  std::vector<common::OriginId> loop_site_origins_;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

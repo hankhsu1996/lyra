@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -25,8 +26,11 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
+#include "lyra/runtime/loop_site_meta.hpp"
+#include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/suspend_record.hpp"
+#include "lyra/runtime/trap.hpp"
 #include "lyra/runtime/update_set.hpp"
 #include "lyra/trace/trace_manager.hpp"
 
@@ -288,7 +292,59 @@ class Engine {
   // convergence. Also used for initial value propagation before Run().
   void FlushAndPropagateConnections();
 
+  // One-time init for process metadata registry.
+  void InitProcessMeta(ProcessMetaRegistry registry) {
+    process_meta_ = std::move(registry);
+  }
+
+  // One-time init for loop site metadata registry.
+  void InitLoopSiteMeta(LoopSiteRegistry registry) {
+    loop_site_meta_ = std::move(registry);
+  }
+
+  [[nodiscard]] auto GetProcessMetaRegistry() const
+      -> const ProcessMetaRegistry& {
+    return process_meta_;
+  }
+
+  [[nodiscard]] auto GetLoopSiteRegistry() const -> const LoopSiteRegistry& {
+    return loop_site_meta_;
+  }
+
+  // Format process identity for diagnostics (normal code path).
+  [[nodiscard]] auto FormatProcess(uint32_t process_id) const -> std::string;
+
+  // Async-signal-safe dump of scheduler status to fd.
+  // Prints: phase, sim_time, activation_seq, current/last process.
+  void DumpSchedulerStatusAsyncSignalSafe(int fd) const;
+
+  // Get current running process ID.
+  [[nodiscard]] auto CurrentRunningProcessId() const -> uint32_t {
+    return current_running_process_.load(std::memory_order_acquire);
+  }
+
+  // Handle a trap raised by generated code (loop budget exceeded, etc.).
+  void HandleTrap(uint32_t process_id, const TrapPayload& payload);
+
+  // Scheduler phase for signal-safe status dump.
+  enum class Phase : uint32_t {
+    kIdle,
+    kAdvanceTime,
+    kRunProcess,
+    kFlushUpdates,
+    kCommitNba,
+    kPostponed,
+  };
+
  private:
+  // Run a single process activation under the trap scope.
+  //
+  // INVARIANT: No RAII-managed resources may be live between setjmp and the
+  // call to runner_(). longjmp must not cross locks, allocation scopes, or
+  // commit phases that mutate engine state without rollback. This function
+  // is deliberately a thin leaf to make future audits easy.
+  void RunOneActivation(const ScheduledEvent& event);
+
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
   void ExecutePostponedRegion();
@@ -417,6 +473,19 @@ class Engine {
   absl::flat_hash_map<uint32_t, std::vector<uint32_t>> comb_trigger_map_;
   // Bitset of process indices that are comb kernels (skip in ScheduleInitial).
   absl::flat_hash_set<uint32_t> comb_kernel_indices_;
+
+  // Process metadata registry for diagnostics and signal-safe dumps.
+  ProcessMetaRegistry process_meta_;
+
+  // Loop site metadata registry for loop guard diagnostics.
+  LoopSiteRegistry loop_site_meta_;
+
+  // Scheduler observability atomics (signal-safe reads from SIGUSR1).
+  // Written by scheduler, read by signal handler via relaxed loads.
+  std::atomic<uint32_t> current_running_process_{UINT32_MAX};
+  std::atomic<uint32_t> last_process_id_{UINT32_MAX};
+  std::atomic<uint64_t> activation_seq_{0};
+  std::atomic<uint32_t> phase_{static_cast<uint32_t>(Phase::kIdle)};
 };
 
 }  // namespace lyra::runtime
