@@ -380,10 +380,16 @@ void SetupAndRunSimulation(
         lyra::runtime::ProcessHandle{.process_id = i, .instance_id = 0});
   }
 
-  // Propagate initial values through connection wiring before Run().
-  // Init processes have already set initial values (via LyraRunProcessSync);
-  // connections copy src->dst so downstream processes see correct values.
+  // Propagate initial values through connections and comb kernels before Run().
+  // Init processes have already set initial values and marked slots dirty.
+  // EvaluateAllConnections seeds dirty marks for all changed destinations.
+  // SeedCombKernelDirtyMarks ensures comb kernels fire even when source values
+  // match the default (memset 0 = no LyraStorePacked dirty mark).
+  // FlushAndPropagateConnections then converges connections + comb kernels
+  // using the dirty-driven propagation loop (handles cascading).
   engine.EvaluateAllConnections();
+  engine.SeedCombKernelDirtyMarks();
+  engine.FlushAndPropagateConnections();
 
   auto final_time = engine.Run();
   FinalTime() = std::max(FinalTime(), final_time);
@@ -397,7 +403,8 @@ extern "C" void LyraRunSimulation(
     const char** instance_paths_raw, uint32_t num_instance_paths,
     const uint32_t* slot_meta_words, uint32_t num_slot_metas,
     uint32_t slot_meta_version, const void* conn_descs_raw,
-    uint32_t num_conn_descs, uint32_t feature_flags) {
+    uint32_t num_conn_descs, const uint32_t* comb_kernel_words,
+    uint32_t num_comb_kernel_words, uint32_t feature_flags) {
   auto states = std::span(states_raw, num_processes);
   auto procs = std::span(processes, num_processes);
 
@@ -443,6 +450,11 @@ extern "C" void LyraRunSimulation(
         static_cast<const lyra::runtime::ConnectionDescriptor*>(conn_descs_raw),
         num_conn_descs);
     engine.InitConnectionBatch(conn_descs);
+  }
+  if (comb_kernel_words != nullptr && num_comb_kernel_words > 0) {
+    engine.InitCombKernels(
+        std::span(comb_kernel_words, num_comb_kernel_words), processes,
+        states_raw);
   }
   if (HasFlag(flags, FeatureFlag::kDumpSlotMeta)) {
     engine.GetSlotMetaRegistry().DumpSummary();

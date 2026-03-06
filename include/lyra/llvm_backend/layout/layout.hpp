@@ -118,6 +118,14 @@ struct ConnectionKernelEntry {
   std::optional<mir::PlaceId> trigger_observed_place;
 };
 
+// Entry for a pure combinational process that can be evaluated inline.
+// Unlike connections (memcpy), comb kernels run compiled code but skip
+// the full scheduler overhead (subscriptions, queuing, SuspendRecord).
+struct CombKernelEntry {
+  mir::ProcessId process_id;
+  std::vector<mir::SlotId> trigger_slots;  // Read slots (sensitivity list)
+};
+
 // Identifies a module variant: a set of module instances whose processes are
 // ALL structurally identical (same template assignments for every local process
 // index). Assigned by BuildModuleVariants after template analysis.
@@ -219,8 +227,10 @@ struct Layout {
   std::vector<mir::ProcessId> process_ids;
   // Boundary marker: number of init processes at start of process_ids
   size_t num_init_processes = 0;
-  // Connection processes that use the shared runtime kernel
+  // Connection processes evaluated as batch memcpy
   std::vector<ConnectionKernelEntry> connection_kernel_entries;
+  // Pure combinational processes evaluated inline via compiled function
+  std::vector<CombKernelEntry> comb_kernel_entries;
   // ProcessStateHeader type: {SuspendRecord, DesignState*}
   llvm::StructType* header_type = nullptr;
   // SuspendRecord type (opaque blob matching C++ struct size)

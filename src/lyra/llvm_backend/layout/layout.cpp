@@ -980,6 +980,103 @@ auto TryKernelizeConnection(
   };
 }
 
+// Check if a statement is "pure" for comb kernel batching.
+// Pure means: no I/O, no NBA, no function calls, no container mutations.
+auto IsStatementPure(const mir::Statement& stmt) -> bool {
+  return std::visit(
+      common::Overloaded{
+          [](const mir::Assign&) { return true; },
+          [](const mir::GuardedAssign&) { return true; },
+          [](const mir::DefineTemp& dt) {
+            // DefineTemp is pure if RHS is pure
+            if (const auto* rv = std::get_if<mir::Rvalue>(&dt.rhs)) {
+              return !mir::RvalueHasSideEffects(rv->info);
+            }
+            return true;  // Operand RHS is always pure
+          },
+          [](const mir::Effect&) { return false; },
+          [](const mir::DeferredAssign&) { return false; },
+          [](const mir::Call&) { return false; },
+          [](const mir::BuiltinCall&) { return false; },
+          [](const mir::AssocOp&) { return false; },
+      },
+      stmt.data);
+}
+
+// Check if a terminator is "pure control flow" (no delays, no events).
+auto IsTerminatorPureCF(const mir::Terminator& term) -> bool {
+  return std::visit(
+      common::Overloaded{
+          [](const mir::Jump&) { return true; },
+          [](const mir::Branch&) { return true; },
+          [](const mir::Switch&) { return true; },
+          [](const mir::QualifiedDispatch&) { return true; },
+          [](const mir::Wait&) { return true; },
+          [](const mir::Delay&) { return false; },
+          [](const mir::Return&) { return false; },
+          [](const mir::Finish&) { return false; },
+          [](const mir::Repeat&) { return false; },
+      },
+      term.data);
+}
+
+// Check if a process can be batched as a comb kernel.
+// Criteria: kLooping, all statements pure, all terminators are pure CF or Wait,
+// exactly one Wait terminator with kAnyChange triggers and no late-bound.
+auto TryKernelizeComb(const mir::Process& process, const mir::Arena& arena)
+    -> std::optional<CombKernelEntry> {
+  if (process.kind != mir::ProcessKind::kLooping) return std::nullopt;
+
+  const mir::Wait* wait_term = nullptr;
+
+  for (const auto& block : process.blocks) {
+    // Check all statements are pure
+    for (const auto& stmt : block.statements) {
+      if (!IsStatementPure(stmt)) return std::nullopt;
+
+      // Check Assign RHS for side-effecting Rvalues
+      if (const auto* assign = std::get_if<mir::Assign>(&stmt.data)) {
+        if (const auto* rv = std::get_if<mir::Rvalue>(&assign->rhs)) {
+          if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
+        }
+      }
+      if (const auto* ga = std::get_if<mir::GuardedAssign>(&stmt.data)) {
+        if (const auto* rv = std::get_if<mir::Rvalue>(&ga->rhs)) {
+          if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
+        }
+      }
+    }
+
+    // Check terminator
+    if (!IsTerminatorPureCF(block.terminator)) return std::nullopt;
+
+    // Track the Wait terminator
+    if (const auto* w = std::get_if<mir::Wait>(&block.terminator.data)) {
+      if (wait_term != nullptr) return std::nullopt;  // Multiple Waits
+      wait_term = w;
+    }
+  }
+
+  // Must have exactly one Wait terminator
+  if (wait_term == nullptr) return std::nullopt;
+
+  // All triggers must be kAnyChange with no late-bound
+  std::vector<mir::SlotId> trigger_slots;
+  trigger_slots.reserve(wait_term->triggers.size());
+  for (const auto& trigger : wait_term->triggers) {
+    if (trigger.edge != common::EdgeKind::kAnyChange) return std::nullopt;
+    if (trigger.late_bound.has_value()) return std::nullopt;
+    trigger_slots.push_back(trigger.signal);
+  }
+
+  if (trigger_slots.empty()) return std::nullopt;
+
+  return CombKernelEntry{
+      .process_id = {},  // Set by caller
+      .trigger_slots = std::move(trigger_slots),
+  };
+}
+
 // Build SuspendRecord as opaque blob - suspend helpers own the layout.
 auto BuildSuspendRecordType(llvm::LLVMContext& ctx) -> llvm::StructType* {
   static_assert(
@@ -1555,6 +1652,7 @@ auto BuildLayout(
   }
 
   // Phase 3: Collect module processes (run through scheduler)
+  // Also detect pure combinational processes for comb kernel batching.
   for (const auto& element : design.elements) {
     if (!std::holds_alternative<mir::Module>(element)) {
       continue;
@@ -1562,9 +1660,14 @@ auto BuildLayout(
     const auto& mir_module = std::get<mir::Module>(element);
     for (mir::ProcessId proc_id : mir_module.processes) {
       const auto& process = arena[proc_id];
-      if (process.kind != mir::ProcessKind::kFinal) {
-        layout.process_ids.push_back(proc_id);
+      if (process.kind == mir::ProcessKind::kFinal) continue;
+
+      auto comb = TryKernelizeComb(process, arena);
+      if (comb) {
+        comb->process_id = proc_id;
+        layout.comb_kernel_entries.push_back(std::move(*comb));
       }
+      layout.process_ids.push_back(proc_id);
     }
   }
 
