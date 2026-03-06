@@ -225,13 +225,14 @@ auto Context::GetLyraRunSimulation() -> llvm::Function* {
     //                        const uint32_t* slot_meta_words,
     //                        uint32_t num_slot_metas,
     //                        uint32_t slot_meta_version,
+    //                        const void* conn_descs, uint32_t num_conn_descs,
     //                        uint32_t feature_flags)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
         {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-         i32_ty, i32_ty},
+         i32_ty, ptr_ty, i32_ty, i32_ty},
         false);
     lyra_run_simulation_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulation",
@@ -1172,20 +1173,6 @@ auto Context::GetLyraFscanf() -> llvm::Function* {
         llvm_module_.get());
   }
   return lyra_fscanf_;
-}
-
-auto Context::GetLyraConnectionKernel() -> llvm::Function* {
-  if (lyra_connection_kernel_ == nullptr) {
-    // void LyraConnectionKernel(ptr state, i32 resume_block)
-    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
-    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty}, false);
-    lyra_connection_kernel_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, "LyraConnectionKernel",
-        llvm_module_.get());
-  }
-  return lyra_connection_kernel_;
 }
 
 auto Context::GetLyraAssocNew() -> llvm::Function* {

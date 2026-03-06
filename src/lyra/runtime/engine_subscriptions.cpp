@@ -559,19 +559,16 @@ void Engine::RebindSubscription(SubscriptionNode* rebind_node) {
 
 void Engine::FlushSignalUpdates() {
   if (finished_) {
-    update_set_.ClearDelta();
     return;
   }
 
   // Guard: MIR path has no slot meta / design state.
   if (!slot_meta_registry_.IsPopulated() || design_state_base_ == nullptr) {
-    update_set_.ClearDelta();
     return;
   }
 
   auto newly_dirty = update_set_.DeltaDirtySlots();
   if (newly_dirty.empty()) {
-    update_set_.ClearDelta();
     return;
   }
 
@@ -773,7 +770,8 @@ void Engine::FlushSignalUpdates() {
     }
   }
 
-  update_set_.ClearDelta();
+  // Note: delta is NOT cleared here. The caller (FlushAndPropagateConnections)
+  // clears it after connection evaluation has also consumed the delta.
 }
 
 }  // namespace lyra::runtime

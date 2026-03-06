@@ -25,6 +25,7 @@
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/slot_meta.hpp"
+#include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/update_set.hpp"
 #include "lyra/trace/trace_manager.hpp"
 
@@ -265,11 +266,21 @@ class Engine {
     return HasFlag(static_cast<FeatureFlag>(feature_flags_), flag);
   }
 
+  // Initialize connection batch from descriptors.
+  // Builds trigger map for fast evaluation.
+  void InitConnectionBatch(std::span<const ConnectionDescriptor> descs);
+
+  // Evaluate all connections once (used for initial value propagation).
+  void EvaluateAllConnections();
+
  private:
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
   void ExecutePostponedRegion();
   void FlushDirtySlots();
+
+  // Flush signal updates + evaluate triggered connections until convergence.
+  void FlushAndPropagateConnections();
 
   // Subscription management
   void ClearProcessSubscriptions(ProcessHandle handle);
@@ -365,6 +376,22 @@ class Engine {
   // for trace).
   void* design_state_base_ = nullptr;
   UpdateSet update_set_;
+
+  // Connection batch: fast-path for kernelized connection processes.
+  // Instead of scheduling connection processes through the full engine,
+  // connections are evaluated inline during signal propagation.
+  struct BatchedConnection {
+    uint32_t src_byte_offset;
+    uint32_t dst_byte_offset;
+    uint32_t byte_size;
+    uint32_t dst_slot_id;
+  };
+  // All batched connections (for initial evaluation).
+  std::vector<BatchedConnection> all_connections_;
+  // Trigger map: trigger_slot_id -> {start, count} into all_connections_.
+  // Connections are sorted by trigger_slot_id so each group is contiguous.
+  absl::flat_hash_map<uint32_t, std::pair<uint32_t, uint32_t>>
+      conn_trigger_map_;
 };
 
 }  // namespace lyra::runtime

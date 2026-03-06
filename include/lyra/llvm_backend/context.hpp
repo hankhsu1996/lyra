@@ -158,7 +158,6 @@ class Context {
   [[nodiscard]] auto GetLyraFgets() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFread() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFscanf() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraConnectionKernel() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAssocNew() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAssocRelease() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAssocClone() -> llvm::Function*;
@@ -542,7 +541,6 @@ class Context {
   llvm::Function* lyra_fgets_ = nullptr;
   llvm::Function* lyra_fread_ = nullptr;
   llvm::Function* lyra_fscanf_ = nullptr;
-  llvm::Function* lyra_connection_kernel_ = nullptr;
   llvm::Function* lyra_assoc_new_ = nullptr;
   llvm::Function* lyra_assoc_release_ = nullptr;
   llvm::Function* lyra_assoc_clone_ = nullptr;

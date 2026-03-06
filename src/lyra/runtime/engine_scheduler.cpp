@@ -1,6 +1,8 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <span>
 #include <utility>
@@ -230,11 +232,11 @@ void Engine::ExecuteTimeSlot() {
       }
     }
 
-    FlushSignalUpdates();  // Flush blocking assignment edges
+    FlushAndPropagateConnections();  // Flush + connection propagation
 
     ExecuteRegion(Region::kNBA);
 
-    FlushSignalUpdates();  // Flush NBA edges
+    FlushAndPropagateConnections();  // Flush + connection propagation
 
     if (finished_ || next_delta_queue_.empty()) {
       break;
@@ -290,6 +292,108 @@ void Engine::FlushDirtySlots() {
         trace_manager_, slot_meta_registry_, design_state_base_, update_set_);
   }
   update_set_.Clear();
+}
+
+void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
+  if (descs.empty()) return;
+
+  // Sort by trigger_slot_id so each group is contiguous
+  struct IndexedConn {
+    uint32_t trigger_slot_id;
+    BatchedConnection conn;
+  };
+  std::vector<IndexedConn> sorted;
+  sorted.reserve(descs.size());
+  for (const auto& d : descs) {
+    sorted.push_back(
+        {d.trigger_slot_id, BatchedConnection{
+                                .src_byte_offset = d.src_byte_offset,
+                                .dst_byte_offset = d.dst_byte_offset,
+                                .byte_size = d.byte_size,
+                                .dst_slot_id = d.dst_slot_id}});
+  }
+  std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
+    return a.trigger_slot_id < b.trigger_slot_id;
+  });
+
+  all_connections_.reserve(sorted.size());
+  for (const auto& s : sorted) {
+    all_connections_.push_back(s.conn);
+  }
+
+  // Build trigger map: trigger_slot_id -> {start, count}
+  uint32_t i = 0;
+  while (i < sorted.size()) {
+    uint32_t trigger = sorted[i].trigger_slot_id;
+    uint32_t start = i;
+    while (i < sorted.size() && sorted[i].trigger_slot_id == trigger) {
+      ++i;
+    }
+    conn_trigger_map_[trigger] = {start, i - start};
+  }
+}
+
+void Engine::EvaluateAllConnections() {
+  if (all_connections_.empty() || design_state_base_ == nullptr) return;
+  auto* base = static_cast<uint8_t*>(design_state_base_);
+  for (const auto& conn : all_connections_) {
+    auto* src = base + conn.src_byte_offset;
+    auto* dst = base + conn.dst_byte_offset;
+    if (std::memcmp(dst, src, conn.byte_size) != 0) {
+      std::memcpy(dst, src, conn.byte_size);
+      MarkSlotDirty(conn.dst_slot_id);
+    }
+  }
+}
+
+void Engine::FlushAndPropagateConnections() {
+  if (all_connections_.empty()) {
+    FlushSignalUpdates();
+    update_set_.ClearDelta();
+    return;
+  }
+
+  // Propagate connections until stable, then flush subscriptions.
+  // Connections must fire before subscription wakeup so that downstream
+  // processes observe the propagated values (e.g., x->a must complete
+  // before always_comb watching a is woken).
+  //
+  // The delta accumulates across iterations: MarkSlotDirty from connection
+  // writes appends to the same delta. We track how many delta entries we've
+  // already scanned to process only new additions each iteration.
+  constexpr uint32_t kMaxIterations = 100;
+  uint32_t scanned = 0;
+  auto* base = static_cast<uint8_t*>(design_state_base_);
+  for (uint32_t iter = 0; iter < kMaxIterations; ++iter) {
+    auto all_dirty = update_set_.DeltaDirtySlots();
+    if (scanned >= all_dirty.size()) break;
+
+    bool any_conn_changed = false;
+    auto new_dirty = all_dirty.subspan(scanned);
+    scanned = static_cast<uint32_t>(all_dirty.size());
+
+    for (uint32_t slot_id : new_dirty) {
+      auto it = conn_trigger_map_.find(slot_id);
+      if (it == conn_trigger_map_.end()) continue;
+      auto [start, count] = it->second;
+      for (uint32_t ci = start; ci < start + count; ++ci) {
+        const auto& conn = all_connections_[ci];
+        auto* src = base + conn.src_byte_offset;
+        auto* dst = base + conn.dst_byte_offset;
+        if (std::memcmp(dst, src, conn.byte_size) != 0) {
+          std::memcpy(dst, src, conn.byte_size);
+          MarkSlotDirty(conn.dst_slot_id);
+          any_conn_changed = true;
+        }
+      }
+    }
+    if (!any_conn_changed) break;
+  }
+
+  // Flush subscriptions with all accumulated dirty marks (process writes +
+  // connection propagation), then clear the delta.
+  FlushSignalUpdates();
+  update_set_.ClearDelta();
 }
 
 void Engine::OnMutation(const common::MutationEvent& event) {

@@ -45,8 +45,8 @@ void LyraRunSimulation(
     LyraProcessFunc* processes, void** states, uint32_t num_processes,
     const char** plusargs, uint32_t num_plusargs, const char** instance_paths,
     uint32_t num_instance_paths, const uint32_t* slot_meta_words,
-    uint32_t num_slot_metas, uint32_t slot_meta_version,
-    uint32_t feature_flags);
+    uint32_t num_slot_metas, uint32_t slot_meta_version, const void* conn_descs,
+    uint32_t num_conn_descs, uint32_t feature_flags);
 
 // $test$plusargs: prefix match against plusargs.
 // Query is LyraStringHandle (matches SV string operand lowering).
