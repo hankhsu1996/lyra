@@ -1,0 +1,124 @@
+feature: specialization_grouping
+description: Tests deterministic specialization grouping by ModuleSpecId
+
+cases:
+  - name: no_params
+    description: Two instances of same module with no params -> grouped together (plus Top)
+    dump_specialization_map: true
+    sv: |
+      module Counter;
+        initial $display("counter");
+      endmodule
+
+      module Top;
+        Counter c0();
+        Counter c1();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 2"
+          - "spec[0]: def=0"
+          - "spec[1]: def=1"
+          - "instances=1"
+          - "instances=2"
+
+  - name: same_structural_params
+    description: Two instances with same structural param value -> one group (plus Top)
+    dump_specialization_map: true
+    sv: |
+      module Sized #(parameter int WIDTH = 8);
+        bit [WIDTH-1:0] data;
+        initial begin
+          data = '1;
+          $display("w=%0d d=%0d", WIDTH, data);
+        end
+      endmodule
+
+      module Top;
+        Sized #(.WIDTH(4)) s0();
+        Sized #(.WIDTH(4)) s1();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 2"
+          - "spec[0]: def=0"
+          - "spec[1]: def=1"
+          - "instances=2"
+
+  - name: value_only_params_dont_split
+    description: Value-only params with same structural shape -> one group (plus Top)
+    dump_specialization_map: true
+    sv: |
+      module Bank #(parameter int WIDTH = 8, parameter int ID = 0);
+        bit [WIDTH-1:0] data;
+        initial begin
+          data = '1;
+          $display("id=%0d d=%0d", ID, data);
+        end
+      endmodule
+
+      module Top;
+        Bank #(.WIDTH(4), .ID(10)) b0();
+        Bank #(.WIDTH(4), .ID(20)) b1();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 2"
+          - "spec[0]: def=0"
+          - "spec[1]: def=1"
+          - "instances=2"
+
+  - name: multiple_definitions
+    description: Instances of different definitions -> separate groups
+    dump_specialization_map: true
+    sv: |
+      module Alpha;
+        initial $display("alpha");
+      endmodule
+
+      module Beta;
+        initial $display("beta");
+      endmodule
+
+      module Top;
+        Alpha a0();
+        Alpha a1();
+        Beta b0();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 3"
+          - "spec[0]: def=0"
+          - "spec[1]: def=1"
+          - "spec[2]: def=2"
+          - "def=1"
+          - "instances=2"
+          - "instances=1"
+
+  - name: deterministic_ordering
+    description: Groups are sorted by (def_id, fingerprint) for determinism
+    dump_specialization_map: true
+    sv: |
+      module Leaf;
+        initial $display("leaf");
+      endmodule
+
+      module Mid;
+        Leaf l0();
+        Leaf l1();
+      endmodule
+
+      module Top;
+        Mid m0();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 3"
+          - "spec[0]: def=0"
+          - "spec[1]: def=1"
+          - "spec[2]: def=2"

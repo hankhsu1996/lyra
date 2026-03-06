@@ -46,7 +46,7 @@ auto LowerDesign(
   for (const auto& range : decls.instance_slot_ranges) {
     result.instance_slot_ranges.push_back({range.slot_begin, range.slot_count});
   }
-  result.module_def_keys = decls.module_def_keys;
+  result.module_def_ids = decls.module_def_ids;
   result.instance_param_inits = decls.instance_param_inits;
   if (input.instance_table != nullptr) {
     result.instance_table = *input.instance_table;

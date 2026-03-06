@@ -19,6 +19,7 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/module_identity.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
@@ -1253,7 +1254,7 @@ auto BuildSlotInfoFromDesign(
 // Per-module-process info for template analysis.
 struct ModuleProcessInfo {
   mir::ProcessId process_id;
-  uint64_t module_def_key;
+  common::ModuleDefId module_def_id;
   LocalProcIndex local_process_index;
   uint32_t slot_begin;
   uint32_t slot_count;
@@ -1283,7 +1284,7 @@ void BuildModuleVariants(
     const auto& mir_module = std::get<mir::Module>(element);
     uint32_t slot_begin = design.instance_slot_ranges[module_idx].slot_begin;
     uint32_t slot_count = design.instance_slot_ranges[module_idx].slot_count;
-    uint64_t def_key = design.module_def_keys[module_idx];
+    common::ModuleDefId def_id = design.module_def_ids[module_idx];
 
     uint32_t local_idx = 0;
     for (mir::ProcessId proc_id : mir_module.processes) {
@@ -1302,7 +1303,7 @@ void BuildModuleVariants(
       all_module_procs.push_back(
           ModuleProcessInfo{
               .process_id = proc_id,
-              .module_def_key = def_key,
+              .module_def_id = def_id,
               .local_process_index = LocalProcIndex{local_idx},
               .slot_begin = slot_begin,
               .slot_count = slot_count,
@@ -1327,19 +1328,17 @@ void BuildModuleVariants(
   // keys). Not stored in Layout -- variant routing is the sole source of truth.
   std::unordered_map<uint32_t, TemplateId> proc_id_to_template;
 
-  // Group by (module_def_key, local_process_index)
-  std::map<std::pair<uint64_t, uint32_t>, std::vector<size_t>> candidate_groups;
+  // Group by (module_def_id, local_process_index) as candidate filter.
+  // Processes from different definitions can never be templates of each other.
+  std::map<std::pair<common::ModuleDefId, LocalProcIndex>, std::vector<size_t>>
+      candidate_groups;
   for (size_t i = 0; i < all_module_procs.size(); ++i) {
     const auto& info = all_module_procs[i];
-    candidate_groups[{info.module_def_key, info.local_process_index.value}]
-        .push_back(i);
+    candidate_groups[{info.module_def_id, info.local_process_index}].push_back(
+        i);
   }
 
   const auto* struct_layout = dl.getStructLayout(layout.design.llvm_type);
-
-  // Cache rel_byte_offsets by module_def_key (all instances of same def_key
-  // have identical layout -- verified by offset compatibility check below).
-  std::unordered_map<uint64_t, std::vector<uint64_t>> def_key_rel_offsets;
 
   // Initialize instance_base_byte_offsets and instance_variant_ids
   size_t num_module_elements = design.instance_slot_ranges.size();
@@ -1411,20 +1410,16 @@ void BuildModuleVariants(
       }
       if (!frames_compatible) continue;
 
-      // Compute rel_byte_offsets (reuse from cache if same def_key)
-      auto [cache_it, inserted] =
-          def_key_rel_offsets.try_emplace(rep.module_def_key);
-      if (inserted) {
+      // Compute rel_byte_offsets for the representative instance
+      std::vector<uint64_t> rel_offsets(rep.slot_count);
+      {
         uint64_t rep_base_offset =
             struct_layout->getElementOffset(rep.slot_begin);
-        cache_it->second.resize(rep.slot_count);
         for (uint32_t i = 0; i < rep.slot_count; ++i) {
-          uint64_t slot_offset =
-              struct_layout->getElementOffset(rep.slot_begin + i);
-          cache_it->second[i] = slot_offset - rep_base_offset;
+          rel_offsets[i] = struct_layout->getElementOffset(rep.slot_begin + i) -
+                           rep_base_offset;
         }
       }
-      const auto& rel_offsets = cache_it->second;
 
       // Verify byte-offset compatibility across all instances
       bool offsets_compatible = true;
@@ -1509,7 +1504,6 @@ void BuildModuleVariants(
       ++next_variant;
 
       // Construct ModuleVariant for this new variant
-      uint64_t def_key = design.module_def_keys[module_idx];
       ModuleVariant variant;
 
       // Build proc_template_ids from the key
@@ -1522,23 +1516,15 @@ void BuildModuleVariants(
         variant.proc_template_ids[li] = tmpl_id;
       }
 
-      // Get rel_byte_offsets from cache (or compute for this def_key)
-      auto cache_it = def_key_rel_offsets.find(def_key);
-      if (cache_it != def_key_rel_offsets.end()) {
-        variant.rel_byte_offsets = cache_it->second;
-      } else {
-        // No templates for this variant's def_key; compute rel offsets anyway
-        uint32_t slot_begin =
-            design.instance_slot_ranges[module_idx].slot_begin;
-        uint32_t slot_count =
-            design.instance_slot_ranges[module_idx].slot_count;
-        if (slot_count > 0) {
-          uint64_t base = struct_layout->getElementOffset(slot_begin);
-          variant.rel_byte_offsets.resize(slot_count);
-          for (uint32_t i = 0; i < slot_count; ++i) {
-            variant.rel_byte_offsets[i] =
-                struct_layout->getElementOffset(slot_begin + i) - base;
-          }
+      // Compute rel_byte_offsets for this instance
+      uint32_t slot_begin = design.instance_slot_ranges[module_idx].slot_begin;
+      uint32_t slot_count = design.instance_slot_ranges[module_idx].slot_count;
+      if (slot_count > 0) {
+        uint64_t base = struct_layout->getElementOffset(slot_begin);
+        variant.rel_byte_offsets.resize(slot_count);
+        for (uint32_t i = 0; i < slot_count; ++i) {
+          variant.rel_byte_offsets[i] =
+              struct_layout->getElementOffset(slot_begin + i) - base;
         }
       }
 

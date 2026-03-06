@@ -62,6 +62,12 @@ void RunTestCase(
         AssertOutput(result.captured_output, test_case.expected_stdout.value());
       }
 
+      // Check expected compiler output
+      if (test_case.expected_compiler_output.has_value()) {
+        AssertOutput(
+            result.compiler_output, test_case.expected_compiler_output.value());
+      }
+
       // Check expected files
       if (!test_case.expected_files.empty()) {
         AssertFiles(work_directory, test_case.expected_files);
@@ -151,6 +157,12 @@ void RunTestCase(
       if (test_case.expected_stdout.has_value()) {
         AssertOutput(result.captured_output, test_case.expected_stdout.value());
       }
+
+      // Check expected compiler output
+      if (test_case.expected_compiler_output.has_value()) {
+        AssertOutput(
+            result.compiler_output, test_case.expected_compiler_output.value());
+      }
       break;
     }
 
@@ -188,6 +200,12 @@ void RunTestCase(
       if (test_case.expected_stdout.has_value()) {
         AssertOutput(result.captured_output, test_case.expected_stdout.value());
       }
+
+      // Check expected compiler output
+      if (test_case.expected_compiler_output.has_value()) {
+        AssertOutput(
+            result.compiler_output, test_case.expected_compiler_output.value());
+      }
       break;
     }
 
@@ -224,6 +242,12 @@ void RunTestCase(
       // Check expected stdout
       if (test_case.expected_stdout.has_value()) {
         AssertOutput(result.captured_output, test_case.expected_stdout.value());
+      }
+
+      // Check expected compiler output
+      if (test_case.expected_compiler_output.has_value()) {
+        AssertOutput(
+            result.compiler_output, test_case.expected_compiler_output.value());
       }
       break;
     }

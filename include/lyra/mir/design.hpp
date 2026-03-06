@@ -7,6 +7,7 @@
 
 #include "absl/container/flat_hash_map.h"
 #include "lyra/common/integral_constant.hpp"
+#include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
@@ -95,8 +96,8 @@ struct Design {
     uint32_t slot_count = 0;
   };
   std::vector<InstanceSlotRange> instance_slot_ranges;
-  // Per-module-instance def keys (parallel to instance_slot_ranges).
-  std::vector<uint64_t> module_def_keys;
+  // Per-module-instance def IDs (parallel to instance_slot_ranges).
+  std::vector<common::ModuleDefId> module_def_ids;
 
   // Per-module-instance param init entries (parallel to instance_slot_ranges).
   // instance_param_inits[module_idx] = entries for that instance.

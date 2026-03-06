@@ -90,6 +90,7 @@ auto RunAotBackend(
   auto parsed = ParseLyraVarOutput(sub.stdout_text);
   result.success = true;
   result.captured_output = std::move(parsed.clean);
+  result.compiler_output = std::move(prep_result->compiler_output);
   result.variables = std::move(parsed.variables);
   result.final_time = parsed.final_time;
   return result;

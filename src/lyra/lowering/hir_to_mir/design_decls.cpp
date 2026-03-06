@@ -125,7 +125,7 @@ auto CollectDeclarations(
           static_cast<uint32_t>(next_slot) - instance_slot_begin;
       decls.instance_slot_ranges.push_back(
           {instance_slot_begin, instance_slot_count});
-      decls.module_def_keys.push_back(mod->module_def_key);
+      decls.module_def_ids.push_back(mod->module_def_id);
       decls.instance_param_inits.push_back(std::move(param_inits));
     }
   }

@@ -317,7 +317,8 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     ValidateKeys(
         node,
         {"name", "description", "sv", "files", "plusargs", "param_overrides",
-         "pedantic", "trace", "dump_slot_meta", "expect"},
+         "pedantic", "trace", "dump_slot_meta", "dump_specialization_map",
+         "expect"},
         case_context, path);
 
     // Single-file format: sv: |
@@ -372,13 +373,20 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       test_case.dump_slot_meta = node["dump_slot_meta"].as<bool>();
     }
 
+    // Dump specialization map (test-only)
+    if (node["dump_specialization_map"]) {
+      test_case.dump_specialization_map =
+          node["dump_specialization_map"].as<bool>();
+    }
+
     // Parse unified expect: block
     if (node["expect"]) {
       const auto& expect = node["expect"];
       auto expect_context = std::format("expect in {}", case_context);
       ValidateKeys(
           expect,
-          {"variables", "time", "stdout", "files", "error", "mutations"},
+          {"variables", "time", "stdout", "compiler_output", "files", "error",
+           "mutations"},
           expect_context, path);
 
       // expect.variables: {var: value, ...}
@@ -399,6 +407,13 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
         test_case.expected_stdout = ParseExpectedOutput(
             expect["stdout"], std::format("expect.stdout in {}", case_context),
             path);
+      }
+
+      // expect.compiler_output: {contains: [...], not_contains: [...]}
+      if (expect["compiler_output"]) {
+        test_case.expected_compiler_output = ParseExpectedOutput(
+            expect["compiler_output"],
+            std::format("expect.compiler_output in {}", case_context), path);
       }
 
       // expect.files: {filename: content_or_spec, ...}

@@ -17,6 +17,7 @@ struct TestResult {
   bool success = false;
   std::string error_message;
   std::string captured_output;
+  std::string compiler_output;
   std::map<std::string, TestValue> variables;
   uint64_t final_time = 0;
   std::vector<common::MutationEvent> mutation_events;

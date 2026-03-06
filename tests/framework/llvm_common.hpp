@@ -41,6 +41,10 @@ struct LlvmPreparationResult {
 
   // The LLVM module (references type_arena from hir_result)
   lowering::mir_to_llvm::LoweringResult llvm_result;
+
+  // Compiler observability output (e.g., specialization map dump).
+  // Separate from simulation output; routed to TestResult::compiler_output.
+  std::string compiler_output;
 };
 
 // Prepare LLVM IR from test case.

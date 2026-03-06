@@ -63,7 +63,7 @@ These must hold after migration. Each gets a CI/policy enforcement task.
 
 Staged transition. Each phase establishes new invariants while old paths coexist temporarily.
 
-**Stage 1: Identity** (Phase A) - Introduce `ModuleSpecId` and grouping. No runtime behavior change. Old per-instance pipeline continues unchanged. New grouping is observation-only.
+**Stage 1: Identity** (Phase A) - Complete. `ModuleSpecId` and `SpecializationMap` introduced. Grouping is observation-only. Old per-instance pipeline unchanged. Known gap: M2 (param classification misses type-level structural refs).
 
 **Stage 2: Specialization-scoped IR** (Phase B) - HIR/MIR lowered once per specialization. Old per-instance containers replaced. Assembly still fused. Codegen still design-wide. Temporary: codegen duplicates specialization MIR back into per-instance form for compatibility.
 
@@ -120,13 +120,13 @@ Single monotonic counter across entire design. All downstream tables use design-
 - `src/lyra/lowering/hir_to_mir/design_connections.cpp` - synthetic connection processes
 - `include/lyra/mir/design.hpp:83-85` - `alias_map` and `connection_processes` in Design
 
-**M2: No StructuralFingerprint**
+**M2: ParamRole classification misses type-level structural references**
 
-`ModuleSpecId` doesn't exist. `module_def_key` is `DefinitionSymbol*` pointer (slang-internal, not stable). No fingerprint captures structural parameter values.
+`ShapeParamCollector` walks the elaborated AST for `NamedValueExpression` references outside procedural contexts. However, slang resolves parameterized types during elaboration, so a parameter used in a type declaration (e.g., `bit [WIDTH-1:0] data`) is already baked into the resolved type and not visible as a `NamedValueExpression`. This causes params that affect structural shape (port widths, variable widths) to be misclassified as `kValueOnly` when the only reference is through a type expression.
 
-- `src/lyra/lowering/ast_to_hir/design.cpp:495-503` - assigns `module_def_key` from pointer
-- `include/lyra/hir/module.hpp:30` - `uint64_t module_def_key = 0`
-- `include/lyra/mir/design.hpp:99` - `module_def_keys` vector
+- `src/lyra/lowering/ast_to_hir/param_role.cpp:53-59` - visitor only sees `NamedValueExpression`, misses resolved types
+- Impact: Two instances with different `WIDTH` values may share a specialization when they should not
+- Fix: Walk type expressions or compare elaborated type structures across instances to detect structural variation
 
 **M3: Runtime metadata built during codegen**
 

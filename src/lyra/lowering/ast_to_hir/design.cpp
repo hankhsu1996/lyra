@@ -8,7 +8,6 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -23,6 +22,7 @@
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/module_identity.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
@@ -38,6 +38,7 @@
 #include "lyra/lowering/ast_to_hir/param_role.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
+#include "lyra/lowering/ast_to_hir/specialization.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 #include "lyra/mir/instance.hpp"
@@ -492,22 +493,15 @@ auto LowerDesign(
     elements.emplace_back(LowerPackage(*pkg, registrar, ctx));
   }
 
-  // Assign module_def_key from DefinitionSymbol* (cheap pre-filter for template
-  // grouping).
-  uint64_t next_def_key = 0;
-  std::unordered_map<const slang::ast::DefinitionSymbol*, uint64_t> def_keys;
-  for (const auto* instance : all_instances) {
-    const auto& def = instance->body.getDefinition();
-    auto [it, inserted] = def_keys.try_emplace(&def, next_def_key);
-    if (inserted) ++next_def_key;
-  }
+  // Build specialization map (assigns ModuleDefId + fingerprint per instance).
+  common::SpecializationMap spec_map =
+      BuildSpecializationMap(all_instances, param_roles);
 
   // Phase 1: Lower module bodies.
   // Port bindings are now handled at HIR->MIR level, not here.
-  for (const auto* instance : all_instances) {
-    auto mod = LowerModule(*instance, registrar, ctx);
-    const auto& def = instance->body.getDefinition();
-    mod.module_def_key = def_keys[&def];
+  for (size_t i = 0; i < all_instances.size(); ++i) {
+    auto mod = LowerModule(*all_instances[i], registrar, ctx);
+    mod.module_def_id = spec_map.spec_id_by_instance[i].def_id;
     elements.emplace_back(std::move(mod));
   }
 
@@ -526,6 +520,7 @@ auto LowerDesign(
   return DesignLoweringResult{
       .design = hir::Design{.elements = std::move(elements)},
       .binding_plan = std::move(binding_plan),
+      .specialization_map = std::move(spec_map),
       .instance_table = std::move(instance_table),
   };
 }

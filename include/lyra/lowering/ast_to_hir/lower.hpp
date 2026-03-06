@@ -7,6 +7,7 @@
 
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/module_identity.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -28,6 +29,7 @@ struct LoweringResult {
   std::unique_ptr<SourceManager> source_manager;
   std::unique_ptr<SourceMapper> source_mapper;
   DesignBindingPlan binding_plan;
+  common::SpecializationMap specialization_map;
   mir::InstanceTable instance_table;  // For %m support
   int8_t global_precision_power =
       -9;  // Finest timeprecision across all modules
