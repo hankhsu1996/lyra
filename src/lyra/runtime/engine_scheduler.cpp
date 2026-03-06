@@ -40,6 +40,10 @@ void ValidateSlotRootPointer(
 }  // namespace
 
 void Engine::ScheduleInitial(ProcessHandle handle) {
+  // Skip comb kernel processes - they are evaluated inline during flush,
+  // not through the normal scheduler activation path.
+  if (comb_kernel_indices_.contains(handle.process_id)) return;
+
   active_queue_.push_back(
       ScheduledEvent{
           .handle = handle,
@@ -346,21 +350,64 @@ void Engine::EvaluateAllConnections() {
   }
 }
 
+void Engine::InitCombKernels(
+    std::span<const uint32_t> words, CombFunc* processes, void** states) {
+  if (words.empty()) return;
+
+  // Word table format: [num_comb, (proc_idx, num_triggers, trigger_0, ...)*]
+  uint32_t pos = 0;
+  uint32_t num_comb = words[pos++];
+
+  for (uint32_t ki = 0; ki < num_comb; ++ki) {
+    if (pos + 2 > words.size()) {
+      throw common::InternalError(
+          "Engine::InitCombKernels", "word table truncated");
+    }
+    uint32_t proc_idx = words[pos++];
+    uint32_t num_triggers = words[pos++];
+    if (pos + num_triggers > words.size()) {
+      throw common::InternalError(
+          "Engine::InitCombKernels", "trigger list truncated");
+    }
+
+    auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
+    comb_kernels_.push_back(
+        CombKernel{
+            .func = processes[proc_idx],
+            .state = states[proc_idx],
+            .process_index = proc_idx,
+        });
+    comb_kernel_indices_.insert(proc_idx);
+
+    for (uint32_t ti = 0; ti < num_triggers; ++ti) {
+      uint32_t trigger_slot = words[pos++];
+      comb_trigger_map_[trigger_slot].push_back(comb_idx);
+    }
+  }
+}
+
+void Engine::SeedCombKernelDirtyMarks() {
+  for (const auto& [trigger_slot, _] : comb_trigger_map_) {
+    MarkSlotDirty(trigger_slot);
+  }
+}
+
 void Engine::FlushAndPropagateConnections() {
-  if (all_connections_.empty()) {
+  bool has_conns = !all_connections_.empty();
+  bool has_combs = !comb_kernels_.empty();
+  if (!has_conns && !has_combs) {
     FlushSignalUpdates();
     update_set_.ClearDelta();
     return;
   }
 
-  // Propagate connections until stable, then flush subscriptions.
-  // Connections must fire before subscription wakeup so that downstream
-  // processes observe the propagated values (e.g., x->a must complete
-  // before always_comb watching a is woken).
+  // Propagate connections and comb kernels until stable, then flush
+  // subscriptions. Connections and comb kernels must fire before subscription
+  // wakeup so that downstream processes observe the propagated values.
   //
   // The delta accumulates across iterations: MarkSlotDirty from connection
-  // writes appends to the same delta. We track how many delta entries we've
-  // already scanned to process only new additions each iteration.
+  // writes and comb kernel stores appends to the same delta. We track how
+  // many delta entries we've already scanned to process only new additions.
   constexpr uint32_t kMaxIterations = 100;
   uint32_t scanned = 0;
   auto* base = static_cast<uint8_t*>(design_state_base_);
@@ -368,30 +415,51 @@ void Engine::FlushAndPropagateConnections() {
     auto all_dirty = update_set_.DeltaDirtySlots();
     if (scanned >= all_dirty.size()) break;
 
-    bool any_conn_changed = false;
+    bool any_changed = false;
     auto new_dirty = all_dirty.subspan(scanned);
     scanned = static_cast<uint32_t>(all_dirty.size());
 
-    for (uint32_t slot_id : new_dirty) {
-      auto it = conn_trigger_map_.find(slot_id);
-      if (it == conn_trigger_map_.end()) continue;
-      auto [start, count] = it->second;
-      for (uint32_t ci = start; ci < start + count; ++ci) {
-        const auto& conn = all_connections_[ci];
-        auto* src = base + conn.src_byte_offset;
-        auto* dst = base + conn.dst_byte_offset;
-        if (std::memcmp(dst, src, conn.byte_size) != 0) {
-          std::memcpy(dst, src, conn.byte_size);
-          MarkSlotDirty(conn.dst_slot_id);
-          any_conn_changed = true;
+    // Phase 1: connections (pure memcpy, no side effects)
+    if (has_conns) {
+      for (uint32_t slot_id : new_dirty) {
+        auto it = conn_trigger_map_.find(slot_id);
+        if (it == conn_trigger_map_.end()) continue;
+        auto [start, count] = it->second;
+        for (uint32_t ci = start; ci < start + count; ++ci) {
+          const auto& conn = all_connections_[ci];
+          auto* src = base + conn.src_byte_offset;
+          auto* dst = base + conn.dst_byte_offset;
+          if (std::memcmp(dst, src, conn.byte_size) != 0) {
+            std::memcpy(dst, src, conn.byte_size);
+            MarkSlotDirty(conn.dst_slot_id);
+            any_changed = true;
+          }
         }
       }
     }
-    if (!any_conn_changed) break;
+
+    // Phase 2: comb kernels (call compiled functions directly)
+    if (has_combs) {
+      for (uint32_t slot_id : new_dirty) {
+        auto it = comb_trigger_map_.find(slot_id);
+        if (it == comb_trigger_map_.end()) continue;
+        for (uint32_t ki : it->second) {
+          const auto& ck = comb_kernels_[ki];
+          ck.func(ck.state, 0);
+        }
+      }
+      // Comb kernels may have produced new dirty marks via LyraStorePacked
+      auto updated_dirty = update_set_.DeltaDirtySlots();
+      if (updated_dirty.size() > scanned) {
+        any_changed = true;
+      }
+    }
+
+    if (!any_changed) break;
   }
 
   // Flush subscriptions with all accumulated dirty marks (process writes +
-  // connection propagation), then clear the delta.
+  // connection propagation + comb kernels), then clear the delta.
   FlushSignalUpdates();
   update_set_.ClearDelta();
 }

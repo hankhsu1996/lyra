@@ -1053,6 +1053,58 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
         context, slot_info, layout.design, mod.getDataLayout(),
         *input.type_arena);
 
+    // Build comb kernel word table.
+    // Format: [num_comb_kernels, (process_index, num_triggers, trigger_0,
+    // ...)*]
+    llvm::Value* comb_words_ptr =
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+    uint32_t comb_word_count = 0;
+    auto num_comb = static_cast<uint32_t>(layout.comb_kernel_entries.size());
+    if (num_comb > 0) {
+      // Build ProcessId -> module process index mapping
+      std::unordered_map<uint32_t, uint32_t> proc_id_to_module_idx;
+      for (uint32_t pi = 0; pi < num_regular_module; ++pi) {
+        auto proc_id = layout.process_ids[num_init + pi];
+        proc_id_to_module_idx[proc_id.value] = pi;
+      }
+
+      // Build word table
+      std::vector<uint32_t> comb_words;
+      comb_words.push_back(num_comb);
+      for (const auto& ck : layout.comb_kernel_entries) {
+        auto it = proc_id_to_module_idx.find(ck.process_id.value);
+        if (it == proc_id_to_module_idx.end()) {
+          throw common::InternalError(
+              "LowerMirToLlvm",
+              "comb kernel process not found in module process list");
+        }
+        comb_words.push_back(it->second);
+        comb_words.push_back(static_cast<uint32_t>(ck.trigger_slots.size()));
+        for (const auto& slot : ck.trigger_slots) {
+          comb_words.push_back(slot.value);
+        }
+      }
+      comb_word_count = static_cast<uint32_t>(comb_words.size());
+
+      // Emit as global constant
+      std::vector<llvm::Constant*> word_constants;
+      word_constants.reserve(comb_words.size());
+      for (uint32_t w : comb_words) {
+        word_constants.push_back(llvm::ConstantInt::get(i32_ty, w));
+      }
+      auto* comb_array_type = llvm::ArrayType::get(i32_ty, comb_word_count);
+      auto* comb_global = new llvm::GlobalVariable(
+          mod, comb_array_type, true, llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantArray::get(comb_array_type, word_constants),
+          "__lyra_comb_kernel_words");
+      comb_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      comb_words_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+          comb_array_type, comb_global,
+          llvm::ArrayRef<llvm::Constant*>{
+              llvm::ConstantInt::get(i32_ty, 0),
+              llvm::ConstantInt::get(i32_ty, 0)});
+    }
+
     // Call multi-process scheduler
     auto* conn_descs_arg = conn_desc_table_ptr != nullptr
                                ? conn_desc_table_ptr
@@ -1067,6 +1119,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
          llvm::ConstantInt::get(i32_ty, meta_count),
          llvm::ConstantInt::get(i32_ty, runtime::slot_meta_abi::kVersion),
          conn_descs_arg, llvm::ConstantInt::get(i32_ty, num_kernelized),
+         comb_words_ptr, llvm::ConstantInt::get(i32_ty, comb_word_count),
          llvm::ConstantInt::get(i32_ty, input.feature_flags)});
   }
 

@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/mutation_event.hpp"
@@ -273,14 +274,25 @@ class Engine {
   // Evaluate all connections once (used for initial value propagation).
   void EvaluateAllConnections();
 
+  // Initialize comb kernels from word table and process arrays.
+  // Parses trigger metadata, extracts func/state pointers, builds trigger map.
+  // func_type: void(*)(void* state, uint32_t resume_block)
+  using CombFunc = void (*)(void*, uint32_t);
+  void InitCombKernels(
+      std::span<const uint32_t> words, CombFunc* processes, void** states);
+
+  // Mark all comb kernel trigger slots dirty to ensure initial evaluation.
+  void SeedCombKernelDirtyMarks();
+
+  // Flush signal updates + evaluate triggered connections/comb kernels until
+  // convergence. Also used for initial value propagation before Run().
+  void FlushAndPropagateConnections();
+
  private:
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
   void ExecutePostponedRegion();
   void FlushDirtySlots();
-
-  // Flush signal updates + evaluate triggered connections until convergence.
-  void FlushAndPropagateConnections();
 
   // Subscription management
   void ClearProcessSubscriptions(ProcessHandle handle);
@@ -392,6 +404,19 @@ class Engine {
   // Connections are sorted by trigger_slot_id so each group is contiguous.
   absl::flat_hash_map<uint32_t, std::pair<uint32_t, uint32_t>>
       conn_trigger_map_;
+
+  // Comb kernel batch: pure combinational processes evaluated inline.
+  // Each kernel has a compiled function pointer and state pointer.
+  struct CombKernel {
+    CombFunc func;
+    void* state;
+    uint32_t process_index;  // Original index in processes array (for skip)
+  };
+  std::vector<CombKernel> comb_kernels_;
+  // Trigger map: trigger_slot_id -> list of comb kernel indices.
+  absl::flat_hash_map<uint32_t, std::vector<uint32_t>> comb_trigger_map_;
+  // Bitset of process indices that are comb kernels (skip in ScheduleInitial).
+  absl::flat_hash_set<uint32_t> comb_kernel_indices_;
 };
 
 }  // namespace lyra::runtime

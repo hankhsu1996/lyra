@@ -226,13 +226,14 @@ auto Context::GetLyraRunSimulation() -> llvm::Function* {
     //                        uint32_t num_slot_metas,
     //                        uint32_t slot_meta_version,
     //                        const void* conn_descs, uint32_t num_conn_descs,
-    //                        uint32_t feature_flags)
+    //                        const uint32_t* comb_words, uint32_t
+    //                        num_comb_words, uint32_t feature_flags)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
         {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-         i32_ty, ptr_ty, i32_ty, i32_ty},
+         i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty},
         false);
     lyra_run_simulation_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRunSimulation",
