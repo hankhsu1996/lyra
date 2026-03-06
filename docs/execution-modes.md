@@ -14,7 +14,7 @@ bundle directory with binary + shared runtime library.
 MIR -> LLVM IR -> object file -> link -> bundle/bin/<name>
 ```
 
-**JIT (hosted mode)** -- developer path, interactive iteration.
+**JIT (hosted mode)** -- fast iteration, interactive tooling, future tiered compilation.
 
 Compile to LLVM IR in-process, JIT-link, and call the entry point directly.
 No artifact on disk.
@@ -49,7 +49,7 @@ both modes equally. There is no AOT-only or JIT-only IR path.
 
 ```
 lyra run [files...]              # Execute (AOT, default)
-lyra run --backend=jit [files]   # Execute (JIT, dev-only)
+lyra run --backend=jit [files]   # Execute (JIT)
 lyra run --backend=mir [files]   # Execute (MIR interpreter)
 lyra compile [files...]          # Produce artifact only (no execution)
 ```
@@ -91,29 +91,12 @@ fs_base_dir resolution for file I/O (`$readmemh`, etc.):
 2. Bundle root derived from `argv[0]` (dirname of dirname of executable)
 3. Current working directory (fallback)
 
-## JIT: dev-only commitment
+## JIT future directions
 
-JIT is retained for interactive development, not as a production path.
+Both AOT and JIT are production modes. AOT is the default; JIT enables
+workflows that AOT cannot:
 
-**What dev-only means:**
-
-- Not in CI's primary gate (optional smoke test at most)
-- No performance guarantees
-- May support a feature subset
-- Primary use: fast iteration, debugging, future interactive tooling
-
-**What dev-only does not mean:**
-
-- Not deprecated -- JIT has genuine advantages for interactive workflows
-- Not frozen -- improvements that fall out of shared pipeline work are welcome
-- Not scheduled for removal -- removal is a separate future decision
-
-## Future directions (not current work)
-
-These are possible JIT evolutions, deferred until AOT readiness (M1+M2) is
-achieved. Listed for architectural awareness, not as commitments.
-
-- **On-demand compilation**: interpret or use bytecode by default, JIT-compile
+- **Tiered compilation**: interpret or use bytecode by default, JIT-compile
   hot processes when triggered
 - **REPL / interactive debug**: modify design, re-run to a specific time point
   without full recompilation

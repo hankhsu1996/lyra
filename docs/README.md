@@ -37,5 +37,4 @@ Start here for an overview of Lyra's design and constraints.
 
 - [limitations.md](limitations.md) - unsupported SystemVerilog features
 - [error-handling.md](error-handling.md) - error types and usage
-- [aot-readiness.md](aot-readiness.md) - AOT milestones and gates
 - [documentation-guidelines.md](documentation-guidelines.md) - documentation conventions

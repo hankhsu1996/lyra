@@ -25,7 +25,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/string-types.md`             | String type handling, slang interaction              |
 | `docs/error-handling.md`           | Error types, when to use each                        |
 | `docs/execution-modes.md`          | AOT vs JIT vs MIR, shared pipeline, CLI semantics    |
-| `docs/aot-readiness.md`            | AOT milestones, gates, and PR ordering               |
 | `docs/documentation-guidelines.md` | Documentation guidelines                             |
 
 **When writing or editing documentation, follow `docs/documentation-guidelines.md`.** Key rules: concise over complete, capture decisions not implementation, ASCII only, integrate don't append.
