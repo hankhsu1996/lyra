@@ -403,6 +403,22 @@ auto Context::GetLyraStorePacked() -> llvm::Function* {
   return lyra_store_packed_;
 }
 
+auto Context::GetLyraMarkDirty() -> llvm::Function* {
+  if (lyra_mark_dirty_ == nullptr) {
+    // void LyraMarkDirty(ptr engine, i32 signal_id,
+    //                    i32 dirty_off, i32 dirty_size)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty, i32_ty, i32_ty},
+        false);
+    lyra_mark_dirty_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraMarkDirty",
+        llvm_module_.get());
+  }
+  return lyra_mark_dirty_;
+}
+
 auto Context::GetLyraStoreString() -> llvm::Function* {
   if (lyra_store_string_ == nullptr) {
     // void LyraStoreString(ptr engine, ptr slot, ptr new_str, i32 signal_id)

@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <expected>
 
+#include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>
@@ -20,6 +21,91 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
+// Returns true if byte_size is a power of 2 and <= 16 (eligible for inline
+// compare+store instead of runtime LyraStorePacked call).
+auto IsInlineStoreSize(uint32_t byte_size) -> bool {
+  return byte_size > 0 && byte_size <= 16 && (byte_size & (byte_size - 1)) == 0;
+}
+
+// Emit inline compare+store+conditional dirty mark for small packed values.
+// Avoids the overhead of calling LyraStorePacked (memcmp + memcpy + call).
+void EmitInlineStore(
+    Context& ctx, llvm::Value* new_value, const WriteTarget& target,
+    uint32_t byte_size) {
+  auto& builder = ctx.GetBuilder();
+  auto& llvm_ctx = ctx.GetLlvmContext();
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  // Integer type matching the slot's byte size for byte-level comparison.
+  auto* cmp_type = llvm::Type::getIntNTy(llvm_ctx, byte_size * 8);
+
+  // Load old value as integer from slot.
+  auto* old_int = builder.CreateLoad(cmp_type, target.ptr, "old");
+
+  // Get new value as same-width integer for comparison + store.
+  llvm::Value* new_int = nullptr;
+  llvm::Type* value_type = new_value->getType();
+  if (value_type == cmp_type) {
+    new_int = new_value;
+  } else if (value_type->isIntegerTy()) {
+    new_int = builder.CreateZExt(new_value, cmp_type, "new.zext");
+  } else {
+    // Struct or other type: store to temp alloca, load back as integer.
+    auto* temp = builder.CreateAlloca(value_type, nullptr, "cmp_tmp");
+    builder.CreateStore(new_value, temp);
+    new_int = builder.CreateLoad(cmp_type, temp, "new.int");
+  }
+
+  // Store new value to slot (as integer, matching memcpy byte semantics).
+  builder.CreateStore(new_int, target.ptr);
+
+  // Compare and conditionally mark dirty (only if value changed AND engine
+  // is present -- engine_ptr is null during init processes that run before
+  // simulation).
+  auto* changed = builder.CreateICmpNE(old_int, new_int, "changed");
+  auto* engine_not_null = builder.CreateICmpNE(
+      ctx.GetEnginePointer(),
+      llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(llvm_ctx)),
+      "engine.nonnull");
+  auto* should_mark =
+      builder.CreateAnd(changed, engine_not_null, "should_mark");
+
+  auto* fn = builder.GetInsertBlock()->getParent();
+  auto* dirty_bb = llvm::BasicBlock::Create(llvm_ctx, "mark_dirty", fn);
+  auto* done_bb = llvm::BasicBlock::Create(llvm_ctx, "store_done", fn);
+
+  builder.CreateCondBr(should_mark, dirty_bb, done_bb);
+
+  builder.SetInsertPoint(dirty_bb);
+  builder.CreateCall(
+      ctx.GetLyraMarkDirty(),
+      {ctx.GetEnginePointer(), target.canonical_signal_id->Emit(builder),
+       llvm::ConstantInt::get(i32_ty, target.dirty_off),
+       llvm::ConstantInt::get(i32_ty, target.dirty_size)});
+  builder.CreateBr(done_bb);
+
+  builder.SetInsertPoint(done_bb);
+}
+
+// Emit fallback LyraStorePacked call for large or non-power-of-2 types.
+void EmitStorePackedCall(
+    Context& ctx, llvm::Value* new_value, const WriteTarget& target,
+    uint32_t byte_size) {
+  auto& builder = ctx.GetBuilder();
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
+
+  auto* temp =
+      builder.CreateAlloca(new_value->getType(), nullptr, "notify_tmp");
+  builder.CreateStore(new_value, temp);
+  builder.CreateCall(
+      ctx.GetLyraStorePacked(),
+      {ctx.GetEnginePointer(), target.ptr, temp,
+       llvm::ConstantInt::get(i32_ty, byte_size),
+       target.canonical_signal_id->Emit(builder),
+       llvm::ConstantInt::get(i32_ty, target.dirty_off),
+       llvm::ConstantInt::get(i32_ty, target.dirty_size)});
+}
+
 // Store to design slot with runtime notification.
 // Precondition: target.canonical_signal_id must have value.
 void StoreDesignWithNotify(
@@ -29,12 +115,8 @@ void StoreDesignWithNotify(
         "StoreDesignWithNotify", "called with non-design WriteTarget");
   }
 
-  auto& builder = ctx.GetBuilder();
-  auto& llvm_ctx = ctx.GetLlvmContext();
-
   llvm::Type* value_type = new_value->getType();
 
-  // Sanity check: packed stores should be integer or struct types, not pointers
   if (value_type->isPointerTy()) {
     throw common::InternalError(
         "StoreDesignWithNotify",
@@ -44,18 +126,12 @@ void StoreDesignWithNotify(
 
   auto byte_size = static_cast<uint32_t>(
       ctx.GetModule().getDataLayout().getTypeAllocSize(value_type));
-  // Store new value to a temp alloca (notify helper reads from pointer)
-  auto* temp = builder.CreateAlloca(value_type, nullptr, "notify_tmp");
-  builder.CreateStore(new_value, temp);
 
-  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  builder.CreateCall(
-      ctx.GetLyraStorePacked(),
-      {ctx.GetEnginePointer(), target.ptr, temp,
-       llvm::ConstantInt::get(i32_ty, byte_size),
-       target.canonical_signal_id->Emit(builder),
-       llvm::ConstantInt::get(i32_ty, target.dirty_off),
-       llvm::ConstantInt::get(i32_ty, target.dirty_size)});
+  if (IsInlineStoreSize(byte_size)) {
+    EmitInlineStore(ctx, new_value, target, byte_size);
+  } else {
+    EmitStorePackedCall(ctx, new_value, target, byte_size);
+  }
 }
 
 }  // namespace

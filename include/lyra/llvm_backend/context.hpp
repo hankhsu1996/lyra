@@ -106,6 +106,7 @@ class Context {
   [[nodiscard]] auto GetLyraAllocTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFreeTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStorePacked() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraMarkDirty() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNba() -> llvm::Function*;
   [[nodiscard]] auto GetLyraTerminate() -> llvm::Function*;
@@ -489,6 +490,7 @@ class Context {
   llvm::Function* lyra_alloc_triggers_ = nullptr;
   llvm::Function* lyra_free_triggers_ = nullptr;
   llvm::Function* lyra_store_packed_ = nullptr;
+  llvm::Function* lyra_mark_dirty_ = nullptr;
   llvm::Function* lyra_store_string_ = nullptr;
   llvm::Function* lyra_schedule_nba_ = nullptr;
   llvm::Function* lyra_terminate_ = nullptr;

@@ -528,6 +528,17 @@ extern "C" void LyraStorePacked(
   }
 }
 
+extern "C" void LyraMarkDirty(
+    void* engine_ptr, uint32_t signal_id, uint32_t dirty_off,
+    uint32_t dirty_size) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  if (dirty_size > 0) {
+    engine->MarkDirtyRange(signal_id, dirty_off, dirty_size);
+  } else {
+    engine->MarkSlotDirty(signal_id);
+  }
+}
+
 extern "C" void LyraStoreString(
     void* engine_ptr, void* slot_ptr, void* new_str, uint32_t signal_id) {
   auto** str_slot = static_cast<void**>(slot_ptr);

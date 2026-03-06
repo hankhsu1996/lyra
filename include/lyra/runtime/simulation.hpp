@@ -209,4 +209,15 @@ void LyraApply4StatePatches64(
 void LyraNotifyContainerMutation(
     void* engine_ptr, uint32_t signal_id, uint32_t kind, uint32_t off,
     uint32_t size);
+
+// Mark a design slot dirty (conditional on value change done by caller).
+// Thin wrapper for inline store codegen: the caller emits compare+store in
+// LLVM IR and calls this only when the value actually changed.
+// - engine_ptr: pointer to Engine (from state header)
+// - signal_id: slot ID for notification
+// - dirty_off: byte offset within slot for dirty range (0 = start)
+// - dirty_size: dirty range size; 0 = full slot, > 0 = precise byte range
+void LyraMarkDirty(
+    void* engine_ptr, uint32_t signal_id, uint32_t dirty_off,
+    uint32_t dirty_size);
 }
