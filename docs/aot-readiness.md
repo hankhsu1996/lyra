@@ -1,8 +1,7 @@
 # AOT Readiness
 
 Milestones and gates for making AOT the production execution path. Each
-milestone has a quantitative gate that can eventually become a CI check. Gaps
-are cross-referenced from [gaps.md](gaps.md) by section name.
+milestone has a quantitative gate that can eventually become a CI check.
 
 ## Milestones
 
@@ -44,12 +43,12 @@ medium-size designs (RISC-V CPU level). Init codegen is done (`main` 2579 ->
 **Gaps**:
 
 - Performance validation (P1)
-- Process duplication across instances (P2)
+- Specialization-based compilation (P2)
 
 **PR sequence**:
 
 1. Add IR size report to CI (observation only) -- establishes baseline
-2. Process function sharing -- reduces binary size for multi-instance designs
+2. Specialization-based compilation -- compile per specialization, not per instance
 
 ### M3: JIT dev-only
 
@@ -73,5 +72,5 @@ Priority is top-to-bottom. Each PR should be independently mergeable.
 2. Add `aot_dev_tests` suite
 3. Add IR size / compile-time report (observation mode)
 4. X/Z init observability
-5. Process function sharing
+5. Specialization-based compilation
 6. JIT dev-only documentation and CI changes

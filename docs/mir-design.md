@@ -13,6 +13,10 @@ SystemVerilog -> Slang AST -> HIR -> MIR -> LLVM IR
 HIR freezes _what the language means_.
 MIR freezes _how the language must be executed_, while remaining platform-independent.
 
+## Scope
+
+MIR is **specialization-scoped**. All Places reference specialization-local storage. No instance paths, no design-global slot IDs, no design-global allocation. See [compilation-model.md](compilation-model.md).
+
 Guiding question when designing MIR:
 
 > If a backend still needs to "understand SystemVerilog rules" to run correctly, then MIR has failed to fully fix the semantics.

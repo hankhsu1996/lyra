@@ -30,9 +30,10 @@ MIR lowering, not for running full designs.
 
 ## Shared pipeline
 
-Both AOT and JIT consume the same `LoweringResult` from `LowerMirToLlvm()`.
-The codegen shape contract (init patterns, process functions, runtime calls) is
-identical. The only difference is `MainAbi`:
+Both AOT and JIT consume compiled specialization artifacts. The codegen shape
+contract (init patterns, process functions, runtime calls) is identical across
+modes. LLVM compilation is per-specialization; assembly produces the design-level
+tables. The only mode difference is `MainAbi`:
 
 - `kArgvForwarding` (AOT): `main(argc, argv)` forwards CLI args as plusargs,
   resolves fs_base_dir from bundle root

@@ -8,6 +8,12 @@ This document defines the behavioral boundaries between pipeline stages. It is n
 
 If MIR is correct, the language semantics are correct. LLVM IR and other backends are translators, not interpreters of SystemVerilog.
 
+## Scope Authority
+
+**All IR is specialization-scoped.**
+
+HIR and MIR represent a single module specialization. No design-global slot IDs, no instance paths, no BFS instance ordering. See [compilation-model.md](compilation-model.md).
+
 ## Layer Responsibilities
 
 ### AST -> HIR
@@ -18,7 +24,7 @@ If MIR is correct, the language semantics are correct. LLVM IR and other backend
 | Type resolution        | Control flow lowering    |
 | Symbol binding         | Temporary introduction   |
 | Source span capture    | Basic block construction |
-| User error diagnostics |                          |
+| User error diagnostics | Design-global allocation |
 
 HIR should still "look like SV", just cleaned and normalized.
 
@@ -29,7 +35,7 @@ HIR should still "look like SV", just cleaned and normalized.
 | Execution order                  | Re-interpret syntax        |
 | Data flow (temporaries)          | Emit user diagnostics      |
 | Control flow (basic blocks)      | Platform-specific lowering |
-| Place/Value separation           |                            |
+| Place/Value separation           | Design-global allocation   |
 | System subroutine classification |                            |
 
 MIR defines how the program executes. All semantic questions are answered here.
@@ -45,6 +51,27 @@ MIR defines how the program executes. All semantic questions are answered here.
 
 LLVM IR is not where language semantics live.
 
+### Specialization -> Assembly
+
+| Must Do                                   | Must NOT Do                          |
+| ----------------------------------------- | ------------------------------------ |
+| Produce self-contained CompiledModuleSpec | Reference design-global slot IDs     |
+| Use specialization-constant offsets only  | Embed instance paths in code         |
+| Classify parameters (structural vs value) | Depend on instance count or ordering |
+| Export SpecLayout, metadata, process info | Require design-global knowledge      |
+
+The specialization boundary is the key architectural invariant. Violations here break parallelism and incrementality.
+
+### Assembly -> Runtime
+
+| Must Do                             | Must NOT Do                   |
+| ----------------------------------- | ----------------------------- |
+| Bind instances to specializations   | Recompile specialization code |
+| Compute design state allocation     | Re-run LLVM optimization      |
+| Build connectivity / trigger tables | Modify compiled kernels       |
+| Construct per-instance const blocks | Depend on design flattening   |
+| Produce instance path debug tables  |                               |
+
 ### Codegen -> Runtime
 
 | Must Do                             | Must NOT Do                        |
@@ -54,7 +81,7 @@ LLVM IR is not where language semantics live.
 | Reference slots as instance-local   | Assume global flat slot addressing |
 | Delegate dirty/event/NBA to runtime | Implement tracing or subscription  |
 
-Runtime is the sole owner of instance storage, dirty tracking, subscriptions, event queues, and NBA machinery. Slot identity is instance-local: the addressing contract is `(Instance, LocalSlot)` via `this_ptr` + relative offset. Global slot numbering is an implementation detail, not an architectural contract.
+Runtime is the sole owner of instance storage, dirty tracking, subscriptions, event queues, and NBA machinery. Slot identity is instance-local: the addressing contract is `this_base + specialization_constant_offset`.
 
 ## Information Flow
 
@@ -70,15 +97,17 @@ These must flow end-to-end through the pipeline:
 
 ## Forbidden Cross-Layer Behavior
 
-| Violation                  | Why It's Wrong                                |
-| -------------------------- | --------------------------------------------- |
-| LLVM fixes SV semantics    | Semantics must be fixed in MIR                |
-| MIR re-interprets syntax   | Syntax interpretation is HIR's job            |
-| HIR encodes execution      | Execution semantics belong in MIR             |
-| Post-HIR user diagnostics  | All user errors caught at AST -> HIR boundary |
-| Backend creates types      | Types are language-level, owned by HIR        |
-| Backend manages storage    | Instance storage is owned by runtime          |
-| Backend invents scheduling | Scheduling semantics belong in runtime        |
+| Violation                           | Why It's Wrong                                 |
+| ----------------------------------- | ---------------------------------------------- |
+| LLVM fixes SV semantics             | Semantics must be fixed in MIR                 |
+| MIR re-interprets syntax            | Syntax interpretation is HIR's job             |
+| HIR encodes execution               | Execution semantics belong in MIR              |
+| Post-HIR user diagnostics           | All user errors caught at AST -> HIR boundary  |
+| Backend creates types               | Types are language-level, owned by HIR         |
+| Backend manages storage             | Instance storage is owned by runtime           |
+| Backend invents scheduling          | Scheduling semantics belong in runtime         |
+| Design-global IDs in specialization | Breaks parallelism and incrementality          |
+| Instance paths in compiled code     | Instance binding is assembly-time, not compile |
 
 ## Error Boundaries
 
