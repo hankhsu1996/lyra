@@ -13,60 +13,68 @@ Examples: `lyra run`, `lyra check`, `lyra dump hir`
 Externally: one binary for usability.
 Internally: compiler logic is a library, orchestrator handles config, caching, and invocation.
 
-## Compilation Pipeline
+## Compilation Model
+
+Lyra uses specialization-based compilation. The compilation unit is a **module specialization** (`ModuleSpecId`), not an elaborated design. See [compilation-model.md](compilation-model.md) for the full data model.
 
 ```
-AST (slang) -> HIR -> MIR -> LLVM IR -> executable
+SV -> slang -> Elaboration Discovery
+                    |
+         Specialization Compilation  (parallel per spec)
+           AST -> HIR -> MIR -> LLVM
+                    |
+         Assembly / Link  (design-wide)
+                    |
+         Runtime Execution
 ```
 
-### Slang (Frontend)
+### Elaboration Discovery
 
-- Parses SystemVerilog, produces AST
+- slang parses SystemVerilog, produces AST
 - Performs legality checks, name resolution, type checking
-- Does NOT emit fully elaborated netlist (see Runtime Elaboration below)
+- Determines the instance graph, connectivity, and required specializations
+- Does NOT produce compiled artifacts
 
-### HIR (Language Semantic Layer)
+### Specialization Compilation (Parallel)
 
-- Decouples from slang AST
-- Preserves SystemVerilog semantics faithfully
-- Owns all data (strings, types) - no lifetime dependency on slang
-- Represents module templates, not elaborated instances
-- Primary boundary between slang and the rest of the compiler
+Each specialization is compiled independently:
 
-### MIR (Executable Semantic Layer)
+- **HIR**: Decouples from slang AST. Preserves SystemVerilog semantics. Specialization-scoped.
+- **MIR**: Place/Value model with basic blocks. Fixes all execution semantics. Specialization-scoped.
+- **LLVM IR**: Per-specialization LLVM module. Runtime library calls for simulation primitives.
 
-- Place/Value model (strict separation: Place for writes, Value for computation)
-- Control flow graphs with basic blocks and terminators
-- Suspension (Delay/Wait) as terminators, not statements
-- Target-independent; fixes all execution semantics
-- Primary input for LLVM backend and interpreter
+HIR and MIR are internal to specialization compilation. They contain no instance paths, no design-global slot IDs, and no design-global allocation. See [hir-design.md](hir-design.md) and [mir-design.md](mir-design.md).
 
-### LLVM IR (Machine Layer)
+### Assembly / Link
 
-- SSA form, three-address code
-- Runtime library calls for simulation primitives
-- Primary compilation path for performance
+Binds instances to compiled specializations and produces design-level tables:
 
-## Elaboration Model
+- Instance-to-specialization mapping
+- Design state allocation (per-instance segments from SpecLayout)
+- Connectivity tables (port wiring, connection descriptors)
+- Per-instance constant blocks (value-only parameters)
+- Debug tables (instance paths for `%m`)
 
-Slang performs full elaboration at compile time:
+Assembly does not recompile specialization code. See [compilation-model.md](compilation-model.md).
 
-- Slang validates semantics and elaborates hierarchy
-- HIR/MIR represent the elaborated design
-- Each instance has resolved parameters and types
+### Runtime Execution
+
+Event-driven simulation engine consuming linked design tables. See [runtime.md](runtime.md).
 
 ## Project Structure
 
 ```
 include/lyra/
   common/        # shared types, utilities, diagnostics
-  hir/           # language semantic IR (decoupled from slang)
-  mir/           # executable semantic IR (Place/Value, basic blocks)
-  llvm_backend/  # MIR -> LLVM IR
+  hir/           # language semantic IR (specialization-scoped)
+  mir/           # executable semantic IR (specialization-scoped)
+  llvm_backend/  # MIR -> LLVM IR (per-specialization)
   runtime/       # simulation runtime (scheduler, signals)
   lowering/      # AST->HIR, HIR->MIR lowering
   semantic/      # semantic utilities
 ```
+
+Headers in `include/lyra/`, implementations in `src/lyra/`.
 
 ### Key Components
 
@@ -87,7 +95,7 @@ Useful for validating MIR semantics without LLVM compilation overhead.
 1. Source files -> `SlangFrontend` -> AST
 2. AST -> `AstToHir` -> HIR (owns all data, slang can be released)
 3. HIR -> `HirToMir` -> MIR (executable semantics)
-4. MIR -> `MirToLlvm` -> LLVM IR -> executable
+4. MIR -> `MirToLlvm` -> LLVM IR -> executable (per specialization)
 
 Each stage is independent and testable. The HIR stage creates a clean boundary where slang resources can be released.
 

@@ -2,7 +2,9 @@
 
 How Lyra handles hierarchical module instantiation and port connections.
 
-Key design: **Transform once at AST->MIR, simplify downstream stages**.
+Port connections and hierarchical references are resolved at **assembly/link time**, not during specialization compilation. Compiled specializations address state via `this_base + offset`; assembly binds instances to concrete memory locations and builds connectivity tables.
+
+See [compilation-model.md](compilation-model.md) for the assembly model.
 
 ## Port Connections
 

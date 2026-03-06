@@ -12,6 +12,12 @@ HIR -> MIR -> LLVM IR -> executable
 
 MIR fixes all execution semantics. The LLVM backend only translates--it does not interpret SystemVerilog rules.
 
+## Scope
+
+LLVM compilation is **per-specialization**. Each module specialization produces its own LLVM module. There is no monolithic design-level LLVM module. This enables parallel compilation and incremental rebuilds. See [compilation-model.md](compilation-model.md).
+
+Specialization-local optimizations (kernelization, connection batching, topo sorting) are performed within the specialization boundary. Cross-module optimization is forbidden.
+
 ## Core Philosophy
 
 Three principles govern all lowering decisions:

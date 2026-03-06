@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | ---------------------------------- | ---------------------------------------------------- |
 | `docs/philosophy.md`               | North star, priorities, tradeoffs                    |
 | `docs/architecture-principles.md`  | Architectural north stars, structural rules          |
+| `docs/compilation-model.md`        | Specialization-based compilation data model          |
 | `docs/design-principles.md`        | Implementation guidelines, coding patterns           |
 | `docs/architecture.md`             | Component relationships, data flow                   |
 | `docs/pipeline-contract.md`        | Layer responsibilities, boundaries, correctness      |
@@ -17,8 +18,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/runtime.md`                  | Simulation engine, scheduling, backend-agnostic API  |
 | `docs/change-propagation.md`       | Dirty tracking, subscriptions, wakeup filtering      |
 | `docs/type-system.md`              | Type interning, type kinds, 4-state representation   |
-| `docs/parameterized-modules.md`    | Module parameters, template specialization, strings  |
-| `docs/module-hierarchy.md`         | Module hierarchy support (MIR, codegen, interpreter) |
+| `docs/parameterized-modules.md`    | Module parameters, specialization, param classes     |
+| `docs/module-hierarchy.md`         | Module hierarchy, port connections, assembly binding |
 | `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands          |
 | `docs/limitations.md`              | Unsupported SystemVerilog features                   |
 | `docs/string-types.md`             | String type handling, slang interaction              |
@@ -67,13 +68,20 @@ Lyra targets **IEEE 1800-2023** (SystemVerilog 2023). The slang frontend is conf
 
 ## Architecture
 
-SystemVerilog compiler:
+SystemVerilog compiler with specialization-based compilation:
 
 ```
-SV ---> AST ---> HIR ---> MIR ---> LLVM IR ---> Binary
-                  |
-                  +---> C++ (secondary)
+SV -> slang -> Elaboration Discovery
+                    |
+            Specialization Compilation (parallel per spec)
+              AST -> HIR -> MIR -> LLVM IR
+                    |
+            Assembly / Link (design-wide)
+                    |
+            Runtime Execution
 ```
+
+See `docs/compilation-model.md` for the data model.
 
 Headers in `include/lyra/`, implementations in `src/lyra/`.
 

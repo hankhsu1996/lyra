@@ -10,6 +10,10 @@ SystemVerilog -> Slang AST -> HIR -> MIR -> LLVM IR
 
 The frontend (slang) is used only during lowering, then discarded. HIR freezes _what the language means_, not _how it runs_.
 
+## Scope
+
+HIR is **specialization-scoped**. It represents a single module specialization, not an elaborated design. No instance paths, no design-global slot IDs, no design-global allocation. See [compilation-model.md](compilation-model.md).
+
 ### AST Boundary
 
 AST -> HIR lowering is the **error boundary** for user-facing diagnostics:
