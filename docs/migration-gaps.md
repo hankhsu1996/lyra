@@ -65,7 +65,7 @@ Staged transition. Each phase establishes new invariants while old paths coexist
 
 **Stage 1: Identity** (Phase A) - Complete. `ModuleSpecId` and `SpecializationMap` introduced. Grouping is observation-only. Old per-instance pipeline unchanged. Known gap: M2 (param classification misses type-level structural refs).
 
-**Stage 2: Specialization-scoped IR** (Phase B) - HIR/MIR lowered once per specialization. Old per-instance containers replaced. Assembly still fused. Codegen still design-wide. Temporary: codegen duplicates specialization MIR back into per-instance form for compatibility.
+**Stage 2: Specialization-ready ownership** (Phase B) - Introduce the ownership boundary required for specialization-scoped IR. Module behavioral body (processes, functions) moves to a dedicated `ModuleBody` artifact; instances become lightweight records that reference bodies. Early steps establish the ownership shape (1:1 bodies); later steps introduce actual sharing by `ModuleSpecId` and remove instance identity from behavioral IR. Assembly still fused. Codegen still design-wide.
 
 **Stage 3: Storage model** (Phase C) - SlotId becomes specialization-local. Assembly-time placement mapping introduced. Old design-global slot allocation removed.
 
@@ -75,22 +75,23 @@ Staged transition. Each phase establishes new invariants while old paths coexist
 
 **Stage 6: Acceleration** (Phase F) - Parallel compilation, caching, incremental. Pure wins from clean architecture.
 
-**Allowed during transition**: Dual containers (old per-instance + new per-spec) in intermediate stages. Temporary compatibility adapters that expand specialization artifacts back to per-instance form.
+**Allowed during transition**: Compatibility adapters that reconstruct per-instance views from specialization artifacts for downstream consumers. Design-global slot IDs in specialization process bodies (normalization is a later concern).
 
-**Forbidden immediately**: New code that adds design-global dependencies to specialization artifacts. New code that passes `mir::Design` to specialization-local functions.
+**Forbidden immediately**: New code that adds design-global dependencies to specialization artifacts. New code that passes `mir::Design` to specialization-local functions. New code that makes instances own behavioral IR.
 
 ## Gap Inventory
 
 ### Blockers
 
-**B1: HIR/MIR are per-instance, not per-specialization**
+**B1: MIR behavioral IR ownership is per-instance instead of per-specialization** (partially addressed)
 
-Each elaborated instance gets its own `hir::Module` and `mir::Module`. Two instances of the same module with identical structural params produce duplicate IR.
+MIR ownership split done: `mir::ModuleBody` owns processes/functions, `mir::Module` is an instance-side record with `body_id`. Bodies are still 1:1 with instances (no sharing yet). HIR still per-instance.
 
-- `src/lyra/lowering/ast_to_hir/design.cpp` - `LowerDesign()` creates one `hir::Module` per instance
-- `src/lyra/lowering/hir_to_mir/design_lower.cpp:33` - `LowerDesign()` creates one `mir::Module` per instance
-- `include/lyra/hir/design.hpp` - `Design::elements` parallel to elaboration order
-- `include/lyra/mir/design.hpp:56` - `Design::elements` parallel to elaboration order
+Remaining:
+
+- `src/lyra/lowering/ast_to_hir/design.cpp:502-506` - `LowerDesign()` creates one `hir::Module` per instance
+- `include/lyra/hir/design.hpp` - `Design::elements` parallel to elaboration order, each element owns behavioral content
+- `include/lyra/mir/routine.hpp:28` - `mir::Process::owner_instance_id` still embeds instance identity in behavioral IR
 
 **B2: SlotId allocation is design-global**
 
@@ -156,7 +157,7 @@ Slot meta, process meta, connection descriptors, comb kernels, instance paths al
 
 **m2: Instance paths baked into codegen** - `include/lyra/mir/instance.hpp:10-32`, `src/lyra/llvm_backend/lower.cpp:1265-1292`.
 
-**m3: Process owner_instance_id in MIR** - `include/lyra/mir/routine.hpp:28`. MIR should not know about instances.
+**m3: Process owner_instance_id in MIR** - `include/lyra/mir/routine.hpp:28`. Instance identity in behavioral IR prevents specialization ownership. Addressed by B4.
 
 **m4: ParamRole uses slang pointer as grouping key** - `src/lyra/lowering/ast_to_hir/param_role.cpp:72-77`.
 
@@ -208,47 +209,54 @@ Each task has: goal, areas, acceptance criteria, dependencies. Tasks are indepen
 - Dependencies: A3
 - Invariant: Value-only params do not affect specialization identity.
 
-### Phase B: Specialization-scoped IR containers
+### Phase B: Specialization-owned behavioral IR
 
-**B1: Introduce specialization-indexed HIR container**
+The goal of Phase B is to establish the ownership boundary required for specialization-scoped IR. Module behavioral IR (processes, functions) moves to a dedicated body artifact; instances become lightweight records that reference bodies. Early steps establish the shape with 1:1 mapping; later steps introduce actual sharing by `ModuleSpecId` and remove instance identity from behavioral IR.
 
-- Goal: New container that holds one `hir::Module` per `ModuleSpecId`, alongside existing per-instance container
-- Areas: `include/lyra/hir/design.hpp`, `src/lyra/lowering/ast_to_hir/design.cpp`
-- Acceptance: `hir::Design` has a spec-indexed container. Old per-instance container still exists (dual-path). Test: design with N instances and K specs has exactly K entries in spec container.
-- Dependencies: A3
-- Invariant: Spec container has no duplicate modules for same `ModuleSpecId`.
+**B1: Introduce specialization-ready MIR body artifact** (done)
 
-**B2: Lower HIR once per specialization**
+- Goal: First-class `mir::ModuleBody` type that owns behavioral IR (processes, functions). Purely behavioral --no instance identity, no storage shape, no placement metadata. This is the seed of specialization-owned MIR; actual sharing comes in B3.
+- Areas: New `include/lyra/mir/module_body.hpp`, `include/lyra/mir/module.hpp`, `include/lyra/mir/design.hpp`, all MIR consumers
+- Acceptance: `mir::ModuleBody` type exists with `processes` and `functions` only. `mir::Module` becomes instance-side record with `instance_sym` and `body_id`. `mir::Design` gains `module_bodies` vector. `LowerModule` returns `ModuleBody`. All consumers access behavioral IR through `GetModuleBody()`. Bodies are 1:1 with instances (no sharing yet).
+- Dependencies: None (ownership-only change, no grouping logic needed)
+- Invariant: `ModuleBody` contains no instance-specific fields, no storage descriptors, no placement data. `mir::Module` does not own behavioral IR.
 
-- Goal: AST->HIR lowering runs once per `ModuleSpecId`, not per instance
-- Areas: `src/lyra/lowering/ast_to_hir/design.cpp`, `src/lyra/lowering/ast_to_hir/module.cpp`
-- Acceptance: Lowering consumes specialization input (not "pick an arbitrary instance"). Representative instance selection must be deterministic. Other instances reference the same HIR module. Old per-instance path removed. Test: N identical instances produce 1 HIR lowering call.
+**B2: (Absorbed into B1)**
+
+B1 now covers both the body artifact and the instance record conversion as a single atomic change. `mir::Module` is `{instance_sym, body_id}` --no additional instance-side fields until truly needed by later phases.
+
+**B3: Lower MIR body once per specialization group**
+
+- Goal: HIR->MIR module lowering produces one `ModuleBody` per `ModuleSpecId`. Multiple instance records reference the same body. `SpecializationMap` drives the lowering loop.
+- Areas: `src/lyra/lowering/hir_to_mir/design_lower.cpp`, `src/lyra/lowering/hir_to_mir/module.cpp`, `include/lyra/lowering/hir_to_mir/lower.hpp`
+- Acceptance: `LoweringInput` gains `const SpecializationMap*`. `LowerDesign` iterates specialization groups, lowering module body once per group. Instance records created for each instance referencing the shared body. Test: design with N instances and K specs produces exactly K `LowerModule` calls and K `ModuleBody` entries.
+- Dependencies: B1, A3
+- Invariant: Module behavioral lowering runs once per specialization, not per instance.
+
+**B4: Remove owner_instance_id from MIR Process**
+
+- Goal: `owner_instance_id` on `mir::Process` is instance metadata embedded in behavioral IR. Remove it so processes in a shared `ModuleBody` carry no instance identity. Instance-to-process binding is expressed through the instance record's `body_id` + design walk context.
+- Areas: `include/lyra/mir/routine.hpp`, `src/lyra/lowering/hir_to_mir/module.cpp`, codegen sites that read `owner_instance_id`
+- Acceptance: `mir::Process` has no `owner_instance_id`. Codegen retrieves instance identity from the design walk context (instance record), not from the process. Test: `mir::Process` struct has no instance-specific fields.
+- Dependencies: B3 (sharing must exist before instance identity can be removed from processes)
+- Invariant: No instance identity in specialization-owned MIR.
+- Note: `VerifyLoweredMir` currently derives module labeling from `process.owner_instance_id` --this must be refactored to use instance record context.
+
+**B5: Codegen compatibility adapter**
+
+- Goal: Existing design-wide codegen continues to work by reconstructing per-instance process views from specialization bodies + instance records. Temporary bridge until Phase E.
+- Areas: `src/lyra/llvm_backend/lower.cpp`, `src/lyra/llvm_backend/layout/layout.cpp`
+- Acceptance: All existing tests pass. Codegen iterates instance records, looks up shared `ModuleBody`, and provides instance_id from the record. `BuildModuleVariants` continues to work on the reconstructed view. Test: no behavioral change in output.
+- Dependencies: B3, B4
+- Invariant: No new design-global dependencies added. Adapter is clearly marked as transitional.
+
+**B6: Propagate ownership to HIR**
+
+- Goal: Same ownership split at HIR level. `hir::ModuleBody` owned by specialization, `hir::Module` becomes instance record.
+- Areas: `include/lyra/hir/module.hpp`, `include/lyra/hir/design.hpp`, `src/lyra/lowering/ast_to_hir/design.cpp`
+- Acceptance: AST->HIR lowering produces one `hir::ModuleBody` per specialization group. Instance records reference shared bodies. Test: K specs produce K HIR body lowering calls.
 - Dependencies: B1
-- Invariant: HIR is specialization-scoped. No instance-coupled assumptions in the lowering path.
-
-**B3: Introduce specialization-indexed MIR container**
-
-- Goal: MIR container holds one `mir::Module` per `ModuleSpecId`
-- Areas: `include/lyra/mir/design.hpp`, `src/lyra/lowering/hir_to_mir/design_lower.cpp`
-- Acceptance: `mir::Design` has spec-indexed modules. Old per-instance MIR still exists as compatibility adapter. Test: K specializations produce K MIR modules.
-- Dependencies: B2
-- Invariant: MIR modules are specialization-scoped.
-
-**B4: Lower MIR once per specialization**
-
-- Goal: HIR->MIR lowering runs once per `ModuleSpecId`
-- Areas: `src/lyra/lowering/hir_to_mir/design_lower.cpp`, `src/lyra/lowering/hir_to_mir/module.cpp`
-- Acceptance: Lowering consumes specialization HIR, not arbitrary instance. Representative selection deterministic. Old per-instance MIR path removed. Test: identical instances produce 1 MIR lowering call.
-- Dependencies: B3
-- Invariant: MIR lowering is specialization-scoped. No instance-coupled assumptions.
-
-**B5: Remove owner_instance_id from MIR Process**
-
-- Goal: MIR processes don't know which instance they belong to
-- Areas: `include/lyra/mir/routine.hpp`, codegen compatibility adapter
-- Acceptance: `owner_instance_id` removed from `mir::Process`. Instance binding deferred to assembly. Test: MIR Process struct has no instance-specific fields.
-- Dependencies: B4
-- Invariant: No instance identity in specialization MIR.
+- Invariant: HIR behavioral ownership follows the same body/instance split as MIR.
 
 ### Phase C: Specialization-local storage model
 
@@ -338,9 +346,9 @@ Each task has: goal, areas, acceptance criteria, dependencies. Tasks are indepen
 
 **E4: Delete compatibility adapters**
 
-- Goal: Remove temporary dual-container support and per-instance expansion layers
-- Areas: `include/lyra/hir/design.hpp`, `include/lyra/mir/design.hpp`, any compatibility shims added during Phase B
-- Acceptance: No dual-path containers remain. No compatibility lowering path remains. No temporary expansion from specialization to per-instance form. Test: all tests pass with only specialization-scoped containers.
+- Goal: Remove transitional codegen adapters from Phase B5
+- Areas: `include/lyra/mir/design.hpp`, `src/lyra/llvm_backend/lower.cpp`, any compatibility shims added during Phase B
+- Acceptance: No per-instance reconstruction. No compatibility adapters remain. Codegen operates natively on `ModuleBody` + instance records. Test: all tests pass with only specialization-owned path.
 - Dependencies: E3
 - Invariant: Single clean path. No legacy per-instance artifacts.
 
@@ -366,9 +374,9 @@ Each task has: goal, areas, acceptance criteria, dependencies. Tasks are indepen
 
 Enforcement tasks to add during migration. Each prevents regression.
 
-**G1: Policy check - no design-global IDs in specialization MIR**
+**G1: Policy check - no instance identity in specialization-owned MIR**
 
-- After Phase B: Assert `mir::Process` has no `owner_instance_id`. Assert specialization MIR `SlotId` values are 0-based.
+- After Phase B: Assert `mir::Process` has no `owner_instance_id`. Assert `mir::ModuleBody` has no instance-specific fields. Assert instance records do not own processes or functions.
 - Tool: `tools/policy/check_specialization_scope.py` or compile-time static assertion.
 
 **G2: Policy check - specialization codegen API has no design input**
@@ -415,3 +423,5 @@ Key consequences: unpacked container sizes are no longer structural specializati
 4. **Container descriptor format**: How should SpecLayout represent container regions? Options include inline descriptor structs, a separate container metadata table, or a hybrid.
 
 5. **MIR interpreter alignment**: Debug-only. Migrate in lockstep or defer?
+
+6. **Specialization body slot numbering**: During transition, `ModuleBody` processes reference design-global slot IDs (from the instance whose elaboration was used for lowering). Slot normalization to spec-local (0-based) happens in Phase C. `ModuleBody` intentionally has no slot metadata --storage shape is a Phase C concern. The instance record or a separate assembly artifact should provide the slot base for rebasing.

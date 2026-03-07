@@ -16,7 +16,7 @@
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/module.hpp"
+#include "lyra/mir/module_body.hpp"
 #include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -24,9 +24,8 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerModule(
     const hir::Module& module, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map,
-    const DesignDeclarations& decls) -> Result<mir::Module> {
-  mir::Module result;
-  result.instance_sym = module.symbol;
+    const DesignDeclarations& decls) -> Result<mir::ModuleBody> {
+  mir::ModuleBody result;
 
   // Phase 1: Pre-allocate mir::FunctionIds and build symbol map
   // Start with design-wide functions (package functions) so module code can

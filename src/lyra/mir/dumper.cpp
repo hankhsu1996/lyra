@@ -194,21 +194,26 @@ void Dumper::Dump(const Design& design) {
   *out_ << "Design {\n";
   Indent();
   for (const auto& element : design.elements) {
-    std::visit([this](const auto& elem) { Dump(elem); }, element);
+    std::visit(
+        common::Overloaded{
+            [&](const Module& mod) { Dump(mod, GetModuleBody(design, mod)); },
+            [&](const Package& pkg) { Dump(pkg); },
+        },
+        element);
   }
   Dedent();
   *out_ << "}\n";
 }
 
-void Dumper::Dump(const Module& module) {
+void Dumper::Dump(const Module& /*module*/, const ModuleBody& body) {
   PrintIndent();
   *out_ << "Module {\n";
   Indent();
 
-  for (ProcessId id : module.processes) {
+  for (ProcessId id : body.processes) {
     Dump(id);
   }
-  for (FunctionId id : module.functions) {
+  for (FunctionId id : body.functions) {
     Dump(id);
   }
 

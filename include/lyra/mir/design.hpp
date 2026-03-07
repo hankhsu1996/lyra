@@ -13,6 +13,7 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instance.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/module_body.hpp"
 #include "lyra/mir/package.hpp"
 
 namespace lyra::mir {
@@ -56,6 +57,7 @@ struct PortConnection {
 
 struct Design {
   std::vector<DesignElement> elements;
+  std::vector<ModuleBody> module_bodies;
   size_t num_design_slots = 0;
   // Slot descriptors: indexed by design slot ID, contains type and kind for
   // each slot. Ordering is ABI: packages first (in element order), then all
@@ -103,5 +105,10 @@ struct Design {
   // instance_param_inits[module_idx] = entries for that instance.
   std::vector<std::vector<ParamInitEntry>> instance_param_inits;
 };
+
+inline auto GetModuleBody(const Design& design, const Module& mod)
+    -> const ModuleBody& {
+  return design.module_bodies.at(mod.body_id.value);
+}
 
 }  // namespace lyra::mir

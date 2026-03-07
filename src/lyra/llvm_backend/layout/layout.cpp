@@ -1282,12 +1282,13 @@ void BuildModuleVariants(
   for (const auto& element : design.elements) {
     if (!std::holds_alternative<mir::Module>(element)) continue;
     const auto& mir_module = std::get<mir::Module>(element);
+    const auto& body = mir::GetModuleBody(design, mir_module);
     uint32_t slot_begin = design.instance_slot_ranges[module_idx].slot_begin;
     uint32_t slot_count = design.instance_slot_ranges[module_idx].slot_count;
     common::ModuleDefId def_id = design.module_def_ids[module_idx];
 
     uint32_t local_idx = 0;
-    for (mir::ProcessId proc_id : mir_module.processes) {
+    for (mir::ProcessId proc_id : body.processes) {
       const auto& process = arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) {
         ++local_idx;
@@ -1310,7 +1311,7 @@ void BuildModuleVariants(
               .instance_id = process.owner_instance_id,
               .process_ids_index = pid_it->second,
               .module_idx = ModuleIndex{module_idx},
-              .module_functions = &mir_module.functions,
+              .module_functions = &body.functions,
           });
       ++local_idx;
     }
@@ -1478,10 +1479,11 @@ void BuildModuleVariants(
   for (const auto& element : design.elements) {
     if (!std::holds_alternative<mir::Module>(element)) continue;
     const auto& mir_module = std::get<mir::Module>(element);
+    const auto& body = mir::GetModuleBody(design, mir_module);
 
     VariantKey vkey;
     uint32_t local_idx = 0;
-    for (mir::ProcessId proc_id : mir_module.processes) {
+    for (mir::ProcessId proc_id : body.processes) {
       const auto& process = arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) {
         ++local_idx;
@@ -1644,7 +1646,8 @@ auto BuildLayout(
       continue;
     }
     const auto& mir_module = std::get<mir::Module>(element);
-    for (mir::ProcessId proc_id : mir_module.processes) {
+    const auto& body = mir::GetModuleBody(design, mir_module);
+    for (mir::ProcessId proc_id : body.processes) {
       const auto& process = arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
 
