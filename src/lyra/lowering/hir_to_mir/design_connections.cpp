@@ -30,13 +30,15 @@ namespace lyra::lowering::hir_to_mir {
 auto MakeDesignContext(
     const LoweringInput& input, mir::Arena& mir_arena,
     const DesignDeclarations& decls) -> Context {
+  // Connection processes are design-level: they only see design-global places.
+  // No body_places -- connections operate across instances.
   return Context{
       .mir_arena = &mir_arena,
       .hir_arena = input.hir_arena,
       .type_arena = input.type_arena,
       .constant_arena = input.constant_arena,
       .symbol_table = input.symbol_table,
-      .module_places = &decls.design_places,
+      .design_places = &decls.design_places,
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
@@ -148,9 +150,9 @@ auto ApplyDriveChildToParent(
     return std::unexpected(parent_lv.error());
   }
 
-  // Validate parent place resolves to kDesign (may have projections)
+  // Validate parent place resolves to kDesignGlobal (may have projections)
   const mir::Place& parent_place = mir_arena[*parent_lv];
-  if (parent_place.root.kind != mir::PlaceRoot::Kind::kDesign) {
+  if (parent_place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
     throw common::InternalError(
         "ApplyDriveChildToParent", "output target must be a design slot");
   }
@@ -194,7 +196,7 @@ auto ApplyAlias(
 
   // Validate child place is simple design slot
   const mir::Place& child = mir_arena[child_place];
-  if (child.root.kind != mir::PlaceRoot::Kind::kDesign) {
+  if (child.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
     throw common::InternalError(
         "ApplyAlias", "alias child must be design slot");
   }
@@ -205,9 +207,9 @@ auto ApplyAlias(
 
   mir::SlotId child_slot{static_cast<uint32_t>(child.root.id)};
 
-  // Validate parent place resolves to kDesign (may have projections)
+  // Validate parent place resolves to kDesignGlobal (may have projections)
   const mir::Place& parent_place = mir_arena[*parent_lv];
-  if (parent_place.root.kind != mir::PlaceRoot::Kind::kDesign) {
+  if (parent_place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
     throw common::InternalError(
         "ApplyAlias", "alias target must be a design slot");
   }

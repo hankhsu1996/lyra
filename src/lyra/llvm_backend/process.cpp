@@ -481,7 +481,9 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
 
   const auto& arena = context.GetMirArena();
   const auto& place = arena[*trigger.observed_place];
-  TypeId root_type = context.GetMirDesign().slots[trigger.signal.value].type;
+  // Resolve signal to design-global slot id for type lookup
+  uint32_t global_signal_id = context.ResolveDesignGlobalSlotId(trigger.signal);
+  TypeId root_type = context.GetMirDesign().slots[global_signal_id].type;
 
   auto resolver =
       [&context](const mir::Operand& op) -> std::optional<uint64_t> {
@@ -707,7 +709,9 @@ void EmitDynamicContainerTarget(
   }
 
   // Local-index path: load container handle from slot in DesignState.
-  uint32_t field_index = context.GetDesignFieldIndex(trigger.signal);
+  // Resolve signal to design-global slot for field index lookup
+  uint32_t ct_global_id = context.ResolveDesignGlobalSlotId(trigger.signal);
+  uint32_t field_index = context.GetDesignFieldIndex(mir::SlotId{ct_global_id});
   auto* slot_ptr = builder.CreateStructGEP(
       context.GetDesignStateType(), context.GetDesignPointer(), field_index,
       "ct.slot_ptr");
@@ -768,16 +772,8 @@ void FillTriggerArray(
 
     // Write signal_id (field 0)
     auto* signal_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 0);
-    if (context.IsTemplateProcess()) {
-      uint32_t rel_signal =
-          triggers[i].signal.value - context.GetTemplateBaseSlotId();
-      auto* abs_signal = builder.CreateAdd(
-          context.GetSignalIdOffset(), builder.getInt32(rel_signal));
-      builder.CreateStore(abs_signal, signal_ptr);
-    } else {
-      builder.CreateStore(
-          llvm::ConstantInt::get(i32_ty, triggers[i].signal.value), signal_ptr);
-    }
+    auto signal_expr = context.EmitSignalId(triggers[i].signal);
+    builder.CreateStore(signal_expr.Emit(builder), signal_ptr);
 
     // Write edge (field 1)
     auto* edge_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 1);
@@ -947,12 +943,19 @@ auto EmitLateBoundData(
     builder.CreateStore(
         llvm::ConstantInt::get(i32_ty, container_elem_stride), f8);
 
-    // Fill plan ops.
+    // Fill plan ops (resolve scoped slot IDs to design-global).
     if (plan_ops_alloca != nullptr) {
       auto* plan_array_type =
           llvm::ArrayType::get(plan_op_type, total_plan_ops);
       for (uint32_t p = 0; p < lb.plan.size(); ++p) {
-        const auto& op = lb.plan[p];
+        const auto& scoped_op = lb.plan[p];
+        auto op = scoped_op.op;
+        // Resolve module-local slot IDs to design-global at codegen time.
+        if (op.kind == runtime::IndexPlanOp::Kind::kReadSlot &&
+            scoped_op.slot_scope == mir::ScopedSlotRef::Scope::kModuleLocal) {
+          op.slot_id = context.ResolveDesignGlobalSlotId(
+              mir::ScopedSlotRef{scoped_op.slot_scope, op.slot_id});
+        }
         auto* op_ptr = builder.CreateConstGEP2_32(
             plan_array_type, plan_ops_alloca, 0, plan_offset + p);
 
@@ -980,14 +983,16 @@ auto EmitLateBoundData(
       }
     }
 
-    // Fill dep slots.
+    // Fill dep slots (resolve scoped refs to design-global).
     if (dep_slots_alloca != nullptr) {
       auto* dep_array_type = llvm::ArrayType::get(i32_ty, total_dep_slots);
       for (uint32_t d = 0; d < lb.dep_slots.size(); ++d) {
+        const auto& ref = lb.dep_slots[d];
+        uint32_t global_id = context.ResolveDesignGlobalSlotId(ref);
         auto* slot_ptr = builder.CreateConstGEP2_32(
             dep_array_type, dep_slots_alloca, 0, dep_offset + d);
         builder.CreateStore(
-            llvm::ConstantInt::get(i32_ty, lb.dep_slots[d].value), slot_ptr);
+            llvm::ConstantInt::get(i32_ty, global_id), slot_ptr);
       }
     }
 

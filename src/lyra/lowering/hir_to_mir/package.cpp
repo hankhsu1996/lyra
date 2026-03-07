@@ -27,7 +27,7 @@ auto LowerPackage(
 
   // Lower function bodies (IDs were pre-allocated in CollectDeclarations)
   DeclView decl_view{
-      .places = &decls.design_places,
+      .design_places = &decls.design_places,
       .functions = &decls.functions,
       .slots = &decls.slots};
   for (hir::FunctionId hir_func_id : package.functions) {

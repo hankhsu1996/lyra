@@ -877,7 +877,8 @@ auto CollectFrameRoots(
   std::unordered_map<PlaceRootKey, TypeId, PlaceRootKeyHash> seen;
   for (mir::PlaceId place_id : all_places) {
     const auto& place = arena[place_id];
-    if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
+    if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
+        place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
       continue;
     }
     // Void-typed places (e.g. targets of .delete()) never need storage
@@ -927,7 +928,7 @@ auto TryKernelizeConnection(
 
   // Dest must be a design slot (PlaceRoot::kDesign, no projections)
   const auto& dest_place = arena[assign->dest];
-  if (dest_place.root.kind != mir::PlaceRoot::Kind::kDesign) {
+  if (dest_place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
     return std::nullopt;
   }
   if (!dest_place.projections.empty()) {
@@ -948,7 +949,7 @@ auto TryKernelizeConnection(
   // Source must be a design slot (no projections)
   auto src_place_id = std::get<mir::PlaceId>(rhs_operand->payload);
   const auto& src_place = arena[src_place_id];
-  if (src_place.root.kind != mir::PlaceRoot::Kind::kDesign) {
+  if (src_place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
     return std::nullopt;
   }
   if (!src_place.projections.empty()) {
@@ -971,11 +972,17 @@ auto TryKernelizeConnection(
     return std::nullopt;
   }
 
+  // Connection processes operate on design-global storage only.
+  if (trigger.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
+    throw common::InternalError(
+        "TryKernelizeConnection", "connection trigger must be design-global");
+  }
+
   return ConnectionKernelEntry{
       .process_id = {},  // Set by caller
       .src_slot = mir::SlotId{static_cast<uint32_t>(src_place.root.id)},
       .dst_slot = mir::SlotId{static_cast<uint32_t>(dest_place.root.id)},
-      .trigger_slot = trigger.signal,
+      .trigger_slot = mir::SlotId{trigger.signal.id},
       .trigger_edge = trigger.edge,
       .trigger_observed_place = trigger.observed_place,
   };
@@ -1021,10 +1028,19 @@ auto IsTerminatorPureCF(const mir::Terminator& term) -> bool {
       term.data);
 }
 
+// Centralized helper: resolve a SignalRef to design-global slot ID.
+auto ResolveSignalToGlobalSlot(const mir::SignalRef& signal, uint32_t slot_base)
+    -> uint32_t {
+  return (signal.scope == mir::SignalRef::Scope::kModuleLocal)
+             ? slot_base + signal.id
+             : signal.id;
+}
+
 // Check if a process can be batched as a comb kernel.
 // Criteria: kLooping, all statements pure, all terminators are pure CF or Wait,
 // exactly one Wait terminator with kAnyChange triggers and no late-bound.
-auto TryKernelizeComb(const mir::Process& process, const mir::Arena& arena)
+auto TryKernelizeComb(
+    const mir::Process& process, const mir::Arena& arena, uint32_t slot_base)
     -> std::optional<CombKernelEntry> {
   if (process.kind != mir::ProcessKind::kLooping) return std::nullopt;
 
@@ -1067,7 +1083,8 @@ auto TryKernelizeComb(const mir::Process& process, const mir::Arena& arena)
   for (const auto& trigger : wait_term->triggers) {
     if (trigger.edge != common::EdgeKind::kAnyChange) return std::nullopt;
     if (trigger.late_bound.has_value()) return std::nullopt;
-    trigger_slots.push_back(trigger.signal);
+    trigger_slots.push_back(
+        mir::SlotId{ResolveSignalToGlobalSlot(trigger.signal, slot_base)});
   }
 
   if (trigger_slots.empty()) return std::nullopt;
@@ -1378,7 +1395,7 @@ void BuildModuleVariants(
       const auto& info = all_module_procs[idx];
       const auto& process = arena[info.process_id];
       uint64_t fp = ComputeProcessFingerprint(
-          process, arena, types, info.slot_begin, *info.module_functions);
+          process, arena, types, *info.module_functions);
       fingerprint_groups[fp].push_back(idx);
     }
 
@@ -1651,7 +1668,12 @@ auto BuildLayout(
       const auto& process = arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
 
-      auto comb = TryKernelizeComb(process, arena);
+      uint32_t slot_base = 0;
+      if (process.owner_instance_id != UINT32_MAX) {
+        slot_base =
+            design.instance_slot_ranges[process.owner_instance_id].slot_begin;
+      }
+      auto comb = TryKernelizeComb(process, arena, slot_base);
       if (comb) {
         comb->process_id = proc_id;
         layout.comb_kernel_entries.push_back(std::move(*comb));

@@ -36,10 +36,15 @@ auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes {
 }
 
 auto Context::AllocLocal(SymbolId sym, TypeId type) -> LocalAllocation {
-  if (module_places != nullptr && module_places->contains(sym)) {
+  if (body_places != nullptr && body_places->contains(sym)) {
     throw common::InternalError(
         "AllocLocal",
-        std::format("symbol {} already has a module place", sym.value));
+        std::format("symbol {} already has a body place", sym.value));
+  }
+  if (design_places != nullptr && design_places->contains(sym)) {
+    throw common::InternalError(
+        "AllocLocal",
+        std::format("symbol {} already has a design place", sym.value));
   }
 
   auto local_slot = static_cast<uint32_t>(next_local_id++);
@@ -90,16 +95,24 @@ auto Context::AllocValueTemp(TypeId type) -> int {
 }
 
 auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
-  if (module_places != nullptr) {
-    auto it = module_places->find(sym);
-    if (it != module_places->end()) {
-      return it->second;
-    }
-  }
-
+  // Lookup order: local -> body -> design-global
   auto it = local_places.find(sym);
   if (it != local_places.end()) {
     return it->second;
+  }
+
+  if (body_places != nullptr) {
+    auto body_it = body_places->find(sym);
+    if (body_it != body_places->end()) {
+      return body_it->second;
+    }
+  }
+
+  if (design_places != nullptr) {
+    auto design_it = design_places->find(sym);
+    if (design_it != design_places->end()) {
+      return design_it->second;
+    }
   }
 
   throw common::InternalError(

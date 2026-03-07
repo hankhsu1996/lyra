@@ -220,7 +220,8 @@ auto LowerStrobeEffect(
       .type_arena = original_ctx.type_arena,
       .constant_arena = original_ctx.constant_arena,
       .symbol_table = original_ctx.symbol_table,
-      .module_places = original_ctx.module_places,
+      .body_places = original_ctx.body_places,
+      .design_places = original_ctx.design_places,
       .local_places = {},  // Fresh local mapping (thunk has no SV locals)
       .next_local_id = 0,
       .next_temp_id = 0,
@@ -504,7 +505,8 @@ auto LowerMonitorCheckThunk(
       .type_arena = original_ctx.type_arena,
       .constant_arena = original_ctx.constant_arena,
       .symbol_table = original_ctx.symbol_table,
-      .module_places = original_ctx.module_places,
+      .body_places = original_ctx.body_places,
+      .design_places = original_ctx.design_places,
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
@@ -580,7 +582,8 @@ auto LowerMonitorSetupThunk(
       .type_arena = original_ctx.type_arena,
       .constant_arena = original_ctx.constant_arena,
       .symbol_table = original_ctx.symbol_table,
-      .module_places = original_ctx.module_places,
+      .body_places = original_ctx.body_places,
+      .design_places = original_ctx.design_places,
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
@@ -1387,9 +1390,16 @@ auto MakeIntConstant(uint64_t value, TypeId type) -> Constant {
 // Recursively walk an HIR index expression and build IndexPlanOp bytecode.
 // Returns true if all leaves are constants or design-state slots.
 // Returns false if a local variable is encountered in a compound expression.
+// Helper to convert PlaceRoot::Kind to ScopedSlotRef::Scope.
+auto PlaceRootScope(mir::PlaceRoot::Kind kind) -> mir::ScopedSlotRef::Scope {
+  return (kind == mir::PlaceRoot::Kind::kModuleSlot)
+             ? mir::ScopedSlotRef::Scope::kModuleLocal
+             : mir::ScopedSlotRef::Scope::kDesignGlobal;
+}
+
 auto BuildIndexPlan(
     hir::ExpressionId expr_id, Context& ctx,
-    std::vector<runtime::IndexPlanOp>& plan, std::vector<mir::SlotId>& deps)
+    std::vector<mir::ScopedPlanOp>& plan, std::vector<mir::ScopedSlotRef>& deps)
     -> bool {
   const auto& expr = (*ctx.hir_arena)[expr_id];
 
@@ -1402,24 +1412,27 @@ auto BuildIndexPlan(
       if (!ic.value.empty()) {
         val = static_cast<int64_t>(ic.value[0]);
       }
-      plan.push_back(runtime::IndexPlanOp::MakeConst(val));
+      plan.push_back({.op = runtime::IndexPlanOp::MakeConst(val)});
       return true;
     }
     case hir::ExpressionKind::kNameRef: {
       const auto& name_data = std::get<hir::NameRefExpressionData>(expr.data);
       auto place_id = ctx.LookupPlace(name_data.symbol);
       const auto& place = (*ctx.mir_arena)[place_id];
-      if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
-        auto slot = mir::SlotId{static_cast<uint32_t>(place.root.id)};
+      if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
+          place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+        auto slot_id = static_cast<uint32_t>(place.root.id);
+        auto scope = PlaceRootScope(place.root.kind);
         const Type& idx_type = (*ctx.type_arena)[expr.type];
         uint32_t bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
         bool is_signed = IsPackedSigned(idx_type, *ctx.type_arena);
         uint32_t byte_size = (bit_width + 7) / 8;
         plan.push_back(
-            runtime::IndexPlanOp::MakeReadSlot(
-                slot.value, 0, static_cast<uint8_t>(byte_size),
-                static_cast<uint8_t>(bit_width), is_signed));
-        deps.push_back(slot);
+            {.op = runtime::IndexPlanOp::MakeReadSlot(
+                 slot_id, 0, static_cast<uint8_t>(byte_size),
+                 static_cast<uint8_t>(bit_width), is_signed),
+             .slot_scope = scope});
+        deps.push_back({.scope = scope, .id = slot_id});
         return true;
       }
       // Local variable -- not supported in compound expressions.
@@ -1430,17 +1443,20 @@ auto BuildIndexPlan(
           std::get<hir::HierarchicalRefExpressionData>(expr.data);
       auto place_id = ctx.LookupPlace(href_data.target);
       const auto& place = (*ctx.mir_arena)[place_id];
-      if (place.root.kind == mir::PlaceRoot::Kind::kDesign) {
-        auto slot = mir::SlotId{static_cast<uint32_t>(place.root.id)};
+      if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
+          place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+        auto slot_id = static_cast<uint32_t>(place.root.id);
+        auto scope = PlaceRootScope(place.root.kind);
         const Type& idx_type = (*ctx.type_arena)[expr.type];
         uint32_t bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
         bool is_signed = IsPackedSigned(idx_type, *ctx.type_arena);
         uint32_t byte_size = (bit_width + 7) / 8;
         plan.push_back(
-            runtime::IndexPlanOp::MakeReadSlot(
-                slot.value, 0, static_cast<uint8_t>(byte_size),
-                static_cast<uint8_t>(bit_width), is_signed));
-        deps.push_back(slot);
+            {.op = runtime::IndexPlanOp::MakeReadSlot(
+                 slot_id, 0, static_cast<uint8_t>(byte_size),
+                 static_cast<uint8_t>(bit_width), is_signed),
+             .slot_scope = scope});
+        deps.push_back({.scope = scope, .id = slot_id});
         return true;
       }
       return false;
@@ -1496,25 +1512,25 @@ auto BuildIndexPlan(
         default:
           return false;
       }
-      plan.push_back(runtime::IndexPlanOp::MakeBinaryOp(op_kind));
+      plan.push_back({.op = runtime::IndexPlanOp::MakeBinaryOp(op_kind)});
       return true;
     }
     case hir::ExpressionKind::kUnaryOp: {
       const auto& unary_data = std::get<hir::UnaryExpressionData>(expr.data);
       if (unary_data.op == hir::UnaryOp::kMinus) {
-        plan.push_back(runtime::IndexPlanOp::MakeConst(0));
+        plan.push_back({.op = runtime::IndexPlanOp::MakeConst(0)});
         if (!BuildIndexPlan(unary_data.operand, ctx, plan, deps)) return false;
         plan.push_back(
-            runtime::IndexPlanOp::MakeBinaryOp(
-                runtime::IndexPlanOp::Kind::kSub));
+            {.op = runtime::IndexPlanOp::MakeBinaryOp(
+                 runtime::IndexPlanOp::Kind::kSub)});
         return true;
       }
       if (unary_data.op == hir::UnaryOp::kBitwiseNot) {
         if (!BuildIndexPlan(unary_data.operand, ctx, plan, deps)) return false;
-        plan.push_back(runtime::IndexPlanOp::MakeConst(-1));
+        plan.push_back({.op = runtime::IndexPlanOp::MakeConst(-1)});
         plan.push_back(
-            runtime::IndexPlanOp::MakeBinaryOp(
-                runtime::IndexPlanOp::Kind::kXor));
+            {.op = runtime::IndexPlanOp::MakeBinaryOp(
+                 runtime::IndexPlanOp::Kind::kXor)});
         return true;
       }
       return false;
@@ -1644,8 +1660,8 @@ auto LowerEventWait(
         mapping.total_bits = total_bits;
 
         // Build index plan from the HIR index expression.
-        std::vector<runtime::IndexPlanOp> plan;
-        std::vector<mir::SlotId> deps;
+        std::vector<mir::ScopedPlanOp> plan;
+        std::vector<mir::ScopedSlotRef> deps;
         bool plan_ok = BuildIndexPlan(index_id, ctx, plan, deps);
 
         if (!plan_ok && !deps.empty()) {
@@ -1665,9 +1681,8 @@ auto LowerEventWait(
 
         if (plan_ok && !deps.empty()) {
           // Deduplicate dep_slots.
-          std::ranges::sort(deps, {}, &mir::SlotId::value);
-          auto [first, last] =
-              std::ranges::unique(deps, {}, &mir::SlotId::value);
+          std::ranges::sort(deps);
+          auto [first, last] = std::ranges::unique(deps);
           deps.erase(first, last);
 
           late_bound_info = mir::LateBoundIndex{
@@ -1861,18 +1876,18 @@ auto LowerEventWait(
 
         // Build index plan. For ascending (+:), plan evaluates to the SV index
         // (same as bus[i]). For descending (-:), plan evaluates to i-(w-1).
-        std::vector<runtime::IndexPlanOp> plan;
-        std::vector<mir::SlotId> deps;
+        std::vector<mir::ScopedPlanOp> plan;
+        std::vector<mir::ScopedSlotRef> deps;
         bool plan_ok = BuildIndexPlan(ips_data.index, ctx, plan, deps);
 
         if (plan_ok && !ips_data.ascending && ips_data.width > 1) {
           // Append: MakeConst(width-1), MakeBinaryOp(kSub)
           plan.push_back(
-              runtime::IndexPlanOp::MakeConst(
-                  static_cast<int64_t>(ips_data.width - 1)));
+              {.op = runtime::IndexPlanOp::MakeConst(
+                   static_cast<int64_t>(ips_data.width - 1))});
           plan.push_back(
-              runtime::IndexPlanOp::MakeBinaryOp(
-                  runtime::IndexPlanOp::Kind::kSub));
+              {.op = runtime::IndexPlanOp::MakeBinaryOp(
+                   runtime::IndexPlanOp::Kind::kSub)});
         }
 
         if (!plan_ok && !deps.empty()) {
@@ -1891,9 +1906,8 @@ auto LowerEventWait(
         }
 
         if (plan_ok && !deps.empty()) {
-          std::ranges::sort(deps, {}, &mir::SlotId::value);
-          auto [first, last] =
-              std::ranges::unique(deps, {}, &mir::SlotId::value);
+          std::ranges::sort(deps);
+          auto [first, last] = std::ranges::unique(deps);
           deps.erase(first, last);
 
           late_bound_info = mir::LateBoundIndex{
@@ -1971,8 +1985,8 @@ auto LowerEventWait(
         mapping.index_step = 1;
         mapping.total_bits = 0;  // Unused for containers.
 
-        std::vector<runtime::IndexPlanOp> plan;
-        std::vector<mir::SlotId> deps;
+        std::vector<mir::ScopedPlanOp> plan;
+        std::vector<mir::ScopedSlotRef> deps;
         bool plan_ok = BuildIndexPlan(elem_data.index, ctx, plan, deps);
 
         if (!plan_ok && !deps.empty()) {
@@ -1991,9 +2005,8 @@ auto LowerEventWait(
         }
 
         if (plan_ok && !deps.empty()) {
-          std::ranges::sort(deps, {}, &mir::SlotId::value);
-          auto [first, last] =
-              std::ranges::unique(deps, {}, &mir::SlotId::value);
+          std::ranges::sort(deps);
+          auto [first, last] = std::ranges::unique(deps);
           deps.erase(first, last);
 
           late_bound_info = mir::LateBoundIndex{
@@ -2049,8 +2062,8 @@ auto LowerEventWait(
         mapping.index_step = arr_info.range.IsDescending() ? -1 : 1;
         mapping.total_bits = 0;  // Codegen fills from DataLayout.
 
-        std::vector<runtime::IndexPlanOp> plan;
-        std::vector<mir::SlotId> deps;
+        std::vector<mir::ScopedPlanOp> plan;
+        std::vector<mir::ScopedSlotRef> deps;
         bool plan_ok = BuildIndexPlan(elem_data.index, ctx, plan, deps);
 
         if (!plan_ok && !deps.empty()) {
@@ -2069,9 +2082,8 @@ auto LowerEventWait(
         }
 
         if (plan_ok && !deps.empty()) {
-          std::ranges::sort(deps, {}, &mir::SlotId::value);
-          auto [first, last] =
-              std::ranges::unique(deps, {}, &mir::SlotId::value);
+          std::ranges::sort(deps);
+          auto [first, last] = std::ranges::unique(deps);
           deps.erase(first, last);
 
           late_bound_info = mir::LateBoundIndex{
@@ -2151,11 +2163,19 @@ auto LowerEventWait(
     }
 
     const auto& place = (*ctx.mir_arena)[place_id];
-    if (place.root.kind != mir::PlaceRoot::Kind::kDesign) {
+    mir::SignalRef signal_ref;
+    if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
+      signal_ref = {
+          mir::SignalRef::Scope::kModuleLocal,
+          static_cast<uint32_t>(place.root.id)};
+    } else if (place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+      signal_ref = {
+          mir::SignalRef::Scope::kDesignGlobal,
+          static_cast<uint32_t>(place.root.id)};
+    } else {
       throw common::InternalError(
           "LowerEventWait", "event trigger must reference a design variable");
     }
-    auto slot_id = mir::SlotId{static_cast<uint32_t>(place.root.id)};
 
     std::optional<mir::PlaceId> obs_place;
     if (!place.projections.empty()) {
@@ -2164,12 +2184,12 @@ auto LowerEventWait(
 
     if (hir_trigger.edge == hir::EventEdgeKind::kBothEdges) {
       triggers.push_back(
-          {.signal = slot_id,
+          {.signal = signal_ref,
            .edge = common::EdgeKind::kPosedge,
            .observed_place = obs_place,
            .late_bound = late_bound_info});
       triggers.push_back(
-          {.signal = slot_id,
+          {.signal = signal_ref,
            .edge = common::EdgeKind::kNegedge,
            .observed_place = obs_place,
            .late_bound = late_bound_info});
@@ -2189,7 +2209,7 @@ auto LowerEventWait(
           break;  // Already handled above
       }
       triggers.push_back(
-          {.signal = slot_id,
+          {.signal = signal_ref,
            .edge = edge,
            .observed_place = obs_place,
            .late_bound = late_bound_info});

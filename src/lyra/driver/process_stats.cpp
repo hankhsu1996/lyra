@@ -148,12 +148,12 @@ void PrintProcessStats(
             !wait->triggers[0].late_bound.has_value()) {
           const auto& dest = arena[assign->dest];
           const auto* rhs_op = std::get_if<mir::Operand>(&assign->rhs);
-          if (dest.root.kind == mir::PlaceRoot::Kind::kDesign &&
+          if (dest.root.kind == mir::PlaceRoot::Kind::kDesignGlobal &&
               dest.projections.empty() && rhs_op != nullptr &&
               rhs_op->kind == mir::Operand::Kind::kUse) {
             auto src_pid = std::get<mir::PlaceId>(rhs_op->payload);
             const auto& src = arena[src_pid];
-            if (src.root.kind == mir::PlaceRoot::Kind::kDesign &&
+            if (src.root.kind == mir::PlaceRoot::Kind::kDesignGlobal &&
                 src.projections.empty()) {
               kernelizable = true;
             }

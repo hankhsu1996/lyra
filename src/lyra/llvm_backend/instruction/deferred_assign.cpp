@@ -306,7 +306,7 @@ auto LowerDeferredAssignBitRange(
         "LowerDeferredAssignBitRange", "BitRange on non-scalar base type");
   }
 
-  llvm::Value* notify_base_ptr = context.GetDesignRootPointer(deferred.dest);
+  llvm::Value* notify_base_ptr = context.GetStorageRootPointer(deferred.dest);
 
   if (IsFourStateScalarStruct(base_type)) {
     // 4-state base: mask both planes
@@ -439,7 +439,7 @@ auto LowerDeferredAssignWithOobGuard(
   auto write_ptr_or_err = context.GetPlacePointer(deferred.dest);
   if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
-  llvm::Value* notify_base_ptr = context.GetDesignRootPointer(deferred.dest);
+  llvm::Value* notify_base_ptr = context.GetStorageRootPointer(deferred.dest);
 
   auto result = EmitDeferredStoreCore(
       context, deferred, shape, write_ptr, notify_base_ptr, signal_id);
@@ -458,7 +458,7 @@ auto LowerDeferredAssignDirect(
   auto write_ptr_or_err = context.GetPlacePointer(deferred.dest);
   if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
-  llvm::Value* notify_base_ptr = context.GetDesignRootPointer(deferred.dest);
+  llvm::Value* notify_base_ptr = context.GetStorageRootPointer(deferred.dest);
 
   return EmitDeferredStoreCore(
       context, deferred, shape, write_ptr, notify_base_ptr, signal_id);

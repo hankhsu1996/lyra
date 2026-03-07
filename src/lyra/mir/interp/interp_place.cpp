@@ -27,13 +27,31 @@
 
 namespace lyra::mir::interp {
 
+auto ResolveDesignGlobalSlot(const PlaceRoot& root, uint32_t slot_base) -> int {
+  switch (root.kind) {
+    case PlaceRoot::Kind::kModuleSlot:
+      return static_cast<int>(slot_base) + root.id;
+    case PlaceRoot::Kind::kDesignGlobal:
+      return root.id;
+    default:
+      throw common::InternalError(
+          "ResolveDesignGlobalSlot", "not a design-scope root");
+  }
+}
+
 void Interpreter::EmitMutation(
-    PlaceId place_id, common::MutationKind kind, common::EpochEffect epoch) {
+    const ProcessState& state, PlaceId place_id, common::MutationKind kind,
+    common::EpochEffect epoch) {
   if (!mutation_sink_) return;
   const auto& place = (*arena_)[place_id];
-  if (place.root.kind != PlaceRoot::Kind::kDesign) return;
+  if (place.root.kind != PlaceRoot::Kind::kModuleSlot &&
+      place.root.kind != PlaceRoot::Kind::kDesignGlobal) {
+    return;
+  }
+  uint32_t global_slot = static_cast<uint32_t>(
+      ResolveDesignGlobalSlot(place.root, state.slot_base));
   common::MutationEvent event;
-  event.root = common::DesignSlotId{static_cast<uint32_t>(place.root.id)};
+  event.root = common::DesignSlotId{global_slot};
   event.kind = kind;
   event.epoch_effect = epoch;
   event.ranges.MarkFullExtent();
@@ -110,8 +128,10 @@ auto Interpreter::ResolveRoot(const ProcessState& state, const PlaceRoot& root)
       return state.frame.GetLocal(root.id);
     case PlaceRoot::Kind::kTemp:
       return state.frame.GetTemp(root.id);
-    case PlaceRoot::Kind::kDesign:
-      return state.design_state->Get(root.id);
+    case PlaceRoot::Kind::kModuleSlot:
+    case PlaceRoot::Kind::kDesignGlobal:
+      return state.design_state->Get(
+          ResolveDesignGlobalSlot(root, state.slot_base));
   }
   throw common::InternalError("ResolveRoot", "unknown PlaceRoot kind");
 }
@@ -123,8 +143,10 @@ auto Interpreter::ResolveRootMut(ProcessState& state, const PlaceRoot& root)
       return state.frame.GetLocal(root.id);
     case PlaceRoot::Kind::kTemp:
       return state.frame.GetTemp(root.id);
-    case PlaceRoot::Kind::kDesign:
-      return state.design_state->Get(root.id);
+    case PlaceRoot::Kind::kModuleSlot:
+    case PlaceRoot::Kind::kDesignGlobal:
+      return state.design_state->Get(
+          ResolveDesignGlobalSlot(root, state.slot_base));
   }
   throw common::InternalError("ResolveRootMut", "unknown PlaceRoot kind");
 }
@@ -569,7 +591,7 @@ auto Interpreter::ReadPlace(const ProcessState& state, PlaceId place_id)
 auto Interpreter::WritePlace(
     ProcessState& state, PlaceId place_id, common::MutationKind kind,
     common::EpochEffect epoch) -> Result<std::reference_wrapper<RuntimeValue>> {
-  EmitMutation(place_id, kind, epoch);
+  EmitMutation(state, place_id, kind, epoch);
   const auto& place = (*arena_)[place_id];
   auto& root_value = ResolveRootMut(state, place.root);
 
@@ -601,7 +623,7 @@ auto Interpreter::StoreToPlace(
 
   if (place.projections.empty()) {
     root_value = std::move(value);
-    EmitMutation(place_id, common::MutationKind::kValueWrite);
+    EmitMutation(state, place_id, common::MutationKind::kValueWrite);
     return {};
   }
 
@@ -652,7 +674,7 @@ auto Interpreter::StoreToPlace(
   } else {
     *loc.base = std::move(value);
   }
-  EmitMutation(place_id, common::MutationKind::kValueWrite);
+  EmitMutation(state, place_id, common::MutationKind::kValueWrite);
   return {};
 }
 

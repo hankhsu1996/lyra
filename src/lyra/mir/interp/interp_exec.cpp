@@ -590,7 +590,7 @@ auto Interpreter::ExecMemIOEffect(
     auto store_result = StoreToPlace(state, mem_io.target, std::move(arr_val));
     if (!store_result) return store_result;
 
-    EmitMutation(mem_io.target, common::MutationKind::kBulkInit);
+    EmitMutation(state, mem_io.target, common::MutationKind::kBulkInit);
     return {};
   }
 
@@ -1218,7 +1218,7 @@ auto Interpreter::ExecFreadCall(ProcessState& state, const Call& call)
       total_bytes_read += bytes_read;
     }
 
-    EmitMutation(wb.dest, common::MutationKind::kBulkInit);
+    EmitMutation(state, wb.dest, common::MutationKind::kBulkInit);
   }
 
   // Commit return value (bytes_read)

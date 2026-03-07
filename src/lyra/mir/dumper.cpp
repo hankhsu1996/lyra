@@ -402,8 +402,11 @@ auto Dumper::FormatIndexOperand(const Operand& op) const -> std::string {
         case PlaceRoot::Kind::kTemp:
           prefix = "%";
           break;
-        case PlaceRoot::Kind::kDesign:
-          prefix = "@";
+        case PlaceRoot::Kind::kModuleSlot:
+          prefix = "@m";
+          break;
+        case PlaceRoot::Kind::kDesignGlobal:
+          prefix = "@g";
           break;
       }
       return std::format("{}{}", prefix, place.root.id);
@@ -455,8 +458,11 @@ auto Dumper::FormatPlace(PlaceId id) const -> std::string {
     case PlaceRoot::Kind::kTemp:
       prefix = "%";
       break;
-    case PlaceRoot::Kind::kDesign:
-      prefix = "@";
+    case PlaceRoot::Kind::kModuleSlot:
+      prefix = "@m";
+      break;
+    case PlaceRoot::Kind::kDesignGlobal:
+      prefix = "@g";
       break;
   }
   std::string result = std::format("{}{}", prefix, place.root.id);
@@ -505,8 +511,11 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
         case PlaceRoot::Kind::kTemp:
           prefix = "%";
           break;
-        case PlaceRoot::Kind::kDesign:
-          prefix = "@";
+        case PlaceRoot::Kind::kModuleSlot:
+          prefix = "@m";
+          break;
+        case PlaceRoot::Kind::kDesignGlobal:
+          prefix = "@g";
           break;
       }
       std::string result = std::format("{}{}", prefix, place.root.id);

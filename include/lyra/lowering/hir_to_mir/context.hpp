@@ -57,7 +57,19 @@ struct InstanceSlotRange {
   uint32_t slot_count = 0;
 };
 
+// Per-module body-local declaration map.
+// Maps module-owned symbols to body-local PlaceIds (kModuleSlot, 0-based).
+struct BodyLocalDecls {
+  PlaceMap places;
+  // Body-local slot descriptors (type + kind), indexed by kModuleSlot id.
+  // Built directly as source of truth - not derived from design-global slots.
+  std::vector<mir::SlotDesc> slots;
+};
+
 struct DesignDeclarations {
+  // Design-global places: packages + design-level lowering.
+  // For module-owned symbols, these are the design-global kDesignGlobal places
+  // used by connection processes and design-level consumers.
   PlaceMap design_places;
   SymbolToMirFunctionMap functions;
   size_t num_design_slots = 0;
@@ -75,15 +87,21 @@ struct DesignDeclarations {
   std::vector<common::ModuleDefId> module_def_ids;
   // Per-module-instance param init entries (parallel to instance_slot_ranges).
   std::vector<std::vector<mir::ParamInitEntry>> instance_param_inits;
+  // Per-module body-local declaration maps (parallel to instance_slot_ranges).
+  // Maps module-owned symbols to body-local kModuleSlot places.
+  // Module body lowering consumes these instead of design_places.
+  std::vector<BodyLocalDecls> body_local_decls;
 };
 
 // Read-only view into declaration artifacts for lower-level helpers
 // (LowerProcess, LowerFunctionBody). Ensures the frozen boundary is
 // consistent throughout the lowering layer.
 struct DeclView {
-  const PlaceMap* places;
-  const SymbolToMirFunctionMap* functions;
-  const std::vector<mir::SlotDesc>* slots = nullptr;
+  const PlaceMap* body_places = nullptr;    // body-local (kModuleSlot)
+  const PlaceMap* design_places = nullptr;  // design-global (kDesignGlobal)
+  const SymbolToMirFunctionMap* functions = nullptr;
+  const std::vector<mir::SlotDesc>* slots = nullptr;       // design-global
+  const std::vector<mir::SlotDesc>* body_slots = nullptr;  // body-local
 };
 
 // Result of AllocLocal - provides both the PlaceId and the local slot index.
@@ -103,9 +121,13 @@ struct Context {
   const ConstantArena* constant_arena;
   const SymbolTable* symbol_table;
 
-  // module_places: module-scoped storage, must outlive this Context.
-  // local_places: process-scoped storage, owned by this Context.
-  const PlaceMap* module_places;
+  // body_places: body-local (kModuleSlot) lookup, used for module body
+  // lowering. design_places: design-global (kDesignGlobal) lookup, used for
+  // design-level. Both must outlive this Context. local_places: process-scoped
+  // storage, owned by this Context. Lookup order: local_places -> body_places
+  // -> design_places.
+  const PlaceMap* body_places = nullptr;
+  const PlaceMap* design_places = nullptr;
   PlaceMap local_places;
 
   int next_local_id = 0;
@@ -136,9 +158,11 @@ struct Context {
   std::optional<mir::PlaceId> return_slot;
   TypeId return_type = kInvalidTypeId;
 
-  // Design slot descriptors (read-only, owned by DesignDeclarations).
-  // Used to enforce write-protection on kParamConst slots at lvalue lowering.
+  // Slot descriptors for write-protection checks.
+  // design_slots: indexed by kDesignGlobal id.
+  // body_slots: indexed by kModuleSlot id (body-local).
   const std::vector<mir::SlotDesc>* design_slots = nullptr;
+  const std::vector<mir::SlotDesc>* body_slots = nullptr;
 
   // Stats: count of MaterializeOperandToPlace calls (for --stats output).
   uint64_t materialize_count = 0;

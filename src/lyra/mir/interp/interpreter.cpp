@@ -62,6 +62,7 @@ namespace {
 struct LocalInitCollector {
   std::vector<TypeId> local_types;
   std::vector<TypeId> design_types;
+  uint32_t slot_base = 0;  // kModuleSlot -> design-global rebasing offset
 
   void VisitRoot(const PlaceRoot& root) {
     switch (root.kind) {
@@ -79,8 +80,10 @@ struct LocalInitCollector {
         // Temps are handled by process.temp_metadata, not collected here
         break;
       }
-      case PlaceRoot::Kind::kDesign: {
-        auto idx = static_cast<size_t>(root.id);
+      case PlaceRoot::Kind::kModuleSlot:
+      case PlaceRoot::Kind::kDesignGlobal: {
+        auto idx =
+            static_cast<size_t>(ResolveDesignGlobalSlot(root, slot_base));
         if (idx >= design_types.size()) {
           design_types.resize(idx + 1, kInvalidTypeId);
         }
@@ -368,6 +371,7 @@ auto CreateProcessState(
       .design_state = design_state,
       .status = ProcessStatus::kRunning,
       .instance_id = process.owner_instance_id,
+      .slot_base = 0,  // Populated by caller with instance slot range
       .pending_suspend = std::nullopt,
       .function_return_value = std::nullopt,
   };
@@ -387,16 +391,29 @@ void VisitProcessBlocks(
 auto CreateDesignState(
     const Arena& arena, const TypeArena& types, const Design& design)
     -> DesignState {
-  // Collect design slot types by scanning all processes
+  // Collect design slot types by scanning all processes.
+  // Each module's processes use body-local kModuleSlot IDs that must be
+  // rebased to design-global before indexing into design_types.
   LocalInitCollector collector;
   for (const auto& element : design.elements) {
     if (const auto* module = std::get_if<Module>(&element)) {
       const auto& body = GetModuleBody(design, *module);
       for (ProcessId process_id : body.processes) {
-        VisitProcessBlocks(collector, arena[process_id], arena);
+        const auto& process = arena[process_id];
+        // Set slot_base per process so kModuleSlot IDs are correctly
+        // rebased to design-global indices.
+        collector.slot_base = 0;
+        if (process.owner_instance_id != UINT32_MAX &&
+            process.owner_instance_id < design.instance_slot_ranges.size()) {
+          collector.slot_base =
+              design.instance_slot_ranges[process.owner_instance_id].slot_begin;
+        }
+        VisitProcessBlocks(collector, process, arena);
       }
     }
   }
+  // Init and connection processes are design-global (no module-local storage).
+  collector.slot_base = 0;
   for (ProcessId process_id : design.init_processes) {
     VisitProcessBlocks(collector, arena[process_id], arena);
   }
@@ -504,9 +521,20 @@ auto RunSimulation(
     interp.SetInstancePaths(std::move(instance_paths));
   }
 
+  auto create_state = [&](ProcessId proc_id) -> ProcessState {
+    auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
+    const auto& process = mir_arena[proc_id];
+    if (process.owner_instance_id != UINT32_MAX &&
+        process.owner_instance_id < design.instance_slot_ranges.size()) {
+      state.slot_base =
+          design.instance_slot_ranges[process.owner_instance_id].slot_begin;
+    }
+    return state;
+  };
+
   // Run design init processes (package variable initialization)
   for (ProcessId proc_id : design.init_processes) {
-    auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
+    auto state = create_state(proc_id);
     auto result = interp.Run(state);
     if (!result) {
       return SimulationResult{
@@ -517,11 +545,11 @@ auto RunSimulation(
   // Create process states for initial and connection processes
   std::unordered_map<uint32_t, ProcessState> process_states;
   for (ProcessId proc_id : process_info->initial_processes) {
-    auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
+    auto state = create_state(proc_id);
     process_states.emplace(proc_id.value, std::move(state));
   }
   for (ProcessId proc_id : design.connection_processes) {
-    auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
+    auto state = create_state(proc_id);
     process_states.emplace(proc_id.value, std::move(state));
   }
 

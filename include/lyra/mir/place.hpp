@@ -12,9 +12,10 @@ namespace lyra::mir {
 
 struct PlaceRoot {
   enum class Kind {
-    kLocal,   // function/process local storage (vars, params)
-    kTemp,    // compiler-generated local storage
-    kDesign,  // design/runtime storage (nets, ports, hierarchy)
+    kLocal,         // function/process local storage (vars, params)
+    kTemp,          // compiler-generated local storage
+    kModuleSlot,    // body-local storage (0-based within ModuleBody)
+    kDesignGlobal,  // design-global storage (packages, design-level processes)
   };
 
   Kind kind;

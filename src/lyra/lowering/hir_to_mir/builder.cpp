@@ -74,13 +74,23 @@ void VerifyRvalueInvariants(const mir::Rvalue& rv) {
 // projected writes (field/index/range of a param slot).
 void CheckWriteableSlot(
     mir::PlaceId place_id, const mir::Arena& arena, const Context& ctx) {
-  if (ctx.design_slots == nullptr) return;
   const mir::Place& place = arena[place_id];
-  if (place.root.kind != mir::PlaceRoot::Kind::kDesign) return;
-  auto slot_id = static_cast<size_t>(place.root.id);
-  if (slot_id < ctx.design_slots->size() &&
-      (*ctx.design_slots)[slot_id].kind == mir::SlotKind::kParamConst) {
-    throw common::InternalError("EmitAssign", "write to read-only param slot");
+  if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
+    if (ctx.body_slots == nullptr) return;
+    auto slot_id = static_cast<size_t>(place.root.id);
+    if (slot_id < ctx.body_slots->size() &&
+        (*ctx.body_slots)[slot_id].kind == mir::SlotKind::kParamConst) {
+      throw common::InternalError(
+          "EmitAssign", "write to read-only param slot");
+    }
+  } else if (place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+    if (ctx.design_slots == nullptr) return;
+    auto slot_id = static_cast<size_t>(place.root.id);
+    if (slot_id < ctx.design_slots->size() &&
+        (*ctx.design_slots)[slot_id].kind == mir::SlotKind::kParamConst) {
+      throw common::InternalError(
+          "EmitAssign", "write to read-only param slot");
+    }
   }
 }
 

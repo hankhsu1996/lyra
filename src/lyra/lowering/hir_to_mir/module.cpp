@@ -24,8 +24,14 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerModule(
     const hir::Module& module, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map,
-    const DesignDeclarations& decls) -> Result<mir::ModuleBody> {
+    const DesignDeclarations& decls, uint32_t module_index)
+    -> Result<mir::ModuleBody> {
   mir::ModuleBody result;
+
+  // Body-local slot descriptors are sourced directly from BodyLocalDecls,
+  // not derived from design-global slots.
+  const auto& body_decls = decls.body_local_decls[module_index];
+  result.slots = body_decls.slots;
 
   // Phase 1: Pre-allocate mir::FunctionIds and build symbol map
   // Start with design-wide functions (package functions) so module code can
@@ -46,10 +52,14 @@ auto LowerModule(
   }
 
   // Phase 2: Lower function bodies (map is complete, recursion works)
+  // Module body lowering uses body-local places (kModuleSlot) for module-owned
+  // state, with design-global places as fallback for package/global references.
   DeclView decl_view{
-      .places = &decls.design_places,
+      .body_places = &body_decls.places,
+      .design_places = &decls.design_places,
       .functions = &symbol_to_mir_function,
-      .slots = &decls.slots};
+      .slots = &decls.slots,
+      .body_slots = &result.slots};
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
