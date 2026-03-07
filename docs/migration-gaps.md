@@ -4,7 +4,7 @@ Canonical working queue for migrating Lyra toward specialization-based compilati
 
 ## North Star
 
-Compile unit is `ModuleSpecId = (ModuleDefId, StructuralFingerprint)`. Four distinct phases:
+Compile unit is `ModuleSpecId = (ModuleDefId, BehaviorFingerprint)`. Four distinct phases:
 
 1. **Elaboration Discovery** - discover module definitions and instances from slang
 2. **Specialization Compilation** (parallel per spec) - AST -> HIR -> MIR -> LLVM IR, specialization-scoped
@@ -17,17 +17,17 @@ Key architectural rule: the `this_base + local_offset` addressing pattern (curre
 
 Concrete types that replace the current fused pipeline:
 
-| Artifact                | Scope          | Purpose                                                          |
-| ----------------------- | -------------- | ---------------------------------------------------------------- |
-| `ModuleDefId`           | Elaboration    | Stable definition identity (replaces `DefinitionSymbol*`)        |
-| `StructuralFingerprint` | Elaboration    | Hash of structural parameter values                              |
-| `ModuleSpecId`          | Elaboration    | `(ModuleDefId, StructuralFingerprint)` - specialization identity |
-| `CompiledModuleSpec`    | Specialization | LLVM IR + specialization-local layout for one spec               |
-| `SpecLayout`            | Specialization | Slot count, local offsets, type info for one spec                |
-| `InstancePlacement`     | Assembly       | Maps instance -> `(ModuleSpecId, base_offset_in_DesignState)`    |
-| `InstanceConstBlock`    | Assembly       | Per-instance value-only parameter values                         |
-| `ConnectivityTable`     | Assembly       | Port connection descriptors across instances                     |
-| `RuntimeMetadataBlob`   | Assembly       | Slot meta, process meta, instance paths, loop sites              |
+| Artifact              | Scope          | Purpose                                                        |
+| --------------------- | -------------- | -------------------------------------------------------------- |
+| `ModuleDefId`         | Elaboration    | Stable definition identity (replaces `DefinitionSymbol*`)      |
+| `BehaviorFingerprint` | Elaboration    | Hash of structural parameter values                            |
+| `ModuleSpecId`        | Elaboration    | `(ModuleDefId, BehaviorFingerprint)` - specialization identity |
+| `CompiledModuleSpec`  | Specialization | LLVM IR + specialization-local layout for one spec             |
+| `SpecLayout`          | Specialization | Slot count, local offsets, type info for one spec              |
+| `InstancePlacement`   | Assembly       | Maps instance -> `(ModuleSpecId, base_offset_in_DesignState)`  |
+| `InstanceConstBlock`  | Assembly       | Per-instance value-only parameter values                       |
+| `ConnectivityTable`   | Assembly       | Port connection descriptors across instances                   |
+| `RuntimeMetadataBlob` | Assembly       | Slot meta, process meta, instance paths, loop sites            |
 
 ## Required Invariants
 
@@ -120,13 +120,17 @@ Single monotonic counter across entire design. All downstream tables use design-
 - `src/lyra/lowering/hir_to_mir/design_connections.cpp` - synthetic connection processes
 - `include/lyra/mir/design.hpp:83-85` - `alias_map` and `connection_processes` in Design
 
-**M2: ParamRole classification misses type-level structural references**
+**M2: ParamRole classification needs refinement for construction vs behavior**
 
-`ShapeParamCollector` walks the elaborated AST for `NamedValueExpression` references outside procedural contexts. However, slang resolves parameterized types during elaboration, so a parameter used in a type declaration (e.g., `bit [WIDTH-1:0] data`) is already baked into the resolved type and not visible as a `NamedValueExpression`. This causes params that affect structural shape (port widths, variable widths) to be misclassified as `kValueOnly` when the only reference is through a type expression.
+`ShapeParamCollector` walks the elaborated AST for `NamedValueExpression` references outside procedural contexts. Two issues:
+
+1. slang resolves parameterized types during elaboration, so a parameter used in a type declaration (e.g., `bit [WIDTH-1:0] data`) may be baked into the resolved type and not visible as a `NamedValueExpression`. This can cause params that affect packed widths to be misclassified as `kValueOnly`.
+
+2. The classifier does not distinguish between parameters that affect packed widths (execution-time, must specialize) and parameters that affect only unpacked container sizes (elaboration-time, should not specialize).
 
 - `src/lyra/lowering/ast_to_hir/param_role.cpp:53-59` - visitor only sees `NamedValueExpression`, misses resolved types
-- Impact: Two instances with different `WIDTH` values may share a specialization when they should not
-- Fix: Walk type expressions or compare elaborated type structures across instances to detect structural variation
+- Impact: Packed-width params may be misclassified; unpacked-size params may over-specialize
+- Fix: Walk type expressions to detect packed-width variation. Separately classify unpacked-size params as elaboration-time (not structural). See architectural direction in this document.
 
 **M3: Runtime metadata built during codegen**
 
@@ -180,17 +184,17 @@ Each task has: goal, areas, acceptance criteria, dependencies. Tasks are indepen
 - Dependencies: None
 - Invariant: Definition identity is stable within a compilation. Cross-build cache identity comes from a content-based layer above `ModuleDefId` (future work).
 
-**A2: Define StructuralFingerprint**
+**A2: Define BehaviorFingerprint**
 
 - Goal: Hash all elaboration inputs that affect structure/code shape
 - Areas: `include/lyra/common/module_identity.hpp`, `src/lyra/lowering/ast_to_hir/param_role.cpp`
-- Acceptance: `StructuralFingerprint` type exists. First implementation hashes kShape parameter values after `ClassifyParamRoles()`. Test: two instances with same structural params produce same fingerprint; different structural params produce different fingerprint.
+- Acceptance: `BehaviorFingerprint` type exists. First implementation hashes kShape parameter values after `ClassifyParamRoles()`. Test: two instances with same structural params produce same fingerprint; different structural params produce different fingerprint.
 - Dependencies: A1
 - Invariant: Fingerprint captures all elaboration inputs that affect structure/code shape (structural params initially; future: defines, interface bindings, anything that changes elaborated structure).
 
 **A3: Define ModuleSpecId and grouping pass**
 
-- Goal: Group instances by `(ModuleDefId, StructuralFingerprint)` after elaboration
+- Goal: Group instances by `(ModuleDefId, BehaviorFingerprint)` after elaboration
 - Areas: `include/lyra/common/module_identity.hpp`, `src/lyra/lowering/ast_to_hir/design.cpp`
 - Acceptance: `ModuleSpecId` type exists. After elaboration, each instance is assigned a `ModuleSpecId`. Test: design with 4 instances of same module (2 param configs) produces exactly 2 specialization groups.
 - Dependencies: A2
@@ -392,14 +396,22 @@ Enforcement tasks to add during migration. Each prevents regression.
 
 - After Phase A: Same source with same elaboration inputs produces identical specialization grouping and ordering. Matters for caching and reproducibility.
 
+## Architectural Direction
+
+**Future direction, not yet implemented.**
+
+The long-term state layout moves from a compile-time LLVM struct to an arena-based layout with elaboration-resolved container offsets. See [state-layout.md](state-layout.md).
+
+Key consequences: unpacked container sizes are no longer structural specialization inputs. `SpecLayout` distinguishes static offsets (packed fields) from container descriptors (elaboration-resolved). Assembly resolves container sizes and allocates the arena. Generate blocks that only construct the design graph (including process instantiation) are elaboration-time, not specialization boundaries.
+
 ## Open Questions
 
-1. **StructuralFingerprint granularity**: Hash structural parameter values, or hash generated HIR? Hashing params is simpler but might miss cases where different param values produce identical IR.
+1. **BehaviorFingerprint granularity**: Hash structural parameter values, or hash generated HIR? Hashing params is simpler but might miss cases where different param values produce identical IR.
 
 2. **Connection process ownership**: Connection processes span two specializations (parent port + child port). Assembly must create them using both specializations' layouts.
 
 3. **Package compilation**: Packages have no instances. Should they be their own specialization unit or a separate concept?
 
-4. **DesignState struct shape**: Should each specialization have a sub-struct within DesignState, or should assembly flatten into one struct with computed offsets? The `this_base + local_offset` model works either way.
+4. **Container descriptor format**: How should SpecLayout represent container regions? Options include inline descriptor structs, a separate container metadata table, or a hybrid.
 
 5. **MIR interpreter alignment**: Debug-only. Migrate in lockstep or defer?

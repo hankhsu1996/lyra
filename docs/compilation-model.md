@@ -9,13 +9,13 @@ For architectural motivation, see [architecture-principles.md](architecture-prin
 A **Module Specialization** is the unit of compilation and optimization. It is uniquely identified by:
 
 ```
-ModuleSpecId = (ModuleDefId, StructuralFingerprint)
+ModuleSpecId = (ModuleDefId, BehaviorFingerprint)
 ```
 
-| Component               | Definition                                                   |
-| ----------------------- | ------------------------------------------------------------ |
-| `ModuleDefId`           | Source-level module definition identity                      |
-| `StructuralFingerprint` | Hash of all inputs that affect the compiled artifact's shape |
+| Component             | Definition                                                   |
+| --------------------- | ------------------------------------------------------------ |
+| `ModuleDefId`         | Source-level module definition identity                      |
+| `BehaviorFingerprint` | Hash of all inputs that affect the compiled artifact's shape |
 
 A specialization produces a self-contained, cacheable artifact: `CompiledModuleSpec`.
 
@@ -29,37 +29,72 @@ A specialization produces a self-contained, cacheable artifact: `CompiledModuleS
 | Compile               | Compile a translation unit into `.o`                 |
 | Assembly/Link         | Link objects + apply relocations                     |
 
+## Elaboration-Time vs Execution-Time
+
+Specialization boundaries are determined by differences in compiled behavior artifacts, not by differences in constructed design graphs.
+
+**Elaboration-time** parameter effects build the design graph without changing compiled code:
+
+- Unpacked container sizes
+- Instance counts and topology
+- Process instantiation decisions (which processes exist)
+- Generate-controlled graph construction
+- Connectivity wiring
+
+These are resolved during elaboration. They do not create specialization boundaries.
+
+**Execution-time** parameter effects change the compiled artifact:
+
+- Packed bit widths, packed layout, signedness
+- Arithmetic representation (operation widths, type coercions)
+- Compiled process code shape (different instructions, different control flow)
+
+These require specialization.
+
 ## Parameter Classification
 
-Parameters are classified by their effect on the compiled artifact:
+Parameters are classified into three categories:
 
 ### Structural Parameters (part of specialization key)
 
-A parameter is **structural** if changing it affects:
+A parameter is **structural** if changing it affects the compiled behavior artifact: packed widths, arithmetic representation, or compiled code shape. Structural parameters are part of `BehaviorFingerprint`.
 
-- Type widths, packed sizes, signedness
-- Array bounds, unpacked dimensions
-- Generate-if / generate-for / generate-case decisions
-- Existence or count of processes, variables, instances
-- Layout offsets, slot count, trigger structure
+### Elaboration-time Parameters
 
-Structural parameters are part of `StructuralFingerprint`.
+A parameter is **elaboration-time** if it affects only elaboration-time properties: unpacked container sizes, instance counts, process instantiation decisions, or generate-controlled graph construction. These are resolved during elaboration and do not create specialization boundaries.
 
 ### Value-Only Parameters (per-instance constants)
 
-A parameter is **value-only** if changing it does NOT affect layout, generate structure, types, or process/trigger topology. It is used only in RHS expressions, comparisons, or non-generate branches.
+A parameter is **value-only** if it affects only runtime expressions (comparisons, display output, address calculations). It is stored in a per-instance `InstanceConstBlock` and read by compiled code at runtime.
 
-Value-only parameters are stored in a per-instance `InstanceConstBlock` and read by compiled code at runtime. They are NOT part of the specialization key.
-
-**Example**: A memory bank module parameterized by `BANK_ID` (0..15) where `BANK_ID` only appears in `$display` and address calculation expressions. All 16 banks share one compiled specialization; each instance has a different const block.
+**Example**: `BANK_ID` (0..15) used only in `$display` and address expressions. All 16 banks share one compiled specialization; each instance has a different const block.
 
 ### Dead Parameters
 
-Parameters that are unused or optimized away. Must not affect the specialization key and must produce identical artifacts.
+Parameters that are unused or optimized away. Must not affect the specialization key.
 
 ### Classification Rule
 
-The compiler determines classification by examining what each parameter influences after elaboration. The `StructuralFingerprint` is computed from the _results_ (layout + generated item graph + process list + trigger schema), not from raw parameter values. Two different parameter assignments that produce identical structural results map to the same specialization.
+The compiler determines classification by examining what each parameter influences after elaboration. The `BehaviorFingerprint` is computed from execution-time results (packed layout, compiled code shape), not from raw parameter values. Two different parameter assignments that produce identical execution-time results map to the same specialization.
+
+## Containers
+
+A **container** is an unpacked array whose size is resolved during elaboration and whose storage location is determined by the runtime layout.
+
+- Container size is elaboration-time metadata, not a specialization input
+- Access uses `base_offset + index * element_stride` arithmetic
+- Element type (and its compiled representation) remains specialization-scoped
+- `int a[4]` and `int a[8]` in two instances of the same module share compiled code
+
+Container size is a property of the constructed design state, not a type property for specialization purposes. See [state-layout.md](state-layout.md) for the arena-based storage model.
+
+## Generate Semantics
+
+A generate block requires specialization only if it changes the compiled behavior artifact. Otherwise it is resolved during elaboration.
+
+Generate blocks that build the design graph (creating instances, instantiating processes, wiring connectivity) are elaboration-time operations. The process body is compiled independently; the generate block only decides whether that process object is created.
+
+Generate blocks that change compiled code (different packed widths, different arithmetic representation inside branches) require specialization.
 
 ## Compiled Artifact: CompiledModuleSpec
 
@@ -189,12 +224,17 @@ These invariants must be enforced automatically:
 
 ## Terminology
 
-| Term               | Definition                                                    |
-| ------------------ | ------------------------------------------------------------- |
-| Module Definition  | Source-level `module M; ... endmodule`                        |
-| Specialization     | `(ModuleDefId, StructuralFingerprint)` -- unit of compilation |
-| Instance           | Runtime object with `this_base`                               |
-| SpecLayout         | Specialization-scoped mapping from slot to offset             |
-| Assembly / Link    | Binding instances to specializations + connectivity tables    |
-| InstanceConstBlock | Per-instance storage for value-only parameters                |
-| Kernelization      | Transforming a process into an inline-callable kernel         |
+| Term                | Definition                                                               |
+| ------------------- | ------------------------------------------------------------------------ |
+| Module Definition   | Source-level `module M; ... endmodule`                                   |
+| Specialization      | `(ModuleDefId, BehaviorFingerprint)` -- unit of compilation              |
+| Instance            | Runtime object with `this_base`                                          |
+| BehaviorFingerprint | Hash of execution-time inputs that affect the compiled artifact          |
+| SpecLayout          | Specialization-scoped mapping from slot to offset                        |
+| Assembly / Link     | Binding instances to specializations + connectivity tables               |
+| InstanceConstBlock  | Per-instance storage for value-only parameters                           |
+| Kernelization       | Transforming a process into an inline-callable kernel                    |
+| Elaboration-time    | Properties resolved during elaboration (containers, topology, processes) |
+| Execution-time      | Properties requiring specialization (packed widths, compiled code shape) |
+| Container           | Unpacked array with elaboration-resolved size and layout metadata        |
+| Arena               | Contiguous byte memory for design state, allocated after elaboration     |

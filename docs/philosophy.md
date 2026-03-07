@@ -17,6 +17,14 @@ This reflects real pain with tools like Verilator: compile times reaching hours,
 5. Runtime performance
 6. Peak optimization / research features
 
+## Elaboration-Time vs Execution-Time
+
+Many simulators treat all parameter effects as compile-time specialization triggers. This leads to specialization explosion and long compile times.
+
+Lyra observes that most parameter effects are **elaboration-time**: they build the design graph (instances, processes, containers, connectivity) without changing compiled code. Only a smaller set of effects are **execution-time**: they change the compiled artifact itself (packed widths, arithmetic representation).
+
+Lyra exploits this distinction to minimize the specialization space. See [compilation-model.md](compilation-model.md) for the full definition.
+
 ## Key Architectural Decisions
 
 These follow from the architectural north stars; see [architecture-principles.md](architecture-principles.md) for the reasoning behind each.
