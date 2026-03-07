@@ -115,7 +115,8 @@ auto LowerFunctionBody(
       .type_arena = input.type_arena,
       .constant_arena = input.constant_arena,
       .symbol_table = input.symbol_table,
-      .module_places = decl_view.places,
+      .body_places = decl_view.body_places,
+      .design_places = decl_view.design_places,
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
@@ -126,6 +127,7 @@ auto LowerFunctionBody(
       .return_slot = std::nullopt,
       .return_type = function.return_type,
       .design_slots = decl_view.slots,
+      .body_slots = decl_view.body_slots,
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map);

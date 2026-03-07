@@ -39,7 +39,7 @@ auto CollectDeclarations(
         mir::Place place{
             .root =
                 mir::PlaceRoot{
-                    .kind = mir::PlaceRoot::Kind::kDesign,
+                    .kind = mir::PlaceRoot::Kind::kDesignGlobal,
                     .id = next_slot++,
                     .type = sym.type,
                 },
@@ -60,57 +60,109 @@ auto CollectDeclarations(
     }
   }
 
-  // Allocate module variable and net design places
+  // Allocate module variable and net design places.
+  // For each module instance, we create:
+  //   1. kDesignGlobal places for design-level consumers (connections, layout)
+  //   2. kModuleSlot places (0-based) for body lowering
+  // Both refer to the same logical storage but use different scope roots.
   for (const auto& element : design.elements) {
     if (const auto* mod = std::get_if<hir::Module>(&element)) {
       auto instance_slot_begin = static_cast<uint32_t>(next_slot);
+      int next_body_slot = 0;
+      BodyLocalDecls body_decls;
 
       for (SymbolId var : mod->variables) {
         const Symbol& sym = (*input.symbol_table)[var];
-        mir::Place place{
+        mir::SlotDesc desc{sym.type, mir::SlotKind::kVariable};
+        // Design-global place for connections/layout
+        mir::Place global_place{
             .root =
                 mir::PlaceRoot{
-                    .kind = mir::PlaceRoot::Kind::kDesign,
+                    .kind = mir::PlaceRoot::Kind::kDesignGlobal,
                     .id = next_slot++,
                     .type = sym.type,
                 },
             .projections = {},
         };
-        decls.design_places[var] = mir_arena.AddPlace(std::move(place));
-        decls.slots.push_back({sym.type, mir::SlotKind::kVariable});
+        decls.design_places[var] = mir_arena.AddPlace(std::move(global_place));
+        decls.slots.push_back(desc);
+
+        // Body-local place for module body lowering
+        mir::Place body_place{
+            .root =
+                mir::PlaceRoot{
+                    .kind = mir::PlaceRoot::Kind::kModuleSlot,
+                    .id = next_body_slot++,
+                    .type = sym.type,
+                },
+            .projections = {},
+        };
+        body_decls.places[var] = mir_arena.AddPlace(std::move(body_place));
+        body_decls.slots.push_back(desc);
       }
 
       for (SymbolId net : mod->nets) {
         const Symbol& sym = (*input.symbol_table)[net];
-        mir::Place place{
+        mir::SlotDesc desc{sym.type, mir::SlotKind::kNet};
+        // Design-global place
+        mir::Place global_place{
             .root =
                 mir::PlaceRoot{
-                    .kind = mir::PlaceRoot::Kind::kDesign,
+                    .kind = mir::PlaceRoot::Kind::kDesignGlobal,
                     .id = next_slot++,
                     .type = sym.type,
                 },
             .projections = {},
         };
-        decls.design_places[net] = mir_arena.AddPlace(std::move(place));
-        decls.slots.push_back({sym.type, mir::SlotKind::kNet});
+        decls.design_places[net] = mir_arena.AddPlace(std::move(global_place));
+        decls.slots.push_back(desc);
+
+        // Body-local place
+        mir::Place body_place{
+            .root =
+                mir::PlaceRoot{
+                    .kind = mir::PlaceRoot::Kind::kModuleSlot,
+                    .id = next_body_slot++,
+                    .type = sym.type,
+                },
+            .projections = {},
+        };
+        body_decls.places[net] = mir_arena.AddPlace(std::move(body_place));
+        body_decls.slots.push_back(desc);
       }
 
       std::vector<mir::ParamInitEntry> param_inits;
       for (size_t pi = 0; pi < mod->param_slots.size(); ++pi) {
         SymbolId param = mod->param_slots[pi];
         const Symbol& sym = (*input.symbol_table)[param];
+        mir::SlotDesc desc{sym.type, mir::SlotKind::kParamConst};
         auto slot_id = static_cast<uint32_t>(next_slot);
-        mir::Place place{
+        // Design-global place
+        mir::Place global_place{
             .root =
                 mir::PlaceRoot{
-                    .kind = mir::PlaceRoot::Kind::kDesign,
+                    .kind = mir::PlaceRoot::Kind::kDesignGlobal,
                     .id = next_slot++,
                     .type = sym.type,
                 },
             .projections = {},
         };
-        decls.design_places[param] = mir_arena.AddPlace(std::move(place));
-        decls.slots.push_back({sym.type, mir::SlotKind::kParamConst});
+        decls.design_places[param] =
+            mir_arena.AddPlace(std::move(global_place));
+        decls.slots.push_back(desc);
+
+        // Body-local place
+        mir::Place body_place{
+            .root =
+                mir::PlaceRoot{
+                    .kind = mir::PlaceRoot::Kind::kModuleSlot,
+                    .id = next_body_slot++,
+                    .type = sym.type,
+                },
+            .projections = {},
+        };
+        body_decls.places[param] = mir_arena.AddPlace(std::move(body_place));
+        body_decls.slots.push_back(desc);
 
         if (pi < mod->param_init_values.size()) {
           param_inits.push_back(
@@ -127,6 +179,7 @@ auto CollectDeclarations(
           {instance_slot_begin, instance_slot_count});
       decls.module_def_ids.push_back(mod->module_def_id);
       decls.instance_param_inits.push_back(std::move(param_inits));
+      decls.body_local_decls.push_back(std::move(body_decls));
     }
   }
 

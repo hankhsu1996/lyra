@@ -56,7 +56,7 @@ auto LowerDesign(
   // Lower package init processes
   // Collect dynamically generated functions (e.g., strobe thunks)
   DeclView init_view{
-      .places = &decls.design_places,
+      .design_places = &decls.design_places,
       .functions = &decls.functions,
       .slots = &decls.slots};
   for (const auto& element : design.elements) {
@@ -77,10 +77,12 @@ auto LowerDesign(
   }
 
   // Lower design elements (modules and packages)
+  uint32_t module_index = 0;
   for (const auto& element : design.elements) {
     if (const auto* mod = std::get_if<hir::Module>(&element)) {
       Result<mir::ModuleBody> body_result =
-          LowerModule(*mod, input, mir_arena, origin_map, decls);
+          LowerModule(*mod, input, mir_arena, origin_map, decls, module_index);
+      ++module_index;
       if (!body_result) {
         return std::unexpected(body_result.error());
       }

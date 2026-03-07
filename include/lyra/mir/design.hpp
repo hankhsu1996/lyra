@@ -83,8 +83,9 @@ struct Design {
   // DERIVED: acceleration structure for kAlias only.
   // INVARIANT: entry exists iff PortConnection{kAlias} exists for that slot.
   // Written ONLY in ApplyBindings, nowhere else.
-  // Key: child port's SlotId (must be kDesign root with no projections)
-  // Value: parent's PlaceId (may have projections, must resolve to kDesign)
+  // Key: child port's SlotId (must be kDesignGlobal root with no projections)
+  // Value: parent's PlaceId (may have projections, must resolve to
+  // kDesignGlobal)
   absl::flat_hash_map<SlotId, PlaceId> alias_map;
 
   // Instance table for %m support.

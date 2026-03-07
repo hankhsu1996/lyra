@@ -36,8 +36,8 @@ struct ValueChange {
 // Bulk memory write ($readmemh, $readmemb, $fread into unpacked array).
 // Emitted once per call, not per element.
 // Best-effort: only emitted when the target Place is rooted in a design slot
-// (PlaceRoot::kDesign). For non-design targets (temporaries, stack memory),
-// no MemoryDirty event is emitted.
+// (PlaceRoot::kDesignGlobal/kModuleSlot). For non-design targets (temporaries,
+// stack memory), no MemoryDirty event is emitted.
 struct MemoryDirty {
   uint32_t slot_id;
 };

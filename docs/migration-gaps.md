@@ -53,7 +53,7 @@ These must hold after migration. Each gets a CI/policy enforcement task.
 
 ### Process fingerprinting and relative addressing exist
 
-`ComputeProcessFingerprint()` in `include/lyra/llvm_backend/process_fingerprint.hpp` normalizes slot references by subtracting `base_slot_id`. `ProcessTemplate` groups processes by fingerprint. Shared functions use `this_ptr + rel_byte_offsets[slot_id - base_slot_id]`. This is the seed of specialization-scoped codegen -- the addressing model is correct, but discovered through design-wide dedup instead of being the native specialization model.
+`ComputeProcessFingerprint()` in `include/lyra/llvm_backend/process_fingerprint.hpp` hashes `kModuleSlot` roots as body-local IDs and `kDesignGlobal` roots as global IDs directly -- no `base_slot_id` normalization needed since MIR storage roots carry explicit scope. `ProcessTemplate` groups processes by fingerprint. Shared functions use `this_ptr + rel_byte_offsets[slot_id - base_slot_id]`. This is the seed of specialization-scoped codegen -- the addressing model is correct, but discovered through design-wide dedup instead of being the native specialization model.
 
 ### DesignBindingPlan partially separates port connections
 
@@ -93,14 +93,18 @@ Remaining:
 - `include/lyra/hir/design.hpp` - `Design::elements` parallel to elaboration order, each element owns behavioral content
 - `include/lyra/mir/routine.hpp:28` - `mir::Process::owner_instance_id` still embeds instance identity in behavioral IR
 
-**B2: SlotId allocation is design-global**
+**B2: SlotId allocation is design-global** (partially addressed)
 
 Single monotonic counter across entire design. All downstream tables use design-global indices. Specialization artifacts cannot be compiled independently.
 
-- `src/lyra/lowering/hir_to_mir/design_decls.cpp:27` - `int next_slot = 0;` global counter
+MIR place roots now distinguish module-local vs design-global storage: `PlaceRoot::kModuleSlot` (body-local, 0-based) and `PlaceRoot::kDesignGlobal` (package/global). Module body processes use `kModuleSlot` for module-owned state. `SignalRef` carries explicit scope (`kModuleLocal` / `kDesignGlobal`) for wait triggers. `ScopedSlotRef` and `ScopedPlanOp` preserve scope for late-bound index dependencies. `ModuleBody` owns body-local slot descriptors. Each subsystem has one canonical scope-resolution helper: `Context::ResolveDesignGlobalSlotId()` (LLVM backend, with overloads for `PlaceRoot`, `SignalRef`, `ScopedSlotRef`), `ResolveDesignGlobalSlot()` (interpreter), `ResolveSignalToGlobalSlot()` (layout). Process fingerprinting and sensitivity analysis operate on scoped identity directly without collapsing to global. Bodies are storage-local by construction but still 1:1 with instances.
+
+Remaining:
+
+- `src/lyra/lowering/hir_to_mir/design_decls.cpp:27` - `int next_slot = 0;` global counter still drives allocation
 - `include/lyra/mir/handle.hpp:79` - `SlotId` is bare `uint32_t`, no scope
 - `include/lyra/mir/design.hpp:63` - `Design::slots` indexed by global SlotId
-- `include/lyra/mir/place.hpp:13` - `PlaceRoot::kDesign` uses `id` as global SlotId
+- Design-global slot tables and `instance_slot_ranges` still provide the runtime placement model
 
 **B3: Codegen operates on entire design**
 
@@ -424,4 +428,4 @@ Key consequences: unpacked container sizes are no longer structural specializati
 
 5. **MIR interpreter alignment**: Debug-only. Migrate in lockstep or defer?
 
-6. **Specialization body slot numbering**: During transition, `ModuleBody` processes reference design-global slot IDs (from the instance whose elaboration was used for lowering). Slot normalization to spec-local (0-based) happens in Phase C. `ModuleBody` intentionally has no slot metadata --storage shape is a Phase C concern. The instance record or a separate assembly artifact should provide the slot base for rebasing.
+6. **Specialization body slot numbering**: Addressed. `ModuleBody` processes now use `kModuleSlot` (0-based, body-local) for module-owned storage, with `SignalRef::kModuleLocal` for wait triggers. Design-global references use `kDesignGlobal`. `ModuleBody` owns body-local slot descriptors. Rebasing from body-local to design-global happens through one canonical resolver per subsystem. Remaining transitional items: `body_local_decls` indexed per-instance (should collapse to per-specialization); `SignalRef`/`ScopedSlotRef`/`PlaceRoot` express the same scope concept as separate types (could unify scope enum). Full spec-local slot allocation (removing design-global counter) remains Phase C.

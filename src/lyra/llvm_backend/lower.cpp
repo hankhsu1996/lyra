@@ -842,6 +842,18 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       continue;
     }
 
+    // Set base slot id for kModuleSlot rebasing in standalone processes.
+    // Connection processes (owner_instance_id == UINT32_MAX) use only
+    // kDesignGlobal, so base 0 is safe.
+    if (mir_process.owner_instance_id != UINT32_MAX) {
+      uint32_t base_slot_id =
+          input.design->instance_slot_ranges[mir_process.owner_instance_id]
+              .slot_begin;
+      context.SetRelByteOffsets({}, base_slot_id);
+    } else {
+      context.SetRelByteOffsets({}, 0);
+    }
+
     auto func_result = GenerateProcessFunction(
         context, mir_process, std::format("process_{}", i));
     if (!func_result) return std::unexpected(func_result.error());

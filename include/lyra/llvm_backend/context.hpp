@@ -22,6 +22,11 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
 
+namespace lyra::mir {
+struct SignalRef;
+struct ScopedSlotRef;
+}  // namespace lyra::mir
+
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
@@ -267,12 +272,29 @@ class Context {
   void SetRelByteOffsets(std::vector<uint64_t> offsets, uint32_t base_slot_id);
   [[nodiscard]] auto GetTemplateBaseSlotId() const -> uint32_t;
 
+  // Centralized resolution: MIR storage root -> design-global slot ID.
+  // kModuleSlot / kModuleLocal: template_base_slot_id_ + id
+  // kDesignGlobal: id directly
+  [[nodiscard]] auto ResolveDesignGlobalSlotId(const mir::PlaceRoot& root) const
+      -> uint32_t;
+  [[nodiscard]] auto ResolveDesignGlobalSlotId(const mir::SignalRef& sig) const
+      -> uint32_t;
+  [[nodiscard]] auto ResolveDesignGlobalSlotId(
+      const mir::ScopedSlotRef& ref) const -> uint32_t;
+
+  // Emit runtime signal ID for a signal ref (handles template vs non-template).
+  // kModuleLocal template: Dynamic(signal_id_offset_ + sig.id)
+  // kModuleLocal non-template: Const(template_base_slot_id_ + sig.id)
+  // kDesignGlobal: Const(sig.id) always
+  [[nodiscard]] auto EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr;
+
   // Single GEP emitter for design slots. Handles template vs non-template.
   [[nodiscard]] auto GetDesignSlotPointer(uint32_t slot_id) -> llvm::Value*;
 
-  // Resolve aliases + GetDesignSlotPointer. Returns root slot pointer for a
-  // place. Used by NBA path for notify_base_ptr.
-  [[nodiscard]] auto GetDesignRootPointer(mir::PlaceId place_id)
+  // Resolve aliases + get storage pointer for a place root.
+  // Returns root slot pointer for kModuleSlot or kDesignGlobal roots.
+  // Used by NBA path for notify_base_ptr.
+  [[nodiscard]] auto GetStorageRootPointer(mir::PlaceId place_id)
       -> llvm::Value*;
 
   // Emit GEPs and loads to extract design_ptr, engine_ptr, and frame_ptr from

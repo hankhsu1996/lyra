@@ -25,15 +25,32 @@ namespace lyra::mir {
 
 namespace {
 
-// Per-slot observation tracking. For each design slot, we track all distinct
+// Observation key: signal scope + id. Distinguishes module-local and
+// design-global signals for deduplication and observation tracking.
+struct SignalKey {
+  SignalRef::Scope scope;
+  uint32_t id;
+  auto operator==(const SignalKey&) const -> bool = default;
+};
+
+struct SignalKeyHash {
+  auto operator()(const SignalKey& k) const noexcept -> size_t {
+    return std::hash<uint64_t>{}((static_cast<uint64_t>(k.scope) << 32) | k.id);
+  }
+};
+
+// Per-signal observation tracking. For each signal, we track all distinct
 // observed places. A nullopt entry means "full slot" and subsumes all sub-range
 // observations.
 struct ObservationSet {
-  // Key: slot_id. Value: list of observed PlaceIds (nullopt = full slot).
-  std::unordered_map<uint32_t, std::vector<std::optional<PlaceId>>> entries;
+  std::unordered_map<
+      SignalKey, std::vector<std::optional<PlaceId>>, SignalKeyHash>
+      entries;
 
-  void Add(uint32_t slot_id, std::optional<PlaceId> place_id) {
-    auto& vec = entries[slot_id];
+  void Add(
+      SignalRef::Scope scope, uint32_t id, std::optional<PlaceId> place_id) {
+    SignalKey key{scope, id};
+    auto& vec = entries[key];
 
     // If we already have a full-slot observation, no need to add more.
     for (const auto& entry : vec) {
@@ -89,15 +106,21 @@ void CollectFromOperand(
 void CollectFromPlace(
     PlaceId place_id, const Place& place, const Arena& arena,
     ObservationSet& obs) {
-  if (place.root.kind != PlaceRoot::Kind::kDesign) {
+  // Only module-local and design-global roots produce sensitivity triggers.
+  SignalRef::Scope scope;
+  if (place.root.kind == PlaceRoot::Kind::kModuleSlot) {
+    scope = SignalRef::Scope::kModuleLocal;
+  } else if (place.root.kind == PlaceRoot::Kind::kDesignGlobal) {
+    scope = SignalRef::Scope::kDesignGlobal;
+  } else {
     return;
   }
   auto slot_id = static_cast<uint32_t>(place.root.id);
 
   if (HasStaticObservation(place)) {
-    obs.Add(slot_id, place_id);
+    obs.Add(scope, slot_id, place_id);
   } else {
-    obs.Add(slot_id, std::nullopt);
+    obs.Add(scope, slot_id, std::nullopt);
   }
 
   // Continue collecting sub-reads from projection operands (e.g., dynamic
@@ -255,10 +278,10 @@ auto CollectSensitivity(const Process& process, const Arena& arena)
   }
 
   std::vector<WaitTrigger> triggers;
-  for (const auto& [slot_id, places] : obs.entries) {
+  for (const auto& [key, places] : obs.entries) {
     for (const auto& place : places) {
       triggers.push_back(
-          {.signal = SlotId{slot_id},
+          {.signal = SignalRef{.scope = key.scope, .id = key.id},
            .edge = common::EdgeKind::kAnyChange,
            .observed_place = place});
     }

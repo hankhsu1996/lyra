@@ -73,13 +73,42 @@ struct Delay {
   BasicBlockId resume = {};  // Block to resume after delay
 };
 
+// Scoped slot reference for index plan dependencies.
+// Preserves module-local vs design-global distinction end-to-end.
+// Resolved to concrete design-global IDs at codegen time.
+struct ScopedSlotRef {
+  enum class Scope : uint8_t { kModuleLocal, kDesignGlobal };
+  Scope scope;
+  uint32_t id;
+
+  auto operator==(const ScopedSlotRef&) const -> bool = default;
+
+  auto operator<=>(const ScopedSlotRef& other) const {
+    if (auto cmp =
+            static_cast<uint8_t>(scope) <=> static_cast<uint8_t>(other.scope);
+        cmp != 0) {
+      return cmp;
+    }
+    return id <=> other.id;
+  }
+};
+
+// MIR-level index plan operation that preserves storage scope.
+// Wraps runtime::IndexPlanOp with scope info for kReadSlot ops.
+// At codegen time, module-local slot IDs are resolved to design-global
+// through the instance placement context.
+struct ScopedPlanOp {
+  runtime::IndexPlanOp op;
+  ScopedSlotRef::Scope slot_scope = ScopedSlotRef::Scope::kDesignGlobal;
+};
+
 // Late-bound index metadata for dynamic-index edge triggers.
 // Carries the expression plan (bytecode) to evaluate the index at runtime,
 // the set of design-state slots the expression depends on (for rebind
 // subscriptions), and the affine mapping from SV index to storage bit.
 struct LateBoundIndex {
-  std::vector<runtime::IndexPlanOp> plan;  // Expression bytecode
-  std::vector<SlotId> dep_slots;           // Design-state slots to subscribe
+  std::vector<ScopedPlanOp> plan;        // Expression bytecode with scope
+  std::vector<ScopedSlotRef> dep_slots;  // Scoped slots to subscribe
   runtime::BitTargetMapping mapping;
   // Element type for unpacked array or container edge triggers.
   // For unpacked arrays: mapping.index_step is a direction sign (+1/-1),
@@ -90,9 +119,21 @@ struct LateBoundIndex {
   bool is_container = false;
 };
 
+// Scoped signal reference that distinguishes module-local vs design-global.
+// Allows a single process to legally contain mixed-scope sensitivity while
+// keeping MIR clean and future-shareable.
+struct SignalRef {
+  enum class Scope : uint8_t { kModuleLocal, kDesignGlobal };
+  Scope scope;
+  uint32_t
+      id;  // body-local index (kModuleLocal) or global slot (kDesignGlobal)
+
+  auto operator==(const SignalRef&) const -> bool = default;
+};
+
 // A single trigger in a Wait terminator.
 struct WaitTrigger {
-  SlotId signal;
+  SignalRef signal;
   common::EdgeKind edge = common::EdgeKind::kAnyChange;
   // Optional place reference for sub-slot observation narrowing.
   // Set by sensitivity analysis when the observed sub-range is statically known

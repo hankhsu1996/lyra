@@ -87,6 +87,7 @@ struct ProcessState {
   DesignState* design_state = nullptr;
   ProcessStatus status = ProcessStatus::kRunning;
   uint32_t instance_id = UINT32_MAX;  // For %m: index into instance paths
+  uint32_t slot_base = 0;  // kModuleSlot -> design slot rebasing offset
   // Set by ExecTerminator when process suspends (Delay, Wait, Repeat).
   // RunUntilSuspend checks this before returning.
   std::optional<SuspendReason> pending_suspend;
@@ -365,8 +366,9 @@ class Interpreter {
   common::MutationSink mutation_sink_;
 
   // Emit a mutation event for the given design-slot place.
+  // Resolves kModuleSlot -> design-global via state.slot_base.
   void EmitMutation(
-      PlaceId place_id, common::MutationKind kind,
+      const ProcessState& state, PlaceId place_id, common::MutationKind kind,
       common::EpochEffect epoch = common::EpochEffect::kNone);
 
   // Emit a mutation event for a heap-backed object (associative arrays).
@@ -374,6 +376,11 @@ class Interpreter {
       uint32_t handle_id, common::MutationKind kind,
       common::EpochEffect epoch = common::EpochEffect::kNone);
 };
+
+// Centralized helper: resolve a design-scope PlaceRoot to design-global slot
+// index. All kModuleSlot -> design-global translation in the interpreter must
+// go through this function.
+auto ResolveDesignGlobalSlot(const PlaceRoot& root, uint32_t slot_base) -> int;
 
 // Helper: Create ProcessState for a given process.
 // Initializes locals and temps with default values based on their types.

@@ -2,9 +2,13 @@
 
 #include <vector>
 
+#include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::mir {
+
+enum class SlotKind : uint8_t;
+struct SlotDesc;
 
 // Specialization-owned behavioral MIR for a module body.
 //
@@ -20,6 +24,11 @@ namespace lyra::mir {
 struct ModuleBody {
   std::vector<ProcessId> processes;
   std::vector<FunctionId> functions;
+
+  // Body-local slot descriptors, indexed by kModuleSlot id.
+  // This is the body's required storage interface: what slots exist,
+  // their kinds, and their types. This is NOT placement/layout metadata.
+  std::vector<SlotDesc> slots;
 };
 
 }  // namespace lyra::mir
