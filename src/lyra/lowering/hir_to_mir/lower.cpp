@@ -50,23 +50,24 @@ void VerifyLoweredMir(
     std::visit(
         common::Overloaded{
             [&](const mir::Module& mod) {
+              const auto& body = mir::GetModuleBody(design, mod);
               // Derive instance path from first process (all share same owner).
               std::string_view module_path;
-              if (!mod.processes.empty()) {
-                const auto& first = arena[mod.processes[0]];
+              if (!body.processes.empty()) {
+                const auto& first = arena[body.processes[0]];
                 module_path =
                     design.instance_table.GetPath(first.owner_instance_id);
               }
-              for (size_t fi = 0; fi < mod.functions.size(); ++fi) {
+              for (size_t fi = 0; fi < body.functions.size(); ++fi) {
                 std::string label =
                     module_path.empty()
                         ? std::format("element[{}]: function[{}]", ei, fi)
                         : std::format("{}: function[{}]", module_path, fi);
                 mir::VerifyFunction(
-                    arena[mod.functions[fi]], arena, type_arena, label);
+                    arena[body.functions[fi]], arena, type_arena, label);
               }
-              for (size_t pi = 0; pi < mod.processes.size(); ++pi) {
-                const auto& proc = arena[mod.processes[pi]];
+              for (size_t pi = 0; pi < body.processes.size(); ++pi) {
+                const auto& proc = arena[body.processes[pi]];
                 std::string label = module_path.empty()
                                         ? std::format(
                                               "element[{}]: {}[{}]", ei,
@@ -113,10 +114,11 @@ auto ComputeMirStats(const mir::Design& design, const mir::Arena& arena)
     std::visit(
         common::Overloaded{
             [&](const mir::Module& mod) {
-              for (auto fid : mod.functions) {
+              const auto& body = mir::GetModuleBody(design, mod);
+              for (auto fid : body.functions) {
                 count_routine(arena[fid]);
               }
-              for (auto pid : mod.processes) {
+              for (auto pid : body.processes) {
                 count_routine(arena[pid]);
               }
             },

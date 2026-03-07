@@ -14,6 +14,7 @@
 #include "lyra/common/source_span.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/place.hpp"
@@ -173,7 +174,8 @@ void PrintProcessStats(
       continue;
     }
     const auto& mir_module = std::get<mir::Module>(element);
-    for (mir::ProcessId pid : mir_module.processes) {
+    const auto& body = mir::GetModuleBody(design, mir_module);
+    for (mir::ProcessId pid : body.processes) {
       if (arena[pid].kind != mir::ProcessKind::kFinal) {
         process_ids.push_back(pid);
       }

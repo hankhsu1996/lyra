@@ -6,13 +6,13 @@
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/module.hpp"
+#include "lyra/mir/module_body.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 auto LowerModule(
     const hir::Module& module, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map,
-    const DesignDeclarations& decls) -> Result<mir::Module>;
+    const DesignDeclarations& decls) -> Result<mir::ModuleBody>;
 
 }  // namespace lyra::lowering::hir_to_mir

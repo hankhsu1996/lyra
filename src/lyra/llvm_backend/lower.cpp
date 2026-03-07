@@ -37,6 +37,7 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
@@ -736,7 +737,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   // Scan module processes
   for (const auto& element : input.design->elements) {
     if (const auto* mod_elem = std::get_if<mir::Module>(&element)) {
-      for (mir::ProcessId proc_id : mod_elem->processes) {
+      const auto& body = mir::GetModuleBody(*input.design, *mod_elem);
+      for (mir::ProcessId proc_id : body.processes) {
         register_monitor_info(proc_id);
       }
     }
@@ -751,10 +753,18 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   std::vector<mir::FunctionId> all_func_ids;
   for (const auto& element : input.design->elements) {
     std::visit(
-        [&](const auto& elem) {
-          for (mir::FunctionId func_id : elem.functions) {
-            all_func_ids.push_back(func_id);
-          }
+        common::Overloaded{
+            [&](const mir::Module& mod) {
+              const auto& body = mir::GetModuleBody(*input.design, mod);
+              for (mir::FunctionId func_id : body.functions) {
+                all_func_ids.push_back(func_id);
+              }
+            },
+            [&](const mir::Package& pkg) {
+              for (mir::FunctionId func_id : pkg.functions) {
+                all_func_ids.push_back(func_id);
+              }
+            },
         },
         element);
   }

@@ -21,6 +21,7 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/module_body.hpp"
 #include "lyra/mir/package.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -78,12 +79,16 @@ auto LowerDesign(
   // Lower design elements (modules and packages)
   for (const auto& element : design.elements) {
     if (const auto* mod = std::get_if<hir::Module>(&element)) {
-      Result<mir::Module> mod_result =
+      Result<mir::ModuleBody> body_result =
           LowerModule(*mod, input, mir_arena, origin_map, decls);
-      if (!mod_result) {
-        return std::unexpected(mod_result.error());
+      if (!body_result) {
+        return std::unexpected(body_result.error());
       }
-      result.elements.emplace_back(std::move(*mod_result));
+      mir::ModuleBodyId body_id{
+          static_cast<uint32_t>(result.module_bodies.size())};
+      result.module_bodies.push_back(std::move(*body_result));
+      result.elements.emplace_back(
+          mir::Module{.instance_sym = mod->symbol, .body_id = body_id});
     } else if (const auto* pkg = std::get_if<hir::Package>(&element)) {
       Result<mir::Package> pkg_result =
           LowerPackage(*pkg, input, mir_arena, origin_map, decls);

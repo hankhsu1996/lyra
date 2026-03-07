@@ -391,7 +391,8 @@ auto CreateDesignState(
   LocalInitCollector collector;
   for (const auto& element : design.elements) {
     if (const auto* module = std::get_if<Module>(&element)) {
-      for (ProcessId process_id : module->processes) {
+      const auto& body = GetModuleBody(design, *module);
+      for (ProcessId process_id : body.processes) {
         VisitProcessBlocks(collector, arena[process_id], arena);
       }
     }
@@ -430,7 +431,8 @@ auto CollectInitialProcesses(const Design& design, const Arena& arena)
   std::vector<ProcessId> initial_processes;
   for (const auto& element : design.elements) {
     if (const auto* module = std::get_if<Module>(&element)) {
-      for (ProcessId process_id : module->processes) {
+      const auto& body = GetModuleBody(design, *module);
+      for (ProcessId process_id : body.processes) {
         const auto& process = arena[process_id];
         if (process.kind == ProcessKind::kOnce) {
           initial_processes.push_back(process_id);
