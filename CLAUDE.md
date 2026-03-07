@@ -21,6 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/parameterized-modules.md`    | Module parameters, specialization, param classes     |
 | `docs/module-hierarchy.md`         | Module hierarchy, port connections, assembly binding |
 | `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands          |
+| `docs/state-layout.md`             | Arena state layout, container semantics              |
 | `docs/limitations.md`              | Unsupported SystemVerilog features                   |
 | `docs/string-types.md`             | String type handling, slang interaction              |
 | `docs/error-handling.md`           | Error types, when to use each                        |

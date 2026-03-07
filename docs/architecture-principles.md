@@ -44,7 +44,7 @@ These are consequences of the north stars, not goals in themselves.
 
 ### Compile per Specialization, Assemble per Design, Run per Instance
 
-`ModuleSpecId = (ModuleDefId, StructuralFingerprint)` is the compile-time unit. Code is generated once per specialization. At assembly time, instances are bound to compiled specializations and connectivity tables are built. At runtime, each instance owns its own state and the shared specialization code operates on it via `this_base` + relative offset.
+`ModuleSpecId = (ModuleDefId, BehaviorFingerprint)` is the compile-time unit. Code is generated once per specialization. At assembly time, instances are bound to compiled specializations and connectivity tables are built. At runtime, each instance owns its own state and the shared specialization code operates on it via `this_base` + relative offset.
 
 This follows from **parallelism** (compile units are specializations) and **performance** (O(1) storage access).
 
@@ -69,9 +69,15 @@ All compile-time optimizations (kernelization, topo sorting, connection batching
 
 This follows from **parallelism** (specializations compile independently) and **incrementality** (local changes have local effects).
 
+### Elaboration-Time vs Execution-Time Separation
+
+Specialization boundaries are determined by differences in compiled behavior artifacts, not by differences in constructed design graphs. Elaboration-time properties (container sizes, instance counts, process instantiation, connectivity) are resolved without recompilation. Only execution-time properties (packed widths, compiled code shape) require specialization. See [compilation-model.md](compilation-model.md) for the full classification.
+
+This follows from **parallelism** (fewer specializations = better parallelism) and **incrementality** (elaboration-time changes don't force recompilation).
+
 ### Structural vs Value-Only Parameter Split
 
-Specialization identity is based on structural effects (layout, generate decisions, types, process/trigger topology), not raw parameter values. Parameters that affect only runtime behavior are stored as per-instance constants. This prevents specialization explosion while preserving parallel/incremental compilation.
+Within execution-time parameters, specialization identity is based on structural effects (packed layout, compiled code shape), not raw parameter values. Parameters that affect only runtime expressions are stored as per-instance constants.
 
 This follows from **parallelism** (fewer specializations = better parallelism) and **incrementality** (value-only parameter changes don't force recompilation).
 
@@ -99,3 +105,5 @@ How existing decisions follow from these principles:
 - **Strict pipeline layering** (HIR -> MIR -> LLVM) -> incrementality: each stage depends only on its input
 - **Kernelization within specialization** -> performance: scheduler bypass without cross-module coupling
 - **Value-only parameters as instance constants** -> parallelism: 16 banks = 1 specialization, not 16
+- **Unpacked sizes as elaboration-time metadata** -> parallelism: `int a[4]` and `int a[8]` share compiled code
+- **Generate-for as elaboration, not specialization** -> incrementality: adding instances doesn't recompile parent

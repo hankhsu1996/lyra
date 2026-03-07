@@ -18,7 +18,7 @@ Each instance is a complete, independent scope with unique symbol pointers.
 Lyra does not preserve slang's per-instance model in compiled artifacts. Instead, instances with the same structural parameters share a single compiled specialization:
 
 ```
-ModuleSpecId = (ModuleDefId, StructuralFingerprint)
+ModuleSpecId = (ModuleDefId, BehaviorFingerprint)
 ```
 
 Two instances of the same module with different `BANK_ID` values but identical layout, generate structure, and process topology map to the **same** specialization. The `BANK_ID` value becomes a per-instance constant read from an `InstanceConstBlock`.
@@ -35,8 +35,11 @@ All parameters are resolved at elaboration time by slang:
 
 After elaboration, the compiler classifies each parameter:
 
-- **Structural** (affects layout/generate) -> part of `StructuralFingerprint`
-- **Value-only** (affects only computation) -> stored in `InstanceConstBlock`
+- **Structural** (affects packed widths, compiled code shape) -> part of `BehaviorFingerprint`
+- **Elaboration-time** (affects unpacked container sizes, instance counts) -> resolved during elaboration as layout metadata
+- **Value-only** (affects only runtime expressions) -> stored in `InstanceConstBlock`
+
+See [compilation-model.md](compilation-model.md) for the elaboration-time vs execution-time distinction.
 
 ## Hierarchical References
 
