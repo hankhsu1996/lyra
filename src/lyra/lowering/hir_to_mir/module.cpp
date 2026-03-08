@@ -24,13 +24,12 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerModule(
     const hir::Module& module, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map,
-    const DesignDeclarations& decls, uint32_t module_index)
+    const DesignDeclarations& decls, const BodyLocalDecls& body_decls)
     -> Result<mir::ModuleBody> {
   mir::ModuleBody result;
 
-  // Body-local slot descriptors are sourced directly from BodyLocalDecls,
-  // not derived from design-global slots.
-  const auto& body_decls = decls.body_local_decls[module_index];
+  // Body-local slot descriptors come from specialization-local collection,
+  // not from design-global declaration state.
   result.slots = body_decls.slots;
 
   // Phase 1: Pre-allocate mir::FunctionIds and build symbol map

@@ -25,7 +25,7 @@ auto LowerPackage(
     const DesignDeclarations& decls) -> Result<mir::Package> {
   mir::Package result;
 
-  // Lower function bodies (IDs were pre-allocated in CollectDeclarations)
+  // Lower function bodies (IDs were pre-allocated in CollectDesignDeclarations)
   DeclView decl_view{
       .design_places = &decls.design_places,
       .functions = &decls.functions,

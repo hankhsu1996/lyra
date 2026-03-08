@@ -37,10 +37,14 @@ using PlaceMap = std::unordered_map<SymbolId, mir::PlaceId, SymbolIdHash>;
 using SymbolToMirFunctionMap =
     std::unordered_map<SymbolId, mir::FunctionId, SymbolIdHash>;
 
-// Frozen design-level declarations produced by CollectDeclarations().
+// Frozen design-global declarations produced by CollectDesignDeclarations().
+// Contains only placement-facing / design-global data. Specialization-local
+// body declarations (BodyLocalDecls) are collected separately per
+// specialization group by CollectBodyLocalDecls().
+//
 // Immutable after construction; passed as const& to all lowering functions.
 //
-// Invariants (guaranteed on exit from CollectDeclarations):
+// Invariants (guaranteed on exit from CollectDesignDeclarations):
 //   - design_places is complete for all design variables (pkg + module)
 //   - functions is complete for all package functions
 //   - All mir::FunctionIds in the map have frozen signatures in the arena
@@ -51,7 +55,7 @@ using SymbolToMirFunctionMap =
 using InstanceIndexMap = std::unordered_map<SymbolId, uint32_t, SymbolIdHash>;
 
 // Per-instance slot range within the design slot table.
-// Recorded during CollectDeclarations, parallel to module elements.
+// Recorded during CollectDesignDeclarations, parallel to module elements.
 struct InstanceSlotRange {
   uint32_t slot_begin = 0;
   uint32_t slot_count = 0;
@@ -78,7 +82,7 @@ struct DesignDeclarations {
   // module instances (in BFS elaboration order).
   std::vector<mir::SlotDesc> slots;
   // Reverse lookup: module instance symbol -> instance table index.
-  // Built from LoweringInput::instance_table during CollectDeclarations.
+  // Built from LoweringInput::instance_table during CollectDesignDeclarations.
   InstanceIndexMap instance_indices;
   // Per-module-instance slot ranges (parallel to module elements only).
   // Recorded in BFS elaboration order.
@@ -87,10 +91,6 @@ struct DesignDeclarations {
   std::vector<common::ModuleDefId> module_def_ids;
   // Per-module-instance param init entries (parallel to instance_slot_ranges).
   std::vector<std::vector<mir::ParamInitEntry>> instance_param_inits;
-  // Per-module body-local declaration maps (parallel to instance_slot_ranges).
-  // Maps module-owned symbols to body-local kModuleSlot places.
-  // Module body lowering consumes these instead of design_places.
-  std::vector<BodyLocalDecls> body_local_decls;
 };
 
 // Read-only view into declaration artifacts for lower-level helpers
