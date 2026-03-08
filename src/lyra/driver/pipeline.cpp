@@ -57,6 +57,7 @@ auto CompileToMir(const CompilationInput& input, VerboseLogger& vlog)
       .binding_plan = &hir_result.binding_plan,
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
+      .specialization_map = &hir_result.specialization_map,
   };
 
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;

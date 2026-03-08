@@ -21,13 +21,24 @@ struct InstanceEntry {
 struct InstanceTable {
   std::vector<InstanceEntry> entries;
 
-  // Look up the hierarchical path for an instance.
+  // Look up the hierarchical path for an instance by index.
   // Returns empty string_view for invalid instance_id.
   [[nodiscard]] auto GetPath(uint32_t instance_id) const -> std::string_view {
     if (instance_id >= entries.size()) {
       return "";
     }
     return entries[instance_id].full_path;
+  }
+
+  // Look up the hierarchical path for an instance by its symbol.
+  // Returns empty string_view if no entry matches.
+  [[nodiscard]] auto GetPathBySymbol(SymbolId sym) const -> std::string_view {
+    for (const auto& entry : entries) {
+      if (entry.instance_sym == sym) {
+        return entry.full_path;
+      }
+    }
+    return "";
   }
 };
 

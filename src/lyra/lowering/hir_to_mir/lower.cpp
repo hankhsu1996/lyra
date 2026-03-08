@@ -10,6 +10,7 @@
 #include <variant>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
@@ -51,13 +52,9 @@ void VerifyLoweredMir(
         common::Overloaded{
             [&](const mir::Module& mod) {
               const auto& body = mir::GetModuleBody(design, mod);
-              // Derive instance path from first process (all share same owner).
-              std::string_view module_path;
-              if (!body.processes.empty()) {
-                const auto& first = arena[body.processes[0]];
-                module_path =
-                    design.instance_table.GetPath(first.owner_instance_id);
-              }
+              // Use instance-side module record + typed InstanceTable lookup.
+              std::string_view module_path =
+                  design.instance_table.GetPathBySymbol(mod.instance_sym);
               for (size_t fi = 0; fi < body.functions.size(); ++fi) {
                 std::string label =
                     module_path.empty()
@@ -144,6 +141,11 @@ auto ComputeMirStats(const mir::Design& design, const mir::Arena& arena)
 }  // namespace
 
 auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
+  if (input.specialization_map == nullptr) {
+    throw common::InternalError(
+        "LowerHirToMir", "specialization_map must not be null");
+  }
+
   auto mir_arena = std::make_unique<mir::Arena>();
   OriginMap origin_map;
 

@@ -19,7 +19,7 @@ class Dumper {
   Dumper(const Arena* arena, const TypeArena* type_arena, std::ostream* out);
 
   void Dump(const Design& design);
-  void Dump(const Module& module, const ModuleBody& body);
+  void DumpModuleBody(const ModuleBody& body, ModuleBodyId body_id);
   void Dump(const Package& package);
   void Dump(ProcessId id);
   void Dump(FunctionId id);

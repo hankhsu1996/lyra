@@ -101,6 +101,7 @@ auto DumpMir(const CompilationInput& input) -> int {
       .binding_plan = &hir_result.binding_plan,
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
+      .specialization_map = &hir_result.specialization_map,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
@@ -161,6 +162,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .binding_plan = &hir_result.binding_plan,
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
+      .specialization_map = &hir_result.specialization_map,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {

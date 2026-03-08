@@ -5,6 +5,7 @@
 
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
@@ -29,6 +30,7 @@ struct LoweringInput {
   int8_t global_precision_power =
       -9;  // Finest timeprecision across all modules
   const mir::InstanceTable* instance_table = nullptr;  // For %m support
+  const common::SpecializationMap* specialization_map;
 };
 
 // Statistics collected during HIR->MIR lowering (for --stats output).

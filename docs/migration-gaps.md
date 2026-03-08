@@ -63,9 +63,9 @@ These must hold after migration. Each gets a CI/policy enforcement task.
 
 Staged transition. Each phase establishes new invariants while old paths coexist temporarily.
 
-**Stage 1: Identity** (Phase A) - Complete. `ModuleSpecId` and `SpecializationMap` introduced. Grouping is observation-only. Old per-instance pipeline unchanged. Known gap: M2 (param classification misses type-level structural refs).
+**Stage 1: Identity** (Phase A) - Complete. `ModuleSpecId` and `SpecializationMap` introduced. Grouping is observation-only. Old per-instance pipeline unchanged. Known gap: M2 (param classification misses type-level structural refs -- temporarily mitigated by `type.toString()` hashing in structural fingerprint, not a clean solution).
 
-**Stage 2: Specialization-ready ownership** (Phase B) - Introduce the ownership boundary required for specialization-scoped IR. Module behavioral body (processes, functions) moves to a dedicated `ModuleBody` artifact; instances become lightweight records that reference bodies. Early steps establish the ownership shape (1:1 bodies); later steps introduce actual sharing by `ModuleSpecId` and remove instance identity from behavioral IR. Assembly still fused. Codegen still design-wide.
+**Stage 2: Specialization-ready ownership** (Phase B) - B1-B3 done. Ownership boundary established: `ModuleBody` owns behavioral IR, `Module` is instance-side record with `body_id`. Shared bodies active (one body per specialization group). Layout/codegen use `ScheduledProcess` records (no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. `SpecializationMap` is non-nullable in MIR-lowering input (enforced at type level). `BuildMirSpecGroups` validates specialization invariants. `InstanceTable::GetPathBySymbol` centralizes instance path lookup. MIR dump uses explicit `ModuleBodies` / `Modules` sections. Remaining: B4 (remove `owner_instance_id`), B5 (codegen compatibility), B6 (HIR ownership split).
 
 **Stage 3: Storage model** (Phase C) - SlotId becomes specialization-local. Assembly-time placement mapping introduced. Old design-global slot allocation removed.
 
@@ -229,13 +229,16 @@ The goal of Phase B is to establish the ownership boundary required for speciali
 
 B1 now covers both the body artifact and the instance record conversion as a single atomic change. `mir::Module` is `{instance_sym, body_id}` --no additional instance-side fields until truly needed by later phases.
 
-**B3: Lower MIR body once per specialization group**
+**B3: Lower MIR body once per specialization group** (done)
 
 - Goal: HIR->MIR module lowering produces one `ModuleBody` per `ModuleSpecId`. Multiple instance records reference the same body. `SpecializationMap` drives the lowering loop.
 - Areas: `src/lyra/lowering/hir_to_mir/design_lower.cpp`, `src/lyra/lowering/hir_to_mir/module.cpp`, `include/lyra/lowering/hir_to_mir/lower.hpp`
 - Acceptance: `LoweringInput` gains `const SpecializationMap*`. `LowerDesign` iterates specialization groups, lowering module body once per group. Instance records created for each instance referencing the shared body. Test: design with N instances and K specs produces exactly K `LowerModule` calls and K `ModuleBody` entries.
 - Dependencies: B1, A3
 - Invariant: Module behavioral lowering runs once per specialization, not per instance.
+- Done: Shared bodies active. `SpecializationMap` is non-nullable in `LoweringInput` (no default, enforced at type level). `BuildMirSpecGroups` validates group invariants (range, uniqueness, cross-reference with `spec_id_by_instance`). Layout uses `ScheduledProcess` records (single vector, no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. MIR verification uses `InstanceTable::GetPathBySymbol` (centralized lookup, no ad-hoc maps). MIR dump has explicit `ModuleBodies` / `Modules` sections.
+- Temporary stopgap: Structural fingerprint includes `type.toString()` hashing for variable types to catch param-dependent types resolved at elaboration. This is a presentation-format mitigation, not a clean semantic fingerprint. Proper fix requires explicit structural type fingerprinting over resolved type structure (see M2 gap).
+- Remaining debt: `owner_instance_id` remains on `mir::Process` (B4).
 
 **B4: Remove owner_instance_id from MIR Process**
 

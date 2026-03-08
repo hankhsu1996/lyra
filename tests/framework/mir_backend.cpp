@@ -28,6 +28,7 @@
 #include "lyra/mir/interp/interpreter.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/simulation.hpp"
 #include "tests/framework/jit_backend.hpp"
@@ -117,6 +118,7 @@ auto RunMirInterpreter(
       .binding_plan = &hir_result.binding_plan,
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
+      .specialization_map = &hir_result.specialization_map,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   if (!mir_result) {
@@ -267,12 +269,27 @@ auto RunMirInterpreter(
     }
   }
 
-  // Create process states for all initial processes
-  std::unordered_map<uint32_t, mir::interp::ProcessState> process_states;
-  for (mir::ProcessId proc_id : process_info->initial_processes) {
+  // Create process states for all initial processes.
+  // Keyed by ProcessHandle (typed runtime identity).
+  std::unordered_map<
+      runtime::ProcessHandle, mir::interp::ProcessState,
+      runtime::ProcessHandleHash>
+      process_states;
+  for (const auto& entry : process_info->initial_processes) {
     auto state = mir::interp::CreateProcessState(
-        *mir_result->mir_arena, *hir_result.type_arena, proc_id, &design_state);
-    process_states.emplace(proc_id.value, std::move(state));
+        *mir_result->mir_arena, *hir_result.type_arena, entry.process_id,
+        &design_state);
+    state.instance_id = entry.module_index;
+    if (entry.module_index != UINT32_MAX &&
+        entry.module_index < mir_result->design.instance_slot_ranges.size()) {
+      state.slot_base =
+          mir_result->design.instance_slot_ranges[entry.module_index]
+              .slot_begin;
+    }
+    runtime::ProcessHandle handle{
+        .process_id = entry.process_id.value,
+        .instance_id = entry.module_index};
+    process_states.emplace(handle, std::move(state));
   }
 
   // Run with Engine-based scheduler for proper delay handling
@@ -286,7 +303,7 @@ auto RunMirInterpreter(
     runtime::Engine engine([&](runtime::Engine& eng,
                                runtime::ProcessHandle handle,
                                runtime::ResumePoint resume) {
-      auto it = process_states.find(handle.process_id);
+      auto it = process_states.find(handle);
       if (it == process_states.end()) {
         return;
       }
@@ -350,12 +367,11 @@ auto RunMirInterpreter(
     }
 
     // Schedule initial processes
-    for (mir::ProcessId proc_id : process_info->initial_processes) {
-      const auto& proc = (*mir_result->mir_arena)[proc_id];
+    for (const auto& entry : process_info->initial_processes) {
       engine.ScheduleInitial(
           runtime::ProcessHandle{
-              .process_id = proc_id.value,
-              .instance_id = proc.owner_instance_id});
+              .process_id = entry.process_id.value,
+              .instance_id = entry.module_index});
     }
 
     // Run simulation

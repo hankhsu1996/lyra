@@ -169,7 +169,7 @@ struct LocalProcIndex {
   }
 };
 
-// Index into Layout::process_ids / Layout::processes.
+// Index into Layout::scheduled_processes / Layout::processes (parallel).
 struct LayoutProcessIndex {
   uint32_t value = UINT32_MAX;
   static constexpr uint32_t kNone = UINT32_MAX;
@@ -217,15 +217,25 @@ struct TemplatedRoute {
 };
 using ProcessRoute = std::variant<StandaloneRoute, TemplatedRoute>;
 
+// Scheduled process record: pairs a ProcessId with optional module instance.
+// Module-owned processes have a valid module_index; design-level processes
+// (init, connection) have ModuleIndex::kNone -- they are not bound to any
+// module instance.
+struct ScheduledProcess {
+  mir::ProcessId process_id;
+  ModuleIndex module_index;
+};
+
 // Complete layout for entire module
 struct Layout {
   DesignLayout design;
   std::vector<ProcessLayout> processes;
-  // Canonical list of process IDs (single source of truth for ordering)
-  // Layout: init processes first (indices 0..num_init_processes-1),
-  //         then module processes (indices num_init_processes..)
-  std::vector<mir::ProcessId> process_ids;
-  // Boundary marker: number of init processes at start of process_ids
+  // Canonical list of scheduled processes with instance binding.
+  // Layout: init processes [0..num_init_processes),
+  //         then module processes [num_init_processes..)
+  // For design-level processes (init, connection), module_index is kNone.
+  std::vector<ScheduledProcess> scheduled_processes;
+  // Boundary marker: number of init processes at start of scheduled_processes
   size_t num_init_processes = 0;
   // Connection processes evaluated as batch memcpy
   std::vector<ConnectionKernelEntry> connection_kernel_entries;
@@ -255,7 +265,8 @@ struct Layout {
 
   // Module variants (one per unique template assignment pattern).
   std::vector<ModuleVariant> variants;
-  // Parallel to process_ids[num_init_processes..], nullopt = standalone.
+  // Parallel to scheduled_processes[num_init_processes..], nullopt =
+  // standalone.
   std::vector<std::optional<ProcessMembership>> process_membership;
   // Pre-computed byte offset of each instance's slot base in DesignState.
   // Parallel to instance_variant_ids. Access via GetInstanceBaseByteOffset.

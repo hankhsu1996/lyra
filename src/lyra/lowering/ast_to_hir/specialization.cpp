@@ -2,10 +2,13 @@
 
 #include <cstdint>
 #include <map>
+#include <string>
 #include <vector>
 
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
+#include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/Type.h>
 
 #include "absl/hash/hash.h"
 #include "lyra/common/module_identity.hpp"
@@ -38,6 +41,7 @@ auto ComputeStructuralFingerprint(
     const ParamRoleTable& param_roles) -> common::StructuralFingerprint {
   std::vector<StructuralParamEntry> entries;
 
+  // Hash shape-classified parameter values.
   for (const auto& member : body.members()) {
     if (member.kind != slang::ast::SymbolKind::Parameter) {
       continue;
@@ -65,7 +69,22 @@ auto ComputeStructuralFingerprint(
         });
   }
 
-  return common::StructuralFingerprint{absl::HashOf(entries)};
+  // Hash variable types to catch param-dependent types that slang resolves
+  // at elaboration (e.g., bit [WIDTH-1:0] data). Since the type is already
+  // resolved, the NamedValueExpression referencing the parameter is gone,
+  // so param role classification may miss it. Hashing resolved types catches
+  // these structural differences.
+  std::vector<std::string> type_strings;
+  for (const auto& member : body.members()) {
+    if (member.kind != slang::ast::SymbolKind::Variable &&
+        member.kind != slang::ast::SymbolKind::Net) {
+      continue;
+    }
+    type_strings.push_back(
+        member.as<slang::ast::ValueSymbol>().getType().toString());
+  }
+
+  return common::StructuralFingerprint{absl::HashOf(entries, type_strings)};
 }
 
 auto BuildSpecializationMap(
