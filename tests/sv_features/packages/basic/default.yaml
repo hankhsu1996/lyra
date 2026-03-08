@@ -285,3 +285,30 @@ cases:
       endmodule
     expect:
       stdout: "10 15\n"
+
+  - name: mixed_module_local_and_package_global
+    description: >
+      Same process accesses both module-local storage (via this_ptr in shared
+      bodies) and design-global/package storage (via design_ptr). Exercises
+      the addressing mode split within a single behavioral process.
+    sv: |
+      package Pkg;
+        int global_val = 100;
+      endpackage
+      module Child;
+        import Pkg::*;
+        int local_val;
+        initial begin
+          local_val = 42;
+          global_val = global_val + local_val;
+          $display("local=%0d global=%0d", local_val, global_val);
+        end
+      endmodule
+      module Test;
+        Child c1();
+        Child c2();
+      endmodule
+    expect:
+      stdout: |
+        local=42 global=142
+        local=42 global=184

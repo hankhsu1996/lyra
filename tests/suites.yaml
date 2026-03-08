@@ -145,3 +145,4 @@ suites:
       - ^system_tf/state/random/
     exclude_regex:
       - two_state_only\.yaml$ # Two-state semantic diff only
+      - multi_instance\.yaml$ # MIR interpreter is single-instance only

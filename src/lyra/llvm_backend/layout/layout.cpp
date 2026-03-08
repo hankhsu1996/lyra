@@ -1407,9 +1407,10 @@ void BuildModuleVariants(
   }
 
   for (const auto& [key, indices] : candidate_groups) {
-    if (indices.size() < 2) continue;
-
-    // Compute fingerprints and split into sub-groups
+    // Compute fingerprints and split into sub-groups.
+    // Every module behavioral process gets a template, even singletons.
+    // The point of templating is architectural ownership (specialization-local
+    // codegen), not only dedup payoff.
     std::map<uint64_t, std::vector<size_t>> fingerprint_groups;
     for (size_t idx : indices) {
       const auto& info = all_module_procs[idx];
@@ -1420,8 +1421,6 @@ void BuildModuleVariants(
     }
 
     for (const auto& [fp, fp_indices] : fingerprint_groups) {
-      if (fp_indices.size() < 2) continue;
-
       // Select representative: lowest instance_id
       size_t rep_idx = fp_indices[0];
       for (size_t fi : fp_indices) {
@@ -1450,7 +1449,7 @@ void BuildModuleVariants(
 
       // Compute rel_byte_offsets for the representative instance
       std::vector<uint64_t> rel_offsets(rep.slot_count);
-      {
+      if (rep.slot_count > 0) {
         uint64_t rep_base_offset =
             struct_layout->getElementOffset(rep.slot_begin);
         for (uint32_t i = 0; i < rep.slot_count; ++i) {
@@ -1464,6 +1463,7 @@ void BuildModuleVariants(
       for (size_t fi : fp_indices) {
         if (fi == rep_idx) continue;
         const auto& other = all_module_procs[fi];
+        if (rep.slot_count == 0) break;
         uint64_t other_base = struct_layout->getElementOffset(other.slot_begin);
         for (uint32_t i = 0; i < rep.slot_count; ++i) {
           uint64_t other_offset =

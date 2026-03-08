@@ -9,6 +9,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
+#include "absl/container/flat_hash_map.h"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -38,6 +39,24 @@ class Access;
 
 // Forward declaration for WriteTarget (defined in commit/access.hpp)
 struct WriteTarget;
+
+// How module-local slots (kModuleSlot) are addressed in the current lowering
+// scope. Set explicitly per function scope -- never inferred from nullable
+// fields.
+//
+// kSpecializationLocal: Module slots accessed via this_ptr +
+//   rel_byte_offsets. Signal identity is dynamic (signal_id_offset +
+//   local_id). Used in shared module behavioral process bodies and
+//   module-scoped user functions.
+//
+// kDesignGlobal: Module slots accessed via design_ptr + struct GEP,
+//   rebased through module_base_slot_id_. Signal identity is a constant
+//   design-global slot ID. Used in standalone non-module processes
+//   (init, connection) and thunks with runtime-defined calling conventions.
+enum class SlotAddressingMode {
+  kDesignGlobal,
+  kSpecializationLocal,
+};
 
 // Shared context for MIR -> LLVM lowering
 class Context {
@@ -261,35 +280,63 @@ class Context {
   void SetCurrentInstanceId(uint32_t instance_id);
   [[nodiscard]] auto GetCurrentInstanceId() const -> uint32_t;
 
-  // Template process mode (process sharing)
-  void SetTemplateProcess(bool shared);
-  [[nodiscard]] auto IsTemplateProcess() const -> bool;
+  // Slot addressing mode -- controls how kModuleSlot roots are lowered.
+  // Must be set explicitly per function scope.
+  void SetSlotAddressingMode(SlotAddressingMode mode);
+  [[nodiscard]] auto GetSlotAddressingMode() const -> SlotAddressingMode;
+
+  // Module behavioral shared-body state.
+  // Set by GenerateSharedProcessFunction, cleared on exit.
   void SetThisPointer(llvm::Value* ptr);
+  [[nodiscard]] auto GetThisPointer() const -> llvm::Value*;
   void SetDynamicInstanceId(llvm::Value* id);
   void SetSignalIdOffset(llvm::Value* offset);
   [[nodiscard]] auto GetSignalIdOffset() const -> llvm::Value*;
   [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
   void SetRelByteOffsets(std::vector<uint64_t> offsets, uint32_t base_slot_id);
-  [[nodiscard]] auto GetTemplateBaseSlotId() const -> uint32_t;
 
-  // Centralized resolution: MIR storage root -> design-global slot ID.
-  // kModuleSlot / kModuleLocal: template_base_slot_id_ + id
-  // kDesignGlobal: id directly
+  // Explicit address-space APIs for slot pointer formation.
+  // Call sites must choose the correct API based on the resolved root scope.
+
+  // Module-local storage: this_ptr + rel_byte_offsets[local_slot_id].
+  // Requires module behavioral shared-context state (this_ptr_,
+  // rel_byte_offsets_).
+  [[nodiscard]] auto GetModuleSlotPointer(uint32_t local_slot_id)
+      -> llvm::Value*;
+
+  // Design-global storage: design_ptr + struct GEP via field index.
+  [[nodiscard]] auto GetDesignGlobalSlotPointer(uint32_t global_slot_id)
+      -> llvm::Value*;
+
+  // Central dispatch: resolve a design-storage root (kModuleSlot or
+  // kDesignGlobal) to its LLVM pointer, using slot_addressing_ to decide the
+  // code path. This is the single source of truth for slot root -> pointer.
+  [[nodiscard]] auto GetSlotRootPointer(const mir::PlaceRoot& root)
+      -> llvm::Value*;
+
+  // Central dispatch for signal-root pointer formation.
+  // Converts SignalRef scope to the same addressing-mode dispatch as
+  // GetSlotRootPointer. This is the single source of truth for
+  // signal root -> pointer (used by trigger/container lowering).
+  [[nodiscard]] auto GetSignalSlotPointer(const mir::SignalRef& sig)
+      -> llvm::Value*;
+
+  // Emit runtime signal ID for a signal ref (scope-based, not flag-based).
+  // kModuleLocal + kSpecializationLocal: Dynamic(signal_id_offset_ + sig.id)
+  // kModuleLocal + kDesignGlobal: Const(module_base_slot_id_ + sig.id)
+  // kDesignGlobal: Const(sig.id) -- always constant.
+  [[nodiscard]] auto EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr;
+
+  // Resolution: MIR storage root -> design-global slot ID.
+  // Used for alias map lookup (all contexts) and design-global pointer
+  // formation (kDesignGlobal addressing mode). Rebases kModuleSlot roots
+  // through module_base_slot_id_.
   [[nodiscard]] auto ResolveDesignGlobalSlotId(const mir::PlaceRoot& root) const
       -> uint32_t;
   [[nodiscard]] auto ResolveDesignGlobalSlotId(const mir::SignalRef& sig) const
       -> uint32_t;
   [[nodiscard]] auto ResolveDesignGlobalSlotId(
       const mir::ScopedSlotRef& ref) const -> uint32_t;
-
-  // Emit runtime signal ID for a signal ref (handles template vs non-template).
-  // kModuleLocal template: Dynamic(signal_id_offset_ + sig.id)
-  // kModuleLocal non-template: Const(template_base_slot_id_ + sig.id)
-  // kDesignGlobal: Const(sig.id) always
-  [[nodiscard]] auto EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr;
-
-  // Single GEP emitter for design slots. Handles template vs non-template.
-  [[nodiscard]] auto GetDesignSlotPointer(uint32_t slot_id) -> llvm::Value*;
 
   // Resolve aliases + get storage pointer for a place root.
   // Returns root slot pointer for kModuleSlot or kDesignGlobal roots.
@@ -402,6 +449,27 @@ class Context {
       -> llvm::Function*;
   [[nodiscard]] auto HasUserFunction(mir::FunctionId func_id) const -> bool;
 
+  // Module-scoped function lowering metadata.
+  // Module-scoped functions use the specialization-local calling convention:
+  // they receive (this_ptr, signal_id_offset, instance_id) and use
+  // kSpecializationLocal addressing for module-local slot access.
+  //
+  // Lowering metadata: rel_byte_offsets is specialization-owned (from
+  // ModuleVariant, shared across all instances of the same variant).
+  // base_slot_id is instance-owned compatibility metadata used for
+  // design-global alias resolution.
+  // DefineUserFunction queries this to set up addressing state.
+  struct ModuleFunctionLowering {
+    const std::vector<uint64_t>* rel_byte_offsets;  // Borrowed from Layout
+    uint32_t base_slot_id;
+  };
+  void RegisterModuleScopedFunction(
+      mir::FunctionId func_id, ModuleFunctionLowering lowering);
+  [[nodiscard]] auto IsModuleScopedFunction(mir::FunctionId func_id) const
+      -> bool;
+  [[nodiscard]] auto GetModuleFunctionLowering(mir::FunctionId func_id) const
+      -> const ModuleFunctionLowering&;
+
   // Monitor layout: snapshot encoding info (codegen artifact, not in MIR).
   // Keyed by check_thunk FunctionId. Contains only layout info (offsets,
   // sizes). format_ops come from the check thunk's own DisplayEffect (correct
@@ -427,11 +495,12 @@ class Context {
       -> const MonitorSetupInfo*;
 
   // Build LLVM function type from MIR function signature.
-  // All user functions receive (DesignState*, Engine*, args...).
-  // For managed returns: (out_ptr*, DesignState*, Engine*, args...) -> void
-  // Note: We use out-param convention but NOT LLVM's sret attribute (which is
-  // for aggregates, not pointer handles).
-  [[nodiscard]] auto BuildUserFunctionType(const mir::FunctionSignature& sig)
+  // Package-scoped: (DesignState*, Engine*, args...)
+  // Module-scoped:  (DesignState*, Engine*, this_ptr*, signal_id_offset_i32,
+  //                  instance_id_i32, args...)
+  // For managed returns: out_ptr* prepended, return type becomes void.
+  [[nodiscard]] auto BuildUserFunctionType(
+      const mir::FunctionSignature& sig, bool is_module_scoped)
       -> Result<llvm::FunctionType*>;
 
   // Check if a function uses out-param calling convention (managed return).
@@ -636,13 +705,23 @@ class Context {
   llvm::Value* frame_ptr_ = nullptr;
   llvm::Value* engine_ptr_ = nullptr;
 
-  // Template process mode (process sharing)
-  bool is_template_process_ = false;
+  // How module-local slots are addressed in the current function scope.
+  SlotAddressingMode slot_addressing_ = SlotAddressingMode::kDesignGlobal;
+
+  // Module behavioral shared-body state.
+  // Set when lowering a shared process function, null/empty otherwise.
   llvm::Value* this_ptr_ = nullptr;  // Instance storage base pointer (fn arg)
   llvm::Value* dynamic_instance_id_ = nullptr;  // i32 fn arg
   llvm::Value* signal_id_offset_ = nullptr;     // i32 fn arg
   std::vector<uint64_t> rel_byte_offsets_;
-  uint32_t template_base_slot_id_ = 0;
+
+  // Design-global base slot ID for the current module instance.
+  // Two uses:
+  //   1. Alias resolution: kModuleSlot local_id -> design-global slot_id
+  //      for alias_map lookup (needed in all addressing modes).
+  //   2. Design-global addressing fallback: kModuleSlot -> design_ptr GEP
+  //      when slot_addressing_ == kDesignGlobal (user functions, standalone).
+  uint32_t module_base_slot_id_ = 0;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();
@@ -655,6 +734,10 @@ class Context {
 
   // User function registry: FunctionId -> llvm::Function*
   absl::flat_hash_map<mir::FunctionId, llvm::Function*> user_functions_;
+
+  // Module-scoped functions: lowering metadata keyed by FunctionId.
+  absl::flat_hash_map<mir::FunctionId, ModuleFunctionLowering>
+      module_function_lowering_;
 
   // Monitor layouts (codegen artifact, not MIR semantics).
   // Keyed by check_thunk FunctionId - single source of truth for encoding.

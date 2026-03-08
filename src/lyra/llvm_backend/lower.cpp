@@ -753,22 +753,38 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     register_monitor_info(proc_id);
   }
 
-  // Two-pass user function generation for mutual recursion support
+  // Two-pass user function generation for mutual recursion support.
   // Collect all unique function IDs from modules, packages, and generated
   // functions. With shared bodies, the same FunctionId appears for multiple
   // instances; dedup by tracking seen IDs.
+  //
+  // Module-scoped functions (non-thunk) are registered with specialization-
+  // owned lowering metadata: rel_byte_offsets from the ModuleVariant,
+  // base_slot_id from a representative instance's placement.
   std::vector<mir::FunctionId> all_func_ids;
   std::unordered_set<uint32_t> seen_func_ids;
+  uint32_t func_collection_module_idx = 0;
   for (const auto& element : input.design->elements) {
     std::visit(
         common::Overloaded{
             [&](const mir::Module& mod) {
               const auto& body = mir::GetModuleBody(*input.design, mod);
+              ModuleIndex mod_idx{func_collection_module_idx};
               for (mir::FunctionId func_id : body.functions) {
                 if (seen_func_ids.insert(func_id.value).second) {
                   all_func_ids.push_back(func_id);
                 }
+                const auto& func = (*input.mir_arena)[func_id];
+                if (func.thunk_kind == mir::ThunkKind::kNone) {
+                  const auto& variant = layout.GetInstanceVariant(mod_idx);
+                  const auto& placement = mir::GetInstancePlacement(
+                      input.design->placement, mod_idx.value);
+                  context.RegisterModuleScopedFunction(
+                      func_id, {&variant.rel_byte_offsets,
+                                placement.design_state_base_slot});
+                }
               }
+              ++func_collection_module_idx;
             },
             [&](const mir::Package& pkg) {
               for (mir::FunctionId func_id : pkg.functions) {
@@ -799,7 +815,9 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     declared_funcs.emplace_back(func_id, llvm_func);
   }
 
-  // Pass 2: Define all user functions (emits bodies, can reference other funcs)
+  // Pass 2: Define all user functions (emits bodies, can reference other
+  // funcs). Module-scoped functions set up their own addressing state from
+  // the registered lowering metadata -- no ambient setup needed.
   for (const auto& [func_id, llvm_func] : declared_funcs) {
     auto result = DefineUserFunction(context, func_id, llvm_func);
     if (!result) return std::unexpected(result.error());
@@ -842,6 +860,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     auto route =
         layout.RouteProcess(LayoutProcessIndex{static_cast<uint32_t>(i)});
     if (auto* templated = std::get_if<TemplatedRoute>(&route)) {
+      // Module behavioral process: emit a thin wrapper that calls the shared
+      // template function with instance-specific bindings.
       uint64_t base_byte_offset =
           layout.GetInstanceBaseByteOffset(templated->module_idx);
       uint32_t base_slot_id = mir::GetInstanceBaseSlot(
@@ -855,23 +875,14 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       continue;
     }
 
-    // Set base slot id for kModuleSlot rebasing in standalone processes.
-    // Design-level processes (no module owner) use only kDesignGlobal,
-    // so base 0 is safe.
-    if (bp.module_index) {
-      uint32_t base_slot_id = mir::GetInstanceBaseSlot(
-          input.design->placement, bp.module_index.value);
-      context.SetRelByteOffsets({}, base_slot_id);
-    } else {
-      context.SetRelByteOffsets({}, 0);
-    }
-
+    // Standalone path: only for non-module processes (connection processes
+    // that weren't kernelized). Module behavioral processes always route
+    // through the specialization/shared path above.
     auto func_result = GenerateProcessFunction(
         context, mir_process, std::format("process_{}", i));
     if (!func_result) return std::unexpected(func_result.error());
     process_funcs.push_back(*func_result);
   }
-
   // Create main function.
   // kEmbeddedPlusargs: int main() - plusargs baked into IR
   // kArgvForwarding: int main(int argc, char** argv) - plusargs from CLI
@@ -963,7 +974,6 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   if (num_module_processes > 0 || num_kernelized > 0) {
     auto* i8_ty = llvm::Type::getInt8Ty(ctx);
     const auto& dl = mod.getDataLayout();
-    auto* header_type = context.GetHeaderType();
 
     // Compute packed process state buffer layout.
     // All regular module process frames are packed into a single alloca,

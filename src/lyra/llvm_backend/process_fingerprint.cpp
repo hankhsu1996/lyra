@@ -81,6 +81,10 @@ class Hasher {
 // Hash the structural shape of a type (not the TypeId value, which is an
 // interned pointer that may differ across instances).
 void HashTypeShape(Hasher& h, TypeId type_id, const TypeArena& types) {
+  if (!type_id) {
+    h.Mix8(0xFF);
+    return;
+  }
   const Type& type = types[type_id];
   h.Mix8(static_cast<uint8_t>(type.Kind()));
 

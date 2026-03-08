@@ -71,6 +71,32 @@ auto LowerUserCall(
   args.push_back(context.GetDesignPointer());
   args.push_back(context.GetEnginePointer());
 
+  // Module-scoped functions receive specialization-local context.
+  // Hard invariant: caller must be in kSpecializationLocal mode with valid
+  // module behavioral state when calling a module-scoped callee.
+  if (context.IsModuleScopedFunction(func_id)) {
+    if (context.GetSlotAddressingMode() !=
+        SlotAddressingMode::kSpecializationLocal) {
+      throw common::InternalError(
+          "LowerUserCall",
+          std::format(
+              "module-scoped function {} called from kDesignGlobal context",
+              func_id.value));
+    }
+    if (context.GetThisPointer() == nullptr ||
+        context.GetSignalIdOffset() == nullptr ||
+        context.GetDynamicInstanceId() == nullptr) {
+      throw common::InternalError(
+          "LowerUserCall", std::format(
+                               "module-scoped function {} called without valid "
+                               "specialization-local state",
+                               func_id.value));
+    }
+    args.push_back(context.GetThisPointer());
+    args.push_back(context.GetSignalIdOffset());
+    args.push_back(context.GetDynamicInstanceId());
+  }
+
   // Build argument list: input values + output/inout destination pointers
   // The signature has params for both in_args AND writebacks in parameter
   // order. We need to interleave them correctly based on arg_index in
