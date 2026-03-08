@@ -375,56 +375,110 @@ def compute_ratios(
     return verilator_sim
 
 
-def print_markdown(results: list[BenchResult], num_trials: int) -> None:
+def fmt_ratio(sim_s: float, verilator_s: float) -> str:
+    if sim_s <= 0 or verilator_s <= 0:
+        return "-"
+    ratio = sim_s / verilator_s
+    if ratio >= 10:
+        return f"{ratio:.0f}x"
+    return f"{ratio:.1f}x"
+
+
+def group_by_design(
+    results: list[BenchResult], designs: list[str],
+) -> dict[str, dict[str, BenchResult]]:
+    """Group results into {design: {backend: result}}."""
+    grouped: dict[str, dict[str, BenchResult]] = {}
+    for r in results:
+        grouped.setdefault(r.design, {})[r.backend] = r
+    return grouped
+
+
+def print_markdown(
+    results: list[BenchResult], num_trials: int, designs: list[str],
+) -> None:
     trial_note = f"{num_trials} (median)" if num_trials > 1 else "1"
+    grouped = group_by_design(results, designs)
     verilator_sim = compute_ratios(results)
 
     print()
     print("## Lyra Benchmark Report")
     print()
-    print(f"git: {get_git_sha()} | trials: {trial_note}")
+    print(f"> git: `{get_git_sha()}` | trials: {trial_note}")
+
+    # Table 1: Simulation Performance
     print()
-    print(
-        "| Design | Backend | Compile (s) | Sim (s) | Total (s) "
-        "| vs Verilator | LLVM Insts | MIR Stmts | Binary (KB) |"
+    print("### Simulation Performance")
+    print()
+    print("| Design | AOT (s) | JIT (s) | Verilator (s) | AOT vs V | JIT vs V |")
+    print("|--------|---------|---------|---------------|----------|----------|")
+    for design in designs:
+        backends = grouped.get(design, {})
+        aot = backends.get("aot")
+        jit = backends.get("jit")
+        ver = backends.get("verilator")
+
+        aot_sim = fmt_time(aot.sim_s) if aot and not aot.error else "FAIL" if aot else "-"
+        jit_sim = fmt_time(jit.sim_s) if jit and not jit.error else "FAIL" if jit else "-"
+        ver_sim = fmt_time(ver.sim_s) if ver and not ver.error else "FAIL" if ver else "-"
+
+        ver_s = ver.sim_s if ver and not ver.error else 0.0
+        aot_ratio = fmt_ratio(aot.sim_s, ver_s) if aot and not aot.error else "-"
+        jit_ratio = fmt_ratio(jit.sim_s, ver_s) if jit and not jit.error else "-"
+
+        print(f"| {design} | {aot_sim} | {jit_sim} | {ver_sim} | {aot_ratio} | {jit_ratio} |")
+
+    # Table 2: Compile Time
+    print()
+    print("### Compile Time")
+    print()
+    print("| Design | AOT (s) | JIT (s) | Verilator (s) |")
+    print("|--------|---------|---------|---------------|")
+    for design in designs:
+        backends = grouped.get(design, {})
+        aot = backends.get("aot")
+        jit = backends.get("jit")
+        ver = backends.get("verilator")
+
+        aot_c = fmt_time(aot.compile_s) if aot and not aot.error else "FAIL" if aot else "-"
+        jit_c = fmt_time(jit.compile_s) if jit and not jit.error else "FAIL" if jit else "-"
+        ver_c = fmt_time(ver.compile_s) if ver and not ver.error else "FAIL" if ver else "-"
+
+        print(f"| {design} | {aot_c} | {jit_c} | {ver_c} |")
+
+    # Table 3: Compiler Stats (Lyra only)
+    has_stats = any(
+        r.backend in ("aot", "jit") and not r.error
+        and (r.llvm_insts or r.mir_stmts or r.binary_kb)
+        for r in results
     )
-    print(
-        "|--------|---------|-------------|---------|-----------|"
-        "--------------|------------|-----------|-------------|"
-    )
+    if has_stats:
+        print()
+        print("### Compiler Stats")
+        print()
+        print("| Design | Backend | LLVM Insts | MIR Stmts | Binary (KB) |")
+        print("|--------|---------|------------|-----------|-------------|")
+        for design in designs:
+            backends = grouped.get(design, {})
+            for backend in ("aot", "jit"):
+                r = backends.get(backend)
+                if not r or r.error:
+                    continue
+                print(
+                    f"| {design} | {backend} "
+                    f"| {fmt_int(r.llvm_insts)} "
+                    f"| {fmt_int(r.mir_stmts)} "
+                    f"| {fmt_int(r.binary_kb)} |"
+                )
 
-    for r in results:
-        if r.error:
-            print(
-                f"| {r.design} | {r.backend} "
-                f"| FAIL | | | | | | |"
-            )
-            print(
-                f"| | | {r.error} | | | | | | |"
-            )
-            continue
-
-        # Compute ratio vs Verilator
-        ratio = "-"
-        if r.sim_s > 0 and r.design in verilator_sim:
-            ratio_val = r.sim_s / verilator_sim[r.design]
-            if r.backend == "verilator":
-                ratio = "1.0x"
-            elif ratio_val >= 10:
-                ratio = f"{ratio_val:.0f}x"
-            else:
-                ratio = f"{ratio_val:.1f}x"
-
-        print(
-            f"| {r.design} | {r.backend} "
-            f"| {fmt_time(r.compile_s)} "
-            f"| {fmt_time(r.sim_s)} "
-            f"| {fmt_time(r.wall_s)} "
-            f"| {ratio} "
-            f"| {fmt_int(r.llvm_insts)} "
-            f"| {fmt_int(r.mir_stmts)} "
-            f"| {fmt_int(r.binary_kb)} |"
-        )
+    # Errors
+    errors = [r for r in results if r.error and r.error != "verilator not found"]
+    if errors:
+        print()
+        print("### Errors")
+        print()
+        for r in errors:
+            print(f"- **{r.design}/{r.backend}**: {r.error}")
 
     print()
 
@@ -490,7 +544,7 @@ def main() -> None:
                 if r.error and r.error != "verilator not found":
                     has_failure = True
 
-    print_markdown(all_results, num_trials)
+    print_markdown(all_results, num_trials, design_names)
 
     if args.json:
         write_json(all_results, args.json)

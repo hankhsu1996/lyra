@@ -34,9 +34,8 @@ jobs:
           sudo update-alternatives --set clang /usr/bin/clang-20
           sudo update-alternatives --set lli /usr/bin/lli-20
 
-      - name: Install Verilator
-        run: |
-          sudo apt-get install -y verilator
+      - name: Setup Verilator
+        uses: veryl-lang/setup-verilator@v1
 
       - name: Build lyra
         env:
