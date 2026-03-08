@@ -8,13 +8,13 @@
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/design_assembly/compiled_bindings.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/compiled_bindings.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/instance.hpp"
 
@@ -52,7 +52,7 @@ struct LoweringResult {
   std::unique_ptr<mir::Arena> mir_arena;
   OriginMap origin_map;
   LoweringStats stats;
-  design_assembly::CompiledBindingPlan compiled_bindings;
+  mir::CompiledBindingPlan compiled_bindings;
 };
 
 auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult>;

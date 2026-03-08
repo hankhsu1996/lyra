@@ -26,9 +26,9 @@
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/design_assembly/assemble_bindings.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
+#include "lyra/link/assemble_bindings.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
@@ -311,7 +311,7 @@ auto PrepareLlvmModule(
   }
 
   // Assembly: attach compiled bindings to design.
-  design_assembly::AssembleBindings(
+  link::AssembleBindings(
       std::move(mir_result->compiled_bindings), *mir_result->mir_arena,
       mir_result->design);
 

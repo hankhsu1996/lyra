@@ -20,9 +20,9 @@
 #include "lyra/common/mutation_event.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type_queries.hpp"
-#include "lyra/design_assembly/assemble_bindings.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
+#include "lyra/link/assemble_bindings.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/handle.hpp"
@@ -129,7 +129,7 @@ auto RunMirInterpreter(
   }
 
   // Assembly: attach compiled bindings to design.
-  design_assembly::AssembleBindings(
+  link::AssembleBindings(
       std::move(mir_result->compiled_bindings), *mir_result->mir_arena,
       mir_result->design);
 
