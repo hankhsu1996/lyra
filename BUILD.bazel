@@ -96,24 +96,12 @@ cc_library(
 )
 
 cc_library(
-    name = "compiled_bindings",
-    hdrs = ["include/lyra/design_assembly/compiled_bindings.hpp"],
+    name = "link",
+    srcs = glob(["src/lyra/link/*.cpp"]),
+    hdrs = glob(["include/lyra/link/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
-        ":common",
-        ":mir",
-    ],
-)
-
-cc_library(
-    name = "design_assembly",
-    srcs = glob(["src/lyra/design_assembly/*.cpp"]),
-    hdrs = glob(["include/lyra/design_assembly/*.hpp"]),
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":compiled_bindings",
         ":mir",
     ],
 )
@@ -126,7 +114,6 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":common",
-        ":compiled_bindings",
         ":hir",
         ":mir",
         ":semantic",
@@ -167,9 +154,9 @@ cc_binary(
     data = [":liblyra_runtime.so"],
     linkopts = ["-Wl,--export-dynamic"],  # Export symbols for ORC JIT
     deps = [
-        ":design_assembly",
         ":hir",
         ":interp",
+        ":link",
         ":llvm_backend",
         ":lowering",
         ":mir",

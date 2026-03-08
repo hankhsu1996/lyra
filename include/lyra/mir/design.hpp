@@ -56,17 +56,17 @@ struct Design {
   int8_t global_precision_power = -9;
 
   // Source of truth for all port connections.
-  // Written ONLY by design_assembly::AssembleBindings.
+  // Written ONLY by link::AssembleBindings.
   std::vector<PortConnection> port_connections;
 
   // Wiring processes (separate from module processes).
   // These implement kDriveParentToChild and kDriveChildToParent semantics.
-  // Written ONLY by design_assembly::AssembleBindings.
+  // Written ONLY by link::AssembleBindings.
   std::vector<ProcessId> connection_processes;
 
   // DERIVED: acceleration structure for kAlias only.
   // INVARIANT: entry exists iff PortConnection{kAlias} exists for that slot.
-  // Written ONLY by design_assembly::AssembleBindings.
+  // Written ONLY by link::AssembleBindings.
   // Key: child port's SlotId (must be kDesignGlobal root with no projections)
   // Value: parent's PlaceId (may have projections, must resolve to
   // kDesignGlobal)
