@@ -280,7 +280,7 @@ auto RunMirInterpreter(
         *mir_result->mir_arena, *hir_result.type_arena, entry.process_id,
         &design_state);
     mir::interp::BindProcessToInstance(
-        state, entry.module_index, mir_result->design.instance_slot_ranges);
+        state, entry.module_index, mir_result->design.placement);
     runtime::ProcessHandle handle{
         .process_id = entry.process_id.value,
         .instance_id = entry.module_index};

@@ -28,6 +28,7 @@
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/module_body.hpp"
 #include "lyra/mir/package.hpp"
+#include "lyra/mir/placement.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -131,12 +132,6 @@ auto LowerDesign(
   result.num_design_slots = decls.num_design_slots;
   result.slots = decls.slots;
   result.global_precision_power = input.global_precision_power;
-  // Thread slot ranges and def keys for process template grouping in LLVM
-  // backend
-  result.instance_slot_ranges.reserve(decls.instance_slot_ranges.size());
-  for (const auto& range : decls.instance_slot_ranges) {
-    result.instance_slot_ranges.push_back({range.slot_begin, range.slot_count});
-  }
   result.module_def_ids = decls.module_def_ids;
   result.instance_param_inits = decls.instance_param_inits;
   if (input.instance_table != nullptr) {
@@ -202,8 +197,15 @@ auto LowerDesign(
     spec_to_body[group.spec_id] = body_id;
   }
 
-  // Phase 2: Emit one mir::Module per HIR module instance.
+  // Phase 2: Emit one mir::Module per HIR module instance and build placement.
   // Walk design elements in original order to preserve instance ordering.
+  //
+  // Placement computes its own running base counter from the authoritative
+  // package slot count + specialization body sizes. This is the source of
+  // truth for per-instance base offsets. instance_slot_ranges is then derived
+  // from placement below.
+  uint32_t next_placement_base = decls.num_package_slots;
+
   uint32_t module_index = 0;
   for (const auto& element : design.elements) {
     if (std::holds_alternative<hir::Module>(element)) {
@@ -220,6 +222,18 @@ auto LowerDesign(
       }
       result.elements.emplace_back(
           mir::Module{.instance_sym = mod.symbol, .body_id = it->second});
+
+      const auto& body = result.module_bodies.at(it->second.value);
+      auto slot_count = static_cast<uint32_t>(body.slots.size());
+      result.placement.instances.push_back(
+          mir::InstancePlacement{
+              .instance_sym = mod.symbol,
+              .spec_id = spec_id,
+              .design_state_base_slot = next_placement_base,
+              .slot_count = slot_count,
+          });
+      next_placement_base += slot_count;
+
       ++module_index;
     } else if (const auto* pkg = std::get_if<hir::Package>(&element)) {
       Result<mir::Package> pkg_result =
@@ -229,6 +243,13 @@ auto LowerDesign(
       }
       result.elements.emplace_back(std::move(*pkg_result));
     }
+  }
+
+  // Derive compatibility instance_slot_ranges from placement (source of truth).
+  result.instance_slot_ranges.reserve(result.placement.instances.size());
+  for (const auto& p : result.placement.instances) {
+    result.instance_slot_ranges.push_back(
+        {p.design_state_base_slot, p.slot_count});
   }
 
   // Apply port drive bindings (creates synthetic always_comb processes)

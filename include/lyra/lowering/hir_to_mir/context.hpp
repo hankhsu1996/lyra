@@ -77,6 +77,10 @@ struct DesignDeclarations {
   PlaceMap design_places;
   SymbolToMirFunctionMap functions;
   size_t num_design_slots = 0;
+  // Number of package/global slots allocated before module-instance slots.
+  // Set at the package/module boundary in CollectDesignDeclarations.
+  // Used by placement to determine where module-instance storage begins.
+  uint32_t num_package_slots = 0;
   // Slot descriptors: indexed by design slot ID, contains type and kind for
   // each slot. Ordering is ABI: packages first (in element order), then all
   // module instances (in BFS elaboration order).

@@ -396,12 +396,10 @@ auto CreateProcessState(
 // For design-level processes (no owning instance), pass UINT32_MAX;
 // the helper will leave slot_base at 0.
 inline void BindProcessToInstance(
-    ProcessState& state, uint32_t module_index,
-    std::span<const Design::InstanceSlotRange> instance_slot_ranges) {
+    ProcessState& state, uint32_t module_index, const PlacementMap& placement) {
   state.instance_id = module_index;
-  if (module_index != UINT32_MAX &&
-      module_index < instance_slot_ranges.size()) {
-    state.slot_base = instance_slot_ranges[module_index].slot_begin;
+  if (module_index != UINT32_MAX && module_index < placement.instances.size()) {
+    state.slot_base = GetInstanceBaseSlot(placement, module_index);
   }
 }
 
