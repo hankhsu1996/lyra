@@ -254,7 +254,7 @@ auto LowerDesign(
   }
 
   // Compile port bindings into assembly-ready artifacts (no design mutation).
-  design_assembly::CompiledBindingPlan compiled_bindings;
+  mir::CompiledBindingPlan compiled_bindings;
   if (input.binding_plan != nullptr) {
     auto binding_result =
         CompileBindings(*input.binding_plan, decls, input, mir_arena);

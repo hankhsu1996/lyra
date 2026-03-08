@@ -3,10 +3,10 @@
 #include <functional>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/design_assembly/compiled_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/compiled_bindings.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/routine.hpp"
 
@@ -47,6 +47,6 @@ namespace lyra::lowering::hir_to_mir {
 auto CompileBindings(
     const ast_to_hir::DesignBindingPlan& plan, const DesignDeclarations& decls,
     const LoweringInput& input, mir::Arena& mir_arena)
-    -> Result<design_assembly::CompiledBindingPlan>;
+    -> Result<mir::CompiledBindingPlan>;
 
 }  // namespace lyra::lowering::hir_to_mir

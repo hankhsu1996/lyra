@@ -7,7 +7,6 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/design_assembly/compiled_bindings.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
@@ -18,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
+#include "lyra/mir/compiled_bindings.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
@@ -108,7 +108,7 @@ namespace {
 auto CompileDriveParentToChild(
     const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
     const DesignDeclarations& decls, const LoweringInput& input,
-    mir::Arena& mir_arena) -> Result<design_assembly::CompiledDriveBinding> {
+    mir::Arena& mir_arena) -> Result<mir::CompiledDriveBinding> {
   // Source is parent rvalue expression (arbitrary, may emit temps)
   auto build_src =
       [&binding](MirBuilder& builder, const Context&) -> Result<mir::Operand> {
@@ -121,7 +121,7 @@ auto CompileDriveParentToChild(
     return std::unexpected(proc.error());
   }
 
-  return design_assembly::CompiledDriveBinding{
+  return mir::CompiledDriveBinding{
       .kind = mir::PortConnection::Kind::kDriveParentToChild,
       .child_port_sym = binding.child_port_sym,
       .parent_instance_sym = binding.parent_instance_sym,
@@ -135,7 +135,7 @@ auto CompileDriveParentToChild(
 auto CompileDriveChildToParent(
     const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
     const DesignDeclarations& decls, const LoweringInput& input,
-    mir::Arena& mir_arena) -> Result<design_assembly::CompiledDriveBinding> {
+    mir::Arena& mir_arena) -> Result<mir::CompiledDriveBinding> {
   // Lower parent lvalue -> place (pure by construction - no MirBuilder)
   Context ctx = MakeDesignContext(input, mir_arena, decls);
   auto parent_lv = LowerPureLvaluePlace(binding.parent_lvalue, ctx);
@@ -163,7 +163,7 @@ auto CompileDriveChildToParent(
     return std::unexpected(proc.error());
   }
 
-  return design_assembly::CompiledDriveBinding{
+  return mir::CompiledDriveBinding{
       .kind = mir::PortConnection::Kind::kDriveChildToParent,
       .child_port_sym = binding.child_port_sym,
       .parent_instance_sym = binding.parent_instance_sym,
@@ -177,7 +177,7 @@ auto CompileDriveChildToParent(
 auto CompileAlias(
     const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
     const DesignDeclarations& decls, const LoweringInput& input,
-    mir::Arena& mir_arena) -> Result<design_assembly::CompiledAliasBinding> {
+    mir::Arena& mir_arena) -> Result<mir::CompiledAliasBinding> {
   // Lower parent lvalue -> place (pure by construction - no MirBuilder)
   Context ctx = MakeDesignContext(input, mir_arena, decls);
   auto parent_lv = LowerPureLvaluePlace(binding.parent_lvalue, ctx);
@@ -214,7 +214,7 @@ auto CompileAlias(
     }
   }
 
-  return design_assembly::CompiledAliasBinding{
+  return mir::CompiledAliasBinding{
       .child_port_sym = binding.child_port_sym,
       .parent_instance_sym = binding.parent_instance_sym,
       .child_place = child_place,
@@ -228,8 +228,8 @@ auto CompileAlias(
 auto CompileBindings(
     const ast_to_hir::DesignBindingPlan& plan, const DesignDeclarations& decls,
     const LoweringInput& input, mir::Arena& mir_arena)
-    -> Result<design_assembly::CompiledBindingPlan> {
-  design_assembly::CompiledBindingPlan result;
+    -> Result<mir::CompiledBindingPlan> {
+  mir::CompiledBindingPlan result;
   if (plan.bindings.empty()) {
     return result;
   }
