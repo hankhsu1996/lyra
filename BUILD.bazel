@@ -97,7 +97,7 @@ cc_library(
 
 cc_library(
     name = "compiled_bindings",
-    hdrs = glob(["include/lyra/design_assembly/compiled_bindings.hpp"]),
+    hdrs = ["include/lyra/design_assembly/compiled_bindings.hpp"],
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
