@@ -433,7 +433,7 @@ extern "C" void LyraRunSimulation(
   auto flags = static_cast<FeatureFlag>(feature_flags);
 
   lyra::runtime::Engine engine(
-      MakeProcessRunner(procs, states), std::span(plusargs_vec),
+      MakeProcessRunner(procs, states), num_processes, std::span(plusargs_vec),
       std::move(instance_paths_vec), feature_flags);
 
   if (abi != nullptr) {

@@ -99,9 +99,10 @@ void Engine::TerminateWithResourceError(
 
 void Engine::PrintTopWaiters(size_t count) {
   std::vector<std::pair<SignalId, size_t>> waiter_counts;
-  waiter_counts.reserve(signal_waiters_.size());
 
-  for (const auto& [signal, sw] : signal_waiters_) {
+  for (uint32_t signal = 0; signal < signal_waiters_.size(); ++signal) {
+    const auto& sw = signal_waiters_[signal];
+    if (sw.head == nullptr && sw.rebind_head == nullptr) continue;
     size_t n = 0;
     for (auto* node = sw.head; node != nullptr; node = node->signal_next) {
       ++n;
@@ -128,38 +129,38 @@ void Engine::PrintTopWaiters(size_t count) {
 }
 
 void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
-  auto proc_it = process_states_.find(handle);
-  if (proc_it == process_states_.end()) {
+  if (handle.process_id >= num_processes_) {
     return;
   }
+  auto& proc_state = process_states_[handle.process_id];
 
-  SubscriptionNode* node = proc_it->second.subscription_head;
+  SubscriptionNode* node = proc_state.subscription_head;
   while (node != nullptr) {
     SubscriptionNode* next = node->process_next;
 
-    auto sig_it = signal_waiters_.find(node->signal);
-    if (sig_it != signal_waiters_.end()) {
-      auto& sw = sig_it->second;
+    if (node->signal >= signal_waiters_.size()) {
+      throw common::InternalError(
+          "Engine::ClearProcessSubscriptions",
+          std::format(
+              "stale subscription signal {} exceeds slot count {}",
+              node->signal, signal_waiters_.size()));
+    }
+    auto& sw = signal_waiters_[node->signal];
 
-      // Rebind nodes use rebind_head/rebind_tail; normal nodes use head/tail.
-      bool is_rebind = (node->rebind_target != nullptr);
-      auto*& list_head = is_rebind ? sw.rebind_head : sw.head;
-      auto*& list_tail = is_rebind ? sw.rebind_tail : sw.tail;
+    // Rebind nodes use rebind_head/rebind_tail; normal nodes use head/tail.
+    bool is_rebind = (node->rebind_target != nullptr);
+    auto*& list_head = is_rebind ? sw.rebind_head : sw.head;
+    auto*& list_tail = is_rebind ? sw.rebind_tail : sw.tail;
 
-      if (node->signal_prev != nullptr) {
-        node->signal_prev->signal_next = node->signal_next;
-      } else {
-        list_head = node->signal_next;
-      }
-      if (node->signal_next != nullptr) {
-        node->signal_next->signal_prev = node->signal_prev;
-      } else {
-        list_tail = node->signal_prev;
-      }
-
-      if (sw.head == nullptr && sw.rebind_head == nullptr) {
-        signal_waiters_.erase(sig_it);
-      }
+    if (node->signal_prev != nullptr) {
+      node->signal_prev->signal_next = node->signal_next;
+    } else {
+      list_head = node->signal_next;
+    }
+    if (node->signal_next != nullptr) {
+      node->signal_next->signal_prev = node->signal_prev;
+    } else {
+      list_tail = node->signal_prev;
     }
 
     FreeNode(node);
@@ -172,9 +173,9 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
     node = next;
   }
 
-  proc_it->second.subscription_head = nullptr;
-  proc_it->second.subscription_count = 0;
-  proc_it->second.plan_pool.ops.clear();
+  proc_state.subscription_head = nullptr;
+  proc_state.subscription_count = 0;
+  proc_state.plan_pool.ops.clear();
 }
 
 auto Engine::Subscribe(
@@ -216,7 +217,13 @@ auto Engine::Subscribe(
         "Engine::Subscribe", "Subscribe before InitSlotMeta");
   }
 
-  auto& proc_state = process_states_[handle];
+  if (handle.process_id >= num_processes_) {
+    throw common::InternalError(
+        "Engine::Subscribe", std::format(
+                                 "process_id {} exceeds num_processes {}",
+                                 handle.process_id, num_processes_));
+  }
+  auto& proc_state = process_states_[handle.process_id];
 
   if (!CheckSubscriptionLimits(proc_state)) {
     return nullptr;
@@ -312,7 +319,14 @@ auto Engine::SubscribeContainerElement(
         "SubscribeContainerElement before InitSlotMeta");
   }
 
-  auto& proc_state = process_states_[handle];
+  if (handle.process_id >= num_processes_) {
+    throw common::InternalError(
+        "Engine::SubscribeContainerElement",
+        std::format(
+            "process_id {} exceeds num_processes {}", handle.process_id,
+            num_processes_));
+  }
+  auto& proc_state = process_states_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return nullptr;
 
   const auto& meta = slot_meta_registry_.Get(signal);
@@ -397,7 +411,13 @@ void Engine::SubscribeRebind(
         "Engine::SubscribeRebind", "SubscribeRebind before InitSlotMeta");
   }
 
-  auto& proc_state = process_states_[handle];
+  if (handle.process_id >= num_processes_) {
+    throw common::InternalError(
+        "Engine::SubscribeRebind", std::format(
+                                       "process_id {} exceeds num_processes {}",
+                                       handle.process_id, num_processes_));
+  }
+  auto& proc_state = process_states_[handle.process_id];
 
   // Store plan in process's pool and set target_node's plan_ref.
   auto plan_start = static_cast<uint32_t>(proc_state.plan_pool.ops.size());
@@ -473,7 +493,14 @@ void Engine::RebindSubscription(SubscriptionNode* rebind_node) {
   const auto& mapping = rebind_node->rebind_mapping;
 
   // Resolve plan from the process's pool.
-  auto& proc_state = process_states_[rebind_node->handle];
+  if (rebind_node->handle.process_id >= num_processes_) {
+    throw common::InternalError(
+        "Engine::RebindSubscription",
+        std::format(
+            "process_id {} exceeds num_processes {}",
+            rebind_node->handle.process_id, num_processes_));
+  }
+  auto& proc_state = process_states_[rebind_node->handle.process_id];
   auto all_ops = std::span<const IndexPlanOp>(proc_state.plan_pool.ops);
   auto plan_span =
       all_ops.subspan(rebind_node->plan_ref.start, rebind_node->plan_ref.count);
@@ -583,12 +610,12 @@ void Engine::FlushSignalUpdates() {
   // When a dep slot changes, we re-evaluate the index plan and recompute the
   // edge subscription's byte_offset/bit_index via the affine mapping.
   for (uint32_t slot_id : newly_dirty) {
-    auto it = signal_waiters_.find(slot_id);
-    if (it == signal_waiters_.end()) continue;
+    const auto& sw = signal_waiters_[slot_id];
+    if (sw.rebind_head == nullptr) continue;
 
     const auto& meta = slot_meta_registry_.Get(slot_id);
 
-    for (auto* node = it->second.rebind_head; node != nullptr;) {
+    for (auto* node = sw.rebind_head; node != nullptr;) {
       auto* next = node->signal_next;
       const auto* current = &design_state[meta.base_off + node->byte_offset];
       auto* snapshot = node->SnapshotData();
@@ -602,14 +629,14 @@ void Engine::FlushSignalUpdates() {
 
   // Pass 2: Edge/wake phase -- existing logic, with is_active check.
   for (uint32_t slot_id : newly_dirty) {
-    auto it = signal_waiters_.find(slot_id);
-    if (it == signal_waiters_.end()) continue;
+    const auto& sw = signal_waiters_[slot_id];
+    if (sw.head == nullptr) continue;
 
     const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
     const auto& external_ranges = update_set_.DeltaExternalRangesFor(slot_id);
     const auto& meta = slot_meta_registry_.Get(slot_id);
 
-    for (auto* node = it->second.head; node != nullptr;) {
+    for (auto* node = sw.head; node != nullptr;) {
       auto* next = node->signal_next;
 
       // Container element subscription path.
@@ -712,7 +739,14 @@ void Engine::FlushSignalUpdates() {
         }
         node->snapshot_inline[0] = heap_data[node->byte_offset];
         if (should_wake) {
-          auto& proc_state = process_states_[node->handle];
+          if (node->handle.process_id >= num_processes_) {
+            throw common::InternalError(
+                "Engine::FlushSignalUpdates",
+                std::format(
+                    "wakeup process_id {} exceeds num_processes {}",
+                    node->handle.process_id, num_processes_));
+          }
+          auto& proc_state = process_states_[node->handle.process_id];
           if (!proc_state.is_enqueued) {
             next_delta_queue_.push_back(
                 ScheduledEvent{.handle = node->handle, .resume = node->resume});
@@ -758,7 +792,7 @@ void Engine::FlushSignalUpdates() {
       }
 
       if (should_wake) {
-        auto& proc_state = process_states_[node->handle];
+        auto& proc_state = process_states_[node->handle.process_id];
         if (!proc_state.is_enqueued) {
           next_delta_queue_.push_back(
               ScheduledEvent{.handle = node->handle, .resume = node->resume});

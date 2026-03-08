@@ -301,59 +301,60 @@ auto RunMirInterpreter(
   runtime::OutputSinkScope sink_scope(
       [&trace_output](std::string_view text) { trace_output.append(text); });
   try {
-    runtime::Engine engine([&](runtime::Engine& eng,
-                               runtime::ProcessHandle handle,
-                               runtime::ResumePoint resume) {
-      auto it = process_states.find(handle);
-      if (it == process_states.end()) {
-        return;
-      }
-      auto& state = it->second;
+    runtime::Engine engine(
+        [&](runtime::Engine& eng, runtime::ProcessHandle handle,
+            runtime::ResumePoint resume) {
+          auto it = process_states.find(handle);
+          if (it == process_states.end()) {
+            return;
+          }
+          auto& state = it->second;
 
-      state.current_block = mir::BasicBlockId{resume.block_index};
-      state.instruction_index = resume.instruction_index;
-      state.status = mir::interp::ProcessStatus::kRunning;
+          state.current_block = mir::BasicBlockId{resume.block_index};
+          state.instruction_index = resume.instruction_index;
+          state.status = mir::interp::ProcessStatus::kRunning;
 
-      // Provide authoritative simulation time from Engine for $finish/$time
-      // output
-      interpreter.SetSimulationTime(eng.CurrentTime());
+          // Provide authoritative simulation time from Engine for $finish/$time
+          // output
+          interpreter.SetSimulationTime(eng.CurrentTime());
 
-      auto reason_result = interpreter.RunUntilSuspend(state);
-      if (!reason_result) {
-        throw std::runtime_error(reason_result.error().primary.message);
-      }
-      auto& reason = *reason_result;
+          auto reason_result = interpreter.RunUntilSuspend(state);
+          if (!reason_result) {
+            throw std::runtime_error(reason_result.error().primary.message);
+          }
+          auto& reason = *reason_result;
 
-      std::visit(
-          common::Overloaded{
-              [](const mir::interp::SuspendFinished&) {},
-              [&](const mir::interp::SuspendDelay& d) {
-                eng.Delay(
-                    handle,
-                    runtime::ResumePoint{
-                        .block_index = d.resume_block.value,
-                        .instruction_index = 0},
-                    d.ticks);
+          std::visit(
+              common::Overloaded{
+                  [](const mir::interp::SuspendFinished&) {},
+                  [&](const mir::interp::SuspendDelay& d) {
+                    eng.Delay(
+                        handle,
+                        runtime::ResumePoint{
+                            .block_index = d.resume_block.value,
+                            .instruction_index = 0},
+                        d.ticks);
+                  },
+                  [&](const mir::interp::SuspendWait& w) {
+                    eng.Delay(
+                        handle,
+                        runtime::ResumePoint{
+                            .block_index = w.resume_block.value,
+                            .instruction_index = 0},
+                        1);
+                  },
+                  [&](const mir::interp::SuspendRepeat& r) {
+                    eng.Delay(
+                        handle,
+                        runtime::ResumePoint{
+                            .block_index = r.resume_block.value,
+                            .instruction_index = 0},
+                        1);
+                  },
               },
-              [&](const mir::interp::SuspendWait& w) {
-                eng.Delay(
-                    handle,
-                    runtime::ResumePoint{
-                        .block_index = w.resume_block.value,
-                        .instruction_index = 0},
-                    1);
-              },
-              [&](const mir::interp::SuspendRepeat& r) {
-                eng.Delay(
-                    handle,
-                    runtime::ResumePoint{
-                        .block_index = r.resume_block.value,
-                        .instruction_index = 0},
-                    1);
-              },
-          },
-          reason);
-    });
+              reason);
+        },
+        0);
 
     // Wire mutation sink: record events and route to Engine
     interpreter.SetMutationSink(

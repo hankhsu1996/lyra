@@ -45,4 +45,11 @@ using SignalId = uint32_t;
 // Lowering passes this when a target is not a design slot (e.g., local/temp).
 inline constexpr uint32_t kNoSlotId = UINT32_MAX;
 
+// Dense trigger range: maps a slot to a contiguous range in a backing array.
+// Empty = count == 0.
+struct TriggerRange {
+  uint32_t start = 0;
+  uint32_t count = 0;
+};
+
 }  // namespace lyra::runtime

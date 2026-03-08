@@ -15,8 +15,6 @@
 #include <utility>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/mutation_event.hpp"
@@ -56,9 +54,12 @@ using ProcessRunner = std::function<void(
 class Engine {
  public:
   explicit Engine(
-      ProcessRunner runner, std::span<const std::string> plusargs = {},
+      ProcessRunner runner, uint32_t num_processes = 0,
+      std::span<const std::string> plusargs = {},
       std::vector<std::string> instance_paths = {}, uint32_t feature_flags = 0)
       : runner_(std::move(runner)),
+        num_processes_(num_processes),
+        process_states_(num_processes),
         plusargs_(plusargs.begin(), plusargs.end()),
         instance_paths_(std::move(instance_paths)),
         feature_flags_(feature_flags) {
@@ -178,7 +179,9 @@ class Engine {
     return trace_manager_;
   }
 
-  // One-time init for slot metadata registry.
+  // One-time init for slot metadata registry. Must be called exactly once,
+  // before InitConnectionBatch/InitCombKernels (which size from this registry).
+  // Sizes signal_waiters_ to the authoritative slot count.
   void InitSlotMeta(SlotMetaRegistry&& registry) {
     if (slot_meta_registry_.IsPopulated()) {
       throw common::InternalError(
@@ -190,6 +193,7 @@ class Engine {
       sizes.push_back(registry.Get(i).total_bytes);
     }
     update_set_.Init(registry.Size(), sizes);
+    signal_waiters_.resize(registry.Size());
     slot_meta_registry_ = std::move(registry);
   }
 
@@ -369,6 +373,8 @@ class Engine {
       -> bool;
 
   ProcessRunner runner_;
+  uint32_t num_processes_ = 0;
+  std::vector<ProcessState> process_states_;
   SimTime current_time_ = 0;
   bool finished_ = false;
   int8_t global_precision_power_ = -9;   // Set once at simulation init
@@ -387,10 +393,8 @@ class Engine {
   // NBA queue: deferred writes committed in ExecuteRegion(kNBA)
   std::vector<NbaEntry> nba_queue_;
 
-  // Trigger subscriptions: signal -> waiting processes (intrusive linked lists)
-  absl::flat_hash_map<SignalId, SignalWaiters> signal_waiters_;
-  absl::flat_hash_map<ProcessHandle, ProcessState, ProcessHandleHash>
-      process_states_;
+  // Dense signal waiter table (indexed by slot_id, sized in InitSlotMeta).
+  std::vector<SignalWaiters> signal_waiters_;
 
   // Node pool: deque owns memory (stable pointers), free_list_ tracks reusable
   std::deque<SubscriptionNode> node_pool_;
@@ -456,10 +460,8 @@ class Engine {
   };
   // All batched connections (for initial evaluation).
   std::vector<BatchedConnection> all_connections_;
-  // Trigger map: trigger_slot_id -> {start, count} into all_connections_.
-  // Connections are sorted by trigger_slot_id so each group is contiguous.
-  absl::flat_hash_map<uint32_t, std::pair<uint32_t, uint32_t>>
-      conn_trigger_map_;
+  // Dense trigger range table (indexed by slot_id, sized from slot registry).
+  std::vector<TriggerRange> conn_trigger_map_;
 
   // Comb kernel batch: pure combinational processes evaluated inline.
   // Each kernel has a compiled function pointer and state pointer.
@@ -469,10 +471,16 @@ class Engine {
     uint32_t process_index;  // Original index in processes array (for skip)
   };
   std::vector<CombKernel> comb_kernels_;
-  // Trigger map: trigger_slot_id -> list of comb kernel indices.
-  absl::flat_hash_map<uint32_t, std::vector<uint32_t>> comb_trigger_map_;
-  // Bitset of process indices that are comb kernels (skip in ScheduleInitial).
-  absl::flat_hash_set<uint32_t> comb_kernel_indices_;
+  // Flat backing array of kernel indices, indexed via comb_trigger_map_ ranges.
+  std::vector<uint32_t> comb_trigger_backing_;
+  // Dense per-slot range table into comb_trigger_backing_ (sized from slot
+  // registry).
+  std::vector<TriggerRange> comb_trigger_map_;
+  // List of trigger slots for seeding dirty marks.
+  std::vector<uint32_t> comb_trigger_slots_;
+  // Dense flag table by process index (sized from num_processes_ in
+  // InitCombKernels, true = comb kernel, skip in ScheduleInitial).
+  std::vector<uint8_t> comb_kernel_flags_;
 
   // Process metadata registry for diagnostics and signal-safe dumps.
   ProcessMetaRegistry process_meta_;
