@@ -48,7 +48,10 @@ void ValidateSlotRootPointer(
 void Engine::ScheduleInitial(ProcessHandle handle) {
   // Skip comb kernel processes - they are evaluated inline during flush,
   // not through the normal scheduler activation path.
-  if (comb_kernel_indices_.contains(handle.process_id)) return;
+  if (handle.process_id < comb_kernel_flags_.size() &&
+      comb_kernel_flags_[handle.process_id] != 0) {
+    return;
+  }
 
   active_queue_.push_back(
       ScheduledEvent{
@@ -193,9 +196,15 @@ void Engine::ExecuteRegion(Region region) {
             break;
           }
 
-          auto proc_it = process_states_.find(event.handle);
-          if (proc_it != process_states_.end()) {
-            proc_it->second.is_enqueued = false;
+          if (num_processes_ > 0) {
+            if (event.handle.process_id >= num_processes_) {
+              throw common::InternalError(
+                  "Engine::ExecuteRegion",
+                  std::format(
+                      "process_id {} exceeds num_processes {}",
+                      event.handle.process_id, num_processes_));
+            }
+            process_states_[event.handle.process_id].is_enqueued = false;
           }
 
           ClearProcessSubscriptions(event.handle);
@@ -410,7 +419,15 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
     all_connections_.push_back(s.conn);
   }
 
-  // Build trigger map: trigger_slot_id -> {start, count}
+  // Build dense trigger map: trigger_slot_id -> {start, count}
+  // Sized from authoritative slot count (same universe as signal_waiters_).
+  if (!slot_meta_registry_.IsPopulated()) {
+    throw common::InternalError(
+        "Engine::InitConnectionBatch",
+        "InitConnectionBatch before InitSlotMeta");
+  }
+  conn_trigger_map_.resize(slot_meta_registry_.Size());
+
   uint32_t i = 0;
   while (i < sorted.size()) {
     uint32_t trigger = sorted[i].trigger_slot_id;
@@ -443,6 +460,22 @@ void Engine::InitCombKernels(
   uint32_t pos = 0;
   uint32_t num_comb = words[pos++];
 
+  // Validate init order: slot meta must be populated for trigger map sizing.
+  if (!slot_meta_registry_.IsPopulated()) {
+    throw common::InternalError(
+        "Engine::InitCombKernels", "InitCombKernels before InitSlotMeta");
+  }
+
+  // Size comb_kernel_flags_ once from authoritative process count.
+  comb_kernel_flags_.resize(num_processes_, 0);
+
+  // First pass: parse kernels, collect per-slot trigger lists.
+  struct TriggerEntry {
+    uint32_t slot_id;
+    uint32_t kernel_idx;
+  };
+  std::vector<TriggerEntry> entries;
+
   for (uint32_t ki = 0; ki < num_comb; ++ki) {
     if (pos + 2 > words.size()) {
       throw common::InternalError(
@@ -455,6 +488,14 @@ void Engine::InitCombKernels(
           "Engine::InitCombKernels", "trigger list truncated");
     }
 
+    if (proc_idx >= num_processes_) {
+      throw common::InternalError(
+          "Engine::InitCombKernels",
+          std::format(
+              "comb kernel proc_idx {} exceeds num_processes {}", proc_idx,
+              num_processes_));
+    }
+
     auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
     comb_kernels_.push_back(
         CombKernel{
@@ -462,17 +503,44 @@ void Engine::InitCombKernels(
             .state = states[proc_idx],
             .process_index = proc_idx,
         });
-    comb_kernel_indices_.insert(proc_idx);
+
+    comb_kernel_flags_[proc_idx] = 1;
 
     for (uint32_t ti = 0; ti < num_triggers; ++ti) {
       uint32_t trigger_slot = words[pos++];
-      comb_trigger_map_[trigger_slot].push_back(comb_idx);
+      entries.push_back({trigger_slot, comb_idx});
     }
+  }
+
+  if (entries.empty()) return;
+
+  // Sort by slot_id for contiguous grouping.
+  std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+    return a.slot_id < b.slot_id;
+  });
+
+  // Build flat backing array and dense range table.
+  // Sized from authoritative slot count (same universe as signal_waiters_).
+  comb_trigger_backing_.reserve(entries.size());
+  comb_trigger_map_.resize(slot_meta_registry_.Size());
+
+  uint32_t i = 0;
+  while (i < entries.size()) {
+    uint32_t slot = entries[i].slot_id;
+    uint32_t start = static_cast<uint32_t>(comb_trigger_backing_.size());
+    while (i < entries.size() && entries[i].slot_id == slot) {
+      comb_trigger_backing_.push_back(entries[i].kernel_idx);
+      ++i;
+    }
+    uint32_t count =
+        static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
+    comb_trigger_map_[slot] = {start, count};
+    comb_trigger_slots_.push_back(slot);
   }
 }
 
 void Engine::SeedCombKernelDirtyMarks() {
-  for (const auto& [trigger_slot, _] : comb_trigger_map_) {
+  for (uint32_t trigger_slot : comb_trigger_slots_) {
     MarkSlotDirty(trigger_slot);
   }
 }
@@ -507,9 +575,9 @@ void Engine::FlushAndPropagateConnections() {
     // Phase 1: connections (pure memcpy, no side effects)
     if (has_conns) {
       for (uint32_t slot_id : new_dirty) {
-        auto it = conn_trigger_map_.find(slot_id);
-        if (it == conn_trigger_map_.end()) continue;
-        auto [start, count] = it->second;
+        if (slot_id >= conn_trigger_map_.size()) continue;
+        auto [start, count] = conn_trigger_map_[slot_id];
+        if (count == 0) continue;
         for (uint32_t ci = start; ci < start + count; ++ci) {
           const auto& conn = all_connections_[ci];
           auto* src = base + conn.src_byte_offset;
@@ -526,10 +594,11 @@ void Engine::FlushAndPropagateConnections() {
     // Phase 2: comb kernels (call compiled functions directly)
     if (has_combs) {
       for (uint32_t slot_id : new_dirty) {
-        auto it = comb_trigger_map_.find(slot_id);
-        if (it == comb_trigger_map_.end()) continue;
-        for (uint32_t ki : it->second) {
-          const auto& ck = comb_kernels_[ki];
+        if (slot_id >= comb_trigger_map_.size()) continue;
+        auto [cstart, ccount] = comb_trigger_map_[slot_id];
+        if (ccount == 0) continue;
+        for (uint32_t ci = cstart; ci < cstart + ccount; ++ci) {
+          const auto& ck = comb_kernels_[comb_trigger_backing_[ci]];
           ck.func(ck.state, 0);
         }
       }

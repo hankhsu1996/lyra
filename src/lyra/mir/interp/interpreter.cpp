@@ -566,64 +566,65 @@ auto RunSimulation(
   std::optional<Diagnostic> callback_error;
 
   // Create engine with suspension handler
-  runtime::Engine engine([&](runtime::Engine& eng,
-                             runtime::ProcessHandle handle,
-                             runtime::ResumePoint resume) {
-    if (callback_error) {
-      return;  // Stop processing if we already have an error
-    }
+  runtime::Engine engine(
+      [&](runtime::Engine& eng, runtime::ProcessHandle handle,
+          runtime::ResumePoint resume) {
+        if (callback_error) {
+          return;  // Stop processing if we already have an error
+        }
 
-    auto it = process_states.find(handle);
-    if (it == process_states.end()) {
-      return;
-    }
-    auto& state = it->second;
+        auto it = process_states.find(handle);
+        if (it == process_states.end()) {
+          return;
+        }
+        auto& state = it->second;
 
-    state.current_block = BasicBlockId{resume.block_index};
-    state.instruction_index = resume.instruction_index;
-    state.status = ProcessStatus::kRunning;
+        state.current_block = BasicBlockId{resume.block_index};
+        state.instruction_index = resume.instruction_index;
+        state.status = ProcessStatus::kRunning;
 
-    // Provide authoritative simulation time from Engine for $finish/$time
-    // output
-    interp.SetSimulationTime(eng.CurrentTime());
+        // Provide authoritative simulation time from Engine for $finish/$time
+        // output
+        interp.SetSimulationTime(eng.CurrentTime());
 
-    auto reason_result = interp.RunUntilSuspend(state);
-    if (!reason_result) {
-      callback_error = std::move(reason_result).error();
-      return;
-    }
+        auto reason_result = interp.RunUntilSuspend(state);
+        if (!reason_result) {
+          callback_error = std::move(reason_result).error();
+          return;
+        }
 
-    std::visit(
-        common::Overloaded{
-            [](const SuspendFinished&) {},
-            [&](const SuspendDelay& d) {
-              eng.Delay(
-                  handle,
-                  runtime::ResumePoint{
-                      .block_index = d.resume_block.value,
-                      .instruction_index = 0},
-                  d.ticks);
+        std::visit(
+            common::Overloaded{
+                [](const SuspendFinished&) {},
+                [&](const SuspendDelay& d) {
+                  eng.Delay(
+                      handle,
+                      runtime::ResumePoint{
+                          .block_index = d.resume_block.value,
+                          .instruction_index = 0},
+                      d.ticks);
+                },
+                [&](const SuspendWait& w) {
+                  // TODO(hankhsu): Subscribe to signal triggers
+                  eng.Delay(
+                      handle,
+                      runtime::ResumePoint{
+                          .block_index = w.resume_block.value,
+                          .instruction_index = 0},
+                      1);
+                },
+                [&](const SuspendRepeat& r) {
+                  eng.Delay(
+                      handle,
+                      runtime::ResumePoint{
+                          .block_index = r.resume_block.value,
+                          .instruction_index = 0},
+                      1);
+                },
             },
-            [&](const SuspendWait& w) {
-              // TODO(hankhsu): Subscribe to signal triggers
-              eng.Delay(
-                  handle,
-                  runtime::ResumePoint{
-                      .block_index = w.resume_block.value,
-                      .instruction_index = 0},
-                  1);
-            },
-            [&](const SuspendRepeat& r) {
-              eng.Delay(
-                  handle,
-                  runtime::ResumePoint{
-                      .block_index = r.resume_block.value,
-                      .instruction_index = 0},
-                  1);
-            },
-        },
-        *reason_result);
-  });
+            *reason_result);
+      },
+      0);
 
   // Wire mutation sink to route changes to Engine's UpdateSet
   interp.SetMutationSink([&engine](const common::MutationEvent& event) {
