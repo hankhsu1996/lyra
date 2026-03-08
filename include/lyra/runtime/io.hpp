@@ -136,7 +136,7 @@ void LyraWritemem(
 
 // Print hierarchical module path (%m format specifier)
 // - engine: pointer to Engine (for instance path lookup)
-// - instance_id: index into instance_paths (from process's owner_instance_id)
+// - instance_id: index into instance_paths (from scheduling/binding context)
 void LyraPrintModulePath(void* engine, uint32_t instance_id);
 
 // $fread - read binary data from file

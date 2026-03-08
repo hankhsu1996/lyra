@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/process.hpp"
 
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <utility>
@@ -48,7 +47,6 @@ auto LowerProcess(
     hir::ProcessId hir_proc_id, const hir::Process& process,
     const LoweringInput& input, mir::Arena& mir_arena,
     const DeclView& decl_view, OriginMap* origin_map,
-    uint32_t owner_instance_id,
     std::vector<mir::FunctionId>* generated_functions)
     -> Result<mir::ProcessId> {
   Context ctx{
@@ -127,7 +125,6 @@ auto LowerProcess(
       .entry = mir::BasicBlockId{entry_idx.value},  // Local index
       .blocks = std::move(blocks),
       .origin = origin,
-      .owner_instance_id = owner_instance_id,
       .temp_metadata = std::move(ctx.temp_metadata),
       .materialize_count = ctx.materialize_count,
   };

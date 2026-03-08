@@ -154,10 +154,9 @@ auto LowerDesign(
       if (pkg->init_process) {
         hir::ProcessId hir_proc_id = pkg->init_process;
         const hir::Process& proc = (*input.hir_arena)[hir_proc_id];
-        // Package init processes have no owning instance (UINT32_MAX sentinel)
         Result<mir::ProcessId> mir_proc_result = LowerProcess(
             hir_proc_id, proc, input, mir_arena, init_view, origin_map,
-            UINT32_MAX, &result.generated_functions);
+            &result.generated_functions);
         if (!mir_proc_result) {
           return std::unexpected(mir_proc_result.error());
         }
