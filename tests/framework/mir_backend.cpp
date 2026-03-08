@@ -20,6 +20,7 @@
 #include "lyra/common/mutation_event.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type_queries.hpp"
+#include "lyra/design_assembly/assemble_bindings.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
@@ -126,6 +127,11 @@ auto RunMirInterpreter(
         "MIR lowering error: {}", mir_result.error().primary.message);
     return result;
   }
+
+  // Assembly: attach compiled bindings to design.
+  design_assembly::AssembleBindings(
+      std::move(mir_result->compiled_bindings), *mir_result->mir_arena,
+      mir_result->design);
 
   // Find the top HIR module (the one with processes) for variable assertions
   const hir::Module* hir_module = nullptr;

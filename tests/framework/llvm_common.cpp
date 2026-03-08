@@ -26,6 +26,7 @@
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/design_assembly/assemble_bindings.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -308,6 +309,11 @@ auto PrepareLlvmModule(
         std::format(
             "MIR lowering error: {}", mir_result.error().primary.message));
   }
+
+  // Assembly: attach compiled bindings to design.
+  design_assembly::AssembleBindings(
+      std::move(mir_result->compiled_bindings), *mir_result->mir_arena,
+      mir_result->design);
 
   // Find the top module (first module in elaboration order) and calculate base
   // slot ID. Slot ordering: packages first, then all modules' variables in

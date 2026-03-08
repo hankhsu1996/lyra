@@ -124,7 +124,8 @@ auto BuildMirSpecGroups(
 
 auto LowerDesign(
     const hir::Design& design, const LoweringInput& input,
-    mir::Arena& mir_arena, OriginMap* origin_map) -> Result<mir::Design> {
+    mir::Arena& mir_arena, OriginMap* origin_map)
+    -> Result<DesignLoweringResult> {
   const DesignDeclarations decls =
       CollectDesignDeclarations(design, input, mir_arena);
 
@@ -252,14 +253,19 @@ auto LowerDesign(
         {p.design_state_base_slot, p.slot_count});
   }
 
-  // Apply port drive bindings (creates synthetic always_comb processes)
+  // Compile port bindings into assembly-ready artifacts (no design mutation).
+  design_assembly::CompiledBindingPlan compiled_bindings;
   if (input.binding_plan != nullptr) {
     auto binding_result =
-        ApplyBindings(*input.binding_plan, decls, input, mir_arena, result);
+        CompileBindings(*input.binding_plan, decls, input, mir_arena);
     if (!binding_result) return std::unexpected(binding_result.error());
+    compiled_bindings = std::move(*binding_result);
   }
 
-  return result;
+  return DesignLoweringResult{
+      .design = std::move(result),
+      .compiled_bindings = std::move(compiled_bindings),
+  };
 }
 
 }  // namespace lyra::lowering::hir_to_mir

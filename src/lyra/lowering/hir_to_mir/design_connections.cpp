@@ -7,6 +7,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/design_assembly/compiled_bindings.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
@@ -17,7 +18,6 @@
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
-#include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
@@ -56,7 +56,7 @@ auto MakeDesignContext(
 auto CreateConnectionProcess(
     mir::PlaceId dst, BuildSrcFn build_src, const LoweringInput& input,
     mir::Arena& mir_arena, const DesignDeclarations& decls)
-    -> Result<mir::ProcessId> {
+    -> Result<mir::Process> {
   Context ctx = MakeDesignContext(input, mir_arena, decls);
   MirBuilder builder(&mir_arena, &ctx);
 
@@ -93,27 +93,22 @@ auto CreateConnectionProcess(
     }
   }
 
-  return mir_arena.AddProcess(
-      mir::Process{
-          .kind = mir::ProcessKind::kLooping,
-          .entry = mir::BasicBlockId{entry_idx.value},
-          .blocks = std::move(blocks),
-          .temp_metadata = std::move(ctx.temp_metadata),
-      });
+  return mir::Process{
+      .kind = mir::ProcessKind::kLooping,
+      .entry = mir::BasicBlockId{entry_idx.value},
+      .blocks = std::move(blocks),
+      .temp_metadata = std::move(ctx.temp_metadata),
+  };
 }
 
 namespace {
 
-// Record a port connection in the design (single write path).
-void RecordConnection(mir::Design& design, mir::PortConnection connection) {
-  design.port_connections.push_back(std::move(connection));
-}
-
-// Apply kDriveParentToChild binding: parent rvalue -> child place via process.
-auto ApplyDriveParentToChild(
+// Compile kDriveParentToChild binding: parent rvalue -> child place via
+// process.
+auto CompileDriveParentToChild(
     const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
     const DesignDeclarations& decls, const LoweringInput& input,
-    mir::Arena& mir_arena, mir::Design& design) -> Result<void> {
+    mir::Arena& mir_arena) -> Result<design_assembly::CompiledDriveBinding> {
   // Source is parent rvalue expression (arbitrary, may emit temps)
   auto build_src =
       [&binding](MirBuilder& builder, const Context&) -> Result<mir::Operand> {
@@ -126,23 +121,21 @@ auto ApplyDriveParentToChild(
     return std::unexpected(proc.error());
   }
 
-  design.connection_processes.push_back(*proc);
-  RecordConnection(
-      design, mir::PortConnection{
-                  .kind = mir::PortConnection::Kind::kDriveParentToChild,
-                  .child_port_sym = binding.child_port_sym,
-                  .parent_instance_sym = binding.parent_instance_sym,
-                  .child_place = child_place,
-                  .parent_place = {},  // Not meaningful for this kind
-              });
-  return {};
+  return design_assembly::CompiledDriveBinding{
+      .kind = mir::PortConnection::Kind::kDriveParentToChild,
+      .child_port_sym = binding.child_port_sym,
+      .parent_instance_sym = binding.parent_instance_sym,
+      .child_place = child_place,
+      .parent_place = {},
+      .body = {.process = std::move(*proc)},
+  };
 }
 
-// Apply kDriveChildToParent binding: child place -> parent place via process.
-auto ApplyDriveChildToParent(
+// Compile kDriveChildToParent binding: child place -> parent place via process.
+auto CompileDriveChildToParent(
     const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
     const DesignDeclarations& decls, const LoweringInput& input,
-    mir::Arena& mir_arena, mir::Design& design) -> Result<void> {
+    mir::Arena& mir_arena) -> Result<design_assembly::CompiledDriveBinding> {
   // Lower parent lvalue -> place (pure by construction - no MirBuilder)
   Context ctx = MakeDesignContext(input, mir_arena, decls);
   auto parent_lv = LowerPureLvaluePlace(binding.parent_lvalue, ctx);
@@ -154,7 +147,7 @@ auto ApplyDriveChildToParent(
   const mir::Place& parent_place = mir_arena[*parent_lv];
   if (parent_place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
     throw common::InternalError(
-        "ApplyDriveChildToParent", "output target must be a design slot");
+        "CompileDriveChildToParent", "output target must be a design slot");
   }
 
   // Source is explicit read from child place (value, not handle)
@@ -170,23 +163,21 @@ auto ApplyDriveChildToParent(
     return std::unexpected(proc.error());
   }
 
-  design.connection_processes.push_back(*proc);
-  RecordConnection(
-      design, mir::PortConnection{
-                  .kind = mir::PortConnection::Kind::kDriveChildToParent,
-                  .child_port_sym = binding.child_port_sym,
-                  .parent_instance_sym = binding.parent_instance_sym,
-                  .child_place = child_place,
-                  .parent_place = *parent_lv,
-              });
-  return {};
+  return design_assembly::CompiledDriveBinding{
+      .kind = mir::PortConnection::Kind::kDriveChildToParent,
+      .child_port_sym = binding.child_port_sym,
+      .parent_instance_sym = binding.parent_instance_sym,
+      .child_place = child_place,
+      .parent_place = *parent_lv,
+      .body = {.process = std::move(*proc)},
+  };
 }
 
-// Apply kAlias binding: child port aliases parent place (true identity).
-auto ApplyAlias(
+// Compile kAlias binding: child port aliases parent place (true identity).
+auto CompileAlias(
     const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
     const DesignDeclarations& decls, const LoweringInput& input,
-    mir::Arena& mir_arena, mir::Design& design) -> Result<void> {
+    mir::Arena& mir_arena) -> Result<design_assembly::CompiledAliasBinding> {
   // Lower parent lvalue -> place (pure by construction - no MirBuilder)
   Context ctx = MakeDesignContext(input, mir_arena, decls);
   auto parent_lv = LowerPureLvaluePlace(binding.parent_lvalue, ctx);
@@ -198,11 +189,11 @@ auto ApplyAlias(
   const mir::Place& child = mir_arena[child_place];
   if (child.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
     throw common::InternalError(
-        "ApplyAlias", "alias child must be design slot");
+        "CompileAlias", "alias child must be design slot");
   }
   if (!child.projections.empty()) {
     throw common::InternalError(
-        "ApplyAlias", "alias child must have no projections");
+        "CompileAlias", "alias child must have no projections");
   }
 
   mir::SlotId child_slot{static_cast<uint32_t>(child.root.id)};
@@ -211,66 +202,67 @@ auto ApplyAlias(
   const mir::Place& parent_place = mir_arena[*parent_lv];
   if (parent_place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
     throw common::InternalError(
-        "ApplyAlias", "alias target must be a design slot");
+        "CompileAlias", "alias target must be a design slot");
   }
 
   // V1 invariant: alias targets must NOT contain BitRange projections.
   for (const auto& proj : parent_place.projections) {
     if (mir::IsBitRange(proj)) {
       throw common::InternalError(
-          "ApplyAlias", "alias target must not contain bit-range projections");
+          "CompileAlias",
+          "alias target must not contain bit-range projections");
     }
   }
 
-  // SINGLE write path for alias_map
-  design.alias_map[child_slot] = *parent_lv;
-
-  RecordConnection(
-      design, mir::PortConnection{
-                  .kind = mir::PortConnection::Kind::kAlias,
-                  .child_port_sym = binding.child_port_sym,
-                  .parent_instance_sym = binding.parent_instance_sym,
-                  .child_place = child_place,
-                  .parent_place = *parent_lv,
-              });
-  return {};
+  return design_assembly::CompiledAliasBinding{
+      .child_port_sym = binding.child_port_sym,
+      .parent_instance_sym = binding.parent_instance_sym,
+      .child_place = child_place,
+      .parent_place = *parent_lv,
+      .child_slot = child_slot,
+  };
 }
 
 }  // namespace
 
-auto ApplyBindings(
+auto CompileBindings(
     const ast_to_hir::DesignBindingPlan& plan, const DesignDeclarations& decls,
-    const LoweringInput& input, mir::Arena& mir_arena, mir::Design& design)
-    -> Result<void> {
+    const LoweringInput& input, mir::Arena& mir_arena)
+    -> Result<design_assembly::CompiledBindingPlan> {
+  design_assembly::CompiledBindingPlan result;
   if (plan.bindings.empty()) {
-    return {};
+    return result;
   }
 
   for (const auto& binding : plan.bindings) {
     mir::PlaceId child_place = decls.design_places.at(binding.child_port_sym);
 
-    Result<void> result;
     switch (binding.kind) {
-      case ast_to_hir::PortBinding::Kind::kDriveParentToChild:
-        result = ApplyDriveParentToChild(
-            binding, child_place, decls, input, mir_arena, design);
+      case ast_to_hir::PortBinding::Kind::kDriveParentToChild: {
+        auto compiled = CompileDriveParentToChild(
+            binding, child_place, decls, input, mir_arena);
+        if (!compiled) return std::unexpected(compiled.error());
+        result.drive_bindings.push_back(std::move(*compiled));
         break;
-      case ast_to_hir::PortBinding::Kind::kDriveChildToParent:
-        result = ApplyDriveChildToParent(
-            binding, child_place, decls, input, mir_arena, design);
+      }
+      case ast_to_hir::PortBinding::Kind::kDriveChildToParent: {
+        auto compiled = CompileDriveChildToParent(
+            binding, child_place, decls, input, mir_arena);
+        if (!compiled) return std::unexpected(compiled.error());
+        result.drive_bindings.push_back(std::move(*compiled));
         break;
-      case ast_to_hir::PortBinding::Kind::kAlias:
-        result =
-            ApplyAlias(binding, child_place, decls, input, mir_arena, design);
+      }
+      case ast_to_hir::PortBinding::Kind::kAlias: {
+        auto compiled =
+            CompileAlias(binding, child_place, decls, input, mir_arena);
+        if (!compiled) return std::unexpected(compiled.error());
+        result.alias_bindings.push_back(std::move(*compiled));
         break;
-    }
-
-    if (!result) {
-      return std::unexpected(result.error());
+      }
     }
   }
 
-  return {};
+  return result;
 }
 
 }  // namespace lyra::lowering::hir_to_mir
