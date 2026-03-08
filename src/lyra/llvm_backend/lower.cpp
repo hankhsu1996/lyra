@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -297,7 +298,7 @@ struct ProcessMetaTableResult {
 
 auto EmitProcessMetaTable(
     Context& context, const LoweringInput& input,
-    const std::vector<mir::ProcessId>& process_ids, size_t num_init)
+    const std::vector<ScheduledProcess>& scheduled_processes, size_t num_init)
     -> ProcessMetaTableResult {
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -306,7 +307,7 @@ auto EmitProcessMetaTable(
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
   // Only emit meta for module processes (skip init processes)
-  auto num_module = process_ids.size() - num_init;
+  auto num_module = scheduled_processes.size() - num_init;
   if (num_module == 0) {
     return {
         .pool_ptr = null_ptr,
@@ -333,13 +334,14 @@ auto EmitProcessMetaTable(
 
   const auto& instance_entries = input.design->instance_table.entries;
 
-  for (size_t i = num_init; i < process_ids.size(); ++i) {
-    const auto& proc = (*input.mir_arena)[process_ids[i]];
+  for (size_t i = num_init; i < scheduled_processes.size(); ++i) {
+    const auto& bp = scheduled_processes[i];
+    const auto& proc = (*input.mir_arena)[bp.process_id];
 
-    // Instance path
+    // Instance path: use bound process module_index for instance identity
     std::string inst_path;
-    if (proc.owner_instance_id < instance_entries.size()) {
-      inst_path = instance_entries[proc.owner_instance_id].full_path;
+    if (bp.module_index && bp.module_index.value < instance_entries.size()) {
+      inst_path = instance_entries[bp.module_index.value].full_path;
     }
     uint32_t inst_off = add_string(inst_path);
 
@@ -734,12 +736,15 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       }
     }
   };
-  // Scan module processes
+  // Scan module processes (dedup with shared bodies)
+  std::unordered_set<uint32_t> seen_proc_ids;
   for (const auto& element : input.design->elements) {
     if (const auto* mod_elem = std::get_if<mir::Module>(&element)) {
       const auto& body = mir::GetModuleBody(*input.design, *mod_elem);
       for (mir::ProcessId proc_id : body.processes) {
-        register_monitor_info(proc_id);
+        if (seen_proc_ids.insert(proc_id.value).second) {
+          register_monitor_info(proc_id);
+        }
       }
     }
   }
@@ -749,20 +754,27 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   }
 
   // Two-pass user function generation for mutual recursion support
-  // Collect all function IDs from modules, packages, and generated functions
+  // Collect all unique function IDs from modules, packages, and generated
+  // functions. With shared bodies, the same FunctionId appears for multiple
+  // instances; dedup by tracking seen IDs.
   std::vector<mir::FunctionId> all_func_ids;
+  std::unordered_set<uint32_t> seen_func_ids;
   for (const auto& element : input.design->elements) {
     std::visit(
         common::Overloaded{
             [&](const mir::Module& mod) {
               const auto& body = mir::GetModuleBody(*input.design, mod);
               for (mir::FunctionId func_id : body.functions) {
-                all_func_ids.push_back(func_id);
+                if (seen_func_ids.insert(func_id.value).second) {
+                  all_func_ids.push_back(func_id);
+                }
               }
             },
             [&](const mir::Package& pkg) {
               for (mir::FunctionId func_id : pkg.functions) {
-                all_func_ids.push_back(func_id);
+                if (seen_func_ids.insert(func_id.value).second) {
+                  all_func_ids.push_back(func_id);
+                }
               }
             },
         },
@@ -770,7 +782,9 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   }
   // Include dynamically generated functions (e.g., strobe thunks)
   for (mir::FunctionId func_id : input.design->generated_functions) {
-    all_func_ids.push_back(func_id);
+    if (seen_func_ids.insert(func_id.value).second) {
+      all_func_ids.push_back(func_id);
+    }
   }
 
   // Pass 1: Declare all user functions (builds function types, registers them)
@@ -791,10 +805,10 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     if (!result) return std::unexpected(result.error());
   }
 
-  // Generate process functions (use process_ids from layout for single source
-  // of truth)
+  // Generate process functions (use scheduled_processes from layout for single
+  // source of truth)
   std::vector<llvm::Function*> process_funcs;
-  process_funcs.reserve(layout.process_ids.size());
+  process_funcs.reserve(layout.scheduled_processes.size());
 
   // Phase 1: Emit template functions (one per ProcessTemplate)
   std::vector<llvm::Function*> template_fns(layout.process_templates.size());
@@ -803,7 +817,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     context.SetCurrentProcess(tmpl.template_layout_index.value);
 
     const auto& mir_process = (*input.mir_arena)[tmpl.template_process];
-    context.SetCurrentInstanceId(mir_process.owner_instance_id);
+    context.SetCurrentInstanceId(tmpl.representative_module_idx.value);
 
     const auto& variant =
         layout.GetInstanceVariant(tmpl.representative_module_idx);
@@ -818,12 +832,12 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
 
   // Phase 2: Emit per-process functions (wrappers vs standalone)
   size_t num_init = layout.num_init_processes;
-  for (size_t i = 0; i < layout.process_ids.size(); ++i) {
+  for (size_t i = 0; i < layout.scheduled_processes.size(); ++i) {
     context.SetCurrentProcess(i);
 
-    mir::ProcessId proc_id = layout.process_ids[i];
-    const auto& mir_process = (*input.mir_arena)[proc_id];
-    context.SetCurrentInstanceId(mir_process.owner_instance_id);
+    const auto& bp = layout.scheduled_processes[i];
+    const auto& mir_process = (*input.mir_arena)[bp.process_id];
+    context.SetCurrentInstanceId(bp.module_index.value);
 
     auto route =
         layout.RouteProcess(LayoutProcessIndex{static_cast<uint32_t>(i)});
@@ -836,19 +850,18 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
 
       auto* wrapper = GenerateProcessWrapper(
           context, template_fns[templated->template_id.value],
-          mir_process.owner_instance_id, base_byte_offset, base_slot_id,
+          bp.module_index.value, base_byte_offset, base_slot_id,
           std::format("process_{}", i));
       process_funcs.push_back(wrapper);
       continue;
     }
 
     // Set base slot id for kModuleSlot rebasing in standalone processes.
-    // Connection processes (owner_instance_id == UINT32_MAX) use only
-    // kDesignGlobal, so base 0 is safe.
-    if (mir_process.owner_instance_id != UINT32_MAX) {
+    // Design-level processes (no module owner) use only kDesignGlobal,
+    // so base 0 is safe.
+    if (bp.module_index) {
       uint32_t base_slot_id =
-          input.design->instance_slot_ranges[mir_process.owner_instance_id]
-              .slot_begin;
+          input.design->instance_slot_ranges[bp.module_index.value].slot_begin;
       context.SetRelByteOffsets({}, base_slot_id);
     } else {
       context.SetRelByteOffsets({}, 0);
@@ -1329,7 +1342,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       // Build ProcessId -> module process index mapping
       std::unordered_map<uint32_t, uint32_t> proc_id_to_module_idx;
       for (uint32_t pi = 0; pi < num_regular_module; ++pi) {
-        auto proc_id = layout.process_ids[num_init + pi];
+        auto proc_id = layout.scheduled_processes[num_init + pi].process_id;
         proc_id_to_module_idx[proc_id.value] = pi;
       }
 
@@ -1371,8 +1384,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     }
 
     // Build process metadata table
-    auto proc_meta =
-        EmitProcessMetaTable(context, input, layout.process_ids, num_init);
+    auto proc_meta = EmitProcessMetaTable(
+        context, input, layout.scheduled_processes, num_init);
 
     // Build loop site metadata table (from origins accumulated during codegen)
     auto loop_meta = EmitLoopSiteMetaTable(context, input);

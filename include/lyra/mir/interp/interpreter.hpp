@@ -388,9 +388,16 @@ auto CreateProcessState(
     const Arena& arena, const TypeArena& types, ProcessId process_id,
     DesignState* design_state) -> ProcessState;
 
+// Instance-bound process entry for the interpreter.
+// Pairs a shared ProcessId with the module instance it belongs to.
+struct BoundProcessEntry {
+  ProcessId process_id;
+  uint32_t module_index;  // index into module-order space
+};
+
 // Info about initial processes to run (collected from all modules)
 struct InitialProcessInfo {
-  std::vector<ProcessId> initial_processes;  // All kOnce processes in order
+  std::vector<BoundProcessEntry> initial_processes;  // All kOnce processes
 };
 
 // Helper: Create DesignState with properly initialized storage.

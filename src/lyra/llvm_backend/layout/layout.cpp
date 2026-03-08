@@ -813,7 +813,6 @@ auto CollectProcessPlaces(const mir::Process& process)
                 places.insert(aop.receiver);
                 std::visit(
                     [&](const auto& op) {
-                      using T = std::decay_t<decltype(op)>;
                       if constexpr (requires { op.dest; }) {
                         places.insert(op.dest);
                       }
@@ -1275,8 +1274,9 @@ struct ModuleProcessInfo {
   LocalProcIndex local_process_index;
   uint32_t slot_begin;
   uint32_t slot_count;
-  uint32_t instance_id;                  // owner_instance_id from process
-  LayoutProcessIndex process_ids_index;  // Index in layout.process_ids
+  uint32_t instance_id;  // module_index (instance identity)
+  LayoutProcessIndex
+      scheduled_process_index;  // Index in layout.scheduled_processes
   ModuleIndex module_idx;
   const std::vector<mir::FunctionId>* module_functions = nullptr;
 };
@@ -1286,12 +1286,27 @@ void BuildModuleVariants(
     const TypeArena& types, const llvm::DataLayout& dl) {
   // Step 1: Build process info by walking module elements
 
-  // Build process_id -> process_ids_index map (avoids O(N^2) linear scan)
-  std::unordered_map<uint32_t, LayoutProcessIndex> pid_to_index;
-  for (size_t i = layout.num_init_processes; i < layout.process_ids.size();
-       ++i) {
-    pid_to_index[layout.process_ids[i].value] =
-        LayoutProcessIndex{static_cast<uint32_t>(i)};
+  // Build (proc_id, module_index) -> scheduled_process_index map.
+  // With shared bodies, the same ProcessId can appear for multiple instances,
+  // so we key on both process_id and module_index for uniqueness.
+  struct ProcModuleKey {
+    uint32_t proc_id;
+    uint32_t module_index;
+    auto operator==(const ProcModuleKey&) const -> bool = default;
+  };
+  struct ProcModuleKeyHash {
+    auto operator()(const ProcModuleKey& k) const noexcept -> size_t {
+      return std::hash<uint64_t>{}(
+          (static_cast<uint64_t>(k.proc_id) << 32) | k.module_index);
+    }
+  };
+  std::unordered_map<ProcModuleKey, LayoutProcessIndex, ProcModuleKeyHash>
+      pid_to_index;
+  for (size_t i = layout.num_init_processes;
+       i < layout.scheduled_processes.size(); ++i) {
+    const auto& bp = layout.scheduled_processes[i];
+    ProcModuleKey key{bp.process_id.value, bp.module_index.value};
+    pid_to_index[key] = LayoutProcessIndex{static_cast<uint32_t>(i)};
   }
 
   std::vector<ModuleProcessInfo> all_module_procs;
@@ -1312,7 +1327,8 @@ void BuildModuleVariants(
         continue;
       }
 
-      auto pid_it = pid_to_index.find(proc_id.value);
+      ProcModuleKey key{proc_id.value, module_idx};
+      auto pid_it = pid_to_index.find(key);
       if (pid_it == pid_to_index.end()) {
         ++local_idx;
         continue;
@@ -1325,8 +1341,8 @@ void BuildModuleVariants(
               .local_process_index = LocalProcIndex{local_idx},
               .slot_begin = slot_begin,
               .slot_count = slot_count,
-              .instance_id = process.owner_instance_id,
-              .process_ids_index = pid_it->second,
+              .instance_id = module_idx,
+              .scheduled_process_index = pid_it->second,
               .module_idx = ModuleIndex{module_idx},
               .module_functions = &body.functions,
           });
@@ -1337,7 +1353,7 @@ void BuildModuleVariants(
 
   // Initialize membership (all nullopt = standalone)
   size_t num_module_procs =
-      layout.process_ids.size() - layout.num_init_processes;
+      layout.scheduled_processes.size() - layout.num_init_processes;
   layout.process_membership.assign(num_module_procs, std::nullopt);
 
   // Phase A: Dedup template functions
@@ -1414,12 +1430,12 @@ void BuildModuleVariants(
 
       // Verify frame layout compatibility
       const auto& rep_frame =
-          layout.processes[rep.process_ids_index.value].frame;
+          layout.processes[rep.scheduled_process_index.value].frame;
       bool frames_compatible = true;
       for (size_t fi : fp_indices) {
         if (fi == rep_idx) continue;
         const auto& other_frame =
-            layout.processes[all_module_procs[fi].process_ids_index.value]
+            layout.processes[all_module_procs[fi].scheduled_process_index.value]
                 .frame;
         if (other_frame.root_types != rep_frame.root_types) {
           frames_compatible = false;
@@ -1463,7 +1479,7 @@ void BuildModuleVariants(
       layout.process_templates.push_back(
           ProcessTemplate{
               .template_process = rep.process_id,
-              .template_layout_index = rep.process_ids_index,
+              .template_layout_index = rep.scheduled_process_index,
               .func_name = std::format(
                   "proc_template_{}_{:x}", rep.local_process_index.value, fp),
               .template_base_slot_id = rep.slot_begin,
@@ -1473,7 +1489,7 @@ void BuildModuleVariants(
       // Record membership for all instances in this group
       for (size_t fi : fp_indices) {
         const auto& info = all_module_procs[fi];
-        uint32_t map_idx = info.process_ids_index.value -
+        uint32_t map_idx = info.scheduled_process_index.value -
                            static_cast<uint32_t>(layout.num_init_processes);
         layout.process_membership[map_idx] = ProcessMembership{
             .local_proc_idx = info.local_process_index,
@@ -1638,9 +1654,9 @@ auto BuildLayout(
   // Phase 1: Collect init processes (package variable initialization)
   // These run synchronously before scheduling, in design.init_processes order
   for (mir::ProcessId proc_id : design.init_processes) {
-    layout.process_ids.push_back(proc_id);
+    layout.scheduled_processes.push_back({proc_id, ModuleIndex{}});
   }
-  layout.num_init_processes = layout.process_ids.size();
+  layout.num_init_processes = layout.scheduled_processes.size();
 
   // Phase 2: Collect connection processes (scheduled, always_comb semantics)
   // These implement port drive bindings (kDriveParentToChild,
@@ -1652,16 +1668,19 @@ auto BuildLayout(
       entry->process_id = proc_id;
       layout.connection_kernel_entries.push_back(*entry);
     } else {
-      layout.process_ids.push_back(proc_id);
+      layout.scheduled_processes.push_back({proc_id, ModuleIndex{}});
     }
   }
 
   // Phase 3: Collect module processes (run through scheduler)
   // Also detect pure combinational processes for comb kernel batching.
+  // Each instance gets its own entries even when sharing a body.
+  uint32_t module_idx_counter = 0;
   for (const auto& element : design.elements) {
     if (!std::holds_alternative<mir::Module>(element)) {
       continue;
     }
+    uint32_t current_module_idx = module_idx_counter++;
     const auto& mir_module = std::get<mir::Module>(element);
     const auto& body = mir::GetModuleBody(design, mir_module);
     for (mir::ProcessId proc_id : body.processes) {
@@ -1669,24 +1688,24 @@ auto BuildLayout(
       if (process.kind == mir::ProcessKind::kFinal) continue;
 
       uint32_t slot_base = 0;
-      if (process.owner_instance_id != UINT32_MAX) {
-        slot_base =
-            design.instance_slot_ranges[process.owner_instance_id].slot_begin;
+      if (current_module_idx < design.instance_slot_ranges.size()) {
+        slot_base = design.instance_slot_ranges[current_module_idx].slot_begin;
       }
       auto comb = TryKernelizeComb(process, arena, slot_base);
       if (comb) {
         comb->process_id = proc_id;
         layout.comb_kernel_entries.push_back(std::move(*comb));
       }
-      layout.process_ids.push_back(proc_id);
+      layout.scheduled_processes.push_back(
+          {proc_id, ModuleIndex{current_module_idx}});
     }
   }
 
   // Build process layouts
-  layout.processes.reserve(layout.process_ids.size());
+  layout.processes.reserve(layout.scheduled_processes.size());
 
-  for (size_t i = 0; i < layout.process_ids.size(); ++i) {
-    const auto& process = arena[layout.process_ids[i]];
+  for (size_t i = 0; i < layout.scheduled_processes.size(); ++i) {
+    const auto& process = arena[layout.scheduled_processes[i].process_id];
 
     ProcessLayout proc_layout;
     proc_layout.process_index = i;

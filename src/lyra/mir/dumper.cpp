@@ -193,21 +193,60 @@ void Dumper::Dedent() {
 void Dumper::Dump(const Design& design) {
   *out_ << "Design {\n";
   Indent();
+
+  // Packages
   for (const auto& element : design.elements) {
-    std::visit(
-        common::Overloaded{
-            [&](const Module& mod) { Dump(mod, GetModuleBody(design, mod)); },
-            [&](const Package& pkg) { Dump(pkg); },
-        },
-        element);
+    if (const auto* pkg = std::get_if<Package>(&element)) {
+      Dump(*pkg);
+    }
   }
+
+  // ModuleBodies: dump each shared body exactly once.
+  if (!design.module_bodies.empty()) {
+    PrintIndent();
+    *out_ << "ModuleBodies {\n";
+    Indent();
+    for (size_t i = 0; i < design.module_bodies.size(); ++i) {
+      DumpModuleBody(
+          design.module_bodies[i], ModuleBodyId{static_cast<uint32_t>(i)});
+    }
+    Dedent();
+    PrintIndent();
+    *out_ << "}\n";
+  }
+
+  // Modules: per-instance records showing body_id binding.
+  bool has_modules = false;
+  for (const auto& element : design.elements) {
+    if (std::holds_alternative<Module>(element)) {
+      has_modules = true;
+      break;
+    }
+  }
+  if (has_modules) {
+    PrintIndent();
+    *out_ << "Modules {\n";
+    Indent();
+    for (const auto& element : design.elements) {
+      if (const auto* mod = std::get_if<Module>(&element)) {
+        PrintIndent();
+        *out_ << std::format(
+            "instance_sym={} -> body_{}\n", mod->instance_sym.value,
+            mod->body_id.value);
+      }
+    }
+    Dedent();
+    PrintIndent();
+    *out_ << "}\n";
+  }
+
   Dedent();
   *out_ << "}\n";
 }
 
-void Dumper::Dump(const Module& /*module*/, const ModuleBody& body) {
+void Dumper::DumpModuleBody(const ModuleBody& body, ModuleBodyId body_id) {
   PrintIndent();
-  *out_ << "Module {\n";
+  *out_ << std::format("body_{} {{\n", body_id.value);
   Indent();
 
   for (ProcessId id : body.processes) {

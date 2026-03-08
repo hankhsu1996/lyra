@@ -395,21 +395,22 @@ auto CreateDesignState(
   // Each module's processes use body-local kModuleSlot IDs that must be
   // rebased to design-global before indexing into design_types.
   LocalInitCollector collector;
+  uint32_t cds_module_index = 0;
   for (const auto& element : design.elements) {
     if (const auto* module = std::get_if<Module>(&element)) {
       const auto& body = GetModuleBody(design, *module);
       for (ProcessId process_id : body.processes) {
         const auto& process = arena[process_id];
-        // Set slot_base per process so kModuleSlot IDs are correctly
+        // Set slot_base per instance so kModuleSlot IDs are correctly
         // rebased to design-global indices.
         collector.slot_base = 0;
-        if (process.owner_instance_id != UINT32_MAX &&
-            process.owner_instance_id < design.instance_slot_ranges.size()) {
+        if (cds_module_index < design.instance_slot_ranges.size()) {
           collector.slot_base =
-              design.instance_slot_ranges[process.owner_instance_id].slot_begin;
+              design.instance_slot_ranges[cds_module_index].slot_begin;
         }
         VisitProcessBlocks(collector, process, arena);
       }
+      ++cds_module_index;
     }
   }
   // Init and connection processes are design-global (no module-local storage).
@@ -442,19 +443,23 @@ auto CollectInitialProcesses(const Design& design, const Arena& arena)
   // elaboration order. Each module's processes vector preserves source order.
   // This gives deterministic, stable init ordering.
   //
-  // Note: kOnce means "run exactly once per elaborated instance." Each Module
-  // in design.elements represents one elaborated instance, so collecting all
-  // kOnce processes across all modules is correct.
-  std::vector<ProcessId> initial_processes;
+  // With shared bodies, the same ProcessId may appear for multiple instances.
+  // Each instance must get its own runtime entry so each instance's initial
+  // block runs independently.
+  std::vector<BoundProcessEntry> initial_processes;
+  uint32_t module_index = 0;
   for (const auto& element : design.elements) {
     if (const auto* module = std::get_if<Module>(&element)) {
       const auto& body = GetModuleBody(design, *module);
       for (ProcessId process_id : body.processes) {
         const auto& process = arena[process_id];
         if (process.kind == ProcessKind::kOnce) {
-          initial_processes.push_back(process_id);
+          initial_processes.push_back(
+              BoundProcessEntry{
+                  .process_id = process_id, .module_index = module_index});
         }
       }
+      ++module_index;
     }
   }
   if (initial_processes.empty()) {
@@ -521,20 +526,20 @@ auto RunSimulation(
     interp.SetInstancePaths(std::move(instance_paths));
   }
 
-  auto create_state = [&](ProcessId proc_id) -> ProcessState {
+  auto create_bound_state = [&](ProcessId proc_id,
+                                uint32_t module_index) -> ProcessState {
     auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
-    const auto& process = mir_arena[proc_id];
-    if (process.owner_instance_id != UINT32_MAX &&
-        process.owner_instance_id < design.instance_slot_ranges.size()) {
-      state.slot_base =
-          design.instance_slot_ranges[process.owner_instance_id].slot_begin;
+    state.instance_id = module_index;
+    if (module_index != UINT32_MAX &&
+        module_index < design.instance_slot_ranges.size()) {
+      state.slot_base = design.instance_slot_ranges[module_index].slot_begin;
     }
     return state;
   };
 
   // Run design init processes (package variable initialization)
   for (ProcessId proc_id : design.init_processes) {
-    auto state = create_state(proc_id);
+    auto state = create_bound_state(proc_id, UINT32_MAX);
     auto result = interp.Run(state);
     if (!result) {
       return SimulationResult{
@@ -542,15 +547,23 @@ auto RunSimulation(
     }
   }
 
-  // Create process states for initial and connection processes
-  std::unordered_map<uint32_t, ProcessState> process_states;
-  for (ProcessId proc_id : process_info->initial_processes) {
-    auto state = create_state(proc_id);
-    process_states.emplace(proc_id.value, std::move(state));
+  // Create process states for initial and connection processes.
+  // Keyed by ProcessHandle (typed runtime identity).
+  std::unordered_map<
+      runtime::ProcessHandle, ProcessState, runtime::ProcessHandleHash>
+      process_states;
+  for (const auto& entry : process_info->initial_processes) {
+    auto state = create_bound_state(entry.process_id, entry.module_index);
+    runtime::ProcessHandle handle{
+        .process_id = entry.process_id.value,
+        .instance_id = entry.module_index};
+    process_states.emplace(handle, std::move(state));
   }
   for (ProcessId proc_id : design.connection_processes) {
-    auto state = create_state(proc_id);
-    process_states.emplace(proc_id.value, std::move(state));
+    auto state = create_bound_state(proc_id, UINT32_MAX);
+    runtime::ProcessHandle handle{
+        .process_id = proc_id.value, .instance_id = UINT32_MAX};
+    process_states.emplace(handle, std::move(state));
   }
 
   // Error from callback (captured by reference)
@@ -564,7 +577,7 @@ auto RunSimulation(
       return;  // Stop processing if we already have an error
     }
 
-    auto it = process_states.find(handle.process_id);
+    auto it = process_states.find(handle);
     if (it == process_states.end()) {
       return;
     }
@@ -627,15 +640,18 @@ auto RunSimulation(
   }
 
   // Schedule initial processes
-  for (ProcessId proc_id : process_info->initial_processes) {
+  for (const auto& entry : process_info->initial_processes) {
     engine.ScheduleInitial(
-        runtime::ProcessHandle{.process_id = proc_id.value, .instance_id = 0});
+        runtime::ProcessHandle{
+            .process_id = entry.process_id.value,
+            .instance_id = entry.module_index});
   }
 
   // Schedule connection processes (always_comb semantics - run once at time 0)
   for (ProcessId proc_id : design.connection_processes) {
     engine.ScheduleInitial(
-        runtime::ProcessHandle{.process_id = proc_id.value, .instance_id = 0});
+        runtime::ProcessHandle{
+            .process_id = proc_id.value, .instance_id = UINT32_MAX});
   }
 
   // Run simulation

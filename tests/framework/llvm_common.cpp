@@ -300,6 +300,7 @@ auto PrepareLlvmModule(
       .builtin_types = {},
       .binding_plan = &hir_result.binding_plan,
       .instance_table = &hir_result.instance_table,
+      .specialization_map = &hir_result.specialization_map,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   if (!mir_result) {
