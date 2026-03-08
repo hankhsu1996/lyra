@@ -65,9 +65,9 @@ Staged transition. Each phase establishes new invariants while old paths coexist
 
 **Stage 1: Identity** (Phase A) - Complete. `ModuleSpecId` and `SpecializationMap` introduced. Grouping is observation-only. Old per-instance pipeline unchanged. Known gap: M2 (param classification misses type-level structural refs -- temporarily mitigated by `type.toString()` hashing in structural fingerprint, not a clean solution).
 
-**Stage 2: Specialization-ready ownership** (Phase B) - B1-B4 done. Ownership boundary established: `ModuleBody` owns behavioral IR, `Module` is instance-side record with `body_id`. Shared bodies active (one body per specialization group). `mir::Process` carries no instance identity -- instance binding comes exclusively from scheduling/runtime context (`BoundProcessEntry`, `ProcessHandle`, `BindProcessToInstance`). Layout/codegen use `ScheduledProcess` records (no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. `SpecializationMap` is required in MIR-lowering input (no default/null fallback path remains). `BuildMirSpecGroups` validates specialization invariants. `InstanceTable::GetPathBySymbol` centralizes instance path lookup. MIR dump uses explicit `ModuleBodies` / `Modules` sections. Remaining: B5 (codegen compatibility -- largely already operational through explicit instance-side context), B6 (HIR ownership split).
+**Stage 2: Specialization-ready ownership** (Phase B) - B1-B4 done. Ownership boundary established: `ModuleBody` owns behavioral IR, `Module` is instance-side record with `body_id`. Shared bodies active (one body per specialization group). `mir::Process` carries no instance identity -- instance binding comes exclusively from scheduling/runtime context (`BoundProcessEntry`, `ProcessHandle`, `BindProcessToInstance`). Layout/codegen use `ScheduledProcess` records (no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. `SpecializationMap` is required in MIR-lowering input (no default/null fallback path remains). `BuildMirSpecGroups` validates specialization invariants. `InstanceTable::GetPathBySymbol` centralizes instance path lookup. MIR dump uses explicit `ModuleBodies` / `Modules` sections. Remaining: B5 (design-wide codegen compatibility remains as transitional state until Phase E), B6 (HIR ownership split).
 
-**Stage 3: Storage model** (Phase C) - SlotId becomes specialization-local. Assembly-time placement mapping introduced. Old design-global slot allocation removed.
+**Stage 3: Storage model** (Phase C) - C1 done: module-owned slot identity is specialization-local by construction (`CollectBodyLocalDecls` produces body-local storage independently; `ModuleBody.slots` is the authoritative specialization-local storage interface). Full storage model (runtime placement, design-global slot tables, codegen slot access) remains design-global-backed until C2/C3.
 
 **Stage 4: Assembly extraction** (Phase D) - Assembly becomes a separate phase. Binding, metadata, and connectivity moved out of MIR lowering and codegen. Temporary: assembly still produces the same monolithic LLVM IR.
 
@@ -75,7 +75,7 @@ Staged transition. Each phase establishes new invariants while old paths coexist
 
 **Stage 6: Acceleration** (Phase F) - Parallel compilation, caching, incremental. Pure wins from clean architecture.
 
-**Allowed during transition**: Compatibility adapters that reconstruct per-instance views from specialization artifacts for downstream consumers. Design-global slot IDs in specialization process bodies (normalization is a later concern).
+**Allowed during transition**: Compatibility adapters that reconstruct per-instance views from specialization artifacts for downstream consumers. Design-global placement/runtime tables may still exist outside specialization-owned behavioral storage, until C2/C3.
 
 **Forbidden immediately**: New code that adds design-global dependencies to specialization artifacts. New code that passes `mir::Design` to specialization-local functions. New code that makes instances own behavioral IR.
 
@@ -83,27 +83,27 @@ Staged transition. Each phase establishes new invariants while old paths coexist
 
 ### Blockers
 
-**B1: MIR behavioral IR ownership is per-instance instead of per-specialization** (partially addressed)
+**B1: MIR behavioral IR ownership is per-specialization; HIR still per-instance**
 
-MIR ownership split done: `mir::ModuleBody` owns processes/functions, `mir::Module` is an instance-side record with `body_id`. Bodies are still 1:1 with instances (no sharing yet). HIR still per-instance.
+MIR side resolved: `mir::ModuleBody` owns processes/functions, `mir::Module` is an instance-side record with `body_id`. Shared bodies active (one per specialization group, B3 done). `mir::Process` carries no instance identity (B4 done).
 
-Remaining:
+HIR side remaining:
 
 - `src/lyra/lowering/ast_to_hir/design.cpp:502-506` - `LowerDesign()` creates one `hir::Module` per instance
 - `include/lyra/hir/design.hpp` - `Design::elements` parallel to elaboration order, each element owns behavioral content
 
 **B2: SlotId allocation is design-global** (partially addressed)
 
-Single monotonic counter across entire design. All downstream tables use design-global indices. Specialization artifacts cannot be compiled independently.
+Module-owned slot identity is resolved (C1 done): `CollectBodyLocalDecls()` produces `BodyLocalDecls` from the representative module alone, with its own 0-based counter and no access to design-global slot state. `ModuleBody.slots` is the authoritative specialization-local storage interface during and after lowering. Design-global placement model is unresolved: `Design::slots`, `instance_slot_ranges`, and runtime/codegen slot resolution still operate on design-global slot tables produced by `CollectDesignDeclarations()`.
 
-MIR place roots now distinguish module-local vs design-global storage: `PlaceRoot::kModuleSlot` (body-local, 0-based) and `PlaceRoot::kDesignGlobal` (package/global). Module body processes use `kModuleSlot` for module-owned state. `SignalRef` carries explicit scope (`kModuleLocal` / `kDesignGlobal`) for wait triggers. `ScopedSlotRef` and `ScopedPlanOp` preserve scope for late-bound index dependencies. `ModuleBody` owns body-local slot descriptors. Each subsystem has one canonical scope-resolution helper: `Context::ResolveDesignGlobalSlotId()` (LLVM backend, with overloads for `PlaceRoot`, `SignalRef`, `ScopedSlotRef`), `ResolveDesignGlobalSlot()` (interpreter), `ResolveSignalToGlobalSlot()` (layout). Process fingerprinting and sensitivity analysis operate on scoped identity directly without collapsing to global. Bodies are storage-local by construction but still 1:1 with instances.
+Scope infrastructure: MIR place roots distinguish `PlaceRoot::kModuleSlot` (body-local, 0-based) and `PlaceRoot::kDesignGlobal` (package/global). `SignalRef` carries explicit scope (`kModuleLocal` / `kDesignGlobal`) for wait triggers. `ScopedSlotRef` and `ScopedPlanOp` preserve scope for late-bound index dependencies. Each subsystem has one canonical scope-resolution helper: `Context::ResolveDesignGlobalSlotId()` (LLVM backend), `ResolveDesignGlobalSlot()` (interpreter), `ResolveSignalToGlobalSlot()` (layout). Process fingerprinting and sensitivity analysis operate on scoped identity directly without collapsing to global.
 
-Remaining:
+Remaining (design-global placement model):
 
-- `src/lyra/lowering/hir_to_mir/design_decls.cpp:27` - `int next_slot = 0;` global counter still drives allocation
 - `include/lyra/mir/handle.hpp:79` - `SlotId` is bare `uint32_t`, no scope
 - `include/lyra/mir/design.hpp:63` - `Design::slots` indexed by global SlotId
 - Design-global slot tables and `instance_slot_ranges` still provide the runtime placement model
+- Full removal of design-global storage model is later work (C2/C3)
 
 **B3: Codegen operates on entire design**
 
@@ -232,10 +232,10 @@ B1 now covers both the body artifact and the instance record conversion as a sin
 
 - Goal: HIR->MIR module lowering produces one `ModuleBody` per `ModuleSpecId`. Multiple instance records reference the same body. `SpecializationMap` drives the lowering loop.
 - Areas: `src/lyra/lowering/hir_to_mir/design_lower.cpp`, `src/lyra/lowering/hir_to_mir/module.cpp`, `include/lyra/lowering/hir_to_mir/lower.hpp`
-- Acceptance: `LoweringInput` gains `const SpecializationMap*`. `LowerDesign` iterates specialization groups, lowering module body once per group. Instance records created for each instance referencing the shared body. Test: design with N instances and K specs produces exactly K `LowerModule` calls and K `ModuleBody` entries.
+- Acceptance: `LoweringInput` requires `SpecializationMap`. `LowerDesign` iterates specialization groups, lowering module body once per group. Instance records created for each instance referencing the shared body. Test: design with N instances and K specs produces exactly K `LowerModule` calls and K `ModuleBody` entries.
 - Dependencies: B1, A3
 - Invariant: Module behavioral lowering runs once per specialization, not per instance.
-- Done: Shared bodies active. `SpecializationMap` is non-nullable in `LoweringInput` (no default, enforced at type level). `BuildMirSpecGroups` validates group invariants (range, uniqueness, cross-reference with `spec_id_by_instance`). Layout uses `ScheduledProcess` records (single vector, no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. MIR verification uses `InstanceTable::GetPathBySymbol` (centralized lookup, no ad-hoc maps). MIR dump has explicit `ModuleBodies` / `Modules` sections.
+- Done: Shared bodies active. `SpecializationMap` is required in `LoweringInput` (no default/null fallback path remains). `BuildMirSpecGroups` validates group invariants (range, uniqueness, cross-reference with `spec_id_by_instance`). Layout uses `ScheduledProcess` records (single vector, no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. MIR verification uses `InstanceTable::GetPathBySymbol` (centralized lookup, no ad-hoc maps). MIR dump has explicit `ModuleBodies` / `Modules` sections.
 - Temporary stopgap: Structural fingerprint includes `type.toString()` hashing for variable types to catch param-dependent types resolved at elaboration. This is a presentation-format mitigation, not a clean semantic fingerprint. Proper fix requires explicit structural type fingerprinting over resolved type structure (see M2 gap).
 
 **B4: Remove owner_instance_id from MIR Process** (done)
@@ -247,13 +247,9 @@ B1 now covers both the body artifact and the instance record conversion as a sin
 - Invariant: No instance identity in specialization-owned MIR.
 - Done: Field deleted from `mir::Process`. `LowerProcess()` no longer accepts instance identity. Module lowering no longer looks up instance index for process construction. Interpreter `CreateProcessState()` returns unbound state; callers use `BindProcessToInstance()` to bind behavioral state to instance context. `VerifyLoweredMir` already uses instance record context (not process fields).
 
-**B5: Codegen compatibility adapter**
+**B5: Design-wide codegen compatibility remains until Phase E**
 
-- Goal: Existing design-wide codegen continues to work by reconstructing per-instance process views from specialization bodies + instance records. Temporary bridge until Phase E.
-- Areas: `src/lyra/llvm_backend/lower.cpp`, `src/lyra/llvm_backend/layout/layout.cpp`
-- Acceptance: All existing tests pass. Codegen iterates instance records, looks up shared `ModuleBody`, and provides instance_id from the record. `BuildModuleVariants` continues to work on the reconstructed view. Test: no behavioral change in output.
-- Dependencies: B3, B4
-- Invariant: No new design-global dependencies added. Adapter is clearly marked as transitional.
+Existing design-wide codegen continues to work by reconstructing per-instance process views from specialization bodies + instance records. This is a transitional state, not a separate task. Codegen iterates instance records, looks up shared `ModuleBody`, and provides instance_id from the record. `BuildModuleVariants` continues to work on the reconstructed view. No new design-global dependencies added. Removal happens through D/E phases.
 
 **B6: Propagate ownership to HIR**
 
@@ -265,13 +261,14 @@ B1 now covers both the body artifact and the instance record conversion as a sin
 
 ### Phase C: Specialization-local storage model
 
-**C1: Make SlotId specialization-local**
+**C1: Make module-owned slot identity specialization-local** (done)
 
-- Goal: SlotIds start at 0 per specialization
-- Areas: `src/lyra/lowering/hir_to_mir/design_decls.cpp`, `include/lyra/mir/handle.hpp`
-- Acceptance: Each specialization allocates slots starting from 0. Test: two specializations both have slot 0; design-global mapping exists in assembly data.
+- Goal: Module-owned slot numbering produced from representative module body alone, independent of design-global allocation
+- Areas: `src/lyra/lowering/hir_to_mir/design_decls.cpp`, `include/lyra/lowering/hir_to_mir/context.hpp`, `include/lyra/lowering/hir_to_mir/design.hpp`, `src/lyra/lowering/hir_to_mir/design_lower.cpp`, `include/lyra/lowering/hir_to_mir/module.hpp`, `src/lyra/lowering/hir_to_mir/module.cpp`
+- Acceptance: `CollectBodyLocalDecls()` is self-contained with no design-global dependency. `DesignDeclarations` no longer contains `body_local_decls`. `LowerModule()` receives `BodyLocalDecls` directly. Module-owned `kModuleSlot` allocation happens once per specialization-group representative. `ModuleBody.slots` determined without walking design topology. Design-global placement tables remain unchanged and outside this PR's source-of-truth boundary.
 - Dependencies: B4
-- Invariant: Specialization slot numbering is independent of other specializations.
+- Invariant: Specialization-local slot numbering is independent of other specializations and design topology.
+- Done: Declaration collection split into `CollectBodyLocalDecls()` (specialization-local, one module) and `CollectDesignDeclarations()` (design-global placement). Body-local decls collected once per specialization group in `LowerDesign` and passed directly to `LowerModule`. Design-global slot tables remain as transitional placement/runtime data.
 
 **C2: Introduce assembly-time placement mapping**
 
@@ -379,10 +376,10 @@ B1 now covers both the body artifact and the instance record conversion as a sin
 
 Enforcement tasks to add during migration. Each prevents regression.
 
-**G1: Policy check - no instance identity in specialization-owned MIR** (enforced by construction)
+**G1: Policy check - no instance identity in specialization-owned MIR** (enforced structurally)
 
-- After Phase B: Assert `mir::Process` has no `owner_instance_id`. Assert `mir::ModuleBody` has no instance-specific fields. Assert instance records do not own processes or functions.
-- Enforced by code review. The field is deleted; reintroduction requires adding it back explicitly.
+- After Phase B: `mir::Process` has no instance-identity field. `mir::ModuleBody` has no instance-specific fields. Instance records do not own processes or functions.
+- Enforced by type shape: `mir::Process` no longer has any instance-identity field. Reintroduction would require an explicit API/type change.
 
 **G2: Policy check - specialization codegen API has no design input**
 
@@ -428,5 +425,3 @@ Key consequences: unpacked container sizes are no longer structural specializati
 4. **Container descriptor format**: How should SpecLayout represent container regions? Options include inline descriptor structs, a separate container metadata table, or a hybrid.
 
 5. **MIR interpreter alignment**: Debug-only. Migrate in lockstep or defer?
-
-6. **Specialization body slot numbering**: Addressed. `ModuleBody` processes now use `kModuleSlot` (0-based, body-local) for module-owned storage, with `SignalRef::kModuleLocal` for wait triggers. Design-global references use `kDesignGlobal`. `ModuleBody` owns body-local slot descriptors. Rebasing from body-local to design-global happens through one canonical resolver per subsystem. Remaining transitional items: `body_local_decls` indexed per-instance (should collapse to per-specialization); `SignalRef`/`ScopedSlotRef`/`PlaceRoot` express the same scope concept as separate types (could unify scope enum). Full spec-local slot allocation (removing design-global counter) remains Phase C.

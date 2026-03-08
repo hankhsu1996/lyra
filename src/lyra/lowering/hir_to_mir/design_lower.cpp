@@ -125,7 +125,7 @@ auto LowerDesign(
     const hir::Design& design, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map) -> Result<mir::Design> {
   const DesignDeclarations decls =
-      CollectDeclarations(design, input, mir_arena);
+      CollectDesignDeclarations(design, input, mir_arena);
 
   mir::Design result;
   result.num_design_slots = decls.num_design_slots;
@@ -189,8 +189,10 @@ auto LowerDesign(
           "LowerDesign", "representative module index out of range");
     }
     const hir::Module& rep_mod = *hir_modules[rep_idx];
+    BodyLocalDecls body_decls =
+        CollectBodyLocalDecls(rep_mod, *input.symbol_table, mir_arena);
     Result<mir::ModuleBody> body_result =
-        LowerModule(rep_mod, input, mir_arena, origin_map, decls, rep_idx);
+        LowerModule(rep_mod, input, mir_arena, origin_map, decls, body_decls);
     if (!body_result) {
       return std::unexpected(body_result.error());
     }
