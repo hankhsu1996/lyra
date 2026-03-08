@@ -392,16 +392,20 @@ auto Context::GetCurrentInstanceId() const -> uint32_t {
   return current_instance_id_;
 }
 
-void Context::SetTemplateProcess(bool shared) {
-  is_template_process_ = shared;
+void Context::SetSlotAddressingMode(SlotAddressingMode mode) {
+  slot_addressing_ = mode;
 }
 
-auto Context::IsTemplateProcess() const -> bool {
-  return is_template_process_;
+auto Context::GetSlotAddressingMode() const -> SlotAddressingMode {
+  return slot_addressing_;
 }
 
 void Context::SetThisPointer(llvm::Value* ptr) {
   this_ptr_ = ptr;
+}
+
+auto Context::GetThisPointer() const -> llvm::Value* {
+  return this_ptr_;
 }
 
 void Context::SetDynamicInstanceId(llvm::Value* id) {
@@ -423,11 +427,7 @@ auto Context::GetDynamicInstanceId() const -> llvm::Value* {
 void Context::SetRelByteOffsets(
     std::vector<uint64_t> offsets, uint32_t base_slot_id) {
   rel_byte_offsets_ = std::move(offsets);
-  template_base_slot_id_ = base_slot_id;
-}
-
-auto Context::GetTemplateBaseSlotId() const -> uint32_t {
-  return template_base_slot_id_;
+  module_base_slot_id_ = base_slot_id;
 }
 
 void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
@@ -529,6 +529,41 @@ auto Context::HasUserFunction(mir::FunctionId func_id) const -> bool {
   return user_functions_.contains(func_id);
 }
 
+void Context::RegisterModuleScopedFunction(
+    mir::FunctionId func_id, ModuleFunctionLowering lowering) {
+  auto [it, inserted] = module_function_lowering_.emplace(func_id, lowering);
+  if (!inserted) {
+    // Same function seen from another instance of the same variant.
+    // Verify the registrations agree on specialization-owned metadata.
+    const auto& existing = it->second;
+    if (*existing.rel_byte_offsets != *lowering.rel_byte_offsets) {
+      throw common::InternalError(
+          "RegisterModuleScopedFunction",
+          std::format(
+              "function {} registered with conflicting rel_byte_offsets "
+              "(sizes {} vs {})",
+              func_id.value, existing.rel_byte_offsets->size(),
+              lowering.rel_byte_offsets->size()));
+    }
+  }
+}
+
+auto Context::IsModuleScopedFunction(mir::FunctionId func_id) const -> bool {
+  return module_function_lowering_.contains(func_id);
+}
+
+auto Context::GetModuleFunctionLowering(mir::FunctionId func_id) const
+    -> const ModuleFunctionLowering& {
+  auto it = module_function_lowering_.find(func_id);
+  if (it == module_function_lowering_.end()) {
+    throw common::InternalError(
+        "GetModuleFunctionLowering",
+        std::format(
+            "function {} not registered as module-scoped", func_id.value));
+  }
+  return it->second;
+}
+
 void Context::RegisterMonitorLayout(
     mir::FunctionId check_thunk, MonitorLayout layout) {
   monitor_layouts_.emplace(check_thunk, std::move(layout));
@@ -557,9 +592,11 @@ auto Context::GetMonitorSetupInfo(mir::FunctionId setup_thunk) const
   return &it->second;
 }
 
-auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
+auto Context::BuildUserFunctionType(
+    const mir::FunctionSignature& sig, bool is_module_scoped)
     -> Result<llvm::FunctionType*> {
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+  auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
 
   // Use MIR return policy (frozen at HIR->MIR lowering)
   bool uses_sret = sig.return_policy == mir::ReturnPolicy::kSretOutParam;
@@ -574,6 +611,13 @@ auto Context::BuildUserFunctionType(const mir::FunctionSignature& sig)
   // DesignState* and Engine* follow
   param_types.push_back(ptr_ty);  // DesignState*
   param_types.push_back(ptr_ty);  // Engine*
+
+  // Module-scoped functions receive specialization-local context
+  if (is_module_scoped) {
+    param_types.push_back(ptr_ty);  // this_ptr (module instance storage)
+    param_types.push_back(i32_ty);  // signal_id_offset
+    param_types.push_back(i32_ty);  // instance_id
+  }
 
   // Add parameter types from signature
   for (const auto& param : sig.params) {

@@ -109,11 +109,11 @@ auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
 auto Context::ComputePlacePointer(
     const mir::Place& resolved, mir::PlaceId original_place_id)
     -> Result<llvm::Value*> {
-  // Get base pointer from root (resolved is already alias-resolved)
+  // Get base pointer from root (resolved is already alias-resolved).
   llvm::Value* ptr = nullptr;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
       resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-    ptr = GetDesignSlotPointer(ResolveDesignGlobalSlotId(resolved.root));
+    ptr = GetSlotRootPointer(resolved.root);
   } else {
     // Local/Temp places: check place_alias_ first (inout managed params),
     // then place_storage_ (regular allocas), then frame (processes).
@@ -265,7 +265,6 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
   uint32_t dirty_size = 0;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
       resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-    uint32_t global_slot_id = ResolveDesignGlobalSlotId(resolved.root);
     mir::SignalRef sig{
         .scope = (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot)
                      ? mir::SignalRef::Scope::kModuleLocal
@@ -283,9 +282,11 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
       }
       return std::nullopt;
     };
+    // Use the resolved root's type directly (carried by MIR place metadata)
+    // rather than detouring through the design-global slot table.
     auto range = ResolveByteRange(
         *llvm_context_, llvm_module_->getDataLayout(), types_, resolved,
-        design_.slots[global_slot_id].type, resolver, force_two_state_);
+        resolved.root.type, resolver, force_two_state_);
     if (range.kind == RangeKind::kPrecise) {
       dirty_off = range.byte_offset;
       dirty_size = range.byte_size;
@@ -319,7 +320,7 @@ auto Context::GetCanonicalRootSignalId(mir::PlaceId place_id)
 auto Context::ResolveDesignGlobalSlotId(const mir::PlaceRoot& root) const
     -> uint32_t {
   if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
-    return template_base_slot_id_ + static_cast<uint32_t>(root.id);
+    return module_base_slot_id_ + static_cast<uint32_t>(root.id);
   }
   if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
     return static_cast<uint32_t>(root.id);
@@ -332,67 +333,90 @@ auto Context::ResolveDesignGlobalSlotId(const mir::PlaceRoot& root) const
 auto Context::ResolveDesignGlobalSlotId(const mir::SignalRef& sig) const
     -> uint32_t {
   return (sig.scope == mir::SignalRef::Scope::kModuleLocal)
-             ? template_base_slot_id_ + sig.id
+             ? module_base_slot_id_ + sig.id
              : sig.id;
 }
 
 auto Context::ResolveDesignGlobalSlotId(const mir::ScopedSlotRef& ref) const
     -> uint32_t {
   return (ref.scope == mir::ScopedSlotRef::Scope::kModuleLocal)
-             ? template_base_slot_id_ + ref.id
+             ? module_base_slot_id_ + ref.id
              : ref.id;
 }
 
 auto Context::EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr {
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
-    if (is_template_process_) {
+    if (slot_addressing_ == SlotAddressingMode::kSpecializationLocal) {
       auto* abs =
           builder_.CreateAdd(signal_id_offset_, builder_.getInt32(sig.id));
       return SignalIdExpr::Dynamic(abs);
     }
-    return SignalIdExpr::Const(template_base_slot_id_ + sig.id);
+    uint32_t global_id = module_base_slot_id_ + sig.id;
+    return SignalIdExpr::Const(global_id);
   }
   return SignalIdExpr::Const(sig.id);
 }
 
-auto Context::GetDesignSlotPointer(uint32_t slot_id) -> llvm::Value* {
+auto Context::GetModuleSlotPointer(uint32_t local_slot_id) -> llvm::Value* {
+  if (this_ptr_ == nullptr) {
+    throw common::InternalError(
+        "GetModuleSlotPointer",
+        "this_ptr not set (module-local access requires shared-body context)");
+  }
+  if (local_slot_id >= rel_byte_offsets_.size() ||
+      rel_byte_offsets_[local_slot_id] == UINT64_MAX) {
+    throw common::InternalError(
+        "GetModuleSlotPointer",
+        std::format(
+            "local_slot_id {} out of range (table_size={})", local_slot_id,
+            rel_byte_offsets_.size()));
+  }
+  uint64_t rel_offset = rel_byte_offsets_[local_slot_id];
+  return builder_.CreateGEP(
+      llvm::Type::getInt8Ty(*llvm_context_), this_ptr_,
+      builder_.getInt64(rel_offset), "module_slot_ptr");
+}
+
+auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)
+    -> llvm::Value* {
   if (design_ptr_ == nullptr) {
-    throw common::InternalError("llvm_backend", "design pointer not set");
+    throw common::InternalError(
+        "GetDesignGlobalSlotPointer", "design pointer not set");
   }
-  if (is_template_process_) {
-    if (this_ptr_ == nullptr) {
-      throw common::InternalError(
-          "GetDesignSlotPointer", "this_ptr not set for template process");
-    }
-    uint32_t rel_idx = slot_id - template_base_slot_id_;
-    if (rel_idx >= rel_byte_offsets_.size() ||
-        rel_byte_offsets_[rel_idx] == UINT64_MAX) {
-      throw common::InternalError(
-          "GetDesignSlotPointer",
-          std::format(
-              "template process: slot {} out of range (base={}, "
-              "table_size={})",
-              slot_id, template_base_slot_id_, rel_byte_offsets_.size()));
-    }
-    uint64_t rel_offset = rel_byte_offsets_[rel_idx];
-    return builder_.CreateGEP(
-        llvm::Type::getInt8Ty(*llvm_context_), this_ptr_,
-        builder_.getInt64(rel_offset), "design_slot_ptr");
-  }
-  uint32_t field_index = GetDesignFieldIndex(mir::SlotId{slot_id});
+  uint32_t field_index = GetDesignFieldIndex(mir::SlotId{global_slot_id});
   return builder_.CreateStructGEP(
-      GetDesignStateType(), design_ptr_, field_index, "design_slot_ptr");
+      GetDesignStateType(), design_ptr_, field_index, "design_global_slot_ptr");
+}
+
+auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {
+  if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
+    if (slot_addressing_ == SlotAddressingMode::kSpecializationLocal) {
+      return GetModuleSlotPointer(static_cast<uint32_t>(root.id));
+    }
+    uint32_t global_id = ResolveDesignGlobalSlotId(root);
+    return GetDesignGlobalSlotPointer(global_id);
+  }
+  if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+    return GetDesignGlobalSlotPointer(static_cast<uint32_t>(root.id));
+  }
+  throw common::InternalError(
+      "GetSlotRootPointer", "expected kModuleSlot or kDesignGlobal root");
+}
+
+auto Context::GetSignalSlotPointer(const mir::SignalRef& sig) -> llvm::Value* {
+  if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
+    if (slot_addressing_ == SlotAddressingMode::kSpecializationLocal) {
+      return GetModuleSlotPointer(sig.id);
+    }
+    uint32_t global_id = module_base_slot_id_ + sig.id;
+    return GetDesignGlobalSlotPointer(global_id);
+  }
+  return GetDesignGlobalSlotPointer(sig.id);
 }
 
 auto Context::GetStorageRootPointer(mir::PlaceId place_id) -> llvm::Value* {
   mir::Place resolved = ResolveAliases(place_id);
-  if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
-      resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-    return GetDesignSlotPointer(ResolveDesignGlobalSlotId(resolved.root));
-  }
-  throw common::InternalError(
-      "GetStorageRootPointer",
-      "expected kModuleSlot or kDesignGlobal root for NBA notify base");
+  return GetSlotRootPointer(resolved.root);
 }
 
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {

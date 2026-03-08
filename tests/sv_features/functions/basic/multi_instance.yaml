@@ -1,0 +1,63 @@
+feature: functions
+description: >
+  Tests for module-scoped user functions with multiple instances.
+  MIR interpreter does not support multi-instance designs.
+
+cases:
+  - name: function_accesses_module_local_storage
+    description: >
+      Module-scoped function reads/writes module-local storage via
+      specialization-local addressing (this_ptr + rel_byte_offsets).
+      Two instances verify each instance uses its own storage.
+    sv: |
+      module Child;
+        int counter;
+
+        function void increment(int amount);
+          counter = counter + amount;
+        endfunction
+
+        initial begin
+          counter = 0;
+          increment(10);
+          increment(5);
+          $display("counter=%0d", counter);
+        end
+      endmodule
+      module Test;
+        Child c1();
+        Child c2();
+      endmodule
+    expect:
+      stdout: "counter=15\ncounter=15\n"
+
+  - name: function_reads_and_writes_module_local
+    description: >
+      Module-scoped function both reads and writes module-local state.
+      Two instances verify the function accesses the correct instance's
+      storage through specialization-local addressing.
+    sv: |
+      module Child;
+        int a;
+        int b;
+
+        function int swap_and_sum();
+          int tmp;
+          tmp = a;
+          a = b;
+          b = tmp;
+          return a + b;
+        endfunction
+
+        initial begin
+          a = 10;
+          b = 20;
+          $display("sum=%0d a=%0d b=%0d", swap_and_sum(), a, b);
+        end
+      endmodule
+      module Test;
+        Child c1();
+        Child c2();
+      endmodule
+    expect:
+      stdout: "sum=30 a=20 b=10\nsum=30 a=20 b=10\n"

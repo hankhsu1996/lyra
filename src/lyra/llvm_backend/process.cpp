@@ -481,9 +481,9 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
 
   const auto& arena = context.GetMirArena();
   const auto& place = arena[*trigger.observed_place];
-  // Resolve signal to design-global slot id for type lookup
-  uint32_t global_signal_id = context.ResolveDesignGlobalSlotId(trigger.signal);
-  TypeId root_type = context.GetMirDesign().slots[global_signal_id].type;
+  // Use the place's root type directly (carried by MIR place metadata)
+  // rather than detouring through the design-global slot table.
+  TypeId root_type = place.root.type;
 
   auto resolver =
       [&context](const mir::Operand& op) -> std::optional<uint64_t> {
@@ -708,13 +708,8 @@ void EmitDynamicContainerTarget(
     return;
   }
 
-  // Local-index path: load container handle from slot in DesignState.
-  // Resolve signal to design-global slot for field index lookup
-  uint32_t ct_global_id = context.ResolveDesignGlobalSlotId(trigger.signal);
-  uint32_t field_index = context.GetDesignFieldIndex(mir::SlotId{ct_global_id});
-  auto* slot_ptr = builder.CreateStructGEP(
-      context.GetDesignStateType(), context.GetDesignPointer(), field_index,
-      "ct.slot_ptr");
+  // Local-index path: load container handle from slot.
+  auto* slot_ptr = context.GetSignalSlotPointer(trigger.signal);
   auto* handle = builder.CreateLoad(ptr_ty, slot_ptr, "ct.handle");
 
   // Check null handle.
@@ -943,19 +938,15 @@ auto EmitLateBoundData(
     builder.CreateStore(
         llvm::ConstantInt::get(i32_ty, container_elem_stride), f8);
 
-    // Fill plan ops (resolve scoped slot IDs to design-global).
+    // Fill plan ops. Module-local slot IDs use dynamic signal identity
+    // (signal_id_offset + local_id) to stay topology-independent in shared
+    // bodies.
     if (plan_ops_alloca != nullptr) {
       auto* plan_array_type =
           llvm::ArrayType::get(plan_op_type, total_plan_ops);
       for (uint32_t p = 0; p < lb.plan.size(); ++p) {
         const auto& scoped_op = lb.plan[p];
         auto op = scoped_op.op;
-        // Resolve module-local slot IDs to design-global at codegen time.
-        if (op.kind == runtime::IndexPlanOp::Kind::kReadSlot &&
-            scoped_op.slot_scope == mir::ScopedSlotRef::Scope::kModuleLocal) {
-          op.slot_id = context.ResolveDesignGlobalSlotId(
-              mir::ScopedSlotRef{scoped_op.slot_scope, op.slot_id});
-        }
         auto* op_ptr = builder.CreateConstGEP2_32(
             plan_array_type, plan_ops_alloca, 0, plan_offset + p);
 
@@ -968,8 +959,17 @@ auto EmitLateBoundData(
         builder.CreateStore(llvm::ConstantInt::get(i8_ty, op.is_signed), pf2);
         auto* pf3 = builder.CreateStructGEP(plan_op_type, op_ptr, 3);
         builder.CreateStore(llvm::ConstantInt::get(i8_ty, op.byte_size), pf3);
+        // Resolve slot_id: module-local uses dynamic signal identity,
+        // design-global uses constant.
         auto* pf4 = builder.CreateStructGEP(plan_op_type, op_ptr, 4);
-        builder.CreateStore(llvm::ConstantInt::get(i32_ty, op.slot_id), pf4);
+        if (op.kind == runtime::IndexPlanOp::Kind::kReadSlot &&
+            scoped_op.slot_scope == mir::ScopedSlotRef::Scope::kModuleLocal) {
+          auto signal_expr = context.EmitSignalId(
+              mir::SignalRef{mir::SignalRef::Scope::kModuleLocal, op.slot_id});
+          builder.CreateStore(signal_expr.Emit(builder), pf4);
+        } else {
+          builder.CreateStore(llvm::ConstantInt::get(i32_ty, op.slot_id), pf4);
+        }
         auto* pf5 = builder.CreateStructGEP(plan_op_type, op_ptr, 5);
         builder.CreateStore(
             llvm::ConstantInt::get(i32_ty, op.byte_offset), pf5);
@@ -983,16 +983,20 @@ auto EmitLateBoundData(
       }
     }
 
-    // Fill dep slots (resolve scoped refs to design-global).
+    // Fill dep slots. Module-local refs use dynamic signal identity.
     if (dep_slots_alloca != nullptr) {
       auto* dep_array_type = llvm::ArrayType::get(i32_ty, total_dep_slots);
       for (uint32_t d = 0; d < lb.dep_slots.size(); ++d) {
         const auto& ref = lb.dep_slots[d];
-        uint32_t global_id = context.ResolveDesignGlobalSlotId(ref);
+        auto signal_scope =
+            (ref.scope == mir::ScopedSlotRef::Scope::kModuleLocal)
+                ? mir::SignalRef::Scope::kModuleLocal
+                : mir::SignalRef::Scope::kDesignGlobal;
+        auto signal_expr =
+            context.EmitSignalId(mir::SignalRef{signal_scope, ref.id});
         auto* slot_ptr = builder.CreateConstGEP2_32(
             dep_array_type, dep_slots_alloca, 0, dep_offset + d);
-        builder.CreateStore(
-            llvm::ConstantInt::get(i32_ty, global_id), slot_ptr);
+        builder.CreateStore(signal_expr.Emit(builder), slot_ptr);
       }
     }
 
@@ -1462,11 +1466,13 @@ auto GenerateSharedProcessFunction(
 
   context.EmitProcessStateSetup(func->getArg(0));
 
-  // Cache shared-mode arguments in context
+  // Enter specialization-local addressing mode for module-local slots.
+  // Module slots accessed via this_ptr + rel_byte_offsets; signal identity
+  // via signal_id_offset + local_id.
+  context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
   context.SetThisPointer(func->getArg(2));
   context.SetDynamicInstanceId(func->getArg(3));
   context.SetSignalIdOffset(func->getArg(4));
-  context.SetTemplateProcess(true);
 
   // Resume dispatch (same logic as GenerateProcessFunction)
   std::vector<size_t> resume_targets;
@@ -1523,12 +1529,12 @@ auto GenerateSharedProcessFunction(
   builder.SetInsertPoint(exit_block);
   builder.CreateRetVoid();
 
-  // Clear state
+  // Clear shared-body state and revert to design-global addressing.
+  context.SetSlotAddressingMode(SlotAddressingMode::kDesignGlobal);
   context.SetStatePointer(nullptr);
   context.SetDesignPointer(nullptr);
   context.SetFramePointer(nullptr);
   context.SetEnginePointer(nullptr);
-  context.SetTemplateProcess(false);
   context.SetThisPointer(nullptr);
   context.SetDynamicInstanceId(nullptr);
   context.SetSignalIdOffset(nullptr);
@@ -1599,9 +1605,9 @@ auto DeclareUserFunction(
       break;
     }
     default: {
-      // All other thunks use standard signature: (design*, engine*)
-      // or with out-param: (out_ptr*, design*, engine*)
-      auto fn_type_or_err = context.BuildUserFunctionType(func.signature);
+      bool is_module_scoped = context.IsModuleScopedFunction(func_id);
+      auto fn_type_or_err =
+          context.BuildUserFunctionType(func.signature, is_module_scoped);
       if (!fn_type_or_err) return std::unexpected(fn_type_or_err.error());
       fn_type = *fn_type_or_err;
       break;
@@ -2371,6 +2377,31 @@ auto DefineUserFunction(
   engine_arg->setName("engine");
   context.SetEnginePointer(engine_arg);
 
+  // Module-scoped functions receive specialization-local context and set up
+  // their own addressing state from the registered lowering metadata.
+  bool is_module_scoped = context.IsModuleScopedFunction(func_id);
+  unsigned context_arg_count = 0;
+  if (is_module_scoped) {
+    const auto& lowering = context.GetModuleFunctionLowering(func_id);
+    context.SetRelByteOffsets(
+        *lowering.rel_byte_offsets, lowering.base_slot_id);
+
+    auto* this_arg = llvm_func->getArg(arg_offset + 2);
+    this_arg->setName("this_ptr");
+    context.SetThisPointer(this_arg);
+
+    auto* sig_offset_arg = llvm_func->getArg(arg_offset + 3);
+    sig_offset_arg->setName("signal_id_offset");
+    context.SetSignalIdOffset(sig_offset_arg);
+
+    auto* instance_id_arg = llvm_func->getArg(arg_offset + 4);
+    instance_id_arg->setName("instance_id");
+    context.SetDynamicInstanceId(instance_id_arg);
+
+    context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
+    context_arg_count = 3;
+  }
+
   // Collect all local/temp places referenced in the function
   PlaceCollector collector;
   collector.CollectFromFunction(func, arena);
@@ -2413,7 +2444,8 @@ auto DefineUserFunction(
 
   // Store argument values into parameter locals (overwriting default init).
   // Use explicit param_local_slots mapping - do NOT assume param i = local i.
-  // Arguments start at index arg_offset + 2 (after sret/design/engine).
+  // Arguments start after: [sret], design, engine, [this, sig_offset, inst_id].
+  unsigned user_arg_base = arg_offset + 2 + context_arg_count;
   //
   // For output/inout params, the argument is a pointer to caller's storage.
   // We track these pointers for writing back at function exit.
@@ -2438,7 +2470,7 @@ auto DefineUserFunction(
       llvm::AllocaInst* alloca = *alloca_or_err;
 
       llvm::Value* arg_val =
-          llvm_func->getArg(static_cast<unsigned>(i + arg_offset + 2));
+          llvm_func->getArg(static_cast<unsigned>(i) + user_arg_base);
       arg_val->setName(std::format("arg{}", i));
 
       switch (param.kind) {
@@ -2630,6 +2662,13 @@ auto DefineUserFunction(
   // Clean up function scope
   context.EndFunction();
   context.SetDesignPointer(nullptr);
+  if (is_module_scoped) {
+    context.SetSlotAddressingMode(SlotAddressingMode::kDesignGlobal);
+    context.SetThisPointer(nullptr);
+    context.SetSignalIdOffset(nullptr);
+    context.SetDynamicInstanceId(nullptr);
+    context.SetRelByteOffsets({}, 0);
+  }
 
   return {};
 }
