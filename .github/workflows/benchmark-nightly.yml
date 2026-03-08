@@ -34,6 +34,10 @@ jobs:
           sudo update-alternatives --set clang /usr/bin/clang-20
           sudo update-alternatives --set lli /usr/bin/lli-20
 
+      - name: Install Verilator
+        run: |
+          sudo apt-get install -y verilator
+
       - name: Build lyra
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
