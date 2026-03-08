@@ -279,13 +279,8 @@ auto RunMirInterpreter(
     auto state = mir::interp::CreateProcessState(
         *mir_result->mir_arena, *hir_result.type_arena, entry.process_id,
         &design_state);
-    state.instance_id = entry.module_index;
-    if (entry.module_index != UINT32_MAX &&
-        entry.module_index < mir_result->design.instance_slot_ranges.size()) {
-      state.slot_base =
-          mir_result->design.instance_slot_ranges[entry.module_index]
-              .slot_begin;
-    }
+    mir::interp::BindProcessToInstance(
+        state, entry.module_index, mir_result->design.instance_slot_ranges);
     runtime::ProcessHandle handle{
         .process_id = entry.process_id.value,
         .instance_id = entry.module_index};

@@ -384,9 +384,26 @@ auto ResolveDesignGlobalSlot(const PlaceRoot& root, uint32_t slot_base) -> int;
 
 // Helper: Create ProcessState for a given process.
 // Initializes locals and temps with default values based on their types.
+// Returns unbound state (instance_id = UINT32_MAX, slot_base = 0).
+// Use BindProcessToInstance() to assign instance context.
 auto CreateProcessState(
     const Arena& arena, const TypeArena& types, ProcessId process_id,
     DesignState* design_state) -> ProcessState;
+
+// Bind a behavioral process state to an instance context.
+// Assigns both instance_id and slot_base together -- these are one
+// architectural operation (binding behavioral IR to an instance).
+// For design-level processes (no owning instance), pass UINT32_MAX;
+// the helper will leave slot_base at 0.
+inline void BindProcessToInstance(
+    ProcessState& state, uint32_t module_index,
+    std::span<const Design::InstanceSlotRange> instance_slot_ranges) {
+  state.instance_id = module_index;
+  if (module_index != UINT32_MAX &&
+      module_index < instance_slot_ranges.size()) {
+    state.slot_base = instance_slot_ranges[module_index].slot_begin;
+  }
+}
 
 // Instance-bound process entry for the interpreter.
 // Pairs a shared ProcessId with the module instance it belongs to.

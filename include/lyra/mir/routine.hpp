@@ -25,7 +25,6 @@ struct Process {
   BasicBlockId entry;              // Local index within blocks (0, 1, 2...)
   std::vector<BasicBlock> blocks;  // Direct ownership
   common::OriginId origin = common::OriginId::Invalid();  // Source location
-  uint32_t owner_instance_id = UINT32_MAX;  // Index into Design::instance_table
 
   // Authoritative temp metadata (indexed by temp_id).
   // Contains kind (kValue vs kPlace) and type for each temp.

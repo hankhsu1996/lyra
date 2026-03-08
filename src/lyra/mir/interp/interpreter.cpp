@@ -370,8 +370,8 @@ auto CreateProcessState(
           Frame(std::move(locals), std::move(temps), std::move(temp_types)),
       .design_state = design_state,
       .status = ProcessStatus::kRunning,
-      .instance_id = process.owner_instance_id,
-      .slot_base = 0,  // Populated by caller with instance slot range
+      .instance_id = UINT32_MAX,  // Populated by caller via instance binding
+      .slot_base = 0,             // Populated by caller via instance binding
       .pending_suspend = std::nullopt,
       .function_return_value = std::nullopt,
   };
@@ -529,11 +529,7 @@ auto RunSimulation(
   auto create_bound_state = [&](ProcessId proc_id,
                                 uint32_t module_index) -> ProcessState {
     auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
-    state.instance_id = module_index;
-    if (module_index != UINT32_MAX &&
-        module_index < design.instance_slot_ranges.size()) {
-      state.slot_base = design.instance_slot_ranges[module_index].slot_begin;
-    }
+    BindProcessToInstance(state, module_index, design.instance_slot_ranges);
     return state;
   };
 

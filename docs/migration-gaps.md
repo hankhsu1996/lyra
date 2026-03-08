@@ -65,7 +65,7 @@ Staged transition. Each phase establishes new invariants while old paths coexist
 
 **Stage 1: Identity** (Phase A) - Complete. `ModuleSpecId` and `SpecializationMap` introduced. Grouping is observation-only. Old per-instance pipeline unchanged. Known gap: M2 (param classification misses type-level structural refs -- temporarily mitigated by `type.toString()` hashing in structural fingerprint, not a clean solution).
 
-**Stage 2: Specialization-ready ownership** (Phase B) - B1-B3 done. Ownership boundary established: `ModuleBody` owns behavioral IR, `Module` is instance-side record with `body_id`. Shared bodies active (one body per specialization group). Layout/codegen use `ScheduledProcess` records (no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. `SpecializationMap` is non-nullable in MIR-lowering input (enforced at type level). `BuildMirSpecGroups` validates specialization invariants. `InstanceTable::GetPathBySymbol` centralizes instance path lookup. MIR dump uses explicit `ModuleBodies` / `Modules` sections. Remaining: B4 (remove `owner_instance_id`), B5 (codegen compatibility), B6 (HIR ownership split).
+**Stage 2: Specialization-ready ownership** (Phase B) - B1-B4 done. Ownership boundary established: `ModuleBody` owns behavioral IR, `Module` is instance-side record with `body_id`. Shared bodies active (one body per specialization group). `mir::Process` carries no instance identity -- instance binding comes exclusively from scheduling/runtime context (`BoundProcessEntry`, `ProcessHandle`, `BindProcessToInstance`). Layout/codegen use `ScheduledProcess` records (no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. `SpecializationMap` is required in MIR-lowering input (no default/null fallback path remains). `BuildMirSpecGroups` validates specialization invariants. `InstanceTable::GetPathBySymbol` centralizes instance path lookup. MIR dump uses explicit `ModuleBodies` / `Modules` sections. Remaining: B5 (codegen compatibility -- largely already operational through explicit instance-side context), B6 (HIR ownership split).
 
 **Stage 3: Storage model** (Phase C) - SlotId becomes specialization-local. Assembly-time placement mapping introduced. Old design-global slot allocation removed.
 
@@ -91,7 +91,6 @@ Remaining:
 
 - `src/lyra/lowering/ast_to_hir/design.cpp:502-506` - `LowerDesign()` creates one `hir::Module` per instance
 - `include/lyra/hir/design.hpp` - `Design::elements` parallel to elaboration order, each element owns behavioral content
-- `include/lyra/mir/routine.hpp:28` - `mir::Process::owner_instance_id` still embeds instance identity in behavioral IR
 
 **B2: SlotId allocation is design-global** (partially addressed)
 
@@ -161,7 +160,7 @@ Slot meta, process meta, connection descriptors, comb kernels, instance paths al
 
 **m2: Instance paths baked into codegen** - `include/lyra/mir/instance.hpp:10-32`, `src/lyra/llvm_backend/lower.cpp:1265-1292`.
 
-**m3: Process owner_instance_id in MIR** - `include/lyra/mir/routine.hpp:28`. Instance identity in behavioral IR prevents specialization ownership. Addressed by B4.
+**m3: Process owner_instance_id in MIR** - Resolved by B4. `mir::Process` no longer carries instance identity.
 
 **m4: ParamRole uses slang pointer as grouping key** - `src/lyra/lowering/ast_to_hir/param_role.cpp:72-77`.
 
@@ -238,16 +237,15 @@ B1 now covers both the body artifact and the instance record conversion as a sin
 - Invariant: Module behavioral lowering runs once per specialization, not per instance.
 - Done: Shared bodies active. `SpecializationMap` is non-nullable in `LoweringInput` (no default, enforced at type level). `BuildMirSpecGroups` validates group invariants (range, uniqueness, cross-reference with `spec_id_by_instance`). Layout uses `ScheduledProcess` records (single vector, no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. MIR verification uses `InstanceTable::GetPathBySymbol` (centralized lookup, no ad-hoc maps). MIR dump has explicit `ModuleBodies` / `Modules` sections.
 - Temporary stopgap: Structural fingerprint includes `type.toString()` hashing for variable types to catch param-dependent types resolved at elaboration. This is a presentation-format mitigation, not a clean semantic fingerprint. Proper fix requires explicit structural type fingerprinting over resolved type structure (see M2 gap).
-- Remaining debt: `owner_instance_id` remains on `mir::Process` (B4).
 
-**B4: Remove owner_instance_id from MIR Process**
+**B4: Remove owner_instance_id from MIR Process** (done)
 
 - Goal: `owner_instance_id` on `mir::Process` is instance metadata embedded in behavioral IR. Remove it so processes in a shared `ModuleBody` carry no instance identity. Instance-to-process binding is expressed through the instance record's `body_id` + design walk context.
-- Areas: `include/lyra/mir/routine.hpp`, `src/lyra/lowering/hir_to_mir/module.cpp`, codegen sites that read `owner_instance_id`
-- Acceptance: `mir::Process` has no `owner_instance_id`. Codegen retrieves instance identity from the design walk context (instance record), not from the process. Test: `mir::Process` struct has no instance-specific fields.
+- Areas: `include/lyra/mir/routine.hpp`, `src/lyra/lowering/hir_to_mir/module.cpp`, interpreter, test framework
+- Acceptance: `mir::Process` has no `owner_instance_id`. No process-lowering API accepts instance identity. Runtime binding comes from explicit `BindProcessToInstance()` helper.
 - Dependencies: B3 (sharing must exist before instance identity can be removed from processes)
 - Invariant: No instance identity in specialization-owned MIR.
-- Note: `VerifyLoweredMir` currently derives module labeling from `process.owner_instance_id` --this must be refactored to use instance record context.
+- Done: Field deleted from `mir::Process`. `LowerProcess()` no longer accepts instance identity. Module lowering no longer looks up instance index for process construction. Interpreter `CreateProcessState()` returns unbound state; callers use `BindProcessToInstance()` to bind behavioral state to instance context. `VerifyLoweredMir` already uses instance record context (not process fields).
 
 **B5: Codegen compatibility adapter**
 
@@ -381,10 +379,10 @@ B1 now covers both the body artifact and the instance record conversion as a sin
 
 Enforcement tasks to add during migration. Each prevents regression.
 
-**G1: Policy check - no instance identity in specialization-owned MIR**
+**G1: Policy check - no instance identity in specialization-owned MIR** (enforced by construction)
 
 - After Phase B: Assert `mir::Process` has no `owner_instance_id`. Assert `mir::ModuleBody` has no instance-specific fields. Assert instance records do not own processes or functions.
-- Tool: `tools/policy/check_specialization_scope.py` or compile-time static assertion.
+- Enforced by code review. The field is deleted; reintroduction requires adding it back explicitly.
 
 **G2: Policy check - specialization codegen API has no design input**
 
