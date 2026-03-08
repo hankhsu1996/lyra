@@ -1,0 +1,6 @@
+[package]
+name = "pipeline"
+top = "Top"
+
+[sources]
+files = ["pipeline.sv"]

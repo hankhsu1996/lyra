@@ -114,6 +114,17 @@ bazel test //tests:jit_dev_tests \
 
 Path is relative to `tests/sv_features/`. `--backend` is required with `--test_file`.
 
+## Benchmarks
+
+Benchmark runner: `tools/bench/run_benchmarks.py`. Fixtures in `tools/bench/fixtures/`. Examples (`examples/hello`, `examples/riscv-cpu`) are also used as benchmark designs.
+
+```bash
+python3 tools/bench/run_benchmarks.py --tier=nightly    # Full nightly run
+python3 tools/bench/run_benchmarks.py --tier=pr          # Quick PR check
+```
+
+New benchmark designs go in `tools/bench/fixtures/<name>/` (with `lyra.toml` + `.sv` files) and must be registered in `DESIGNS` and `TIER_CONFIG` in the runner script.
+
 ## Code Style
 
 - C++23, Google style, clang-tidy warning-free
