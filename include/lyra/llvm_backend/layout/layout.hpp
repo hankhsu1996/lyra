@@ -147,7 +147,7 @@ struct TemplateId {
 };
 
 // Index into module-instance parallel arrays (instance_variant_ids,
-// instance_base_byte_offsets, design.instance_slot_ranges, etc.).
+// instance_base_byte_offsets, placement.instances, etc.).
 struct ModuleIndex {
   uint32_t value = UINT32_MAX;
   static constexpr uint32_t kNone = UINT32_MAX;

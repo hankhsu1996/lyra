@@ -844,9 +844,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     if (auto* templated = std::get_if<TemplatedRoute>(&route)) {
       uint64_t base_byte_offset =
           layout.GetInstanceBaseByteOffset(templated->module_idx);
-      uint32_t base_slot_id =
-          input.design->instance_slot_ranges[templated->module_idx.value]
-              .slot_begin;
+      uint32_t base_slot_id = mir::GetInstanceBaseSlot(
+          input.design->placement, templated->module_idx.value);
 
       auto* wrapper = GenerateProcessWrapper(
           context, template_fns[templated->template_id.value],
@@ -860,8 +859,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     // Design-level processes (no module owner) use only kDesignGlobal,
     // so base 0 is safe.
     if (bp.module_index) {
-      uint32_t base_slot_id =
-          input.design->instance_slot_ranges[bp.module_index.value].slot_begin;
+      uint32_t base_slot_id = mir::GetInstanceBaseSlot(
+          input.design->placement, bp.module_index.value);
       context.SetRelByteOffsets({}, base_slot_id);
     } else {
       context.SetRelByteOffsets({}, 0);

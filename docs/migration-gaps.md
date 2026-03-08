@@ -67,7 +67,7 @@ Staged transition. Each phase establishes new invariants while old paths coexist
 
 **Stage 2: Specialization-ready ownership** (Phase B) - B1-B4 done. Ownership boundary established: `ModuleBody` owns behavioral IR, `Module` is instance-side record with `body_id`. Shared bodies active (one body per specialization group). `mir::Process` carries no instance identity -- instance binding comes exclusively from scheduling/runtime context (`BoundProcessEntry`, `ProcessHandle`, `BindProcessToInstance`). Layout/codegen use `ScheduledProcess` records (no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. `SpecializationMap` is required in MIR-lowering input (no default/null fallback path remains). `BuildMirSpecGroups` validates specialization invariants. `InstanceTable::GetPathBySymbol` centralizes instance path lookup. MIR dump uses explicit `ModuleBodies` / `Modules` sections. Remaining: B5 (design-wide codegen compatibility remains as transitional state until Phase E), B6 (HIR ownership split).
 
-**Stage 3: Storage model** (Phase C) - C1 done: module-owned slot identity is specialization-local by construction (`CollectBodyLocalDecls` produces body-local storage independently; `ModuleBody.slots` is the authoritative specialization-local storage interface). Full storage model (runtime placement, design-global slot tables, codegen slot access) remains design-global-backed until C2/C3.
+**Stage 3: Storage model** (Phase C) - C1 done: module-owned slot identity is specialization-local by construction (`CollectBodyLocalDecls` produces body-local storage independently; `ModuleBody.slots` is the authoritative specialization-local storage interface). C2 done: `mir::InstancePlacement` is the source of truth for per-instance module placement in DesignState, computed via independent running base counter grounded in authoritative package slot count from `CollectDesignDeclarations`; `instance_slot_ranges` is derived compatibility data. Full codegen slot access remains design-global-backed until C3.
 
 **Stage 4: Assembly extraction** (Phase D) - Assembly becomes a separate phase. Binding, metadata, and connectivity moved out of MIR lowering and codegen. Temporary: assembly still produces the same monolithic LLVM IR.
 
@@ -94,16 +94,18 @@ HIR side remaining:
 
 **B2: SlotId allocation is design-global** (partially addressed)
 
-Module-owned slot identity is resolved (C1 done): `CollectBodyLocalDecls()` produces `BodyLocalDecls` from the representative module alone, with its own 0-based counter and no access to design-global slot state. `ModuleBody.slots` is the authoritative specialization-local storage interface during and after lowering. Design-global placement model is unresolved: `Design::slots`, `instance_slot_ranges`, and runtime/codegen slot resolution still operate on design-global slot tables produced by `CollectDesignDeclarations()`.
+Module-owned slot identity is resolved (C1 done): `CollectBodyLocalDecls()` produces `BodyLocalDecls` from the representative module alone, with its own 0-based counter and no access to design-global slot state. `ModuleBody.slots` is the authoritative specialization-local storage interface during and after lowering.
+
+Placement is resolved (C2 done): `mir::InstancePlacement` is the source of truth for per-instance module placement in DesignState. `Design::placement` is built from specialization bodies via independent running base counter, grounded in authoritative package slot count from `CollectDesignDeclarations` (not re-derived from HIR shape). `instance_slot_ranges` is derived compatibility data. Interpreter and layout consumers use placement helpers (`GetInstancePlacement`, `GetInstanceBaseSlot`).
 
 Scope infrastructure: MIR place roots distinguish `PlaceRoot::kModuleSlot` (body-local, 0-based) and `PlaceRoot::kDesignGlobal` (package/global). `SignalRef` carries explicit scope (`kModuleLocal` / `kDesignGlobal`) for wait triggers. `ScopedSlotRef` and `ScopedPlanOp` preserve scope for late-bound index dependencies. Each subsystem has one canonical scope-resolution helper: `Context::ResolveDesignGlobalSlotId()` (LLVM backend), `ResolveDesignGlobalSlot()` (interpreter), `ResolveSignalToGlobalSlot()` (layout). Process fingerprinting and sensitivity analysis operate on scoped identity directly without collapsing to global.
 
-Remaining (design-global placement model):
+Remaining (design-global codegen model):
 
 - `include/lyra/mir/handle.hpp:79` - `SlotId` is bare `uint32_t`, no scope
-- `include/lyra/mir/design.hpp:63` - `Design::slots` indexed by global SlotId
-- Design-global slot tables and `instance_slot_ranges` still provide the runtime placement model
-- Full removal of design-global storage model is later work (C2/C3)
+- `include/lyra/mir/design.hpp` - `Design::slots` indexed by global SlotId
+- `Design::instance_slot_ranges` remains as derived compatibility data
+- Codegen slot access still uses design-global base + offset (C3)
 
 **B3: Codegen operates on entire design**
 
@@ -270,13 +272,14 @@ Existing design-wide codegen continues to work by reconstructing per-instance pr
 - Invariant: Specialization-local slot numbering is independent of other specializations and design topology.
 - Done: Declaration collection split into `CollectBodyLocalDecls()` (specialization-local, one module) and `CollectDesignDeclarations()` (design-global placement). Body-local decls collected once per specialization group in `LowerDesign` and passed directly to `LowerModule`. Design-global slot tables remain as transitional placement/runtime data.
 
-**C2: Introduce assembly-time placement mapping**
+**C2: Introduce placement mapping** (done)
 
-- Goal: Assembly maps `(ModuleSpecId, instance) -> base_offset` in DesignState. Assembly owns final DesignState layout; specialization compilation owns only `SpecLayout`.
-- Areas: New `include/lyra/assembly/placement.hpp`, `src/lyra/assembly/placement.cpp`, modify `src/lyra/llvm_backend/layout/layout.cpp`
-- Acceptance: `InstancePlacement` type exists. Assembly computes base offsets. Test: specialization code uses `this_base + local_offset`, not absolute offsets.
+- Goal: Placement maps `(ModuleSpecId, instance) -> base_offset` in DesignState. Placement owns per-instance module placement; specialization compilation owns only local slot identity.
+- Areas: `include/lyra/mir/placement.hpp`, `src/lyra/mir/placement.cpp`, modify `src/lyra/llvm_backend/layout/layout.cpp`
+- Acceptance: `InstancePlacement` type exists. Placement computes base offsets via independent running counter. Test: specialization code uses `this_base + local_offset`, not absolute offsets.
 - Dependencies: C1
-- Invariant: Specialization code does not know absolute DesignState offsets. Assembly owns DesignState placement.
+- Invariant: Specialization code does not know absolute DesignState offsets. Placement owns DesignState layout.
+- Done: `mir::InstancePlacement` and `mir::PlacementMap` introduced as transitional placement artifacts carried by `mir::Design`. `Design::placement` is the source of truth for per-instance module placement, built from specialization bodies via running base counter grounded in authoritative package slot count (not re-derived from HIR shape, not copied from legacy slot tables). `instance_slot_ranges` derived from placement for compatibility. All consumers use placement helpers (`GetInstancePlacement`, `GetInstanceBaseSlot`). `BindProcessToInstance` has placement-based overload.
 
 **C3: Convert codegen to specialization-local slot access**
 

@@ -114,6 +114,8 @@ auto CollectDesignDeclarations(
     }
   }
 
+  decls.num_package_slots = static_cast<uint32_t>(next_slot);
+
   // Allocate module variable and net design-global places.
   // Design-global kDesignGlobal places for connections, layout, and runtime
   // placement. Body-local kModuleSlot places are collected separately by

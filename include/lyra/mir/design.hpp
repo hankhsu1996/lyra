@@ -15,6 +15,7 @@
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/module_body.hpp"
 #include "lyra/mir/package.hpp"
+#include "lyra/mir/placement.hpp"
 
 namespace lyra::mir {
 
@@ -92,8 +93,18 @@ struct Design {
   // Index = instance_id, same order as all_instances during elaboration.
   InstanceTable instance_table;
 
-  // Per-module-instance slot ranges (parallel to module elements only).
-  // Populated during HIR->MIR lowering from DesignDeclarations.
+  // Placement: source of truth for per-instance module placement in
+  // DesignState. Covers module-instance storage only (not package/global
+  // slots). Built from specialization bodies + instance records via running
+  // base counter. Indexed by module-instance index (module-only elements in BFS
+  // elaboration order), NOT parallel to Design::elements (which also
+  // contains packages).
+  PlacementMap placement;
+
+  // DERIVED compatibility data: instance slot ranges derived from placement.
+  // Consumers should prefer placement helpers (GetInstancePlacement,
+  // GetInstanceBaseSlot). These tables remain for transitional compatibility
+  // with layout/codegen/runtime until C3.
   struct InstanceSlotRange {
     uint32_t slot_begin = 0;
     uint32_t slot_count = 0;

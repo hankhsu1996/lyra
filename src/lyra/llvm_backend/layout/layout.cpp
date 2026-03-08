@@ -1315,8 +1315,10 @@ void BuildModuleVariants(
     if (!std::holds_alternative<mir::Module>(element)) continue;
     const auto& mir_module = std::get<mir::Module>(element);
     const auto& body = mir::GetModuleBody(design, mir_module);
-    uint32_t slot_begin = design.instance_slot_ranges[module_idx].slot_begin;
-    uint32_t slot_count = design.instance_slot_ranges[module_idx].slot_count;
+    const auto& inst_placement =
+        mir::GetInstancePlacement(design.placement, module_idx);
+    uint32_t slot_begin = inst_placement.design_state_base_slot;
+    uint32_t slot_count = inst_placement.slot_count;
     common::ModuleDefId def_id = design.module_def_ids[module_idx];
 
     uint32_t local_idx = 0;
@@ -1375,30 +1377,32 @@ void BuildModuleVariants(
   const auto* struct_layout = dl.getStructLayout(layout.design.llvm_type);
 
   // Initialize instance_base_byte_offsets and instance_variant_ids
-  size_t num_module_elements = design.instance_slot_ranges.size();
+  size_t num_module_elements = design.placement.instances.size();
   layout.instance_base_byte_offsets.resize(num_module_elements);
   layout.instance_variant_ids.resize(
       num_module_elements, ModuleVariantId{ModuleVariantId::kNone});
 
-  // Pre-compute all instance base byte offsets.
+  // Pre-compute all instance base byte offsets from placement.
   // Invariant: slot_id.value == LLVM struct field index
   // (BuildSlotInfoFromDesign creates slot IDs as sequential indices into
   // slots, and BuildDesignLayout maps them 1:1 to struct fields). This
-  // lets us use slot_begin directly as a struct element index.
+  // lets us use design_state_base_slot directly as a struct element index.
   for (size_t mi = 0; mi < num_module_elements; ++mi) {
-    uint32_t slot_begin = design.instance_slot_ranges[mi].slot_begin;
-    uint32_t slot_count = design.instance_slot_ranges[mi].slot_count;
-    if (slot_count > 0) {
-      if (slot_begin + slot_count > layout.design.llvm_type->getNumElements()) {
+    const auto& p =
+        mir::GetInstancePlacement(design.placement, static_cast<uint32_t>(mi));
+    if (p.slot_count > 0) {
+      if (p.design_state_base_slot + p.slot_count >
+          layout.design.llvm_type->getNumElements()) {
         throw common::InternalError(
             "BuildModuleVariants",
             std::format(
                 "slot range [{}, {}) exceeds DesignState field count {}",
-                slot_begin, slot_begin + slot_count,
+                p.design_state_base_slot,
+                p.design_state_base_slot + p.slot_count,
                 layout.design.llvm_type->getNumElements()));
       }
       layout.instance_base_byte_offsets[mi] =
-          struct_layout->getElementOffset(slot_begin);
+          struct_layout->getElementOffset(p.design_state_base_slot);
     }
   }
 
@@ -1551,15 +1555,16 @@ void BuildModuleVariants(
         variant.proc_template_ids[li] = tmpl_id;
       }
 
-      // Compute rel_byte_offsets for this instance
-      uint32_t slot_begin = design.instance_slot_ranges[module_idx].slot_begin;
-      uint32_t slot_count = design.instance_slot_ranges[module_idx].slot_count;
-      if (slot_count > 0) {
-        uint64_t base = struct_layout->getElementOffset(slot_begin);
-        variant.rel_byte_offsets.resize(slot_count);
-        for (uint32_t i = 0; i < slot_count; ++i) {
+      // Compute rel_byte_offsets for this instance from placement
+      const auto& vp = mir::GetInstancePlacement(design.placement, module_idx);
+      if (vp.slot_count > 0) {
+        uint64_t base =
+            struct_layout->getElementOffset(vp.design_state_base_slot);
+        variant.rel_byte_offsets.resize(vp.slot_count);
+        for (uint32_t i = 0; i < vp.slot_count; ++i) {
           variant.rel_byte_offsets[i] =
-              struct_layout->getElementOffset(slot_begin + i) - base;
+              struct_layout->getElementOffset(vp.design_state_base_slot + i) -
+              base;
         }
       }
 
@@ -1569,14 +1574,13 @@ void BuildModuleVariants(
     ++module_idx;
   }
 
-  if (layout.instance_variant_ids.size() !=
-      design.instance_slot_ranges.size()) {
+  if (layout.instance_variant_ids.size() != design.placement.instances.size()) {
     throw common::InternalError(
-        "BuildModuleVariants", std::format(
-                                   "instance_variant_ids.size()={} != "
-                                   "instance_slot_ranges.size()={}",
-                                   layout.instance_variant_ids.size(),
-                                   design.instance_slot_ranges.size()));
+        "BuildModuleVariants",
+        std::format(
+            "instance_variant_ids.size()={} != placement.instances.size()={}",
+            layout.instance_variant_ids.size(),
+            design.placement.instances.size()));
   }
 
   // Post-build invariant: every membership entry must route through its
@@ -1688,8 +1692,9 @@ auto BuildLayout(
       if (process.kind == mir::ProcessKind::kFinal) continue;
 
       uint32_t slot_base = 0;
-      if (current_module_idx < design.instance_slot_ranges.size()) {
-        slot_base = design.instance_slot_ranges[current_module_idx].slot_begin;
+      if (current_module_idx < design.placement.instances.size()) {
+        slot_base =
+            mir::GetInstanceBaseSlot(design.placement, current_module_idx);
       }
       auto comb = TryKernelizeComb(process, arena, slot_base);
       if (comb) {
@@ -1724,7 +1729,7 @@ auto BuildLayout(
     layout.processes.push_back(std::move(proc_layout));
   }
 
-  if (!design.instance_slot_ranges.empty()) {
+  if (!design.placement.instances.empty()) {
     BuildModuleVariants(layout, design, arena, types, dl);
   }
 

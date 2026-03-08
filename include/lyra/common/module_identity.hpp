@@ -39,7 +39,8 @@ struct SpecializationGroup {
 // Indexing contract: `spec_id_by_instance[i]` corresponds to
 // `all_instances[i]` in design.cpp, which is the BFS-discovered,
 // hierarchical-path-sorted instance order.  This same order defines
-// `design.elements` (module entries only) and `design.instance_slot_ranges`.
+// the module-instance index space: `design.placement.instances[i]` and
+// the module-only entries extracted from `design.elements`.
 struct SpecializationMap {
   std::vector<ModuleSpecId> spec_id_by_instance;
 

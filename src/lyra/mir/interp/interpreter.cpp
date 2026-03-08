@@ -404,9 +404,9 @@ auto CreateDesignState(
         // Set slot_base per instance so kModuleSlot IDs are correctly
         // rebased to design-global indices.
         collector.slot_base = 0;
-        if (cds_module_index < design.instance_slot_ranges.size()) {
+        if (cds_module_index < design.placement.instances.size()) {
           collector.slot_base =
-              design.instance_slot_ranges[cds_module_index].slot_begin;
+              GetInstanceBaseSlot(design.placement, cds_module_index);
         }
         VisitProcessBlocks(collector, process, arena);
       }
@@ -529,7 +529,7 @@ auto RunSimulation(
   auto create_bound_state = [&](ProcessId proc_id,
                                 uint32_t module_index) -> ProcessState {
     auto state = CreateProcessState(mir_arena, types, proc_id, &design_state);
-    BindProcessToInstance(state, module_index, design.instance_slot_ranges);
+    BindProcessToInstance(state, module_index, design.placement);
     return state;
   };
 
