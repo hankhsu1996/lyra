@@ -16,6 +16,7 @@
 #include "lyra/mir/module_body.hpp"
 #include "lyra/mir/package.hpp"
 #include "lyra/mir/placement.hpp"
+#include "lyra/mir/port_connection.hpp"
 
 namespace lyra::mir {
 
@@ -36,26 +37,6 @@ struct ParamInitEntry {
 
 using DesignElement = std::variant<Module, Package>;
 
-// Port connection record with asymmetric representation for different kinds.
-// Source of truth for all port connections - alias_map is derived from this.
-struct PortConnection {
-  enum class Kind : int32_t {
-    kDriveParentToChild,  // input: parent expr -> child port (via process)
-    kDriveChildToParent,  // output variable: child port -> parent place
-    kAlias,               // output/inout net: true identity
-  };
-
-  Kind kind = Kind::kDriveParentToChild;
-  SymbolId child_port_sym;       // Child's port backing variable
-  SymbolId parent_instance_sym;  // Parent module's instance symbol
-
-  // For kDriveChildToParent and kAlias: both places are meaningful.
-  // For kDriveParentToChild: only child_place is meaningful here;
-  //   the source is the connection process itself (not a simple place).
-  PlaceId child_place;   // Always valid
-  PlaceId parent_place;  // Valid for kDriveChildToParent, kAlias
-};
-
 struct Design {
   std::vector<DesignElement> elements;
   std::vector<ModuleBody> module_bodies;
@@ -75,15 +56,17 @@ struct Design {
   int8_t global_precision_power = -9;
 
   // Source of truth for all port connections.
+  // Written ONLY by design_assembly::AssembleBindings.
   std::vector<PortConnection> port_connections;
 
   // Wiring processes (separate from module processes).
   // These implement kDriveParentToChild and kDriveChildToParent semantics.
+  // Written ONLY by design_assembly::AssembleBindings.
   std::vector<ProcessId> connection_processes;
 
   // DERIVED: acceleration structure for kAlias only.
   // INVARIANT: entry exists iff PortConnection{kAlias} exists for that slot.
-  // Written ONLY in ApplyBindings, nowhere else.
+  // Written ONLY by design_assembly::AssembleBindings.
   // Key: child port's SlotId (must be kDesignGlobal root with no projections)
   // Value: parent's PlaceId (may have projections, must resolve to
   // kDesignGlobal)

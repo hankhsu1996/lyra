@@ -7,6 +7,7 @@
 #include "frontend.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/design_assembly/assemble_bindings.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "verbose_logger.hpp"
@@ -73,6 +74,11 @@ auto CompileToMir(const CompilationInput& input, VerboseLogger& vlog)
         CompilationError::FromDiagnostics(
             std::move(error_sink), std::move(hir_result.source_manager)));
   }
+
+  // Assembly: attach compiled bindings to design (no HIR dependency).
+  design_assembly::AssembleBindings(
+      std::move(mir_result->compiled_bindings), *mir_result->mir_arena,
+      mir_result->design);
 
   return CompilationResult{
       .hir = std::move(hir_result),

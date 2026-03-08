@@ -179,7 +179,7 @@ auto LowerModule(
       processes.push_back(proc);
     }
 
-    // Port bindings are now handled at HIR->MIR level via ApplyBindings
+    // Port bindings are compiled at HIR->MIR level via CompileBindings
 
     // Phase 4: Lower function bodies
     // Functions with unsupported return types were already skipped in Phase 2.

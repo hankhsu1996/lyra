@@ -3,10 +3,12 @@
 #include <functional>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/design_assembly/compiled_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -26,10 +28,11 @@ using BuildSrcFn =
 
 // Create a synthetic always_comb process for port connection.
 // Uses callback pattern to build source operand inside the process's builder.
+// Returns a Process value (not registered in arena - assembly does that).
 auto CreateConnectionProcess(
     mir::PlaceId dst, BuildSrcFn build_src, const LoweringInput& input,
     mir::Arena& mir_arena, const DesignDeclarations& decls)
-    -> Result<mir::ProcessId>;
+    -> Result<mir::Process>;
 
 }  // namespace lyra::lowering::hir_to_mir
 
@@ -37,17 +40,13 @@ namespace lyra::lowering::ast_to_hir {
 struct DesignBindingPlan;
 }  // namespace lyra::lowering::ast_to_hir
 
-namespace lyra::mir {
-struct Design;
-}  // namespace lyra::mir
-
 namespace lyra::lowering::hir_to_mir {
 
-// Apply port bindings to the design.
-// Creates connection processes and populates alias_map.
-auto ApplyBindings(
+// Compile port bindings into assembly-ready artifacts.
+// Does NOT mutate mir::Design -- assembly attachment is separate.
+auto CompileBindings(
     const ast_to_hir::DesignBindingPlan& plan, const DesignDeclarations& decls,
-    const LoweringInput& input, mir::Arena& mir_arena, mir::Design& design)
-    -> Result<void>;
+    const LoweringInput& input, mir::Arena& mir_arena)
+    -> Result<design_assembly::CompiledBindingPlan>;
 
 }  // namespace lyra::lowering::hir_to_mir

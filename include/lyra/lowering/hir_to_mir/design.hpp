@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/design_assembly/compiled_bindings.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
@@ -26,8 +27,14 @@ auto CollectBodyLocalDecls(
     const hir::Module& module, const SymbolTable& symbol_table,
     mir::Arena& mir_arena) -> BodyLocalDecls;
 
+struct DesignLoweringResult {
+  mir::Design design;
+  design_assembly::CompiledBindingPlan compiled_bindings;
+};
+
 auto LowerDesign(
     const hir::Design& design, const LoweringInput& input,
-    mir::Arena& mir_arena, OriginMap* origin_map) -> Result<mir::Design>;
+    mir::Arena& mir_arena, OriginMap* origin_map)
+    -> Result<DesignLoweringResult>;
 
 }  // namespace lyra::lowering::hir_to_mir
