@@ -1,424 +1,129 @@
 # Specialization Migration Gaps
 
-Canonical working queue for migrating Lyra toward specialization-based compilation.
+Working queue for migrating Lyra toward specialization-based compilation.
 
-## North Star
+For the stable architecture (phases, specialization boundary rule, parameter classification, realization model): see [compilation-model.md](compilation-model.md).
 
-Compile unit is `ModuleSpecId = (ModuleDefId, BehaviorFingerprint)`. Four distinct phases:
+**Naming note**: This document uses "realization" for the conceptual phase. The current code still uses `lyra::assembly` and `lyra::link` namespaces. Code references below use the current names; a code rename is planned separately.
 
-1. **Elaboration Discovery** - discover module definitions and instances from slang
-2. **Specialization Compilation** (parallel per spec) - AST -> HIR -> MIR -> LLVM IR, specialization-scoped
-3. **Assembly/Link** - bind instances to compiled specializations, produce connectivity tables, emit metadata
-4. **Runtime Execution**
+## Current Status
 
-Key architectural rule: the `this_base + local_offset` addressing pattern (currently in `ModuleVariant::rel_byte_offsets`) is the right model. The migration preserves specialization-local relative layout while deleting design-wide compilation coupling.
+**Next PR: E1 -- narrow codegen API to one specialization.**
 
-## Assembly Artifacts
+**Current phase**: transitioning from D (realization extraction) to E (per-specialization codegen).
 
-Concrete types that replace the current fused pipeline:
+**Immediate blocker**: B3 -- codegen operates on entire design. E1 is the fix path.
 
-| Artifact              | Scope          | Purpose                                                        |
-| --------------------- | -------------- | -------------------------------------------------------------- |
-| `ModuleDefId`         | Elaboration    | Stable definition identity (replaces `DefinitionSymbol*`)      |
-| `BehaviorFingerprint` | Elaboration    | Hash of structural parameter values                            |
-| `ModuleSpecId`        | Elaboration    | `(ModuleDefId, BehaviorFingerprint)` - specialization identity |
-| `CompiledModuleSpec`  | Specialization | LLVM IR + specialization-local layout for one spec             |
-| `SpecLayout`          | Specialization | Slot count, local offsets, type info for one spec              |
-| `InstancePlacement`   | Assembly       | Maps instance -> `(ModuleSpecId, base_offset_in_DesignState)`  |
-| `InstanceConstBlock`  | Assembly       | Per-instance value-only parameter values                       |
-| `ConnectivityTable`   | Assembly       | Port connection descriptors across instances                   |
-| `RuntimeMetadataBlob` | Assembly       | Slot meta, process meta, instance paths, loop sites            |
+**Transitional state**: design-wide compatibility adapters (B5) remain until Phase E removes them.
 
-## Required Invariants
+**Architectural uncertainties**:
 
-These must hold after migration. Each gets a CI/policy enforcement task.
+- M2 -- param classification needs to distinguish packed-width params from unpacked-size params, aligned with the specialization boundary rule
+- E1-E4 ordering -- may simplify once codegen API is narrowed
 
-1. **No design-global IDs in specialization artifacts** - HIR, MIR, and per-specialization LLVM IR must not contain SlotIds, instance IDs, or instance paths that depend on the elaborated design.
+## Completed Milestones
 
-2. **No instance-path dependence in compiled code** - Process functions must not embed instance-specific information. Instance paths are assembly/runtime metadata only.
+- **Phase A complete** -- `ModuleDefId`, `BehaviorFingerprint`, `ModuleSpecId`, `SpecializationMap` introduced. Known gap: M2 (type-level structural refs mitigated by `type.toString()` hashing, not clean).
+- **Phase B mostly complete** (B1-B4 done) -- `mir::ModuleBody` owns behavioral IR, `mir::Module` is instance record with `body_id`. Shared bodies active. `mir::Process` carries no instance identity. `SpecializationMap` required (no fallback). Remaining: B6 (HIR split).
+- **Phase C complete** (C1-C3) -- specialization-local slot identity via `CollectBodyLocalDecls`. `mir::InstancePlacement` is source of truth for design-state placement. Alias resolution eliminated from behavioral codegen.
+- **Phase D mostly complete** (D1, D3, D4 done) -- bindings separated (`CompileBindings` + `link::AssembleBindings`). Metadata serialization in `link::BuildDesignMetadata`. `main()` in `assembly::EmitDesignMain()`. `LowerMirToLlvm()` is thin wrapper: `CompileDesignProcesses` -> `EmitDesignMain` -> `FinalizeModule`. Remaining: D2 (`InstanceConstBlock`).
 
-3. **No codegen requiring whole-design layout** - Specialization codegen must not access other modules' layouts, global connectivity, or design-wide slot tables.
+## Active Gaps
 
-4. **Specialization artifacts are cacheable** - Given the same `ModuleSpecId`, the compiled artifact must be identical regardless of which design uses it or how many instances exist.
+### Now: B3 / E1
 
-5. **Value-only params do not create distinct specializations** - Two instances with identical structural params but different value-only params share compiled code. Value-only params initialized at runtime via `InstanceConstBlock`.
-
-6. **Assembly is the only phase with design-global knowledge** - Only assembly sees full design topology. It maps specialization-local slots to design-global offsets and constructs connectivity tables.
-
-## Progress Already Achieved
-
-### Parameter classification exists
-
-`ParamRole` enum (`kShape` / `kValueOnly`) in `include/lyra/lowering/ast_to_hir/param_role.hpp`. `ClassifyParamRoles()` in `src/lyra/lowering/ast_to_hir/param_role.cpp` separates structural from value-only. Value-only params get `StorageClass::kDesignStorage` (runtime slots) instead of `kConstOnly` (compile-time folding).
-
-### Process fingerprinting and relative addressing exist
-
-`ComputeProcessFingerprint()` in `include/lyra/llvm_backend/process_fingerprint.hpp` hashes `kModuleSlot` roots as body-local IDs and `kDesignGlobal` roots as global IDs directly -- no `base_slot_id` normalization needed since MIR storage roots carry explicit scope. `ProcessTemplate` groups processes by fingerprint. Shared functions use `this_ptr + rel_byte_offsets[slot_id - base_slot_id]`. This is the seed of specialization-scoped codegen -- the addressing model is correct, but discovered through design-wide dedup instead of being the native specialization model.
-
-### DesignBindingPlan partially separates port connections
-
-`DesignBindingPlan` (from AST->HIR) captures port connections as data. `ApplyBindings()` converts them to MIR processes. Conceptually an assembly concern, already partially separated from module compilation.
-
-## Migration Strategy
-
-Staged transition. Each phase establishes new invariants while old paths coexist temporarily.
-
-**Stage 1: Identity** (Phase A) - Complete. `ModuleSpecId` and `SpecializationMap` introduced. Grouping is observation-only. Old per-instance pipeline unchanged. Known gap: M2 (param classification misses type-level structural refs -- temporarily mitigated by `type.toString()` hashing in structural fingerprint, not a clean solution).
-
-**Stage 2: Specialization-ready ownership** (Phase B) - B1-B4 done. Ownership boundary established: `ModuleBody` owns behavioral IR, `Module` is instance-side record with `body_id`. Shared bodies active (one body per specialization group). `mir::Process` carries no instance identity -- instance binding comes exclusively from scheduling/runtime context (`BoundProcessEntry`, `ProcessHandle`, `BindProcessToInstance`). Layout/codegen use `ScheduledProcess` records (no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. `SpecializationMap` is required in MIR-lowering input (no default/null fallback path remains). `BuildMirSpecGroups` validates specialization invariants. `InstanceTable::GetPathBySymbol` centralizes instance path lookup. MIR dump uses explicit `ModuleBodies` / `Modules` sections. Remaining: B5 (design-wide codegen compatibility remains as transitional state until Phase E), B6 (HIR ownership split).
-
-**Stage 3: Storage model** (Phase C) - C1 done: module-owned slot identity is specialization-local by construction (`CollectBodyLocalDecls` produces body-local storage independently; `ModuleBody.slots` is the authoritative specialization-local storage interface). C2 done: `mir::InstancePlacement` is the source of truth for per-instance module placement in DesignState, computed via independent running base counter grounded in authoritative package slot count from `CollectDesignDeclarations`; `instance_slot_ranges` is derived compatibility data. C3 done: alias resolution eliminated from behavioral codegen; `kAlias` binding kind deleted, `alias_map` removed, `ResolveAliases()` inlined away. Shared module behavioral processes no longer resolve module-local places through design-global alias topology. Explicit `kDesignGlobal` roots still use design-global addressing paths.
-
-**Stage 4: Assembly extraction** (Phase D) - D1 done: binding compilation separated from assembly attachment; `CompileBindings()` (lowering) + `link::AssembleBindings()` (link phase). D3 done: metadata serialization moved to link; `link::BuildDesignMetadata` owns all packing, backend extracts raw facts and emits pre-serialized tables. D4 done: `main()` generation moved to `assembly::EmitDesignMain()`; `LowerMirToLlvm()` is a thin orchestrator calling `CompileDesignProcesses` -> `EmitDesignMain` -> `FinalizeModule`. Assembly is a separate Bazel target (`:assembly`) with clean dependency direction (`assembly` -> `llvm_backend`, never reverse). Metadata extraction functions take narrow parameters instead of `LoweringInput`. Remaining: D2 (InstanceConstBlock).
-
-**Stage 5: Per-specialization codegen** (Phase E) - Codegen API takes one specialization. Design-wide main/metadata generation moves to assembly. Template dedup path removed (dedup is automatic). Old design-wide codegen path deleted.
-
-**Stage 6: Acceleration** (Phase F) - Parallel compilation, caching, incremental. Pure wins from clean architecture.
-
-**Allowed during transition**: Compatibility adapters that reconstruct per-instance views from specialization artifacts for downstream consumers. Design-global placement/runtime tables may still exist outside specialization-owned behavioral storage.
-
-**Forbidden immediately**: New code that adds design-global dependencies to specialization artifacts. New code that passes `mir::Design` to specialization-local functions. New code that makes instances own behavioral IR.
-
-## Gap Inventory
-
-### Blockers
-
-**B1: MIR behavioral IR ownership is per-specialization; HIR still per-instance**
-
-MIR side resolved: `mir::ModuleBody` owns processes/functions, `mir::Module` is an instance-side record with `body_id`. Shared bodies active (one per specialization group, B3 done). `mir::Process` carries no instance identity (B4 done).
-
-HIR side remaining:
-
-- `src/lyra/lowering/ast_to_hir/design.cpp:502-506` - `LowerDesign()` creates one `hir::Module` per instance
-- `include/lyra/hir/design.hpp` - `Design::elements` parallel to elaboration order, each element owns behavioral content
-
-**B2: SlotId allocation is design-global** (partially addressed)
-
-Module-owned slot identity is resolved (C1 done): `CollectBodyLocalDecls()` produces `BodyLocalDecls` from the representative module alone, with its own 0-based counter and no access to design-global slot state. `ModuleBody.slots` is the authoritative specialization-local storage interface during and after lowering.
-
-Placement is resolved (C2 done): `mir::InstancePlacement` is the source of truth for per-instance module placement in DesignState. `Design::placement` is built from specialization bodies via independent running base counter, grounded in authoritative package slot count from `CollectDesignDeclarations` (not re-derived from HIR shape). `instance_slot_ranges` is derived compatibility data. Interpreter and layout consumers use placement helpers (`GetInstancePlacement`, `GetInstanceBaseSlot`).
-
-Scope infrastructure: MIR place roots distinguish `PlaceRoot::kModuleSlot` (body-local, 0-based) and `PlaceRoot::kDesignGlobal` (package/global). `SignalRef` carries explicit scope (`kModuleLocal` / `kDesignGlobal`) for wait triggers. `ScopedSlotRef` and `ScopedPlanOp` preserve scope for late-bound index dependencies. Each subsystem has one canonical scope-resolution helper: `Context::ResolveDesignGlobalSlotId()` (LLVM backend), `ResolveDesignGlobalSlot()` (interpreter), `ResolveSignalToGlobalSlot()` (layout). Process fingerprinting and sensitivity analysis operate on scoped identity directly without collapsing to global.
-
-Remaining (design-global codegen model):
-
-- `include/lyra/mir/handle.hpp:79` - `SlotId` is bare `uint32_t`, no scope
-- `include/lyra/mir/design.hpp` - `Design::slots` indexed by global SlotId
-- `Design::instance_slot_ranges` remains as derived compatibility data
-- Codegen slot access still uses design-global base + offset for `kDesignGlobal` roots (C3 removed alias-driven topology dependence from behavioral codegen, but explicit design-global addressing remains)
+B3 and E1 are the same immediate story. B3 is the problem; E1 is the fix.
 
 **B3: Codegen operates on entire design**
 
-`LowerMirToLlvm()` receives `mir::Design`. `BuildLayout()` processes all instances, processes, connections. Cannot parallelize or cache. After D4, `LowerMirToLlvm()` lives in assembly and orchestrates `CompileDesignProcesses` -> `EmitDesignMain` -> `FinalizeModule`, but `CompileDesignProcesses` still processes the full design.
-
-- `include/lyra/llvm_backend/lower.hpp:83-95` - `LoweringInput` holds `const mir::Design*`
-- `src/lyra/llvm_backend/lower.cpp` - `CompileDesignProcesses()` still processes full design
-- `src/lyra/llvm_backend/layout/layout.cpp` - `BuildLayout()` iterates all instances
-- `include/lyra/llvm_backend/context.hpp` - `Context` holds `const mir::Design&`
-
-### Major
-
-**M1: Assembly fused into MIR lowering** (resolved by D1)
-
-Resolved: `ApplyBindings()` replaced by `CompileBindings()` (lowering) + `link::AssembleBindings()` (link phase). MIR lowering produces `mir::CompiledBindingPlan` artifacts; link phase attaches connection processes, alias map, and port connections to `mir::Design`. No design mutation during lowering.
-
-**M2: ParamRole classification needs refinement for construction vs behavior**
-
-`ShapeParamCollector` walks the elaborated AST for `NamedValueExpression` references outside procedural contexts. Two issues:
-
-1. slang resolves parameterized types during elaboration, so a parameter used in a type declaration (e.g., `bit [WIDTH-1:0] data`) may be baked into the resolved type and not visible as a `NamedValueExpression`. This can cause params that affect packed widths to be misclassified as `kValueOnly`.
-
-2. The classifier does not distinguish between parameters that affect packed widths (execution-time, must specialize) and parameters that affect only unpacked container sizes (elaboration-time, should not specialize).
-
-- `src/lyra/lowering/ast_to_hir/param_role.cpp:53-59` - visitor only sees `NamedValueExpression`, misses resolved types
-- Impact: Packed-width params may be misclassified; unpacked-size params may over-specialize
-- Fix: Walk type expressions to detect packed-width variation. Separately classify unpacked-size params as elaboration-time (not structural). See architectural direction in this document.
-
-**M3: Runtime metadata built during codegen** (resolved by D3 + D4)
-
-Resolved: Metadata serialization moved to `link::BuildDesignMetadata` (D3). Metadata extraction and LLVM global emission now happen in `assembly::EmitDesignMain()` (D4), separate from behavioral codegen.
-
-**M4: Template dedup is cross-instance optimization in codegen**
-
-`BuildModuleVariants()` groups processes across all instances by fingerprint during layout. Requires design-wide knowledge. In north star model, dedup is automatic.
-
-- `src/lyra/llvm_backend/layout/layout.cpp:1266-1500` - `BuildModuleVariants()`
-- `include/lyra/llvm_backend/layout/layout.hpp:183-192` - `ProcessTemplate`
-- `src/lyra/llvm_backend/lower.cpp:790-839` - template emission + wrapper routing
-
-### Medium
-
-**m1: DesignState struct is monolithic** - Absolute byte offsets depend on elaboration order. `include/lyra/llvm_backend/layout/layout.hpp:72-83`, `src/lyra/llvm_backend/layout/layout.cpp:154-250`.
-
-**m2: Instance paths baked into codegen** - `include/lyra/mir/instance.hpp:10-32`, `src/lyra/llvm_backend/lower.cpp:1265-1292`.
-
-**m3: Process owner_instance_id in MIR** - Resolved by B4. `mir::Process` no longer carries instance identity.
-
-**m4: ParamRole uses slang pointer as grouping key** - `src/lyra/lowering/ast_to_hir/param_role.cpp:72-77`.
-
-**m5: main() generation is monolithic** - Resolved by D4. `main()` generation moved to `assembly::EmitDesignMain()` in `src/lyra/assembly/emit_design_main.cpp`.
-
-### Minor
-
-**n1: No caching infrastructure** - Future work after specialization compilation separated.
-
-**n2: MIR interpreter uses design-global state** - Debug-only. Align when main path migrated.
-
-**n3: No parallel compilation** - Future work after specializations are independent.
-
-## Prioritized Working Queue
-
-Each task has: goal, areas, acceptance criteria, dependencies. Tasks are independently mergeable.
-
-### Phase A: Identity and grouping
-
-**A1: Define ModuleDefId**
-
-- Goal: Stable definition identity replacing `DefinitionSymbol*`
-- Areas: New `include/lyra/common/module_identity.hpp`, `src/lyra/lowering/ast_to_hir/design.cpp`
-- Acceptance: `ModuleDefId` type exists. `module_def_key` uses it instead of pointer cast. Test: same definition produces same `ModuleDefId` within a compilation session.
-- Dependencies: None
-- Invariant: Definition identity is stable within a compilation. Cross-build cache identity comes from a content-based layer above `ModuleDefId` (future work).
-
-**A2: Define BehaviorFingerprint**
-
-- Goal: Hash all elaboration inputs that affect structure/code shape
-- Areas: `include/lyra/common/module_identity.hpp`, `src/lyra/lowering/ast_to_hir/param_role.cpp`
-- Acceptance: `BehaviorFingerprint` type exists. First implementation hashes kShape parameter values after `ClassifyParamRoles()`. Test: two instances with same structural params produce same fingerprint; different structural params produce different fingerprint.
-- Dependencies: A1
-- Invariant: Fingerprint captures all elaboration inputs that affect structure/code shape (structural params initially; future: defines, interface bindings, anything that changes elaborated structure).
-
-**A3: Define ModuleSpecId and grouping pass**
-
-- Goal: Group instances by `(ModuleDefId, BehaviorFingerprint)` after elaboration
-- Areas: `include/lyra/common/module_identity.hpp`, `src/lyra/lowering/ast_to_hir/design.cpp`
-- Acceptance: `ModuleSpecId` type exists. After elaboration, each instance is assigned a `ModuleSpecId`. Test: design with 4 instances of same module (2 param configs) produces exactly 2 specialization groups.
-- Dependencies: A2
-- Invariant: Instances with identical structural params share a `ModuleSpecId`.
-
-**A4: Test value-only param grouping**
-
-- Goal: Prove value-only params don't split specializations
-- Areas: Tests only
-- Acceptance: Test: two instances with same structural params but different value-only params share the same `ModuleSpecId`.
-- Dependencies: A3
-- Invariant: Value-only params do not affect specialization identity.
-
-### Phase B: Specialization-owned behavioral IR
-
-The goal of Phase B is to establish the ownership boundary required for specialization-scoped IR. Module behavioral IR (processes, functions) moves to a dedicated body artifact; instances become lightweight records that reference bodies. Early steps establish the shape with 1:1 mapping; later steps introduce actual sharing by `ModuleSpecId` and remove instance identity from behavioral IR.
-
-**B1: Introduce specialization-ready MIR body artifact** (done)
-
-- Goal: First-class `mir::ModuleBody` type that owns behavioral IR (processes, functions). Purely behavioral --no instance identity, no storage shape, no placement metadata. This is the seed of specialization-owned MIR; actual sharing comes in B3.
-- Areas: New `include/lyra/mir/module_body.hpp`, `include/lyra/mir/module.hpp`, `include/lyra/mir/design.hpp`, all MIR consumers
-- Acceptance: `mir::ModuleBody` type exists with `processes` and `functions` only. `mir::Module` becomes instance-side record with `instance_sym` and `body_id`. `mir::Design` gains `module_bodies` vector. `LowerModule` returns `ModuleBody`. All consumers access behavioral IR through `GetModuleBody()`. Bodies are 1:1 with instances (no sharing yet).
-- Dependencies: None (ownership-only change, no grouping logic needed)
-- Invariant: `ModuleBody` contains no instance-specific fields, no storage descriptors, no placement data. `mir::Module` does not own behavioral IR.
-
-**B2: (Absorbed into B1)**
-
-B1 now covers both the body artifact and the instance record conversion as a single atomic change. `mir::Module` is `{instance_sym, body_id}` --no additional instance-side fields until truly needed by later phases.
-
-**B3: Lower MIR body once per specialization group** (done)
-
-- Goal: HIR->MIR module lowering produces one `ModuleBody` per `ModuleSpecId`. Multiple instance records reference the same body. `SpecializationMap` drives the lowering loop.
-- Areas: `src/lyra/lowering/hir_to_mir/design_lower.cpp`, `src/lyra/lowering/hir_to_mir/module.cpp`, `include/lyra/lowering/hir_to_mir/lower.hpp`
-- Acceptance: `LoweringInput` requires `SpecializationMap`. `LowerDesign` iterates specialization groups, lowering module body once per group. Instance records created for each instance referencing the shared body. Test: design with N instances and K specs produces exactly K `LowerModule` calls and K `ModuleBody` entries.
-- Dependencies: B1, A3
-- Invariant: Module behavioral lowering runs once per specialization, not per instance.
-- Done: Shared bodies active. `SpecializationMap` is required in `LoweringInput` (no default/null fallback path remains). `BuildMirSpecGroups` validates group invariants (range, uniqueness, cross-reference with `spec_id_by_instance`). Layout uses `ScheduledProcess` records (single vector, no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. MIR verification uses `InstanceTable::GetPathBySymbol` (centralized lookup, no ad-hoc maps). MIR dump has explicit `ModuleBodies` / `Modules` sections.
-- Temporary stopgap: Structural fingerprint includes `type.toString()` hashing for variable types to catch param-dependent types resolved at elaboration. This is a presentation-format mitigation, not a clean semantic fingerprint. Proper fix requires explicit structural type fingerprinting over resolved type structure (see M2 gap).
-
-**B4: Remove owner_instance_id from MIR Process** (done)
-
-- Goal: `owner_instance_id` on `mir::Process` is instance metadata embedded in behavioral IR. Remove it so processes in a shared `ModuleBody` carry no instance identity. Instance-to-process binding is expressed through the instance record's `body_id` + design walk context.
-- Areas: `include/lyra/mir/routine.hpp`, `src/lyra/lowering/hir_to_mir/module.cpp`, interpreter, test framework
-- Acceptance: `mir::Process` has no `owner_instance_id`. No process-lowering API accepts instance identity. Runtime binding comes from explicit `BindProcessToInstance()` helper.
-- Dependencies: B3 (sharing must exist before instance identity can be removed from processes)
-- Invariant: No instance identity in specialization-owned MIR.
-- Done: Field deleted from `mir::Process`. `LowerProcess()` no longer accepts instance identity. Module lowering no longer looks up instance index for process construction. Interpreter `CreateProcessState()` returns unbound state; callers use `BindProcessToInstance()` to bind behavioral state to instance context. `VerifyLoweredMir` already uses instance record context (not process fields).
-
-**B5: Design-wide codegen compatibility remains until Phase E**
-
-Existing design-wide codegen continues to work by reconstructing per-instance process views from specialization bodies + instance records. This is a transitional state, not a separate task. Codegen iterates instance records, looks up shared `ModuleBody`, and provides instance_id from the record. `BuildModuleVariants` continues to work on the reconstructed view. No new design-global dependencies added. Removal happens through D/E phases.
-
-**B6: Propagate ownership to HIR**
-
-- Goal: Same ownership split at HIR level. `hir::ModuleBody` owned by specialization, `hir::Module` becomes instance record.
-- Areas: `include/lyra/hir/module.hpp`, `include/lyra/hir/design.hpp`, `src/lyra/lowering/ast_to_hir/design.cpp`
-- Acceptance: AST->HIR lowering produces one `hir::ModuleBody` per specialization group. Instance records reference shared bodies. Test: K specs produce K HIR body lowering calls.
-- Dependencies: B1
-- Invariant: HIR behavioral ownership follows the same body/instance split as MIR.
-
-### Phase C: Specialization-local storage model
-
-**C1: Make module-owned slot identity specialization-local** (done)
-
-- Goal: Module-owned slot numbering produced from representative module body alone, independent of design-global allocation
-- Areas: `src/lyra/lowering/hir_to_mir/design_decls.cpp`, `include/lyra/lowering/hir_to_mir/context.hpp`, `include/lyra/lowering/hir_to_mir/design.hpp`, `src/lyra/lowering/hir_to_mir/design_lower.cpp`, `include/lyra/lowering/hir_to_mir/module.hpp`, `src/lyra/lowering/hir_to_mir/module.cpp`
-- Acceptance: `CollectBodyLocalDecls()` is self-contained with no design-global dependency. `DesignDeclarations` no longer contains `body_local_decls`. `LowerModule()` receives `BodyLocalDecls` directly. Module-owned `kModuleSlot` allocation happens once per specialization-group representative. `ModuleBody.slots` determined without walking design topology. Design-global placement tables remain unchanged and outside this PR's source-of-truth boundary.
-- Dependencies: B4
-- Invariant: Specialization-local slot numbering is independent of other specializations and design topology.
-- Done: Declaration collection split into `CollectBodyLocalDecls()` (specialization-local, one module) and `CollectDesignDeclarations()` (design-global placement). Body-local decls collected once per specialization group in `LowerDesign` and passed directly to `LowerModule`. Design-global slot tables remain as transitional placement/runtime data.
-
-**C2: Introduce placement mapping** (done)
-
-- Goal: Placement maps `(ModuleSpecId, instance) -> base_offset` in DesignState. Placement owns per-instance module placement; specialization compilation owns only local slot identity.
-- Areas: `include/lyra/mir/placement.hpp`, `src/lyra/mir/placement.cpp`, modify `src/lyra/llvm_backend/layout/layout.cpp`
-- Acceptance: `InstancePlacement` type exists. Placement computes base offsets via independent running counter. Test: specialization code uses `this_base + local_offset`, not absolute offsets.
-- Dependencies: C1
-- Invariant: Specialization code does not know absolute DesignState offsets. Placement owns DesignState layout.
-- Done: `mir::InstancePlacement` and `mir::PlacementMap` introduced as transitional placement artifacts carried by `mir::Design`. `Design::placement` is the source of truth for per-instance module placement, built from specialization bodies via running base counter grounded in authoritative package slot count (not re-derived from HIR shape, not copied from legacy slot tables). `instance_slot_ranges` derived from placement for compatibility. All consumers use placement helpers (`GetInstancePlacement`, `GetInstanceBaseSlot`). `BindProcessToInstance` has placement-based overload.
-
-**C3: Eliminate compile-time alias resolution from behavioral codegen** (done)
-
-- Goal: Remove alias-driven topology dependence from behavioral codegen so shared module behavioral processes no longer resolve module-local places through design-global alias topology
-- Areas: `src/lyra/lowering/ast_to_hir/design.cpp`, `include/lyra/lowering/ast_to_hir/port_binding.hpp`, `src/lyra/lowering/hir_to_mir/design_connections.cpp`, `include/lyra/mir/compiled_bindings.hpp`, `src/lyra/link/assemble_bindings.cpp`, `include/lyra/mir/design.hpp`, `include/lyra/mir/port_connection.hpp`, `src/lyra/llvm_backend/context_place.cpp`, `include/lyra/llvm_backend/context.hpp`
-- Acceptance: No `kAlias` concept exists. `ResolveAliases()` deleted (inlined away). `alias_map` deleted. All output net ports use `kDriveChildToParent` connection processes. Shared behavioral function body is identical regardless of instance count/topology. Explicit `kDesignGlobal` roots still use design-global addressing paths.
-- Dependencies: C2
-- Invariant: Shared behavioral codegen does not resolve module-local places through design-global alias topology. Explicit design-global roots remain design-global.
-- Done: `kAlias` removed from `PortBinding::Kind` and `PortConnection::Kind`. `CompileAlias()` deleted. `CompiledAliasBinding` deleted. `alias_map` removed from `mir::Design`. `ResolveAliases()` inlined at call sites and deleted. Output net ports classified as `kDriveChildToParent`, flowing through existing connection process / connection descriptor infrastructure.
-
-### Phase D: Assembly extraction
-
-**D1: Extract ApplyBindings from MIR lowering** (done)
-
-- Goal: Port connection binding is a separate assembly step
-- Areas: `src/lyra/lowering/hir_to_mir/design_connections.cpp`, `include/lyra/mir/compiled_bindings.hpp`, `include/lyra/link/assemble_bindings.hpp`, `src/lyra/link/assemble_bindings.cpp`
-- Acceptance: `LowerDesign()` no longer calls `ApplyBindings()`. Assembly step consumes `DesignBindingPlan` + compiled specializations. Test: MIR lowering produces no connection processes.
-- Dependencies: B4
-- Invariant: MIR lowering is purely specialization-scoped.
-- Done: `ApplyBindings()` replaced by `CompileBindings()` (returns `mir::CompiledBindingPlan`) + `link::AssembleBindings()` (attaches to design). Artifact types (`CompiledBindingPlan`, `CompiledDriveBinding`) live in `lyra::mir` namespace (`include/lyra/mir/compiled_bindings.hpp`). `PortConnection` extracted to own header (`include/lyra/mir/port_connection.hpp`). `DesignLoweringResult` carries both `mir::Design` and `CompiledBindingPlan`. Link phase (`lyra::link`) has no HIR/lowering/slang dependencies. Pipeline explicitly orchestrates: lowering -> link -> runtime.
-
-**D2: Define InstanceConstBlock**
-
-- Goal: Per-instance value-only parameter values as assembly artifact
-- Areas: New `include/lyra/assembly/instance_const.hpp`, `src/lyra/assembly/instance_const.cpp`
-- Acceptance: `InstanceConstBlock` type exists. Assembly creates one per instance from value-only param values. Replaces `instance_param_inits` in `mir::Design`. Test: two instances with different value-only params produce different `InstanceConstBlock` but share specialization.
-- Dependencies: A4, C2
-- Invariant: Value-only params are assembly data, not compilation data.
-
-**D3: Move metadata table construction to assembly** (done)
-
-- Goal: Metadata serialization (slot meta, process meta, loop site meta, connection descriptors, comb kernels, instance paths) owned by link phase, not inlined in codegen
-- Areas: `include/lyra/link/design_metadata.hpp`, `include/lyra/link/build_design_metadata.hpp`, `src/lyra/link/build_design_metadata.cpp`, `include/lyra/llvm_backend/design_metadata_lowering.hpp`, `src/lyra/llvm_backend/design_metadata_lowering.cpp`, `src/lyra/llvm_backend/lower.cpp`
-- Acceptance: `link::BuildDesignMetadata` owns all metadata packing/serialization. Backend extracts raw facts into `link::DesignMetadataInputs`, link serializes into runtime-shaped `link::DesignMetadata`, backend emits pre-serialized tables as LLVM globals. `lower.cpp` reduced to orchestration only.
-- Dependencies: D1, C3
-- Invariant: Metadata serialization logic lives in link, not codegen. Backend is a pure emitter for already-serialized metadata.
-- Done: `DesignMetadataInputs` and `DesignMetadata` types in `lyra::link`. `BuildDesignMetadata` centralizes all packing (slot meta words, process meta word table, loop site meta word table, comb kernel words). Backend helpers (`ExtractSlotMetaInputs`, `PrepareScheduledProcessInputs`, `PrepareLoopSiteInputs`, `ExtractConnectionDescriptorEntries`, `PrepareCombKernelInputs`, `PrepareInstancePaths`) extract LLVM-layout-dependent facts into plain link structs. `EmitDesignMetadataGlobals` emits pre-serialized metadata with no packing logic.
-
-**D4: Move main() generation to assembly** (done)
-
-- Goal: Assembly generates the main function
-- Areas: `include/lyra/assembly/emit_design_main.hpp`, `src/lyra/assembly/emit_design_main.cpp`, `include/lyra/llvm_backend/codegen_session.hpp`, `src/lyra/llvm_backend/lower.cpp`
-- Acceptance: `LowerMirToLlvm()` no longer generates main(). Assembly phase constructs main from `InstancePlacement` + compiled specialization functions. Test: main() exists only in assembly output.
-- Dependencies: D3
-- Invariant: Assembly owns design-wide code generation.
-- Done: `main()` generation and all design-wide helpers (`InitializeDesignState`, `InitializeProcessState`, `EmitParamInitStores`, `ReleaseStringSlots`, `EmitWaitSiteMetaTable`) moved to `lyra::assembly::EmitDesignMain()`. `LowerMirToLlvm()` is now a thin wrapper: `CompileDesignProcesses()` -> `assembly::EmitDesignMain()` -> `FinalizeModule()`. `CodegenSession` is a backend-owned intermediate state passed between phases. `EmitDesignMainInput` is a narrow assembly contract (no raw `LoweringInput`). No driver/test caller changes; public API preserved for E1.
-
-### Phase E: Per-specialization codegen
+`LowerMirToLlvm()` receives `mir::Design`. `BuildLayout()` processes all instances. Cannot parallelize or cache. After D4, `LowerMirToLlvm()` remains a thin backend wrapper that orchestrates specialization codegen + realization, but `CompileDesignProcesses` still processes the full design.
+
+- `include/lyra/llvm_backend/lower.hpp:83-95` -- `LoweringInput` holds `const mir::Design*`
+- `src/lyra/llvm_backend/lower.cpp` -- `CompileDesignProcesses()` processes full design
+- `src/lyra/llvm_backend/layout/layout.cpp` -- `BuildLayout()` iterates all instances
+- `include/lyra/llvm_backend/context.hpp` -- `Context` holds `const mir::Design&`
 
 **E1: New codegen API takes one specialization**
 
-- Goal: `LowerMirToLlvm()` operates on a single `CompiledModuleSpec`
-- Areas: `include/lyra/llvm_backend/lower.hpp`, `src/lyra/llvm_backend/lower.cpp`
-- Acceptance: `LoweringInput` no longer holds `const mir::Design*`. Takes specialization MIR + `SpecLayout`. Test: codegen call has no design-global parameters.
-- Dependencies: D3, D4
-- Invariant: Specialization codegen is self-contained.
+- `LowerMirToLlvm()` operates on a single `CompiledModuleSpec`
+- `LoweringInput` no longer holds `const mir::Design*`; takes specialization MIR + `SpecLayout`
+- Codegen call has no design-global parameters
+
+### Next: D2 / M2
+
+**D2: InstanceConstBlock**
+
+Per-instance value-only parameter values as realization artifact. Replaces `instance_param_inits` in `mir::Design`. Two instances with different value-only params produce different `InstanceConstBlock` but share specialization. Depends on A4, C2.
+
+**M2: ParamRole classification refinement**
+
+`ShapeParamCollector` has two issues:
+
+1. slang resolves parameterized types during elaboration, so packed-width params may be invisible as `NamedValueExpression` and misclassified as `kValueOnly`.
+2. The classifier does not distinguish packed-width params (require specialization) from unpacked-size params (should not specialize).
+
+Fix: walk type expressions to detect packed-width variation. Separately classify unpacked-size params as elaboration-time. See specialization boundary rule in [compilation-model.md](compilation-model.md).
+
+- `src/lyra/lowering/ast_to_hir/param_role.cpp:53-59` -- visitor misses resolved types
+
+### Later: B6 / M4 / E2-E4 / medium gaps
+
+**B6: HIR ownership split**
+
+Same body/instance split at HIR level. `hir::ModuleBody` owned by specialization, `hir::Module` becomes instance record. AST->HIR lowering produces one body per specialization group.
+
+- `src/lyra/lowering/ast_to_hir/design.cpp:502-506` -- `LowerDesign()` creates one `hir::Module` per instance
+- `include/lyra/hir/design.hpp` -- `Design::elements` parallel to elaboration order
+
+**M4: Template dedup is cross-instance optimization**
+
+`BuildModuleVariants()` groups processes across all instances by fingerprint. Requires design-wide knowledge. In north star model, dedup is automatic from specialization. Removed by E2.
 
 **E2: Remove template dedup path**
 
-- Goal: Delete `BuildModuleVariants`, `ProcessTemplate`, fingerprint-based dedup
-- Areas: `src/lyra/llvm_backend/layout/layout.cpp:1266-1500`, `include/lyra/llvm_backend/layout/layout.hpp:183-202`
-- Acceptance: No cross-instance fingerprinting. Dedup is automatic from specialization model. Test: all tests still pass without template dedup code.
-- Dependencies: E1
-- Invariant: No cross-instance optimization in codegen.
+- Delete `BuildModuleVariants`, `ProcessTemplate`, fingerprint-based dedup
+- Depends on E1
 
 **E3: Delete legacy design-wide codegen path**
 
-- Goal: Remove all code paths that pass full `mir::Design` to codegen
-- Areas: `include/lyra/llvm_backend/lower.hpp`, `src/lyra/llvm_backend/lower.cpp`, `include/lyra/llvm_backend/context.hpp`
-- Acceptance: `Context` no longer holds `const mir::Design&`. Test: compilation succeeds with only per-specialization codegen path.
-- Dependencies: E2
-- Invariant: Design-wide compilation coupling deleted.
+- Remove all code paths that pass full `mir::Design` to codegen
+- `Context` no longer holds `const mir::Design&`
+- Depends on E2
 
 **E4: Delete compatibility adapters**
 
-- Goal: Remove transitional codegen adapters from Phase B5
-- Areas: `include/lyra/mir/design.hpp`, `src/lyra/llvm_backend/lower.cpp`, any compatibility shims added during Phase B
-- Acceptance: No per-instance reconstruction. No compatibility adapters remain. Codegen operates natively on `ModuleBody` + instance records. Test: all tests pass with only specialization-owned path.
-- Dependencies: E3
-- Invariant: Single clean path. No legacy per-instance artifacts.
+- Remove transitional codegen adapters from Phase B5
+- Codegen operates natively on `ModuleBody` + instance records
+- Depends on E3
 
-### Phase F: Acceleration
+**Medium gaps**
 
-**F1: Parallel specialization compilation**
+- **m1**: DesignState struct is monolithic -- absolute byte offsets depend on elaboration order
+- **m2**: Instance paths baked into codegen
+- **m4**: ParamRole uses slang pointer as grouping key
 
-- Goal: Thread pool compiles specializations concurrently
-- Areas: `src/lyra/driver/pipeline.cpp`
-- Acceptance: Compilation scales with core count. Test: N specializations compile in parallel on N cores.
-- Dependencies: E1
-- Invariant: Specializations are independently compilable.
+## Phase F: Acceleration
 
-**F2: Specialization caching**
+Future work after Phase E.
 
-- Goal: Content-addressed cache keyed by `ModuleSpecId`
-- Areas: New caching infrastructure
-- Acceptance: Unchanged specializations skip recompilation. Test: second build of same design hits cache for all specs.
-- Dependencies: E1
-- Invariant: Cache produces identical artifacts for identical `ModuleSpecId`.
+- **F1**: Parallel specialization compilation -- thread pool, scales with core count
+- **F2**: Specialization caching -- content-addressed cache keyed by `ModuleSpecId`
 
 ## CI / Policy Gates
 
-Enforcement tasks to add during migration. Each prevents regression.
-
-**G1: Policy check - no instance identity in specialization-owned MIR** (enforced structurally)
-
-- After Phase B: `mir::Process` has no instance-identity field. `mir::ModuleBody` has no instance-specific fields. Instance records do not own processes or functions.
-- Enforced by type shape: `mir::Process` no longer has any instance-identity field. Reintroduction would require an explicit API/type change.
-
-**G2: Policy check - specialization codegen API has no design input**
-
-- After Phase E: Assert `LoweringInput` for specialization codegen does not accept `mir::Design*`.
-- Tool: API signature check in CI.
-
-**G3: Regression test - value-only params share specialization**
-
-- After Phase A: Test that two instances with same structural params but different value-only params produce exactly 1 specialization.
-
-**G4: Regression test - structural params produce distinct specializations**
-
-- After Phase A: Test that two instances with different structural params produce 2 specializations.
-
-**G5: Regression test - specialization IR is topology-independent**
-
-- After Phase C: Test that adding/removing instances of the same spec does not change per-specialization LLVM IR.
-
-**G6: Policy check - no instance paths in specialization artifacts**
-
-- After Phase D: Assert compiled specialization contains no instance path strings.
-
-**G7: Regression test - specialization grouping is deterministic**
-
-- After Phase A: Same source with same elaboration inputs produces identical specialization grouping and ordering. Matters for caching and reproducibility.
-
-## Architectural Direction
-
-**Future direction, not yet implemented.**
-
-The long-term state layout moves from a compile-time LLVM struct to an arena-based layout with elaboration-resolved container offsets. See [state-layout.md](state-layout.md).
-
-Key consequences: unpacked container sizes are no longer structural specialization inputs. `SpecLayout` distinguishes static offsets (packed fields) from container descriptors (elaboration-resolved). Assembly resolves container sizes and allocates the arena. Generate blocks that only construct the design graph (including process instantiation) are elaboration-time, not specialization boundaries.
+| Gate                                              | Enforcement             | Status        |
+| ------------------------------------------------- | ----------------------- | ------------- |
+| G1: No instance identity in specialization MIR    | Structural (type shape) | Enforced      |
+| G2: Codegen API has no design input               | API signature check     | Not added yet |
+| G3: Value-only params share specialization        | Regression test         | Not added yet |
+| G4: Structural params produce distinct specs      | Regression test         | Not added yet |
+| G5: Specialization IR is topology-independent     | Regression test         | Not added yet |
+| G6: No instance paths in specialization artifacts | Policy check            | Not added yet |
+| G7: Specialization grouping is deterministic      | Regression test         | Not added yet |
 
 ## Open Questions
 
-1. **BehaviorFingerprint granularity**: Hash structural parameter values, or hash generated HIR? Hashing params is simpler but might miss cases where different param values produce identical IR.
-
-2. **Connection process ownership**: Resolved by D1. Connection processes are compiled during lowering (using both endpoint layouts) and assembled by `link::AssembleBindings()` (arena registration + design attachment).
-
-3. **Package compilation**: Packages have no instances. Should they be their own specialization unit or a separate concept?
-
-4. **Container descriptor format**: How should SpecLayout represent container regions? Options include inline descriptor structs, a separate container metadata table, or a hybrid.
-
-5. **MIR interpreter alignment**: Debug-only. Migrate in lockstep or defer?
+1. **BehaviorFingerprint granularity**: Hash structural parameter values, or hash generated HIR?
+2. **Package compilation**: Packages have no instances. Separate specialization unit or separate concept?
+3. **Container descriptor format**: How should SpecLayout represent container regions?
+4. **MIR interpreter alignment**: Debug-only. Migrate in lockstep or defer?

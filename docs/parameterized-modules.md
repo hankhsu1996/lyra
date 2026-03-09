@@ -43,7 +43,7 @@ See [compilation-model.md](compilation-model.md) for the elaboration-time vs exe
 
 ## Hierarchical References
 
-Hierarchical access (e.g., `inst2.data`) is resolved at assembly/link time, not at specialization compile time. The compiled specialization code addresses state via `this_base + offset`. Assembly maps instance paths to concrete memory locations.
+Hierarchical access (e.g., `inst2.data`) is resolved during design realization, not during specialization compilation. The compiled specialization code addresses state via `this_base + offset`. Design realization maps instance paths to concrete memory locations.
 
 This means hierarchical references do not prevent specialization sharing. Two instances of the same specialization have different `this_base` pointers but execute identical code.
 

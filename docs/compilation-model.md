@@ -4,6 +4,24 @@ The concrete data model for specialization-based compilation. Defines the types,
 
 For architectural motivation, see [architecture-principles.md](architecture-principles.md).
 
+## Pipeline Phases
+
+Four distinct phases with clear boundaries:
+
+1. **Elaboration** -- discover the design: module definitions, instances, parameters, hierarchy, connectivity
+2. **Specialization Compilation** -- compile reusable behavior units, one per `ModuleSpecId`, parallelizable
+3. **Design Realization** -- materialize the executable runtime image from compiled specializations + elaborated design topology
+4. **Execution** -- run the simulation
+
+Each phase answers a different question:
+
+- Elaboration: _What is the design?_
+- Specialization Compilation: _How does each reusable behavior class execute?_
+- Design Realization: _How does this particular design become a runnable image?_
+- Execution: _Run it._
+
+**Compile time** covers elaboration and specialization compilation. These produce design-independent, cacheable artifacts. **Design realization** is a distinct phase that takes compiled specializations and the elaborated design topology and materializes the executable runtime image -- instance placement, connectivity binding, container sizing, metadata construction. It is not compile time (it requires the full design graph) and not execution (the simulation has not started). **Execution** is the simulation itself.
+
 ## Compilation Unit: Module Specialization
 
 A **Module Specialization** is the unit of compilation and optimization. It is uniquely identified by:
@@ -27,29 +45,43 @@ A specialization produces a self-contained, cacheable artifact: `CompiledModuleS
 | Module specialization | Template specialization with concrete type arguments |
 | Instance              | Object with a `this` pointer                         |
 | Compile               | Compile a translation unit into `.o`                 |
-| Assembly/Link         | Link objects + apply relocations                     |
+| Design Realization    | Construct the object graph + wire references         |
 
-## Elaboration-Time vs Execution-Time
+## Specialization Boundary Rule
 
-Specialization boundaries are determined by differences in compiled behavior artifacts, not by differences in constructed design graphs.
+A specialization exists only when a parameter changes the reusable compiled behavior or the low-level representation in a way that affects code shape.
 
-**Elaboration-time** parameter effects build the design graph without changing compiled code:
+**Specialization inputs** (require distinct compiled artifacts):
+
+- Packed bit widths, packed layout, signedness
+- Arithmetic representation (operation widths, type coercions)
+- Compiled process code shape (different instructions, different control flow)
+
+**Realization inputs** (do not create specialization boundaries):
 
 - Unpacked container sizes
 - Instance counts and topology
 - Process instantiation decisions (which processes exist)
 - Generate-controlled graph construction
 - Connectivity wiring
+- Per-instance constants (value-only parameters)
 
-These are resolved during elaboration. They do not create specialization boundaries.
+The clearest example is packed data. Packed widths are tightly coupled to the LLVM-level representation (`i8`, `i16`, `i32`, etc.), operation lowering, and bit-level semantics. When a packed shape changes, that is a real specialization boundary.
 
-**Execution-time** parameter effects change the compiled artifact:
+Unpacked/container size is different. A change in unpacked extent is handled during design realization, not specialization compilation. The right mental model is not `std::array<N>`-style type explosion but a runtime container model: descriptor-driven storage, vector-like regions, small-buffer optimization where profitable, and runtime materialization of container size.
 
-- Packed bit widths, packed layout, signedness
-- Arithmetic representation (operation widths, type coercions)
-- Compiled process code shape (different instructions, different control flow)
+Generate-controlled graph construction is not by itself a specialization boundary; it becomes one only when it changes reusable compiled behavior or packed low-level representation.
 
-These require specialization.
+The goal: a small number of specializations. Specialization count should not explode because elaboration produced many different unpacked sizes or design-specific container shapes.
+
+### Decision Rule
+
+For any parameter or shape difference, ask:
+
+> Does this change the reusable compiled behavior or packed low-level representation?
+
+If yes: specialization boundary.
+If no (only changes container realization, runtime sizing, placement, connectivity, or the realized object graph): handled by realization.
 
 ## Parameter Classification
 
@@ -124,7 +156,7 @@ All contents of `CompiledModuleSpec` are **specialization-scoped**. No design-gl
 - IR node IDs scoped to specialization (expression, statement, process, place, slot)
 - `SpecLayout` offsets (constants within the specialization)
 
-**B) Instance layer (assembly/runtime)**
+**B) Instance layer -- realization and runtime**
 
 - `InstanceId`
 - Design connectivity (nets across instances)
@@ -150,9 +182,9 @@ this_base + specialization_constant_offset
 
 Where `this_base` is an instance-specific runtime pointer and offsets are constants from `SpecLayout`.
 
-## Assembly / Link
+## Design Realization
 
-Assembly takes compiled specializations + an instance graph and produces a runnable design without recompiling specialization code.
+Realization takes compiled specializations + the elaborated design graph and materializes a runnable design image without recompiling specialization code.
 
 ### Inputs
 
@@ -168,17 +200,17 @@ Assembly takes compiled specializations + an instance graph and produces a runna
 | DesignStateAllocation | Per-instance state segments derived from `SpecLayout`                |
 | ConnectivityTables    | Connection descriptors, trigger/propagation tables between instances |
 | InstanceConstBlocks   | Per-instance value-only parameter values                             |
-| Debug tables          | Instance path strings (assembly-time only)                           |
+| Debug tables          | Instance path strings (realization-time only)                        |
 
-### Assembly constraints
+### Realization constraints
 
-Assembly must NOT:
+Realization must NOT:
 
 - Re-run LLVM optimization or regenerate kernel bodies
 - Depend on full design flattening to create new IR
 - Modify specialization code
 
-Assembly may:
+Realization may:
 
 - Sort and build index tables
 - Compute instance memory placements
@@ -186,7 +218,7 @@ Assembly may:
 
 ### Incrementality
 
-If only wiring or instance graph changes but module bodies do not, compiled specializations are reused and only assembly tables are rebuilt.
+If only wiring or instance graph changes but module bodies do not, compiled specializations are reused and only realization tables are rebuilt.
 
 ## Specialization-Local Optimizations
 
@@ -206,7 +238,7 @@ Whole-design topo sorting is explicitly forbidden as a prerequisite for correctn
 
 Required for caching, incrementality, and debugging:
 
-- Stable ordering of specialization IDs, slots, processes, kernels, assembly tables
+- Stable ordering of specialization IDs, slots, processes, kernels, realization tables
 - Map/set iteration must use deterministic containers or explicit ordering
 - `SpecHash` must be bit-for-bit reproducible across runs given identical inputs
 
@@ -219,22 +251,22 @@ These invariants must be enforced automatically:
 | Specialization hash stability  | Same `ModuleSpecId` produces identical `SpecHash` across runs              |
 | No design-global slots in spec | Static checks forbid design-global slot concepts in spec IR                |
 | Incremental rebuild boundary   | Changing a leaf module recompiles only affected specializations            |
-| Assembly reuse                 | Wiring-only changes reuse compiled specializations                         |
+| Realization reuse              | Wiring-only changes reuse compiled specializations                         |
 | Parallel build safety          | Multiple specializations compile concurrently without shared mutable state |
 
 ## Terminology
 
-| Term                | Definition                                                               |
-| ------------------- | ------------------------------------------------------------------------ |
-| Module Definition   | Source-level `module M; ... endmodule`                                   |
-| Specialization      | `(ModuleDefId, BehaviorFingerprint)` -- unit of compilation              |
-| Instance            | Runtime object with `this_base`                                          |
-| BehaviorFingerprint | Hash of execution-time inputs that affect the compiled artifact          |
-| SpecLayout          | Specialization-scoped mapping from slot to offset                        |
-| Assembly / Link     | Binding instances to specializations + connectivity tables               |
-| InstanceConstBlock  | Per-instance storage for value-only parameters                           |
-| Kernelization       | Transforming a process into an inline-callable kernel                    |
-| Elaboration-time    | Properties resolved during elaboration (containers, topology, processes) |
-| Execution-time      | Properties requiring specialization (packed widths, compiled code shape) |
-| Container           | Unpacked array with elaboration-resolved size and layout metadata        |
-| Arena               | Contiguous byte memory for design state, allocated after elaboration     |
+| Term                | Definition                                                                     |
+| ------------------- | ------------------------------------------------------------------------------ |
+| Module Definition   | Source-level `module M; ... endmodule`                                         |
+| Specialization      | `(ModuleDefId, BehaviorFingerprint)` -- unit of compilation                    |
+| Instance            | Runtime object with `this_base`                                                |
+| BehaviorFingerprint | Hash of execution-time inputs that affect the compiled artifact                |
+| SpecLayout          | Specialization-scoped mapping from slot to offset                              |
+| Design Realization  | Materializing the executable runtime image from specializations + design graph |
+| InstanceConstBlock  | Per-instance storage for value-only parameters                                 |
+| Kernelization       | Transforming a process into an inline-callable kernel                          |
+| Elaboration-time    | Properties resolved during elaboration (containers, topology, processes)       |
+| Execution-time      | Properties requiring specialization (packed widths, compiled code shape)       |
+| Container           | Unpacked array with elaboration-resolved size and layout metadata              |
+| Arena               | Contiguous byte memory for design state, allocated after elaboration           |

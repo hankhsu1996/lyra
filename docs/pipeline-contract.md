@@ -51,7 +51,7 @@ MIR defines how the program executes. All semantic questions are answered here.
 
 LLVM IR is not where language semantics live.
 
-### Specialization -> Assembly
+### Specialization -> Realization
 
 | Must Do                                   | Must NOT Do                          |
 | ----------------------------------------- | ------------------------------------ |
@@ -62,7 +62,7 @@ LLVM IR is not where language semantics live.
 
 The specialization boundary is the key architectural invariant. Violations here break parallelism and incrementality.
 
-### Assembly -> Runtime
+### Realization -> Runtime
 
 | Must Do                             | Must NOT Do                   |
 | ----------------------------------- | ----------------------------- |
@@ -97,17 +97,17 @@ These must flow end-to-end through the pipeline:
 
 ## Forbidden Cross-Layer Behavior
 
-| Violation                           | Why It's Wrong                                 |
-| ----------------------------------- | ---------------------------------------------- |
-| LLVM fixes SV semantics             | Semantics must be fixed in MIR                 |
-| MIR re-interprets syntax            | Syntax interpretation is HIR's job             |
-| HIR encodes execution               | Execution semantics belong in MIR              |
-| Post-HIR user diagnostics           | All user errors caught at AST -> HIR boundary  |
-| Backend creates types               | Types are language-level, owned by HIR         |
-| Backend manages storage             | Instance storage is owned by runtime           |
-| Backend invents scheduling          | Scheduling semantics belong in runtime         |
-| Design-global IDs in specialization | Breaks parallelism and incrementality          |
-| Instance paths in compiled code     | Instance binding is assembly-time, not compile |
+| Violation                           | Why It's Wrong                                                  |
+| ----------------------------------- | --------------------------------------------------------------- |
+| LLVM fixes SV semantics             | Semantics must be fixed in MIR                                  |
+| MIR re-interprets syntax            | Syntax interpretation is HIR's job                              |
+| HIR encodes execution               | Execution semantics belong in MIR                               |
+| Post-HIR user diagnostics           | All user errors caught at AST -> HIR boundary                   |
+| Backend creates types               | Types are language-level, owned by HIR                          |
+| Backend manages storage             | Instance storage is owned by runtime                            |
+| Backend invents scheduling          | Scheduling semantics belong in runtime                          |
+| Design-global IDs in specialization | Breaks parallelism and incrementality                           |
+| Instance paths in compiled code     | Instance binding belongs to design realization, not compilation |
 
 ## Error Boundaries
 

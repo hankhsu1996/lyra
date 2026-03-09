@@ -19,7 +19,7 @@ Changes invalidate the minimum possible scope. This requires:
 - **Stable keys** -- identifiers that survive edits to unrelated code
 - **Small invalidation surface** -- changing one module recompiles only its affected specializations (and explicit dependents), not the entire design
 - **Strict layering** -- each pipeline stage depends only on its input, never on stages before or after its predecessor
-- **Assembly reuse** -- if module bodies are unchanged, compiled specializations are reused and only assembly tables are rebuilt
+- **Realization reuse** -- if module bodies are unchanged, compiled specializations are reused and only realization tables are rebuilt
 
 ### Performance
 
@@ -42,9 +42,9 @@ Correctness comes from structure, not discipline:
 
 These are consequences of the north stars, not goals in themselves.
 
-### Compile per Specialization, Assemble per Design, Run per Instance
+### Compile per Specialization, Realize per Design, Run per Instance
 
-`ModuleSpecId = (ModuleDefId, BehaviorFingerprint)` is the compile-time unit. Code is generated once per specialization. At assembly time, instances are bound to compiled specializations and connectivity tables are built. At runtime, each instance owns its own state and the shared specialization code operates on it via `this_base` + relative offset.
+`ModuleSpecId = (ModuleDefId, BehaviorFingerprint)` is the compile-time unit. Code is generated once per specialization. During design realization, instances are bound to compiled specializations and connectivity tables are built. At runtime, each instance owns its own state and the shared specialization code operates on it via `this_base` + relative offset.
 
 This follows from **parallelism** (compile units are specializations) and **performance** (O(1) storage access).
 
@@ -57,9 +57,9 @@ Strongly-typed IDs (`ModuleSpecId`, `SymbolId`, `TypeId`, etc.) serve two purpos
 
 This follows from **incrementality** (stable keys) and **lifecycle** (strong invariants).
 
-### Specialization-Scoped IR, Instances at Assembly/Runtime
+### Specialization-Scoped IR, Instances at Realization/Runtime
 
-HIR and MIR are internal to specialization compilation and are specialization-scoped. No instance paths, no design-global slot IDs, no design-global allocation. Instance creation, storage allocation, and hierarchy wiring happen at assembly/runtime. The IR never duplicates code for structurally identical instances.
+HIR and MIR are internal to specialization compilation and are specialization-scoped. No instance paths, no design-global slot IDs, no design-global allocation. Instance creation, storage allocation, and hierarchy wiring happen at realization/runtime. The IR never duplicates code for structurally identical instances.
 
 This follows from **parallelism** (IR scales with specializations) and **incrementality** (specialization changes do not cascade through instance graphs).
 
@@ -106,4 +106,4 @@ How existing decisions follow from these principles:
 - **Kernelization within specialization** -> performance: scheduler bypass without cross-module coupling
 - **Value-only parameters as instance constants** -> parallelism: 16 banks = 1 specialization, not 16
 - **Unpacked sizes as elaboration-time metadata** -> parallelism: `int a[4]` and `int a[8]` share compiled code
-- **Generate-for as elaboration, not specialization** -> incrementality: adding instances doesn't recompile parent
+- **Generate-for as elaboration, not specialization** -- incrementality: adding instances doesn't recompile parent
