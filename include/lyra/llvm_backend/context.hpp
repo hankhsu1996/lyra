@@ -122,7 +122,6 @@ class Context {
   [[nodiscard]] auto GetLyraPackedFromString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunSimulation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunProcessSync() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraTrap() -> llvm::Function*;
   [[nodiscard]] auto GetLyraLoopBudgetPtr() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPlusargsTest() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPlusargsValueInt() -> llvm::Function*;
@@ -612,7 +611,6 @@ class Context {
   llvm::Function* lyra_init_runtime_ = nullptr;
   llvm::Function* lyra_resolve_base_dir_ = nullptr;
   llvm::Function* lyra_report_time_ = nullptr;
-  llvm::Function* lyra_trap_ = nullptr;
   llvm::Function* lyra_loop_budget_ptr_ = nullptr;
   llvm::Function* lyra_dynarray_new_ = nullptr;
   llvm::Function* lyra_dynarray_new_copy_ = nullptr;

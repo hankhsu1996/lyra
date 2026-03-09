@@ -19,7 +19,6 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/loop_budget.hpp"
 #include "lyra/runtime/trace_flush.hpp"
-#include "lyra/runtime/trap.hpp"
 
 namespace lyra::runtime {
 
@@ -159,8 +158,7 @@ void Engine::RunOneActivation(const ScheduledEvent& event) {
   phase_.store(
       static_cast<uint32_t>(Phase::kRunProcess), std::memory_order_release);
 
-  // Reset trap state and loop budget before each process activation.
-  ResetTlsTrap();
+  // Reset loop budget before each process activation.
   LyraResetLoopBudget(kDefaultLoopBudget);
 
   runner_(*this, event.handle, event.resume);

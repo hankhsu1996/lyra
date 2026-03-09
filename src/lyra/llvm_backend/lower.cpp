@@ -945,7 +945,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
 
     // Generate comb wrapper functions.
     // Process functions use the pointer-out ABI: void(ptr, i32, ptr %out).
-    // Comb runtime ABI is void(ptr, i32) — no outcome pointer.
+    // Comb runtime ABI is void(ptr, i32) -- no outcome pointer.
     // Each wrapper allocates a local outcome buffer, calls the process
     // function with &outcome, and discards the result.
     auto* null_ptr =
@@ -981,8 +981,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
             std::format("__lyra_comb_wrapper_{}", ki), mod);
         auto* entry = llvm::BasicBlock::Create(ctx, "entry", wrapper);
         llvm::IRBuilder<> wb(entry);
-        auto* outcome_buf =
-            wb.CreateAlloca(outcome_mem_ty, nullptr, "outcome");
+        auto* outcome_buf = wb.CreateAlloca(outcome_mem_ty, nullptr, "outcome");
         wb.CreateCall(
             proc_fn_ty, proc_fn,
             {wrapper->getArg(0), wrapper->getArg(1), outcome_buf});
@@ -999,8 +998,9 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       comb_funcs_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
       comb_funcs_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
           comb_func_array_type, comb_funcs_global,
-          llvm::ArrayRef<llvm::Constant*>{llvm::ConstantInt::get(i32_ty, 0),
-                                          llvm::ConstantInt::get(i32_ty, 0)});
+          llvm::ArrayRef<llvm::Constant*>{
+              llvm::ConstantInt::get(i32_ty, 0),
+              llvm::ConstantInt::get(i32_ty, 0)});
     }
 
     // LyraRuntimeAbi field indices. Must match runtime_abi.hpp layout.

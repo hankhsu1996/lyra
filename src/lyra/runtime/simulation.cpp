@@ -37,7 +37,6 @@
 #include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/suspend_record.hpp"
-#include "lyra/runtime/trap.hpp"
 
 namespace {
 
@@ -56,38 +55,6 @@ struct StateHeader {
 auto FinalTime() -> uint64_t& {
   static uint64_t value = 0;
   return value;
-}
-
-// Decode a raw process exit status and consume any pending trap payload.
-// Returns the consumed TrapPayload if the process trapped, or nullopt for kOk.
-// Enforces the process-exit ABI contract:
-//   kTrap must have a pending payload (internal error otherwise)
-//   kOk must not have a pending payload (internal error otherwise)
-auto ConsumeProcessExit(uint32_t raw_exit, const char* caller)
-    -> std::optional<lyra::runtime::TrapPayload> {
-  using lyra::runtime::ProcessExitCode;
-  switch (raw_exit) {
-    case static_cast<uint32_t>(ProcessExitCode::kOk): {
-      auto stale = lyra::runtime::ConsumeTlsTrap();
-      if (stale.has_value()) {
-        throw lyra::common::InternalError(
-            caller, "process returned kOk but a trap payload is pending");
-      }
-      return std::nullopt;
-    }
-    case static_cast<uint32_t>(ProcessExitCode::kTrap): {
-      auto payload = lyra::runtime::ConsumeTlsTrap();
-      if (!payload.has_value()) {
-        throw lyra::common::InternalError(
-            caller, "process returned kTrap but no trap payload is pending");
-      }
-      return payload;
-    }
-    default:
-      throw lyra::common::InternalError(
-          caller,
-          std::format("process returned unknown exit code {}", raw_exit));
-  }
 }
 
 void HandleSuspendRecord(
@@ -350,22 +317,34 @@ extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
   // Entry block is always block 0 (ABI contract with process generation)
   constexpr uint32_t kEntryBlock = 0;
 
-  // Reset suspend record, trap state, and loop budget before execution.
-  // Same execution contract as RunOneActivation.
+  // Reset suspend record and loop budget before execution.
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
   suspend->tag = lyra::runtime::SuspendTag::kFinished;
-  lyra::runtime::ResetTlsTrap();
   LyraResetLoopBudget(kDefaultLoopBudget);
 
-  uint32_t raw_exit = process(state, kEntryBlock);
-  auto trap = ConsumeProcessExit(raw_exit, "LyraRunProcessSync");
+  // Pointer-out ABI contract: caller owns the outcome buffer, callee must
+  // write exactly one valid ProcessOutcome before returning. Sentinel tag
+  // (UINT32_MAX) detects codegen bugs where a process path misses the write.
+  lyra::runtime::ProcessOutcome outcome{};
+  outcome.tag = UINT32_MAX;
+  process(state, kEntryBlock, &outcome);
 
-  if (trap.has_value()) {
-    lyra::PrintError(
-        std::format(
-            "init process trapped (reason={}, a={}, b={}), aborting",
-            static_cast<int>(trap->reason), trap->a, trap->b));
-    std::abort();
+  switch (static_cast<lyra::runtime::ProcessExitCode>(outcome.tag)) {
+    case lyra::runtime::ProcessExitCode::kOk:
+      break;
+    case lyra::runtime::ProcessExitCode::kTrap:
+      lyra::PrintError(
+          std::format(
+              "init process trapped (reason={}, a={}, b={}), aborting",
+              outcome.reason, outcome.a, outcome.b));
+      std::abort();
+    default:
+      throw lyra::common::InternalError(
+          "LyraRunProcessSync",
+          std::format(
+              "process returned invalid exit tag {} (sentinel=codegen bug, "
+              "other=unknown tag)",
+              outcome.tag));
   }
 
   // Init processes must not suspend - they run to completion
@@ -392,12 +371,32 @@ auto MakeProcessRunner(
     auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
     SuspendReset(suspend);
 
-    uint32_t raw_exit = procs[proc_idx](state, resume.block_index);
-    auto trap = ConsumeProcessExit(raw_exit, "MakeProcessRunner");
+    // Pointer-out ABI contract: caller owns the outcome buffer, callee must
+    // write exactly one valid ProcessOutcome before returning. Sentinel tag
+    // (UINT32_MAX) detects codegen bugs where a process path misses the write.
+    lyra::runtime::ProcessOutcome outcome{};
+    outcome.tag = UINT32_MAX;
+    procs[proc_idx](state, resume.block_index, &outcome);
 
-    if (trap.has_value()) {
-      eng.HandleTrap(proc_idx, *trap);
-      return;
+    switch (static_cast<lyra::runtime::ProcessExitCode>(outcome.tag)) {
+      case lyra::runtime::ProcessExitCode::kOk:
+        break;
+      case lyra::runtime::ProcessExitCode::kTrap: {
+        lyra::runtime::TrapPayload payload{
+            .reason = static_cast<lyra::runtime::TrapReason>(outcome.reason),
+            .a = outcome.a,
+            .b = outcome.b,
+        };
+        eng.HandleTrap(proc_idx, payload);
+        return;
+      }
+      default:
+        throw lyra::common::InternalError(
+            "MakeProcessRunner",
+            std::format(
+                "process returned invalid exit tag {} (sentinel=codegen bug, "
+                "other=unknown tag)",
+                outcome.tag));
     }
 
     // When the engine has wait-site metadata and suspend-record access,

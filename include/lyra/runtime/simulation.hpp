@@ -12,10 +12,21 @@ namespace lyra::runtime {
 auto GetFsBaseDir() -> const std::filesystem::path&;
 
 // Explicit process exit status returned by LLVM-generated process functions.
-// LLVM ABI is i32; C++ contract uses this named enum.
 enum class ProcessExitCode : uint32_t {
   kOk = 0,    // Normal completion (suspend, finish, etc.)
   kTrap = 1,  // Terminal trap (loop budget, $fatal, etc.)
+};
+
+// Explicit process execution outcome returned directly by LLVM-generated
+// process functions. POD struct of four uint32_t fields (16 bytes).
+//
+// For kOk: { kOk, 0, 0, 0 }
+// For kTrap: { kTrap, reason, a, b }
+struct ProcessOutcome {
+  uint32_t tag;     // ProcessExitCode
+  uint32_t reason;  // TrapReason as uint32_t; meaningful only for kTrap
+  uint32_t a;       // trap payload field (e.g., loop_site_id)
+  uint32_t b;       // trap payload field / spare
 };
 
 }  // namespace lyra::runtime
@@ -24,8 +35,11 @@ enum class ProcessExitCode : uint32_t {
 // - state: pointer to ProcessState (contains SuspendRecord at offset 0, then
 // slots)
 // - resume_block: which basic block to start execution from
-// Returns uint32_t (ProcessExitCode): 0 = kOk, 1 = kTrap.
-using LyraProcessFunc = uint32_t (*)(void* state, uint32_t resume_block);
+// - out: caller-owned buffer for the process outcome
+// Pointer-out ABI: callee writes exactly one valid ProcessOutcome before
+// returning. No struct return across JIT boundary, no TLS, no longjmp.
+using LyraProcessFunc = void (*)(
+    void* state, uint32_t resume_block, lyra::runtime::ProcessOutcome* out);
 
 // Container mutation kind for LyraNotifyContainerMutation.
 enum class ContainerMutationKind : uint32_t {
