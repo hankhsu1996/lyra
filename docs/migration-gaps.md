@@ -118,13 +118,9 @@ Remaining (design-global codegen model):
 
 ### Major
 
-**M1: Assembly fused into MIR lowering**
+**M1: Assembly fused into MIR lowering** (resolved by D1)
 
-`ApplyBindings()` called during `LowerDesign()`. Connection processes mixed with module processes.
-
-- `src/lyra/lowering/hir_to_mir/design_lower.cpp:99` - `ApplyBindings()` mid-lowering
-- `src/lyra/lowering/hir_to_mir/design_connections.cpp` - synthetic connection processes
-- `include/lyra/mir/design.hpp:83-85` - `alias_map` and `connection_processes` in Design
+Resolved: `ApplyBindings()` replaced by `CompileBindings()` (lowering) + `link::AssembleBindings()` (link phase). MIR lowering produces `mir::CompiledBindingPlan` artifacts; link phase attaches connection processes, alias map, and port connections to `mir::Design`. No design mutation during lowering.
 
 **M2: ParamRole classification needs refinement for construction vs behavior**
 
@@ -291,13 +287,14 @@ Existing design-wide codegen continues to work by reconstructing per-instance pr
 
 ### Phase D: Assembly extraction
 
-**D1: Extract ApplyBindings from MIR lowering**
+**D1: Extract ApplyBindings from MIR lowering** (done)
 
 - Goal: Port connection binding is a separate assembly step
-- Areas: `src/lyra/lowering/hir_to_mir/design_lower.cpp`, new `include/lyra/assembly/binding.hpp`, `src/lyra/assembly/binding.cpp`
+- Areas: `src/lyra/lowering/hir_to_mir/design_connections.cpp`, `include/lyra/mir/compiled_bindings.hpp`, `include/lyra/link/assemble_bindings.hpp`, `src/lyra/link/assemble_bindings.cpp`
 - Acceptance: `LowerDesign()` no longer calls `ApplyBindings()`. Assembly step consumes `DesignBindingPlan` + compiled specializations. Test: MIR lowering produces no connection processes.
 - Dependencies: B4
 - Invariant: MIR lowering is purely specialization-scoped.
+- Done: `ApplyBindings()` replaced by `CompileBindings()` (returns `mir::CompiledBindingPlan`) + `link::AssembleBindings()` (attaches to design). Artifact types (`CompiledBindingPlan`, `CompiledDriveBinding`, `CompiledAliasBinding`) live in `lyra::mir` namespace (`include/lyra/mir/compiled_bindings.hpp`). `PortConnection` extracted to own header (`include/lyra/mir/port_connection.hpp`). `DesignLoweringResult` carries both `mir::Design` and `CompiledBindingPlan`. Link phase (`lyra::link`) has no HIR/lowering/slang dependencies. Pipeline explicitly orchestrates: lowering -> link -> runtime.
 
 **D2: Define InstanceConstBlock**
 
@@ -421,7 +418,7 @@ Key consequences: unpacked container sizes are no longer structural specializati
 
 1. **BehaviorFingerprint granularity**: Hash structural parameter values, or hash generated HIR? Hashing params is simpler but might miss cases where different param values produce identical IR.
 
-2. **Connection process ownership**: Connection processes span two specializations (parent port + child port). Assembly must create them using both specializations' layouts.
+2. **Connection process ownership**: Resolved by D1. Connection processes are compiled during lowering (using both endpoint layouts) and assembled by `link::AssembleBindings()` (arena registration + design attachment).
 
 3. **Package compilation**: Packages have no instances. Should they be their own specialization unit or a separate concept?
 

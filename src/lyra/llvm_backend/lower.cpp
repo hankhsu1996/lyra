@@ -39,32 +39,24 @@
 #include <llvm/TargetParser/SubtargetFeature.h>
 
 #include "lyra/common/constant.hpp"
-#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
-#include "lyra/common/source_manager.hpp"
-#include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/link/build_design_metadata.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/design_metadata_lowering.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
-#include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/runtime/feature_flags.hpp"
-#include "lyra/runtime/loop_site_meta.hpp"
-#include "lyra/runtime/process_meta.hpp"
-#include "lyra/runtime/process_meta_abi.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
-#include "lyra/runtime/slot_meta.hpp"
-#include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
@@ -123,367 +115,6 @@ void SetHostDataLayout(llvm::Module& module) {
 
   module.setTargetTriple(triple);
   module.setDataLayout(tm->createDataLayout());
-}
-
-// Classify a design slot's storage kind from its TypeId.
-auto ClassifySlotStorageKind(
-    TypeId type_id, const TypeArena& types, bool force_two_state)
-    -> runtime::SlotStorageKind {
-  const Type& type = types[type_id];
-  switch (type.Kind()) {
-    case TypeKind::kString:
-      return runtime::SlotStorageKind::kString;
-    case TypeKind::kDynamicArray:
-    case TypeKind::kQueue:
-      return runtime::SlotStorageKind::kHandle;
-    case TypeKind::kUnpackedArray:
-    case TypeKind::kUnpackedStruct:
-    case TypeKind::kUnpackedUnion:
-      return runtime::SlotStorageKind::kAggregate;
-    case TypeKind::kAssociativeArray:
-      return runtime::SlotStorageKind::kHandle;
-    default:
-      break;
-  }
-  if (IsPacked(type) && IsFourState(type_id, types, force_two_state)) {
-    return runtime::SlotStorageKind::kPacked4;
-  }
-  return runtime::SlotStorageKind::kPacked2;
-}
-
-// Build the slot metadata global constant table.
-// Returns {constant_ptr, slot_count}. If no slots, returns {null, 0}.
-struct SlotMetaTableResult {
-  llvm::Constant* table_ptr;
-  uint32_t count;
-};
-
-auto EmitSlotMetaTable(
-    Context& context, const std::vector<SlotInfo>& slots,
-    const DesignLayout& design_layout, const llvm::DataLayout& dl,
-    const TypeArena& types) -> SlotMetaTableResult {
-  if (slots.empty()) {
-    auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
-    return {
-        .table_ptr = llvm::ConstantPointerNull::get(
-            llvm::cast<llvm::PointerType>(ptr_ty)),
-        .count = 0};
-  }
-
-  auto* design_struct = design_layout.llvm_type;
-  const llvm::StructLayout* sl = dl.getStructLayout(design_struct);
-  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-
-  std::vector<llvm::Constant*> words;
-  words.reserve(slots.size() * runtime::slot_meta_abi::kStride);
-
-  for (const auto& slot : slots) {
-    auto it = design_layout.slot_to_field.find(slot.slot_id);
-    if (it == design_layout.slot_to_field.end()) {
-      throw common::InternalError(
-          "EmitSlotMetaTable",
-          std::format("slot_id {} not in design layout", slot.slot_id.value));
-    }
-    uint32_t field_idx = it->second;
-    auto* field_type = design_struct->getElementType(field_idx);
-
-    uint64_t raw_base_off = sl->getElementOffset(field_idx);
-    uint64_t raw_total_bytes = dl.getTypeAllocSize(field_type);
-    if (raw_base_off > UINT32_MAX || raw_total_bytes > UINT32_MAX) {
-      throw common::InternalError(
-          "EmitSlotMetaTable", "DesignState exceeds 4GB (not supported)");
-    }
-    auto base_off = static_cast<uint32_t>(raw_base_off);
-    auto total_bytes = static_cast<uint32_t>(raw_total_bytes);
-
-    auto kind =
-        ClassifySlotStorageKind(slot.type_id, types, context.IsForceTwoState());
-    auto kind_val = static_cast<uint32_t>(kind);
-
-    uint32_t value_off = 0;
-    uint32_t value_bytes = 0;
-    uint32_t unk_off = 0;
-    uint32_t unk_bytes = 0;
-
-    if (kind == runtime::SlotStorageKind::kPacked4) {
-      auto* four_state = llvm::dyn_cast<llvm::StructType>(field_type);
-      if (four_state == nullptr) {
-        throw common::InternalError(
-            "EmitSlotMetaTable", std::format(
-                                     "expected StructType for kPacked4 slot {}",
-                                     slot.slot_id.value));
-      }
-      const llvm::StructLayout* fs_layout = dl.getStructLayout(four_state);
-      uint64_t raw_value_off = fs_layout->getElementOffset(0);
-      uint64_t raw_value_bytes =
-          dl.getTypeAllocSize(four_state->getElementType(0));
-      uint64_t raw_unk_off = fs_layout->getElementOffset(1);
-      uint64_t raw_unk_bytes =
-          dl.getTypeAllocSize(four_state->getElementType(1));
-
-      if (raw_value_off > UINT32_MAX || raw_value_bytes > UINT32_MAX ||
-          raw_unk_off > UINT32_MAX || raw_unk_bytes > UINT32_MAX) {
-        throw common::InternalError(
-            "EmitSlotMetaTable",
-            "4-state plane layout exceeds 4GB (not supported)");
-      }
-      value_off = static_cast<uint32_t>(raw_value_off);
-      value_bytes = static_cast<uint32_t>(raw_value_bytes);
-      unk_off = static_cast<uint32_t>(raw_unk_off);
-      unk_bytes = static_cast<uint32_t>(raw_unk_bytes);
-    }
-
-    words.push_back(llvm::ConstantInt::get(i32_ty, base_off));
-    words.push_back(llvm::ConstantInt::get(i32_ty, total_bytes));
-    words.push_back(llvm::ConstantInt::get(i32_ty, kind_val));
-    words.push_back(llvm::ConstantInt::get(i32_ty, value_off));
-    words.push_back(llvm::ConstantInt::get(i32_ty, value_bytes));
-    words.push_back(llvm::ConstantInt::get(i32_ty, unk_off));
-    words.push_back(llvm::ConstantInt::get(i32_ty, unk_bytes));
-  }
-
-  auto* array_type = llvm::ArrayType::get(i32_ty, words.size());
-  auto* initializer = llvm::ConstantArray::get(array_type, words);
-  auto* global_var = new llvm::GlobalVariable(
-      context.GetModule(), array_type, true, llvm::GlobalValue::InternalLinkage,
-      initializer, "__lyra_slot_meta_table");
-
-  // GEP to first element: [N x i32]* -> i32*
-  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
-  auto* table_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
-      array_type, global_var, llvm::ArrayRef<llvm::Constant*>{zero, zero});
-
-  return {.table_ptr = table_ptr, .count = static_cast<uint32_t>(slots.size())};
-}
-
-// Map MIR ProcessKind to runtime ProcessKind.
-auto MapProcessKind(mir::ProcessKind kind) -> runtime::ProcessKind {
-  switch (kind) {
-    case mir::ProcessKind::kOnce:
-      return runtime::ProcessKind::kInitial;
-    case mir::ProcessKind::kFinal:
-      return runtime::ProcessKind::kFinal;
-    case mir::ProcessKind::kLooping:
-      return runtime::ProcessKind::kAlways;
-  }
-  return runtime::ProcessKind::kAlways;
-}
-
-// Resolve a process origin to file path, line, and col.
-struct ResolvedLoc {
-  std::string file;
-  uint32_t line = 0;
-  uint32_t col = 0;
-};
-
-auto ResolveProcessOrigin(
-    common::OriginId origin, const lowering::DiagnosticContext* diag_ctx,
-    const SourceManager* source_manager) -> ResolvedLoc {
-  if (diag_ctx == nullptr || source_manager == nullptr || !origin.IsValid()) {
-    return {};
-  }
-
-  // DiagnosticContext wraps ResolveToSpan, but we need to call it via the
-  // type-erased interface. Instead, try to resolve via the source_manager
-  // directly using knowledge of the OriginMap. For now, we don't have direct
-  // access to ResolveToSpan from DiagnosticContext. So we skip source location
-  // resolution and rely on instance path for process identity.
-  // TODO(hankhsu): Thread ResolveToSpan access for full source location.
-  return {};
-}
-
-// Build a string pool and process meta word table from the process list.
-// Returns {pool_global, pool_size, words_global, num_entries}.
-struct ProcessMetaTableResult {
-  llvm::Constant* pool_ptr;
-  uint32_t pool_size;
-  llvm::Constant* words_ptr;
-  uint32_t count;
-};
-
-auto EmitProcessMetaTable(
-    Context& context, const LoweringInput& input,
-    const std::vector<ScheduledProcess>& scheduled_processes, size_t num_init)
-    -> ProcessMetaTableResult {
-  auto& ctx = context.GetLlvmContext();
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto null_ptr =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-
-  // Only emit meta for module processes (skip init processes)
-  auto num_module = scheduled_processes.size() - num_init;
-  if (num_module == 0) {
-    return {
-        .pool_ptr = null_ptr,
-        .pool_size = 0,
-        .words_ptr = null_ptr,
-        .count = 0};
-  }
-
-  // Build string pool: NUL-terminated strings for instance paths and file names
-  std::vector<char> pool;
-  pool.push_back('\0');  // Offset 0 = empty string
-
-  auto add_string = [&](const std::string& s) -> uint32_t {
-    if (s.empty()) return 0;
-    auto off = static_cast<uint32_t>(pool.size());
-    pool.insert(pool.end(), s.begin(), s.end());
-    pool.push_back('\0');
-    return off;
-  };
-
-  // Build word table
-  std::vector<llvm::Constant*> words;
-  words.reserve(num_module * runtime::process_meta_abi::kStride);
-
-  const auto& instance_entries = input.design->instance_table.entries;
-
-  for (size_t i = num_init; i < scheduled_processes.size(); ++i) {
-    const auto& bp = scheduled_processes[i];
-    const auto& proc = (*input.mir_arena)[bp.process_id];
-
-    // Instance path: use bound process module_index for instance identity
-    std::string inst_path;
-    if (bp.module_index && bp.module_index.value < instance_entries.size()) {
-      inst_path = instance_entries[bp.module_index.value].full_path;
-    }
-    uint32_t inst_off = add_string(inst_path);
-
-    // Process kind
-    auto kind = MapProcessKind(proc.kind);
-
-    // Source location
-    auto loc =
-        ResolveProcessOrigin(proc.origin, input.diag_ctx, input.source_manager);
-    uint32_t file_off = add_string(loc.file);
-
-    uint32_t kind_packed = static_cast<uint32_t>(kind);
-
-    words.push_back(llvm::ConstantInt::get(i32_ty, inst_off));
-    words.push_back(llvm::ConstantInt::get(i32_ty, kind_packed));
-    words.push_back(llvm::ConstantInt::get(i32_ty, file_off));
-    words.push_back(llvm::ConstantInt::get(i32_ty, loc.line));
-    words.push_back(llvm::ConstantInt::get(i32_ty, loc.col));
-  }
-
-  // Emit string pool as global constant
-  auto& mod = context.GetModule();
-  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
-  std::vector<llvm::Constant*> pool_bytes;
-  pool_bytes.reserve(pool.size());
-  for (char c : pool) {
-    pool_bytes.push_back(
-        llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(c)));
-  }
-  auto* pool_array_type = llvm::ArrayType::get(i8_ty, pool.size());
-  auto* pool_init = llvm::ConstantArray::get(pool_array_type, pool_bytes);
-  auto* pool_global = new llvm::GlobalVariable(
-      mod, pool_array_type, true, llvm::GlobalValue::InternalLinkage, pool_init,
-      "__lyra_process_meta_pool");
-
-  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
-  auto* pool_gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
-      pool_array_type, pool_global,
-      llvm::ArrayRef<llvm::Constant*>{zero, zero});
-
-  // Emit words table as global constant
-  auto* words_array_type = llvm::ArrayType::get(i32_ty, words.size());
-  auto* words_init = llvm::ConstantArray::get(words_array_type, words);
-  auto* words_global = new llvm::GlobalVariable(
-      mod, words_array_type, true, llvm::GlobalValue::InternalLinkage,
-      words_init, "__lyra_process_meta_table");
-
-  auto* words_gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
-      words_array_type, words_global,
-      llvm::ArrayRef<llvm::Constant*>{zero, zero});
-
-  return {
-      .pool_ptr = pool_gep,
-      .pool_size = static_cast<uint32_t>(pool.size()),
-      .words_ptr = words_gep,
-      .count = static_cast<uint32_t>(num_module),
-  };
-}
-
-// Build a loop site metadata table from origins accumulated during codegen.
-// Same pattern as EmitProcessMetaTable.
-auto EmitLoopSiteMetaTable(Context& context, const LoweringInput& input)
-    -> ProcessMetaTableResult {
-  auto& ctx = context.GetLlvmContext();
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto null_ptr =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-
-  const auto& origins = context.GetLoopSiteOrigins();
-  if (origins.empty()) {
-    return {
-        .pool_ptr = null_ptr,
-        .pool_size = 0,
-        .words_ptr = null_ptr,
-        .count = 0};
-  }
-
-  std::vector<char> pool;
-  pool.push_back('\0');
-
-  auto add_string = [&](const std::string& s) -> uint32_t {
-    if (s.empty()) return 0;
-    auto off = static_cast<uint32_t>(pool.size());
-    pool.insert(pool.end(), s.begin(), s.end());
-    pool.push_back('\0');
-    return off;
-  };
-
-  std::vector<llvm::Constant*> words;
-  words.reserve(origins.size() * runtime::loop_site_meta_abi::kStride);
-
-  for (const auto& origin : origins) {
-    auto loc =
-        ResolveProcessOrigin(origin, input.diag_ctx, input.source_manager);
-    uint32_t file_off = add_string(loc.file);
-
-    words.push_back(llvm::ConstantInt::get(i32_ty, file_off));
-    words.push_back(llvm::ConstantInt::get(i32_ty, loc.line));
-    words.push_back(llvm::ConstantInt::get(i32_ty, loc.col));
-  }
-
-  auto& mod = context.GetModule();
-  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
-  std::vector<llvm::Constant*> pool_bytes;
-  pool_bytes.reserve(pool.size());
-  for (char c : pool) {
-    pool_bytes.push_back(
-        llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(c)));
-  }
-  auto* pool_array_type = llvm::ArrayType::get(i8_ty, pool.size());
-  auto* pool_init = llvm::ConstantArray::get(pool_array_type, pool_bytes);
-  auto* pool_global = new llvm::GlobalVariable(
-      mod, pool_array_type, true, llvm::GlobalValue::InternalLinkage, pool_init,
-      "__lyra_loop_site_meta_pool");
-
-  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
-  auto* pool_gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
-      pool_array_type, pool_global,
-      llvm::ArrayRef<llvm::Constant*>{zero, zero});
-
-  auto* words_array_type = llvm::ArrayType::get(i32_ty, words.size());
-  auto* words_init = llvm::ConstantArray::get(words_array_type, words);
-  auto* words_global = new llvm::GlobalVariable(
-      mod, words_array_type, true, llvm::GlobalValue::InternalLinkage,
-      words_init, "__lyra_loop_site_meta_table");
-
-  auto* words_gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
-      words_array_type, words_global,
-      llvm::ArrayRef<llvm::Constant*>{zero, zero});
-
-  return {
-      .pool_ptr = pool_gep,
-      .pool_size = static_cast<uint32_t>(pool.size()),
-      .words_ptr = words_gep,
-      .count = static_cast<uint32_t>(origins.size()),
-  };
 }
 
 struct WaitSiteMetaResult {
@@ -1230,111 +861,6 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       }
     }
 
-    // Kernelized connection descriptors: global table for batch evaluation.
-    // Instead of creating per-connection process states, we pass the descriptor
-    // table to the runtime for direct batch evaluation in the flush path.
-    llvm::Value* conn_desc_table_ptr = nullptr;
-    if (num_kernelized > 0) {
-      auto* design_struct = layout.design.llvm_type;
-      const llvm::StructLayout* design_sl = dl.getStructLayout(design_struct);
-
-      // Build connection descriptor constants (pre-compute all values as C++
-      // data, then emit as a single typed LLVM global constant array)
-      auto* i32_llvm = llvm::Type::getInt32Ty(ctx);
-      auto* i16_llvm = llvm::Type::getInt16Ty(ctx);
-      auto* i8_llvm = llvm::Type::getInt8Ty(ctx);
-
-      // ConnectionDescriptor LLVM struct type (mirrors C++ layout exactly)
-      auto* conn_desc_llvm_type = llvm::StructType::create(
-          ctx,
-          {i32_llvm, i32_llvm, i32_llvm,
-           i32_llvm,  // src/dst offset, size, dst_slot
-           i32_llvm, i8_llvm, i8_llvm,
-           i16_llvm,             // trigger_slot, edge, bit_idx, pad
-           i32_llvm, i32_llvm},  // trigger byte offset/size
-          "ConnectionDescriptor");
-
-      std::vector<llvm::Constant*> desc_constants;
-      desc_constants.reserve(num_kernelized);
-
-      for (uint32_t ki = 0; ki < num_kernelized; ++ki) {
-        const auto& entry = layout.connection_kernel_entries[ki];
-
-        auto src_it = layout.design.slot_to_field.find(entry.src_slot);
-        auto dst_it = layout.design.slot_to_field.find(entry.dst_slot);
-        if (src_it == layout.design.slot_to_field.end() ||
-            dst_it == layout.design.slot_to_field.end()) {
-          throw common::InternalError(
-              "LowerMirToLlvm",
-              "kernelized connection slot not in design layout");
-        }
-
-        uint32_t src_field = src_it->second;
-        uint32_t dst_field = dst_it->second;
-        auto src_offset =
-            static_cast<uint32_t>(design_sl->getElementOffset(src_field));
-        auto dst_offset =
-            static_cast<uint32_t>(design_sl->getElementOffset(dst_field));
-        auto* dst_field_type = design_struct->getElementType(dst_field);
-        auto byte_size =
-            static_cast<uint32_t>(dl.getTypeAllocSize(dst_field_type));
-
-        uint32_t trigger_byte_offset = 0;
-        uint32_t trigger_byte_size = 0;
-        uint8_t trigger_bit_index = 0;
-        if (entry.trigger_observed_place) {
-          auto trigger_slot_it =
-              layout.design.slot_to_field.find(entry.trigger_slot);
-          if (trigger_slot_it != layout.design.slot_to_field.end()) {
-            TypeId trigger_root_type =
-                input.design->slots[trigger_slot_it->first.value].type;
-            const auto& trigger_place =
-                (*input.mir_arena)[*entry.trigger_observed_place];
-            auto range = ResolveByteRange(
-                ctx, dl, *input.type_arena, trigger_place, trigger_root_type,
-                nullptr, force_two_state);
-            if (range.kind == RangeKind::kPrecise) {
-              trigger_byte_offset = range.byte_offset;
-              trigger_byte_size = range.byte_size;
-              trigger_bit_index = range.bit_index;
-            }
-          }
-        }
-
-        desc_constants.push_back(
-            llvm::ConstantStruct::get(
-                conn_desc_llvm_type,
-                {llvm::ConstantInt::get(i32_llvm, src_offset),
-                 llvm::ConstantInt::get(i32_llvm, dst_offset),
-                 llvm::ConstantInt::get(i32_llvm, byte_size),
-                 llvm::ConstantInt::get(i32_llvm, entry.dst_slot.value),
-                 llvm::ConstantInt::get(i32_llvm, entry.trigger_slot.value),
-                 llvm::ConstantInt::get(
-                     i8_llvm, static_cast<uint8_t>(entry.trigger_edge)),
-                 llvm::ConstantInt::get(i8_llvm, trigger_bit_index),
-                 llvm::ConstantInt::get(i16_llvm, 0),
-                 llvm::ConstantInt::get(i32_llvm, trigger_byte_offset),
-                 llvm::ConstantInt::get(i32_llvm, trigger_byte_size)}));
-      }
-
-      // Emit global constant table: @conn_descs = internal constant [N x
-      // %ConnDesc]
-      auto* desc_array_type =
-          llvm::ArrayType::get(conn_desc_llvm_type, num_kernelized);
-      auto* desc_table = new llvm::GlobalVariable(
-          mod, desc_array_type, true, llvm::GlobalValue::InternalLinkage,
-          llvm::ConstantArray::get(desc_array_type, desc_constants),
-          "__lyra_conn_descs");
-      desc_table->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-
-      // GEP to first element for runtime
-      conn_desc_table_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
-          desc_array_type, desc_table,
-          llvm::ArrayRef<llvm::Constant*>{
-              llvm::ConstantInt::get(i32_ty, 0),
-              llvm::ConstantInt::get(i32_ty, 0)});
-    }
-
     // Build function pointer array as global constant
     std::vector<llvm::Constant*> func_constants;
     func_constants.reserve(num_module_processes);
@@ -1349,7 +875,6 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
         "__lyra_module_funcs");
     funcs_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
-    // GEP to first element for scheduler
     auto* funcs_array = llvm::ConstantExpr::getInBoundsGetElementPtr(
         func_array_type, funcs_global,
         llvm::ArrayRef<llvm::Constant*>{
@@ -1360,10 +885,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     llvm::Value* plusargs_array = nullptr;
     llvm::Value* num_plusargs_val = nullptr;
     if (argv_forwarding) {
-      // AOT: plusargs come from argv[1:] at runtime
       auto* argc_val = main_func->getArg(0);
       auto* argv_val = main_func->getArg(1);
-      // Clamp to 0 if argc < 1 (practically impossible but defensive)
       auto* argc_minus_1 =
           builder.CreateSub(argc_val, llvm::ConstantInt::get(i32_ty, 1));
       auto* is_positive = builder.CreateICmpSGT(
@@ -1374,7 +897,6 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       plusargs_array = builder.CreateGEP(
           ptr_ty, argv_val, {llvm::ConstantInt::get(i32_ty, 1)}, "plusargs");
     } else {
-      // JIT: plusargs baked into IR as global string constants
       auto num_plusargs = static_cast<uint32_t>(input.plusargs.size());
       num_plusargs_val = llvm::ConstantInt::get(i32_ty, num_plusargs);
       if (num_plusargs > 0) {
@@ -1393,98 +915,30 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       }
     }
 
-    // Build instance paths array as global constant
-    const auto& instance_entries = input.design->instance_table.entries;
-    auto num_instance_paths = static_cast<uint32_t>(instance_entries.size());
-    llvm::Value* instance_paths_array = nullptr;
-    if (num_instance_paths > 0) {
-      // Create global string constants for all paths
-      std::vector<llvm::Constant*> path_constants;
-      path_constants.reserve(num_instance_paths);
-      for (uint32_t i = 0; i < num_instance_paths; ++i) {
-        auto* path_str = builder.CreateGlobalStringPtr(
-            instance_entries[i].full_path, std::format("inst_path_{}", i));
-        path_constants.push_back(llvm::cast<llvm::Constant>(path_str));
-      }
-      auto* path_array_type = llvm::ArrayType::get(ptr_ty, num_instance_paths);
-      auto* paths_global = new llvm::GlobalVariable(
-          mod, path_array_type, true, llvm::GlobalValue::InternalLinkage,
-          llvm::ConstantArray::get(path_array_type, path_constants),
-          "__lyra_instance_paths");
-      paths_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-      instance_paths_array = llvm::ConstantExpr::getInBoundsGetElementPtr(
-          path_array_type, paths_global,
-          llvm::ArrayRef<llvm::Constant*>{
-              llvm::ConstantInt::get(i32_ty, 0),
-              llvm::ConstantInt::get(i32_ty, 0)});
-    } else {
-      instance_paths_array =
-          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-    }
+    // Extract metadata inputs from layout/codegen facts
+    auto slot_meta_inputs = ExtractSlotMetaInputs(
+        context, slot_info, layout.design, dl, *input.type_arena);
+    auto conn_desc_entries = ExtractConnectionDescriptorEntries(
+        input, layout, dl, ctx, force_two_state);
+    auto scheduled_inputs = PrepareScheduledProcessInputs(
+        input, layout.scheduled_processes, num_init);
+    auto comb_inputs = PrepareCombKernelInputs(layout, num_init);
+    auto instance_paths = PrepareInstancePaths(input);
+    auto loop_site_inputs = PrepareLoopSiteInputs(context, input);
 
-    // Build slot metadata table
-    auto [meta_table, meta_count] = EmitSlotMetaTable(
-        context, slot_info, layout.design, mod.getDataLayout(),
-        *input.type_arena);
+    // Build design metadata via link (all table construction in one place)
+    link::DesignMetadataInputs metadata_inputs{
+        .slot_meta = std::move(slot_meta_inputs),
+        .scheduled_processes = std::move(scheduled_inputs),
+        .loop_sites = std::move(loop_site_inputs),
+        .connection_descriptors = std::move(conn_desc_entries),
+        .comb_kernels = std::move(comb_inputs),
+        .instance_paths = std::move(instance_paths),
+    };
+    auto metadata = link::BuildDesignMetadata(metadata_inputs);
 
-    // Build comb kernel word table.
-    // Format: [num_comb_kernels, (process_index, num_triggers, trigger_0,
-    // ...)*]
-    llvm::Value* comb_words_ptr =
-        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-    uint32_t comb_word_count = 0;
-    auto num_comb = static_cast<uint32_t>(layout.comb_kernel_entries.size());
-    if (num_comb > 0) {
-      // Build ProcessId -> module process index mapping
-      std::unordered_map<uint32_t, uint32_t> proc_id_to_module_idx;
-      for (uint32_t pi = 0; pi < num_regular_module; ++pi) {
-        auto proc_id = layout.scheduled_processes[num_init + pi].process_id;
-        proc_id_to_module_idx[proc_id.value] = pi;
-      }
-
-      // Build word table
-      std::vector<uint32_t> comb_words;
-      comb_words.push_back(num_comb);
-      for (const auto& ck : layout.comb_kernel_entries) {
-        auto it = proc_id_to_module_idx.find(ck.process_id.value);
-        if (it == proc_id_to_module_idx.end()) {
-          throw common::InternalError(
-              "LowerMirToLlvm",
-              "comb kernel process not found in module process list");
-        }
-        comb_words.push_back(it->second);
-        comb_words.push_back(static_cast<uint32_t>(ck.trigger_slots.size()));
-        for (const auto& slot : ck.trigger_slots) {
-          comb_words.push_back(slot.value);
-        }
-      }
-      comb_word_count = static_cast<uint32_t>(comb_words.size());
-
-      // Emit as global constant
-      std::vector<llvm::Constant*> word_constants;
-      word_constants.reserve(comb_words.size());
-      for (uint32_t w : comb_words) {
-        word_constants.push_back(llvm::ConstantInt::get(i32_ty, w));
-      }
-      auto* comb_array_type = llvm::ArrayType::get(i32_ty, comb_word_count);
-      auto* comb_global = new llvm::GlobalVariable(
-          mod, comb_array_type, true, llvm::GlobalValue::InternalLinkage,
-          llvm::ConstantArray::get(comb_array_type, word_constants),
-          "__lyra_comb_kernel_words");
-      comb_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-      comb_words_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
-          comb_array_type, comb_global,
-          llvm::ArrayRef<llvm::Constant*>{
-              llvm::ConstantInt::get(i32_ty, 0),
-              llvm::ConstantInt::get(i32_ty, 0)});
-    }
-
-    // Build process metadata table
-    auto proc_meta = EmitProcessMetaTable(
-        context, input, layout.scheduled_processes, num_init);
-
-    // Build loop site metadata table (from origins accumulated during codegen)
-    auto loop_meta = EmitLoopSiteMetaTable(context, input);
+    // Emit metadata as LLVM globals (thin emission only)
+    auto meta_globals = EmitDesignMetadataGlobals(context, metadata, builder);
 
     // Build wait-site metadata table (from entries collected during codegen)
     auto wait_site_meta = EmitWaitSiteMetaTable(context, all_wait_sites);
@@ -1524,39 +978,36 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       builder.CreateStore(val, gep);
     };
 
-    auto* conn_descs_arg = conn_desc_table_ptr != nullptr
-                               ? conn_desc_table_ptr
-                               : llvm::ConstantPointerNull::get(
-                                     llvm::cast<llvm::PointerType>(ptr_ty));
-
     store_field(
         kAbiVersion, llvm::ConstantInt::get(i32_ty, kRuntimeAbiVersion));
-    store_field(kAbiSlotMetaWords, meta_table);
+    store_field(kAbiSlotMetaWords, meta_globals.slot_meta_words);
     store_field(
-        kAbiSlotMetaWordCount, llvm::ConstantInt::get(i32_ty, meta_count));
-    store_field(kAbiProcessMetaWords, proc_meta.words_ptr);
+        kAbiSlotMetaWordCount,
+        llvm::ConstantInt::get(i32_ty, meta_globals.slot_meta_count));
+    store_field(kAbiProcessMetaWords, meta_globals.process_meta_words);
     store_field(
         kAbiProcessMetaWordCount,
-        llvm::ConstantInt::get(i32_ty, proc_meta.count));
-    store_field(kAbiProcessMetaStringPool, proc_meta.pool_ptr);
+        llvm::ConstantInt::get(i32_ty, meta_globals.process_meta_count));
+    store_field(kAbiProcessMetaStringPool, meta_globals.process_meta_pool);
     store_field(
         kAbiProcessMetaStringPoolSize,
-        llvm::ConstantInt::get(i32_ty, proc_meta.pool_size));
-    store_field(kAbiLoopSiteMetaWords, loop_meta.words_ptr);
+        llvm::ConstantInt::get(i32_ty, meta_globals.process_meta_pool_size));
+    store_field(kAbiLoopSiteMetaWords, meta_globals.loop_site_meta_words);
     store_field(
         kAbiLoopSiteMetaWordCount,
-        llvm::ConstantInt::get(i32_ty, loop_meta.count));
-    store_field(kAbiLoopSiteMetaStringPool, loop_meta.pool_ptr);
+        llvm::ConstantInt::get(i32_ty, meta_globals.loop_site_meta_count));
+    store_field(kAbiLoopSiteMetaStringPool, meta_globals.loop_site_meta_pool);
     store_field(
         kAbiLoopSiteMetaStringPoolSize,
-        llvm::ConstantInt::get(i32_ty, loop_meta.pool_size));
-    store_field(kAbiConnDescs, conn_descs_arg);
+        llvm::ConstantInt::get(i32_ty, meta_globals.loop_site_meta_pool_size));
+    store_field(kAbiConnDescs, meta_globals.conn_desc_table);
     store_field(
-        kAbiNumConnDescs, llvm::ConstantInt::get(i32_ty, num_kernelized));
-    store_field(kAbiCombKernelWords, comb_words_ptr);
+        kAbiNumConnDescs,
+        llvm::ConstantInt::get(i32_ty, meta_globals.conn_desc_count));
+    store_field(kAbiCombKernelWords, meta_globals.comb_kernel_words);
     store_field(
         kAbiNumCombKernelWords,
-        llvm::ConstantInt::get(i32_ty, comb_word_count));
+        llvm::ConstantInt::get(i32_ty, meta_globals.comb_kernel_word_count));
     store_field(
         kAbiFeatureFlags, llvm::ConstantInt::get(i32_ty, input.feature_flags));
     store_field(kAbiWaitSiteWords, wait_site_meta.words_ptr);
@@ -1569,8 +1020,9 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
         context.GetLyraRunSimulation(),
         {funcs_array, states_array,
          llvm::ConstantInt::get(i32_ty, num_module_processes), plusargs_array,
-         num_plusargs_val, instance_paths_array,
-         llvm::ConstantInt::get(i32_ty, num_instance_paths), abi_alloca});
+         num_plusargs_val, meta_globals.instance_paths_array,
+         llvm::ConstantInt::get(i32_ty, meta_globals.instance_path_count),
+         abi_alloca});
   }
 
   // Branch to exit block
