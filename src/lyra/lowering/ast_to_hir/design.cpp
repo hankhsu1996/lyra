@@ -119,8 +119,9 @@ auto ClassifyPortBinding(const slang::ast::PortSymbol& port)
       return Kind::kDriveParentToChild;
 
     case slang::ast::ArgumentDirection::Out:
-      // Use slang's authoritative API for net vs variable classification
-      return port.isNetPort() ? Kind::kAlias : Kind::kDriveChildToParent;
+      // Both net and variable output ports use connection propagation.
+      // Child owns its port storage; parent propagation is connection work.
+      return Kind::kDriveChildToParent;
 
     case slang::ast::ArgumentDirection::InOut:
       // GATE: reject all inout for MVP (requires tri-state semantics)

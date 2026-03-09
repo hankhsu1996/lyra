@@ -67,7 +67,7 @@ Staged transition. Each phase establishes new invariants while old paths coexist
 
 **Stage 2: Specialization-ready ownership** (Phase B) - B1-B4 done. Ownership boundary established: `ModuleBody` owns behavioral IR, `Module` is instance-side record with `body_id`. Shared bodies active (one body per specialization group). `mir::Process` carries no instance identity -- instance binding comes exclusively from scheduling/runtime context (`BoundProcessEntry`, `ProcessHandle`, `BindProcessToInstance`). Layout/codegen use `ScheduledProcess` records (no parallel arrays). Interpreter/test framework use typed `ProcessHandle` keys. `SpecializationMap` is required in MIR-lowering input (no default/null fallback path remains). `BuildMirSpecGroups` validates specialization invariants. `InstanceTable::GetPathBySymbol` centralizes instance path lookup. MIR dump uses explicit `ModuleBodies` / `Modules` sections. Remaining: B5 (design-wide codegen compatibility remains as transitional state until Phase E), B6 (HIR ownership split).
 
-**Stage 3: Storage model** (Phase C) - C1 done: module-owned slot identity is specialization-local by construction (`CollectBodyLocalDecls` produces body-local storage independently; `ModuleBody.slots` is the authoritative specialization-local storage interface). C2 done: `mir::InstancePlacement` is the source of truth for per-instance module placement in DesignState, computed via independent running base counter grounded in authoritative package slot count from `CollectDesignDeclarations`; `instance_slot_ranges` is derived compatibility data. Full codegen slot access remains design-global-backed until C3.
+**Stage 3: Storage model** (Phase C) - C1 done: module-owned slot identity is specialization-local by construction (`CollectBodyLocalDecls` produces body-local storage independently; `ModuleBody.slots` is the authoritative specialization-local storage interface). C2 done: `mir::InstancePlacement` is the source of truth for per-instance module placement in DesignState, computed via independent running base counter grounded in authoritative package slot count from `CollectDesignDeclarations`; `instance_slot_ranges` is derived compatibility data. C3 done: alias resolution eliminated from behavioral codegen; `kAlias` binding kind deleted, `alias_map` removed, `ResolveAliases()` inlined away. Shared module behavioral processes no longer resolve module-local places through design-global alias topology. Explicit `kDesignGlobal` roots still use design-global addressing paths.
 
 **Stage 4: Assembly extraction** (Phase D) - Assembly becomes a separate phase. Binding, metadata, and connectivity moved out of MIR lowering and codegen. Temporary: assembly still produces the same monolithic LLVM IR.
 
@@ -75,7 +75,7 @@ Staged transition. Each phase establishes new invariants while old paths coexist
 
 **Stage 6: Acceleration** (Phase F) - Parallel compilation, caching, incremental. Pure wins from clean architecture.
 
-**Allowed during transition**: Compatibility adapters that reconstruct per-instance views from specialization artifacts for downstream consumers. Design-global placement/runtime tables may still exist outside specialization-owned behavioral storage, until C2/C3.
+**Allowed during transition**: Compatibility adapters that reconstruct per-instance views from specialization artifacts for downstream consumers. Design-global placement/runtime tables may still exist outside specialization-owned behavioral storage.
 
 **Forbidden immediately**: New code that adds design-global dependencies to specialization artifacts. New code that passes `mir::Design` to specialization-local functions. New code that makes instances own behavioral IR.
 
@@ -105,7 +105,7 @@ Remaining (design-global codegen model):
 - `include/lyra/mir/handle.hpp:79` - `SlotId` is bare `uint32_t`, no scope
 - `include/lyra/mir/design.hpp` - `Design::slots` indexed by global SlotId
 - `Design::instance_slot_ranges` remains as derived compatibility data
-- Codegen slot access still uses design-global base + offset (C3)
+- Codegen slot access still uses design-global base + offset for `kDesignGlobal` roots (C3 removed alias-driven topology dependence from behavioral codegen, but explicit design-global addressing remains)
 
 **B3: Codegen operates on entire design**
 
@@ -277,13 +277,14 @@ Existing design-wide codegen continues to work by reconstructing per-instance pr
 - Invariant: Specialization code does not know absolute DesignState offsets. Placement owns DesignState layout.
 - Done: `mir::InstancePlacement` and `mir::PlacementMap` introduced as transitional placement artifacts carried by `mir::Design`. `Design::placement` is the source of truth for per-instance module placement, built from specialization bodies via running base counter grounded in authoritative package slot count (not re-derived from HIR shape, not copied from legacy slot tables). `instance_slot_ranges` derived from placement for compatibility. All consumers use placement helpers (`GetInstancePlacement`, `GetInstanceBaseSlot`). `BindProcessToInstance` has placement-based overload.
 
-**C3: Convert codegen to specialization-local slot access**
+**C3: Eliminate compile-time alias resolution from behavioral codegen** (done)
 
-- Goal: All slot access in codegen uses local offsets, not design-global
-- Areas: `src/lyra/llvm_backend/context_place.cpp`, `include/lyra/llvm_backend/context.hpp`
-- Acceptance: `GetDesignSlotPointer()` uses local offset + base. No global slot lookup in process codegen. Test: changing instance count does not change specialization LLVM IR.
+- Goal: Remove alias-driven topology dependence from behavioral codegen so shared module behavioral processes no longer resolve module-local places through design-global alias topology
+- Areas: `src/lyra/lowering/ast_to_hir/design.cpp`, `include/lyra/lowering/ast_to_hir/port_binding.hpp`, `src/lyra/lowering/hir_to_mir/design_connections.cpp`, `include/lyra/mir/compiled_bindings.hpp`, `src/lyra/link/assemble_bindings.cpp`, `include/lyra/mir/design.hpp`, `include/lyra/mir/port_connection.hpp`, `src/lyra/llvm_backend/context_place.cpp`, `include/lyra/llvm_backend/context.hpp`
+- Acceptance: No `kAlias` concept exists. `ResolveAliases()` deleted (inlined away). `alias_map` deleted. All output net ports use `kDriveChildToParent` connection processes. Shared behavioral function body is identical regardless of instance count/topology. Explicit `kDesignGlobal` roots still use design-global addressing paths.
 - Dependencies: C2
-- Invariant: Specialization LLVM IR is independent of design topology.
+- Invariant: Shared behavioral codegen does not resolve module-local places through design-global alias topology. Explicit design-global roots remain design-global.
+- Done: `kAlias` removed from `PortBinding::Kind` and `PortConnection::Kind`. `CompileAlias()` deleted. `CompiledAliasBinding` deleted. `alias_map` removed from `mir::Design`. `ResolveAliases()` inlined at call sites and deleted. Output net ports classified as `kDriveChildToParent`, flowing through existing connection process / connection descriptor infrastructure.
 
 ### Phase D: Assembly extraction
 
@@ -294,7 +295,7 @@ Existing design-wide codegen continues to work by reconstructing per-instance pr
 - Acceptance: `LowerDesign()` no longer calls `ApplyBindings()`. Assembly step consumes `DesignBindingPlan` + compiled specializations. Test: MIR lowering produces no connection processes.
 - Dependencies: B4
 - Invariant: MIR lowering is purely specialization-scoped.
-- Done: `ApplyBindings()` replaced by `CompileBindings()` (returns `mir::CompiledBindingPlan`) + `link::AssembleBindings()` (attaches to design). Artifact types (`CompiledBindingPlan`, `CompiledDriveBinding`, `CompiledAliasBinding`) live in `lyra::mir` namespace (`include/lyra/mir/compiled_bindings.hpp`). `PortConnection` extracted to own header (`include/lyra/mir/port_connection.hpp`). `DesignLoweringResult` carries both `mir::Design` and `CompiledBindingPlan`. Link phase (`lyra::link`) has no HIR/lowering/slang dependencies. Pipeline explicitly orchestrates: lowering -> link -> runtime.
+- Done: `ApplyBindings()` replaced by `CompileBindings()` (returns `mir::CompiledBindingPlan`) + `link::AssembleBindings()` (attaches to design). Artifact types (`CompiledBindingPlan`, `CompiledDriveBinding`) live in `lyra::mir` namespace (`include/lyra/mir/compiled_bindings.hpp`). `PortConnection` extracted to own header (`include/lyra/mir/port_connection.hpp`). `DesignLoweringResult` carries both `mir::Design` and `CompiledBindingPlan`. Link phase (`lyra::link`) has no HIR/lowering/slang dependencies. Pipeline explicitly orchestrates: lowering -> link -> runtime.
 
 **D2: Define InstanceConstBlock**
 

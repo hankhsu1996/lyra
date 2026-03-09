@@ -366,11 +366,6 @@ class Context {
   void SetEnginePointer(llvm::Value* engine_ptr);
   [[nodiscard]] auto GetEnginePointer() -> llvm::Value*;
 
-  // Resolve alias chains for a place. If the place's root is an aliased design
-  // slot, returns the resolved place (with target root + composed projections).
-  // Handles chained aliases with cycle detection.
-  [[nodiscard]] auto ResolveAliases(mir::PlaceId place_id) -> mir::Place;
-
   // Get pointer to a place's base storage via GEP into design or frame.
   // Applies all non-BitRange projections (IndexProjection, etc.) and stops
   // at the first BitRangeProjection. For bitrange reads/writes, use
@@ -724,11 +719,9 @@ class Context {
   std::vector<uint64_t> rel_byte_offsets_;
 
   // Design-global base slot ID for the current module instance.
-  // Two uses:
-  //   1. Alias resolution: kModuleSlot local_id -> design-global slot_id
-  //      for alias_map lookup (needed in all addressing modes).
-  //   2. Design-global addressing fallback: kModuleSlot -> design_ptr GEP
-  //      when slot_addressing_ == kDesignGlobal (user functions, standalone).
+  // Only used in non-shared / explicitly design-global lowering contexts:
+  // kModuleSlot -> design_ptr GEP when slot_addressing_ == kDesignGlobal
+  // (user functions, standalone mode). Not used in shared behavioral code.
   uint32_t module_base_slot_id_ = 0;
 
   // Current origin for error reporting

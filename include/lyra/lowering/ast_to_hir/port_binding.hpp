@@ -37,13 +37,13 @@ using TransientPortBindingPlan = std::unordered_map<
 // Unified port binding with explicit rvalue/lvalue fields.
 // The kind determines port connection semantics:
 // - kDriveParentToChild: input ports, parent expr -> child port
-// - kDriveChildToParent: output variable ports, child port -> parent place
-// - kAlias: output/inout net ports, true identity (child aliases parent)
+// - kDriveChildToParent: output ports (net and variable), child port ->
+//   parent place via connection process. Child owns its port storage;
+//   propagation to parent is connection work.
 struct PortBinding {
   enum class Kind : int32_t {
     kDriveParentToChild,  // input: parent expr -> child port
-    kDriveChildToParent,  // output variable: child port -> parent place
-    kAlias,               // output/inout net: true identity
+    kDriveChildToParent,  // output (net + variable): child port -> parent place
   };
 
   Kind kind = Kind::kDriveParentToChild;
@@ -55,9 +55,9 @@ struct PortBinding {
   // Structurally explicit: different fields for different semantics.
   // INVARIANT: exactly one is valid based on kind:
   // - kDriveParentToChild: parent_rvalue is valid
-  // - kDriveChildToParent, kAlias: parent_lvalue is valid
+  // - kDriveChildToParent: parent_lvalue is valid
   hir::ExpressionId parent_rvalue;  // Valid for kDriveParentToChild only
-  hir::ExpressionId parent_lvalue;  // Valid for kDriveChildToParent, kAlias
+  hir::ExpressionId parent_lvalue;  // Valid for kDriveChildToParent
 };
 
 // Design-level binding plan (persists beyond AST->HIR).

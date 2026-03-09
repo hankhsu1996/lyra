@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <format>
+#include <numeric>
 #include <string>
 #include <unordered_map>
 #include <variant>

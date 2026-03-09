@@ -1,4 +1,3 @@
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <utility>
@@ -173,56 +172,6 @@ auto CompileDriveChildToParent(
   };
 }
 
-// Compile kAlias binding: child port aliases parent place (true identity).
-auto CompileAlias(
-    const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
-    const DesignDeclarations& decls, const LoweringInput& input,
-    mir::Arena& mir_arena) -> Result<mir::CompiledAliasBinding> {
-  // Lower parent lvalue -> place (pure by construction - no MirBuilder)
-  Context ctx = MakeDesignContext(input, mir_arena, decls);
-  auto parent_lv = LowerPureLvaluePlace(binding.parent_lvalue, ctx);
-  if (!parent_lv) {
-    return std::unexpected(parent_lv.error());
-  }
-
-  // Validate child place is simple design slot
-  const mir::Place& child = mir_arena[child_place];
-  if (child.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
-    throw common::InternalError(
-        "CompileAlias", "alias child must be design slot");
-  }
-  if (!child.projections.empty()) {
-    throw common::InternalError(
-        "CompileAlias", "alias child must have no projections");
-  }
-
-  mir::SlotId child_slot{static_cast<uint32_t>(child.root.id)};
-
-  // Validate parent place resolves to kDesignGlobal (may have projections)
-  const mir::Place& parent_place = mir_arena[*parent_lv];
-  if (parent_place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
-    throw common::InternalError(
-        "CompileAlias", "alias target must be a design slot");
-  }
-
-  // V1 invariant: alias targets must NOT contain BitRange projections.
-  for (const auto& proj : parent_place.projections) {
-    if (mir::IsBitRange(proj)) {
-      throw common::InternalError(
-          "CompileAlias",
-          "alias target must not contain bit-range projections");
-    }
-  }
-
-  return mir::CompiledAliasBinding{
-      .child_port_sym = binding.child_port_sym,
-      .parent_instance_sym = binding.parent_instance_sym,
-      .child_place = child_place,
-      .parent_place = *parent_lv,
-      .child_slot = child_slot,
-  };
-}
-
 }  // namespace
 
 auto CompileBindings(
@@ -250,13 +199,6 @@ auto CompileBindings(
             binding, child_place, decls, input, mir_arena);
         if (!compiled) return std::unexpected(compiled.error());
         result.drive_bindings.push_back(std::move(*compiled));
-        break;
-      }
-      case ast_to_hir::PortBinding::Kind::kAlias: {
-        auto compiled =
-            CompileAlias(binding, child_place, decls, input, mir_arena);
-        if (!compiled) return std::unexpected(compiled.error());
-        result.alias_bindings.push_back(std::move(*compiled));
         break;
       }
     }

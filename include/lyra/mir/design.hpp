@@ -5,7 +5,6 @@
 #include <variant>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol_types.hpp"
@@ -64,14 +63,6 @@ struct Design {
   // Written ONLY by link::AssembleBindings.
   std::vector<ProcessId> connection_processes;
 
-  // DERIVED: acceleration structure for kAlias only.
-  // INVARIANT: entry exists iff PortConnection{kAlias} exists for that slot.
-  // Written ONLY by link::AssembleBindings.
-  // Key: child port's SlotId (must be kDesignGlobal root with no projections)
-  // Value: parent's PlaceId (may have projections, must resolve to
-  // kDesignGlobal)
-  absl::flat_hash_map<SlotId, PlaceId> alias_map;
-
   // Instance table for %m support.
   // Index = instance_id, same order as all_instances during elaboration.
   InstanceTable instance_table;
@@ -85,9 +76,10 @@ struct Design {
   PlacementMap placement;
 
   // DERIVED compatibility data: instance slot ranges derived from placement.
-  // Consumers should prefer placement helpers (GetInstancePlacement,
-  // GetInstanceBaseSlot). These tables remain for transitional compatibility
-  // with layout/codegen/runtime until C3.
+  // `placement` is the source of truth. New code should use placement helpers
+  // (GetInstancePlacement, GetInstanceBaseSlot), not these tables.
+  // These remain only for transitional compatibility with
+  // layout/codegen/runtime.
   struct InstanceSlotRange {
     uint32_t slot_begin = 0;
     uint32_t slot_count = 0;

@@ -24,18 +24,8 @@ struct CompiledDriveBinding {
   CompiledConnectionBody body;
 };
 
-struct CompiledAliasBinding {
-  SymbolId child_port_sym;
-  SymbolId parent_instance_sym;
-
-  PlaceId child_place;
-  PlaceId parent_place;
-  SlotId child_slot;
-};
-
 struct CompiledBindingPlan {
   std::vector<CompiledDriveBinding> drive_bindings;
-  std::vector<CompiledAliasBinding> alias_bindings;
 };
 
 }  // namespace lyra::mir
