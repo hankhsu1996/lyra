@@ -10,13 +10,18 @@
 
 #include "lyra/common/type_arena.hpp"
 #include "lyra/link/design_metadata.hpp"
+#include "lyra/lowering/diagnostic_context.hpp"
+
+namespace lyra::mir {
+struct Design;
+class Arena;
+}  // namespace lyra::mir
 
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
 struct Layout;
 struct DesignLayout;
-struct LoweringInput;
 struct SlotInfo;
 
 // Extract slot metadata inputs from LLVM layout into plain link structs.
@@ -27,17 +32,21 @@ auto ExtractSlotMetaInputs(
 
 // Extract scheduled process inputs into plain link structs.
 auto PrepareScheduledProcessInputs(
-    const LoweringInput& input,
+    const mir::Design& design, const mir::Arena& mir_arena,
+    const lowering::DiagnosticContext* diag_ctx,
+    const SourceManager* source_manager,
     const std::vector<struct ScheduledProcess>& scheduled_processes,
     size_t num_init) -> std::vector<link::ScheduledProcessInput>;
 
 // Extract loop site inputs from accumulated codegen origins.
-auto PrepareLoopSiteInputs(const Context& context, const LoweringInput& input)
-    -> std::vector<link::LoopSiteInput>;
+auto PrepareLoopSiteInputs(
+    const Context& context, const lowering::DiagnosticContext* diag_ctx,
+    const SourceManager* source_manager) -> std::vector<link::LoopSiteInput>;
 
 // Extract connection descriptor entries from LLVM layout.
 auto ExtractConnectionDescriptorEntries(
-    const LoweringInput& input, const Layout& layout,
+    const mir::Design& design, const mir::Arena& mir_arena,
+    const TypeArena& type_arena, const Layout& layout,
     const llvm::DataLayout& dl, llvm::LLVMContext& ctx, bool force_two_state)
     -> std::vector<link::ConnectionDescriptorEntry>;
 
@@ -46,7 +55,7 @@ auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
     -> std::vector<link::CombKernelInput>;
 
 // Prepare instance paths from design.
-auto PrepareInstancePaths(const LoweringInput& input)
+auto PrepareInstancePaths(const mir::Design& design)
     -> std::vector<std::string>;
 
 // Result of emitting DesignMetadata as LLVM globals.

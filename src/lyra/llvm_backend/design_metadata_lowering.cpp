@@ -18,7 +18,6 @@
 #include "lyra/common/source_manager.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
-#include "lyra/llvm_backend/lower.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
@@ -231,7 +230,9 @@ auto ExtractSlotMetaInputs(
 }
 
 auto PrepareScheduledProcessInputs(
-    const LoweringInput& input,
+    const mir::Design& design, const mir::Arena& mir_arena,
+    const lowering::DiagnosticContext* diag_ctx,
+    const SourceManager* source_manager,
     const std::vector<ScheduledProcess>& scheduled_processes, size_t num_init)
     -> std::vector<link::ScheduledProcessInput> {
   if (scheduled_processes.size() < num_init) {
@@ -244,11 +245,11 @@ auto PrepareScheduledProcessInputs(
   auto num_module = scheduled_processes.size() - num_init;
   entries.reserve(num_module);
 
-  const auto& instance_entries = input.design->instance_table.entries;
+  const auto& instance_entries = design.instance_table.entries;
 
   for (size_t i = num_init; i < scheduled_processes.size(); ++i) {
     const auto& bp = scheduled_processes[i];
-    const auto& proc = (*input.mir_arena)[bp.process_id];
+    const auto& proc = mir_arena[bp.process_id];
 
     std::string inst_path;
     if (bp.module_index && bp.module_index.value < instance_entries.size()) {
@@ -256,8 +257,7 @@ auto PrepareScheduledProcessInputs(
     }
 
     auto kind = MapProcessKind(proc.kind);
-    auto loc =
-        ResolveProcessOrigin(proc.origin, input.diag_ctx, input.source_manager);
+    auto loc = ResolveProcessOrigin(proc.origin, diag_ctx, source_manager);
 
     auto scheduled_index = static_cast<uint32_t>(i - num_init);
 
@@ -277,15 +277,15 @@ auto PrepareScheduledProcessInputs(
   return entries;
 }
 
-auto PrepareLoopSiteInputs(const Context& context, const LoweringInput& input)
-    -> std::vector<link::LoopSiteInput> {
+auto PrepareLoopSiteInputs(
+    const Context& context, const lowering::DiagnosticContext* diag_ctx,
+    const SourceManager* source_manager) -> std::vector<link::LoopSiteInput> {
   const auto& origins = context.GetLoopSiteOrigins();
   std::vector<link::LoopSiteInput> entries;
   entries.reserve(origins.size());
 
   for (size_t i = 0; i < origins.size(); ++i) {
-    auto loc =
-        ResolveProcessOrigin(origins[i], input.diag_ctx, input.source_manager);
+    auto loc = ResolveProcessOrigin(origins[i], diag_ctx, source_manager);
     entries.push_back({
         .loop_site_index = static_cast<uint32_t>(i),
         .file = std::move(loc.file),
@@ -298,7 +298,8 @@ auto PrepareLoopSiteInputs(const Context& context, const LoweringInput& input)
 }
 
 auto ExtractConnectionDescriptorEntries(
-    const LoweringInput& input, const Layout& layout,
+    const mir::Design& design, const mir::Arena& mir_arena,
+    const TypeArena& type_arena, const Layout& layout,
     const llvm::DataLayout& dl, llvm::LLVMContext& ctx, bool force_two_state)
     -> std::vector<link::ConnectionDescriptorEntry> {
   const auto& kernel_entries = layout.connection_kernel_entries;
@@ -345,12 +346,11 @@ auto ExtractConnectionDescriptorEntries(
           layout.design.slot_to_field.find(entry.trigger_slot);
       if (trigger_slot_it != layout.design.slot_to_field.end()) {
         TypeId trigger_root_type =
-            input.design->slots[trigger_slot_it->first.value].type;
-        const auto& trigger_place =
-            (*input.mir_arena)[*entry.trigger_observed_place];
+            design.slots[trigger_slot_it->first.value].type;
+        const auto& trigger_place = mir_arena[*entry.trigger_observed_place];
         auto range = ResolveByteRange(
-            ctx, dl, *input.type_arena, trigger_place, trigger_root_type,
-            nullptr, force_two_state);
+            ctx, dl, type_arena, trigger_place, trigger_root_type, nullptr,
+            force_two_state);
         if (range.kind == RangeKind::kPrecise) {
           trigger_byte_offset = range.byte_offset;
           trigger_byte_size = range.byte_size;
@@ -424,9 +424,9 @@ auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
   return inputs;
 }
 
-auto PrepareInstancePaths(const LoweringInput& input)
+auto PrepareInstancePaths(const mir::Design& design)
     -> std::vector<std::string> {
-  const auto& instance_entries = input.design->instance_table.entries;
+  const auto& instance_entries = design.instance_table.entries;
   std::vector<std::string> paths;
   paths.reserve(instance_entries.size());
   for (const auto& entry : instance_entries) {

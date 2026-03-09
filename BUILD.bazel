@@ -148,6 +148,21 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "assembly",
+    srcs = glob(["src/lyra/assembly/**/*.cpp"]),
+    hdrs = glob(["include/lyra/assembly/**/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":common",
+        ":link",
+        ":llvm_backend",
+        ":mir",
+        ":runtime",
+    ],
+)
+
 cc_binary(
     name = "lyra",
     srcs = glob([
@@ -157,6 +172,7 @@ cc_binary(
     data = [":liblyra_runtime.so"],
     linkopts = ["-Wl,--export-dynamic"],  # Export symbols for ORC JIT
     deps = [
+        ":assembly",
         ":hir",
         ":interp",
         ":link",
