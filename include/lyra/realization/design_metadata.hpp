@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace lyra::link {
+namespace lyra::realization {
 
 struct MetaWordTable {
   std::vector<uint32_t> words;
@@ -89,4 +89,4 @@ struct DesignMetadata {
   std::vector<std::string> instance_paths;
 };
 
-}  // namespace lyra::link
+}  // namespace lyra::realization

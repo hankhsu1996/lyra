@@ -1,4 +1,4 @@
-#include "lyra/assembly/emit_design_main.hpp"
+#include "lyra/llvm_backend/emit_design_main.hpp"
 
 #include <array>
 #include <cstddef>
@@ -24,7 +24,6 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/link/build_design_metadata.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -35,31 +34,13 @@
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/realization/build_design_metadata.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
-namespace lyra::assembly {
+namespace lyra::lowering::mir_to_llvm {
 
 namespace {
-
-using lowering::mir_to_llvm::Context;
-using lowering::mir_to_llvm::EmitApply4StatePatches;
-using lowering::mir_to_llvm::EmitDesignMetadataGlobals;
-using lowering::mir_to_llvm::EmitMemsetZero;
-using lowering::mir_to_llvm::EmitSVDefaultInitAfterZero;
-using lowering::mir_to_llvm::ExtractConnectionDescriptorEntries;
-using lowering::mir_to_llvm::ExtractSlotMetaInputs;
-using lowering::mir_to_llvm::IsScalarPatchable;
-using lowering::mir_to_llvm::Layout;
-using lowering::mir_to_llvm::LowerConstant;
-using lowering::mir_to_llvm::MetadataGlobals;
-using lowering::mir_to_llvm::PrepareCombKernelInputs;
-using lowering::mir_to_llvm::PrepareInstancePaths;
-using lowering::mir_to_llvm::PrepareLoopSiteInputs;
-using lowering::mir_to_llvm::PrepareScheduledProcessInputs;
-using lowering::mir_to_llvm::ProcessLayout;
-using lowering::mir_to_llvm::SlotInfo;
-using lowering::mir_to_llvm::WaitSiteEntry;
 
 struct WaitSiteMetaResult {
   llvm::Constant* words_ptr;
@@ -614,7 +595,7 @@ auto BuildDesignMetadata(
   auto loop_site_inputs =
       PrepareLoopSiteInputs(context, input.diag_ctx, input.source_manager);
 
-  link::DesignMetadataInputs metadata_inputs{
+  realization::DesignMetadataInputs metadata_inputs{
       .slot_meta = std::move(slot_meta_inputs),
       .scheduled_processes = std::move(scheduled_inputs),
       .loop_sites = std::move(loop_site_inputs),
@@ -622,7 +603,7 @@ auto BuildDesignMetadata(
       .comb_kernels = std::move(comb_inputs),
       .instance_paths = std::move(instance_paths),
   };
-  auto metadata = link::BuildDesignMetadata(metadata_inputs);
+  auto metadata = realization::BuildDesignMetadata(metadata_inputs);
 
   return EmitDesignMetadataGlobals(context, metadata, builder);
 }
@@ -876,16 +857,12 @@ auto EmitDesignMain(
   return {};
 }
 
-}  // namespace lyra::assembly
-
-namespace lyra::lowering::mir_to_llvm {
-
 auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   auto session_result = CompileDesignProcesses(input);
   if (!session_result) return std::unexpected(session_result.error());
 
-  auto emit_result = assembly::EmitDesignMain(
-      *session_result, assembly::BuildEmitDesignMainInput(input));
+  auto emit_result =
+      EmitDesignMain(*session_result, BuildEmitDesignMainInput(input));
   if (!emit_result) return std::unexpected(emit_result.error());
 
   return FinalizeModule(std::move(*session_result));

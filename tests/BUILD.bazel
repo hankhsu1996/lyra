@@ -9,11 +9,10 @@ cc_library(
     srcs = glob(["framework/*.cpp"]),
     hdrs = glob(["framework/*.hpp"]),
     deps = [
-        "//:assembly",
         "//:interp",
-        "//:link",
         "//:llvm_backend",
         "//:lowering",
+        "//:realization",
         "@googletest//:gtest",
         "@slang",
         "@yaml-cpp",

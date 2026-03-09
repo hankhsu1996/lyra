@@ -28,13 +28,13 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
-#include "lyra/link/assemble_bindings.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
+#include "lyra/realization/assemble_bindings.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
@@ -310,8 +310,8 @@ auto PrepareLlvmModule(
             "MIR lowering error: {}", mir_result.error().primary.message));
   }
 
-  // Assembly: attach compiled bindings to design.
-  link::AssembleBindings(
+  // Realization: attach compiled bindings to design.
+  realization::AssembleBindings(
       std::move(mir_result->compiled_bindings), *mir_result->mir_arena,
       mir_result->design);
 
