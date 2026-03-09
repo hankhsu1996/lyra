@@ -1,6 +1,5 @@
 #pragma once
 
-#include <csetjmp>
 #include <cstdint>
 
 namespace lyra::runtime {
@@ -17,25 +16,4 @@ struct TrapPayload {
   uint32_t b = 0;  // spare
 };
 
-struct TrapFrame {
-  std::jmp_buf env{};
-  TrapPayload payload{};
-  bool armed = false;
-};
-
-// Get the thread-local trap frame pointer.
-// Returns nullptr if no trap scope is active.
-auto GetTlsTrapFrame() -> TrapFrame*;
-
-// Set the thread-local trap frame pointer.
-void SetTlsTrapFrame(TrapFrame* frame);
-
 }  // namespace lyra::runtime
-
-extern "C" {
-
-// Called from generated code to unwind back to the engine scheduler.
-// engine_ptr is unused in the current implementation (trap frame is TLS).
-[[noreturn]] void LyraTrap(
-    void* engine_ptr, uint32_t reason, uint32_t a, uint32_t b);
-}

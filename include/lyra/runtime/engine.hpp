@@ -283,12 +283,14 @@ class Engine {
   // Evaluate all connections once (used for initial value propagation).
   void EvaluateAllConnections();
 
-  // Initialize comb kernels from word table and process arrays.
-  // Parses trigger metadata, extracts func/state pointers, builds trigger map.
-  // func_type: void(*)(void* state, uint32_t resume_block)
+  // Initialize comb kernels from word table and comb function array.
+  // Parses trigger metadata, builds trigger map.
+  // comb_funcs: one void-returning entry per comb kernel, in word-table order.
+  // states: full process state array, indexed by proc_idx from word table.
+  // Comb kernels do not participate in the process trap/return-code contract.
   using CombFunc = void (*)(void*, uint32_t);
   void InitCombKernels(
-      std::span<const uint32_t> words, CombFunc* processes, void** states);
+      std::span<const uint32_t> words, CombFunc* comb_funcs, void** states);
 
   // Mark all comb kernel trigger slots dirty to ensure initial evaluation.
   void SeedCombKernelDirtyMarks();
@@ -360,12 +362,9 @@ class Engine {
   };
 
  private:
-  // Run a single process activation under the trap scope.
-  //
-  // INVARIANT: No RAII-managed resources may be live between setjmp and the
-  // call to runner_(). longjmp must not cross locks, allocation scopes, or
-  // commit phases that mutate engine state without rollback. This function
-  // is deliberately a thin leaf to make future audits easy.
+  // Run a single process activation.
+  // Establishes clean activation-entry state (trap reset, loop budget),
+  // then invokes the runner which owns exit-status interpretation.
   void RunOneActivation(const ScheduledEvent& event);
 
   void ExecuteTimeSlot();

@@ -57,13 +57,49 @@
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
-#include "lyra/runtime/loop_budget.hpp"
+#include "lyra/runtime/simulation.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trap.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
+
+// Canonical memory layout type for ProcessOutcome: { i32, i32, i32, i32 }.
+// Used only as a memory shape for stores through the %out pointer.
+// No struct return across the JIT boundary.
+auto GetProcessOutcomeType(llvm::LLVMContext& ctx) -> llvm::StructType* {
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  return llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty});
+}
+
+// Store ProcessOutcome{tag, reason, a, b} into %out as a single aggregate
+// store.
+void EmitStoreOutcome(
+    llvm::IRBuilder<>& builder, llvm::LLVMContext& ctx, llvm::Value* out_ptr,
+    uint32_t tag, uint32_t reason, llvm::Value* a, llvm::Value* b) {
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* outcome_ty = GetProcessOutcomeType(ctx);
+
+  llvm::Value* outcome = llvm::UndefValue::get(outcome_ty);
+  outcome = builder.CreateInsertValue(
+      outcome, llvm::ConstantInt::get(i32_ty, tag), {0});
+  outcome = builder.CreateInsertValue(
+      outcome, llvm::ConstantInt::get(i32_ty, reason), {1});
+  outcome = builder.CreateInsertValue(outcome, a, {2});
+  outcome = builder.CreateInsertValue(outcome, b, {3});
+  builder.CreateStore(outcome, out_ptr);
+}
+
+// Store kOk outcome {kOk, 0, 0, 0} into %out.
+void EmitStoreOkOutcome(
+    llvm::IRBuilder<>& builder, llvm::LLVMContext& ctx, llvm::Value* out_ptr) {
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+  EmitStoreOutcome(
+      builder, ctx, out_ptr,
+      static_cast<uint32_t>(runtime::ProcessExitCode::kOk), 0, zero, zero);
+}
 
 // Load design_ptr from state->header.design without setting context pointers.
 // Used by the wrapper which only needs design_ptr to compute this_ptr.
@@ -311,9 +347,11 @@ auto HasBackEdge(const mir::Terminator& term, size_t current_block_idx)
 }
 
 // Emit a loop budget guard before a back-edge terminator.
-// Decrements TLS budget, and if exhausted calls LyraTrap.
+// Decrements TLS budget, and if exhausted stores a kTrap ProcessOutcome
+// into %out and returns void.
 void EmitLoopGuard(
-    Context& context, common::OriginId origin, llvm::Function* func) {
+    Context& context, common::OriginId origin, llvm::Function* func,
+    llvm::Value* out_ptr) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
@@ -336,18 +374,15 @@ void EmitLoopGuard(
 
   builder.CreateCondBr(exhausted, trap_bb, continue_bb);
 
-  // Trap block: call LyraTrap and mark unreachable
+  // Trap block: store kTrap outcome into %out and return void
   builder.SetInsertPoint(trap_bb);
-  auto* engine_ptr = context.GetEnginePointer();
-  builder.CreateCall(
-      context.GetLyraTrap(),
-      {engine_ptr,
-       llvm::ConstantInt::get(
-           i32_ty,
-           static_cast<uint32_t>(runtime::TrapReason::kLoopBudgetExceeded)),
-       llvm::ConstantInt::get(i32_ty, site_id),
-       llvm::ConstantInt::get(i32_ty, 0)});
-  builder.CreateUnreachable();
+  EmitStoreOutcome(
+      builder, llvm_ctx, out_ptr,
+      static_cast<uint32_t>(runtime::ProcessExitCode::kTrap),
+      static_cast<uint32_t>(runtime::TrapReason::kLoopBudgetExceeded),
+      llvm::ConstantInt::get(i32_ty, site_id),
+      llvm::ConstantInt::get(i32_ty, 0));
+  builder.CreateRetVoid();
 
   // Continue block: terminator will be emitted here
   builder.SetInsertPoint(continue_bb);
@@ -1311,11 +1346,12 @@ auto GenerateProcessFunction(
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
-  // Create function type: void(ptr %state, i32 %resume_block)
+  // Create function type: void(ptr %state, i32 %resume_block, ptr %out)
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  auto* fn_type = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(llvm_ctx), {ptr_ty, i32_ty}, false);
+  auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+  auto* fn_type =
+      llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty, ptr_ty}, false);
 
   auto* func = llvm::Function::Create(
       fn_type, llvm::Function::InternalLinkage, name, &module);
@@ -1323,8 +1359,10 @@ auto GenerateProcessFunction(
   // Name the arguments
   auto* state_arg = func->getArg(0);
   auto* resume_block_arg = func->getArg(1);
+  auto* out_arg = func->getArg(2);
   state_arg->setName("state");
   resume_block_arg->setName("resume_block");
+  out_arg->setName("out");
 
   // Create blocks
   auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", func);
@@ -1415,7 +1453,7 @@ auto GenerateProcessFunction(
 
     // Emit loop guard before back-edge terminators
     if (context.IsLoopGuardEnabled() && HasBackEdge(block.terminator, i)) {
-      EmitLoopGuard(context, block.terminator.origin, func);
+      EmitLoopGuard(context, block.terminator.origin, func, out_arg);
     }
 
     auto term_result = LowerTerminator(
@@ -1428,8 +1466,9 @@ auto GenerateProcessFunction(
   phi_state.WireIncomingEdges(context.GetBuilder());
   phi_state.ValidatePhiWiring(llvm_blocks, func->getName().str());
 
-  // Exit block: just return
+  // Exit block: store kOk outcome and return void
   builder.SetInsertPoint(exit_block);
+  EmitStoreOkOutcome(builder, llvm_ctx, out_arg);
   builder.CreateRetVoid();
 
   // Clear cached pointers for next function
@@ -1454,12 +1493,12 @@ auto GenerateSharedProcessFunction(
 
   // Shared function signature:
   // void(ptr state, i32 resume, ptr this_ptr, i32 inst_id,
-  //      i32 signal_id_offset)
+  //      i32 signal_id_offset, ptr out)
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
   auto* fn_type = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(llvm_ctx), {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty},
-      false);
+      void_ty, {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty}, false);
 
   auto* func = llvm::Function::Create(
       fn_type, llvm::Function::InternalLinkage, name, &module);
@@ -1469,6 +1508,7 @@ auto GenerateSharedProcessFunction(
   func->getArg(2)->setName("this_ptr");
   func->getArg(3)->setName("inst_id");
   func->getArg(4)->setName("signal_id_offset");
+  func->getArg(5)->setName("out");
 
   auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", func);
   auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", func);
@@ -1534,7 +1574,7 @@ auto GenerateSharedProcessFunction(
 
     // Emit loop guard before back-edge terminators
     if (context.IsLoopGuardEnabled() && HasBackEdge(block.terminator, i)) {
-      EmitLoopGuard(context, block.terminator.origin, func);
+      EmitLoopGuard(context, block.terminator.origin, func, func->getArg(5));
     }
 
     auto term_result = LowerTerminator(
@@ -1546,7 +1586,9 @@ auto GenerateSharedProcessFunction(
   phi_state.WireIncomingEdges(context.GetBuilder());
   phi_state.ValidatePhiWiring(llvm_blocks, func->getName().str());
 
+  // Exit block: store kOk outcome and return void
   builder.SetInsertPoint(exit_block);
+  EmitStoreOkOutcome(builder, llvm_ctx, func->getArg(5));
   builder.CreateRetVoid();
 
   // Clear shared-body state and revert to design-global addressing.
@@ -1571,16 +1613,18 @@ auto GenerateProcessWrapper(
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
-  // Wrapper signature: void(ptr state, i32 resume) -- LyraProcessFunc ABI
+  // Wrapper signature: void(ptr state, i32 resume, ptr out)
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  auto* fn_type = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(llvm_ctx), {ptr_ty, i32_ty}, false);
+  auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+  auto* fn_type =
+      llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty, ptr_ty}, false);
 
   auto* wrapper = llvm::Function::Create(
       fn_type, llvm::Function::InternalLinkage, name, &module);
   wrapper->getArg(0)->setName("state");
   wrapper->getArg(1)->setName("resume_block");
+  wrapper->getArg(2)->setName("out");
 
   auto* entry = llvm::BasicBlock::Create(llvm_ctx, "entry", wrapper);
   auto& builder = context.GetBuilder();
@@ -1595,10 +1639,12 @@ auto GenerateProcessWrapper(
       i8_ty, design_ptr, llvm::ConstantInt::get(i64_ty, base_byte_offset),
       "this_ptr");
 
+  // Forward %out directly to the shared process function
   builder.CreateCall(
-      shared_fn, {wrapper->getArg(0), wrapper->getArg(1), this_ptr,
-                  llvm::ConstantInt::get(i32_ty, instance_id),
-                  llvm::ConstantInt::get(i32_ty, base_slot_id)});
+      shared_fn,
+      {wrapper->getArg(0), wrapper->getArg(1), this_ptr,
+       llvm::ConstantInt::get(i32_ty, instance_id),
+       llvm::ConstantInt::get(i32_ty, base_slot_id), wrapper->getArg(2)});
   builder.CreateRetVoid();
 
   return wrapper;

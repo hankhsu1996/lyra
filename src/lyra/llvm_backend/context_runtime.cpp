@@ -262,22 +262,6 @@ auto Context::GetLyraRunProcessSync() -> llvm::Function* {
   return lyra_run_process_sync_;
 }
 
-auto Context::GetLyraTrap() -> llvm::Function* {
-  if (lyra_trap_ == nullptr) {
-    // void LyraTrap(ptr engine, uint32_t reason, uint32_t a, uint32_t b)
-    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
-    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-    auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty, i32_ty, i32_ty},
-        false);
-    lyra_trap_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, "LyraTrap",
-        llvm_module_.get());
-    lyra_trap_->setDoesNotReturn();
-  }
-  return lyra_trap_;
-}
-
 auto Context::GetLyraLoopBudgetPtr() -> llvm::Function* {
   if (lyra_loop_budget_ptr_ == nullptr) {
     // uint32_t* LyraLoopBudgetPtr()

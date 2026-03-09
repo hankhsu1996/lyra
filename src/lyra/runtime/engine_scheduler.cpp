@@ -1,7 +1,6 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 
 #include <algorithm>
-#include <csetjmp>
 #include <cstdint>
 #include <cstring>
 #include <format>
@@ -20,7 +19,6 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/loop_budget.hpp"
 #include "lyra/runtime/trace_flush.hpp"
-#include "lyra/runtime/trap.hpp"
 
 namespace lyra::runtime {
 
@@ -163,23 +161,7 @@ void Engine::RunOneActivation(const ScheduledEvent& event) {
   // Reset loop budget before each process activation.
   LyraResetLoopBudget(kDefaultLoopBudget);
 
-  // INVARIANT: No RAII-managed resources between setjmp and runner_().
-  // longjmp must not cross locks, allocation scopes, or commit phases.
-  TrapFrame trap_frame{};
-  TrapFrame* prev_frame = GetTlsTrapFrame();
-  SetTlsTrapFrame(&trap_frame);
-  trap_frame.armed = true;
-
-  // NOLINTNEXTLINE(cert-err52-cpp)
-  if (setjmp(trap_frame.env) == 0) {
-    runner_(*this, event.handle, event.resume);
-  } else {
-    // Defensive clearing on trap: ensure stable state for diagnostics.
-    LyraResetLoopBudget(kDefaultLoopBudget);
-    HandleTrap(pid, trap_frame.payload);
-  }
-
-  SetTlsTrapFrame(prev_frame);
+  runner_(*this, event.handle, event.resume);
   current_running_process_.store(UINT32_MAX, std::memory_order_release);
   phase_.store(static_cast<uint32_t>(Phase::kIdle), std::memory_order_release);
 }
@@ -211,7 +193,7 @@ void Engine::ExecuteRegion(Region region) {
             ClearProcessSubscriptions(event.handle);
           }
           RunOneActivation(event);
-          if (HasPostActivationReconciliation()) {
+          if (!finished_ && HasPostActivationReconciliation()) {
             ReconcilePostActivation(event.handle);
           }
         }
@@ -458,7 +440,7 @@ void Engine::EvaluateAllConnections() {
 }
 
 void Engine::InitCombKernels(
-    std::span<const uint32_t> words, CombFunc* processes, void** states) {
+    std::span<const uint32_t> words, CombFunc* comb_funcs, void** states) {
   if (words.empty()) return;
 
   // Word table format: [num_comb, (proc_idx, num_triggers, trigger_0, ...)*]
@@ -504,7 +486,7 @@ void Engine::InitCombKernels(
     auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
     comb_kernels_.push_back(
         CombKernel{
-            .func = processes[proc_idx],
+            .func = comb_funcs[ki],
             .state = states[proc_idx],
             .process_index = proc_idx,
         });
