@@ -118,6 +118,8 @@ class Engine {
   void ScheduleNextDelta(ProcessHandle handle, ResumePoint resume);
 
   // Enqueue a non-blocking assignment for later commit in the NBA region.
+  // mask_ptr == nullptr: full overwrite (direct compare/copy).
+  // mask_ptr != nullptr: masked merge (per-byte mask).
   void ScheduleNba(
       void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
       const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id);

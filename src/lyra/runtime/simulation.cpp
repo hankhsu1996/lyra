@@ -680,6 +680,7 @@ extern "C" void LyraScheduleNba(
     void* engine_ptr, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size,
     uint32_t notify_slot_id) {
+  // mask_ptr == nullptr means full overwrite; non-null means masked merge.
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   engine->ScheduleNba(
       write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size,
