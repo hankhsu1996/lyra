@@ -32,7 +32,7 @@ MIR lowering, not for running full designs.
 
 Both AOT and JIT consume compiled specialization artifacts. The codegen shape
 contract (init patterns, process functions, runtime calls) is identical across
-modes. LLVM compilation is per-specialization; assembly produces the design-level
+modes. LLVM compilation is per-specialization; realization produces the design-level
 tables. The only mode difference is `MainAbi`:
 
 - `kArgvForwarding` (AOT): `main(argc, argv)` forwards CLI args as plusargs,

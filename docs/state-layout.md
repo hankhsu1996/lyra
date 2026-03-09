@@ -63,7 +63,7 @@ The extra metadata load for containers is negligible: unpacked array access alre
 
 1. **Compilation**: SpecLayout records static offsets for packed fields and container descriptors for unpacked regions. No design-global layout knowledge.
 
-2. **Elaboration**: Assembly resolves container sizes from elaborated parameters. Computes final layout per instance. Allocates the arena.
+2. **Realization**: Resolves container sizes from elaborated parameters. Computes final layout per instance. Allocates the arena.
 
 3. **Simulation**: Arena is immutable in structure. No allocations, no resizing. Only field values change.
 
@@ -86,7 +86,7 @@ Two instances with the same `ModuleSpecId` but different unpacked array sizes sh
 | `SpecLayout`              | Per-specialization field layout       | Refined: adds container descriptors   |
 | `this_base`               | Instance state base pointer           | No                                    |
 | `DesignState`             | Design-wide state memory              | Refined: arena instead of LLVM struct |
-| Assembly                  | Computes instance placements          | Extended: resolves container sizes    |
+| Realization               | Computes instance placements          | Extended: resolves container sizes    |
 | Packed field access       | `this_base + constant`                | No                                    |
 | Unpacked container access | `this_base + metadata_offset + index` | New: metadata indirection             |
 

@@ -35,7 +35,7 @@ Primary backend generates LLVM IR. Native codegen with full optimization pipelin
 
 ### Specialization-Based Compilation
 
-Compilation unit is the module specialization (`ModuleSpecId`), not the elaborated design. Compile per specialization, assemble per design, run per instance. See [compilation-model.md](compilation-model.md) for the data model and [architecture-principles.md](architecture-principles.md) for the reasoning.
+Compilation unit is the module specialization (`ModuleSpecId`), not the elaborated design. Compile per specialization, realize per design, run per instance. See [compilation-model.md](compilation-model.md) for the data model and [architecture-principles.md](architecture-principles.md) for the reasoning.
 
 ### Elaboration Model
 

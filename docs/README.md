@@ -18,7 +18,7 @@ Start here for an overview of Lyra's design and constraints.
 - [type-system.md](type-system.md) - type representation and interning
 - [string-types.md](string-types.md) - string handling
 - [parameterized-modules.md](parameterized-modules.md) - parameters and specialization
-- [module-hierarchy.md](module-hierarchy.md) - hierarchy support and assembly binding
+- [module-hierarchy.md](module-hierarchy.md) - hierarchy support and port connections
 
 ## Backend and Runtime
 

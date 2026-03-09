@@ -23,9 +23,9 @@ SV -> slang -> Elaboration Discovery
          Specialization Compilation  (parallel per spec)
            AST -> HIR -> MIR -> LLVM
                     |
-         Assembly / Link  (design-wide)
+         Design Realization  (design-wide)
                     |
-         Runtime Execution
+         Execution
 ```
 
 ### Elaboration Discovery
@@ -45,9 +45,9 @@ Each specialization is compiled independently:
 
 HIR and MIR are internal to specialization compilation. They contain no instance paths, no design-global slot IDs, and no design-global allocation. See [hir-design.md](hir-design.md) and [mir-design.md](mir-design.md).
 
-### Assembly / Link
+### Design Realization
 
-Binds instances to compiled specializations and produces design-level tables:
+Materializes the executable runtime image from compiled specializations + elaborated design topology:
 
 - Instance-to-specialization mapping
 - Design state allocation (per-instance segments from SpecLayout)
@@ -55,11 +55,11 @@ Binds instances to compiled specializations and produces design-level tables:
 - Per-instance constant blocks (value-only parameters)
 - Debug tables (instance paths for `%m`)
 
-Assembly does not recompile specialization code. See [compilation-model.md](compilation-model.md).
+Realization does not recompile specialization code. See [compilation-model.md](compilation-model.md).
 
-### Runtime Execution
+### Execution
 
-Event-driven simulation engine consuming linked design tables. See [runtime.md](runtime.md).
+Event-driven simulation engine consuming realized design tables. See [runtime.md](runtime.md).
 
 ## Project Structure
 
