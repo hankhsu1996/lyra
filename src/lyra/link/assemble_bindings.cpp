@@ -21,18 +21,6 @@ void AssembleBindings(
             .parent_place = drive.parent_place,
         });
   }
-
-  for (auto& alias : plan.alias_bindings) {
-    design.alias_map[alias.child_slot] = alias.parent_place;
-    design.port_connections.push_back(
-        mir::PortConnection{
-            .kind = mir::PortConnection::Kind::kAlias,
-            .child_port_sym = alias.child_port_sym,
-            .parent_instance_sym = alias.parent_instance_sym,
-            .child_place = alias.child_place,
-            .parent_place = alias.parent_place,
-        });
-  }
 }
 
 }  // namespace lyra::link

@@ -37,79 +37,14 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto Context::ResolveAliases(mir::PlaceId place_id) -> mir::Place {
-  const mir::Place& original = arena_[place_id];
-
-  // Only design-storage roots (kDesignGlobal or kModuleSlot) can be aliased.
-  if (original.root.kind != mir::PlaceRoot::Kind::kDesignGlobal &&
-      original.root.kind != mir::PlaceRoot::Kind::kModuleSlot) {
-    return original;
-  }
-  mir::SlotId slot{ResolveDesignGlobalSlotId(original.root)};
-  auto alias_it = design_.alias_map.find(slot);
-  if (alias_it == design_.alias_map.end()) {
-    return original;  // Not aliased
-  }
-
-  // Flatten alias chain with cycle detection
-  std::unordered_set<mir::SlotId> visited;
-  visited.insert(slot);
-  mir::SlotId start_slot = slot;  // For error reporting
-
-  mir::Place resolved = original;
-  std::vector<mir::Projection> accumulated_projections = original.projections;
-
-  while (alias_it != design_.alias_map.end()) {
-    mir::PlaceId target_place_id = alias_it->second;
-    const mir::Place& target = arena_[target_place_id];
-
-    // Invariant: alias_map only maps to kDesignGlobal roots
-    if (target.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
-      throw common::InternalError(
-          "ResolveAliases",
-          std::format(
-              "alias target for slot {} is not a design slot", slot.value));
-    }
-
-    // Prepend target's projections (target.proj comes before our accumulated)
-    std::vector<mir::Projection> new_projections = target.projections;
-    new_projections.insert(
-        new_projections.end(), accumulated_projections.begin(),
-        accumulated_projections.end());
-    accumulated_projections = std::move(new_projections);
-
-    // Update resolved root
-    resolved.root = target.root;
-
-    mir::SlotId target_slot{static_cast<uint32_t>(target.root.id)};
-
-    // Cycle detection
-    if (visited.contains(target_slot)) {
-      throw common::InternalError(
-          "ResolveAliases",
-          std::format(
-              "alias cycle detected: slot {} -> ... -> slot {}",
-              start_slot.value, target_slot.value));
-    }
-    visited.insert(target_slot);
-
-    alias_it = design_.alias_map.find(target_slot);
-  }
-
-  resolved.projections = std::move(accumulated_projections);
-  return resolved;
-}
-
 auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
-  // Resolve aliases first, then delegate to the internal helper
-  mir::Place resolved = ResolveAliases(place_id);
-  return ComputePlacePointer(resolved, place_id);
+  return ComputePlacePointer(arena_[place_id], place_id);
 }
 
 auto Context::ComputePlacePointer(
     const mir::Place& resolved, mir::PlaceId original_place_id)
     -> Result<llvm::Value*> {
-  // Get base pointer from root (resolved is already alias-resolved).
+  // Get base pointer from root.
   llvm::Value* ptr = nullptr;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
       resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
@@ -252,14 +187,13 @@ auto Context::ComputePlacePointer(
 }
 
 auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
-  // Resolve aliases FIRST - all decisions based on this single resolved place
-  mir::Place resolved = ResolveAliases(place_id);
+  mir::Place resolved = arena_[place_id];
 
-  // Compute pointer directly from the resolved place (no re-resolution)
+  // Compute pointer from the place
   auto ptr_or_err = ComputePlacePointer(resolved, place_id);
   if (!ptr_or_err) return std::unexpected(ptr_or_err.error());
 
-  // Determine canonical_signal_id from the SAME resolved root
+  // Determine canonical_signal_id from root
   std::optional<SignalIdExpr> signal_id;
   uint32_t dirty_off = 0;
   uint32_t dirty_size = 0;
@@ -303,7 +237,7 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
 
 auto Context::GetCanonicalRootSignalId(mir::PlaceId place_id)
     -> std::optional<SignalIdExpr> {
-  mir::Place resolved = ResolveAliases(place_id);
+  const mir::Place& resolved = arena_[place_id];
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
     return EmitSignalId(
         {mir::SignalRef::Scope::kModuleLocal,
@@ -415,8 +349,7 @@ auto Context::GetSignalSlotPointer(const mir::SignalRef& sig) -> llvm::Value* {
 }
 
 auto Context::GetStorageRootPointer(mir::PlaceId place_id) -> llvm::Value* {
-  mir::Place resolved = ResolveAliases(place_id);
-  return GetSlotRootPointer(resolved.root);
+  return GetSlotRootPointer(arena_[place_id].root);
 }
 
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
