@@ -69,7 +69,7 @@ Staged transition. Each phase establishes new invariants while old paths coexist
 
 **Stage 3: Storage model** (Phase C) - C1 done: module-owned slot identity is specialization-local by construction (`CollectBodyLocalDecls` produces body-local storage independently; `ModuleBody.slots` is the authoritative specialization-local storage interface). C2 done: `mir::InstancePlacement` is the source of truth for per-instance module placement in DesignState, computed via independent running base counter grounded in authoritative package slot count from `CollectDesignDeclarations`; `instance_slot_ranges` is derived compatibility data. C3 done: alias resolution eliminated from behavioral codegen; `kAlias` binding kind deleted, `alias_map` removed, `ResolveAliases()` inlined away. Shared module behavioral processes no longer resolve module-local places through design-global alias topology. Explicit `kDesignGlobal` roots still use design-global addressing paths.
 
-**Stage 4: Assembly extraction** (Phase D) - Assembly becomes a separate phase. Binding, metadata, and connectivity moved out of MIR lowering and codegen. Temporary: assembly still produces the same monolithic LLVM IR.
+**Stage 4: Assembly extraction** (Phase D) - D1 done: binding compilation separated from assembly attachment; `CompileBindings()` (lowering) + `link::AssembleBindings()` (link phase). D3 done: metadata serialization moved to link; `link::BuildDesignMetadata` owns all packing, backend extracts raw facts and emits pre-serialized tables. D4 done: `main()` generation moved to `assembly::EmitDesignMain()`; `LowerMirToLlvm()` is a thin orchestrator calling `CompileDesignProcesses` -> `EmitDesignMain` -> `FinalizeModule`. Assembly is a separate Bazel target (`:assembly`) with clean dependency direction (`assembly` -> `llvm_backend`, never reverse). Metadata extraction functions take narrow parameters instead of `LoweringInput`. Remaining: D2 (InstanceConstBlock).
 
 **Stage 5: Per-specialization codegen** (Phase E) - Codegen API takes one specialization. Design-wide main/metadata generation moves to assembly. Template dedup path removed (dedup is automatic). Old design-wide codegen path deleted.
 
@@ -109,12 +109,12 @@ Remaining (design-global codegen model):
 
 **B3: Codegen operates on entire design**
 
-`LowerMirToLlvm()` receives `mir::Design`. `BuildLayout()` processes all instances, processes, connections. Cannot parallelize or cache.
+`LowerMirToLlvm()` receives `mir::Design`. `BuildLayout()` processes all instances, processes, connections. Cannot parallelize or cache. After D4, `LowerMirToLlvm()` lives in assembly and orchestrates `CompileDesignProcesses` -> `EmitDesignMain` -> `FinalizeModule`, but `CompileDesignProcesses` still processes the full design.
 
 - `include/lyra/llvm_backend/lower.hpp:83-95` - `LoweringInput` holds `const mir::Design*`
-- `src/lyra/llvm_backend/lower.cpp:666` - `LowerMirToLlvm()` entry point
-- `src/lyra/llvm_backend/layout/layout.cpp:1620` - `BuildLayout()` iterates all instances
-- `include/lyra/llvm_backend/context.hpp:471` - `Context` holds `const mir::Design&`
+- `src/lyra/llvm_backend/lower.cpp` - `CompileDesignProcesses()` still processes full design
+- `src/lyra/llvm_backend/layout/layout.cpp` - `BuildLayout()` iterates all instances
+- `include/lyra/llvm_backend/context.hpp` - `Context` holds `const mir::Design&`
 
 ### Major
 
@@ -134,15 +134,9 @@ Resolved: `ApplyBindings()` replaced by `CompileBindings()` (lowering) + `link::
 - Impact: Packed-width params may be misclassified; unpacked-size params may over-specialize
 - Fix: Walk type expressions to detect packed-width variation. Separately classify unpacked-size params as elaboration-time (not structural). See architectural direction in this document.
 
-**M3: Runtime metadata built during codegen**
+**M3: Runtime metadata built during codegen** (resolved by D3 + D4)
 
-Slot meta, process meta, connection descriptors, comb kernels, instance paths all emitted as LLVM globals during `LowerMirToLlvm()`. These are design-wide.
-
-- `src/lyra/llvm_backend/lower.cpp:154-250` - `EmitSlotMetaTable()`
-- `src/lyra/llvm_backend/lower.cpp:297-399` - `EmitProcessMetaTable()`
-- `src/lyra/llvm_backend/lower.cpp:1102-1205` - connection descriptors
-- `src/lyra/llvm_backend/lower.cpp:1265-1292` - `__lyra_instance_paths`
-- `src/lyra/llvm_backend/lower.cpp:635-660` - `EmitParamInitStores()`
+Resolved: Metadata serialization moved to `link::BuildDesignMetadata` (D3). Metadata extraction and LLVM global emission now happen in `assembly::EmitDesignMain()` (D4), separate from behavioral codegen.
 
 **M4: Template dedup is cross-instance optimization in codegen**
 
@@ -162,7 +156,7 @@ Slot meta, process meta, connection descriptors, comb kernels, instance paths al
 
 **m4: ParamRole uses slang pointer as grouping key** - `src/lyra/lowering/ast_to_hir/param_role.cpp:72-77`.
 
-**m5: main() generation is monolithic** - `src/lyra/llvm_backend/lower.cpp:841-1200+`. Design-wide assembly logic in codegen.
+**m5: main() generation is monolithic** - Resolved by D4. `main()` generation moved to `assembly::EmitDesignMain()` in `src/lyra/assembly/emit_design_main.cpp`.
 
 ### Minor
 
@@ -305,21 +299,23 @@ Existing design-wide codegen continues to work by reconstructing per-instance pr
 - Dependencies: A4, C2
 - Invariant: Value-only params are assembly data, not compilation data.
 
-**D3: Move metadata table construction to assembly**
+**D3: Move metadata table construction to assembly** (done)
 
-- Goal: Slot meta, process meta, instance paths, connection descriptors produced by assembly
-- Areas: Extract from `src/lyra/llvm_backend/lower.cpp` into `src/lyra/assembly/metadata.cpp`
-- Acceptance: `EmitSlotMetaTable`, `EmitProcessMetaTable`, `EmitLoopSiteMetaTable`, connection descriptor emission, `__lyra_instance_paths` moved to assembly. Test: per-specialization codegen does not emit design-wide globals.
+- Goal: Metadata serialization (slot meta, process meta, loop site meta, connection descriptors, comb kernels, instance paths) owned by link phase, not inlined in codegen
+- Areas: `include/lyra/link/design_metadata.hpp`, `include/lyra/link/build_design_metadata.hpp`, `src/lyra/link/build_design_metadata.cpp`, `include/lyra/llvm_backend/design_metadata_lowering.hpp`, `src/lyra/llvm_backend/design_metadata_lowering.cpp`, `src/lyra/llvm_backend/lower.cpp`
+- Acceptance: `link::BuildDesignMetadata` owns all metadata packing/serialization. Backend extracts raw facts into `link::DesignMetadataInputs`, link serializes into runtime-shaped `link::DesignMetadata`, backend emits pre-serialized tables as LLVM globals. `lower.cpp` reduced to orchestration only.
 - Dependencies: D1, C3
-- Invariant: Specialization codegen produces no design-wide metadata.
+- Invariant: Metadata serialization logic lives in link, not codegen. Backend is a pure emitter for already-serialized metadata.
+- Done: `DesignMetadataInputs` and `DesignMetadata` types in `lyra::link`. `BuildDesignMetadata` centralizes all packing (slot meta words, process meta word table, loop site meta word table, comb kernel words). Backend helpers (`ExtractSlotMetaInputs`, `PrepareScheduledProcessInputs`, `PrepareLoopSiteInputs`, `ExtractConnectionDescriptorEntries`, `PrepareCombKernelInputs`, `PrepareInstancePaths`) extract LLVM-layout-dependent facts into plain link structs. `EmitDesignMetadataGlobals` emits pre-serialized metadata with no packing logic.
 
-**D4: Move main() generation to assembly**
+**D4: Move main() generation to assembly** (done)
 
 - Goal: Assembly generates the main function
-- Areas: Extract from `src/lyra/llvm_backend/lower.cpp:841-1200+`
+- Areas: `include/lyra/assembly/emit_design_main.hpp`, `src/lyra/assembly/emit_design_main.cpp`, `include/lyra/llvm_backend/codegen_session.hpp`, `src/lyra/llvm_backend/lower.cpp`
 - Acceptance: `LowerMirToLlvm()` no longer generates main(). Assembly phase constructs main from `InstancePlacement` + compiled specialization functions. Test: main() exists only in assembly output.
 - Dependencies: D3
 - Invariant: Assembly owns design-wide code generation.
+- Done: `main()` generation and all design-wide helpers (`InitializeDesignState`, `InitializeProcessState`, `EmitParamInitStores`, `ReleaseStringSlots`, `EmitWaitSiteMetaTable`) moved to `lyra::assembly::EmitDesignMain()`. `LowerMirToLlvm()` is now a thin wrapper: `CompileDesignProcesses()` -> `assembly::EmitDesignMain()` -> `FinalizeModule()`. `CodegenSession` is a backend-owned intermediate state passed between phases. `EmitDesignMainInput` is a narrow assembly contract (no raw `LoweringInput`). No driver/test caller changes; public API preserved for E1.
 
 ### Phase E: Per-specialization codegen
 
