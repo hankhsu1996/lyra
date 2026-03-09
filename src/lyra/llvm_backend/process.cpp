@@ -1,5 +1,6 @@
 #include "lyra/llvm_backend/process.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -1014,8 +1015,8 @@ auto EmitLateBoundData(
 }
 
 auto LowerWait(
-    Context& context, const mir::Wait& wait, llvm::BasicBlock* exit_block)
-    -> Result<void> {
+    Context& context, const mir::Wait& wait, llvm::BasicBlock* exit_block,
+    std::vector<WaitSiteEntry>& wait_sites) -> Result<void> {
   static_assert(sizeof(runtime::WaitTriggerRecord) == 16);
 
   auto& builder = context.GetBuilder();
@@ -1036,6 +1037,17 @@ auto LowerWait(
   // Emit late-bound data (headers + plan ops pool + dep slots pool).
   auto lb_data = EmitLateBoundData(context, wait.triggers);
 
+  // Allocate wait-site ID and record entry for the caller.
+  bool has_late_bound = (lb_data.num_headers > 0);
+  bool has_container = std::ranges::any_of(wait.triggers, [](const auto& t) {
+    return t.late_bound && t.late_bound->is_container;
+  });
+  uint32_t wait_site_id = context.NextWaitSiteId();
+  wait_sites.push_back(
+      WaitSiteEntry{
+          wait.resume.value, num_triggers, has_late_bound, has_container});
+  auto* wait_site_id_val = llvm::ConstantInt::get(i32_ty, wait_site_id);
+
   // Compile-time branching: different codegen for small vs large trigger counts
   if (num_triggers <= runtime::kInlineTriggerCapacity) {
     // Small path: fixed-size stack allocation (never dynamic alloca)
@@ -1048,7 +1060,7 @@ auto LowerWait(
         context, triggers_alloca, trigger_type, fixed_array_type,
         wait.triggers);
 
-    if (lb_data.num_headers > 0) {
+    if (has_late_bound) {
       auto* null_ptr = llvm::ConstantPointerNull::get(
           llvm::PointerType::getUnqual(llvm_ctx));
       builder.CreateCall(
@@ -1060,13 +1072,14 @@ auto LowerWait(
            lb_data.plan_ops_ptr != nullptr ? lb_data.plan_ops_ptr : null_ptr,
            llvm::ConstantInt::get(i32_ty, lb_data.num_plan_ops),
            lb_data.dep_slots_ptr != nullptr ? lb_data.dep_slots_ptr : null_ptr,
-           llvm::ConstantInt::get(i32_ty, lb_data.num_dep_slots)});
+           llvm::ConstantInt::get(i32_ty, lb_data.num_dep_slots),
+           wait_site_id_val});
     } else {
       builder.CreateCall(
           context.GetLyraSuspendWait(),
           {context.GetStatePointer(),
            llvm::ConstantInt::get(i32_ty, wait.resume.value), triggers_alloca,
-           llvm::ConstantInt::get(i32_ty, num_triggers)});
+           llvm::ConstantInt::get(i32_ty, num_triggers), wait_site_id_val});
     }
   } else {
     // Large path: runtime allocates scratch buffer, we fill it, runtime copies
@@ -1078,7 +1091,7 @@ auto LowerWait(
     FillTriggerArray(
         context, heap_ptr, trigger_type, array_type, wait.triggers);
 
-    if (lb_data.num_headers > 0) {
+    if (has_late_bound) {
       auto* null_ptr = llvm::ConstantPointerNull::get(
           llvm::PointerType::getUnqual(llvm_ctx));
       builder.CreateCall(
@@ -1090,13 +1103,14 @@ auto LowerWait(
            lb_data.plan_ops_ptr != nullptr ? lb_data.plan_ops_ptr : null_ptr,
            llvm::ConstantInt::get(i32_ty, lb_data.num_plan_ops),
            lb_data.dep_slots_ptr != nullptr ? lb_data.dep_slots_ptr : null_ptr,
-           llvm::ConstantInt::get(i32_ty, lb_data.num_dep_slots)});
+           llvm::ConstantInt::get(i32_ty, lb_data.num_dep_slots),
+           wait_site_id_val});
     } else {
       builder.CreateCall(
           context.GetLyraSuspendWait(),
           {context.GetStatePointer(),
            llvm::ConstantInt::get(i32_ty, wait.resume.value), heap_ptr,
-           llvm::ConstantInt::get(i32_ty, num_triggers)});
+           llvm::ConstantInt::get(i32_ty, num_triggers), wait_site_id_val});
     }
 
     // Free scratch buffer (runtime already copied to SuspendRecord storage)
@@ -1238,7 +1252,8 @@ auto LowerQualifiedDispatch(
 auto LowerTerminator(
     Context& context, const mir::Terminator& term,
     const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block,
-    PhiWiringState& phi_state) -> Result<void> {
+    PhiWiringState& phi_state, std::vector<WaitSiteEntry>& wait_sites)
+    -> Result<void> {
   // Set origin for error reporting.
   // OriginScope preserves outer (function/process) origin if term.origin is
   // Invalid.
@@ -1264,7 +1279,7 @@ auto LowerTerminator(
             return {};
           },
           [&](const mir::Wait& w) -> Result<void> {
-            return LowerWait(context, w, exit_block);
+            return LowerWait(context, w, exit_block, wait_sites);
           },
           [&](const mir::Repeat&) -> Result<void> {
             LowerRepeat(context, exit_block);
@@ -1287,10 +1302,11 @@ auto LowerTerminator(
 
 auto GenerateProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
-    -> Result<llvm::Function*> {
+    -> Result<ProcessCodegenResult> {
   // Process-level origin scope for errors during code generation.
   // If process.origin is Invalid, this is a no-op.
   OriginScope proc_scope(context, process.origin);
+  std::vector<WaitSiteEntry> wait_sites;
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -1403,7 +1419,8 @@ auto GenerateProcessFunction(
     }
 
     auto term_result = LowerTerminator(
-        context, block.terminator, llvm_blocks, exit_block, phi_state);
+        context, block.terminator, llvm_blocks, exit_block, phi_state,
+        wait_sites);
     if (!term_result) return std::unexpected(term_result.error());
   }
 
@@ -1422,13 +1439,15 @@ auto GenerateProcessFunction(
   context.SetEnginePointer(nullptr);
 
   VerifyLlvmFunction(func, "GenerateProcessFunction");
-  return func;
+  return ProcessCodegenResult{
+      .function = func, .wait_sites = std::move(wait_sites)};
 }
 
 auto GenerateSharedProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
-    -> Result<llvm::Function*> {
+    -> Result<ProcessCodegenResult> {
   OriginScope proc_scope(context, process.origin);
+  std::vector<WaitSiteEntry> wait_sites;
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -1519,7 +1538,8 @@ auto GenerateSharedProcessFunction(
     }
 
     auto term_result = LowerTerminator(
-        context, block.terminator, llvm_blocks, exit_block, phi_state);
+        context, block.terminator, llvm_blocks, exit_block, phi_state,
+        wait_sites);
     if (!term_result) return std::unexpected(term_result.error());
   }
 
@@ -1540,7 +1560,8 @@ auto GenerateSharedProcessFunction(
   context.SetSignalIdOffset(nullptr);
 
   VerifyLlvmFunction(func, "GenerateSharedProcessFunction");
-  return func;
+  return ProcessCodegenResult{
+      .function = func, .wait_sites = std::move(wait_sites)};
 }
 
 auto GenerateProcessWrapper(

@@ -198,7 +198,7 @@ void ReleaseTriggerOverflow(lyra::runtime::SuspendRecord* suspend) {
 
 void SuspendReset(lyra::runtime::SuspendRecord* suspend) {
   ReleaseTriggerOverflow(suspend);
-  suspend->tag = lyra::runtime::SuspendTag::kFinished;
+  *suspend = lyra::runtime::SuspendRecord{};
 }
 
 }  // namespace
@@ -225,12 +225,13 @@ extern "C" void LyraSuspendDelay(
 
 extern "C" void LyraSuspendWait(
     void* state, uint32_t resume_block, const void* triggers,
-    uint32_t num_triggers) {
+    uint32_t num_triggers, uint32_t wait_site_id) {
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
   ReleaseTriggerOverflow(suspend);  // Clean up any previous wait
 
   suspend->tag = lyra::runtime::SuspendTag::kWait;
   suspend->resume_block = resume_block;
+  suspend->wait_site_id = wait_site_id;
   suspend->num_triggers = num_triggers;
 
   // Always set triggers_ptr for invariant consistency (even if num_triggers ==
@@ -253,12 +254,13 @@ extern "C" void LyraSuspendWaitWithLateBound(
     void* state, uint32_t resume_block, const void* triggers,
     uint32_t num_triggers, const void* headers, uint32_t num_headers,
     const void* plan_ops, uint32_t num_plan_ops, const void* dep_slots,
-    uint32_t num_dep_slots) {
+    uint32_t num_dep_slots, uint32_t wait_site_id) {
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
   ReleaseTriggerOverflow(suspend);
 
   suspend->tag = lyra::runtime::SuspendTag::kWait;
   suspend->resume_block = resume_block;
+  suspend->wait_site_id = wait_site_id;
   suspend->num_triggers = num_triggers;
 
   if (num_triggers <= lyra::runtime::kInlineTriggerCapacity) {
@@ -345,7 +347,13 @@ auto MakeProcessRunner(
     SuspendReset(suspend);
 
     procs[proc_idx](state, resume.block_index);
-    HandleSuspendRecord(eng, handle, suspend);
+
+    // When the engine has wait-site metadata and suspend-record access,
+    // post-activation reconciliation is handled by the engine.
+    // Otherwise, fall back to the legacy HandleSuspendRecord path.
+    if (!eng.HasPostActivationReconciliation()) {
+      HandleSuspendRecord(eng, handle, suspend);
+    }
   };
 }
 
@@ -437,10 +445,12 @@ extern "C" void LyraRunSimulation(
       std::move(instance_paths_vec), feature_flags);
 
   if (abi != nullptr) {
-    if (abi->version != 1) {
+    if (abi->version != kRuntimeAbiVersion) {
       throw lyra::common::InternalError(
           "LyraRunSimulation",
-          std::format("unsupported RuntimeAbi version {}", abi->version));
+          std::format(
+              "unsupported RuntimeAbi version {} (expected {})", abi->version,
+              kRuntimeAbiVersion));
     }
 
     // Slot metadata
@@ -484,6 +494,26 @@ extern "C" void LyraRunSimulation(
           std::span(abi->comb_kernel_words, abi->num_comb_kernel_words),
           processes, states_raw);
     }
+
+    // Wait-site metadata
+    if (abi->wait_site_words != nullptr && abi->wait_site_word_count > 0) {
+      engine.InitWaitSiteMeta(
+          lyra::runtime::WaitSiteRegistry(
+              abi->wait_site_words, abi->wait_site_word_count));
+    }
+  }
+
+  // Register suspend records for post-activation reconciliation.
+  // When both wait-site metadata and suspend records are present,
+  // HasPostActivationReconciliation() gates the new flow everywhere.
+  if (abi != nullptr && abi->wait_site_words != nullptr &&
+      abi->wait_site_word_count > 0) {
+    std::vector<lyra::runtime::SuspendRecord*> suspend_ptrs;
+    suspend_ptrs.reserve(states.size());
+    for (auto* state : states) {
+      suspend_ptrs.push_back(static_cast<lyra::runtime::SuspendRecord*>(state));
+    }
+    engine.RegisterSuspendRecords(suspend_ptrs);
   }
 
   if (HasFlag(flags, FeatureFlag::kDumpSlotMeta)) {

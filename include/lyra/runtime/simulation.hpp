@@ -74,12 +74,12 @@ auto LyraSystemCmd(void* engine_ptr, LyraStringHandle cmd_handle) -> int32_t;
 void LyraSuspendDelay(void* state, uint64_t ticks, uint32_t resume_block);
 void LyraSuspendWait(
     void* state, uint32_t resume_block, const void* triggers,
-    uint32_t num_triggers);
+    uint32_t num_triggers, uint32_t wait_site_id);
 void LyraSuspendWaitWithLateBound(
     void* state, uint32_t resume_block, const void* triggers,
     uint32_t num_triggers, const void* headers, uint32_t num_headers,
     const void* plan_ops, uint32_t num_plan_ops, const void* dep_slots,
-    uint32_t num_dep_slots);
+    uint32_t num_dep_slots, uint32_t wait_site_id);
 void LyraSuspendRepeat(void* state);
 
 // Store a packed (integer/packed-array) value to a design slot with change

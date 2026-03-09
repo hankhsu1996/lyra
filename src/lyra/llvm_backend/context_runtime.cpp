@@ -349,12 +349,12 @@ auto Context::GetLyraSuspendDelay() -> llvm::Function* {
 auto Context::GetLyraSuspendWait() -> llvm::Function* {
   if (lyra_suspend_wait_ == nullptr) {
     // void LyraSuspendWait(ptr state, i32 resume_block, ptr triggers,
-    //                      i32 num_triggers)
+    //                      i32 num_triggers, i32 wait_site_id)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty, ptr_ty, i32_ty},
-        false);
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty}, false);
     lyra_suspend_wait_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraSuspendWait",
         llvm_module_.get());
@@ -369,13 +369,14 @@ auto Context::GetLyraSuspendWaitWithLateBound() -> llvm::Function* {
     //     ptr triggers, i32 num_triggers,
     //     ptr headers, i32 num_headers,
     //     ptr plan_ops, i32 num_plan_ops,
-    //     ptr dep_slots, i32 num_dep_slots)
+    //     ptr dep_slots, i32 num_dep_slots,
+    //     i32 wait_site_id)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
         {ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-         i32_ty},
+         i32_ty, i32_ty},
         false);
     lyra_suspend_wait_with_late_bound_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage,

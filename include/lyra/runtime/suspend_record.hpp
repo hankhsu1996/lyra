@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "lyra/runtime/index_plan.hpp"
+#include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::runtime {
 
@@ -117,11 +118,12 @@ static constexpr uint32_t kInlineTriggerCapacity = 32;
 // inline_triggers.data()
 struct SuspendRecord {
   SuspendTag tag = SuspendTag::kFinished;
-  uint64_t delay_ticks = 0;                   // For kDelay
-  uint32_t resume_block = 0;                  // For kDelay, kWait, kRepeat
-  uint32_t num_triggers = 0;                  // For kWait
-  WaitTriggerRecord* triggers_ptr = nullptr;  // Single source of truth
-  uint32_t num_late_bound = 0;                // For kWait (late-bound triggers)
+  uint64_t delay_ticks = 0;                      // For kDelay
+  uint32_t resume_block = 0;                     // For kDelay, kWait, kRepeat
+  WaitSiteId wait_site_id = kInvalidWaitSiteId;  // For kWait: compiled site
+  uint32_t num_triggers = 0;                     // For kWait
+  WaitTriggerRecord* triggers_ptr = nullptr;     // Single source of truth
+  uint32_t num_late_bound = 0;  // For kWait (late-bound triggers)
   LateBoundHeader* late_bound_ptr = nullptr;
   uint32_t num_plan_ops = 0;
   IndexPlanOp* plan_ops_ptr = nullptr;

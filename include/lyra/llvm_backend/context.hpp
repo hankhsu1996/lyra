@@ -522,6 +522,14 @@ class Context {
     return loop_site_origins_;
   }
 
+  // Wait-site ID allocation for persistent wait installation.
+  // Returns the next sequential wait-site ID. Process codegen uses this
+  // to assign IDs; the entries themselves are returned as process-level
+  // output (not stored on Context).
+  auto NextWaitSiteId() -> uint32_t {
+    return next_wait_site_id_++;
+  }
+
   // SSA temp management (for block params and temps defined by statements)
   // BindTemp: define an SSA temp value with its MIR type.
   // Must be called exactly once per temp_id. Binding an already-bound temp_id
@@ -760,6 +768,9 @@ class Context {
   // Loop site origins accumulated during process codegen.
   // Index = loop_site_id, value = origin of the back-edge terminator.
   std::vector<common::OriginId> loop_site_origins_;
+
+  // Wait-site ID counter. Incremented by NextWaitSiteId().
+  uint32_t next_wait_site_id_ = 0;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

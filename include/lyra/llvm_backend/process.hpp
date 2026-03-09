@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <llvm/IR/Function.h>
 
@@ -11,12 +12,26 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+// Per-wait-site entry produced during process codegen.
+// Index = wait_site_id (assigned sequentially via Context::NextWaitSiteId).
+struct WaitSiteEntry {
+  uint32_t resume_block;
+  uint32_t num_triggers;
+  bool has_late_bound;
+  bool has_container;
+};
+
+// Output of process code generation.
+struct ProcessCodegenResult {
+  llvm::Function* function;
+  std::vector<WaitSiteEntry> wait_sites;
+};
+
 // Generate a complete process function with resume dispatch.
 // The function signature is: void process_N(void* state, uint32_t resume_block)
-// Returns the generated function.
 auto GenerateProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
-    -> Result<llvm::Function*>;
+    -> Result<ProcessCodegenResult>;
 
 // Generate a template process function with extra arguments for sharing.
 // Signature: void(ptr state, i32 resume, ptr this_ptr, i32 inst_id,
@@ -26,7 +41,7 @@ auto GenerateProcessFunction(
 // configured before calling.
 auto GenerateSharedProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
-    -> Result<llvm::Function*>;
+    -> Result<ProcessCodegenResult>;
 
 // Generate a thin wrapper that calls the template function with baked-in args.
 // Computes this_ptr = design_ptr + base_byte_offset, then calls the shared

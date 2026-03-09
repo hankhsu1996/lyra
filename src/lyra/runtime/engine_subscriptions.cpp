@@ -13,6 +13,7 @@
 
 #include <fmt/core.h>
 
+#include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/index_plan.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -22,7 +23,9 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/index_plan.hpp"
 #include "lyra/runtime/slot_meta.hpp"
+#include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/update_set.hpp"
+#include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::runtime {
 
@@ -128,7 +131,7 @@ void Engine::PrintTopWaiters(size_t count) {
   }
 }
 
-void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
+void Engine::ClearInstalledSubscriptions(ProcessHandle handle) {
   if (handle.process_id >= num_processes_) {
     return;
   }
@@ -140,7 +143,7 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
 
     if (node->signal >= signal_waiters_.size()) {
       throw common::InternalError(
-          "Engine::ClearProcessSubscriptions",
+          "Engine::ClearInstalledSubscriptions",
           std::format(
               "stale subscription signal {} exceeds slot count {}",
               node->signal, signal_waiters_.size()));
@@ -166,7 +169,7 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
     FreeNode(node);
     if (live_subscription_count_ == 0) {
       throw common::InternalError(
-          "Engine::ClearProcessSubscriptions",
+          "Engine::ClearInstalledSubscriptions",
           "live_subscription_count_ underflow");
     }
     --live_subscription_count_;
@@ -176,6 +179,289 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
   proc_state.subscription_head = nullptr;
   proc_state.subscription_count = 0;
   proc_state.plan_pool.ops.clear();
+}
+
+void Engine::InvalidateInstalledWait(ProcessHandle handle) {
+  if (handle.process_id >= num_processes_) return;
+  auto& proc_state = process_states_[handle.process_id];
+  proc_state.installed_wait = InstalledWaitState{};
+}
+
+void Engine::ResetInstalledWait(ProcessHandle handle) {
+  ClearInstalledSubscriptions(handle);
+  InvalidateInstalledWait(handle);
+}
+
+void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
+  ResetInstalledWait(handle);
+}
+
+void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
+  if (handle.process_id >= num_processes_) return;
+
+  auto& proc_state = process_states_[handle.process_id];
+
+  std::span design_state(
+      static_cast<const uint8_t*>(design_state_base_),
+      slot_meta_registry_.MaxExtent());
+
+  for (auto* node = proc_state.subscription_head; node != nullptr;
+       node = node->process_next) {
+    // Static refresh invariant: all installed nodes must be refreshable
+    // in place. Rebind nodes and container element nodes violate this
+    // contract -- their presence under a kStatic site is a compiler bug.
+    if (node->rebind_target != nullptr) {
+      throw common::InternalError(
+          "Engine::RefreshInstalledSnapshots",
+          std::format(
+              "process {} has rebind node on static refresh path",
+              handle.process_id));
+    }
+    if (node->container_base_off != UINT32_MAX) {
+      throw common::InternalError(
+          "Engine::RefreshInstalledSnapshots",
+          std::format(
+              "process {} has container element node on static refresh path",
+              handle.process_id));
+    }
+
+    const auto& meta = slot_meta_registry_.Get(node->signal);
+
+    if (node->edge == common::EdgeKind::kAnyChange) {
+      const auto* current = &design_state[meta.base_off + node->byte_offset];
+      auto* snapshot = node->SnapshotData();
+      std::memcpy(snapshot, current, node->byte_size);
+    } else {
+      uint8_t current_byte = design_state[meta.base_off + node->byte_offset];
+      node->last_bit = (current_byte >> node->bit_index) & 1;
+      node->snapshot_inline[0] = current_byte;
+    }
+  }
+}
+
+void Engine::InstallWaitSite(
+    ProcessHandle handle, SuspendRecord* suspend,
+    const CompiledWaitSite& descriptor) {
+  auto resume =
+      ResumePoint{.block_index = suspend->resume_block, .instruction_index = 0};
+  auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
+
+  bool has_late_bound =
+      suspend->num_late_bound > 0 && suspend->late_bound_ptr != nullptr;
+
+  // Validate late-bound presence matches compiled descriptor.
+  if (has_late_bound != descriptor.has_late_bound) {
+    throw common::InternalError(
+        "Engine::InstallWaitSite",
+        std::format(
+            "process {} wait_site {}: has_late_bound mismatch: "
+            "descriptor={} vs suspend={}",
+            handle.process_id, descriptor.id, descriptor.has_late_bound,
+            has_late_bound));
+  }
+
+  // Collect created subscription nodes for late-bound rebinding.
+  std::vector<SubscriptionNode*> edge_nodes;
+  if (has_late_bound) {
+    edge_nodes.resize(suspend->num_triggers, nullptr);
+  }
+
+  // Pre-scan: build container stride map from late-bound headers.
+  // Use a linear scan instead of hash map -- trigger counts are small.
+  std::vector<std::pair<uint32_t, uint32_t>> container_strides;
+  if (has_late_bound) {
+    auto headers = std::span(suspend->late_bound_ptr, suspend->num_late_bound);
+    for (const auto& hdr : headers) {
+      if (hdr.container_elem_stride > 0) {
+        container_strides.emplace_back(
+            hdr.trigger_index, hdr.container_elem_stride);
+      }
+    }
+  }
+
+  for (uint32_t i = 0; i < triggers.size(); ++i) {
+    const auto& trigger = triggers[i];
+    auto edge = static_cast<common::EdgeKind>(trigger.edge);
+    SubscriptionNode* node = nullptr;
+
+    // Linear scan for container stride.
+    uint32_t cs_stride = 0;
+    for (const auto& [idx, stride] : container_strides) {
+      if (idx == i) {
+        cs_stride = stride;
+        break;
+      }
+    }
+
+    if (cs_stride > 0) {
+      int64_t sv_index =
+          (trigger.byte_size == UINT32_MAX)
+              ? -1
+              : static_cast<int64_t>(trigger.byte_offset / cs_stride);
+      node = SubscribeContainerElement(
+          handle, resume, trigger.signal_id, edge, sv_index, cs_stride);
+    } else if (trigger.byte_size == UINT32_MAX) {
+      node = Subscribe(handle, resume, trigger.signal_id, edge, 0, 1, 0);
+      if (node != nullptr) node->is_active = false;
+    } else if (trigger.byte_size > 0) {
+      node = Subscribe(
+          handle, resume, trigger.signal_id, edge, trigger.byte_offset,
+          trigger.byte_size, trigger.bit_index);
+    } else {
+      node = Subscribe(handle, resume, trigger.signal_id, edge);
+    }
+    if (has_late_bound) {
+      edge_nodes[i] = node;
+    }
+  }
+
+  // Create rebind subscriptions for late-bound triggers.
+  if (has_late_bound) {
+    auto headers = std::span(suspend->late_bound_ptr, suspend->num_late_bound);
+    auto all_plan_ops = std::span(suspend->plan_ops_ptr, suspend->num_plan_ops);
+    auto all_dep_slots =
+        std::span(suspend->dep_slots_ptr, suspend->num_dep_slots);
+    for (const auto& hdr : headers) {
+      if (hdr.trigger_index >= suspend->num_triggers) {
+        throw common::InternalError(
+            "Engine::InstallWaitSite",
+            std::format(
+                "process {} wait_site {}: trigger_index {} >= num_triggers {}",
+                handle.process_id, descriptor.id, hdr.trigger_index,
+                suspend->num_triggers));
+      }
+      auto* target = edge_nodes[hdr.trigger_index];
+      if (target == nullptr) continue;
+      if (hdr.dep_slots_count == 0) continue;
+      if (hdr.plan_ops_start + hdr.plan_ops_count > suspend->num_plan_ops) {
+        throw common::InternalError(
+            "Engine::InstallWaitSite",
+            std::format(
+                "process {} wait_site {}: plan_ops span [{}, +{}) exceeds "
+                "pool size {}",
+                handle.process_id, descriptor.id, hdr.plan_ops_start,
+                hdr.plan_ops_count, suspend->num_plan_ops));
+      }
+      if (hdr.dep_slots_start + hdr.dep_slots_count > suspend->num_dep_slots) {
+        throw common::InternalError(
+            "Engine::InstallWaitSite",
+            std::format(
+                "process {} wait_site {}: dep_slots span [{}, +{}) exceeds "
+                "pool size {}",
+                handle.process_id, descriptor.id, hdr.dep_slots_start,
+                hdr.dep_slots_count, suspend->num_dep_slots));
+      }
+      BitTargetMapping mapping{
+          .index_base = hdr.index_base,
+          .index_step = hdr.index_step,
+          .total_bits = hdr.total_bits};
+      auto plan_ops =
+          all_plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
+      auto dep_slots =
+          all_dep_slots.subspan(hdr.dep_slots_start, hdr.dep_slots_count);
+      SubscribeRebind(handle, resume, target, plan_ops, mapping, dep_slots);
+    }
+  }
+
+  // Unconditionally publish installed wait state from the compiled descriptor.
+  auto& proc_state = process_states_[handle.process_id];
+  proc_state.installed_wait = InstalledWaitState{
+      .wait_site_id = descriptor.id, .shape = descriptor.shape, .valid = true};
+}
+
+void Engine::RegisterSuspendRecords(std::span<SuspendRecord*> records) {
+  suspend_records_.assign(records.begin(), records.end());
+}
+
+void Engine::ReconcilePostActivation(ProcessHandle handle) {
+  if (!HasPostActivationReconciliation()) {
+    throw common::InternalError(
+        "Engine::ReconcilePostActivation",
+        "called without post-activation reconciliation capability");
+  }
+  if (handle.process_id >= suspend_records_.size()) {
+    throw common::InternalError(
+        "Engine::ReconcilePostActivation",
+        std::format(
+            "process_id {} >= suspend_records size {}", handle.process_id,
+            suspend_records_.size()));
+  }
+  auto* suspend = suspend_records_[handle.process_id];
+
+  auto resume =
+      ResumePoint{.block_index = suspend->resume_block, .instruction_index = 0};
+
+  switch (suspend->tag) {
+    case SuspendTag::kFinished:
+      ResetInstalledWait(handle);
+      break;
+
+    case SuspendTag::kDelay:
+      ResetInstalledWait(handle);
+      Delay(handle, resume, suspend->delay_ticks);
+      break;
+
+    case SuspendTag::kWait: {
+      // Validate wait_site_id before use.
+      if (suspend->wait_site_id == kInvalidWaitSiteId) {
+        throw common::InternalError(
+            "Engine::ReconcilePostActivation",
+            std::format(
+                "process {} suspended with kWait but wait_site_id is invalid",
+                handle.process_id));
+      }
+      if (suspend->wait_site_id >= wait_site_meta_.Size()) {
+        throw common::InternalError(
+            "Engine::ReconcilePostActivation",
+            std::format(
+                "process {} wait_site_id {} >= registry size {}",
+                handle.process_id, suspend->wait_site_id,
+                wait_site_meta_.Size()));
+      }
+
+      const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
+
+      // Validate transitional invariants: compiled descriptor must agree
+      // with runtime activation record.
+      if (descriptor.resume_block != suspend->resume_block) {
+        throw common::InternalError(
+            "Engine::ReconcilePostActivation",
+            std::format(
+                "process {} wait_site {} resume_block mismatch: "
+                "descriptor={} vs suspend={}",
+                handle.process_id, suspend->wait_site_id,
+                descriptor.resume_block, suspend->resume_block));
+      }
+      if (descriptor.num_triggers != suspend->num_triggers) {
+        throw common::InternalError(
+            "Engine::ReconcilePostActivation",
+            std::format(
+                "process {} wait_site {} num_triggers mismatch: "
+                "descriptor={} vs suspend={}",
+                handle.process_id, suspend->wait_site_id,
+                descriptor.num_triggers, suspend->num_triggers));
+      }
+
+      auto& proc_state = process_states_[handle.process_id];
+      bool can_refresh =
+          proc_state.installed_wait.valid &&
+          proc_state.installed_wait.wait_site_id == suspend->wait_site_id &&
+          descriptor.shape == WaitShapeKind::kStatic;
+
+      if (can_refresh) {
+        RefreshInstalledSnapshots(handle);
+      } else {
+        ResetInstalledWait(handle);
+        InstallWaitSite(handle, suspend, descriptor);
+      }
+      break;
+    }
+
+    case SuspendTag::kRepeat:
+      ResetInstalledWait(handle);
+      ScheduleNextDelta(handle, ResumePoint{.block_index = 0});
+      break;
+  }
 }
 
 auto Engine::Subscribe(

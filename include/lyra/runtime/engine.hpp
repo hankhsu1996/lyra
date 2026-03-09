@@ -30,6 +30,7 @@
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trap.hpp"
 #include "lyra/runtime/update_set.hpp"
+#include "lyra/runtime/wait_site.hpp"
 #include "lyra/trace/trace_manager.hpp"
 
 namespace lyra::runtime {
@@ -306,6 +307,24 @@ class Engine {
     loop_site_meta_ = std::move(registry);
   }
 
+  // One-time init for wait-site metadata registry.
+  void InitWaitSiteMeta(WaitSiteRegistry registry) {
+    wait_site_meta_ = std::move(registry);
+  }
+
+  // Register suspend record pointers for post-activation reconciliation.
+  void RegisterSuspendRecords(std::span<SuspendRecord*> records);
+
+  // Single source of truth for whether the engine uses post-activation
+  // reconciliation (new path) vs legacy HandleSuspendRecord (old path).
+  // True when both wait-site metadata and suspend-record access are present.
+  [[nodiscard]] auto HasPostActivationReconciliation() const -> bool {
+    return wait_site_meta_.IsPopulated() && !suspend_records_.empty();
+  }
+
+  // Post-activation reconciliation: engine-owned dispatch after process runs.
+  void ReconcilePostActivation(ProcessHandle handle);
+
   [[nodiscard]] auto GetProcessMetaRegistry() const
       -> const ProcessMetaRegistry& {
     return process_meta_;
@@ -354,10 +373,19 @@ class Engine {
   void ExecutePostponedRegion();
   void FlushDirtySlots();
 
-  // Subscription management
+  // Subscription lifecycle
+  void ClearInstalledSubscriptions(ProcessHandle handle);
+  void InvalidateInstalledWait(ProcessHandle handle);
+  void ResetInstalledWait(ProcessHandle handle);
   void ClearProcessSubscriptions(ProcessHandle handle);
   auto AllocNode() -> SubscriptionNode*;
   void FreeNode(SubscriptionNode* node);
+
+  // Persistent wait-site installation
+  void InstallWaitSite(
+      ProcessHandle handle, SuspendRecord* suspend,
+      const CompiledWaitSite& descriptor);
+  void RefreshInstalledSnapshots(ProcessHandle handle);
 
   // Late-bound rebinding: re-read index value, recompute edge target.
   void RebindSubscription(SubscriptionNode* rebind_node);
@@ -487,6 +515,12 @@ class Engine {
 
   // Loop site metadata registry for loop guard diagnostics.
   LoopSiteRegistry loop_site_meta_;
+
+  // Wait-site metadata registry for persistent wait installation.
+  WaitSiteRegistry wait_site_meta_;
+
+  // Suspend record access for post-activation reconciliation.
+  std::vector<SuspendRecord*> suspend_records_;
 
   // Scheduler observability atomics (signal-safe reads from SIGUSR1).
   // Written by scheduler, read by signal handler via relaxed loads.
