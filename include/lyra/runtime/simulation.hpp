@@ -11,13 +11,21 @@ namespace lyra::runtime {
 // Get the base directory for relative path resolution in file I/O.
 auto GetFsBaseDir() -> const std::filesystem::path&;
 
+// Explicit process exit status returned by LLVM-generated process functions.
+// LLVM ABI is i32; C++ contract uses this named enum.
+enum class ProcessExitCode : uint32_t {
+  kOk = 0,    // Normal completion (suspend, finish, etc.)
+  kTrap = 1,  // Terminal trap (loop budget, $fatal, etc.)
+};
+
 }  // namespace lyra::runtime
 
 // Process function signature for LLVM-generated code.
 // - state: pointer to ProcessState (contains SuspendRecord at offset 0, then
 // slots)
 // - resume_block: which basic block to start execution from
-using LyraProcessFunc = void (*)(void* state, uint32_t resume_block);
+// Returns uint32_t (ProcessExitCode): 0 = kOk, 1 = kTrap.
+using LyraProcessFunc = uint32_t (*)(void* state, uint32_t resume_block);
 
 // Container mutation kind for LyraNotifyContainerMutation.
 enum class ContainerMutationKind : uint32_t {

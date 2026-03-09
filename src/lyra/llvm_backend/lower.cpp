@@ -943,6 +943,66 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     // Build wait-site metadata table (from entries collected during codegen)
     auto wait_site_meta = EmitWaitSiteMetaTable(context, all_wait_sites);
 
+    // Generate comb wrapper functions.
+    // Process functions use the pointer-out ABI: void(ptr, i32, ptr %out).
+    // Comb runtime ABI is void(ptr, i32) — no outcome pointer.
+    // Each wrapper allocates a local outcome buffer, calls the process
+    // function with &outcome, and discards the result.
+    auto* null_ptr =
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+    llvm::Value* comb_funcs_ptr = null_ptr;
+    auto num_comb = static_cast<uint32_t>(layout.comb_kernel_entries.size());
+    if (num_comb > 0) {
+      // Build ProcessId -> module process index mapping
+      std::unordered_map<uint32_t, uint32_t> proc_id_to_module_idx;
+      for (uint32_t pi = 0; pi < num_module_processes; ++pi) {
+        auto proc_id = layout.scheduled_processes[num_init + pi].process_id;
+        proc_id_to_module_idx[proc_id.value] = pi;
+      }
+
+      auto* void_ty = llvm::Type::getVoidTy(ctx);
+      auto* comb_fn_ty =
+          llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty}, false);
+      auto* outcome_mem_ty =
+          llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty});
+      auto* proc_fn_ty =
+          llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty, ptr_ty}, false);
+
+      std::vector<llvm::Constant*> comb_func_constants;
+      comb_func_constants.reserve(num_comb);
+      for (uint32_t ki = 0; ki < num_comb; ++ki) {
+        const auto& ck = layout.comb_kernel_entries[ki];
+        auto it = proc_id_to_module_idx.find(ck.process_id.value);
+        uint32_t module_idx = it->second;
+        auto* proc_fn = process_funcs[num_init + module_idx];
+
+        auto* wrapper = llvm::Function::Create(
+            comb_fn_ty, llvm::Function::InternalLinkage,
+            std::format("__lyra_comb_wrapper_{}", ki), mod);
+        auto* entry = llvm::BasicBlock::Create(ctx, "entry", wrapper);
+        llvm::IRBuilder<> wb(entry);
+        auto* outcome_buf =
+            wb.CreateAlloca(outcome_mem_ty, nullptr, "outcome");
+        wb.CreateCall(
+            proc_fn_ty, proc_fn,
+            {wrapper->getArg(0), wrapper->getArg(1), outcome_buf});
+        wb.CreateRetVoid();
+
+        comb_func_constants.push_back(wrapper);
+      }
+
+      auto* comb_func_array_type = llvm::ArrayType::get(ptr_ty, num_comb);
+      auto* comb_funcs_global = new llvm::GlobalVariable(
+          mod, comb_func_array_type, true, llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantArray::get(comb_func_array_type, comb_func_constants),
+          "__lyra_comb_funcs");
+      comb_funcs_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      comb_funcs_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+          comb_func_array_type, comb_funcs_global,
+          llvm::ArrayRef<llvm::Constant*>{llvm::ConstantInt::get(i32_ty, 0),
+                                          llvm::ConstantInt::get(i32_ty, 0)});
+    }
+
     // LyraRuntimeAbi field indices. Must match runtime_abi.hpp layout.
     constexpr unsigned kAbiVersion = 0;
     constexpr unsigned kAbiSlotMetaWords = 1;
@@ -962,12 +1022,15 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     constexpr unsigned kAbiFeatureFlags = 15;
     constexpr unsigned kAbiWaitSiteWords = 16;
     constexpr unsigned kAbiWaitSiteWordCount = 17;
-    constexpr unsigned kAbiFieldCount = 18;
+    constexpr unsigned kAbiCombFuncs = 18;
+    constexpr unsigned kAbiNumCombFuncs = 19;
+    constexpr unsigned kAbiFieldCount = 20;
 
     // Build RuntimeAbi struct on the stack
     std::array<llvm::Type*, kAbiFieldCount> abi_fields = {
-        i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-        ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty,
+        i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
+        ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+        i32_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
     };
     auto* abi_struct_type = llvm::StructType::get(ctx, abi_fields, false);
 
@@ -1014,6 +1077,8 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     store_field(
         kAbiWaitSiteWordCount,
         llvm::ConstantInt::get(i32_ty, wait_site_meta.count));
+    store_field(kAbiCombFuncs, comb_funcs_ptr);
+    store_field(kAbiNumCombFuncs, llvm::ConstantInt::get(i32_ty, num_comb));
 
     // Call multi-process scheduler
     builder.CreateCall(

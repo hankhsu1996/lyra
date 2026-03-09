@@ -1,7 +1,7 @@
 #pragma once
 
-#include <csetjmp>
 #include <cstdint>
+#include <optional>
 
 namespace lyra::runtime {
 
@@ -17,25 +17,21 @@ struct TrapPayload {
   uint32_t b = 0;  // spare
 };
 
-struct TrapFrame {
-  std::jmp_buf env{};
-  TrapPayload payload{};
-  bool armed = false;
-};
+// Consume the pending TLS trap payload (exactly-once delivery).
+// Returns the payload and clears the pending flag.
+// Returns nullopt if no trap is pending.
+auto ConsumeTlsTrap() -> std::optional<TrapPayload>;
 
-// Get the thread-local trap frame pointer.
-// Returns nullptr if no trap scope is active.
-auto GetTlsTrapFrame() -> TrapFrame*;
-
-// Set the thread-local trap frame pointer.
-void SetTlsTrapFrame(TrapFrame* frame);
+// Hard-reset TLS trap state at activation entry.
+// Guarantees every activation starts clean.
+void ResetTlsTrap();
 
 }  // namespace lyra::runtime
 
 extern "C" {
 
-// Called from generated code to unwind back to the engine scheduler.
-// engine_ptr is unused in the current implementation (trap frame is TLS).
-[[noreturn]] void LyraTrap(
-    void* engine_ptr, uint32_t reason, uint32_t a, uint32_t b);
+// Called from generated code to capture a trap payload into TLS and return.
+// The process function must then return kTrap to its caller.
+// Internal error if called while a payload is already pending.
+void LyraTrap(void* engine_ptr, uint32_t reason, uint32_t a, uint32_t b);
 }

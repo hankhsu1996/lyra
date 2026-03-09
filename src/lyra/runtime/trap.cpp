@@ -1,45 +1,49 @@
 #include "lyra/runtime/trap.hpp"
 
-#include <csetjmp>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
+#include <optional>
+
+#include "lyra/common/internal_error.hpp"
 
 namespace lyra::runtime {
 
 namespace {
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-thread_local TrapFrame* tls_trap_frame = nullptr;
+thread_local TrapPayload tls_trap_payload{};
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+thread_local bool tls_trap_pending = false;
 
 }  // namespace
 
-auto GetTlsTrapFrame() -> TrapFrame* {
-  return tls_trap_frame;
+auto ConsumeTlsTrap() -> std::optional<TrapPayload> {
+  if (!tls_trap_pending) {
+    return std::nullopt;
+  }
+  auto payload = tls_trap_payload;
+  tls_trap_payload = {};
+  tls_trap_pending = false;
+  return payload;
 }
 
-void SetTlsTrapFrame(TrapFrame* frame) {
-  tls_trap_frame = frame;
+void ResetTlsTrap() {
+  tls_trap_payload = {};
+  tls_trap_pending = false;
 }
 
 }  // namespace lyra::runtime
 
-extern "C" [[noreturn]] void LyraTrap(
+extern "C" void LyraTrap(
     void* /*engine_ptr*/, uint32_t reason, uint32_t a, uint32_t b) {
-  auto* frame = lyra::runtime::GetTlsTrapFrame();
-  if (frame == nullptr || !frame->armed) {
-    // No trap scope active - fatal abort (should never happen in normal flow)
-    fprintf(stderr, "LyraTrap called without active trap scope\n");  // NOLINT
-    std::abort();
+  if (lyra::runtime::tls_trap_pending) {
+    throw lyra::common::InternalError(
+        "LyraTrap", "trap raised while a payload is already pending");
   }
 
-  frame->payload = lyra::runtime::TrapPayload{
+  lyra::runtime::tls_trap_payload = lyra::runtime::TrapPayload{
       .reason = static_cast<lyra::runtime::TrapReason>(reason),
       .a = a,
       .b = b,
   };
-  frame->armed = false;
-
-  // NOLINTNEXTLINE(cert-err52-cpp)
-  std::longjmp(frame->env, 1);
+  lyra::runtime::tls_trap_pending = true;
 }

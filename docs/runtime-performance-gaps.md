@@ -1,10 +1,10 @@
-# Runtime Performance Gaps
+#Runtime Performance Gaps
 
-Canonical working queue for closing the simulation performance gap between Lyra and Verilator.
+Canonical working queue for closing the simulation performance gap between Lyra and Verilator. Remove items from this document once they land on main.
 
 ## North Star
 
-Lyra's runtime engine should achieve simulation throughput within 10x of Verilator for clocked designs. The current gap is 50-2000x depending on design complexity.
+Lyra's runtime engine should achieve simulation throughput within 10x of Verilator for clocked designs. The current gap is 2-165x depending on design complexity.
 
 Strategy: preserve the general event-driven engine (IEEE 1800 semantics), but eliminate accidental overhead first, then introduce specialized fast paths for restricted design classes later.
 
@@ -18,62 +18,22 @@ Do not let persistent subscriptions, topological ordering, or other optimization
 
 ## Measurements
 
-Benchmark data from CI nightly run (2026-03-08). Pipeline: 8-stage pipe, 10K cycles. All times are simulation only (compile excluded).
+Benchmark data from nightly run (2026-03-08, commit `aa2d213`). Pipeline: 8-stage pipe, 10K cycles. All times are simulation only (compile excluded).
 
 | Design       | AOT (s) | Verilator (s) | Ratio | Notes                                   |
 | ------------ | ------- | ------------- | ----- | --------------------------------------- |
-| hello        | 0.005   | 0.002         | 3x    | Startup overhead only                   |
-| stress-array | 0.007   | 0.002         | 4x    | Memory workload                         |
-| riscv-cpu    | 0.12    | 0.002         | 60x   | Real design, ~1116 processes            |
-| pipeline     | 8.33    | 0.004         | 2000x | Clock-heavy, exposes scheduler overhead |
+| hello        | 0.0025  | 0.0013        | 2x    | Startup overhead only                   |
+| stress-array | 0.0033  | 0.0013        | 2.5x  | Memory workload                         |
+| riscv-cpu    | 0.0059  | 0.0012        | 5x    | Real design, ~1116 processes            |
+| pipeline     | 0.46    | 0.0028        | 165x  | Clock-heavy, exposes scheduler overhead |
 
-Pipeline per-cycle cost: 0.43ms/cycle (Lyra) vs 0.3us/cycle (Verilator).
+Pipeline per-cycle cost: 0.023ms/cycle (Lyra) vs 0.3us/cycle (Verilator).
+
+Previous baseline (before G1+G2): pipeline 8.33s (2000x), riscv-cpu 0.12s (60x).
 
 ## Gap Inventory
 
 Each gap has: description, hot path impact, fix direction.
-
-### G1: Dense runtime tables
-
-The runtime uses `absl::flat_hash_map` for all core lookups: process state, signal waiters, connection triggers, comb kernel triggers. These are keyed by dense integer IDs (`process_id`, `slot_id`) where flat array indexing would be O(1) with perfect cache locality.
-
-This is not a micro-optimization -- it is a runtime representation cleanup. Making the runtime dense makes every other optimization (G2 persistent subscriptions, G5 dirty propagation) cleaner and faster, because they can all assume array-indexed access.
-
-Specific maps to convert:
-
-- `process_states_` to `std::vector<ProcessState>` indexed by `process_id`
-- `signal_waiters_` to `std::vector<SignalWaiters>` indexed by `slot_id`
-- `conn_trigger_map_` to flat vector indexed by trigger slot
-- `comb_trigger_map_` to flat vector indexed by trigger slot
-
-Construction-time sizing and invariants:
-
-- Process-state table sized once from total process count (known at `LyraRunSimulation` entry)
-- Signal waiter table sized once from total slot count (known from `SlotMetaRegistry`)
-- Trigger tables sized once from compiled trigger metadata (connection descriptors, comb kernel word table)
-- IDs must remain dense and stable for the lifetime of the engine -- no dynamic ID allocation after init
-
-### G2: Persistent process-owned subscriptions
-
-Every process activation clears all subscriptions and re-subscribes. For an `always_ff @(posedge clk)` block, this means: hash map lookups to find signal waiters, linked list unlink, FreeNode cleanup, then fresh Subscribe with hash map insert, snapshot copy, linked list link.
-
-- Hot path cost: ~10 clear + 10 re-subscribe per clock edge
-
-This is probably the biggest single win. The fix direction must be a clean ownership model, not an ad-hoc caching layer on top of the current subscription machinery.
-
-The clean shape:
-
-- Each process owns stable subscription node storage
-- Waiting reuses owned nodes when the wait set is unchanged
-- Engine-side waiter lists only relink/unlink those stable nodes
-- Subscription rebuild happens only when the wait signature changes
-
-Explicitly separate two classes:
-
-- **Fixed wait sets** (`always_ff @(posedge clk)`) -- should become nearly zero-overhead after initial setup
-- **Data-dependent wait sets** (variable-index edge triggers, late-bound rebinding) -- may still need rebuild, but these are the minority
-
-Success criterion: for fixed wait-set processes, steady-state suspend/resume must perform zero heap allocation and zero subscription reconstruction. The engine reuses the existing nodes in place.
 
 ### G3: Small-buffer NBA storage
 
@@ -102,7 +62,7 @@ Expected output:
 - Enqueue dedup overhead measurement
 - Proposed replacement shape if needed
 
-Status: needs profiling after G1 dense tables are in place.
+Status: ready for profiling now that G1 dense tables are in place.
 
 ### G5: Dirty-slot propagation representation
 
@@ -123,17 +83,20 @@ Expected output:
 
 Status: needs dedicated audit.
 
-### G6: Trap overhead (setjmp per activation)
+### G6: Runtime execution model still uses setjmp/longjmp-based trap escape
 
-Every `RunOneActivation` calls `setjmp()` to establish a trap frame for loop budget enforcement. This saves/restores all callee-saved registers. ~200K calls for pipeline benchmark.
+**Gap:** Process trap handling uses `setjmp` / `longjmp` nonlocal escape at activation boundaries. This was introduced for simulator-side loop-budget enforcement, not as a SystemVerilog semantic construct. It leaves process execution on an older control-flow model that does not match the project's preferred explicit-ABI architecture.
 
-- Hot path cost: 1 setjmp per process activation
+**Target shape:** Process execution reports an explicit outcome (`kOk` / `kTrap`) through its ABI, with trap payload transport separated from engine policy. This removes nonlocal jump control flow from the hot path and aligns runtime execution with a `Result` / `expected`-like model:
 
-Fix direction: amortize trap scope to time-slot or delta-cycle level, or use a different trap mechanism (return-code-based).
+- Process functions return a small named status enum (`ProcessExitCode`)
+- `LyraTrap` captures a payload into TLS and returns (no longjmp)
+- Caller consumes payload exactly once via `ConsumeTlsTrap()`
+- Engine owns simulation policy (`HandleTrap`), not trap transport
 
-Caution: trap-scope widening crosses semantic boundaries. Nested runtime callbacks, long-running combinational work, and partial progress assumptions all create correctness risk. Do not start this before reprofile after tier 1 confirms it is still material.
+**Why it matters:** Cleaner control-flow boundaries, cleaner separation of transport vs policy, and removal of hot-path `setjmp` overhead (~200K calls for pipeline benchmark).
 
-Status: measure after G1-G3 are complete.
+Status: in progress.
 
 ### G7: Acyclic connection/comb scheduling
 
@@ -158,33 +121,35 @@ These are real but small. Do not let them distract from the big wins.
 
 ## Prioritized Working Queue
 
-### Tier 1: Remove accidental overhead in the current model
+### Tier 1: Remove accidental overhead in the current model (remaining)
 
-These are clean local wins that do not change semantics or architecture. Combined, they should reduce the per-cycle cost significantly.
+1. **G3: Small-buffer NBA storage** -- Eliminates ~320K heap allocations. Inline buffer for common case, heap spill for large values.
 
-1. **G1: Dense runtime tables** -- Foundation for everything else. Makes all lookups O(1) with cache-friendly access. Unblocks cleaner implementation of G2.
+### Tier 2:
 
-2. **G2: Persistent process-owned subscriptions** -- Biggest single win. Eliminates the clear/re-subscribe cycle. Must be a clean ownership model, not a cache layer.
+Audit and cleanup after reprofile
 
-3. **G3: Small-buffer NBA storage** -- Eliminates ~320K heap allocations. Inline buffer for common case, heap spill for large values.
+        2. *
+        *G4 : Activation queue audit* * --Profile ready -
+    queue overhead,
+    enqueue dedup,
+    region transitions.
 
-### Tier 2: Audit and cleanup after reprofile
+            3. *
+            *G6 : Trap overhead* * --Replace setjmp /
+            longjmp with explicit return -code ABI.
 
-After tier 1, reprofile to see what remains. These items need measurement to confirm they are material.
-
-4. **G4: Activation queue audit** -- Profile ready-queue overhead, enqueue dedup, region transitions.
-
-5. **G6: Trap overhead remeasure** -- Confirm setjmp is still material after tier 1. Only then consider amortization.
-
-6. **G8: Minor hot-path cleanup** -- Bundle small items (std::function, atomics) into one cleanup pass.
+            4. *
+            *G8 : Minor hot -
+        path cleanup * *--Bundle small items(std::function, atomics) into one cleanup pass.
 
 ### Tier 3: Structural execution improvements
 
 These change how evaluation works, not just how fast the current model runs. Require careful semantic analysis.
 
-7. **G5: Dirty propagation audit** -- Understand UpdateSet representation cost before changing it.
+5. **G5: Dirty propagation audit** -- Understand UpdateSet representation cost before changing it.
 
-8. **G7: Acyclic connection/comb scheduling** -- Static evaluation order for provably acyclic subgraphs. Does not change event semantics.
+6. **G7: Acyclic connection/comb scheduling** -- Static evaluation order for provably acyclic subgraphs. Does not change event semantics.
 
 ### Separate long-term track: clocked-design fast path
 
@@ -196,11 +161,12 @@ This is a different execution model, not an optimization of the current one. It 
 
 ## Reprofiling Gates
 
-### After Tier 1
+### After G3
 
 - Rerun pipeline, riscv-cpu, stress-array benchmarks
-- Compare per-cycle cost, activation count, NBA count, subscription operations
-- Update measurements table with new numbers
+- Compare per-cycle cost, NBA count
+- Update measurements table
+- Decide if remaining gap justifies tier 2/3 work
 
 ### After G4/G5 audits
 
@@ -212,3 +178,10 @@ This is a different execution model, not an optimization of the current one. It 
 Separate from simulation throughput. Tracked here for completeness but not part of the throughput gap.
 
 **Dynamic library startup (AOT)**: AOT binary links to `liblyra_runtime.so` (6MB). Dynamic linker loads and relocates it on every execution. Verilator statically links everything into a ~200KB binary. Adds ~1.7ms startup overhead. Fix direction: static linking option for AOT binaries.
+
+## Completed
+
+| Gap | Description                                             | PR   | Impact                                       |
+| --- | ------------------------------------------------------- | ---- | -------------------------------------------- |
+| G1  | Dense runtime tables (hash maps to flat vectors)        | #476 | Foundation for G2                            |
+| G2  | Persistent wait-site installation (compiled wait plans) | #478 | Pipeline 2000x -> 165x, RISC-V CPU 60x -> 5x |

@@ -273,7 +273,6 @@ auto Context::GetLyraTrap() -> llvm::Function* {
     lyra_trap_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraTrap",
         llvm_module_.get());
-    lyra_trap_->setDoesNotReturn();
   }
   return lyra_trap_;
 }
