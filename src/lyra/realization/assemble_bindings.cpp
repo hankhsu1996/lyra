@@ -1,11 +1,11 @@
-#include "lyra/link/assemble_bindings.hpp"
+#include "lyra/realization/assemble_bindings.hpp"
 
 #include <utility>
 
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 
-namespace lyra::link {
+namespace lyra::realization {
 
 void AssembleBindings(
     mir::CompiledBindingPlan&& plan, mir::Arena& arena, mir::Design& design) {
@@ -23,4 +23,4 @@ void AssembleBindings(
   }
 }
 
-}  // namespace lyra::link
+}  // namespace lyra::realization

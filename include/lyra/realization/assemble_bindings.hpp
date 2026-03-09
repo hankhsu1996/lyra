@@ -7,9 +7,9 @@ class Arena;
 struct Design;
 }  // namespace lyra::mir
 
-namespace lyra::link {
+namespace lyra::realization {
 
 void AssembleBindings(
     mir::CompiledBindingPlan&& plan, mir::Arena& arena, mir::Design& design);
 
-}  // namespace lyra::link
+}  // namespace lyra::realization

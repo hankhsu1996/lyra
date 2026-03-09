@@ -69,6 +69,7 @@ include/lyra/
   hir/           # language semantic IR (specialization-scoped)
   mir/           # executable semantic IR (specialization-scoped)
   llvm_backend/  # MIR -> LLVM IR (per-specialization)
+  realization/   # design realization (bindings, metadata, main emission)
   runtime/       # simulation runtime (scheduler, signals)
   lowering/      # AST->HIR, HIR->MIR lowering
   semantic/      # semantic utilities

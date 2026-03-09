@@ -1,4 +1,4 @@
-#include "lyra/link/build_design_metadata.hpp"
+#include "lyra/realization/build_design_metadata.hpp"
 
 #include <cstdint>
 #include <string>
@@ -9,7 +9,7 @@
 #include "lyra/runtime/process_meta_abi.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
 
-namespace lyra::link {
+namespace lyra::realization {
 
 namespace {
 
@@ -174,4 +174,4 @@ auto BuildDesignMetadata(const DesignMetadataInputs& input) -> DesignMetadata {
   };
 }
 
-}  // namespace lyra::link
+}  // namespace lyra::realization

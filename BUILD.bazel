@@ -96,9 +96,9 @@ cc_library(
 )
 
 cc_library(
-    name = "link",
-    srcs = glob(["src/lyra/link/*.cpp"]),
-    hdrs = glob(["include/lyra/link/*.hpp"]),
+    name = "realization",
+    srcs = glob(["src/lyra/realization/**/*.cpp"]),
+    hdrs = glob(["include/lyra/realization/**/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
@@ -131,9 +131,9 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":common",
-        ":link",
         ":lowering",
         ":mir",
+        ":realization",
         ":runtime",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:ExecutionEngine",
@@ -148,21 +148,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "assembly",
-    srcs = glob(["src/lyra/assembly/**/*.cpp"]),
-    hdrs = glob(["include/lyra/assembly/**/*.hpp"]),
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":common",
-        ":link",
-        ":llvm_backend",
-        ":mir",
-        ":runtime",
-    ],
-)
-
 cc_binary(
     name = "lyra",
     srcs = glob([
@@ -172,13 +157,12 @@ cc_binary(
     data = [":liblyra_runtime.so"],
     linkopts = ["-Wl,--export-dynamic"],  # Export symbols for ORC JIT
     deps = [
-        ":assembly",
         ":hir",
         ":interp",
-        ":link",
         ":llvm_backend",
         ":lowering",
         ":mir",
+        ":realization",
         ":runtime",
         "@argparse",
         "@fmt",

@@ -161,8 +161,8 @@ auto GetConnectionDescriptorLlvmType(llvm::LLVMContext& ctx)
 auto ExtractSlotMetaInputs(
     Context& context, const std::vector<SlotInfo>& slots,
     const DesignLayout& design_layout, const llvm::DataLayout& dl,
-    const TypeArena& types) -> std::vector<link::SlotMetaInput> {
-  std::vector<link::SlotMetaInput> entries;
+    const TypeArena& types) -> std::vector<realization::SlotMetaInput> {
+  std::vector<realization::SlotMetaInput> entries;
   entries.reserve(slots.size());
 
   auto* design_struct = design_layout.llvm_type;
@@ -188,7 +188,7 @@ auto ExtractSlotMetaInputs(
     auto kind =
         ClassifySlotStorageKind(slot.type_id, types, context.IsForceTwoState());
 
-    link::SlotMetaInput entry{
+    realization::SlotMetaInput entry{
         .byte_offset = static_cast<uint32_t>(raw_base_off),
         .total_bytes = static_cast<uint32_t>(raw_total_bytes),
         .storage_kind = static_cast<uint32_t>(kind),
@@ -234,14 +234,14 @@ auto PrepareScheduledProcessInputs(
     const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager,
     const std::vector<ScheduledProcess>& scheduled_processes, size_t num_init)
-    -> std::vector<link::ScheduledProcessInput> {
+    -> std::vector<realization::ScheduledProcessInput> {
   if (scheduled_processes.size() < num_init) {
     throw common::InternalError(
         "PrepareScheduledProcessInputs",
         "scheduled_processes.size() < num_init");
   }
 
-  std::vector<link::ScheduledProcessInput> entries;
+  std::vector<realization::ScheduledProcessInput> entries;
   auto num_module = scheduled_processes.size() - num_init;
   entries.reserve(num_module);
 
@@ -279,9 +279,10 @@ auto PrepareScheduledProcessInputs(
 
 auto PrepareLoopSiteInputs(
     const Context& context, const lowering::DiagnosticContext* diag_ctx,
-    const SourceManager* source_manager) -> std::vector<link::LoopSiteInput> {
+    const SourceManager* source_manager)
+    -> std::vector<realization::LoopSiteInput> {
   const auto& origins = context.GetLoopSiteOrigins();
-  std::vector<link::LoopSiteInput> entries;
+  std::vector<realization::LoopSiteInput> entries;
   entries.reserve(origins.size());
 
   for (size_t i = 0; i < origins.size(); ++i) {
@@ -301,9 +302,9 @@ auto ExtractConnectionDescriptorEntries(
     const mir::Design& design, const mir::Arena& mir_arena,
     const TypeArena& type_arena, const Layout& layout,
     const llvm::DataLayout& dl, llvm::LLVMContext& ctx, bool force_two_state)
-    -> std::vector<link::ConnectionDescriptorEntry> {
+    -> std::vector<realization::ConnectionDescriptorEntry> {
   const auto& kernel_entries = layout.connection_kernel_entries;
-  std::vector<link::ConnectionDescriptorEntry> entries;
+  std::vector<realization::ConnectionDescriptorEntry> entries;
   entries.reserve(kernel_entries.size());
 
   auto* design_struct = layout.design.llvm_type;
@@ -376,7 +377,7 @@ auto ExtractConnectionDescriptorEntries(
 }
 
 auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
-    -> std::vector<link::CombKernelInput> {
+    -> std::vector<realization::CombKernelInput> {
   const auto& comb_entries = layout.comb_kernel_entries;
   if (comb_entries.empty()) {
     return {};
@@ -398,7 +399,7 @@ auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
     proc_id_to_scheduled_index[proc_id.value] = pi;
   }
 
-  std::vector<link::CombKernelInput> inputs;
+  std::vector<realization::CombKernelInput> inputs;
   inputs.reserve(comb_entries.size());
 
   for (const auto& ck : comb_entries) {
@@ -436,7 +437,7 @@ auto PrepareInstancePaths(const mir::Design& design)
 }
 
 auto EmitDesignMetadataGlobals(
-    Context& context, const link::DesignMetadata& metadata,
+    Context& context, const realization::DesignMetadata& metadata,
     llvm::IRBuilder<>& builder) -> MetadataGlobals {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();

@@ -22,12 +22,12 @@
 #include "lyra/common/type_queries.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
-#include "lyra/link/assemble_bindings.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/interp/interpreter.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
+#include "lyra/realization/assemble_bindings.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/output_sink.hpp"
@@ -128,8 +128,8 @@ auto RunMirInterpreter(
     return result;
   }
 
-  // Assembly: attach compiled bindings to design.
-  link::AssembleBindings(
+  // Realization: attach compiled bindings to design.
+  realization::AssembleBindings(
       std::move(mir_result->compiled_bindings), *mir_result->mir_arena,
       mir_result->design);
 

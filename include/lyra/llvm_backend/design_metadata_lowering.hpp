@@ -9,8 +9,8 @@
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/type_arena.hpp"
-#include "lyra/link/design_metadata.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/realization/design_metadata.hpp"
 
 namespace lyra::mir {
 struct Design;
@@ -28,7 +28,7 @@ struct SlotInfo;
 auto ExtractSlotMetaInputs(
     Context& context, const std::vector<SlotInfo>& slots,
     const DesignLayout& design_layout, const llvm::DataLayout& dl,
-    const TypeArena& types) -> std::vector<link::SlotMetaInput>;
+    const TypeArena& types) -> std::vector<realization::SlotMetaInput>;
 
 // Extract scheduled process inputs into plain link structs.
 auto PrepareScheduledProcessInputs(
@@ -36,23 +36,24 @@ auto PrepareScheduledProcessInputs(
     const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager,
     const std::vector<struct ScheduledProcess>& scheduled_processes,
-    size_t num_init) -> std::vector<link::ScheduledProcessInput>;
+    size_t num_init) -> std::vector<realization::ScheduledProcessInput>;
 
 // Extract loop site inputs from accumulated codegen origins.
 auto PrepareLoopSiteInputs(
     const Context& context, const lowering::DiagnosticContext* diag_ctx,
-    const SourceManager* source_manager) -> std::vector<link::LoopSiteInput>;
+    const SourceManager* source_manager)
+    -> std::vector<realization::LoopSiteInput>;
 
 // Extract connection descriptor entries from LLVM layout.
 auto ExtractConnectionDescriptorEntries(
     const mir::Design& design, const mir::Arena& mir_arena,
     const TypeArena& type_arena, const Layout& layout,
     const llvm::DataLayout& dl, llvm::LLVMContext& ctx, bool force_two_state)
-    -> std::vector<link::ConnectionDescriptorEntry>;
+    -> std::vector<realization::ConnectionDescriptorEntry>;
 
 // Prepare comb kernel inputs from layout data.
 auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
-    -> std::vector<link::CombKernelInput>;
+    -> std::vector<realization::CombKernelInput>;
 
 // Prepare instance paths from design.
 auto PrepareInstancePaths(const mir::Design& design)
@@ -82,7 +83,7 @@ struct MetadataGlobals {
 // table packing or serialization. All tables in DesignMetadata are already
 // runtime-shaped.
 auto EmitDesignMetadataGlobals(
-    Context& context, const link::DesignMetadata& metadata,
+    Context& context, const realization::DesignMetadata& metadata,
     llvm::IRBuilder<>& builder) -> MetadataGlobals;
 
 }  // namespace lyra::lowering::mir_to_llvm

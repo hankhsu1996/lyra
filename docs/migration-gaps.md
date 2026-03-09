@@ -4,8 +4,6 @@ Working queue for migrating Lyra toward specialization-based compilation.
 
 For the stable architecture (phases, specialization boundary rule, parameter classification, realization model): see [compilation-model.md](compilation-model.md).
 
-**Naming note**: This document uses "realization" for the conceptual phase. The current code still uses `lyra::assembly` and `lyra::link` namespaces. Code references below use the current names; a code rename is planned separately.
-
 ## Current Status
 
 **Next PR: E1 -- narrow codegen API to one specialization.**
@@ -26,7 +24,7 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 - **Phase A complete** -- `ModuleDefId`, `BehaviorFingerprint`, `ModuleSpecId`, `SpecializationMap` introduced. Known gap: M2 (type-level structural refs mitigated by `type.toString()` hashing, not clean).
 - **Phase B mostly complete** (B1-B4 done) -- `mir::ModuleBody` owns behavioral IR, `mir::Module` is instance record with `body_id`. Shared bodies active. `mir::Process` carries no instance identity. `SpecializationMap` required (no fallback). Remaining: B6 (HIR split).
 - **Phase C complete** (C1-C3) -- specialization-local slot identity via `CollectBodyLocalDecls`. `mir::InstancePlacement` is source of truth for design-state placement. Alias resolution eliminated from behavioral codegen.
-- **Phase D mostly complete** (D1, D3, D4 done) -- bindings separated (`CompileBindings` + `link::AssembleBindings`). Metadata serialization in `link::BuildDesignMetadata`. `main()` in `assembly::EmitDesignMain()`. `LowerMirToLlvm()` is thin wrapper: `CompileDesignProcesses` -> `EmitDesignMain` -> `FinalizeModule`. Remaining: D2 (`InstanceConstBlock`).
+- **Phase D mostly complete** (D1, D3, D4 done) -- bindings separated (`CompileBindings` + `realization::AssembleBindings`). Metadata serialization in `realization::BuildDesignMetadata`. `main()` in `realization::EmitDesignMain()`. `LowerMirToLlvm()` is thin wrapper: `CompileDesignProcesses` -> `EmitDesignMain` -> `FinalizeModule`. Remaining: D2 (`InstanceConstBlock`).
 
 ## Active Gaps
 

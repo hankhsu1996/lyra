@@ -55,12 +55,12 @@ struct Design {
   int8_t global_precision_power = -9;
 
   // Source of truth for all port connections.
-  // Written ONLY by link::AssembleBindings.
+  // Written ONLY by realization::AssembleBindings.
   std::vector<PortConnection> port_connections;
 
   // Wiring processes (separate from module processes).
   // These implement kDriveParentToChild and kDriveChildToParent semantics.
-  // Written ONLY by link::AssembleBindings.
+  // Written ONLY by realization::AssembleBindings.
   std::vector<ProcessId> connection_processes;
 
   // Instance table for %m support.
