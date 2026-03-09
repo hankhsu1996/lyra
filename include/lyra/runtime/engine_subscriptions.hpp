@@ -9,6 +9,7 @@
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/index_plan.hpp"
+#include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::runtime {
 
@@ -106,12 +107,21 @@ struct SignalWaiters {
   SubscriptionNode* rebind_tail = nullptr;
 };
 
+// Per-process installed wait-site cache.
+// Tracks which compiled wait site is physically installed.
+struct InstalledWaitState {
+  WaitSiteId wait_site_id = kInvalidWaitSiteId;
+  WaitShapeKind shape = WaitShapeKind::kDynamic;
+  bool valid = false;
+};
+
 // Per-process state (keyed by ProcessHandle).
 struct ProcessState {
   bool is_enqueued = false;  // De-dup flag for next-delta queue
   size_t subscription_count = 0;
   SubscriptionNode* subscription_head = nullptr;
   IndexPlanPool plan_pool;
+  InstalledWaitState installed_wait;
 };
 
 }  // namespace lyra::runtime

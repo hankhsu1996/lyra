@@ -1,13 +1,16 @@
 #include "lyra/llvm_backend/lower.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -59,9 +62,11 @@
 #include "lyra/runtime/loop_site_meta.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
+#include "lyra/runtime/runtime_abi.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/suspend_record.hpp"
+#include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -481,6 +486,76 @@ auto EmitLoopSiteMetaTable(Context& context, const LoweringInput& input)
   };
 }
 
+struct WaitSiteMetaResult {
+  llvm::Constant* words_ptr;
+  uint32_t count;
+};
+
+auto EmitWaitSiteMetaTable(
+    Context& context, std::span<const WaitSiteEntry> entries)
+    -> WaitSiteMetaResult {
+  auto& ctx = context.GetLlvmContext();
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* null_ptr =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+  if (entries.empty()) {
+    return {.words_ptr = null_ptr, .count = 0};
+  }
+
+  // Word table format:
+  // [version, num_sites, (id, resume_block, shape_and_triggers, flags)*]
+  std::vector<llvm::Constant*> words;
+  words.reserve(2 + entries.size() * runtime::wait_site_abi::kStride);
+
+  words.push_back(
+      llvm::ConstantInt::get(i32_ty, runtime::wait_site_abi::kVersion));
+  words.push_back(
+      llvm::ConstantInt::get(i32_ty, static_cast<uint32_t>(entries.size())));
+
+  for (uint32_t i = 0; i < entries.size(); ++i) {
+    const auto& entry = entries[i];
+
+    // Classify shape from compiled trigger properties.
+    // kStatic: all installed nodes refreshable in place (no rebind, no
+    // container) kRebindable: signal set fixed, observation targets may move
+    // (late-bound) kDynamic: structural reasons preventing in-place refresh
+    // (containers)
+    auto shape = runtime::WaitShapeKind::kStatic;
+    if (entry.has_late_bound) {
+      shape = runtime::WaitShapeKind::kRebindable;
+    } else if (entry.has_container) {
+      shape = runtime::WaitShapeKind::kDynamic;
+    }
+
+    uint32_t shape_and_triggers =
+        (static_cast<uint32_t>(shape) & 0xFF) | (entry.num_triggers << 8);
+    uint32_t flags = entry.has_late_bound ? 1U : 0U;
+
+    words.push_back(llvm::ConstantInt::get(i32_ty, i));
+    words.push_back(llvm::ConstantInt::get(i32_ty, entry.resume_block));
+    words.push_back(llvm::ConstantInt::get(i32_ty, shape_and_triggers));
+    words.push_back(llvm::ConstantInt::get(i32_ty, flags));
+  }
+
+  auto& mod = context.GetModule();
+  auto word_count = static_cast<uint32_t>(words.size());
+
+  auto* words_array_type = llvm::ArrayType::get(i32_ty, word_count);
+  auto* words_init = llvm::ConstantArray::get(words_array_type, words);
+  auto* words_global = new llvm::GlobalVariable(
+      mod, words_array_type, true, llvm::GlobalValue::InternalLinkage,
+      words_init, "__lyra_wait_site_meta_table");
+  words_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+  auto* words_gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
+      words_array_type, words_global,
+      llvm::ArrayRef<llvm::Constant*>{zero, zero});
+
+  return {.words_ptr = words_gep, .count = word_count};
+}
+
 // Initialize DesignState: zero everything, apply 4-state patches, then handle
 // composite 4-state fields with recursive init.
 void InitializeDesignState(
@@ -828,6 +903,10 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout.scheduled_processes.size());
 
+  // Collect wait-site entries from all process codegen results.
+  // Entries are appended in ID order (Context::NextWaitSiteId is sequential).
+  std::vector<WaitSiteEntry> all_wait_sites;
+
   // Phase 1: Emit template functions (one per ProcessTemplate)
   std::vector<llvm::Function*> template_fns(layout.process_templates.size());
   for (size_t t = 0; t < layout.process_templates.size(); ++t) {
@@ -845,7 +924,11 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     auto func_result =
         GenerateSharedProcessFunction(context, mir_process, tmpl.func_name);
     if (!func_result) return std::unexpected(func_result.error());
-    template_fns[t] = *func_result;
+    template_fns[t] = func_result->function;
+    all_wait_sites.insert(
+        all_wait_sites.end(),
+        std::make_move_iterator(func_result->wait_sites.begin()),
+        std::make_move_iterator(func_result->wait_sites.end()));
   }
 
   // Phase 2: Emit per-process functions (wrappers vs standalone)
@@ -881,7 +964,11 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     auto func_result = GenerateProcessFunction(
         context, mir_process, std::format("process_{}", i));
     if (!func_result) return std::unexpected(func_result.error());
-    process_funcs.push_back(*func_result);
+    process_funcs.push_back(func_result->function);
+    all_wait_sites.insert(
+        all_wait_sites.end(),
+        std::make_move_iterator(func_result->wait_sites.begin()),
+        std::make_move_iterator(func_result->wait_sites.end()));
   }
   // Create main function.
   // kEmbeddedPlusargs: int main() - plusargs baked into IR
@@ -1399,26 +1486,36 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
     // Build loop site metadata table (from origins accumulated during codegen)
     auto loop_meta = EmitLoopSiteMetaTable(context, input);
 
+    // Build wait-site metadata table (from entries collected during codegen)
+    auto wait_site_meta = EmitWaitSiteMetaTable(context, all_wait_sites);
+
+    // LyraRuntimeAbi field indices. Must match runtime_abi.hpp layout.
+    constexpr unsigned kAbiVersion = 0;
+    constexpr unsigned kAbiSlotMetaWords = 1;
+    constexpr unsigned kAbiSlotMetaWordCount = 2;
+    constexpr unsigned kAbiProcessMetaWords = 3;
+    constexpr unsigned kAbiProcessMetaWordCount = 4;
+    constexpr unsigned kAbiProcessMetaStringPool = 5;
+    constexpr unsigned kAbiProcessMetaStringPoolSize = 6;
+    constexpr unsigned kAbiLoopSiteMetaWords = 7;
+    constexpr unsigned kAbiLoopSiteMetaWordCount = 8;
+    constexpr unsigned kAbiLoopSiteMetaStringPool = 9;
+    constexpr unsigned kAbiLoopSiteMetaStringPoolSize = 10;
+    constexpr unsigned kAbiConnDescs = 11;
+    constexpr unsigned kAbiNumConnDescs = 12;
+    constexpr unsigned kAbiCombKernelWords = 13;
+    constexpr unsigned kAbiNumCombKernelWords = 14;
+    constexpr unsigned kAbiFeatureFlags = 15;
+    constexpr unsigned kAbiWaitSiteWords = 16;
+    constexpr unsigned kAbiWaitSiteWordCount = 17;
+    constexpr unsigned kAbiFieldCount = 18;
+
     // Build RuntimeAbi struct on the stack
-    auto* abi_struct_type = llvm::StructType::get(
-        ctx,
-        {i32_ty,   // version
-         ptr_ty,   // slot_meta_words
-         i32_ty,   // slot_meta_word_count
-         ptr_ty,   // process_meta_words
-         i32_ty,   // process_meta_word_count
-         ptr_ty,   // process_meta_string_pool
-         i32_ty,   // process_meta_string_pool_size
-         ptr_ty,   // loop_site_meta_words
-         i32_ty,   // loop_site_meta_word_count
-         ptr_ty,   // loop_site_meta_string_pool
-         i32_ty,   // loop_site_meta_string_pool_size
-         ptr_ty,   // conn_descs
-         i32_ty,   // num_conn_descs
-         ptr_ty,   // comb_kernel_words
-         i32_ty,   // num_comb_kernel_words
-         i32_ty},  // feature_flags
-        false);
+    std::array<llvm::Type*, kAbiFieldCount> abi_fields = {
+        i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
+        ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty,
+    };
+    auto* abi_struct_type = llvm::StructType::get(ctx, abi_fields, false);
 
     auto* abi_alloca = builder.CreateAlloca(abi_struct_type, nullptr, "abi");
 
@@ -1432,22 +1529,40 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
                                : llvm::ConstantPointerNull::get(
                                      llvm::cast<llvm::PointerType>(ptr_ty));
 
-    store_field(0, llvm::ConstantInt::get(i32_ty, 1));  // version
-    store_field(1, meta_table);                         // slot_meta_words
-    store_field(2, llvm::ConstantInt::get(i32_ty, meta_count));
-    store_field(3, proc_meta.words_ptr);  // process_meta_words
-    store_field(4, llvm::ConstantInt::get(i32_ty, proc_meta.count));
-    store_field(5, proc_meta.pool_ptr);  // process_meta_pool
-    store_field(6, llvm::ConstantInt::get(i32_ty, proc_meta.pool_size));
-    store_field(7, loop_meta.words_ptr);  // loop_site_meta
-    store_field(8, llvm::ConstantInt::get(i32_ty, loop_meta.count));
-    store_field(9, loop_meta.pool_ptr);
-    store_field(10, llvm::ConstantInt::get(i32_ty, loop_meta.pool_size));
-    store_field(11, conn_descs_arg);  // conn_descs
-    store_field(12, llvm::ConstantInt::get(i32_ty, num_kernelized));
-    store_field(13, comb_words_ptr);  // comb_kernel_words
-    store_field(14, llvm::ConstantInt::get(i32_ty, comb_word_count));
-    store_field(15, llvm::ConstantInt::get(i32_ty, input.feature_flags));
+    store_field(
+        kAbiVersion, llvm::ConstantInt::get(i32_ty, kRuntimeAbiVersion));
+    store_field(kAbiSlotMetaWords, meta_table);
+    store_field(
+        kAbiSlotMetaWordCount, llvm::ConstantInt::get(i32_ty, meta_count));
+    store_field(kAbiProcessMetaWords, proc_meta.words_ptr);
+    store_field(
+        kAbiProcessMetaWordCount,
+        llvm::ConstantInt::get(i32_ty, proc_meta.count));
+    store_field(kAbiProcessMetaStringPool, proc_meta.pool_ptr);
+    store_field(
+        kAbiProcessMetaStringPoolSize,
+        llvm::ConstantInt::get(i32_ty, proc_meta.pool_size));
+    store_field(kAbiLoopSiteMetaWords, loop_meta.words_ptr);
+    store_field(
+        kAbiLoopSiteMetaWordCount,
+        llvm::ConstantInt::get(i32_ty, loop_meta.count));
+    store_field(kAbiLoopSiteMetaStringPool, loop_meta.pool_ptr);
+    store_field(
+        kAbiLoopSiteMetaStringPoolSize,
+        llvm::ConstantInt::get(i32_ty, loop_meta.pool_size));
+    store_field(kAbiConnDescs, conn_descs_arg);
+    store_field(
+        kAbiNumConnDescs, llvm::ConstantInt::get(i32_ty, num_kernelized));
+    store_field(kAbiCombKernelWords, comb_words_ptr);
+    store_field(
+        kAbiNumCombKernelWords,
+        llvm::ConstantInt::get(i32_ty, comb_word_count));
+    store_field(
+        kAbiFeatureFlags, llvm::ConstantInt::get(i32_ty, input.feature_flags));
+    store_field(kAbiWaitSiteWords, wait_site_meta.words_ptr);
+    store_field(
+        kAbiWaitSiteWordCount,
+        llvm::ConstantInt::get(i32_ty, wait_site_meta.count));
 
     // Call multi-process scheduler
     builder.CreateCall(

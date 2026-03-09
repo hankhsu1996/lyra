@@ -207,8 +207,13 @@ void Engine::ExecuteRegion(Region region) {
             process_states_[event.handle.process_id].is_enqueued = false;
           }
 
-          ClearProcessSubscriptions(event.handle);
+          if (!HasPostActivationReconciliation()) {
+            ClearProcessSubscriptions(event.handle);
+          }
           RunOneActivation(event);
+          if (HasPostActivationReconciliation()) {
+            ReconcilePostActivation(event.handle);
+          }
         }
         ++active_iterations;
         if (active_iterations % 2 == 0) {

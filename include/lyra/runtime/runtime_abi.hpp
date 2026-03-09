@@ -8,8 +8,15 @@
 //
 // Layout stability: fields are append-only. New fields are added after
 // existing ones. The version field gates which fields the runtime reads.
+// Runtime ABI version history:
+//   1: Initial version (slot meta, process meta, loop site meta, connections,
+//      comb kernels, feature flags)
+//   2: Added wait-site metadata word table (wait_site_words,
+//   wait_site_word_count)
+inline constexpr uint32_t kRuntimeAbiVersion = 2;
+
 struct LyraRuntimeAbi {
-  uint32_t version;  // = 1
+  uint32_t version;  // = kRuntimeAbiVersion
 
   const uint32_t* slot_meta_words;
   uint32_t slot_meta_word_count;
@@ -33,4 +40,8 @@ struct LyraRuntimeAbi {
   uint32_t num_comb_kernel_words;
 
   uint32_t feature_flags;
+
+  // Wait-site metadata word table for persistent wait installation.
+  const uint32_t* wait_site_words;
+  uint32_t wait_site_word_count;
 };
