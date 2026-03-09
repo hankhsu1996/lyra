@@ -115,40 +115,6 @@ auto ClassifyDeferredStore(Context& context, mir::PlaceId dest)
       .byte_size = byte_size};
 }
 
-// Build all-ones mask constant for the given store shape.
-// - Scalars: type-level all-ones (contiguous bytes)
-// - Aggregates: explicit [N x i8] byte mask filled with 0xFF (safe for any
-// type)
-auto BuildAllOnesMask(Context& context, const StoreShape& shape)
-    -> llvm::Constant* {
-  auto& llvm_ctx = context.GetLlvmContext();
-
-  switch (shape.kind) {
-    case StoreKind::kScalar2State: {
-      auto* int_ty = llvm::cast<llvm::IntegerType>(shape.storage_ty);
-      return llvm::ConstantInt::get(
-          int_ty, llvm::APInt::getAllOnes(int_ty->getBitWidth()));
-    }
-    case StoreKind::kScalar4State: {
-      auto* st = llvm::cast<llvm::StructType>(shape.storage_ty);
-      auto* elem_ty = llvm::cast<llvm::IntegerType>(st->getElementType(0));
-      auto* ones = llvm::ConstantInt::get(
-          elem_ty, llvm::APInt::getAllOnes(elem_ty->getBitWidth()));
-      return llvm::ConstantStruct::get(st, {ones, ones});
-    }
-    case StoreKind::kAggregateBytes: {
-      // CRITICAL: Byte-level mask, not Constant::getAllOnesValue
-      // Runtime does byte-mask: (old & ~mask) | (new & mask)
-      // Must be [byte_size x i8] filled with 0xFF
-      // Use ConstantDataArray for efficiency (single allocation vs vector)
-      std::string all_ones(shape.byte_size, static_cast<char>(0xFF));
-      return llvm::ConstantDataArray::getString(llvm_ctx, all_ones, false);
-    }
-  }
-  // Unreachable, but needed for -Wreturn-type
-  return nullptr;
-}
-
 // Coerce raw RHS value to match store shape.
 // - kScalar2State: ZExtOrTrunc to target integer
 // - kScalar4State: Extract/create val+unk, pack into struct
@@ -243,26 +209,21 @@ auto EmitDeferredStoreCore(
     llvm::Value* notify_base_ptr, const SignalIdExpr& signal_id)
     -> Result<void> {
   auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
 
   auto raw_or_err = LowerRhsRaw(context, deferred.rhs, deferred.dest);
   if (!raw_or_err) return std::unexpected(raw_or_err.error());
 
   llvm::Value* source_value = CoerceValueToShape(context, *raw_or_err, shape);
-  llvm::Constant* mask_const = BuildAllOnesMask(context, shape);
 
   // Store value to alloca for runtime call
   auto* val_alloca = builder.CreateAlloca(shape.storage_ty, nullptr, "nba.val");
   builder.CreateStore(source_value, val_alloca);
 
-  // Mask alloca: for aggregates, type is [byte_size x i8]; for scalars, same
-  // as storage_ty
-  llvm::Type* mask_ty = (shape.kind == StoreKind::kAggregateBytes)
-                            ? mask_const->getType()
-                            : shape.storage_ty;
-  auto* mask_alloca = builder.CreateAlloca(mask_ty, nullptr, "nba.mask");
-  builder.CreateStore(mask_const, mask_alloca);
+  // Full overwrite: pass null mask_ptr to runtime
+  auto* null_ptr =
+      llvm::ConstantPointerNull::get(llvm::PointerType::get(llvm_ctx, 0));
 
-  // Compute byte_size
   uint32_t byte_size =
       (shape.kind == StoreKind::kAggregateBytes)
           ? shape.byte_size
@@ -270,12 +231,11 @@ auto EmitDeferredStoreCore(
                 context.GetModule().getDataLayout().getTypeStoreSize(
                     shape.storage_ty));
 
-  auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   builder.CreateCall(
       context.GetLyraScheduleNba(),
       {context.GetEnginePointer(), write_ptr, notify_base_ptr, val_alloca,
-       mask_alloca, llvm::ConstantInt::get(i32_ty, byte_size),
+       null_ptr, llvm::ConstantInt::get(i32_ty, byte_size),
        signal_id.Emit(builder)});
 
   return {};

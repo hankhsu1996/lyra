@@ -35,15 +35,9 @@ Previous baseline (before G1+G2): pipeline 8.33s (2000x), riscv-cpu 0.12s (60x).
 
 Each gap has: description, hot path impact, fix direction.
 
-### G3: Small-buffer NBA storage
+### G3: Small-buffer NBA storage + explicit full-overwrite mode (done)
 
-Each non-blocking assignment allocates two `std::vector<uint8_t>` (value + mask) via `nba_queue_.push_back()`. For the pipeline benchmark: ~16 NBA entries per clock edge x 20K edges = ~320K vector allocations.
-
-- Hot path cost: 2 heap allocs per NBA entry
-
-Fix direction: inline small-buffer optimization with spill path. Most NBA writes are 4-8 bytes. A fixed-size inline buffer (like `SubscriptionNode::snapshot_inline`) eliminates the heap allocation for the common case. Heap spill only for uncommon larger values.
-
-Do not use arena allocation as the first approach -- it creates lifetime/reset complexity that is not justified when inline storage captures most writes.
+Fixed. `NbaEntry` now uses `SmallByteBuffer` (16-byte inline capacity) instead of `std::vector<uint8_t>`, eliminating heap allocation for the common case (4-8 byte scalar writes). Full-overwrite NBAs (`mask_ptr == nullptr`) use a direct memcmp/memcpy path; only bit-range partial writes go through masked merge.
 
 ### G4: Activation queue and ready-set audit
 

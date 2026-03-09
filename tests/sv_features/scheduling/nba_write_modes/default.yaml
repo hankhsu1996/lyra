@@ -1,0 +1,114 @@
+feature: nba_write_modes
+description: NBA write mode contract -- full overwrite vs masked merge
+
+cases:
+  - name: full_overwrite_scalar
+    description: Full-width NBA overwrites entire scalar (null mask path)
+    sv: |
+      module Test;
+        logic [31:0] x;
+        int result;
+        initial begin
+          x = 32'hAAAA_BBBB;
+          x <= 32'h1234_5678;
+          #0;
+          result = x;
+        end
+      endmodule
+    expect:
+      variables:
+        result: "0x12345678"
+
+  - name: full_overwrite_multiple_nbas
+    description: Multiple full-width NBAs to same variable (last write wins)
+    sv: |
+      module Test;
+        logic [31:0] x;
+        int result;
+        initial begin
+          x = '0;
+          x <= 32'h1111_1111;
+          x <= 32'h2222_2222;
+          x <= 32'h3333_3333;
+          #0;
+          result = x;
+        end
+      endmodule
+    expect:
+      variables:
+        result: "0x33333333"
+
+  - name: full_overwrite_wide
+    description: Full-width NBA on value wider than inline buffer (>16 bytes)
+    sv: |
+      module Test;
+        logic [255:0] wide;
+        longint lo, hi;
+        initial begin
+          wide = '0;
+          wide <= 256'hDEADBEEF_CAFEBABE_12345678_9ABCDEF0_DEADBEEF_CAFEBABE_12345678_9ABCDEF0;
+          #0;
+          lo = wide[63:0];
+          hi = wide[255:192];
+        end
+      endmodule
+    expect:
+      variables:
+        lo: "0x123456789ABCDEF0"
+        hi: "0xDEADBEEFCAFEBABE"
+
+  - name: bit_range_masked_merge
+    description: Bit-range NBA uses masked merge (preserves unwritten bits)
+    sv: |
+      module Test;
+        logic [31:0] x;
+        int result;
+        initial begin
+          x = 32'hFF00_FF00;
+          x[15:8] <= 8'hAB;
+          #0;
+          result = x;
+        end
+      endmodule
+    expect:
+      variables:
+        result: "0xFF00AB00"
+
+  - name: bit_range_multiple_fields
+    description: Multiple bit-range NBAs to different fields of same variable
+    sv: |
+      module Test;
+        logic [31:0] x;
+        int result;
+        initial begin
+          x = 32'h0000_0000;
+          x[7:0] <= 8'hAA;
+          x[31:24] <= 8'h55;
+          #0;
+          result = x;
+        end
+      endmodule
+    expect:
+      variables:
+        result: "0x550000AA"
+
+  - name: full_overwrite_then_bit_range
+    description: Full-width and bit-range NBAs in same time slot
+    sv: |
+      module Test;
+        logic [31:0] a, b;
+        int ra, rb;
+        initial begin
+          a = '0;
+          b = 32'hFFFF_FFFF;
+          a <= 32'h1234_5678;   // full overwrite
+          b[15:8] <= 8'h00;     // masked merge
+          #0;
+          ra = a;
+          rb = b;
+        end
+      endmodule
+    expect:
+      variables:
+        ra: "0x12345678"
+        rb: "0xFFFF00FF"

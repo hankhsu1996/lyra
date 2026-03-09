@@ -131,7 +131,9 @@ void LyraStoreString(
 // - write_ptr: exact write address for the target
 // - notify_base_ptr: base design slot pointer (for registry)
 // - value_ptr: pointer to value bytes to write
-// - mask_ptr: pointer to mask bytes (per-byte mask)
+// - mask_ptr: pointer to mask bytes, or nullptr for full overwrite.
+//   nullptr -- kFullOverwrite (direct compare/copy, no mask storage).
+//   non-null -- kMaskedMerge (per-byte: (old & ~mask) | (new & mask)).
 // - byte_size: size of the write region in bytes
 // - notify_slot_id: slot ID for trigger lookup
 void LyraScheduleNba(
