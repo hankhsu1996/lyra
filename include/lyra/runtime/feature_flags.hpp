@@ -14,6 +14,8 @@ enum class FeatureFlag : uint32_t {
   kEnableSystem = 1 << 2,     // Enable $system shell command execution
   kDumpProcessMeta = 1 << 3,  // Dump process metadata registry (test-only)
   kEnableLoopGuard = 1 << 4,  // Enable loop guard checks (back-edge budget)
+  kDumpPropagationStats = 1
+                          << 5,  // Print propagation counters after simulation
 };
 
 constexpr auto operator|(FeatureFlag a, FeatureFlag b) -> FeatureFlag {

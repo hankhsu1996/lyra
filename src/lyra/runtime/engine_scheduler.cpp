@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <format>
 #include <span>
@@ -10,6 +11,8 @@
 #include <utility>
 #include <variant>
 #include <vector>
+
+#include <fmt/core.h>
 
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -428,6 +431,11 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
   std::vector<IndexedConn> sorted;
   sorted.reserve(descs.size());
   for (const auto& d : descs) {
+    if (d.trigger_byte_size > 0) {
+      ++conn_narrow_count_;
+    } else {
+      ++conn_full_slot_count_;
+    }
     sorted.push_back(
         {d.trigger_slot_id, BatchedConnection{
                                 .src_byte_offset = d.src_byte_offset,
@@ -588,11 +596,13 @@ void Engine::FlushAndPropagateConnections() {
   // many delta entries we've already scanned to process only new additions.
   constexpr uint32_t kMaxIterations = 100;
   uint32_t scanned = 0;
+  uint32_t iterations_used = 0;
   auto* base = static_cast<uint8_t*>(design_state_base_);
   for (uint32_t iter = 0; iter < kMaxIterations; ++iter) {
     auto all_dirty = update_set_.DeltaDirtySlots();
     if (scanned >= all_dirty.size()) break;
 
+    ++iterations_used;
     bool any_changed = false;
     auto new_dirty = all_dirty.subspan(scanned);
     scanned = static_cast<uint32_t>(all_dirty.size());
@@ -604,10 +614,13 @@ void Engine::FlushAndPropagateConnections() {
         auto [start, count] = conn_trigger_map_[slot_id];
         if (count == 0) continue;
         for (uint32_t ci = start; ci < start + count; ++ci) {
+          ++propagation_stats_.conn_considered;
           const auto& conn = all_connections_[ci];
           auto* src = base + conn.src_byte_offset;
           auto* dst = base + conn.dst_byte_offset;
+          ++propagation_stats_.conn_memcmp_executed;
           if (std::memcmp(dst, src, conn.byte_size) != 0) {
+            ++propagation_stats_.conn_memcpy_executed;
             std::memcpy(dst, src, conn.byte_size);
             MarkSlotDirty(conn.dst_slot_id);
             any_changed = true;
@@ -636,11 +649,30 @@ void Engine::FlushAndPropagateConnections() {
 
     if (!any_changed) break;
   }
+  ++propagation_stats_.propagation_calls;
+  propagation_stats_.propagation_iterations += iterations_used;
+  propagation_stats_.propagation_max_iterations = std::max(
+      propagation_stats_.propagation_max_iterations,
+      static_cast<uint64_t>(iterations_used));
 
   // Flush subscriptions with all accumulated dirty marks (process writes +
   // connection propagation + comb kernels), then clear the delta.
   FlushSignalUpdates();
   update_set_.ClearDelta();
+}
+
+void Engine::DumpPropagationStats(FILE* sink) const {
+  const auto& s = propagation_stats_;
+  fmt::print(
+      sink,
+      "[lyra][stats][propagation]"
+      " calls={} iterations={} max_iterations={}"
+      " conn_considered={} conn_memcmp={} conn_memcpy={}"
+      " conn_full_slot={} conn_narrow={}\n",
+      s.propagation_calls, s.propagation_iterations,
+      s.propagation_max_iterations, s.conn_considered, s.conn_memcmp_executed,
+      s.conn_memcpy_executed, conn_full_slot_count_, conn_narrow_count_);
+  std::fflush(sink);
 }
 
 void Engine::OnMutation(const common::MutationEvent& event) {

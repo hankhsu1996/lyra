@@ -100,6 +100,10 @@ auto RunJit(const CompilationInput& input) -> int {
   if (input.enable_system) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableSystem);
   }
+  if (input.verbose >= 2) {
+    feature_flags |=
+        runtime::ToUint32(runtime::FeatureFlag::kDumpPropagationStats);
+  }
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &compilation.mir.design,

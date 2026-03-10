@@ -45,6 +45,16 @@ struct ProcessDispatch {
   void* ctx = nullptr;
 };
 
+// Connection/comb propagation counters accumulated during Engine::Run().
+struct PropagationStats {
+  uint64_t propagation_calls = 0;
+  uint64_t propagation_iterations = 0;
+  uint64_t propagation_max_iterations = 0;
+  uint64_t conn_considered = 0;
+  uint64_t conn_memcmp_executed = 0;
+  uint64_t conn_memcpy_executed = 0;
+};
+
 // Simulation Engine: event-driven scheduler for SystemVerilog processes.
 //
 // Design:
@@ -150,6 +160,14 @@ class Engine {
   void Finish() {
     finished_ = true;
   }
+
+  // Propagation counters accumulated during simulation.
+  [[nodiscard]] auto GetPropagationStats() const -> const PropagationStats& {
+    return propagation_stats_;
+  }
+
+  // Print propagation stats and connection batch shape to sink.
+  void DumpPropagationStats(FILE* sink) const;
 
   // Get current simulation time.
   [[nodiscard]] auto CurrentTime() const -> SimTime {
@@ -537,6 +555,13 @@ class Engine {
   std::atomic<uint32_t> last_process_id_{UINT32_MAX};
   std::atomic<uint64_t> activation_seq_{0};
   std::atomic<uint32_t> phase_{static_cast<uint32_t>(Phase::kIdle)};
+
+  // Execution-discipline counters (accumulated during Run).
+  PropagationStats propagation_stats_;
+
+  // Static connection batch shape (populated once in InitConnectionBatch).
+  uint32_t conn_full_slot_count_ = 0;
+  uint32_t conn_narrow_count_ = 0;
 };
 
 }  // namespace lyra::runtime
