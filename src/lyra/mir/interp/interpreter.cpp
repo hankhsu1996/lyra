@@ -332,6 +332,72 @@ struct LocalInitCollector {
   }
 };
 
+struct MirProcessDispatchContext {
+  Interpreter* interp;
+  std::unordered_map<
+      runtime::ProcessHandle, ProcessState, runtime::ProcessHandleHash>*
+      process_states;
+  std::optional<Diagnostic>* callback_error;
+};
+
+void MirProcessDispatch(
+    void* ctx, runtime::Engine& eng, runtime::ProcessHandle handle,
+    runtime::ResumePoint resume) {
+  auto* mir = static_cast<MirProcessDispatchContext*>(ctx);
+  if (*mir->callback_error) {
+    return;
+  }
+
+  auto it = mir->process_states->find(handle);
+  if (it == mir->process_states->end()) {
+    return;
+  }
+  auto& state = it->second;
+
+  state.current_block = BasicBlockId{resume.block_index};
+  state.instruction_index = resume.instruction_index;
+  state.status = ProcessStatus::kRunning;
+
+  mir->interp->SetSimulationTime(eng.CurrentTime());
+
+  auto reason_result = mir->interp->RunUntilSuspend(state);
+  if (!reason_result) {
+    *mir->callback_error = std::move(reason_result).error();
+    return;
+  }
+
+  std::visit(
+      common::Overloaded{
+          [](const SuspendFinished&) {},
+          [&](const SuspendDelay& d) {
+            eng.Delay(
+                handle,
+                runtime::ResumePoint{
+                    .block_index = d.resume_block.value,
+                    .instruction_index = 0},
+                d.ticks);
+          },
+          [&](const SuspendWait& w) {
+            // TODO(hankhsu): Subscribe to signal triggers
+            eng.Delay(
+                handle,
+                runtime::ResumePoint{
+                    .block_index = w.resume_block.value,
+                    .instruction_index = 0},
+                1);
+          },
+          [&](const SuspendRepeat& r) {
+            eng.Delay(
+                handle,
+                runtime::ResumePoint{
+                    .block_index = r.resume_block.value,
+                    .instruction_index = 0},
+                1);
+          },
+      },
+      *reason_result);
+}
+
 }  // namespace
 
 auto CreateProcessState(
@@ -565,65 +631,12 @@ auto RunSimulation(
   // Error from callback (captured by reference)
   std::optional<Diagnostic> callback_error;
 
-  // Create engine with suspension handler
+  MirProcessDispatchContext dispatch_ctx{
+      &interp, &process_states, &callback_error};
+
+  // Create engine with explicit dispatch
   runtime::Engine engine(
-      [&](runtime::Engine& eng, runtime::ProcessHandle handle,
-          runtime::ResumePoint resume) {
-        if (callback_error) {
-          return;  // Stop processing if we already have an error
-        }
-
-        auto it = process_states.find(handle);
-        if (it == process_states.end()) {
-          return;
-        }
-        auto& state = it->second;
-
-        state.current_block = BasicBlockId{resume.block_index};
-        state.instruction_index = resume.instruction_index;
-        state.status = ProcessStatus::kRunning;
-
-        // Provide authoritative simulation time from Engine for $finish/$time
-        // output
-        interp.SetSimulationTime(eng.CurrentTime());
-
-        auto reason_result = interp.RunUntilSuspend(state);
-        if (!reason_result) {
-          callback_error = std::move(reason_result).error();
-          return;
-        }
-
-        std::visit(
-            common::Overloaded{
-                [](const SuspendFinished&) {},
-                [&](const SuspendDelay& d) {
-                  eng.Delay(
-                      handle,
-                      runtime::ResumePoint{
-                          .block_index = d.resume_block.value,
-                          .instruction_index = 0},
-                      d.ticks);
-                },
-                [&](const SuspendWait& w) {
-                  // TODO(hankhsu): Subscribe to signal triggers
-                  eng.Delay(
-                      handle,
-                      runtime::ResumePoint{
-                          .block_index = w.resume_block.value,
-                          .instruction_index = 0},
-                      1);
-                },
-                [&](const SuspendRepeat& r) {
-                  eng.Delay(
-                      handle,
-                      runtime::ResumePoint{
-                          .block_index = r.resume_block.value,
-                          .instruction_index = 0},
-                      1);
-                },
-            },
-            *reason_result);
-      },
+      runtime::ProcessDispatch{.fn = MirProcessDispatch, .ctx = &dispatch_ctx},
       0);
 
   // Wire mutation sink to route changes to Engine's UpdateSet

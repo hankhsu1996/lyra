@@ -39,6 +39,66 @@
 namespace lyra::test {
 namespace {
 
+struct TestMirDispatchContext {
+  mir::interp::Interpreter* interp;
+  std::unordered_map<
+      runtime::ProcessHandle, mir::interp::ProcessState,
+      runtime::ProcessHandleHash>* process_states;
+};
+
+void TestMirProcessDispatch(
+    void* ctx, runtime::Engine& eng, runtime::ProcessHandle handle,
+    runtime::ResumePoint resume) {
+  auto* tctx = static_cast<TestMirDispatchContext*>(ctx);
+  auto it = tctx->process_states->find(handle);
+  if (it == tctx->process_states->end()) {
+    return;
+  }
+  auto& state = it->second;
+
+  state.current_block = mir::BasicBlockId{resume.block_index};
+  state.instruction_index = resume.instruction_index;
+  state.status = mir::interp::ProcessStatus::kRunning;
+
+  tctx->interp->SetSimulationTime(eng.CurrentTime());
+
+  auto reason_result = tctx->interp->RunUntilSuspend(state);
+  if (!reason_result) {
+    throw std::runtime_error(reason_result.error().primary.message);
+  }
+  auto& reason = *reason_result;
+
+  std::visit(
+      common::Overloaded{
+          [](const mir::interp::SuspendFinished&) {},
+          [&](const mir::interp::SuspendDelay& d) {
+            eng.Delay(
+                handle,
+                runtime::ResumePoint{
+                    .block_index = d.resume_block.value,
+                    .instruction_index = 0},
+                d.ticks);
+          },
+          [&](const mir::interp::SuspendWait& w) {
+            eng.Delay(
+                handle,
+                runtime::ResumePoint{
+                    .block_index = w.resume_block.value,
+                    .instruction_index = 0},
+                1);
+          },
+          [&](const mir::interp::SuspendRepeat& r) {
+            eng.Delay(
+                handle,
+                runtime::ResumePoint{
+                    .block_index = r.resume_block.value,
+                    .instruction_index = 0},
+                1);
+          },
+      },
+      reason);
+}
+
 // Extract numeric value from RuntimeValue for assertion comparison.
 // All integrals are returned as IntegralValue (unknown all zeros for 2-state)
 // to keep comparison logic uniform.
@@ -301,59 +361,11 @@ auto RunMirInterpreter(
   runtime::OutputSinkScope sink_scope(
       [&trace_output](std::string_view text) { trace_output.append(text); });
   try {
+    TestMirDispatchContext dispatch_ctx{&interpreter, &process_states};
+
     runtime::Engine engine(
-        [&](runtime::Engine& eng, runtime::ProcessHandle handle,
-            runtime::ResumePoint resume) {
-          auto it = process_states.find(handle);
-          if (it == process_states.end()) {
-            return;
-          }
-          auto& state = it->second;
-
-          state.current_block = mir::BasicBlockId{resume.block_index};
-          state.instruction_index = resume.instruction_index;
-          state.status = mir::interp::ProcessStatus::kRunning;
-
-          // Provide authoritative simulation time from Engine for $finish/$time
-          // output
-          interpreter.SetSimulationTime(eng.CurrentTime());
-
-          auto reason_result = interpreter.RunUntilSuspend(state);
-          if (!reason_result) {
-            throw std::runtime_error(reason_result.error().primary.message);
-          }
-          auto& reason = *reason_result;
-
-          std::visit(
-              common::Overloaded{
-                  [](const mir::interp::SuspendFinished&) {},
-                  [&](const mir::interp::SuspendDelay& d) {
-                    eng.Delay(
-                        handle,
-                        runtime::ResumePoint{
-                            .block_index = d.resume_block.value,
-                            .instruction_index = 0},
-                        d.ticks);
-                  },
-                  [&](const mir::interp::SuspendWait& w) {
-                    eng.Delay(
-                        handle,
-                        runtime::ResumePoint{
-                            .block_index = w.resume_block.value,
-                            .instruction_index = 0},
-                        1);
-                  },
-                  [&](const mir::interp::SuspendRepeat& r) {
-                    eng.Delay(
-                        handle,
-                        runtime::ResumePoint{
-                            .block_index = r.resume_block.value,
-                            .instruction_index = 0},
-                        1);
-                  },
-              },
-              reason);
-        },
+        runtime::ProcessDispatch{
+            .fn = TestMirProcessDispatch, .ctx = &dispatch_ctx},
         0);
 
     // Wire mutation sink: record events and route to Engine

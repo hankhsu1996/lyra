@@ -25,18 +25,20 @@ The fixture must stay fixed so that profiles are comparable across gap rankings 
 Why pipeline:
 
 - 8-stage pipe, 10K cycles -- exercises the scheduler hot loop heavily
-- Largest performance gap (139x vs Verilator as of `c030550`)
-- Completes in <1s natively, ~10min under Callgrind
+- Largest performance gap (15x vs Verilator at `-c opt`)
+- Completes in ~50ms natively, ~2-3min under Callgrind
 - Reproduces the same bottleneck pattern as large designs (ibex) but at 1/200th the cost
 
 ## Workflow
 
 ### 1. Build
 
-Compile the pipeline AOT binary. The AOT path produces a standalone executable linked against `liblyra_runtime.so`. Both the binary and library ship with symbols (not stripped).
+Compile the pipeline AOT binary with optimization. The AOT path produces a standalone executable linked against `liblyra_runtime.so`.
+
+**Always build with `-c opt`.** This applies to both profiling and benchmarking. Bazel's default `fastbuild` mode uses `-O0`, which prevents inlining and inflates STL/container overhead by 5x+. Profiles taken at `-O0` show a completely different cost distribution (dominated by iterator constructors, vector::empty checks, and function call overhead that vanishes at `-O2`) and cannot be used for hotspot ranking. The benchmark runner (`tools/bench/run_benchmarks.py`) enforces this by building with `-c opt` and always using the resulting optimized binary. See the `-c opt` discovery note in `docs/runtime-performance-gaps.md` for the full story.
 
 ```bash
-bazel build //:lyra
+bazel build -c opt //:lyra
 ./bazel-bin/lyra -C tools/bench/fixtures/pipeline compile
 ```
 
@@ -51,7 +53,7 @@ valgrind --tool=callgrind \
   out/bin/Top
 ```
 
-Expected runtime: ~5-10 minutes (Callgrind adds ~20-50x overhead).
+Expected runtime: ~2-3 minutes with `-c opt` (Callgrind adds ~20-50x overhead).
 
 ### 3. Inspect
 
@@ -98,7 +100,8 @@ After making a change, reprofile and compare:
 # Before: save callgrind.out as callgrind.before
 cp callgrind.out callgrind.before
 
-# After: rebuild, reprofile
+# After: rebuild with -c opt, reprofile
+bazel build -c opt //:lyra
 ./bazel-bin/lyra -C tools/bench/fixtures/pipeline compile
 cd tools/bench/fixtures/pipeline
 valgrind --tool=callgrind --callgrind-out-file=callgrind.out out/bin/Top
@@ -115,7 +118,7 @@ For function-level comparison, open both files in KCachegrind side by side, or d
 
 - **Startup:** For the pipeline fixture at 10K cycles, startup is a negligible fraction of total cost. No need to filter it. This may not hold for shorter workloads -- verify if you change the fixture.
 - **Determinism:** For deterministic workloads (no randomness, no I/O timing), repeated Callgrind runs should produce identical or near-identical instruction counts. No need for multiple trials in the common case.
-- **Optimization level:** The AOT binary and `liblyra_runtime.so` are built with Bazel's default optimization flags. Profile the same binary you benchmark -- don't use special debug builds for profiling.
+- **Optimization level:** Always profile with `-c opt`. Bazel's default `fastbuild` mode uses `-O0`, which inflates instruction counts by ~5x with STL overhead that does not exist in optimized builds. The cost distribution at `-O0` is misleading -- functions that dominate at `-O0` (iterator constructors, vector::empty, begin/end comparisons) are fully inlined at `-O2` and disappear from the profile. Never use `-O0` profiles for performance prioritization.
 
 ## Callgrind output artifacts
 
