@@ -69,8 +69,9 @@ struct PlaceRootKeyHash {
   }
 };
 
-// Design state layout - one per module
-// Maps SlotId (the design variable) to field index in DesignState struct.
+// Design-wide state layout analysis artifact.
+// Defines the LLVM struct shape and slot-to-field mapping for DesignState.
+// Computed independently of mir::Design by BuildDesignLayout().
 struct DesignLayout {
   // Ordered slots for DesignState, in declaration order
   std::vector<mir::SlotId> slots;
@@ -226,7 +227,9 @@ struct ScheduledProcess {
   ModuleIndex module_index;
 };
 
-// Complete layout for entire module
+// Transitional full backend layout product.
+// Includes DesignLayout (design-wide state) plus process/template routing data.
+// Downstream consumer of BuildDesignLayout; constructed by BuildLayout.
 struct Layout {
   DesignLayout design;
   std::vector<ProcessLayout> processes;
@@ -347,22 +350,20 @@ auto BuildSlotInfoFromDesign(
 auto IsScalarPatchable(
     TypeId type_id, const TypeArena& types, bool force_two_state) -> bool;
 
+// Build the design-wide DesignState layout from precomputed slot metadata.
+// This analysis is independent of mir::Design and defines the LLVM struct
+// shape and slot-to-field mapping used by downstream layout/codegen.
+auto BuildDesignLayout(
+    const std::vector<SlotInfo>& slots, const TypeArena& types,
+    llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
+    -> DesignLayout;
+
 // Build complete layout from MIR design.
 // This is a pure analysis pass that creates LLVM types but does NOT emit IR.
-//
-// Parameters:
-//   design: MIR design to analyze
-//   arena: MIR arena for looking up places
-//   types: Type arena for looking up types
-//   slots: Ordered list of design slots (declaration order from HIR)
-//   ctx: LLVM context for creating struct types
-//   dl: LLVM DataLayout for computing byte offsets
-//
-// Returns:
-//   Complete Layout with all struct types created
+// Consumes a prebuilt DesignLayout (design-wide state contract).
 auto BuildLayout(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
-    const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx,
+    DesignLayout design_layout, llvm::LLVMContext& ctx,
     const llvm::DataLayout& dl, bool force_two_state) -> Layout;
 
 // Discriminant for byte range resolution results.
