@@ -5,8 +5,8 @@ Runs lyra (and optionally Verilator) against a set of designs, collects
 compile-time and simulation-time metrics, and prints a Markdown report.
 
 Usage:
-    python3 tools/bench/run_benchmarks.py [--lyra PATH] [--json PATH]
-           [--trials N] [--tier pr|nightly|full] [--ci]
+    python3 tools/bench/run_benchmarks.py [--json PATH] [--trials N]
+           [--tier pr|nightly|full] [--ci]
 """
 
 import argparse
@@ -497,8 +497,6 @@ def write_json(results: list[BenchResult], path: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Lyra performance benchmarks")
     parser.add_argument(
-        "--lyra", default="bazel-bin/lyra", help="Path to lyra binary")
-    parser.add_argument(
         "--json", default=None, help="Write JSON results to this path")
     parser.add_argument(
         "--trials", type=int, default=None, help="Override number of trials")
@@ -510,11 +508,26 @@ def main() -> None:
         help="CI mode: always exit 0, print FAIL rows")
     args = parser.parse_args()
 
-    lyra = os.path.abspath(args.lyra)
+    # Always build with -c opt for benchmarking. Unoptimized builds inflate
+    # runtime overhead by ~5-8x due to missing inlining and produce misleading
+    # performance numbers. See docs/profiling.md.
+    print("Building lyra with -c opt...", file=sys.stderr)
+    build_result = subprocess.run(
+        ["bazel", "build", "-c", "opt", "//:lyra"],
+        cwd=str(REPO_ROOT),
+        capture_output=True, text=True,
+    )
+    if build_result.returncode != 0:
+        print("Error: bazel build -c opt //:lyra failed:", file=sys.stderr)
+        print(build_result.stderr, file=sys.stderr)
+        sys.exit(1)
+
+    # Always use the freshly built optimized binary, regardless of --lyra.
+    # This prevents silently benchmarking a stale or unoptimized binary.
+    lyra = str(REPO_ROOT / "bazel-bin" / "lyra")
 
     if not os.path.isfile(lyra):
         print(f"Error: lyra binary not found at {lyra}", file=sys.stderr)
-        print("Run 'bazel build //:lyra' first.", file=sys.stderr)
         sys.exit(1)
 
     tier = TIER_CONFIG[args.tier]

@@ -359,53 +359,54 @@ extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
 
 namespace {
 
-// Create the process runner callback used by both LyraRunSimulation and
-// LyraRunSimulationWithPlusargs.
-auto MakeProcessRunner(
-    std::span<LyraProcessFunc> procs, std::span<void*> states) {
-  return [procs, states](
-             lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
-             lyra::runtime::ResumePoint resume) {
-    uint32_t proc_idx = handle.process_id;
-    void* state = states[proc_idx];
-    auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
-    SuspendReset(suspend);
+struct AotProcessDispatchContext {
+  std::span<LyraProcessFunc> procs;
+  std::span<void*> states;
+};
 
-    // Pointer-out ABI contract: caller owns the outcome buffer, callee must
-    // write exactly one valid ProcessOutcome before returning. Sentinel tag
-    // (UINT32_MAX) detects codegen bugs where a process path misses the write.
-    lyra::runtime::ProcessOutcome outcome{};
-    outcome.tag = UINT32_MAX;
-    procs[proc_idx](state, resume.block_index, &outcome);
+void AotProcessDispatch(
+    void* ctx, lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
+    lyra::runtime::ResumePoint resume) {
+  auto* aot = static_cast<AotProcessDispatchContext*>(ctx);
+  uint32_t proc_idx = handle.process_id;
+  void* state = aot->states[proc_idx];
+  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+  SuspendReset(suspend);
 
-    switch (static_cast<lyra::runtime::ProcessExitCode>(outcome.tag)) {
-      case lyra::runtime::ProcessExitCode::kOk:
-        break;
-      case lyra::runtime::ProcessExitCode::kTrap: {
-        lyra::runtime::TrapPayload payload{
-            .reason = static_cast<lyra::runtime::TrapReason>(outcome.reason),
-            .a = outcome.a,
-            .b = outcome.b,
-        };
-        eng.HandleTrap(proc_idx, payload);
-        return;
-      }
-      default:
-        throw lyra::common::InternalError(
-            "MakeProcessRunner",
-            std::format(
-                "process returned invalid exit tag {} (sentinel=codegen bug, "
-                "other=unknown tag)",
-                outcome.tag));
+  // Pointer-out ABI contract: caller owns the outcome buffer, callee must
+  // write exactly one valid ProcessOutcome before returning. Sentinel tag
+  // (UINT32_MAX) detects codegen bugs where a process path misses the write.
+  lyra::runtime::ProcessOutcome outcome{};
+  outcome.tag = UINT32_MAX;
+  aot->procs[proc_idx](state, resume.block_index, &outcome);
+
+  switch (static_cast<lyra::runtime::ProcessExitCode>(outcome.tag)) {
+    case lyra::runtime::ProcessExitCode::kOk:
+      break;
+    case lyra::runtime::ProcessExitCode::kTrap: {
+      lyra::runtime::TrapPayload payload{
+          .reason = static_cast<lyra::runtime::TrapReason>(outcome.reason),
+          .a = outcome.a,
+          .b = outcome.b,
+      };
+      eng.HandleTrap(proc_idx, payload);
+      return;
     }
+    default:
+      throw lyra::common::InternalError(
+          "AotProcessDispatch",
+          std::format(
+              "process returned invalid exit tag {} (sentinel=codegen bug, "
+              "other=unknown tag)",
+              outcome.tag));
+  }
 
-    // When the engine has wait-site metadata and suspend-record access,
-    // post-activation reconciliation is handled by the engine.
-    // Otherwise, fall back to the legacy HandleSuspendRecord path.
-    if (!eng.HasPostActivationReconciliation()) {
-      HandleSuspendRecord(eng, handle, suspend);
-    }
-  };
+  // When the engine has wait-site metadata and suspend-record access,
+  // post-activation reconciliation is handled by the engine.
+  // Otherwise, fall back to the legacy HandleSuspendRecord path.
+  if (!eng.HasPostActivationReconciliation()) {
+    HandleSuspendRecord(eng, handle, suspend);
+  }
 }
 
 void SetupAndRunSimulation(
@@ -491,9 +492,12 @@ extern "C" void LyraRunSimulation(
   using lyra::runtime::FeatureFlag;
   auto flags = static_cast<FeatureFlag>(feature_flags);
 
+  AotProcessDispatchContext dispatch_ctx{procs, states};
   lyra::runtime::Engine engine(
-      MakeProcessRunner(procs, states), num_processes, std::span(plusargs_vec),
-      std::move(instance_paths_vec), feature_flags);
+      lyra::runtime::ProcessDispatch{
+          .fn = AotProcessDispatch, .ctx = &dispatch_ctx},
+      num_processes, std::span(plusargs_vec), std::move(instance_paths_vec),
+      feature_flags);
 
   if (abi != nullptr) {
     if (abi->version != kRuntimeAbiVersion) {

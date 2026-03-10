@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <deque>
 #include <format>
-#include <functional>
 #include <map>
 #include <optional>
 #include <queue>
@@ -35,11 +34,16 @@
 
 namespace lyra::runtime {
 
-// Callback type for process execution.
-// Engine calls this when a process should run; callback handles suspension.
-// The callback should call Delay/Subscribe/etc. on the engine to reschedule.
-using ProcessRunner = std::function<void(
-    Engine& engine, ProcessHandle handle, ResumePoint resume)>;
+// Explicit process dispatch ABI for the hot path.
+// fn is required (must not be nullptr). ctx is non-owning and must outlive
+// Engine::Run().
+using ProcessDispatchFn = void (*)(
+    void* ctx, Engine& engine, ProcessHandle handle, ResumePoint resume);
+
+struct ProcessDispatch {
+  ProcessDispatchFn fn = nullptr;
+  void* ctx = nullptr;
+};
 
 // Simulation Engine: event-driven scheduler for SystemVerilog processes.
 //
@@ -49,21 +53,25 @@ using ProcessRunner = std::function<void(
 // - Processes suspend via Delay/Subscribe, engine resumes them later
 //
 // Usage:
-// 1. Create engine with a ProcessRunner callback
+// 1. Create engine with a ProcessDispatch callback
 // 2. Schedule initial processes with ScheduleInitial()
 // 3. Call Run() to execute until completion or time limit
 class Engine {
  public:
   explicit Engine(
-      ProcessRunner runner, uint32_t num_processes = 0,
+      ProcessDispatch process_dispatch, uint32_t num_processes = 0,
       std::span<const std::string> plusargs = {},
       std::vector<std::string> instance_paths = {}, uint32_t feature_flags = 0)
-      : runner_(std::move(runner)),
+      : process_dispatch_(process_dispatch),
         num_processes_(num_processes),
         process_states_(num_processes),
         plusargs_(plusargs.begin(), plusargs.end()),
         instance_paths_(std::move(instance_paths)),
         feature_flags_(feature_flags) {
+    if (process_dispatch_.fn == nullptr) {
+      throw common::InternalError(
+          "Engine::Engine", "process_dispatch.fn must not be null");
+    }
   }
 
   ~Engine() = default;
@@ -401,7 +409,7 @@ class Engine {
   static auto EvaluateEdge(common::EdgeKind edge, bool old_lsb, bool new_lsb)
       -> bool;
 
-  ProcessRunner runner_;
+  ProcessDispatch process_dispatch_;
   uint32_t num_processes_ = 0;
   std::vector<ProcessState> process_states_;
   SimTime current_time_ = 0;

@@ -199,7 +199,8 @@ void Engine::RunOneActivation(const ScheduledEvent& event) {
   // Reset loop budget before each process activation.
   LyraResetLoopBudget(kDefaultLoopBudget);
 
-  runner_(*this, event.handle, event.resume);
+  process_dispatch_.fn(
+      process_dispatch_.ctx, *this, event.handle, event.resume);
   current_running_process_.store(UINT32_MAX, std::memory_order_release);
   phase_.store(static_cast<uint32_t>(Phase::kIdle), std::memory_order_release);
 }
