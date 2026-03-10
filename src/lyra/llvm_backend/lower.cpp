@@ -119,12 +119,10 @@ void RegisterMonitorInfo(
   }
 }
 
-auto BuildSpecCompilationUnits(const mir::Design& design, const Layout& layout)
+auto BuildSpecCompilationUnits(const mir::Design& design)
     -> std::vector<SpecCompilationUnit> {
   std::vector<SpecCompilationUnit> units;
   std::unordered_map<uint32_t, size_t> body_to_unit;
-  // Maps ModuleIndex -> body_id for template association.
-  std::unordered_map<uint32_t, uint32_t> modidx_to_bodyid;
 
   uint32_t module_idx = 0;
   for (const auto& element : design.elements) {
@@ -132,8 +130,6 @@ auto BuildSpecCompilationUnits(const mir::Design& design, const Layout& layout)
     if (mod == nullptr) continue;
 
     auto body_id = mod->body_id;
-    modidx_to_bodyid[module_idx] = body_id.value;
-
     const auto& placement =
         mir::GetInstancePlacement(design.placement, module_idx);
 
@@ -144,11 +140,13 @@ auto BuildSpecCompilationUnits(const mir::Design& design, const Layout& layout)
 
     auto [it, inserted] = body_to_unit.try_emplace(body_id.value, units.size());
     if (inserted) {
+      const auto& body = design.module_bodies.at(body_id.value);
       units.push_back(
           SpecCompilationUnit{
               .body_id = body_id,
+              .processes = {body.processes.begin(), body.processes.end()},
+              .functions = {body.functions.begin(), body.functions.end()},
               .instances = {binding},
-              .template_indices = {},
           });
     } else {
       units[it->second].instances.push_back(binding);
@@ -157,52 +155,86 @@ auto BuildSpecCompilationUnits(const mir::Design& design, const Layout& layout)
     ++module_idx;
   }
 
-  // Associate template indices with their owning body's unit.
+  return units;
+}
+
+auto BuildSpecCodegenViews(
+    const std::vector<SpecCompilationUnit>& units, const mir::Design& design,
+    const Layout& layout) -> std::vector<SpecCodegenView> {
+  // Map ModuleIndex -> body_id for template association.
+  std::unordered_map<uint32_t, uint32_t> modidx_to_bodyid;
+  uint32_t module_idx = 0;
+  for (const auto& element : design.elements) {
+    const auto* mod = std::get_if<mir::Module>(&element);
+    if (mod == nullptr) continue;
+    modidx_to_bodyid[module_idx] = mod->body_id.value;
+    ++module_idx;
+  }
+
+  // Map body_id -> unit index.
+  std::unordered_map<uint32_t, size_t> body_to_unit;
+  for (size_t i = 0; i < units.size(); ++i) {
+    body_to_unit[units[i].body_id.value] = i;
+  }
+
+  // Build views, one per unit.
+  std::vector<SpecCodegenView> views(units.size());
+
+  // Set rel_byte_offsets from the first instance's variant.
+  for (size_t i = 0; i < units.size(); ++i) {
+    const auto& variant =
+        layout.GetInstanceVariant(units[i].instances[0].module_index);
+    views[i].rel_byte_offsets = &variant.rel_byte_offsets;
+  }
+
+  // Associate templates with their owning unit's view.
   for (size_t t = 0; t < layout.process_templates.size(); ++t) {
     const auto& tmpl = layout.process_templates[t];
     auto body_it = modidx_to_bodyid.find(tmpl.representative_module_idx.value);
     if (body_it == modidx_to_bodyid.end()) continue;
     auto unit_it = body_to_unit.find(body_it->second);
     if (unit_it == body_to_unit.end()) continue;
-    units[unit_it->second].template_indices.push_back(t);
+
+    views[unit_it->second].templates.push_back(
+        SpecTemplateView{
+            .global_template_index = t,
+            .layout_process_index = tmpl.template_layout_index.value,
+            .process_id = tmpl.template_process,
+            .representative_module_index = tmpl.representative_module_idx,
+            .template_base_slot_id = tmpl.template_base_slot_id,
+            .func_name = tmpl.func_name,
+        });
   }
 
-  return units;
+  return views;
 }
 
 }  // namespace
 
 auto PrepareSpecialization(
-    Context& context, const Layout& layout, const mir::Arena& arena,
-    const mir::Design& design, const SpecCompilationUnit& unit)
-    -> PreparedSpecialization {
-  const auto& body = design.module_bodies.at(unit.body_id.value);
-
+    Context& context, const mir::Arena& arena, const SpecCompilationUnit& unit,
+    const SpecCodegenView& view) -> PreparedSpecialization {
   // Register monitor info for body processes
-  for (mir::ProcessId proc_id : body.processes) {
+  for (mir::ProcessId proc_id : unit.processes) {
     RegisterMonitorInfo(context, arena, proc_id);
   }
 
   // Register module-scoped function metadata for each instance
   for (const auto& binding : unit.instances) {
-    const auto& variant = layout.GetInstanceVariant(binding.module_index);
-    for (mir::FunctionId func_id : body.functions) {
+    for (mir::FunctionId func_id : unit.functions) {
       const auto& func = arena[func_id];
       if (func.thunk_kind == mir::ThunkKind::kNone) {
         context.RegisterModuleScopedFunction(
-            func_id, {.rel_byte_offsets = &variant.rel_byte_offsets,
+            func_id, {.rel_byte_offsets = view.rel_byte_offsets,
                       .base_slot_id = binding.base_slot_id});
       }
     }
   }
 
-  // Collect body function IDs
-  PreparedSpecialization prepared{
+  return PreparedSpecialization{
       .body_id = unit.body_id,
-      .function_ids = {body.functions.begin(), body.functions.end()},
+      .function_ids = {unit.functions.begin(), unit.functions.end()},
   };
-
-  return prepared;
 }
 
 auto CompileDesignProcesses(const LoweringInput& input)
@@ -236,8 +268,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
       runtime::FeatureFlag::kEnableLoopGuard);
   context->SetLoopGuardEnabled(loop_guard_enabled);
 
-  // Phase 1: Build specialization units
-  auto units = BuildSpecCompilationUnits(*input.design, *layout);
+  // Phase 1: Build specialization units and codegen views
+  auto units = BuildSpecCompilationUnits(*input.design);
+  auto views = BuildSpecCodegenViews(units, *input.design, *layout);
 
   // Phase 2: Design-wide init-process monitor registration
   for (mir::ProcessId proc_id : input.design->init_processes) {
@@ -248,9 +281,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // function collection)
   std::vector<PreparedSpecialization> prepared_specs;
   prepared_specs.reserve(units.size());
-  for (const auto& unit : units) {
-    prepared_specs.push_back(PrepareSpecialization(
-        *context, *layout, *input.mir_arena, *input.design, unit));
+  for (size_t i = 0; i < units.size(); ++i) {
+    prepared_specs.push_back(
+        PrepareSpecialization(*context, *input.mir_arena, units[i], views[i]));
   }
 
   // Merge specialization function IDs into global collection
@@ -303,9 +336,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
   std::vector<llvm::Function*> template_fns(layout->process_templates.size());
   std::vector<WaitSiteEntry> all_wait_sites;
 
-  for (const auto& unit : units) {
+  for (size_t i = 0; i < units.size(); ++i) {
     auto result = CompileSpecialization(
-        *context, *layout, *input.mir_arena, unit, template_fns,
+        *context, *input.mir_arena, units[i], views[i], template_fns,
         all_wait_sites);
     if (!result) return std::unexpected(result.error());
   }
@@ -360,26 +393,22 @@ auto CompileDesignProcesses(const LoweringInput& input)
 }
 
 auto CompileSpecialization(
-    Context& context, const Layout& layout, const mir::Arena& arena,
-    const SpecCompilationUnit& unit, std::vector<llvm::Function*>& template_fns,
+    Context& context, const mir::Arena& arena,
+    const SpecCompilationUnit& /*unit*/, const SpecCodegenView& view,
+    std::vector<llvm::Function*>& template_fns,
     std::vector<WaitSiteEntry>& all_wait_sites) -> Result<void> {
   // Generate shared/template process functions for this body
-  for (size_t t : unit.template_indices) {
-    const auto& tmpl = layout.process_templates[t];
-    context.SetCurrentProcess(tmpl.template_layout_index.value);
-
-    const auto& mir_process = arena[tmpl.template_process];
-    context.SetCurrentInstanceId(tmpl.representative_module_idx.value);
-
-    const auto& variant =
-        layout.GetInstanceVariant(tmpl.representative_module_idx);
+  for (const auto& tmpl : view.templates) {
+    context.SetCurrentProcess(tmpl.layout_process_index);
+    context.SetCurrentInstanceId(tmpl.representative_module_index.value);
     context.SetRelByteOffsets(
-        variant.rel_byte_offsets, tmpl.template_base_slot_id);
+        *view.rel_byte_offsets, tmpl.template_base_slot_id);
 
+    const auto& mir_process = arena[tmpl.process_id];
     auto func_result =
         GenerateSharedProcessFunction(context, mir_process, tmpl.func_name);
     if (!func_result) return std::unexpected(func_result.error());
-    template_fns[t] = func_result->function;
+    template_fns[tmpl.global_template_index] = func_result->function;
 
     all_wait_sites.insert(
         all_wait_sites.end(),

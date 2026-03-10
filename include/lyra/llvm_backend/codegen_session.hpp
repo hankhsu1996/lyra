@@ -11,7 +11,6 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -27,12 +26,33 @@ struct SpecInstanceBinding {
   uint32_t base_slot_id;  // From placement
 };
 
-// Represents one specialization/body and the instances/templates currently
-// associated with it.  Contains only stable IDs/data; no borrowed pointers.
+// Specialization-owned MIR content: identity + behavioral IR references.
+// Does not contain backend layout or codegen routing data.
 struct SpecCompilationUnit {
   mir::ModuleBodyId body_id;
+  std::vector<mir::ProcessId> processes;
+  std::vector<mir::FunctionId> functions;
   std::vector<SpecInstanceBinding> instances;
-  std::vector<size_t> template_indices;  // Into layout.process_templates
+};
+
+// Narrow backend view for one shared/template process belonging to a
+// specialization. Contains transitional codegen routing data, not
+// specialization identity.
+struct SpecTemplateView {
+  size_t global_template_index;
+  uint32_t layout_process_index;
+  mir::ProcessId process_id;
+  ModuleIndex representative_module_index;
+  uint32_t template_base_slot_id;
+  std::string func_name;
+};
+
+// Narrow backend view for compiling one specialization in the current
+// transitional backend. Ephemeral: built and consumed inside
+// CompileDesignProcesses, not persisted.
+struct SpecCodegenView {
+  const std::vector<uint64_t>* rel_byte_offsets;
+  std::vector<SpecTemplateView> templates;
 };
 
 // Explicit intermediate product from PrepareSpecialization.
@@ -73,17 +93,16 @@ auto CompileDesignProcesses(const LoweringInput& input)
 // should be merged into the global collection by the outer orchestrator.
 // Must be called for ALL units before the global function declare/define pass.
 auto PrepareSpecialization(
-    Context& context, const Layout& layout, const mir::Arena& arena,
-    const mir::Design& design, const SpecCompilationUnit& unit)
-    -> PreparedSpecialization;
+    Context& context, const mir::Arena& arena, const SpecCompilationUnit& unit,
+    const SpecCodegenView& view) -> PreparedSpecialization;
 
 // Compile one specialization unit: generate shared/template process functions.
 // Prerequisites: PrepareSpecialization called for all units, functions declared
 // and defined. Does not emit per-instance wrappers or inspect package/global
 // elements.
 auto CompileSpecialization(
-    Context& context, const Layout& layout, const mir::Arena& arena,
-    const SpecCompilationUnit& unit, std::vector<llvm::Function*>& template_fns,
+    Context& context, const mir::Arena& arena, const SpecCompilationUnit& unit,
+    const SpecCodegenView& view, std::vector<llvm::Function*>& template_fns,
     std::vector<WaitSiteEntry>& all_wait_sites) -> Result<void>;
 
 // Backend phase: extract LLVM ownership from a completed session.
