@@ -14,6 +14,8 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 
 **Transitional state**: design-wide compatibility adapters (B5) remain until Phase E removes them.
 
+**Specialization compilation units**: `CompileDesignProcesses` now builds explicit `SpecCompilationUnit` objects and iterates them for monitor registration, function metadata, function collection, and template process generation. Full design still remains in the outer orchestration and layout/codegen API, so E1 is not yet complete.
+
 **Architectural uncertainties**:
 
 - M2 -- param classification needs to distinguish packed-width params from unpacked-size params, aligned with the specialization boundary rule

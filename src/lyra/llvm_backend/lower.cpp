@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -27,7 +28,6 @@
 #include <llvm/TargetParser/SubtargetFeature.h>
 
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/overloaded.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
@@ -35,6 +35,7 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/placement.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/runtime/feature_flags.hpp"
@@ -91,10 +92,120 @@ void SetHostDataLayout(llvm::Module& module) {
   module.setDataLayout(tm->createDataLayout());
 }
 
+void RegisterMonitorInfo(
+    Context& context, const mir::Arena& arena, mir::ProcessId proc_id) {
+  const auto& process = arena[proc_id];
+  for (const auto& block : process.blocks) {
+    for (const auto& instr : block.statements) {
+      const auto* effect = std::get_if<mir::Effect>(&instr.data);
+      if (effect == nullptr) continue;
+      const auto* monitor = std::get_if<mir::MonitorEffect>(&effect->op);
+      if (monitor == nullptr) continue;
+
+      Context::MonitorLayout mon_layout{
+          .offsets = monitor->offsets,
+          .byte_sizes = monitor->byte_sizes,
+          .total_size = monitor->prev_buffer_size,
+      };
+      context.RegisterMonitorLayout(
+          monitor->check_thunk, std::move(mon_layout));
+
+      Context::MonitorSetupInfo setup_info{
+          .check_thunk = monitor->check_thunk,
+      };
+      context.RegisterMonitorSetupInfo(
+          monitor->setup_thunk, std::move(setup_info));
+    }
+  }
+}
+
+auto BuildSpecCompilationUnits(const mir::Design& design, const Layout& layout)
+    -> std::vector<SpecCompilationUnit> {
+  std::vector<SpecCompilationUnit> units;
+  std::unordered_map<uint32_t, size_t> body_to_unit;
+  // Maps ModuleIndex -> body_id for template association.
+  std::unordered_map<uint32_t, uint32_t> modidx_to_bodyid;
+
+  uint32_t module_idx = 0;
+  for (const auto& element : design.elements) {
+    const auto* mod = std::get_if<mir::Module>(&element);
+    if (mod == nullptr) continue;
+
+    auto body_id = mod->body_id;
+    modidx_to_bodyid[module_idx] = body_id.value;
+
+    const auto& placement =
+        mir::GetInstancePlacement(design.placement, module_idx);
+
+    SpecInstanceBinding binding{
+        .module_index = ModuleIndex{module_idx},
+        .base_slot_id = placement.design_state_base_slot,
+    };
+
+    auto [it, inserted] = body_to_unit.try_emplace(body_id.value, units.size());
+    if (inserted) {
+      units.push_back(
+          SpecCompilationUnit{
+              .body_id = body_id,
+              .body = &design.module_bodies.at(body_id.value),
+              .instances = {binding},
+              .template_indices = {},
+          });
+    } else {
+      units[it->second].instances.push_back(binding);
+    }
+
+    ++module_idx;
+  }
+
+  // Associate template indices with their owning body's unit.
+  for (size_t t = 0; t < layout.process_templates.size(); ++t) {
+    const auto& tmpl = layout.process_templates[t];
+    auto body_it = modidx_to_bodyid.find(tmpl.representative_module_idx.value);
+    if (body_it == modidx_to_bodyid.end()) continue;
+    auto unit_it = body_to_unit.find(body_it->second);
+    if (unit_it == body_to_unit.end()) continue;
+    units[unit_it->second].template_indices.push_back(t);
+  }
+
+  return units;
+}
+
 }  // namespace
+
+auto PrepareSpecialization(
+    Context& context, const Layout& layout, const mir::Arena& arena,
+    const SpecCompilationUnit& unit, std::vector<mir::FunctionId>& all_func_ids,
+    std::unordered_set<uint32_t>& seen_func_ids) -> void {
+  // Register monitor info for body processes
+  for (mir::ProcessId proc_id : unit.body->processes) {
+    RegisterMonitorInfo(context, arena, proc_id);
+  }
+
+  // Register module-scoped function metadata for each instance
+  for (const auto& binding : unit.instances) {
+    const auto& variant = layout.GetInstanceVariant(binding.module_index);
+    for (mir::FunctionId func_id : unit.body->functions) {
+      const auto& func = arena[func_id];
+      if (func.thunk_kind == mir::ThunkKind::kNone) {
+        context.RegisterModuleScopedFunction(
+            func_id, {.rel_byte_offsets = &variant.rel_byte_offsets,
+                      .base_slot_id = binding.base_slot_id});
+      }
+    }
+  }
+
+  // Collect body function IDs into global function collection
+  for (mir::FunctionId func_id : unit.body->functions) {
+    if (seen_func_ids.insert(func_id.value).second) {
+      all_func_ids.push_back(func_id);
+    }
+  }
+}
 
 auto CompileDesignProcesses(const LoweringInput& input)
     -> Result<CodegenSession> {
+  // Phase 0: Setup
   auto llvm_ctx = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("lyra_module", *llvm_ctx);
 
@@ -123,83 +234,33 @@ auto CompileDesignProcesses(const LoweringInput& input)
       runtime::FeatureFlag::kEnableLoopGuard);
   context->SetLoopGuardEnabled(loop_guard_enabled);
 
-  // Pre-scan all processes for MonitorEffect instructions
-  auto register_monitor_info = [&](mir::ProcessId proc_id) {
-    const auto& process = (*input.mir_arena)[proc_id];
-    for (const auto& block : process.blocks) {
-      for (const auto& instr : block.statements) {
-        const auto* effect = std::get_if<mir::Effect>(&instr.data);
-        if (effect == nullptr) continue;
-        const auto* monitor = std::get_if<mir::MonitorEffect>(&effect->op);
-        if (monitor == nullptr) continue;
+  // Phase 1: Build specialization units
+  auto units = BuildSpecCompilationUnits(*input.design, *layout);
 
-        Context::MonitorLayout mon_layout{
-            .offsets = monitor->offsets,
-            .byte_sizes = monitor->byte_sizes,
-            .total_size = monitor->prev_buffer_size,
-        };
-        context->RegisterMonitorLayout(
-            monitor->check_thunk, std::move(mon_layout));
-
-        Context::MonitorSetupInfo setup_info{
-            .check_thunk = monitor->check_thunk,
-        };
-        context->RegisterMonitorSetupInfo(
-            monitor->setup_thunk, std::move(setup_info));
-      }
-    }
-  };
-
-  std::unordered_set<uint32_t> seen_proc_ids;
-  for (const auto& element : input.design->elements) {
-    if (const auto* mod_elem = std::get_if<mir::Module>(&element)) {
-      const auto& body = mir::GetModuleBody(*input.design, *mod_elem);
-      for (mir::ProcessId proc_id : body.processes) {
-        if (seen_proc_ids.insert(proc_id.value).second) {
-          register_monitor_info(proc_id);
-        }
-      }
-    }
-  }
+  // Phase 2: Design-wide init-process monitor registration
   for (mir::ProcessId proc_id : input.design->init_processes) {
-    register_monitor_info(proc_id);
+    RegisterMonitorInfo(*context, *input.mir_arena, proc_id);
   }
 
-  // Two-pass user function generation
+  // Phase 3: Specialization preparation (monitors, function metadata,
+  // function collection)
   std::vector<mir::FunctionId> all_func_ids;
   std::unordered_set<uint32_t> seen_func_ids;
-  uint32_t func_collection_module_idx = 0;
+
+  for (const auto& unit : units) {
+    PrepareSpecialization(
+        *context, *layout, *input.mir_arena, unit, all_func_ids, seen_func_ids);
+  }
+
+  // Phase 4: Design-wide function collection outside specialization units
   for (const auto& element : input.design->elements) {
-    std::visit(
-        common::Overloaded{
-            [&](const mir::Module& mod) {
-              const auto& body = mir::GetModuleBody(*input.design, mod);
-              ModuleIndex mod_idx{func_collection_module_idx};
-              for (mir::FunctionId func_id : body.functions) {
-                if (seen_func_ids.insert(func_id.value).second) {
-                  all_func_ids.push_back(func_id);
-                }
-                const auto& func = (*input.mir_arena)[func_id];
-                if (func.thunk_kind == mir::ThunkKind::kNone) {
-                  const auto& variant = layout->GetInstanceVariant(mod_idx);
-                  const auto& placement = mir::GetInstancePlacement(
-                      input.design->placement, mod_idx.value);
-                  context->RegisterModuleScopedFunction(
-                      func_id, {&variant.rel_byte_offsets,
-                                placement.design_state_base_slot});
-                }
-              }
-              ++func_collection_module_idx;
-            },
-            [&](const mir::Package& pkg) {
-              for (mir::FunctionId func_id : pkg.functions) {
-                if (seen_func_ids.insert(func_id.value).second) {
-                  all_func_ids.push_back(func_id);
-                }
-              }
-            },
-        },
-        element);
+    const auto* pkg = std::get_if<mir::Package>(&element);
+    if (pkg == nullptr) continue;
+    for (mir::FunctionId func_id : pkg->functions) {
+      if (seen_func_ids.insert(func_id.value).second) {
+        all_func_ids.push_back(func_id);
+      }
+    }
   }
   for (mir::FunctionId func_id : input.design->generated_functions) {
     if (seen_func_ids.insert(func_id.value).second) {
@@ -207,7 +268,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
   }
 
-  // Pass 1: Declare all user functions
+  // Phase 5: Global function two-pass (declare all, then define all)
   std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_funcs;
   declared_funcs.reserve(all_func_ids.size());
   for (size_t i = 0; i < all_func_ids.size(); ++i) {
@@ -219,43 +280,28 @@ auto CompileDesignProcesses(const LoweringInput& input)
     declared_funcs.emplace_back(func_id, llvm_func);
   }
 
-  // Pass 2: Define all user functions
   for (const auto& [func_id, llvm_func] : declared_funcs) {
     auto result = DefineUserFunction(*context, func_id, llvm_func);
     if (!result) return std::unexpected(result.error());
   }
 
-  // Generate process functions
+  // Phase 6: Specialization template process generation (step 4).
+  // Must happen after function declare/define since template codegen
+  // may reference user functions.
+  std::vector<llvm::Function*> template_fns(layout->process_templates.size());
+  std::vector<WaitSiteEntry> all_wait_sites;
+
+  for (const auto& unit : units) {
+    auto result = CompileSpecialization(
+        *context, *layout, *input.mir_arena, unit, template_fns,
+        all_wait_sites);
+    if (!result) return std::unexpected(result.error());
+  }
+
+  // Phase 7: Per-instance wrapper / standalone process generation
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout->scheduled_processes.size());
 
-  std::vector<WaitSiteEntry> all_wait_sites;
-
-  // Phase 1: Emit template functions
-  std::vector<llvm::Function*> template_fns(layout->process_templates.size());
-  for (size_t t = 0; t < layout->process_templates.size(); ++t) {
-    const auto& tmpl = layout->process_templates[t];
-    context->SetCurrentProcess(tmpl.template_layout_index.value);
-
-    const auto& mir_process = (*input.mir_arena)[tmpl.template_process];
-    context->SetCurrentInstanceId(tmpl.representative_module_idx.value);
-
-    const auto& variant =
-        layout->GetInstanceVariant(tmpl.representative_module_idx);
-    context->SetRelByteOffsets(
-        variant.rel_byte_offsets, tmpl.template_base_slot_id);
-
-    auto func_result =
-        GenerateSharedProcessFunction(*context, mir_process, tmpl.func_name);
-    if (!func_result) return std::unexpected(func_result.error());
-    template_fns[t] = func_result->function;
-    all_wait_sites.insert(
-        all_wait_sites.end(),
-        std::make_move_iterator(func_result->wait_sites.begin()),
-        std::make_move_iterator(func_result->wait_sites.end()));
-  }
-
-  // Phase 2: Emit per-process functions
   size_t num_init = layout->num_init_processes;
   for (size_t i = 0; i < layout->scheduled_processes.size(); ++i) {
     context->SetCurrentProcess(i);
@@ -299,6 +345,37 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .slot_info = std::move(slot_info),
       .num_init_processes = num_init,
   };
+}
+
+auto CompileSpecialization(
+    Context& context, const Layout& layout, const mir::Arena& arena,
+    const SpecCompilationUnit& unit, std::vector<llvm::Function*>& template_fns,
+    std::vector<WaitSiteEntry>& all_wait_sites) -> Result<void> {
+  // Generate shared/template process functions for this body
+  for (size_t t : unit.template_indices) {
+    const auto& tmpl = layout.process_templates[t];
+    context.SetCurrentProcess(tmpl.template_layout_index.value);
+
+    const auto& mir_process = arena[tmpl.template_process];
+    context.SetCurrentInstanceId(tmpl.representative_module_idx.value);
+
+    const auto& variant =
+        layout.GetInstanceVariant(tmpl.representative_module_idx);
+    context.SetRelByteOffsets(
+        variant.rel_byte_offsets, tmpl.template_base_slot_id);
+
+    auto func_result =
+        GenerateSharedProcessFunction(context, mir_process, tmpl.func_name);
+    if (!func_result) return std::unexpected(func_result.error());
+    template_fns[t] = func_result->function;
+
+    all_wait_sites.insert(
+        all_wait_sites.end(),
+        std::make_move_iterator(func_result->wait_sites.begin()),
+        std::make_move_iterator(func_result->wait_sites.end()));
+  }
+
+  return {};
 }
 
 auto FinalizeModule(CodegenSession session) -> LoweringResult {
