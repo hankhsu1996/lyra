@@ -14,7 +14,7 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 
 **Transitional state**: design-wide compatibility adapters (B5) remain until Phase E removes them.
 
-**Specialization compilation units**: `CompileDesignProcesses` builds explicit `SpecCompilationUnit` objects. `PrepareSpecialization` owns all specialization-owned preparation (monitor registration, function metadata, body function collection) and returns a `PreparedSpecialization` product. `CompileSpecialization` owns specialization-owned template/shared process codegen. The outer orchestrator contains only design-wide work (init-process monitors, package/generated function collection, global function declare/define, per-instance wrapper generation). Full-design layout and wrapper generation still remain outside specialization scope, so E1 is not yet complete.
+**Specialization compilation units**: `SpecCompilationUnit` carries specialization-owned MIR data (body processes, functions, instance bindings). `SpecCodegenView` provides a narrow backend view (rel_byte_offsets, template routing) built and consumed inside `CompileDesignProcesses`. `PrepareSpecialization` and `CompileSpecialization` no longer depend on `mir::Design` or broad `Layout` in their signatures. The outer orchestrator contains only design-wide work (init-process monitors, package/generated function collection, global function declare/define, per-instance wrapper generation). Full `Context`/`Layout` coupling and wrapper generation still remain outside specialization scope, so E1 is not yet complete.
 
 **Architectural uncertainties**:
 
