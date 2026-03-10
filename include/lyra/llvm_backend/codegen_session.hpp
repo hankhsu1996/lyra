@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <unordered_set>
 #include <vector>
 
 #include <llvm/IR/Function.h>
@@ -14,7 +13,6 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/module_body.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -30,12 +28,19 @@ struct SpecInstanceBinding {
 };
 
 // Represents one specialization/body and the instances/templates currently
-// associated with it.
+// associated with it.  Contains only stable IDs/data; no borrowed pointers.
 struct SpecCompilationUnit {
   mir::ModuleBodyId body_id;
-  const mir::ModuleBody* body;  // Borrowed
   std::vector<SpecInstanceBinding> instances;
   std::vector<size_t> template_indices;  // Into layout.process_templates
+};
+
+// Explicit intermediate product from PrepareSpecialization.
+// Carries the body function IDs discovered during preparation so the outer
+// orchestrator can merge them into the global function collection.
+struct PreparedSpecialization {
+  mir::ModuleBodyId body_id;
+  std::vector<mir::FunctionId> function_ids;
 };
 
 // Backend-owned intermediate state between behavioral codegen and assembly.
@@ -64,12 +69,13 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
 // Prepare one specialization unit: register monitor info for body processes,
 // register module-scoped function metadata for each instance, and collect
-// body function IDs. Must be called for ALL units before the global function
-// declare/define pass.
+// body function IDs.  Returns a PreparedSpecialization whose function_ids
+// should be merged into the global collection by the outer orchestrator.
+// Must be called for ALL units before the global function declare/define pass.
 auto PrepareSpecialization(
     Context& context, const Layout& layout, const mir::Arena& arena,
-    const SpecCompilationUnit& unit, std::vector<mir::FunctionId>& all_func_ids,
-    std::unordered_set<uint32_t>& seen_func_ids) -> void;
+    const mir::Design& design, const SpecCompilationUnit& unit)
+    -> PreparedSpecialization;
 
 // Compile one specialization unit: generate shared/template process functions.
 // Prerequisites: PrepareSpecialization called for all units, functions declared
