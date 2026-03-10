@@ -1115,7 +1115,8 @@ auto BuildHeaderType(llvm::LLVMContext& ctx, llvm::StructType* suspend_type)
       ctx, {suspend_type, ptr_ty, ptr_ty}, "ProcessStateHeader");
 }
 
-// Build DesignLayout from slot info
+}  // namespace
+
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
     llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
@@ -1152,6 +1153,8 @@ auto BuildDesignLayout(
 
   return layout;
 }
+
+namespace {
 
 // Build FrameLayout from de-duplicated roots
 auto BuildFrameLayout(
@@ -1644,7 +1647,7 @@ auto Layout::GetInstanceVariantId(ModuleIndex idx) const -> ModuleVariantId {
 
 auto BuildLayout(
     const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
-    const std::vector<SlotInfo>& slots, llvm::LLVMContext& ctx,
+    DesignLayout design_layout, llvm::LLVMContext& ctx,
     const llvm::DataLayout& dl, bool force_two_state) -> Layout {
   Layout layout;
 
@@ -1652,8 +1655,8 @@ auto BuildLayout(
   layout.suspend_record_type = BuildSuspendRecordType(ctx);
   layout.header_type = BuildHeaderType(ctx, layout.suspend_record_type);
 
-  // Build design layout (use actual TypeIds for type derivation)
-  layout.design = BuildDesignLayout(slots, types, ctx, dl, force_two_state);
+  // Use prebuilt design layout
+  layout.design = std::move(design_layout);
 
   // Phase 1: Collect init processes (package variable initialization)
   // These run synchronously before scheduling, in design.init_processes order

@@ -105,9 +105,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto slot_info = BuildSlotInfoFromDesign(
       *input.design, *input.type_arena, force_two_state);
 
+  auto design_layout = BuildDesignLayout(
+      slot_info, *input.type_arena, *llvm_ctx, module->getDataLayout(),
+      force_two_state);
+
   auto layout = std::make_unique<Layout>(BuildLayout(
-      *input.design, *input.mir_arena, *input.type_arena, slot_info, *llvm_ctx,
-      module->getDataLayout(), force_two_state));
+      *input.design, *input.mir_arena, *input.type_arena,
+      std::move(design_layout), *llvm_ctx, module->getDataLayout(),
+      force_two_state));
 
   auto context = std::make_unique<Context>(
       *input.design, *input.mir_arena, *input.type_arena, *layout,
