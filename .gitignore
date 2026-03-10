@@ -31,6 +31,9 @@ Thumbs.db
 *.log
 *.log.*
 
+# Profiling artifacts
+callgrind.*
+
 # Generated output
 out/
 *tmp*
