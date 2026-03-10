@@ -593,6 +593,10 @@ extern "C" void LyraRunSimulation(
   if (HasFlag(flags, FeatureFlag::kEnableTrace)) {
     engine.GetTraceManager().PrintSummary();
   }
+
+  if (HasFlag(flags, FeatureFlag::kDumpPropagationStats)) {
+    engine.DumpPropagationStats(stderr);
+  }
 }
 
 extern "C" auto LyraPlusargsTest(void* engine_ptr, LyraStringHandle query)
