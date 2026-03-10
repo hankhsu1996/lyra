@@ -571,14 +571,13 @@ auto BuildPlusargs(
 }
 
 auto BuildDesignMetadata(
-    Context& context, const Layout& layout,
+    Context& context, const mir::Design& design, const Layout& layout,
     const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input,
     size_t num_init) -> MetadataGlobals {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
   const auto& dl = mod.getDataLayout();
-  const auto& design = context.GetMirDesign();
   const auto& mir_arena = context.GetMirArena();
   const auto& type_arena = context.GetTypeArena();
   bool force_two_state = context.IsForceTwoState();
@@ -798,7 +797,11 @@ auto EmitDesignMain(
   const auto& slot_info = session.slot_info;
   const auto& process_funcs = session.process_funcs;
   size_t num_init = session.num_init_processes;
-  const auto& design = context.GetMirDesign();
+  if (session.design == nullptr) {
+    throw common::InternalError(
+        "EmitDesignMain", "session.design must not be null");
+  }
+  const auto& design = *session.design;
 
   auto [main_func, exit_block, design_state] =
       CreateMainFunction(context, input.main_abi);
@@ -835,8 +838,8 @@ auto EmitDesignMain(
 
     auto plusargs = BuildPlusargs(context, main_func, input);
 
-    auto meta_globals =
-        BuildDesignMetadata(context, layout, slot_info, input, num_init);
+    auto meta_globals = BuildDesignMetadata(
+        context, design, layout, slot_info, input, num_init);
 
     auto wait_site_meta = EmitWaitSiteMetaTable(context, session.wait_sites);
 

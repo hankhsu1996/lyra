@@ -19,7 +19,6 @@
 #include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
 
@@ -64,8 +63,7 @@ class Context {
 
  public:
   Context(
-      const mir::Design& design, const mir::Arena& arena,
-      const TypeArena& types, const Layout& layout,
+      const mir::Arena& arena, const TypeArena& types, const Layout& layout,
       std::unique_ptr<llvm::LLVMContext> llvm_ctx,
       std::unique_ptr<llvm::Module> module,
       const lowering::DiagnosticContext* diag_ctx,
@@ -81,9 +79,6 @@ class Context {
     return builder_;
   }
 
-  [[nodiscard]] auto GetMirDesign() const -> const mir::Design& {
-    return design_;
-  }
   [[nodiscard]] auto GetMirArena() const -> const mir::Arena& {
     return arena_;
   }
@@ -561,7 +556,6 @@ class Context {
       const mir::Place& resolved, mir::PlaceId original_place_id)
       -> Result<llvm::Value*>;
 
-  const mir::Design& design_;
   const mir::Arena& arena_;
   const TypeArena& types_;
   const Layout& layout_;

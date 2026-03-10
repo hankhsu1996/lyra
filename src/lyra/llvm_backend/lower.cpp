@@ -115,8 +115,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
       force_two_state));
 
   auto context = std::make_unique<Context>(
-      *input.design, *input.mir_arena, *input.type_arena, *layout,
-      std::move(llvm_ctx), std::move(module), input.diag_ctx, force_two_state);
+      *input.mir_arena, *input.type_arena, *layout, std::move(llvm_ctx),
+      std::move(module), input.diag_ctx, force_two_state);
 
   bool loop_guard_enabled = runtime::HasFlag(
       static_cast<runtime::FeatureFlag>(input.feature_flags),
@@ -293,6 +293,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   return CodegenSession{
       .layout = std::move(layout),
       .context = std::move(context),
+      .design = input.design,
       .process_funcs = std::move(process_funcs),
       .wait_sites = std::move(all_wait_sites),
       .slot_info = std::move(slot_info),

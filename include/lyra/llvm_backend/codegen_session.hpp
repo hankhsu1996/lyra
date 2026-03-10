@@ -9,6 +9,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
+#include "lyra/mir/design.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -28,6 +29,7 @@ struct LoweringResult;
 struct CodegenSession {
   std::unique_ptr<Layout> layout;
   std::unique_ptr<Context> context;
+  const mir::Design* design = nullptr;
   std::vector<llvm::Function*> process_funcs;
   std::vector<WaitSiteEntry> wait_sites;
   std::vector<SlotInfo> slot_info;
