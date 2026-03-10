@@ -297,15 +297,20 @@ auto Context::GetModuleSlotPointer(uint32_t local_slot_id) -> llvm::Value* {
         "GetModuleSlotPointer",
         "this_ptr not set (module-local access requires shared-body context)");
   }
-  if (local_slot_id >= rel_byte_offsets_.size() ||
-      rel_byte_offsets_[local_slot_id] == UINT64_MAX) {
+  if (rel_byte_offsets_ == nullptr) {
+    throw common::InternalError(
+        "GetModuleSlotPointer",
+        "rel_byte_offsets not set (requires specialization-local context)");
+  }
+  if (local_slot_id >= rel_byte_offsets_->size() ||
+      (*rel_byte_offsets_)[local_slot_id] == UINT64_MAX) {
     throw common::InternalError(
         "GetModuleSlotPointer",
         std::format(
             "local_slot_id {} out of range (table_size={})", local_slot_id,
-            rel_byte_offsets_.size()));
+            rel_byte_offsets_->size()));
   }
-  uint64_t rel_offset = rel_byte_offsets_[local_slot_id];
+  uint64_t rel_offset = (*rel_byte_offsets_)[local_slot_id];
   return builder_.CreateGEP(
       llvm::Type::getInt8Ty(*llvm_context_), this_ptr_,
       builder_.getInt64(rel_offset), "module_slot_ptr");

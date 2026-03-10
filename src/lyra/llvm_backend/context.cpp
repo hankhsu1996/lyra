@@ -422,10 +422,8 @@ auto Context::GetDynamicInstanceId() const -> llvm::Value* {
   return dynamic_instance_id_;
 }
 
-void Context::SetRelByteOffsets(
-    std::vector<uint64_t> offsets, uint32_t base_slot_id) {
-  rel_byte_offsets_ = std::move(offsets);
-  module_base_slot_id_ = base_slot_id;
+void Context::SetRelByteOffsets(const std::vector<uint64_t>* offsets) {
+  rel_byte_offsets_ = offsets;
 }
 
 void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
@@ -531,18 +529,12 @@ void Context::RegisterModuleScopedFunction(
     mir::FunctionId func_id, ModuleFunctionLowering lowering) {
   auto [it, inserted] = module_function_lowering_.emplace(func_id, lowering);
   if (!inserted) {
-    // Same function seen from another instance of the same variant.
-    // Verify the registrations agree on specialization-owned metadata.
-    const auto& existing = it->second;
-    if (*existing.rel_byte_offsets != *lowering.rel_byte_offsets) {
-      throw common::InternalError(
-          "RegisterModuleScopedFunction",
-          std::format(
-              "function {} registered with conflicting rel_byte_offsets "
-              "(sizes {} vs {})",
-              func_id.value, existing.rel_byte_offsets->size(),
-              lowering.rel_byte_offsets->size()));
-    }
+    throw common::InternalError(
+        "RegisterModuleScopedFunction",
+        std::format(
+            "function {} registered twice (must be registered once per "
+            "specialization, not per instance)",
+            func_id.value));
   }
 }
 

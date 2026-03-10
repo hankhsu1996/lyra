@@ -6,15 +6,22 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 
 ## Current Status
 
-**Next PR: E1 -- narrow codegen API to one specialization.**
+**E1 structural boundary established.**
 
-**Current phase**: transitioning from D (realization extraction) to E (per-specialization codegen).
-
-**Immediate blocker**: B3 -- codegen operates on entire design. E1 is the fix path.
+**Current phase**: E (per-specialization codegen). Native specialization compile entrypoint exists; remaining E1 narrowing work below.
 
 **Transitional state**: design-wide compatibility adapters (B5) remain until Phase E removes them.
 
-**Specialization compilation units**: `SpecCompilationUnit` carries specialization-owned MIR data (body processes, functions, instance bindings). `SpecCodegenView` provides a narrow backend view (rel_byte_offsets, template routing) built and consumed inside `CompileDesignProcesses`. `PrepareSpecialization` and `CompileSpecialization` no longer depend on `mir::Design` or broad `Layout` in their signatures. The outer orchestrator contains only design-wide work (init-process monitors, package/generated function collection, global function declare/define, per-instance wrapper generation). Full `Context`/`Layout` coupling and wrapper generation still remain outside specialization scope, so E1 is not yet complete.
+**Specialization compilation**: `CompileModuleSpecSession` is the native per-specialization backend entrypoint. It takes an owned `CompiledModuleSpecInput` (body MIR membership, `SpecLayout`, `SpecCodegenView`) and returns a `CompiledModuleSpec` product (template functions, wait sites). Body-function declare/define is specialization-local. Module-scoped function lowering metadata is registered once per specialization. Body-local user functions are registered as `Context` side effects, not explicit products -- no downstream consumer currently needs them as products. `CompileDesignProcesses` is orchestration: setup, design-global functions (packages + generated), `CompileModuleSpecSession` x N, per-instance wrappers. No body-local function lowering or template lowering logic remains outside `CompileModuleSpecSession`.
+
+**Remaining E1 gaps**:
+
+- `Context` still holds broad design/layout state (`const Layout&`, design types)
+- `LoweringInput` still exposes `mir::Design`
+- Wrapper generation remains design-wide (correct: wrappers are per-instance, not per-specialization)
+- Template dedup compatibility still exists until E2/E3/E4
+- Body-function artifacts are Context side effects, not explicit products
+- Template lowering uses representative instance ID for %m path support (compatibility)
 
 **Architectural uncertainties**:
 
@@ -30,24 +37,17 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 
 ## Active Gaps
 
-### Now: B3 / E1
+### Now: E1 remaining gaps
 
-B3 and E1 are the same immediate story. B3 is the problem; E1 is the fix.
+The E1 structural boundary is established (`CompileModuleSpecSession` is the native specialization backend entrypoint). Remaining narrowing work:
 
-**B3: Codegen operates on entire design**
+**B3: Design-wide state still flows through top-level APIs**
 
-`LowerMirToLlvm()` receives `mir::Design`. `BuildLayout()` processes all instances. Cannot parallelize or cache. After D4, `LowerMirToLlvm()` remains a thin backend wrapper that orchestrates specialization codegen + realization, but `CompileDesignProcesses` still processes the full design.
+`LowerMirToLlvm()` still receives `mir::Design`. `BuildLayout()` still processes all instances. `Context` still holds `const Layout&`. These are incremental narrowing tasks, not architectural blockers.
 
-- `include/lyra/llvm_backend/lower.hpp:83-95` -- `LoweringInput` holds `const mir::Design*`
-- `src/lyra/llvm_backend/lower.cpp` -- `CompileDesignProcesses()` processes full design
+- `include/lyra/llvm_backend/lower.hpp` -- `LoweringInput` holds `const mir::Design*`
 - `src/lyra/llvm_backend/layout/layout.cpp` -- `BuildLayout()` iterates all instances
-- `include/lyra/llvm_backend/context.hpp` -- `Context` holds `const mir::Design&`
-
-**E1: New codegen API takes one specialization**
-
-- `LowerMirToLlvm()` operates on a single `CompiledModuleSpec`
-- `LoweringInput` no longer holds `const mir::Design*`; takes specialization MIR + `SpecLayout`
-- Codegen call has no design-global parameters
+- `include/lyra/llvm_backend/context.hpp` -- `Context` holds `const Layout&`
 
 ### Next: D2 / M2
 

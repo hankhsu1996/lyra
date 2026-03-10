@@ -177,15 +177,8 @@ auto BuildSpecCodegenViews(
     body_to_unit[units[i].body_id.value] = i;
   }
 
-  // Build views, one per unit.
+  // Build views, one per unit. Template routing / association only.
   std::vector<SpecCodegenView> views(units.size());
-
-  // Set rel_byte_offsets from the first instance's variant.
-  for (size_t i = 0; i < units.size(); ++i) {
-    const auto& variant =
-        layout.GetInstanceVariant(units[i].instances[0].module_index);
-    views[i].rel_byte_offsets = &variant.rel_byte_offsets;
-  }
 
   // Associate templates with their owning unit's view.
   for (size_t t = 0; t < layout.process_templates.size(); ++t) {
@@ -209,37 +202,115 @@ auto BuildSpecCodegenViews(
   return views;
 }
 
+auto BuildSpecLayouts(
+    const std::vector<SpecCompilationUnit>& units, const Layout& layout)
+    -> std::vector<SpecLayout> {
+  std::vector<SpecLayout> layouts;
+  layouts.reserve(units.size());
+  for (const auto& unit : units) {
+    if (unit.instances.empty()) {
+      throw common::InternalError(
+          "BuildSpecLayouts",
+          std::format(
+              "specialization unit for body {} has no instances",
+              unit.body_id.value));
+    }
+    const auto& variant =
+        layout.GetInstanceVariant(unit.instances[0].module_index);
+    layouts.push_back(SpecLayout{.rel_byte_offsets = variant.rel_byte_offsets});
+  }
+  return layouts;
+}
+
+auto BuildCompiledModuleSpecInputs(
+    const std::vector<SpecCompilationUnit>& units,
+    std::vector<SpecLayout> layouts, std::vector<SpecCodegenView> views)
+    -> std::vector<CompiledModuleSpecInput> {
+  std::vector<CompiledModuleSpecInput> inputs;
+  inputs.reserve(units.size());
+  for (size_t i = 0; i < units.size(); ++i) {
+    inputs.push_back(
+        CompiledModuleSpecInput{
+            .body_id = units[i].body_id,
+            .processes = units[i].processes,
+            .functions = units[i].functions,
+            .layout = std::move(layouts[i]),
+            .view = std::move(views[i]),
+        });
+  }
+  return inputs;
+}
+
 }  // namespace
 
-auto PrepareSpecialization(
-    Context& context, const mir::Arena& arena, const SpecCompilationUnit& unit,
-    const SpecCodegenView& view) -> PreparedSpecialization {
-  // Register monitor info for body processes
-  for (mir::ProcessId proc_id : unit.processes) {
+auto CompileModuleSpecSession(
+    Context& context, const mir::Arena& arena,
+    const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec> {
+  // Step 1: Register monitor info for body processes
+  for (mir::ProcessId proc_id : input.processes) {
     RegisterMonitorInfo(context, arena, proc_id);
   }
 
-  // Register module-scoped function metadata for each instance
-  for (const auto& binding : unit.instances) {
-    for (mir::FunctionId func_id : unit.functions) {
-      const auto& func = arena[func_id];
-      if (func.thunk_kind == mir::ThunkKind::kNone) {
-        context.RegisterModuleScopedFunction(
-            func_id, {.rel_byte_offsets = view.rel_byte_offsets,
-                      .base_slot_id = binding.base_slot_id});
-      }
+  // Step 2: Register module-scoped function lowering metadata.
+  // Once per function, not per instance -- rel_byte_offsets is
+  // specialization-owned and shared across all instances.
+  for (mir::FunctionId func_id : input.functions) {
+    const auto& func = arena[func_id];
+    if (func.thunk_kind == mir::ThunkKind::kNone) {
+      context.RegisterModuleScopedFunction(
+          func_id, {.rel_byte_offsets = &input.layout.rel_byte_offsets});
     }
   }
 
-  return PreparedSpecialization{
-      .body_id = unit.body_id,
-      .function_ids = {unit.functions.begin(), unit.functions.end()},
-  };
+  // Step 3: Declare all body functions
+  std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_funcs;
+  std::unordered_set<uint32_t> seen_func_ids;
+  for (mir::FunctionId func_id : input.functions) {
+    if (!seen_func_ids.insert(func_id.value).second) continue;
+    auto llvm_func_or_err = DeclareUserFunction(
+        context, func_id,
+        std::format("body_{}_func_{}", input.body_id.value, func_id.value));
+    if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
+    declared_funcs.emplace_back(func_id, *llvm_func_or_err);
+  }
+
+  // Step 4: Define all body functions
+  for (const auto& [func_id, llvm_func] : declared_funcs) {
+    auto result = DefineUserFunction(context, func_id, llvm_func);
+    if (!result) return std::unexpected(result.error());
+  }
+
+  // Step 5: Codegen all specialization templates/processes
+  CompiledModuleSpec product{.body_id = input.body_id};
+
+  for (const auto& tmpl : input.view.templates) {
+    context.SetCurrentProcess(tmpl.layout_process_index);
+    // Compatibility: template lowering still needs a representative instance ID
+    // for %m path support. This is transitional -- true specialization codegen
+    // should not require instance identity. Tracked as remaining E1 work.
+    context.SetCurrentInstanceId(tmpl.representative_module_index.value);
+    context.SetRelByteOffsets(&input.layout.rel_byte_offsets);
+
+    const auto& mir_process = arena[tmpl.process_id];
+    auto func_result =
+        GenerateSharedProcessFunction(context, mir_process, tmpl.func_name);
+    if (!func_result) return std::unexpected(func_result.error());
+
+    product.template_functions.emplace_back(
+        tmpl.global_template_index, func_result->function);
+
+    product.wait_sites.insert(
+        product.wait_sites.end(),
+        std::make_move_iterator(func_result->wait_sites.begin()),
+        std::make_move_iterator(func_result->wait_sites.end()));
+  }
+
+  return product;
 }
 
 auto CompileDesignProcesses(const LoweringInput& input)
     -> Result<CodegenSession> {
-  // Phase 0: Setup
+  // Phase 0: Backend/session setup
   auto llvm_ctx = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("lyra_module", *llvm_ctx);
 
@@ -268,61 +339,44 @@ auto CompileDesignProcesses(const LoweringInput& input)
       runtime::FeatureFlag::kEnableLoopGuard);
   context->SetLoopGuardEnabled(loop_guard_enabled);
 
-  // Phase 1: Build specialization units and codegen views
+  // Phase 1: Build specialization inputs (units + layouts + codegen views)
   auto units = BuildSpecCompilationUnits(*input.design);
   auto views = BuildSpecCodegenViews(units, *input.design, *layout);
+  auto spec_layouts = BuildSpecLayouts(units, *layout);
+  auto spec_inputs = BuildCompiledModuleSpecInputs(
+      units, std::move(spec_layouts), std::move(views));
 
   // Phase 2: Design-wide init-process monitor registration
   for (mir::ProcessId proc_id : input.design->init_processes) {
     RegisterMonitorInfo(*context, *input.mir_arena, proc_id);
   }
 
-  // Phase 3: Specialization-owned preparation (monitors, function metadata,
-  // function collection)
-  std::vector<PreparedSpecialization> prepared_specs;
-  prepared_specs.reserve(units.size());
-  for (size_t i = 0; i < units.size(); ++i) {
-    prepared_specs.push_back(
-        PrepareSpecialization(*context, *input.mir_arena, units[i], views[i]));
-  }
-
-  // Merge specialization function IDs into global collection
-  std::vector<mir::FunctionId> all_func_ids;
+  // Phase 3: Design-global function declare/define only (packages + generated)
+  std::vector<mir::FunctionId> global_func_ids;
   std::unordered_set<uint32_t> seen_func_ids;
-  for (const auto& prepared : prepared_specs) {
-    for (mir::FunctionId func_id : prepared.function_ids) {
-      if (seen_func_ids.insert(func_id.value).second) {
-        all_func_ids.push_back(func_id);
-      }
-    }
-  }
 
-  // Phase 4: Design-wide function collection outside specialization units
   for (const auto& element : input.design->elements) {
     const auto* pkg = std::get_if<mir::Package>(&element);
     if (pkg == nullptr) continue;
     for (mir::FunctionId func_id : pkg->functions) {
       if (seen_func_ids.insert(func_id.value).second) {
-        all_func_ids.push_back(func_id);
+        global_func_ids.push_back(func_id);
       }
     }
   }
   for (mir::FunctionId func_id : input.design->generated_functions) {
     if (seen_func_ids.insert(func_id.value).second) {
-      all_func_ids.push_back(func_id);
+      global_func_ids.push_back(func_id);
     }
   }
 
-  // Phase 5: Global function two-pass (declare all, then define all)
   std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_funcs;
-  declared_funcs.reserve(all_func_ids.size());
-  for (size_t i = 0; i < all_func_ids.size(); ++i) {
-    mir::FunctionId func_id = all_func_ids[i];
-    auto llvm_func_or_err =
-        DeclareUserFunction(*context, func_id, std::format("user_func_{}", i));
+  declared_funcs.reserve(global_func_ids.size());
+  for (mir::FunctionId func_id : global_func_ids) {
+    auto llvm_func_or_err = DeclareUserFunction(
+        *context, func_id, std::format("global_func_{}", func_id.value));
     if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
-    llvm::Function* llvm_func = *llvm_func_or_err;
-    declared_funcs.emplace_back(func_id, llvm_func);
+    declared_funcs.emplace_back(func_id, *llvm_func_or_err);
   }
 
   for (const auto& [func_id, llvm_func] : declared_funcs) {
@@ -330,20 +384,26 @@ auto CompileDesignProcesses(const LoweringInput& input)
     if (!result) return std::unexpected(result.error());
   }
 
-  // Phase 6: Specialization template process generation (step 4).
-  // Must happen after function declare/define since template codegen
-  // may reference user functions.
+  // Phase 4: Compile each specialization via CompileModuleSpecSession
   std::vector<llvm::Function*> template_fns(layout->process_templates.size());
   std::vector<WaitSiteEntry> all_wait_sites;
 
-  for (size_t i = 0; i < units.size(); ++i) {
-    auto result = CompileSpecialization(
-        *context, *input.mir_arena, units[i], views[i], template_fns,
-        all_wait_sites);
-    if (!result) return std::unexpected(result.error());
+  for (const auto& spec_input : spec_inputs) {
+    auto product =
+        CompileModuleSpecSession(*context, *input.mir_arena, spec_input);
+    if (!product) return std::unexpected(product.error());
+
+    // Merge specialization products
+    for (const auto& [template_idx, func] : product->template_functions) {
+      template_fns[template_idx] = func;
+    }
+    all_wait_sites.insert(
+        all_wait_sites.end(),
+        std::make_move_iterator(product->wait_sites.begin()),
+        std::make_move_iterator(product->wait_sites.end()));
   }
 
-  // Phase 7: Per-instance wrapper / standalone process generation
+  // Phase 5: Per-instance wrappers / standalone entrypoints
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout->scheduled_processes.size());
 
@@ -390,33 +450,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .slot_info = std::move(slot_info),
       .num_init_processes = num_init,
   };
-}
-
-auto CompileSpecialization(
-    Context& context, const mir::Arena& arena,
-    const SpecCompilationUnit& /*unit*/, const SpecCodegenView& view,
-    std::vector<llvm::Function*>& template_fns,
-    std::vector<WaitSiteEntry>& all_wait_sites) -> Result<void> {
-  // Generate shared/template process functions for this body
-  for (const auto& tmpl : view.templates) {
-    context.SetCurrentProcess(tmpl.layout_process_index);
-    context.SetCurrentInstanceId(tmpl.representative_module_index.value);
-    context.SetRelByteOffsets(
-        *view.rel_byte_offsets, tmpl.template_base_slot_id);
-
-    const auto& mir_process = arena[tmpl.process_id];
-    auto func_result =
-        GenerateSharedProcessFunction(context, mir_process, tmpl.func_name);
-    if (!func_result) return std::unexpected(func_result.error());
-    template_fns[tmpl.global_template_index] = func_result->function;
-
-    all_wait_sites.insert(
-        all_wait_sites.end(),
-        std::make_move_iterator(func_result->wait_sites.begin()),
-        std::make_move_iterator(func_result->wait_sites.end()));
-  }
-
-  return {};
 }
 
 auto FinalizeModule(CodegenSession session) -> LoweringResult {

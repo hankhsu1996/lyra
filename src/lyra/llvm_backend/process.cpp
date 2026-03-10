@@ -2450,8 +2450,7 @@ auto DefineUserFunction(
   unsigned context_arg_count = 0;
   if (is_module_scoped) {
     const auto& lowering = context.GetModuleFunctionLowering(func_id);
-    context.SetRelByteOffsets(
-        *lowering.rel_byte_offsets, lowering.base_slot_id);
+    context.SetRelByteOffsets(lowering.rel_byte_offsets);
 
     auto* this_arg = llvm_func->getArg(arg_offset + 2);
     this_arg->setName("this_ptr");
@@ -2734,7 +2733,7 @@ auto DefineUserFunction(
     context.SetThisPointer(nullptr);
     context.SetSignalIdOffset(nullptr);
     context.SetDynamicInstanceId(nullptr);
-    context.SetRelByteOffsets({}, 0);
+    context.SetRelByteOffsets(nullptr);
   }
 
   return {};
