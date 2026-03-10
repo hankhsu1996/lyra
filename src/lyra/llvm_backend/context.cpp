@@ -33,7 +33,6 @@
 #include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
@@ -41,12 +40,11 @@
 namespace lyra::lowering::mir_to_llvm {
 
 Context::Context(
-    const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
-    const Layout& layout, std::unique_ptr<llvm::LLVMContext> llvm_ctx,
+    const mir::Arena& arena, const TypeArena& types, const Layout& layout,
+    std::unique_ptr<llvm::LLVMContext> llvm_ctx,
     std::unique_ptr<llvm::Module> module,
     const lowering::DiagnosticContext* diag_ctx, bool force_two_state)
-    : design_(design),
-      arena_(arena),
+    : arena_(arena),
       types_(types),
       layout_(layout),
       force_two_state_(force_two_state),

@@ -17,8 +17,8 @@ namespace lyra::lowering::mir_to_llvm {
 
 // Narrow contract for design-wide main() emission.
 // Contains only what main() generation needs beyond what is already
-// accessible through CodegenSession (Context carries design, type_arena,
-// layout, force_two_state, etc.).
+// accessible through CodegenSession (Context carries type_arena, layout,
+// force_two_state, etc.; session carries design).
 struct EmitDesignMainInput {
   const DiagnosticContext* diag_ctx = nullptr;
   const SourceManager* source_manager = nullptr;
