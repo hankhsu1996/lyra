@@ -14,7 +14,7 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 
 **Transitional state**: design-wide compatibility adapters (B5) remain until Phase E removes them.
 
-**Specialization compilation units**: `CompileDesignProcesses` now builds explicit `SpecCompilationUnit` objects and iterates them for monitor registration, function metadata, function collection, and template process generation. Full design still remains in the outer orchestration and layout/codegen API, so E1 is not yet complete.
+**Specialization compilation units**: `CompileDesignProcesses` builds explicit `SpecCompilationUnit` objects. `PrepareSpecialization` owns all specialization-owned preparation (monitor registration, function metadata, body function collection) and returns a `PreparedSpecialization` product. `CompileSpecialization` owns specialization-owned template/shared process codegen. The outer orchestrator contains only design-wide work (init-process monitors, package/generated function collection, global function declare/define, per-instance wrapper generation). Full-design layout and wrapper generation still remain outside specialization scope, so E1 is not yet complete.
 
 **Architectural uncertainties**:
 

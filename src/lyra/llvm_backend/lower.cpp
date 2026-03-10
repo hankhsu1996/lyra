@@ -147,7 +147,6 @@ auto BuildSpecCompilationUnits(const mir::Design& design, const Layout& layout)
       units.push_back(
           SpecCompilationUnit{
               .body_id = body_id,
-              .body = &design.module_bodies.at(body_id.value),
               .instances = {binding},
               .template_indices = {},
           });
@@ -175,17 +174,19 @@ auto BuildSpecCompilationUnits(const mir::Design& design, const Layout& layout)
 
 auto PrepareSpecialization(
     Context& context, const Layout& layout, const mir::Arena& arena,
-    const SpecCompilationUnit& unit, std::vector<mir::FunctionId>& all_func_ids,
-    std::unordered_set<uint32_t>& seen_func_ids) -> void {
+    const mir::Design& design, const SpecCompilationUnit& unit)
+    -> PreparedSpecialization {
+  const auto& body = design.module_bodies.at(unit.body_id.value);
+
   // Register monitor info for body processes
-  for (mir::ProcessId proc_id : unit.body->processes) {
+  for (mir::ProcessId proc_id : body.processes) {
     RegisterMonitorInfo(context, arena, proc_id);
   }
 
   // Register module-scoped function metadata for each instance
   for (const auto& binding : unit.instances) {
     const auto& variant = layout.GetInstanceVariant(binding.module_index);
-    for (mir::FunctionId func_id : unit.body->functions) {
+    for (mir::FunctionId func_id : body.functions) {
       const auto& func = arena[func_id];
       if (func.thunk_kind == mir::ThunkKind::kNone) {
         context.RegisterModuleScopedFunction(
@@ -195,12 +196,13 @@ auto PrepareSpecialization(
     }
   }
 
-  // Collect body function IDs into global function collection
-  for (mir::FunctionId func_id : unit.body->functions) {
-    if (seen_func_ids.insert(func_id.value).second) {
-      all_func_ids.push_back(func_id);
-    }
-  }
+  // Collect body function IDs
+  PreparedSpecialization prepared{
+      .body_id = unit.body_id,
+      .function_ids = {body.functions.begin(), body.functions.end()},
+  };
+
+  return prepared;
 }
 
 auto CompileDesignProcesses(const LoweringInput& input)
@@ -242,14 +244,24 @@ auto CompileDesignProcesses(const LoweringInput& input)
     RegisterMonitorInfo(*context, *input.mir_arena, proc_id);
   }
 
-  // Phase 3: Specialization preparation (monitors, function metadata,
+  // Phase 3: Specialization-owned preparation (monitors, function metadata,
   // function collection)
+  std::vector<PreparedSpecialization> prepared_specs;
+  prepared_specs.reserve(units.size());
+  for (const auto& unit : units) {
+    prepared_specs.push_back(PrepareSpecialization(
+        *context, *layout, *input.mir_arena, *input.design, unit));
+  }
+
+  // Merge specialization function IDs into global collection
   std::vector<mir::FunctionId> all_func_ids;
   std::unordered_set<uint32_t> seen_func_ids;
-
-  for (const auto& unit : units) {
-    PrepareSpecialization(
-        *context, *layout, *input.mir_arena, unit, all_func_ids, seen_func_ids);
+  for (const auto& prepared : prepared_specs) {
+    for (mir::FunctionId func_id : prepared.function_ids) {
+      if (seen_func_ids.insert(func_id.value).second) {
+        all_func_ids.push_back(func_id);
+      }
+    }
   }
 
   // Phase 4: Design-wide function collection outside specialization units
