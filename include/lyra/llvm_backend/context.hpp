@@ -287,7 +287,7 @@ class Context {
   void SetSignalIdOffset(llvm::Value* offset);
   [[nodiscard]] auto GetSignalIdOffset() const -> llvm::Value*;
   [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
-  void SetRelByteOffsets(std::vector<uint64_t> offsets, uint32_t base_slot_id);
+  void SetRelByteOffsets(const std::vector<uint64_t>* offsets);
 
   // Explicit address-space APIs for slot pointer formation.
   // Call sites must choose the correct API based on the resolved root scope.
@@ -443,14 +443,11 @@ class Context {
   // they receive (this_ptr, signal_id_offset, instance_id) and use
   // kSpecializationLocal addressing for module-local slot access.
   //
-  // Lowering metadata: rel_byte_offsets is specialization-owned (from
-  // ModuleVariant, shared across all instances of the same variant).
-  // base_slot_id is instance-owned compatibility metadata used for
-  // design-global alias resolution.
+  // rel_byte_offsets is specialization-owned addressing data (borrowed from
+  // SpecLayout, shared across all instances of the same specialization).
   // DefineUserFunction queries this to set up addressing state.
   struct ModuleFunctionLowering {
-    const std::vector<uint64_t>* rel_byte_offsets;  // Borrowed from Layout
-    uint32_t base_slot_id;
+    const std::vector<uint64_t>* rel_byte_offsets;  // Borrowed from SpecLayout
   };
   void RegisterModuleScopedFunction(
       mir::FunctionId func_id, ModuleFunctionLowering lowering);
@@ -708,7 +705,7 @@ class Context {
   llvm::Value* this_ptr_ = nullptr;  // Instance storage base pointer (fn arg)
   llvm::Value* dynamic_instance_id_ = nullptr;  // i32 fn arg
   llvm::Value* signal_id_offset_ = nullptr;     // i32 fn arg
-  std::vector<uint64_t> rel_byte_offsets_;
+  const std::vector<uint64_t>* rel_byte_offsets_ = nullptr;
 
   // Design-global base slot ID for the current module instance.
   // Only used in non-shared / explicitly design-global lowering contexts:

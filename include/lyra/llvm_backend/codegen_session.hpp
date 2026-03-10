@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <llvm/IR/Function.h>
@@ -48,19 +49,42 @@ struct SpecTemplateView {
 };
 
 // Narrow backend view for compiling one specialization in the current
-// transitional backend. Ephemeral: built and consumed inside
-// CompileDesignProcesses, not persisted.
+// transitional backend. Contains template-routing / association data only.
+// Ephemeral: built and consumed inside CompileDesignProcesses, not persisted.
 struct SpecCodegenView {
-  const std::vector<uint64_t>* rel_byte_offsets;
   std::vector<SpecTemplateView> templates;
 };
 
-// Explicit intermediate product from PrepareSpecialization.
-// Carries the body function IDs discovered during preparation so the outer
-// orchestrator can merge them into the global function collection.
-struct PreparedSpecialization {
+// Specialization-local layout data only.
+// No design-global state, no wrapper data, no absolute offsets.
+// Transitional: until E2 removes cross-instance template-dedup-era
+// assumptions, this is extracted from the representative instance's
+// ModuleVariant.
+struct SpecLayout {
+  std::vector<uint64_t> rel_byte_offsets;
+};
+
+// Specialization compilation input: all data needed to compile one
+// specialization body. Owns specialization-local backend data (MIR
+// membership, layout, codegen routing). Does not reference orchestrator
+// storage -- the specialization compiler reads only from this object.
+struct CompiledModuleSpecInput {
   mir::ModuleBodyId body_id;
-  std::vector<mir::FunctionId> function_ids;
+  std::vector<mir::ProcessId> processes;
+  std::vector<mir::FunctionId> functions;
+  SpecLayout layout;
+  SpecCodegenView view;
+};
+
+// Process codegen product of compiling one specialization body.
+// Contains template functions and wait sites produced by
+// CompileModuleSpecSession. Body-local user functions are registered as
+// Context side effects (not returned here) because no downstream consumer
+// currently needs them as explicit products.
+struct CompiledModuleSpec {
+  mir::ModuleBodyId body_id;
+  std::vector<std::pair<size_t, llvm::Function*>> template_functions;
+  std::vector<WaitSiteEntry> wait_sites;
 };
 
 // Backend-owned intermediate state between behavioral codegen and assembly.
@@ -87,23 +111,13 @@ struct CodegenSession {
 auto CompileDesignProcesses(const LoweringInput& input)
     -> Result<CodegenSession>;
 
-// Prepare one specialization unit: register monitor info for body processes,
-// register module-scoped function metadata for each instance, and collect
-// body function IDs.  Returns a PreparedSpecialization whose function_ids
-// should be merged into the global collection by the outer orchestrator.
-// Must be called for ALL units before the global function declare/define pass.
-auto PrepareSpecialization(
-    Context& context, const mir::Arena& arena, const SpecCompilationUnit& unit,
-    const SpecCodegenView& view) -> PreparedSpecialization;
-
-// Compile one specialization unit: generate shared/template process functions.
-// Prerequisites: PrepareSpecialization called for all units, functions declared
-// and defined. Does not emit per-instance wrappers or inspect package/global
-// elements.
-auto CompileSpecialization(
-    Context& context, const mir::Arena& arena, const SpecCompilationUnit& unit,
-    const SpecCodegenView& view, std::vector<llvm::Function*>& template_fns,
-    std::vector<WaitSiteEntry>& all_wait_sites) -> Result<void>;
+// Compile one specialization body: the single native per-specialization backend
+// entrypoint. Registers monitors, declares/defines body-local functions,
+// generates shared/template process functions, and returns an explicit product.
+// Does not inspect design-global state, package functions, or wrapper logic.
+auto CompileModuleSpecSession(
+    Context& context, const mir::Arena& arena,
+    const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec>;
 
 // Backend phase: extract LLVM ownership from a completed session.
 auto FinalizeModule(CodegenSession session) -> LoweringResult;
