@@ -345,3 +345,89 @@ cases:
       variables:
         b: 14
       time: 1
+
+  - name: always_ff_rearm_multiple_edges
+    description: |
+      Regression test for G9 wait-plan refresh rewrite. Verifies that
+      always_ff correctly re-arms after each posedge and accumulates
+      the right count across multiple clock cycles.
+    sv: |
+      module Test;
+        bit clk;
+        int count;
+
+        always_ff @(posedge clk) begin
+          count = count + 1;
+        end
+
+        initial begin
+          clk = 0;
+          #2 clk = 1;
+          #2 clk = 0;
+          #2 clk = 1;
+          #2 clk = 0;
+          #2 clk = 1;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 3
+      time: 10
+
+  - name: always_event_control_setup_before_wait
+    description: |
+      Regression test for G9 safety guard. A non-canonical always with
+      setup statements before the event control must re-execute the setup
+      on every iteration. The G9 rewrite must NOT apply here because the
+      entry block contains statements (not a pure wait-arm).
+    sv: |
+      module Test;
+        bit clk;
+        int setup_count, body_count;
+
+        always begin
+          setup_count = setup_count + 1;
+          @(posedge clk);
+          body_count = body_count + 1;
+        end
+
+        initial begin
+          clk = 0;
+          #2 clk = 1;
+          #2 clk = 0;
+          #2 clk = 1;
+        end
+      endmodule
+    expect:
+      variables:
+        setup_count: 3
+        body_count: 2
+      time: 6
+
+  - name: always_event_control_static_rearm
+    description: |
+      Regression test for G9 wait-plan refresh rewrite. A static
+      always @(posedge clk) should be rewritten to re-arm the wait
+      directly (same shape as always_ff). Verifies correct count.
+    sv: |
+      module Test;
+        bit clk;
+        int count;
+
+        always @(posedge clk) begin
+          count = count + 1;
+        end
+
+        initial begin
+          clk = 0;
+          #2 clk = 1;
+          #2 clk = 0;
+          #2 clk = 1;
+          #2 clk = 0;
+          #2 clk = 1;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 3
+      time: 10

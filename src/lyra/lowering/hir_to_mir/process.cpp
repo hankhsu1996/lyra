@@ -41,6 +41,58 @@ auto ConvertProcessKind(hir::ProcessKind hir_kind) -> mir::ProcessKind {
   __builtin_unreachable();
 }
 
+// Rewrite the epilogue back-edge of a static event-controlled process so the
+// runtime can reuse the wait-plan (refresh path) instead of clear+reinstall
+// every cycle.
+//
+// Canonical input shape (produced by LowerEventWait + EmitProcessEpilogue):
+//   bb0 (entry): Wait{triggers=T, resume=bb1}   [no statements]
+//   bb1..N:      <body>  ...  Repeat
+//
+// Rewritten shape:
+//   bb0 (entry): Wait{triggers=T, resume=bb1}   [initial arm, runs once]
+//   bb1..N:      <body>  ...  Wait{triggers=T, resume=bb1}
+//
+// Returns true if the rewrite was applied.
+auto RewriteStaticEventLoopBackedge(
+    std::vector<mir::BasicBlock>& blocks, BlockIndex entry_idx) -> bool {
+  auto& entry_block = blocks[entry_idx.value];
+  const auto* entry_wait = std::get_if<mir::Wait>(&entry_block.terminator.data);
+
+  // Guard 1: entry must be a pure wait-arm (no statements, Wait terminator).
+  if (entry_wait == nullptr || !entry_block.statements.empty()) {
+    return false;
+  }
+
+  // Guard 2: entry Wait must resume into a body block, not itself.
+  if (entry_wait->resume.value == entry_idx.value) {
+    return false;
+  }
+
+  // Guard 3: exactly one Repeat must exist. mir::Repeat semantics are
+  // "restart from process entry" (see terminator.hpp), so every Repeat is
+  // structurally an epilogue back-edge. Multiple Repeats indicate
+  // non-canonical control flow where the rewrite may not be safe.
+  mir::BasicBlock* epilogue_block = nullptr;
+  for (auto& block : blocks) {
+    if (std::holds_alternative<mir::Repeat>(block.terminator.data)) {
+      if (epilogue_block != nullptr) {
+        return false;  // Multiple Repeats -- skip.
+      }
+      epilogue_block = &block;
+    }
+  }
+
+  if (epilogue_block == nullptr) {
+    return false;
+  }
+
+  // Clone the entry Wait unchanged. The cloned Wait re-arms the same
+  // triggers and resumes into the same body entry block.
+  epilogue_block->terminator.data = mir::Wait{*entry_wait};
+  return true;
+}
+
 }  // namespace
 
 auto LowerProcess(
@@ -108,6 +160,13 @@ auto LowerProcess(
         break;
       }
     }
+  }
+
+  // For always_ff and static event-controlled always: rewrite the epilogue
+  // Repeat into a cloned Wait so the runtime stays on the refresh path.
+  if (process.kind == hir::ProcessKind::kAlwaysFf ||
+      process.kind == hir::ProcessKind::kAlways) {
+    RewriteStaticEventLoopBackedge(blocks, entry_idx);
   }
 
   // Pre-allocate the ProcessId so we can record origin before adding

@@ -1400,6 +1400,13 @@ auto GenerateProcessFunction(
         },
         block.terminator.data);
   }
+  // Deduplicate: the G9 lowering rewrite for static event-controlled processes
+  // (always_ff, always @(...)) clones the entry Wait onto the body epilogue
+  // block, producing two Wait terminators with the same resume target. The
+  // switch dispatch requires unique case values.
+  std::ranges::sort(resume_targets);
+  auto [first, last] = std::ranges::unique(resume_targets);
+  resume_targets.erase(first, last);
 
   // Assert: resume target blocks (and bb0) must NOT have block params.
   // Resume edges are additional predecessors that can't provide PHI incoming
@@ -1547,6 +1554,11 @@ auto GenerateSharedProcessFunction(
         },
         block.terminator.data);
   }
+  // Deduplicate: G9 lowering may produce multiple Wait terminators with the
+  // same resume target (see GenerateProcessFunction comment).
+  std::ranges::sort(resume_targets);
+  auto [sfirst, slast] = std::ranges::unique(resume_targets);
+  resume_targets.erase(sfirst, slast);
 
   auto* sw = builder.CreateSwitch(
       func->getArg(1), llvm_blocks[0],
