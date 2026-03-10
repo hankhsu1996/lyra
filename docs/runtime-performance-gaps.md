@@ -18,28 +18,29 @@ Do not let persistent subscriptions, topological ordering, or other optimization
 
 ## Measurements
 
-Benchmark data (2026-03-09, post-G4, built with `-c opt`). Pipeline: 8-stage pipe, 10K cycles. All times are simulation only (compile excluded).
+Benchmark data (2026-03-09, post-G9, built with `-c opt`). Pipeline: 8-stage pipe, 10K cycles. All times are simulation only (compile excluded).
 
 | Design       | AOT (s) | Verilator (s) | Ratio | Notes                                   |
 | ------------ | ------- | ------------- | ----- | --------------------------------------- |
-| hello        | 0.0015  | 0.0020        | 0.8x  | Startup overhead only                   |
-| stress-array | 0.0022  | 0.0013        | 1.7x  | Memory workload                         |
-| riscv-cpu    | 0.0018  | 0.0017        | 1.1x  | Real design, ~1116 processes            |
-| pipeline     | 0.050   | 0.0028        | 19x   | Clock-heavy, exposes scheduler overhead |
+| hello        | 0.0012  | 0.0012        | 1.1x  | Startup overhead only                   |
+| stress-array | 0.0014  | 0.0013        | 1.1x  | Memory workload                         |
+| riscv-cpu    | 0.0024  | 0.0014        | 1.7x  | Real design, ~1116 processes            |
+| pipeline     | 0.040   | 0.0029        | 15x   | Clock-heavy, exposes scheduler overhead |
 
-Pipeline per-cycle cost: 5us/cycle (Lyra) vs 0.3us/cycle (Verilator).
+Pipeline per-cycle cost: 4us/cycle (Lyra) vs 0.3us/cycle (Verilator).
 
 Previous baselines:
 
 - Before G1+G2, unoptimized (`-O0`): pipeline 8.33s / 2000x, riscv-cpu 0.12s / 60x
 - After G3+G6, unoptimized (`-O0`): pipeline 0.39s / 139x, riscv-cpu 0.0054s / 4.4x
-- After G3+G6, optimized (`-c opt`): pipeline 0.050s / 19x, riscv-cpu 0.0018s / 1.1x (current)
+- After G3+G6, optimized (`-c opt`): pipeline 0.050s / 19x, riscv-cpu 0.0018s / 1.1x
+- After G9, optimized (`-c opt`): pipeline 0.040s / 15x, riscv-cpu 0.0024s / 1.7x (current)
 
 **Note:** All measurements before this table were taken at `-O0` (Bazel fastbuild default), which inflates runtime by ~5-8x due to missing inlining of STL code. The 139x -> 19x drop for pipeline is entirely from measuring with the correct optimization level. See `docs/profiling.md` for why `-c opt` is mandatory for profiling and benchmarking.
 
 ## Callgrind Profile
 
-Pipeline benchmark profiled at G4 with `-c opt` (730 million instructions total). See `docs/profiling.md` for methodology.
+**These hotspot tables are pre-G9** (profiled at G4 with `-c opt`, 730 million instructions total). The benchmark numbers in the Measurements section above are post-G9. G9 eliminated the `InstallWaitSite` / `ClearInstalledSubscriptions` churn; a re-profile is needed to get accurate post-G9 hotspot distribution. See `docs/profiling.md` for methodology.
 
 Inclusive percentages are for hotspot ranking, not additive budgeting. Parent/child paths overlap -- a function's inclusive cost contains its callees' costs. Do not sum inclusive percentages across rows to estimate total overhead.
 
@@ -117,13 +118,13 @@ However, further sub-profiling is needed to separate repeated-iteration waste fr
 
 Other possible improvements within the current fixpoint model: reduce per-connection memcmp cost (e.g., dirty-flag gating instead of full compare).
 
-### G9: Post-activation reconciliation overhead (investigation)
+### G9: Event-controlled process lowering defeats refresh reuse (DONE)
 
-**Measured cost:** `ReconcilePostActivation` 21.9% inclusive (25.7M self, 3.5%). The high inclusive cost is dominated by `InstallWaitSite` (9.8% inclusive) and `ClearInstalledSubscriptions` (3.2% inclusive). The G2 compiled wait-plan refresh path is working correctly, but subscription install/clear per activation is still expensive.
+**Measured cost (pre-fix):** ~13% of total instructions (`InstallWaitSite` 9.8% + `ClearInstalledSubscriptions` 3.2%).
 
-The per-activation refresh path (`RefreshInstalledSnapshots` at 7.1M self, 1.0%) copies current signal values into subscription snapshots for edge detection. The optimization hypothesis still needs semantic validation.
+**Root cause:** `always_ff`/`always` were lowered to Wait -> body -> Repeat. The Repeat forced `kRepeat` which invalidated `installed_wait`, so the next `kWait` did a full clear + reinstall instead of the cheap refresh path.
 
-Fix direction: first verify whether `RefreshInstalledSnapshots` is semantically redundant for static waits. `FlushSignalUpdates` already updates snapshots during edge/change detection (lines 1063-1077 of `engine_subscriptions.cpp`). If the flush path always leaves snapshots current for static-wait processes, the explicit refresh after activation may be removable. If redundant, remove or narrow it to only non-static waits.
+**Fix:** Lowering-shape rewrite in `process.cpp`. For `always_ff` and static event-controlled `always` with a pure wait-arm entry block (no statements), the body `Repeat` back-edge is replaced with a cloned `Wait` terminator. The entry block remains as a one-time initial arm; subsequent activations re-arm the same wait directly from the body block. Pipeline improved from 19x to 15x.
 
 ## Prioritized Working Queue
 
@@ -136,10 +137,9 @@ Priority is based on: measured hotspot size, architectural cleanliness, expected
 1. **G5: Dirty-slot propagation** -- `MarkDirtyRange` 7.5% self, `RangeSet::Insert` 4.1% self, `SlotMetaRegistry::Get` 4.5% self. Multiple sub-items, each independently addressable.
 2. **G7: Connection/comb fixpoint region** -- 34.6% inclusive (overlaps significantly with G5 dirty tracking). Leading direction: static topo order for acyclic subgraphs. Requires further sub-profiling to isolate iteration waste from per-pass cost.
 
-### Tier 2: Moderate impact, needs investigation
+### Tier 2: Moderate impact
 
-3. **G4b: Atomic stores** -- 4.0% self (in `ExecuteRegion`). Low-risk cleanup.
-4. **G9: Post-activation reconciliation** -- 21.9% inclusive (subscription install/clear dominates). Much larger than previously measured at `-c opt`. Needs investigation: why is subscription install/clear running per-activation when compiled wait-plans should make it once-per-process?
+4. **G4b: Atomic stores** -- 4.0% self (in `ExecuteRegion`). Low-risk cleanup.
 
 ### Separate long-term track: clocked-design fast path
 

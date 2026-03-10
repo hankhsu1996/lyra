@@ -172,7 +172,14 @@ struct Finish {
       message;  // String handle for $fatal, nullopt otherwise
 };
 
-// Repeat loop back to entry block (requires scheduler).
+// Restart from process entry block (requires scheduler).
+//
+// Semantics: unconditionally transfer control back to the process entry block.
+// Unlike Jump, this does not name a target -- the target is always the process
+// entry. This is the only back-edge mechanism for looping processes.
+//
+// The runtime implements this by re-entering the process dispatch loop, which
+// clears any installed wait state before re-executing the entry block.
 struct Repeat {};
 
 // Terminator data variant.
