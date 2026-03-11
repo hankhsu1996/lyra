@@ -548,10 +548,45 @@ auto CompileDesignProcesses(const LoweringInput& input)
     process_funcs.push_back(wrapper);
   }
 
+  // Build realization data: extract design-derived facts needed by assembly.
+  RealizationData realization;
+
+  realization.param_inits.reserve(input.design->instance_param_inits.size());
+  for (const auto& entries : input.design->instance_param_inits) {
+    auto& resolved = realization.param_inits.emplace_back();
+    resolved.reserve(entries.size());
+    for (const auto& e : entries) {
+      if (e.slot_id >= input.design->slots.size()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "param init slot_id {} out of range (slots.size() = {})",
+                e.slot_id, input.design->slots.size()));
+      }
+      resolved.push_back(
+          ResolvedParamInit{
+              .slot_id = e.slot_id,
+              .type_id = input.design->slots[e.slot_id].type,
+              .value = e.value,
+          });
+    }
+  }
+
+  realization.slot_types.reserve(input.design->slots.size());
+  for (const auto& slot : input.design->slots) {
+    realization.slot_types.push_back(slot.type);
+  }
+
+  realization.instance_paths.reserve(
+      input.design->instance_table.entries.size());
+  for (const auto& entry : input.design->instance_table.entries) {
+    realization.instance_paths.push_back(entry.full_path);
+  }
+
   return CodegenSession{
       .layout = std::move(layout),
       .context = std::move(context),
-      .design = input.design,
+      .realization = std::move(realization),
       .process_funcs = std::move(process_funcs),
       .wait_sites = std::move(all_wait_sites),
       .slot_info = std::move(slot_info),

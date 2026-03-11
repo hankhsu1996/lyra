@@ -6,9 +6,9 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 
 ## Current Status
 
-**E2 complete: body-owned specialization is the only backend model.**
+**E3 partial: `CodegenSession` no longer carries `const mir::Design*`.**
 
-**Current phase**: E (per-specialization codegen). Variant/template-dedup backend ownership deleted. Specialization compiles directly from body-owned process order and body identity.
+**Current phase**: E (per-specialization codegen). Variant/template-dedup backend ownership deleted. Specialization compiles directly from body-owned process order and body identity. Realization / assembly code no longer reads design MIR directly -- realization input data is extracted explicitly during `CompileDesignProcesses` into `RealizationData`.
 
 **Transitional state**: design-wide compatibility adapters (B5) remain until Phase E3/E4 removes them.
 
@@ -30,10 +30,17 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 - `CompiledModuleSpec::process_functions` (replaces `template_functions`)
 - Explicit `body_to_compiled_funcs` routing table in Phase 5
 
+**What was done in E3 (partial)**:
+
+- `CodegenSession` no longer holds `const mir::Design*` -- replaced with `RealizationData` (param-init entries, slot types, instance paths)
+- Realization/assembly code (`emit_design_main.cpp`, `design_metadata_lowering.hpp/.cpp`) has zero `mir::Design` references
+- Design-derived realization inputs are extracted explicitly during `CompileDesignProcesses` at the codegen/realization seam
+
 **Remaining gaps**:
 
+- `LoweringInput` still holds `const mir::Design*`
 - `Context` still holds broad design/layout state (`const Layout&`, design types)
-- `LoweringInput` still exposes `mir::Design`
+- `BuildLayout()` still operates design-wide
 - Wrapper generation remains design-wide (correct: wrappers are per-instance, not per-specialization)
 - Body-function artifacts are Context side effects, not explicit products
 - Process lowering uses representative instance ID for %m path support (compatibility-only, not ownership)
@@ -52,9 +59,9 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 
 ## Active Gaps
 
-### Now: E3 narrowing
+### Now: E3 narrowing (continued)
 
-Body-owned specialization is the only backend model (E2 done). Next: narrow the remaining design-wide coupling.
+`CodegenSession` no longer carries `const mir::Design*` (E3 partial done). Remaining E3 scope:
 
 **B3: Design-wide state still flows through top-level APIs**
 

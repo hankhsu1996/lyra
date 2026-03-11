@@ -8,6 +8,7 @@
 
 #include <llvm/IR/Function.h>
 
+#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
@@ -84,6 +85,31 @@ struct CompiledModuleSpec {
   std::vector<WaitSiteEntry> wait_sites;
 };
 
+// Parameter initialization entry with pre-resolved type information.
+// type_id is intentionally duplicated from the design slot table so that
+// realization code does not need a backpointer to mir::Design.
+struct ResolvedParamInit {
+  uint32_t slot_id;
+  TypeId type_id;
+  IntegralConstant value;
+};
+
+// Design-derived inputs for the realization/assembly phase, extracted during
+// CompileDesignProcesses. This is a partial bundle -- only the fields that
+// assembly and metadata lowering currently consume. Not the full realization
+// model. Indexed forms are explicit so each helper can take narrow views.
+struct RealizationData {
+  // Indexed by instance table index / instance-slot-range index, matching the
+  // existing realization-side per-instance ordering contract.
+  std::vector<std::vector<ResolvedParamInit>> param_inits;
+
+  // Indexed by slot_id.value.
+  std::vector<TypeId> slot_types;
+
+  // Indexed by instance table entry index.
+  std::vector<std::string> instance_paths;
+};
+
 // Backend-owned intermediate state between behavioral codegen and assembly.
 // This is a strict bridge object: assembly may append IR (main()) to the
 // module owned by context, but must not own layout/process compilation
@@ -96,7 +122,7 @@ struct CompiledModuleSpec {
 struct CodegenSession {
   std::unique_ptr<Layout> layout;
   std::unique_ptr<Context> context;
-  const mir::Design* design = nullptr;
+  RealizationData realization;
   std::vector<llvm::Function*> process_funcs;
   std::vector<WaitSiteEntry> wait_sites;
   std::vector<SlotInfo> slot_info;

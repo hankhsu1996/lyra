@@ -32,7 +32,6 @@
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
-#include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/realization/build_design_metadata.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
@@ -194,22 +193,22 @@ void ReleaseStringSlots(
 }
 
 void EmitParamInitStores(
-    Context& context, llvm::Value* design_state, const mir::Design& design) {
-  if (design.instance_param_inits.empty()) return;
+    Context& context, llvm::Value* design_state,
+    const RealizationData& realization) {
+  if (realization.param_inits.empty()) return;
 
   auto& builder = context.GetBuilder();
   auto* design_type = context.GetDesignStateType();
 
-  for (const auto& entries : design.instance_param_inits) {
+  for (const auto& entries : realization.param_inits) {
     for (const auto& entry : entries) {
       auto slot_id = mir::SlotId{entry.slot_id};
       uint32_t field_index = context.GetDesignFieldIndex(slot_id);
-      TypeId type_id = design.slots[entry.slot_id].type;
 
       auto* slot_ptr =
           builder.CreateStructGEP(design_type, design_state, field_index);
 
-      Constant constant{.type = type_id, .value = entry.value};
+      Constant constant{.type = entry.type_id, .value = entry.value};
       auto value_result = LowerConstant(context, constant);
       if (!value_result) {
         throw common::InternalError(
@@ -263,10 +262,10 @@ auto CreateMainFunction(
 void EmitDesignStateInit(
     Context& context, llvm::Value* design_state,
     const std::vector<SlotInfo>& slot_info, const Layout& layout,
-    const mir::Design& design) {
+    const RealizationData& realization) {
   InitializeDesignState(
       context, design_state, slot_info, layout.design.four_state_patches);
-  EmitParamInitStores(context, design_state, design);
+  EmitParamInitStores(context, design_state, realization);
 }
 
 void EmitRuntimeInit(
@@ -571,7 +570,7 @@ auto BuildPlusargs(
 }
 
 auto BuildDesignMetadata(
-    Context& context, const mir::Design& design, const Layout& layout,
+    Context& context, const RealizationData& realization, const Layout& layout,
     const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input,
     size_t num_init) -> MetadataGlobals {
   auto& builder = context.GetBuilder();
@@ -585,14 +584,14 @@ auto BuildDesignMetadata(
   auto slot_meta_inputs =
       ExtractSlotMetaInputs(context, slot_info, layout.design, dl, type_arena);
   auto conn_desc_entries = ExtractConnectionDescriptorEntries(
-      design, mir_arena, type_arena, layout, dl, ctx, force_two_state);
+      realization.slot_types, mir_arena, type_arena, layout, dl, ctx,
+      force_two_state);
   auto scheduled_inputs = PrepareScheduledProcessInputs(
-      design, mir_arena, input.diag_ctx, input.source_manager,
-      layout.scheduled_processes, num_init);
+      realization.instance_paths, mir_arena, input.diag_ctx,
+      input.source_manager, layout.scheduled_processes, num_init);
   auto comb_inputs = PrepareCombKernelInputs(
-      design, mir_arena, type_arena, layout, dl, ctx, force_two_state,
-      num_init);
-  auto instance_paths = PrepareInstancePaths(design);
+      realization.slot_types, mir_arena, type_arena, layout, dl, ctx,
+      force_two_state, num_init);
   auto loop_site_inputs =
       PrepareLoopSiteInputs(context, input.diag_ctx, input.source_manager);
 
@@ -602,7 +601,7 @@ auto BuildDesignMetadata(
       .loop_sites = std::move(loop_site_inputs),
       .connection_descriptors = std::move(conn_desc_entries),
       .comb_kernels = std::move(comb_inputs),
-      .instance_paths = std::move(instance_paths),
+      .instance_paths = realization.instance_paths,
   };
   auto metadata = realization::BuildDesignMetadata(metadata_inputs);
 
@@ -799,16 +798,12 @@ auto EmitDesignMain(
   const auto& slot_info = session.slot_info;
   const auto& process_funcs = session.process_funcs;
   size_t num_init = session.num_init_processes;
-  if (session.design == nullptr) {
-    throw common::InternalError(
-        "EmitDesignMain", "session.design must not be null");
-  }
-  const auto& design = *session.design;
+  const auto& realization = session.realization;
 
   auto [main_func, exit_block, design_state] =
       CreateMainFunction(context, input.main_abi);
 
-  EmitDesignStateInit(context, design_state, slot_info, layout, design);
+  EmitDesignStateInit(context, design_state, slot_info, layout, realization);
 
   EmitRuntimeInit(context, main_func, input);
 
@@ -841,7 +836,7 @@ auto EmitDesignMain(
     auto plusargs = BuildPlusargs(context, main_func, input);
 
     auto meta_globals = BuildDesignMetadata(
-        context, design, layout, slot_info, input, num_init);
+        context, realization, layout, slot_info, input, num_init);
 
     auto wait_site_meta = EmitWaitSiteMetaTable(context, session.wait_sites);
 
