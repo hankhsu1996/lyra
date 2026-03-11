@@ -1,0 +1,175 @@
+feature: unpacked_arrays
+description: |
+  Dynamic indexing into unpacked arrays whose upper bound exceeds the signed
+  range of the index storage width. Covers the widening contract: backends
+  must widen narrow indices to at least kMinIndexCompareBits before signed
+  comparison against bounds.
+
+cases:
+  - name: 4state_wide_index
+    description: Wide (int) index into 256-element 4-state array -- baseline
+    sv: |
+      module Test;
+        logic [31:0] arr [256];
+        logic [31:0] result;
+        initial begin
+          int idx;
+          arr[42] = 32'hCAFE;
+          idx = 42;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x0000CAFE
+
+  - name: 2state_wide_index
+    description: Wide (int) index into 256-element 2-state array -- control case
+    sv: |
+      module Test;
+        int arr [256];
+        int result;
+        initial begin
+          int idx;
+          arr[200] = 42;
+          idx = 200;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: 4state_narrow_unsigned_index
+    description: |
+      Unsigned 8-bit 4-state index (logic [7:0]) into 256-element array.
+      Valid unsigned indices must remain in range even when the array upper
+      bound exceeds the signed range of the index storage width.
+    sv: |
+      module Test;
+        logic [31:0] arr [256];
+        logic [31:0] result;
+        initial begin
+          logic [7:0] idx;
+          arr[0] = 32'hBEEF;
+          idx = 0;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x0000BEEF
+
+  - name: 4state_narrow_signed_index
+    description: |
+      Signed 8-bit index (byte) into 200-element array. Index value 100 is
+      within signed i8 range [-128,127]. Tests sign-extension path in the
+      widening logic.
+    sv: |
+      module Test;
+        logic [31:0] arr [200];
+        logic [31:0] result;
+        initial begin
+          byte idx;
+          arr[100] = 32'hABCD;
+          idx = 100;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x0000ABCD
+
+  - name: 2state_narrow_unsigned_max
+    description: |
+      Unsigned 8-bit 2-state index (bit [7:0]) at maximum value 255 into
+      256-element array. Zero-extension must preserve the unsigned value in
+      the wider signed comparison.
+    sv: |
+      module Test;
+        int arr [256];
+        int result;
+        initial begin
+          bit [7:0] idx;
+          arr[255] = 99;
+          idx = 255;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 99
+
+  - name: 2state_narrow_unsigned_16bit
+    description: |
+      Unsigned 16-bit 2-state index (bit [15:0]) into 512-element array.
+      Bounds exceed i8 but fit in i16. Tests wider-than-i8 unsigned index.
+    sv: |
+      module Test;
+        int arr [512];
+        int result;
+        initial begin
+          bit [15:0] idx;
+          arr[500] = 77;
+          idx = 500;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 77
+
+  - name: 4state_max_index
+    description: Access element at maximum valid index (255) of 256-element array
+    sv: |
+      module Test;
+        logic [31:0] arr [256];
+        logic [31:0] result;
+        initial begin
+          int idx;
+          arr[255] = 32'hFF;
+          idx = 255;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x000000FF
+
+  - name: boundary_128_signed_fit
+    description: |
+      128 elements: upper_bound=127 fits in signed i8. Last array size where
+      narrow signed comparison works without widening.
+    sv: |
+      module Test;
+        logic [31:0] arr [128];
+        logic [31:0] result;
+        initial begin
+          int idx;
+          arr[127] = 32'h7F;
+          idx = 127;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x0000007F
+
+  - name: boundary_129_signed_overflow
+    description: |
+      129 elements: upper_bound=128 exceeds signed i8 range. First array
+      size that requires widening to avoid signed overflow in bounds check.
+    sv: |
+      module Test;
+        logic [31:0] arr [129];
+        logic [31:0] result;
+        initial begin
+          int idx;
+          arr[128] = 32'h80;
+          idx = 128;
+          result = arr[idx];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0x00000080

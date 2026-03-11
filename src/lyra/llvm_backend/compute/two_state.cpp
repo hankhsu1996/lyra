@@ -1,11 +1,13 @@
 #include "lyra/llvm_backend/compute/two_state.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <variant>
 #include <vector>
 
+#include <llvm/ADT/APInt.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>
@@ -27,6 +29,7 @@
 #include "lyra/llvm_backend/compute/string.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/index_lowering_policy.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -266,8 +269,35 @@ auto LowerReplicateRvalue2State(
   return ComputeResult::TwoState(acc);
 }
 
-auto LowerIndexValidity2State(
-    Context& context, const mir::IndexValidityRvalueInfo& info,
+auto LowerIsKnown2State(
+    Context& context, const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  llvm::Type* storage_type = packed_context.storage_type;
+  auto& builder = context.GetBuilder();
+
+  auto raw_or_err = LowerOperandRaw(context, operands[0]);
+  if (!raw_or_err) return std::unexpected(raw_or_err.error());
+  llvm::Value* raw = *raw_or_err;
+
+  // LLVM representation convention: 4-state values are {value, unknown}
+  // structs, 2-state values are plain integers. Struct => check unknown lane;
+  // non-struct
+  // => always known.
+  llvm::Value* known = nullptr;
+  if (raw->getType()->isStructTy()) {
+    auto* unk = builder.CreateExtractValue(raw, 1, "known.unk");
+    auto* zero = llvm::ConstantInt::get(unk->getType(), 0);
+    known = builder.CreateICmpEQ(unk, zero, "known.check");
+  } else {
+    known = llvm::ConstantInt::getTrue(context.GetLlvmContext());
+  }
+
+  auto* result = builder.CreateZExt(known, storage_type, "known.ext");
+  return ComputeResult::TwoState(result);
+}
+
+auto LowerIndexInRange2State(
+    Context& context, const mir::IndexInRangeRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
   llvm::Type* storage_type = packed_context.storage_type;
@@ -277,27 +307,36 @@ auto LowerIndexValidity2State(
   auto index_or_err = LowerOperand(context, operands[0]);
   if (!index_or_err) return std::unexpected(index_or_err.error());
   llvm::Value* index = *index_or_err;
-  auto* idx_type = index->getType();
+  auto* idx_type = llvm::cast<llvm::IntegerType>(index->getType());
 
-  auto* lower = llvm::ConstantInt::get(idx_type, info.lower_bound, true);
+  // Widen the index to a comparison type that can faithfully represent
+  // both bounds as signed values. Without widening, ConstantInt::get
+  // truncates bounds exceeding the signed range of idx_type (e.g.,
+  // upper_bound=255 wraps to -1 in i8), causing incorrect comparisons.
+  //
+  // Widening strategy:
+  //   - index_is_signed=true: sign-extend so negative values stay negative
+  //   - index_is_signed=false: zero-extend into the non-negative region
+  //     of the wider signed type, making signed comparison correct
+  unsigned idx_bits = idx_type->getBitWidth();
+  unsigned needed = std::max(
+      {idx_bits, llvm::APInt(64, info.lower_bound, true).getSignificantBits(),
+       llvm::APInt(64, info.upper_bound, true).getSignificantBits(),
+       mir::kMinIndexCompareBits});
+  auto* cmp_type = llvm::IntegerType::get(context.GetLlvmContext(), needed);
+  if (needed > idx_bits) {
+    index = info.index_is_signed
+                ? builder.CreateSExt(index, cmp_type, "idx.sext")
+                : builder.CreateZExt(index, cmp_type, "idx.zext");
+  }
+
+  auto* lower = llvm::ConstantInt::getSigned(cmp_type, info.lower_bound);
   auto* ge_lower = builder.CreateICmpSGE(index, lower, "idx.ge_lower");
 
-  auto* upper = llvm::ConstantInt::get(idx_type, info.upper_bound, true);
+  auto* upper = llvm::ConstantInt::getSigned(cmp_type, info.upper_bound);
   auto* le_upper = builder.CreateICmpSLE(index, upper, "idx.le_upper");
 
   llvm::Value* valid = builder.CreateAnd(ge_lower, le_upper, "idx.valid");
-
-  if (info.check_known) {
-    auto raw_or_err = LowerOperandRaw(context, operands[0]);
-    if (!raw_or_err) return std::unexpected(raw_or_err.error());
-    llvm::Value* raw = *raw_or_err;
-    if (raw->getType()->isStructTy()) {
-      auto* unk = builder.CreateExtractValue(raw, 1, "idx.unk");
-      auto* zero = llvm::ConstantInt::get(unk->getType(), 0);
-      auto* is_known = builder.CreateICmpEQ(unk, zero, "idx.is_known");
-      valid = builder.CreateAnd(valid, is_known, "idx.valid_known");
-    }
-  }
 
   auto* result = builder.CreateZExt(valid, storage_type, "idx.ext");
   return ComputeResult::TwoState(result);

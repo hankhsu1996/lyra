@@ -643,10 +643,11 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
             }
             return std::format("builtin({})", method_name);
           },
-          [](const IndexValidityRvalueInfo& info) {
+          [](const IsKnownRvalueInfo&) { return std::string("is_known"); },
+          [](const IndexInRangeRvalueInfo& info) {
             return std::format(
-                "index_validity(bounds=[{}, {}], check_known={})",
-                info.lower_bound, info.upper_bound, info.check_known);
+                "index_in_range(bounds=[{}, {}], index_is_signed={})",
+                info.lower_bound, info.upper_bound, info.index_is_signed);
           },
           [this](const GuardedUseRvalueInfo& info) {
             return std::format(

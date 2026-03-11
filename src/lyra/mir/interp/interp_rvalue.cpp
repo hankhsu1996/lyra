@@ -25,6 +25,7 @@
 #include "lyra/common/type_queries.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/index_lowering_policy.hpp"
 #include "lyra/mir/interp/blob_codec.hpp"
 #include "lyra/mir/interp/eval_ops.hpp"
 #include "lyra/mir/interp/format.hpp"
@@ -250,8 +251,11 @@ auto Interpreter::EvalRvalue(
           [&](const BuiltinCallRvalueInfo&) -> Result<RuntimeValue> {
             return EvalBuiltinCall(state, rv);
           },
-          [&](const IndexValidityRvalueInfo&) -> Result<RuntimeValue> {
-            return EvalIndexValidity(state, rv);
+          [&](const IsKnownRvalueInfo&) -> Result<RuntimeValue> {
+            return EvalIsKnown(state, rv);
+          },
+          [&](const IndexInRangeRvalueInfo&) -> Result<RuntimeValue> {
+            return EvalIndexInRange(state, rv);
           },
           [&](const GuardedUseRvalueInfo& info) -> Result<RuntimeValue> {
             if (rv.operands.size() != 1) {
@@ -676,12 +680,10 @@ auto Interpreter::EvalBuiltinCall(ProcessState& state, const Rvalue& rv)
   throw common::InternalError("EvalBuiltinCall", "unknown builtin method");
 }
 
-auto Interpreter::EvalIndexValidity(ProcessState& state, const Rvalue& rv)
+auto Interpreter::EvalIsKnown(ProcessState& state, const Rvalue& rv)
     -> Result<RuntimeValue> {
-  const auto& info = std::get<IndexValidityRvalueInfo>(rv.info);
   if (rv.operands.size() != 1) {
-    throw common::InternalError(
-        "EvalIndexValidity", "requires exactly 1 operand");
+    throw common::InternalError("EvalIsKnown", "requires exactly 1 operand");
   }
   auto index_result = EvalOperand(state, rv.operands[0]);
   if (!index_result) {
@@ -689,49 +691,44 @@ auto Interpreter::EvalIndexValidity(ProcessState& state, const Rvalue& rv)
   }
   auto& index = *index_result;
   if (!IsIntegral(index)) {
+    throw common::InternalError("EvalIsKnown", "operand must be integral");
+  }
+  return MakeIntegral(AsIntegral(index).IsKnown() ? 1 : 0, 1);
+}
+
+auto Interpreter::EvalIndexInRange(ProcessState& state, const Rvalue& rv)
+    -> Result<RuntimeValue> {
+  const auto& info = std::get<IndexInRangeRvalueInfo>(rv.info);
+  if (rv.operands.size() != 1) {
     throw common::InternalError(
-        "EvalIndexValidity", "operand must be integral");
+        "EvalIndexInRange", "requires exactly 1 operand");
+  }
+  auto index_result = EvalOperand(state, rv.operands[0]);
+  if (!index_result) {
+    return std::unexpected(std::move(index_result).error());
+  }
+  auto& index = *index_result;
+  if (!IsIntegral(index)) {
+    throw common::InternalError("EvalIndexInRange", "operand must be integral");
   }
   const auto& idx_int = AsIntegral(index);
 
-  bool is_known = idx_int.IsKnown();
-  if (info.check_known && !is_known) {
-    return MakeIntegral(0, 1);  // Invalid: X/Z index
-  }
+  // Widen the comparison to a width that can faithfully represent both
+  // bounds. Without widening, bounds exceeding the signed range of the
+  // index type wrap incorrectly.
+  uint32_t cmp_width = std::max({idx_int.bit_width, kMinIndexCompareBits});
 
-  TypeId index_type =
-      TypeOfOperand(rv.operands[0], *arena_, *types_, state.frame);
-  bool is_signed = IsSignedType(*types_, index_type);
+  RuntimeValue widened_idx =
+      WidenIntegral(idx_int, cmp_width, info.index_is_signed);
+  const auto& widened_int = AsIntegral(widened_idx);
 
-  // Special case: unsigned index with negative bounds.
-  if (!is_signed) {
-    if (info.lower_bound < 0) {
-      if (info.upper_bound < 0) {
-        return MakeIntegral(0, 1);  // Always invalid
-      }
-      auto upper_int = MakeIntegral(
-          static_cast<uint64_t>(info.upper_bound), idx_int.bit_width);
-      const auto& upper_val = AsIntegral(upper_int);
-      return IntegralLe(idx_int, upper_val, false);
-    }
-    auto lower_int = MakeIntegral(
-        static_cast<uint64_t>(info.lower_bound), idx_int.bit_width);
-    auto upper_int = MakeIntegral(
-        static_cast<uint64_t>(info.upper_bound), idx_int.bit_width);
-    const auto& lower_val = AsIntegral(lower_int);
-    const auto& upper_val = AsIntegral(upper_int);
-    auto ge_lower = IntegralGe(idx_int, lower_val, false);
-    auto le_upper = IntegralLe(idx_int, upper_val, false);
-    return IntegralLogicalAnd(ge_lower, le_upper);
-  }
-
-  // Signed index: use signed comparison with proper sign extension
-  auto lower_int = MakeIntegralSigned(info.lower_bound, idx_int.bit_width);
-  auto upper_int = MakeIntegralSigned(info.upper_bound, idx_int.bit_width);
+  // Create bounds at cmp_width and do signed comparison
+  auto lower_int = MakeIntegralSigned(info.lower_bound, cmp_width);
+  auto upper_int = MakeIntegralSigned(info.upper_bound, cmp_width);
   const auto& lower_val = AsIntegral(lower_int);
   const auto& upper_val = AsIntegral(upper_int);
-  auto ge_lower = IntegralGe(idx_int, lower_val, true);
-  auto le_upper = IntegralLe(idx_int, upper_val, true);
+  auto ge_lower = IntegralGe(widened_int, lower_val, true);
+  auto le_upper = IntegralLe(widened_int, upper_val, true);
   return IntegralLogicalAnd(ge_lower, le_upper);
 }
 

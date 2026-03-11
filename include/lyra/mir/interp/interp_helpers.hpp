@@ -7,6 +7,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/interp/frame.hpp"
 #include "lyra/mir/interp/runtime_value.hpp"
@@ -37,26 +38,6 @@ inline auto TypeOfOperand(
       return TypeId{};
   }
   throw common::InternalError("TypeOfOperand", "unhandled operand kind");
-}
-
-// Checks if a type is signed (handles both kIntegral and packed types).
-inline auto IsSignedType(const TypeArena& types, TypeId type_id) -> bool {
-  if (!type_id) {
-    return false;
-  }
-  const auto& type = types[type_id];
-  if (type.Kind() == TypeKind::kIntegral) {
-    return type.AsIntegral().is_signed;
-  }
-  if (IsPacked(type)) {
-    return IsPackedSigned(type, types);
-  }
-  return false;
-}
-
-// Backward-compatible alias for IsSignedType.
-inline auto IsSignedIntegral(const TypeArena& types, TypeId type_id) -> bool {
-  return IsSignedType(types, type_id);
 }
 
 // Safely extract index from RuntimeValue, return nullopt if X/Z.

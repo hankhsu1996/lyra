@@ -79,6 +79,28 @@ inline auto IsPackedFourState(const Type& type, const TypeArena& arena)
   }
 }
 
+// Check if a packed type has signed integral semantics.
+// Handles kIntegral, kPackedArray, kPackedStruct, kEnum via IsPackedSigned.
+// Returns false for non-packed types (unpacked structs, arrays, etc).
+inline auto IsSignedPackedType(const TypeArena& arena, TypeId type_id) -> bool {
+  const Type& type = arena[type_id];
+  if (IsPacked(type)) {
+    return IsPackedSigned(type, arena);
+  }
+  return false;
+}
+
+// Check if an index type is 4-state (contains X/Z bits).
+// Returns false for non-packed types (only packed types can be 4-state).
+inline auto IsFourStateIndex(TypeId index_type, const TypeArena& arena)
+    -> bool {
+  const Type& type = arena[index_type];
+  if (IsPacked(type)) {
+    return IsPackedFourState(type, arena);
+  }
+  return false;
+}
+
 // Predicate for packed integral-like types eligible for fill operations.
 inline auto IsPackedIntegralLike(TypeId type_id, const TypeArena& arena)
     -> bool {

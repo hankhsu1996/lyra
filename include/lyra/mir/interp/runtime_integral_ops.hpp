@@ -164,4 +164,15 @@ void IntegralInsertSlice4StateInPlace(
     RuntimeIntegral& dst, const RuntimeIntegral& src, uint32_t bit_offset,
     uint32_t width);
 
+// Sign-extend a raw value based on its bit width to produce a signed int64.
+auto SignExtendToInt64(uint64_t raw, uint32_t bit_width) -> int64_t;
+
+// Widen an integral value to target_width, preserving signedness.
+// Signed: sign-extends so negative values stay negative in the wider type.
+// Unsigned: zero-extends into the non-negative region of the wider type.
+// Assumes value fits in a single uint64_t word (indices are always <= 64 bits).
+auto WidenIntegral(
+    const RuntimeIntegral& val, uint32_t target_width, bool is_signed)
+    -> RuntimeValue;
+
 }  // namespace lyra::mir::interp

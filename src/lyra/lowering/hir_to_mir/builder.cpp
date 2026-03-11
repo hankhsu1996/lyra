@@ -15,6 +15,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/materialize_cache.hpp"
@@ -553,18 +554,39 @@ auto MirBuilder::EmitCast(
   return EmitValueTemp(target_type, std::move(rvalue));
 }
 
-auto MirBuilder::EmitIndexValidity(
-    mir::Operand index, int64_t lower, int64_t upper, bool check_known)
+auto MirBuilder::EmitIsKnown(mir::Operand index) -> mir::Operand {
+  mir::Rvalue rvalue{
+      .operands = {std::move(index)},
+      .info = mir::IsKnownRvalueInfo{},
+  };
+  return EmitValueTemp(ctx_->GetBitType(), std::move(rvalue));
+}
+
+auto MirBuilder::EmitIndexInRange(
+    mir::Operand index, int64_t lower, int64_t upper, bool index_is_signed)
     -> mir::Operand {
   mir::Rvalue rvalue{
       .operands = {std::move(index)},
       .info =
-          mir::IndexValidityRvalueInfo{
+          mir::IndexInRangeRvalueInfo{
               .lower_bound = lower,
               .upper_bound = upper,
-              .check_known = check_known},
+              .index_is_signed = index_is_signed},
   };
   return EmitValueTemp(ctx_->GetBitType(), std::move(rvalue));
+}
+
+auto MirBuilder::EmitIndexAccessValidity(
+    mir::Operand index, TypeId index_type, int64_t lower, int64_t upper)
+    -> mir::Operand {
+  bool is_signed = IsSignedPackedType(*ctx_->type_arena, index_type);
+  mir::Operand valid = EmitIndexInRange(index, lower, upper, is_signed);
+  if (IsFourStateIndex(index_type, *ctx_->type_arena)) {
+    auto known = EmitIsKnown(index);
+    TypeId bit_type = ctx_->GetBitType();
+    valid = EmitBinary(mir::BinaryOp::kLogicalAnd, valid, known, bit_type);
+  }
+  return valid;
 }
 
 auto MirBuilder::EmitGuardedUse(

@@ -56,14 +56,27 @@ struct BuiltinCallRvalueInfo {
   std::optional<TypeId> enum_type;  // For kEnumNext, kEnumPrev, kEnumName
 };
 
-// IndexValidity: computes "this index is a valid access" predicate.
-// Returns 1-bit 2-state bool: (lower <= index <= upper) && is_known(index)
+// IsKnown: pure X/Z knownness check for integral operands.
+// Returns 1-bit 2-state bool: 1 if operand has no X/Z bits, 0 otherwise.
+// Legal for any integral operand; 2-state operands always return 1.
+// operands[0] = index (any integral type)
+struct IsKnownRvalueInfo {};
+
+// IndexInRange: pure bounds-check predicate.
+// Returns 1-bit 2-state bool: (lower <= index <= upper).
 // Bounds are logical (always lower <= upper); direction handling happens
 // during lowering when computing the bit offset.
-struct IndexValidityRvalueInfo {
+//
+// Backend widening contract:
+//   Backends must widen the index and bounds to a width that can faithfully
+//   represent both bounds as signed values. Signedness determines how the
+//   index is widened (sign-extend vs zero-extend); comparison is always
+//   signed in the widened domain. See index_lowering_policy.hpp for the
+//   minimum comparison width constant.
+struct IndexInRangeRvalueInfo {
   int64_t lower_bound;
   int64_t upper_bound;
-  bool check_known;  // true for 4-state indices
+  bool index_is_signed;
   // operands[0] = index
 };
 
@@ -177,11 +190,11 @@ struct SystemCmdRvalueInfo {
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
-    AggregateRvalueInfo, BuiltinCallRvalueInfo, IndexValidityRvalueInfo,
-    GuardedUseRvalueInfo, ConcatRvalueInfo, ReplicateRvalueInfo,
-    SFormatRvalueInfo, TestPlusargsRvalueInfo, FopenRvalueInfo,
-    RuntimeQueryRvalueInfo, MathCallRvalueInfo, SystemTfRvalueInfo,
-    ArrayQueryRvalueInfo, SystemCmdRvalueInfo>;
+    AggregateRvalueInfo, BuiltinCallRvalueInfo, IsKnownRvalueInfo,
+    IndexInRangeRvalueInfo, GuardedUseRvalueInfo, ConcatRvalueInfo,
+    ReplicateRvalueInfo, SFormatRvalueInfo, TestPlusargsRvalueInfo,
+    FopenRvalueInfo, RuntimeQueryRvalueInfo, MathCallRvalueInfo,
+    SystemTfRvalueInfo, ArrayQueryRvalueInfo, SystemCmdRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -205,8 +218,10 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "aggregate";
         } else if constexpr (std::is_same_v<T, BuiltinCallRvalueInfo>) {
           return "builtin";
-        } else if constexpr (std::is_same_v<T, IndexValidityRvalueInfo>) {
-          return "index_validity";
+        } else if constexpr (std::is_same_v<T, IsKnownRvalueInfo>) {
+          return "is_known";
+        } else if constexpr (std::is_same_v<T, IndexInRangeRvalueInfo>) {
+          return "index_in_range";
         } else if constexpr (std::is_same_v<T, GuardedUseRvalueInfo>) {
           return "guarded_use";
         } else if constexpr (std::is_same_v<T, ConcatRvalueInfo>) {
@@ -245,6 +260,10 @@ inline auto RvalueHasSideEffects(const RvalueInfo& info) -> bool {
         // $system executes shell commands - definitely side-effecting
         if constexpr (std::is_same_v<T, SystemCmdRvalueInfo>) {
           return true;
+        }
+        // IsKnown is pure
+        if constexpr (std::is_same_v<T, IsKnownRvalueInfo>) {
+          return false;
         }
         // $fopen opens files - side-effecting
         if constexpr (std::is_same_v<T, FopenRvalueInfo>) {
