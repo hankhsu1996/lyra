@@ -597,23 +597,27 @@ void EmitDynamicBitTarget(
   auto* byte_off_32 = builder.CreateTrunc(byte_off_64, i32_ty);
   auto* bit_idx_8 = builder.CreateTrunc(bit_idx_64, i8_ty);
 
-  // Select: in-bounds -> computed values, OOB -> UINT32_MAX sentinel.
-  // byte_size=0 already means "full slot" in the ABI, so we use UINT32_MAX
-  // as a distinct OOB sentinel that the runtime recognizes.
+  // Select: in-bounds -> computed values, OOB -> zero (valid but inactive).
   auto* zero_32 = llvm::ConstantInt::get(i32_ty, 0);
   auto* zero_8 = llvm::ConstantInt::get(i8_ty, 0);
   auto* one_32 = llvm::ConstantInt::get(i32_ty, 1);
-  auto* oob_sentinel = llvm::ConstantInt::get(i32_ty, UINT32_MAX);
   auto* sel_byte_off = builder.CreateSelect(in_bounds, byte_off_32, zero_32);
   auto* sel_bit_idx = builder.CreateSelect(in_bounds, bit_idx_8, zero_8);
-  auto* sel_byte_size = builder.CreateSelect(in_bounds, one_32, oob_sentinel);
+  auto* sel_byte_size = builder.CreateSelect(in_bounds, one_32, one_32);
+
+  // Flags: initially active only if in-bounds.
+  auto* active_flag =
+      llvm::ConstantInt::get(i8_ty, runtime::kTriggerInitiallyActive);
+  auto* sel_flags = builder.CreateSelect(in_bounds, active_flag, zero_8);
 
   // Store into WaitTriggerRecord fields.
   auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
   builder.CreateStore(sel_bit_idx, bit_idx_ptr);
-  auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+  auto* flags_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+  builder.CreateStore(sel_flags, flags_ptr);
+  auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
   builder.CreateStore(sel_byte_off, offset_ptr);
-  auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
+  auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 6);
   builder.CreateStore(sel_byte_size, size_ptr);
 }
 
@@ -674,20 +678,26 @@ void EmitDynamicUnpackedBitTarget(
   auto* byte_off_64 = builder.CreateSDiv(logical_bit, eight, "ua.byteoff");
   auto* byte_off_32 = builder.CreateTrunc(byte_off_64, i32_ty);
 
-  // Select: in-bounds -> computed, OOB -> UINT32_MAX sentinel.
+  // Select: in-bounds -> computed, OOB -> zero (valid but inactive).
   auto* zero_32 = llvm::ConstantInt::get(i32_ty, 0);
   auto* zero_8 = llvm::ConstantInt::get(i8_ty, 0);
   auto* one_32 = llvm::ConstantInt::get(i32_ty, 1);
-  auto* oob_sentinel = llvm::ConstantInt::get(i32_ty, UINT32_MAX);
   auto* sel_byte_off = builder.CreateSelect(in_bounds, byte_off_32, zero_32);
-  auto* sel_byte_size = builder.CreateSelect(in_bounds, one_32, oob_sentinel);
+  auto* sel_byte_size = builder.CreateSelect(in_bounds, one_32, one_32);
+
+  // Flags: initially active only if in-bounds.
+  auto* active_flag =
+      llvm::ConstantInt::get(i8_ty, runtime::kTriggerInitiallyActive);
+  auto* sel_flags = builder.CreateSelect(in_bounds, active_flag, zero_8);
 
   // Store into WaitTriggerRecord fields.
   auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
   builder.CreateStore(zero_8, bit_idx_ptr);
-  auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+  auto* flags_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+  builder.CreateStore(sel_flags, flags_ptr);
+  auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
   builder.CreateStore(sel_byte_off, offset_ptr);
-  auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
+  auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 6);
   builder.CreateStore(sel_byte_size, size_ptr);
 }
 
@@ -727,20 +737,28 @@ void EmitDynamicContainerTarget(
   const auto& dl = context.GetModule().getDataLayout();
   auto elem_stride = static_cast<uint32_t>(dl.getTypeAllocSize(elem_llvm_type));
 
+  // Container elem stride is always stored in the trigger record.
+  auto* stride_const = llvm::ConstantInt::get(i32_ty, elem_stride);
+  auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
+  builder.CreateStore(stride_const, stride_ptr);
+
   if (!lb.dep_slots.empty()) {
-    // Design-state index: store current byte_offset for initial subscription.
+    // Design-state index: store element index for initial subscription.
     // RebindSubscription will update it when the index changes.
-    auto* stride = llvm::ConstantInt::get(i64_ty, elem_stride);
-    auto* byte_off_64 = builder.CreateMul(sv_index, stride, "ct.ds.byteoff");
-    auto* byte_off_32 = builder.CreateTrunc(byte_off_64, i32_ty);
+    // For kContainer, byte_offset carries the element index (not byte offset).
+    auto* sv_idx_32 = builder.CreateTrunc(sv_index, i32_ty, "ct.ds.idx");
     auto* zero_8 = llvm::ConstantInt::get(i8_ty, 0);
-    auto* one_32 = llvm::ConstantInt::get(i32_ty, 1);
+    auto* zero_32 = llvm::ConstantInt::get(i32_ty, 0);
+    auto* active_flag =
+        llvm::ConstantInt::get(i8_ty, runtime::kTriggerInitiallyActive);
     auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
     builder.CreateStore(zero_8, bit_idx_ptr);
-    auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
-    builder.CreateStore(byte_off_32, offset_ptr);
-    auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
-    builder.CreateStore(one_32, size_ptr);
+    auto* flags_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+    builder.CreateStore(active_flag, flags_ptr);
+    auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
+    builder.CreateStore(sv_idx_32, offset_ptr);
+    auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 6);
+    builder.CreateStore(zero_32, size_ptr);
     return;
   }
 
@@ -766,27 +784,37 @@ void EmitDynamicContainerTarget(
   auto* not_null_and_in_bounds =
       builder.CreateAnd(builder.CreateNot(is_null), in_bounds, "ct.valid");
 
-  // Compute byte_offset = sv_index * elem_stride.
-  auto* stride = llvm::ConstantInt::get(i64_ty, elem_stride);
-  auto* byte_off_64 = builder.CreateMul(sv_index, stride, "ct.byteoff");
-  auto* byte_off_32 = builder.CreateTrunc(byte_off_64, i32_ty);
+  // For kContainer, byte_offset carries the element index (not byte offset).
+  auto* sv_idx_32 = builder.CreateTrunc(sv_index, i32_ty, "ct.idx32");
 
   auto* zero_32 = llvm::ConstantInt::get(i32_ty, 0);
   auto* zero_8 = llvm::ConstantInt::get(i8_ty, 0);
-  auto* one_32 = llvm::ConstantInt::get(i32_ty, 1);
-  auto* oob_sentinel = llvm::ConstantInt::get(i32_ty, UINT32_MAX);
 
-  auto* sel_byte_off =
-      builder.CreateSelect(not_null_and_in_bounds, byte_off_32, zero_32);
-  auto* sel_byte_size =
-      builder.CreateSelect(not_null_and_in_bounds, one_32, oob_sentinel);
+  auto* sel_elem_idx =
+      builder.CreateSelect(not_null_and_in_bounds, sv_idx_32, zero_32);
+
+  // Flags: initially active only if in-bounds and not null.
+  auto* active_flag =
+      llvm::ConstantInt::get(i8_ty, runtime::kTriggerInitiallyActive);
+  auto* sel_flags =
+      builder.CreateSelect(not_null_and_in_bounds, active_flag, zero_8);
 
   auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
   builder.CreateStore(zero_8, bit_idx_ptr);
-  auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
-  builder.CreateStore(sel_byte_off, offset_ptr);
-  auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
-  builder.CreateStore(sel_byte_size, size_ptr);
+  auto* flags_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+  builder.CreateStore(sel_flags, flags_ptr);
+  auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
+  builder.CreateStore(sel_elem_idx, offset_ptr);
+  auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 6);
+  builder.CreateStore(zero_32, size_ptr);
+}
+
+// Determine the TriggerInstallKind for a given trigger.
+auto TriggerKindFromEdge(common::EdgeKind edge) -> runtime::TriggerInstallKind {
+  if (edge == common::EdgeKind::kAnyChange) {
+    return runtime::TriggerInstallKind::kChange;
+  }
+  return runtime::TriggerInstallKind::kEdge;
 }
 
 // Helper to fill trigger array at a given base pointer
@@ -812,32 +840,52 @@ void FillTriggerArray(
         llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(triggers[i].edge)),
         edge_ptr);
 
-    if (triggers[i].late_bound && triggers[i].late_bound->is_container) {
+    // Write kind (field 3) -- determined by trigger classification.
+    bool is_container =
+        triggers[i].late_bound && triggers[i].late_bound->is_container;
+    auto install_kind = is_container ? runtime::TriggerInstallKind::kContainer
+                                     : TriggerKindFromEdge(triggers[i].edge);
+    auto* kind_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 3);
+    builder.CreateStore(
+        llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(install_kind)),
+        kind_ptr);
+
+    if (is_container) {
       // Container element: emit dynamic container target.
+      // container_elem_stride and flags are set by EmitDynamicContainerTarget.
       EmitDynamicContainerTarget(context, elem_ptr, trigger_type, triggers[i]);
-    } else if (
-        triggers[i].late_bound && triggers[i].late_bound->element_type &&
-        !triggers[i].late_bound->is_container) {
-      // Dynamic unpacked array element: compute initial target from the
-      // SV index evaluated at suspend time. For design-state indices,
-      // RebindSubscription will update the target when the index changes.
+    } else if (triggers[i].late_bound && triggers[i].late_bound->element_type) {
+      // Dynamic unpacked array element.
+      // container_elem_stride = 0 (non-container), flags set by Emit*.
+      auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
+      builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
       EmitDynamicUnpackedBitTarget(
           context, elem_ptr, trigger_type, triggers[i]);
     } else if (triggers[i].late_bound) {
-      // Dynamic bit-select: emit IR to compute target at suspend time.
+      // Dynamic bit-select.
+      // container_elem_stride = 0 (non-container), flags set by Emit*.
+      auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
+      builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
       EmitDynamicBitTarget(context, elem_ptr, trigger_type, triggers[i]);
     } else {
       // Static path: resolve observation range at compile time.
+      // Always active, container_elem_stride = 0.
       auto range = ResolveObservationRange(context, triggers[i]);
       auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
       builder.CreateStore(
           llvm::ConstantInt::get(i8_ty, range.bit_index), bit_idx_ptr);
-      auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+      auto* flags_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+      builder.CreateStore(
+          llvm::ConstantInt::get(i8_ty, runtime::kTriggerInitiallyActive),
+          flags_ptr);
+      auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
       builder.CreateStore(
           llvm::ConstantInt::get(i32_ty, range.byte_offset), offset_ptr);
-      auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
+      auto* size_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 6);
       builder.CreateStore(
           llvm::ConstantInt::get(i32_ty, range.byte_size), size_ptr);
+      auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
+      builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
     }
   }
 }
@@ -1052,7 +1100,7 @@ auto EmitLateBoundData(
 auto LowerWait(
     Context& context, const mir::Wait& wait, llvm::BasicBlock* exit_block,
     std::vector<WaitSiteEntry>& wait_sites) -> Result<void> {
-  static_assert(sizeof(runtime::WaitTriggerRecord) == 16);
+  static_assert(sizeof(runtime::WaitTriggerRecord) == 20);
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -1063,11 +1111,10 @@ auto LowerWait(
   auto num_triggers = static_cast<uint32_t>(wait.triggers.size());
 
   // WaitTriggerRecord layout:
-  // {i32 signal_id, i8 edge, i8 bit_index, [2 x i8] padding, i32 byte_offset,
-  //  i32 byte_size}
+  // {i32 signal_id, i8 edge, i8 bit_index, i8 kind, i8 flags,
+  //  i32 byte_offset, i32 byte_size, i32 container_elem_stride}
   auto* trigger_type = llvm::StructType::get(
-      llvm_ctx,
-      {i32_ty, i8_ty, i8_ty, llvm::ArrayType::get(i8_ty, 2), i32_ty, i32_ty});
+      llvm_ctx, {i32_ty, i8_ty, i8_ty, i8_ty, i8_ty, i32_ty, i32_ty, i32_ty});
 
   // Emit late-bound data (headers + plan ops pool + dep slots pool).
   auto lb_data = EmitLateBoundData(context, wait.triggers);

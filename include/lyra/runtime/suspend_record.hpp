@@ -18,28 +18,64 @@ enum class SuspendTag : uint8_t {
   kRepeat = 3,
 };
 
+// Trigger install kind: explicit per-trigger classification written by codegen.
+// Runtime installs subscriptions directly from this kind without inferring it
+// from EdgeKind or late-bound header presence.
+enum class TriggerInstallKind : uint8_t {
+  kEdge = 0,
+  kChange = 1,
+  kContainer = 2,
+};
+
+// Trigger flags: explicit per-trigger metadata written by codegen.
+inline constexpr uint8_t kTriggerInitiallyActive = 0x01;
+
 struct WaitTriggerRecord {
   uint32_t signal_id = 0;
-  uint8_t edge = 0;       // common::EdgeKind
-  uint8_t bit_index = 0;  // Bit position within observed byte (edge triggers)
-  std::array<uint8_t, 2> padding = {};
-  uint32_t byte_offset = 0;  // Observation start within slot
-  uint32_t byte_size = 0;    // Observation size; 0 = full slot
+  uint8_t edge = 0;  // common::EdgeKind
+  // kEdge/kChange: bit position within observed byte.
+  // kContainer: must be 0 (unused).
+  uint8_t bit_index = 0;
+  uint8_t kind = 0;   // TriggerInstallKind
+  uint8_t flags = 0;  // kTriggerInitiallyActive
+
+  // Per-kind semantics:
+  //   kEdge/kChange: byte offset within slot (observation start).
+  //   kContainer: element index (sv_index). Runtime uses this directly
+  //     as the logical container element index, not as a byte offset.
+  uint32_t byte_offset = 0;
+
+  // Per-kind semantics:
+  //   kEdge/kChange: observation size in bytes; 0 = full slot.
+  //   kContainer: unused (set to 0).
+  uint32_t byte_size = 0;
+
+  // For kContainer only. Element stride in bytes. 0 for non-container triggers.
+  uint32_t container_elem_stride = 0;
 };
 
 static_assert(
-    sizeof(WaitTriggerRecord) == 16, "WaitTriggerRecord size mismatch");
+    sizeof(WaitTriggerRecord) == 20, "WaitTriggerRecord size mismatch");
 static_assert(
     alignof(WaitTriggerRecord) == 4, "WaitTriggerRecord alignment mismatch");
 static_assert(
     offsetof(WaitTriggerRecord, bit_index) == 5,
     "WaitTriggerRecord bit_index offset mismatch");
 static_assert(
+    offsetof(WaitTriggerRecord, kind) == 6,
+    "WaitTriggerRecord kind offset mismatch");
+static_assert(
+    offsetof(WaitTriggerRecord, flags) == 7,
+    "WaitTriggerRecord flags offset mismatch");
+static_assert(
     offsetof(WaitTriggerRecord, byte_offset) == 8,
     "WaitTriggerRecord byte_offset offset mismatch");
 static_assert(
     offsetof(WaitTriggerRecord, byte_size) == 12,
     "WaitTriggerRecord byte_size offset mismatch");
+static_assert(
+    offsetof(WaitTriggerRecord, container_elem_stride) == 16,
+    "WaitTriggerRecord container_elem_stride offset mismatch");
 
 // Late-bound header for dynamic-index edge triggers.
 // References into plan_ops and dep_slots pools via start/count spans.

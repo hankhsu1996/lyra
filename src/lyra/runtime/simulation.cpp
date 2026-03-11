@@ -16,15 +16,10 @@
 
 #include <fmt/core.h>
 
-#include "absl/container/flat_hash_map.h"
-#include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/diagnostic/print.hpp"
-#include "lyra/common/edge_kind.hpp"
 #include "lyra/common/format.hpp"
-#include "lyra/common/index_plan.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
-#include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"
@@ -79,107 +74,23 @@ void HandleSuspendRecord(
       }
       auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
 
-      // Track created subscription info for late-bound rebinding.
-      // Invariant: created_subs[i] records the dense vector index assigned
-      // to trigger i at creation time. These indices remain stable within
-      // this function because no removals occur between subscription
-      // creation and rebind hookup below.
-      struct CreatedSub {
-        lyra::runtime::SignalId slot_id;
-        lyra::runtime::SubKind kind;
-        uint32_t index;
-      };
       bool has_late_bound =
           suspend->num_late_bound > 0 && suspend->late_bound_ptr != nullptr;
-      std::vector<CreatedSub> created_subs;
-      if (has_late_bound) {
-        created_subs.resize(
-            suspend->num_triggers,
-            CreatedSub{0, lyra::runtime::SubKind::kEdge, UINT32_MAX});
-      }
+      auto late_bound =
+          has_late_bound
+              ? std::span(suspend->late_bound_ptr, suspend->num_late_bound)
+              : std::span<const lyra::runtime::LateBoundHeader>{};
+      auto plan_ops =
+          (suspend->plan_ops_ptr != nullptr)
+              ? std::span(suspend->plan_ops_ptr, suspend->num_plan_ops)
+              : std::span<const lyra::runtime::IndexPlanOp>{};
+      auto dep_slots =
+          (suspend->dep_slots_ptr != nullptr)
+              ? std::span(suspend->dep_slots_ptr, suspend->num_dep_slots)
+              : std::span<const uint32_t>{};
 
-      // Pre-scan: build container stride map from late-bound headers.
-      absl::flat_hash_map<uint32_t, uint32_t> container_strides;
-      if (has_late_bound) {
-        auto headers =
-            std::span(suspend->late_bound_ptr, suspend->num_late_bound);
-        for (const auto& hdr : headers) {
-          if (hdr.container_elem_stride > 0) {
-            container_strides[hdr.trigger_index] = hdr.container_elem_stride;
-          }
-        }
-      }
-
-      for (uint32_t i = 0; i < triggers.size(); ++i) {
-        const auto& trigger = triggers[i];
-        auto edge = static_cast<lyra::common::EdgeKind>(trigger.edge);
-        uint32_t sub_idx = UINT32_MAX;
-        auto sub_kind = lyra::runtime::SubKind::kEdge;
-
-        auto cs_it = container_strides.find(i);
-        if (cs_it != container_strides.end()) {
-          // Container element trigger.
-          int64_t sv_index =
-              (trigger.byte_size == UINT32_MAX)
-                  ? -1
-                  : static_cast<int64_t>(trigger.byte_offset / cs_it->second);
-          sub_idx = eng.SubscribeContainerElement(
-              handle, resume, trigger.signal_id, edge, sv_index, cs_it->second);
-          sub_kind = lyra::runtime::SubKind::kContainer;
-        } else if (trigger.byte_size == UINT32_MAX) {
-          // OOB dynamic edge trigger: UINT32_MAX is the codegen sentinel.
-          // Create a valid but inactive subscription at bit 0.
-          // The engine handles marking it inactive internally now.
-          sub_idx =
-              eng.Subscribe(handle, resume, trigger.signal_id, edge, 0, 1, 0);
-          sub_kind = (edge == lyra::common::EdgeKind::kAnyChange)
-                         ? lyra::runtime::SubKind::kChange
-                         : lyra::runtime::SubKind::kEdge;
-        } else if (trigger.byte_size > 0) {
-          sub_idx = eng.Subscribe(
-              handle, resume, trigger.signal_id, edge, trigger.byte_offset,
-              trigger.byte_size, trigger.bit_index);
-          sub_kind = (edge == lyra::common::EdgeKind::kAnyChange)
-                         ? lyra::runtime::SubKind::kChange
-                         : lyra::runtime::SubKind::kEdge;
-        } else {
-          sub_idx = eng.Subscribe(handle, resume, trigger.signal_id, edge);
-          sub_kind = (edge == lyra::common::EdgeKind::kAnyChange)
-                         ? lyra::runtime::SubKind::kChange
-                         : lyra::runtime::SubKind::kEdge;
-        }
-        if (has_late_bound) {
-          created_subs[i] = CreatedSub{trigger.signal_id, sub_kind, sub_idx};
-        }
-      }
-
-      // Create rebind subscriptions for late-bound triggers.
-      if (has_late_bound) {
-        auto headers =
-            std::span(suspend->late_bound_ptr, suspend->num_late_bound);
-        auto all_plan_ops =
-            std::span(suspend->plan_ops_ptr, suspend->num_plan_ops);
-        auto all_dep_slots =
-            std::span(suspend->dep_slots_ptr, suspend->num_dep_slots);
-        for (const auto& hdr : headers) {
-          if (hdr.trigger_index >= suspend->num_triggers) continue;
-          const auto& target = created_subs[hdr.trigger_index];
-          if (target.index == UINT32_MAX) continue;
-          if (hdr.dep_slots_count == 0) continue;
-          lyra::runtime::BitTargetMapping mapping{
-              .index_base = hdr.index_base,
-              .index_step = hdr.index_step,
-              .total_bits = hdr.total_bits};
-          auto plan_ops =
-              all_plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
-          auto dep_slots =
-              all_dep_slots.subspan(hdr.dep_slots_start, hdr.dep_slots_count);
-
-          eng.SubscribeRebind(
-              handle, UINT32_MAX, target.slot_id, target.kind, target.index,
-              plan_ops, mapping, dep_slots);
-        }
-      }
+      eng.InstallTriggers(
+          handle, resume, triggers, late_bound, plan_ops, dep_slots);
       break;
     }
 
