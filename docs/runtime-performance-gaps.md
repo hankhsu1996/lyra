@@ -16,7 +16,7 @@ Ordering principle:
 
 ## Measurements
 
-Post-G5c (pre-G6 re-profile), built with `-c opt`. Pipeline: 8-stage pipe, 10K cycles. Simulation time only.
+Post-G6, built with `-c opt`. Pipeline: 8-stage pipe, 10K cycles. Simulation time only.
 
 | Design       | AOT (s) | Verilator (s) | Ratio |
 | ------------ | ------- | ------------- | ----- |
@@ -37,44 +37,45 @@ All measurements use `-c opt`. See `docs/profiling.md` for why this is mandatory
 
 ## Callgrind Profile
 
-Post-G5c (pre-G6 re-profile) with `-c opt`, 456M instructions total (down from 515M pre-G5c, 583M pre-G5a, 730M pre-G9). See `docs/profiling.md` for methodology.
+Post-G6 with `-c opt`, 446M instructions total (down from 456M pre-G6, 515M pre-G5c, 583M pre-G5a, 730M pre-G9). See `docs/profiling.md` for methodology.
 
-**Profiling target:** Always profile the AOT binary directly (`out/Top`), not `lyra run`. AOT mode forks a child process for the simulation; callgrind only profiles the process it launches. Profiling `lyra run` shows the compiler (~208M instructions) while the simulation (~456M) runs in an untraced child. See `docs/profiling.md` "AOT architecture and profiling implications" for details.
+**Profiling target:** Always profile the AOT binary directly (`out/Top`), not `lyra run`. AOT mode forks a child process for the simulation; callgrind only profiles the process it launches. Profiling `lyra run` shows the compiler (~208M instructions) while the simulation (~446M) runs in an untraced child. See `docs/profiling.md` "AOT architecture and profiling implications" for details.
 
 Top self-cost functions, sorted by instruction count:
 
 | Function                     | Self Ir | Self % | Description                          |
 | ---------------------------- | ------- | ------ | ------------------------------------ |
-| FlushSignalUpdates           | 65.8M   | 14.4%  | Edge/change detection + snapshot upd |
-| FlushAndPropagateConnections | 46.8M   | 10.2%  | Connection fixpoint memcpy loop      |
-| TouchSlot                    | 32.4M   | 7.1%   | Dirty-slot dedup + range tracking    |
-| LyraSuspendWait              | 25.5M   | 5.6%   | SuspendRecord fill (codegen ABI)     |
-| ExecuteRegion                | 22.9M   | 5.0%   | Active region dispatch loop          |
-| RefreshInstalledSnapshots    | 22.8M   | 5.0%   | Snapshot re-capture post-activation  |
-| memcpy (libc)                | 21.3M   | 4.7%   | Shared: conn/NBA/snapshot            |
-| AotProcessDispatch           | 20.1M   | 4.4%   | Function pointer trampoline          |
-| ReconcilePostActivation      | 17.5M   | 3.8%   | Post-activation dispatch + validate  |
+| FlushSignalUpdates           | 65.8M   | 14.7%  | Edge/change detection + snapshot upd |
+| FlushAndPropagateConnections | 46.8M   | 10.5%  | Connection fixpoint memcpy loop      |
+| TouchSlot                    | 32.4M   | 7.3%   | Dirty-slot dedup + range tracking    |
+| LyraSuspendWait              | 25.5M   | 5.7%   | SuspendRecord fill (codegen ABI)     |
+| ExecuteRegion                | 22.9M   | 5.1%   | Active region dispatch loop          |
+| memcpy (libc)                | 20.6M   | 4.6%   | Shared: conn/NBA/snapshot            |
+| AotProcessDispatch           | 20.1M   | 4.5%   | Function pointer trampoline          |
+| ReconcilePostActivation      | 18.0M   | 4.0%   | Post-activation dispatch + validate  |
 | ScheduleNba                  | 16.7M   | 3.7%   | NBA push operations                  |
-| body_1_proc_0                | 16.4M   | 3.6%   | Emitted process code                 |
-| memset (libc)                | 13.2M   | 2.9%   | Shared: ClearDelta/init              |
-| LyraMarkDirty                | 13.2M   | 2.9%   | Codegen -> TouchSlot trampoline      |
-| memcmp (libc)                | 12.9M   | 2.8%   | Shared: flush/conn comparison        |
-| ClearDelta                   | 11.5M   | 2.5%   | Per-region range/kind reset          |
-| free/malloc (libc)           | 18.2M   | 4.0%   | Heap operations combined             |
+| body_1_proc_0                | 16.4M   | 3.7%   | Emitted process code                 |
+| memset (libc)                | 13.2M   | 3.0%   | Shared: ClearDelta/init              |
+| LyraMarkDirty                | 13.2M   | 3.0%   | Codegen -> TouchSlot trampoline      |
+| memcmp (libc)                | 12.9M   | 2.9%   | Shared: flush/conn comparison        |
+| ClearDelta                   | 11.5M   | 2.6%   | Per-region range/kind reset          |
+| free/malloc (libc)           | 15.1M   | 3.4%   | Heap operations combined             |
 | SmallByteBuffer (move/dtor)  | 12.6M   | 2.8%   | NBA queue entry lifecycle            |
+| RefreshInstalledSnapshots    | 6.6M    | 1.5%   | Snapshot re-capture (guarded)        |
+| NeedsSnapshotRefresh         | 6.1M    | 1.4%   | Delta-dirty guard for refresh        |
 
 Grouped by area (inclusive, do not sum across rows):
 
 | Area                       | Inclusive | Self % | Description                        |
 | -------------------------- | --------- | ------ | ---------------------------------- |
-| Process dispatch           | 48.4%     | 9.4%   | Region loop + dispatch trampoline  |
-| Connection/comb fixpoint   | 48.0%     | 10.2%  | Propagation loop + memcmp          |
-| Signal flush               | 19.3%     | 14.4%  | Subscription traversal + snapshots |
-| Post-activation reconcile  | 12.1%     | 8.8%   | Reconcile + snapshot refresh       |
-| Dirty tracking (TouchSlot) | 7.1%      | 7.1%   | Slot dedup + kind/epoch join       |
-| Wait suspension            | 6.6%      | 5.6%   | Process suspend/resume path        |
+| Process dispatch           | 48.4%     | 9.6%   | Region loop + dispatch trampoline  |
+| Connection/comb fixpoint   | 48.0%     | 10.5%  | Propagation loop + memcmp          |
+| Signal flush               | 19.3%     | 14.7%  | Subscription traversal + snapshots |
+| Post-activation reconcile  | 9.4%      | 6.9%   | Reconcile + snapshot refresh       |
+| Dirty tracking (TouchSlot) | 7.3%      | 7.3%   | Slot dedup + kind/epoch join       |
+| Wait suspension            | 6.6%      | 5.7%   | Process suspend/resume path        |
 | NBA queue                  | 8.8%      | 3.7%   | NBA push operations                |
-| ClearDelta                 | 2.5%      | 2.5%   | Per-region range/kind reset        |
+| ClearDelta                 | 2.6%      | 2.6%   | Per-region range/kind reset        |
 
 ## Gap Inventory
 
@@ -113,19 +114,19 @@ Grouped by area (inclusive, do not sum across rows):
 
 ## Prioritized Working Queue
 
-Ranked by measured profile data (pipeline, post-G5c, `-c opt`, 456M instructions).
+Ranked by measured profile data (pipeline, post-G6, `-c opt`, 446M instructions).
 
 ### Tier 1: Highest impact
 
-1. **Signal flush tuning** -- 14.4% self (65.8M Ir). FlushSignalUpdates is the single largest self-cost function. G5b/G5c cleaned up the subscription data model. Remaining: per-kind flush tuning, dirty-range filtering precision.
-2. **G7: Connection/comb fixpoint** -- 48.0% inclusive (10.2% self). Remaining: measure iteration behavior, topo ordering, sub-slot connections.
-3. **Process dispatch** -- 9.4% self (22.9M + 20.1M). Region loop + dispatch trampoline overhead.
+1. **Signal flush tuning** -- 14.7% self (65.8M Ir). FlushSignalUpdates is the single largest self-cost function. G5b/G5c cleaned up the subscription data model. Remaining: per-kind flush tuning, dirty-range filtering precision.
+2. **G7: Connection/comb fixpoint** -- 48.0% inclusive (10.5% self). Remaining: measure iteration behavior, topo ordering, sub-slot connections.
+3. **Process dispatch** -- 9.6% self (22.9M + 20.1M). Region loop + dispatch trampoline overhead.
 
 ### Tier 2: Moderate impact
 
-5. **ReconcilePostActivation overhead** -- 3.8% self (17.5M Ir). Validation + WaitSiteRegistry::Get (6.1M Ir) on every activation. Could cache descriptor or reduce validation.
-6. **G5 remaining: ClearDelta + external ranges** -- 2.5% self for ClearDelta; external range hash map overhead.
-7. **NBA queue lifecycle** -- SmallByteBuffer move/dtor at 2.8% self + 4.0% malloc/free. Allocation pressure from NBA entry construction.
+4. **ReconcilePostActivation overhead** -- 4.0% self (18.0M Ir). Validation + WaitSiteRegistry::Get (6.1M Ir) on every activation. Could cache descriptor or reduce validation.
+5. **G5 remaining: ClearDelta + external ranges** -- 2.6% self for ClearDelta; external range hash map overhead.
+6. **NBA queue lifecycle** -- SmallByteBuffer move/dtor at 2.8% self + 3.4% malloc/free. Allocation pressure from NBA entry construction.
 
 ### Observability
 

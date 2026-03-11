@@ -349,6 +349,7 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
 // late-bound indices. The check below enforces this at runtime.
 [[nodiscard]] static auto NeedsSnapshotRefresh(
     const UpdateSet& update_set, const ProcessState& proc_state) -> bool {
+  if (update_set.DeltaDirtySlots().empty()) return false;
   return std::ranges::any_of(proc_state.sub_refs, [&](const SubRef& ref) {
     if (ref.kind != SubKind::kEdge && ref.kind != SubKind::kChange) {
       throw common::InternalError(
