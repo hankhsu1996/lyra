@@ -94,7 +94,7 @@ Ranked by measured profile data (pipeline, post-G5, `-c opt`, 515M instructions)
 
 ### Tier 1: Highest impact
 
-1. **Signal flush** -- 10.8% self. Subscription traversal + snapshot refresh. Now the single largest self-cost function.
+1. **Signal flush** -- 10.8% self. Subscription traversal + snapshot refresh. Now the single largest self-cost function. G5b landed dense typed subscriber storage (EdgeSub/ChangeSub/RebindWatcherSub/ContainerSub with separated cold pools). Remaining: compile-time trigger metadata -- runtime still reconstructs trigger shape (edge vs change vs container, elem_stride, OOB sentinel) by scanning late-bound headers at install time. Next step: extend `CompiledWaitSite` / `WaitTriggerRecord` with per-trigger classification so runtime reads typed descriptors instead of re-deriving them. This also unifies the duplicated trigger install logic in `HandleSuspendRecord` and `InstallWaitSite`.
 2. **G7: Connection/comb fixpoint** -- 41.9% inclusive (9.2% self). Remaining: measure iteration behavior, topo ordering, sub-slot connections.
 3. **Process dispatch** -- 10.7% self. Region loop + dispatch trampoline overhead.
 
@@ -126,4 +126,5 @@ Separate from simulation throughput. AOT binary links `liblyra_runtime.so` (6MB)
 | G6  | Pointer-out process ABI             | #481 | Removes nonlocal jump from hot path              |
 | G9  | Static event-loop back-edge rewrite | #493 | Pipeline 19x -> 15x, -21% instructions           |
 | G7b | Comb kernel trigger precision       | #497 | Infrastructure only; comb_narrow=0 on benchmarks |
-| G5a | Dirty-slot full-extent fast path    |      | Pipeline 15x -> 12x, 583M -> 515M (-12%)         |
+| G5a | Dirty-slot full-extent fast path    | #501 | Pipeline 15x -> 12x, 583M -> 515M (-12%)         |
+| G5b | Dense typed subscriber storage      |      | Structural: typed hot-path vectors, cold pools   |

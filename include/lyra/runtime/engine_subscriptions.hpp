@@ -19,92 +19,187 @@ struct IndexPlanRef {
   uint16_t count = 0;
 };
 
-// Per-process plan storage. Stable spans -- not invalidated until
-// ClearProcessSubscriptions.
+// Per-process plan storage for rebind index plans.
+//
+// Ownership model: plans are appended during SubscribeRebind and referenced
+// by IndexPlanRef spans stored in the target's cold entry. The entire pool
+// is cleared in ClearProcessSubscriptions when the process's installed
+// subscriptions are removed. Individual plan entries are never removed --
+// they are append-only and lifetime-coupled to the installed wait.
 struct IndexPlanPool {
   std::vector<IndexPlanOp> ops;
 };
 
-// Subscription node - doubly linked in signal's list, singly linked in
-// process's list. Each subscription is linked into two lists for O(1) removal.
-struct SubscriptionNode {
-  ProcessHandle handle;
-  ResumePoint resume;
-  common::EdgeKind edge = common::EdgeKind::kAnyChange;
-  SignalId signal = 0;  // For removal from signal's list
+// Subscription kind discriminator for SubRef typed dispatch.
+enum class SubKind : uint8_t {
+  kEdge,
+  kChange,
+  kRebindWatcher,
+  kContainer,
+};
 
-  // Observation region within the slot (relative to SlotMeta::base_off).
-  // byte_offset: start of observed range within the slot.
-  // byte_size:   number of bytes in the observed range (always > 0).
-  //   kAnyChange:         SlotMeta::total_bytes (full-slot byte comparison).
-  //   kPosedge/kNegedge:  1 (one byte containing the observed bit).
-  uint32_t byte_offset = 0;
-  uint32_t byte_size = 0;
-  uint8_t bit_index = 0;
+// Per-process ownership record. Indexes into the typed vector for a given slot.
+//
+// Invariants maintained by swap-and-pop removal:
+// - SubRef.index always points to a valid entry in the typed sub vector
+//   for signal_subs_[SubRef.slot_id].
+// - The pointed-to sub's process_sub_idx always points back to this SubRef's
+//   position in process_state.sub_refs.
+// - When a sub is swapped during removal, both the moved sub's
+//   process_sub_idx and its SubRef.index are updated atomically.
+// - If the moved sub is a rebind target (has edge_target_id),
+//   edge_target_table_[edge_target_id].index is also updated.
+struct SubRef {
+  uint32_t slot_id;
+  uint32_t index;
+  SubKind kind;
+};
 
-  // Per-subscription snapshot.
-  // kPosedge/kNegedge: single bit stored in last_bit.
-  // kAnyChange:        byte-range snapshot via SnapshotData().
-  uint8_t last_bit = 0;
+// Stable indirection handle for rebind targets.
+// Stored in edge_target_table_, updated on swap-and-pop.
+struct EdgeTargetHandle {
+  uint32_t slot_id;
+  SubKind kind;  // kEdge or kContainer
+  uint32_t index;
+};
 
-  // Small-buffer-optimized snapshot for kAnyChange byte-range comparison.
-  // Inline for observed regions <= kInlineSnapshotCap bytes (covers most
-  // scalars). Heap-allocated for larger regions (freed by Engine::FreeNode).
-  static constexpr uint32_t kInlineSnapshotCap = 16;
-  std::array<uint8_t, kInlineSnapshotCap> snapshot_inline{};
-  std::vector<uint8_t> snapshot_heap;
+// Cold state for EdgeSub rebind targets. Lives in edge_cold_pool_, indexed
+// by EdgeSub.cold_idx. Only allocated when the edge sub is a rebind target.
+struct EdgeTargetCold {
+  uint32_t edge_target_id = UINT32_MAX;
+  IndexPlanRef plan_ref = {};
+  BitTargetMapping rebind_mapping = {};
+  uint32_t last_rebind_epoch = 0;
+  // Byte snapshot at the observed byte_offset for same-byte rebind detection.
+  // When rebinding moves bit_index within the same byte, this preserves the
+  // pre-change value so the edge pass detects the transition correctly.
+  uint8_t edge_last_byte = 0;
+  bool has_edge_last_byte = false;
+};
 
-  [[nodiscard]] auto SnapshotData() -> uint8_t* {
-    return byte_size <= kInlineSnapshotCap ? snapshot_inline.data()
-                                           : snapshot_heap.data();
-  }
-  [[nodiscard]] auto SnapshotData() const -> const uint8_t* {
-    return byte_size <= kInlineSnapshotCap ? snapshot_inline.data()
-                                           : snapshot_heap.data();
-  }
+// Cold state for ChangeSub large snapshots. Lives in change_cold_pool_,
+// indexed by ChangeSub.cold_idx. Only allocated when byte_size exceeds
+// the inline snapshot capacity.
+struct ChangeSnapshotCold {
+  std::vector<uint8_t> snapshot;
+};
 
-  // Edge subscription activation state.
-  // When false, FlushSignalUpdates skips edge evaluation entirely.
-  // Set to false when rebind detects OOB or X index.
-  bool is_active = true;
+// Cold state for RebindWatcherSub. Lives in watcher_cold_pool_, indexed
+// by RebindWatcherSub.cold_idx. Always allocated (holds edge_target_id
+// and dep slot snapshot).
+struct WatcherCold {
+  uint32_t edge_target_id = UINT32_MAX;
+  std::vector<uint8_t> snapshot;
+};
 
-  // Container element mode. UINT32_MAX = normal DesignState subscription.
-  // Otherwise = base_off of handle slot in DesignState.
+// Cold state for ContainerSub. Lives in container_cold_pool_, indexed
+// by ContainerSub.cold_idx. Always allocated (holds container runtime state
+// and optional rebind target metadata).
+struct ContainerCold {
   uint32_t container_base_off = UINT32_MAX;
   uint32_t container_elem_stride = 0;
   int64_t container_sv_index = 0;
   uint64_t container_epoch = 0;
 
-  // Late-bound rebinding fields.
-  // For rebind nodes: rebind_target points to the edge subscription.
-  // For edge target nodes: plan_ref + rebind_mapping define the expression.
-  SubscriptionNode* rebind_target = nullptr;
+  // Rebind target fields (only used when this container sub is a rebind
+  // target, i.e. @(posedge d[i]) where d is a dynamic array/queue).
+  uint32_t edge_target_id = UINT32_MAX;
   IndexPlanRef plan_ref = {};
   BitTargetMapping rebind_mapping = {};
-
-  // Epoch guard: prevents redundant re-evaluations when multiple dep slots
-  // change in the same delta.
   uint32_t last_rebind_epoch = 0;
-
-  // Links for signal's waiter list (doubly linked for O(1) removal).
-  // Normal subscriptions use head/tail; rebind subscriptions use
-  // rebind_head/rebind_tail. Distinguish by checking rebind_target != nullptr.
-  SubscriptionNode* signal_prev = nullptr;
-  SubscriptionNode* signal_next = nullptr;
-
-  // Link for process's subscription list (singly linked, only traverse on
-  // clear)
-  SubscriptionNode* process_next = nullptr;
 };
 
-// Signal's waiter list head/tail pointers.
-// Normal subscriptions are linked via head/tail.
-// Rebind subscriptions are linked via rebind_head/rebind_tail (separate list).
-struct SignalWaiters {
-  SubscriptionNode* head = nullptr;
-  SubscriptionNode* tail = nullptr;
-  SubscriptionNode* rebind_head = nullptr;
-  SubscriptionNode* rebind_tail = nullptr;
+// Dense hot-path record for posedge/negedge signal wakeup (32B).
+// This is the dominant pipeline shape -- FlushSignalUpdates iterates
+// a dense std::vector<EdgeSub> and touches only this layout.
+struct EdgeSub {
+  // Wakeup identity (12B)
+  uint32_t process_id;
+  uint32_t instance_id;
+  uint32_t resume_block;
+
+  // Observation target (8B)
+  uint32_t byte_offset;
+  uint32_t byte_size;
+
+  // Edge / state (4B)
+  uint8_t bit_index;
+  common::EdgeKind edge;
+  uint8_t last_bit;
+  uint8_t flags;  // kActive=0x01, kHasCold=0x02
+
+  // Removal / ownership (8B)
+  uint32_t process_sub_idx;  // index in owning process_state.sub_refs
+  uint32_t cold_idx;         // UINT32_MAX = no cold state (edge_cold_pool_)
+};
+static_assert(sizeof(EdgeSub) == 32);
+
+// Dense record for kAnyChange subscribers (48B).
+// Has a different hot path from edge detection -- splitting from EdgeSub
+// keeps the dominant clock-edge path smaller.
+struct ChangeSub {
+  uint32_t process_id;
+  uint32_t instance_id;
+  uint32_t resume_block;
+  uint32_t byte_offset;
+  uint32_t byte_size;
+  uint32_t process_sub_idx;
+  uint32_t cold_idx;  // UINT32_MAX if inline snapshot only (change_cold_pool_)
+
+  // Inline snapshot for small observed ranges.
+  static constexpr uint32_t kInlineSnapshotCap = 16;
+  std::array<uint8_t, kInlineSnapshotCap> snapshot_inline{};
+
+  uint8_t flags;  // kActive=0x01
+  std::array<uint8_t, 3> padding_{};
+};
+static_assert(sizeof(ChangeSub) == 48);
+
+// Dense record for rebind watchers (pass 1 only) (24B).
+// Logically a different pass -- lives in its own dense array so
+// pass 2 never branches over them.
+struct RebindWatcherSub {
+  uint32_t process_id;
+  uint32_t byte_offset;
+  uint32_t byte_size;
+  uint32_t process_sub_idx;
+  uint32_t cold_idx;  // always valid (watcher_cold_pool_)
+  uint32_t flags;     // kActive=0x01
+};
+static_assert(sizeof(RebindWatcherSub) == 24);
+
+// Dense record for container element subscriptions (24B).
+// Container subscriptions are rare and structurally different.
+//
+// Observation model: container subs observe bit 0 of byte 0 of the selected
+// element (byte_off = sv_index * elem_stride within the heap-allocated data).
+// This is sufficient because container edge triggers (@(posedge d[i])) are
+// defined over the LSB of the element, matching the scalar edge semantics.
+// Multi-bit or multi-byte element observation is not supported.
+struct ContainerSub {
+  uint32_t process_id;
+  uint32_t instance_id;
+  uint32_t resume_block;
+  uint32_t process_sub_idx;
+  uint32_t cold_idx;      // always valid (container_cold_pool_)
+  common::EdgeKind edge;  // trigger kind (posedge/negedge/anychange)
+  uint8_t last_bit;       // last observed bit value for edge detection
+  uint8_t flags;          // kActive=0x01
+  uint8_t padding_ = 0;
+};
+static_assert(sizeof(ContainerSub) == 24);
+
+// Flag constants for sub flags fields.
+inline constexpr uint8_t kSubActive = 0x01;
+inline constexpr uint8_t kSubHasCold = 0x02;
+
+// Per-slot subscription storage. Four dense typed arrays.
+// The flush path becomes four dense scans with no mixed-node branching.
+struct SlotSubscriptions {
+  std::vector<EdgeSub> edge_subs;
+  std::vector<ChangeSub> change_subs;
+  std::vector<RebindWatcherSub> rebind_subs;
+  std::vector<ContainerSub> container_subs;
 };
 
 // Per-process installed wait-site cache.
@@ -119,7 +214,7 @@ struct InstalledWaitState {
 struct ProcessState {
   bool is_enqueued = false;  // De-dup flag for next-delta queue
   size_t subscription_count = 0;
-  SubscriptionNode* subscription_head = nullptr;
+  std::vector<SubRef> sub_refs;
   IndexPlanPool plan_pool;
   InstalledWaitState installed_wait;
 };
