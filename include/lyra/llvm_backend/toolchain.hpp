@@ -6,16 +6,9 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-// Platform-specific rpath style for linking.
-enum class RpathStyle {
-  kOrigin,      // Linux: $ORIGIN
-  kLoaderPath,  // macOS: @loader_path (stub, not yet supported)
-};
-
 // Toolchain configuration for linking AOT executables.
 struct Toolchain {
   std::filesystem::path cc_path;  // C compiler (used as linker driver)
-  RpathStyle rpath_style = RpathStyle::kOrigin;
 };
 
 // Structured error from the link step.
@@ -31,10 +24,9 @@ struct LinkError {
 auto DetectToolchain(bool allow_ambient_search = true)
     -> std::expected<Toolchain, std::string>;
 
-// Link an object file into an executable, placing the result in a bundle:
-//   output_dir/bin/<name>
-//   output_dir/lib/liblyra_runtime.so
-// The executable is linked with -rpath=$ORIGIN/../lib so it finds the runtime.
+// Link an object file with a runtime archive into an executable at
+// output_dir/<name>. Runtime symbols referenced by the design object are
+// pulled from the archive by normal archive linking.
 auto LinkExecutable(
     const Toolchain& toolchain, const std::filesystem::path& object_path,
     const std::filesystem::path& runtime_lib_path,

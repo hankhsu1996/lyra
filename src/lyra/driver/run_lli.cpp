@@ -20,6 +20,7 @@
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
+#include "lyra/runtime/artifact_names.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
 #include "process_stats.hpp"
@@ -159,7 +160,7 @@ auto RunLli(const CompilationInput& input) -> int {
   }
 
   std::vector<std::string> tried_paths;
-  auto runtime_path = FindRuntimeLibrary(tried_paths);
+  auto runtime_path = FindRuntimeLibrary(runtime::kSharedLibName, tried_paths);
   if (runtime_path.empty()) {
     std::string msg = "runtime library not found\n       tried:";
     for (const auto& path : tried_paths) {

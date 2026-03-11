@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/llvm_backend/lower.hpp"
+#include "lyra/runtime/artifact_names.hpp"
 #include "tests/framework/llvm_common.hpp"
 #include "tests/framework/output_protocol.hpp"
 #include "tests/framework/runner_common.hpp"
@@ -42,7 +43,7 @@ auto RunLliBackend(
     out << lowering::mir_to_llvm::DumpLlvmIr(prep_result->llvm_result);
   }
 
-  auto runtime_path = FindRuntimeLibrary();
+  auto runtime_path = FindRuntimeLibrary(runtime::kSharedLibName);
   if (!runtime_path) {
     result.error_message = "Runtime library not found";
     return result;

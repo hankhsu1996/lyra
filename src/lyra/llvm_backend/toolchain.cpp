@@ -118,7 +118,6 @@ auto DetectToolchain(bool allow_ambient_search)
   }
   return Toolchain{
       .cc_path = std::move(cc),
-      .rpath_style = RpathStyle::kOrigin,
   };
 }
 
@@ -127,72 +126,27 @@ auto LinkExecutable(
     const std::filesystem::path& runtime_lib_path,
     const std::filesystem::path& output_dir, const std::string& name)
     -> std::expected<std::filesystem::path, LinkError> {
-  auto bin_dir = output_dir / "bin";
-  auto lib_dir = output_dir / "lib";
-
-  // Create output directories
   std::error_code ec;
-  fs::create_directories(bin_dir, ec);
+  fs::create_directories(output_dir, ec);
   if (ec) {
     return std::unexpected(
         LinkError{
             .stage = "link",
             .message = std::format(
-                "cannot create '{}': {}", bin_dir.string(), ec.message()),
-        });
-  }
-  fs::create_directories(lib_dir, ec);
-  if (ec) {
-    return std::unexpected(
-        LinkError{
-            .stage = "link",
-            .message = std::format(
-                "cannot create '{}': {}", lib_dir.string(), ec.message()),
+                "cannot create '{}': {}", output_dir.string(), ec.message()),
+            .stderr = {},
         });
   }
 
-  // Copy runtime library into bundle.
-  // Remove existing file first: Bazel produces read-only files, so
-  // copy_file(overwrite_existing) fails on the read-only destination.
-  auto bundled_runtime = lib_dir / runtime_lib_path.filename();
-  fs::remove(bundled_runtime, ec);
-  // Ignore remove error (file may not exist)
-  ec.clear();
-  fs::copy_file(runtime_lib_path, bundled_runtime, ec);
-  if (ec) {
-    return std::unexpected(
-        LinkError{
-            .stage = "link",
-            .message = std::format(
-                "cannot copy runtime '{}' -> '{}': {}",
-                runtime_lib_path.string(), bundled_runtime.string(),
-                ec.message()),
-        });
-  }
+  auto exe_path = output_dir / name;
 
-  auto exe_path = bin_dir / name;
-
-  // Build rpath flag
-  std::string rpath_flag;
-  switch (toolchain.rpath_style) {
-    case RpathStyle::kOrigin:
-      rpath_flag = "-Wl,-rpath,$ORIGIN/../lib";
-      break;
-    case RpathStyle::kLoaderPath:
-      rpath_flag = "-Wl,-rpath,@loader_path/../lib";
-      break;
-  }
-
-  // Link command
   std::vector<std::string> link_args = {
       toolchain.cc_path.string(),
       "-o",
       exe_path.string(),
       object_path.string(),
-      "-L",
-      lib_dir.string(),
-      std::format("-l:{}", runtime_lib_path.filename().string()),
-      rpath_flag,
+      runtime_lib_path.string(),
+      "-lstdc++",
       "-lm",
       "-lpthread",
   };

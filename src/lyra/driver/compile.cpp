@@ -13,6 +13,7 @@
 #include "lyra/llvm_backend/toolchain.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
+#include "lyra/runtime/artifact_names.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "pipeline.hpp"
 #include "print.hpp"
@@ -102,9 +103,9 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
     }
   }
 
-  // Find runtime library
+  // Find static runtime library
   std::vector<std::string> tried_paths;
-  auto runtime_path = FindRuntimeLibrary(tried_paths);
+  auto runtime_path = FindRuntimeLibrary(runtime::kStaticLibName, tried_paths);
   if (runtime_path.empty()) {
     std::string msg = "runtime library not found\n       tried:";
     for (const auto& path : tried_paths) {

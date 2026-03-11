@@ -4,14 +4,15 @@
 #include <filesystem>
 #include <format>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lyra::driver {
 
-auto FindRuntimeLibrary(std::vector<std::string>& tried_paths)
+auto FindRuntimeLibrary(
+    std::string_view lib_name, std::vector<std::string>& tried_paths)
     -> std::filesystem::path {
   namespace fs = std::filesystem;
-  constexpr auto kLibName = "liblyra_runtime.so";
 
   // 1. LYRA_RUNTIME_PATH environment variable
   if (const char* env_path = std::getenv("LYRA_RUNTIME_PATH")) {
@@ -35,14 +36,14 @@ auto FindRuntimeLibrary(std::vector<std::string>& tried_paths)
   if (!exe_path.empty()) {
     // Bazel runfiles path
     auto runfiles_path =
-        fs::path(exe_path.string() + ".runfiles") / "_main" / kLibName;
+        fs::path(exe_path.string() + ".runfiles") / "_main" / lib_name;
     tried_paths.push_back(runfiles_path.string());
     if (fs::exists(runfiles_path)) {
       return runfiles_path;
     }
 
     // Sibling to executable
-    auto sibling_path = exe_path.parent_path() / kLibName;
+    auto sibling_path = exe_path.parent_path() / lib_name;
     tried_paths.push_back(sibling_path.string());
     if (fs::exists(sibling_path)) {
       return sibling_path;
@@ -50,7 +51,7 @@ auto FindRuntimeLibrary(std::vector<std::string>& tried_paths)
   }
 
   // 3. Current working directory
-  auto cwd_path = fs::current_path() / kLibName;
+  auto cwd_path = fs::current_path() / lib_name;
   tried_paths.push_back(cwd_path.string());
   if (fs::exists(cwd_path)) {
     return cwd_path;

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <expected>
 #include <filesystem>
@@ -11,6 +12,7 @@
 #include <spawn.h>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <sys/wait.h>
 #include <type_traits>
 #include <unistd.h>
@@ -30,11 +32,13 @@
 #include "lyra/hir/package.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lower.hpp"
+#include "lyra/llvm_backend/toolchain.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/realization/assemble_bindings.hpp"
+#include "lyra/runtime/artifact_names.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
@@ -116,15 +120,14 @@ thread_local std::unique_ptr<HooksHolder> g_hooks_holder;
 
 }  // namespace
 
-auto FindRuntimeLibrary() -> std::optional<std::filesystem::path> {
-  constexpr std::string_view kLibName = "liblyra_runtime.so";
-
+auto FindRuntimeLibrary(std::string_view lib_name)
+    -> std::optional<std::filesystem::path> {
   // Prefer Bazel runfiles env vars (works in RBE and local)
   const char* test_srcdir = std::getenv("TEST_SRCDIR");
   const char* test_workspace = std::getenv("TEST_WORKSPACE");
   if (test_srcdir != nullptr && test_workspace != nullptr) {
     auto runfiles_path =
-        std::filesystem::path(test_srcdir) / test_workspace / kLibName;
+        std::filesystem::path(test_srcdir) / test_workspace / lib_name;
     if (std::filesystem::exists(runfiles_path)) {
       return runfiles_path;
     }
@@ -139,12 +142,12 @@ auto FindRuntimeLibrary() -> std::optional<std::filesystem::path> {
   }
 
   auto runfiles_path = std::filesystem::path(exe_path.string() + ".runfiles") /
-                       "_main" / kLibName;
+                       "_main" / lib_name;
   if (std::filesystem::exists(runfiles_path)) {
     return runfiles_path;
   }
 
-  auto sibling_path = exe_path.parent_path() / kLibName;
+  auto sibling_path = exe_path.parent_path() / lib_name;
   if (std::filesystem::exists(sibling_path)) {
     return sibling_path;
   }
@@ -153,8 +156,8 @@ auto FindRuntimeLibrary() -> std::optional<std::filesystem::path> {
 }
 
 auto RunSubprocess(
-    const std::filesystem::path& exe, std::span<const std::string> args)
-    -> SubprocessResult {
+    const std::filesystem::path& exe, std::span<const std::string> args,
+    const EnvOverrides& env_overrides) -> SubprocessResult {
   // Create pipes for stdout and stderr
   std::array<int, 2> stdout_pipe{};
   std::array<int, 2> stderr_pipe{};
@@ -188,10 +191,46 @@ auto RunSubprocess(
   }
   argv.push_back(nullptr);
 
+  // Build environment (with overrides if any)
+  // env_storage must outlive posix_spawnp; BuildEnviron returns pointers into
+  // its own env_strings vector, but those are local -- so we need the vector
+  // alive. However BuildEnviron returns vector<char*> pointing into local
+  // strings that get destroyed. We need to keep both alive.
+  // Simpler: if no overrides, use environ directly.
+  std::vector<std::string> env_owned;
+  std::vector<char*> env_ptrs;
+  char** envp = environ;  // NOLINT(misc-include-cleaner)
+  if (!env_overrides.empty()) {
+    // Copy current environ
+    for (char** e = environ; *e != nullptr;
+         ++e) {  // NOLINT(misc-include-cleaner)
+      env_owned.emplace_back(*e);
+    }
+    for (const auto& [key, value] : env_overrides) {
+      auto prefix = key + "=";
+      bool replaced = false;
+      for (auto& entry : env_owned) {
+        if (entry.starts_with(prefix)) {
+          entry = prefix + value;
+          replaced = true;
+          break;
+        }
+      }
+      if (!replaced) {
+        env_owned.push_back(prefix + value);
+      }
+    }
+    env_ptrs.reserve(env_owned.size() + 1);
+    for (auto& s : env_owned) {
+      env_ptrs.push_back(s.data());
+    }
+    env_ptrs.push_back(nullptr);
+    envp = env_ptrs.data();
+  }
+
   pid_t pid = 0;
-  // NOLINTNEXTLINE(misc-include-cleaner) - environ is from unistd.h
-  int spawn_result = posix_spawnp(
-      &pid, exe_str.c_str(), &actions, nullptr, argv.data(), environ);
+  int spawn_result =
+      posix_spawnp(&pid, exe_str.c_str(), &actions, nullptr, argv.data(), envp);
   posix_spawn_file_actions_destroy(&actions);
 
   // Close write ends in parent
@@ -402,6 +441,61 @@ auto PrepareLlvmModule(
       .diag_ctx = std::move(diag_ctx),
       .llvm_result = std::move(*llvm_result),
       .compiler_output = std::move(compiler_output),
+  };
+}
+
+auto LinkTestExecutable(
+    const std::filesystem::path& object_path,
+    const std::filesystem::path& output_dir, const std::string& name)
+    -> std::expected<TestLinkResult, std::string> {
+  // Find shared runtime library
+  auto runtime_path = FindRuntimeLibrary(runtime::kSharedLibName);
+  if (!runtime_path) {
+    return std::unexpected("shared runtime library not found");
+  }
+
+  // Detect toolchain
+  auto toolchain = lowering::mir_to_llvm::DetectToolchain();
+  if (!toolchain) {
+    return std::unexpected(
+        std::format("toolchain detection failed: {}", toolchain.error()));
+  }
+
+  std::error_code ec;
+  std::filesystem::create_directories(output_dir, ec);
+  if (ec) {
+    return std::unexpected(
+        std::format(
+            "cannot create '{}': {}", output_dir.string(), ec.message()));
+  }
+
+  auto exe_path = output_dir / name;
+  auto runtime_dir = runtime_path->parent_path();
+
+  // Link against the shared library directly. No rpath needed -- the test
+  // harness sets LD_LIBRARY_PATH when executing the binary.
+  std::vector<std::string> link_args = {
+      "-o",
+      exe_path.string(),
+      object_path.string(),
+      std::format("-L{}", runtime_dir.string()),
+      std::format("-l:{}", runtime::kSharedLibName),
+      "-lstdc++",
+      "-lm",
+      "-lpthread",
+  };
+
+  auto sub = RunSubprocess(toolchain->cc_path, link_args);
+  if (sub.exit_code != 0) {
+    return std::unexpected(
+        std::format(
+            "linker failed (exit code {}): {}", sub.exit_code,
+            sub.stderr_text));
+  }
+
+  return TestLinkResult{
+      .exe_path = exe_path,
+      .runtime_dir = runtime_dir,
   };
 }
 
