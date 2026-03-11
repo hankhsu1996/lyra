@@ -292,3 +292,163 @@ cases:
       endmodule
     expect:
       stdout: "PASS\n"
+
+  - name: same_delta_blocking_write_requires_refresh
+    description: |
+      Process A and B both wake on posedge clk (same delta). A runs first
+      and does a blocking write to sig. B has a multi-trigger wait
+      @(posedge clk or posedge sig). Without snapshot refresh, B's sig
+      baseline stays at 0 (stale from previous flush), and the next flush
+      falsely detects posedge sig, causing a spurious wakeup.
+      With refresh, B's sig baseline is updated to 1 (current), and no false
+      posedge sig is detected.
+
+      Ordering assumption: Lyra executes same-delta processes in subscription
+      installation order (source order). This is a deterministic runtime
+      property -- FlushSignalUpdates appends wakeups in sub vector iteration
+      order, and ExecuteRegion processes the active queue FIFO. The test
+      requires A (source-first) to run before B so that A's blocking write
+      to sig is visible when B's post-activation reconciliation runs.
+    sv: |
+      module Test;
+        logic clk;
+        logic sig;
+        int count;
+
+        // Process A: source-first, so installed first and runs first in the
+        // active queue (Lyra guarantees source-order same-delta execution).
+        // Does a blocking write to sig.
+        always @(posedge clk) begin
+          sig = 1;
+        end
+
+        // Process B: multi-trigger wait. The posedge sig trigger must not
+        // falsely fire when A's blocking write in the same delta changed sig.
+        always @(posedge clk or posedge sig) begin
+          count = count + 1;
+        end
+
+        initial begin
+          clk = 0; sig = 0; count = 0;
+          #1 clk = 1;
+          #1 clk = 0;
+          #1 clk = 1;
+          #1 clk = 0;
+          #1 clk = 1;
+          #1;
+          $display("count=%0d", count);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: |
+        count=3
+        PASS
+
+  - name: disjoint_blocking_write_skips_refresh_safely
+    description: |
+      A process wakes and a same-delta blocking write touches an unrelated slot.
+      Verify no behavioral change and no false wake caused by the snapshot
+      refresh guard skipping refresh for processes whose observed slots are
+      not delta-dirty.
+    sv: |
+      module Test;
+        logic clk;
+        logic unrelated;
+        int count;
+
+        initial begin
+          clk = 0;
+          unrelated = 0;
+          count = 0;
+          #1 clk = 1;
+          unrelated = 1;
+          #1 clk = 0;
+          unrelated = 0;
+          #1 clk = 1;
+          #1 clk = 0;
+          #1 clk = 1;
+          #1;
+          $display("count=%0d", count);
+          $display("PASS");
+        end
+
+        always @(posedge clk) begin
+          count = count + 1;
+        end
+      endmodule
+    expect:
+      stdout: |
+        count=3
+        PASS
+
+  - name: nba_only_activation_does_not_need_refresh
+    description: |
+      Typical always_ff / NBA-only path. The common case where the snapshot
+      refresh guard should skip the phase because no observed slot was dirtied
+      by a blocking write in the current delta. Verifies correctness unchanged.
+    sv: |
+      module Test;
+        logic clk;
+        int counter;
+
+        initial begin
+          clk = 0;
+          counter = 0;
+          #1 clk = 1;
+          #1 clk = 0;
+          #1 clk = 1;
+          #1 clk = 0;
+          #1 clk = 1;
+          #1;
+          $display("counter=%0d", counter);
+          $display("PASS");
+        end
+
+        always @(posedge clk) begin
+          counter <= counter + 1;
+        end
+      endmodule
+    expect:
+      stdout: |
+        counter=3
+        PASS
+
+  - name: self_blocking_write_observed_slot_requires_refresh
+    description: |
+      A process with multi-trigger wait @(posedge clk or posedge sig) wakes
+      on posedge clk and does a blocking write to sig (its own observed slot).
+      Without snapshot refresh, the process's sig baseline stays at 0 (stale
+      from the flush that set it before the process ran), and the next flush
+      falsely detects posedge sig, causing a spurious self-wakeup.
+      With refresh, the sig baseline is updated to 1 (current after the
+      blocking write), and no false posedge sig is detected.
+    sv: |
+      module Test;
+        logic clk;
+        logic sig;
+        int count;
+
+        // Single process: writes to sig, which is also one of its own
+        // triggers. The self-write must not cause a false posedge sig.
+        always @(posedge clk or posedge sig) begin
+          count = count + 1;
+          sig = 1;
+        end
+
+        initial begin
+          clk = 0; sig = 0; count = 0;
+          #1 clk = 1;
+          #1 clk = 0;
+          #1 clk = 1;
+          #1 clk = 0;
+          #1 clk = 1;
+          #1;
+          $display("count=%0d", count);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: |
+        count=3
+        PASS

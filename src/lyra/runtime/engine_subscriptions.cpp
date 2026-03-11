@@ -338,6 +338,29 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
   ResetInstalledWait(handle);
 }
 
+// Check whether any installed subscription for the given process observes a
+// slot that was dirtied in the current delta. If false, the previous
+// FlushSignalUpdates already established correct baselines and the
+// post-activation snapshot refresh can be skipped.
+//
+// Precondition: all sub_refs are snapshot-bearing (kEdge or kChange).
+// This is structurally guaranteed by the caller -- can_refresh requires
+// WaitShapeKind::kStatic, and static waits have fixed trigger sets with no
+// late-bound indices. The check below enforces this at runtime.
+[[nodiscard]] static auto NeedsSnapshotRefresh(
+    const UpdateSet& update_set, const ProcessState& proc_state) -> bool {
+  if (update_set.DeltaDirtySlots().empty()) return false;
+  return std::ranges::any_of(proc_state.sub_refs, [&](const SubRef& ref) {
+    if (ref.kind != SubKind::kEdge && ref.kind != SubKind::kChange) {
+      throw common::InternalError(
+          "NeedsSnapshotRefresh", std::format(
+                                      "sub_ref kind {} is not snapshot-bearing",
+                                      static_cast<int>(ref.kind)));
+    }
+    return update_set.IsDeltaDirty(ref.slot_id);
+  });
+}
+
 void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
   if (handle.process_id >= num_processes_) return;
 
@@ -690,7 +713,16 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
           descriptor.shape == WaitShapeKind::kStatic;
 
       if (can_refresh) {
-        RefreshInstalledSnapshots(handle);
+        // FlushSignalUpdates already established correct snapshot baselines at
+        // the previous delta boundary. Post-activation refresh is only needed
+        // when an observed slot was dirtied earlier in the current delta (a
+        // same-delta blocking write touched something this process observes).
+        // delta_seen_ remains valid until ClearDelta() after flush, so the
+        // guard observes correct same-delta dirtiness throughout the active
+        // region.
+        if (NeedsSnapshotRefresh(update_set_, proc_state)) {
+          RefreshInstalledSnapshots(handle);
+        }
       } else {
         ResetInstalledWait(handle);
         InstallWaitSite(handle, suspend, descriptor);
