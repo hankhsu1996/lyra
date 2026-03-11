@@ -52,7 +52,12 @@ auto ExtractConnectionDescriptorEntries(
     -> std::vector<realization::ConnectionDescriptorEntry>;
 
 // Prepare comb kernel inputs from layout data.
-auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
+// Resolves symbolic trigger observations to concrete byte ranges and
+// canonicalizes to one trigger per (kernel, slot).
+auto PrepareCombKernelInputs(
+    const mir::Design& design, const mir::Arena& mir_arena,
+    const TypeArena& types, const Layout& layout, const llvm::DataLayout& dl,
+    llvm::LLVMContext& ctx, bool force_two_state, size_t num_init)
     -> std::vector<realization::CombKernelInput>;
 
 // Prepare instance paths from design.

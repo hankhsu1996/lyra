@@ -110,9 +110,11 @@ auto BuildCombKernelWords(const std::vector<CombKernelInput>& kernels)
 
   for (const auto& ck : kernels) {
     words.push_back(ck.scheduled_process_index);
-    words.push_back(static_cast<uint32_t>(ck.trigger_slot_ids.size()));
-    for (uint32_t slot_id : ck.trigger_slot_ids) {
-      words.push_back(slot_id);
+    words.push_back(static_cast<uint32_t>(ck.triggers.size()));
+    for (const auto& trigger : ck.triggers) {
+      words.push_back(trigger.slot_id);
+      words.push_back(trigger.byte_offset);
+      words.push_back(trigger.byte_size);
     }
   }
 

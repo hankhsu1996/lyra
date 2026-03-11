@@ -489,7 +489,8 @@ void Engine::InitCombKernels(
     std::span<const uint32_t> words, CombFunc* comb_funcs, void** states) {
   if (words.empty()) return;
 
-  // Word table format: [num_comb, (proc_idx, num_triggers, trigger_0, ...)*]
+  // Word table format:
+  // [num_comb, (proc_idx, num_triggers, (slot, byte_off, byte_size), ...)*]
   uint32_t pos = 0;
   uint32_t num_comb = words[pos++];
 
@@ -502,12 +503,14 @@ void Engine::InitCombKernels(
   // Size comb_kernel_flags_ once from authoritative process count.
   comb_kernel_flags_.resize(num_processes_, 0);
 
-  // First pass: parse kernels, collect per-slot trigger lists.
-  struct TriggerEntry {
+  // First pass: parse kernels, collect per-slot trigger entries.
+  struct ParsedTrigger {
     uint32_t slot_id;
     uint32_t kernel_idx;
+    uint32_t byte_offset;
+    uint32_t byte_size;
   };
-  std::vector<TriggerEntry> entries;
+  std::vector<ParsedTrigger> entries;
 
   for (uint32_t ki = 0; ki < num_comb; ++ki) {
     if (pos + 2 > words.size()) {
@@ -516,7 +519,7 @@ void Engine::InitCombKernels(
     }
     uint32_t proc_idx = words[pos++];
     uint32_t num_triggers = words[pos++];
-    if (pos + num_triggers > words.size()) {
+    if (pos + num_triggers * 3 > words.size()) {
       throw common::InternalError(
           "Engine::InitCombKernels", "trigger list truncated");
     }
@@ -541,7 +544,14 @@ void Engine::InitCombKernels(
 
     for (uint32_t ti = 0; ti < num_triggers; ++ti) {
       uint32_t trigger_slot = words[pos++];
-      entries.push_back({trigger_slot, comb_idx});
+      uint32_t byte_offset = words[pos++];
+      uint32_t byte_size = words[pos++];
+      entries.push_back({trigger_slot, comb_idx, byte_offset, byte_size});
+      if (byte_size > 0) {
+        ++comb_narrow_count_;
+      } else {
+        ++comb_full_slot_count_;
+      }
     }
   }
 
@@ -562,7 +572,11 @@ void Engine::InitCombKernels(
     uint32_t slot = entries[i].slot_id;
     uint32_t start = static_cast<uint32_t>(comb_trigger_backing_.size());
     while (i < entries.size() && entries[i].slot_id == slot) {
-      comb_trigger_backing_.push_back(entries[i].kernel_idx);
+      comb_trigger_backing_.push_back({
+          .kernel_idx = entries[i].kernel_idx,
+          .byte_offset = entries[i].byte_offset,
+          .byte_size = entries[i].byte_size,
+      });
       ++i;
     }
     uint32_t count =
@@ -635,8 +649,21 @@ void Engine::FlushAndPropagateConnections() {
         if (slot_id >= comb_trigger_map_.size()) continue;
         auto [cstart, ccount] = comb_trigger_map_[slot_id];
         if (ccount == 0) continue;
+
+        const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
+
         for (uint32_t ci = cstart; ci < cstart + ccount; ++ci) {
-          const auto& ck = comb_kernels_[comb_trigger_backing_[ci]];
+          ++propagation_stats_.comb_considered;
+          const auto& entry = comb_trigger_backing_[ci];
+
+          if (entry.byte_size > 0 &&
+              !dirty_ranges.Overlaps(entry.byte_offset, entry.byte_size)) {
+            ++propagation_stats_.comb_skipped_range;
+            continue;
+          }
+
+          ++propagation_stats_.comb_executed;
+          const auto& ck = comb_kernels_[entry.kernel_idx];
           ck.func(ck.state, 0);
         }
       }
@@ -668,10 +695,14 @@ void Engine::DumpPropagationStats(FILE* sink) const {
       "[lyra][stats][propagation]"
       " calls={} iterations={} max_iterations={}"
       " conn_considered={} conn_memcmp={} conn_memcpy={}"
-      " conn_full_slot={} conn_narrow={}\n",
+      " conn_full_slot={} conn_narrow={}"
+      " comb_considered={} comb_executed={} comb_skipped_range={}"
+      " comb_full_slot={} comb_narrow={}\n",
       s.propagation_calls, s.propagation_iterations,
       s.propagation_max_iterations, s.conn_considered, s.conn_memcmp_executed,
-      s.conn_memcpy_executed, conn_full_slot_count_, conn_narrow_count_);
+      s.conn_memcpy_executed, conn_full_slot_count_, conn_narrow_count_,
+      s.comb_considered, s.comb_executed, s.comb_skipped_range,
+      comb_full_slot_count_, comb_narrow_count_);
   std::fflush(sink);
 }
 

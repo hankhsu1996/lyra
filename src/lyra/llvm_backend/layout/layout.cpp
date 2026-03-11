@@ -1074,20 +1074,23 @@ auto TryKernelizeComb(
   if (wait_term == nullptr) return std::nullopt;
 
   // All triggers must be kAnyChange with no late-bound
-  std::vector<mir::SlotId> trigger_slots;
-  trigger_slots.reserve(wait_term->triggers.size());
+  std::vector<CombTrigger> triggers;
+  triggers.reserve(wait_term->triggers.size());
   for (const auto& trigger : wait_term->triggers) {
     if (trigger.edge != common::EdgeKind::kAnyChange) return std::nullopt;
     if (trigger.late_bound.has_value()) return std::nullopt;
-    trigger_slots.push_back(
-        mir::SlotId{ResolveSignalToGlobalSlot(trigger.signal, slot_base)});
+    triggers.push_back({
+        .slot =
+            mir::SlotId{ResolveSignalToGlobalSlot(trigger.signal, slot_base)},
+        .observed_place = trigger.observed_place,
+    });
   }
 
-  if (trigger_slots.empty()) return std::nullopt;
+  if (triggers.empty()) return std::nullopt;
 
   return CombKernelEntry{
       .process_id = {},  // Set by caller
-      .trigger_slots = std::move(trigger_slots),
+      .triggers = std::move(triggers),
   };
 }
 

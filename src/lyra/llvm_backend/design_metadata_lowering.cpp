@@ -1,5 +1,6 @@
 #include "lyra/llvm_backend/design_metadata_lowering.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <format>
 #include <string>
@@ -23,6 +24,7 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/instance.hpp"
+#include "lyra/mir/place.hpp"
 #include "lyra/runtime/loop_site_meta.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
@@ -376,7 +378,10 @@ auto ExtractConnectionDescriptorEntries(
   return entries;
 }
 
-auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
+auto PrepareCombKernelInputs(
+    const mir::Design& design, const mir::Arena& mir_arena,
+    const TypeArena& types, const Layout& layout, const llvm::DataLayout& dl,
+    llvm::LLVMContext& ctx, bool force_two_state, size_t num_init)
     -> std::vector<realization::CombKernelInput> {
   const auto& comb_entries = layout.comb_kernel_entries;
   if (comb_entries.empty()) {
@@ -410,15 +415,84 @@ auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
           "comb kernel process not found in scheduled process list");
     }
 
-    std::vector<uint32_t> trigger_ids;
-    trigger_ids.reserve(ck.trigger_slots.size());
-    for (const auto& slot : ck.trigger_slots) {
-      trigger_ids.push_back(slot.value);
+    // Resolve each symbolic trigger to a concrete byte range, then group
+    // by slot_id and merge into one trigger per (kernel, slot).
+    struct SlotAccum {
+      uint32_t byte_offset = 0;
+      uint32_t byte_size = 0;
+      bool is_full_slot = false;
+    };
+    std::unordered_map<uint32_t, SlotAccum> per_slot;
+
+    for (const auto& trigger : ck.triggers) {
+      uint32_t slot_id = trigger.slot.value;
+      auto& accum = per_slot[slot_id];
+
+      if (accum.is_full_slot) continue;
+
+      if (!trigger.observed_place) {
+        accum.is_full_slot = true;
+        accum.byte_offset = 0;
+        accum.byte_size = 0;
+        continue;
+      }
+
+      // Verify slot exists in design layout (byte-range resolution requires
+      // it).
+      if (!layout.design.slot_to_field.contains(trigger.slot)) {
+        accum.is_full_slot = true;
+        accum.byte_offset = 0;
+        accum.byte_size = 0;
+        continue;
+      }
+
+      TypeId root_type = design.slots[trigger.slot.value].type;
+      const auto& place = mir_arena[*trigger.observed_place];
+      auto range = ResolveByteRange(
+          ctx, dl, types, place, root_type, nullptr, force_two_state);
+
+      if (range.kind != RangeKind::kPrecise) {
+        accum.is_full_slot = true;
+        accum.byte_offset = 0;
+        accum.byte_size = 0;
+        continue;
+      }
+
+      if (accum.byte_size == 0 && !accum.is_full_slot) {
+        // First precise range on this slot
+        accum.byte_offset = range.byte_offset;
+        accum.byte_size = range.byte_size;
+      } else {
+        // Merge: bounding range [min_offset, max_end)
+        uint32_t existing_end = accum.byte_offset + accum.byte_size;
+        uint32_t new_end = range.byte_offset + range.byte_size;
+        accum.byte_offset = std::min(accum.byte_offset, range.byte_offset);
+        accum.byte_size = std::max(existing_end, new_end) - accum.byte_offset;
+      }
     }
+
+    std::vector<realization::CombTriggerInput> merged_triggers;
+    merged_triggers.reserve(per_slot.size());
+    for (const auto& [slot_id, accum] : per_slot) {
+      if (accum.is_full_slot) {
+        merged_triggers.push_back({.slot_id = slot_id});
+      } else {
+        merged_triggers.push_back({
+            .slot_id = slot_id,
+            .byte_offset = accum.byte_offset,
+            .byte_size = accum.byte_size,
+        });
+      }
+    }
+
+    // Deterministic output: sort by slot_id (unordered_map iteration is
+    // random).
+    std::ranges::sort(
+        merged_triggers, {}, &realization::CombTriggerInput::slot_id);
 
     inputs.push_back({
         .scheduled_process_index = it->second,
-        .trigger_slot_ids = std::move(trigger_ids),
+        .triggers = std::move(merged_triggers),
     });
   }
 
