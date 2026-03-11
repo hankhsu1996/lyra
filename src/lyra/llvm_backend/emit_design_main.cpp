@@ -589,7 +589,9 @@ auto BuildDesignMetadata(
   auto scheduled_inputs = PrepareScheduledProcessInputs(
       design, mir_arena, input.diag_ctx, input.source_manager,
       layout.scheduled_processes, num_init);
-  auto comb_inputs = PrepareCombKernelInputs(layout, num_init);
+  auto comb_inputs = PrepareCombKernelInputs(
+      design, mir_arena, type_arena, layout, dl, ctx, force_two_state,
+      num_init);
   auto instance_paths = PrepareInstancePaths(design);
   auto loop_site_inputs =
       PrepareLoopSiteInputs(context, input.diag_ctx, input.source_manager);

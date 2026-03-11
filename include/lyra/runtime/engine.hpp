@@ -53,6 +53,9 @@ struct PropagationStats {
   uint64_t conn_considered = 0;
   uint64_t conn_memcmp_executed = 0;
   uint64_t conn_memcpy_executed = 0;
+  uint64_t comb_considered = 0;
+  uint64_t comb_executed = 0;
+  uint64_t comb_skipped_range = 0;
 };
 
 // Simulation Engine: event-driven scheduler for SystemVerilog processes.
@@ -526,8 +529,13 @@ class Engine {
     uint32_t process_index;  // Original index in processes array (for skip)
   };
   std::vector<CombKernel> comb_kernels_;
-  // Flat backing array of kernel indices, indexed via comb_trigger_map_ ranges.
-  std::vector<uint32_t> comb_trigger_backing_;
+  // Structured trigger entries with byte-range observation.
+  struct CombTriggerEntry {
+    uint32_t kernel_idx;
+    uint32_t byte_offset;
+    uint32_t byte_size;  // 0 = full-slot
+  };
+  std::vector<CombTriggerEntry> comb_trigger_backing_;
   // Dense per-slot range table into comb_trigger_backing_ (sized from slot
   // registry).
   std::vector<TriggerRange> comb_trigger_map_;
@@ -562,6 +570,10 @@ class Engine {
   // Static connection batch shape (populated once in InitConnectionBatch).
   uint32_t conn_full_slot_count_ = 0;
   uint32_t conn_narrow_count_ = 0;
+
+  // Static comb trigger batch shape (populated once in InitCombKernels).
+  uint32_t comb_full_slot_count_ = 0;
+  uint32_t comb_narrow_count_ = 0;
 };
 
 }  // namespace lyra::runtime

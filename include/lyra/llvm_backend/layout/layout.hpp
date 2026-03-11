@@ -117,12 +117,20 @@ struct ConnectionKernelEntry {
   std::optional<mir::PlaceId> trigger_observed_place;
 };
 
+// Symbolic trigger observation for a comb kernel input slot.
+// Preserves the observed_place from sensitivity analysis for later byte-range
+// resolution in metadata lowering.
+struct CombTrigger {
+  mir::SlotId slot;
+  std::optional<mir::PlaceId> observed_place;
+};
+
 // Entry for a pure combinational process that can be evaluated inline.
 // Unlike connections (memcpy), comb kernels run compiled code but skip
 // the full scheduler overhead (subscriptions, queuing, SuspendRecord).
 struct CombKernelEntry {
   mir::ProcessId process_id;
-  std::vector<mir::SlotId> trigger_slots;  // Read slots (sensitivity list)
+  std::vector<CombTrigger> triggers;
 };
 
 // Index into module-instance parallel arrays (instance_base_byte_offsets,

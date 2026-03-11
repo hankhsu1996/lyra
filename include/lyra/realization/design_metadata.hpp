@@ -49,12 +49,20 @@ struct ScheduledProcessInput {
   uint32_t col = 0;
 };
 
+// Runtime-facing trigger observation for a comb kernel input slot.
+// byte_size == 0 means full-slot (no sub-slot narrowing).
+struct CombTriggerInput {
+  uint32_t slot_id = 0;
+  uint32_t byte_offset = 0;
+  uint32_t byte_size = 0;
+};
+
 // Input facts for a combinational kernel.
 // scheduled_process_index is the canonical index into the process meta table
 // (0-based, counting from the first module process after init processes).
 struct CombKernelInput {
   uint32_t scheduled_process_index = 0;
-  std::vector<uint32_t> trigger_slot_ids;
+  std::vector<CombTriggerInput> triggers;
 };
 
 // Input facts for a loop site.
