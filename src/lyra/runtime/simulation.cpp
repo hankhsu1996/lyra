@@ -79,12 +79,23 @@ void HandleSuspendRecord(
       }
       auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
 
-      // Collect created subscription nodes for late-bound rebinding.
-      std::vector<lyra::runtime::SubscriptionNode*> edge_nodes;
+      // Track created subscription info for late-bound rebinding.
+      // Invariant: created_subs[i] records the dense vector index assigned
+      // to trigger i at creation time. These indices remain stable within
+      // this function because no removals occur between subscription
+      // creation and rebind hookup below.
+      struct CreatedSub {
+        lyra::runtime::SignalId slot_id;
+        lyra::runtime::SubKind kind;
+        uint32_t index;
+      };
       bool has_late_bound =
           suspend->num_late_bound > 0 && suspend->late_bound_ptr != nullptr;
+      std::vector<CreatedSub> created_subs;
       if (has_late_bound) {
-        edge_nodes.resize(suspend->num_triggers, nullptr);
+        created_subs.resize(
+            suspend->num_triggers,
+            CreatedSub{0, lyra::runtime::SubKind::kEdge, UINT32_MAX});
       }
 
       // Pre-scan: build container stride map from late-bound headers.
@@ -102,7 +113,8 @@ void HandleSuspendRecord(
       for (uint32_t i = 0; i < triggers.size(); ++i) {
         const auto& trigger = triggers[i];
         auto edge = static_cast<lyra::common::EdgeKind>(trigger.edge);
-        lyra::runtime::SubscriptionNode* node = nullptr;
+        uint32_t sub_idx = UINT32_MAX;
+        auto sub_kind = lyra::runtime::SubKind::kEdge;
 
         auto cs_it = container_strides.find(i);
         if (cs_it != container_strides.end()) {
@@ -111,23 +123,33 @@ void HandleSuspendRecord(
               (trigger.byte_size == UINT32_MAX)
                   ? -1
                   : static_cast<int64_t>(trigger.byte_offset / cs_it->second);
-          node = eng.SubscribeContainerElement(
+          sub_idx = eng.SubscribeContainerElement(
               handle, resume, trigger.signal_id, edge, sv_index, cs_it->second);
+          sub_kind = lyra::runtime::SubKind::kContainer;
         } else if (trigger.byte_size == UINT32_MAX) {
           // OOB dynamic edge trigger: UINT32_MAX is the codegen sentinel.
           // Create a valid but inactive subscription at bit 0.
-          node =
+          // The engine handles marking it inactive internally now.
+          sub_idx =
               eng.Subscribe(handle, resume, trigger.signal_id, edge, 0, 1, 0);
-          if (node != nullptr) node->is_active = false;
+          sub_kind = (edge == lyra::common::EdgeKind::kAnyChange)
+                         ? lyra::runtime::SubKind::kChange
+                         : lyra::runtime::SubKind::kEdge;
         } else if (trigger.byte_size > 0) {
-          node = eng.Subscribe(
+          sub_idx = eng.Subscribe(
               handle, resume, trigger.signal_id, edge, trigger.byte_offset,
               trigger.byte_size, trigger.bit_index);
+          sub_kind = (edge == lyra::common::EdgeKind::kAnyChange)
+                         ? lyra::runtime::SubKind::kChange
+                         : lyra::runtime::SubKind::kEdge;
         } else {
-          node = eng.Subscribe(handle, resume, trigger.signal_id, edge);
+          sub_idx = eng.Subscribe(handle, resume, trigger.signal_id, edge);
+          sub_kind = (edge == lyra::common::EdgeKind::kAnyChange)
+                         ? lyra::runtime::SubKind::kChange
+                         : lyra::runtime::SubKind::kEdge;
         }
         if (has_late_bound) {
-          edge_nodes[i] = node;
+          created_subs[i] = CreatedSub{trigger.signal_id, sub_kind, sub_idx};
         }
       }
 
@@ -141,11 +163,8 @@ void HandleSuspendRecord(
             std::span(suspend->dep_slots_ptr, suspend->num_dep_slots);
         for (const auto& hdr : headers) {
           if (hdr.trigger_index >= suspend->num_triggers) continue;
-          auto* target = edge_nodes[hdr.trigger_index];
-          if (target == nullptr) continue;
-          // Skip rebind for headers with no dep slots (e.g., container
-          // triggers with local-variable index). These don't need runtime
-          // rebinding since the index can't change while suspended.
+          const auto& target = created_subs[hdr.trigger_index];
+          if (target.index == UINT32_MAX) continue;
           if (hdr.dep_slots_count == 0) continue;
           lyra::runtime::BitTargetMapping mapping{
               .index_base = hdr.index_base,
@@ -155,8 +174,10 @@ void HandleSuspendRecord(
               all_plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
           auto dep_slots =
               all_dep_slots.subspan(hdr.dep_slots_start, hdr.dep_slots_count);
+
           eng.SubscribeRebind(
-              handle, resume, target, plan_ops, mapping, dep_slots);
+              handle, UINT32_MAX, target.slot_id, target.kind, target.index,
+              plan_ops, mapping, dep_slots);
         }
       }
       break;

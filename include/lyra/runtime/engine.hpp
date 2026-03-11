@@ -3,7 +3,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <format>
 #include <map>
 #include <optional>
@@ -89,7 +88,7 @@ class Engine {
 
   ~Engine() = default;
 
-  // Non-copyable/movable due to intrusive node pointers.
+  // Non-copyable/movable due to internal subscription storage.
   Engine(const Engine&) = delete;
   auto operator=(const Engine&) -> Engine& = delete;
   Engine(Engine&&) = delete;
@@ -107,30 +106,39 @@ class Engine {
 
   // Subscribe to signal edge. Process resumes when signal changes.
   // Called by interpreter/codegen when process hits a Wait terminator.
-  // Returns the created SubscriptionNode, or nullptr if subscription failed.
+  // Returns the index of the created subscription in the slot's typed vector,
+  // or UINT32_MAX if subscription failed.
   auto Subscribe(
       ProcessHandle handle, ResumePoint resume, SignalId signal,
-      common::EdgeKind edge) -> SubscriptionNode*;
+      common::EdgeKind edge) -> uint32_t;
 
   // Subscribe with explicit observation byte range within the slot.
-  // Returns the created SubscriptionNode, or nullptr if subscription failed.
+  // Returns the index of the created subscription in the slot's typed vector,
+  // or UINT32_MAX if subscription failed.
   auto Subscribe(
       ProcessHandle handle, ResumePoint resume, SignalId signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
-      uint8_t bit_index = 0) -> SubscriptionNode*;
+      uint8_t bit_index = 0) -> uint32_t;
 
   // Subscribe to a container (dynamic array/queue) element edge trigger.
   // Chases the handle from DesignState, validates magic, performs OOB check.
   auto SubscribeContainerElement(
       ProcessHandle handle, ResumePoint resume, SignalId signal,
       common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride)
-      -> SubscriptionNode*;
+      -> uint32_t;
 
   // Create rebind subscriptions for a late-bound edge trigger. For each dep
   // slot, an AnyChange rebind node is created. When any dep changes, the plan
-  // is re-evaluated and the edge target's byte_offset/bit_index are updated.
+  // is re-evaluated and the edge target's observation position is updated.
+  // edge_target_id identifies the target in edge_target_table_.
+  // target_kind must be kEdge or kContainer (kChange not supported).
+  //
+  // Atomicity: either all dep_slot watchers are installed, or none are.
+  // Pre-validates capacity for all watchers before mutating any state.
+  // Validates target_slot and target_index against current dense storage.
   void SubscribeRebind(
-      ProcessHandle handle, ResumePoint resume, SubscriptionNode* target_node,
+      ProcessHandle handle, uint32_t edge_target_id, SignalId target_slot,
+      SubKind target_kind, uint32_t target_index,
       std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
       std::span<const uint32_t> dep_slots);
 
@@ -213,7 +221,7 @@ class Engine {
 
   // One-time init for slot metadata registry. Must be called exactly once,
   // before InitConnectionBatch/InitCombKernels (which size from this registry).
-  // Sizes signal_waiters_ to the authoritative slot count.
+  // Sizes signal_subs_ to the authoritative slot count.
   void InitSlotMeta(SlotMetaRegistry&& registry) {
     if (slot_meta_registry_.IsPopulated()) {
       throw common::InternalError(
@@ -225,7 +233,7 @@ class Engine {
       sizes.push_back(registry.Get(i).total_bytes);
     }
     update_set_.Init(registry.Size(), sizes);
-    signal_waiters_.resize(registry.Size());
+    signal_subs_.resize(registry.Size());
     slot_meta_registry_ = std::move(registry);
   }
 
@@ -408,8 +416,26 @@ class Engine {
   void InvalidateInstalledWait(ProcessHandle handle);
   void ResetInstalledWait(ProcessHandle handle);
   void ClearProcessSubscriptions(ProcessHandle handle);
-  auto AllocNode() -> SubscriptionNode*;
-  void FreeNode(SubscriptionNode* node);
+
+  // Typed cold pool management.
+  auto AllocEdgeCold() -> uint32_t;
+  void FreeEdgeCold(uint32_t idx);
+  auto AllocChangeCold() -> uint32_t;
+  void FreeChangeCold(uint32_t idx);
+  auto AllocWatcherCold() -> uint32_t;
+  void FreeWatcherCold(uint32_t idx);
+  auto AllocContainerCold() -> uint32_t;
+  void FreeContainerCold(uint32_t idx);
+
+  // Edge target table management.
+  auto AllocEdgeTarget(EdgeTargetHandle handle) -> uint32_t;
+  void FreeEdgeTarget(uint32_t id);
+
+  // Typed swap-and-pop removal from dense vectors.
+  void RemoveEdgeSub(uint32_t slot_id, uint32_t index);
+  void RemoveChangeSub(uint32_t slot_id, uint32_t index);
+  void RemoveRebindWatcherSub(uint32_t slot_id, uint32_t index);
+  void RemoveContainerSub(uint32_t slot_id, uint32_t index);
 
   // Persistent wait-site installation
   void InstallWaitSite(
@@ -418,7 +444,11 @@ class Engine {
   void RefreshInstalledSnapshots(ProcessHandle handle);
 
   // Late-bound rebinding: re-read index value, recompute edge target.
-  void RebindSubscription(SubscriptionNode* rebind_node);
+  void RebindSubscription(uint32_t edge_target_id);
+
+  // Container flush helper.
+  void FlushContainerSub(
+      ContainerSub& sub, std::span<const uint8_t> design_state);
 
   // Resource limit checking
   auto CheckSubscriptionLimits(const ProcessState& proc_state) -> bool;
@@ -451,12 +481,24 @@ class Engine {
   // NBA queue: deferred writes committed in ExecuteRegion(kNBA)
   std::vector<NbaEntry> nba_queue_;
 
-  // Dense signal waiter table (indexed by slot_id, sized in InitSlotMeta).
-  std::vector<SignalWaiters> signal_waiters_;
+  // Dense per-slot subscription storage (indexed by slot_id, sized in
+  // InitSlotMeta). Four typed vectors per slot for branch-free flush scans.
+  std::vector<SlotSubscriptions> signal_subs_;
 
-  // Node pool: deque owns memory (stable pointers), free_list_ tracks reusable
-  std::deque<SubscriptionNode> node_pool_;
-  std::vector<SubscriptionNode*> free_list_;
+  // Typed cold pools: each sub kind has its own cold storage.
+  std::vector<EdgeTargetCold> edge_cold_pool_;
+  std::vector<uint32_t> edge_cold_free_list_;
+  std::vector<ChangeSnapshotCold> change_cold_pool_;
+  std::vector<uint32_t> change_cold_free_list_;
+  std::vector<WatcherCold> watcher_cold_pool_;
+  std::vector<uint32_t> watcher_cold_free_list_;
+  std::vector<ContainerCold> container_cold_pool_;
+  std::vector<uint32_t> container_cold_free_list_;
+
+  // Edge target table: stable indirection for rebind targets.
+  // Indexed by edge_target_id, updated on swap-and-pop of the target.
+  std::vector<EdgeTargetHandle> edge_target_table_;
+  std::vector<uint32_t> edge_target_free_list_;
 
   // Resource limits (0 = unlimited)
   size_t live_subscription_count_ = 0;
