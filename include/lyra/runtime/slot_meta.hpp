@@ -61,9 +61,15 @@ class SlotMetaRegistry {
     return slots_[slot_id];
   }
 
-  [[nodiscard]] auto Size() const -> uint32_t;
-  [[nodiscard]] auto IsPopulated() const -> bool;
-  [[nodiscard]] auto MaxExtent() const -> uint32_t;
+  [[nodiscard]] auto Size() const -> uint32_t {
+    return static_cast<uint32_t>(slots_.size());
+  }
+  [[nodiscard]] auto IsPopulated() const -> bool {
+    return !slots_.empty();
+  }
+  [[nodiscard]] auto MaxExtent() const -> uint32_t {
+    return max_extent_;
+  }
 
   // Machine-stable dump to WriteOutput. Includes version and count header.
   // Called right after registry construction, before simulation runs.

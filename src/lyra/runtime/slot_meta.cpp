@@ -114,18 +114,6 @@ void SlotMetaRegistry::ThrowOutOfRange(uint32_t slot_id) const {
       std::format("slot_id {} out of range (size {})", slot_id, slots_.size()));
 }
 
-auto SlotMetaRegistry::Size() const -> uint32_t {
-  return static_cast<uint32_t>(slots_.size());
-}
-
-auto SlotMetaRegistry::MaxExtent() const -> uint32_t {
-  return max_extent_;
-}
-
-auto SlotMetaRegistry::IsPopulated() const -> bool {
-  return !slots_.empty();
-}
-
 void SlotMetaRegistry::DumpSummary() const {
   WriteOutput(
       std::format(

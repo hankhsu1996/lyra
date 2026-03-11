@@ -914,12 +914,17 @@ void Engine::FlushSignalUpdates() {
   }
 
   // Pass 2: Edge/wake phase -- existing logic, with is_active check.
+  const bool has_external = update_set_.HasExternalRanges();
+
   for (uint32_t slot_id : newly_dirty) {
     const auto& sw = signal_waiters_[slot_id];
     if (sw.head == nullptr) continue;
 
     const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
-    const auto& external_ranges = update_set_.DeltaExternalRangesFor(slot_id);
+    static const common::RangeSet kEmptyRangeSet;
+    const auto& external_ranges =
+        has_external ? update_set_.DeltaExternalRangesFor(slot_id)
+                     : kEmptyRangeSet;
     const auto& meta = slot_meta_registry_.Get(slot_id);
 
     for (auto* node = sw.head; node != nullptr;) {

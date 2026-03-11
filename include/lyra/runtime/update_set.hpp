@@ -100,6 +100,11 @@ class UpdateSet {
   // Called at end of time slot (by FlushDirtySlots). Resets everything.
   void Clear();
 
+  // Check if any external ranges have been recorded this delta.
+  [[nodiscard]] auto HasExternalRanges() const -> bool {
+    return !delta_external_ranges_.empty();
+  }
+
   // Check if any slots are dirty (time-slot level).
   [[nodiscard]] auto IsEmpty() const -> bool {
     return dirty_list_.empty();
