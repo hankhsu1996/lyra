@@ -67,6 +67,12 @@ struct LlvmPreparationResult {
   // Compiler observability output (e.g., specialization map dump).
   // Separate from simulation output; routed to TestResult::compiler_output.
   std::string compiler_output;
+
+  // Frontend phase timings (seconds).
+  double parse_seconds = 0.0;
+  double hir_lower_seconds = 0.0;
+  double mir_lower_seconds = 0.0;
+  double llvm_lower_seconds = 0.0;
 };
 
 // Prepare LLVM IR from test case.

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <expected>
@@ -162,12 +163,18 @@ auto RunSubprocess(
   std::array<int, 2> stdout_pipe{};
   std::array<int, 2> stderr_pipe{};
   if (pipe(stdout_pipe.data()) != 0) {
-    return {.exit_code = -1, .stderr_text = "failed to create stdout pipe"};
+    return {
+        .exit_code = -1,
+        .stdout_text = {},
+        .stderr_text = "failed to create stdout pipe"};
   }
   if (pipe(stderr_pipe.data()) != 0) {
     close(stdout_pipe[0]);
     close(stdout_pipe[1]);
-    return {.exit_code = -1, .stderr_text = "failed to create stderr pipe"};
+    return {
+        .exit_code = -1,
+        .stdout_text = {},
+        .stderr_text = "failed to create stderr pipe"};
   }
 
   posix_spawn_file_actions_t actions{};
@@ -242,6 +249,7 @@ auto RunSubprocess(
     close(stderr_pipe[0]);
     return {
         .exit_code = -1,
+        .stdout_text = {},
         .stderr_text = std::format(
             "posix_spawnp failed: {}", std::strerror(spawn_result))};
   }
@@ -280,7 +288,8 @@ auto RunSubprocess(
 
   int status = 0;
   if (waitpid(pid, &status, 0) == -1) {
-    return {.exit_code = -1, .stderr_text = "waitpid failed"};
+    return {
+        .exit_code = -1, .stdout_text = {}, .stderr_text = "waitpid failed"};
   }
 
   int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
@@ -293,13 +302,19 @@ auto RunSubprocess(
 auto PrepareLlvmModule(
     const TestCase& test_case, const std::filesystem::path& work_directory,
     bool force_two_state) -> std::expected<LlvmPreparationResult, std::string> {
+  using Clock = std::chrono::steady_clock;
+
   // Parse test case using slang
+  auto t_parse = Clock::now();
   auto parse_result = ParseTestCase(test_case, work_directory);
   if (!parse_result.Success()) {
     return std::unexpected(parse_result.error_message);
   }
+  double parse_seconds =
+      std::chrono::duration<double>(Clock::now() - t_parse).count();
 
   // Lower AST to HIR
+  auto t_hir = Clock::now();
   DiagnosticSink sink;
   auto hir_result =
       lowering::ast_to_hir::LowerAstToHir(*parse_result.compilation, sink);
@@ -316,6 +331,9 @@ auto PrepareLlvmModule(
     return std::unexpected("HIR lowering errors:\n" + error_stream.str());
   }
 
+  double hir_lower_seconds =
+      std::chrono::duration<double>(Clock::now() - t_hir).count();
+
   // Build specialization map dump (routed to TestResult::compiler_output)
   std::string compiler_output;
   if (test_case.dump_specialization_map) {
@@ -331,6 +349,7 @@ auto PrepareLlvmModule(
   }
 
   // Lower HIR to MIR
+  auto t_mir = Clock::now();
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
       .hir_arena = hir_result.hir_arena.get(),
@@ -353,6 +372,9 @@ auto PrepareLlvmModule(
   realization::AssembleBindings(
       std::move(mir_result->compiled_bindings), *mir_result->mir_arena,
       mir_result->design);
+
+  double mir_lower_seconds =
+      std::chrono::duration<double>(Clock::now() - t_mir).count();
 
   // Find the top module (first module in elaboration order) and calculate base
   // slot ID. Slot ordering: packages first, then all modules' variables in
@@ -389,6 +411,7 @@ auto PrepareLlvmModule(
   auto diag_ctx = std::make_unique<lowering::DiagnosticContext>(*origin_lookup);
 
   // Lower MIR to LLVM IR
+  auto t_llvm = Clock::now();
   // Use work_directory for file I/O tests, otherwise fall back to CWD
   auto fs_base_dir =
       work_directory.empty()
@@ -434,6 +457,9 @@ auto PrepareLlvmModule(
         std::format("LLVM lowering error: {}", diag.primary.message));
   }
 
+  double llvm_lower_seconds =
+      std::chrono::duration<double>(Clock::now() - t_llvm).count();
+
   return LlvmPreparationResult{
       .hir_result = std::move(hir_result),
       .mir_result = std::move(*mir_result),
@@ -441,6 +467,10 @@ auto PrepareLlvmModule(
       .diag_ctx = std::move(diag_ctx),
       .llvm_result = std::move(*llvm_result),
       .compiler_output = std::move(compiler_output),
+      .parse_seconds = parse_seconds,
+      .hir_lower_seconds = hir_lower_seconds,
+      .mir_lower_seconds = mir_lower_seconds,
+      .llvm_lower_seconds = llvm_lower_seconds,
   };
 }
 

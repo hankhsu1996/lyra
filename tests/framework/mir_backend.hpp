@@ -2,8 +2,8 @@
 
 #include <filesystem>
 
-#include "tests/framework/jit_backend.hpp"
 #include "tests/framework/test_case.hpp"
+#include "tests/framework/test_result.hpp"
 
 namespace lyra::test {
 

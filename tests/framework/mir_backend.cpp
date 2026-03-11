@@ -1,5 +1,6 @@
 #include "tests/framework/mir_backend.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -33,9 +34,9 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/simulation.hpp"
-#include "tests/framework/jit_backend.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
+#include "tests/framework/timing_collector.hpp"
 
 namespace lyra::test {
 namespace {
@@ -142,19 +143,28 @@ auto ExtractNumericValue(const mir::interp::RuntimeValue& value)
 auto RunMirInterpreter(
     const TestCase& test_case, const std::filesystem::path& work_directory)
     -> TestResult {
+  using Clock = std::chrono::steady_clock;
+  auto t_total = Clock::now();
   TestResult result;
 
   // Parse test case using slang
+  auto t_parse = Clock::now();
   auto parse_result = ParseTestCase(test_case, work_directory);
   if (!parse_result.Success()) {
     result.error_message = parse_result.error_message;
     return result;
   }
+  result.timings.parse =
+      std::chrono::duration<double>(Clock::now() - t_parse).count();
 
   // Lower AST to HIR
+  auto t_hir = Clock::now();
   DiagnosticSink sink;
   auto hir_result =
       lowering::ast_to_hir::LowerAstToHir(*parse_result.compilation, sink);
+
+  result.timings.hir_lower =
+      std::chrono::duration<double>(Clock::now() - t_hir).count();
 
   if (sink.HasErrors()) {
     std::ostringstream error_stream;
@@ -170,6 +180,7 @@ auto RunMirInterpreter(
   }
 
   // Lower HIR to MIR
+  auto t_mir = Clock::now();
   lowering::hir_to_mir::LoweringInput mir_input{
       .design = &hir_result.design,
       .hir_arena = hir_result.hir_arena.get(),
@@ -183,11 +194,16 @@ auto RunMirInterpreter(
       .specialization_map = &hir_result.specialization_map,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  result.timings.mir_lower =
+      std::chrono::duration<double>(Clock::now() - t_mir).count();
   if (!mir_result) {
     result.error_message = std::format(
         "MIR lowering error: {}", mir_result.error().primary.message);
     return result;
   }
+
+  // Backend setup: realization, interpreter init, process state creation.
+  auto t_backend = Clock::now();
 
   // Realization: attach compiled bindings to design.
   realization::AssembleBindings(
@@ -372,7 +388,11 @@ auto RunMirInterpreter(
     process_states.emplace(handle, std::move(state));
   }
 
+  result.timings.backend =
+      std::chrono::duration<double>(Clock::now() - t_backend).count();
+
   // Run with Engine-based scheduler for proper delay handling
+  auto t_exec = Clock::now();
   // OutputSinkScope captures trace summary output from PrintSummary (which uses
   // WriteOutput). Interpreter $display goes to output_stream directly.
   std::string trace_output;
@@ -419,6 +439,9 @@ auto RunMirInterpreter(
     return result;
   }
 
+  result.timings.execute =
+      std::chrono::duration<double>(Clock::now() - t_exec).count();
+
   result.success = true;
   result.captured_output = output_stream.str() + trace_output;
   result.mutation_events = std::move(mutation_events);
@@ -440,6 +463,13 @@ auto RunMirInterpreter(
       return result;
     }
     result.variables[name] = *extracted;
+  }
+
+  result.timings.total =
+      std::chrono::duration<double>(Clock::now() - t_total).count();
+
+  if (IsTimingEnabled()) {
+    GetTimingCollector().Record(test_case.name, result.timings);
   }
 
   return result;

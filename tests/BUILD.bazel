@@ -91,6 +91,42 @@ cc_test(
     ],
 )
 
+# JIT sharded targets for parallel CI
+[cc_test(
+    name = "jit_dev_tests_shard%d" % i,
+    srcs = ["main.cpp"],
+    args = [
+        "--suite=jit_dev",
+        "--shard_count=4",
+        "--shard_index=%d" % i,
+    ],
+    data = [
+        "suites.yaml",
+    ] + glob(["sv_features/**/*.yaml"]),
+    deps = [
+        ":test_framework",
+        "@googletest//:gtest",
+    ],
+) for i in range(4)]
+
+# JIT two-state sharded targets for parallel CI
+[cc_test(
+    name = "jit_two_state_tests_shard%d" % i,
+    srcs = ["main.cpp"],
+    args = [
+        "--suite=jit_two_state",
+        "--shard_count=4",
+        "--shard_index=%d" % i,
+    ],
+    data = [
+        "suites.yaml",
+    ] + glob(["sv_features/**/*.yaml"]),
+    deps = [
+        ":test_framework",
+        "@googletest//:gtest",
+    ],
+) for i in range(4)]
+
 # AOT sharded targets for parallel CI on main
 [cc_test(
     name = "aot_dev_tests_shard%d" % i,

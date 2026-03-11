@@ -329,8 +329,9 @@ struct CompileResult {
 auto CompileJitImpl(
     LoweringResult& result,
     const std::optional<std::filesystem::path>& runtime_path,
-    OptLevel opt_level, bool emit_progress)
+    const JitCompileOptions& options)
     -> std::expected<CompileResult, std::string> {
+  bool profiling = options.enable_profiling || options.emit_progress;
   JitCompileTimings timings;
 
   // Sub-phase 1: create_jit
@@ -343,7 +344,7 @@ auto CompileJitImpl(
         std::format(
             "failed to detect host: {}", llvm::toString(jtmb.takeError())));
   }
-  jtmb->setCodeGenOptLevel(ToCodeGenOpt(opt_level));
+  jtmb->setCodeGenOptLevel(ToCodeGenOpt(options.opt_level));
   auto jit = llvm::orc::LLJITBuilder()
                  .setJITTargetMachineBuilder(std::move(*jtmb))
                  .create();
@@ -400,29 +401,30 @@ auto CompileJitImpl(
   }
   timings.load_runtime = ElapsedSeconds(t1);
 
-  // Detect linker backend and install profiling plugin.
-  LinkProgress progress;
-  if (auto* oll = llvm::dyn_cast<llvm::orc::ObjectLinkingLayer>(
-          &(*jit)->getObjLinkingLayer())) {
-    progress.linker_backend = "JITLink";
-    oll->addPlugin(std::make_unique<ProfilingPlugin>(&progress));
-  } else {
-    progress.linker_backend = "RTDyld";
-  }
+  // Install profiling instrumentation when enabled.
+  std::optional<LinkProgress> progress;
+  if (profiling) {
+    progress.emplace();
+    if (auto* oll = llvm::dyn_cast<llvm::orc::ObjectLinkingLayer>(
+            &(*jit)->getObjLinkingLayer())) {
+      progress->linker_backend = "JITLink";
+      oll->addPlugin(std::make_unique<ProfilingPlugin>(&*progress));
+    } else {
+      progress->linker_backend = "RTDyld";
+    }
 
-  // Install object transform to measure codegen->link boundary.
-  // The transform fires after IR compilation produces an object buffer
-  // but before JITLink/RTDyld processes it.
-  (*jit)->getObjTransformLayer().setTransform(
-      [&progress](std::unique_ptr<llvm::MemoryBuffer> buf)
-          -> llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>> {
-        std::lock_guard lock(progress.mutex);
-        progress.object_count++;
-        progress.total_object_bytes +=
-            static_cast<int64_t>(buf->getBufferSize());
-        progress.codegen_end = Clock::now();
-        return buf;
-      });
+    // Object transform measures codegen->link boundary.
+    (*jit)->getObjTransformLayer().setTransform(
+        [&progress](std::unique_ptr<llvm::MemoryBuffer> buf)
+            -> llvm::Expected<std::unique_ptr<llvm::MemoryBuffer>> {
+          std::lock_guard lock(progress->mutex);
+          progress->object_count++;
+          progress->total_object_bytes +=
+              static_cast<int64_t>(buf->getBufferSize());
+          progress->codegen_end = Clock::now();
+          return buf;
+        });
+  }
 
   // Sub-phase 3: add_ir
   auto t2 = Clock::now();
@@ -436,16 +438,20 @@ auto CompileJitImpl(
   timings.add_ir = ElapsedSeconds(t2);
 
   // Sub-phase 4: lookup_main (triggers full JIT compilation + linking)
-  progress.lookup_start = Clock::now();
+  if (progress) {
+    progress->lookup_start = Clock::now();
+  }
 
   std::optional<std::thread> watchdog;
-  if (emit_progress) {
-    watchdog.emplace([&progress] { PrintLinkProgress(progress); });
+  if (options.emit_progress && progress) {
+    watchdog.emplace([&progress] { PrintLinkProgress(*progress); });
   }
 
   auto main_sym = (*jit)->lookup("main");
 
-  progress.stop.store(true, std::memory_order_relaxed);
+  if (progress) {
+    progress->stop.store(true, std::memory_order_relaxed);
+  }
   if (watchdog) watchdog->join();
 
   if (!main_sym) {
@@ -455,56 +461,59 @@ auto CompileJitImpl(
             llvm::toString(main_sym.takeError())));
   }
 
-  // Compute timings from progress (single-threaded after join, no lock).
+  // Compute timings from profiling data (single-threaded after join, no lock).
   auto lookup_end = Clock::now();
-  timings.lookup_main =
-      std::chrono::duration<double>(lookup_end - progress.lookup_start).count();
-  if (progress.object_count > 0) {
-    timings.codegen = std::chrono::duration<double>(
-                          progress.codegen_end - progress.lookup_start)
-                          .count();
-    timings.linking = timings.lookup_main - timings.codegen;
-  }
+  JitOrcStats orc_stats;
 
-  if (progress.fixup_done != Clock::time_point{}) {
-    timings.link_graph = std::chrono::duration<double>(
-                             progress.graph_ready - progress.codegen_end)
-                             .count();
-    timings.link_alloc = std::chrono::duration<double>(
-                             progress.alloc_done - progress.graph_ready)
-                             .count();
-    timings.link_fixup =
-        std::chrono::duration<double>(progress.fixup_done - progress.alloc_done)
+  if (progress) {
+    timings.lookup_main =
+        std::chrono::duration<double>(lookup_end - progress->lookup_start)
             .count();
-    timings.link_finalize =
-        std::chrono::duration<double>(lookup_end - progress.fixup_done).count();
-
-    // Break down link_finalize into permission application vs overhead.
-    // notifyEmitted fires after finalization (mprotect) completes but before
-    // lookup returns. This gives us: fixup_done -> emitted (perm) and
-    // emitted -> lookup_end (symbol registration / overhead).
-    if (progress.emitted != Clock::time_point{}) {
-      timings.finalize_perm =
-          std::chrono::duration<double>(progress.emitted - progress.fixup_done)
-              .count();
-      timings.finalize_overhead =
-          std::chrono::duration<double>(lookup_end - progress.emitted).count();
+    if (progress->object_count > 0) {
+      timings.codegen = std::chrono::duration<double>(
+                            progress->codegen_end - progress->lookup_start)
+                            .count();
+      timings.linking = timings.lookup_main - timings.codegen;
     }
 
-    timings.has_link_detail = true;
-  }
-  timings.complete = true;
+    if (progress->fixup_done != Clock::time_point{}) {
+      timings.link_graph = std::chrono::duration<double>(
+                               progress->graph_ready - progress->codegen_end)
+                               .count();
+      timings.link_alloc = std::chrono::duration<double>(
+                               progress->alloc_done - progress->graph_ready)
+                               .count();
+      timings.link_fixup = std::chrono::duration<double>(
+                               progress->fixup_done - progress->alloc_done)
+                               .count();
+      timings.link_finalize =
+          std::chrono::duration<double>(lookup_end - progress->fixup_done)
+              .count();
 
-  JitOrcStats orc_stats;
-  orc_stats.linker_backend = std::move(progress.linker_backend);
-  orc_stats.object_count = progress.object_count;
-  orc_stats.total_object_bytes = progress.total_object_bytes;
-  orc_stats.relocation_count = progress.relocation_count;
-  orc_stats.symbol_count = progress.symbol_count;
-  orc_stats.section_count = progress.section_count;
-  orc_stats.block_count = progress.block_count;
-  orc_stats.finalize_segments = progress.finalize_segments;
-  orc_stats.finalize_bytes = progress.finalize_bytes;
+      if (progress->emitted != Clock::time_point{}) {
+        timings.finalize_perm = std::chrono::duration<double>(
+                                    progress->emitted - progress->fixup_done)
+                                    .count();
+        timings.finalize_overhead =
+            std::chrono::duration<double>(lookup_end - progress->emitted)
+                .count();
+      }
+
+      timings.has_link_detail = true;
+    }
+
+    orc_stats.linker_backend = std::move(progress->linker_backend);
+    orc_stats.object_count = progress->object_count;
+    orc_stats.total_object_bytes = progress->total_object_bytes;
+    orc_stats.relocation_count = progress->relocation_count;
+    orc_stats.symbol_count = progress->symbol_count;
+    orc_stats.section_count = progress->section_count;
+    orc_stats.block_count = progress->block_count;
+    orc_stats.finalize_segments = progress->finalize_segments;
+    orc_stats.finalize_bytes = progress->finalize_bytes;
+  }
+
+  timings.complete = true;
 
   return CompileResult{
       .jit = std::move(*jit),
@@ -518,9 +527,9 @@ auto CompileJitImpl(
 
 auto CompileJit(
     LoweringResult& result, const std::filesystem::path& runtime_path,
-    OptLevel opt_level, bool emit_progress)
+    const JitCompileOptions& options)
     -> std::expected<JitSession, std::string> {
-  auto cr = CompileJitImpl(result, runtime_path, opt_level, emit_progress);
+  auto cr = CompileJitImpl(result, runtime_path, options);
   if (!cr) return std::unexpected(cr.error());
   JitSession session;
   session.impl_ = std::make_unique<JitSession::Impl>();
@@ -532,9 +541,9 @@ auto CompileJit(
 }
 
 auto CompileJitInProcess(
-    LoweringResult& result, OptLevel opt_level, bool emit_progress)
+    LoweringResult& result, const JitCompileOptions& options)
     -> std::expected<JitSession, std::string> {
-  auto cr = CompileJitImpl(result, std::nullopt, opt_level, emit_progress);
+  auto cr = CompileJitImpl(result, std::nullopt, options);
   if (!cr) return std::unexpected(cr.error());
   JitSession session;
   session.impl_ = std::make_unique<JitSession::Impl>();
@@ -547,15 +556,16 @@ auto CompileJitInProcess(
 
 auto ExecuteWithOrcJit(
     LoweringResult& result, const std::filesystem::path& runtime_path,
-    OptLevel opt_level) -> std::expected<int, std::string> {
-  auto session = CompileJit(result, runtime_path, opt_level);
+    const JitCompileOptions& options) -> std::expected<int, std::string> {
+  auto session = CompileJit(result, runtime_path, options);
   if (!session) return std::unexpected(session.error());
   return session->Run();
 }
 
-auto ExecuteWithOrcJitInProcess(LoweringResult& result, OptLevel opt_level)
+auto ExecuteWithOrcJitInProcess(
+    LoweringResult& result, const JitCompileOptions& options)
     -> std::expected<int, std::string> {
-  auto session = CompileJitInProcess(result, opt_level);
+  auto session = CompileJitInProcess(result, options);
   if (!session) return std::unexpected(session.error());
   return session->Run();
 }

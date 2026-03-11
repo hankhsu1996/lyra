@@ -19,11 +19,14 @@ struct WriteTarget;
 // Pointers to packed storage planes for direct word-level access.
 // Used for runtime helpers that write directly to storage.
 struct PackedPlanesPtr {
-  llvm::Value* root_ptr = nullptr;  // Original storage pointer (for notify)
-  llvm::Value* val_ptr = nullptr;   // Pointer to value plane (opaque ptr)
-  llvm::Value* unk_ptr =
-      nullptr;  // Pointer to unknown plane (null for 2-state)
-  std::optional<SignalIdExpr> signal_id;  // For design-slot notification
+  // Original storage pointer (for notify)
+  llvm::Value* root_ptr = nullptr;
+  // Pointer to value plane (opaque ptr)
+  llvm::Value* val_ptr = nullptr;
+  // Pointer to unknown plane (null for 2-state)
+  llvm::Value* unk_ptr = nullptr;
+  // For design-slot notification
+  std::optional<SignalIdExpr> signal_id;
 };
 
 // Store raw value to target place with type-appropriate handling.
