@@ -4,9 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
-#include <string>
 #include <unordered_map>
-#include <variant>
 #include <vector>
 
 #include <llvm/IR/DataLayout.h>
@@ -127,28 +125,8 @@ struct CombKernelEntry {
   std::vector<mir::SlotId> trigger_slots;  // Read slots (sensitivity list)
 };
 
-// Identifies a module variant: a set of module instances whose processes are
-// ALL structurally identical (same template assignments for every local process
-// index). Assigned by BuildModuleVariants after template analysis.
-struct ModuleVariantId {
-  uint32_t value;
-  static constexpr uint32_t kNone = UINT32_MAX;
-  auto operator==(const ModuleVariantId&) const -> bool = default;
-};
-
-// Index into Layout::process_templates.
-struct TemplateId {
-  uint32_t value = UINT32_MAX;
-  static constexpr uint32_t kNone = UINT32_MAX;
-  auto operator==(const TemplateId&) const -> bool = default;
-  auto operator<=>(const TemplateId&) const = default;
-  explicit operator bool() const {
-    return value != kNone;
-  }
-};
-
-// Index into module-instance parallel arrays (instance_variant_ids,
-// instance_base_byte_offsets, placement.instances, etc.).
+// Index into module-instance parallel arrays (instance_base_byte_offsets,
+// placement.instances, etc.).
 struct ModuleIndex {
   uint32_t value = UINT32_MAX;
   static constexpr uint32_t kNone = UINT32_MAX;
@@ -159,65 +137,6 @@ struct ModuleIndex {
   }
 };
 
-// Index within a module's local process list.
-struct LocalProcIndex {
-  uint32_t value = UINT32_MAX;
-  static constexpr uint32_t kNone = UINT32_MAX;
-  auto operator==(const LocalProcIndex&) const -> bool = default;
-  auto operator<=>(const LocalProcIndex&) const = default;
-  explicit operator bool() const {
-    return value != kNone;
-  }
-};
-
-// Index into Layout::scheduled_processes / Layout::processes (parallel).
-struct LayoutProcessIndex {
-  uint32_t value = UINT32_MAX;
-  static constexpr uint32_t kNone = UINT32_MAX;
-  auto operator==(const LayoutProcessIndex&) const -> bool = default;
-  auto operator<=>(const LayoutProcessIndex&) const = default;
-  explicit operator bool() const {
-    return value != kNone;
-  }
-};
-
-// A deduped template function: one per fingerprint group across all instances.
-// Does NOT reference a specific variant (a template can span multiple
-// variants).
-struct ProcessTemplate {
-  mir::ProcessId template_process;           // Representative MIR process
-  LayoutProcessIndex template_layout_index;  // Index into layout.processes
-  std::string func_name;                     // proc_template_{idx}_{fp:x}
-  uint32_t template_base_slot_id;            // Representative's slot_begin
-  ModuleIndex representative_module_idx;     // For accessing module layout
-};
-
-// The "class object" for a module variant: owns slot layout and routes
-// processes to deduped template functions.
-struct ModuleVariant {
-  // Per local_proc_idx: index into process_templates, or nullopt (standalone).
-  std::vector<std::optional<TemplateId>> proc_template_ids;
-  // Slot layout for this_ptr + rel_offset addressing.
-  // Indexed by (slot_id - base_slot_id). Sized to slot_count.
-  std::vector<uint64_t> rel_byte_offsets;
-};
-
-// Lightweight membership index: "is this process templated?"
-// Routing goes through ModuleVariant::proc_template_ids[local_proc_idx].
-struct ProcessMembership {
-  LocalProcIndex local_proc_idx;  // Position in module's process list
-  ModuleIndex module_idx;         // Which module instance owns this process
-};
-
-// Routing result: how a process should be emitted.
-struct StandaloneRoute {};
-struct TemplatedRoute {
-  TemplateId template_id;
-  ModuleIndex module_idx;
-  LocalProcIndex local_proc_idx;
-};
-using ProcessRoute = std::variant<StandaloneRoute, TemplatedRoute>;
-
 // Scheduled process record: pairs a ProcessId with optional module instance.
 // Module-owned processes have a valid module_index; design-level processes
 // (init, connection) have ModuleIndex::kNone -- they are not bound to any
@@ -227,8 +146,9 @@ struct ScheduledProcess {
   ModuleIndex module_index;
 };
 
-// Transitional full backend layout product.
-// Includes DesignLayout (design-wide state) plus process/template routing data.
+// Full backend layout product.
+// Includes DesignLayout (design-wide state) plus process layout and
+// body-owned specialization addressing.
 // Downstream consumer of BuildDesignLayout; constructed by BuildLayout.
 struct Layout {
   DesignLayout design;
@@ -249,34 +169,26 @@ struct Layout {
   // SuspendRecord type (opaque blob matching C++ struct size)
   llvm::StructType* suspend_record_type = nullptr;
 
-  // Deduped template functions (one per fingerprint group).
-  std::vector<ProcessTemplate> process_templates;
-
-  // Canonical routing entrypoint: how should this process be emitted?
-  auto RouteProcess(LayoutProcessIndex idx) const -> ProcessRoute;
   // Canonical offset accessor: byte offset of instance's slot base.
   auto GetInstanceBaseByteOffset(ModuleIndex idx) const -> uint64_t;
-  // Variant lookup by module instance index.
-  auto GetInstanceVariant(ModuleIndex idx) const -> const ModuleVariant&;
-  // Variant ID lookup by module instance index.
-  auto GetInstanceVariantId(ModuleIndex idx) const -> ModuleVariantId;
+  // Body-owned relative byte offsets: indexed by body_id, contains
+  // per-slot relative offsets within the instance's slot region.
+  auto GetBodyRelByteOffsets(mir::ModuleBodyId body_id) const
+      -> const std::vector<uint64_t>&;
 
  private:
-  friend void BuildModuleVariants(
-      Layout& layout, const mir::Design& design, const mir::Arena& arena,
-      const TypeArena& types, const llvm::DataLayout& dl);
+  friend auto BuildLayout(
+      const mir::Design& design, const mir::Arena& arena,
+      const TypeArena& types, DesignLayout design_layout,
+      llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
+      -> Layout;
 
-  // Module variants (one per unique template assignment pattern).
-  std::vector<ModuleVariant> variants;
-  // Parallel to scheduled_processes[num_init_processes..], nullopt =
-  // standalone.
-  std::vector<std::optional<ProcessMembership>> process_membership;
   // Pre-computed byte offset of each instance's slot base in DesignState.
-  // Parallel to instance_variant_ids. Access via GetInstanceBaseByteOffset.
+  // Parallel to placement.instances. Access via GetInstanceBaseByteOffset.
   std::vector<uint64_t> instance_base_byte_offsets;
-  // Per-instance module variant ID (parallel to module elements in
-  // design.elements). Access via GetInstanceVariantId / GetInstanceVariant.
-  std::vector<ModuleVariantId> instance_variant_ids;
+  // Body-owned relative byte offsets, indexed by body_id.value.
+  // Each entry contains per-slot relative offsets for that body's slot layout.
+  std::vector<std::vector<uint64_t>> body_rel_byte_offsets_;
 };
 
 // Type kind for variable inspection (also used in layout)

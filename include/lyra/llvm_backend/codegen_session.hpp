@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <utility>
+#include <string>
 #include <vector>
 
 #include <llvm/IR/Function.h>
@@ -36,30 +36,26 @@ struct SpecCompilationUnit {
   std::vector<SpecInstanceBinding> instances;
 };
 
-// Narrow backend view for one shared/template process belonging to a
-// specialization. Contains transitional codegen routing data, not
-// specialization identity.
-struct SpecTemplateView {
-  size_t global_template_index;
-  uint32_t layout_process_index;
+// Narrow backend view for one body-owned process belonging to a
+// specialization. Contains codegen routing data for the process.
+struct SpecProcessView {
+  uint32_t local_nonfinal_proc_index;  // Position among body's non-final procs
+  uint32_t layout_process_index;       // Matching entry in layout.processes
   mir::ProcessId process_id;
-  ModuleIndex representative_module_index;
-  uint32_t template_base_slot_id;
-  std::string func_name;
+  ModuleIndex representative_module_index;  // Compatibility only (%m / path)
+  std::string func_name;  // body_{body_id}_proc_{local_nonfinal_proc_index}
 };
 
-// Narrow backend view for compiling one specialization in the current
-// transitional backend. Contains template-routing / association data only.
+// Narrow backend view for compiling one specialization body.
+// Contains body-owned process routing data.
 // Ephemeral: built and consumed inside CompileDesignProcesses, not persisted.
 struct SpecCodegenView {
-  std::vector<SpecTemplateView> templates;
+  std::vector<SpecProcessView> processes;
 };
 
 // Specialization-local layout data only.
 // No design-global state, no wrapper data, no absolute offsets.
-// Transitional: until E2 removes cross-instance template-dedup-era
-// assumptions, this is extracted from the representative instance's
-// ModuleVariant.
+// Sourced from Layout::GetBodyRelByteOffsets(body_id).
 struct SpecLayout {
   std::vector<uint64_t> rel_byte_offsets;
 };
@@ -77,13 +73,14 @@ struct CompiledModuleSpecInput {
 };
 
 // Process codegen product of compiling one specialization body.
-// Contains template functions and wait sites produced by
+// Contains process functions and wait sites produced by
 // CompileModuleSpecSession. Body-local user functions are registered as
 // Context side effects (not returned here) because no downstream consumer
 // currently needs them as explicit products.
 struct CompiledModuleSpec {
   mir::ModuleBodyId body_id;
-  std::vector<std::pair<size_t, llvm::Function*>> template_functions;
+  // Parallel to input.view.processes: one compiled function per body process
+  std::vector<llvm::Function*> process_functions;
   std::vector<WaitSiteEntry> wait_sites;
 };
 
