@@ -108,24 +108,40 @@ class Engine {
   // Called by interpreter/codegen when process hits a Wait terminator.
   // Returns the index of the created subscription in the slot's typed vector,
   // or UINT32_MAX if subscription failed.
+  // initially_active: if false, subscription is created in inactive state.
   auto Subscribe(
       ProcessHandle handle, ResumePoint resume, SignalId signal,
-      common::EdgeKind edge) -> uint32_t;
+      common::EdgeKind edge, bool initially_active = true) -> uint32_t;
 
   // Subscribe with explicit observation byte range within the slot.
   // Returns the index of the created subscription in the slot's typed vector,
   // or UINT32_MAX if subscription failed.
+  // initially_active: if false, subscription is created in inactive state.
   auto Subscribe(
       ProcessHandle handle, ResumePoint resume, SignalId signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
-      uint8_t bit_index = 0) -> uint32_t;
+      uint8_t bit_index, bool initially_active = true) -> uint32_t;
 
   // Subscribe to a container (dynamic array/queue) element edge trigger.
   // Chases the handle from DesignState, validates magic, performs OOB check.
+  // initially_active: codegen's descriptor-time classification. If false,
+  // the subscription is created inactive and runtime skips validation. If
+  // true, runtime still validates handle/bounds and may downgrade to inactive.
   auto SubscribeContainerElement(
       ProcessHandle handle, ResumePoint resume, SignalId signal,
-      common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride)
-      -> uint32_t;
+      common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
+      bool initially_active = true) -> uint32_t;
+
+  // Canonical trigger installation from typed descriptors.
+  // Installs subscriptions directly from per-trigger metadata (kind, flags,
+  // container_elem_stride), then hooks up rebind watchers from late-bound
+  // headers. Both InstallWaitSite and HandleSuspendRecord delegate here.
+  void InstallTriggers(
+      ProcessHandle handle, ResumePoint resume,
+      std::span<const WaitTriggerRecord> triggers,
+      std::span<const LateBoundHeader> late_bound,
+      std::span<const IndexPlanOp> plan_ops,
+      std::span<const uint32_t> dep_slots);
 
   // Create rebind subscriptions for a late-bound edge trigger. For each dep
   // slot, an AnyChange rebind node is created. When any dep changes, the plan

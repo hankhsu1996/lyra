@@ -402,6 +402,173 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
   }
 }
 
+void Engine::InstallTriggers(
+    ProcessHandle handle, ResumePoint resume,
+    std::span<const WaitTriggerRecord> triggers,
+    std::span<const LateBoundHeader> late_bound,
+    std::span<const IndexPlanOp> plan_ops,
+    std::span<const uint32_t> dep_slots) {
+  // Track created subscription info for late-bound rebinding.
+  // Invariant: created_subs[i] records the dense vector index assigned
+  // to trigger i at creation time. These indices remain stable within
+  // this function because no removals occur between subscription
+  // creation and rebind hookup below.
+  struct CreatedSub {
+    SignalId slot_id;
+    SubKind kind;
+    uint32_t index;
+  };
+  bool has_late_bound = !late_bound.empty();
+  std::vector<CreatedSub> created_subs;
+  if (has_late_bound) {
+    created_subs.resize(
+        triggers.size(), CreatedSub{0, SubKind::kEdge, UINT32_MAX});
+  }
+
+  for (uint32_t i = 0; i < triggers.size(); ++i) {
+    const auto& trigger = triggers[i];
+    auto edge = static_cast<common::EdgeKind>(trigger.edge);
+    bool initially_active = (trigger.flags & kTriggerInitiallyActive) != 0;
+    uint32_t sub_idx = UINT32_MAX;
+    SubKind sub_kind = SubKind::kEdge;
+
+    if (trigger.kind > static_cast<uint8_t>(TriggerInstallKind::kContainer)) {
+      throw common::InternalError(
+          "Engine::InstallTriggers",
+          std::format("trigger {}: invalid kind {}", i, trigger.kind));
+    }
+    auto install_kind = static_cast<TriggerInstallKind>(trigger.kind);
+
+    switch (install_kind) {
+      case TriggerInstallKind::kContainer: {
+        if (trigger.container_elem_stride == 0) {
+          throw common::InternalError(
+              "Engine::InstallTriggers",
+              std::format(
+                  "trigger {}: kContainer requires container_elem_stride > 0",
+                  i));
+        }
+        if (trigger.byte_size != 0) {
+          throw common::InternalError(
+              "Engine::InstallTriggers",
+              std::format(
+                  "trigger {}: kContainer requires byte_size == 0, got {}", i,
+                  trigger.byte_size));
+        }
+        if (trigger.bit_index != 0) {
+          throw common::InternalError(
+              "Engine::InstallTriggers",
+              std::format(
+                  "trigger {}: kContainer requires bit_index == 0, got {}", i,
+                  trigger.bit_index));
+        }
+        if (edge != common::EdgeKind::kPosedge &&
+            edge != common::EdgeKind::kNegedge &&
+            edge != common::EdgeKind::kAnyChange) {
+          throw common::InternalError(
+              "Engine::InstallTriggers",
+              std::format(
+                  "trigger {}: kContainer has invalid edge {}", i,
+                  static_cast<uint8_t>(edge)));
+        }
+        // For kContainer, byte_offset carries the element index directly.
+        int64_t sv_index =
+            initially_active ? static_cast<int64_t>(trigger.byte_offset) : -1;
+        sub_idx = SubscribeContainerElement(
+            handle, resume, trigger.signal_id, edge, sv_index,
+            trigger.container_elem_stride, initially_active);
+        sub_kind = SubKind::kContainer;
+        break;
+      }
+      case TriggerInstallKind::kChange: {
+        if (edge != common::EdgeKind::kAnyChange) {
+          throw common::InternalError(
+              "Engine::InstallTriggers",
+              std::format(
+                  "trigger {}: kChange requires kAnyChange edge, got {}", i,
+                  static_cast<uint8_t>(edge)));
+        }
+        if (trigger.byte_size > 0) {
+          sub_idx = Subscribe(
+              handle, resume, trigger.signal_id, edge, trigger.byte_offset,
+              trigger.byte_size, trigger.bit_index, initially_active);
+        } else {
+          sub_idx = Subscribe(
+              handle, resume, trigger.signal_id, edge, initially_active);
+        }
+        sub_kind = SubKind::kChange;
+        break;
+      }
+      case TriggerInstallKind::kEdge: {
+        if (edge == common::EdgeKind::kAnyChange) {
+          throw common::InternalError(
+              "Engine::InstallTriggers",
+              std::format(
+                  "trigger {}: kEdge requires posedge/negedge, got kAnyChange",
+                  i));
+        }
+        if (trigger.byte_size > 0) {
+          sub_idx = Subscribe(
+              handle, resume, trigger.signal_id, edge, trigger.byte_offset,
+              trigger.byte_size, trigger.bit_index, initially_active);
+        } else {
+          sub_idx = Subscribe(
+              handle, resume, trigger.signal_id, edge, initially_active);
+        }
+        sub_kind = SubKind::kEdge;
+        break;
+      }
+    }
+
+    if (has_late_bound) {
+      created_subs[i] = CreatedSub{trigger.signal_id, sub_kind, sub_idx};
+    }
+  }
+
+  // Install rebind watchers from late-bound headers.
+  for (uint32_t h = 0; h < late_bound.size(); ++h) {
+    const auto& hdr = late_bound[h];
+
+    if (hdr.trigger_index >= triggers.size()) {
+      throw common::InternalError(
+          "Engine::InstallTriggers",
+          std::format(
+              "late_bound[{}]: trigger_index {} >= num_triggers {}", h,
+              hdr.trigger_index, triggers.size()));
+    }
+    if (static_cast<uint64_t>(hdr.plan_ops_start) + hdr.plan_ops_count >
+        plan_ops.size()) {
+      throw common::InternalError(
+          "Engine::InstallTriggers",
+          std::format(
+              "late_bound[{}]: plan_ops span [{}, +{}) exceeds pool size {}", h,
+              hdr.plan_ops_start, hdr.plan_ops_count, plan_ops.size()));
+    }
+    if (static_cast<uint64_t>(hdr.dep_slots_start) + hdr.dep_slots_count >
+        dep_slots.size()) {
+      throw common::InternalError(
+          "Engine::InstallTriggers",
+          std::format(
+              "late_bound[{}]: dep_slots span [{}, +{}) exceeds pool size {}",
+              h, hdr.dep_slots_start, hdr.dep_slots_count, dep_slots.size()));
+    }
+
+    const auto& target = created_subs[hdr.trigger_index];
+    if (target.index == UINT32_MAX) continue;
+    if (hdr.dep_slots_count == 0) continue;
+
+    BitTargetMapping mapping{
+        .index_base = hdr.index_base,
+        .index_step = hdr.index_step,
+        .total_bits = hdr.total_bits};
+    auto hdr_plan = plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
+    auto hdr_deps = dep_slots.subspan(hdr.dep_slots_start, hdr.dep_slots_count);
+    SubscribeRebind(
+        handle, UINT32_MAX, target.slot_id, target.kind, target.index, hdr_plan,
+        mapping, hdr_deps);
+  }
+}
+
 void Engine::InstallWaitSite(
     ProcessHandle handle, SuspendRecord* suspend,
     const CompiledWaitSite& descriptor) {
@@ -423,139 +590,19 @@ void Engine::InstallWaitSite(
             has_late_bound));
   }
 
-  // Collect created subscription indices for late-bound rebinding.
-  // Invariant: created_subs[i] records the dense vector index assigned
-  // to trigger i at creation time. These indices remain stable within
-  // this function because no removals occur between subscription
-  // creation and rebind hookup below.
-  struct CreatedSub {
-    SignalId slot_id;
-    SubKind kind;
-    uint32_t index;
-  };
-  std::vector<CreatedSub> created_subs;
-  if (has_late_bound) {
-    created_subs.resize(
-        suspend->num_triggers, CreatedSub{0, SubKind::kEdge, UINT32_MAX});
-  }
+  auto late_bound =
+      has_late_bound
+          ? std::span(suspend->late_bound_ptr, suspend->num_late_bound)
+          : std::span<const LateBoundHeader>{};
+  auto plan_ops = (suspend->plan_ops_ptr != nullptr)
+                      ? std::span(suspend->plan_ops_ptr, suspend->num_plan_ops)
+                      : std::span<const IndexPlanOp>{};
+  auto dep_slots =
+      (suspend->dep_slots_ptr != nullptr)
+          ? std::span(suspend->dep_slots_ptr, suspend->num_dep_slots)
+          : std::span<const uint32_t>{};
 
-  // Pre-scan: build container stride map from late-bound headers.
-  std::vector<std::pair<uint32_t, uint32_t>> container_strides;
-  if (has_late_bound) {
-    auto headers = std::span(suspend->late_bound_ptr, suspend->num_late_bound);
-    for (const auto& hdr : headers) {
-      if (hdr.container_elem_stride > 0) {
-        container_strides.emplace_back(
-            hdr.trigger_index, hdr.container_elem_stride);
-      }
-    }
-  }
-
-  for (uint32_t i = 0; i < triggers.size(); ++i) {
-    const auto& trigger = triggers[i];
-    auto edge = static_cast<common::EdgeKind>(trigger.edge);
-    uint32_t sub_idx = UINT32_MAX;
-    SignalId sub_slot = trigger.signal_id;
-    SubKind sub_kind = SubKind::kEdge;
-
-    // Linear scan for container stride.
-    uint32_t cs_stride = 0;
-    for (const auto& [idx, stride] : container_strides) {
-      if (idx == i) {
-        cs_stride = stride;
-        break;
-      }
-    }
-
-    if (cs_stride > 0) {
-      int64_t sv_index =
-          (trigger.byte_size == UINT32_MAX)
-              ? -1
-              : static_cast<int64_t>(trigger.byte_offset / cs_stride);
-      sub_idx = SubscribeContainerElement(
-          handle, resume, trigger.signal_id, edge, sv_index, cs_stride);
-      sub_kind = SubKind::kContainer;
-    } else if (trigger.byte_size == UINT32_MAX) {
-      sub_idx = Subscribe(handle, resume, trigger.signal_id, edge, 0, 1, 0);
-      if (sub_idx != UINT32_MAX) {
-        // Mark inactive: OOB dynamic edge trigger sentinel.
-        auto& slot = signal_subs_[trigger.signal_id];
-        if (edge == common::EdgeKind::kAnyChange) {
-          slot.change_subs[sub_idx].flags &= ~kSubActive;
-          sub_kind = SubKind::kChange;
-        } else {
-          slot.edge_subs[sub_idx].flags &= ~kSubActive;
-          sub_kind = SubKind::kEdge;
-        }
-      }
-    } else if (trigger.byte_size > 0) {
-      sub_idx = Subscribe(
-          handle, resume, trigger.signal_id, edge, trigger.byte_offset,
-          trigger.byte_size, trigger.bit_index);
-      sub_kind = (edge == common::EdgeKind::kAnyChange) ? SubKind::kChange
-                                                        : SubKind::kEdge;
-    } else {
-      sub_idx = Subscribe(handle, resume, trigger.signal_id, edge);
-      sub_kind = (edge == common::EdgeKind::kAnyChange) ? SubKind::kChange
-                                                        : SubKind::kEdge;
-    }
-    if (has_late_bound) {
-      created_subs[i] = CreatedSub{sub_slot, sub_kind, sub_idx};
-    }
-  }
-
-  // Create rebind subscriptions for late-bound triggers.
-  if (has_late_bound) {
-    auto headers = std::span(suspend->late_bound_ptr, suspend->num_late_bound);
-    auto all_plan_ops = std::span(suspend->plan_ops_ptr, suspend->num_plan_ops);
-    auto all_dep_slots =
-        std::span(suspend->dep_slots_ptr, suspend->num_dep_slots);
-    for (const auto& hdr : headers) {
-      if (hdr.trigger_index >= suspend->num_triggers) {
-        throw common::InternalError(
-            "Engine::InstallWaitSite",
-            std::format(
-                "process {} wait_site {}: trigger_index {} >= num_triggers {}",
-                handle.process_id, descriptor.id, hdr.trigger_index,
-                suspend->num_triggers));
-      }
-      const auto& target = created_subs[hdr.trigger_index];
-      if (target.index == UINT32_MAX) continue;
-      if (hdr.dep_slots_count == 0) continue;
-      if (hdr.plan_ops_start + hdr.plan_ops_count > suspend->num_plan_ops) {
-        throw common::InternalError(
-            "Engine::InstallWaitSite",
-            std::format(
-                "process {} wait_site {}: plan_ops span [{}, +{}) exceeds "
-                "pool size {}",
-                handle.process_id, descriptor.id, hdr.plan_ops_start,
-                hdr.plan_ops_count, suspend->num_plan_ops));
-      }
-      if (hdr.dep_slots_start + hdr.dep_slots_count > suspend->num_dep_slots) {
-        throw common::InternalError(
-            "Engine::InstallWaitSite",
-            std::format(
-                "process {} wait_site {}: dep_slots span [{}, +{}) exceeds "
-                "pool size {}",
-                handle.process_id, descriptor.id, hdr.dep_slots_start,
-                hdr.dep_slots_count, suspend->num_dep_slots));
-      }
-
-      // Target handle allocation and cold setup are owned by SubscribeRebind.
-      // Pass UINT32_MAX to let SubscribeRebind allocate the edge_target_id.
-      BitTargetMapping mapping{
-          .index_base = hdr.index_base,
-          .index_step = hdr.index_step,
-          .total_bits = hdr.total_bits};
-      auto plan_ops =
-          all_plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
-      auto dep_slots =
-          all_dep_slots.subspan(hdr.dep_slots_start, hdr.dep_slots_count);
-      SubscribeRebind(
-          handle, UINT32_MAX, target.slot_id, target.kind, target.index,
-          plan_ops, mapping, dep_slots);
-    }
-  }
+  InstallTriggers(handle, resume, triggers, late_bound, plan_ops, dep_slots);
 
   // Unconditionally publish installed wait state from the compiled descriptor.
   auto& proc_state = process_states_[handle.process_id];
@@ -660,7 +707,7 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
 
 auto Engine::Subscribe(
     ProcessHandle handle, ResumePoint resume, SignalId signal,
-    common::EdgeKind edge) -> uint32_t {
+    common::EdgeKind edge, bool initially_active) -> uint32_t {
   if (design_state_base_ == nullptr) {
     throw common::InternalError(
         "Engine::Subscribe", "Subscribe before SetDesignStateBase");
@@ -673,13 +720,14 @@ auto Engine::Subscribe(
   const auto& meta = slot_meta_registry_.Get(signal);
   uint32_t obs_size =
       (edge == common::EdgeKind::kAnyChange) ? meta.total_bytes : 1;
-  return Subscribe(handle, resume, signal, edge, 0, obs_size);
+  return Subscribe(
+      handle, resume, signal, edge, 0, obs_size, 0, initially_active);
 }
 
 auto Engine::Subscribe(
     ProcessHandle handle, ResumePoint resume, SignalId signal,
     common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
-    uint8_t bit_index) -> uint32_t {
+    uint8_t bit_index, bool initially_active) -> uint32_t {
   if (finished_) {
     return UINT32_MAX;
   }
@@ -725,6 +773,9 @@ auto Engine::Subscribe(
 
   if (edge == common::EdgeKind::kAnyChange) {
     // kAnyChange -> ChangeSub
+    // Baseline capture policy: always capture snapshot regardless of
+    // initially_active. When a rebind later activates an inactive sub,
+    // the baseline prevents a false trigger on the first flush.
     auto sub_idx = static_cast<uint32_t>(slot.change_subs.size());
     auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
 
@@ -736,7 +787,7 @@ auto Engine::Subscribe(
     sub.byte_size = byte_size;
     sub.process_sub_idx = proc_sub_idx;
     sub.cold_idx = UINT32_MAX;
-    sub.flags = kSubActive;
+    sub.flags = initially_active ? kSubActive : 0;
 
     const auto* src = &design_state[meta.base_off + byte_offset];
     if (byte_size <= ChangeSub::kInlineSnapshotCap) {
@@ -758,6 +809,9 @@ auto Engine::Subscribe(
   }
 
   // kPosedge/kNegedge -> EdgeSub
+  // Baseline capture policy: always capture last_bit regardless of
+  // initially_active. When a rebind later activates an inactive sub,
+  // the baseline prevents a false trigger on the first flush.
   if (byte_size != 1) {
     throw common::InternalError(
         "Engine::Subscribe", "edge subscriptions require byte_size=1");
@@ -779,7 +833,7 @@ auto Engine::Subscribe(
   sub.bit_index = bit_index;
   sub.edge = edge;
   sub.last_bit = (design_state[meta.base_off + byte_offset] >> bit_index) & 1;
-  sub.flags = kSubActive;
+  sub.flags = initially_active ? kSubActive : 0;
   sub.process_sub_idx = proc_sub_idx;
   sub.cold_idx = UINT32_MAX;
 
@@ -793,7 +847,8 @@ auto Engine::Subscribe(
 
 auto Engine::SubscribeContainerElement(
     ProcessHandle handle, ResumePoint resume, SignalId signal,
-    common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride) -> uint32_t {
+    common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
+    bool initially_active) -> uint32_t {
   if (finished_) return UINT32_MAX;
 
   if (design_state_base_ == nullptr) {
@@ -843,7 +898,7 @@ auto Engine::SubscribeContainerElement(
   sub.cold_idx = cold_idx;
   sub.edge = edge;
   sub.last_bit = 0;
-  sub.flags = kSubActive;
+  sub.flags = 0;
 
   // Chase handle from DesignState.
   auto ds = std::span(
@@ -852,8 +907,10 @@ auto Engine::SubscribeContainerElement(
   void* handle_ptr = nullptr;
   std::memcpy(&handle_ptr, &ds[meta.base_off], sizeof(void*));
 
-  if (handle_ptr == nullptr) {
-    sub.flags &= ~kSubActive;
+  if (!initially_active) {
+    // Descriptor says inactive -- skip runtime validation entirely.
+    cold.container_epoch = 0;
+  } else if (handle_ptr == nullptr) {
     cold.container_epoch = 0;
   } else {
     const auto* arr = static_cast<const DynArrayData*>(handle_ptr);
@@ -863,9 +920,7 @@ auto Engine::SubscribeContainerElement(
     }
     cold.container_epoch = arr->epoch;
 
-    if (arr->data == nullptr || sv_index < 0 || sv_index >= arr->size) {
-      sub.flags &= ~kSubActive;
-    } else {
+    if (arr->data != nullptr && sv_index >= 0 && sv_index < arr->size) {
       // Capture initial LSB of element byte 0 for edge detection.
       // Container edge triggers observe bit 0 of the first byte of each
       // element (byte_off = sv_index * elem_stride). This matches the
@@ -874,6 +929,7 @@ auto Engine::SubscribeContainerElement(
       auto heap_data = std::span(
           static_cast<const uint8_t*>(arr->data), byte_off + elem_stride);
       sub.last_bit = heap_data[byte_off] & 1;
+      sub.flags = kSubActive;
     }
   }
 
