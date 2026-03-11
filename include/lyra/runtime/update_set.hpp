@@ -35,17 +35,15 @@ class UpdateSet {
       common::MutationKind kind = common::MutationKind::kValueWrite,
       common::EpochEffect epoch = common::EpochEffect::kNone);
 
-  // Mark an entire slot as dirty. Wrapper for MarkDirtyRange with full slot.
-  // INVARIANT: Always produces a full-slot entry [0, slot_size) in
-  // delta_slot_ranges_. This guarantees Overlaps() returns true for any
-  // sub-range observation, so no subscription is incorrectly skipped.
+  // Mark an entire slot as dirty. Full-extent is a terminal state: once set,
+  // no further range work is needed for this slot in the current delta.
   void MarkSlotDirty(
       uint32_t slot_id,
       common::MutationKind kind = common::MutationKind::kValueWrite,
       common::EpochEffect epoch = common::EpochEffect::kNone) {
-    if (slot_id < slot_sizes_.size()) {
-      MarkDirtyRange(slot_id, 0, slot_sizes_[slot_id], kind, epoch);
-    }
+    if (slot_id >= seen_.size()) return;
+    TouchSlot(slot_id, kind, epoch);
+    delta_slot_ranges_[slot_id].MarkFullExtent();
   }
 
   // All dirty slots this time slot (deduped across time slot). For trace.
@@ -108,6 +106,23 @@ class UpdateSet {
   }
 
  private:
+  // Shared slot bookkeeping: dedup into dirty_list_ / delta_dirty_,
+  // lattice-join kind and epoch. Inline to avoid cross-TU call on hot path.
+  void TouchSlot(
+      uint32_t slot_id, common::MutationKind kind, common::EpochEffect epoch) {
+    if (seen_[slot_id] == 0) {
+      seen_[slot_id] = 1;
+      dirty_list_.push_back(slot_id);
+    }
+    if (delta_seen_[slot_id] == 0) {
+      delta_seen_[slot_id] = 1;
+      delta_dirty_.push_back(slot_id);
+    }
+    if (kind > delta_slot_kinds_[slot_id]) delta_slot_kinds_[slot_id] = kind;
+    if (epoch > delta_slot_epochs_[slot_id])
+      delta_slot_epochs_[slot_id] = epoch;
+  }
+
   std::vector<uint32_t> dirty_list_;
   std::vector<uint8_t> seen_;
   std::vector<uint32_t> delta_dirty_;

@@ -45,25 +45,13 @@ void UpdateSet::MarkDirtyRange(
         "UpdateSet::MarkDirtyRange", "range exceeds slot size");
   }
 
-  // Slot-level dedup (iteration indices).
-  if (seen_[slot_id] == 0) {
-    seen_[slot_id] = 1;
-    dirty_list_.push_back(slot_id);
-  }
-  if (delta_seen_[slot_id] == 0) {
-    delta_seen_[slot_id] = 1;
-    delta_dirty_.push_back(slot_id);
-  }
+  TouchSlot(slot_id, kind, epoch);
 
-  // Range storage + merge (canonical data).
-  delta_slot_ranges_[slot_id].Insert(off, size);
-
-  // Lattice join for kind and epoch.
-  if (kind > delta_slot_kinds_[slot_id]) {
-    delta_slot_kinds_[slot_id] = kind;
-  }
-  if (epoch > delta_slot_epochs_[slot_id]) {
-    delta_slot_epochs_[slot_id] = epoch;
+  // Full-slot write canonicalizes to full-extent immediately.
+  if (off == 0 && size == slot_sizes_[slot_id]) {
+    delta_slot_ranges_[slot_id].MarkFullExtent();
+  } else {
+    delta_slot_ranges_[slot_id].Insert(off, size);
   }
 }
 
@@ -71,15 +59,8 @@ void UpdateSet::MarkExternalDirtyRange(
     uint32_t slot_id, uint32_t off, uint32_t size) {
   if (slot_id >= seen_.size()) return;
 
-  // Slot-level dedup (same as MarkDirtyRange).
-  if (seen_[slot_id] == 0) {
-    seen_[slot_id] = 1;
-    dirty_list_.push_back(slot_id);
-  }
-  if (delta_seen_[slot_id] == 0) {
-    delta_seen_[slot_id] = 1;
-    delta_dirty_.push_back(slot_id);
-  }
+  TouchSlot(
+      slot_id, common::MutationKind::kValueWrite, common::EpochEffect::kNone);
 
   auto& range_set = delta_external_ranges_[slot_id];
   if (size == 0) {
@@ -112,7 +93,9 @@ void UpdateSet::ClearDelta() {
     delta_seen_[id] = 0;
   }
   delta_dirty_.clear();
-  delta_external_ranges_.clear();
+  if (!delta_external_ranges_.empty()) {
+    delta_external_ranges_.clear();
+  }
 }
 
 void UpdateSet::Clear() {

@@ -54,7 +54,12 @@ class SlotMetaRegistry {
   explicit SlotMetaRegistry(const uint32_t* words, uint32_t count);
 
   // Access metadata. Throws InternalError if slot_id >= Size().
-  [[nodiscard]] auto Get(uint32_t slot_id) const -> const SlotMeta&;
+  [[nodiscard]] auto Get(uint32_t slot_id) const -> const SlotMeta& {
+    if (slot_id >= slots_.size()) [[unlikely]] {
+      ThrowOutOfRange(slot_id);
+    }
+    return slots_[slot_id];
+  }
 
   [[nodiscard]] auto Size() const -> uint32_t;
   [[nodiscard]] auto IsPopulated() const -> bool;
@@ -65,6 +70,8 @@ class SlotMetaRegistry {
   void DumpSummary() const;
 
  private:
+  [[noreturn]] void ThrowOutOfRange(uint32_t slot_id) const;
+
   std::vector<SlotMeta> slots_;
   uint32_t max_extent_ = 0;
 };

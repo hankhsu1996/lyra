@@ -29,6 +29,27 @@ Why pipeline:
 - Completes in ~50ms natively, ~2-3min under Callgrind
 - Reproduces the same bottleneck pattern as large designs (ibex) but at 1/200th the cost
 
+## AOT architecture and profiling implications
+
+`lyra run` in AOT mode (the default) has two processes:
+
+1. **Compiler process** (`lyra` binary) -- parses, lowers, emits object code, links the AOT binary, then forks/execs it
+2. **Simulation process** (the AOT binary, e.g., `out/bin/Top`) -- runs the actual simulation linked against `liblyra_runtime.so`
+
+Callgrind (and valgrind in general) profiles only the process it launches. If you profile `lyra run`, you get the **compiler** profile (~208M instructions for pipeline), not the simulation. The simulation runs in a child process that callgrind does not follow by default.
+
+The simulation is where the runtime performance gap lives (~583M instructions for pipeline). Always profile the AOT binary directly, not `lyra run`.
+
+If you must profile through `lyra run` (e.g., to include compile time), use `--trace-children=yes`:
+
+```bash
+valgrind --tool=callgrind --trace-children=yes \
+  --callgrind-out-file=callgrind.out \
+  ./bazel-bin/lyra -C tools/bench/fixtures/pipeline run
+```
+
+This produces separate output files per process. The simulation process will have the higher instruction count.
+
 ## Workflow
 
 ### 1. Build
