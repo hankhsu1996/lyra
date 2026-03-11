@@ -8,12 +8,12 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
+#include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/realization/design_metadata.hpp"
 
 namespace lyra::mir {
-struct Design;
 class Arena;
 }  // namespace lyra::mir
 
@@ -32,7 +32,7 @@ auto ExtractSlotMetaInputs(
 
 // Extract scheduled process inputs into plain link structs.
 auto PrepareScheduledProcessInputs(
-    const mir::Design& design, const mir::Arena& mir_arena,
+    const std::vector<std::string>& instance_paths, const mir::Arena& mir_arena,
     const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager,
     const std::vector<struct ScheduledProcess>& scheduled_processes,
@@ -46,7 +46,7 @@ auto PrepareLoopSiteInputs(
 
 // Extract connection descriptor entries from LLVM layout.
 auto ExtractConnectionDescriptorEntries(
-    const mir::Design& design, const mir::Arena& mir_arena,
+    const std::vector<TypeId>& slot_types, const mir::Arena& mir_arena,
     const TypeArena& type_arena, const Layout& layout,
     const llvm::DataLayout& dl, llvm::LLVMContext& ctx, bool force_two_state)
     -> std::vector<realization::ConnectionDescriptorEntry>;
@@ -55,14 +55,10 @@ auto ExtractConnectionDescriptorEntries(
 // Resolves symbolic trigger observations to concrete byte ranges and
 // canonicalizes to one trigger per (kernel, slot).
 auto PrepareCombKernelInputs(
-    const mir::Design& design, const mir::Arena& mir_arena,
+    const std::vector<TypeId>& slot_types, const mir::Arena& mir_arena,
     const TypeArena& types, const Layout& layout, const llvm::DataLayout& dl,
     llvm::LLVMContext& ctx, bool force_two_state, size_t num_init)
     -> std::vector<realization::CombKernelInput>;
-
-// Prepare instance paths from design.
-auto PrepareInstancePaths(const mir::Design& design)
-    -> std::vector<std::string>;
 
 // Result of emitting DesignMetadata as LLVM globals.
 struct MetadataGlobals {

@@ -22,7 +22,6 @@
 #include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/design.hpp"
 #include "lyra/mir/instance.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/runtime/loop_site_meta.hpp"
@@ -232,7 +231,7 @@ auto ExtractSlotMetaInputs(
 }
 
 auto PrepareScheduledProcessInputs(
-    const mir::Design& design, const mir::Arena& mir_arena,
+    const std::vector<std::string>& instance_paths, const mir::Arena& mir_arena,
     const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager,
     const std::vector<ScheduledProcess>& scheduled_processes, size_t num_init)
@@ -247,15 +246,20 @@ auto PrepareScheduledProcessInputs(
   auto num_module = scheduled_processes.size() - num_init;
   entries.reserve(num_module);
 
-  const auto& instance_entries = design.instance_table.entries;
-
   for (size_t i = num_init; i < scheduled_processes.size(); ++i) {
     const auto& bp = scheduled_processes[i];
     const auto& proc = mir_arena[bp.process_id];
 
     std::string inst_path;
-    if (bp.module_index && bp.module_index.value < instance_entries.size()) {
-      inst_path = instance_entries[bp.module_index.value].full_path;
+    if (bp.module_index) {
+      if (bp.module_index.value >= instance_paths.size()) {
+        throw common::InternalError(
+            "PrepareScheduledProcessInputs",
+            std::format(
+                "module_index {} out of range (instance_paths size {})",
+                bp.module_index.value, instance_paths.size()));
+      }
+      inst_path = instance_paths[bp.module_index.value];
     }
 
     auto kind = MapProcessKind(proc.kind);
@@ -301,7 +305,7 @@ auto PrepareLoopSiteInputs(
 }
 
 auto ExtractConnectionDescriptorEntries(
-    const mir::Design& design, const mir::Arena& mir_arena,
+    const std::vector<TypeId>& slot_types, const mir::Arena& mir_arena,
     const TypeArena& type_arena, const Layout& layout,
     const llvm::DataLayout& dl, llvm::LLVMContext& ctx, bool force_two_state)
     -> std::vector<realization::ConnectionDescriptorEntry> {
@@ -348,8 +352,14 @@ auto ExtractConnectionDescriptorEntries(
       auto trigger_slot_it =
           layout.design.slot_to_field.find(entry.trigger_slot);
       if (trigger_slot_it != layout.design.slot_to_field.end()) {
-        TypeId trigger_root_type =
-            design.slots[trigger_slot_it->first.value].type;
+        if (trigger_slot_it->first.value >= slot_types.size()) {
+          throw common::InternalError(
+              "ExtractConnectionDescriptorEntries",
+              std::format(
+                  "trigger slot_id {} out of range (slot_types size {})",
+                  trigger_slot_it->first.value, slot_types.size()));
+        }
+        TypeId trigger_root_type = slot_types[trigger_slot_it->first.value];
         const auto& trigger_place = mir_arena[*entry.trigger_observed_place];
         auto range = ResolveByteRange(
             ctx, dl, type_arena, trigger_place, trigger_root_type, nullptr,
@@ -379,7 +389,7 @@ auto ExtractConnectionDescriptorEntries(
 }
 
 auto PrepareCombKernelInputs(
-    const mir::Design& design, const mir::Arena& mir_arena,
+    const std::vector<TypeId>& slot_types, const mir::Arena& mir_arena,
     const TypeArena& types, const Layout& layout, const llvm::DataLayout& dl,
     llvm::LLVMContext& ctx, bool force_two_state, size_t num_init)
     -> std::vector<realization::CombKernelInput> {
@@ -446,7 +456,14 @@ auto PrepareCombKernelInputs(
         continue;
       }
 
-      TypeId root_type = design.slots[trigger.slot.value].type;
+      if (trigger.slot.value >= slot_types.size()) {
+        throw common::InternalError(
+            "PrepareCombKernelInputs",
+            std::format(
+                "trigger slot_id {} out of range (slot_types size {})",
+                trigger.slot.value, slot_types.size()));
+      }
+      TypeId root_type = slot_types[trigger.slot.value];
       const auto& place = mir_arena[*trigger.observed_place];
       auto range = ResolveByteRange(
           ctx, dl, types, place, root_type, nullptr, force_two_state);
@@ -497,17 +514,6 @@ auto PrepareCombKernelInputs(
   }
 
   return inputs;
-}
-
-auto PrepareInstancePaths(const mir::Design& design)
-    -> std::vector<std::string> {
-  const auto& instance_entries = design.instance_table.entries;
-  std::vector<std::string> paths;
-  paths.reserve(instance_entries.size());
-  for (const auto& entry : instance_entries) {
-    paths.push_back(entry.full_path);
-  }
-  return paths;
 }
 
 auto EmitDesignMetadataGlobals(
