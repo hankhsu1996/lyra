@@ -45,7 +45,7 @@ jobs:
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
             RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
           fi
-          bazel build //:lyra $RBE_FLAGS
+          bazel build -c opt //:lyra $RBE_FLAGS
 
       - name: Run benchmarks
         continue-on-error: true
