@@ -105,6 +105,12 @@ class UpdateSet {
     return !delta_external_ranges_.empty();
   }
 
+  // Check whether a slot was dirtied in the current delta.
+  // O(1) lookup into the per-delta dedup array.
+  [[nodiscard]] auto IsDeltaDirty(uint32_t slot_id) const -> bool {
+    return slot_id < delta_seen_.size() && delta_seen_[slot_id] != 0;
+  }
+
   // Check if any slots are dirty (time-slot level).
   [[nodiscard]] auto IsEmpty() const -> bool {
     return dirty_list_.empty();
