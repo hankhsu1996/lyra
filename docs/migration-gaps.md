@@ -6,22 +6,37 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 
 ## Current Status
 
-**E1 structural boundary established.**
+**E2 complete: body-owned specialization is the only backend model.**
 
-**Current phase**: E (per-specialization codegen). Native specialization compile entrypoint exists; remaining E1 narrowing work below.
+**Current phase**: E (per-specialization codegen). Variant/template-dedup backend ownership deleted. Specialization compiles directly from body-owned process order and body identity.
 
-**Transitional state**: design-wide compatibility adapters (B5) remain until Phase E removes them.
+**Transitional state**: design-wide compatibility adapters (B5) remain until Phase E3/E4 removes them.
 
-**Specialization compilation**: `CompileModuleSpecSession` is the native per-specialization backend entrypoint. It takes an owned `CompiledModuleSpecInput` (body MIR membership, `SpecLayout`, `SpecCodegenView`) and returns a `CompiledModuleSpec` product (template functions, wait sites). Body-function declare/define is specialization-local. Module-scoped function lowering metadata is registered once per specialization. Body-local user functions are registered as `Context` side effects, not explicit products -- no downstream consumer currently needs them as products. `CompileDesignProcesses` is orchestration: setup, design-global functions (packages + generated), `CompileModuleSpecSession` x N, per-instance wrappers. No body-local function lowering or template lowering logic remains outside `CompileModuleSpecSession`.
+**Specialization compilation**: `CompileModuleSpecSession` is the native per-specialization backend entrypoint. It takes an owned `CompiledModuleSpecInput` (body MIR membership, `SpecLayout`, `SpecCodegenView`) and returns a `CompiledModuleSpec` product (process functions parallel to view.processes, wait sites). Body-function declare/define is specialization-local. Module-scoped function lowering metadata is registered once per specialization. `CompileDesignProcesses` is orchestration: setup, design-global functions (packages + generated), `CompileModuleSpecSession` x N, per-instance wrappers. Wrapper generation routes explicitly by `(body_id, local_nonfinal_process_index)` via an explicit routing table built from Phase 4 products.
 
-**Remaining E1 gaps**:
+**What was deleted in E2**:
+
+- `BuildModuleVariants`, `ProcessTemplate`, `ModuleVariant`, `ProcessFingerprint`, `ProcessMembership`
+- `process_fingerprint.hpp` / `process_fingerprint.cpp`
+- `ModuleVariantId`, `TemplateId`, `LocalProcIndex`, `LayoutProcessIndex`, `StandaloneRoute`, `TemplatedRoute`, `ProcessRoute`
+- `Layout::RouteProcess`, `Layout::GetInstanceVariant`, `Layout::GetInstanceVariantId`
+- `Layout::process_templates`, `Layout::variants`, `Layout::process_membership`, `Layout::instance_variant_ids`
+
+**What was added in E2**:
+
+- `Layout::GetBodyRelByteOffsets(body_id)` -- body-owned relative byte offsets computed directly in `BuildLayout`
+- `SpecProcessView` (replaces `SpecTemplateView`) -- body-owned process routing with `local_nonfinal_proc_index`
+- `SpecCodegenView::processes` (replaces `templates`)
+- `CompiledModuleSpec::process_functions` (replaces `template_functions`)
+- Explicit `body_to_compiled_funcs` routing table in Phase 5
+
+**Remaining gaps**:
 
 - `Context` still holds broad design/layout state (`const Layout&`, design types)
 - `LoweringInput` still exposes `mir::Design`
 - Wrapper generation remains design-wide (correct: wrappers are per-instance, not per-specialization)
-- Template dedup compatibility still exists until E2/E3/E4
 - Body-function artifacts are Context side effects, not explicit products
-- Template lowering uses representative instance ID for %m path support (compatibility)
+- Process lowering uses representative instance ID for %m path support (compatibility-only, not ownership)
 
 **Architectural uncertainties**:
 
@@ -37,9 +52,9 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 
 ## Active Gaps
 
-### Now: E1 remaining gaps
+### Now: E3 narrowing
 
-The E1 structural boundary is established (`CompileModuleSpecSession` is the native specialization backend entrypoint). Remaining narrowing work:
+Body-owned specialization is the only backend model (E2 done). Next: narrow the remaining design-wide coupling.
 
 **B3: Design-wide state still flows through top-level APIs**
 
@@ -75,24 +90,17 @@ Same body/instance split at HIR level. `hir::ModuleBody` owned by specialization
 - `src/lyra/lowering/ast_to_hir/design.cpp:502-506` -- `LowerDesign()` creates one `hir::Module` per instance
 - `include/lyra/hir/design.hpp` -- `Design::elements` parallel to elaboration order
 
-**M4: Template dedup is cross-instance optimization**
-
-`BuildModuleVariants()` groups processes across all instances by fingerprint. Requires design-wide knowledge. In north star model, dedup is automatic from specialization. Removed by E2.
-
-**E2: Remove template dedup path**
-
-- Delete `BuildModuleVariants`, `ProcessTemplate`, fingerprint-based dedup
-- Depends on E1
-
-**E3: Delete legacy design-wide codegen path**
+**E3: Delete remaining broad design/layout coupling from top-level backend APIs and `Context`**
 
 - Remove all code paths that pass full `mir::Design` to codegen
-- `Context` no longer holds `const mir::Design&`
-- Depends on E2
+- `Context` no longer holds `const Layout&` (or narrowed to only what it needs)
+- `LoweringInput` no longer exposes `mir::Design`
+- Depends on E2 (done)
 
-**E4: Delete compatibility adapters**
+**E4: Delete compatibility adapters / representative-instance compatibility scaffolding**
 
 - Remove transitional codegen adapters from Phase B5
+- Remove representative-instance ID usage for %m path support
 - Codegen operates natively on `ModuleBody` + instance records
 - Depends on E3
 

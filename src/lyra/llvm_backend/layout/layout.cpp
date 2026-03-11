@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <map>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -19,11 +18,9 @@
 #include "lyra/common/constant.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/module_identity.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
-#include "lyra/llvm_backend/process_fingerprint.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
@@ -1270,379 +1267,20 @@ auto BuildSlotInfoFromDesign(
   return slots;
 }
 
-// Per-module-process info for template analysis.
-struct ModuleProcessInfo {
-  mir::ProcessId process_id;
-  common::ModuleDefId module_def_id;
-  LocalProcIndex local_process_index;
-  uint32_t slot_begin;
-  uint32_t slot_count;
-  uint32_t instance_id;  // module_index (instance identity)
-  LayoutProcessIndex
-      scheduled_process_index;  // Index in layout.scheduled_processes
-  ModuleIndex module_idx;
-  const std::vector<mir::FunctionId>* module_functions = nullptr;
-};
-
-void BuildModuleVariants(
-    Layout& layout, const mir::Design& design, const mir::Arena& arena,
-    const TypeArena& types, const llvm::DataLayout& dl) {
-  // Step 1: Build process info by walking module elements
-
-  // Build (proc_id, module_index) -> scheduled_process_index map.
-  // With shared bodies, the same ProcessId can appear for multiple instances,
-  // so we key on both process_id and module_index for uniqueness.
-  struct ProcModuleKey {
-    uint32_t proc_id;
-    uint32_t module_index;
-    auto operator==(const ProcModuleKey&) const -> bool = default;
-  };
-  struct ProcModuleKeyHash {
-    auto operator()(const ProcModuleKey& k) const noexcept -> size_t {
-      return std::hash<uint64_t>{}(
-          (static_cast<uint64_t>(k.proc_id) << 32) | k.module_index);
-    }
-  };
-  std::unordered_map<ProcModuleKey, LayoutProcessIndex, ProcModuleKeyHash>
-      pid_to_index;
-  for (size_t i = layout.num_init_processes;
-       i < layout.scheduled_processes.size(); ++i) {
-    const auto& bp = layout.scheduled_processes[i];
-    ProcModuleKey key{bp.process_id.value, bp.module_index.value};
-    pid_to_index[key] = LayoutProcessIndex{static_cast<uint32_t>(i)};
-  }
-
-  std::vector<ModuleProcessInfo> all_module_procs;
-  uint32_t module_idx = 0;
-  for (const auto& element : design.elements) {
-    if (!std::holds_alternative<mir::Module>(element)) continue;
-    const auto& mir_module = std::get<mir::Module>(element);
-    const auto& body = mir::GetModuleBody(design, mir_module);
-    const auto& inst_placement =
-        mir::GetInstancePlacement(design.placement, module_idx);
-    uint32_t slot_begin = inst_placement.design_state_base_slot;
-    uint32_t slot_count = inst_placement.slot_count;
-    common::ModuleDefId def_id = design.module_def_ids[module_idx];
-
-    uint32_t local_idx = 0;
-    for (mir::ProcessId proc_id : body.processes) {
-      const auto& process = arena[proc_id];
-      if (process.kind == mir::ProcessKind::kFinal) {
-        ++local_idx;
-        continue;
-      }
-
-      ProcModuleKey key{proc_id.value, module_idx};
-      auto pid_it = pid_to_index.find(key);
-      if (pid_it == pid_to_index.end()) {
-        ++local_idx;
-        continue;
-      }
-
-      all_module_procs.push_back(
-          ModuleProcessInfo{
-              .process_id = proc_id,
-              .module_def_id = def_id,
-              .local_process_index = LocalProcIndex{local_idx},
-              .slot_begin = slot_begin,
-              .slot_count = slot_count,
-              .instance_id = module_idx,
-              .scheduled_process_index = pid_it->second,
-              .module_idx = ModuleIndex{module_idx},
-              .module_functions = &body.functions,
-          });
-      ++local_idx;
-    }
-    ++module_idx;
-  }
-
-  // Initialize membership (all nullopt = standalone)
-  size_t num_module_procs =
-      layout.scheduled_processes.size() - layout.num_init_processes;
-  layout.process_membership.assign(num_module_procs, std::nullopt);
-
-  // Phase A: Dedup template functions
-
-  // Builder-local: process_id -> template_id (used by Phase B to build variant
-  // keys). Not stored in Layout -- variant routing is the sole source of truth.
-  std::unordered_map<uint32_t, TemplateId> proc_id_to_template;
-
-  // Group by (module_def_id, local_process_index) as candidate filter.
-  // Processes from different definitions can never be templates of each other.
-  std::map<std::pair<common::ModuleDefId, LocalProcIndex>, std::vector<size_t>>
-      candidate_groups;
-  for (size_t i = 0; i < all_module_procs.size(); ++i) {
-    const auto& info = all_module_procs[i];
-    candidate_groups[{info.module_def_id, info.local_process_index}].push_back(
-        i);
-  }
-
-  const auto* struct_layout = dl.getStructLayout(layout.design.llvm_type);
-
-  // Initialize instance_base_byte_offsets and instance_variant_ids
-  size_t num_module_elements = design.placement.instances.size();
-  layout.instance_base_byte_offsets.resize(num_module_elements);
-  layout.instance_variant_ids.resize(
-      num_module_elements, ModuleVariantId{ModuleVariantId::kNone});
-
-  // Pre-compute all instance base byte offsets from placement.
-  // Invariant: slot_id.value == LLVM struct field index
-  // (BuildSlotInfoFromDesign creates slot IDs as sequential indices into
-  // slots, and BuildDesignLayout maps them 1:1 to struct fields). This
-  // lets us use design_state_base_slot directly as a struct element index.
-  for (size_t mi = 0; mi < num_module_elements; ++mi) {
-    const auto& p =
-        mir::GetInstancePlacement(design.placement, static_cast<uint32_t>(mi));
-    if (p.slot_count > 0) {
-      if (p.design_state_base_slot + p.slot_count >
-          layout.design.llvm_type->getNumElements()) {
-        throw common::InternalError(
-            "BuildModuleVariants",
-            std::format(
-                "slot range [{}, {}) exceeds DesignState field count {}",
-                p.design_state_base_slot,
-                p.design_state_base_slot + p.slot_count,
-                layout.design.llvm_type->getNumElements()));
-      }
-      layout.instance_base_byte_offsets[mi] =
-          struct_layout->getElementOffset(p.design_state_base_slot);
-    }
-  }
-
-  for (const auto& [key, indices] : candidate_groups) {
-    // Compute fingerprints and split into sub-groups.
-    // Every module behavioral process gets a template, even singletons.
-    // The point of templating is architectural ownership (specialization-local
-    // codegen), not only dedup payoff.
-    std::map<uint64_t, std::vector<size_t>> fingerprint_groups;
-    for (size_t idx : indices) {
-      const auto& info = all_module_procs[idx];
-      const auto& process = arena[info.process_id];
-      uint64_t fp = ComputeProcessFingerprint(
-          process, arena, types, *info.module_functions);
-      fingerprint_groups[fp].push_back(idx);
-    }
-
-    for (const auto& [fp, fp_indices] : fingerprint_groups) {
-      // Select representative: lowest instance_id
-      size_t rep_idx = fp_indices[0];
-      for (size_t fi : fp_indices) {
-        if (all_module_procs[fi].instance_id <
-            all_module_procs[rep_idx].instance_id) {
-          rep_idx = fi;
-        }
-      }
-      const auto& rep = all_module_procs[rep_idx];
-
-      // Verify frame layout compatibility
-      const auto& rep_frame =
-          layout.processes[rep.scheduled_process_index.value].frame;
-      bool frames_compatible = true;
-      for (size_t fi : fp_indices) {
-        if (fi == rep_idx) continue;
-        const auto& other_frame =
-            layout.processes[all_module_procs[fi].scheduled_process_index.value]
-                .frame;
-        if (other_frame.root_types != rep_frame.root_types) {
-          frames_compatible = false;
-          break;
-        }
-      }
-      if (!frames_compatible) continue;
-
-      // Compute rel_byte_offsets for the representative instance
-      std::vector<uint64_t> rel_offsets(rep.slot_count);
-      if (rep.slot_count > 0) {
-        uint64_t rep_base_offset =
-            struct_layout->getElementOffset(rep.slot_begin);
-        for (uint32_t i = 0; i < rep.slot_count; ++i) {
-          rel_offsets[i] = struct_layout->getElementOffset(rep.slot_begin + i) -
-                           rep_base_offset;
-        }
-      }
-
-      // Verify byte-offset compatibility across all instances
-      bool offsets_compatible = true;
-      for (size_t fi : fp_indices) {
-        if (fi == rep_idx) continue;
-        const auto& other = all_module_procs[fi];
-        if (rep.slot_count == 0) break;
-        uint64_t other_base = struct_layout->getElementOffset(other.slot_begin);
-        for (uint32_t i = 0; i < rep.slot_count; ++i) {
-          uint64_t other_offset =
-              struct_layout->getElementOffset(other.slot_begin + i);
-          if (other_offset - other_base != rel_offsets[i]) {
-            offsets_compatible = false;
-            break;
-          }
-        }
-        if (!offsets_compatible) break;
-      }
-      if (!offsets_compatible) continue;
-
-      // Create ProcessTemplate
-      auto template_id =
-          TemplateId{static_cast<uint32_t>(layout.process_templates.size())};
-      layout.process_templates.push_back(
-          ProcessTemplate{
-              .template_process = rep.process_id,
-              .template_layout_index = rep.scheduled_process_index,
-              .func_name = std::format(
-                  "proc_template_{}_{:x}", rep.local_process_index.value, fp),
-              .template_base_slot_id = rep.slot_begin,
-              .representative_module_idx = rep.module_idx,
-          });
-
-      // Record membership for all instances in this group
-      for (size_t fi : fp_indices) {
-        const auto& info = all_module_procs[fi];
-        uint32_t map_idx = info.scheduled_process_index.value -
-                           static_cast<uint32_t>(layout.num_init_processes);
-        layout.process_membership[map_idx] = ProcessMembership{
-            .local_proc_idx = info.local_process_index,
-            .module_idx = info.module_idx,
-        };
-        proc_id_to_template[info.process_id.value] = template_id;
-      }
-    }
-  }
-
-  // Phase B: Build variants
-
-  // Per module instance, build VariantKey from membership data
-  using VariantKey =
-      std::vector<std::pair<uint32_t, std::optional<TemplateId>>>;
-  std::map<VariantKey, uint32_t> key_to_variant;
-  uint32_t next_variant = 0;
-
-  module_idx = 0;
-  for (const auto& element : design.elements) {
-    if (!std::holds_alternative<mir::Module>(element)) continue;
-    const auto& mir_module = std::get<mir::Module>(element);
-    const auto& body = mir::GetModuleBody(design, mir_module);
-
-    VariantKey vkey;
-    uint32_t local_idx = 0;
-    for (mir::ProcessId proc_id : body.processes) {
-      const auto& process = arena[proc_id];
-      if (process.kind == mir::ProcessKind::kFinal) {
-        ++local_idx;
-        continue;
-      }
-
-      // Look up this process's template assignment (if any)
-      std::optional<TemplateId> tmpl_id;
-      auto tmpl_it = proc_id_to_template.find(proc_id.value);
-      if (tmpl_it != proc_id_to_template.end()) {
-        tmpl_id = tmpl_it->second;
-      }
-
-      vkey.emplace_back(local_idx, tmpl_id);
-      ++local_idx;
-    }
-
-    auto [it, inserted] = key_to_variant.emplace(vkey, next_variant);
-    if (inserted) {
-      ++next_variant;
-
-      // Construct ModuleVariant for this new variant
-      ModuleVariant variant;
-
-      // Build proc_template_ids from the key
-      uint32_t max_local_idx = 0;
-      for (const auto& [li, _] : vkey) {
-        max_local_idx = std::max(max_local_idx, li);
-      }
-      variant.proc_template_ids.resize(max_local_idx + 1);
-      for (const auto& [li, tmpl_id] : vkey) {
-        variant.proc_template_ids[li] = tmpl_id;
-      }
-
-      // Compute rel_byte_offsets for this instance from placement
-      const auto& vp = mir::GetInstancePlacement(design.placement, module_idx);
-      if (vp.slot_count > 0) {
-        uint64_t base =
-            struct_layout->getElementOffset(vp.design_state_base_slot);
-        variant.rel_byte_offsets.resize(vp.slot_count);
-        for (uint32_t i = 0; i < vp.slot_count; ++i) {
-          variant.rel_byte_offsets[i] =
-              struct_layout->getElementOffset(vp.design_state_base_slot + i) -
-              base;
-        }
-      }
-
-      layout.variants.push_back(std::move(variant));
-    }
-    layout.instance_variant_ids[module_idx] = ModuleVariantId{it->second};
-    ++module_idx;
-  }
-
-  if (layout.instance_variant_ids.size() != design.placement.instances.size()) {
-    throw common::InternalError(
-        "BuildModuleVariants",
-        std::format(
-            "instance_variant_ids.size()={} != placement.instances.size()={}",
-            layout.instance_variant_ids.size(),
-            design.placement.instances.size()));
-  }
-
-  // Post-build invariant: every membership entry must route through its
-  // variant.
-  for (size_t i = 0; i < layout.process_membership.size(); ++i) {
-    const auto& m = layout.process_membership[i];
-    if (!m) continue;
-    const auto& variant = layout.GetInstanceVariant(m->module_idx);
-    if (m->local_proc_idx.value >= variant.proc_template_ids.size() ||
-        !variant.proc_template_ids[m->local_proc_idx.value]) {
-      throw common::InternalError(
-          "BuildModuleVariants",
-          std::format(
-              "membership[{}] has local_proc_idx={} but variant has no "
-              "template at that index",
-              i, m->local_proc_idx.value));
-    }
-  }
-}
-
-auto Layout::RouteProcess(LayoutProcessIndex idx) const -> ProcessRoute {
-  if (idx.value < num_init_processes) {
-    return StandaloneRoute{};
-  }
-  if (process_membership.empty()) {
-    return StandaloneRoute{};
-  }
-  uint32_t map_idx = idx.value - static_cast<uint32_t>(num_init_processes);
-  if (map_idx >= process_membership.size() || !process_membership[map_idx]) {
-    return StandaloneRoute{};
-  }
-  const auto& m = *process_membership[map_idx];
-  const auto& variant = GetInstanceVariant(m.module_idx);
-  const auto& tmpl = variant.proc_template_ids[m.local_proc_idx.value];
-  if (!tmpl) {
-    throw common::InternalError(
-        "RouteProcess",
-        std::format(
-            "membership exists for process {} but variant has no template "
-            "at local_proc_idx {}",
-            idx.value, m.local_proc_idx.value));
-  }
-  return TemplatedRoute{
-      .template_id = *tmpl,
-      .module_idx = m.module_idx,
-      .local_proc_idx = m.local_proc_idx,
-  };
-}
-
 auto Layout::GetInstanceBaseByteOffset(ModuleIndex idx) const -> uint64_t {
   return instance_base_byte_offsets[idx.value];
 }
 
-auto Layout::GetInstanceVariant(ModuleIndex idx) const -> const ModuleVariant& {
-  return variants[instance_variant_ids[idx.value].value];
-}
-
-auto Layout::GetInstanceVariantId(ModuleIndex idx) const -> ModuleVariantId {
-  return instance_variant_ids[idx.value];
+auto Layout::GetBodyRelByteOffsets(mir::ModuleBodyId body_id) const
+    -> const std::vector<uint64_t>& {
+  if (body_id.value >= body_rel_byte_offsets_.size()) {
+    throw common::InternalError(
+        "GetBodyRelByteOffsets",
+        std::format(
+            "body_id {} out of range (size={})", body_id.value,
+            body_rel_byte_offsets_.size()));
+  }
+  return body_rel_byte_offsets_[body_id.value];
 }
 
 auto BuildLayout(
@@ -1732,8 +1370,99 @@ auto BuildLayout(
     layout.processes.push_back(std::move(proc_layout));
   }
 
+  // Compute instance base byte offsets and body-owned relative byte offsets
   if (!design.placement.instances.empty()) {
-    BuildModuleVariants(layout, design, arena, types, dl);
+    const auto* struct_layout = dl.getStructLayout(layout.design.llvm_type);
+    size_t num_instances = design.placement.instances.size();
+    layout.instance_base_byte_offsets.resize(num_instances);
+
+    for (size_t mi = 0; mi < num_instances; ++mi) {
+      const auto& p = mir::GetInstancePlacement(
+          design.placement, static_cast<uint32_t>(mi));
+      if (p.slot_count > 0) {
+        if (p.design_state_base_slot + p.slot_count >
+            layout.design.llvm_type->getNumElements()) {
+          throw common::InternalError(
+              "BuildLayout",
+              std::format(
+                  "slot range [{}, {}) exceeds DesignState field count {}",
+                  p.design_state_base_slot,
+                  p.design_state_base_slot + p.slot_count,
+                  layout.design.llvm_type->getNumElements()));
+        }
+        layout.instance_base_byte_offsets[mi] =
+            struct_layout->getElementOffset(p.design_state_base_slot);
+      }
+    }
+
+    // Compute body-owned relative byte offsets, once per body_id.
+    // Find the maximum body_id to size the vector.
+    uint32_t max_body_id = 0;
+    uint32_t mod_idx = 0;
+    for (const auto& element : design.elements) {
+      const auto* mod = std::get_if<mir::Module>(&element);
+      if (mod == nullptr) continue;
+      max_body_id = std::max(max_body_id, mod->body_id.value);
+      ++mod_idx;
+    }
+    layout.body_rel_byte_offsets_.resize(max_body_id + 1);
+
+    std::unordered_map<uint32_t, uint32_t> body_to_representative;
+    mod_idx = 0;
+    for (const auto& element : design.elements) {
+      const auto* mod = std::get_if<mir::Module>(&element);
+      if (mod == nullptr) continue;
+
+      auto [it, inserted] =
+          body_to_representative.try_emplace(mod->body_id.value, mod_idx);
+      if (inserted) {
+        const auto& p = mir::GetInstancePlacement(design.placement, mod_idx);
+        std::vector<uint64_t> rel_offsets(p.slot_count);
+        if (p.slot_count > 0) {
+          uint64_t base =
+              struct_layout->getElementOffset(p.design_state_base_slot);
+          for (uint32_t i = 0; i < p.slot_count; ++i) {
+            rel_offsets[i] =
+                struct_layout->getElementOffset(p.design_state_base_slot + i) -
+                base;
+          }
+        }
+        layout.body_rel_byte_offsets_[mod->body_id.value] =
+            std::move(rel_offsets);
+      } else {
+        // Verify that repeated encounters of the same body_id produce
+        // identical relative byte offsets.
+        const auto& existing =
+            layout.body_rel_byte_offsets_[mod->body_id.value];
+        const auto& p = mir::GetInstancePlacement(design.placement, mod_idx);
+        if (existing.size() != p.slot_count) {
+          throw common::InternalError(
+              "BuildLayout",
+              std::format(
+                  "body {} has inconsistent slot counts: {} vs {}",
+                  mod->body_id.value, existing.size(), p.slot_count));
+        }
+        if (p.slot_count > 0) {
+          uint64_t base =
+              struct_layout->getElementOffset(p.design_state_base_slot);
+          for (uint32_t i = 0; i < p.slot_count; ++i) {
+            uint64_t rel =
+                struct_layout->getElementOffset(p.design_state_base_slot + i) -
+                base;
+            if (rel != existing[i]) {
+              throw common::InternalError(
+                  "BuildLayout",
+                  std::format(
+                      "body {} slot {} has inconsistent relative offset: "
+                      "{} vs {}",
+                      mod->body_id.value, i, rel, existing[i]));
+            }
+          }
+        }
+      }
+
+      ++mod_idx;
+    }
   }
 
   return layout;

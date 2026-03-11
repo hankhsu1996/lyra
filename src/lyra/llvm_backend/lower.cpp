@@ -10,8 +10,6 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <utility>
-#include <variant>
 #include <vector>
 
 #include <llvm/ADT/StringMap.h>
@@ -158,45 +156,81 @@ auto BuildSpecCompilationUnits(const mir::Design& design)
   return units;
 }
 
+// Build module_index -> ordered list of scheduled process indices.
+// Each entry contains the layout-order indices of that instance's non-final
+// processes in scheduled_processes.
+auto BuildModuleSchedIndices(const Layout& layout)
+    -> std::unordered_map<uint32_t, std::vector<uint32_t>> {
+  std::unordered_map<uint32_t, std::vector<uint32_t>> result;
+  for (size_t i = layout.num_init_processes;
+       i < layout.scheduled_processes.size(); ++i) {
+    const auto& sp = layout.scheduled_processes[i];
+    if (sp.module_index.value == ModuleIndex::kNone) continue;
+    result[sp.module_index.value].push_back(static_cast<uint32_t>(i));
+  }
+  return result;
+}
+
 auto BuildSpecCodegenViews(
-    const std::vector<SpecCompilationUnit>& units, const mir::Design& design,
-    const Layout& layout) -> std::vector<SpecCodegenView> {
-  // Map ModuleIndex -> body_id for template association.
-  std::unordered_map<uint32_t, uint32_t> modidx_to_bodyid;
-  uint32_t module_idx = 0;
-  for (const auto& element : design.elements) {
-    const auto* mod = std::get_if<mir::Module>(&element);
-    if (mod == nullptr) continue;
-    modidx_to_bodyid[module_idx] = mod->body_id.value;
-    ++module_idx;
-  }
-
-  // Map body_id -> unit index.
-  std::unordered_map<uint32_t, size_t> body_to_unit;
-  for (size_t i = 0; i < units.size(); ++i) {
-    body_to_unit[units[i].body_id.value] = i;
-  }
-
-  // Build views, one per unit. Template routing / association only.
+    const std::vector<SpecCompilationUnit>& units, const mir::Arena& arena,
+    const std::unordered_map<uint32_t, std::vector<uint32_t>>&
+        modidx_to_sched_indices) -> std::vector<SpecCodegenView> {
   std::vector<SpecCodegenView> views(units.size());
 
-  // Associate templates with their owning unit's view.
-  for (size_t t = 0; t < layout.process_templates.size(); ++t) {
-    const auto& tmpl = layout.process_templates[t];
-    auto body_it = modidx_to_bodyid.find(tmpl.representative_module_idx.value);
-    if (body_it == modidx_to_bodyid.end()) continue;
-    auto unit_it = body_to_unit.find(body_it->second);
-    if (unit_it == body_to_unit.end()) continue;
+  for (size_t u = 0; u < units.size(); ++u) {
+    const auto& unit = units[u];
+    if (unit.instances.empty()) {
+      throw common::InternalError(
+          "BuildSpecCodegenViews",
+          std::format(
+              "specialization unit for body {} has no instances",
+              unit.body_id.value));
+    }
 
-    views[unit_it->second].templates.push_back(
-        SpecTemplateView{
-            .global_template_index = t,
-            .layout_process_index = tmpl.template_layout_index.value,
-            .process_id = tmpl.template_process,
-            .representative_module_index = tmpl.representative_module_idx,
-            .template_base_slot_id = tmpl.template_base_slot_id,
-            .func_name = tmpl.func_name,
-        });
+    // Count non-final processes
+    uint32_t num_nonfinal = 0;
+    for (mir::ProcessId proc_id : unit.processes) {
+      if (arena[proc_id].kind != mir::ProcessKind::kFinal) ++num_nonfinal;
+    }
+    if (num_nonfinal == 0) continue;
+
+    // Use first instance as representative for scheduled-process indexing
+    ModuleIndex rep_module_index = unit.instances[0].module_index;
+    auto sched_it = modidx_to_sched_indices.find(rep_module_index.value);
+    if (sched_it == modidx_to_sched_indices.end()) {
+      throw common::InternalError(
+          "BuildSpecCodegenViews",
+          std::format(
+              "body {} has {} non-final processes but representative "
+              "module_index {} has no scheduled processes",
+              unit.body_id.value, num_nonfinal, rep_module_index.value));
+    }
+    const auto& sched_indices = sched_it->second;
+    if (sched_indices.size() != num_nonfinal) {
+      throw common::InternalError(
+          "BuildSpecCodegenViews",
+          std::format(
+              "body {} has {} non-final processes but representative "
+              "module_index {} has {} scheduled processes",
+              unit.body_id.value, num_nonfinal, rep_module_index.value,
+              sched_indices.size()));
+    }
+
+    uint32_t local_nonfinal = 0;
+    for (mir::ProcessId proc_id : unit.processes) {
+      if (arena[proc_id].kind == mir::ProcessKind::kFinal) continue;
+
+      views[u].processes.push_back(
+          SpecProcessView{
+              .local_nonfinal_proc_index = local_nonfinal,
+              .layout_process_index = sched_indices[local_nonfinal],
+              .process_id = proc_id,
+              .representative_module_index = rep_module_index,
+              .func_name = std::format(
+                  "body_{}_proc_{}", unit.body_id.value, local_nonfinal),
+          });
+      ++local_nonfinal;
+    }
   }
 
   return views;
@@ -215,9 +249,10 @@ auto BuildSpecLayouts(
               "specialization unit for body {} has no instances",
               unit.body_id.value));
     }
-    const auto& variant =
-        layout.GetInstanceVariant(unit.instances[0].module_index);
-    layouts.push_back(SpecLayout{.rel_byte_offsets = variant.rel_byte_offsets});
+    layouts.push_back(
+        SpecLayout{
+            .rel_byte_offsets = layout.GetBodyRelByteOffsets(unit.body_id),
+        });
   }
   return layouts;
 }
@@ -280,24 +315,27 @@ auto CompileModuleSpecSession(
     if (!result) return std::unexpected(result.error());
   }
 
-  // Step 5: Codegen all specialization templates/processes
-  CompiledModuleSpec product{.body_id = input.body_id};
+  // Step 5: Codegen all body-owned processes
+  CompiledModuleSpec product{
+      .body_id = input.body_id,
+      .process_functions = {},
+      .wait_sites = {},
+  };
 
-  for (const auto& tmpl : input.view.templates) {
-    context.SetCurrentProcess(tmpl.layout_process_index);
-    // Compatibility: template lowering still needs a representative instance ID
+  for (const auto& proc_view : input.view.processes) {
+    context.SetCurrentProcess(proc_view.layout_process_index);
+    // Compatibility: process lowering still needs a representative instance ID
     // for %m path support. This is transitional -- true specialization codegen
-    // should not require instance identity. Tracked as remaining E1 work.
-    context.SetCurrentInstanceId(tmpl.representative_module_index.value);
+    // should not require instance identity.
+    context.SetCurrentInstanceId(proc_view.representative_module_index.value);
     context.SetRelByteOffsets(&input.layout.rel_byte_offsets);
 
-    const auto& mir_process = arena[tmpl.process_id];
-    auto func_result =
-        GenerateSharedProcessFunction(context, mir_process, tmpl.func_name);
+    const auto& mir_process = arena[proc_view.process_id];
+    auto func_result = GenerateSharedProcessFunction(
+        context, mir_process, proc_view.func_name);
     if (!func_result) return std::unexpected(func_result.error());
 
-    product.template_functions.emplace_back(
-        tmpl.global_template_index, func_result->function);
+    product.process_functions.push_back(func_result->function);
 
     product.wait_sites.insert(
         product.wait_sites.end(),
@@ -341,7 +379,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   // Phase 1: Build specialization inputs (units + layouts + codegen views)
   auto units = BuildSpecCompilationUnits(*input.design);
-  auto views = BuildSpecCodegenViews(units, *input.design, *layout);
+  auto modidx_to_sched_indices = BuildModuleSchedIndices(*layout);
+  auto views =
+      BuildSpecCodegenViews(units, *input.mir_arena, modidx_to_sched_indices);
   auto spec_layouts = BuildSpecLayouts(units, *layout);
   auto spec_inputs = BuildCompiledModuleSpecInputs(
       units, std::move(spec_layouts), std::move(views));
@@ -385,22 +425,81 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   // Phase 4: Compile each specialization via CompileModuleSpecSession
-  std::vector<llvm::Function*> template_fns(layout->process_templates.size());
+  // Build body_id -> compiled process functions routing table
+  std::unordered_map<uint32_t, std::vector<llvm::Function*>>
+      body_to_compiled_funcs;
   std::vector<WaitSiteEntry> all_wait_sites;
 
-  for (const auto& spec_input : spec_inputs) {
+  for (size_t si = 0; si < spec_inputs.size(); ++si) {
+    const auto& spec_input = spec_inputs[si];
     auto product =
         CompileModuleSpecSession(*context, *input.mir_arena, spec_input);
     if (!product) return std::unexpected(product.error());
 
-    // Merge specialization products
-    for (const auto& [template_idx, func] : product->template_functions) {
-      template_fns[template_idx] = func;
+    auto [it, inserted] = body_to_compiled_funcs.try_emplace(
+        product->body_id.value, std::move(product->process_functions));
+    if (!inserted) {
+      throw common::InternalError(
+          "CompileDesignProcesses",
+          std::format(
+              "duplicate body_id {} in specialization products",
+              product->body_id.value));
     }
     all_wait_sites.insert(
         all_wait_sites.end(),
         std::make_move_iterator(product->wait_sites.begin()),
         std::make_move_iterator(product->wait_sites.end()));
+  }
+
+  // Build explicit sched_index -> shared compiled function routing table.
+  // This maps each scheduled module process to its body-owned compiled
+  // function, using the pre-computed per-instance scheduled-process indices.
+  std::unordered_map<uint32_t, llvm::Function*> sched_idx_to_shared_func;
+  for (const auto& unit : units) {
+    auto funcs_it = body_to_compiled_funcs.find(unit.body_id.value);
+    if (funcs_it == body_to_compiled_funcs.end()) {
+      throw common::InternalError(
+          "CompileDesignProcesses",
+          std::format("no compiled functions for body {}", unit.body_id.value));
+    }
+    const auto& compiled_funcs = funcs_it->second;
+
+    for (const auto& inst : unit.instances) {
+      auto sched_it = modidx_to_sched_indices.find(inst.module_index.value);
+      if (sched_it == modidx_to_sched_indices.end()) {
+        if (!compiled_funcs.empty()) {
+          throw common::InternalError(
+              "CompileDesignProcesses",
+              std::format(
+                  "body {} has {} compiled functions but instance {} has "
+                  "no scheduled processes",
+                  unit.body_id.value, compiled_funcs.size(),
+                  inst.module_index.value));
+        }
+        continue;
+      }
+      const auto& sched_indices = sched_it->second;
+      if (sched_indices.size() != compiled_funcs.size()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "body {} has {} compiled functions but instance {} has {} "
+                "scheduled processes",
+                unit.body_id.value, compiled_funcs.size(),
+                inst.module_index.value, sched_indices.size()));
+      }
+      for (size_t k = 0; k < sched_indices.size(); ++k) {
+        auto [it, inserted] = sched_idx_to_shared_func.try_emplace(
+            sched_indices[k], compiled_funcs[k]);
+        if (!inserted) {
+          throw common::InternalError(
+              "CompileDesignProcesses",
+              std::format(
+                  "duplicate routing for scheduled process index {}",
+                  sched_indices[k]));
+        }
+      }
+    }
   }
 
   // Phase 5: Per-instance wrappers / standalone entrypoints
@@ -415,30 +514,38 @@ auto CompileDesignProcesses(const LoweringInput& input)
     const auto& mir_process = (*input.mir_arena)[bp.process_id];
     context->SetCurrentInstanceId(bp.module_index.value);
 
-    auto route =
-        layout->RouteProcess(LayoutProcessIndex{static_cast<uint32_t>(i)});
-    if (auto* templated = std::get_if<TemplatedRoute>(&route)) {
-      uint64_t base_byte_offset =
-          layout->GetInstanceBaseByteOffset(templated->module_idx);
-      uint32_t base_slot_id = mir::GetInstanceBaseSlot(
-          input.design->placement, templated->module_idx.value);
-
-      auto* wrapper = GenerateProcessWrapper(
-          *context, template_fns[templated->template_id.value],
-          bp.module_index.value, base_byte_offset, base_slot_id,
-          std::format("process_{}", i));
-      process_funcs.push_back(wrapper);
+    // Init and connection processes are standalone (no module binding)
+    if (i < num_init || bp.module_index.value == ModuleIndex::kNone) {
+      auto func_result = GenerateProcessFunction(
+          *context, mir_process, std::format("process_{}", i));
+      if (!func_result) return std::unexpected(func_result.error());
+      process_funcs.push_back(func_result->function);
+      all_wait_sites.insert(
+          all_wait_sites.end(),
+          std::make_move_iterator(func_result->wait_sites.begin()),
+          std::make_move_iterator(func_result->wait_sites.end()));
       continue;
     }
 
-    auto func_result = GenerateProcessFunction(
-        *context, mir_process, std::format("process_{}", i));
-    if (!func_result) return std::unexpected(func_result.error());
-    process_funcs.push_back(func_result->function);
-    all_wait_sites.insert(
-        all_wait_sites.end(),
-        std::make_move_iterator(func_result->wait_sites.begin()),
-        std::make_move_iterator(func_result->wait_sites.end()));
+    // Module process: route through explicit sched_idx -> shared_func table
+    auto func_it = sched_idx_to_shared_func.find(static_cast<uint32_t>(i));
+    if (func_it == sched_idx_to_shared_func.end()) {
+      throw common::InternalError(
+          "CompileDesignProcesses",
+          std::format(
+              "no compiled function routing for scheduled process {}", i));
+    }
+    llvm::Function* shared_func = func_it->second;
+
+    uint64_t base_byte_offset =
+        layout->GetInstanceBaseByteOffset(bp.module_index);
+    uint32_t base_slot_id = mir::GetInstanceBaseSlot(
+        input.design->placement, bp.module_index.value);
+
+    auto* wrapper = GenerateProcessWrapper(
+        *context, shared_func, bp.module_index.value, base_byte_offset,
+        base_slot_id, std::format("process_{}", i));
+    process_funcs.push_back(wrapper);
   }
 
   return CodegenSession{
