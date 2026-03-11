@@ -6,6 +6,8 @@
 namespace lyra::common {
 
 void RangeSet::Insert(uint32_t offset, uint32_t size) {
+  if (is_full_extent_) return;
+
   uint64_t new_start = offset;
   uint64_t new_end =
       static_cast<uint64_t>(offset) + static_cast<uint64_t>(size);

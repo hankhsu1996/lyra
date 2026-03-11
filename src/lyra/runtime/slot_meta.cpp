@@ -108,14 +108,10 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
   }
 }
 
-auto SlotMetaRegistry::Get(uint32_t slot_id) const -> const SlotMeta& {
-  if (slot_id >= slots_.size()) {
-    throw common::InternalError(
-        "SlotMetaRegistry::Get",
-        std::format(
-            "slot_id {} out of range (size {})", slot_id, slots_.size()));
-  }
-  return slots_[slot_id];
+void SlotMetaRegistry::ThrowOutOfRange(uint32_t slot_id) const {
+  throw common::InternalError(
+      "SlotMetaRegistry::Get",
+      std::format("slot_id {} out of range (size {})", slot_id, slots_.size()));
 }
 
 auto SlotMetaRegistry::Size() const -> uint32_t {
