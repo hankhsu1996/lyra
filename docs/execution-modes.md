@@ -7,11 +7,10 @@ codegen pipeline and diverge only at the final step.
 
 **AOT (artifact mode)** -- default, production path.
 
-Compile to a native executable, then run it. The artifact is a self-contained
-bundle directory with binary + shared runtime library.
+Compile to a native executable with the runtime linked in, then run it.
 
 ```
-MIR -> LLVM IR -> object file -> link -> bundle/bin/<name>
+MIR -> LLVM IR -> object file -> link -> <dir>/<name>
 ```
 
 **JIT (hosted mode)** -- fast iteration, interactive tooling, future tiered compilation.
@@ -36,7 +35,7 @@ modes. LLVM compilation is per-specialization; realization produces the design-l
 tables. The only mode difference is `MainAbi`:
 
 - `kArgvForwarding` (AOT): `main(argc, argv)` forwards CLI args as plusargs,
-  resolves fs_base_dir from bundle root
+  resolves fs_base_dir from executable directory
 - `kEmbeddedPlusargs` (JIT): `main()` with plusargs baked into IR as global
   string constants
 
@@ -54,8 +53,8 @@ lyra run --backend=mir [files]   # Execute (MIR interpreter)
 lyra compile [files...]          # Produce artifact only (no execution)
 ```
 
-AOT `run` compiles to a temp bundle, executes it, and cleans up. `compile`
-produces a persistent bundle at the specified output directory.
+AOT `run` compiles to a temp directory, executes the binary, and cleans up.
+`compile` produces a persistent executable at the specified output directory.
 
 ### Plusargs
 
@@ -63,7 +62,7 @@ For AOT standalone executables, plusargs are passed directly as CLI arguments:
 
 ```
 lyra compile -o out/ design.sv
-out/bin/design +TEST=foo +SEED=42
+out/design +TEST=foo +SEED=42
 ```
 
 For `lyra run`, plusargs go after `--`:
@@ -72,23 +71,22 @@ For `lyra run`, plusargs go after `--`:
 lyra run design.sv -- +TEST=foo +SEED=42
 ```
 
-## AOT bundle layout
+## AOT output layout
 
-`lyra compile -o <dir>` produces:
+`lyra compile -o <dir>` produces a single self-contained executable:
 
 ```
-<dir>/
-+-- bin/<name>                  # Native executable
-+-- lib/liblyra_runtime.so      # Runtime library
+<dir>/<name>                    # Native executable (runtime linked in)
 ```
 
-The executable uses `$ORIGIN/../lib` rpath (Linux) to find the runtime library.
-The bundle is self-contained and relocatable.
+The Lyra runtime archive is linked into the binary by normal archive linking,
+so no shared library or rpath is needed. The binary still dynamically links
+libc, libstdc++, libm, and libpthread.
 
 fs_base_dir resolution for file I/O (`$readmemh`, etc.):
 
-1. `LYRA_FS_BASE_DIR` env var (internal, set by `lyra run` for temp bundles)
-2. Bundle root derived from `argv[0]` (dirname of dirname of executable)
+1. `LYRA_FS_BASE_DIR` env var (internal, set by `lyra run` for temp dirs)
+2. Directory of the executable (dirname of `argv[0]`)
 3. Current working directory (fallback)
 
 ## JIT future directions

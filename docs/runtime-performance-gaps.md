@@ -38,7 +38,7 @@ All measurements use `-c opt`. See `docs/profiling.md` for why this is mandatory
 
 Post-G5 with `-c opt`, 515M instructions total (down from 583M pre-G5, 730M pre-G9). See `docs/profiling.md` for methodology.
 
-**Profiling target:** Always profile the AOT binary directly (`out/bin/Top`), not `lyra run`. AOT mode forks a child process for the simulation; callgrind only profiles the process it launches. Profiling `lyra run` shows the compiler (~208M instructions) while the simulation (~515M) runs in an untraced child. See `docs/profiling.md` "AOT architecture and profiling implications" for details.
+**Profiling target:** Always profile the AOT binary directly (`out/Top`), not `lyra run`. AOT mode forks a child process for the simulation; callgrind only profiles the process it launches. Profiling `lyra run` shows the compiler (~208M instructions) while the simulation (~515M) runs in an untraced child. See `docs/profiling.md` "AOT architecture and profiling implications" for details.
 
 Percentages are inclusive (contain callees) -- do not sum across rows.
 

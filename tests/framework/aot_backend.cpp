@@ -1,5 +1,6 @@
 #include "tests/framework/aot_backend.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <string>
@@ -9,7 +10,6 @@
 #include "lyra/common/opt_level.hpp"
 #include "lyra/llvm_backend/emit.hpp"
 #include "lyra/llvm_backend/lower.hpp"
-#include "lyra/llvm_backend/toolchain.hpp"
 #include "tests/framework/llvm_common.hpp"
 #include "tests/framework/output_protocol.hpp"
 #include "tests/framework/runner_common.hpp"
@@ -46,35 +46,28 @@ auto RunAotBackend(
     return result;
   }
 
-  // Find runtime library
-  auto runtime_path = FindRuntimeLibrary();
-  if (!runtime_path) {
-    result.error_message = "Runtime library not found";
-    return result;
-  }
-
-  // Detect toolchain (uses LYRA_CC > CC > PATH search)
-  auto toolchain = lowering::mir_to_llvm::DetectToolchain();
-  if (!toolchain) {
-    result.error_message =
-        std::format("Toolchain detection failed: {}", toolchain.error());
-    return result;
-  }
-
-  // Link executable bundle
-  auto bundle_dir = aot_dir / "bundle";
-  auto link_result = lowering::mir_to_llvm::LinkExecutable(
-      *toolchain, obj_path, *runtime_path, bundle_dir, "test");
+  // Link test executable against the shared runtime (fast dynamic link).
+  // Uses the shared library for test speed; production `lyra compile` uses
+  // the static archive for self-contained output.
+  auto link_result = LinkTestExecutable(obj_path, aot_dir, "test");
   if (!link_result) {
-    result.error_message = std::format(
-        "Linking failed: {} (stderr: {})", link_result.error().message,
-        link_result.error().stderr);
+    result.error_message =
+        std::format("Linking failed: {}", link_result.error());
     return result;
   }
 
-  // Execute the linked binary
+  // Execute the linked binary with LD_LIBRARY_PATH prepended to include the
+  // shared runtime directory. The binary is ephemeral -- no rpath or bundle
+  // needed.
   std::vector<std::string> no_args;
-  auto sub = RunSubprocess(*link_result, no_args);
+  std::string ld_path = link_result->runtime_dir.string();
+  const char* existing = std::getenv("LD_LIBRARY_PATH");
+  if (existing != nullptr && existing[0] != '\0') {
+    ld_path += ':';
+    ld_path += existing;
+  }
+  EnvOverrides env = {{"LD_LIBRARY_PATH", ld_path}};
+  auto sub = RunSubprocess(link_result->exe_path, no_args, env);
   if (sub.exit_code < 0) {
     result.error_message =
         std::format("AOT execution failed: {}", sub.stderr_text);

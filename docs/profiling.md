@@ -34,7 +34,7 @@ Why pipeline:
 `lyra run` in AOT mode (the default) has two processes:
 
 1. **Compiler process** (`lyra` binary) -- parses, lowers, emits object code, links the AOT binary, then forks/execs it
-2. **Simulation process** (the AOT binary, e.g., `out/bin/Top`) -- runs the actual simulation linked against `liblyra_runtime.so`
+2. **Simulation process** (the AOT binary, e.g., `out/Top`) -- runs the actual simulation
 
 Callgrind (and valgrind in general) profiles only the process it launches. If you profile `lyra run`, you get the **compiler** profile (~208M instructions for pipeline), not the simulation. The simulation runs in a child process that callgrind does not follow by default.
 
@@ -54,7 +54,7 @@ This produces separate output files per process. The simulation process will hav
 
 ### 1. Build
 
-Compile the pipeline AOT binary with optimization. The AOT path produces a standalone executable linked against `liblyra_runtime.so`.
+Compile the pipeline AOT binary with optimization. The AOT path produces a native executable with the Lyra runtime linked in.
 
 **Always build with `-c opt`.** This applies to both profiling and benchmarking. Bazel's default `fastbuild` mode uses `-O0`, which prevents inlining and inflates STL/container overhead by 5x+. Profiles taken at `-O0` show a completely different cost distribution (dominated by iterator constructors, vector::empty checks, and function call overhead that vanishes at `-O2`) and cannot be used for hotspot ranking. The benchmark runner (`tools/bench/run_benchmarks.py`) enforces this by building with `-c opt` and always using the resulting optimized binary. See the `-c opt` discovery note in `docs/runtime-performance-gaps.md` for the full story.
 
@@ -71,7 +71,7 @@ Run under Callgrind. Output goes to a fixed filename for easy comparison.
 cd tools/bench/fixtures/pipeline
 valgrind --tool=callgrind \
   --callgrind-out-file=callgrind.out \
-  out/bin/Top
+  out/Top
 ```
 
 Expected runtime: ~2-3 minutes with `-c opt` (Callgrind adds ~20-50x overhead).
@@ -125,7 +125,7 @@ cp callgrind.out callgrind.before
 bazel build -c opt //:lyra
 ./bazel-bin/lyra -C tools/bench/fixtures/pipeline compile
 cd tools/bench/fixtures/pipeline
-valgrind --tool=callgrind --callgrind-out-file=callgrind.out out/bin/Top
+valgrind --tool=callgrind --callgrind-out-file=callgrind.out out/Top
 
 # Compare total instruction counts
 grep "Collected" callgrind.before callgrind.out

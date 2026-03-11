@@ -2,18 +2,20 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lyra::driver {
 
-// Find liblyra_runtime.so using standard search paths.
+// Find a runtime library by name using standard search paths.
 // Returns empty path if not found; populates tried_paths with locations
 // checked. Search order:
 //   1. LYRA_RUNTIME_PATH environment variable
 //   2. Bazel runfiles directory
 //   3. Sibling to executable
 //   4. Current working directory
-auto FindRuntimeLibrary(std::vector<std::string>& tried_paths)
+auto FindRuntimeLibrary(
+    std::string_view lib_name, std::vector<std::string>& tried_paths)
     -> std::filesystem::path;
 
 }  // namespace lyra::driver

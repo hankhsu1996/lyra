@@ -45,7 +45,7 @@ buildifier -r .                                # Format Bazel files
 
 ```bash
 lyra init [name]                 # Create a new project
-lyra compile [files...]          # Compile to native executable bundle
+lyra compile [files...]          # Compile to native executable
 lyra run [files...]              # Run simulation (AOT, default)
 lyra run --backend=jit [files]   # Run via ORC JIT (in-process)
 lyra run --backend=mir [files]   # Run via MIR interpreter

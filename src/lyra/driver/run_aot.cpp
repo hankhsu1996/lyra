@@ -61,7 +61,7 @@ auto RunAot(const CompilationInput& input) -> int {
   argv.push_back(nullptr);
 
   // Set fs_base_dir so the AOT binary resolves file I/O relative to the
-  // original project directory, not the temp bundle directory.
+  // original project directory, not the temp output directory.
   // Internal contract: LYRA_FS_BASE_DIR is set by `lyra run` only.
   setenv("LYRA_FS_BASE_DIR", input.fs_base_dir.string().c_str(), 1);
 

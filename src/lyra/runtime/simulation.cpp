@@ -794,8 +794,8 @@ extern "C" auto LyraResolveBaseDir(const char* argv0) -> const char* {
     return resolved.c_str();
   }
 
-  // Priority 2: derive bundle root from executable path
-  // Assumes bundle layout: <root>/bin/<exe> (produced by `lyra compile`)
+  // Priority 2: derive from executable directory
+  // Layout: <dir>/<name> (produced by `lyra compile`)
   if (argv0 != nullptr && argv0[0] != '\0') {
     std::error_code ec;
     auto exe_path = std::filesystem::canonical(argv0, ec);
@@ -805,8 +805,7 @@ extern "C" auto LyraResolveBaseDir(const char* argv0) -> const char* {
       exe_path = std::filesystem::absolute(argv0, ec);
     }
     if (!ec) {
-      auto bundle_root = exe_path.parent_path().parent_path();
-      resolved = bundle_root.string();
+      resolved = exe_path.parent_path().string();
       return resolved.c_str();
     }
   }

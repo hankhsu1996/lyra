@@ -6,6 +6,9 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
@@ -16,8 +19,9 @@
 
 namespace lyra::test {
 
-// Find liblyra_runtime.so in runfiles or sibling path.
-auto FindRuntimeLibrary() -> std::optional<std::filesystem::path>;
+// Find a runtime library by name in runfiles or sibling path.
+auto FindRuntimeLibrary(std::string_view lib_name)
+    -> std::optional<std::filesystem::path>;
 
 // Result of spawning a subprocess with captured stdout/stderr.
 struct SubprocessResult {
@@ -26,10 +30,28 @@ struct SubprocessResult {
   std::string stderr_text;
 };
 
+// Environment variable override for subprocess execution.
+using EnvOverrides = std::vector<std::pair<std::string, std::string>>;
+
 // Spawn a subprocess, capturing stdout and stderr concurrently.
+// Optional env_overrides set/replace environment variables for the child.
 auto RunSubprocess(
-    const std::filesystem::path& exe, std::span<const std::string> args)
-    -> SubprocessResult;
+    const std::filesystem::path& exe, std::span<const std::string> args,
+    const EnvOverrides& env_overrides = {}) -> SubprocessResult;
+
+// Link a test executable against the shared runtime library.
+// Test-only path: uses dynamic linking for fast iteration (no rpath, no
+// bundling). Returns {exe_path, runtime_dir} on success. The caller must
+// set LD_LIBRARY_PATH=runtime_dir when executing the binary.
+struct TestLinkResult {
+  std::filesystem::path exe_path;
+  std::filesystem::path runtime_dir;  // directory containing the .so
+};
+
+auto LinkTestExecutable(
+    const std::filesystem::path& object_path,
+    const std::filesystem::path& output_dir, const std::string& name)
+    -> std::expected<TestLinkResult, std::string>;
 
 // Result of LLVM IR preparation (owns all lowering artifacts).
 struct LlvmPreparationResult {
