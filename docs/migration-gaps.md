@@ -55,7 +55,7 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 - **Phase A complete** -- `ModuleDefId`, `BehaviorFingerprint`, `ModuleSpecId`, `SpecializationMap` introduced. Known gap: M2 (type-level structural refs mitigated by `type.toString()` hashing, not clean).
 - **Phase B mostly complete** (B1-B4 done) -- `mir::ModuleBody` owns behavioral IR, `mir::Module` is instance record with `body_id`. Shared bodies active. `mir::Process` carries no instance identity. `SpecializationMap` required (no fallback). Remaining: B6 (HIR split).
 - **Phase C complete** (C1-C3) -- specialization-local slot identity via `CollectBodyLocalDecls`. `mir::InstancePlacement` is source of truth for design-state placement. Alias resolution eliminated from behavioral codegen.
-- **Phase D mostly complete** (D1, D3, D4 done) -- bindings separated (`CompileBindings` + `realization::AssembleBindings`). Metadata serialization in `realization::BuildDesignMetadata`. `main()` in `realization::EmitDesignMain()`. `LowerMirToLlvm()` is thin wrapper: `CompileDesignProcesses` -> `EmitDesignMain` -> `FinalizeModule`. Remaining: D2 (`InstanceConstBlock`).
+- **Phase D complete** (D1-D4 done) -- bindings separated (`CompileBindings` + `realization::AssembleBindings`). Metadata serialization in `realization::BuildDesignMetadata`. `main()` in `realization::EmitDesignMain()`. `LowerMirToLlvm()` is thin wrapper: `CompileDesignProcesses` -> `EmitDesignMain` -> `FinalizeModule`. D2: `InstanceConstBlock` is a first-class realization artifact in `PlacementMap`; per-instance value-only parameter values are owned by `PlacementMap::const_blocks` (body-local slot indices), not by `mir::Design`. `mir::Design::instance_param_inits` deleted.
 
 ## Active Gaps
 
@@ -71,11 +71,7 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 - `src/lyra/llvm_backend/layout/layout.cpp` -- `BuildLayout()` iterates all instances
 - `include/lyra/llvm_backend/context.hpp` -- `Context` holds `const Layout&`
 
-### Next: D2 / M2
-
-**D2: InstanceConstBlock**
-
-Per-instance value-only parameter values as realization artifact. Replaces `instance_param_inits` in `mir::Design`. Two instances with different value-only params produce different `InstanceConstBlock` but share specialization. Depends on A4, C2.
+### Next: M2
 
 **M2: ParamRole classification refinement**
 

@@ -3,10 +3,28 @@
 #include <cstdint>
 #include <vector>
 
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol_types.hpp"
 
 namespace lyra::mir {
+
+// One constant-valued slot initialization within an InstanceConstBlock.
+// `body_local_slot` is in body-local slot space (0-based within the
+// specialization body). Consumers resolve to design-global slot IDs by
+// combining with the matching InstancePlacement::design_state_base_slot.
+struct ConstSlotInit {
+  uint32_t body_local_slot;
+  IntegralConstant value;
+};
+
+// Per-instance constant initialization data for value-only parameters.
+// Paired 1:1 with InstancePlacement entries (same index = same instance).
+// This is a realization artifact: specialization owns the code shape,
+// realization owns the per-instance constant data.
+struct InstanceConstBlock {
+  std::vector<ConstSlotInit> slot_inits;
+};
 
 // Transitional placement artifact for one module instance in DesignState.
 //
@@ -28,8 +46,14 @@ struct InstancePlacement {
 // Owning aggregate for all instance placements in a design.
 // Indexed by module-instance index (module-only elements in BFS elaboration
 // order). NOT parallel to Design::elements (which also contains packages).
+//
+// Invariant: instances.size() == const_blocks.size().
+// Each const_blocks[i] belongs to the instance at instances[i].
 struct PlacementMap {
   std::vector<InstancePlacement> instances;
+  // Per-instance constant initialization data for value-only parameters.
+  // Parallel to `instances`: const_blocks[i] is paired with instances[i].
+  std::vector<InstanceConstBlock> const_blocks;
 };
 
 // Look up placement for a module instance by its index.

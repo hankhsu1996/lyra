@@ -87,10 +87,6 @@ struct Design {
   std::vector<InstanceSlotRange> instance_slot_ranges;
   // Per-module-instance def IDs (parallel to instance_slot_ranges).
   std::vector<common::ModuleDefId> module_def_ids;
-
-  // Per-module-instance param init entries (parallel to instance_slot_ranges).
-  // instance_param_inits[module_idx] = entries for that instance.
-  std::vector<std::vector<ParamInitEntry>> instance_param_inits;
 };
 
 inline auto GetModuleBody(const Design& design, const Module& mod)

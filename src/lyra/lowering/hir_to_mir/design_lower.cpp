@@ -134,7 +134,6 @@ auto LowerDesign(
   result.slots = decls.slots;
   result.global_precision_power = input.global_precision_power;
   result.module_def_ids = decls.module_def_ids;
-  result.instance_param_inits = decls.instance_param_inits;
   if (input.instance_table != nullptr) {
     result.instance_table = *input.instance_table;
   }
@@ -233,6 +232,34 @@ auto LowerDesign(
               .design_state_base_slot = next_placement_base,
               .slot_count = slot_count,
           });
+
+      // Build InstanceConstBlock from transient design-global param inits.
+      // Convert absolute slot IDs to body-local using the canonical
+      // instance_slot_ranges as the conversion source of truth.
+      mir::InstanceConstBlock const_block;
+      if (module_index < decls.instance_param_inits.size()) {
+        const auto& slot_range = decls.instance_slot_ranges.at(module_index);
+        uint32_t slot_begin = slot_range.slot_begin;
+        uint32_t slot_end = slot_begin + slot_range.slot_count;
+        for (const auto& entry : decls.instance_param_inits[module_index]) {
+          if (entry.slot_id < slot_begin || entry.slot_id >= slot_end) {
+            throw common::InternalError(
+                "LowerDesign",
+                std::format(
+                    "param init slot_id {} outside instance slot range "
+                    "[{}, {})",
+                    entry.slot_id, slot_begin, slot_end));
+          }
+          uint32_t body_local_slot = entry.slot_id - slot_begin;
+          const_block.slot_inits.push_back(
+              mir::ConstSlotInit{
+                  .body_local_slot = body_local_slot,
+                  .value = entry.value,
+              });
+        }
+      }
+      result.placement.const_blocks.push_back(std::move(const_block));
+
       next_placement_base += slot_count;
 
       ++module_index;
@@ -244,6 +271,17 @@ auto LowerDesign(
       }
       result.elements.emplace_back(std::move(*pkg_result));
     }
+  }
+
+  // Enforce placement/const-block parallelism invariant.
+  if (result.placement.instances.size() !=
+      result.placement.const_blocks.size()) {
+    throw common::InternalError(
+        "LowerDesign",
+        std::format(
+            "placement instances ({}) and const_blocks ({}) size mismatch",
+            result.placement.instances.size(),
+            result.placement.const_blocks.size()));
   }
 
   // Derive compatibility instance_slot_ranges from placement (source of truth).

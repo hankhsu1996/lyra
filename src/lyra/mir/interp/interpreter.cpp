@@ -15,6 +15,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/mutation_event.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
@@ -553,16 +554,34 @@ auto RunSimulation(
   // Create design state
   auto design_state = CreateDesignState(mir_arena, types, design);
 
-  // Initialize promoted param slots with constant values.
-  // Must happen after CreateDesignState (default-init) but before any process.
-  for (const auto& entries : design.instance_param_inits) {
-    for (const auto& entry : entries) {
-      if (entry.slot_id < design_state.storage.size()) {
-        TypeId type_id = design.slots[entry.slot_id].type;
-        uint32_t bit_width = PackedBitWidth(types[type_id], types);
-        design_state.storage[entry.slot_id] =
-            MakeIntegralFromConstant(entry.value, bit_width);
+  // Initialize promoted param slots with constant values from placement
+  // const blocks. Must happen after CreateDesignState (default-init) but
+  // before any process.
+  if (design.placement.instances.size() !=
+      design.placement.const_blocks.size()) {
+    throw common::InternalError(
+        "RunSimulation",
+        std::format(
+            "placement instances ({}) and const_blocks ({}) size mismatch",
+            design.placement.instances.size(),
+            design.placement.const_blocks.size()));
+  }
+  for (size_t i = 0; i < design.placement.const_blocks.size(); ++i) {
+    const auto& inst = design.placement.instances[i];
+    const auto& const_block = design.placement.const_blocks[i];
+    for (const auto& init : const_block.slot_inits) {
+      uint32_t abs_slot = inst.design_state_base_slot + init.body_local_slot;
+      if (abs_slot >= design_state.storage.size()) {
+        throw common::InternalError(
+            "RunSimulation",
+            std::format(
+                "const block abs_slot {} out of range (storage size {})",
+                abs_slot, design_state.storage.size()));
       }
+      TypeId type_id = design.slots[abs_slot].type;
+      uint32_t bit_width = PackedBitWidth(types[type_id], types);
+      design_state.storage[abs_slot] =
+          MakeIntegralFromConstant(init.value, bit_width);
     }
   }
 
