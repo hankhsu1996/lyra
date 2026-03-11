@@ -69,12 +69,19 @@ auto LowerReplicateRvalue(
   return LowerReplicateRvalue2State(context, info, operands, packed_context);
 }
 
-auto LowerIndexValidity(
-    Context& context, const mir::IndexValidityRvalueInfo& info,
+auto LowerIsKnown(
+    Context& context, const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult> {
+  // IsKnown always returns 2-state (bool)
+  return LowerIsKnown2State(context, operands, packed_context);
+}
+
+auto LowerIndexInRange(
+    Context& context, const mir::IndexInRangeRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  // IndexValidity always returns 2-state (bool)
-  return LowerIndexValidity2State(context, info, operands, packed_context);
+  // IndexInRange always returns 2-state (bool)
+  return LowerIndexInRange2State(context, info, operands, packed_context);
 }
 
 auto LowerGuardedUse(
@@ -171,9 +178,12 @@ auto LowerPackedCoreRvalue(
             return LowerReplicateRvalue(
                 context, info, rvalue.operands, packed_context);
           },
-          [&](const mir::IndexValidityRvalueInfo& info)
+          [&](const mir::IsKnownRvalueInfo&) -> Result<ComputeResult> {
+            return LowerIsKnown(context, rvalue.operands, packed_context);
+          },
+          [&](const mir::IndexInRangeRvalueInfo& info)
               -> Result<ComputeResult> {
-            return LowerIndexValidity(
+            return LowerIndexInRange(
                 context, info, rvalue.operands, packed_context);
           },
           [&](const mir::GuardedUseRvalueInfo& info) -> Result<ComputeResult> {

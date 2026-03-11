@@ -1818,15 +1818,6 @@ auto LowerBuiltinMethodCall(
       "LowerBuiltinMethodCall", "unknown builtin method");
 }
 
-// Check if index type is 4-state (has X/Z bits).
-auto IsFourStateIndex(TypeId index_type, const TypeArena& types) -> bool {
-  const Type& type = types[index_type];
-  if (IsPacked(type)) {
-    return IsPackedFourState(type, types);
-  }
-  return false;
-}
-
 // Compute bit offset for packed array element select.
 // Returns {offset, valid} pair.
 // Uses 32-bit offset type for intermediate calculations to avoid truncation
@@ -1840,10 +1831,8 @@ auto EmitPackedElementOffset(
   uint32_t element_width = PackedArrayElementWidth(array_type, *ctx.type_arena);
   TypeId offset_type = ctx.GetOffsetType();
 
-  // Compute validity using IndexValidity rvalue
-  bool check_known = IsFourStateIndex(index_type, *ctx.type_arena);
-  auto valid = builder.EmitIndexValidity(
-      index, range.Lower(), range.Upper(), check_known);
+  auto valid = builder.EmitIndexAccessValidity(
+      index, index_type, range.Lower(), range.Upper());
 
   // Compute offset based on direction
   // Descending [H:L]: offset = (index - lower) * width
@@ -1878,8 +1867,6 @@ auto EmitPackedElementOffset(
 auto EmitBitSelectOffset(
     mir::Operand index, TypeId index_type, const Type& base_type,
     MirBuilder& builder) -> std::pair<mir::Operand, mir::Operand> {
-  const Context& ctx = builder.GetContext();
-
   // Get bit width based on type kind
   uint32_t bit_width = 0;
   switch (base_type.Kind()) {
@@ -1898,9 +1885,7 @@ auto EmitBitSelectOffset(
   int32_t upper = static_cast<int32_t>(bit_width) - 1;
   int32_t lower = 0;
 
-  // Compute validity using IndexValidity rvalue
-  bool check_known = IsFourStateIndex(index_type, *ctx.type_arena);
-  auto valid = builder.EmitIndexValidity(index, lower, upper, check_known);
+  auto valid = builder.EmitIndexAccessValidity(index, index_type, lower, upper);
 
   // Offset = index (0-based descending)
   return {index, valid};
@@ -2124,10 +2109,9 @@ auto EmitIndexedPartSelectOffset(
     TypeId bit_type = ctx.GetBitType();
     valid = mir::Operand::Const(MakeIntegralConst(0, bit_type));
   } else {
-    bool check_known = IsFourStateIndex(index_type, *ctx.type_arena);
-    valid = builder.EmitIndexValidity(
-        index, static_cast<int32_t>(eff_lower_64),
-        static_cast<int32_t>(eff_upper_64), check_known);
+    valid = builder.EmitIndexAccessValidity(
+        index, index_type, static_cast<int32_t>(eff_lower_64),
+        static_cast<int32_t>(eff_upper_64));
   }
 
   // Compute physical bit offset based on base direction and part-select

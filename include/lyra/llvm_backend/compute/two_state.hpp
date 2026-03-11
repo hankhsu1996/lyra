@@ -35,9 +35,14 @@ auto LowerReplicateRvalue2State(
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 
-// Lower 2-state index validity check (bounds checking).
-auto LowerIndexValidity2State(
-    Context& context, const mir::IndexValidityRvalueInfo& info,
+// Lower 2-state IsKnown check (X/Z knownness).
+auto LowerIsKnown2State(
+    Context& context, const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
+
+// Lower 2-state index-in-range check (bounds checking).
+auto LowerIndexInRange2State(
+    Context& context, const mir::IndexInRangeRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult>;
 

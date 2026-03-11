@@ -71,18 +71,6 @@ void Interpreter::EmitHeapMutation(
 
 namespace {
 
-// Sign-extends a value based on its bit width to produce a signed int64.
-auto SignExtendToInt64(uint64_t raw, uint32_t bit_width) -> int64_t {
-  if (bit_width > 0 && bit_width < 64) {
-    uint64_t sign_bit = 1ULL << (bit_width - 1);
-    if ((raw & sign_bit) != 0) {
-      uint64_t mask = ~((1ULL << bit_width) - 1);
-      raw |= mask;
-    }
-  }
-  return static_cast<int64_t>(raw);
-}
-
 // Evaluates an index operand to int64, handling sign extension and X/Z checks.
 auto ResolveIndex(
     const RuntimeValue& idx_val, const Operand& idx_operand, const Arena& arena,
@@ -97,7 +85,7 @@ auto ResolveIndex(
   }
   uint64_t raw = idx_int.value.empty() ? 0 : idx_int.value[0];
   TypeId type_id = TypeOfOperand(idx_operand, arena, types, frame);
-  if (IsSignedIntegral(types, type_id)) {
+  if (IsSignedPackedType(types, type_id)) {
     return SignExtendToInt64(raw, idx_int.bit_width);
   }
   return static_cast<int64_t>(raw);

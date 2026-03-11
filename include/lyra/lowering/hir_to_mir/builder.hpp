@@ -125,10 +125,22 @@ class MirBuilder {
   auto EmitCast(mir::Operand source, TypeId source_type, TypeId target_type)
       -> mir::Operand;
 
-  // Emit IndexValidity rvalue: computes "index is valid access" predicate.
-  // Returns 1-bit 2-state bool: (lower <= index <= upper) && is_known(index).
-  auto EmitIndexValidity(
-      mir::Operand index, int64_t lower, int64_t upper, bool check_known)
+  // Emit IsKnown rvalue: pure X/Z knownness check for integral operands.
+  // Returns 1-bit 2-state bool: 1 if operand has no X/Z bits, 0 otherwise.
+  // Legal for any integral operand; 2-state operands always return 1.
+  auto EmitIsKnown(mir::Operand index) -> mir::Operand;
+
+  // Emit IndexInRange rvalue: pure bounds-check predicate.
+  // Returns 1-bit 2-state bool: (lower <= index <= upper).
+  auto EmitIndexInRange(
+      mir::Operand index, int64_t lower, int64_t upper, bool index_is_signed)
+      -> mir::Operand;
+
+  // Emit composed index access validity: bounds check with X/Z knownness.
+  // Returns 1-bit 2-state bool: (in_range && is_known).
+  // Signedness and 4-state checks are derived from index_type.
+  auto EmitIndexAccessValidity(
+      mir::Operand index, TypeId index_type, int64_t lower, int64_t upper)
       -> mir::Operand;
 
   // Emit GuardedUse rvalue: conditionally read from place with OOB safety.

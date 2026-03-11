@@ -675,7 +675,8 @@ void CollectPlacesFromRvalue(
             std::is_same_v<T, mir::CastRvalueInfo> ||
             std::is_same_v<T, mir::BitCastRvalueInfo> ||
             std::is_same_v<T, mir::AggregateRvalueInfo> ||
-            std::is_same_v<T, mir::IndexValidityRvalueInfo> ||
+            std::is_same_v<T, mir::IsKnownRvalueInfo> ||
+            std::is_same_v<T, mir::IndexInRangeRvalueInfo> ||
             std::is_same_v<T, mir::ConcatRvalueInfo> ||
             std::is_same_v<T, mir::ReplicateRvalueInfo> ||
             std::is_same_v<T, mir::RuntimeQueryRvalueInfo> ||

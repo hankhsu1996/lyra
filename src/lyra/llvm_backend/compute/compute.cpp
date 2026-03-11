@@ -156,7 +156,10 @@ auto LowerRvalue(
           [&](const mir::RuntimeQueryRvalueInfo&) -> Result<RvalueValue> {
             return LowerPackedCoreRvalue(context, rvalue, result_type);
           },
-          [&](const mir::IndexValidityRvalueInfo&) -> Result<RvalueValue> {
+          [&](const mir::IsKnownRvalueInfo&) -> Result<RvalueValue> {
+            return LowerPackedCoreRvalue(context, rvalue, result_type);
+          },
+          [&](const mir::IndexInRangeRvalueInfo&) -> Result<RvalueValue> {
             return LowerPackedCoreRvalue(context, rvalue, result_type);
           },
           [&](const mir::GuardedUseRvalueInfo&) -> Result<RvalueValue> {

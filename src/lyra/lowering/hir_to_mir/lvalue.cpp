@@ -90,47 +90,14 @@ auto ComposeValidity(
       mir::BinaryOp::kLogicalAnd, base_valid, our_valid, bool_type);
 }
 
-// Check if index type is 4-state (has X/Z bits).
-auto IsFourStateIndex(TypeId index_type, const TypeArena& types) -> bool {
-  const Type& type = types[index_type];
-  if (IsPacked(type)) {
-    return IsPackedFourState(type, types);
-  }
-  return false;
-}
-
-// Emit X/Z knownness check for a 4-state index.
-// Returns 2-state bool: 1 if index has no X/Z bits, 0 if it does.
-// Uses EmitIndexValidity with bounds spanning the full signed range of the
-// index type, so the range check is trivially true and only check_known
-// does real work.
-auto EmitIsKnown(mir::Operand index, TypeId index_type, MirBuilder& builder)
-    -> mir::Operand {
-  const Context& ctx = builder.GetContext();
-  const Type& type = (*ctx.type_arena)[index_type];
-  uint32_t bit_width = PackedBitWidth(type, *ctx.type_arena);
-  if (bit_width == 0 || bit_width > 63) {
-    throw common::InternalError(
-        "EmitIsKnown",
-        std::format("unsupported index bit width: {}", bit_width));
-  }
-  // Full signed range for N-bit type: [-(2^(N-1)), 2^(N-1)-1]
-  // Safe: bit_width in [1, 63], so shift is in [0, 62].
-  int64_t lower = -(static_cast<int64_t>(1) << (bit_width - 1));
-  int64_t upper = (static_cast<int64_t>(1) << (bit_width - 1)) - 1;
-  return builder.EmitIndexValidity(index, lower, upper, true);
-}
-
 // Emit bounds and X/Z validity check for packed array index.
 auto EmitPackedIndexValidity(
     mir::Operand index, TypeId index_type, const Type& array_type,
     MirBuilder& builder) -> mir::Operand {
-  const Context& ctx = builder.GetContext();
   const auto& packed_info = array_type.AsPackedArray();
   const auto& range = packed_info.range;
-  bool check_known = IsFourStateIndex(index_type, *ctx.type_arena);
-  return builder.EmitIndexValidity(
-      index, range.Lower(), range.Upper(), check_known);
+  return builder.EmitIndexAccessValidity(
+      index, index_type, range.Lower(), range.Upper());
 }
 
 // Emit offset computation for packed array element select.
@@ -183,7 +150,7 @@ auto EmitUnpackedIndexValidity(
       const auto& range = base_type.AsUnpackedArray().range;
 
       // Constant-fold: if index is a compile-time constant and in bounds,
-      // skip runtime check. Constants cannot contain X/Z, so check_known
+      // skip runtime check. Constants cannot contain X/Z, so knownness
       // is irrelevant.
       if (index.kind == mir::Operand::Kind::kConst) {
         const auto& constant = std::get<Constant>(index.payload);
@@ -208,8 +175,8 @@ auto EmitUnpackedIndexValidity(
         }
       }
 
-      return builder.EmitIndexValidity(
-          index, range.Lower(), range.Upper(), is_four_state);
+      return builder.EmitIndexAccessValidity(
+          index, index_type, range.Lower(), range.Upper());
     }
 
     case TypeKind::kDynamicArray:
@@ -220,7 +187,7 @@ auto EmitUnpackedIndexValidity(
       // Step 1: X/Z knownness check (4-state indices only)
       mir::Operand validity = MakeAlwaysValid(builder);
       if (is_four_state) {
-        validity = EmitIsKnown(index, index_type, builder);
+        validity = builder.EmitIsKnown(index);
       }
 
       // Step 2: Cast index to 2-state offset type (collapses X/Z to 0)
@@ -519,10 +486,9 @@ auto EmitIndexedPartSelectOffsetAndValidity(
     TypeId bit_type = ctx.GetBitType();
     valid = mir::Operand::Const(MakeIntegralConst(0, bit_type));
   } else {
-    bool check_known = IsFourStateIndex(index_type, *ctx.type_arena);
-    valid = builder.EmitIndexValidity(
-        index, static_cast<int32_t>(eff_lower_64),
-        static_cast<int32_t>(eff_upper_64), check_known);
+    valid = builder.EmitIndexAccessValidity(
+        index, index_type, static_cast<int32_t>(eff_lower_64),
+        static_cast<int32_t>(eff_upper_64));
   }
 
   // Compute physical bit offset based on base direction and part-select

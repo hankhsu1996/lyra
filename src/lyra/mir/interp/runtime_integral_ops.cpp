@@ -1306,4 +1306,34 @@ void IntegralInsertSlice4StateInPlace(
   MaskTopWord(dst.unknown, dst.bit_width);
 }
 
+auto SignExtendToInt64(uint64_t raw, uint32_t bit_width) -> int64_t {
+  if (bit_width == 0) {
+    throw common::InternalError(
+        "SignExtendToInt64", "bit_width must be non-zero");
+  }
+  if (bit_width < 64) {
+    uint64_t sign_bit = 1ULL << (bit_width - 1);
+    if ((raw & sign_bit) != 0) {
+      uint64_t mask = ~((1ULL << bit_width) - 1);
+      raw |= mask;
+    }
+  }
+  return static_cast<int64_t>(raw);
+}
+
+auto WidenIntegral(
+    const RuntimeIntegral& val, uint32_t target_width, bool is_signed)
+    -> RuntimeValue {
+  if (val.bit_width > 64) {
+    throw common::InternalError(
+        "WidenIntegral", "index operand must be <= 64 bits");
+  }
+  uint64_t raw = val.value.empty() ? 0 : val.value[0];
+  if (is_signed) {
+    int64_t extended = SignExtendToInt64(raw, val.bit_width);
+    return MakeIntegralSigned(extended, target_width);
+  }
+  return MakeIntegral(raw, target_width);
+}
+
 }  // namespace lyra::mir::interp
