@@ -551,23 +551,34 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // Build realization data: extract design-derived facts needed by assembly.
   RealizationData realization;
 
-  realization.param_inits.reserve(input.design->instance_param_inits.size());
-  for (const auto& entries : input.design->instance_param_inits) {
+  const auto& placement = input.design->placement;
+  if (placement.instances.size() != placement.const_blocks.size()) {
+    throw common::InternalError(
+        "CompileDesignProcesses",
+        std::format(
+            "placement instances/const_blocks size mismatch: {} vs {}",
+            placement.instances.size(), placement.const_blocks.size()));
+  }
+  realization.param_inits.reserve(placement.const_blocks.size());
+  for (size_t i = 0; i < placement.const_blocks.size(); ++i) {
+    const auto& inst = placement.instances[i];
+    const auto& const_block = placement.const_blocks[i];
     auto& resolved = realization.param_inits.emplace_back();
-    resolved.reserve(entries.size());
-    for (const auto& e : entries) {
-      if (e.slot_id >= input.design->slots.size()) {
+    resolved.reserve(const_block.slot_inits.size());
+    for (const auto& init : const_block.slot_inits) {
+      uint32_t abs_slot = inst.design_state_base_slot + init.body_local_slot;
+      if (abs_slot >= input.design->slots.size()) {
         throw common::InternalError(
             "CompileDesignProcesses",
             std::format(
-                "param init slot_id {} out of range (slots.size() = {})",
-                e.slot_id, input.design->slots.size()));
+                "param init abs_slot {} out of range (slots.size() = {})",
+                abs_slot, input.design->slots.size()));
       }
       resolved.push_back(
           ResolvedParamInit{
-              .slot_id = e.slot_id,
-              .type_id = input.design->slots[e.slot_id].type,
-              .value = e.value,
+              .slot_id = abs_slot,
+              .type_id = input.design->slots[abs_slot].type,
+              .value = init.value,
           });
     }
   }

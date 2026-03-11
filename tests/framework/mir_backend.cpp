@@ -17,6 +17,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/mutation_event.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type_queries.hpp"
@@ -285,16 +286,34 @@ auto RunMirInterpreter(
         mir::interp::CreateDefaultValue(*hir_result.type_arena, sym.type);
   }
 
-  // Initialize promoted param slots with constant values.
-  for (const auto& entries : mir_result->design.instance_param_inits) {
-    for (const auto& entry : entries) {
-      if (entry.slot_id < design_state.storage.size()) {
-        TypeId type_id = mir_result->design.slots[entry.slot_id].type;
-        uint32_t bit_width = PackedBitWidth(
-            (*hir_result.type_arena)[type_id], *hir_result.type_arena);
-        design_state.storage[entry.slot_id] =
-            mir::interp::MakeIntegralFromConstant(entry.value, bit_width);
+  // Initialize promoted param slots from placement const blocks.
+  if (mir_result->design.placement.instances.size() !=
+      mir_result->design.placement.const_blocks.size()) {
+    throw common::InternalError(
+        "RunMirInterpreter",
+        std::format(
+            "placement instances ({}) and const_blocks ({}) size mismatch",
+            mir_result->design.placement.instances.size(),
+            mir_result->design.placement.const_blocks.size()));
+  }
+  for (size_t i = 0; i < mir_result->design.placement.const_blocks.size();
+       ++i) {
+    const auto& inst = mir_result->design.placement.instances[i];
+    const auto& const_block = mir_result->design.placement.const_blocks[i];
+    for (const auto& init : const_block.slot_inits) {
+      uint32_t abs_slot = inst.design_state_base_slot + init.body_local_slot;
+      if (abs_slot >= design_state.storage.size()) {
+        throw common::InternalError(
+            "RunMirInterpreter",
+            std::format(
+                "const block abs_slot {} out of range (storage size {})",
+                abs_slot, design_state.storage.size()));
       }
+      TypeId type_id = mir_result->design.slots[abs_slot].type;
+      uint32_t bit_width = PackedBitWidth(
+          (*hir_result.type_arena)[type_id], *hir_result.type_arena);
+      design_state.storage[abs_slot] =
+          mir::interp::MakeIntegralFromConstant(init.value, bit_width);
     }
   }
 

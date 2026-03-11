@@ -14,8 +14,10 @@ namespace lyra::lowering::hir_to_mir {
 
 // Collect design-global placement-facing declarations only.
 // Responsible for package/global storage, per-instance design-global places,
-// instance_slot_ranges, instance_param_inits, and design-global descriptor
-// tables. Does NOT produce specialization-local body declarations.
+// instance_slot_ranges, and design-global descriptor tables.
+// instance_param_inits are transient: consumed during lowering to build
+// InstanceConstBlock in PlacementMap, not stored in mir::Design.
+// Does NOT produce specialization-local body declarations.
 auto CollectDesignDeclarations(
     const hir::Design& design, const LoweringInput& input,
     mir::Arena& mir_arena) -> DesignDeclarations;
