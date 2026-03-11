@@ -164,8 +164,13 @@ auto RunJit(const CompilationInput& input) -> int {
   std::expected<lowering::mir_to_llvm::JitSession, std::string> session;
   {
     PhaseTimer timer(vlog, "jit_compile");
-    session = lowering::mir_to_llvm::CompileJit(
-        *llvm_result, runtime_path, input.opt_level, emit_stats);
+    lowering::mir_to_llvm::JitCompileOptions jit_opts{
+        .opt_level = input.opt_level,
+        .enable_profiling = emit_stats,
+        .emit_progress = emit_stats,
+    };
+    session =
+        lowering::mir_to_llvm::CompileJit(*llvm_result, runtime_path, jit_opts);
   }
   if (!session) {
     PrintError(std::format("JIT compilation failed: {}", session.error()));

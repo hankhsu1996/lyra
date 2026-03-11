@@ -1,27 +1,11 @@
 #pragma once
 
-#include <cstdint>
 #include <filesystem>
-#include <map>
-#include <string>
-#include <vector>
 
-#include "lyra/common/mutation_event.hpp"
 #include "tests/framework/test_case.hpp"
-#include "tests/framework/test_value.hpp"
+#include "tests/framework/test_result.hpp"
 
 namespace lyra::test {
-
-// Result from running a test backend
-struct TestResult {
-  bool success = false;
-  std::string error_message;
-  std::string captured_output;
-  std::string compiler_output;
-  std::map<std::string, TestValue> variables;
-  uint64_t final_time = 0;
-  std::vector<common::MutationEvent> mutation_events;
-};
 
 // Run test using JIT backend (in-process ORC JIT).
 // work_directory is the runner-owned directory for file I/O (may be empty).

@@ -83,11 +83,29 @@ jobs:
           - name: MIR
             target: //tests:mir_dev_tests
             extra_flags: ""
-          - name: JIT
-            target: //tests:jit_dev_tests
+          - name: JIT 0
+            target: //tests:jit_dev_tests_shard0
             extra_flags: ""
-          - name: JIT Two-State
-            target: //tests:jit_two_state_tests
+          - name: JIT 1
+            target: //tests:jit_dev_tests_shard1
+            extra_flags: ""
+          - name: JIT 2
+            target: //tests:jit_dev_tests_shard2
+            extra_flags: ""
+          - name: JIT 3
+            target: //tests:jit_dev_tests_shard3
+            extra_flags: ""
+          - name: JIT-2S 0
+            target: //tests:jit_two_state_tests_shard0
+            extra_flags: ""
+          - name: JIT-2S 1
+            target: //tests:jit_two_state_tests_shard1
+            extra_flags: ""
+          - name: JIT-2S 2
+            target: //tests:jit_two_state_tests_shard2
+            extra_flags: ""
+          - name: JIT-2S 3
+            target: //tests:jit_two_state_tests_shard3
             extra_flags: ""
           - name: AOT Smoke
             target: //tests:aot_smoke_tests

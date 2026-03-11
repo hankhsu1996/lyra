@@ -42,6 +42,21 @@ struct JitOrcStats {
   int64_t finalize_bytes = 0;      // Total block content bytes at finalize time
 };
 
+// Options for JIT compilation.
+//
+// Profiling instrumentation (ProfilingPlugin + ObjectTransformLayer) is
+// installed when either enable_profiling or emit_progress is true.
+// emit_progress requires profiling because progress tracking uses the
+// profiling infrastructure to observe link events.
+struct JitCompileOptions {
+  OptLevel opt_level = OptLevel::kO2;
+  // Collect per-object compile/link timing via ProfilingPlugin.
+  bool enable_profiling = false;
+  // Print per-object link progress to stderr during long compiles.
+  // Implicitly enables profiling instrumentation.
+  bool emit_progress = false;
+};
+
 // Holds compiled JIT state. Must stay alive during simulation
 // (LLJIT owns the compiled code memory).
 class JitSession {
@@ -64,9 +79,9 @@ class JitSession {
 
  private:
   friend auto CompileJit(
-      LoweringResult&, const std::filesystem::path&, OptLevel, bool)
+      LoweringResult&, const std::filesystem::path&, const JitCompileOptions&)
       -> std::expected<JitSession, std::string>;
-  friend auto CompileJitInProcess(LoweringResult&, OptLevel, bool)
+  friend auto CompileJitInProcess(LoweringResult&, const JitCompileOptions&)
       -> std::expected<JitSession, std::string>;
   struct Impl;
   std::unique_ptr<Impl> impl_;
@@ -75,11 +90,10 @@ class JitSession {
 // Compile LLVM module to native code using ORC JIT.
 // Takes ownership of result.context and result.module.
 // runtime_path: absolute path to liblyra_runtime.so
-// emit_progress: if true, print JITLink progress to stderr every 5s
 // Returns JitSession on success (call Run() to execute).
 auto CompileJit(
     LoweringResult& result, const std::filesystem::path& runtime_path,
-    OptLevel opt_level = OptLevel::kO2, bool emit_progress = false)
+    const JitCompileOptions& options = {})
     -> std::expected<JitSession, std::string>;
 
 // Compile LLVM module using in-process ORC JIT with host process symbols.
@@ -88,17 +102,17 @@ auto CompileJit(
 // binary is linked against the runtime library directly.
 // Takes ownership of result.context and result.module.
 auto CompileJitInProcess(
-    LoweringResult& result, OptLevel opt_level = OptLevel::kO2,
-    bool emit_progress = false) -> std::expected<JitSession, std::string>;
+    LoweringResult& result, const JitCompileOptions& options = {})
+    -> std::expected<JitSession, std::string>;
 
 // One-shot: compile + run. Convenience wrapper for callers that don't need
 // separate phases (e.g., test framework).
 auto ExecuteWithOrcJit(
     LoweringResult& result, const std::filesystem::path& runtime_path,
-    OptLevel opt_level = OptLevel::kO2) -> std::expected<int, std::string>;
+    const JitCompileOptions& options = {}) -> std::expected<int, std::string>;
 
 auto ExecuteWithOrcJitInProcess(
-    LoweringResult& result, OptLevel opt_level = OptLevel::kO2)
+    LoweringResult& result, const JitCompileOptions& options = {})
     -> std::expected<int, std::string>;
 
 }  // namespace lyra::lowering::mir_to_llvm

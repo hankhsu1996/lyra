@@ -49,7 +49,10 @@ auto ParseArgs(std::span<char*> argv)
     std::string_view next_arg = (i + 1 < argv.size()) ? argv[i + 1] : "";
     bool consumed_next = false;
 
-    if (TryParseFlag(arg, next_arg, "suite", args.suite, consumed_next) ||
+    if (arg == "--timing") {
+      args.timing = true;
+    } else if (
+        TryParseFlag(arg, next_arg, "suite", args.suite, consumed_next) ||
         TryParseFlag(arg, next_arg, "backend", args.backend, consumed_next) ||
         TryParseFlag(
             arg, next_arg, "test_file", args.test_file, consumed_next) ||

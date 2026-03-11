@@ -1,5 +1,6 @@
 #include "tests/framework/lli_backend.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -13,12 +14,15 @@
 #include "tests/framework/output_protocol.hpp"
 #include "tests/framework/runner_common.hpp"
 #include "tests/framework/test_case.hpp"
+#include "tests/framework/timing_collector.hpp"
 
 namespace lyra::test {
 
 auto RunLliBackend(
     const TestCase& test_case, const std::filesystem::path& work_directory)
     -> TestResult {
+  using Clock = std::chrono::steady_clock;
+  auto t_total = Clock::now();
   TestResult result;
 
   // Prepare LLVM module (AST -> HIR -> MIR -> LLVM)
@@ -28,7 +32,14 @@ auto RunLliBackend(
     return result;
   }
 
-  // Write IR to temp file
+  // Copy frontend timings
+  result.timings.parse = prep_result->parse_seconds;
+  result.timings.hir_lower = prep_result->hir_lower_seconds;
+  result.timings.mir_lower = prep_result->mir_lower_seconds;
+  result.timings.llvm_lower = prep_result->llvm_lower_seconds;
+
+  // Write IR to temp file (counted as "backend")
+  auto t_backend = Clock::now();
   auto ir_dir = MakeUniqueTempPath(test_case.name + "_ir");
   std::filesystem::create_directories(ir_dir);
   ScopedTempDirectory ir_guard(ir_dir);
@@ -42,6 +53,8 @@ auto RunLliBackend(
     }
     out << lowering::mir_to_llvm::DumpLlvmIr(prep_result->llvm_result);
   }
+  result.timings.backend =
+      std::chrono::duration<double>(Clock::now() - t_backend).count();
 
   auto runtime_path = FindRuntimeLibrary(runtime::kSharedLibName);
   if (!runtime_path) {
@@ -49,11 +62,16 @@ auto RunLliBackend(
     return result;
   }
 
+  // Execute via lli subprocess
+  auto t_exec = Clock::now();
   std::vector<std::string> lli_args = {
       std::format("--dlopen={}", runtime_path->string()),
       ir_path.string(),
   };
   auto sub = RunSubprocess("lli", lli_args);
+  result.timings.execute =
+      std::chrono::duration<double>(Clock::now() - t_exec).count();
+
   if (sub.exit_code < 0) {
     result.error_message =
         std::format("Failed to run lli: {}", sub.stderr_text);
@@ -66,6 +84,13 @@ auto RunLliBackend(
   result.compiler_output = std::move(prep_result->compiler_output);
   result.variables = std::move(parsed.variables);
   result.final_time = parsed.final_time;
+  result.timings.total =
+      std::chrono::duration<double>(Clock::now() - t_total).count();
+
+  if (IsTimingEnabled()) {
+    GetTimingCollector().Record(test_case.name, result.timings);
+  }
+
   return result;
 }
 

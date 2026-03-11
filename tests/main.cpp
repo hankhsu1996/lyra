@@ -12,6 +12,7 @@
 #include "tests/framework/suite.hpp"
 #include "tests/framework/test_case.hpp"
 #include "tests/framework/test_discovery.hpp"
+#include "tests/framework/timing_collector.hpp"
 
 namespace lyra::test {
 namespace {
@@ -71,6 +72,11 @@ auto main(int argc, char** argv) -> int {
   remaining.push_back(nullptr);
   int remaining_argc = static_cast<int>(remaining.size() - 1);
 
+  // Enable timing collection if requested
+  if (args.timing) {
+    lyra::test::SetTimingEnabled(true);
+  }
+
   // Initialize gtest before registration
   testing::InitGoogleTest(&remaining_argc, remaining.data());
 
@@ -114,5 +120,11 @@ auto main(int argc, char** argv) -> int {
     return 1;
   }
 
-  return RUN_ALL_TESTS();
+  int test_result = RUN_ALL_TESTS();
+
+  if (args.timing) {
+    lyra::test::GetTimingCollector().PrintSummary();
+  }
+
+  return test_result;
 }
