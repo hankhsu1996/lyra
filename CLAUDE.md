@@ -117,7 +117,7 @@ Path is relative to `tests/sv_features/`. `--backend` is required with `--test_f
 
 ## Benchmarks
 
-Benchmark runner: `tools/bench/run_benchmarks.py`. Fixtures in `tools/bench/fixtures/`. Examples (`examples/hello`, `examples/riscv-cpu`) are also used as benchmark designs.
+Benchmark runner: `tools/bench/run_benchmarks.py`. Fixtures in `tools/bench/fixtures/`.
 
 ```bash
 python3 tools/bench/run_benchmarks.py --tier=nightly    # Full nightly run

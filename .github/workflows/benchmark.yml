@@ -59,6 +59,9 @@ jobs:
           sudo update-alternatives --set clang /usr/bin/clang-20
           sudo update-alternatives --set lli /usr/bin/lli-20
 
+      - name: Setup Verilator
+        uses: veryl-lang/setup-verilator@v1
+
       - name: Build lyra
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
