@@ -6,7 +6,7 @@ compile-time and simulation-time metrics, and prints a Markdown report.
 
 Usage:
     python3 tools/bench/run_benchmarks.py [--json PATH] [--trials N]
-           [--tier pr|nightly|full] [--ci]
+           [--tier pr|nightly] [--ci]
 """
 
 import argparse
@@ -28,25 +28,18 @@ TIMEOUT_SECONDS = 120
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 DESIGNS = {
-    "hello": REPO_ROOT / "examples" / "hello",
-    "riscv-cpu": REPO_ROOT / "examples" / "riscv-cpu",
     "stress-array": REPO_ROOT / "tools" / "bench" / "fixtures" / "stress-array",
     "pipeline": REPO_ROOT / "tools" / "bench" / "fixtures" / "pipeline",
 }
 
 TIER_CONFIG = {
     "pr": {
-        "designs": ["hello", "riscv-cpu"],
-        "backends": ["aot"],
+        "designs": ["stress-array", "pipeline"],
+        "backends": ["aot", "jit", "verilator"],
         "default_trials": 1,
     },
     "nightly": {
-        "designs": ["hello", "riscv-cpu", "stress-array", "pipeline"],
-        "backends": ["aot", "jit", "verilator"],
-        "default_trials": 3,
-    },
-    "full": {
-        "designs": ["hello", "riscv-cpu", "stress-array", "pipeline"],
+        "designs": ["stress-array", "pipeline"],
         "backends": ["aot", "jit", "verilator"],
         "default_trials": 3,
     },
@@ -76,7 +69,7 @@ def read_stats_json(path: str) -> dict:
         return {}
 
 
-def compute_compile_time(stats: dict, backend: str) -> float:
+def compute_compile_time(stats: dict) -> float:
     """Sum all compile phases from stats JSON."""
     phases = stats.get("phases", {})
     total = 0.0
@@ -90,7 +83,7 @@ def compute_compile_time(stats: dict, backend: str) -> float:
 def populate_from_stats(result: BenchResult, stats: dict) -> None:
     phases = stats.get("phases", {})
     result.phases = dict(phases)
-    result.compile_s = compute_compile_time(stats, result.backend)
+    result.compile_s = compute_compile_time(stats)
 
     llvm = stats.get("llvm", {})
     result.llvm_insts = llvm.get("instructions", 0)
@@ -358,32 +351,6 @@ def fmt_time(val: float) -> str:
     return f"{val:.2f}"
 
 
-def fmt_int(val: int) -> str:
-    if val == 0:
-        return "-"
-    return str(val)
-
-
-def compute_ratios(
-    results: list[BenchResult],
-) -> dict[str, float]:
-    """Compute Verilator sim_s per design for ratio calculation."""
-    verilator_sim: dict[str, float] = {}
-    for r in results:
-        if r.backend == "verilator" and not r.error and r.sim_s > 0:
-            verilator_sim[r.design] = r.sim_s
-    return verilator_sim
-
-
-def fmt_ratio(sim_s: float, verilator_s: float) -> str:
-    if sim_s <= 0 or verilator_s <= 0:
-        return "-"
-    ratio = sim_s / verilator_s
-    if ratio >= 10:
-        return f"{ratio:.0f}x"
-    return f"{ratio:.1f}x"
-
-
 def group_by_design(
     results: list[BenchResult], designs: list[str],
 ) -> dict[str, dict[str, BenchResult]]:
@@ -399,7 +366,6 @@ def print_markdown(
 ) -> None:
     trial_note = f"{num_trials} (median)" if num_trials > 1 else "1"
     grouped = group_by_design(results, designs)
-    verilator_sim = compute_ratios(results)
 
     print()
     print("## Lyra Benchmark Report")
@@ -410,23 +376,17 @@ def print_markdown(
     print()
     print("### Simulation Performance")
     print()
-    print("| Design | AOT (s) | JIT (s) | Verilator (s) | AOT vs V | JIT vs V |")
-    print("|--------|---------|---------|---------------|----------|----------|")
+    print("| Design | Lyra AOT (s) | Verilator (s) |")
+    print("|--------|--------------|---------------|")
     for design in designs:
         backends = grouped.get(design, {})
         aot = backends.get("aot")
-        jit = backends.get("jit")
         ver = backends.get("verilator")
 
         aot_sim = fmt_time(aot.sim_s) if aot and not aot.error else "FAIL" if aot else "-"
-        jit_sim = fmt_time(jit.sim_s) if jit and not jit.error else "FAIL" if jit else "-"
         ver_sim = fmt_time(ver.sim_s) if ver and not ver.error else "FAIL" if ver else "-"
 
-        ver_s = ver.sim_s if ver and not ver.error else 0.0
-        aot_ratio = fmt_ratio(aot.sim_s, ver_s) if aot and not aot.error else "-"
-        jit_ratio = fmt_ratio(jit.sim_s, ver_s) if jit and not jit.error else "-"
-
-        print(f"| {design} | {aot_sim} | {jit_sim} | {ver_sim} | {aot_ratio} | {jit_ratio} |")
+        print(f"| {design} | {aot_sim} | {ver_sim} |")
 
     # Table 2: Compile Time
     print()
@@ -445,31 +405,6 @@ def print_markdown(
         ver_c = fmt_time(ver.compile_s) if ver and not ver.error else "FAIL" if ver else "-"
 
         print(f"| {design} | {aot_c} | {jit_c} | {ver_c} |")
-
-    # Table 3: Compiler Stats (Lyra only)
-    has_stats = any(
-        r.backend in ("aot", "jit") and not r.error
-        and (r.llvm_insts or r.mir_stmts or r.binary_kb)
-        for r in results
-    )
-    if has_stats:
-        print()
-        print("### Compiler Stats")
-        print()
-        print("| Design | Backend | LLVM Insts | MIR Stmts | Binary (KB) |")
-        print("|--------|---------|------------|-----------|-------------|")
-        for design in designs:
-            backends = grouped.get(design, {})
-            for backend in ("aot", "jit"):
-                r = backends.get(backend)
-                if not r or r.error:
-                    continue
-                print(
-                    f"| {design} | {backend} "
-                    f"| {fmt_int(r.llvm_insts)} "
-                    f"| {fmt_int(r.mir_stmts)} "
-                    f"| {fmt_int(r.binary_kb)} |"
-                )
 
     # Errors
     errors = [r for r in results if r.error and r.error != "verilator not found"]
@@ -501,8 +436,8 @@ def main() -> None:
     parser.add_argument(
         "--trials", type=int, default=None, help="Override number of trials")
     parser.add_argument(
-        "--tier", choices=["pr", "nightly", "full"], default="full",
-        help="Benchmark tier (default: full)")
+        "--tier", choices=["pr", "nightly"], default="nightly",
+        help="Benchmark tier (default: nightly)")
     parser.add_argument(
         "--ci", action="store_true",
         help="CI mode: always exit 0, print FAIL rows")
