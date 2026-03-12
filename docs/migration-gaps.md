@@ -47,12 +47,12 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 
 **Architectural uncertainties**:
 
-- M2 -- param classification needs to distinguish packed-width params from unpacked-size params, aligned with the specialization boundary rule
+- M2 -- current classifier has the causality backwards; see M2 section below
 - E1-E4 ordering -- may simplify once codegen API is narrowed
 
 ## Completed Milestones
 
-- **Phase A complete** -- `ModuleDefId`, `BehaviorFingerprint`, `ModuleSpecId`, `SpecializationMap` introduced. Known gap: M2 (type-level structural refs mitigated by `type.toString()` hashing, not clean).
+- **Phase A complete** -- `ModuleDefId`, `BehaviorFingerprint`, `ModuleSpecId`, `SpecializationMap` introduced. Known gap: M2 (param-role/specialization dependency is inverted; see M2 section).
 - **Phase B mostly complete** (B1-B4 done) -- `mir::ModuleBody` owns behavioral IR, `mir::Module` is instance record with `body_id`. Shared bodies active. `mir::Process` carries no instance identity. `SpecializationMap` required (no fallback). Remaining: B6 (HIR split).
 - **Phase C complete** (C1-C3) -- specialization-local slot identity via `CollectBodyLocalDecls`. `mir::InstancePlacement` is source of truth for design-state placement. Alias resolution eliminated from behavioral codegen.
 - **Phase D complete** (D1-D4 done) -- bindings separated (`CompileBindings` + `realization::AssembleBindings`). Metadata serialization in `realization::BuildDesignMetadata`. `main()` in `realization::EmitDesignMain()`. `LowerMirToLlvm()` is thin wrapper: `CompileDesignProcesses` -> `EmitDesignMain` -> `FinalizeModule`. D2: `InstanceConstBlock` is a first-class realization artifact in `PlacementMap`; per-instance value-only parameter values are owned by `PlacementMap::const_blocks` (body-local slot indices), not by `mir::Design`. `mir::Design::instance_param_inits` deleted.
@@ -71,18 +71,59 @@ For the stable architecture (phases, specialization boundary rule, parameter cla
 - `src/lyra/llvm_backend/layout/layout.cpp` -- `BuildLayout()` iterates all instances
 - `include/lyra/llvm_backend/context.hpp` -- `Context` holds `const Layout&`
 
-### Next: M2
+### Next: M2 -- Invert specialization/param-role dependency
 
-**M2: ParamRole classification refinement**
+**Problem**: The current pipeline computes param roles first, then derives specialization grouping from those roles. This is backwards. It puts all correctness pressure on an upfront classifier that must perfectly predict which parameters affect compiled code shape -- a problem that is fundamentally hard because slang resolves parameterized types during elaboration, losing provenance.
 
-`ShapeParamCollector` has two issues:
+The current `ClassifyParamRoles` has three passes to work around this:
 
-1. slang resolves parameterized types during elaboration, so packed-width params may be invisible as `NamedValueExpression` and misclassified as `kValueOnly`.
-2. The classifier does not distinguish packed-width params (require specialization) from unpacked-size params (should not specialize).
+1. Syntax-visible shape collection (AST walk for non-procedural param refs)
+2. Cross-instance value comparison to find kValueOnly candidates
+3. Structural shape promotion (syntax-walk recovery for packed-width params)
 
-Fix: walk type expressions to detect packed-width variation. Separately classify unpacked-size params as elaboration-time. See specialization boundary rule in [compilation-model.md](compilation-model.md).
+Pass 3 (`CollectStructuralShapeParams`) was added as a temporary fix for packed-width params being misclassified. It works but is a band-aid on the wrong architecture.
 
-- `src/lyra/lowering/ast_to_hir/param_role.cpp:53-59` -- visitor misses resolved types
+**Root cause**: Specialization identity and parameter transmission are conflated. The classifier tries to answer both "which instances can share code?" and "which params need per-instance storage?" in one step. These are related but should not be defined by the same analysis.
+
+**Target architecture**: Invert the dependency.
+
+1. **Specialization grouping comes first.** Group instances by conservative structural equivalence. `ComputeStructuralFingerprint` already hashes resolved type strings from the slang AST -- this part is self-contained and does not need param roles. Drop the param-value hashing from the fingerprint (or hash all param values conservatively).
+
+2. **Parameter transmission is derived from groups.** Within each specialization group, observe which parameters are constant across all instances. Constant params were absorbed by the specialization choice -- they are specialization-owned. Params that still vary are per-instance constructor/realization args.
+
+This gives the mental model: all instance parameters start as instance inputs; some differences are absorbed by specialization selection; the remaining differences become per-instance realization arguments.
+
+**Current pipeline** (wrong causality):
+
+```
+ClassifyParamRoles(all_instances)        -- param roles first
+  -> RegisterModuleDeclarations(roles)   -- storage class from roles
+  -> BuildSpecializationMap(roles)       -- grouping from roles
+```
+
+**Target pipeline** (correct causality):
+
+```
+ComputeSpecGroups(all_instances)         -- grouping first (structural equiv)
+  -> DeriveParamTransmission(groups)     -- observe variance within groups
+  -> RegisterModuleDeclarations(transmission)
+```
+
+**Why this is better**:
+
+- No correctness pressure on an upfront classifier
+- No need to recover parameter provenance from resolved types
+- Grouping rule can evolve independently of parameter transmission
+- Matches the ownership model: specialization-owned differences are absorbed into the compiled body, per-instance differences stay outside
+
+**Current state**: Pass 3 band-aid is in place and tests pass. The inversion touches `param_role.cpp`, `specialization.cpp`, `design.cpp` pipeline order, `module.cpp` storage class assignment, and registration flow.
+
+**Files involved**:
+
+- `src/lyra/lowering/ast_to_hir/param_role.cpp` -- simplifies to group-local variance check
+- `src/lyra/lowering/ast_to_hir/specialization.cpp` -- fingerprint becomes self-contained (no ParamRoleTable input)
+- `src/lyra/lowering/ast_to_hir/design.cpp` -- pipeline reordering
+- `src/lyra/lowering/ast_to_hir/module.cpp` -- storage class assignment changes
 
 ### Later: B6 / M4 / E2-E4 / medium gaps
 

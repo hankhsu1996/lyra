@@ -24,6 +24,11 @@ class ParamRoleTable {
     value_only_params_.insert(p);
   }
 
+  // Promote a parameter to shape-owned. Erases any earlier kValueOnly mark.
+  void MarkShape(const slang::ast::ParameterSymbol* p) {
+    value_only_params_.erase(p);
+  }
+
  private:
   std::unordered_set<const slang::ast::ParameterSymbol*> value_only_params_;
 };

@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/param_role.hpp"
 
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -9,7 +10,11 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
+#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/DeclaredType.h>
+#include <slang/syntax/AllSyntax.h>
+#include <slang/syntax/SyntaxNode.h>
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -60,6 +65,100 @@ struct ShapeParamCollector
   }
 };
 
+// Recursively collect identifier tokens from a syntax tree.
+void CollectIdentifiersFromSyntax(
+    const slang::syntax::SyntaxNode* node,
+    std::unordered_set<std::string_view>& identifiers) {
+  if (node == nullptr) return;
+  auto count = node->getChildCount();
+  for (size_t i = 0; i < count; ++i) {
+    if (const auto* child = node->childNode(i)) {
+      CollectIdentifiersFromSyntax(child, identifiers);
+    } else {
+      auto token = node->childToken(i);
+      if (token.kind == slang::parsing::TokenKind::Identifier) {
+        identifiers.insert(token.valueText());
+      }
+    }
+  }
+}
+
+// Trace a symbol's constant-expression dependency chain back to root
+// (non-local) parameters. For localparams, recursively follows initializer
+// expression references.
+void CollectParamsFromDependencyChain(
+    const slang::ast::Symbol& sym,
+    std::unordered_set<const slang::ast::ParameterSymbol*>& out,
+    std::unordered_set<const slang::ast::Symbol*>& visited) {
+  if (!visited.insert(&sym).second) return;
+  if (sym.kind != slang::ast::SymbolKind::Parameter) return;
+
+  const auto& param = sym.as<slang::ast::ParameterSymbol>();
+
+  if (!param.isLocalParam()) {
+    out.insert(&param);
+    return;
+  }
+
+  // Local parameter: trace initializer for further dependencies.
+  const auto* init = param.getInitializer();
+  if (init == nullptr) return;
+
+  struct RefCollector
+      : public slang::ast::ASTVisitor<RefCollector, true, true> {
+    std::vector<const slang::ast::Symbol*> refs;
+    void handle(const slang::ast::NamedValueExpression& expr) {
+      if (expr.symbol.kind == slang::ast::SymbolKind::Parameter) {
+        refs.push_back(&expr.symbol);
+      }
+    }
+  };
+
+  RefCollector collector;
+  init->visit(collector);
+
+  for (const auto* ref : collector.refs) {
+    CollectParamsFromDependencyChain(*ref, out, visited);
+  }
+}
+
+// Collect parameters that affect packed structural shape of body declarations.
+// Analyzes one instance body at a time by inspecting type syntax of
+// declarations with packed/integral types and tracing parameter dependencies.
+auto CollectStructuralShapeParams(const slang::ast::InstanceBodySymbol& body)
+    -> std::unordered_set<const slang::ast::ParameterSymbol*> {
+  std::unordered_set<const slang::ast::ParameterSymbol*> result;
+
+  for (const auto& member : body.members()) {
+    bool is_value_sym =
+        (member.kind == slang::ast::SymbolKind::Variable ||
+         member.kind == slang::ast::SymbolKind::Net);
+    if (!is_value_sym) continue;
+
+    const auto& val_sym = member.as<slang::ast::ValueSymbol>();
+    if (!val_sym.getType().isIntegral()) continue;
+
+    const auto* type_syntax = val_sym.getDeclaredType()->getTypeSyntax();
+    if (type_syntax == nullptr) continue;
+
+    // Walk type syntax to find identifier references in packed dimensions.
+    std::unordered_set<std::string_view> identifiers;
+    CollectIdentifiersFromSyntax(type_syntax, identifiers);
+
+    // Resolve each identifier and trace parameter dependencies.
+    std::unordered_set<const slang::ast::Symbol*> visited;
+    for (const auto& name : identifiers) {
+      const auto* sym = body.find(name);
+      if (sym == nullptr) continue;
+      if (sym->kind == slang::ast::SymbolKind::Parameter) {
+        CollectParamsFromDependencyChain(*sym, result, visited);
+      }
+    }
+  }
+
+  return result;
+}
+
 }  // namespace
 
 auto ClassifyParamRoles(
@@ -90,11 +189,11 @@ auto ClassifyParamRoles(
     }
     if (all_params.empty()) continue;
 
-    // Walk the body to find shape-affecting references.
+    // Pass 1: syntax-visible shape collection.
     ShapeParamCollector collector;
     body.visit(collector);
 
-    // Classify: anything NOT in shape_params is a ValueOnly candidate.
+    // Pass 2: provisionally classify remaining params as kValueOnly.
     for (const auto* param : all_params) {
       if (collector.shape_params.contains(param)) continue;
 
@@ -126,6 +225,15 @@ auto ClassifyParamRoles(
         if (other_sym == nullptr) continue;
         if (other_sym->kind != slang::ast::SymbolKind::Parameter) continue;
         table.MarkValueOnly(&other_sym->as<slang::ast::ParameterSymbol>());
+      }
+    }
+
+    // Pass 3: structural shape promotion from resolved packed types.
+    // Run on each instance body and promote discovered shape params.
+    for (const auto* inst : instances) {
+      auto structural_shape = CollectStructuralShapeParams(inst->body);
+      for (const auto* param : structural_shape) {
+        table.MarkShape(param);
       }
     }
   }
