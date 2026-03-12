@@ -1,95 +1,118 @@
 #include "lyra/lowering/ast_to_hir/specialization.hpp"
 
-#include <cstdint>
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
 
 #include <slang/ast/symbols/InstanceSymbols.h>
-#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/Type.h>
 
 #include "absl/hash/hash.h"
 #include "lyra/common/module_identity.hpp"
-#include "lyra/lowering/ast_to_hir/param_role.hpp"
 
 namespace lyra::lowering::ast_to_hir {
-
 namespace {
 
-// Hashable representation of a single structural parameter value.
-// Position-based (parameter identity comes from definition order +
-// ModuleDefId).
-struct StructuralParamEntry {
-  uint32_t bit_width;
-  bool is_signed;
-  std::vector<uint64_t> words;
-
-  template <typename H>
-  friend auto AbslHashValue(H h, const StructuralParamEntry& e) -> H {
-    h = H::combine(std::move(h), e.bit_width, e.is_signed);
-    h = H::combine_contiguous(std::move(h), e.words.data(), e.words.size());
-    return h;
-  }
+// Compile-owned declaration descriptor: name and resolved type of a single
+// module-local variable or net.
+//
+// v1: uses slang's type.toString() as canonical type representation.
+// Pragmatic starting point -- not a principled canonicalizer.
+//
+// Risk: type.toString() may encode runtime-owned differences (e.g., unpacked
+// container sizing) that should not split specialization. If this causes
+// oversplitting, the canonicalizer needs narrowing. Tracked as part of M2c.
+struct CompileOwnedDeclDescriptor {
+  std::string name;
+  std::string type_repr;
 };
 
-}  // namespace
+// Compile-owned body descriptor for the v1 discriminator.
+// Sorted by name for deterministic hashing.
+//
+// v1 scope: module-local variables and nets only. This captures
+// declaration-side compile-owned shape (packed widths, signedness, 2-state
+// vs 4-state as reflected in resolved types). It does not capture
+// procedural/behavioral compile-owned shape (e.g., generate branch
+// selections that affect code shape without introducing new declarations).
+// Tracked as M2c.
+struct CompileOwnedBodyDescriptor {
+  std::vector<CompileOwnedDeclDescriptor> decls;
+};
 
-auto ComputeStructuralFingerprint(
-    const slang::ast::InstanceBodySymbol& body,
-    const ParamRoleTable& param_roles) -> common::StructuralFingerprint {
-  std::vector<StructuralParamEntry> entries;
+// Returns true if a body member is a compile-owned declaration.
+//
+// v1 includes all module-local variables and nets. If a parameter affects
+// packed width, signedness, or any other type property, the resolved type
+// of the affected variable/net will differ, producing a different fingerprint.
+//
+// Excludes parameters, localparams, child instances, generates, procedures.
+// Their declaration-side effects are observed indirectly through the
+// resolved types of the variables/nets they influence.
+auto IsCompileOwnedDeclaration(const slang::ast::Symbol& member) -> bool {
+  return member.kind == slang::ast::SymbolKind::Variable ||
+         member.kind == slang::ast::SymbolKind::Net;
+}
 
-  // Hash shape-classified parameter values.
+// Returns the canonical type representation for a compile-owned declaration.
+//
+// v1: reuses slang's type.toString(). See CompileOwnedDeclDescriptor comment
+// for the runtime-owned type risk.
+auto CanonicalCompileOwnedTypeRepr(const slang::ast::Type& type)
+    -> std::string {
+  return type.toString();
+}
+
+auto BuildCompileOwnedBodyDescriptor(const slang::ast::InstanceBodySymbol& body)
+    -> CompileOwnedBodyDescriptor {
+  CompileOwnedBodyDescriptor desc;
+
   for (const auto& member : body.members()) {
-    if (member.kind != slang::ast::SymbolKind::Parameter) {
+    if (!IsCompileOwnedDeclaration(member)) {
       continue;
     }
-    const auto& param = member.as<slang::ast::ParameterSymbol>();
-    if (param_roles.Lookup(param) != ParamRole::kShape) {
-      continue;
-    }
-
-    // Only hash integer-valued parameters.
-    // Non-integer params (real, string) are not structural.
-    if (!param.getValue().isInteger()) {
-      continue;
-    }
-
-    const slang::SVInt& sv_int = param.getValue().integer();
-    uint32_t num_words = sv_int.getNumWords();
-    const uint64_t* raw = sv_int.getRawPtr();
-
-    entries.push_back(
-        StructuralParamEntry{
-            .bit_width = sv_int.getBitWidth(),
-            .is_signed = sv_int.isSigned(),
-            .words = std::vector<uint64_t>(raw, raw + num_words),
+    const auto& val = member.as<slang::ast::ValueSymbol>();
+    desc.decls.push_back(
+        CompileOwnedDeclDescriptor{
+            .name = std::string(val.name),
+            .type_repr = CanonicalCompileOwnedTypeRepr(val.getType()),
         });
   }
 
-  // Hash variable types to catch param-dependent types that slang resolves
-  // at elaboration (e.g., bit [WIDTH-1:0] data). Since the type is already
-  // resolved, the NamedValueExpression referencing the parameter is gone,
-  // so param role classification may miss it. Hashing resolved types catches
-  // these structural differences.
-  std::vector<std::string> type_strings;
-  for (const auto& member : body.members()) {
-    if (member.kind != slang::ast::SymbolKind::Variable &&
-        member.kind != slang::ast::SymbolKind::Net) {
-      continue;
-    }
-    type_strings.push_back(
-        member.as<slang::ast::ValueSymbol>().getType().toString());
-  }
+  // Sort by name for deterministic hashing. Module-local declaration names
+  // are unique within a scope (guaranteed by slang's elaboration model),
+  // so name-only sorting is sufficient for a stable ordering.
+  std::ranges::sort(
+      desc.decls, [](const auto& a, const auto& b) { return a.name < b.name; });
 
-  return common::StructuralFingerprint{absl::HashOf(entries, type_strings)};
+  return desc;
+}
+
+// Hash a descriptor into a v1 declaration-shape fingerprint.
+// Hashes only body-local declaration facts (name + type_repr pairs).
+// def_id is not included -- it is paired externally by BuildSpecializationMap.
+auto HashCompileOwnedBodyDescriptor(const CompileOwnedBodyDescriptor& desc)
+    -> common::StructuralFingerprint {
+  size_t h = 0;
+  for (const auto& decl : desc.decls) {
+    h = absl::HashOf(h, decl.name, decl.type_repr);
+  }
+  return common::StructuralFingerprint{h};
+}
+
+}  // namespace
+
+auto ComputeStructuralFingerprint(const slang::ast::InstanceBodySymbol& body)
+    -> common::StructuralFingerprint {
+  auto desc = BuildCompileOwnedBodyDescriptor(body);
+  return HashCompileOwnedBodyDescriptor(desc);
 }
 
 auto BuildSpecializationMap(
-    const std::vector<const slang::ast::InstanceSymbol*>& all_instances,
-    const ParamRoleTable& param_roles) -> common::SpecializationMap {
+    const std::vector<const slang::ast::InstanceSymbol*>& all_instances)
+    -> common::SpecializationMap {
   common::SpecializationMap result;
   result.spec_id_by_instance.reserve(all_instances.size());
 
@@ -103,8 +126,7 @@ auto BuildSpecializationMap(
     if (inserted) ++next_def_id;
 
     common::ModuleDefId def_id{it->second};
-    auto fingerprint =
-        ComputeStructuralFingerprint(all_instances[i]->body, param_roles);
+    auto fingerprint = ComputeStructuralFingerprint(all_instances[i]->body);
     result.spec_id_by_instance.push_back({def_id, fingerprint});
   }
 
@@ -119,7 +141,9 @@ auto BuildSpecializationMap(
 
   for (size_t i = 0; i < all_instances.size(); ++i) {
     const auto& spec_id = result.spec_id_by_instance[i];
-    SpecIdKey key{spec_id.def_id.value, spec_id.fingerprint.value};
+    SpecIdKey key{
+        .def_id = spec_id.def_id.value,
+        .fingerprint = spec_id.fingerprint.value};
     groups[key].push_back(static_cast<common::ModuleInstanceIndex>(i));
   }
 
@@ -129,8 +153,9 @@ auto BuildSpecializationMap(
         common::SpecializationGroup{
             .spec_id =
                 common::ModuleSpecId{
-                    common::ModuleDefId{key.def_id},
-                    common::StructuralFingerprint{key.fingerprint}},
+                    .def_id = common::ModuleDefId{key.def_id},
+                    .fingerprint =
+                        common::StructuralFingerprint{key.fingerprint}},
             .instance_indices = std::move(indices),
         });
   }

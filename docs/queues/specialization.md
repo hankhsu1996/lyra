@@ -13,66 +13,49 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] E1-E2 -- Per-spec codegen (`CompileModuleSpecSession`, variant/template-dedup deleted)
 - [x] E3 partial -- `CodegenSession` has no `const mir::Design*`
 - [x] M2a -- Storage assignment derived from within-group variance (ParamTransmissionTable)
-- [ ] **M2b -- Self-contained grouping, delete param-role compatibility code** (next)
+- [x] M2b partial -- Declaration-based grouping, param-role deleted. v1 discriminator captures declaration-side shape only.
+- [ ] M2c -- Complete compile-owned discriminator (procedural/behavioral shape, runtime-owned type filtering)
 - [ ] E3 remaining -- Remove `mir::Design` from `LoweringInput`, narrow `Context` and `BuildLayout`
 - [ ] E4 -- Delete B5 compatibility adapters, representative-instance scaffolding
 - [ ] B6 -- HIR ownership split (depends on post-M2 grouping contract)
 - [ ] m1 -- DesignState struct is monolithic
 - [ ] m2 -- Instance paths baked into codegen
-- [ ] m4 -- ParamRole uses slang pointer as grouping key
+- [ ] m3 -- ParamTransmissionTable uses raw ParameterSymbol\* as key (should be group-scoped)
 - [ ] F1 -- Parallel specialization compilation
 - [ ] F2 -- Specialization caching
 
 ## M2: Invert specialization/param-role dependency
 
-Cross-cutting architectural correction. Fixes wrong causality in the pipeline contract between lowering, specialization, and realization. Must land before E3/E4 narrowing -- continuing to build on the wrong conceptual seam makes future work harder.
+Cross-cutting architectural correction. Fixes wrong causality in the pipeline contract between lowering, specialization, and realization.
 
-**Core conceptual correction**: Specialization identity is not a parameter tuple. Parameters are inputs to a module; specialization is the compile-owned equivalence class of the body. Two instances belong to the same specialization when their bodies produce identical compiled code -- regardless of how their parameter values differ, as long as those differences are not compile-owned.
-
-**Problem**: The current pipeline computes param roles first, then derives specialization grouping from those roles. This is backwards. Specialization identity and parameter transmission are conflated -- the classifier tries to answer both "which instances can share code?" and "which params need per-instance storage?" in one step.
+**Core conceptual correction**: Specialization identity is not a parameter tuple. Parameters are inputs to a module; specialization is the compile-owned equivalence class of the body.
 
 ### Grouping contract
 
-The grouping rule is **compile-owned body equivalence**: two instances belong to the same specialization group when every fact that the compiler bakes into the compiled body is identical between them. This includes resolved types, packed widths, generate selections, and any other elaboration-time decision that affects emitted code shape.
+The grouping rule is **compile-owned body equivalence**: two instances belong to the same specialization group when every compile-owned fact is identical between them.
+
+The v1 discriminator captures **declaration-side compile-owned shape**: module-local variable and net declarations (names and resolved types). This captures differences where parameters affect packed widths, signedness, or 2-state vs 4-state, because those decisions are reflected in the resolved types of these declarations. Parameters and localparams are excluded -- their effects are observed indirectly through the resolved types they influence.
+
+**v1 does not capture all compile-owned facts.** Two known gaps:
+
+- **Procedural/behavioral shape**: generate branch selections that affect code shape without introducing new declarations are not captured. Instances with different procedural code shape but identical declaration sets will incorrectly share a specialization.
+- **Runtime-owned type leakage**: `type.toString()` may encode runtime-owned differences (e.g., unpacked container sizing) that should not split specialization, causing oversplitting.
+
+These are tracked as M2c.
 
 Differences that are runtime-owned (assembly/constructor-time values, realization metadata) must not split specialization. The grouping ignores those.
 
-**Invariant**: If a parameter difference affects any compile-owned body fact, those instances must already be in different groups. Only within-group parameter variance becomes per-instance transmission.
+**Invariant**: Specialization identity is defined directly from compile-owned body facts. Parameters are neither classified nor hashed as a primary mechanism. Per-instance parameter transmission is a separate derived step based on within-group variance.
 
-Group-local variance alone is not sufficient unless the grouping has already absorbed every compile-owned difference. The grouping contract and the transmission derivation are coupled through this invariant -- getting one right requires the other.
-
-### Current state (transitional)
-
-The current `ClassifyParamRoles` is transitional compatibility logic with three passes:
-
-1. Syntax-visible shape collection (AST walk for non-procedural param refs)
-2. Cross-instance value comparison to find kValueOnly candidates
-3. Structural shape promotion (syntax-walk recovery for packed-width params)
-
-**Transitional grouping rule**: During migration, specialization grouping remains conservatively over-discriminating if needed. The current `ComputeStructuralFingerprint` hashes resolved type strings and parameter values -- this is more conservative than necessary but correct. Remove param-role-driven grouping only after the fingerprint independently captures all compile-owned differences currently relied on.
-
-### Target pipeline
-
-**Current pipeline** (after M2a -- storage decoupled, grouping NOT yet self-contained):
+### Pipeline (after M2a + M2b)
 
 ```
-ClassifyParamRoles(all_instances)              -- temporary: grouping scaffolding
-  -> BuildSpecializationMap(roles)             -- grouping still uses roles
-  -> DeriveParamTransmission(groups)           -- NEW: observe within-group variance
-  -> RegisterModuleDeclarations(transmission)  -- storage from transmission, not roles
+BuildSpecializationMap(all_instances)            -- v1 declaration-shape grouping
+  -> DeriveParamTransmission(groups)             -- observe within-group variance
+  -> RegisterModuleDeclarations(transmission)    -- storage from transmission
 ```
 
-M2a only decouples storage assignment from the classifier. Grouping still flows through `ClassifyParamRoles` -> `BuildSpecializationMap`. The classifier is demoted from "decides storage" to "feeds grouping."
-
-**Target pipeline** (after M2b):
-
-```
-ComputeSpecGroups(all_instances)         -- grouping by compile-owned body equivalence
-  -> DeriveParamTransmission(groups)     -- observe within-group variance
-  -> RegisterModuleDeclarations(transmission)
-```
-
-After M2b, `ClassifyParamRoles` is deleted. The grouping is self-contained and correct because the fingerprint independently captures all compile-owned body facts.
+Grouping implementation is internal to `specialization.cpp`: `BuildCompileOwnedBodyDescriptor` collects declaration facts, `HashCompileOwnedBodyDescriptor` produces the fingerprint. No parameter classification, no param-role table.
 
 ### Storage class consequence
 
@@ -88,11 +71,22 @@ Storage / const-block assignment is derived from within-group parameter variance
 
 ### Files involved
 
+- `include/lyra/lowering/ast_to_hir/specialization.hpp` -- public grouping API
+- `src/lyra/lowering/ast_to_hir/specialization.cpp` -- descriptor types, fingerprint, grouping (all internal)
 - `include/lyra/lowering/ast_to_hir/param_transmission.hpp` -- M2a: ParamTransmissionTable, DeriveParamTransmission
 - `src/lyra/lowering/ast_to_hir/param_transmission.cpp` -- M2a: within-group variance derivation
-- `src/lyra/lowering/ast_to_hir/design.cpp` -- M2a: pipeline reorder, RegisterModuleDeclarations takes transmission
-- `src/lyra/lowering/ast_to_hir/param_role.cpp` -- M2b: delete (replaced by self-contained grouping)
-- `src/lyra/lowering/ast_to_hir/specialization.cpp` -- M2b: fingerprint becomes self-contained (no ParamRoleTable input)
+- `src/lyra/lowering/ast_to_hir/design.cpp` -- pipeline: grouping -> transmission -> registration
+
+## M2c: Complete compile-owned discriminator
+
+The v1 discriminator (M2b) captures declaration-side shape only. M2c expands it to cover all compile-owned facts that affect compiled code.
+
+Known gaps:
+
+1. **Procedural shape without declaration change**: A generate branch that selects different procedural code (e.g., different `always` body) without introducing different variable/net declarations. The v1 discriminator sees identical declaration sets and merges them into one specialization.
+2. **Runtime-owned type filtering**: `type.toString()` may include runtime-owned type properties (unpacked container sizes, dynamic array bounds) that should not split specialization. The canonicalizer needs to strip these.
+
+Scope: define what "complete compile-owned representation" means, expand the descriptor, narrow the type canonicalizer.
 
 ## E3 remaining: Backend API narrowing
 
@@ -114,7 +108,7 @@ These are incremental narrowing tasks, not architectural blockers.
 
 Same body/instance split at HIR level. `hir::ModuleBody` owned by specialization, `hir::Module` becomes instance record. AST->HIR lowering produces one body per specialization group.
 
-Depends on the post-M2 grouping contract: the specialization groups that define which instances share a body are no longer param-role-defined but compile-owned-equivalence-defined.
+Depends on the post-M2 grouping contract: the specialization groups that define which instances share a body are now defined by compile-owned body equivalence.
 
 ## CI / Policy Gates
 
@@ -130,7 +124,7 @@ Depends on the post-M2 grouping contract: the specialization groups that define 
 
 ## Open Questions
 
-1. **BehaviorFingerprint granularity**: What is the minimal compile-owned representation that should define specialization identity? Resolved compile-owned body facts, lowered HIR/MIR shape, or a hybrid?
+1. **v1 discriminator completeness**: The v1 discriminator captures variable/net names and resolved types. It does not capture procedural/behavioral compile-owned shape. What is the minimal complete compile-owned representation? (Tracked as M2c.)
 2. **Package compilation**: Packages have no instances. Separate specialization unit or separate concept?
 3. **Container descriptor format**: How should SpecLayout represent container regions?
 4. **MIR interpreter alignment**: Debug-only. Migrate in lockstep or defer?

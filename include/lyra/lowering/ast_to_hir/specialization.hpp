@@ -11,14 +11,18 @@ class InstanceBodySymbol;
 
 namespace lyra::lowering::ast_to_hir {
 
-class ParamRoleTable;
+// Compute the v1 declaration-shape fingerprint for an instance body.
+// Captures variable/net names and resolved types. Does not capture
+// procedural/behavioral compile-owned shape (tracked as M2c).
+// Does not include def_id -- that is paired externally by
+// BuildSpecializationMap.
+auto ComputeStructuralFingerprint(const slang::ast::InstanceBodySymbol& body)
+    -> common::StructuralFingerprint;
 
-auto ComputeStructuralFingerprint(
-    const slang::ast::InstanceBodySymbol& body,
-    const ParamRoleTable& param_roles) -> common::StructuralFingerprint;
-
+// Build specialization groups from compile-owned body equivalence.
+// v1: declaration-shape grouping only. No parameter classification.
 auto BuildSpecializationMap(
-    const std::vector<const slang::ast::InstanceSymbol*>& all_instances,
-    const ParamRoleTable& param_roles) -> common::SpecializationMap;
+    const std::vector<const slang::ast::InstanceSymbol*>& all_instances)
+    -> common::SpecializationMap;
 
 }  // namespace lyra::lowering::ast_to_hir
