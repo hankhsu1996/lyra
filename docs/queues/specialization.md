@@ -2,7 +2,7 @@
 
 Working queue for migrating Lyra toward specialization-based compilation.
 
-For the stable architecture: see [compilation-model.md](compilation-model.md).
+For the stable architecture: see [compilation-model.md](../compilation-model.md).
 
 ## Progress
 
