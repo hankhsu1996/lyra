@@ -106,11 +106,14 @@ Grouped by area (inclusive, do not sum across rows):
 - Connections are structurally full-slot today -- range filtering would be dead code
 - Comb kernel trigger precision is plumbed end-to-end (PR #497) but `comb_narrow=0` on benchmarks because sensitivity analysis produces full-slot observations for current design patterns
 
+**Comb self-trigger oscillation (fixed, PR TBD):** PR #509 added `comb_write_capture_` to bypass `delta_seen_` dedup for cross-kernel visibility. This exposed a latent bug: `always_comb` blocks with write-then-read of the same variable (e.g. `a = f(x); a = a + g(x)`) create a self-edge in the trigger map. Intermediate writes differ from the final value, causing permanent oscillation. Runtime fix: per-iteration worklist dedup + pre-comb snapshot comparison to suppress net-zero self-triggers. This is a bucket fix. The root cause is that `CollectSensitivity()` does not exclude variables always written before being read (IEEE 1800 `always_comb` implicit sensitivity rule). See `docs/comb-sensitivity-design.md` for the planned compiler-level fix.
+
 **Remaining directions:**
 
 - Measure fixpoint iteration behavior and propagation fanout on real designs
 - Assembly-time topological ordering for acyclic realized propagation subgraphs
 - Relax connection kernelization to allow sub-slot connections
+- Compiler: must-def analysis for `always_comb` sensitivity (removes false self-edges at the source)
 
 ## Prioritized Working Queue
 
