@@ -56,7 +56,7 @@ This produces separate output files per process. The simulation process will hav
 
 Compile the pipeline AOT binary with optimization. The AOT path produces a native executable with the Lyra runtime linked in.
 
-**Always build with `-c opt`.** This applies to both profiling and benchmarking. Bazel's default `fastbuild` mode uses `-O0`, which prevents inlining and inflates STL/container overhead by 5x+. Profiles taken at `-O0` show a completely different cost distribution (dominated by iterator constructors, vector::empty checks, and function call overhead that vanishes at `-O2`) and cannot be used for hotspot ranking. The benchmark runner (`tools/bench/run_benchmarks.py`) enforces this by building with `-c opt` and always using the resulting optimized binary. See the `-c opt` discovery note in `docs/runtime-performance-gaps.md` for the full story.
+**Always build with `-c opt`.** This applies to both profiling and benchmarking. Bazel's default `fastbuild` mode uses `-O0`, which prevents inlining and inflates STL/container overhead by 5x+. Profiles taken at `-O0` show a completely different cost distribution (dominated by iterator constructors, vector::empty checks, and function call overhead that vanishes at `-O2`) and cannot be used for hotspot ranking. The benchmark runner (`tools/bench/run_benchmarks.py`) enforces this by building with `-c opt` and always using the resulting optimized binary. See the `-c opt` discovery note in `docs/queues/performance.md` for the full story.
 
 ```bash
 bazel build -c opt //:lyra
@@ -153,7 +153,7 @@ rm -f tools/bench/fixtures/pipeline/callgrind.*
 
 ## Linking profiles to performance gaps
 
-Every gap in `docs/runtime-performance-gaps.md` should cite either:
+Every gap in `docs/queues/performance.md` should cite either:
 
 - A benchmark delta (before/after wall-clock numbers from `run_benchmarks.py`)
 - A profiling result (inclusive/self cost percentage from callgrind)
