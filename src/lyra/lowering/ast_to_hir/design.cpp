@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <optional>
 #include <string>
@@ -35,7 +34,6 @@
 #include "lyra/lowering/ast_to_hir/generate.hpp"
 #include "lyra/lowering/ast_to_hir/module.hpp"
 #include "lyra/lowering/ast_to_hir/package.hpp"
-#include "lyra/lowering/ast_to_hir/param_role.hpp"
 #include "lyra/lowering/ast_to_hir/param_transmission.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
@@ -476,15 +474,9 @@ auto LowerDesign(
     return a->getHierarchicalPath() < b->getHierarchicalPath();
   });
 
-  // Classify param roles (temporary compatibility scaffolding for grouping).
-  // Storage assignment no longer comes from here -- it is derived from
-  // within-group variance below.
-  ParamRoleTable param_roles = ClassifyParamRoles(all_instances);
-
-  // Build specialization groups. Grouping still temporarily depends on
-  // param-role classification; M2b will make this self-contained.
-  common::SpecializationMap spec_map =
-      BuildSpecializationMap(all_instances, param_roles);
+  // Build specialization groups from compile-owned body facts.
+  // No parameter classification -- grouping is self-contained.
+  common::SpecializationMap spec_map = BuildSpecializationMap(all_instances);
 
   // Derive per-instance parameter transmission from within-group variance.
   ParamTransmissionTable transmission =

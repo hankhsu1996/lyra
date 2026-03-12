@@ -38,9 +38,9 @@ enum class ParamDisposition : uint8_t {
 // they must already be in different groups before this table is consulted.
 //
 // Keying: ParameterSymbol* is per-instance-body in slang's elaboration
-// model (each elaborated body has its own symbol objects). This is the
-// same identity basis as ParamRoleTable (m4 tracks replacing both with
-// a group-scoped key).
+// model (each elaborated body has its own symbol objects). This works
+// but couples identity to slang's pointer allocation. Tracked as m3
+// in specialization.md for replacement with a group-scoped key.
 class ParamTransmissionTable {
  public:
   auto Lookup(const slang::ast::ParameterSymbol& p) const -> ParamDisposition;
