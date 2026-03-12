@@ -101,6 +101,67 @@ cases:
     expect:
       stdout: "n=2 w=4 d=15\nn=4 w=8 d=255\n"
 
+  - name: all_instances_same_value
+    description: >
+      M2a structural invariant: no within-group variance means no slots.
+      All instances have identical VAL -- absorbed, zero param slots.
+      count=0 proves no design-global slots allocated.
+    dump_slot_meta: true
+    sv: |
+      module Uniform #(parameter int VAL = 42);
+        initial $display("val=%0d", VAL);
+      endmodule
+
+      module Top;
+        Uniform #(.VAL(42)) u0();
+        Uniform #(.VAL(42)) u1();
+        Uniform #(.VAL(42)) u2();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "val=42"
+          - "count=0"
+
+  - name: three_way_value_variance
+    description: Three instances with different value-only param -- all transmitted
+    sv: |
+      module Triple #(parameter int X = 0);
+        initial $display("x=%0d", X);
+      endmodule
+
+      module Top;
+        Triple #(.X(10)) t0();
+        Triple #(.X(20)) t1();
+        Triple #(.X(30)) t2();
+      endmodule
+    expect:
+      stdout: "x=10\nx=20\nx=30\n"
+
+  - name: mixed_absorbed_and_transmitted
+    description: >
+      M2a structural invariant: within-group variance determines storage.
+      BASE is constant across the group (absorbed, no slot).
+      ID varies across the group (transmitted, gets a slot per instance).
+      count=2 proves exactly 2 param slots exist (one per instance for ID).
+      If BASE were incorrectly transmitted, count would be 4.
+    dump_slot_meta: true
+    sv: |
+      module Dual #(parameter int BASE = 0, parameter int ID = 0);
+        initial $display("base=%0d id=%0d", BASE, ID);
+      endmodule
+
+      module Top;
+        Dual #(.BASE(100), .ID(1)) d0();
+        Dual #(.BASE(100), .ID(2)) d1();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "base=100 id=1"
+          - "base=100 id=2"
+          - "count=2"
+
   - name: value_param_in_conditional
     description: Value-only param used in if-else condition
     sv: |

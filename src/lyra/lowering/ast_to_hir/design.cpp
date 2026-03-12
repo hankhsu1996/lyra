@@ -36,6 +36,7 @@
 #include "lyra/lowering/ast_to_hir/module.hpp"
 #include "lyra/lowering/ast_to_hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/param_role.hpp"
+#include "lyra/lowering/ast_to_hir/param_transmission.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/specialization.hpp"
@@ -52,7 +53,7 @@ namespace {
 // unused downstream but assigned for future use.
 void RegisterModuleDeclarations(
     const slang::ast::InstanceSymbol& instance, SymbolRegistrar& registrar,
-    const ParamRoleTable& param_roles, Context* ctx) {
+    const ParamTransmissionTable& transmission, Context* ctx) {
   const slang::ast::InstanceBodySymbol& body = instance.body;
   SourceSpan span = ctx->SpanOf(GetSourceRange(instance));
 
@@ -86,14 +87,15 @@ void RegisterModuleDeclarations(
   }
 
   // Register parameters.
-  // ValueOnly params get kDesignStorage (runtime slots for dedup).
-  // Shape params keep kConstOnly (no runtime storage, values folded).
+  // Storage assignment is derived from within-group parameter variance,
+  // not from the upstream param-role classifier.
   for (const auto* param : members.parameters) {
     TypeId type = LowerType(param->getType(), span, ctx);
     if (type) {
-      StorageClass sc = param_roles.Lookup(*param) == ParamRole::kValueOnly
-                            ? StorageClass::kDesignStorage
-                            : StorageClass::kConstOnly;
+      StorageClass sc =
+          transmission.Lookup(*param) == ParamDisposition::kTransmitted
+              ? StorageClass::kDesignStorage
+              : StorageClass::kConstOnly;
       registrar.Register(*param, SymbolKind::kParameter, type, sc);
     }
   }
@@ -474,12 +476,24 @@ auto LowerDesign(
     return a->getHierarchicalPath() < b->getHierarchicalPath();
   });
 
-  // Classify parameter roles (before Phase 0 so storage class is known).
+  // Classify param roles (temporary compatibility scaffolding for grouping).
+  // Storage assignment no longer comes from here -- it is derived from
+  // within-group variance below.
   ParamRoleTable param_roles = ClassifyParamRoles(all_instances);
 
-  // Phase 0: Register all module declarations (creation allowed)
+  // Build specialization groups. Grouping still temporarily depends on
+  // param-role classification; M2b will make this self-contained.
+  common::SpecializationMap spec_map =
+      BuildSpecializationMap(all_instances, param_roles);
+
+  // Derive per-instance parameter transmission from within-group variance.
+  ParamTransmissionTable transmission =
+      DeriveParamTransmission(spec_map, all_instances);
+
+  // Phase 0: Register all module declarations (creation allowed).
+  // Storage class is derived from transmission, not from param roles.
   for (const auto* instance : all_instances) {
-    RegisterModuleDeclarations(*instance, registrar, param_roles, ctx);
+    RegisterModuleDeclarations(*instance, registrar, transmission, ctx);
   }
 
   // Lower port bindings to HIR (after Phase 0, symbols are registered)
@@ -493,10 +507,6 @@ auto LowerDesign(
     }
     elements.emplace_back(LowerPackage(*pkg, registrar, ctx));
   }
-
-  // Build specialization map (assigns ModuleDefId + fingerprint per instance).
-  common::SpecializationMap spec_map =
-      BuildSpecializationMap(all_instances, param_roles);
 
   // Phase 1: Lower module bodies.
   // Port bindings are now handled at HIR->MIR level, not here.

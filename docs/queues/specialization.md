@@ -12,7 +12,8 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] D1-D4 -- Realization extraction (bindings, metadata, `EmitDesignMain`, `InstanceConstBlock`)
 - [x] E1-E2 -- Per-spec codegen (`CompileModuleSpecSession`, variant/template-dedup deleted)
 - [x] E3 partial -- `CodegenSession` has no `const mir::Design*`
-- [ ] **M2 -- Invert specialization/param-role dependency** (next)
+- [x] M2a -- Storage assignment derived from within-group variance (ParamTransmissionTable)
+- [ ] **M2b -- Self-contained grouping, delete param-role compatibility code** (next)
 - [ ] E3 remaining -- Remove `mir::Design` from `LoweringInput`, narrow `Context` and `BuildLayout`
 - [ ] E4 -- Delete B5 compatibility adapters, representative-instance scaffolding
 - [ ] B6 -- HIR ownership split (depends on post-M2 grouping contract)
@@ -52,15 +53,18 @@ The current `ClassifyParamRoles` is transitional compatibility logic with three 
 
 ### Target pipeline
 
-**Current pipeline** (wrong causality):
+**Current pipeline** (after M2a -- storage decoupled, grouping NOT yet self-contained):
 
 ```
-ClassifyParamRoles(all_instances)        -- param roles first
-  -> RegisterModuleDeclarations(roles)   -- storage class from roles
-  -> BuildSpecializationMap(roles)       -- grouping from roles
+ClassifyParamRoles(all_instances)              -- temporary: grouping scaffolding
+  -> BuildSpecializationMap(roles)             -- grouping still uses roles
+  -> DeriveParamTransmission(groups)           -- NEW: observe within-group variance
+  -> RegisterModuleDeclarations(transmission)  -- storage from transmission, not roles
 ```
 
-**Target pipeline** (correct causality):
+M2a only decouples storage assignment from the classifier. Grouping still flows through `ClassifyParamRoles` -> `BuildSpecializationMap`. The classifier is demoted from "decides storage" to "feeds grouping."
+
+**Target pipeline** (after M2b):
 
 ```
 ComputeSpecGroups(all_instances)         -- grouping by compile-owned body equivalence
@@ -68,7 +72,7 @@ ComputeSpecGroups(all_instances)         -- grouping by compile-owned body equiv
   -> RegisterModuleDeclarations(transmission)
 ```
 
-After M2, `ClassifyParamRoles` simplifies to a group-local variance check. But that check is only correct because the grouping has already separated instances with different compile-owned body facts.
+After M2b, `ClassifyParamRoles` is deleted. The grouping is self-contained and correct because the fingerprint independently captures all compile-owned body facts.
 
 ### Storage class consequence
 
@@ -84,10 +88,11 @@ Storage / const-block assignment is derived from within-group parameter variance
 
 ### Files involved
 
-- `src/lyra/lowering/ast_to_hir/param_role.cpp` -- simplifies to group-local variance check (correct only because grouping absorbed compile-owned differences)
-- `src/lyra/lowering/ast_to_hir/specialization.cpp` -- fingerprint becomes self-contained (no ParamRoleTable input), must capture all compile-owned body facts
-- `src/lyra/lowering/ast_to_hir/design.cpp` -- pipeline reordering
-- `src/lyra/lowering/ast_to_hir/module.cpp` -- storage class derived from within-group variance, not from upfront role classifier
+- `include/lyra/lowering/ast_to_hir/param_transmission.hpp` -- M2a: ParamTransmissionTable, DeriveParamTransmission
+- `src/lyra/lowering/ast_to_hir/param_transmission.cpp` -- M2a: within-group variance derivation
+- `src/lyra/lowering/ast_to_hir/design.cpp` -- M2a: pipeline reorder, RegisterModuleDeclarations takes transmission
+- `src/lyra/lowering/ast_to_hir/param_role.cpp` -- M2b: delete (replaced by self-contained grouping)
+- `src/lyra/lowering/ast_to_hir/specialization.cpp` -- M2b: fingerprint becomes self-contained (no ParamRoleTable input)
 
 ## E3 remaining: Backend API narrowing
 
