@@ -2,96 +2,55 @@
 
 Working queue for migrating Lyra toward specialization-based compilation.
 
-For the stable architecture (phases, specialization boundary rule, parameter classification, realization model): see [compilation-model.md](compilation-model.md).
+For the stable architecture: see [compilation-model.md](compilation-model.md).
 
-## Current Status
+## Progress
 
-**E3 partial: `CodegenSession` no longer carries `const mir::Design*`.**
+- [x] A -- Identity (`ModuleDefId`, `BehaviorFingerprint`, `ModuleSpecId`, `SpecializationMap`)
+- [x] B1-B4 -- Body ownership (`mir::ModuleBody`, shared bodies, no instance identity in `mir::Process`)
+- [x] C1-C3 -- Local storage (`CollectBodyLocalDecls`, `mir::InstancePlacement`, alias resolution eliminated)
+- [x] D1-D4 -- Realization extraction (bindings, metadata, `EmitDesignMain`, `InstanceConstBlock`)
+- [x] E1-E2 -- Per-spec codegen (`CompileModuleSpecSession`, variant/template-dedup deleted)
+- [x] E3 partial -- `CodegenSession` has no `const mir::Design*`
+- [ ] **M2 -- Invert specialization/param-role dependency** (next)
+- [ ] E3 remaining -- Remove `mir::Design` from `LoweringInput`, narrow `Context` and `BuildLayout`
+- [ ] E4 -- Delete B5 compatibility adapters, representative-instance scaffolding
+- [ ] B6 -- HIR ownership split (depends on post-M2 grouping contract)
+- [ ] m1 -- DesignState struct is monolithic
+- [ ] m2 -- Instance paths baked into codegen
+- [ ] m4 -- ParamRole uses slang pointer as grouping key
+- [ ] F1 -- Parallel specialization compilation
+- [ ] F2 -- Specialization caching
 
-**Current phase**: E (per-specialization codegen). Variant/template-dedup backend ownership deleted. Specialization compiles directly from body-owned process order and body identity. Realization / assembly code no longer reads design MIR directly -- realization input data is extracted explicitly during `CompileDesignProcesses` into `RealizationData`.
+## M2: Invert specialization/param-role dependency
 
-**Transitional state**: design-wide compatibility adapters (B5) remain until Phase E3/E4 removes them.
+Cross-cutting architectural correction. Fixes wrong causality in the pipeline contract between lowering, specialization, and realization. Must land before E3/E4 narrowing -- continuing to build on the wrong conceptual seam makes future work harder.
 
-**Specialization compilation**: `CompileModuleSpecSession` is the native per-specialization backend entrypoint. It takes an owned `CompiledModuleSpecInput` (body MIR membership, `SpecLayout`, `SpecCodegenView`) and returns a `CompiledModuleSpec` product (process functions parallel to view.processes, wait sites). Body-function declare/define is specialization-local. Module-scoped function lowering metadata is registered once per specialization. `CompileDesignProcesses` is orchestration: setup, design-global functions (packages + generated), `CompileModuleSpecSession` x N, per-instance wrappers. Wrapper generation routes explicitly by `(body_id, local_nonfinal_process_index)` via an explicit routing table built from Phase 4 products.
+**Core conceptual correction**: Specialization identity is not a parameter tuple. Parameters are inputs to a module; specialization is the compile-owned equivalence class of the body. Two instances belong to the same specialization when their bodies produce identical compiled code -- regardless of how their parameter values differ, as long as those differences are not compile-owned.
 
-**What was deleted in E2**:
+**Problem**: The current pipeline computes param roles first, then derives specialization grouping from those roles. This is backwards. Specialization identity and parameter transmission are conflated -- the classifier tries to answer both "which instances can share code?" and "which params need per-instance storage?" in one step.
 
-- `BuildModuleVariants`, `ProcessTemplate`, `ModuleVariant`, `ProcessFingerprint`, `ProcessMembership`
-- `process_fingerprint.hpp` / `process_fingerprint.cpp`
-- `ModuleVariantId`, `TemplateId`, `LocalProcIndex`, `LayoutProcessIndex`, `StandaloneRoute`, `TemplatedRoute`, `ProcessRoute`
-- `Layout::RouteProcess`, `Layout::GetInstanceVariant`, `Layout::GetInstanceVariantId`
-- `Layout::process_templates`, `Layout::variants`, `Layout::process_membership`, `Layout::instance_variant_ids`
+### Grouping contract
 
-**What was added in E2**:
+The grouping rule is **compile-owned body equivalence**: two instances belong to the same specialization group when every fact that the compiler bakes into the compiled body is identical between them. This includes resolved types, packed widths, generate selections, and any other elaboration-time decision that affects emitted code shape.
 
-- `Layout::GetBodyRelByteOffsets(body_id)` -- body-owned relative byte offsets computed directly in `BuildLayout`
-- `SpecProcessView` (replaces `SpecTemplateView`) -- body-owned process routing with `local_nonfinal_proc_index`
-- `SpecCodegenView::processes` (replaces `templates`)
-- `CompiledModuleSpec::process_functions` (replaces `template_functions`)
-- Explicit `body_to_compiled_funcs` routing table in Phase 5
+Differences that are runtime-owned (assembly/constructor-time values, realization metadata) must not split specialization. The grouping ignores those.
 
-**What was done in E3 (partial)**:
+**Invariant**: If a parameter difference affects any compile-owned body fact, those instances must already be in different groups. Only within-group parameter variance becomes per-instance transmission.
 
-- `CodegenSession` no longer holds `const mir::Design*` -- replaced with `RealizationData` (param-init entries, slot types, instance paths)
-- Realization/assembly code (`emit_design_main.cpp`, `design_metadata_lowering.hpp/.cpp`) has zero `mir::Design` references
-- Design-derived realization inputs are extracted explicitly during `CompileDesignProcesses` at the codegen/realization seam
+Group-local variance alone is not sufficient unless the grouping has already absorbed every compile-owned difference. The grouping contract and the transmission derivation are coupled through this invariant -- getting one right requires the other.
 
-**Remaining gaps**:
+### Current state (transitional)
 
-- `LoweringInput` still holds `const mir::Design*`
-- `Context` still holds broad design/layout state (`const Layout&`, design types)
-- `BuildLayout()` still operates design-wide
-- Wrapper generation remains design-wide (correct: wrappers are per-instance, not per-specialization)
-- Body-function artifacts are Context side effects, not explicit products
-- Process lowering uses representative instance ID for %m path support (compatibility-only, not ownership)
-
-**Architectural uncertainties**:
-
-- M2 -- current classifier has the causality backwards; see M2 section below
-- E1-E4 ordering -- may simplify once codegen API is narrowed
-
-## Completed Milestones
-
-- **Phase A complete** -- `ModuleDefId`, `BehaviorFingerprint`, `ModuleSpecId`, `SpecializationMap` introduced. Known gap: M2 (param-role/specialization dependency is inverted; see M2 section).
-- **Phase B mostly complete** (B1-B4 done) -- `mir::ModuleBody` owns behavioral IR, `mir::Module` is instance record with `body_id`. Shared bodies active. `mir::Process` carries no instance identity. `SpecializationMap` required (no fallback). Remaining: B6 (HIR split).
-- **Phase C complete** (C1-C3) -- specialization-local slot identity via `CollectBodyLocalDecls`. `mir::InstancePlacement` is source of truth for design-state placement. Alias resolution eliminated from behavioral codegen.
-- **Phase D complete** (D1-D4 done) -- bindings separated (`CompileBindings` + `realization::AssembleBindings`). Metadata serialization in `realization::BuildDesignMetadata`. `main()` in `realization::EmitDesignMain()`. `LowerMirToLlvm()` is thin wrapper: `CompileDesignProcesses` -> `EmitDesignMain` -> `FinalizeModule`. D2: `InstanceConstBlock` is a first-class realization artifact in `PlacementMap`; per-instance value-only parameter values are owned by `PlacementMap::const_blocks` (body-local slot indices), not by `mir::Design`. `mir::Design::instance_param_inits` deleted.
-
-## Active Gaps
-
-### Now: E3 narrowing (continued)
-
-`CodegenSession` no longer carries `const mir::Design*` (E3 partial done). Remaining E3 scope:
-
-**B3: Design-wide state still flows through top-level APIs**
-
-`LowerMirToLlvm()` still receives `mir::Design`. `BuildLayout()` still processes all instances. `Context` still holds `const Layout&`. These are incremental narrowing tasks, not architectural blockers.
-
-- `include/lyra/llvm_backend/lower.hpp` -- `LoweringInput` holds `const mir::Design*`
-- `src/lyra/llvm_backend/layout/layout.cpp` -- `BuildLayout()` iterates all instances
-- `include/lyra/llvm_backend/context.hpp` -- `Context` holds `const Layout&`
-
-### Next: M2 -- Invert specialization/param-role dependency
-
-**Problem**: The current pipeline computes param roles first, then derives specialization grouping from those roles. This is backwards. It puts all correctness pressure on an upfront classifier that must perfectly predict which parameters affect compiled code shape -- a problem that is fundamentally hard because slang resolves parameterized types during elaboration, losing provenance.
-
-The current `ClassifyParamRoles` has three passes to work around this:
+The current `ClassifyParamRoles` is transitional compatibility logic with three passes:
 
 1. Syntax-visible shape collection (AST walk for non-procedural param refs)
 2. Cross-instance value comparison to find kValueOnly candidates
 3. Structural shape promotion (syntax-walk recovery for packed-width params)
 
-Pass 3 (`CollectStructuralShapeParams`) was added as a temporary fix for packed-width params being misclassified. It works but is a band-aid on the wrong architecture.
+**Transitional grouping rule**: During migration, specialization grouping remains conservatively over-discriminating if needed. The current `ComputeStructuralFingerprint` hashes resolved type strings and parameter values -- this is more conservative than necessary but correct. Remove param-role-driven grouping only after the fingerprint independently captures all compile-owned differences currently relied on.
 
-**Root cause**: Specialization identity and parameter transmission are conflated. The classifier tries to answer both "which instances can share code?" and "which params need per-instance storage?" in one step. These are related but should not be defined by the same analysis.
-
-**Target architecture**: Invert the dependency.
-
-1. **Specialization grouping comes first.** Group instances by conservative structural equivalence. `ComputeStructuralFingerprint` already hashes resolved type strings from the slang AST -- this part is self-contained and does not need param roles. Drop the param-value hashing from the fingerprint (or hash all param values conservatively).
-
-2. **Parameter transmission is derived from groups.** Within each specialization group, observe which parameters are constant across all instances. Constant params were absorbed by the specialization choice -- they are specialization-owned. Params that still vary are per-instance constructor/realization args.
-
-This gives the mental model: all instance parameters start as instance inputs; some differences are absorbed by specialization selection; the remaining differences become per-instance realization arguments.
+### Target pipeline
 
 **Current pipeline** (wrong causality):
 
@@ -104,78 +63,69 @@ ClassifyParamRoles(all_instances)        -- param roles first
 **Target pipeline** (correct causality):
 
 ```
-ComputeSpecGroups(all_instances)         -- grouping first (structural equiv)
-  -> DeriveParamTransmission(groups)     -- observe variance within groups
+ComputeSpecGroups(all_instances)         -- grouping by compile-owned body equivalence
+  -> DeriveParamTransmission(groups)     -- observe within-group variance
   -> RegisterModuleDeclarations(transmission)
 ```
 
-**Why this is better**:
+After M2, `ClassifyParamRoles` simplifies to a group-local variance check. But that check is only correct because the grouping has already separated instances with different compile-owned body facts.
 
+### Storage class consequence
+
+Storage / const-block assignment is derived from within-group parameter variance, not from an upfront global role classifier. A parameter that is constant across all instances in a group was absorbed by the specialization choice -- it has no runtime storage. A parameter that varies within a group is a per-instance transmission argument and gets a const-block slot.
+
+### Why this is better
+
+- Specialization identity is not a parameter tuple; it is the compile-owned equivalence class of the body
 - No correctness pressure on an upfront classifier
 - No need to recover parameter provenance from resolved types
 - Grouping rule can evolve independently of parameter transmission
-- Matches the ownership model: specialization-owned differences are absorbed into the compiled body, per-instance differences stay outside
+- Matches ownership model: specialization-owned differences are absorbed into the compiled body, per-instance differences stay outside
 
-**Current state**: Pass 3 band-aid is in place and tests pass. The inversion touches `param_role.cpp`, `specialization.cpp`, `design.cpp` pipeline order, `module.cpp` storage class assignment, and registration flow.
+### Files involved
 
-**Files involved**:
-
-- `src/lyra/lowering/ast_to_hir/param_role.cpp` -- simplifies to group-local variance check
-- `src/lyra/lowering/ast_to_hir/specialization.cpp` -- fingerprint becomes self-contained (no ParamRoleTable input)
+- `src/lyra/lowering/ast_to_hir/param_role.cpp` -- simplifies to group-local variance check (correct only because grouping absorbed compile-owned differences)
+- `src/lyra/lowering/ast_to_hir/specialization.cpp` -- fingerprint becomes self-contained (no ParamRoleTable input), must capture all compile-owned body facts
 - `src/lyra/lowering/ast_to_hir/design.cpp` -- pipeline reordering
-- `src/lyra/lowering/ast_to_hir/module.cpp` -- storage class assignment changes
+- `src/lyra/lowering/ast_to_hir/module.cpp` -- storage class derived from within-group variance, not from upfront role classifier
 
-### Later: B6 / M4 / E2-E4 / medium gaps
+## E3 remaining: Backend API narrowing
 
-**B6: HIR ownership split**
+`CodegenSession` no longer carries `const mir::Design*` (done). Remaining scope:
 
-Same body/instance split at HIR level. `hir::ModuleBody` owned by specialization, `hir::Module` becomes instance record. AST->HIR lowering produces one body per specialization group.
+- `include/lyra/llvm_backend/lower.hpp` -- `LoweringInput` holds `const mir::Design*`
+- `src/lyra/llvm_backend/layout/layout.cpp` -- `BuildLayout()` iterates all instances
+- `include/lyra/llvm_backend/context.hpp` -- `Context` holds `const Layout&`
 
-- `src/lyra/lowering/ast_to_hir/design.cpp:502-506` -- `LowerDesign()` creates one `hir::Module` per instance
-- `include/lyra/hir/design.hpp` -- `Design::elements` parallel to elaboration order
+These are incremental narrowing tasks, not architectural blockers.
 
-**E3: Delete remaining broad design/layout coupling from top-level backend APIs and `Context`**
-
-- Remove all code paths that pass full `mir::Design` to codegen
-- `Context` no longer holds `const Layout&` (or narrowed to only what it needs)
-- `LoweringInput` no longer exposes `mir::Design`
-- Depends on E2 (done)
-
-**E4: Delete compatibility adapters / representative-instance compatibility scaffolding**
+## E4: Delete compatibility adapters
 
 - Remove transitional codegen adapters from Phase B5
 - Remove representative-instance ID usage for %m path support
 - Codegen operates natively on `ModuleBody` + instance records
-- Depends on E3
 
-**Medium gaps**
+## B6: HIR ownership split
 
-- **m1**: DesignState struct is monolithic -- absolute byte offsets depend on elaboration order
-- **m2**: Instance paths baked into codegen
-- **m4**: ParamRole uses slang pointer as grouping key
+Same body/instance split at HIR level. `hir::ModuleBody` owned by specialization, `hir::Module` becomes instance record. AST->HIR lowering produces one body per specialization group.
 
-## Phase F: Acceleration
-
-Future work after Phase E.
-
-- **F1**: Parallel specialization compilation -- thread pool, scales with core count
-- **F2**: Specialization caching -- content-addressed cache keyed by `ModuleSpecId`
+Depends on the post-M2 grouping contract: the specialization groups that define which instances share a body are no longer param-role-defined but compile-owned-equivalence-defined.
 
 ## CI / Policy Gates
 
-| Gate                                              | Enforcement             | Status        |
-| ------------------------------------------------- | ----------------------- | ------------- |
-| G1: No instance identity in specialization MIR    | Structural (type shape) | Enforced      |
-| G2: Codegen API has no design input               | API signature check     | Not added yet |
-| G3: Value-only params share specialization        | Regression test         | Not added yet |
-| G4: Structural params produce distinct specs      | Regression test         | Not added yet |
-| G5: Specialization IR is topology-independent     | Regression test         | Not added yet |
-| G6: No instance paths in specialization artifacts | Policy check            | Not added yet |
-| G7: Specialization grouping is deterministic      | Regression test         | Not added yet |
+| Gate                                                           | Enforcement             | Status        |
+| -------------------------------------------------------------- | ----------------------- | ------------- |
+| G1: No instance identity in specialization MIR                 | Structural (type shape) | Enforced      |
+| G2: Codegen API has no design input                            | API signature check     | Not added yet |
+| G3: Within-group param variance is transmitted per-instance    | Regression test         | Not added yet |
+| G4: Compile-owned differences produce distinct specializations | Regression test         | Not added yet |
+| G5: Specialization IR is topology-independent                  | Regression test         | Not added yet |
+| G6: No instance paths in specialization artifacts              | Policy check            | Not added yet |
+| G7: Specialization grouping is deterministic                   | Regression test         | Not added yet |
 
 ## Open Questions
 
-1. **BehaviorFingerprint granularity**: Hash structural parameter values, or hash generated HIR?
+1. **BehaviorFingerprint granularity**: What is the minimal compile-owned representation that should define specialization identity? Resolved compile-owned body facts, lowered HIR/MIR shape, or a hybrid?
 2. **Package compilation**: Packages have no instances. Separate specialization unit or separate concept?
 3. **Container descriptor format**: How should SpecLayout represent container regions?
 4. **MIR interpreter alignment**: Debug-only. Migrate in lockstep or defer?
