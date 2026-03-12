@@ -267,14 +267,24 @@ class Engine {
   // design - both identify the same design slot. Callers may pass either type.
   void MarkSlotDirty(uint32_t slot_id) {
     update_set_.MarkSlotDirty(slot_id);
+    if (comb_write_capture_ != nullptr) {
+      comb_write_capture_->push_back(slot_id);
+    }
   }
 
   // Mark a byte range within a slot as dirty.
   void MarkDirtyRange(uint32_t slot_id, uint32_t byte_off, uint32_t byte_size) {
     update_set_.MarkDirtyRange(slot_id, byte_off, byte_size);
+    if (comb_write_capture_ != nullptr) {
+      comb_write_capture_->push_back(slot_id);
+    }
   }
 
   // Mark a heap-relative byte range as dirty for a container slot.
+  // Intentionally excluded from comb write capture: heap/container mutations
+  // do not participate in flat connection/comb convergence. Connections are
+  // byte-range copies between design slots, and comb kernels read/write
+  // packed design slots only.
   void MarkExternalDirtyRange(
       uint32_t slot_id, uint32_t byte_off, uint32_t byte_size) {
     update_set_.MarkExternalDirtyRange(slot_id, byte_off, byte_size);
@@ -602,6 +612,12 @@ class Engine {
   // Dense flag table by process index (sized from num_processes_ in
   // InitCombKernels, true = comb kernel, skip in ScheduleInitial).
   std::vector<uint8_t> comb_kernel_flags_;
+
+  // Comb write capture for FlushAndPropagateConnections fixed-point loop.
+  // When non-null, MarkSlotDirty/MarkDirtyRange additionally push to this
+  // vector to bypass delta_seen_ dedup. Owned by a CombWriteGuard on the
+  // stack of FlushAndPropagateConnections; null at all other times.
+  std::vector<uint32_t>* comb_write_capture_ = nullptr;
 
   // Process metadata registry for diagnostics and signal-safe dumps.
   ProcessMetaRegistry process_meta_;

@@ -601,29 +601,49 @@ void Engine::FlushAndPropagateConnections() {
     return;
   }
 
-  // Propagate connections and comb kernels until stable, then flush
-  // subscriptions. Connections and comb kernels must fire before subscription
-  // wakeup so that downstream processes observe the propagated values.
+  // Fixed-point propagation of connections and comb kernels.
   //
-  // The delta accumulates across iterations: MarkSlotDirty from connection
-  // writes and comb kernel stores appends to the same delta. We track how
-  // many delta entries we've already scanned to process only new additions.
+  // Two tracking channels serve different purposes:
+  //   update_set_ (delta_dirty_/delta_seen_): cross-phase dirty tracking for
+  //     scheduler wakeup and trace snapshots. Uses dedup (delta_seen_) so each
+  //     slot appears at most once per delta.
+  //   pending/next_pending (local work list): fixed-point propagation
+  //     scheduling within this function only. No dedup -- duplicates are
+  //     harmless because connections guard with memcmp and comb kernel writes
+  //     go through LyraStorePacked (which memcmps before writing, so only
+  //     actual value changes reach MarkSlotDirty).
+  //
+  // The local work list exists because delta_seen_ dedup is wrong for
+  // convergence: if a comb kernel writes an intermediate value then re-writes
+  // the correct value in a later iteration, the corrected write would be
+  // invisible to delta_dirty_ (already deduped). The local list captures
+  // comb writes via comb_write_capture_ which bypasses delta_seen_.
+  //
+  // Using a local vector also avoids span invalidation: iterating
+  // delta_dirty_ while MarkSlotDirty pushes to it would be UB.
   constexpr uint32_t kMaxIterations = 100;
-  uint32_t scanned = 0;
   uint32_t iterations_used = 0;
   auto* base = static_cast<uint8_t*>(design_state_base_);
+
+  // Seed work list from current delta dirty slots.
+  auto initial = update_set_.DeltaDirtySlots();
+  std::vector<uint32_t> pending(initial.begin(), initial.end());
+
+  // Scoped capture buffer for comb kernel writes. While this vector is
+  // installed in comb_write_capture_, MarkSlotDirty/MarkDirtyRange push
+  // written slot IDs here in addition to update_set_. This lets the
+  // fixed-point loop observe comb output changes that delta_seen_ would
+  // otherwise hide.
+  std::vector<uint32_t> comb_writes;
+
   for (uint32_t iter = 0; iter < kMaxIterations; ++iter) {
-    auto all_dirty = update_set_.DeltaDirtySlots();
-    if (scanned >= all_dirty.size()) break;
-
+    if (pending.empty()) break;
     ++iterations_used;
-    bool any_changed = false;
-    auto new_dirty = all_dirty.subspan(scanned);
-    scanned = static_cast<uint32_t>(all_dirty.size());
+    std::vector<uint32_t> next_pending;
 
-    // Phase 1: connections (pure memcpy, no side effects)
+    // Phase 1: connection propagation (memcmp guards actual change).
     if (has_conns) {
-      for (uint32_t slot_id : new_dirty) {
+      for (uint32_t slot_id : pending) {
         if (slot_id >= conn_trigger_map_.size()) continue;
         auto [start, count] = conn_trigger_map_[slot_id];
         if (count == 0) continue;
@@ -637,15 +657,19 @@ void Engine::FlushAndPropagateConnections() {
             ++propagation_stats_.conn_memcpy_executed;
             std::memcpy(dst, src, conn.byte_size);
             MarkSlotDirty(conn.dst_slot_id);
-            any_changed = true;
+            next_pending.push_back(conn.dst_slot_id);
           }
         }
       }
     }
 
-    // Phase 2: comb kernels (call compiled functions directly)
+    // Phase 2: comb kernel evaluation.
+    // Install capture so comb writes feed back into the work list.
     if (has_combs) {
-      for (uint32_t slot_id : new_dirty) {
+      comb_writes.clear();
+      comb_write_capture_ = &comb_writes;
+
+      for (uint32_t slot_id : pending) {
         if (slot_id >= comb_trigger_map_.size()) continue;
         auto [cstart, ccount] = comb_trigger_map_[slot_id];
         if (ccount == 0) continue;
@@ -667,15 +691,24 @@ void Engine::FlushAndPropagateConnections() {
           ck.func(ck.state, 0);
         }
       }
-      // Comb kernels may have produced new dirty marks via LyraStorePacked
-      auto updated_dirty = update_set_.DeltaDirtySlots();
-      if (updated_dirty.size() > scanned) {
-        any_changed = true;
-      }
+
+      comb_write_capture_ = nullptr;
+      next_pending.insert(
+          next_pending.end(), comb_writes.begin(), comb_writes.end());
     }
 
-    if (!any_changed) break;
+    pending = std::move(next_pending);
   }
+
+  if (!pending.empty()) {
+    throw common::InternalError(
+        "Engine::FlushAndPropagateConnections",
+        std::format(
+            "convergence not reached after {} iterations "
+            "({} slots still pending)",
+            kMaxIterations, pending.size()));
+  }
+
   ++propagation_stats_.propagation_calls;
   propagation_stats_.propagation_iterations += iterations_used;
   propagation_stats_.propagation_max_iterations = std::max(
