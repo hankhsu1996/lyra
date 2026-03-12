@@ -431,3 +431,158 @@ cases:
       variables:
         count: 3
       time: 10
+
+  # Must-def sensitivity exclusion tests (G7d Phase 1).
+  # These verify that write-before-read patterns in always_comb do not
+  # create false self-trigger edges. Without must-def analysis, these
+  # patterns cause infinite re-triggering or incorrect values.
+
+  - name: must_def_simple_write_then_read
+    description: >
+      Pipeline pattern: write a variable then read it back in the same
+      always_comb block. The read of data_comb should not create a
+      self-trigger edge because data_comb is always written first.
+    sv: |
+      module Test;
+        int data_in, data_comb, result;
+        initial begin
+          data_in = 42;
+        end
+
+        always_comb begin
+          data_comb = data_in ^ (data_in >> 1);
+          data_comb = data_comb + data_in;
+        end
+
+        always_comb result = data_comb;
+      endmodule
+    expect:
+      variables:
+        data_comb: 105
+        result: 105
+      time: 0
+
+  - name: must_def_sequential_chain
+    description: >
+      Chain of writes and reads: a = x; b = a; c = b;
+      Internal reads of a and b should be excluded from sensitivity.
+    sv: |
+      module Test;
+        int x, a, b, c;
+        initial x = 10;
+
+        always_comb begin
+          a = x + 1;
+          b = a + 2;
+          c = b + 3;
+        end
+      endmodule
+    expect:
+      variables:
+        a: 11
+        b: 13
+        c: 16
+      time: 0
+
+  - name: must_def_if_else_both_define
+    description: >
+      Both branches of if/else define the variable. The read after the
+      if/else should be excluded from sensitivity because the variable
+      is must-defined on all paths.
+    sv: |
+      module Test;
+        int sel, x, y, tmp, result;
+        initial begin
+          sel = 1;
+          x = 10;
+          y = 20;
+        end
+
+        always_comb begin
+          if (sel)
+            tmp = x;
+          else
+            tmp = y;
+          result = tmp + 1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 11
+      time: 0
+
+  - name: must_def_if_no_else
+    description: >
+      If without else: tmp is only written on the then-path. The read
+      after the if should remain sensitive to tmp because it might not
+      be written on the fallthrough path.
+    sv: |
+      module Test;
+        int sel, x, tmp, result;
+        initial begin
+          sel = 1;
+          x = 10;
+          tmp = 5;
+        end
+
+        always_comb begin
+          if (sel)
+            tmp = x;
+          result = tmp + 1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 11
+      time: 0
+
+  - name: must_def_case_full
+    description: >
+      Case with all branches (including default) defining the variable.
+      The read after the case should be excluded from sensitivity.
+    sv: |
+      module Test;
+        int sel, a, b, c, tmp, result;
+        initial begin
+          sel = 1;
+          a = 10;
+          b = 20;
+          c = 30;
+        end
+
+        always_comb begin
+          case (sel)
+            0: tmp = a;
+            1: tmp = b;
+            default: tmp = c;
+          endcase
+          result = tmp + 1;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 21
+      time: 0
+
+  - name: must_def_reacts_to_true_inputs
+    description: >
+      Verify that the must-def exclusion does not suppress true input
+      sensitivity. data_in changes at time 5 and should still trigger
+      the always_comb block.
+    sv: |
+      module Test;
+        int data_in, data_comb;
+        initial begin
+          data_in = 10;
+          #5 data_in = 20;
+        end
+
+        always_comb begin
+          data_comb = data_in + 1;
+          data_comb = data_comb * 2;
+        end
+      endmodule
+    expect:
+      variables:
+        data_comb: 42
+      time: 5
