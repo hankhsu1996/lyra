@@ -262,7 +262,6 @@ struct LocalInitCollector {
               Visit(arena[aop.receiver], arena);
               std::visit(
                   [&](const auto& op) {
-                    using T = std::decay_t<decltype(op)>;
                     if constexpr (requires { op.dest; }) {
                       Visit(arena[op.dest], arena);
                     }
