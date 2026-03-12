@@ -9,6 +9,7 @@
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/mir/access_path.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/basic_block.hpp"
@@ -100,14 +101,19 @@ auto HasStaticObservation(const Place& place) -> bool {
   return true;
 }
 
-void CollectFromOperand(
-    const Operand& op, const Arena& arena, ObservationSet& obs);
+// Read collection with must-def filtering.
+// These functions thread a MustDefSet to suppress reads of whole signals
+// that are already must-defined (written on all paths to this point).
 
-void CollectFromPlace(
+void CollectReadsFromOperand(
+    const Operand& op, const Arena& arena, const MustDefSet& must_def,
+    ObservationSet& obs);
+
+void CollectReadsFromPlace(
     PlaceId place_id, const Place& place, const Arena& arena,
-    ObservationSet& obs) {
+    const MustDefSet& must_def, ObservationSet& obs) {
   // Only module-local and design-global roots produce sensitivity triggers.
-  SignalRef::Scope scope;
+  SignalRef::Scope scope{};
   if (place.root.kind == PlaceRoot::Kind::kModuleSlot) {
     scope = SignalRef::Scope::kModuleLocal;
   } else if (place.root.kind == PlaceRoot::Kind::kDesignGlobal) {
@@ -117,6 +123,13 @@ void CollectFromPlace(
   }
   auto slot_id = static_cast<uint32_t>(place.root.id);
 
+  // Must-def filter: suppress reads covered by a prior must-def write.
+  // Phase 1: only whole-signal reads can be suppressed (no projections).
+  auto path = TryExtractWholeSignalPath(place);
+  if (path.has_value() && must_def.Covers(*path)) {
+    return;
+  }
+
   if (HasStaticObservation(place)) {
     obs.Add(scope, slot_id, place_id);
   } else {
@@ -125,15 +138,16 @@ void CollectFromPlace(
 
   // Continue collecting sub-reads from projection operands (e.g., dynamic
   // index expressions reference other design variables that are also
-  // sensitivity triggers).
+  // sensitivity triggers). These are collected independently of the
+  // must-def filter on the signal itself.
   for (const auto& proj : place.projections) {
     std::visit(
         common::Overloaded{
             [&](const IndexProjection& idx) {
-              CollectFromOperand(idx.index, arena, obs);
+              CollectReadsFromOperand(idx.index, arena, must_def, obs);
             },
             [&](const BitRangeProjection& br) {
-              CollectFromOperand(br.bit_offset, arena, obs);
+              CollectReadsFromOperand(br.bit_offset, arena, must_def, obs);
             },
             [](const FieldProjection&) {},
             [](const SliceProjection&) {},
@@ -144,33 +158,37 @@ void CollectFromPlace(
   }
 }
 
-void CollectFromOperand(
-    const Operand& op, const Arena& arena, ObservationSet& obs) {
+void CollectReadsFromOperand(
+    const Operand& op, const Arena& arena, const MustDefSet& must_def,
+    ObservationSet& obs) {
   if (op.kind != Operand::Kind::kUse) {
     return;
   }
   auto place_id = std::get<PlaceId>(op.payload);
-  CollectFromPlace(place_id, arena[place_id], arena, obs);
+  CollectReadsFromPlace(place_id, arena[place_id], arena, must_def, obs);
 }
 
-void CollectFromRhs(
-    const RightHandSide& rhs, const Arena& arena, ObservationSet& obs);
+void CollectReadsFromRhs(
+    const RightHandSide& rhs, const Arena& arena, const MustDefSet& must_def,
+    ObservationSet& obs);
 
-void CollectFromRvalue(
-    const Rvalue& rvalue, const Arena& arena, ObservationSet& obs) {
+void CollectReadsFromRvalue(
+    const Rvalue& rvalue, const Arena& arena, const MustDefSet& must_def,
+    ObservationSet& obs) {
   for (const auto& op : rvalue.operands) {
-    CollectFromOperand(op, arena, obs);
+    CollectReadsFromOperand(op, arena, must_def, obs);
   }
 
   std::visit(
       common::Overloaded{
           [&](const GuardedUseRvalueInfo& info) {
-            CollectFromPlace(info.place, arena[info.place], arena, obs);
+            CollectReadsFromPlace(
+                info.place, arena[info.place], arena, must_def, obs);
           },
           [&](const BuiltinCallRvalueInfo& info) {
             if (info.receiver.has_value()) {
-              CollectFromPlace(
-                  *info.receiver, arena[*info.receiver], arena, obs);
+              CollectReadsFromPlace(
+                  *info.receiver, arena[*info.receiver], arena, must_def, obs);
             }
           },
           [](const UnaryRvalueInfo&) {},
@@ -184,12 +202,13 @@ void CollectFromRvalue(
           [](const ReplicateRvalueInfo&) {},
           [](const SFormatRvalueInfo&) {},
           [&](const TestPlusargsRvalueInfo& info) {
-            CollectFromOperand(info.query.operand, arena, obs);
+            CollectReadsFromOperand(info.query.operand, arena, must_def, obs);
           },
           [&](const FopenRvalueInfo& info) {
-            CollectFromOperand(info.filename.operand, arena, obs);
+            CollectReadsFromOperand(
+                info.filename.operand, arena, must_def, obs);
             if (info.mode) {
-              CollectFromOperand(info.mode->operand, arena, obs);
+              CollectReadsFromOperand(info.mode->operand, arena, must_def, obs);
             }
           },
           [](const RuntimeQueryRvalueInfo&) {},
@@ -198,65 +217,100 @@ void CollectFromRvalue(
           [](const ArrayQueryRvalueInfo&) {},
           [&](const SystemCmdRvalueInfo& info) {
             if (info.command) {
-              CollectFromOperand(info.command->operand, arena, obs);
+              CollectReadsFromOperand(
+                  info.command->operand, arena, must_def, obs);
             }
           },
       },
       rvalue.info);
 }
 
-void CollectFromRhs(
-    const RightHandSide& rhs, const Arena& arena, ObservationSet& obs) {
+void CollectReadsFromRhs(
+    const RightHandSide& rhs, const Arena& arena, const MustDefSet& must_def,
+    ObservationSet& obs) {
   std::visit(
       common::Overloaded{
-          [&](const Operand& op) { CollectFromOperand(op, arena, obs); },
-          [&](const Rvalue& rv) { CollectFromRvalue(rv, arena, obs); },
+          [&](const Operand& op) {
+            CollectReadsFromOperand(op, arena, must_def, obs);
+          },
+          [&](const Rvalue& rv) {
+            CollectReadsFromRvalue(rv, arena, must_def, obs);
+          },
       },
       rhs);
 }
 
-void CollectFromStatement(
-    const Statement& stmt, const Arena& arena, ObservationSet& obs) {
+// Collect reads from a statement and advance must-def state.
+// Order: reads first (against current must_def), then writes update must_def.
+void TransferStatement(
+    const Statement& stmt, const Arena& arena, MustDefSet& must_def,
+    ObservationSet& obs) {
   std::visit(
       common::Overloaded{
-          [&](const Assign& assign) { CollectFromRhs(assign.rhs, arena, obs); },
+          [&](const Assign& assign) {
+            // 1. Collect reads from RHS
+            CollectReadsFromRhs(assign.rhs, arena, must_def, obs);
+            // 2. Transfer: unconditional whole-signal write extends must-def.
+            // Phase 1: only plain Assign to an unprojected signal root.
+            // Projected, guarded, and deferred writes are conservative.
+            const auto& dest = arena[assign.dest];
+            auto path = TryExtractWholeSignalPath(dest);
+            if (path.has_value()) {
+              must_def.Insert(*path);
+            }
+          },
           [&](const GuardedAssign& ga) {
-            CollectFromRhs(ga.rhs, arena, obs);
-            CollectFromOperand(ga.guard, arena, obs);
+            // Conditional write: collect reads but do NOT extend must-def
+            CollectReadsFromRhs(ga.rhs, arena, must_def, obs);
+            CollectReadsFromOperand(ga.guard, arena, must_def, obs);
           },
           [](const Effect&) {},
-          [&](const DeferredAssign& da) { CollectFromRhs(da.rhs, arena, obs); },
+          [&](const DeferredAssign& da) {
+            // NBA: collect reads but do NOT extend must-def
+            // (write happens in a later region, not before subsequent reads)
+            CollectReadsFromRhs(da.rhs, arena, must_def, obs);
+          },
           [&](const Call& call) {
             for (const auto& arg : call.in_args) {
-              CollectFromOperand(arg, arena, obs);
+              CollectReadsFromOperand(arg, arena, must_def, obs);
             }
+            // Conservative: calls may have side effects, do not extend must-def
           },
           [&](const BuiltinCall& bcall) {
             for (const auto& arg : bcall.args) {
-              CollectFromOperand(arg, arena, obs);
+              CollectReadsFromOperand(arg, arena, must_def, obs);
             }
+            // Conservative: builtin calls do not extend must-def
           },
-          [&](const DefineTemp& dt) { CollectFromRhs(dt.rhs, arena, obs); },
+          [&](const DefineTemp& dt) {
+            CollectReadsFromRhs(dt.rhs, arena, must_def, obs);
+            // Temps are not signals, no must-def effect
+          },
           [&](const AssocOp& aop) {
             std::visit(
                 [&](const auto& op) {
                   using T = std::decay_t<decltype(op)>;
                   if constexpr (requires { op.key; }) {
-                    CollectFromOperand(op.key, arena, obs);
+                    CollectReadsFromOperand(op.key, arena, must_def, obs);
                   }
                   if constexpr (requires { op.value; }) {
-                    CollectFromOperand(op.value, arena, obs);
+                    CollectReadsFromOperand(op.value, arena, must_def, obs);
                   }
                 },
                 aop.data);
+            // Conservative: assoc ops do not extend must-def
           },
       },
       stmt.data);
 }
 
-void CollectFromTerminator(
-    const Terminator& term, const Arena& arena, ObservationSet& obs) {
-  auto collect = [&](const Operand& op) { CollectFromOperand(op, arena, obs); };
+// Collect reads from a terminator (conditions, selectors, edge args).
+void CollectReadsFromTerminator(
+    const Terminator& term, const Arena& arena, const MustDefSet& must_def,
+    ObservationSet& obs) {
+  auto collect = [&](const Operand& op) {
+    CollectReadsFromOperand(op, arena, must_def, obs);
+  };
   ForEachLocalOperand(term, collect);
   ForEachSuccessor(term, [&](const TerminatorSuccessor& succ) {
     for (const auto& arg : succ.args) {
@@ -265,17 +319,97 @@ void CollectFromTerminator(
   });
 }
 
+// Compute reverse postorder of the CFG.
+void ComputeRPO(
+    uint32_t block_idx, const std::vector<BasicBlock>& blocks,
+    std::vector<bool>& visited, std::vector<uint32_t>& rpo) {
+  visited[block_idx] = true;
+  ForEachSuccessor(blocks[block_idx].terminator, [&](const auto& succ) {
+    auto target = succ.target.value;
+    if (target < blocks.size() && !visited[target]) {
+      ComputeRPO(target, blocks, visited, rpo);
+    }
+  });
+  rpo.push_back(block_idx);
+}
+
 }  // namespace
 
 auto CollectSensitivity(const Process& process, const Arena& arena)
     -> std::vector<WaitTrigger> {
+  const auto& blocks = process.blocks;
+  if (blocks.empty()) return {};
+
+  auto num_blocks = static_cast<uint32_t>(blocks.size());
+  auto entry_idx = process.entry.value;
+
+  // Build predecessor lists for the meet operation.
+  std::vector<std::vector<uint32_t>> predecessors(num_blocks);
+  for (uint32_t i = 0; i < num_blocks; ++i) {
+    ForEachSuccessor(blocks[i].terminator, [&](const auto& succ) {
+      auto target = succ.target.value;
+      if (target < num_blocks) {
+        predecessors[target].push_back(i);
+      }
+    });
+  }
+
+  // Compute reverse postorder for efficient iteration.
+  std::vector<bool> visited(num_blocks, false);
+  std::vector<uint32_t> rpo;
+  rpo.reserve(num_blocks);
+  ComputeRPO(entry_idx, blocks, visited, rpo);
+  std::reverse(rpo.begin(), rpo.end());
+
+  // Initialize dataflow state.
+  // Entry block starts with Empty (nothing is must-defined).
+  // All other blocks start with Top (optimistic -- refined by meet).
+  std::vector<MustDefSet> block_in(num_blocks, MustDefSet::Top());
+  std::vector<MustDefSet> block_out(num_blocks, MustDefSet::Top());
+  block_in[entry_idx] = MustDefSet::Empty();
+
+  // Observations are accumulated monotonically across fixpoint iterations.
+  // The must-def lattice starts optimistic (Top for non-entry blocks) and
+  // can only become more conservative (smaller sets) on later iterations.
+  // More conservative must-def means fewer reads are suppressed, so later
+  // iterations may only ADD observations, never require removing earlier ones.
+  // This makes union-accumulation into a single ObservationSet safe.
   ObservationSet obs;
 
-  for (const auto& block : process.blocks) {
-    for (const auto& stmt : block.statements) {
-      CollectFromStatement(stmt, arena, obs);
+  // Forward dataflow fixpoint iteration.
+  // Reads are collected during transfer so that each read sees the
+  // actual must-def state at its program point, not a summary.
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (auto block_idx : rpo) {
+      // Meet: intersect all predecessor out states.
+      MustDefSet in_state =
+          block_idx == entry_idx ? MustDefSet::Empty() : MustDefSet::Top();
+      for (auto pred : predecessors[block_idx]) {
+        in_state.IntersectWith(block_out[pred]);
+      }
+
+      if (!(in_state == block_in[block_idx])) {
+        block_in[block_idx] = in_state;
+      }
+
+      // Transfer: walk statements with running must-def, collecting reads.
+      MustDefSet state = block_in[block_idx];
+      for (const auto& stmt : blocks[block_idx].statements) {
+        TransferStatement(stmt, arena, state, obs);
+      }
+
+      // Collect reads from the terminator with the final block state.
+      CollectReadsFromTerminator(
+          blocks[block_idx].terminator, arena, state, obs);
+
+      // Update out state and check for convergence.
+      if (!(state == block_out[block_idx])) {
+        block_out[block_idx] = state;
+        changed = true;
+      }
     }
-    CollectFromTerminator(block.terminator, arena, obs);
   }
 
   std::vector<WaitTrigger> triggers;
