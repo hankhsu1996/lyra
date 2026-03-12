@@ -608,10 +608,9 @@ void Engine::FlushAndPropagateConnections() {
   //     scheduler wakeup and trace snapshots. Uses dedup (delta_seen_) so each
   //     slot appears at most once per delta.
   //   pending/next_pending (local work list): fixed-point propagation
-  //     scheduling within this function only. No dedup -- duplicates are
-  //     harmless because connections guard with memcmp and comb kernel writes
-  //     go through LyraStorePacked (which memcmps before writing, so only
-  //     actual value changes reach MarkSlotDirty).
+  //     scheduling within this function only. Per-iteration dedup via
+  //     pending_seen[] ensures each slot appears at most once per iteration,
+  //     preventing exponential blowup from comb kernel intermediate writes.
   //
   // The local work list exists because delta_seen_ dedup is wrong for
   // convergence: if a comb kernel writes an intermediate value then re-writes
@@ -636,10 +635,46 @@ void Engine::FlushAndPropagateConnections() {
   // otherwise hide.
   std::vector<uint32_t> comb_writes;
 
+  // Per-iteration dedup bitvector. Prevents exponential blowup when comb
+  // kernels write intermediate values (e.g. a = f(x); a = a + g(x)) that
+  // differ from the final value.
+  uint32_t slot_count = slot_meta_registry_.Size();
+  std::vector<uint8_t> pending_seen(slot_count, 0);
+
+  // Helper: enqueue a slot into next_pending with dedup.
+  auto enqueue_pending = [&](std::vector<uint32_t>& next, uint32_t slot_id) {
+    if (slot_id < slot_count && pending_seen[slot_id] == 0) {
+      pending_seen[slot_id] = 1;
+      next.push_back(slot_id);
+    }
+  };
+
+  // Pre-comb snapshot state for self-trigger suppression. A kernel triggered
+  // by slot S may write intermediate values to S that differ from the final
+  // value (e.g. a = f(x); a = a + g(x)). Both intermediate and final writes
+  // pass LyraStorePacked's memcmp, but the NET change (pre-comb vs post-comb)
+  // is zero. Without snapshot comparison, the slot oscillates indefinitely.
+  //
+  // These are scoped to this function. The snapshot_index maps slot_id to
+  // snapshot buffer position for O(1) lookup.
+  struct CombSnapshot {
+    uint32_t buf_off;
+    uint32_t base_off;
+    uint32_t total_bytes;
+  };
+  std::vector<uint8_t> snapshot_buf;
+  // Indexed by slot_id. UINT32_MAX = no snapshot for this slot.
+  std::vector<uint32_t> snapshot_index(slot_count, UINT32_MAX);
+  std::vector<CombSnapshot> snapshots;
+  std::vector<uint32_t> snapshotted_slots;
+
   for (uint32_t iter = 0; iter < kMaxIterations; ++iter) {
     if (pending.empty()) break;
     ++iterations_used;
     std::vector<uint32_t> next_pending;
+
+    // Reset seen bits for slots in the current work list.
+    for (uint32_t s : pending) pending_seen[s] = 0;
 
     // Phase 1: connection propagation (memcmp guards actual change).
     if (has_conns) {
@@ -657,7 +692,7 @@ void Engine::FlushAndPropagateConnections() {
             ++propagation_stats_.conn_memcpy_executed;
             std::memcpy(dst, src, conn.byte_size);
             MarkSlotDirty(conn.dst_slot_id);
-            next_pending.push_back(conn.dst_slot_id);
+            enqueue_pending(next_pending, conn.dst_slot_id);
           }
         }
       }
@@ -666,6 +701,24 @@ void Engine::FlushAndPropagateConnections() {
     // Phase 2: comb kernel evaluation.
     // Install capture so comb writes feed back into the work list.
     if (has_combs) {
+      // Snapshot pending slots that have comb triggers (pre-comb state).
+      snapshot_buf.clear();
+      snapshots.clear();
+      snapshotted_slots.clear();
+      for (uint32_t slot_id : pending) {
+        if (slot_id >= comb_trigger_map_.size()) continue;
+        if (comb_trigger_map_[slot_id].count == 0) continue;
+        const auto& meta = slot_meta_registry_.Get(slot_id);
+        auto buf_off = static_cast<uint32_t>(snapshot_buf.size());
+        snapshot_buf.resize(buf_off + meta.total_bytes);
+        std::memcpy(
+            snapshot_buf.data() + buf_off, base + meta.base_off,
+            meta.total_bytes);
+        snapshot_index[slot_id] = static_cast<uint32_t>(snapshots.size());
+        snapshots.push_back({buf_off, meta.base_off, meta.total_bytes});
+        snapshotted_slots.push_back(slot_id);
+      }
+
       comb_writes.clear();
       comb_write_capture_ = &comb_writes;
 
@@ -693,8 +746,30 @@ void Engine::FlushAndPropagateConnections() {
       }
 
       comb_write_capture_ = nullptr;
-      next_pending.insert(
-          next_pending.end(), comb_writes.begin(), comb_writes.end());
+
+      // Enqueue comb writes, suppressing net-zero self-triggers.
+      for (uint32_t s : comb_writes) {
+        if (s >= slot_count || pending_seen[s] != 0) continue;
+
+        // If this slot was snapshotted, compare current state to pre-comb
+        // state. If bytes are identical, the kernel's intermediate writes
+        // produced no net change -- suppress re-enqueue.
+        if (snapshot_index[s] != UINT32_MAX) {
+          const auto& snap = snapshots[snapshot_index[s]];
+          if (std::memcmp(
+                  base + snap.base_off, snapshot_buf.data() + snap.buf_off,
+                  snap.total_bytes) == 0) {
+            continue;
+          }
+        }
+
+        enqueue_pending(next_pending, s);
+      }
+
+      // Clear snapshot index for exactly the slots we snapshotted.
+      for (uint32_t slot_id : snapshotted_slots) {
+        snapshot_index[slot_id] = UINT32_MAX;
+      }
     }
 
     pending = std::move(next_pending);
