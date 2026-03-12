@@ -1,25 +1,18 @@
-#include "lyra/runtime/engine_subscriptions.hpp"
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <format>
 #include <span>
-#include <string>
-#include <string_view>
-#include <utility>
 #include <vector>
-
-#include <fmt/core.h>
 
 #include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/edge_kind.hpp"
-#include "lyra/common/index_plan.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/dyn_array_data.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
+#include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/index_plan.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -28,166 +21,6 @@
 #include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::runtime {
-
-auto Engine::AllocEdgeCold() -> uint32_t {
-  if (!edge_cold_free_list_.empty()) {
-    uint32_t idx = edge_cold_free_list_.back();
-    edge_cold_free_list_.pop_back();
-    edge_cold_pool_[idx] = EdgeTargetCold{};
-    return idx;
-  }
-  auto idx = static_cast<uint32_t>(edge_cold_pool_.size());
-  edge_cold_pool_.emplace_back();
-  return idx;
-}
-
-void Engine::FreeEdgeCold(uint32_t idx) {
-  edge_cold_pool_[idx] = EdgeTargetCold{};
-  edge_cold_free_list_.push_back(idx);
-}
-
-auto Engine::AllocChangeCold() -> uint32_t {
-  if (!change_cold_free_list_.empty()) {
-    uint32_t idx = change_cold_free_list_.back();
-    change_cold_free_list_.pop_back();
-    change_cold_pool_[idx] = ChangeSnapshotCold{};
-    return idx;
-  }
-  auto idx = static_cast<uint32_t>(change_cold_pool_.size());
-  change_cold_pool_.emplace_back();
-  return idx;
-}
-
-void Engine::FreeChangeCold(uint32_t idx) {
-  change_cold_pool_[idx].snapshot.clear();
-  change_cold_pool_[idx].snapshot.shrink_to_fit();
-  change_cold_free_list_.push_back(idx);
-}
-
-auto Engine::AllocWatcherCold() -> uint32_t {
-  if (!watcher_cold_free_list_.empty()) {
-    uint32_t idx = watcher_cold_free_list_.back();
-    watcher_cold_free_list_.pop_back();
-    watcher_cold_pool_[idx] = WatcherCold{};
-    return idx;
-  }
-  auto idx = static_cast<uint32_t>(watcher_cold_pool_.size());
-  watcher_cold_pool_.emplace_back();
-  return idx;
-}
-
-void Engine::FreeWatcherCold(uint32_t idx) {
-  watcher_cold_pool_[idx].snapshot.clear();
-  watcher_cold_pool_[idx].snapshot.shrink_to_fit();
-  watcher_cold_free_list_.push_back(idx);
-}
-
-auto Engine::AllocContainerCold() -> uint32_t {
-  if (!container_cold_free_list_.empty()) {
-    uint32_t idx = container_cold_free_list_.back();
-    container_cold_free_list_.pop_back();
-    container_cold_pool_[idx] = ContainerCold{};
-    return idx;
-  }
-  auto idx = static_cast<uint32_t>(container_cold_pool_.size());
-  container_cold_pool_.emplace_back();
-  return idx;
-}
-
-void Engine::FreeContainerCold(uint32_t idx) {
-  container_cold_pool_[idx] = ContainerCold{};
-  container_cold_free_list_.push_back(idx);
-}
-
-auto Engine::AllocEdgeTarget(EdgeTargetHandle handle) -> uint32_t {
-  if (!edge_target_free_list_.empty()) {
-    uint32_t id = edge_target_free_list_.back();
-    edge_target_free_list_.pop_back();
-    edge_target_table_[id] = handle;
-    return id;
-  }
-  auto id = static_cast<uint32_t>(edge_target_table_.size());
-  edge_target_table_.push_back(handle);
-  return id;
-}
-
-void Engine::FreeEdgeTarget(uint32_t id) {
-  edge_target_table_[id] =
-      EdgeTargetHandle{UINT32_MAX, SubKind::kEdge, UINT32_MAX};
-  edge_target_free_list_.push_back(id);
-}
-
-auto Engine::EvaluateEdge(common::EdgeKind edge, bool old_lsb, bool new_lsb)
-    -> bool {
-  switch (edge) {
-    case common::EdgeKind::kPosedge:
-      return !old_lsb && new_lsb;
-    case common::EdgeKind::kNegedge:
-      return old_lsb && !new_lsb;
-    case common::EdgeKind::kAnyChange:
-      return true;
-  }
-  return false;
-}
-
-auto Engine::CheckSubscriptionLimits(const ProcessState& proc_state) -> bool {
-  if (max_total_subscriptions_ > 0 &&
-      live_subscription_count_ >= max_total_subscriptions_) {
-    TerminateWithResourceError(
-        "global subscription limit exceeded", live_subscription_count_,
-        max_total_subscriptions_);
-    return false;
-  }
-
-  if (max_subscriptions_per_process_ > 0 &&
-      proc_state.subscription_count >= max_subscriptions_per_process_) {
-    TerminateWithResourceError(
-        "per-process subscription limit exceeded",
-        proc_state.subscription_count, max_subscriptions_per_process_);
-    return false;
-  }
-
-  return true;
-}
-
-void Engine::TerminateWithResourceError(
-    std::string_view reason, size_t current, size_t limit) {
-  termination_reason_ = std::format("{} ({}/{})", reason, current, limit);
-  finished_ = true;
-
-  fmt::println(
-      stderr,
-      "lyra: simulation terminated: {}\n"
-      "  time: {}",
-      *termination_reason_, current_time_);
-
-  PrintTopWaiters(5);
-}
-
-void Engine::PrintTopWaiters(size_t count) {
-  std::vector<std::pair<SignalId, size_t>> waiter_counts;
-
-  for (uint32_t signal = 0; signal < signal_subs_.size(); ++signal) {
-    const auto& slot = signal_subs_[signal];
-    size_t n = slot.edge_subs.size() + slot.change_subs.size() +
-               slot.rebind_subs.size() + slot.container_subs.size();
-    if (n == 0) continue;
-    waiter_counts.emplace_back(signal, n);
-  }
-
-  auto middle = waiter_counts.begin() + static_cast<std::ptrdiff_t>(std::min(
-                                            count, waiter_counts.size()));
-  std::ranges::partial_sort(
-      waiter_counts, middle,
-      [](const auto& a, const auto& b) { return a.second > b.second; });
-
-  fmt::println(stderr, "  top {} signals by waiter count:", count);
-  for (size_t i = 0; i < std::min(count, waiter_counts.size()); ++i) {
-    fmt::println(
-        stderr, "    signal {}: {} waiters", waiter_counts[i].first,
-        waiter_counts[i].second);
-  }
-}
 
 void Engine::RemoveEdgeSub(uint32_t slot_id, uint32_t index) {
   auto& vec = signal_subs_[slot_id].edge_subs;
@@ -346,17 +179,11 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
 // Precondition: all sub_refs are snapshot-bearing (kEdge or kChange).
 // This is structurally guaranteed by the caller -- can_refresh requires
 // WaitShapeKind::kStatic, and static waits have fixed trigger sets with no
-// late-bound indices. The check below enforces this at runtime.
+// late-bound indices. Validated at the can_refresh boundary, not here.
 [[nodiscard]] static auto NeedsSnapshotRefresh(
     const UpdateSet& update_set, const ProcessState& proc_state) -> bool {
   if (update_set.DeltaDirtySlots().empty()) return false;
   return std::ranges::any_of(proc_state.sub_refs, [&](const SubRef& ref) {
-    if (ref.kind != SubKind::kEdge && ref.kind != SubKind::kChange) {
-      throw common::InternalError(
-          "NeedsSnapshotRefresh", std::format(
-                                      "sub_ref kind {} is not snapshot-bearing",
-                                      static_cast<int>(ref.kind)));
-    }
     return update_set.IsDeltaDirty(ref.slot_id);
   });
 }
@@ -713,6 +540,17 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
           descriptor.shape == WaitShapeKind::kStatic;
 
       if (can_refresh) {
+        // Invariant: static waits have fixed trigger sets (no rebind watchers
+        // or container subs), so all sub_refs are snapshot-bearing (kEdge or
+        // kChange). NeedsSnapshotRefresh relies on this.
+        if (!std::ranges::all_of(proc_state.sub_refs, [](const SubRef& ref) {
+              return ref.kind == SubKind::kEdge || ref.kind == SubKind::kChange;
+            })) {
+          throw common::InternalError(
+              "Engine::ReconcilePostActivation",
+              "can_refresh path has non-snapshot-bearing sub_refs");
+        }
+
         // FlushSignalUpdates already established correct snapshot baselines at
         // the previous delta boundary. Post-activation refresh is only needed
         // when an observed slot was dirtied earlier in the current delta (a
@@ -1136,363 +974,6 @@ void Engine::SubscribeRebind(
 
   // Initial rebind: validate codegen-computed target against runtime state.
   RebindSubscription(edge_target_id);
-}
-
-void Engine::RebindSubscription(uint32_t edge_target_id) {
-  if (edge_target_id >= edge_target_table_.size()) {
-    throw common::InternalError(
-        "Engine::RebindSubscription",
-        std::format(
-            "edge_target_id {} >= table size {}", edge_target_id,
-            edge_target_table_.size()));
-  }
-  auto& target_handle = edge_target_table_[edge_target_id];
-  if (target_handle.slot_id == UINT32_MAX) return;  // freed
-
-  // Resolve plan/mapping and epoch from the appropriate cold pool.
-  IndexPlanRef plan_ref;
-  BitTargetMapping mapping;
-  uint32_t* epoch_ptr = nullptr;
-  uint32_t target_process_id = 0;
-
-  if (target_handle.kind == SubKind::kEdge) {
-    auto& esub =
-        signal_subs_[target_handle.slot_id].edge_subs[target_handle.index];
-    if (esub.cold_idx == UINT32_MAX) return;
-    auto& ecold = edge_cold_pool_[esub.cold_idx];
-    plan_ref = ecold.plan_ref;
-    mapping = ecold.rebind_mapping;
-    epoch_ptr = &ecold.last_rebind_epoch;
-    target_process_id = esub.process_id;
-  } else {
-    auto& csub =
-        signal_subs_[target_handle.slot_id].container_subs[target_handle.index];
-    auto& ccold = container_cold_pool_[csub.cold_idx];
-    plan_ref = ccold.plan_ref;
-    mapping = ccold.rebind_mapping;
-    epoch_ptr = &ccold.last_rebind_epoch;
-    target_process_id = csub.process_id;
-  }
-
-  // Epoch guard: skip if already rebound this flush cycle.
-  if (*epoch_ptr == flush_epoch_) return;
-  *epoch_ptr = flush_epoch_;
-
-  // Resolve plan from the process's pool.
-  if (target_process_id >= num_processes_) {
-    throw common::InternalError(
-        "Engine::RebindSubscription",
-        std::format(
-            "process_id {} exceeds num_processes {}", target_process_id,
-            num_processes_));
-  }
-  auto& proc_state = process_states_[target_process_id];
-  auto all_ops = std::span<const IndexPlanOp>(proc_state.plan_pool.ops);
-  auto plan_span = all_ops.subspan(plan_ref.start, plan_ref.count);
-
-  bool should_deactivate = false;
-  int64_t index_val = EvaluateIndexPlan(
-      design_state_base_, slot_meta_registry_, plan_span, &should_deactivate);
-
-  // Helper lambdas for active/inactive flag setting.
-  auto set_inactive = [&]() {
-    if (target_handle.kind == SubKind::kEdge) {
-      signal_subs_[target_handle.slot_id]
-          .edge_subs[target_handle.index]
-          .flags &= ~kSubActive;
-    } else {
-      signal_subs_[target_handle.slot_id]
-          .container_subs[target_handle.index]
-          .flags &= ~kSubActive;
-    }
-  };
-
-  if (should_deactivate) {
-    set_inactive();
-    return;
-  }
-
-  // Container rebind path: recompute which element is observed.
-  // After index plan evaluation, we update container_sv_index to the new
-  // element index, chase the heap handle to validate bounds, and re-seed
-  // last_bit from the new element's LSB. This is sufficient because container
-  // edge triggers observe only bit 0 of byte 0 of the element (see
-  // ContainerSub observation model). The next FlushContainerSub will compare
-  // the reseeded last_bit against the current element value.
-  if (target_handle.kind == SubKind::kContainer) {
-    auto& csub =
-        signal_subs_[target_handle.slot_id].container_subs[target_handle.index];
-    auto& ccold = container_cold_pool_[csub.cold_idx];
-
-    auto ds = std::span(
-        static_cast<const uint8_t*>(design_state_base_),
-        ccold.container_base_off + sizeof(void*));
-    void* handle_ptr = nullptr;
-    std::memcpy(&handle_ptr, &ds[ccold.container_base_off], sizeof(void*));
-
-    if (handle_ptr == nullptr) {
-      set_inactive();
-      return;
-    }
-    const auto* arr = static_cast<const DynArrayData*>(handle_ptr);
-    if (arr->magic != DynArrayData::kMagic) {
-      throw common::InternalError(
-          "Engine::RebindSubscription", "invalid container magic");
-    }
-    ccold.container_sv_index = index_val;
-    ccold.container_epoch = arr->epoch;
-    if (arr->data == nullptr || index_val < 0 || index_val >= arr->size) {
-      set_inactive();
-      return;
-    }
-    csub.flags |= kSubActive;
-    // Capture initial bit for edge detection.
-    auto byte_off =
-        static_cast<uint32_t>(index_val) * ccold.container_elem_stride;
-    auto heap_data =
-        std::span(static_cast<const uint8_t*>(arr->data), byte_off + 1);
-    csub.last_bit = heap_data[byte_off] & 1;
-    return;
-  }
-
-  // Edge path: packed/unpacked DesignState bit position update.
-  int64_t logical_offset =
-      static_cast<int64_t>(index_val - mapping.index_base) * mapping.index_step;
-
-  if (logical_offset < 0 ||
-      static_cast<uint64_t>(logical_offset) >= mapping.total_bits) {
-    set_inactive();
-    return;
-  }
-
-  auto& esub =
-      signal_subs_[target_handle.slot_id].edge_subs[target_handle.index];
-  esub.flags |= kSubActive;
-  auto bit = static_cast<uint64_t>(logical_offset);
-  auto new_byte_offset = static_cast<uint32_t>(bit / 8);
-  auto new_bit_index = static_cast<uint8_t>(bit % 8);
-
-  // Update the target's observation position.
-  auto& ecold = edge_cold_pool_[esub.cold_idx];
-  const auto& meta = slot_meta_registry_.Get(target_handle.slot_id);
-  auto ds = std::span(
-      static_cast<const uint8_t*>(design_state_base_),
-      meta.base_off + new_byte_offset + 1);
-
-  // Same-byte rebinding: extract old bit from the saved byte snapshot
-  // so the edge pass detects the 0->1 / 1->0 transition correctly.
-  // Different-byte: read from current design state (no prior observation).
-  if (new_byte_offset == esub.byte_offset && ecold.has_edge_last_byte) {
-    esub.last_bit = (ecold.edge_last_byte >> new_bit_index) & 1;
-  } else {
-    esub.last_bit = (ds[meta.base_off + new_byte_offset] >> new_bit_index) & 1;
-  }
-  // Save full byte snapshot for potential future same-byte rebinding.
-  ecold.edge_last_byte = ds[meta.base_off + new_byte_offset];
-  ecold.has_edge_last_byte = true;
-  esub.byte_offset = new_byte_offset;
-  esub.bit_index = new_bit_index;
-}
-
-void Engine::FlushContainerSub(
-    ContainerSub& sub, std::span<const uint8_t> design_state) {
-  auto& cold = container_cold_pool_[sub.cold_idx];
-
-  // Chase handle from DesignState.
-  void* handle_ptr = nullptr;
-  std::memcpy(
-      &handle_ptr, &design_state[cold.container_base_off], sizeof(void*));
-
-  if (handle_ptr == nullptr) {
-    sub.flags &= ~kSubActive;
-    return;
-  }
-
-  const auto* arr = static_cast<const DynArrayData*>(handle_ptr);
-  if (arr->magic != DynArrayData::kMagic) {
-    throw common::InternalError(
-        "Engine::FlushContainerSub", "invalid container magic");
-  }
-
-  int64_t idx = cold.container_sv_index;
-
-  if (arr->data == nullptr || idx < 0 || idx >= arr->size) {
-    sub.flags &= ~kSubActive;
-    cold.container_epoch = arr->epoch;
-    return;
-  }
-
-  // Element is in range.
-  if (!(sub.flags & kSubActive)) {
-    // Was inactive, now in-range: reactivate, capture snapshot, no edge.
-    sub.flags |= kSubActive;
-    cold.container_epoch = arr->epoch;
-    auto byte_off = static_cast<uint32_t>(idx) * cold.container_elem_stride;
-    auto heap_data =
-        std::span(static_cast<const uint8_t*>(arr->data), byte_off + 1);
-    sub.last_bit = heap_data[byte_off] & 1;
-    return;
-  }
-
-  cold.container_epoch = arr->epoch;
-
-  auto byte_off = static_cast<uint32_t>(idx) * cold.container_elem_stride;
-  auto heap_data = std::span(
-      static_cast<const uint8_t*>(arr->data),
-      byte_off + cold.container_elem_stride);
-  uint8_t current_bit = heap_data[byte_off] & 1;
-
-  bool should_wake =
-      EvaluateEdge(sub.edge, sub.last_bit != 0, current_bit != 0);
-  sub.last_bit = current_bit;
-
-  if (should_wake) {
-    if (sub.process_id >= num_processes_) {
-      throw common::InternalError(
-          "Engine::FlushContainerSub",
-          std::format(
-              "wakeup process_id {} exceeds num_processes {}", sub.process_id,
-              num_processes_));
-    }
-    auto& proc_state = process_states_[sub.process_id];
-    if (!proc_state.is_enqueued) {
-      next_delta_queue_.push_back(
-          ScheduledEvent{
-              .handle = ProcessHandle{sub.process_id, sub.instance_id},
-              .resume = ResumePoint{sub.resume_block, 0}});
-      proc_state.is_enqueued = true;
-    }
-  }
-}
-
-void Engine::FlushSignalUpdates() {
-  if (finished_) {
-    return;
-  }
-
-  // Guard: MIR path has no slot meta / design state.
-  if (!slot_meta_registry_.IsPopulated() || design_state_base_ == nullptr) {
-    return;
-  }
-
-  auto newly_dirty = update_set_.DeltaDirtySlots();
-  if (newly_dirty.empty()) {
-    return;
-  }
-
-  // Increment flush epoch for rebind deduplication.
-  ++flush_epoch_;
-
-  std::span design_state(
-      static_cast<const uint8_t*>(design_state_base_),
-      slot_meta_registry_.MaxExtent());
-
-  // Pass 1: Rebind phase -- iterate dense rebind_subs.
-  for (uint32_t slot_id : newly_dirty) {
-    auto& slot = signal_subs_[slot_id];
-    if (slot.rebind_subs.empty()) continue;
-
-    const auto& meta = slot_meta_registry_.Get(slot_id);
-
-    for (auto& sub : slot.rebind_subs) {
-      auto& wcold = watcher_cold_pool_[sub.cold_idx];
-      const auto* current = &design_state[meta.base_off + sub.byte_offset];
-      auto* snapshot = wcold.snapshot.data();
-      if (std::memcmp(current, snapshot, sub.byte_size) != 0) {
-        std::memcpy(snapshot, current, sub.byte_size);
-        RebindSubscription(wcold.edge_target_id);
-      }
-    }
-  }
-
-  // Pass 2a: Edge phase -- iterate dense edge_subs.
-  for (uint32_t slot_id : newly_dirty) {
-    auto& edge_subs = signal_subs_[slot_id].edge_subs;
-    if (edge_subs.empty()) continue;
-    const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
-    const auto& meta = slot_meta_registry_.Get(slot_id);
-
-    for (auto& sub : edge_subs) {
-      if (!(sub.flags & kSubActive)) continue;
-      if (!dirty_ranges.Overlaps(sub.byte_offset, sub.byte_size)) continue;
-
-      uint8_t current_byte = design_state[meta.base_off + sub.byte_offset];
-      uint8_t current_bit = (current_byte >> sub.bit_index) & 1;
-
-      bool should_wake = false;
-      if (sub.last_bit != current_bit) {
-        should_wake =
-            EvaluateEdge(sub.edge, sub.last_bit != 0, current_bit != 0);
-        sub.last_bit = current_bit;
-      }
-      // Update byte snapshot for potential same-byte rebinding.
-      if (sub.cold_idx != UINT32_MAX) {
-        auto& ecold = edge_cold_pool_[sub.cold_idx];
-        ecold.edge_last_byte = current_byte;
-        ecold.has_edge_last_byte = true;
-      }
-
-      if (should_wake) {
-        auto& proc_state = process_states_[sub.process_id];
-        if (!proc_state.is_enqueued) {
-          next_delta_queue_.push_back(
-              ScheduledEvent{
-                  .handle = ProcessHandle{sub.process_id, sub.instance_id},
-                  .resume = ResumePoint{sub.resume_block, 0}});
-          proc_state.is_enqueued = true;
-        }
-      }
-    }
-  }
-
-  // Pass 2b: Change phase -- iterate dense change_subs.
-  for (uint32_t slot_id : newly_dirty) {
-    auto& change_subs = signal_subs_[slot_id].change_subs;
-    if (change_subs.empty()) continue;
-    const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
-    const auto& meta = slot_meta_registry_.Get(slot_id);
-
-    for (auto& sub : change_subs) {
-      if (!(sub.flags & kSubActive)) continue;
-      if (!dirty_ranges.Overlaps(sub.byte_offset, sub.byte_size)) continue;
-
-      const auto* current = &design_state[meta.base_off + sub.byte_offset];
-      uint8_t* snapshot = nullptr;
-      if (sub.byte_size <= ChangeSub::kInlineSnapshotCap) {
-        snapshot = sub.snapshot_inline.data();
-      } else if (sub.cold_idx != UINT32_MAX) {
-        snapshot = change_cold_pool_[sub.cold_idx].snapshot.data();
-      }
-      if (snapshot == nullptr) continue;
-
-      if (std::memcmp(current, snapshot, sub.byte_size) != 0) {
-        std::memcpy(snapshot, current, sub.byte_size);
-        auto& proc_state = process_states_[sub.process_id];
-        if (!proc_state.is_enqueued) {
-          next_delta_queue_.push_back(
-              ScheduledEvent{
-                  .handle = ProcessHandle{sub.process_id, sub.instance_id},
-                  .resume = ResumePoint{sub.resume_block, 0}});
-          proc_state.is_enqueued = true;
-        }
-      }
-    }
-  }
-
-  // Pass 2c: Container phase -- iterate dense container_subs.
-  // No delta-range filtering: container subs observe heap-allocated data
-  // whose byte offsets are not tracked by the slot-level dirty ranges.
-  // The slot being dirty is the only signal; FlushContainerSub chases the
-  // heap handle and compares element values directly. This is intentionally
-  // unconditional -- container subs are rare and the per-sub cost is low.
-  for (uint32_t slot_id : newly_dirty) {
-    auto& container_subs = signal_subs_[slot_id].container_subs;
-    if (container_subs.empty()) continue;
-
-    for (auto& sub : container_subs) {
-      FlushContainerSub(sub, design_state);
-    }
-  }
 }
 
 }  // namespace lyra::runtime

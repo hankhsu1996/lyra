@@ -472,9 +472,34 @@ class Engine {
   // Late-bound rebinding: re-read index value, recompute edge target.
   void RebindSubscription(uint32_t edge_target_id);
 
-  // Container flush helper.
+  // Per-dirty-slot flush: ordered dispatch into per-kind helpers.
+  void FlushDirtySlot(
+      uint32_t slot_id, SlotSubscriptions& slot, const SlotMeta& meta,
+      std::span<const uint8_t> design_state);
+
+  // Per-kind flush helpers (called from FlushDirtySlot).
+  void FlushSlotRebindSubs(
+      std::vector<RebindWatcherSub>& subs, const SlotMeta& meta,
+      std::span<const uint8_t> design_state);
+  void FlushSlotEdgeSubs(
+      std::vector<EdgeSub>& subs, const SlotMeta& meta,
+      const common::RangeSet& dirty_ranges, RangeFilterMode mode,
+      std::span<const uint8_t> design_state);
+  void FlushSlotChangeSubs(
+      std::vector<ChangeSub>& subs, const SlotMeta& meta,
+      const common::RangeSet& dirty_ranges, RangeFilterMode mode,
+      std::span<const uint8_t> design_state);
+  void FlushSlotContainerSubs(
+      std::vector<ContainerSub>& subs, std::span<const uint8_t> design_state);
+
+  // Single container sub flush.
   void FlushContainerSub(
       ContainerSub& sub, std::span<const uint8_t> design_state);
+
+  // Deduplicated wakeup enqueue: push to next_delta_queue_ if not already
+  // enqueued. Shared by edge, change, and container flush paths.
+  void EnqueueProcessWakeup(
+      uint32_t process_id, uint32_t instance_id, uint32_t resume_block);
 
   // Resource limit checking
   auto CheckSubscriptionLimits(const ProcessState& proc_state) -> bool;

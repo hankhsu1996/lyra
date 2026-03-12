@@ -193,6 +193,14 @@ static_assert(sizeof(ContainerSub) == 24);
 inline constexpr uint8_t kSubActive = 0x01;
 inline constexpr uint8_t kSubHasCold = 0x02;
 
+// Dirty-range filter mode for per-slot edge/change subscriber processing.
+// Decoded once per dirty slot to avoid repeated per-sub Overlaps() calls.
+enum class RangeFilterMode : uint8_t {
+  kNone,     // No relevant ranges (edge/change subs skipped)
+  kFull,     // Full-extent dirty (all subs match, skip Overlaps)
+  kPartial,  // Partial ranges (per-sub Overlaps required)
+};
+
 // Per-slot subscription storage. Four dense typed arrays.
 // The flush path becomes four dense scans with no mixed-node branching.
 struct SlotSubscriptions {
