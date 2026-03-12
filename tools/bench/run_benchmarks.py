@@ -98,26 +98,30 @@ def get_rss_children_kb() -> int:
 
 
 def find_binary(output_dir: str) -> str | None:
-    """Find the compiled binary in output_dir/bin/."""
-    bin_dir = Path(output_dir) / "bin"
-    if not bin_dir.exists():
+    """Find the compiled binary in output_dir/."""
+    out = Path(output_dir)
+    if not out.exists():
         return None
     regular_files = [
-        f for f in bin_dir.iterdir()
-        if f.is_file() and not f.is_symlink()
+        f for f in out.iterdir()
+        if f.is_file() and not f.is_symlink() and os.access(f, os.X_OK)
     ]
     if len(regular_files) != 1:
         return None
     return str(regular_files[0])
 
 
-def time_binary(binary_path: str) -> float:
-    """Run a binary and return wall-clock time in seconds."""
+def time_binary(binary_path: str) -> tuple[float, str]:
+    """Run a binary and return (wall_seconds, error_string)."""
     t0 = time.monotonic()
-    subprocess.run(
-        [binary_path], capture_output=True, timeout=TIMEOUT_SECONDS,
+    proc = subprocess.run(
+        [binary_path], capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
     )
-    return time.monotonic() - t0
+    elapsed = time.monotonic() - t0
+    if proc.returncode != 0:
+        err = _first_error(proc.stderr) or f"sim exit code {proc.returncode}"
+        return elapsed, err
+    return elapsed, ""
 
 
 def run_lyra_jit(
@@ -190,10 +194,17 @@ def run_lyra_aot(
         result.compile_s = compile_wall
 
         binary = find_binary(output_dir)
-        if binary:
-            result.binary_kb = round(Path(binary).stat().st_size / 1024)
-            # Step 2: run the binary
-            result.sim_s = time_binary(binary)
+        if not binary:
+            result.error = f"binary not found in {output_dir}"
+            return result
+
+        result.binary_kb = round(Path(binary).stat().st_size / 1024)
+
+        # Step 2: run the binary
+        sim_time, sim_err = time_binary(binary)
+        result.sim_s = sim_time
+        if sim_err:
+            result.error = sim_err
 
         result.wall_s = result.compile_s + result.sim_s
 
@@ -272,7 +283,10 @@ def run_verilator(
             return result
 
         result.binary_kb = round(Path(binary).stat().st_size / 1024)
-        result.sim_s = time_binary(binary)
+        sim_time, sim_err = time_binary(binary)
+        result.sim_s = sim_time
+        if sim_err:
+            result.error = sim_err
         result.wall_s = result.compile_s + result.sim_s
         result.rss_max_mb = round(get_rss_children_kb() / 1024, 1)
 
