@@ -31,8 +31,7 @@ auto FormatAsSvLiteral(const RuntimeValue& value, SvLiteralFormatSpec spec = {})
     -> std::string;
 
 // Unified format specification for all formatting operations.
-// This is the semantic layer's definition - both MIR interpreter and LLVM
-// runtime delegate to this.
+// This is the semantic layer's definition - the LLVM runtime delegates to this.
 struct FormatSpec {
   FormatKind kind = FormatKind::kDecimal;
   std::optional<int> width;      // nullopt=auto, 0=minimal, >0=explicit

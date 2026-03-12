@@ -1,22 +1,22 @@
 # Runtime (Simulation Engine)
 
-The runtime provides scheduling and execution infrastructure for SystemVerilog simulation. Both the MIR interpreter and LLVM backend use the same runtime API.
+The runtime provides scheduling and execution infrastructure for SystemVerilog simulation.
 
 ## Design Goals
 
-1. **Backend-agnostic API** - Same interface for MIR interpreter and LLVM codegen
+1. **Backend-agnostic API** - Clean separation between scheduling and code generation
 2. **IEEE 1800 compliant scheduling** - Stratified event scheduler (Active -> Inactive -> NBA)
 3. **Process suspension model** - Processes yield to engine, engine resumes them
 
 ## Architecture
 
 ```
-+------------------+     +------------------+
-|  MIR Interpreter |     |  LLVM Codegen    |
-| (RunUntilSuspend)|     |  (extern "C")    |
-+--------+---------+     +--------+---------+
-         |                        |
-         v                        v
++------------------+
+|  LLVM Codegen    |
+|  (extern "C")    |
++--------+---------+
+         |
+         v
 +------------------------------------------+
 |           Runtime Engine API             |
 |  ScheduleInitial, Delay, Subscribe, Run  |
@@ -25,7 +25,7 @@ The runtime provides scheduling and execution infrastructure for SystemVerilog s
 
 ## Suspension Model
 
-Processes run until they hit a scheduling terminator, then yield control to the engine. The interpreter returns a `SuspendReason` variant:
+Processes run until they hit a scheduling terminator, then yield control to the engine. The process returns a `SuspendReason` variant:
 
 | Reason            | MIR Terminator       | Engine Action                                |
 | ----------------- | -------------------- | -------------------------------------------- |

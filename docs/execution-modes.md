@@ -1,6 +1,6 @@
 # Execution Modes
 
-How Lyra compiles and runs SystemVerilog designs. Two modes share a single
+How Lyra compiles and runs SystemVerilog designs. Both modes share a single
 codegen pipeline and diverge only at the final step.
 
 ## Modes
@@ -21,11 +21,6 @@ No artifact on disk.
 ```
 MIR -> LLVM IR -> ORC JIT -> in-memory execution
 ```
-
-**MIR interpreter** -- debug path, process-local only.
-
-Interprets MIR directly. Supports single `initial` block. Useful for debugging
-MIR lowering, not for running full designs.
 
 ## Shared pipeline
 
@@ -49,7 +44,6 @@ both modes equally. There is no AOT-only or JIT-only IR path.
 ```
 lyra run [files...]              # Execute (AOT, default)
 lyra run --backend=jit [files]   # Execute (JIT)
-lyra run --backend=mir [files]   # Execute (MIR interpreter)
 lyra compile [files...]          # Produce artifact only (no execution)
 ```
 

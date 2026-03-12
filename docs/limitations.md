@@ -295,4 +295,4 @@ Behavioral differences from default mode:
 
 Intended use: synthesizable RTL where X-propagation is unnecessary (e.g., Ibex). Not suitable for verification testbenches that rely on X-detection or 4-state semantics.
 
-Only affects the LLVM JIT backend. MIR interpreter is unaffected.
+Only affects the LLVM backend.

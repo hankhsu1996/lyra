@@ -81,16 +81,6 @@ Headers in `include/lyra/`, implementations in `src/lyra/`.
 
 - **Diagnostic** (`common/diagnostic.hpp`): Error reporting with source locations. Uses `std::expected<T, Diagnostic>` (aliased as `Result<T>`) for error propagation. Produces colorful terminal output with file:line:col and source context.
 
-### MIR Interpreter
-
-The MIR interpreter provides a reference implementation for debugging:
-
-```
-MIR -> Interpreter
-```
-
-Useful for validating MIR semantics without LLVM compilation overhead.
-
 ## Data Flow
 
 1. Source files -> `SlangFrontend` -> AST

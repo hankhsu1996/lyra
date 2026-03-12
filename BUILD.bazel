@@ -88,21 +88,6 @@ cc_static_library(
 )
 
 cc_library(
-    name = "interp",
-    srcs = glob(["src/lyra/mir/interp/*.cpp"]),
-    hdrs = glob(["include/lyra/mir/interp/*.hpp"]),
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":common",
-        ":lowering",
-        ":mir",
-        ":runtime",
-        ":semantic",
-    ],
-)
-
-cc_library(
     name = "realization",
     srcs = glob(["src/lyra/realization/**/*.cpp"]),
     hdrs = glob(["include/lyra/realization/**/*.hpp"]),
@@ -168,7 +153,6 @@ cc_binary(
     linkopts = ["-Wl,--export-dynamic"],  # Export symbols for ORC JIT
     deps = [
         ":hir",
-        ":interp",
         ":llvm_backend",
         ":lowering",
         ":mir",

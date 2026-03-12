@@ -9,27 +9,12 @@ cc_library(
     srcs = glob(["framework/*.cpp"]),
     hdrs = glob(["framework/*.hpp"]),
     deps = [
-        "//:interp",
         "//:llvm_backend",
         "//:lowering",
         "//:realization",
         "@googletest//:gtest",
         "@slang",
         "@yaml-cpp",
-    ],
-)
-
-# MIR development suite - core tests for incremental MIR development
-cc_test(
-    name = "mir_dev_tests",
-    srcs = ["main.cpp"],
-    args = ["--suite=mir_dev"],
-    data = [
-        "suites.yaml",
-    ] + glob(["sv_features/**/*.yaml"]),
-    deps = [
-        ":test_framework",
-        "@googletest//:gtest",
     ],
 )
 

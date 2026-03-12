@@ -563,7 +563,7 @@ extern "C" auto LyraFscanf(
         void* output_ptr = outputs[static_cast<size_t>(output_idx)];
 
         if (result.IsInt()) {
-          // Store as int32_t (matches MIR interpreter behavior)
+          // Store as int32_t (matches IEEE 1800 semantics)
           *static_cast<int32_t*>(output_ptr) =
               static_cast<int32_t>(result.AsInt());
         } else {

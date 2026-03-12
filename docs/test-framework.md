@@ -55,9 +55,9 @@ bazel test //tests:<target> --test_arg=--gtest_filter='*pattern*'
 Run a specific test file without modifying suite definitions:
 
 ```bash
-bazel test //tests:mir_dev_tests \
+bazel test //tests:jit_dev_tests \
   --test_arg=--test_file=control_flow/conditionals.yaml \
-  --test_arg=--backend=mir \
+  --test_arg=--backend=jit \
   --test_output=errors
 ```
 
