@@ -172,6 +172,8 @@ void Engine::SetMonitorEnabled(bool enabled) {
 void Engine::ScheduleNba(
     void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
     const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id) {
+  ++stats_.core.nba_entries;
+
   if (write_ptr == nullptr || notify_base_ptr == nullptr ||
       value_ptr == nullptr || byte_size == 0) {
     throw common::InternalError(
@@ -209,15 +211,15 @@ void Engine::RunOneActivation(const ScheduledEvent& event) {
   phase_.store(
       static_cast<uint32_t>(Phase::kRunProcess), std::memory_order_release);
 
-  // Begin activation context for dirty counting.
-  if (activation_trace_.has_value()) {
-    activation_ctx_.active = true;
+  ++stats_.core.total_activations;
+
+  // Begin activation context for dirty counting (unconditional).
+  activation_ctx_.active = true;
+  ++activation_ctx_.generation;
+  if (activation_ctx_.generation == 0) {
     ++activation_ctx_.generation;
-    if (activation_ctx_.generation == 0) {
-      ++activation_ctx_.generation;
-    }
-    activation_ctx_.dirty_count = 0;
   }
+  activation_ctx_.dirty_count = 0;
 
   // Reset loop budget before each process activation.
   LyraResetLoopBudget(kDefaultLoopBudget);
@@ -225,9 +227,12 @@ void Engine::RunOneActivation(const ScheduledEvent& event) {
   process_dispatch_.fn(
       process_dispatch_.ctx, *this, event.handle, event.resume);
 
-  // End activation context; emit run event.
+  // End activation context.
+  activation_ctx_.active = false;
+  if (activation_ctx_.dirty_count == 0) {
+    ++stats_.core.activations_no_write;
+  }
   if (activation_trace_.has_value()) {
-    activation_ctx_.active = false;
     TraceRun(event);
   }
 
@@ -313,6 +318,7 @@ void Engine::ExecuteRegion(Region region) {
         }
 
         if (changed) {
+          ++stats_.core.nba_changed;
           if (static_cast<const uint8_t*>(entry.write_ptr) <
               static_cast<const uint8_t*>(entry.notify_base_ptr)) {
             throw common::InternalError(
@@ -665,6 +671,7 @@ void Engine::FlushAndPropagateConnections() {
   // Using a local vector also avoids span invalidation: iterating
   // delta_dirty_ while MarkSlotDirty pushes to it would be UB.
   constexpr uint32_t kMaxIterations = 100;
+  const bool detailed = detailed_stats_enabled_;
   uint32_t iterations_used = 0;
   auto* base = static_cast<uint8_t*>(design_state_base_);
 
@@ -721,13 +728,13 @@ void Engine::FlushAndPropagateConnections() {
         auto [start, count] = conn_trigger_map_[slot_id];
         if (count == 0) continue;
         for (uint32_t ci = start; ci < start + count; ++ci) {
-          ++propagation_stats_.conn_considered;
+          if (detailed) ++stats_.detailed.conn_considered;
           const auto& conn = all_connections_[ci];
           auto* src = base + conn.src_byte_offset;
           auto* dst = base + conn.dst_byte_offset;
-          ++propagation_stats_.conn_memcmp_executed;
+          if (detailed) ++stats_.detailed.conn_memcmp_executed;
           if (std::memcmp(dst, src, conn.byte_size) != 0) {
-            ++propagation_stats_.conn_memcpy_executed;
+            if (detailed) ++stats_.detailed.conn_memcpy_executed;
             std::memcpy(dst, src, conn.byte_size);
             MarkSlotDirty(conn.dst_slot_id);
             enqueue_pending(conn.dst_slot_id);
@@ -787,16 +794,16 @@ void Engine::FlushAndPropagateConnections() {
         const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
 
         for (uint32_t ci = cstart; ci < cstart + ccount; ++ci) {
-          ++propagation_stats_.comb_considered;
+          if (detailed) ++stats_.detailed.comb_considered;
           const auto& entry = comb_trigger_backing_[ci];
 
           if (entry.byte_size > 0 &&
               !dirty_ranges.Overlaps(entry.byte_offset, entry.byte_size)) {
-            ++propagation_stats_.comb_skipped_range;
+            if (detailed) ++stats_.detailed.comb_skipped_range;
             continue;
           }
 
-          ++propagation_stats_.comb_executed;
+          if (detailed) ++stats_.detailed.comb_executed;
           const auto& ck = comb_kernels_[entry.kernel_idx];
           ck.func(ck.state, 0);
         }
@@ -848,10 +855,10 @@ void Engine::FlushAndPropagateConnections() {
             kMaxIterations, fp_work_.pending.size()));
   }
 
-  ++propagation_stats_.propagation_calls;
-  propagation_stats_.propagation_iterations += iterations_used;
-  propagation_stats_.propagation_max_iterations = std::max(
-      propagation_stats_.propagation_max_iterations,
+  ++stats_.core.propagation_calls;
+  stats_.core.propagation_iterations += iterations_used;
+  stats_.core.propagation_max_iterations = std::max(
+      stats_.core.propagation_max_iterations,
       static_cast<uint64_t>(iterations_used));
 
   // Flush subscriptions with all accumulated dirty marks (process writes +
@@ -860,21 +867,71 @@ void Engine::FlushAndPropagateConnections() {
   update_set_.ClearDelta();
 }
 
-void Engine::DumpPropagationStats(FILE* sink) const {
-  const auto& s = propagation_stats_;
+void Engine::DumpRuntimeStats(FILE* sink) const {
+  const auto& c = stats_.core;
+
+  // [core] line: always-on summary counters + static design shape metadata
+  // (conn_full_slot, conn_narrow, comb_full_slot, comb_narrow).
+
+  // Core sanity checks.
+  if (c.activations_no_write > c.total_activations) {
+    fmt::print(
+        sink,
+        "[lyra][stats][warning] activations_no_write > total_activations\n");
+  }
+  if (c.nba_changed > c.nba_entries) {
+    fmt::print(sink, "[lyra][stats][warning] nba_changed > nba_entries\n");
+  }
+
   fmt::print(
       sink,
-      "[lyra][stats][propagation]"
-      " calls={} iterations={} max_iterations={}"
-      " conn_considered={} conn_memcmp={} conn_memcpy={}"
+      "[lyra][stats][core]"
+      " total_activations={} activations_no_write={}"
+      " propagation_calls={} propagation_iterations={}"
+      " propagation_max_iterations={}"
+      " nba_entries={} nba_changed={}"
       " conn_full_slot={} conn_narrow={}"
-      " comb_considered={} comb_executed={} comb_skipped_range={}"
       " comb_full_slot={} comb_narrow={}\n",
-      s.propagation_calls, s.propagation_iterations,
-      s.propagation_max_iterations, s.conn_considered, s.conn_memcmp_executed,
-      s.conn_memcpy_executed, conn_full_slot_count_, conn_narrow_count_,
-      s.comb_considered, s.comb_executed, s.comb_skipped_range,
+      c.total_activations, c.activations_no_write, c.propagation_calls,
+      c.propagation_iterations, c.propagation_max_iterations, c.nba_entries,
+      c.nba_changed, conn_full_slot_count_, conn_narrow_count_,
       comb_full_slot_count_, comb_narrow_count_);
+
+  if (detailed_stats_enabled_) {
+    const auto& d = stats_.detailed;
+
+    // Detailed sanity checks.
+    if (d.wakeup_deduped > d.wakeup_attempts) {
+      fmt::print(
+          sink, "[lyra][stats][warning] wakeup_deduped > wakeup_attempts\n");
+    }
+    if (d.edge_sub_wakeups > d.edge_sub_checks) {
+      fmt::print(
+          sink, "[lyra][stats][warning] edge_sub_wakeups > edge_sub_checks\n");
+    }
+    if (d.change_sub_wakeups > d.change_sub_checks) {
+      fmt::print(
+          sink,
+          "[lyra][stats][warning] change_sub_wakeups > change_sub_checks\n");
+    }
+
+    fmt::print(
+        sink,
+        "[lyra][stats][detailed]"
+        " dirty_mark_calls={}"
+        " flush_dirty_slots={}"
+        " conn_considered={} conn_memcmp={} conn_memcpy={}"
+        " comb_considered={} comb_executed={} comb_skipped_range={}"
+        " edge_sub_checks={} edge_sub_wakeups={}"
+        " change_sub_checks={} change_sub_wakeups={}"
+        " wakeup_attempts={} wakeup_deduped={}\n",
+        d.dirty_mark_calls, d.flush_dirty_slots, d.conn_considered,
+        d.conn_memcmp_executed, d.conn_memcpy_executed, d.comb_considered,
+        d.comb_executed, d.comb_skipped_range, d.edge_sub_checks,
+        d.edge_sub_wakeups, d.change_sub_checks, d.change_sub_wakeups,
+        d.wakeup_attempts, d.wakeup_deduped);
+  }
+
   std::fflush(sink);
 }
 

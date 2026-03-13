@@ -25,7 +25,7 @@ The fixture must stay fixed so that profiles are comparable across gap rankings 
 Why pipeline:
 
 - 8-stage pipe, 10K cycles -- exercises the scheduler hot loop heavily
-- Largest performance gap (15x vs Verilator at `-c opt`)
+- Largest performance gap (11x vs Verilator at `-c opt`, post-G7f)
 - Completes in ~50ms natively, ~2-3min under Callgrind
 - Reproduces the same bottleneck pattern as large designs (ibex) but at 1/200th the cost
 
@@ -38,7 +38,7 @@ Why pipeline:
 
 Callgrind (and valgrind in general) profiles only the process it launches. If you profile `lyra run`, you get the **compiler** profile (~208M instructions for pipeline), not the simulation. The simulation runs in a child process that callgrind does not follow by default.
 
-The simulation is where the runtime performance gap lives (~583M instructions for pipeline). Always profile the AOT binary directly, not `lyra run`.
+The simulation is where the runtime performance gap lives (~471M instructions for pipeline post-G7f). Always profile the AOT binary directly, not `lyra run`.
 
 If you must profile through `lyra run` (e.g., to include compile time), use `--trace-children=yes`:
 
@@ -150,6 +150,81 @@ The `tools/bench/fixtures/pipeline/` directory may contain these files after pro
 ```bash
 rm -f tools/bench/fixtures/pipeline/callgrind.*
 ```
+
+## Cost model
+
+Raw Ir totals and hotspot rankings are necessary but not sufficient. Every profile analysis should produce a structured cost breakdown that answers: where does the time go, and is the bottleneck frequency or per-unit cost?
+
+### Fixed cost buckets
+
+Classify every self-cost function into exactly one bucket. The bucket list is fixed across profiles so trends are comparable:
+
+| Bucket                 | What it contains                                                                                                                              |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| actual logic           | Emitted process bodies (`body_*_proc_*`, `process_*`)                                                                                         |
+| dirty tracking         | MarkSlotDirty, TouchSlot, MarkDirtyRange, ClearDelta                                                                                          |
+| subscriptions          | FlushSignalUpdates, FlushDirtySlot, FlushSlotEdgeSubs, FlushSlotChangeSubs, FlushSlotRebindSubs, FlushSlotContainerSubs, EnqueueProcessWakeup |
+| dispatch / reconcile   | ExecuteRegion, RunOneActivation, AotProcessDispatch, ReconcilePostActivation, LyraSuspendWait, TraceWake, LyraResetLoopBudget                 |
+| connection propagation | FlushAndPropagateConnections (connection phase)                                                                                               |
+| comb propagation       | FlushAndPropagateConnections (comb phase), comb kernel functions                                                                              |
+| NBA lifecycle          | ScheduleNba, SmallByteBuffer, ApplyFullOverwriteNba, ApplyMaskedMergeNba                                                                      |
+| memory ops             | memcpy, memset, memcmp (libc)                                                                                                                 |
+| allocator              | malloc, free, \_int_free, operator new, operator delete                                                                                       |
+| other                  | Everything not in the above buckets                                                                                                           |
+
+FlushAndPropagateConnections contains both connection and comb phases. Splitting its self cost between the two buckets requires manual attribution: either source-level annotation in KCachegrind, or instrumented builds with phase-specific counters. Runtime stats (`conn_considered`, `comb_considered`) provide call counts but not per-phase Ir. Treat the connection/comb bucket split as approximate when based on callgrind alone.
+
+When a function straddles two buckets (e.g., memcpy called from both connection propagation and NBA), attribute it to the bucket of its dominant caller if possible. Otherwise, keep it in the generic memory ops bucket.
+
+### Normalized metrics
+
+Total Ir is useful for before/after comparison but hides whether a cost is from high frequency or high per-unit cost. Always compute normalized metrics alongside totals:
+
+| Metric                  | Source                                  | Formula                       |
+| ----------------------- | --------------------------------------- | ----------------------------- |
+| Ir per cycle            | callgrind total, cycle count            | total_Ir / cycles             |
+| activations per cycle   | runtime counter                         | total_activations / cycles    |
+| Ir per activation       | callgrind total, activation count       | total_Ir / total_activations  |
+| Ir per dirty-mark call  | dirty tracking bucket, dirty_mark_calls | bucket_Ir / dirty_mark_calls  |
+| Ir per propagation call | connection bucket, propagation calls    | bucket_Ir / propagation_calls |
+| Ir per NBA entry        | NBA bucket, nba_entries                 | bucket_Ir / nba_entries       |
+
+These require runtime counters (see below). When counters are not yet available, estimate from propagation stats or design structure.
+
+### Runtime counters
+
+Callgrind tells you where instructions execute. Runtime counters tell you why. Counters answer semantic questions that profiles cannot:
+
+- How many activations were productive (dirtied at least one slot)?
+- How many subscription checks resulted in a wakeup vs no-op?
+- What fraction of memcmp guards actually detected a change?
+- How many fixpoint iterations converged in 1 round vs 2+?
+
+Counters live in `RuntimeStats` on Engine, printed by `DumpRuntimeStats`. Two tiers: core counters (always collected, printed when `kDumpRuntimeStats` is set) and detailed per-element counters (collected and printed when `kDetailedStats` is set). The feature flags are the real runtime boundary; `-vv` and `-vvv` are the current CLI wiring (`-vv` sets `kDumpRuntimeStats`, `-vvv` adds `kDetailedStats`). Output lines: `[core]` (summary counters + static design shape) and `[detailed]` (inner-loop accounting, only when enabled).
+
+### Benchmark diversity
+
+Pipeline is the canonical profiling fixture for scheduler overhead. But optimizations must not be pipeline-specific. Validate against multiple workload shapes:
+
+| Fixture                     | Workload character                    | What it catches                      |
+| --------------------------- | ------------------------------------- | ------------------------------------ |
+| pipeline                    | Clock-heavy, many small processes     | Scheduler/dispatch overhead          |
+| (needed) comb-heavy         | Deep combinational chains, few clocks | Fixpoint iteration, comb kernel cost |
+| (needed) subscription-heavy | Many signals observed per process     | Flush/subscription dispatch cost     |
+| (needed) NBA-heavy          | Wide NBA writes, large value buffers  | SmallByteBuffer, NBA apply cost      |
+
+New fixtures go in `tools/bench/fixtures/`. They must be deterministic, complete in <1s natively, and produce stable callgrind numbers.
+
+### Analysis workflow
+
+Combine top-down bucket analysis with bottom-up hotspot analysis and counters:
+
+1. **Top-down:** Compute bucket percentages. Which bucket dominates?
+2. **Bottom-up:** Within the dominant bucket, which function has highest self cost?
+3. **Counters:** Is the hot function called too many times, or is each call too expensive? Compute per-unit Ir.
+4. **Decide:** If per-unit cost is high, optimize the function body. If frequency is high, reduce how often it is called (algorithmic change). If data shape is wrong, restructure the data.
+
+This three-layer analysis (buckets, hotspots, counters) prevents chasing symptoms. A function with high total Ir but low per-call cost needs a frequency reduction, not a micro-optimization.
 
 ## Linking profiles to performance gaps
 
