@@ -732,12 +732,39 @@ class Engine {
   // infrastructure is allocated in FlushAndPropagateConnections.
   bool has_any_self_edge_comb_ = false;
 
-  // Persistent scratch storage for FlushAndPropagateConnections, allocated once
-  // in InitCombKernels to avoid per-call malloc/free. Both use lazy clear
-  // (only touched elements are reset each iteration).
-  std::vector<uint8_t> pending_seen_;
-  // Only allocated when has_any_self_edge_comb_ is true.
-  std::vector<uint32_t> snapshot_index_;
+  // Pre-comb snapshot descriptor for self-trigger suppression.
+  struct CombSnapshot {
+    uint32_t buf_off;
+    uint32_t base_off;
+    uint32_t total_bytes;
+  };
+
+  // Fixpoint workspace for FlushAndPropagateConnections.
+  // Persistent engine-owned scratch storage, reused across invocations.
+  // All vectors are transient -- they carry no semantic state across calls.
+  //
+  // Allocation invariants:
+  // - Slot-count-sized vectors (pending_seen, snapshot_index) are resized
+  //   from the runtime slot count, either in InitCombKernels or lazily on
+  //   first FlushAndPropagateConnections call. No code assumes
+  //   InitCombKernels has run first (connection-only designs skip it).
+  // - Worklists (pending, next_pending, comb_writes) start empty and grow
+  //   on demand. clear() preserves capacity, so after warmup there are no
+  //   further allocations.
+  // - Snapshot vectors (snapshot_buf, snapshots, snapshotted_slots) are only
+  //   used when has_any_self_edge_comb_ is true. Same clear()-preserves-
+  //   capacity pattern.
+  struct FixpointWorkspace {
+    std::vector<uint32_t> pending;
+    std::vector<uint32_t> next_pending;
+    std::vector<uint32_t> comb_writes;
+    std::vector<uint8_t> pending_seen;
+    std::vector<uint32_t> snapshot_index;
+    std::vector<uint8_t> snapshot_buf;
+    std::vector<CombSnapshot> snapshots;
+    std::vector<uint32_t> snapshotted_slots;
+  };
+  FixpointWorkspace fp_work_;
 };
 
 }  // namespace lyra::runtime

@@ -472,9 +472,7 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
                                 .byte_size = d.byte_size,
                                 .dst_slot_id = d.dst_slot_id}});
   }
-  std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) {
-    return a.trigger_slot_id < b.trigger_slot_id;
-  });
+  std::ranges::sort(sorted, {}, &IndexedConn::trigger_slot_id);
 
   all_connections_.reserve(sorted.size());
   for (const auto& s : sorted) {
@@ -497,7 +495,7 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
     while (i < sorted.size() && sorted[i].trigger_slot_id == trigger) {
       ++i;
     }
-    conn_trigger_map_[trigger] = {start, i - start};
+    conn_trigger_map_[trigger] = {.start = start, .count = i - start};
   }
 }
 
@@ -599,15 +597,13 @@ void Engine::InitCombKernels(
   // Sized once here; lazy-clear pattern in the hot loop resets only touched
   // elements per iteration.
   uint32_t slot_count = slot_meta_registry_.Size();
-  pending_seen_.resize(slot_count, 0);
+  fp_work_.pending_seen.resize(slot_count, 0);
   if (has_any_self_edge_comb_) {
-    snapshot_index_.assign(slot_count, UINT32_MAX);
+    fp_work_.snapshot_index.assign(slot_count, UINT32_MAX);
   }
 
   // Sort by slot_id for contiguous grouping.
-  std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
-    return a.slot_id < b.slot_id;
-  });
+  std::ranges::sort(entries, {}, &ParsedTrigger::slot_id);
 
   // Build flat backing array and dense range table.
   // Sized from authoritative slot count (same universe as signal_waiters_).
@@ -617,7 +613,7 @@ void Engine::InitCombKernels(
   uint32_t i = 0;
   while (i < entries.size()) {
     uint32_t slot = entries[i].slot_id;
-    uint32_t start = static_cast<uint32_t>(comb_trigger_backing_.size());
+    auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
     while (i < entries.size() && entries[i].slot_id == slot) {
       comb_trigger_backing_.push_back({
           .kernel_idx = entries[i].kernel_idx,
@@ -629,7 +625,7 @@ void Engine::InitCombKernels(
     }
     uint32_t count =
         static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
-    comb_trigger_map_[slot] = {start, count};
+    comb_trigger_map_[slot] = {.start = start, .count = count};
     comb_trigger_slots_.push_back(slot);
   }
 }
@@ -674,29 +670,27 @@ void Engine::FlushAndPropagateConnections() {
 
   // Seed work list from current delta dirty slots.
   auto initial = update_set_.DeltaDirtySlots();
-  std::vector<uint32_t> pending(initial.begin(), initial.end());
-
-  // Scoped capture buffer for comb kernel writes. While this vector is
-  // installed in comb_write_capture_, MarkSlotDirty/MarkDirtyRange push
-  // written slot IDs here in addition to update_set_. This lets the
-  // fixed-point loop observe comb output changes that delta_seen_ would
-  // otherwise hide.
-  std::vector<uint32_t> comb_writes;
+  fp_work_.pending.clear();
+  fp_work_.pending.insert(
+      fp_work_.pending.end(), initial.begin(), initial.end());
 
   // Per-iteration dedup bitvector. Prevents exponential blowup when comb
   // kernels write intermediate values (e.g. a = f(x); a = a + g(x)) that
   // differ from the final value. Lazy-clear resets only touched slots each
   // iteration. Allocated on first call (covers both conn-only and comb cases).
   uint32_t slot_count = slot_meta_registry_.Size();
-  if (pending_seen_.size() < slot_count) {
-    pending_seen_.resize(slot_count, 0);
+  if (fp_work_.pending_seen.size() < slot_count) {
+    fp_work_.pending_seen.resize(slot_count, 0);
+  }
+  if (has_any_self_edge_comb_ && fp_work_.snapshot_index.size() < slot_count) {
+    fp_work_.snapshot_index.assign(slot_count, UINT32_MAX);
   }
 
   // Helper: enqueue a slot into next_pending with dedup.
-  auto enqueue_pending = [&](std::vector<uint32_t>& next, uint32_t slot_id) {
-    if (slot_id < slot_count && pending_seen_[slot_id] == 0) {
-      pending_seen_[slot_id] = 1;
-      next.push_back(slot_id);
+  auto enqueue_pending = [&](uint32_t slot_id) {
+    if (slot_id < slot_count && fp_work_.pending_seen[slot_id] == 0) {
+      fp_work_.pending_seen[slot_id] = 1;
+      fp_work_.next_pending.push_back(slot_id);
     }
   };
 
@@ -711,26 +705,18 @@ void Engine::FlushAndPropagateConnections() {
   // kernels cannot trigger themselves, so multi-write intermediate values at
   // most cause one bounded extra fixpoint iteration (store-level memcmp catches
   // the no-op on the next pass).
-  struct CombSnapshot {
-    uint32_t buf_off;
-    uint32_t base_off;
-    uint32_t total_bytes;
-  };
-  std::vector<uint8_t> snapshot_buf;
-  std::vector<CombSnapshot> snapshots;
-  std::vector<uint32_t> snapshotted_slots;
 
   for (uint32_t iter = 0; iter < kMaxIterations; ++iter) {
-    if (pending.empty()) break;
+    if (fp_work_.pending.empty()) break;
     ++iterations_used;
-    std::vector<uint32_t> next_pending;
+    fp_work_.next_pending.clear();
 
     // Reset seen bits for slots in the current work list.
-    for (uint32_t s : pending) pending_seen_[s] = 0;
+    for (uint32_t s : fp_work_.pending) fp_work_.pending_seen[s] = 0;
 
     // Phase 1: connection propagation (memcmp guards actual change).
     if (has_conns) {
-      for (uint32_t slot_id : pending) {
+      for (uint32_t slot_id : fp_work_.pending) {
         if (slot_id >= conn_trigger_map_.size()) continue;
         auto [start, count] = conn_trigger_map_[slot_id];
         if (count == 0) continue;
@@ -744,7 +730,7 @@ void Engine::FlushAndPropagateConnections() {
             ++propagation_stats_.conn_memcpy_executed;
             std::memcpy(dst, src, conn.byte_size);
             MarkSlotDirty(conn.dst_slot_id);
-            enqueue_pending(next_pending, conn.dst_slot_id);
+            enqueue_pending(conn.dst_slot_id);
           }
         }
       }
@@ -757,10 +743,10 @@ void Engine::FlushAndPropagateConnections() {
       // state). Only slots where at least one trigger entry has has_self_edge
       // need snapshot protection; others are safe without it.
       if (has_any_self_edge_comb_) {
-        snapshot_buf.clear();
-        snapshots.clear();
-        snapshotted_slots.clear();
-        for (uint32_t slot_id : pending) {
+        fp_work_.snapshot_buf.clear();
+        fp_work_.snapshots.clear();
+        fp_work_.snapshotted_slots.clear();
+        for (uint32_t slot_id : fp_work_.pending) {
           if (slot_id >= comb_trigger_map_.size()) continue;
           auto [start, count] = comb_trigger_map_[slot_id];
           if (count == 0) continue;
@@ -773,21 +759,27 @@ void Engine::FlushAndPropagateConnections() {
           }
           if (!needs_snapshot) continue;
           const auto& meta = slot_meta_registry_.Get(slot_id);
-          auto buf_off = static_cast<uint32_t>(snapshot_buf.size());
-          snapshot_buf.resize(buf_off + meta.total_bytes);
+          auto buf_off = static_cast<uint32_t>(fp_work_.snapshot_buf.size());
+          fp_work_.snapshot_buf.resize(buf_off + meta.total_bytes);
           std::memcpy(
-              snapshot_buf.data() + buf_off, base + meta.base_off,
+              fp_work_.snapshot_buf.data() + buf_off, base + meta.base_off,
               meta.total_bytes);
-          snapshot_index_[slot_id] = static_cast<uint32_t>(snapshots.size());
-          snapshots.push_back({buf_off, meta.base_off, meta.total_bytes});
-          snapshotted_slots.push_back(slot_id);
+          fp_work_.snapshot_index[slot_id] =
+              static_cast<uint32_t>(fp_work_.snapshots.size());
+          fp_work_.snapshots.push_back(
+              {buf_off, meta.base_off, meta.total_bytes});
+          fp_work_.snapshotted_slots.push_back(slot_id);
         }
       }
 
-      comb_writes.clear();
-      comb_write_capture_ = &comb_writes;
+      // Install capture so comb writes feed into the work list.
+      // Invariant: comb_write_capture_ must be nullptr on every exit from
+      // this function. The pointer targets persistent workspace storage, so
+      // a stale pointer would silently corrupt future calls.
+      fp_work_.comb_writes.clear();
+      comb_write_capture_ = &fp_work_.comb_writes;
 
-      for (uint32_t slot_id : pending) {
+      for (uint32_t slot_id : fp_work_.pending) {
         if (slot_id >= comb_trigger_map_.size()) continue;
         auto [cstart, ccount] = comb_trigger_map_[slot_id];
         if (ccount == 0) continue;
@@ -817,38 +809,43 @@ void Engine::FlushAndPropagateConnections() {
       // directly. This may cause at most one bounded extra fixpoint iteration
       // per multi-write output slot: the kernel re-evaluates, store-level
       // memcmp catches the no-op, convergence is reached.
-      for (uint32_t s : comb_writes) {
-        if (s >= slot_count || pending_seen_[s] != 0) continue;
+      for (uint32_t s : fp_work_.comb_writes) {
+        if (s >= slot_count || fp_work_.pending_seen[s] != 0) continue;
 
-        if (has_any_self_edge_comb_ && snapshot_index_[s] != UINT32_MAX) {
-          const auto& snap = snapshots[snapshot_index_[s]];
+        if (has_any_self_edge_comb_ &&
+            fp_work_.snapshot_index[s] != UINT32_MAX) {
+          const auto& snap = fp_work_.snapshots[fp_work_.snapshot_index[s]];
           if (std::memcmp(
-                  base + snap.base_off, snapshot_buf.data() + snap.buf_off,
+                  base + snap.base_off,
+                  fp_work_.snapshot_buf.data() + snap.buf_off,
                   snap.total_bytes) == 0) {
             continue;
           }
         }
 
-        enqueue_pending(next_pending, s);
+        enqueue_pending(s);
       }
 
       if (has_any_self_edge_comb_) {
-        for (uint32_t slot_id : snapshotted_slots) {
-          snapshot_index_[slot_id] = UINT32_MAX;
+        for (uint32_t slot_id : fp_work_.snapshotted_slots) {
+          fp_work_.snapshot_index[slot_id] = UINT32_MAX;
         }
       }
     }
 
-    pending = std::move(next_pending);
+    // Swap preserves both vectors' capacity. Clear after swap (not before)
+    // so next_pending is empty before any enqueue in the next iteration.
+    std::swap(fp_work_.pending, fp_work_.next_pending);
+    fp_work_.next_pending.clear();
   }
 
-  if (!pending.empty()) {
+  if (!fp_work_.pending.empty()) {
     throw common::InternalError(
         "Engine::FlushAndPropagateConnections",
         std::format(
             "convergence not reached after {} iterations "
             "({} slots still pending)",
-            kMaxIterations, pending.size()));
+            kMaxIterations, fp_work_.pending.size()));
   }
 
   ++propagation_stats_.propagation_calls;
