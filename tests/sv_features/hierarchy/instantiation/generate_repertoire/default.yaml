@@ -1,0 +1,98 @@
+feature: generate_repertoire
+description: Artifact inventory with generate availability paths
+
+cases:
+  - name: generate_if_both_branches
+    description: >
+      Both taken and untaken branches of a generate-if produce artifacts.
+      Each artifact's availability path identifies its branch.
+    dump_repertoire: true
+    sv: |
+      module Top #(parameter bit SEL = 1);
+        generate
+          if (SEL) begin : gen_true
+            logic [7:0] data_a;
+            always_comb $display("true branch");
+          end else begin : gen_false
+            logic [7:0] data_b;
+            always_comb $display("false branch");
+          end
+        endgenerate
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "decl data_a avail=[branch(gen_true@1)]"
+          - "decl data_b avail=[branch(gen_false@1)]"
+          - "proc  avail=[branch(gen_true@1)]"
+          - "proc  avail=[branch(gen_false@1)]"
+
+  - name: generate_for_entries
+    description: >
+      Generate-for produces one artifact per iteration entry.
+      Each entry has the same construct name but different ordinal.
+    dump_repertoire: true
+    sv: |
+      module Top;
+        generate
+          for (genvar i = 0; i < 3; i++) begin : gen_loop
+            logic [7:0] data;
+          end
+        endgenerate
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "decl data avail=[entry(gen_loop[0])]"
+          - "decl data avail=[entry(gen_loop[1])]"
+          - "decl data avail=[entry(gen_loop[2])]"
+        not_contains:
+          - "proc"
+          - "inst"
+
+  - name: nested_generate_availability_path
+    description: >
+      Artifacts under nested generate constructs accumulate availability
+      steps. inner_var requires two selections; outer_var requires one.
+    dump_repertoire: true
+    sv: |
+      module Inner;
+        initial $display("inner");
+      endmodule
+
+      module Top #(parameter bit SEL = 1);
+        generate
+          if (SEL) begin : gen_outer
+            logic [7:0] outer_var;
+            Inner inner_inst();
+            if (SEL) begin : gen_inner
+              logic [7:0] inner_var;
+            end
+          end
+        endgenerate
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "decl outer_var avail=[branch(gen_outer@1)]"
+          - "decl inner_var avail=[branch(gen_outer@1), branch(gen_inner@1)]"
+          - "inst inner_inst avail=[branch(gen_outer@1)]"
+
+  - name: unconditional_artifacts
+    description: >
+      Artifacts not inside any generate construct have empty availability.
+    dump_repertoire: true
+    sv: |
+      module Top;
+        logic [7:0] x;
+        initial $display("hello");
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "--- Top (Top) ---"
+          - "decl x avail=[]"
+          - "proc  avail=[]"
+        not_contains:
+          - "inst"
+          - "cont"

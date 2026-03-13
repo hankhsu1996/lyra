@@ -22,6 +22,9 @@
 #include <vector>
 
 #include <llvm/IR/Value.h>
+#include <slang/ast/Compilation.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
+#include <slang/ast/symbols/InstanceSymbols.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
@@ -34,6 +37,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/llvm_backend/toolchain.hpp"
+#include "lyra/lowering/ast_to_hir/generate_repertoire.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -345,6 +349,17 @@ auto PrepareLlvmModule(
           "spec[{}]: def={} fp=0x{:x} instances={}\n", i,
           group.spec_id.def_id.value, group.spec_id.fingerprint.value,
           group.instance_indices.size());
+    }
+  }
+
+  // Build artifact inventory dump (routed to TestResult::compiler_output)
+  if (test_case.dump_repertoire) {
+    const auto& root = parse_result.compilation->getRoot();
+    for (const auto* inst : root.topInstances) {
+      compiler_output +=
+          std::format("--- {} ({}) ---\n", inst->name, inst->body.name);
+      auto inventory = lowering::ast_to_hir::BuildArtifactInventory(inst->body);
+      compiler_output += lowering::ast_to_hir::DumpArtifactInventory(inventory);
     }
   }
 
