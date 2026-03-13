@@ -54,6 +54,7 @@ struct CoreRuntimeStats {
   uint64_t propagation_iterations = 0;
   uint64_t propagation_max_iterations = 0;
   uint64_t nba_entries = 0;
+  uint64_t nba_elided = 0;
   uint64_t nba_changed = 0;
 };
 
@@ -488,6 +489,9 @@ class Engine {
 
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
+  void ExecuteActiveRegion();
+  void ExecuteInactiveRegion();
+  void ExecuteNbaRegion();
   void ExecutePostponedRegion();
   void FlushDirtySlots();
 
