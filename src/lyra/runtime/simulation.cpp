@@ -32,6 +32,7 @@
 #include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/suspend_record.hpp"
+#include "lyra/runtime/trace_signal_meta.hpp"
 
 namespace {
 
@@ -489,6 +490,16 @@ extern "C" void LyraRunSimulation(
       engine.InitWaitSiteMeta(
           lyra::runtime::WaitSiteRegistry(
               abi->wait_site_words, abi->wait_site_word_count));
+    }
+
+    // Trace signal metadata
+    if (abi->trace_signal_meta_words != nullptr &&
+        abi->trace_signal_meta_word_count > 0) {
+      engine.InitTraceSignalMeta(
+          lyra::runtime::TraceSignalMetaRegistry(
+              abi->trace_signal_meta_words, abi->trace_signal_meta_word_count,
+              abi->trace_signal_meta_string_pool,
+              abi->trace_signal_meta_string_pool_size));
     }
   }
 

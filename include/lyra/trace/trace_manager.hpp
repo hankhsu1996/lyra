@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include "lyra/runtime/trace_signal_meta.hpp"
 #include "lyra/trace/summary_trace_sink.hpp"
 #include "lyra/trace/trace_event.hpp"
 #include "lyra/trace/trace_sink.hpp"
@@ -74,6 +75,18 @@ class TraceManager {
   // SnapshotString: deep-copies the string content via LyraStringAsView.
   static auto SnapshotString(const void* str_handle) -> TraceValue;
 
+  // Set non-owning pointer to trace signal metadata registry.
+  // Must be called before SetEnabled(true) for sinks to observe metadata.
+  void SetSignalMeta(const runtime::TraceSignalMetaRegistry* meta) {
+    signal_meta_ = meta;
+  }
+
+  // Get trace signal metadata registry (may be null if not set).
+  [[nodiscard]] auto GetSignalMeta() const
+      -> const runtime::TraceSignalMetaRegistry* {
+    return signal_meta_;
+  }
+
   // Print the most recent session's summary to stdout. Delegates to the
   // built-in summary sink. If tracing was never enabled, prints zeros.
   void PrintSummary() const;
@@ -93,6 +106,9 @@ class TraceManager {
 
   // Lifetime ownership for externally added sinks.
   std::vector<std::unique_ptr<TraceSink>> owned_sinks_;
+
+  // Non-owning pointer to trace signal metadata. Set by Engine.
+  const runtime::TraceSignalMetaRegistry* signal_meta_ = nullptr;
 };
 
 }  // namespace lyra::trace

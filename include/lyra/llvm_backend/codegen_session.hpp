@@ -105,9 +105,14 @@ struct RealizationData {
 
   // Indexed by slot_id.value.
   std::vector<TypeId> slot_types;
+  std::vector<mir::SlotKind> slot_kinds;
 
   // Indexed by instance table entry index.
   std::vector<std::string> instance_paths;
+
+  // Compact slot trace provenance from mir::Design (parallel to slot_types).
+  std::vector<mir::SlotTraceProvenance> slot_trace_provenance;
+  std::vector<char> slot_trace_string_pool;
 };
 
 // Backend-owned intermediate state between behavioral codegen and assembly.

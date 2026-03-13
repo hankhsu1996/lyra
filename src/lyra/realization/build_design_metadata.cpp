@@ -8,6 +8,7 @@
 #include "lyra/runtime/loop_site_meta.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
+#include "lyra/runtime/trace_signal_meta_abi.hpp"
 
 namespace lyra::realization {
 
@@ -124,6 +125,34 @@ auto BuildCombKernelWords(const std::vector<CombKernelInput>& kernels)
   return words;
 }
 
+auto BuildTraceSignalMeta(const std::vector<TraceSignalMetaInput>& signals)
+    -> MetaWordTable {
+  if (signals.empty()) return {};
+
+  std::vector<char> pool;
+  pool.push_back('\0');
+
+  auto add_string = [&](const std::string& s) -> uint32_t {
+    if (s.empty()) return 0;
+    auto off = static_cast<uint32_t>(pool.size());
+    pool.insert(pool.end(), s.begin(), s.end());
+    pool.push_back('\0');
+    return off;
+  };
+
+  std::vector<uint32_t> words;
+  words.reserve(signals.size() * runtime::trace_signal_meta_abi::kStride);
+
+  for (const auto& sig : signals) {
+    uint32_t name_off = add_string(sig.hierarchical_name);
+    words.push_back(name_off);
+    words.push_back(sig.bit_width);
+    words.push_back(sig.trace_kind);
+  }
+
+  return {.words = std::move(words), .pool = std::move(pool)};
+}
+
 }  // namespace
 
 auto BuildDesignMetadata(const DesignMetadataInputs& input) -> DesignMetadata {
@@ -169,6 +198,17 @@ auto BuildDesignMetadata(const DesignMetadataInputs& input) -> DesignMetadata {
         "loop_site_meta words size not divisible by kStride");
   }
 
+  auto trace_signal_meta = BuildTraceSignalMeta(input.trace_signal_meta);
+
+  if (!trace_signal_meta.words.empty() &&
+      trace_signal_meta.words.size() %
+              runtime::trace_signal_meta_abi::kStride !=
+          0) {
+    throw common::InternalError(
+        "BuildDesignMetadata",
+        "trace_signal_meta words size not divisible by kStride");
+  }
+
   return DesignMetadata{
       .slot_meta_words = std::move(slot_meta_words),
       .process_meta = std::move(process_meta),
@@ -176,6 +216,7 @@ auto BuildDesignMetadata(const DesignMetadataInputs& input) -> DesignMetadata {
       .connection_descriptors = input.connection_descriptors,
       .comb_kernel_words = BuildCombKernelWords(input.comb_kernels),
       .instance_paths = input.instance_paths,
+      .trace_signal_meta = std::move(trace_signal_meta),
   };
 }
 

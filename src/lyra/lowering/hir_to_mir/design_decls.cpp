@@ -1,5 +1,7 @@
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 
@@ -74,11 +76,39 @@ auto CollectBodyLocalDecls(
   return body_decls;
 }
 
+namespace {
+
+// Intern a string into the pool: deduplicates identical strings by returning
+// the existing offset if the string was already interned.
+class StringPoolIntern {
+ public:
+  auto Intern(std::vector<char>& pool, const std::string& name) -> uint32_t {
+    if (name.empty()) return 0;
+    auto [it, inserted] = index_.emplace(name, 0u);
+    if (!inserted) return it->second;
+    auto off = static_cast<uint32_t>(pool.size());
+    pool.insert(pool.end(), name.begin(), name.end());
+    pool.push_back('\0');
+    it->second = off;
+    return off;
+  }
+
+ private:
+  std::unordered_map<std::string, uint32_t> index_;
+};
+
+}  // namespace
+
 auto CollectDesignDeclarations(
     const hir::Design& design, const LoweringInput& input,
     mir::Arena& mir_arena) -> DesignDeclarations {
   DesignDeclarations decls;
   int next_slot = 0;
+
+  // Initialize trace string pool with empty string at offset 0.
+  decls.slot_trace_string_pool.push_back('\0');
+
+  StringPoolIntern intern;
 
   // Ordering contract: packages first (in element order), then all module
   // instances (in BFS elaboration order from LowerDesign). This order is ABI -
@@ -87,6 +117,10 @@ auto CollectDesignDeclarations(
   // Allocate package variable design places + pre-allocate function IDs
   for (const auto& element : design.elements) {
     if (const auto* pkg = std::get_if<hir::Package>(&element)) {
+      const Symbol& pkg_sym = (*input.symbol_table)[pkg->symbol];
+      auto pkg_name_off =
+          intern.Intern(decls.slot_trace_string_pool, pkg_sym.name);
+
       for (SymbolId var : pkg->variables) {
         const Symbol& sym = (*input.symbol_table)[var];
         mir::Place place{
@@ -100,6 +134,11 @@ auto CollectDesignDeclarations(
         };
         decls.design_places[var] = mir_arena.AddPlace(std::move(place));
         decls.slots.push_back({sym.type, mir::SlotKind::kVariable});
+        decls.slot_trace_provenance.push_back(
+            {.local_name_str_off =
+                 intern.Intern(decls.slot_trace_string_pool, sym.name),
+             .scope_kind = mir::SlotScopeKind::kPackage,
+             .scope_ref = pkg_name_off});
       }
 
       // Pre-allocate MIR function IDs with frozen signatures
@@ -122,6 +161,8 @@ auto CollectDesignDeclarations(
   for (const auto& element : design.elements) {
     if (const auto* mod = std::get_if<hir::Module>(&element)) {
       auto instance_slot_begin = static_cast<uint32_t>(next_slot);
+      auto instance_idx =
+          static_cast<uint32_t>(decls.instance_slot_ranges.size());
 
       for (SymbolId var : mod->variables) {
         const Symbol& sym = (*input.symbol_table)[var];
@@ -136,6 +177,11 @@ auto CollectDesignDeclarations(
         };
         decls.design_places[var] = mir_arena.AddPlace(std::move(global_place));
         decls.slots.push_back({sym.type, mir::SlotKind::kVariable});
+        decls.slot_trace_provenance.push_back(
+            {.local_name_str_off =
+                 intern.Intern(decls.slot_trace_string_pool, sym.name),
+             .scope_kind = mir::SlotScopeKind::kInstance,
+             .scope_ref = instance_idx});
       }
 
       for (SymbolId net : mod->nets) {
@@ -151,6 +197,11 @@ auto CollectDesignDeclarations(
         };
         decls.design_places[net] = mir_arena.AddPlace(std::move(global_place));
         decls.slots.push_back({sym.type, mir::SlotKind::kNet});
+        decls.slot_trace_provenance.push_back(
+            {.local_name_str_off =
+                 intern.Intern(decls.slot_trace_string_pool, sym.name),
+             .scope_kind = mir::SlotScopeKind::kInstance,
+             .scope_ref = instance_idx});
       }
 
       std::vector<mir::ParamInitEntry> param_inits;
@@ -170,6 +221,11 @@ auto CollectDesignDeclarations(
         decls.design_places[param] =
             mir_arena.AddPlace(std::move(global_place));
         decls.slots.push_back({sym.type, mir::SlotKind::kParamConst});
+        decls.slot_trace_provenance.push_back(
+            {.local_name_str_off =
+                 intern.Intern(decls.slot_trace_string_pool, sym.name),
+             .scope_kind = mir::SlotScopeKind::kInstance,
+             .scope_ref = instance_idx});
 
         if (pi < mod->param_init_values.size()) {
           param_inits.push_back(

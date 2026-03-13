@@ -14,7 +14,10 @@
 //   2: Added wait-site metadata word table (wait_site_words,
 //      wait_site_word_count)
 //   3: Added comb kernel function pointers (comb_funcs, num_comb_funcs)
-inline constexpr uint32_t kRuntimeAbiVersion = 3;
+//   4: Added trace signal metadata (trace_signal_meta_words,
+//      trace_signal_meta_word_count, trace_signal_meta_string_pool,
+//      trace_signal_meta_string_pool_size)
+inline constexpr uint32_t kRuntimeAbiVersion = 4;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -51,4 +54,10 @@ struct LyraRuntimeAbi {
   using LyraCombKernelFunc = void (*)(void*, uint32_t);
   LyraCombKernelFunc* comb_funcs;
   uint32_t num_comb_funcs;
+
+  // v4: Trace signal metadata word table + string pool.
+  const uint32_t* trace_signal_meta_words;
+  uint32_t trace_signal_meta_word_count;
+  const char* trace_signal_meta_string_pool;
+  uint32_t trace_signal_meta_string_pool_size;
 };

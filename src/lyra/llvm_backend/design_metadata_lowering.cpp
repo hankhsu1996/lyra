@@ -17,6 +17,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/source_manager.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
@@ -29,6 +30,8 @@
 #include "lyra/runtime/process_meta_abi.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
+#include "lyra/runtime/trace_signal_meta.hpp"
+#include "lyra/runtime/trace_signal_meta_abi.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -157,7 +160,120 @@ auto GetConnectionDescriptorLlvmType(llvm::LLVMContext& ctx)
       "ConnectionDescriptor");
 }
 
+// Read a NUL-terminated string from a char pool at the given offset.
+// Throws InternalError on invalid offset (compile-side invariant).
+//
+// Pool contract: every stored string is NUL-terminated, and every valid
+// offset points to the first byte of such a string. The pool writer
+// (StringPoolIntern) maintains this by appending '\0' after each string.
+// Offset 0 is the empty-string sentinel (pool[0] == '\0').
+auto ReadPoolString(const std::vector<char>& pool, uint32_t offset)
+    -> std::string_view {
+  if (offset >= pool.size()) {
+    throw common::InternalError(
+        "ReadPoolString",
+        std::format(
+            "offset {} out of range (pool size {})", offset, pool.size()));
+  }
+  return {pool.data() + offset};
+}
+
+// Map SlotKind to runtime TraceSignalKind. This is the sole conversion point
+// between MIR storage semantics and trace-facing signal kinds.
+auto MapSlotKindToTraceKind(mir::SlotKind kind) -> runtime::TraceSignalKind {
+  switch (kind) {
+    case mir::SlotKind::kVariable:
+      return runtime::TraceSignalKind::kVariable;
+    case mir::SlotKind::kNet:
+      return runtime::TraceSignalKind::kNet;
+    case mir::SlotKind::kParamConst:
+      return runtime::TraceSignalKind::kParam;
+  }
+  throw common::InternalError(
+      "MapSlotKindToTraceKind",
+      std::format("unknown SlotKind {}", static_cast<int>(kind)));
+}
+
+// Compute trace bit width from a type. Returns the packed bit width for
+// integral/packed types, 0 for non-bit-vector types.
+auto ComputeTraceBitWidth(TypeId type_id, const TypeArena& types) -> uint32_t {
+  const Type& type = types[type_id];
+  if (IsPacked(type)) {
+    return PackedBitWidth(type, types);
+  }
+  return 0;
+}
+
 }  // namespace
+
+auto PrepareTraceSignalMetaInputs(
+    const std::vector<mir::SlotTraceProvenance>& provenance,
+    const std::vector<char>& trace_string_pool,
+    const std::vector<TypeId>& slot_types,
+    const std::vector<mir::SlotKind>& slot_kinds,
+    const std::vector<std::string>& instance_paths, const TypeArena& types)
+    -> std::vector<realization::TraceSignalMetaInput> {
+  if (provenance.empty()) return {};
+
+  if (provenance.size() != slot_types.size()) {
+    throw common::InternalError(
+        "PrepareTraceSignalMetaInputs",
+        std::format(
+            "provenance.size() ({}) != slot_types.size() ({})",
+            provenance.size(), slot_types.size()));
+  }
+  if (provenance.size() != slot_kinds.size()) {
+    throw common::InternalError(
+        "PrepareTraceSignalMetaInputs",
+        std::format(
+            "provenance.size() ({}) != slot_kinds.size() ({})",
+            provenance.size(), slot_kinds.size()));
+  }
+  if (trace_string_pool.empty() || trace_string_pool[0] != '\0') {
+    throw common::InternalError(
+        "PrepareTraceSignalMetaInputs",
+        "trace_string_pool must be non-empty and start with '\\0'");
+  }
+
+  std::vector<realization::TraceSignalMetaInput> entries;
+  entries.reserve(provenance.size());
+
+  for (uint32_t slot_id = 0; slot_id < provenance.size(); ++slot_id) {
+    const auto& prov = provenance[slot_id];
+    auto local_name =
+        ReadPoolString(trace_string_pool, prov.local_name_str_off);
+
+    std::string hierarchical_name;
+    switch (prov.scope_kind) {
+      case mir::SlotScopeKind::kPackage: {
+        auto pkg_name = ReadPoolString(trace_string_pool, prov.scope_ref);
+        hierarchical_name = std::format("{}.{}", pkg_name, local_name);
+        break;
+      }
+      case mir::SlotScopeKind::kInstance: {
+        if (prov.scope_ref >= instance_paths.size()) {
+          throw common::InternalError(
+              "PrepareTraceSignalMetaInputs",
+              std::format(
+                  "slot {} instance scope_ref {} out of range "
+                  "(instance_paths size {})",
+                  slot_id, prov.scope_ref, instance_paths.size()));
+        }
+        const auto& inst_path = instance_paths[prov.scope_ref];
+        hierarchical_name = std::format("{}.{}", inst_path, local_name);
+        break;
+      }
+    }
+
+    entries.push_back(
+        {.hierarchical_name = std::move(hierarchical_name),
+         .bit_width = ComputeTraceBitWidth(slot_types[slot_id], types),
+         .trace_kind = static_cast<uint32_t>(
+             MapSlotKindToTraceKind(slot_kinds[slot_id]))});
+  }
+
+  return entries;
+}
 
 auto ExtractSlotMetaInputs(
     Context& context, const std::vector<SlotInfo>& slots,
@@ -629,6 +745,26 @@ auto EmitDesignMetadataGlobals(
       mod, ctx, metadata.comb_kernel_words, "__lyra_comb_kernel_words");
   result.comb_kernel_word_count =
       static_cast<uint32_t>(metadata.comb_kernel_words.size());
+
+  // Trace signal meta
+  if (!metadata.trace_signal_meta.words.empty() &&
+      metadata.trace_signal_meta.words.size() %
+              runtime::trace_signal_meta_abi::kStride !=
+          0) {
+    throw common::InternalError(
+        "EmitDesignMetadataGlobals",
+        "trace_signal_meta words size not divisible by kStride");
+  }
+  result.trace_signal_meta_words = EmitWordArrayGlobal(
+      mod, ctx, metadata.trace_signal_meta.words,
+      "__lyra_trace_signal_meta_table");
+  result.trace_signal_meta_word_count =
+      static_cast<uint32_t>(metadata.trace_signal_meta.words.size());
+  result.trace_signal_meta_pool = EmitPoolGlobal(
+      mod, ctx, metadata.trace_signal_meta.pool,
+      "__lyra_trace_signal_meta_pool");
+  result.trace_signal_meta_pool_size =
+      static_cast<uint32_t>(metadata.trace_signal_meta.pool.size());
 
   // Instance paths
   auto num_paths = static_cast<uint32_t>(metadata.instance_paths.size());
