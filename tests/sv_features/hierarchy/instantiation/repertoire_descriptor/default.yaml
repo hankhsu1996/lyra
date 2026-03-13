@@ -1,0 +1,231 @@
+feature: repertoire_descriptor
+description: Definition-owned repertoire descriptor with pointer-free coordinates
+
+cases:
+  - name: generate_if_branch_ordinals
+    description: >
+      Branch alternatives are normalized to ordinals by source order.
+      Both branches of a generate-if get deterministic alt indices.
+    dump_repertoire_desc: true
+    sv: |
+      module Top #(parameter bit SEL = 1);
+        generate
+          if (SEL) begin : gen_true
+            logic [7:0] data_a;
+            always_comb $display("true branch");
+          end else begin : gen_false
+            logic [7:0] data_b;
+            always_comb $display("false branch");
+          end
+        endgenerate
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - 'decl "data_a" coord=[branch(ci=1,alt=0)]'
+          - 'decl "data_b" coord=[branch(ci=1,alt=1)]'
+          - "proc always_comb#0 coord=[branch(ci=1,alt=0)]"
+          - "proc always_comb#0 coord=[branch(ci=1,alt=1)]"
+
+  - name: generate_case_branch_ordinals
+    description: >
+      Generate-case alternatives get source-order branch ordinals
+      under the same construct index. Exact match proves sort order.
+    dump_repertoire_desc: true
+    sv: |
+      module Top;
+        generate
+          case (0)
+            0: begin : mode_zero
+              logic [7:0] val_a;
+            end
+            1: begin : mode_one
+              logic [7:0] val_b;
+            end
+            2: begin : mode_two
+              logic [7:0] val_c;
+            end
+          endcase
+        endgenerate
+      endmodule
+    expect:
+      compiler_output: |
+        --- Top (Top) ---
+          decl "val_a" coord=[branch(ci=1,alt=0)]
+          decl "val_b" coord=[branch(ci=1,alt=1)]
+          decl "val_c" coord=[branch(ci=1,alt=2)]
+
+  - name: generate_for_entries
+    description: >
+      Generate-for entries are preserved with individual entry coordinates.
+      Exact match proves canonical sort order.
+    dump_repertoire_desc: true
+    sv: |
+      module Top;
+        generate
+          for (genvar i = 0; i < 3; i++) begin : gen_loop
+            logic [7:0] data;
+          end
+        endgenerate
+      endmodule
+    expect:
+      compiler_output: |
+        --- Top (Top) ---
+          decl "data" coord=[entry(ci=1,idx=0)]
+          decl "data" coord=[entry(ci=1,idx=1)]
+          decl "data" coord=[entry(ci=1,idx=2)]
+
+  - name: nested_coordinates
+    description: >
+      Nested generate paths accumulate correctly. Outer artifact has
+      one-step coord; inner artifact has two-step coord.
+    dump_repertoire_desc: true
+    sv: |
+      module Inner;
+        initial $display("inner");
+      endmodule
+
+      module Top #(parameter bit SEL = 1);
+        generate
+          if (SEL) begin : gen_outer
+            logic [7:0] outer_var;
+            Inner inner_inst();
+            if (SEL) begin : gen_inner
+              logic [7:0] inner_var;
+            end
+          end
+        endgenerate
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - 'decl "outer_var" coord=[branch(ci=1,alt=0)]'
+          - 'decl "inner_var" coord=[branch(ci=1,alt=0), branch(ci=1,alt=0)]'
+          - 'inst "inner_inst"->"Inner" coord=[branch(ci=1,alt=0)]'
+
+  - name: unconditional_artifacts
+    description: >
+      Artifacts not inside any generate have empty coordinates.
+      Exact match proves canonical sort order (decl before proc).
+    dump_repertoire_desc: true
+    sv: |
+      module Top;
+        logic [7:0] x;
+        initial $display("hello");
+      endmodule
+    expect:
+      compiler_output: |
+        --- Top (Top) ---
+          decl "x" coord=[]
+          proc initial#0 coord=[]
+
+  - name: child_instance_payload
+    description: >
+      Child instance records both instance name and target definition name.
+    dump_repertoire_desc: true
+    sv: |
+      module Child;
+        logic [7:0] data;
+      endmodule
+
+      module Top;
+        Child u0();
+        Child u1();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - 'inst "u0"->"Child" coord=[]'
+          - 'inst "u1"->"Child" coord=[]'
+
+  - name: coordinate_local_ordinals
+    description: >
+      Multiple processes under the same coordinate get bucket-local
+      ordinals. Each coordinate bucket starts at 0.
+    dump_repertoire_desc: true
+    sv: |
+      module Top #(parameter bit SEL = 1);
+        always_comb $display("unconditional 0");
+        always_comb $display("unconditional 1");
+        generate
+          if (SEL) begin : gen_a
+            always_comb $display("branch a 0");
+            always_comb $display("branch a 1");
+          end
+        endgenerate
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "proc always_comb#0 coord=[]"
+          - "proc always_comb#1 coord=[]"
+          - "proc always_comb#0 coord=[branch(ci=1,alt=0)]"
+          - "proc always_comb#1 coord=[branch(ci=1,alt=0)]"
+
+  - name: two_constructs_same_parent
+    description: >
+      Two separate generate-if constructs in the same parent scope get
+      distinct construct indices via different constructIndex values.
+    dump_repertoire_desc: true
+    sv: |
+      module Top #(parameter bit A = 1, parameter bit B = 0);
+        generate
+          if (A) begin : gen_first
+            logic [7:0] var_a;
+          end
+          if (B) begin : gen_second
+            logic [7:0] var_b;
+          end else begin : gen_second_else
+            logic [7:0] var_c;
+          end
+        endgenerate
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - 'decl "var_a" coord=[branch(ci=1,alt=0)]'
+          - 'decl "var_b" coord=[branch(ci=2,alt=0)]'
+          - 'decl "var_c" coord=[branch(ci=2,alt=1)]'
+
+  - name: nested_for_inside_if
+    description: >
+      Generate-for nested inside generate-if produces two-step coordinates
+      combining branch and entry steps. Exact match proves sort order.
+    dump_repertoire_desc: true
+    sv: |
+      module Top;
+        generate
+          if (1) begin : gen_branch
+            for (genvar i = 0; i < 2; i++) begin : gen_loop
+              logic [7:0] data;
+            end
+          end
+        endgenerate
+      endmodule
+    expect:
+      compiler_output: |
+        --- Top (Top) ---
+          decl "data" coord=[branch(ci=1,alt=0), entry(ci=1,idx=0)]
+          decl "data" coord=[branch(ci=1,alt=0), entry(ci=1,idx=1)]
+
+  - name: sorted_artifacts_canonical_order
+    description: >
+      Artifacts are sorted deterministically: coord first, then kind,
+      then payload. Decls sort by name, processes by (kind, ordinal).
+      Source order differs from canonical order. Exact match proves
+      sorting, not just presence.
+    dump_repertoire_desc: true
+    sv: |
+      module Top;
+        always_comb $display("proc");
+        logic [7:0] z_var;
+        logic [7:0] a_var;
+        initial $display("init");
+      endmodule
+    expect:
+      compiler_output: |
+        --- Top (Top) ---
+          decl "a_var" coord=[]
+          decl "z_var" coord=[]
+          proc initial#0 coord=[]
+          proc always_comb#0 coord=[]

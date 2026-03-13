@@ -318,7 +318,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
         node,
         {"name", "description", "sv", "files", "plusargs", "param_overrides",
          "pedantic", "trace", "dump_slot_meta", "dump_specialization_map",
-         "dump_repertoire", "expect"},
+         "dump_repertoire", "dump_repertoire_desc", "expect"},
         case_context, path);
 
     // Single-file format: sv: |
@@ -382,6 +382,11 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     // Dump generate repertoire observation (test-only)
     if (node["dump_repertoire"]) {
       test_case.dump_repertoire = node["dump_repertoire"].as<bool>();
+    }
+
+    // Dump repertoire descriptor (test-only)
+    if (node["dump_repertoire_desc"]) {
+      test_case.dump_repertoire_desc = node["dump_repertoire_desc"].as<bool>();
     }
 
     // Parse unified expect: block

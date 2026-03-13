@@ -39,6 +39,7 @@
 #include "lyra/llvm_backend/toolchain.hpp"
 #include "lyra/lowering/ast_to_hir/generate_repertoire.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
+#include "lyra/lowering/ast_to_hir/repertoire_descriptor.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
@@ -360,6 +361,19 @@ auto PrepareLlvmModule(
           std::format("--- {} ({}) ---\n", inst->name, inst->body.name);
       auto inventory = lowering::ast_to_hir::BuildArtifactInventory(inst->body);
       compiler_output += lowering::ast_to_hir::DumpArtifactInventory(inventory);
+    }
+  }
+
+  // Build repertoire descriptor dump (routed to TestResult::compiler_output)
+  if (test_case.dump_repertoire_desc) {
+    const auto& root = parse_result.compilation->getRoot();
+    for (const auto* inst : root.topInstances) {
+      compiler_output +=
+          std::format("--- {} ({}) ---\n", inst->name, inst->body.name);
+      auto desc =
+          lowering::ast_to_hir::BuildDefinitionRepertoireDesc(inst->body);
+      compiler_output +=
+          lowering::ast_to_hir::DumpDefinitionRepertoireDesc(desc);
     }
   }
 

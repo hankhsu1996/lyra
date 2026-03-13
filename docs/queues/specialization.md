@@ -16,6 +16,8 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] M2b partial -- Declaration-based grouping, param-role deleted. v1 discriminator captures declaration-side shape only.
 - [ ] M2c -- Complete compile-owned discriminator (procedural/behavioral shape, runtime-owned type filtering)
   - [x] M2c-2a -- Artifact inventory with generate availability paths
+  - [ ] M2c-2b -- Definition-owned repertoire descriptor
+    - [x] Inspection scaffold landed
 - [ ] E3 remaining -- Remove `mir::Design` from `LoweringInput`, narrow `Context` and `BuildLayout`
 - [ ] E4 -- Delete B5 compatibility adapters, representative-instance scaffolding
 - [ ] B6 -- HIR ownership split (depends on post-M2 grouping contract)
@@ -102,6 +104,22 @@ Data model:
 This is observation/extraction infrastructure, not semantic identity. The block pointers are valid within the borrowed slang compilation lifetime. Later repertoire descriptor design (M2c-2b) will define what survives beyond this extraction boundary.
 
 Files: `generate_repertoire.hpp`, `generate_repertoire.cpp`. Tests: `generate_repertoire/default.yaml`.
+
+### M2c-2b: Definition-owned repertoire descriptor (inspection scaffold landed)
+
+Pointer-free, definition-owned, flat repertoire descriptor built from the M2c-2a artifact inventory. Converts extraction-layer slang pointers into deterministic coordinate ordinals. The descriptor captures all compile-relevant artifacts and the constructor-selection coordinates under which each exists.
+
+This is inspection/modeling infrastructure only. It does not replace the v1 specialization hashing or wire into the discriminator. Hashing integration is deferred to M2c-3. Payload identities (decl names, instance names, process ordinals) are provisional inspection labels, not semantic identity. M2c-2c must strengthen payloads before M2c-3 can build on this.
+
+Data model:
+
+- `SelectionStepDesc` -- one pointer-free coordinate step. `kBranch` alternatives get source-order `alt_index` ordinals; `kArrayEntry` entries keep their iteration index.
+- `RepertoireArtifactDesc` -- artifact kind + coordinate + provisional payload. Payload identity is name-based (decl, child instance) or encounter-order-based (process, continuous assign). These are NOT semantic identity.
+- `DefinitionRepertoireDesc` -- flat sorted vector of artifact descriptors.
+
+Builder phases: (1) build artifact inventory via M2c-2a, (2) traverse definition body to assign branch ordinals by source order, (3) lower each artifact to pointer-free descriptor with bucket-local ordinals, (4) sort deterministically.
+
+Files: `repertoire_descriptor.hpp`, `repertoire_descriptor.cpp`. Tests: `repertoire_descriptor/default.yaml`.
 
 ## E3 remaining: Backend API narrowing
 
