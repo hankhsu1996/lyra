@@ -90,3 +90,41 @@ cases:
           - "s=hello"
           - "__LYRA_TRACE__:"
           - "value_changes="
+
+  - name: trace-no-writes-zero-counts
+    description: Trace enabled with no design slot writes produces zero value/memory counts
+    sv: |
+      module Test;
+        initial $display("done");
+      endmodule
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "__LYRA_TRACE__: time_advances=1 value_changes=0 memory_dirty=0"
+        not_contains:
+          - "__LYRA_TRACE_SLOT__"
+
+  - name: trace-exact-summary-format
+    description: Summary format is stable and exact for a known scenario
+    sv: |
+      module Test;
+        logic [7:0] a;
+        logic [7:0] b;
+        initial begin
+          a = 8'h01;
+          b = 8'h02;
+          #10;
+          a = 8'h03;
+          $display("done");
+        end
+      endmodule
+    trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "time_advances=2"
+          - "value_changes="
+          - "memory_dirty=0"
