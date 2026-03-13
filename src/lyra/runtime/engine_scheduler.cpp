@@ -1,12 +1,14 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <format>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 #include <utility>
 #include <variant>
@@ -38,8 +40,9 @@ void ValidateSlotRootPointer(
   if (!registry.IsPopulated() || design_state_base == nullptr) {
     return;
   }
-  const auto* expected = static_cast<const uint8_t*>(design_state_base) +
-                         registry.Get(slot_id).base_off;
+  auto state = std::span(
+      static_cast<const uint8_t*>(design_state_base), registry.MaxExtent());
+  const auto* expected = &state[registry.Get(slot_id).base_off];
   if (static_cast<const uint8_t*>(ptr) != expected) {
     throw common::InternalError(
         caller, "pointer does not match slot root address");
@@ -48,34 +51,37 @@ void ValidateSlotRootPointer(
 
 // Apply a full-overwrite NBA entry: direct compare/copy.
 // Returns true if the target was changed.
-auto ApplyFullOverwriteNba(const NbaEntry& entry, uint8_t* target) -> bool {
+auto ApplyFullOverwriteNba(const NbaEntry& entry, std::span<uint8_t> target)
+    -> bool {
   if (entry.mask.Size() != 0) {
     throw common::InternalError(
         "ApplyFullOverwriteNba", "mask must be empty for full overwrite");
   }
-  bool changed = std::memcmp(target, entry.value.Data(), entry.byte_size) != 0;
+  bool changed =
+      std::memcmp(target.data(), entry.value.Data(), entry.byte_size) != 0;
   if (changed) {
-    std::memcpy(target, entry.value.Data(), entry.byte_size);
+    std::memcpy(target.data(), entry.value.Data(), entry.byte_size);
   }
   return changed;
 }
 
 // Apply a masked-merge NBA entry: per-byte (old & ~mask) | (new & mask).
 // Returns true if any byte was changed.
-auto ApplyMaskedMergeNba(const NbaEntry& entry, uint8_t* target) -> bool {
+auto ApplyMaskedMergeNba(const NbaEntry& entry, std::span<uint8_t> target)
+    -> bool {
   if (entry.mask.Size() != entry.byte_size) {
     throw common::InternalError("ApplyMaskedMergeNba", "mask size mismatch");
   }
-  const auto* val = entry.value.Data();
-  const auto* mask = entry.mask.Data();
+  auto val = std::span(entry.value.Data(), entry.byte_size);
+  auto mask = std::span(entry.mask.Data(), entry.byte_size);
   bool changed = false;
   for (uint32_t i = 0; i < entry.byte_size; ++i) {
-    uint8_t old_byte = target[i];                                   // NOLINT
-    uint8_t new_byte = (old_byte & ~mask[i]) | (val[i] & mask[i]);  // NOLINT
+    uint8_t old_byte = target[i];
+    uint8_t new_byte = (old_byte & ~mask[i]) | (val[i] & mask[i]);
     if (old_byte != new_byte) {
       changed = true;
     }
-    target[i] = new_byte;  // NOLINT
+    target[i] = new_byte;
   }
   return changed;
 }
@@ -178,6 +184,16 @@ void Engine::ScheduleNba(
       value_ptr == nullptr || byte_size == 0) {
     throw common::InternalError(
         "Engine::ScheduleNba", "null pointer or zero byte_size");
+  }
+
+  // Early-out for full-overwrite NBAs where the value hasn't changed.
+  // Skips buffer allocation, queue push, and later memcmp in kNBA region.
+  // Only applied to unmasked writes; masked-merge has different semantics
+  // (partial byte update) and is rare enough not to warrant the complexity.
+  if (mask_ptr == nullptr &&
+      std::memcmp(write_ptr, value_ptr, byte_size) == 0) {
+    ++stats_.core.nba_elided;
+    return;
   }
 
   ValidateSlotRootPointer(
@@ -305,7 +321,8 @@ void Engine::ExecuteRegion(Region region) {
           throw common::InternalError(
               "Engine::ExecuteRegion(kNBA)", "value size mismatch");
         }
-        auto* target = static_cast<uint8_t*>(entry.write_ptr);
+        auto target =
+            std::span(static_cast<uint8_t*>(entry.write_ptr), entry.byte_size);
         bool changed = false;
 
         switch (entry.mode) {
@@ -507,10 +524,12 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
 
 void Engine::EvaluateAllConnections() {
   if (all_connections_.empty() || design_state_base_ == nullptr) return;
-  auto* base = static_cast<uint8_t*>(design_state_base_);
+  auto design_state = std::span(
+      static_cast<uint8_t*>(design_state_base_),
+      slot_meta_registry_.MaxExtent());
   for (const auto& conn : all_connections_) {
-    auto* src = base + conn.src_byte_offset;
-    auto* dst = base + conn.dst_byte_offset;
+    auto* src = &design_state[conn.src_byte_offset];
+    auto* dst = &design_state[conn.dst_byte_offset];
     if (std::memcmp(dst, src, conn.byte_size) != 0) {
       std::memcpy(dst, src, conn.byte_size);
       MarkSlotDirty(conn.dst_slot_id);
@@ -532,6 +551,10 @@ void Engine::InitCombKernels(
     throw common::InternalError(
         "Engine::InitCombKernels", "InitCombKernels before InitSlotMeta");
   }
+
+  // Wrap raw ABI pointers in spans for safe indexing.
+  auto funcs = std::span(comb_funcs, num_comb);
+  auto proc_states = std::span(states, num_processes_);
 
   // Size comb_kernel_flags_ once from authoritative process count.
   comb_kernel_flags_.resize(num_processes_, 0);
@@ -574,8 +597,8 @@ void Engine::InitCombKernels(
     auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
     comb_kernels_.push_back(
         CombKernel{
-            .func = comb_funcs[ki],
-            .state = states[proc_idx],
+            .func = funcs[ki],
+            .state = proc_states[proc_idx],
             .process_index = proc_idx,
             .flags = flags,
         });
@@ -673,7 +696,9 @@ void Engine::FlushAndPropagateConnections() {
   constexpr uint32_t kMaxIterations = 100;
   const bool detailed = detailed_stats_enabled_;
   uint32_t iterations_used = 0;
-  auto* base = static_cast<uint8_t*>(design_state_base_);
+  auto design_state = std::span(
+      static_cast<uint8_t*>(design_state_base_),
+      slot_meta_registry_.MaxExtent());
 
   // Seed work list from current delta dirty slots.
   auto initial = update_set_.DeltaDirtySlots();
@@ -730,8 +755,8 @@ void Engine::FlushAndPropagateConnections() {
         for (uint32_t ci = start; ci < start + count; ++ci) {
           if (detailed) ++stats_.detailed.conn_considered;
           const auto& conn = all_connections_[ci];
-          auto* src = base + conn.src_byte_offset;
-          auto* dst = base + conn.dst_byte_offset;
+          auto* src = &design_state[conn.src_byte_offset];
+          auto* dst = &design_state[conn.dst_byte_offset];
           if (detailed) ++stats_.detailed.conn_memcmp_executed;
           if (std::memcmp(dst, src, conn.byte_size) != 0) {
             if (detailed) ++stats_.detailed.conn_memcpy_executed;
@@ -769,7 +794,7 @@ void Engine::FlushAndPropagateConnections() {
           auto buf_off = static_cast<uint32_t>(fp_work_.snapshot_buf.size());
           fp_work_.snapshot_buf.resize(buf_off + meta.total_bytes);
           std::memcpy(
-              fp_work_.snapshot_buf.data() + buf_off, base + meta.base_off,
+              &fp_work_.snapshot_buf[buf_off], &design_state[meta.base_off],
               meta.total_bytes);
           fp_work_.snapshot_index[slot_id] =
               static_cast<uint32_t>(fp_work_.snapshots.size());
@@ -823,8 +848,8 @@ void Engine::FlushAndPropagateConnections() {
             fp_work_.snapshot_index[s] != UINT32_MAX) {
           const auto& snap = fp_work_.snapshots[fp_work_.snapshot_index[s]];
           if (std::memcmp(
-                  base + snap.base_off,
-                  fp_work_.snapshot_buf.data() + snap.buf_off,
+                  &design_state[snap.base_off],
+                  &fp_work_.snapshot_buf[snap.buf_off],
                   snap.total_bytes) == 0) {
             continue;
           }
@@ -879,8 +904,13 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
         sink,
         "[lyra][stats][warning] activations_no_write > total_activations\n");
   }
-  if (c.nba_changed > c.nba_entries) {
-    fmt::print(sink, "[lyra][stats][warning] nba_changed > nba_entries\n");
+  if (c.nba_elided > c.nba_entries) {
+    fmt::print(sink, "[lyra][stats][warning] nba_elided > nba_entries\n");
+  }
+  uint64_t non_elided_nba = c.nba_entries - c.nba_elided;
+  if (c.nba_changed > non_elided_nba) {
+    fmt::print(
+        sink, "[lyra][stats][warning] nba_changed > non-elided entries\n");
   }
 
   fmt::print(
@@ -889,12 +919,12 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
       " total_activations={} activations_no_write={}"
       " propagation_calls={} propagation_iterations={}"
       " propagation_max_iterations={}"
-      " nba_entries={} nba_changed={}"
+      " nba_entries={} nba_elided={} nba_changed={}"
       " conn_full_slot={} conn_narrow={}"
       " comb_full_slot={} comb_narrow={}\n",
       c.total_activations, c.activations_no_write, c.propagation_calls,
       c.propagation_iterations, c.propagation_max_iterations, c.nba_entries,
-      c.nba_changed, conn_full_slot_count_, conn_narrow_count_,
+      c.nba_elided, c.nba_changed, conn_full_slot_count_, conn_narrow_count_,
       comb_full_slot_count_, comb_narrow_count_);
 
   if (detailed_stats_enabled_) {
@@ -961,27 +991,24 @@ namespace {
 
 // Async-signal-safe: write a string literal to fd.
 void SafeWrite(int fd, const char* str, size_t len) {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
   static_cast<void>(write(fd, str, len));
 }
 
 // Async-signal-safe: write a uint64 as decimal to fd.
 void SafeWriteU64(int fd, uint64_t val) {
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays)
-  char buf[20];
+  std::array<char, 20> storage{};
+  auto buf = std::span(storage);
   int pos = 19;
   if (val == 0) {
     buf[pos] = '0';
-    SafeWrite(fd, &buf[pos], 1);  // NOLINT
+    SafeWrite(fd, &buf[pos], 1);
     return;
   }
   while (val > 0) {
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
     buf[pos--] = static_cast<char>('0' + (val % 10));
     val /= 10;
   }
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-  SafeWrite(fd, &buf[pos + 1], static_cast<size_t>(19 - pos));  // NOLINT
+  SafeWrite(fd, &buf[pos + 1], static_cast<size_t>(19 - pos));
 }
 
 // Async-signal-safe: write process identity (name or <process N>).
@@ -999,7 +1026,7 @@ void SafeWriteProcess(int fd, uint32_t pid, const ProcessMetaRegistry& meta) {
   }
 }
 
-auto PhaseLabel(uint32_t phase) -> const char* {
+auto PhaseLabel(uint32_t phase) -> std::string_view {
   switch (static_cast<Engine::Phase>(phase)) {
     case Engine::Phase::kIdle:
       return "Idle";
@@ -1030,10 +1057,8 @@ void Engine::DumpSchedulerStatusAsyncSignalSafe(int fd) const {
 
   // Format: lyra: phase=X sim_time=T activations=N current=... last=...
   SafeWrite(fd, "lyra: phase=", 12);
-  const char* label = PhaseLabel(phase);
-  size_t label_len = 0;
-  while (label[label_len] != '\0') ++label_len;  // NOLINT
-  SafeWrite(fd, label, label_len);
+  auto label = PhaseLabel(phase);
+  SafeWrite(fd, label.data(), label.size());
 
   SafeWrite(fd, " sim_time=", 10);
   SafeWriteU64(fd, sim_time);
