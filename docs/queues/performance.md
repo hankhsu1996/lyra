@@ -18,7 +18,7 @@ Ordering principle:
 
 Built with `-c opt`. Pipeline: 8-stage pipe, 10K cycles. Simulation time only.
 
-Throughput table reflects post-G7d state (compiler must-def sensitivity exclusion). The callgrind profile below also reflects post-G7d.
+Throughput table reflects post-G7e state (per-kernel self-edge gating). The callgrind profile below also reflects post-G7e.
 
 | Design       | AOT (s) | Verilator (s) | Ratio |
 | ------------ | ------- | ------------- | ----- |
@@ -39,12 +39,15 @@ Pipeline Ir timeline (`-c opt`, callgrind on AOT binary):
 | Post-G11 (flush fuse)     | ~446M    | neutral |
 | Post-G7c (bucket fix)     | 737M     | +65%    |
 | Post-G7d (must-def Ph1)   | 634M     | -14%    |
+| Post-G7e (self-edge gate) | 525M     | -17%    |
 
 All measurements use `-c opt`. See `docs/profiling.md` for why this is mandatory.
 
 ## Callgrind Profile
 
-Post-G7d with `-c opt`, 634M instructions total. Down from 737M post-G7c (-14%). The compiler must-def analysis eliminates some false comb self-edges, reducing the frequency of the runtime bucket fix path. The remaining gap vs the 446M pre-G7c baseline is from residual runtime bucket overhead on non-whole-variable patterns (Phase 2 scope).
+Post-G7e with `-c opt`, 525M instructions total. Down from 634M post-G7d (-17%). Two changes: (1) hoisted per-call scratch allocations (`pending_seen_`, `snapshot_index_`) to persistent Engine members; (2) per-kernel self-edge metadata gates snapshot capture/comparison per kernel at runtime. Pipeline has zero self-edge kernels, so all snapshot infrastructure is skipped entirely.
+
+FlushAndPropagateConnections dropped from 102.4M to 70.7M (-31%). malloc/free dropped from 91.7M combined to 63M (-31%). Remaining FlushAndPropagateConnections cost is from per-call `pending`/`next_pending`/`comb_writes` vectors and comb kernel evaluation itself.
 
 **Profiling target:** Always profile the AOT binary directly (`out/Top`), not `lyra run`. See `docs/profiling.md` for details.
 
@@ -52,27 +55,27 @@ Top self-cost functions, sorted by instruction count:
 
 | Function                     | Self Ir | Self % | Description                         |
 | ---------------------------- | ------- | ------ | ----------------------------------- |
-| FlushAndPropagateConnections | 102.4M  | 16.1%  | Fixpoint loop + snapshot compare    |
-| free (libc)                  | 50.4M   | 7.9%   | Per-call scratch vector dealloc     |
-| malloc (libc)                | 41.3M   | 6.5%   | Per-call scratch vector alloc       |
-| FlushDirtySlot               | 28.6M   | 4.5%   | Per-slot subscription dispatch      |
-| TouchSlot                    | 27.4M   | 4.3%   | Dirty-slot dedup + range tracking   |
-| MarkSlotDirty                | 25.2M   | 4.0%   | Dirty mark entry point              |
-| memcpy (libc)                | 24.5M   | 3.9%   | Connection/NBA/snapshot copy        |
-| ExecuteRegion                | 22.8M   | 3.6%   | Active region dispatch loop         |
-| LyraSuspendWait              | 20.4M   | 3.2%   | Suspend record fill (codegen ABI)   |
-| memset (libc)                | 20.6M   | 3.2%   | Delta clear + vector zero-init      |
-| ReconcilePostActivation      | 20.3M   | 3.2%   | Post-activation validation          |
-| AotProcessDispatch           | 20.1M   | 3.2%   | Process function pointer trampoline |
-| ScheduleNba                  | 16.7M   | 2.6%   | NBA push                            |
-| FlushSlotEdgeSubs            | 16.1M   | 2.5%   | Edge subscription traversal         |
-| operator new                 | 14.9M   | 2.4%   | Heap alloc (scratch + NBA)          |
-| FlushSignalUpdates           | 14.7M   | 2.3%   | Flush orchestrator (fused in G11)   |
-| EnqueueProcessWakeup         | 14.1M   | 2.2%   | Wakeup queue push                   |
-| memcmp (libc)                | 11.8M   | 1.9%   | Flush/connection/snapshot compare   |
-| ClearDelta                   | 11.3M   | 1.8%   | Per-region range/kind reset         |
-| FlushSlotChangeSubs          | 10.6M   | 1.7%   | Change subscription traversal       |
-| body_1_proc_0                | 9.0M    | 1.4%   | Emitted process code                |
+| FlushAndPropagateConnections | 70.7M   | 13.5%  | Fixpoint loop (no snapshot)         |
+| FlushDirtySlot               | 28.6M   | 5.5%   | Per-slot subscription dispatch      |
+| TouchSlot                    | 27.4M   | 5.2%   | Dirty-slot dedup + range tracking   |
+| _int_free (libc)             | 27.1M   | 5.2%   | Per-call vector dealloc             |
+| MarkSlotDirty                | 25.2M   | 4.8%   | Dirty mark entry point              |
+| ExecuteRegion                | 22.8M   | 4.3%   | Active region dispatch loop         |
+| malloc (libc)                | 22.0M   | 4.2%   | Per-call vector alloc               |
+| memcpy (libc)                | 20.7M   | 3.9%   | Connection/NBA copy                 |
+| LyraSuspendWait              | 20.4M   | 3.9%   | Suspend record fill (codegen ABI)   |
+| ReconcilePostActivation      | 20.3M   | 3.9%   | Post-activation validation          |
+| AotProcessDispatch           | 20.1M   | 3.8%   | Process function pointer trampoline |
+| ScheduleNba                  | 16.7M   | 3.2%   | NBA push                            |
+| FlushSlotEdgeSubs            | 16.1M   | 3.1%   | Edge subscription traversal         |
+| FlushSignalUpdates           | 14.7M   | 2.8%   | Flush orchestrator                  |
+| EnqueueProcessWakeup         | 14.1M   | 2.7%   | Wakeup queue push                   |
+| free (libc)                  | 14.0M   | 2.7%   | General free                        |
+| memset (libc)                | 13.2M   | 2.5%   | Delta clear + vector zero-init      |
+| memcmp (libc)                | 12.0M   | 2.3%   | Flush/connection compare            |
+| ClearDelta                   | 11.3M   | 2.2%   | Per-region range/kind reset         |
+| FlushSlotChangeSubs          | 10.6M   | 2.0%   | Change subscription traversal       |
+| body_1_proc_0                | 9.0M    | 1.7%   | Emitted process code                |
 
 ## Gap Inventory
 
@@ -93,11 +96,15 @@ Baseline: FlushAndPropagateConnections at 46.8M self (10.5%) pre-G7c.
 
 PR #509 added `comb_write_capture_` for correct cross-kernel comb visibility. This exposed a latent bug: `always_comb` blocks with write-then-read of the same variable create a self-edge in the trigger map, causing permanent oscillation. Runtime fix: per-iteration worklist dedup + pre-comb snapshot comparison to suppress net-zero self-triggers.
 
-Regression: 446M -> 737M (+65%). The fix allocates scratch vectors (`pending_seen`, `snapshot_index`, each slot_count-sized) on every one of ~100K calls per simulation, plus per-iteration `next_pending`. This shows up as 48M malloc + 31M free in the profile.
+Regression: 446M -> 737M (+65%). The fix allocates scratch vectors (`pending_seen`, `snapshot_index`, each slot_count-sized) on every one of ~100K calls per simulation, plus per-iteration `next_pending`. G7d+G7e recovered most of this: `pending_seen_` and `snapshot_index_` hoisted to persistent members, snapshot logic gated per kernel. Remaining gap (525M vs 446M) is from per-call `pending`/`next_pending`/`comb_writes` vectors.
 
 **G7d: compiler must-def sensitivity exclusion (Phase 1 done).**
 
-Phase 1 implements whole-variable must-def exclusion with path-sensitive control flow (sequential, if/else, case). Forward dataflow analysis on MIR CFG suppresses reads of signals that are always written before being read. Result: 737M -> 634M Ir (-14%) on pipeline fixture. Remaining gap vs 446M pre-G7c baseline is from residual runtime bucket overhead on patterns not yet covered (projections, partial writes). Phase 2 will extend to field/index/slice projections. See `docs/comb-sensitivity-design.md`.
+Phase 1 implements whole-variable must-def exclusion with path-sensitive control flow (sequential, if/else, case). Forward dataflow analysis on MIR CFG suppresses reads of signals that are always written before being read. Result: 737M -> 634M Ir (-14%) on pipeline fixture. See `docs/comb-sensitivity-design.md`.
+
+**G7e: per-kernel self-edge gating + scratch hoisting (done).**
+
+Two changes: (1) hoist `pending_seen_` and `snapshot_index_` from per-call stack locals to persistent Engine members; (2) compute per-kernel self-edge metadata at compile time (write-set vs trigger-set overlap, slot-granular), gate snapshot capture/comparison per kernel at runtime with global OR for fast skip. Pipeline has zero self-edge kernels, so all snapshot infrastructure is skipped. Result: 634M -> 525M Ir (-17%). Remaining gap vs 446M pre-G7c baseline is from per-call `pending`/`next_pending`/`comb_writes` vector allocations (~63M malloc/free).
 
 **Deferred G7 directions (not current priorities):**
 
@@ -124,22 +131,19 @@ Phase 1 implements whole-variable must-def exclusion with path-sensitive control
 
 ## Prioritized Working Queue
 
-Ranked by measured profile data (pipeline, post-G7d, `-c opt`, 634M instructions).
+Ranked by measured profile data (pipeline, post-G7e, `-c opt`, 525M instructions).
 
-### Tier 0: Regression recovery (partial)
+### Tier 1: Highest impact
 
-1. **G7d Phase 2: Must-def projection coverage** -- Phase 1 recovered 103M Ir (737M -> 634M, -14%). Remaining 188M Ir gap vs pre-G7c baseline (446M) is from projected writes/reads not yet covered by must-def analysis. Extend `AccessPath` with field, index, and slice segments + `Covers` relation.
-
-### Tier 1: Highest impact (after regression recovery)
-
-2. **Process dispatch** -- 5.8% self (22.8M + 20.1M). Region loop + dispatch trampoline overhead.
-3. **Signal flush** -- FlushDirtySlot 4.2% + FlushSlotEdgeSubs 2.3% + FlushSlotChangeSubs 1.8%. Post-fuse (PR #511), cost is dispersed across per-kind helpers. Remaining: dirty-range filtering precision, per-kind tuning.
-4. **ReconcilePostActivation overhead** -- 2.8% self (20.6M Ir). Validation + WaitSiteRegistry::Get on every activation.
+1. **FlushAndPropagateConnections remaining overhead** -- 70.7M (13.5%). With snapshot gating done, remaining cost is per-call vector allocations (`pending`, `next_pending`, `comb_writes`) and comb evaluation. Hoisting these to persistent members would save ~30M in malloc/free.
+2. **Process dispatch** -- 8.1% self (22.8M + 20.1M). Region loop + dispatch trampoline overhead.
+3. **Signal flush** -- FlushDirtySlot 5.5% + FlushSlotEdgeSubs 3.1% + FlushSlotChangeSubs 2.0%. Per-kind subscription helpers.
+4. **ReconcilePostActivation overhead** -- 3.9% self (20.3M Ir). Validation + WaitSiteRegistry::Get on every activation.
 
 ### Tier 2: Moderate impact
 
-5. **G5 remaining: ClearDelta + external ranges** -- 1.6% self for ClearDelta; external range hash map overhead.
-6. **NBA queue lifecycle** -- SmallByteBuffer + operator new/delete. Allocation pressure from NBA entry construction.
+5. **G5 remaining: ClearDelta + external ranges** -- External range hash map overhead.
+6. **NBA queue lifecycle** -- SmallByteBuffer + operator new/delete.
 
 ### Observability
 
@@ -170,4 +174,5 @@ Separate from simulation throughput. AOT binary links `liblyra_runtime.so` (6MB)
 | G6b | Snapshot refresh guard             |      | Skip RefreshInstalledSnapshots when no observed slot is delta-dirty   |
 | G11 | Fused FlushSignalUpdates traversal | #511 | 65.8M -> 14.9M self; dispersed into per-kind helpers                  |
 | G7c | Comb self-trigger bucket fix       | #516 | Correctness fix; +65% Ir regression (446M -> 737M) from scratch alloc |
-| G7d | Must-def sensitivity (Phase 1)     |      | Whole-variable must-def exclusion; 737M -> 634M (-14%)                |
+| G7d | Must-def sensitivity (Phase 1)     | #520 | Whole-variable must-def exclusion; 737M -> 634M (-14%)                |
+| G7e | Self-edge gating + scratch hoist   |      | Per-kernel metadata + hoisted allocs; 634M -> 525M (-17%)             |

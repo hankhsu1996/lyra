@@ -63,6 +63,7 @@ struct CombTriggerInput {
 struct CombKernelInput {
   uint32_t scheduled_process_index = 0;
   std::vector<CombTriggerInput> triggers;
+  bool has_self_edge = false;
 };
 
 // Input facts for a loop site.

@@ -620,6 +620,8 @@ class Engine {
     CombFunc func;
     void* state;
     uint32_t process_index;  // Original index in processes array (for skip)
+    uint32_t flags;          // Bit 0 = kSelfEdge
+    static constexpr uint32_t kSelfEdge = 1U;
   };
   std::vector<CombKernel> comb_kernels_;
   // Structured trigger entries with byte-range observation.
@@ -627,6 +629,8 @@ class Engine {
     uint32_t kernel_idx;
     uint32_t byte_offset;
     uint32_t byte_size;  // 0 = full-slot
+    // Runtime acceleration copy; source of truth is CombKernel::flags.
+    bool has_self_edge;
   };
   std::vector<CombTriggerEntry> comb_trigger_backing_;
   // Dense per-slot range table into comb_trigger_backing_ (sized from slot
@@ -673,6 +677,17 @@ class Engine {
   // Static comb trigger batch shape (populated once in InitCombKernels).
   uint32_t comb_full_slot_count_ = 0;
   uint32_t comb_narrow_count_ = 0;
+
+  // True if any comb kernel has self-edge risk. Controls whether snapshot
+  // infrastructure is allocated in FlushAndPropagateConnections.
+  bool has_any_self_edge_comb_ = false;
+
+  // Persistent scratch storage for FlushAndPropagateConnections, allocated once
+  // in InitCombKernels to avoid per-call malloc/free. Both use lazy clear
+  // (only touched elements are reset each iteration).
+  std::vector<uint8_t> pending_seen_;
+  // Only allocated when has_any_self_edge_comb_ is true.
+  std::vector<uint32_t> snapshot_index_;
 };
 
 }  // namespace lyra::runtime

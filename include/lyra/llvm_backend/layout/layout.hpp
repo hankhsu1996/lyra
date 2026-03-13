@@ -131,6 +131,9 @@ struct CombTrigger {
 struct CombKernelEntry {
   mir::ProcessId process_id;
   std::vector<CombTrigger> triggers;
+  // True if the kernel's write slot set overlaps its trigger slot set.
+  // Conservative: slot-granular, so sub-slot disjointness is not considered.
+  bool has_self_edge = false;
 };
 
 // Index into module-instance parallel arrays (instance_base_byte_offsets,
