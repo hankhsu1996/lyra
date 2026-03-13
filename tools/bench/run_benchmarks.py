@@ -35,12 +35,12 @@ DESIGNS = {
 TIER_CONFIG = {
     "pr": {
         "designs": ["stress-array", "pipeline"],
-        "backends": ["aot", "jit", "verilator"],
+        "backends": ["aot", "aot-two-state", "jit", "verilator"],
         "default_trials": 1,
     },
     "nightly": {
         "designs": ["stress-array", "pipeline"],
-        "backends": ["aot", "jit", "verilator"],
+        "backends": ["aot", "aot-two-state", "jit", "verilator"],
         "default_trials": 3,
     },
 }
@@ -126,13 +126,17 @@ def time_binary(binary_path: str) -> tuple[float, str]:
 
 def run_lyra_jit(
     lyra: str, project_dir: str, design: str, stats_path: str,
+    two_state: bool = False,
 ) -> BenchResult:
-    result = BenchResult(design=design, backend="jit")
+    backend_name = "jit-two-state" if two_state else "jit"
+    result = BenchResult(design=design, backend=backend_name)
     cmd = [
         lyra, "-C", project_dir, "run",
         "--backend=jit",
         "--stats-out", stats_path,
     ]
+    if two_state:
+        cmd.append("--two-state")
     try:
         t0 = time.monotonic()
         proc = subprocess.run(
@@ -163,9 +167,10 @@ def run_lyra_jit(
 
 def run_lyra_aot(
     lyra: str, project_dir: str, design: str, stats_path: str,
-    output_dir: str,
+    output_dir: str, two_state: bool = False,
 ) -> BenchResult:
-    result = BenchResult(design=design, backend="aot")
+    backend_name = "aot-two-state" if two_state else "aot"
+    result = BenchResult(design=design, backend=backend_name)
 
     # Step 1: compile
     cmd = [
@@ -173,6 +178,8 @@ def run_lyra_aot(
         "--stats-out", stats_path,
         "-o", output_dir,
     ]
+    if two_state:
+        cmd.append("--two-state")
     try:
         t0 = time.monotonic()
         proc = subprocess.run(
@@ -311,12 +318,15 @@ def run_one_trial(
 ) -> BenchResult:
     stats_path = os.path.join(tmpdir, f"{design}-{backend}-{trial_idx}.json")
 
-    if backend == "jit":
-        return run_lyra_jit(lyra, project_dir, design, stats_path)
-    elif backend == "aot":
-        aot_out = os.path.join(tmpdir, f"{design}-aot-{trial_idx}")
+    two_state = backend.endswith("-two-state")
+    base_backend = backend.removesuffix("-two-state")
+
+    if base_backend == "jit":
+        return run_lyra_jit(lyra, project_dir, design, stats_path, two_state)
+    elif base_backend == "aot":
+        aot_out = os.path.join(tmpdir, f"{design}-{backend}-{trial_idx}")
         os.makedirs(aot_out, exist_ok=True)
-        return run_lyra_aot(lyra, project_dir, design, stats_path, aot_out)
+        return run_lyra_aot(lyra, project_dir, design, stats_path, aot_out, two_state)
     elif backend == "verilator":
         ver_dir = os.path.join(tmpdir, f"{design}-verilator-{trial_idx}")
         os.makedirs(ver_dir, exist_ok=True)
@@ -390,17 +400,19 @@ def print_markdown(
     print()
     print("### Simulation Performance")
     print()
-    print("| Design | Lyra AOT (s) | Verilator (s) |")
-    print("|--------|--------------|---------------|")
+    print("| Design | Lyra 4-state (s) | Lyra 2-state (s) | Verilator (s) |")
+    print("|--------|------------------|------------------|---------------|")
     for design in designs:
         backends = grouped.get(design, {})
         aot = backends.get("aot")
+        aot_two_state = backends.get("aot-two-state")
         ver = backends.get("verilator")
 
         aot_sim = fmt_time(aot.sim_s) if aot and not aot.error else "FAIL" if aot else "-"
+        aot_2s_sim = fmt_time(aot_two_state.sim_s) if aot_two_state and not aot_two_state.error else "FAIL" if aot_two_state else "-"
         ver_sim = fmt_time(ver.sim_s) if ver and not ver.error else "FAIL" if ver else "-"
 
-        print(f"| {design} | {aot_sim} | {ver_sim} |")
+        print(f"| {design} | {aot_sim} | {aot_2s_sim} | {ver_sim} |")
 
     # Table 2: Compile Time
     print()

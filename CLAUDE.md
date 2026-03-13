@@ -54,6 +54,12 @@ lyra dump mir [files...]         # Dump MIR representation
 lyra dump llvm [files...]        # Dump LLVM IR
 ```
 
+### Simulation Flags
+
+```bash
+lyra run --two-state [files...]  # Enable 2-state mode (disables X/Z tracking)
+```
+
 ### Debugging Flags
 
 ```bash
