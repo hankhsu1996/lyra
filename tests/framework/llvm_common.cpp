@@ -40,6 +40,7 @@
 #include "lyra/lowering/ast_to_hir/generate_repertoire.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/repertoire_descriptor.hpp"
+#include "lyra/lowering/ast_to_hir/repertoire_descriptor_debug.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
@@ -370,10 +371,11 @@ auto PrepareLlvmModule(
     for (const auto* inst : root.topInstances) {
       compiler_output +=
           std::format("--- {} ({}) ---\n", inst->name, inst->body.name);
-      auto desc =
-          lowering::ast_to_hir::BuildDefinitionRepertoireDesc(inst->body);
+      auto [desc, debug_view] =
+          lowering::ast_to_hir::BuildDefinitionRepertoireDescWithDebugView(
+              inst->body);
       compiler_output +=
-          lowering::ast_to_hir::DumpDefinitionRepertoireDesc(desc);
+          lowering::ast_to_hir::DumpDefinitionRepertoireDesc(desc, debug_view);
     }
   }
 

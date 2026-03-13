@@ -107,7 +107,49 @@ Parameters that are unused or optimized away. Must not affect the specialization
 
 ### Classification Rule
 
-The compiler determines classification by examining what each parameter influences after elaboration. The `BehaviorFingerprint` is computed from execution-time results (packed layout, compiled code shape), not from raw parameter values. Two different parameter assignments that produce identical execution-time results map to the same specialization.
+The compiler determines classification by examining what each parameter influences after elaboration. The `BehaviorFingerprint` is computed from compile-owned facts (packed layout, compiled code shape), not from raw parameter values. Two different parameter assignments that produce identical compile-owned facts map to the same specialization.
+
+## Type Ownership
+
+A single SystemVerilog type declaration (e.g., `logic [7:0] data [0:3]`) encodes facts that belong to different owners in the compilation model. Lyra separates these into distinct ownership worlds:
+
+### Compile-owned type facts
+
+Facts that affect compiled artifact identity and code shape. These are inputs to specialization grouping and are baked into generated code.
+
+- Packed bit width, signedness, two-state vs four-state
+- Packed array element type and packed range
+- Packed struct/union field layout (types, bit offsets, bit widths)
+- Enum base type and member values
+- Unpacked container element type (the compiled access pattern depends on it)
+
+Two instances with different compile-owned type facts require different specializations.
+
+### Constructor-owned type facts
+
+Facts resolved when the design is constructed (realization phase). They affect instance layout and container sizing but not compiled code.
+
+- Unpacked array dimensions (number of elements)
+- Queue maximum bound
+- Instance counts and topology
+- Generate-controlled existence of artifacts
+
+Two instances with different constructor-owned facts but identical compile-owned facts share one specialization. Their differences are resolved during realization.
+
+### Runtime-owned state
+
+Mutable simulation state that changes during execution.
+
+- Field values
+- Container contents
+- String values
+- Dynamic array / queue storage
+
+### Why this matters
+
+These are not "two unrelated type systems." They are one semantic truth projected into owner-specific views. The `TypeArena` in `common/` serves the runtime/codegen world (HIR, MIR, layout, interpreter). The `CompileOwnedTypeStore` in `lowering/ast_to_hir/` captures compile-owned type facts for specialization identity. Both derive from the same frontend types but capture different subsets of information.
+
+Specialization identity requires compile-owned facts only. Constructor-owned and runtime-owned facts must not split specializations. This separation is a first-class architectural principle, not an implementation detail of one subsystem.
 
 ## Containers
 
@@ -261,12 +303,13 @@ These invariants must be enforced automatically:
 | Module Definition   | Source-level `module M; ... endmodule`                                         |
 | Specialization      | `(ModuleDefId, BehaviorFingerprint)` -- unit of compilation                    |
 | Instance            | Runtime object with `this_base`                                                |
-| BehaviorFingerprint | Hash of execution-time inputs that affect the compiled artifact                |
+| BehaviorFingerprint | Hash of compile-owned inputs that affect the compiled artifact                 |
 | SpecLayout          | Specialization-scoped mapping from slot to offset                              |
 | Design Realization  | Materializing the executable runtime image from specializations + design graph |
 | InstanceConstBlock  | Per-instance storage for value-only parameters                                 |
 | Kernelization       | Transforming a process into an inline-callable kernel                          |
 | Elaboration-time    | Properties resolved during elaboration (containers, topology, processes)       |
-| Execution-time      | Properties requiring specialization (packed widths, compiled code shape)       |
+| Compile-owned       | Type/behavior facts requiring specialization (packed widths, code shape)       |
+| Constructor-owned   | Type facts resolved at realization (unpacked dimensions, container sizing)     |
 | Container           | Unpacked array with elaboration-resolved size and layout metadata              |
 | Arena               | Contiguous byte memory for design state, allocated after elaboration           |

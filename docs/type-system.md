@@ -71,6 +71,20 @@ This enables methods like `.next()`, `.prev()`, `.name()` to access enum metadat
 - **Stability**: External API changes don't ripple through backend
 - **Lifetime**: Backend types outlive frontend compilation
 
+## Type Ownership Boundaries
+
+A single SystemVerilog type encodes facts owned by different phases of the compilation model. `TypeArena` serves the runtime/codegen world -- it captures the full type shape needed for value operations, layout computation, and code generation. But not all type facts are relevant to all consumers.
+
+**Compile-owned type facts** (specialization identity): packed width, signedness, two-state vs four-state, packed array element type and range, struct/union field layout, enum base type and member values, unpacked container element type. These are captured in `CompileOwnedTypeStore` as structured, pointer-free, hashable descriptors. Two instances with different compile-owned type facts require different specializations.
+
+**Constructor-owned type facts** (realization metadata): unpacked array dimensions, queue bounds, container sizing. These affect instance layout but not compiled code. They are resolved during realization and do not split specializations.
+
+**Runtime-owned state**: field values, container contents, dynamic storage. Changes during simulation.
+
+`TypeArena` captures both compile-owned and constructor-owned properties in a unified representation. `CompileOwnedTypeStore` is a separate projection that captures only compile-owned facts, stripping constructor-owned properties (dimensions, bounds) and names. Both derive from the same frontend types.
+
+See [compilation-model.md](compilation-model.md) for the full ownership model and specialization boundary rules.
+
 ## Four-State Representation
 
 SystemVerilog has 4-state logic (0, 1, X, Z). The representation uses separate masks:

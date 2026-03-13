@@ -22,8 +22,8 @@ cases:
     expect:
       compiler_output:
         contains:
-          - 'decl "data_a" coord=[branch(ci=1,alt=0)]'
-          - 'decl "data_b" coord=[branch(ci=1,alt=1)]'
+          - 'decl #0 "data_a" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=1,alt=0)]'
+          - 'decl #0 "data_b" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=1,alt=1)]'
           - "proc always_comb#0 coord=[branch(ci=1,alt=0)]"
           - "proc always_comb#0 coord=[branch(ci=1,alt=1)]"
 
@@ -51,9 +51,9 @@ cases:
     expect:
       compiler_output: |
         --- Top (Top) ---
-          decl "val_a" coord=[branch(ci=1,alt=0)]
-          decl "val_b" coord=[branch(ci=1,alt=1)]
-          decl "val_c" coord=[branch(ci=1,alt=2)]
+          decl #0 "val_a" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=1,alt=0)]
+          decl #0 "val_b" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=1,alt=1)]
+          decl #0 "val_c" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=1,alt=2)]
 
   - name: generate_for_entries
     description: >
@@ -71,9 +71,9 @@ cases:
     expect:
       compiler_output: |
         --- Top (Top) ---
-          decl "data" coord=[entry(ci=1,idx=0)]
-          decl "data" coord=[entry(ci=1,idx=1)]
-          decl "data" coord=[entry(ci=1,idx=2)]
+          decl #0 "data" packed_array<integral<1,u,4s>>[7:0] coord=[entry(ci=1,idx=0)]
+          decl #0 "data" packed_array<integral<1,u,4s>>[7:0] coord=[entry(ci=1,idx=1)]
+          decl #0 "data" packed_array<integral<1,u,4s>>[7:0] coord=[entry(ci=1,idx=2)]
 
   - name: nested_coordinates
     description: >
@@ -99,8 +99,8 @@ cases:
     expect:
       compiler_output:
         contains:
-          - 'decl "outer_var" coord=[branch(ci=1,alt=0)]'
-          - 'decl "inner_var" coord=[branch(ci=1,alt=0), branch(ci=1,alt=0)]'
+          - 'decl #0 "outer_var" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=1,alt=0)]'
+          - 'decl #0 "inner_var" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=1,alt=0), branch(ci=1,alt=0)]'
           - 'inst "inner_inst"->"Inner" coord=[branch(ci=1,alt=0)]'
 
   - name: unconditional_artifacts
@@ -116,7 +116,7 @@ cases:
     expect:
       compiler_output: |
         --- Top (Top) ---
-          decl "x" coord=[]
+          decl #0 "x" packed_array<integral<1,u,4s>>[7:0] coord=[]
           proc initial#0 coord=[]
 
   - name: child_instance_payload
@@ -183,9 +183,9 @@ cases:
     expect:
       compiler_output:
         contains:
-          - 'decl "var_a" coord=[branch(ci=1,alt=0)]'
-          - 'decl "var_b" coord=[branch(ci=2,alt=0)]'
-          - 'decl "var_c" coord=[branch(ci=2,alt=1)]'
+          - 'decl #0 "var_a" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=1,alt=0)]'
+          - 'decl #0 "var_b" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=2,alt=0)]'
+          - 'decl #0 "var_c" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=2,alt=1)]'
 
   - name: nested_for_inside_if
     description: >
@@ -205,15 +205,15 @@ cases:
     expect:
       compiler_output: |
         --- Top (Top) ---
-          decl "data" coord=[branch(ci=1,alt=0), entry(ci=1,idx=0)]
-          decl "data" coord=[branch(ci=1,alt=0), entry(ci=1,idx=1)]
+          decl #0 "data" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=1,alt=0), entry(ci=1,idx=0)]
+          decl #0 "data" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=1,alt=0), entry(ci=1,idx=1)]
 
   - name: sorted_artifacts_canonical_order
     description: >
       Artifacts are sorted deterministically: coord first, then kind,
-      then payload. Decls sort by name, processes by (kind, ordinal).
-      Source order differs from canonical order. Exact match proves
-      sorting, not just presence.
+      then payload. Decls sort by ordinal (encounter order, not name).
+      Processes by (kind, ordinal). Source order differs from canonical
+      order only for process kinds. Exact match proves sorting.
     dump_repertoire_desc: true
     sv: |
       module Top;
@@ -225,7 +225,123 @@ cases:
     expect:
       compiler_output: |
         --- Top (Top) ---
-          decl "a_var" coord=[]
-          decl "z_var" coord=[]
+          decl #0 "z_var" packed_array<integral<1,u,4s>>[7:0] coord=[]
+          decl #1 "a_var" packed_array<integral<1,u,4s>>[7:0] coord=[]
           proc initial#0 coord=[]
           proc always_comb#0 coord=[]
+
+  - name: same_name_different_packed_width
+    description: >
+      Same decl name under different coordinates can have different
+      compile-owned types. Type representations differ when widths differ.
+    dump_repertoire_desc: true
+    sv: |
+      module Top #(parameter bit SEL = 1);
+        generate
+          if (SEL) begin : gen_a
+            logic [7:0] data;
+          end else begin : gen_b
+            logic [15:0] data;
+          end
+        endgenerate
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - 'decl #0 "data" packed_array<integral<1,u,4s>>[7:0] coord=[branch(ci=1,alt=0)]'
+          - 'decl #0 "data" packed_array<integral<1,u,4s>>[15:0] coord=[branch(ci=1,alt=1)]'
+
+  - name: unpacked_array_strips_dimension
+    description: >
+      Different unpacked array sizes produce the same compile-owned type
+      representation because dimensions are runtime-owned.
+    dump_repertoire_desc: true
+    sv: |
+      module Top;
+        logic [7:0] arr_small [0:3];
+        logic [7:0] arr_large [0:15];
+      endmodule
+    expect:
+      compiler_output: |
+        --- Top (Top) ---
+          decl #0 "arr_small" unpacked_array<packed_array<integral<1,u,4s>>[7:0]> coord=[]
+          decl #1 "arr_large" unpacked_array<packed_array<integral<1,u,4s>>[7:0]> coord=[]
+
+  - name: packed_element_type_change
+    description: >
+      Same container shape (packed array) but different element types
+      produce different compile-owned type representations.
+    dump_repertoire_desc: true
+    sv: |
+      module Top;
+        logic [3:0][7:0] byte_array;
+        logic [3:0][15:0] word_array;
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - 'decl #0 "byte_array" packed_array<packed_array<integral<1,u,4s>>[7:0]>[3:0]'
+          - 'decl #1 "word_array" packed_array<packed_array<integral<1,u,4s>>[15:0]>[3:0]'
+
+  - name: decl_source_order_not_alphabetical
+    description: >
+      Two decls in one coordinate bucket get encounter-order ordinals.
+      z_var comes first because it appears first in source, not because
+      of alphabetical sorting.
+    dump_repertoire_desc: true
+    sv: |
+      module Top;
+        logic [7:0] z_var;
+        logic [7:0] a_var;
+      endmodule
+    expect:
+      compiler_output: |
+        --- Top (Top) ---
+          decl #0 "z_var" packed_array<integral<1,u,4s>>[7:0] coord=[]
+          decl #1 "a_var" packed_array<integral<1,u,4s>>[7:0] coord=[]
+
+  - name: shared_decl_type_ids
+    description: >
+      Two declarations with identical compile-owned type produce the
+      same type representation in the dump.
+    dump_repertoire_desc: true
+    sv: |
+      module Top;
+        logic [7:0] x;
+        logic [7:0] y;
+      endmodule
+    expect:
+      compiler_output: |
+        --- Top (Top) ---
+          decl #0 "x" packed_array<integral<1,u,4s>>[7:0] coord=[]
+          decl #1 "y" packed_array<integral<1,u,4s>>[7:0] coord=[]
+
+  - name: two_state_integral
+    description: >
+      Two-state types (bit) are captured correctly in the type store.
+    dump_repertoire_desc: true
+    sv: |
+      module Top;
+        bit [7:0] data;
+        int counter;
+      endmodule
+    expect:
+      compiler_output: |
+        --- Top (Top) ---
+          decl #0 "data" packed_array<integral<1,u,2s>>[7:0] coord=[]
+          decl #1 "counter" integral<32,s,2s> coord=[]
+
+  - name: signed_integral
+    description: >
+      Signed types are captured correctly.
+    dump_repertoire_desc: true
+    sv: |
+      module Top;
+        logic signed [15:0] signed_val;
+        integer int_val;
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - 'decl #0 "signed_val" packed_array<integral<1,s,4s>>[15:0]'
+          - 'decl #1 "int_val" integral<32,s,4s>'

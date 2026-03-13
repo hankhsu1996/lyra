@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <format>
 #include <map>
+#include <string>
 #include <tuple>
 #include <utility>
 
@@ -12,10 +13,13 @@
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
+#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/lowering/ast_to_hir/compile_owned_type_desc.hpp"
 #include "lyra/lowering/ast_to_hir/generate_repertoire.hpp"
+#include "lyra/lowering/ast_to_hir/repertoire_descriptor_debug.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -197,7 +201,7 @@ auto ComparePayload(const RepertoirePayload& a, const RepertoirePayload& b)
         using T = std::decay_t<decltype(a_val)>;
         const auto& b_val = std::get<T>(b);
         if constexpr (std::is_same_v<T, DeclArtifactDesc>) {
-          return a_val.name < b_val.name;
+          return a_val.local_ordinal < b_val.local_ordinal;
         } else if constexpr (std::is_same_v<T, ProcessArtifactDesc>) {
           return std::tie(a_val.process_kind, a_val.local_ordinal) <
                  std::tie(b_val.process_kind, b_val.local_ordinal);
@@ -238,6 +242,16 @@ struct ProcessOrdinalKey {
   }
 };
 
+// Ordinal bucket key for declarations: coord only.
+// Declarations get encounter-order ordinals within each coordinate bucket.
+struct DeclOrdinalKey {
+  RepertoireCoord coord;
+
+  auto operator<(const DeclOrdinalKey& other) const -> bool {
+    return CompareCoord(coord, other.coord) < 0;
+  }
+};
+
 // Ordinal bucket key for continuous assigns: coord only.
 struct ContAssignOrdinalKey {
   RepertoireCoord coord;
@@ -249,8 +263,20 @@ struct ContAssignOrdinalKey {
 
 }  // namespace
 
-auto BuildDefinitionRepertoireDesc(const slang::ast::InstanceBodySymbol& body)
-    -> DefinitionRepertoireDesc {
+auto RepertoireDebugView::Key::operator<(const Key& other) const -> bool {
+  auto cmp = CompareCoord(coord, other.coord);
+  if (cmp != 0) {
+    return cmp < 0;
+  }
+  return local_ordinal < other.local_ordinal;
+}
+
+namespace {
+
+// Internal builder that produces both semantic descriptor and debug view
+// in one pass. No redundant inventory walks.
+auto BuildDescInternal(const slang::ast::InstanceBodySymbol& body)
+    -> std::pair<DefinitionRepertoireDesc, RepertoireDebugView> {
   // Step 1: Build artifact inventory using M2c-2a extraction.
   auto inventory = BuildArtifactInventory(body);
 
@@ -260,18 +286,30 @@ auto BuildDefinitionRepertoireDesc(const slang::ast::InstanceBodySymbol& body)
   BuildBranchOrdinals(body, {}, next_ordinal, ordinal_map);
 
   // Step 3 & 4: Lower each artifact to pointer-free descriptor
-  // and assign local ordinals.
+  // and assign local ordinals. Collect debug names alongside.
+  std::map<DeclOrdinalKey, uint32_t> decl_ordinals;
   std::map<ProcessOrdinalKey, uint32_t> process_ordinals;
   std::map<ContAssignOrdinalKey, uint32_t> cont_ordinals;
 
   DefinitionRepertoireDesc desc;
+  RepertoireDebugView debug_view;
 
-  // Decls
+  // Decls: assign ordinals by encounter order within coord bucket,
+  // intern type into compile-owned type store, collect debug names.
   for (const auto& handle : inventory.decls) {
     auto coord = LowerAvailability(handle.availability, ordinal_map);
+    auto ordinal_key = DeclOrdinalKey{coord};
+    auto ordinal = decl_ordinals[ordinal_key]++;
+
+    // Inventory decl handles are guaranteed to be ValueSymbol-backed
+    // (variable/net declarations only).
+    const auto& value_sym = handle.symbol->as<slang::ast::ValueSymbol>();
+    auto type_id = InternCompileOwnedType(value_sym.getType(), desc.type_store);
+
+    debug_view.decl_names[{coord, ordinal}] = std::string(handle.symbol->name);
     desc.artifacts.push_back(
         {RepertoireArtifactKind::kDecl, std::move(coord),
-         DeclArtifactDesc{std::string(handle.symbol->name)}});
+         DeclArtifactDesc{.local_ordinal = ordinal, .type_id = type_id}});
   }
 
   // Processes
@@ -309,56 +347,90 @@ auto BuildDefinitionRepertoireDesc(const slang::ast::InstanceBodySymbol& body)
   // Step 5: Sort deterministically.
   std::sort(desc.artifacts.begin(), desc.artifacts.end(), LessArtifactDesc);
 
-  return desc;
+  return {std::move(desc), std::move(debug_view)};
 }
 
-auto DumpDefinitionRepertoireDesc(const DefinitionRepertoireDesc& desc)
+auto FindDebugName(
+    const RepertoireDebugView& debug_view, const RepertoireCoord& coord,
+    uint32_t ordinal) -> std::string_view {
+  auto it = debug_view.decl_names.find({coord, ordinal});
+  if (it != debug_view.decl_names.end()) {
+    return it->second;
+  }
+  return "?";
+}
+
+auto DumpCoord(const RepertoireCoord& coord) -> std::string {
+  if (coord.empty()) {
+    return "coord=[]";
+  }
+  std::string result = "coord=[";
+  for (size_t i = 0; i < coord.size(); ++i) {
+    if (i > 0) {
+      result += ", ";
+    }
+    const auto& step = coord[i];
+    switch (step.kind) {
+      case SelectionStepKind::kBranch:
+        result += std::format(
+            "branch(ci={},alt={})", step.construct_index, step.alt_index);
+        break;
+      case SelectionStepKind::kArrayEntry:
+        result += std::format(
+            "entry(ci={},idx={})", step.construct_index, step.alt_index);
+        break;
+    }
+  }
+  result += "]";
+  return result;
+}
+
+}  // namespace
+
+auto BuildDefinitionRepertoireDesc(const slang::ast::InstanceBodySymbol& body)
+    -> DefinitionRepertoireDesc {
+  return BuildDescInternal(body).first;
+}
+
+auto BuildDefinitionRepertoireDescWithDebugView(
+    const slang::ast::InstanceBodySymbol& body)
+    -> std::pair<DefinitionRepertoireDesc, RepertoireDebugView> {
+  return BuildDescInternal(body);
+}
+
+auto DumpDefinitionRepertoireDesc(
+    const DefinitionRepertoireDesc& desc, const RepertoireDebugView& debug_view)
     -> std::string {
   std::string result;
 
   for (const auto& artifact : desc.artifacts) {
-    // Kind and identity
     std::visit(
         [&](const auto& payload) {
           using T = std::decay_t<decltype(payload)>;
           if constexpr (std::is_same_v<T, DeclArtifactDesc>) {
-            result += std::format("  decl \"{}\"", payload.name);
+            auto debug_name = FindDebugName(
+                debug_view, artifact.coord, payload.local_ordinal);
+            auto type_str =
+                DumpCompileOwnedType(desc.type_store, payload.type_id);
+            result += std::format(
+                "  decl #{} \"{}\" {} {}", payload.local_ordinal, debug_name,
+                type_str, DumpCoord(artifact.coord));
           } else if constexpr (std::is_same_v<T, ProcessArtifactDesc>) {
             result += std::format(
-                "  proc {}#{}", ProcessKindLabel(payload.process_kind),
-                payload.local_ordinal);
+                "  proc {}#{} {}", ProcessKindLabel(payload.process_kind),
+                payload.local_ordinal, DumpCoord(artifact.coord));
           } else if constexpr (std::is_same_v<T, ChildInstanceArtifactDesc>) {
             result += std::format(
-                "  inst \"{}\"->\"{}\"", payload.inst_name, payload.target_def);
+                "  inst \"{}\"->\"{}\" {}", payload.inst_name,
+                payload.target_def, DumpCoord(artifact.coord));
           } else {
-            result += std::format("  cont #{}", payload.local_ordinal);
+            result += std::format(
+                "  cont #{} {}", payload.local_ordinal,
+                DumpCoord(artifact.coord));
           }
         },
         artifact.payload);
-
-    // Coordinate
-    if (artifact.coord.empty()) {
-      result += " coord=[]\n";
-    } else {
-      result += " coord=[";
-      for (size_t i = 0; i < artifact.coord.size(); ++i) {
-        if (i > 0) {
-          result += ", ";
-        }
-        const auto& step = artifact.coord[i];
-        switch (step.kind) {
-          case SelectionStepKind::kBranch:
-            result += std::format(
-                "branch(ci={},alt={})", step.construct_index, step.alt_index);
-            break;
-          case SelectionStepKind::kArrayEntry:
-            result += std::format(
-                "entry(ci={},idx={})", step.construct_index, step.alt_index);
-            break;
-        }
-      }
-      result += "]\n";
-    }
+    result += "\n";
   }
 
   return result;

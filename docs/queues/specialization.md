@@ -18,6 +18,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
   - [x] M2c-2a -- Artifact inventory with generate availability paths
   - [ ] M2c-2b -- Definition-owned repertoire descriptor
     - [x] Inspection scaffold landed
+    - [x] M2c-2c partial -- Declaration payload strengthening (ordinals + interned type IDs)
 - [ ] E3 remaining -- Remove `mir::Design` from `LoweringInput`, narrow `Context` and `BuildLayout`
 - [ ] E4 -- Delete B5 compatibility adapters, representative-instance scaffolding
 - [ ] B6 -- HIR ownership split (depends on post-M2 grouping contract)
@@ -121,6 +122,20 @@ Builder phases: (1) build artifact inventory via M2c-2a, (2) traverse definition
 
 Files: `repertoire_descriptor.hpp`, `repertoire_descriptor.cpp`. Tests: `repertoire_descriptor/default.yaml`.
 
+### M2c-2c partial: Declaration payload strengthening
+
+Declaration payloads now use coordinate-local ordinals and structured compile-owned type IDs instead of raw name strings:
+
+- `DeclArtifactDesc` contains `local_ordinal` (encounter order within coordinate bucket) and `TypeDescId` (reference into the definition's `CompileOwnedTypeStore`).
+- `CompileOwnedTypeStore` is a per-definition interning store of compile-owned type facts. Each entry has a `TypeDescKind` and a typed payload variant. Structurally identical types within the same definition reuse the same `TypeDescId` via linear deduplication in `InternCompileOwnedType`.
+- Type lowering captures compile-owned representation shape only: integral width/signedness/four-state, packed array element + range, packed struct/union field layout, enum base + member values, unpacked container element types. Names and runtime-owned properties (unpacked dimensions, queue bounds) are stripped.
+- Debug labels (declaration names) are not part of semantic identity. The dump function recovers names from the body at dump time; no debug labels are stored in the semantic descriptor.
+- `DefinitionRepertoireDesc` now owns a `CompileOwnedTypeStore` shared by all declaration artifacts.
+
+Process/child-instance/continuous-assign payloads remain provisional. Process semantic identity is the main open blocker for M2c completion. M2c-3 (discriminator integration) remains blocked until process identity is resolved.
+
+Files: `compile_owned_type_desc.hpp`, `compile_owned_type_desc.cpp`, `repertoire_descriptor.hpp`, `repertoire_descriptor.cpp`. Tests: `repertoire_descriptor/default.yaml`.
+
 ## E3 remaining: Backend API narrowing
 
 `CodegenSession` no longer carries `const mir::Design*` (done). Remaining scope:
@@ -154,6 +169,51 @@ Depends on the post-M2 grouping contract: the specialization groups that define 
 | G5: Specialization IR is topology-independent                  | Regression test         | Not added yet |
 | G6: No instance paths in specialization artifacts              | Policy check            | Not added yet |
 | G7: Specialization grouping is deterministic                   | Regression test         | Not added yet |
+
+## Architecture Gap: Type Ownership Model
+
+The codebase has two type worlds that serve different owners:
+
+- `TypeArena` (`common/type.hpp`): Unified type representation for HIR, MIR, codegen, layout, runtime. Captures both compile-owned and constructor-owned properties in one interned type graph.
+- `CompileOwnedTypeStore` (`lowering/ast_to_hir/compile_owned_type_desc.hpp`): Compile-owned type facts only, for specialization identity. Strips constructor-owned properties (dimensions, bounds) and names.
+
+This is not accidental duplication. It comes from a real architectural split between three ownership worlds:
+
+- **Compile-owned facts** determine specialization identity and compiled artifact shape. Two instances with identical compile-owned facts share a compiled body. Examples: packed width, signedness, 2-state vs 4-state, struct/union layout, enum values.
+- **Constructor-owned facts** determine realization/layout without recompilation. Same compiled body, different constructor-time metadata. Examples: unpacked array dimensions, queue bounds, parameter transmission values.
+- **Runtime-owned facts** determine mutable execution state. Examples: dynamic array contents, queue elements, variable values.
+
+The long-term clean shape is not "one type arena for everything." It is three owner-specific projections:
+
+1. Frontend semantic type world (slang AST types -- borrowed, not owned)
+2. Compile-owned type facts (`CompileOwnedTypeStore` -- specialization identity)
+3. Runtime/layout value-type facts (`TypeArena` -- codegen, layout, runtime)
+
+`CompileOwnedTypeStore` is the right direction for compile-owned projection. This ownership split should be treated as a first-class architectural principle, not left as an M2c implementation detail.
+
+### Audit: docs that still blur ownership boundaries
+
+Three audit questions for each doc:
+
+- What is the compile unit? (specialization = compile-owned equivalence class)
+- What does constructor-time own/do? (realization metadata, layout, per-instance values)
+- What does runtime own/do? (mutable state, scheduling, execution)
+
+Docs that still blur compile-owned vs constructor-owned:
+
+- `pipeline-contract.md`: Says "types are language-level, owned by HIR" without distinguishing compile-owned from constructor-owned properties. Does not frame what crosses the compilation/realization boundary.
+- `state-layout.md`: Correctly describes three phases (Compilation, Realization, Simulation) but does not frame them as three type ownership boundaries or explain what each phase owns.
+- `TypeArena` interning in `type-system.md` captures both compile-owned and constructor-owned properties in one graph. The doc now has a "Type Ownership Boundaries" section but does not yet explain when the unified arena is the right shape vs when owner-specific projections are needed.
+
+These are documentation/terminology gaps, not code correctness issues. The code already implements the right compile-owned projection (M2c-2c). The docs need to catch up.
+
+### Tracked updates
+
+- [x] `compilation-model.md`: Added "Type Ownership" section with compile-owned / constructor-owned / runtime-owned
+- [x] `architecture-principles.md`: Fixed "execution-time" -> "compile-owned" terminology
+- [x] `type-system.md`: Added "Type Ownership Boundaries" section
+- [ ] `pipeline-contract.md`: Clarify "types are language-level" to distinguish ownership worlds
+- [ ] `state-layout.md`: Frame three phases as three ownership boundaries
 
 ## Open Questions
 
