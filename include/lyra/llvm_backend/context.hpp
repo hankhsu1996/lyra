@@ -29,6 +29,7 @@ struct ScopedSlotRef;
 
 namespace lyra::lowering::mir_to_llvm {
 
+struct SpecSlotLayout;
 class Context;
 
 // Forward declaration for friend access
@@ -287,7 +288,9 @@ class Context {
   void SetSignalIdOffset(llvm::Value* offset);
   [[nodiscard]] auto GetSignalIdOffset() const -> llvm::Value*;
   [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
-  void SetRelByteOffsets(const std::vector<uint64_t>* offsets);
+  void SetSpecSlotLayout(const SpecSlotLayout* layout);
+  void SetUnstableSlotOffsetsPtr(llvm::Value* ptr);
+  [[nodiscard]] auto GetUnstableSlotOffsetsPtr() const -> llvm::Value*;
 
   // Explicit address-space APIs for slot pointer formation.
   // Call sites must choose the correct API based on the resolved root scope.
@@ -440,14 +443,14 @@ class Context {
 
   // Module-scoped function lowering metadata.
   // Module-scoped functions use the specialization-local calling convention:
-  // they receive (this_ptr, signal_id_offset, instance_id) and use
-  // kSpecializationLocal addressing for module-local slot access.
+  // they receive (this_ptr, signal_id_offset, instance_id, unstable_offsets)
+  // and use kSpecializationLocal addressing for module-local slot access.
   //
-  // rel_byte_offsets is specialization-owned addressing data (borrowed from
+  // spec_slot_layout is specialization-owned addressing data (owned by
   // SpecLayout, shared across all instances of the same specialization).
   // DefineUserFunction queries this to set up addressing state.
   struct ModuleFunctionLowering {
-    const std::vector<uint64_t>* rel_byte_offsets;  // Borrowed from SpecLayout
+    const SpecSlotLayout* spec_slot_layout;
   };
   void RegisterModuleScopedFunction(
       mir::FunctionId func_id, ModuleFunctionLowering lowering);
@@ -705,7 +708,8 @@ class Context {
   llvm::Value* this_ptr_ = nullptr;  // Instance storage base pointer (fn arg)
   llvm::Value* dynamic_instance_id_ = nullptr;  // i32 fn arg
   llvm::Value* signal_id_offset_ = nullptr;     // i32 fn arg
-  const std::vector<uint64_t>* rel_byte_offsets_ = nullptr;
+  const SpecSlotLayout* spec_slot_layout_ = nullptr;
+  llvm::Value* unstable_slot_offsets_ptr_ = nullptr;
 
   // Design-global base slot ID for the current module instance.
   // Only used in non-shared / explicitly design-global lowering contexts:

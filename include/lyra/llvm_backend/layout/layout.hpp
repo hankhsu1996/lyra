@@ -182,9 +182,10 @@ struct Layout {
 
   // Canonical offset accessor: byte offset of instance's slot base.
   auto GetInstanceBaseByteOffset(ModuleIndex idx) const -> uint64_t;
-  // Body-owned relative byte offsets: indexed by body_id, contains
-  // per-slot relative offsets within the instance's slot region.
-  auto GetBodyRelByteOffsets(mir::ModuleBodyId body_id) const
+  // Per-instance raw relative byte offsets (body-local slot order).
+  // Indexed by module_index, each inner vector has slot_count entries.
+  // Used by spec compilation to compute slot stability classification.
+  auto GetInstanceRelByteOffsets(ModuleIndex idx) const
       -> const std::vector<uint64_t>&;
 
  private:
@@ -197,9 +198,9 @@ struct Layout {
   // Pre-computed byte offset of each instance's slot base in DesignState.
   // Parallel to placement.instances. Access via GetInstanceBaseByteOffset.
   std::vector<uint64_t> instance_base_byte_offsets;
-  // Body-owned relative byte offsets, indexed by body_id.value.
-  // Each entry contains per-slot relative offsets for that body's slot layout.
-  std::vector<std::vector<uint64_t>> body_rel_byte_offsets_;
+  // Per-instance raw relative byte offsets (body-local slot order).
+  // Indexed by module_index, each inner vector has slot_count entries.
+  std::vector<std::vector<uint64_t>> instance_rel_byte_offsets_;
 };
 
 // Type kind for variable inspection (also used in layout)

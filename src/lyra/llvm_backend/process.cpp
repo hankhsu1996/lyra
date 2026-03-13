@@ -1547,12 +1547,12 @@ auto GenerateSharedProcessFunction(
 
   // Shared function signature:
   // void(ptr state, i32 resume, ptr this_ptr, i32 inst_id,
-  //      i32 signal_id_offset, ptr out)
+  //      i32 signal_id_offset, ptr unstable_offsets, ptr out)
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
   auto* fn_type = llvm::FunctionType::get(
-      void_ty, {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty}, false);
+      void_ty, {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, ptr_ty}, false);
 
   auto* func = llvm::Function::Create(
       fn_type, llvm::Function::InternalLinkage, name, &module);
@@ -1562,7 +1562,8 @@ auto GenerateSharedProcessFunction(
   func->getArg(2)->setName("this_ptr");
   func->getArg(3)->setName("inst_id");
   func->getArg(4)->setName("signal_id_offset");
-  func->getArg(5)->setName("out");
+  func->getArg(5)->setName("unstable_offsets");
+  func->getArg(6)->setName("out");
 
   auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", func);
   auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", func);
@@ -1580,12 +1581,14 @@ auto GenerateSharedProcessFunction(
   context.EmitProcessStateSetup(func->getArg(0));
 
   // Enter specialization-local addressing mode for module-local slots.
-  // Module slots accessed via this_ptr + rel_byte_offsets; signal identity
-  // via signal_id_offset + local_id.
+  // Module slots accessed via this_ptr + spec_slot_layout (stable offsets are
+  // compile-time constants; unstable offsets loaded from unstable_offsets arg).
+  // Signal identity via signal_id_offset + local_id.
   context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
   context.SetThisPointer(func->getArg(2));
   context.SetDynamicInstanceId(func->getArg(3));
   context.SetSignalIdOffset(func->getArg(4));
+  context.SetUnstableSlotOffsetsPtr(func->getArg(5));
 
   // Resume dispatch (same logic as GenerateProcessFunction)
   std::vector<size_t> resume_targets;
@@ -1633,7 +1636,7 @@ auto GenerateSharedProcessFunction(
 
     // Emit loop guard before back-edge terminators
     if (context.IsLoopGuardEnabled() && HasBackEdge(block.terminator, i)) {
-      EmitLoopGuard(context, block.terminator.origin, func, func->getArg(5));
+      EmitLoopGuard(context, block.terminator.origin, func, func->getArg(6));
     }
 
     auto term_result = LowerTerminator(
@@ -1647,7 +1650,7 @@ auto GenerateSharedProcessFunction(
 
   // Exit block: store kOk outcome and return void
   builder.SetInsertPoint(exit_block);
-  EmitStoreOkOutcome(builder, llvm_ctx, func->getArg(5));
+  EmitStoreOkOutcome(builder, llvm_ctx, func->getArg(6));
   builder.CreateRetVoid();
 
   // Clear shared-body state and revert to design-global addressing.
@@ -1659,6 +1662,7 @@ auto GenerateSharedProcessFunction(
   context.SetThisPointer(nullptr);
   context.SetDynamicInstanceId(nullptr);
   context.SetSignalIdOffset(nullptr);
+  context.SetUnstableSlotOffsetsPtr(nullptr);
 
   VerifyLlvmFunction(func, "GenerateSharedProcessFunction");
   return ProcessCodegenResult{
@@ -1667,7 +1671,8 @@ auto GenerateSharedProcessFunction(
 
 auto GenerateProcessWrapper(
     Context& context, llvm::Function* shared_fn, uint32_t instance_id,
-    uint64_t base_byte_offset, uint32_t base_slot_id, const std::string& name)
+    uint64_t base_byte_offset, uint32_t base_slot_id,
+    llvm::Constant* unstable_offsets_global, const std::string& name)
     -> llvm::Function* {
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -1698,12 +1703,12 @@ auto GenerateProcessWrapper(
       i8_ty, design_ptr, llvm::ConstantInt::get(i64_ty, base_byte_offset),
       "this_ptr");
 
-  // Forward %out directly to the shared process function
+  // Forward to shared process function with instance-specific unstable offsets
   builder.CreateCall(
-      shared_fn,
-      {wrapper->getArg(0), wrapper->getArg(1), this_ptr,
-       llvm::ConstantInt::get(i32_ty, instance_id),
-       llvm::ConstantInt::get(i32_ty, base_slot_id), wrapper->getArg(2)});
+      shared_fn, {wrapper->getArg(0), wrapper->getArg(1), this_ptr,
+                  llvm::ConstantInt::get(i32_ty, instance_id),
+                  llvm::ConstantInt::get(i32_ty, base_slot_id),
+                  unstable_offsets_global, wrapper->getArg(2)});
   builder.CreateRetVoid();
 
   return wrapper;
@@ -2510,7 +2515,7 @@ auto DefineUserFunction(
   unsigned context_arg_count = 0;
   if (is_module_scoped) {
     const auto& lowering = context.GetModuleFunctionLowering(func_id);
-    context.SetRelByteOffsets(lowering.rel_byte_offsets);
+    context.SetSpecSlotLayout(lowering.spec_slot_layout);
 
     auto* this_arg = llvm_func->getArg(arg_offset + 2);
     this_arg->setName("this_ptr");
@@ -2524,8 +2529,12 @@ auto DefineUserFunction(
     instance_id_arg->setName("instance_id");
     context.SetDynamicInstanceId(instance_id_arg);
 
+    auto* unstable_offsets_arg = llvm_func->getArg(arg_offset + 5);
+    unstable_offsets_arg->setName("unstable_offsets");
+    context.SetUnstableSlotOffsetsPtr(unstable_offsets_arg);
+
     context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
-    context_arg_count = 3;
+    context_arg_count = 4;
   }
 
   // Collect all local/temp places referenced in the function
@@ -2794,7 +2803,8 @@ auto DefineUserFunction(
     context.SetThisPointer(nullptr);
     context.SetSignalIdOffset(nullptr);
     context.SetDynamicInstanceId(nullptr);
-    context.SetRelByteOffsets(nullptr);
+    context.SetSpecSlotLayout(nullptr);
+    context.SetUnstableSlotOffsetsPtr(nullptr);
   }
 
   return {};

@@ -54,11 +54,45 @@ struct SpecCodegenView {
   std::vector<SpecProcessView> processes;
 };
 
-// Specialization-local layout data only.
+// Specialization-local slot layout classification.
+// Computed from raw per-instance relative byte offsets during spec compilation
+// setup. Classifies each body-local slot as either:
+//   stable: same relative offset across all instances (constant GEP)
+//   unstable: offset varies by instance (runtime load from metadata)
+//
+// Invariant: all instances in a specialization share the same body, so they
+// have the same slot set and slot count. The only variation is in relative
+// byte offsets (e.g., parameterized unpacked array dimensions change the size
+// of a slot, shifting subsequent slots).
+//
+// This invariant holds because specialization units share one compiled body
+// from representative lowering. If body compilation later becomes
+// constructor-repertoire-aware (including artifacts from all generate
+// branches), this assumption must be revisited.
+struct SpecSlotLayout {
+  enum class SlotState : uint8_t { kStable, kUnstable };
+
+  std::vector<SlotState> states;
+  // Per-slot relative offset for stable slots. UINT64_MAX if not stable.
+  std::vector<uint64_t> stable_offsets;
+  // Per-slot compact index into the per-instance unstable offset table.
+  // UINT32_MAX if not unstable.
+  std::vector<uint32_t> unstable_ordinals;
+  // Number of unstable slots (= length of each instance's unstable table).
+  uint32_t num_unstable = 0;
+  // Slot count (same across all instances in the specialization).
+  uint32_t num_slots = 0;
+
+  [[nodiscard]] auto IsStable(uint32_t local_slot_id) const -> bool {
+    return states[local_slot_id] == SlotState::kStable;
+  }
+};
+
+// Specialization-local layout data.
 // No design-global state, no wrapper data, no absolute offsets.
-// Sourced from Layout::GetBodyRelByteOffsets(body_id).
+// Computed from raw per-instance offsets during spec compilation setup.
 struct SpecLayout {
-  std::vector<uint64_t> rel_byte_offsets;
+  SpecSlotLayout slot_layout;
 };
 
 // Specialization compilation input: all data needed to compile one

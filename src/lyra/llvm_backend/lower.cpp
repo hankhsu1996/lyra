@@ -16,6 +16,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
 #include <llvm/MC/TargetRegistry.h>
@@ -249,10 +250,61 @@ auto BuildSpecLayouts(
               "specialization unit for body {} has no instances",
               unit.body_id.value));
     }
-    layouts.push_back(
-        SpecLayout{
-            .rel_byte_offsets = layout.GetBodyRelByteOffsets(unit.body_id),
-        });
+
+    // All instances share the same body, so slot count is uniform.
+    // This holds because specialization units share one compiled body from
+    // representative lowering. Revisit if body compilation becomes
+    // constructor-repertoire-aware.
+    auto slot_count = static_cast<uint32_t>(
+        layout.GetInstanceRelByteOffsets(unit.instances[0].module_index)
+            .size());
+    for (const auto& inst : unit.instances) {
+      auto inst_slot_count = static_cast<uint32_t>(
+          layout.GetInstanceRelByteOffsets(inst.module_index).size());
+      if (inst_slot_count != slot_count) {
+        throw common::InternalError(
+            "BuildSpecLayouts",
+            std::format(
+                "slot count mismatch in specialization body {}: instance {} "
+                "has {} slots but representative has {}",
+                unit.body_id.value, inst.module_index.value, inst_slot_count,
+                slot_count));
+      }
+    }
+
+    // Classify each slot as stable or unstable by comparing relative byte
+    // offsets across all instances. Unstable slots arise when parameterized
+    // unpacked dimensions change a slot's size, shifting subsequent offsets.
+    SpecSlotLayout slot_layout;
+    slot_layout.num_slots = slot_count;
+    slot_layout.states.resize(slot_count);
+    slot_layout.stable_offsets.resize(slot_count, UINT64_MAX);
+    slot_layout.unstable_ordinals.resize(slot_count, UINT32_MAX);
+    slot_layout.num_unstable = 0;
+
+    for (uint32_t s = 0; s < slot_count; ++s) {
+      uint64_t ref_offset =
+          layout.GetInstanceRelByteOffsets(unit.instances[0].module_index)[s];
+      bool stable = true;
+      for (size_t i = 1; i < unit.instances.size(); ++i) {
+        if (layout.GetInstanceRelByteOffsets(
+                unit.instances[i].module_index)[s] != ref_offset) {
+          stable = false;
+          break;
+        }
+      }
+
+      if (stable) {
+        slot_layout.states[s] = SpecSlotLayout::SlotState::kStable;
+        slot_layout.stable_offsets[s] = ref_offset;
+      } else {
+        slot_layout.states[s] = SpecSlotLayout::SlotState::kUnstable;
+        slot_layout.unstable_ordinals[s] = slot_layout.num_unstable;
+        ++slot_layout.num_unstable;
+      }
+    }
+
+    layouts.push_back(SpecLayout{.slot_layout = std::move(slot_layout)});
   }
   return layouts;
 }
@@ -287,13 +339,13 @@ auto CompileModuleSpecSession(
   }
 
   // Step 2: Register module-scoped function lowering metadata.
-  // Once per function, not per instance -- rel_byte_offsets is
+  // Once per function, not per instance -- spec_slot_layout is
   // specialization-owned and shared across all instances.
   for (mir::FunctionId func_id : input.functions) {
     const auto& func = arena[func_id];
     if (func.thunk_kind == mir::ThunkKind::kNone) {
       context.RegisterModuleScopedFunction(
-          func_id, {.rel_byte_offsets = &input.layout.rel_byte_offsets});
+          func_id, {.spec_slot_layout = &input.layout.slot_layout});
     }
   }
 
@@ -328,7 +380,7 @@ auto CompileModuleSpecSession(
     // for %m path support. This is transitional -- true specialization codegen
     // should not require instance identity.
     context.SetCurrentInstanceId(proc_view.representative_module_index.value);
-    context.SetRelByteOffsets(&input.layout.rel_byte_offsets);
+    context.SetSpecSlotLayout(&input.layout.slot_layout);
 
     const auto& mir_process = arena[proc_view.process_id];
     auto func_result = GenerateSharedProcessFunction(
@@ -502,6 +554,43 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
   }
 
+  // Phase 4b: Build per-instance unstable offset globals.
+  // For each module instance whose specialization has unstable slots, emit a
+  // constant global array of i64 offsets derived from (raw offsets +
+  // SpecSlotLayout). Instances with all-stable slots get nullptr.
+  auto* ptr_ty = llvm::PointerType::getUnqual(context->GetLlvmContext());
+  auto* i64_ty = llvm::Type::getInt64Ty(context->GetLlvmContext());
+
+  std::unordered_map<uint32_t, llvm::Constant*> instance_unstable_globals;
+  for (size_t si = 0; si < spec_inputs.size(); ++si) {
+    const auto& slot_layout = spec_inputs[si].layout.slot_layout;
+    if (slot_layout.num_unstable == 0) continue;
+
+    for (const auto& inst : units[si].instances) {
+      const auto& raw_offsets =
+          layout->GetInstanceRelByteOffsets(inst.module_index);
+
+      std::vector<llvm::Constant*> values(slot_layout.num_unstable);
+      for (uint32_t s = 0; s < slot_layout.num_slots; ++s) {
+        if (slot_layout.unstable_ordinals[s] == UINT32_MAX) continue;
+        uint32_t ordinal = slot_layout.unstable_ordinals[s];
+        uint64_t offset = raw_offsets[s];
+        values[ordinal] = llvm::ConstantInt::get(i64_ty, offset);
+      }
+
+      auto* arr_type = llvm::ArrayType::get(i64_ty, values.size());
+      auto* initializer = llvm::ConstantArray::get(arr_type, values);
+      auto* global = new llvm::GlobalVariable(
+          context->GetModule(), arr_type, true,
+          llvm::GlobalValue::InternalLinkage, initializer,
+          std::format("inst_{}_unstable_offsets", inst.module_index.value));
+      instance_unstable_globals[inst.module_index.value] = global;
+    }
+  }
+
+  auto* null_ptr =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
   // Phase 5: Per-instance wrappers / standalone entrypoints
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout->scheduled_processes.size());
@@ -542,9 +631,15 @@ auto CompileDesignProcesses(const LoweringInput& input)
     uint32_t base_slot_id = mir::GetInstanceBaseSlot(
         input.design->placement, bp.module_index.value);
 
+    // Look up the instance's unstable offset global (nullptr if all stable).
+    auto unstable_it = instance_unstable_globals.find(bp.module_index.value);
+    llvm::Constant* unstable_global =
+        (unstable_it != instance_unstable_globals.end()) ? unstable_it->second
+                                                         : null_ptr;
+
     auto* wrapper = GenerateProcessWrapper(
         *context, shared_func, bp.module_index.value, base_byte_offset,
-        base_slot_id, std::format("process_{}", i));
+        base_slot_id, unstable_global, std::format("process_{}", i));
     process_funcs.push_back(wrapper);
   }
 

@@ -22,6 +22,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -297,23 +298,43 @@ auto Context::GetModuleSlotPointer(uint32_t local_slot_id) -> llvm::Value* {
         "GetModuleSlotPointer",
         "this_ptr not set (module-local access requires shared-body context)");
   }
-  if (rel_byte_offsets_ == nullptr) {
+  if (spec_slot_layout_ == nullptr) {
     throw common::InternalError(
         "GetModuleSlotPointer",
-        "rel_byte_offsets not set (requires specialization-local context)");
+        "spec_slot_layout not set (requires specialization-local context)");
   }
-  if (local_slot_id >= rel_byte_offsets_->size() ||
-      (*rel_byte_offsets_)[local_slot_id] == UINT64_MAX) {
+  if (local_slot_id >= spec_slot_layout_->num_slots) {
     throw common::InternalError(
         "GetModuleSlotPointer",
         std::format(
-            "local_slot_id {} out of range (table_size={})", local_slot_id,
-            rel_byte_offsets_->size()));
+            "local_slot_id {} out of range (num_slots={})", local_slot_id,
+            spec_slot_layout_->num_slots));
   }
-  uint64_t rel_offset = (*rel_byte_offsets_)[local_slot_id];
-  return builder_.CreateGEP(
-      llvm::Type::getInt8Ty(*llvm_context_), this_ptr_,
-      builder_.getInt64(rel_offset), "module_slot_ptr");
+  auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
+
+  if (spec_slot_layout_->IsStable(local_slot_id)) {
+    uint64_t rel_offset = spec_slot_layout_->stable_offsets[local_slot_id];
+    return builder_.CreateGEP(
+        i8_ty, this_ptr_, builder_.getInt64(rel_offset), "module_slot_ptr");
+  }
+
+  // Unstable slot: load offset from per-instance metadata table.
+  if (unstable_slot_offsets_ptr_ == nullptr) {
+    throw common::InternalError(
+        "GetModuleSlotPointer",
+        std::format(
+            "local_slot_id {} is unstable but unstable_slot_offsets_ptr is "
+            "null",
+            local_slot_id));
+  }
+  uint32_t ordinal = spec_slot_layout_->unstable_ordinals[local_slot_id];
+  auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
+  auto* offset_ptr = builder_.CreateGEP(
+      i64_ty, unstable_slot_offsets_ptr_, builder_.getInt32(ordinal),
+      "unstable_offset_ptr");
+  auto* rel_offset =
+      builder_.CreateLoad(i64_ty, offset_ptr, "unstable_rel_offset");
+  return builder_.CreateGEP(i8_ty, this_ptr_, rel_offset, "module_slot_ptr");
 }
 
 auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)

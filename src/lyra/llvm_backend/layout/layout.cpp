@@ -1303,16 +1303,16 @@ auto Layout::GetInstanceBaseByteOffset(ModuleIndex idx) const -> uint64_t {
   return instance_base_byte_offsets[idx.value];
 }
 
-auto Layout::GetBodyRelByteOffsets(mir::ModuleBodyId body_id) const
+auto Layout::GetInstanceRelByteOffsets(ModuleIndex idx) const
     -> const std::vector<uint64_t>& {
-  if (body_id.value >= body_rel_byte_offsets_.size()) {
+  if (idx.value >= instance_rel_byte_offsets_.size()) {
     throw common::InternalError(
-        "GetBodyRelByteOffsets",
+        "GetInstanceRelByteOffsets",
         std::format(
-            "body_id {} out of range (size={})", body_id.value,
-            body_rel_byte_offsets_.size()));
+            "module_index {} out of range (size={})", idx.value,
+            instance_rel_byte_offsets_.size()));
   }
-  return body_rel_byte_offsets_[body_id.value];
+  return instance_rel_byte_offsets_[idx.value];
 }
 
 auto BuildLayout(
@@ -1427,72 +1427,28 @@ auto BuildLayout(
       }
     }
 
-    // Compute body-owned relative byte offsets, once per body_id.
-    // Find the maximum body_id to size the vector.
-    uint32_t max_body_id = 0;
+    // Compute per-instance raw relative byte offsets.
+    // These are consumed by the spec compilation pipeline to classify
+    // slots into stable/unstable/absent (specialization-local, not here).
+    layout.instance_rel_byte_offsets_.resize(num_instances);
+
     uint32_t mod_idx = 0;
     for (const auto& element : design.elements) {
       const auto* mod = std::get_if<mir::Module>(&element);
       if (mod == nullptr) continue;
-      max_body_id = std::max(max_body_id, mod->body_id.value);
-      ++mod_idx;
-    }
-    layout.body_rel_byte_offsets_.resize(max_body_id + 1);
 
-    std::unordered_map<uint32_t, uint32_t> body_to_representative;
-    mod_idx = 0;
-    for (const auto& element : design.elements) {
-      const auto* mod = std::get_if<mir::Module>(&element);
-      if (mod == nullptr) continue;
-
-      auto [it, inserted] =
-          body_to_representative.try_emplace(mod->body_id.value, mod_idx);
-      if (inserted) {
-        const auto& p = mir::GetInstancePlacement(design.placement, mod_idx);
-        std::vector<uint64_t> rel_offsets(p.slot_count);
-        if (p.slot_count > 0) {
-          uint64_t base =
-              struct_layout->getElementOffset(p.design_state_base_slot);
-          for (uint32_t i = 0; i < p.slot_count; ++i) {
-            rel_offsets[i] =
-                struct_layout->getElementOffset(p.design_state_base_slot + i) -
-                base;
-          }
-        }
-        layout.body_rel_byte_offsets_[mod->body_id.value] =
-            std::move(rel_offsets);
-      } else {
-        // Verify that repeated encounters of the same body_id produce
-        // identical relative byte offsets.
-        const auto& existing =
-            layout.body_rel_byte_offsets_[mod->body_id.value];
-        const auto& p = mir::GetInstancePlacement(design.placement, mod_idx);
-        if (existing.size() != p.slot_count) {
-          throw common::InternalError(
-              "BuildLayout",
-              std::format(
-                  "body {} has inconsistent slot counts: {} vs {}",
-                  mod->body_id.value, existing.size(), p.slot_count));
-        }
-        if (p.slot_count > 0) {
-          uint64_t base =
-              struct_layout->getElementOffset(p.design_state_base_slot);
-          for (uint32_t i = 0; i < p.slot_count; ++i) {
-            uint64_t rel =
-                struct_layout->getElementOffset(p.design_state_base_slot + i) -
-                base;
-            if (rel != existing[i]) {
-              throw common::InternalError(
-                  "BuildLayout",
-                  std::format(
-                      "body {} slot {} has inconsistent relative offset: "
-                      "{} vs {}",
-                      mod->body_id.value, i, rel, existing[i]));
-            }
-          }
+      const auto& p = mir::GetInstancePlacement(design.placement, mod_idx);
+      std::vector<uint64_t> rel_offsets(p.slot_count);
+      if (p.slot_count > 0) {
+        uint64_t base =
+            struct_layout->getElementOffset(p.design_state_base_slot);
+        for (uint32_t i = 0; i < p.slot_count; ++i) {
+          rel_offsets[i] =
+              struct_layout->getElementOffset(p.design_state_base_slot + i) -
+              base;
         }
       }
-
+      layout.instance_rel_byte_offsets_[mod_idx] = std::move(rel_offsets);
       ++mod_idx;
     }
   }

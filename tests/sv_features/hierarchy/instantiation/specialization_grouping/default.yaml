@@ -219,3 +219,70 @@ cases:
         contains:
           - "spec_groups: 3"
           - "instances=1"
+
+  - name: unpacked_dimension_does_not_split
+    description: >
+      Unpacked array dimensions are constructor-owned, not compile-owned.
+      Different unpacked depths with the same packed element type produce
+      identical compile-owned type store entries and must group into one
+      specialization. Layout uses instance-aware stable/unstable slot
+      classification: slots with varying offsets load from per-instance
+      metadata at runtime.
+    dump_specialization_map: true
+    sv: |
+      module Mem #(parameter int DEPTH = 4);
+        bit [7:0] data [DEPTH];
+        initial begin
+          data[0] = 8'hAB;
+          $display("depth=%0d v=%h", DEPTH, data[0]);
+        end
+      endmodule
+
+      module Top;
+        Mem #(.DEPTH(4)) m4();
+        Mem #(.DEPTH(8)) m8();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 2"
+          - "spec[1]: def=1"
+          - "instances=2"
+      stdout:
+        contains:
+          - "depth=4 v=ab"
+          - "depth=8 v=ab"
+
+  - name: packed_width_splits_with_unpacked_depth_variation
+    description: >
+      Cross-product test: packed width creates separate specializations,
+      and within each specialization, different unpacked depths are
+      constructor-owned. Verifies that spec-local layout classification
+      works independently per specialization, not globally per body_id.
+    dump_specialization_map: true
+    sv: |
+      module Mem #(parameter int WIDTH = 8, parameter int DEPTH = 4);
+        bit [WIDTH-1:0] data [DEPTH];
+        initial begin
+          data[0] = '1;
+          $display("w=%0d d=%0d v=%h", WIDTH, DEPTH, data[0]);
+        end
+      endmodule
+
+      module Top;
+        Mem #(.WIDTH(8),  .DEPTH(4)) m8_4();
+        Mem #(.WIDTH(8),  .DEPTH(8)) m8_8();
+        Mem #(.WIDTH(16), .DEPTH(2)) m16_2();
+        Mem #(.WIDTH(16), .DEPTH(6)) m16_6();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 3"
+      stdout:
+        contains:
+          - "w=8 d=4 v=ff"
+          - "w=8 d=8 v=ff"
+          - "w=16 d=2 v=ffff"
+          - "w=16 d=6 v=ffff"
+
