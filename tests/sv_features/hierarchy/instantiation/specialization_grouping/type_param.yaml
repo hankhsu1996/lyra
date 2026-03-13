@@ -1,0 +1,91 @@
+feature: specialization_grouping_type_param
+description: Type parameter specialization grouping
+
+cases:
+  - name: type_param_different_packed_width_splits
+    description: >
+      Different type parameters that resolve to different packed widths
+      produce different compile-owned type store entries and must split
+      into separate specializations. This is the C++ template analogy:
+      MSpec<logic[7:0]> and MSpec<logic[15:0]> are different compiled
+      artifact libraries.
+    dump_specialization_map: true
+    sv: |
+      module M #(parameter type T = logic[7:0])();
+        T data;
+        initial begin
+          data = '1;
+          $display("data=%0d", data);
+        end
+      endmodule
+
+      module Top;
+        M #(.T(logic [7:0])) m8a();
+        M #(.T(logic [7:0])) m8b();
+        M #(.T(logic [15:0])) m16a();
+        M #(.T(logic [15:0])) m16b();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 3"
+          - "instances=2"
+      stdout:
+        contains:
+          - "data=255"
+          - "data=65535"
+
+  - name: type_param_different_four_state_splits
+    description: >
+      logic[7:0] (4-state) and bit[7:0] (2-state) resolve to different
+      compile-owned type facts (is_four_state differs) and must split
+      into separate specializations despite having the same packed width.
+    dump_specialization_map: true
+    sv: |
+      module M #(parameter type T = logic[7:0])();
+        T data;
+        initial begin
+          data = '1;
+          $display("data=%0d", data);
+        end
+      endmodule
+
+      module Top;
+        M #(.T(logic [7:0])) a();
+        M #(.T(bit [7:0])) b();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 3"
+          - "instances=1"
+      stdout:
+        contains:
+          - "data=255"
+
+  - name: type_param_same_type_groups
+    description: >
+      Same type parameter value must group into one specialization.
+      The type store sees the resolved type, not the parameter name.
+    dump_specialization_map: true
+    sv: |
+      module M #(parameter type T = logic[7:0])();
+        T data;
+        initial begin
+          data = '1;
+          $display("data=%0d", data);
+        end
+      endmodule
+
+      module Top;
+        M #(.T(logic [7:0])) a();
+        M #(.T(logic [7:0])) b();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 2"
+          - "instances=2"
+      stdout:
+        contains:
+          - "data=255"
