@@ -510,6 +510,7 @@ auto PrepareCombKernelInputs(
     inputs.push_back({
         .scheduled_process_index = it->second,
         .triggers = std::move(merged_triggers),
+        .has_self_edge = ck.has_self_edge,
     });
   }
 

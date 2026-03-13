@@ -110,6 +110,9 @@ auto BuildCombKernelWords(const std::vector<CombKernelInput>& kernels)
 
   for (const auto& ck : kernels) {
     words.push_back(ck.scheduled_process_index);
+    // Flags bitmask: bit 0 = kSelfEdge (write set overlaps trigger set).
+    uint32_t flags = ck.has_self_edge ? 1U : 0U;
+    words.push_back(flags);
     words.push_back(static_cast<uint32_t>(ck.triggers.size()));
     for (const auto& trigger : ck.triggers) {
       words.push_back(trigger.slot_id);

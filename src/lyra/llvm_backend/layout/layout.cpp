@@ -1043,20 +1043,35 @@ auto TryKernelizeComb(
 
   const mir::Wait* wait_term = nullptr;
 
+  // Collect write destination slot IDs for self-edge detection.
+  std::unordered_set<uint32_t> write_slots;
+
   for (const auto& block : process.blocks) {
     // Check all statements are pure
     for (const auto& stmt : block.statements) {
       if (!IsStatementPure(stmt)) return std::nullopt;
 
-      // Check Assign RHS for side-effecting Rvalues
+      // Check Assign RHS for side-effecting Rvalues, and collect write slots.
       if (const auto* assign = std::get_if<mir::Assign>(&stmt.data)) {
         if (const auto* rv = std::get_if<mir::Rvalue>(&assign->rhs)) {
           if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
+        }
+        const auto& root = arena[assign->dest].root;
+        if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
+          write_slots.insert(slot_base + static_cast<uint32_t>(root.id));
+        } else if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+          write_slots.insert(static_cast<uint32_t>(root.id));
         }
       }
       if (const auto* ga = std::get_if<mir::GuardedAssign>(&stmt.data)) {
         if (const auto* rv = std::get_if<mir::Rvalue>(&ga->rhs)) {
           if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
+        }
+        const auto& root = arena[ga->dest].root;
+        if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
+          write_slots.insert(slot_base + static_cast<uint32_t>(root.id));
+        } else if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+          write_slots.insert(static_cast<uint32_t>(root.id));
         }
       }
     }
@@ -1089,9 +1104,22 @@ auto TryKernelizeComb(
 
   if (triggers.empty()) return std::nullopt;
 
+  // Self-edge detection: slot-granular overlap between write set and trigger
+  // set. Conservative -- sub-slot disjointness (e.g. a[3] write vs a[5]
+  // trigger) is not considered, matching the runtime's slot-granular snapshot
+  // mechanism.
+  bool has_self_edge = false;
+  for (const auto& trigger : triggers) {
+    if (write_slots.contains(trigger.slot.value)) {
+      has_self_edge = true;
+      break;
+    }
+  }
+
   return CombKernelEntry{
       .process_id = {},  // Set by caller
       .triggers = std::move(triggers),
+      .has_self_edge = has_self_edge,
   };
 }
 
