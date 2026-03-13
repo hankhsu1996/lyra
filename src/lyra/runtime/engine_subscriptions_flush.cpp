@@ -251,6 +251,7 @@ void Engine::FlushContainerSub(
 void Engine::EnqueueProcessWakeup(
     uint32_t process_id, uint32_t instance_id, uint32_t resume_block,
     uint32_t trigger_slot, WakeCause cause) {
+  if (detailed_stats_enabled_) ++stats_.detailed.wakeup_attempts;
   auto& proc_state = process_states_[process_id];
   if (!proc_state.is_enqueued) {
     ScheduledEvent event{
@@ -261,6 +262,8 @@ void Engine::EnqueueProcessWakeup(
     };
     next_delta_queue_.push_back(event);
     proc_state.is_enqueued = true;
+  } else {
+    if (detailed_stats_enabled_) ++stats_.detailed.wakeup_deduped;
   }
 }
 
@@ -288,6 +291,7 @@ void Engine::FlushSlotEdgeSubs(
     const common::RangeSet& dirty_ranges, RangeFilterMode mode,
     std::span<const uint8_t> design_state) {
   if (subs.empty()) return;
+  const bool detailed = detailed_stats_enabled_;
 
   for (auto& sub : subs) {
     if (!(sub.flags & kSubActive)) continue;
@@ -295,6 +299,7 @@ void Engine::FlushSlotEdgeSubs(
         !dirty_ranges.Overlaps(sub.byte_offset, sub.byte_size))
       continue;
 
+    if (detailed) ++stats_.detailed.edge_sub_checks;
     uint8_t current_byte = design_state[meta.base_off + sub.byte_offset];
     uint8_t current_bit = (current_byte >> sub.bit_index) & 1;
 
@@ -311,6 +316,7 @@ void Engine::FlushSlotEdgeSubs(
     }
 
     if (should_wake) {
+      if (detailed) ++stats_.detailed.edge_sub_wakeups;
       EnqueueProcessWakeup(
           sub.process_id, sub.instance_id, sub.resume_block, slot_id,
           WakeCause::kEdge);
@@ -323,6 +329,7 @@ void Engine::FlushSlotChangeSubs(
     const common::RangeSet& dirty_ranges, RangeFilterMode mode,
     std::span<const uint8_t> design_state) {
   if (subs.empty()) return;
+  const bool detailed = detailed_stats_enabled_;
 
   for (auto& sub : subs) {
     if (!(sub.flags & kSubActive)) continue;
@@ -330,6 +337,7 @@ void Engine::FlushSlotChangeSubs(
         !dirty_ranges.Overlaps(sub.byte_offset, sub.byte_size))
       continue;
 
+    if (detailed) ++stats_.detailed.change_sub_checks;
     const auto* current = &design_state[meta.base_off + sub.byte_offset];
     uint8_t* snapshot = nullptr;
     if (sub.byte_size <= ChangeSub::kInlineSnapshotCap) {
@@ -340,6 +348,7 @@ void Engine::FlushSlotChangeSubs(
     if (snapshot == nullptr) continue;
 
     if (std::memcmp(current, snapshot, sub.byte_size) != 0) {
+      if (detailed) ++stats_.detailed.change_sub_wakeups;
       std::memcpy(snapshot, current, sub.byte_size);
       EnqueueProcessWakeup(
           sub.process_id, sub.instance_id, sub.resume_block, slot_id,
@@ -408,11 +417,13 @@ void Engine::FlushSignalUpdates() {
   // Increment flush epoch for rebind deduplication.
   ++flush_epoch_;
 
+  const bool detailed = detailed_stats_enabled_;
   std::span design_state(
       static_cast<const uint8_t*>(design_state_base_),
       slot_meta_registry_.MaxExtent());
 
   for (uint32_t slot_id : newly_dirty) {
+    if (detailed) ++stats_.detailed.flush_dirty_slots;
     auto& slot = signal_subs_[slot_id];
     const auto& meta = slot_meta_registry_.Get(slot_id);
     FlushDirtySlot(slot_id, slot, meta, design_state);

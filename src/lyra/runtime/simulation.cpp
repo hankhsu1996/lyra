@@ -526,8 +526,8 @@ extern "C" void LyraRunSimulation(
     engine.GetTraceManager().PrintSummary();
   }
 
-  if (HasFlag(flags, FeatureFlag::kDumpPropagationStats)) {
-    engine.DumpPropagationStats(stderr);
+  if (HasFlag(flags, FeatureFlag::kDumpRuntimeStats)) {
+    engine.DumpRuntimeStats(stderr);
   }
 }
 

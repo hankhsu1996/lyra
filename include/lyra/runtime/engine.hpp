@@ -45,17 +45,39 @@ struct ProcessDispatch {
   void* ctx = nullptr;
 };
 
-// Connection/comb propagation counters accumulated during Engine::Run().
-struct PropagationStats {
+// Always-on summary counters: one increment per major event.
+struct CoreRuntimeStats {
+  uint64_t total_activations = 0;
+  uint64_t activations_no_write = 0;
   uint64_t propagation_calls = 0;
   uint64_t propagation_iterations = 0;
   uint64_t propagation_max_iterations = 0;
+  uint64_t nba_entries = 0;
+  uint64_t nba_changed = 0;
+};
+
+// Opt-in per-element counters: collected only when kDetailedStats is enabled.
+struct DetailedRuntimeStats {
+  uint64_t dirty_mark_calls = 0;
+  uint64_t flush_dirty_slots = 0;
   uint64_t conn_considered = 0;
   uint64_t conn_memcmp_executed = 0;
   uint64_t conn_memcpy_executed = 0;
   uint64_t comb_considered = 0;
   uint64_t comb_executed = 0;
   uint64_t comb_skipped_range = 0;
+  uint64_t edge_sub_checks = 0;
+  uint64_t edge_sub_wakeups = 0;
+  uint64_t change_sub_checks = 0;
+  uint64_t change_sub_wakeups = 0;
+  uint64_t wakeup_attempts = 0;
+  uint64_t wakeup_deduped = 0;
+};
+
+// Composite runtime stats: core (always-on) + detailed (opt-in).
+struct RuntimeStats {
+  CoreRuntimeStats core;
+  DetailedRuntimeStats detailed;
 };
 
 // Simulation Engine: event-driven scheduler for SystemVerilog processes.
@@ -90,6 +112,8 @@ class Engine {
             FeatureFlag::kEnableActivationTrace)) {
       activation_trace_.emplace();
     }
+    detailed_stats_enabled_ = HasFlag(
+        static_cast<FeatureFlag>(feature_flags_), FeatureFlag::kDetailedStats);
   }
 
   ~Engine() = default;
@@ -194,13 +218,13 @@ class Engine {
     finished_ = true;
   }
 
-  // Propagation counters accumulated during simulation.
-  [[nodiscard]] auto GetPropagationStats() const -> const PropagationStats& {
-    return propagation_stats_;
+  // Runtime counters accumulated during simulation.
+  [[nodiscard]] auto GetStats() const -> const RuntimeStats& {
+    return stats_;
   }
 
-  // Print propagation stats and connection batch shape to sink.
-  void DumpPropagationStats(FILE* sink) const;
+  // Print runtime stats (propagation + scheduler) to sink.
+  void DumpRuntimeStats(FILE* sink) const;
 
   // Get current simulation time.
   [[nodiscard]] auto CurrentTime() const -> SimTime {
@@ -256,9 +280,7 @@ class Engine {
     }
     update_set_.Init(registry.Size(), sizes);
     signal_subs_.resize(registry.Size());
-    if (activation_trace_.has_value()) {
-      activation_slot_gen_.resize(registry.Size(), 0);
-    }
+    activation_slot_gen_.resize(registry.Size(), 0);
     slot_meta_registry_ = std::move(registry);
   }
 
@@ -275,6 +297,7 @@ class Engine {
   // Note: SignalId == slot_id in the current runtime. This equivalence is by
   // design - both identify the same design slot. Callers may pass either type.
   void MarkSlotDirty(uint32_t slot_id) {
+    if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
     update_set_.MarkSlotDirty(slot_id);
     if (comb_write_capture_ != nullptr) {
       comb_write_capture_->push_back(slot_id);
@@ -286,6 +309,7 @@ class Engine {
 
   // Mark a byte range within a slot as dirty.
   void MarkDirtyRange(uint32_t slot_id, uint32_t byte_off, uint32_t byte_size) {
+    if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
     update_set_.MarkDirtyRange(slot_id, byte_off, byte_size);
     if (comb_write_capture_ != nullptr) {
       comb_write_capture_->push_back(slot_id);
@@ -616,6 +640,9 @@ class Engine {
   // Feature flags for optional runtime behaviors (see FeatureFlag enum).
   uint32_t feature_flags_ = 0;
 
+  // Cached from kDetailedStats feature flag at construction.
+  bool detailed_stats_enabled_ = false;
+
   // Slot metadata registry (empty until populated by JIT codegen).
   SlotMetaRegistry slot_meta_registry_;
 
@@ -718,7 +745,7 @@ class Engine {
   std::atomic<uint32_t> phase_{static_cast<uint32_t>(Phase::kIdle)};
 
   // Execution-discipline counters (accumulated during Run).
-  PropagationStats propagation_stats_;
+  RuntimeStats stats_;
 
   // Static connection batch shape (populated once in InitConnectionBatch).
   uint32_t conn_full_slot_count_ = 0;

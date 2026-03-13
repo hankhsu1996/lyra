@@ -19,10 +19,12 @@ enum class FeatureFlag : uint32_t {
   kDumpProcessMeta = 1 << 3,
   // Enable loop guard checks (back-edge budget)
   kEnableLoopGuard = 1 << 4,
-  // Print propagation counters after simulation
-  kDumpPropagationStats = 1 << 5,
+  // Print runtime stats (core counters) after simulation
+  kDumpRuntimeStats = 1 << 5,
   // Enable activation trace ring buffer + live output
   kEnableActivationTrace = 1 << 6,
+  // Collect detailed per-element counters (subscription, connection, etc.)
+  kDetailedStats = 1 << 7,
 };
 
 constexpr auto operator|(FeatureFlag a, FeatureFlag b) -> FeatureFlag {

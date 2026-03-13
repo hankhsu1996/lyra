@@ -20,7 +20,7 @@ Three distinct layers, each answering different debugging questions:
 
 ## Current Status
 
-Activation trace (O1) is implemented behind `--trace-activations`. Aggregate counters exist for propagation stats (`-vv`) and a point-in-time SIGUSR1 snapshot.
+Activation trace (O1) is implemented behind `--trace-activations`. Aggregate counters exist for runtime stats and a point-in-time SIGUSR1 snapshot. Two tiers: core stats (`-vv`, always collected) cover activation shape, fixpoint iterations, and NBA; detailed stats (`-vvv`, opt-in) cover per-element connection, comb, subscription, and wakeup accounting.
 
 Common failure modes that lack tooling today:
 

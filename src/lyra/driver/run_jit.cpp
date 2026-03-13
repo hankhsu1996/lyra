@@ -106,8 +106,10 @@ auto RunJit(const CompilationInput& input) -> int {
         runtime::ToUint32(runtime::FeatureFlag::kEnableActivationTrace);
   }
   if (input.verbose >= 2) {
-    feature_flags |=
-        runtime::ToUint32(runtime::FeatureFlag::kDumpPropagationStats);
+    feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDumpRuntimeStats);
+  }
+  if (input.verbose >= 3) {
+    feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDetailedStats);
   }
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
