@@ -211,11 +211,16 @@ struct SlotSubscriptions {
 };
 
 // Per-process installed wait-site cache.
-// Tracks which compiled wait site is physically installed.
+// Tracks which compiled wait site is physically installed and the refresh
+// policy derived from the compiled shape at install time.
 struct InstalledWaitState {
   WaitSiteId wait_site_id = kInvalidWaitSiteId;
-  WaitShapeKind shape = WaitShapeKind::kDynamic;
   bool valid = false;
+  // Installed subscriptions are all snapshot-bearing (kEdge/kChange) and can
+  // be maintained by updating snapshot state alone, without rebuilding
+  // structural subscription shape. Derived from compiled shape at install
+  // time: true iff shape is kStatic.
+  bool can_refresh_snapshot = false;
 };
 
 // Per-process state (keyed by ProcessHandle).

@@ -177,7 +177,9 @@ void Engine::ExecuteActiveRegion() {
         process_states_[event.handle.process_id].is_enqueued = false;
       }
 
-      TraceWake(event);
+      if (activation_trace_.has_value()) {
+        TraceWake(event);
+      }
 
       if (!HasPostActivationReconciliation()) {
         ClearProcessSubscriptions(event.handle);
