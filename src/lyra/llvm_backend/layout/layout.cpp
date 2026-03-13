@@ -899,6 +899,16 @@ auto CollectFrameRoots(
   return result;
 }
 
+// True when the process contains any suspension point (Delay or Wait
+// terminator). Processes without suspension points can use plain allocas
+// for all locals/temps instead of frame struct storage.
+auto ProcessHasSuspension(const mir::Process& process) -> bool {
+  return std::ranges::any_of(process.blocks, [](const auto& block) {
+    return std::holds_alternative<mir::Delay>(block.terminator.data) ||
+           std::holds_alternative<mir::Wait>(block.terminator.data);
+  });
+}
+
 // Check if a connection process can be kernelized (single Assign + Wait with
 // 1 trigger, source is a design slot read, dest is a design slot write).
 auto TryKernelizeConnection(
@@ -1372,15 +1382,24 @@ auto BuildLayout(
 
     ProcessLayout proc_layout;
     proc_layout.process_index = i;
+    proc_layout.has_suspension = ProcessHasSuspension(process);
 
-    // Collect frame roots (de-duplicated by root identity)
-    auto frame_roots = CollectFrameRoots(process, arena, types);
+    auto roots = CollectFrameRoots(process, arena, types);
 
-    // Build frame layout
-    proc_layout.frame =
-        BuildFrameLayout(frame_roots, types, ctx, i, dl, force_two_state);
+    if (proc_layout.has_suspension) {
+      proc_layout.frame =
+          BuildFrameLayout(roots, types, ctx, i, dl, force_two_state);
+    } else {
+      // Suspension-free: empty frame, roots become allocas at codegen time.
+      proc_layout.frame =
+          BuildFrameLayout({}, types, ctx, i, dl, force_two_state);
+      proc_layout.alloca_roots.reserve(roots.size());
+      for (const auto& root : roots) {
+        proc_layout.alloca_roots.push_back(
+            AllocaRootInfo{.key = root.key, .type = root.type});
+      }
+    }
 
-    // Build process state type
     proc_layout.state_type = BuildProcessStateType(
         ctx, layout.header_type, proc_layout.frame.llvm_type, i);
 

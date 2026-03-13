@@ -99,12 +99,25 @@ struct FrameLayout {
   FourStatePatchTable four_state_patches;
 };
 
+// Root identity + type pair for alloca allocation in suspension-free processes.
+struct AllocaRootInfo {
+  PlaceRootKey key;
+  TypeId type;
+};
+
 // Per-process layout info
 struct ProcessLayout {
   size_t process_index = 0;
   FrameLayout frame;
   // LLVM struct type for ProcessStateN: {ProcessStateHeader, ProcessFrameN}
   llvm::StructType* state_type = nullptr;
+  // True when the process has Delay/Wait terminators requiring frame storage.
+  // When false, locals/temps are emitted as plain allocas that LLVM's
+  // mem2reg promotes to SSA registers.
+  bool has_suspension = true;
+  // Root identity + type for each local/temp that needs an alloca.
+  // Populated only when has_suspension is false (suspension-free processes).
+  std::vector<AllocaRootInfo> alloca_roots;
 };
 
 // Entry for a connection process that has been kernelized.

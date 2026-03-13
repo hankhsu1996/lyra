@@ -1430,6 +1430,21 @@ auto GenerateProcessFunction(
 
   context.EmitProcessStateSetup(state_arg);
 
+  // Suspension-free processes: allocate locals/temps as plain allocas instead
+  // of frame struct GEPs. LLVM's mem2reg promotes these to SSA registers.
+  const auto& proc_layout =
+      context.GetLayout().processes[context.GetCurrentProcessIndex()];
+  if (!proc_layout.has_suspension) {
+    context.BeginFunction(*func);
+    for (const auto& root : proc_layout.alloca_roots) {
+      mir::PlaceRoot mir_root{
+          .kind = root.key.kind, .id = root.key.id, .type = root.type};
+      auto alloca_result = context.GetOrCreatePlaceStorage(mir_root);
+      if (!alloca_result) return std::unexpected(alloca_result.error());
+      context.InitializePlaceStorage(*alloca_result, root.type);
+    }
+  }
+
   // Collect actual resume targets: blocks that are jumped to after Delay/Wait.
   // bb0 is always accessible (initial execution) but handled as the default
   // case.
@@ -1525,6 +1540,11 @@ auto GenerateProcessFunction(
   EmitStoreOkOutcome(builder, llvm_ctx, out_arg);
   builder.CreateRetVoid();
 
+  // Clean up suspension-free alloca state before clearing pointers
+  if (!proc_layout.has_suspension) {
+    context.EndFunction();
+  }
+
   // Clear cached pointers for next function
   context.SetStatePointer(nullptr);
   context.SetDesignPointer(nullptr);
@@ -1579,6 +1599,22 @@ auto GenerateSharedProcessFunction(
   builder.SetInsertPoint(entry_block);
 
   context.EmitProcessStateSetup(func->getArg(0));
+
+  // Suspension-free processes: allocate locals/temps as plain allocas.
+  const auto& shared_proc_layout =
+      context.GetLayout().processes[context.GetCurrentProcessIndex()];
+  if (!shared_proc_layout.has_suspension) {
+    context.BeginFunction(*func);
+    for (const auto& root : shared_proc_layout.alloca_roots) {
+      mir::PlaceRoot mir_root{
+          .kind = root.key.kind, .id = root.key.id, .type = root.type};
+      auto alloca_result = context.GetOrCreatePlaceStorage(mir_root);
+      if (!alloca_result) {
+        return std::unexpected(alloca_result.error());
+      }
+      context.InitializePlaceStorage(*alloca_result, root.type);
+    }
+  }
 
   // Enter specialization-local addressing mode for module-local slots.
   // Module slots accessed via this_ptr + spec_slot_layout (stable offsets are
@@ -1652,6 +1688,10 @@ auto GenerateSharedProcessFunction(
   builder.SetInsertPoint(exit_block);
   EmitStoreOkOutcome(builder, llvm_ctx, func->getArg(6));
   builder.CreateRetVoid();
+
+  if (!shared_proc_layout.has_suspension) {
+    context.EndFunction();
+  }
 
   // Clear shared-body state and revert to design-global addressing.
   context.SetSlotAddressingMode(SlotAddressingMode::kDesignGlobal);

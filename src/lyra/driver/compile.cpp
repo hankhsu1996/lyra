@@ -104,6 +104,8 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
       return std::unexpected(1);
     }
 
+    lowering::mir_to_llvm::OptimizeModule(
+        *llvm_result->module, *target_machine, input.opt_level);
     auto emit_result = lowering::mir_to_llvm::EmitObjectFile(
         *llvm_result->module, *target_machine, obj_path);
     if (!emit_result) {
