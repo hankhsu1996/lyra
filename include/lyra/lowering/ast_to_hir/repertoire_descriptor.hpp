@@ -5,6 +5,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/lowering/ast_to_hir/compile_owned_type_desc.hpp"
+
 namespace slang::ast {
 class InstanceBodySymbol;
 }  // namespace slang::ast
@@ -44,12 +46,13 @@ enum class ProcessKindDesc : uint8_t {
   kAlwaysFF,
 };
 
-// Provisional inspection payload for declarations.
-// Identity is the declaration name. This is NOT semantic identity and cannot
-// support M2c-3 discriminator integration without a strengthening step
-// (M2c-2c: structured compile-owned payloads).
+// Semantic payload for declarations.
+// Identity is the coordinate-local ordinal (encounter order within the
+// coordinate bucket) plus a compile-owned type ID referencing the definition's
+// type store. Debug names are not part of semantic identity.
 struct DeclArtifactDesc {
-  std::string name;
+  uint32_t local_ordinal;
+  TypeDescId type_id;
 };
 
 // Provisional inspection payload for processes.
@@ -88,17 +91,20 @@ struct RepertoireArtifactDesc {
   RepertoirePayload payload;
 };
 
-// Inspection/modeling infrastructure for M2c.
+// Definition-owned repertoire descriptor for M2c.
 //
-// This descriptor is pointer-free, definition-owned, and deterministically
-// ordered. It captures all compile-relevant artifacts and the constructor-
-// selection coordinates under which each exists.
+// Pointer-free, deterministically ordered. Captures all compile-relevant
+// artifacts and the constructor-selection coordinates under which each exists.
 //
-// This is NOT yet a hash input for specialization grouping. Payload identities
-// (decl names, instance names, process ordinals) are provisional inspection
-// labels. Discriminator integration (M2c-3) requires a payload strengthening
-// step (M2c-2c) first.
+// Declaration payloads use coordinate-local ordinals and compile-owned type
+// IDs referencing the shared type_store. Debug labels are not part of semantic
+// identity. Process/child-instance/continuous-assign payloads remain
+// provisional inspection labels pending future strengthening.
+//
+// Not yet a hash input for specialization grouping. Discriminator integration
+// (M2c-3) requires process identity strengthening first.
 struct DefinitionRepertoireDesc {
+  CompileOwnedTypeStore type_store;
   std::vector<RepertoireArtifactDesc> artifacts;
 };
 
@@ -107,14 +113,5 @@ struct DefinitionRepertoireDesc {
 // and the constructor-selection coordinates under which each exists.
 auto BuildDefinitionRepertoireDesc(const slang::ast::InstanceBodySymbol& body)
     -> DefinitionRepertoireDesc;
-
-// Text dump for inspection and testing.
-// Format per artifact:
-//   <kind> <identity> coord=[<step>, ...]
-// where <step> is:
-//   branch(ci=N,alt=M)     for kBranch
-//   entry(ci=N,idx=M)      for kArrayEntry
-auto DumpDefinitionRepertoireDesc(const DefinitionRepertoireDesc& desc)
-    -> std::string;
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -69,15 +69,15 @@ All compile-time optimizations (kernelization, topo sorting, connection batching
 
 This follows from **parallelism** (specializations compile independently) and **incrementality** (local changes have local effects).
 
-### Elaboration-Time vs Execution-Time Separation
+### Compile-Owned vs Constructor-Owned Separation
 
-Specialization boundaries are determined by differences in compiled behavior artifacts, not by differences in constructed design graphs. Elaboration-time properties (container sizes, instance counts, process instantiation, connectivity) are resolved without recompilation. Only execution-time properties (packed widths, compiled code shape) require specialization. See [compilation-model.md](compilation-model.md) for the full classification.
+Specialization boundaries are determined by differences in compile-owned facts (packed widths, compiled code shape), not by differences in the constructed design graph. Constructor-owned properties (container sizes, instance counts, process instantiation, connectivity) are resolved during realization without recompilation. Only compile-owned properties require distinct specializations. See [compilation-model.md](compilation-model.md) for the full classification and type ownership model.
 
-This follows from **parallelism** (fewer specializations = better parallelism) and **incrementality** (elaboration-time changes don't force recompilation).
+This follows from **parallelism** (fewer specializations = better parallelism) and **incrementality** (constructor-owned changes don't force recompilation).
 
 ### Structural vs Value-Only Parameter Split
 
-Within execution-time parameters, specialization identity is based on structural effects (packed layout, compiled code shape), not raw parameter values. Parameters that affect only runtime expressions are stored as per-instance constants.
+Within compile-owned parameters, specialization identity is based on structural effects (packed layout, compiled code shape), not raw parameter values. Parameters that affect only runtime expressions are stored as per-instance constants.
 
 This follows from **parallelism** (fewer specializations = better parallelism) and **incrementality** (value-only parameter changes don't force recompilation).
 
