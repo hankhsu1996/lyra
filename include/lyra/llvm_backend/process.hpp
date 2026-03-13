@@ -46,9 +46,12 @@ auto GenerateSharedProcessFunction(
 // Generate a thin wrapper that calls the template function with baked-in args.
 // Computes this_ptr = design_ptr + base_byte_offset, then calls the shared
 // template function. Signature: void(ptr state, i32 resume).
+// unstable_offsets_global is a constant pointer to the instance's compact
+// unstable offset table (nullptr if the body has no unstable slots).
 auto GenerateProcessWrapper(
     Context& context, llvm::Function* shared_fn, uint32_t instance_id,
-    uint64_t base_byte_offset, uint32_t base_slot_id, const std::string& name)
+    uint64_t base_byte_offset, uint32_t base_slot_id,
+    llvm::Constant* unstable_offsets_global, const std::string& name)
     -> llvm::Function*;
 
 // Declare a user function without generating its body.

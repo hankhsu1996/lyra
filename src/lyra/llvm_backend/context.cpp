@@ -422,8 +422,16 @@ auto Context::GetDynamicInstanceId() const -> llvm::Value* {
   return dynamic_instance_id_;
 }
 
-void Context::SetRelByteOffsets(const std::vector<uint64_t>* offsets) {
-  rel_byte_offsets_ = offsets;
+void Context::SetSpecSlotLayout(const SpecSlotLayout* layout) {
+  spec_slot_layout_ = layout;
+}
+
+void Context::SetUnstableSlotOffsetsPtr(llvm::Value* ptr) {
+  unstable_slot_offsets_ptr_ = ptr;
+}
+
+auto Context::GetUnstableSlotOffsetsPtr() const -> llvm::Value* {
+  return unstable_slot_offsets_ptr_;
 }
 
 void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
@@ -607,6 +615,7 @@ auto Context::BuildUserFunctionType(
     param_types.push_back(ptr_ty);  // this_ptr (module instance storage)
     param_types.push_back(i32_ty);  // signal_id_offset
     param_types.push_back(i32_ty);  // instance_id
+    param_types.push_back(ptr_ty);  // unstable_offsets
   }
 
   // Add parameter types from signature
