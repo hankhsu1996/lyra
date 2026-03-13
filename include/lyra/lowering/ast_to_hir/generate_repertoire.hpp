@@ -117,6 +117,15 @@ struct ArtifactInventory {
 
 // Walks the full body including uninstantiated generate branches,
 // collecting every compile-relevant artifact with its availability path.
+//
+// CONTRACT: The traversal intentionally does not filter by
+// GenerateBlockSymbol::isUninstantiated. slang's body.members() includes
+// both active and inactive generate branches for every parameterization.
+// Walking all branches makes the resulting type store definition-scoped
+// (covers all constructor alternatives, not just the instantiated path).
+// The specialization fingerprint depends on this full-definition view --
+// without it, instances on different active branches would produce
+// different type stores and incorrectly split into separate specializations.
 auto BuildArtifactInventory(const slang::ast::InstanceBodySymbol& body)
     -> ArtifactInventory;
 

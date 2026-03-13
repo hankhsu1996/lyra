@@ -13,12 +13,11 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] E1-E2 -- Per-spec codegen (`CompileModuleSpecSession`, variant/template-dedup deleted)
 - [x] E3 partial -- `CodegenSession` has no `const mir::Design*`
 - [x] M2a -- Storage assignment derived from within-group variance (ParamTransmissionTable)
-- [x] M2b partial -- Declaration-based grouping, param-role deleted. v1 discriminator captures declaration-side shape only.
-- [ ] M2c -- Complete compile-owned discriminator (procedural/behavioral shape, runtime-owned type filtering)
+- [x] M2b partial -- Declaration-based grouping, param-role deleted.
+- [ ] M2c -- Complete compile-owned discriminator
   - [x] M2c-2a -- Artifact inventory with generate availability paths
-  - [ ] M2c-2b -- Definition-owned repertoire descriptor
-    - [x] Inspection scaffold landed
-    - [x] M2c-2c partial -- Declaration payload strengthening (ordinals + interned type IDs)
+  - [x] M2c-2b -- Definition-owned repertoire descriptor (inspection scaffold + declaration payload)
+  - [x] M2c-3 -- Specialization fingerprint from definition-scoped type store (v1 removed)
 - [ ] E3 remaining -- Remove `mir::Design` from `LoweringInput`, narrow `Context` and `BuildLayout`
 - [ ] E4 -- Delete B5 compatibility adapters, representative-instance scaffolding
 - [ ] B6 -- HIR ownership split (depends on post-M2 grouping contract)
@@ -36,30 +35,25 @@ Cross-cutting architectural correction. Fixes wrong causality in the pipeline co
 
 ### Grouping contract
 
-The grouping rule is **compile-owned body equivalence**: two instances belong to the same specialization group when every compile-owned fact is identical between them.
+The grouping rule is **compiled-representation equivalence**: two instances belong to the same specialization group when every compiled-representation fact is identical between them.
 
-The v1 discriminator captures **declaration-side compile-owned shape**: module-local variable and net declarations (names and resolved types). This captures differences where parameters affect packed widths, signedness, or 2-state vs 4-state, because those decisions are reflected in the resolved types of these declarations. Parameters and localparams are excluded -- their effects are observed indirectly through the resolved types they influence.
+Specialization identity comes from the load-bearing subset of the definition-scoped `CompileOwnedTypeStore`: integral types (packed width, signedness, 2-state vs 4-state), packed arrays, packed structs, packed unions, and enums. These are the entries that independently change compiled representation (LLVM IR shape). Unpacked/container entries (unpacked array, dynamic array, queue, associative array, unpacked struct, unpacked union) and kind-only entries (void, real, short_real, string) are not hashed -- they only differ when their element's packed type differs, which is already captured. The type store is definition-scoped because the extraction layer walks all generate branches (slang's `body.members()` includes uninstantiated `GenerateBlockSymbol`s). Types from all constructor alternatives contribute to one type store.
 
-**v1 does not capture all compile-owned facts.** Two known gaps:
+Generate constructs (generate-if, generate-for, generate-case) are constructor-time logic. They select which pre-compiled artifacts to install at construction time. Branch structure, artifact coordinates, artifact existence/multiplicity do not affect specialization identity. Only compiled-representation facts (type store entries) determine whether instances share a specialization.
 
-- **Procedural/behavioral shape**: generate branch selections that affect code shape without introducing new declarations are not captured. Instances with different procedural code shape but identical declaration sets will incorrectly share a specialization.
-- **Runtime-owned type leakage**: `type.toString()` may encode runtime-owned differences (e.g., unpacked container sizing) that should not split specialization, causing oversplitting.
+Constructor-owned facts (unpacked dimensions, queue bounds, parameter transmission values) are stripped by `InternCompileOwnedType` and do not split specialization.
 
-These are tracked as M2c.
+**Invariant**: Specialization identity is defined by the definition-scoped compile-owned type store. Parameters are neither classified nor hashed as a primary mechanism. Per-instance parameter transmission is a separate derived step based on within-group variance.
 
-Differences that are runtime-owned (assembly/constructor-time values, realization metadata) must not split specialization. The grouping ignores those.
-
-**Invariant**: Specialization identity is defined directly from compile-owned body facts. Parameters are neither classified nor hashed as a primary mechanism. Per-instance parameter transmission is a separate derived step based on within-group variance.
-
-### Pipeline (after M2a + M2b)
+### Pipeline (after M2a + M2c-3)
 
 ```
-BuildSpecializationMap(all_instances)            -- v1 declaration-shape grouping
+BuildSpecializationMap(all_instances)            -- type-store fingerprint grouping
   -> DeriveParamTransmission(groups)             -- observe within-group variance
   -> RegisterModuleDeclarations(transmission)    -- storage from transmission
 ```
 
-Grouping implementation is internal to `specialization.cpp`: `BuildCompileOwnedBodyDescriptor` collects declaration facts, `HashCompileOwnedBodyDescriptor` produces the fingerprint. No parameter classification, no param-role table.
+Grouping implementation is internal to `specialization.cpp`: `BuildDefinitionRepertoireDesc` produces the definition-scoped descriptor with compile-owned type store, `HashCompileOwnedTypeStore` hashes only the load-bearing subset (integral, packed array, packed struct, packed union, enum). Unpacked/container entries are redundant and excluded. No parameter classification, no param-role table, no `toString()`, no repertoire structure in fingerprint.
 
 ### Storage class consequence
 
@@ -81,16 +75,38 @@ Storage / const-block assignment is derived from within-group parameter variance
 - `src/lyra/lowering/ast_to_hir/param_transmission.cpp` -- M2a: within-group variance derivation
 - `src/lyra/lowering/ast_to_hir/design.cpp` -- pipeline: grouping -> transmission -> registration
 
-## M2c: Complete compile-owned discriminator
+## M2c: Compile-owned discriminator
 
-The v1 discriminator (M2b) captures declaration-side shape only. M2c expands it to cover all compile-owned facts that affect compiled code.
+Specialization fingerprint based on definition-scoped compiled-representation facts.
 
-Known gaps:
+### Definition-scoped type store contract
 
-1. **Procedural shape without declaration change**: A generate branch that selects different procedural code (e.g., different `always` body) without introducing different variable/net declarations. The v1 discriminator sees identical declaration sets and merges them into one specialization.
-2. **Runtime-owned type filtering**: `type.toString()` may include runtime-owned type properties (unpacked container sizes, dynamic array bounds) that should not split specialization. The canonicalizer needs to strip these.
+The specialization fingerprint depends on the type store being **definition-scoped** -- it must contain types from all generate branches (active and inactive), not just the instantiated path. This is not a traversal quirk; it is a load-bearing correctness requirement.
 
-Scope: define what "complete compile-owned representation" means, expand the descriptor, narrow the type canonicalizer.
+**Why it matters**: Two instances of the same definition on different active branches (e.g., MODE=0 vs MODE=1) must produce the same fingerprint. If the type store only captured types from the active branch, each instance would see a different set of types and incorrectly split into separate specializations.
+
+**How it works**: slang elaborates both sides of every generate-if/case and creates `GenerateBlockSymbol`s for each. The active branch has `isUninstantiated=false`, the inactive has `isUninstantiated=true`. Both appear in `body.members()`. `BuildArtifactInventory` intentionally does NOT check `isUninstantiated` -- it walks every `GenerateBlockSymbol` unconditionally. This makes the resulting `CompileOwnedTypeStore` definition-scoped.
+
+**Dependencies**:
+
+- slang must include uninstantiated `GenerateBlockSymbol`s in `body.members()` (verified in slang `Scope.cpp:984-989` and `BlockSymbols.cpp:502-518`)
+- `VisitScope` in `generate_repertoire.cpp` must not filter by `isUninstantiated`
+- `InternCompileOwnedType` must intern types from both active and inactive branches
+
+**Test**: `definition_scoped_type_store_includes_inactive_generate_branches` in `specialization_grouping/default.yaml`. This test puts two instances on different active branches (one sees `bit[7:0]`, the other `bit[15:0]`) and asserts they group together. If the store were instance-scoped, they would split.
+
+### What changed (M2c-3)
+
+- v1 discriminator removed: `CompileOwnedDeclDescriptor`, `CompileOwnedBodyDescriptor`, `IsCompileOwnedDeclaration`, `CanonicalCompileOwnedTypeRepr`, `BuildCompileOwnedBodyDescriptor`, `HashCompileOwnedBodyDescriptor` -- all deleted.
+- Fingerprint now comes from `HashCompileOwnedTypeStore(desc.type_store)` where `desc` is built by `BuildDefinitionRepertoireDesc`. Only the load-bearing subset is hashed: integral, packed array, packed struct, packed union, enum. Unpacked/container and kind-only entries are excluded (redundant -- they only differ when element packed types differ).
+- `type.toString()` eliminated. Type identity uses structured `CompileOwnedTypeStore` entries.
+- Constructor-owned facts stripped: unpacked dimensions, queue bounds, names.
+- Repertoire structure (artifact coordinates, kinds, process existence) excluded from fingerprint -- those are constructor-assembly data.
+- The type store is definition-scoped because `BuildArtifactInventory` walks all generate branches (slang includes uninstantiated `GenerateBlockSymbol`s in `body.members()`).
+
+### Remaining M2c scope
+
+The type store covers declaration-side compiled representation. Process body identity (what code a process executes) is not yet part of the fingerprint. This is acceptable because processes with different code but the same type universe share a specialization under the constructor model -- the constructor selects which process artifacts to install.
 
 ### M2c-2a: Artifact inventory with generate availability (done)
 
@@ -106,35 +122,28 @@ This is observation/extraction infrastructure, not semantic identity. The block 
 
 Files: `generate_repertoire.hpp`, `generate_repertoire.cpp`. Tests: `generate_repertoire/default.yaml`.
 
-### M2c-2b: Definition-owned repertoire descriptor (inspection scaffold landed)
+### M2c-2b: Definition-owned repertoire descriptor
 
 Pointer-free, definition-owned, flat repertoire descriptor built from the M2c-2a artifact inventory. Converts extraction-layer slang pointers into deterministic coordinate ordinals. The descriptor captures all compile-relevant artifacts and the constructor-selection coordinates under which each exists.
 
-This is inspection/modeling infrastructure only. It does not replace the v1 specialization hashing or wire into the discriminator. Hashing integration is deferred to M2c-3. Payload identities (decl names, instance names, process ordinals) are provisional inspection labels, not semantic identity. M2c-2c must strengthen payloads before M2c-3 can build on this.
+The descriptor serves two purposes: (1) it owns the `CompileOwnedTypeStore` used by the specialization fingerprint, and (2) it provides constructor-assembly data (artifact coordinates, kinds, payloads) for future realization phases.
 
-Data model:
+The type store is definition-scoped because `BuildArtifactInventory` walks all generate branches -- slang's `body.members()` includes uninstantiated `GenerateBlockSymbol`s with `isUninstantiated=true`.
 
-- `SelectionStepDesc` -- one pointer-free coordinate step. `kBranch` alternatives get source-order `alt_index` ordinals; `kArrayEntry` entries keep their iteration index.
-- `RepertoireArtifactDesc` -- artifact kind + coordinate + provisional payload. Payload identity is name-based (decl, child instance) or encounter-order-based (process, continuous assign). These are NOT semantic identity.
-- `DefinitionRepertoireDesc` -- flat sorted vector of artifact descriptors.
+Files: `repertoire_descriptor.hpp`, `repertoire_descriptor.cpp`, `compile_owned_type_desc.hpp`, `compile_owned_type_desc.cpp`. Tests: `repertoire_descriptor/default.yaml`.
 
-Builder phases: (1) build artifact inventory via M2c-2a, (2) traverse definition body to assign branch ordinals by source order, (3) lower each artifact to pointer-free descriptor with bucket-local ordinals, (4) sort deterministically.
+### M2c-3: Specialization fingerprint from type store (done)
 
-Files: `repertoire_descriptor.hpp`, `repertoire_descriptor.cpp`. Tests: `repertoire_descriptor/default.yaml`.
+Replaced v1 discriminator with `HashCompileOwnedTypeStore`. The fingerprint hashes only the load-bearing subset of `CompileOwnedTypeStore` entries from the repertoire descriptor: integral types, packed arrays, packed structs, packed unions, and enums. These are the entries that independently change compiled representation (LLVM IR shape).
 
-### M2c-2c partial: Declaration payload strengthening
+Unpacked/container entries (unpacked array, dynamic array, queue, associative array, unpacked struct, unpacked union) and kind-only entries (void, real, string) are excluded from the fingerprint. They only differ between instances when their element's packed type differs, which is already captured by the packed entries. Hashing them would be redundant and would falsely suggest all type-store entries define specialization identity.
 
-Declaration payloads now use coordinate-local ordinals and structured compile-owned type IDs instead of raw name strings:
+- v1 internals deleted: `CompileOwnedDeclDescriptor`, `CompileOwnedBodyDescriptor`, `IsCompileOwnedDeclaration`, `CanonicalCompileOwnedTypeRepr`, `BuildCompileOwnedBodyDescriptor`, `HashCompileOwnedBodyDescriptor`.
+- `type.toString()` eliminated. Structured type entries replace string-based identity.
+- Repertoire structure (coordinates, artifact kinds, process existence) excluded from fingerprint.
+- Constructor-owned facts (unpacked dimensions, queue bounds) stripped by `InternCompileOwnedType`.
 
-- `DeclArtifactDesc` contains `local_ordinal` (encounter order within coordinate bucket) and `TypeDescId` (reference into the definition's `CompileOwnedTypeStore`).
-- `CompileOwnedTypeStore` is a per-definition interning store of compile-owned type facts. Each entry has a `TypeDescKind` and a typed payload variant. Structurally identical types within the same definition reuse the same `TypeDescId` via linear deduplication in `InternCompileOwnedType`.
-- Type lowering captures compile-owned representation shape only: integral width/signedness/four-state, packed array element + range, packed struct/union field layout, enum base + member values, unpacked container element types. Names and runtime-owned properties (unpacked dimensions, queue bounds) are stripped.
-- Debug labels (declaration names) are not part of semantic identity. The dump function recovers names from the body at dump time; no debug labels are stored in the semantic descriptor.
-- `DefinitionRepertoireDesc` now owns a `CompileOwnedTypeStore` shared by all declaration artifacts.
-
-Process/child-instance/continuous-assign payloads remain provisional. Process semantic identity is the main open blocker for M2c completion. M2c-3 (discriminator integration) remains blocked until process identity is resolved.
-
-Files: `compile_owned_type_desc.hpp`, `compile_owned_type_desc.cpp`, `repertoire_descriptor.hpp`, `repertoire_descriptor.cpp`. Tests: `repertoire_descriptor/default.yaml`.
+Files: `specialization.cpp`, `specialization.hpp`. Tests: `specialization_grouping/default.yaml`.
 
 ## E3 remaining: Backend API narrowing
 

@@ -96,13 +96,17 @@ struct RepertoireArtifactDesc {
 // Pointer-free, deterministically ordered. Captures all compile-relevant
 // artifacts and the constructor-selection coordinates under which each exists.
 //
+// The type_store is definition-scoped: it contains types from ALL generate
+// branches (active and inactive), not just the instantiated path. This is
+// because BuildArtifactInventory walks all branches without filtering by
+// isUninstantiated. The specialization fingerprint (HashCompileOwnedTypeStore)
+// hashes the load-bearing subset of this store, so two instances of the same
+// definition on different active branches produce the same fingerprint.
+//
 // Declaration payloads use coordinate-local ordinals and compile-owned type
 // IDs referencing the shared type_store. Debug labels are not part of semantic
 // identity. Process/child-instance/continuous-assign payloads remain
 // provisional inspection labels pending future strengthening.
-//
-// Not yet a hash input for specialization grouping. Discriminator integration
-// (M2c-3) requires process identity strengthening first.
 struct DefinitionRepertoireDesc {
   CompileOwnedTypeStore type_store;
   std::vector<RepertoireArtifactDesc> artifacts;
@@ -111,6 +115,10 @@ struct DefinitionRepertoireDesc {
 // Builds a pointer-free, definition-owned repertoire descriptor from one
 // definition body. The descriptor captures all compile-relevant artifacts
 // and the constructor-selection coordinates under which each exists.
+//
+// The resulting type_store is definition-scoped because the underlying
+// BuildArtifactInventory walks all generate branches (including
+// uninstantiated ones). See BuildArtifactInventory contract.
 auto BuildDefinitionRepertoireDesc(const slang::ast::InstanceBodySymbol& body)
     -> DefinitionRepertoireDesc;
 

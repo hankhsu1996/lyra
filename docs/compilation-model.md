@@ -162,26 +162,110 @@ A **container** is an unpacked array whose size is resolved during elaboration a
 
 Container size is a property of the constructed design state, not a type property for specialization purposes. See [state-layout.md](state-layout.md) for the arena-based storage model.
 
+## Specialization as Artifact Library
+
+A specialization is not a specific execution path through the generate tree. It is a **compiled artifact library** -- the complete repertoire of all artifacts that the definition can produce, compiled once and reused by any instance regardless of constructor-time selections.
+
+### Mental model
+
+```
+Specialization  = compiled artifact library (all possible artifacts)
+Constructor     = selects / instantiates / binds from the library
+Generate        = frontend syntax for constructor-time assembly decisions
+```
+
+### Concrete example
+
+```systemverilog
+module Top #(
+    parameter int MODE = 0,
+    parameter int STAGES = 3,
+    parameter bit USE_ACC = 1,
+    parameter int WIDTH = 32
+) (...);
+
+  logic [WIDTH-1:0] pipe [0:STAGES-1];
+  logic [WIDTH-1:0] acc;
+
+  if (MODE == 0) begin
+    always_comb pipe[0] = in + 1;
+  end else begin
+    always_comb pipe[0] = in ^ 'h55;
+  end
+
+  for (genvar i = 1; i < STAGES; i++) begin
+    always_ff @(posedge clk or negedge rst_n) begin
+      if (!rst_n) pipe[i] <= '0;
+      else        pipe[i] <= pipe[i-1];
+    end
+  end
+
+  if (USE_ACC) begin
+    always_ff @(posedge clk or negedge rst_n) begin
+      if (!rst_n) acc <= '0;
+      else        acc <= acc + pipe[STAGES-1];
+    end
+    assign out = acc;
+  end else begin
+    assign out = pipe[STAGES-1];
+  end
+endmodule
+```
+
+The specialization owns the full artifact library:
+
+- storage template: `pipe` (element type `logic [WIDTH-1:0]`)
+- storage template: `acc` (type `logic [WIDTH-1:0]`)
+- process artifact: `pipe0_mode_add` (`always_comb pipe[0] = in + 1`)
+- process artifact: `pipe0_mode_xor` (`always_comb pipe[0] = in ^ 'h55`)
+- process template: `pipeline_reg(i)` (the `always_ff` body, parameterized over index)
+- process artifact: `accumulate` (the accumulator `always_ff`)
+- connection artifact: `out_from_acc` (`assign out = acc`)
+- connection artifact: `out_from_pipe` (`assign out = pipe[STAGES-1]`)
+
+All eight artifacts are compiled. The constructor selects which subset to install:
+
+```
+construct(spec, params):
+  allocate pipe with size params.STAGES
+  allocate acc
+  if params.MODE == 0: install spec.pipe0_mode_add
+  else:                 install spec.pipe0_mode_xor
+  for i in 1..params.STAGES-1: install spec.pipeline_reg(i)
+  if params.USE_ACC:    install spec.accumulate, bind spec.out_from_acc
+  else:                 bind spec.out_from_pipe
+```
+
+### What this means for specialization identity
+
+Only WIDTH creates a different specialization (different packed bit width = different compiled artifacts). MODE, STAGES, and USE_ACC are constructor-time selections that do not change the artifact library:
+
+- MODE=0 vs MODE=1: same library, constructor installs different process
+- STAGES=3 vs STAGES=5: same library, constructor instantiates different count
+- USE_ACC=1 vs USE_ACC=0: same library, constructor enables different subset
+
+Two instances share a specialization when their artifact libraries have identical compile-owned facts, regardless of which artifacts the constructor selects.
+
 ## Generate Semantics
 
-A generate block requires specialization only if it changes the compiled behavior artifact. Otherwise it is resolved during elaboration.
+Generate constructs are frontend syntax for constructor-time assembly decisions. They describe which artifacts exist in each instance, not which artifacts are compiled.
 
-Generate blocks that build the design graph (creating instances, instantiating processes, wiring connectivity) are elaboration-time operations. The process body is compiled independently; the generate block only decides whether that process object is created.
+A generate block requires specialization only when it changes compile-owned facts (packed widths, arithmetic representation, compiled code shape). Otherwise it is a constructor-time operation resolved during design realization.
 
-Generate blocks that change compiled code (different packed widths, different arithmetic representation inside branches) require specialization.
+The key distinction: generate does not control **what is compiled**. The specialization compiles all artifacts from all branches. Generate controls **what is installed** -- which artifacts the constructor selects for a particular instance.
 
 ## Compiled Artifact: CompiledModuleSpec
 
-A compiled specialization contains:
+A compiled specialization is a self-contained artifact library. It contains compiled code for all artifacts the definition can produce -- not just the artifacts selected by one particular instance.
 
-| Component           | Description                                                          |
-| ------------------- | -------------------------------------------------------------------- |
-| Specialization IR   | HIR and MIR, pointer-free, ID-based, specialization-scoped           |
-| SpecLayout          | Slot list with sizes, alignments, offsets relative to `this_base`    |
-| Code artifacts      | LLVM IR (or machine code) for processes/kernels, scoped to this spec |
-| InstanceConstSchema | Types and positions of value-only parameters in the const block      |
-| Metadata            | Source origins, process meta (names, kinds), read/write sets         |
-| SpecHash            | Deterministic hash over all semantically relevant outputs            |
+| Component           | Description                                                               |
+| ------------------- | ------------------------------------------------------------------------- |
+| Specialization IR   | HIR and MIR for all artifacts, pointer-free, ID-based                     |
+| SpecLayout          | Slot list with sizes, alignments, offsets relative to `this_base`         |
+| Code artifacts      | LLVM IR (or machine code) for all process/kernel artifacts in the library |
+| InstanceConstSchema | Types and positions of value-only parameters in the const block           |
+| Metadata            | Source origins, process meta (names, kinds), read/write sets              |
+| SpecHash            | Deterministic hash over all semantically relevant outputs                 |
 
 ### Scope Rule
 
@@ -301,7 +385,7 @@ These invariants must be enforced automatically:
 | Term                | Definition                                                                     |
 | ------------------- | ------------------------------------------------------------------------------ |
 | Module Definition   | Source-level `module M; ... endmodule`                                         |
-| Specialization      | `(ModuleDefId, BehaviorFingerprint)` -- unit of compilation                    |
+| Specialization      | `(ModuleDefId, BehaviorFingerprint)` -- compiled artifact library              |
 | Instance            | Runtime object with `this_base`                                                |
 | BehaviorFingerprint | Hash of compile-owned inputs that affect the compiled artifact                 |
 | SpecLayout          | Specialization-scoped mapping from slot to offset                              |

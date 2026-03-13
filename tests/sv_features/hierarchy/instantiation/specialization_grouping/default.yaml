@@ -122,3 +122,100 @@ cases:
           - "spec[0]: def=0"
           - "spec[1]: def=1"
           - "spec[2]: def=2"
+
+  - name: definition_scoped_type_store_includes_inactive_generate_branches
+    description: >
+      The type store is definition-scoped: it includes types from ALL
+      generate branches (active and inactive), not just the instantiated
+      path. Here MODE=0 activates bit[7:0] and MODE=1 activates bit[15:0],
+      but both instances see both types in their type store. If the store
+      were instance-scoped (only the active branch), these would produce
+      different fingerprints and incorrectly split into separate
+      specializations. This test is the load-bearing proof that
+      BuildArtifactInventory walks uninstantiated GenerateBlockSymbols.
+    dump_specialization_map: true
+    sv: |
+      module Gated #(parameter int MODE = 0);
+        if (MODE == 0) begin : g
+          bit [7:0] val8;
+          initial begin
+            val8 = 8'hAB;
+            $display("mode0 v=%h", val8);
+          end
+        end else begin : g
+          bit [15:0] val16;
+          initial begin
+            val16 = 16'hCDEF;
+            $display("mode1 v=%h", val16);
+          end
+        end
+      endmodule
+
+      module Top;
+        Gated #(.MODE(0)) g0();
+        Gated #(.MODE(1)) g1();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 2"
+          - "spec[1]: def=1"
+          - "instances=2"
+
+  - name: generate_same_types_same_specialization
+    description: >
+      Generate branches that use the same packed types are grouped into
+      one specialization. The branch selection is constructor-time; the
+      compiled representation is the same.
+    dump_specialization_map: true
+    sv: |
+      module Selector #(parameter int MODE = 0);
+        bit [7:0] data;
+        if (MODE == 0) begin : g
+          initial begin
+            data = 8'hAB;
+            $display("mode0 d=%h", data);
+          end
+        end else begin : g
+          initial begin
+            data = 8'hCD;
+            $display("mode1 d=%h", data);
+          end
+        end
+      endmodule
+
+      module Top;
+        Selector #(.MODE(0)) s0();
+        Selector #(.MODE(1)) s1();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 2"
+          - "spec[1]: def=1"
+          - "instances=2"
+
+  - name: packed_width_splits_specialization
+    description: >
+      Parameter-dependent packed width changes compiled representation.
+      Different packed widths produce different type store entries and
+      must split into separate specializations.
+    dump_specialization_map: true
+    sv: |
+      module Sized #(parameter int WIDTH = 8);
+        bit [WIDTH-1:0] data;
+        initial begin
+          data = '1;
+          $display("w=%0d d=%0d", WIDTH, data);
+        end
+      endmodule
+
+      module Top;
+        Sized #(.WIDTH(8)) s8();
+        Sized #(.WIDTH(16)) s16();
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 3"
+          - "instances=1"

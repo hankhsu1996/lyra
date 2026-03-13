@@ -1,113 +1,102 @@
 #include "lyra/lowering/ast_to_hir/specialization.hpp"
 
-#include <algorithm>
 #include <map>
-#include <string>
 #include <vector>
 
 #include <slang/ast/symbols/InstanceSymbols.h>
-#include <slang/ast/symbols/VariableSymbols.h>
-#include <slang/ast/types/Type.h>
 
 #include "absl/hash/hash.h"
 #include "lyra/common/module_identity.hpp"
+#include "lyra/lowering/ast_to_hir/repertoire_descriptor.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 namespace {
 
-// Compile-owned declaration descriptor: name and resolved type of a single
-// module-local variable or net.
+// Compile-owned representation fingerprint from the definition's type store.
 //
-// v1: uses slang's type.toString() as canonical type representation.
-// Pragmatic starting point -- not a principled canonicalizer.
+// Only the load-bearing subset of type entries is hashed -- those that
+// independently change compiled representation (LLVM IR shape):
 //
-// Risk: type.toString() may encode runtime-owned differences (e.g., unpacked
-// container sizing) that should not split specialization. If this causes
-// oversplitting, the canonicalizer needs narrowing. Tracked as part of M2c.
-struct CompileOwnedDeclDescriptor {
-  std::string name;
-  std::string type_repr;
-};
-
-// Compile-owned body descriptor for the v1 discriminator.
-// Sorted by name for deterministic hashing.
+//   Included: IntegralDesc, PackedArrayDesc, PackedStructDesc,
+//             PackedUnionDesc, EnumDesc
 //
-// v1 scope: module-local variables and nets only. This captures
-// declaration-side compile-owned shape (packed widths, signedness, 2-state
-// vs 4-state as reflected in resolved types). It does not capture
-// procedural/behavioral compile-owned shape (e.g., generate branch
-// selections that affect code shape without introducing new declarations).
-// Tracked as M2c.
-struct CompileOwnedBodyDescriptor {
-  std::vector<CompileOwnedDeclDescriptor> decls;
-};
-
-// Returns true if a body member is a compile-owned declaration.
+//   Excluded: unpacked containers (UnpackedArrayDesc, UnpackedStructDesc,
+//             UnpackedUnionDesc, DynamicArrayDesc, QueueDesc,
+//             AssociativeArrayDesc) and kind-only entries (void, real,
+//             short_real, string).
 //
-// v1 includes all module-local variables and nets. If a parameter affects
-// packed width, signedness, or any other type property, the resolved type
-// of the affected variable/net will differ, producing a different fingerprint.
+// Unpacked/container entries only reference element TypeDescIds. They can
+// only differ between instances when their element's packed type differs --
+// but that packed type is itself a separate entry already hashed here. So
+// container entries are redundant for specialization identity and hashing
+// them would teach the wrong idea that all type-store entries define
+// specialization.
 //
-// Excludes parameters, localparams, child instances, generates, procedures.
-// Their declaration-side effects are observed indirectly through the
-// resolved types of the variables/nets they influence.
-auto IsCompileOwnedDeclaration(const slang::ast::Symbol& member) -> bool {
-  return member.kind == slang::ast::SymbolKind::Variable ||
-         member.kind == slang::ast::SymbolKind::Net;
-}
-
-// Returns the canonical type representation for a compile-owned declaration.
-//
-// v1: reuses slang's type.toString(). See CompileOwnedDeclDescriptor comment
-// for the runtime-owned type risk.
-auto CanonicalCompileOwnedTypeRepr(const slang::ast::Type& type)
-    -> std::string {
-  return type.toString();
-}
-
-auto BuildCompileOwnedBodyDescriptor(const slang::ast::InstanceBodySymbol& body)
-    -> CompileOwnedBodyDescriptor {
-  CompileOwnedBodyDescriptor desc;
-
-  for (const auto& member : body.members()) {
-    if (!IsCompileOwnedDeclaration(member)) {
-      continue;
-    }
-    const auto& val = member.as<slang::ast::ValueSymbol>();
-    desc.decls.push_back(
-        CompileOwnedDeclDescriptor{
-            .name = std::string(val.name),
-            .type_repr = CanonicalCompileOwnedTypeRepr(val.getType()),
-        });
-  }
-
-  // Sort by name for deterministic hashing. Module-local declaration names
-  // are unique within a scope (guaranteed by slang's elaboration model),
-  // so name-only sorting is sufficient for a stable ordering.
-  std::ranges::sort(
-      desc.decls, [](const auto& a, const auto& b) { return a.name < b.name; });
-
-  return desc;
-}
-
-// Hash a descriptor into a v1 declaration-shape fingerprint.
-// Hashes only body-local declaration facts (name + type_repr pairs).
-// def_id is not included -- it is paired externally by BuildSpecializationMap.
-auto HashCompileOwnedBodyDescriptor(const CompileOwnedBodyDescriptor& desc)
-    -> common::StructuralFingerprint {
+// The type store is definition-scoped because BuildArtifactInventory walks
+// all generate branches (slang's body.members() includes uninstantiated
+// GenerateBlockSymbols). So the store contains types from ALL constructor
+// alternatives, not just the instantiated branch.
+auto HashCompileOwnedTypeStore(const CompileOwnedTypeStore& store) -> uint64_t {
   size_t h = 0;
-  for (const auto& decl : desc.decls) {
-    h = absl::HashOf(h, decl.name, decl.type_repr);
+
+  for (const auto& entry : store.entries) {
+    switch (entry.kind) {
+      case TypeDescKind::kIntegral: {
+        const auto& p = std::get<IntegralDesc>(entry.payload);
+        h = absl::HashOf(h, static_cast<uint8_t>(entry.kind));
+        h = absl::HashOf(h, p.bit_width, p.is_signed, p.is_four_state);
+        break;
+      }
+      case TypeDescKind::kPackedArray: {
+        const auto& p = std::get<PackedArrayDesc>(entry.payload);
+        h = absl::HashOf(h, static_cast<uint8_t>(entry.kind));
+        h = absl::HashOf(h, p.element.value, p.left, p.right);
+        break;
+      }
+      case TypeDescKind::kPackedStruct: {
+        const auto& p = std::get<PackedStructDesc>(entry.payload);
+        h = absl::HashOf(h, static_cast<uint8_t>(entry.kind));
+        h = absl::HashOf(h, p.total_bit_width, p.is_signed, p.is_four_state);
+        for (const auto& field : p.fields) {
+          h = absl::HashOf(
+              h, field.type.value, field.bit_offset, field.bit_width);
+        }
+        break;
+      }
+      case TypeDescKind::kPackedUnion: {
+        const auto& p = std::get<PackedUnionDesc>(entry.payload);
+        h = absl::HashOf(h, static_cast<uint8_t>(entry.kind));
+        h = absl::HashOf(h, p.total_bit_width, p.is_signed, p.is_four_state);
+        for (const auto& member : p.members) {
+          h = absl::HashOf(
+              h, member.type.value, member.bit_offset, member.bit_width);
+        }
+        break;
+      }
+      case TypeDescKind::kEnum: {
+        const auto& p = std::get<EnumDesc>(entry.payload);
+        h = absl::HashOf(h, static_cast<uint8_t>(entry.kind));
+        h = absl::HashOf(h, p.base_type.value);
+        for (const auto& member : p.members) {
+          h = absl::HashOf(h, member.value);
+        }
+        break;
+      }
+      default:
+        break;
+    }
   }
-  return common::StructuralFingerprint{h};
+
+  return h;
 }
 
 }  // namespace
 
 auto ComputeStructuralFingerprint(const slang::ast::InstanceBodySymbol& body)
     -> common::StructuralFingerprint {
-  auto desc = BuildCompileOwnedBodyDescriptor(body);
-  return HashCompileOwnedBodyDescriptor(desc);
+  const auto desc = BuildDefinitionRepertoireDesc(body);
+  return common::StructuralFingerprint{
+      HashCompileOwnedTypeStore(desc.type_store)};
 }
 
 auto BuildSpecializationMap(
