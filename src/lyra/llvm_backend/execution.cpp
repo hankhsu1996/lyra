@@ -30,7 +30,6 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/opt_level.hpp"
-#include "lyra/llvm_backend/emit.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -427,12 +426,8 @@ auto CompileJitImpl(
         });
   }
 
-  // Sub-phase 3: optimize + add_ir
+  // Sub-phase 3: add_ir
   auto t2 = Clock::now();
-  {
-    auto opt_tm = CreateHostTargetMachine(options.opt_level);
-    OptimizeModule(*result.module, *opt_tm, options.opt_level);
-  }
   llvm::orc::ThreadSafeContext tsc(std::move(result.context));
   auto tsm = llvm::orc::ThreadSafeModule(std::move(result.module), tsc);
   if (auto err = (*jit)->addIRModule(std::move(tsm))) {

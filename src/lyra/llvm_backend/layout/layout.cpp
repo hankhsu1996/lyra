@@ -863,8 +863,10 @@ struct RootInfo {
   TypeId type;
 };
 
-// Collect unique roots for frame layout, de-duplicating projected places
-auto CollectFrameRoots(
+// Collect unique local/temp roots for a process, de-duplicating projected
+// places. Storage class (frame vs alloca) is determined by the caller based
+// on whether the process has suspension points.
+auto CollectProcessRoots(
     const mir::Process& process, const mir::Arena& arena,
     const TypeArena& types) -> std::vector<RootInfo> {
   auto all_places = CollectProcessPlaces(process);
@@ -899,9 +901,11 @@ auto CollectFrameRoots(
   return result;
 }
 
-// True when the process contains any suspension point (Delay or Wait
-// terminator). Processes without suspension points can use plain allocas
-// for all locals/temps instead of frame struct storage.
+// Conservative whole-process suspension classification (phase 1).
+// True when the process contains any Delay or Wait terminator, meaning
+// locals must persist across resumption and require frame storage.
+// When false, all locals/temps can be plain allocas.
+// Future: per-root classification for mixed processes.
 auto ProcessHasSuspension(const mir::Process& process) -> bool {
   return std::ranges::any_of(process.blocks, [](const auto& block) {
     return std::holds_alternative<mir::Delay>(block.terminator.data) ||
@@ -1384,7 +1388,7 @@ auto BuildLayout(
     proc_layout.process_index = i;
     proc_layout.has_suspension = ProcessHasSuspension(process);
 
-    auto roots = CollectFrameRoots(process, arena, types);
+    auto roots = CollectProcessRoots(process, arena, types);
 
     if (proc_layout.has_suspension) {
       proc_layout.frame =

@@ -17,12 +17,6 @@ namespace lyra::lowering::mir_to_llvm {
 auto CreateHostTargetMachine(OptLevel opt_level = OptLevel::kO2)
     -> std::unique_ptr<llvm::TargetMachine>;
 
-// Run LLVM IR optimization passes on the module.
-// Promotes allocas to SSA registers (mem2reg), simplifies CFG, etc.
-void OptimizeModule(
-    llvm::Module& module, llvm::TargetMachine& target_machine,
-    OptLevel opt_level);
-
 // Emit an LLVM module as a native object file.
 // The module must have DataLayout/TargetTriple already set (by LowerMirToLlvm).
 auto EmitObjectFile(

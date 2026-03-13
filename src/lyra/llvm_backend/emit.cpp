@@ -5,13 +5,9 @@
 #include <mutex>
 #include <string>
 
-#include <llvm/Analysis/CGSCCPassManager.h>
-#include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
-#include <llvm/IR/PassManager.h>
 #include <llvm/MC/TargetRegistry.h>
-#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/TargetSelect.h>
@@ -88,43 +84,6 @@ auto CreateHostTargetMachine(OptLevel opt_level)
   }
 
   return tm;
-}
-
-void OptimizeModule(
-    llvm::Module& module, llvm::TargetMachine& target_machine,
-    OptLevel opt_level) {
-  if (opt_level == OptLevel::kO0) return;
-
-  llvm::PassBuilder pb(&target_machine);
-
-  llvm::LoopAnalysisManager lam;
-  llvm::FunctionAnalysisManager fam;
-  llvm::CGSCCAnalysisManager cgam;
-  llvm::ModuleAnalysisManager mam;
-
-  pb.registerModuleAnalyses(mam);
-  pb.registerCGSCCAnalyses(cgam);
-  pb.registerFunctionAnalyses(fam);
-  pb.registerLoopAnalyses(lam);
-  pb.crossRegisterProxies(lam, fam, cgam, mam);
-
-  auto level = llvm::OptimizationLevel::O2;
-  switch (opt_level) {
-    case OptLevel::kO0:
-      return;
-    case OptLevel::kO1:
-      level = llvm::OptimizationLevel::O1;
-      break;
-    case OptLevel::kO2:
-      level = llvm::OptimizationLevel::O2;
-      break;
-    case OptLevel::kO3:
-      level = llvm::OptimizationLevel::O3;
-      break;
-  }
-
-  auto mpm = pb.buildPerModuleDefaultPipeline(level);
-  mpm.run(module, mam);
 }
 
 auto EmitObjectFile(

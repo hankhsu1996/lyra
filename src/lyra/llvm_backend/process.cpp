@@ -1382,6 +1382,30 @@ auto LowerTerminator(
 
 }  // namespace
 
+// Materialize local/temp storage as allocas for suspension-free processes.
+// Called after EmitProcessStateSetup so that frame_ptr_ is set (but unused).
+// Sets up function-scope alloca management and creates initialized storage
+// for each root in alloca_roots. Returns error if any storage creation fails.
+//
+// Phase 1: conservative whole-process classification. A process is
+// suspension-free iff it has no Delay/Wait terminators. Future phases may
+// refine to per-root classification for mixed processes.
+static auto MaterializeAllocaStorage(
+    Context& context, llvm::Function& func, const ProcessLayout& proc_layout)
+    -> Result<void> {
+  if (proc_layout.has_suspension) return {};
+
+  context.BeginFunction(func);
+  for (const auto& root : proc_layout.alloca_roots) {
+    mir::PlaceRoot mir_root{
+        .kind = root.key.kind, .id = root.key.id, .type = root.type};
+    auto alloca_result = context.GetOrCreatePlaceStorage(mir_root);
+    if (!alloca_result) return std::unexpected(alloca_result.error());
+    context.InitializePlaceStorage(*alloca_result, root.type);
+  }
+  return {};
+}
+
 auto GenerateProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
     -> Result<ProcessCodegenResult> {
@@ -1430,20 +1454,10 @@ auto GenerateProcessFunction(
 
   context.EmitProcessStateSetup(state_arg);
 
-  // Suspension-free processes: allocate locals/temps as plain allocas instead
-  // of frame struct GEPs. LLVM's mem2reg promotes these to SSA registers.
   const auto& proc_layout =
       context.GetLayout().processes[context.GetCurrentProcessIndex()];
-  if (!proc_layout.has_suspension) {
-    context.BeginFunction(*func);
-    for (const auto& root : proc_layout.alloca_roots) {
-      mir::PlaceRoot mir_root{
-          .kind = root.key.kind, .id = root.key.id, .type = root.type};
-      auto alloca_result = context.GetOrCreatePlaceStorage(mir_root);
-      if (!alloca_result) return std::unexpected(alloca_result.error());
-      context.InitializePlaceStorage(*alloca_result, root.type);
-    }
-  }
+  auto alloca_result = MaterializeAllocaStorage(context, *func, proc_layout);
+  if (!alloca_result) return std::unexpected(alloca_result.error());
 
   // Collect actual resume targets: blocks that are jumped to after Delay/Wait.
   // bb0 is always accessible (initial execution) but handled as the default
@@ -1600,20 +1614,12 @@ auto GenerateSharedProcessFunction(
 
   context.EmitProcessStateSetup(func->getArg(0));
 
-  // Suspension-free processes: allocate locals/temps as plain allocas.
   const auto& shared_proc_layout =
       context.GetLayout().processes[context.GetCurrentProcessIndex()];
-  if (!shared_proc_layout.has_suspension) {
-    context.BeginFunction(*func);
-    for (const auto& root : shared_proc_layout.alloca_roots) {
-      mir::PlaceRoot mir_root{
-          .kind = root.key.kind, .id = root.key.id, .type = root.type};
-      auto alloca_result = context.GetOrCreatePlaceStorage(mir_root);
-      if (!alloca_result) {
-        return std::unexpected(alloca_result.error());
-      }
-      context.InitializePlaceStorage(*alloca_result, root.type);
-    }
+  auto shared_alloca_result =
+      MaterializeAllocaStorage(context, *func, shared_proc_layout);
+  if (!shared_alloca_result) {
+    return std::unexpected(shared_alloca_result.error());
   }
 
   // Enter specialization-local addressing mode for module-local slots.
