@@ -131,6 +131,16 @@ cc_test(
     ],
 ) for i in range(4)]
 
+# Unit tests for trace infrastructure (no LLVM/slang dependency)
+cc_test(
+    name = "trace_manager_test",
+    srcs = ["trace_manager_test.cpp"],
+    deps = [
+        "//:runtime",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # LLI development suite - out-of-process LLI execution (for debugging/comparison)
 cc_test(
     name = "lli_dev_tests",
