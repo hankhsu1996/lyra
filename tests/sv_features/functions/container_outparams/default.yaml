@@ -1,5 +1,5 @@
 feature: functions
-description: Container output/inout parameters (LLVM-only - MIR interpreter does not support output/inout)
+description: Container output/inout parameters
 
 cases:
   # Test 1: Output parameter overwrites existing handle (must destroy old)

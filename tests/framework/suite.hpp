@@ -11,17 +11,13 @@ namespace lyra::test {
 // Backend represents the semantic engine used to execute tests.
 // This is the execution model, not the compilation target.
 enum class BackendKind {
-  kMir,  // MIR interpreter
   kJit,  // In-process ORC JIT
   kLli,  // Out-of-process LLI interpreter (for debugging/comparison)
   kAot,  // AOT compile + link + subprocess execution
 };
 
-// Parse backend kind from string (case-sensitive: "mir", "jit", "lli")
+// Parse backend kind from string (case-sensitive: "jit", "lli", "aot")
 inline auto ParseBackendKind(std::string_view backend_string) -> BackendKind {
-  if (backend_string == "mir") {
-    return BackendKind::kMir;
-  }
   if (backend_string == "jit") {
     return BackendKind::kJit;
   }

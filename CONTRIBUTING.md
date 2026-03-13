@@ -70,13 +70,6 @@ YAML-based tests live in `tests/sv_features/`. Suite definitions are in `tests/s
 For ad-hoc runs, use `--test_file` and `--backend`.
 
 ```bash
-# MIR backend
-bazel test //tests:mir_dev_tests \
-  --test_arg=--test_file=control_flow/conditionals.yaml \
-  --test_arg=--backend=mir \
-  --test_output=errors
-
-# JIT backend
 bazel test //tests:jit_dev_tests \
   --test_arg=--test_file=operators/binary.yaml \
   --test_arg=--backend=jit \

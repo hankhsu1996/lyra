@@ -43,17 +43,16 @@ warnings = ["no-unused"]       # Optional: warning control
 
 ## Commands
 
-| Command                  | Description                        |
-| ------------------------ | ---------------------------------- |
-| `lyra init [name]`       | Create a new project               |
-| `lyra run [files]`       | Run simulation (AOT, default)      |
-| `lyra run --backend=jit` | Run simulation via JIT (dev-only)  |
-| `lyra run --backend=mir` | Run simulation via MIR interpreter |
-| `lyra compile [files]`   | Compile to native executable       |
-| `lyra check [files]`     | Check source files for errors      |
-| `lyra dump hir [files]`  | Dump HIR representation            |
-| `lyra dump mir [files]`  | Dump MIR representation            |
-| `lyra dump llvm [files]` | Dump LLVM IR                       |
+| Command                  | Description                       |
+| ------------------------ | --------------------------------- |
+| `lyra init [name]`       | Create a new project              |
+| `lyra run [files]`       | Run simulation (AOT, default)     |
+| `lyra run --backend=jit` | Run simulation via JIT (dev-only) |
+| `lyra compile [files]`   | Compile to native executable      |
+| `lyra check [files]`     | Check source files for errors     |
+| `lyra dump hir [files]`  | Dump HIR representation           |
+| `lyra dump mir [files]`  | Dump MIR representation           |
+| `lyra dump llvm [files]` | Dump LLVM IR                      |
 
 Commands can use either `lyra.toml` or CLI arguments (or both).
 
@@ -176,7 +175,6 @@ architectural details.
 | ------------- | --------------- | ----------------------------- |
 | AOT (default) | `--backend=aot` | Production path               |
 | JIT           | `--backend=jit` | Developer iteration, dev-only |
-| MIR           | `--backend=mir` | MIR debugging, process-local  |
 
 AOT and JIT share the same LLVM codegen pipeline (`LowerMirToLlvm`). AOT
 compiles to a native executable; JIT compiles and runs in-process.
@@ -201,5 +199,4 @@ pedantic = true
 - **Dual mode**: Commands work with lyra.toml, CLI arguments, or both
 - **Default backend**: AOT (production path, compile to native executable)
 - **JIT backend**: Dev-only, accessed via `--backend=jit`
-- **MIR backend**: Debug-only, process-local, accessed via `--backend=mir`
 - **`run` semantics**: Always means "execute", backend is an implementation detail

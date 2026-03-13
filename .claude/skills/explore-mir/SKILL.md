@@ -1,11 +1,11 @@
 ---
 name: explore-mir
-description: Plan how to implement a SystemVerilog feature end-to-end (SV -> HIR -> MIR -> Interpreter). Use when adding new language features.
+description: Plan how to implement a SystemVerilog feature end-to-end (SV -> HIR -> MIR -> LLVM). Use when adding new language features.
 ---
 
 # Plan Feature Lowering (SV -> HIR -> MIR)
 
-Guide for implementing a SystemVerilog feature end-to-end, starting from LRM semantics and ending with passing tests in MIR interpreter (and optionally LLVM backend readiness).
+Guide for implementing a SystemVerilog feature end-to-end, starting from LRM semantics and ending with passing JIT backend tests.
 
 ## Prerequisites
 
@@ -20,8 +20,8 @@ Read before starting:
 ## Mental Model
 
 > The LRM defines semantics. HIR makes semantics explicit and typed.
-> MIR is the semantic endpoint executable by the interpreter.
-> Backends (LLVM) are translation targets, not semantic decision-makers.
+> MIR is the semantic endpoint -- the lowest IR before code generation.
+> The LLVM backend is a translation target, not a semantic decision-maker.
 
 ## Process
 
@@ -49,7 +49,7 @@ Classify the feature:
 | -------------------------------------------------- | -------------------------------------- |
 | Pure expression semantics                          | HIR node (typed), then MIR `Compute`   |
 | Control-flow semantics                             | MIR terminators / blocks               |
-| Effectful behavior (I/O, scheduling, system tasks) | MIR `Effect` + interpreter runtime     |
+| Effectful behavior (I/O, scheduling, system tasks) | MIR `Effect` + runtime                 |
 | Data model / storage layout                        | Type system + runtime layout subsystem |
 | Compile-time-only semantics                        | AST/HIR constant folding / elaboration |
 
@@ -84,7 +84,7 @@ Then implement in the right phase (usually AST->HIR typing or HIR validation).
 
 For each invalid program form:
 
-- Which phase reports it? (AST->HIR, HIR validation, HIR->MIR, interpreter runtime)
+- Which phase reports it? (AST->HIR, HIR validation, HIR->MIR, runtime)
 - Is it a hard error, warning, or runtime failure?
 - What message format / error code conventions?
 
@@ -97,9 +97,8 @@ Pipeline checklist:
 - [ ] AST->HIR: parse + desugar + type
 - [ ] HIR validation: reject invalid forms
 - [ ] HIR->MIR: encode semantics in MIR construct(s)
-- [ ] MIR interpreter: implement behavior (the semantic oracle)
-- [ ] Tests: add SV tests + expected outputs
-- [ ] (Optional) LLVM backend: add lowering or mark unsupported with a clear error
+- [ ] LLVM backend: add lowering
+- [ ] Tests: add SV tests + expected outputs (JIT backend)
 
 ## Testing Methodology (TDD by Default)
 
@@ -108,11 +107,8 @@ Write tests first most of the time.
 ### Test ladder (fast -> slow)
 
 1. **Unit tests for helpers** (type computation, classifier, formatting parser, etc.)
-2. **MIR interpreter semantic tests** (primary oracle)
-3. **End-to-end SV feature tests** in `tests/sv_features/...`
-4. (Optional) **Cross-backend parity tests** - same SV test should pass on MIR interpreter and LLVM backend, or LLVM backend explicitly reports "unsupported feature" with a deterministic error
-
-**Rule:** if you can't test it in the interpreter, you don't actually know the semantics are right.
+2. **End-to-end SV feature tests** in `tests/sv_features/...` (JIT backend)
+3. **AOT backend tests** (only if JIT passes and you suspect a runner/linking issue)
 
 ## Scope Triage
 
@@ -120,9 +116,9 @@ Before coding, classify the feature's surface area:
 
 | Surface area              | Complexity | What to read first                         |
 | ------------------------- | ---------- | ------------------------------------------ |
-| Expression-only           | Easiest    | HIR node + MIR rvalue + interp op          |
+| Expression-only           | Easiest    | HIR node + MIR rvalue + LLVM lowering      |
 | Data type / storage       | Medium     | TypeArena + layout + load/store            |
 | System functions/tasks    | Medium     | Registry + argument rules + runtime        |
 | Control-flow / scheduling | Hard       | Terminators, coroutine/suspend, time wheel |
 
-This tells you whether you need to read layout/interpreter internals up front.
+This tells you whether you need to read layout/runtime internals up front.

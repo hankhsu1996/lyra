@@ -93,7 +93,7 @@ auto LyraFgets(void* engine, int32_t descriptor, LyraStringHandle* str_out)
 // - descriptor: MCD or FD descriptor (0 = no-op, silently ignored)
 // - message: string handle (read-only, NOT retained by this function)
 // - add_newline: true for $fdisplay, false for $fwrite
-// Silently skips invalid/closed streams (matches MIR interpreter behavior).
+// Silently skips invalid/closed streams (matches IEEE 1800 semantics).
 void LyraFWrite(
     void* engine, uint32_t descriptor, LyraStringHandle message,
     bool add_newline);

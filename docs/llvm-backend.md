@@ -170,4 +170,3 @@ Invariant: `x_mask & z_mask == 0` (checked in debug builds).
 
 - One lowering function per MIR construct
 - Deterministic IR output (byte-for-byte reproducible)
-- Use MIR interpreter as semantic oracle: same test, different result -> LLVM bug

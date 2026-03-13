@@ -25,8 +25,6 @@
 #include "run_aot.hpp"
 #include "run_jit.hpp"
 #include "run_lli.hpp"
-#include "run_mir.hpp"
-
 namespace {
 
 // Find the first "--" separator in argv.
@@ -65,7 +63,7 @@ auto main(int argc, char* argv[]) -> int {
   run_cmd.add_description("Run simulation");
   run_cmd.add_argument("--backend")
       .default_value(std::string("aot"))
-      .help("Execution backend: aot (default), jit, lli, or mir");
+      .help("Execution backend: aot (default), jit, or lli");
   lyra::driver::AddCompilationFlags(run_cmd);
   run_cmd.add_argument("files").remaining().help(
       "Source files (uses lyra.toml if not specified)");
@@ -160,8 +158,6 @@ auto main(int argc, char* argv[]) -> int {
           return lyra::driver::RunJit(*input);
         case lyra::driver::Backend::kLli:
           return lyra::driver::RunLli(*input);
-        case lyra::driver::Backend::kMir:
-          return lyra::driver::RunMir(*input);
       }
     }
 

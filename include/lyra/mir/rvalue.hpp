@@ -156,7 +156,7 @@ struct MathCallRvalueInfo {
 };
 
 // Per-dimension compile-time metadata for array query functions.
-// Extracted during HIR->MIR lowering to allow MIR interpreter to evaluate
+// Extracted during HIR->MIR lowering so that downstream consumers can evaluate
 // queries without access to slang types.
 struct DimInfo {
   int32_t left;            // Fixed: actual left bound; Variable: 0

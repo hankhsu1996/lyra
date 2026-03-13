@@ -1,7 +1,6 @@
 feature: functions
 description: >
   Tests for module-scoped user functions with multiple instances.
-  MIR interpreter does not support multi-instance designs.
 
 cases:
   - name: function_accesses_module_local_storage

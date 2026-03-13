@@ -2546,8 +2546,9 @@ auto DefineUserFunction(
   }
 
   // PROLOGUE: Allocate and default-initialize ALL locals/temps at function
-  // entry. This matches MIR interpreter semantics and ensures deterministic
-  // behavior. Order: 1) allocate all, 2) initialize all, 3) store parameters
+  // entry. This matches SystemVerilog default initialization semantics and
+  // ensures deterministic behavior. Order: 1) allocate all, 2) initialize all,
+  // 3) store parameters
   //
   // CONTRACT: All function-local storage is default-initialized at function
   // entry, including: kLocal, kTemp, and return slots.

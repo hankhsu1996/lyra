@@ -169,9 +169,8 @@ Check these before proceeding:
 
 **Test strategy:**
 
-- MIR interpreter is the semantic oracle
-- Same test input, different backend -> results must match
 - Add test cases in `tests/sv_features/`
+- Run JIT backend tests to verify correctness
 - Pattern-based IR checks (verify key instruction sequences, not full IR equality)
 
 ## Deliverable

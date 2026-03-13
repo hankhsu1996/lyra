@@ -82,8 +82,7 @@ auto CollectDesignDeclarations(
 
   // Ordering contract: packages first (in element order), then all module
   // instances (in BFS elaboration order from LowerDesign). This order is ABI -
-  // do not change without updating all consumers (LLVM layout, MIR interpreter,
-  // dump).
+  // do not change without updating all consumers (LLVM layout, dump).
 
   // Allocate package variable design places + pre-allocate function IDs
   for (const auto& element : design.elements) {

@@ -25,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/limitations.md`              | Unsupported SystemVerilog features                  |
 | `docs/string-types.md`             | String type handling, slang interaction             |
 | `docs/error-handling.md`           | Error types, when to use each                       |
-| `docs/execution-modes.md`          | AOT vs JIT vs MIR, shared pipeline, CLI semantics   |
+| `docs/execution-modes.md`          | AOT vs JIT, shared pipeline, CLI semantics          |
 | `docs/profiling.md`                | Callgrind profiling workflow, methodology           |
 | `docs/documentation-guidelines.md` | Documentation guidelines                            |
 
@@ -48,7 +48,6 @@ lyra init [name]                 # Create a new project
 lyra compile [files...]          # Compile to native executable
 lyra run [files...]              # Run simulation (AOT, default)
 lyra run --backend=jit [files]   # Run via ORC JIT (in-process)
-lyra run --backend=mir [files]   # Run via MIR interpreter
 lyra check [files...]            # Check source files for errors
 lyra dump hir [files...]         # Dump HIR representation
 lyra dump mir [files...]         # Dump MIR representation
@@ -91,7 +90,6 @@ Headers in `include/lyra/`, implementations in `src/lyra/`.
 YAML-based tests in `tests/sv_features/`. See `tests/suites.yaml` for suite definitions.
 
 ```bash
-bazel test //tests:mir_dev_tests --test_output=errors    # MIR interpreter tests
 bazel test //tests:jit_dev_tests --test_output=errors    # In-process ORC JIT tests
 ```
 
@@ -100,13 +98,6 @@ bazel test //tests:jit_dev_tests --test_output=errors    # In-process ORC JIT te
 Run a specific test file without modifying suite definitions:
 
 ```bash
-# MIR backend
-bazel test //tests:mir_dev_tests \
-  --test_arg=--test_file=control_flow/conditional/default.yaml \
-  --test_arg=--backend=mir \
-  --test_output=errors
-
-# JIT backend
 bazel test //tests:jit_dev_tests \
   --test_arg=--test_file=operators/binary/two_state.yaml \
   --test_arg=--backend=jit \

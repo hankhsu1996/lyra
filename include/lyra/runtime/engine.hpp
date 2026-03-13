@@ -60,7 +60,7 @@ struct PropagationStats {
 // Simulation Engine: event-driven scheduler for SystemVerilog processes.
 //
 // Design:
-// - Backend-agnostic: both MIR interpreter and LLVM-generated code can use it
+// - Backend-agnostic: decoupled from code generation
 // - IEEE 1800 stratified event scheduler (Active -> Inactive -> NBA regions)
 // - Processes suspend via Delay/Subscribe, engine resumes them later
 //

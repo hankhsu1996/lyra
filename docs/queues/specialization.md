@@ -127,4 +127,3 @@ Depends on the post-M2 grouping contract: the specialization groups that define 
 1. **v1 discriminator completeness**: The v1 discriminator captures variable/net names and resolved types. It does not capture procedural/behavioral compile-owned shape. What is the minimal complete compile-owned representation? (Tracked as M2c.)
 2. **Package compilation**: Packages have no instances. Separate specialization unit or separate concept?
 3. **Container descriptor format**: How should SpecLayout represent container regions?
-4. **MIR interpreter alignment**: Debug-only. Migrate in lockstep or defer?

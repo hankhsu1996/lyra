@@ -94,4 +94,3 @@ Two instances with the same `ModuleSpecId` but different unpacked array sizes sh
 
 - Packed types remain specialization boundaries. Packed width affects arithmetic instructions and must produce different compiled code.
 - Dynamic arrays, queues, and associative arrays remain heap-allocated handle objects. The arena model applies to fixed-size unpacked containers only.
-- The MIR interpreter is unaffected.

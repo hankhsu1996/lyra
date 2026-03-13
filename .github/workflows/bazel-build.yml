@@ -80,9 +80,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: MIR
-            target: //tests:mir_dev_tests
-            extra_flags: ""
           - name: JIT 0
             target: //tests:jit_dev_tests_shard0
             extra_flags: ""
