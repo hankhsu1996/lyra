@@ -18,6 +18,8 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/mutation_event.hpp"
 #include "lyra/common/range_set.hpp"
+#include "lyra/runtime/activation_trace.hpp"
+#include "lyra/runtime/activation_trace_format.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/loop_budget.hpp"
@@ -88,11 +90,13 @@ void Engine::ScheduleInitial(ProcessHandle handle) {
     return;
   }
 
-  active_queue_.push_back(
-      ScheduledEvent{
-          .handle = handle,
-          .resume = ResumePoint{.block_index = 0, .instruction_index = 0},
-      });
+  ScheduledEvent event{
+      .handle = handle,
+      .resume = ResumePoint{.block_index = 0, .instruction_index = 0},
+      .cause = WakeCause::kInitial,
+      .trigger_slot = kNoTriggerSlot,
+  };
+  active_queue_.push_back(event);
 }
 
 void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
@@ -104,27 +108,33 @@ void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
                              current_time_, ticks));
   }
   SimTime wake_time = current_time_ + ticks;
-  delay_queue_[wake_time].push_back(
-      ScheduledEvent{
-          .handle = handle,
-          .resume = resume,
-      });
+  ScheduledEvent event{
+      .handle = handle,
+      .resume = resume,
+      .cause = WakeCause::kDelay,
+      .trigger_slot = kNoTriggerSlot,
+  };
+  delay_queue_[wake_time].push_back(event);
 }
 
 void Engine::DelayZero(ProcessHandle handle, ResumePoint resume) {
-  inactive_queue_.push(
-      ScheduledEvent{
-          .handle = handle,
-          .resume = resume,
-      });
+  ScheduledEvent event{
+      .handle = handle,
+      .resume = resume,
+      .cause = WakeCause::kDelayZero,
+      .trigger_slot = kNoTriggerSlot,
+  };
+  inactive_queue_.push(event);
 }
 
 void Engine::ScheduleNextDelta(ProcessHandle handle, ResumePoint resume) {
-  next_delta_queue_.push_back(
-      ScheduledEvent{
-          .handle = handle,
-          .resume = resume,
-      });
+  ScheduledEvent event{
+      .handle = handle,
+      .resume = resume,
+      .cause = WakeCause::kRepeat,
+      .trigger_slot = kNoTriggerSlot,
+  };
+  next_delta_queue_.push_back(event);
 }
 
 void Engine::SchedulePostponed(PostponedCallback callback, void* design_state) {
@@ -199,11 +209,28 @@ void Engine::RunOneActivation(const ScheduledEvent& event) {
   phase_.store(
       static_cast<uint32_t>(Phase::kRunProcess), std::memory_order_release);
 
+  // Begin activation context for dirty counting.
+  if (activation_trace_.has_value()) {
+    activation_ctx_.active = true;
+    ++activation_ctx_.generation;
+    if (activation_ctx_.generation == 0) {
+      ++activation_ctx_.generation;
+    }
+    activation_ctx_.dirty_count = 0;
+  }
+
   // Reset loop budget before each process activation.
   LyraResetLoopBudget(kDefaultLoopBudget);
 
   process_dispatch_.fn(
       process_dispatch_.ctx, *this, event.handle, event.resume);
+
+  // End activation context; emit run event.
+  if (activation_trace_.has_value()) {
+    activation_ctx_.active = false;
+    TraceRun(event);
+  }
+
   current_running_process_.store(UINT32_MAX, std::memory_order_release);
   phase_.store(static_cast<uint32_t>(Phase::kIdle), std::memory_order_release);
 }
@@ -230,6 +257,8 @@ void Engine::ExecuteRegion(Region region) {
             }
             process_states_[event.handle.process_id].is_enqueued = false;
           }
+
+          TraceWake(event);
 
           if (!HasPostActivationReconciliation()) {
             ClearProcessSubscriptions(event.handle);
@@ -318,7 +347,7 @@ void Engine::ExecutePostponedRegion() {
 }
 
 void Engine::ExecuteTimeSlot() {
-  uint32_t delta_count = 0;
+  current_delta_ = 0;
 
   while (true) {
     while (!finished_ && (!active_queue_.empty() || !inactive_queue_.empty())) {
@@ -344,14 +373,14 @@ void Engine::ExecuteTimeSlot() {
       break;
     }
 
-    ++delta_count;
-    if (delta_count % 100 == 0) {
+    ++current_delta_;
+    if (current_delta_ % 100 == 0) {
       lyra::PrintWarning(
           std::format(
               "time {}: {} delta cycles, {} pending in next delta",
-              current_time_, delta_count, next_delta_queue_.size()));
+              current_time_, current_delta_, next_delta_queue_.size()));
     }
-    if (delta_count >= 10000) {
+    if (current_delta_ >= 10000) {
       lyra::PrintError(
           std::format(
               "delta cycle limit exceeded at time {}; "
@@ -957,6 +986,46 @@ void Engine::HandleTrap(uint32_t process_id, const TrapPayload& payload) {
       finished_ = true;
       break;
   }
+}
+
+void Engine::NoteActivationDirty(uint32_t slot_id) {
+  if (slot_id >= activation_slot_gen_.size()) return;
+  if (activation_slot_gen_[slot_id] != activation_ctx_.generation) {
+    activation_slot_gen_[slot_id] = activation_ctx_.generation;
+    ++activation_ctx_.dirty_count;
+  }
+}
+
+void Engine::TraceWake(const ScheduledEvent& event) {
+  if (!activation_trace_.has_value()) return;
+  ActivationEvent ae{
+      .time = current_time_,
+      .delta = current_delta_,
+      .process_id = event.handle.process_id,
+      .trigger_slot = event.trigger_slot,
+      .resume_block = event.resume.block_index,
+      .kind = ActivationEventKind::kWake,
+      .cause = event.cause,
+      .slots_dirtied = 0,
+  };
+  activation_trace_->Append(ae);
+  fmt::print(stderr, "{}\n", FormatActivationEvent(ae, process_meta_));
+}
+
+void Engine::TraceRun(const ScheduledEvent& event) {
+  if (!activation_trace_.has_value()) return;
+  ActivationEvent ae{
+      .time = current_time_,
+      .delta = current_delta_,
+      .process_id = event.handle.process_id,
+      .trigger_slot = event.trigger_slot,
+      .resume_block = event.resume.block_index,
+      .kind = ActivationEventKind::kRun,
+      .cause = event.cause,
+      .slots_dirtied = activation_ctx_.dirty_count,
+  };
+  activation_trace_->Append(ae);
+  fmt::print(stderr, "{}\n", FormatActivationEvent(ae, process_meta_));
 }
 
 }  // namespace lyra::runtime

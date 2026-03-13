@@ -179,6 +179,11 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
           "disabled by default)");
   cmd.add_argument("--trace").default_value(false).implicit_value(true).help(
       "Enable simulation tracing (event recording)");
+  cmd.add_argument("--trace-activations")
+      .default_value(false)
+      .implicit_value(true)
+      .help(
+          "Enable activation trace (live per-process wake/run log to stderr)");
   cmd.add_argument("--llvm-time-trace")
       .default_value(false)
       .implicit_value(true)
@@ -327,6 +332,9 @@ auto BuildInput(
 
   // Tracing (CLI only)
   input.enable_trace = cmd.get<bool>("--trace");
+
+  // Activation trace (CLI only)
+  input.trace_activations = cmd.get<bool>("--trace-activations");
 
   // LLVM time-trace profiling (CLI only)
   input.time_trace = cmd.get<bool>("--llvm-time-trace");

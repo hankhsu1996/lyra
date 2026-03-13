@@ -46,6 +46,10 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
   if (input.enable_system) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableSystem);
   }
+  if (input.trace_activations) {
+    feature_flags |=
+        runtime::ToUint32(runtime::FeatureFlag::kEnableActivationTrace);
+  }
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &compilation.mir.design,
       .mir_arena = compilation.mir.mir_arena.get(),
