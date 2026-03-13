@@ -84,11 +84,22 @@ auto main(int argc, char** argv) -> int {
   try {
     auto configuration = lyra::test::GetTestConfiguration(args);
 
-    // Framework-level sharding: deterministic filter over sorted YAML paths
-    if (!args.shard_count.empty()) {
-      auto shard_count = std::stoi(args.shard_count);
+    // Sharding: CLI args take precedence, then Bazel env vars.
+    // Bazel sets TEST_TOTAL_SHARDS and TEST_SHARD_INDEX when shard_count
+    // is specified on the cc_test target.
+    auto shard_count_str = args.shard_count;
+    auto shard_index_str = args.shard_index;
+    if (shard_count_str.empty()) {
+      const char* env_total = std::getenv("TEST_TOTAL_SHARDS");
+      const char* env_index = std::getenv("TEST_SHARD_INDEX");
+      if (env_total != nullptr) shard_count_str = env_total;
+      if (env_index != nullptr) shard_index_str = env_index;
+    }
+
+    if (!shard_count_str.empty()) {
+      auto shard_count = std::stoi(shard_count_str);
       auto shard_index =
-          args.shard_index.empty() ? 0 : std::stoi(args.shard_index);
+          shard_index_str.empty() ? 0 : std::stoi(shard_index_str);
       if (shard_count < 1) {
         throw std::runtime_error("--shard_count must be >= 1");
       }

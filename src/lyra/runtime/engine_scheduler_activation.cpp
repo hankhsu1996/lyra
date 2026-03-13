@@ -177,7 +177,9 @@ void Engine::ExecuteActiveRegion() {
         process_states_[event.handle.process_id].is_enqueued = false;
       }
 
-      TraceWake(event);
+      if (activation_trace_.has_value()) {
+        TraceWake(event);
+      }
 
       if (!HasPostActivationReconciliation()) {
         ClearProcessSubscriptions(event.handle);
@@ -269,8 +271,8 @@ void Engine::ExecuteTimeSlot() {
       break;
     }
 
-    active_queue_ = std::move(next_delta_queue_);
-    next_delta_queue_.clear();
+    active_queue_.clear();
+    active_queue_.swap(next_delta_queue_);
   }
 
   phase_.store(

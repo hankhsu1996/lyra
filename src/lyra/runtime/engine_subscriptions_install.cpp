@@ -422,6 +422,26 @@ void Engine::InstallTriggers(
 void Engine::InstallWaitSite(
     ProcessHandle handle, SuspendRecord* suspend,
     const CompiledWaitSite& descriptor) {
+  // Validate compiled-vs-runtime agreement before any installation work.
+  if (descriptor.resume_block != suspend->resume_block) {
+    throw common::InternalError(
+        "Engine::InstallWaitSite",
+        std::format(
+            "process {} wait_site {} resume_block mismatch: "
+            "descriptor={} vs suspend={}",
+            handle.process_id, descriptor.id, descriptor.resume_block,
+            suspend->resume_block));
+  }
+  if (descriptor.num_triggers != suspend->num_triggers) {
+    throw common::InternalError(
+        "Engine::InstallWaitSite",
+        std::format(
+            "process {} wait_site {} num_triggers mismatch: "
+            "descriptor={} vs suspend={}",
+            handle.process_id, descriptor.id, descriptor.num_triggers,
+            suspend->num_triggers));
+  }
+
   auto resume =
       ResumePoint{.block_index = suspend->resume_block, .instruction_index = 0};
   auto triggers = std::span(suspend->triggers_ptr, suspend->num_triggers);
@@ -454,14 +474,43 @@ void Engine::InstallWaitSite(
 
   InstallTriggers(handle, resume, triggers, late_bound, plan_ops, dep_slots);
 
-  // Unconditionally publish installed wait state from the compiled descriptor.
+  // Install-time realized-state invariant: when the compiled shape is
+  // kStatic, the installed subscription set must contain only
+  // snapshot-bearing triggers (kEdge/kChange). This is expected because
+  // static waits have no late-bound indices, so InstallTriggers should not
+  // produce rebind watcher or container subs for this shape.
   auto& proc_state = process_states_[handle.process_id];
+  if (descriptor.shape == WaitShapeKind::kStatic) {
+    if (!std::ranges::all_of(proc_state.sub_refs, [](const SubRef& ref) {
+          return ref.kind == SubKind::kEdge || ref.kind == SubKind::kChange;
+        })) {
+      throw common::InternalError(
+          "Engine::InstallWaitSite",
+          std::format(
+              "process {} wait_site {}: kStatic shape but installed "
+              "non-snapshot-bearing sub_refs",
+              handle.process_id, descriptor.id));
+    }
+  }
+
+  // Publish install-time state with derived policy.
   proc_state.installed_wait = InstalledWaitState{
-      .wait_site_id = descriptor.id, .shape = descriptor.shape, .valid = true};
+      .wait_site_id = descriptor.id,
+      .valid = true,
+      .can_refresh_snapshot = (descriptor.shape == WaitShapeKind::kStatic)};
 }
 
 void Engine::RegisterSuspendRecords(std::span<SuspendRecord*> records) {
   suspend_records_.assign(records.begin(), records.end());
+}
+
+// True when the process re-entered the same wait site whose installed
+// subscriptions support snapshot-only refresh.
+static auto CanRefreshInPlace(
+    const InstalledWaitState& installed, WaitSiteId suspend_wait_site_id)
+    -> bool {
+  return installed.valid && installed.wait_site_id == suspend_wait_site_id &&
+         installed.can_refresh_snapshot;
 }
 
 void Engine::ReconcilePostActivation(ProcessHandle handle) {
@@ -501,67 +550,19 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
                 "process {} suspended with kWait but wait_site_id is invalid",
                 handle.process_id));
       }
-      if (suspend->wait_site_id >= wait_site_meta_.Size()) {
-        throw common::InternalError(
-            "Engine::ReconcilePostActivation",
-            std::format(
-                "process {} wait_site_id {} >= registry size {}",
-                handle.process_id, suspend->wait_site_id,
-                wait_site_meta_.Size()));
-      }
-
-      const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
-
-      // Validate transitional invariants: compiled descriptor must agree
-      // with runtime activation record.
-      if (descriptor.resume_block != suspend->resume_block) {
-        throw common::InternalError(
-            "Engine::ReconcilePostActivation",
-            std::format(
-                "process {} wait_site {} resume_block mismatch: "
-                "descriptor={} vs suspend={}",
-                handle.process_id, suspend->wait_site_id,
-                descriptor.resume_block, suspend->resume_block));
-      }
-      if (descriptor.num_triggers != suspend->num_triggers) {
-        throw common::InternalError(
-            "Engine::ReconcilePostActivation",
-            std::format(
-                "process {} wait_site {} num_triggers mismatch: "
-                "descriptor={} vs suspend={}",
-                handle.process_id, suspend->wait_site_id,
-                descriptor.num_triggers, suspend->num_triggers));
-      }
 
       auto& proc_state = process_states_[handle.process_id];
-      bool can_refresh =
-          proc_state.installed_wait.valid &&
-          proc_state.installed_wait.wait_site_id == suspend->wait_site_id &&
-          descriptor.shape == WaitShapeKind::kStatic;
 
-      if (can_refresh) {
-        // Invariant: static waits have fixed trigger sets (no rebind watchers
-        // or container subs), so all sub_refs are snapshot-bearing (kEdge or
-        // kChange). NeedsSnapshotRefresh relies on this.
-        if (!std::ranges::all_of(proc_state.sub_refs, [](const SubRef& ref) {
-              return ref.kind == SubKind::kEdge || ref.kind == SubKind::kChange;
-            })) {
-          throw common::InternalError(
-              "Engine::ReconcilePostActivation",
-              "can_refresh path has non-snapshot-bearing sub_refs");
-        }
-
-        // FlushSignalUpdates already established correct snapshot baselines at
-        // the previous delta boundary. Post-activation refresh is only needed
-        // when an observed slot was dirtied earlier in the current delta (a
-        // same-delta blocking write touched something this process observes).
-        // delta_seen_ remains valid until ClearDelta() after flush, so the
-        // guard observes correct same-delta dirtiness throughout the active
-        // region.
+      if (CanRefreshInPlace(proc_state.installed_wait, suspend->wait_site_id)) {
+        // Fast path: only per-activation dynamic state.
+        // No descriptor lookup. Installed subscriptions are all
+        // snapshot-bearing (validated at install time).
         if (NeedsSnapshotRefresh(update_set_, proc_state)) {
           RefreshInstalledSnapshots(handle);
         }
       } else {
+        // Slow path: descriptor lookup + full reinstall.
+        const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
         ResetInstalledWait(handle);
         InstallWaitSite(handle, suspend, descriptor);
       }
