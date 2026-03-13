@@ -27,6 +27,7 @@
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/suspend_record.hpp"
+#include "lyra/runtime/trace_signal_meta.hpp"
 #include "lyra/runtime/trap.hpp"
 #include "lyra/runtime/update_set.hpp"
 #include "lyra/runtime/wait_site.hpp"
@@ -418,6 +419,20 @@ class Engine {
     wait_site_meta_ = std::move(registry);
   }
 
+  // One-time init for trace signal metadata registry.
+  // Engine owns the registry as a stable value member. The non-owning pointer
+  // passed to TraceManager remains valid for Engine's lifetime because
+  // trace_signal_meta_ is never moved after this call.
+  void InitTraceSignalMeta(TraceSignalMetaRegistry registry) {
+    trace_signal_meta_ = std::move(registry);
+    trace_manager_.SetSignalMeta(&trace_signal_meta_);
+  }
+
+  [[nodiscard]] auto GetTraceSignalMetaRegistry() const
+      -> const TraceSignalMetaRegistry& {
+    return trace_signal_meta_;
+  }
+
   // Register suspend record pointers for post-activation reconciliation.
   void RegisterSuspendRecords(std::span<SuspendRecord*> records);
 
@@ -733,6 +748,9 @@ class Engine {
 
   // Wait-site metadata registry for persistent wait installation.
   WaitSiteRegistry wait_site_meta_;
+
+  // Trace signal metadata registry (empty until populated).
+  TraceSignalMetaRegistry trace_signal_meta_;
 
   // Suspend record access for post-activation reconciliation.
   std::vector<SuspendRecord*> suspend_records_;

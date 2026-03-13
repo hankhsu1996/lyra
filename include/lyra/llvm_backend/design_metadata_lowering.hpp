@@ -11,6 +11,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/design.hpp"
 #include "lyra/realization/design_metadata.hpp"
 
 namespace lyra::mir {
@@ -60,6 +61,17 @@ auto PrepareCombKernelInputs(
     llvm::LLVMContext& ctx, bool force_two_state, size_t num_init)
     -> std::vector<realization::CombKernelInput>;
 
+// Build final trace-signal metadata inputs from compile-owned provenance.
+// Assembles hierarchical names, computes bit widths, maps trace kinds.
+// Each slot's provenance carries its scope kind and scope ref for O(1) lookup.
+auto PrepareTraceSignalMetaInputs(
+    const std::vector<mir::SlotTraceProvenance>& provenance,
+    const std::vector<char>& trace_string_pool,
+    const std::vector<TypeId>& slot_types,
+    const std::vector<mir::SlotKind>& slot_kinds,
+    const std::vector<std::string>& instance_paths, const TypeArena& types)
+    -> std::vector<realization::TraceSignalMetaInput>;
+
 // Result of emitting DesignMetadata as LLVM globals.
 struct MetadataGlobals {
   llvm::Constant* slot_meta_words = nullptr;
@@ -78,6 +90,10 @@ struct MetadataGlobals {
   uint32_t comb_kernel_word_count = 0;
   llvm::Value* instance_paths_array = nullptr;
   uint32_t instance_path_count = 0;
+  llvm::Constant* trace_signal_meta_words = nullptr;
+  uint32_t trace_signal_meta_word_count = 0;
+  llvm::Constant* trace_signal_meta_pool = nullptr;
+  uint32_t trace_signal_meta_pool_size = 0;
 };
 
 // Emit DesignMetadata as LLVM globals. Pure emission only: no metadata

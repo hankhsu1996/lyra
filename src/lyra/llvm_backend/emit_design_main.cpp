@@ -595,6 +595,11 @@ auto BuildDesignMetadata(
   auto loop_site_inputs =
       PrepareLoopSiteInputs(context, input.diag_ctx, input.source_manager);
 
+  auto trace_signal_inputs = PrepareTraceSignalMetaInputs(
+      realization.slot_trace_provenance, realization.slot_trace_string_pool,
+      realization.slot_types, realization.slot_kinds,
+      realization.instance_paths, type_arena);
+
   realization::DesignMetadataInputs metadata_inputs{
       .slot_meta = std::move(slot_meta_inputs),
       .scheduled_processes = std::move(scheduled_inputs),
@@ -602,6 +607,7 @@ auto BuildDesignMetadata(
       .connection_descriptors = std::move(conn_desc_entries),
       .comb_kernels = std::move(comb_inputs),
       .instance_paths = realization.instance_paths,
+      .trace_signal_meta = std::move(trace_signal_inputs),
   };
   auto metadata = realization::BuildDesignMetadata(metadata_inputs);
 
@@ -694,11 +700,11 @@ auto BuildRuntimeAbi(
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
 
-  constexpr unsigned kAbiFieldCount = 20;
+  constexpr unsigned kAbiFieldCount = 24;
   std::array<llvm::Type*, kAbiFieldCount> abi_fields = {
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-      i32_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
+      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty,
+      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
   };
   auto* abi_struct_type = llvm::StructType::get(ctx, abi_fields, false);
 
@@ -735,6 +741,14 @@ auto BuildRuntimeAbi(
   store_field(17, llvm::ConstantInt::get(i32_ty, wait_site_meta.count));
   store_field(18, comb_wrappers.funcs_ptr);
   store_field(19, llvm::ConstantInt::get(i32_ty, comb_wrappers.count));
+  store_field(20, meta_globals.trace_signal_meta_words);
+  store_field(
+      21, llvm::ConstantInt::get(
+              i32_ty, meta_globals.trace_signal_meta_word_count));
+  store_field(22, meta_globals.trace_signal_meta_pool);
+  store_field(
+      23,
+      llvm::ConstantInt::get(i32_ty, meta_globals.trace_signal_meta_pool_size));
 
   return abi_alloca;
 }

@@ -95,6 +95,10 @@ struct DesignDeclarations {
   std::vector<common::ModuleDefId> module_def_ids;
   // Per-module-instance param init entries (parallel to instance_slot_ranges).
   std::vector<std::vector<mir::ParamInitEntry>> instance_param_inits;
+
+  // Compile-owned slot trace provenance (parallel to slots).
+  std::vector<mir::SlotTraceProvenance> slot_trace_provenance;
+  std::vector<char> slot_trace_string_pool;
 };
 
 // Read-only view into declaration artifacts for lower-level helpers

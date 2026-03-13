@@ -21,6 +21,28 @@ namespace lyra::mir {
 
 enum class SlotKind : uint8_t { kVariable, kNet, kParamConst };
 
+// Scope ownership kind for trace provenance. Discriminates whether a slot
+// belongs to a package or a module instance.
+enum class SlotScopeKind : uint8_t { kPackage, kInstance };
+
+// Compile-owned slot trace provenance. Compact per-slot record preserving
+// the local symbol name and scope ownership from declaration time. Final
+// hierarchical names and trace kinds are derived at metadata lowering time.
+//
+// Scope resolution:
+//   kPackage  -- scope_ref is a string pool offset for the package name.
+//   kInstance -- scope_ref is the instance table index (maps to instance_paths
+//               at metadata lowering time).
+//
+// Trace kind is not stored here. It is derived from SlotDesc::kind
+// (the existing slot table) during metadata lowering. This avoids
+// duplicating kind information and keeps MIR free of trace-facing policy.
+struct SlotTraceProvenance {
+  uint32_t local_name_str_off = 0;
+  SlotScopeKind scope_kind = SlotScopeKind::kInstance;
+  uint32_t scope_ref = 0;
+};
+
 struct SlotDesc {
   TypeId type;
   SlotKind kind = SlotKind::kVariable;
@@ -87,6 +109,12 @@ struct Design {
   std::vector<InstanceSlotRange> instance_slot_ranges;
   // Per-module-instance def IDs (parallel to instance_slot_ranges).
   std::vector<common::ModuleDefId> module_def_ids;
+
+  // Compile-owned slot trace provenance table (parallel to slots).
+  // Each entry stores the local symbol name and scope ownership for one slot.
+  // Final hierarchical names and trace kinds are derived at metadata lowering.
+  std::vector<SlotTraceProvenance> slot_trace_provenance;
+  std::vector<char> slot_trace_string_pool;
 };
 
 inline auto GetModuleBody(const Design& design, const Module& mod)

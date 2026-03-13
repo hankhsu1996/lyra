@@ -132,6 +132,22 @@ auto LowerDesign(
   mir::Design result;
   result.num_design_slots = decls.num_design_slots;
   result.slots = decls.slots;
+  result.slot_trace_provenance = decls.slot_trace_provenance;
+  result.slot_trace_string_pool = decls.slot_trace_string_pool;
+
+  if (result.slot_trace_provenance.size() != result.slots.size()) {
+    throw common::InternalError(
+        "LowerDesign",
+        std::format(
+            "slot_trace_provenance.size() ({}) != slots.size() ({})",
+            result.slot_trace_provenance.size(), result.slots.size()));
+  }
+  if (result.slot_trace_string_pool.empty() ||
+      result.slot_trace_string_pool[0] != '\0') {
+    throw common::InternalError(
+        "LowerDesign",
+        "slot_trace_string_pool must be non-empty and start with '\\0'");
+  }
   result.global_precision_power = input.global_precision_power;
   result.module_def_ids = decls.module_def_ids;
   if (input.instance_table != nullptr) {

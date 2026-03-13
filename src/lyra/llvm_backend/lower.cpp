@@ -584,8 +584,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   realization.slot_types.reserve(input.design->slots.size());
+  realization.slot_kinds.reserve(input.design->slots.size());
   for (const auto& slot : input.design->slots) {
     realization.slot_types.push_back(slot.type);
+    realization.slot_kinds.push_back(slot.kind);
   }
 
   realization.instance_paths.reserve(
@@ -593,6 +595,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
   for (const auto& entry : input.design->instance_table.entries) {
     realization.instance_paths.push_back(entry.full_path);
   }
+
+  realization.slot_trace_provenance = input.design->slot_trace_provenance;
+  realization.slot_trace_string_pool = input.design->slot_trace_string_pool;
 
   return CodegenSession{
       .layout = std::move(layout),

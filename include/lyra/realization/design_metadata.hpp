@@ -76,6 +76,14 @@ struct LoopSiteInput {
   uint32_t col = 0;
 };
 
+// Final trace-signal metadata input for one design slot.
+// Assembled at metadata lowering time from compile-owned provenance.
+struct TraceSignalMetaInput {
+  std::string hierarchical_name;
+  uint32_t bit_width = 0;
+  uint32_t trace_kind = 0;
+};
+
 // Semantic inputs for design metadata construction.
 // All vectors preserve their input order; link serializes in that order.
 struct DesignMetadataInputs {
@@ -85,6 +93,7 @@ struct DesignMetadataInputs {
   std::vector<ConnectionDescriptorEntry> connection_descriptors;
   std::vector<CombKernelInput> comb_kernels;
   std::vector<std::string> instance_paths;
+  std::vector<TraceSignalMetaInput> trace_signal_meta;
 };
 
 // Fully serialized runtime metadata artifact.
@@ -96,6 +105,7 @@ struct DesignMetadata {
   std::vector<ConnectionDescriptorEntry> connection_descriptors;
   std::vector<uint32_t> comb_kernel_words;
   std::vector<std::string> instance_paths;
+  MetaWordTable trace_signal_meta;
 };
 
 }  // namespace lyra::realization
