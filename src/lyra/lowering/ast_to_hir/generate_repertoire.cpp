@@ -45,6 +45,11 @@ void VisitScope(
         break;
 
       case slang::ast::SymbolKind::GenerateBlock: {
+        // Intentionally does NOT check block.isUninstantiated.
+        // slang's body.members() includes both active and inactive generate
+        // branches. We walk ALL branches so the type store is definition-
+        // scoped (covers all constructor alternatives). The specialization
+        // fingerprint depends on this full-definition view.
         const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
         auto next = current_avail;
         next.push_back(
