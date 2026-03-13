@@ -489,6 +489,9 @@ class Engine {
 
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
+  void ExecuteActiveRegion();
+  void ExecuteInactiveRegion();
+  void ExecuteNbaRegion();
   void ExecutePostponedRegion();
   void FlushDirtySlots();
 
