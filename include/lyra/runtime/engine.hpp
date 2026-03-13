@@ -17,6 +17,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/mutation_event.hpp"
 #include "lyra/common/time_format.hpp"
+#include "lyra/runtime/activation_trace.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/engine_types.hpp"
@@ -83,6 +84,11 @@ class Engine {
     if (process_dispatch_.fn == nullptr) {
       throw common::InternalError(
           "Engine::Engine", "process_dispatch.fn must not be null");
+    }
+    if (HasFlag(
+            static_cast<FeatureFlag>(feature_flags_),
+            FeatureFlag::kEnableActivationTrace)) {
+      activation_trace_.emplace();
     }
   }
 
@@ -250,6 +256,9 @@ class Engine {
     }
     update_set_.Init(registry.Size(), sizes);
     signal_subs_.resize(registry.Size());
+    if (activation_trace_.has_value()) {
+      activation_slot_gen_.resize(registry.Size(), 0);
+    }
     slot_meta_registry_ = std::move(registry);
   }
 
@@ -270,6 +279,9 @@ class Engine {
     if (comb_write_capture_ != nullptr) {
       comb_write_capture_->push_back(slot_id);
     }
+    if (activation_ctx_.active) {
+      NoteActivationDirty(slot_id);
+    }
   }
 
   // Mark a byte range within a slot as dirty.
@@ -277,6 +289,9 @@ class Engine {
     update_set_.MarkDirtyRange(slot_id, byte_off, byte_size);
     if (comb_write_capture_ != nullptr) {
       comb_write_capture_->push_back(slot_id);
+    }
+    if (activation_ctx_.active) {
+      NoteActivationDirty(slot_id);
     }
   }
 
@@ -477,29 +492,43 @@ class Engine {
       uint32_t slot_id, SlotSubscriptions& slot, const SlotMeta& meta,
       std::span<const uint8_t> design_state);
 
+  // Activation-local dirty dedup for design-slot dirties only.
+  // Called from MarkSlotDirty and MarkDirtyRange. Excludes
+  // MarkExternalDirtyRange (heap/container) by design.
+  void NoteActivationDirty(uint32_t slot_id);
+
+  // Trace helpers: append event + live stderr print.
+  // TraceWake is called at the single point where an activation becomes
+  // runnable (ExecuteRegion kActive), not at producer-side queue insertion.
+  void TraceWake(const ScheduledEvent& event);
+  void TraceRun(const ScheduledEvent& event);
+
   // Per-kind flush helpers (called from FlushDirtySlot).
   void FlushSlotRebindSubs(
       std::vector<RebindWatcherSub>& subs, const SlotMeta& meta,
       std::span<const uint8_t> design_state);
   void FlushSlotEdgeSubs(
-      std::vector<EdgeSub>& subs, const SlotMeta& meta,
+      uint32_t slot_id, std::vector<EdgeSub>& subs, const SlotMeta& meta,
       const common::RangeSet& dirty_ranges, RangeFilterMode mode,
       std::span<const uint8_t> design_state);
   void FlushSlotChangeSubs(
-      std::vector<ChangeSub>& subs, const SlotMeta& meta,
+      uint32_t slot_id, std::vector<ChangeSub>& subs, const SlotMeta& meta,
       const common::RangeSet& dirty_ranges, RangeFilterMode mode,
       std::span<const uint8_t> design_state);
   void FlushSlotContainerSubs(
-      std::vector<ContainerSub>& subs, std::span<const uint8_t> design_state);
+      uint32_t slot_id, std::vector<ContainerSub>& subs,
+      std::span<const uint8_t> design_state);
 
   // Single container sub flush.
   void FlushContainerSub(
-      ContainerSub& sub, std::span<const uint8_t> design_state);
+      uint32_t slot_id, ContainerSub& sub,
+      std::span<const uint8_t> design_state);
 
   // Deduplicated wakeup enqueue: push to next_delta_queue_ if not already
   // enqueued. Shared by edge, change, and container flush paths.
   void EnqueueProcessWakeup(
-      uint32_t process_id, uint32_t instance_id, uint32_t resume_block);
+      uint32_t process_id, uint32_t instance_id, uint32_t resume_block,
+      uint32_t trigger_slot, WakeCause cause);
 
   // Resource limit checking
   auto CheckSubscriptionLimits(const ProcessState& proc_state) -> bool;
@@ -637,6 +666,27 @@ class Engine {
   // Dense flag table by process index (sized from num_processes_ in
   // InitCombKernels, true = comb kernel, skip in ScheduleInitial).
   std::vector<uint8_t> comb_kernel_flags_;
+
+  // Current delta cycle within the active time slot. Reset to 0 at the
+  // start of each ExecuteTimeSlot. Part of the runtime execution model:
+  // (current_time_, current_delta_) together identify the scheduling epoch.
+  uint32_t current_delta_ = 0;
+
+  // Activation trace: bounded ring buffer of structured activation events
+  // with live stderr output. Only allocated when kEnableActivationTrace is set.
+  std::optional<ActivationTrace> activation_trace_;
+
+  // Per-activation run context for dirty counting.
+  struct ActivationRunContext {
+    bool active = false;
+    uint32_t generation = 0;
+    uint32_t dirty_count = 0;
+  };
+  ActivationRunContext activation_ctx_;
+
+  // Per-slot generation vector for activation-local dirty dedup.
+  // Sized in InitSlotMeta.
+  std::vector<uint32_t> activation_slot_gen_;
 
   // Comb write capture for FlushAndPropagateConnections fixed-point loop.
   // When non-null, MarkSlotDirty/MarkDirtyRange additionally push to this

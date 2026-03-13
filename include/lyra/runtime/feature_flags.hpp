@@ -9,13 +9,20 @@ namespace lyra::runtime {
 // replacing individual boolean parameters for ABI stability.
 enum class FeatureFlag : uint32_t {
   kNone = 0,
-  kDumpSlotMeta = 1 << 0,     // Dump slot metadata registry (test-only)
-  kEnableTrace = 1 << 1,      // Enable simulation tracing
-  kEnableSystem = 1 << 2,     // Enable $system shell command execution
-  kDumpProcessMeta = 1 << 3,  // Dump process metadata registry (test-only)
-  kEnableLoopGuard = 1 << 4,  // Enable loop guard checks (back-edge budget)
-  kDumpPropagationStats = 1
-                          << 5,  // Print propagation counters after simulation
+  // Dump slot metadata registry (test-only)
+  kDumpSlotMeta = 1 << 0,
+  // Enable simulation tracing
+  kEnableTrace = 1 << 1,
+  // Enable $system shell command execution
+  kEnableSystem = 1 << 2,
+  // Dump process metadata registry (test-only)
+  kDumpProcessMeta = 1 << 3,
+  // Enable loop guard checks (back-edge budget)
+  kEnableLoopGuard = 1 << 4,
+  // Print propagation counters after simulation
+  kDumpPropagationStats = 1 << 5,
+  // Enable activation trace ring buffer + live output
+  kEnableActivationTrace = 1 << 6,
 };
 
 constexpr auto operator|(FeatureFlag a, FeatureFlag b) -> FeatureFlag {

@@ -4,6 +4,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "lyra/runtime/activation_trace.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/small_byte_buffer.hpp"
 
@@ -18,9 +19,13 @@ enum class Region : uint8_t {
 };
 
 // Scheduled event: a process ready to resume at a specific point.
+// Wake metadata is part of activation identity -- it describes why this
+// activation exists, not debug/trace adornment.
 struct ScheduledEvent {
   ProcessHandle handle;
   ResumePoint resume;
+  WakeCause cause = WakeCause::kDelay;
+  uint32_t trigger_slot = kNoTriggerSlot;
 };
 
 // NBA write mode: distinguishes full-width overwrite from partial masked merge.

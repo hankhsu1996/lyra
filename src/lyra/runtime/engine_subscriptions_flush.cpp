@@ -189,7 +189,8 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
 }
 
 void Engine::FlushContainerSub(
-    ContainerSub& sub, std::span<const uint8_t> design_state) {
+    uint32_t slot_id, ContainerSub& sub,
+    std::span<const uint8_t> design_state) {
   auto& cold = container_cold_pool_[sub.cold_idx];
 
   // Chase handle from DesignState.
@@ -241,18 +242,24 @@ void Engine::FlushContainerSub(
   sub.last_bit = current_bit;
 
   if (should_wake) {
-    EnqueueProcessWakeup(sub.process_id, sub.instance_id, sub.resume_block);
+    EnqueueProcessWakeup(
+        sub.process_id, sub.instance_id, sub.resume_block, slot_id,
+        WakeCause::kContainer);
   }
 }
 
 void Engine::EnqueueProcessWakeup(
-    uint32_t process_id, uint32_t instance_id, uint32_t resume_block) {
+    uint32_t process_id, uint32_t instance_id, uint32_t resume_block,
+    uint32_t trigger_slot, WakeCause cause) {
   auto& proc_state = process_states_[process_id];
   if (!proc_state.is_enqueued) {
-    next_delta_queue_.push_back(
-        ScheduledEvent{
-            .handle = ProcessHandle{process_id, instance_id},
-            .resume = ResumePoint{resume_block, 0}});
+    ScheduledEvent event{
+        .handle = ProcessHandle{process_id, instance_id},
+        .resume = ResumePoint{resume_block, 0},
+        .cause = cause,
+        .trigger_slot = trigger_slot,
+    };
+    next_delta_queue_.push_back(event);
     proc_state.is_enqueued = true;
   }
 }
@@ -277,7 +284,7 @@ void Engine::FlushSlotRebindSubs(
 }
 
 void Engine::FlushSlotEdgeSubs(
-    std::vector<EdgeSub>& subs, const SlotMeta& meta,
+    uint32_t slot_id, std::vector<EdgeSub>& subs, const SlotMeta& meta,
     const common::RangeSet& dirty_ranges, RangeFilterMode mode,
     std::span<const uint8_t> design_state) {
   if (subs.empty()) return;
@@ -304,13 +311,15 @@ void Engine::FlushSlotEdgeSubs(
     }
 
     if (should_wake) {
-      EnqueueProcessWakeup(sub.process_id, sub.instance_id, sub.resume_block);
+      EnqueueProcessWakeup(
+          sub.process_id, sub.instance_id, sub.resume_block, slot_id,
+          WakeCause::kEdge);
     }
   }
 }
 
 void Engine::FlushSlotChangeSubs(
-    std::vector<ChangeSub>& subs, const SlotMeta& meta,
+    uint32_t slot_id, std::vector<ChangeSub>& subs, const SlotMeta& meta,
     const common::RangeSet& dirty_ranges, RangeFilterMode mode,
     std::span<const uint8_t> design_state) {
   if (subs.empty()) return;
@@ -332,17 +341,20 @@ void Engine::FlushSlotChangeSubs(
 
     if (std::memcmp(current, snapshot, sub.byte_size) != 0) {
       std::memcpy(snapshot, current, sub.byte_size);
-      EnqueueProcessWakeup(sub.process_id, sub.instance_id, sub.resume_block);
+      EnqueueProcessWakeup(
+          sub.process_id, sub.instance_id, sub.resume_block, slot_id,
+          WakeCause::kChange);
     }
   }
 }
 
 void Engine::FlushSlotContainerSubs(
-    std::vector<ContainerSub>& subs, std::span<const uint8_t> design_state) {
+    uint32_t slot_id, std::vector<ContainerSub>& subs,
+    std::span<const uint8_t> design_state) {
   if (subs.empty()) return;
 
   for (auto& sub : subs) {
-    FlushContainerSub(sub, design_state);
+    FlushContainerSub(slot_id, sub, design_state);
   }
 }
 
@@ -369,12 +381,13 @@ void Engine::FlushDirtySlot(
   }
 
   if (mode != RangeFilterMode::kNone) {
-    FlushSlotEdgeSubs(slot.edge_subs, meta, *dirty_ranges, mode, design_state);
+    FlushSlotEdgeSubs(
+        slot_id, slot.edge_subs, meta, *dirty_ranges, mode, design_state);
     FlushSlotChangeSubs(
-        slot.change_subs, meta, *dirty_ranges, mode, design_state);
+        slot_id, slot.change_subs, meta, *dirty_ranges, mode, design_state);
   }
 
-  FlushSlotContainerSubs(slot.container_subs, design_state);
+  FlushSlotContainerSubs(slot_id, slot.container_subs, design_state);
 }
 
 void Engine::FlushSignalUpdates() {

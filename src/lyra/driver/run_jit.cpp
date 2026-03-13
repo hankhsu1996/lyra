@@ -101,6 +101,10 @@ auto RunJit(const CompilationInput& input) -> int {
   if (input.enable_system) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableSystem);
   }
+  if (input.trace_activations) {
+    feature_flags |=
+        runtime::ToUint32(runtime::FeatureFlag::kEnableActivationTrace);
+  }
   if (input.verbose >= 2) {
     feature_flags |=
         runtime::ToUint32(runtime::FeatureFlag::kDumpPropagationStats);
