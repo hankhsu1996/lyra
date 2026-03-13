@@ -271,8 +271,8 @@ void Engine::ExecuteTimeSlot() {
       break;
     }
 
-    active_queue_ = std::move(next_delta_queue_);
-    next_delta_queue_.clear();
+    active_queue_.clear();
+    active_queue_.swap(next_delta_queue_);
   }
 
   phase_.store(
