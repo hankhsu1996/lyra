@@ -49,6 +49,7 @@ struct TestCase {
   bool trace = false;           // Enable simulation tracing for this test
   bool dump_slot_meta = false;  // Dump slot metadata registry (test-only)
   bool dump_specialization_map = false;  // Dump specialization grouping
+  bool dump_repertoire = false;          // Dump generate repertoire observation
   [[nodiscard]] auto IsMultiFile() const -> bool {
     return !files.empty();
   }

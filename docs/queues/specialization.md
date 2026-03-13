@@ -15,6 +15,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] M2a -- Storage assignment derived from within-group variance (ParamTransmissionTable)
 - [x] M2b partial -- Declaration-based grouping, param-role deleted. v1 discriminator captures declaration-side shape only.
 - [ ] M2c -- Complete compile-owned discriminator (procedural/behavioral shape, runtime-owned type filtering)
+  - [x] M2c-2a -- Artifact inventory with generate availability paths
 - [ ] E3 remaining -- Remove `mir::Design` from `LoweringInput`, narrow `Context` and `BuildLayout`
 - [ ] E4 -- Delete B5 compatibility adapters, representative-instance scaffolding
 - [ ] B6 -- HIR ownership split (depends on post-M2 grouping contract)
@@ -87,6 +88,20 @@ Known gaps:
 2. **Runtime-owned type filtering**: `type.toString()` may include runtime-owned type properties (unpacked container sizes, dynamic array bounds) that should not split specialization. The canonicalizer needs to strip these.
 
 Scope: define what "complete compile-owned representation" means, expand the descriptor, narrow the type canonicalizer.
+
+### M2c-2a: Artifact inventory with generate availability (done)
+
+Extraction layer that walks the full generate structure (including uninstantiated branches) and produces a flat artifact inventory. Each artifact is a slang symbol pointer annotated with its generate availability path -- the sequence of constructor-time selections required for the artifact to exist.
+
+Data model:
+
+- `GenerateSelection` -- one step in an availability path. A selection point is identified by `(parent path position, constructIndex)`. Two kinds: `kBranch` (generate-if/case alternative, identified by block pointer) and `kArrayEntry` (generate-for entry, identified by entry ordinal).
+- `ArtifactHandle` -- a slang symbol + its availability path + artifact kind.
+- `ArtifactInventory` -- flat vectors of handles (decls, processes, instances, continuous assigns).
+
+This is observation/extraction infrastructure, not semantic identity. The block pointers are valid within the borrowed slang compilation lifetime. Later repertoire descriptor design (M2c-2b) will define what survives beyond this extraction boundary.
+
+Files: `generate_repertoire.hpp`, `generate_repertoire.cpp`. Tests: `generate_repertoire/default.yaml`.
 
 ## E3 remaining: Backend API narrowing
 
