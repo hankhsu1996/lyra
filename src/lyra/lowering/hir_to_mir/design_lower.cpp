@@ -12,6 +12,7 @@
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
+#include "lyra/hir/module_body.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
@@ -37,13 +38,7 @@ namespace {
 template <class>
 inline constexpr bool kAlwaysFalse = false;
 
-struct ModuleSpecIdHash {
-  auto operator()(const common::ModuleSpecId& id) const noexcept -> size_t {
-    auto h1 = std::hash<uint32_t>{}(id.def_id.value);
-    auto h2 = std::hash<uint64_t>{}(id.fingerprint.value);
-    return h1 ^ (h2 << 1);
-  }
-};
+using common::ModuleSpecIdHash;
 
 // Deterministic specialization group for MIR lowering.
 // representative_module_index is the first instance in design order for this
@@ -200,10 +195,12 @@ auto LowerDesign(
           "LowerDesign", "representative module index out of range");
     }
     const hir::Module& rep_mod = *hir_modules[rep_idx];
+    const hir::ModuleBody& hir_body =
+        design.module_bodies[rep_mod.body_id.value];
     BodyLocalDecls body_decls =
         CollectBodyLocalDecls(rep_mod, *input.symbol_table, mir_arena);
     Result<mir::ModuleBody> body_result =
-        LowerModule(rep_mod, input, mir_arena, origin_map, decls, body_decls);
+        LowerModule(hir_body, input, mir_arena, origin_map, decls, body_decls);
     if (!body_result) {
       return std::unexpected(body_result.error());
     }

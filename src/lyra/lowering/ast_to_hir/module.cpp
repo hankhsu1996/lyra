@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/module.hpp"
 
+#include <format>
 #include <string>
 #include <utility>
 #include <vector>
@@ -12,6 +13,7 @@
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/scope_types.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol.hpp"
@@ -20,113 +22,50 @@
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
+#include "lyra/hir/module_body.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/constant.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
-#include "lyra/lowering/ast_to_hir/generate.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/routine.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
-#include "lyra/lowering/ast_to_hir/type.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerModule(
-    const slang::ast::InstanceSymbol& instance, SymbolRegistrar& registrar,
-    Context* ctx) -> hir::Module {
-  // Create per-module lowerer (owns timescale state)
-  ModuleLowerer lowerer(*ctx, registrar, instance);
+auto LowerModuleBody(
+    const slang::ast::InstanceSymbol& representative,
+    const BodyLoweringInput& input, SymbolRegistrar& registrar, Context* ctx)
+    -> hir::ModuleBody {
+  ModuleLowerer lowerer(*ctx, registrar, representative);
 
-  const slang::ast::InstanceBodySymbol& body = instance.body;
-  SourceSpan span = ctx->SpanOf(GetSourceRange(instance));
+  SourceSpan span = ctx->SpanOf(GetSourceRange(representative));
 
-  SymbolId symbol =
-      registrar.Register(instance, SymbolKind::kInstance, kInvalidTypeId);
+  // All module-level symbols are pre-registered in Phase 0. Body lowering
+  // consumes prepared ownership-shaped input only. Process/function-local
+  // symbols are registered during behavioral lowering below.
 
-  std::vector<SymbolId> variables;
-  std::vector<SymbolId> nets;
-  std::vector<SymbolId> param_slots;
-  std::vector<IntegralConstant> param_init_values;
   std::vector<hir::ProcessId> processes;
   std::vector<hir::FunctionId> functions;
   std::vector<hir::TaskId> tasks;
 
-  // Track variables with initializers for deferred lowering
-  // (must wait until function symbols are registered)
-  std::vector<std::pair<SymbolId, const slang::ast::Expression*>> var_init_refs;
-
   {
+    // Module scope for behavioral lowering (expression/process/function
+    // lowering registers local symbols within this scope context).
     ScopeGuard scope_guard(registrar, ScopeKind::kModule);
 
-    CollectedMembers members;
-    CollectScopeMembers(body, registrar, members);
-
-    // Phase 1: Register module-level variables (before processes that use them)
-    // Store initializer references for deferred lowering
-    for (const auto* var : members.variables) {
-      TypeId type = LowerType(var->getType(), span, ctx);
-      if (type) {
-        SymbolId sym = registrar.Register(*var, SymbolKind::kVariable, type);
-        variables.push_back(sym);
-
-        // Store reference to initializer (lowered after function registration)
-        if (const auto* init = var->getInitializer()) {
-          var_init_refs.emplace_back(sym, init);
-        }
-      }
-    }
-
-    // Phase 1b: Register module-level nets
-    // Net initializers are already rejected during Phase 0 registration
-    for (const auto* net : members.nets) {
-      TypeId type = LowerType(net->getType(), span, ctx);
-      if (type) {
-        SymbolId sym = registrar.Register(*net, SymbolKind::kNet, type);
-        nets.push_back(sym);
-      }
-    }
-
-    // Phase 1c: Collect promoted parameters and capture constant values
-    for (const auto* param : members.parameters) {
-      SymbolId sym = registrar.Lookup(*param);
-      if (sym && (*ctx->symbol_table)[sym].storage_class ==
-                     StorageClass::kDesignStorage) {
-        param_slots.push_back(sym);
-        param_init_values.push_back(
-            LowerSVIntToIntegralConstant(param->getValue().integer()));
-      }
-    }
-
-    // Phase 2: Register function symbols (before processes that call them)
-    // Store references to lower their bodies later.
-    for (const auto* sub : members.functions) {
-      const auto& ret_type = sub->getReturnType();
-      SourceSpan func_span = ctx->SpanOf(GetSourceRange(*sub));
-
-      // Let LowerType determine if the return type is supported.
-      // If unsupported, LowerType emits an error and returns invalid.
-      TypeId return_type = LowerType(ret_type, func_span, ctx);
-      if (!return_type) {
-        continue;
-      }
-      registrar.Register(*sub, SymbolKind::kFunction, return_type);
-    }
-
-    // Phase 3: Lower processes (can now reference function symbols)
-    for (const auto* proc : members.processes) {
+    // Lower processes
+    for (const auto* proc : input.processes) {
       hir::ProcessId id = LowerProcess(*proc, lowerer);
       if (id) {
         processes.push_back(id);
       }
     }
 
-    // Phase 3b: Desugar continuous assignments into synthetic always_comb
-    // Lyra variable-only model; multiple writers use last-writer-wins;
-    // no resolution.
-    for (const auto* ca : members.continuous_assigns) {
+    // Desugar continuous assignments into synthetic always_comb
+    for (const auto* ca : input.continuous_assigns) {
       SourceSpan ca_span = ctx->SpanOf(GetSourceRange(*ca));
 
       if (const auto* delay = ca->getDelay()) {
@@ -179,12 +118,8 @@ auto LowerModule(
       processes.push_back(proc);
     }
 
-    // Port bindings are compiled at HIR->MIR level via CompileBindings
-
-    // Phase 4: Lower function bodies
-    // Functions with unsupported return types were already skipped in Phase 2.
-    for (const auto* sub : members.functions) {
-      // Skip if not registered (unsupported return type)
+    // Lower function bodies
+    for (const auto* sub : input.functions) {
       if (!registrar.Lookup(*sub)) {
         continue;
       }
@@ -194,40 +129,37 @@ auto LowerModule(
       }
     }
 
-    // Phase 5: Lower tasks
-    for (const auto* sub : members.tasks) {
+    // Lower tasks
+    for (const auto* sub : input.tasks) {
       hir::TaskId id = LowerTask(*sub, lowerer);
       if (id) {
         tasks.push_back(id);
       }
     }
 
-    // Phase 6: Generate synthetic init process for module variable initializers
-    // (after function symbols are registered so initializers can call
-    // functions)
-    if (!var_init_refs.empty()) {
+    // Generate synthetic init process from prepared variable initializers.
+    // var_inits are (SymbolId, Expression*) tuples prepared by the caller
+    // from the representative's Phase 0 registration context.
+    if (!input.var_inits.empty()) {
       std::vector<hir::StatementId> init_stmts;
-      init_stmts.reserve(var_init_refs.size());
+      init_stmts.reserve(input.var_inits.size());
 
-      for (const auto& [sym, init_ast] : var_init_refs) {
-        // Lower the initializer expression (now that functions are registered)
-        hir::ExpressionId init_expr =
-            LowerScopedExpression(*init_ast, *ctx, registrar, lowerer.Frame());
+      for (const auto& var_init : input.var_inits) {
+        hir::ExpressionId init_expr = LowerScopedExpression(
+            *var_init.initializer, *ctx, registrar, lowerer.Frame());
         if (!init_expr) {
           continue;
         }
 
-        // Create NameRef for the variable target
-        TypeId var_type = (*ctx->symbol_table)[sym].type;
+        TypeId var_type = (*ctx->symbol_table)[var_init.target].type;
         hir::ExpressionId target_expr = ctx->hir_arena->AddExpression(
             hir::Expression{
                 .kind = hir::ExpressionKind::kNameRef,
                 .type = var_type,
                 .span = span,
-                .data = hir::NameRefExpressionData{.symbol = sym},
+                .data = hir::NameRefExpressionData{.symbol = var_init.target},
             });
 
-        // Create assignment statement: var = init_expr
         hir::StatementId stmt = ctx->hir_arena->AddStatement(
             hir::Statement{
                 .kind = hir::StatementKind::kAssignment,
@@ -241,9 +173,8 @@ auto LowerModule(
         init_stmts.push_back(stmt);
       }
 
-      // Wrap in block statement if we have any valid initializers
       if (!init_stmts.empty()) {
-        hir::StatementId body = ctx->hir_arena->AddStatement(
+        hir::StatementId body_stmt = ctx->hir_arena->AddStatement(
             hir::Statement{
                 .kind = hir::StatementKind::kBlock,
                 .span = span,
@@ -252,17 +183,69 @@ auto LowerModule(
                         .statements = std::move(init_stmts)},
             });
 
-        // Create synthetic init process
         hir::ProcessId init_proc = ctx->hir_arena->AddProcess(
             hir::Process{
                 .kind = hir::ProcessKind::kInitial,
                 .span = span,
-                .body = body,
+                .body = body_stmt,
             });
 
-        // Insert at front so it runs before user-defined initial blocks
         processes.insert(processes.begin(), init_proc);
       }
+    }
+  }
+
+  return hir::ModuleBody{
+      .processes = std::move(processes),
+      .functions = std::move(functions),
+      .tasks = std::move(tasks),
+  };
+}
+
+auto CollectModuleInstance(
+    const slang::ast::InstanceSymbol& instance,
+    const InstanceRegistrationInput& input, SymbolRegistrar& registrar,
+    Context* ctx, common::ModuleDefId module_def_id, hir::ModuleBodyId body_id)
+    -> hir::Module {
+  SourceSpan span = ctx->SpanOf(GetSourceRange(instance));
+
+  // Instance symbol must be pre-registered in Phase 0.
+  SymbolId symbol = registrar.Lookup(instance);
+  if (!symbol) {
+    throw common::InternalError(
+        "CollectModuleInstance",
+        std::format(
+            "instance '{}' not pre-registered in Phase 0", instance.name));
+  }
+
+  std::vector<SymbolId> variables;
+  std::vector<SymbolId> nets;
+  std::vector<SymbolId> param_slots;
+  std::vector<IntegralConstant> param_init_values;
+
+  // Collect per-instance SymbolIds from prepared registration input.
+  for (const auto* var : input.variables) {
+    SymbolId sym = registrar.Lookup(*var);
+    if (sym) {
+      variables.push_back(sym);
+    }
+  }
+
+  for (const auto* net : input.nets) {
+    SymbolId sym = registrar.Lookup(*net);
+    if (sym) {
+      nets.push_back(sym);
+    }
+  }
+
+  // Collect promoted parameters and per-instance constant values
+  for (const auto* param : input.parameters) {
+    SymbolId sym = registrar.Lookup(*param);
+    if (sym && (*ctx->symbol_table)[sym].storage_class ==
+                   StorageClass::kDesignStorage) {
+      param_slots.push_back(sym);
+      param_init_values.push_back(
+          LowerSVIntToIntegralConstant(param->getValue().integer()));
     }
   }
 
@@ -273,9 +256,8 @@ auto LowerModule(
       .nets = std::move(nets),
       .param_slots = std::move(param_slots),
       .param_init_values = std::move(param_init_values),
-      .processes = std::move(processes),
-      .functions = std::move(functions),
-      .tasks = std::move(tasks),
+      .module_def_id = module_def_id,
+      .body_id = body_id,
   };
 }
 

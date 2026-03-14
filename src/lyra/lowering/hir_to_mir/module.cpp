@@ -7,7 +7,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/hir/fwd.hpp"
-#include "lyra/hir/module.hpp"
+#include "lyra/hir/module_body.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
@@ -22,7 +22,7 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto LowerModule(
-    const hir::Module& module, const LoweringInput& input,
+    const hir::ModuleBody& body, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map,
     const DesignDeclarations& decls, const BodyLocalDecls& body_decls)
     -> Result<mir::ModuleBody> {
@@ -38,7 +38,7 @@ auto LowerModule(
   SymbolToMirFunctionMap symbol_to_mir_function = decls.functions;
   std::vector<std::pair<hir::FunctionId, mir::FunctionId>> function_pairs;
 
-  for (hir::FunctionId hir_func_id : module.functions) {
+  for (hir::FunctionId hir_func_id : body.functions) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
     // Reserve the mir::FunctionId with frozen signature
@@ -88,7 +88,7 @@ auto LowerModule(
   // Phase 3: Lower module processes (can reference functions)
   // Collect dynamically generated functions (e.g., observer programs)
   std::vector<mir::FunctionId> generated_functions;
-  for (hir::ProcessId proc_id : module.processes) {
+  for (hir::ProcessId proc_id : body.processes) {
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
     Result<mir::ProcessId> mir_proc_result = LowerProcess(
         proc_id, hir_process, input, mir_arena, decl_view, origin_map,
@@ -105,7 +105,7 @@ auto LowerModule(
   }
 
   // Note: Tasks are lowered similarly to functions
-  for (hir::TaskId task_id : module.tasks) {
+  for (hir::TaskId task_id : body.tasks) {
     (void)task_id;
   }
 

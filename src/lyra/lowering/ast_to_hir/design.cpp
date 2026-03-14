@@ -442,6 +442,71 @@ void CollectInstancesFromScope(
   }
 }
 
+// Prepare ownership-shaped lowering inputs from structural discovery.
+// One CollectScopeMembers walk per instance, then immediate partitioning
+// into behavioral (body) and registration (instance) inputs.
+// CollectedMembers is internal to this function -- never crosses the
+// LowerModuleBody / CollectModuleInstance boundary.
+struct PreparedModuleInputs {
+  std::vector<BodyLoweringInput> body_inputs;
+  std::vector<InstanceRegistrationInput> instance_inputs;
+};
+
+auto PrepareModuleLoweringInputs(
+    const std::vector<const slang::ast::InstanceSymbol*>& all_instances,
+    const common::SpecializationMap& spec_map, SymbolRegistrar& registrar)
+    -> PreparedModuleInputs {
+  // Identify representatives so we can build body inputs during the walk.
+  std::vector<int> rep_group_index(all_instances.size(), -1);
+  for (size_t g = 0; g < spec_map.groups.size(); ++g) {
+    rep_group_index[spec_map.groups[g].instance_indices[0]] =
+        static_cast<int>(g);
+  }
+
+  PreparedModuleInputs result;
+  result.instance_inputs.resize(all_instances.size());
+  result.body_inputs.resize(spec_map.groups.size());
+
+  for (size_t i = 0; i < all_instances.size(); ++i) {
+    CollectedMembers members;
+    {
+      ScopeGuard scope_guard(registrar, ScopeKind::kModule);
+      CollectScopeMembers(all_instances[i]->body, registrar, members);
+    }
+
+    // For representatives, build body lowering input from behavioral members.
+    if (rep_group_index[i] >= 0) {
+      auto g = static_cast<size_t>(rep_group_index[i]);
+      result.body_inputs[g].processes = std::move(members.processes);
+      result.body_inputs[g].continuous_assigns =
+          std::move(members.continuous_assigns);
+      result.body_inputs[g].functions = std::move(members.functions);
+      result.body_inputs[g].tasks = std::move(members.tasks);
+
+      // Prepare var_inits from representative's variables.
+      // Iterate before moving variables into instance_inputs.
+      for (const auto* var : members.variables) {
+        SymbolId sym = registrar.Lookup(*var);
+        if (sym) {
+          if (const auto* init = var->getInitializer()) {
+            result.body_inputs[g].var_inits.push_back(
+                BodyLoweringInput::VarInit{.target = sym, .initializer = init});
+          }
+        }
+      }
+    }
+
+    // Always build instance registration input (per-instance).
+    result.instance_inputs[i] = InstanceRegistrationInput{
+        .variables = std::move(members.variables),
+        .nets = std::move(members.nets),
+        .parameters = std::move(members.parameters),
+    };
+  }
+
+  return result;
+}
+
 }  // namespace
 
 auto LowerDesign(
@@ -500,11 +565,33 @@ auto LowerDesign(
     elements.emplace_back(LowerPackage(*pkg, registrar, ctx));
   }
 
-  // Phase 1: Lower module bodies.
-  // Port bindings are now handled at HIR->MIR level, not here.
+  auto [body_inputs, instance_inputs] =
+      PrepareModuleLoweringInputs(all_instances, spec_map, registrar);
+
+  // Phase 1a: Lower one shared body per specialization group.
+  // The representative instance provides timescale (ModuleLowerer) and
+  // source span context, not identity.
+  std::vector<hir::ModuleBody> module_bodies;
+  module_bodies.reserve(spec_map.groups.size());
+
+  std::vector<hir::ModuleBodyId> body_id_by_instance(all_instances.size());
+
+  for (size_t g = 0; g < spec_map.groups.size(); ++g) {
+    uint32_t rep_idx = spec_map.groups[g].instance_indices[0];
+    auto body = LowerModuleBody(
+        *all_instances[rep_idx], body_inputs[g], registrar, ctx);
+    hir::ModuleBodyId body_id{static_cast<uint32_t>(module_bodies.size())};
+    module_bodies.push_back(std::move(body));
+    for (uint32_t idx : spec_map.groups[g].instance_indices) {
+      body_id_by_instance[idx] = body_id;
+    }
+  }
+
+  // Phase 1b: Collect per-instance data (lightweight instance records).
   for (size_t i = 0; i < all_instances.size(); ++i) {
-    auto mod = LowerModule(*all_instances[i], registrar, ctx);
-    mod.module_def_id = spec_map.spec_id_by_instance[i].def_id;
+    auto mod = CollectModuleInstance(
+        *all_instances[i], instance_inputs[i], registrar, ctx,
+        spec_map.spec_id_by_instance[i].def_id, body_id_by_instance[i]);
     elements.emplace_back(std::move(mod));
   }
 
@@ -521,7 +608,11 @@ auto LowerDesign(
   }
 
   return DesignLoweringResult{
-      .design = hir::Design{.elements = std::move(elements)},
+      .design =
+          hir::Design{
+              .elements = std::move(elements),
+              .module_bodies = std::move(module_bodies),
+          },
       .binding_plan = std::move(binding_plan),
       .specialization_map = std::move(spec_map),
       .instance_table = std::move(instance_table),
