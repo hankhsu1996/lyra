@@ -14,11 +14,11 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] E3 partial -- `CodegenSession` has no `const mir::Design*`
 - [x] M2a -- Storage assignment derived from within-group variance (ParamTransmissionTable)
 - [x] M2b partial -- Declaration-based grouping, param-role deleted.
-- [ ] M2c -- Complete compile-owned discriminator
+- [x] M2c partial -- Compile-owned discriminator (current pipeline complete; process body identity deferred to constructor-repertoire model)
   - [x] M2c-2a -- Artifact inventory with generate availability paths
   - [x] M2c-2b -- Definition-owned repertoire descriptor (inspection scaffold + declaration payload)
   - [x] M2c-3 -- Specialization fingerprint from definition-scoped type store (v1 removed)
-- [ ] E3 remaining -- Remove `mir::Design` from `LoweringInput`, narrow `Context` and `BuildLayout`
+- [ ] E3 remaining -- `LoweringInput` still holds `const mir::Design*` (orchestration-level, acceptable)
 - [ ] E4 -- Delete B5 compatibility adapters, representative-instance scaffolding
 - [ ] B6 -- HIR ownership split (depends on post-M2 grouping contract)
 - [ ] m1 -- DesignState struct is monolithic
@@ -147,13 +147,18 @@ Files: `specialization.cpp`, `specialization.hpp`. Tests: `specialization_groupi
 
 ## E3 remaining: Backend API narrowing
 
-`CodegenSession` no longer carries `const mir::Design*` (done). Remaining scope:
+Done:
 
-- `include/lyra/llvm_backend/lower.hpp` -- `LoweringInput` holds `const mir::Design*`
-- `src/lyra/llvm_backend/layout/layout.cpp` -- `BuildLayout()` iterates all instances
-- `include/lyra/llvm_backend/context.hpp` -- `Context` holds `const Layout&`
+- `CodegenSession` has no `const mir::Design*`
+- `BuildLayout()` takes narrow `LayoutModulePlan` spans, not `mir::Design`
+- `BuildSlotInfo()` takes `span<SlotDesc>`, not `mir::Design`
+- `ExtractRealizationData()` takes narrow parameters, not `mir::Design`
+- Wrapper generation uses pre-extracted `module_base_slots`, not `design.placement`
+- `Context` holds `const Layout&` (pure LLVM artifact, no `mir::Design` reference)
 
-These are incremental narrowing tasks, not architectural blockers.
+Remaining:
+
+- `LoweringInput` still holds `const mir::Design*` -- this is the orchestration entry point and is acceptable. `CompileDesignProcesses` extracts narrow inputs from design during setup; no per-spec compilation, wrapper generation, or realization-building path requires `mir::Design` directly. Orchestration-level reads (element iteration, init-process collection) remain in `CompileDesignProcesses` by design.
 
 ## E4: Delete compatibility adapters
 

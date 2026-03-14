@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -20,6 +21,8 @@
 #include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
+
+struct SlotInfo;
 
 // Patches for 4-state X-encoding initialization, grouped by store width.
 // Each patch contains the byte offset (from base) and the mask to write.
@@ -190,10 +193,12 @@ struct Layout {
 
  private:
   friend auto BuildLayout(
-      const mir::Design& design, const mir::Arena& arena,
-      const TypeArena& types, DesignLayout design_layout,
-      llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
-      -> Layout;
+      std::span<const mir::ProcessId> init_processes,
+      std::span<const mir::ProcessId> connection_processes,
+      std::span<const struct LayoutModulePlan> module_plans,
+      const mir::Arena& arena, const TypeArena& types,
+      DesignLayout design_layout, llvm::LLVMContext& ctx,
+      const llvm::DataLayout& dl, bool force_two_state) -> Layout;
 
   // Pre-computed byte offset of each instance's slot base in DesignState.
   // Parallel to placement.instances. Access via GetInstanceBaseByteOffset.
@@ -260,12 +265,11 @@ auto GetLlvmAbiTypeForValue(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types,
     bool force_two_state) -> llvm::Type*;
 
-// Build SlotInfo list from design's slots.
-// This derives type metadata (kind, width, signedness) for
-// runtime/initialization.
-auto BuildSlotInfoFromDesign(
-    const mir::Design& design, const TypeArena& types, bool force_two_state)
-    -> std::vector<SlotInfo>;
+// Build SlotInfo list from slot descriptors.
+// Derives type metadata (kind, width, signedness) for runtime/initialization.
+auto BuildSlotInfo(
+    std::span<const mir::SlotDesc> slots, const TypeArena& types,
+    bool force_two_state) -> std::vector<SlotInfo>;
 
 // Check if a type is "scalar patchable" - i.e., maps to a single 4-state
 // storage object (struct {iW, iW} where W is 8/16/32/64).
@@ -282,12 +286,25 @@ auto BuildDesignLayout(
     llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
     -> DesignLayout;
 
-// Build complete layout from MIR design.
-// This is a pure analysis pass that creates LLVM types but does NOT emit IR.
+// Per-module-instance layout-planning entry.
+// Borrowed view into MIR data; valid only for the synchronous BuildLayout call.
+// Do not store beyond the call scope.
+struct LayoutModulePlan {
+  std::span<const mir::ProcessId> body_processes;
+  uint32_t design_state_base_slot;
+  uint32_t slot_count;
+};
+
+// Build complete backend layout from narrow planning inputs.
+// Pure analysis pass that creates LLVM types but does NOT emit IR.
 // Consumes a prebuilt DesignLayout (design-wide state contract).
+// TypeArena and force_two_state are needed for frame layout (process-local
+// variable type derivation), not for design slot planning.
 auto BuildLayout(
-    const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
-    DesignLayout design_layout, llvm::LLVMContext& ctx,
+    std::span<const mir::ProcessId> init_processes,
+    std::span<const mir::ProcessId> connection_processes,
+    std::span<const LayoutModulePlan> module_plans, const mir::Arena& arena,
+    const TypeArena& types, DesignLayout design_layout, llvm::LLVMContext& ctx,
     const llvm::DataLayout& dl, bool force_two_state) -> Layout;
 
 // Discriminant for byte range resolution results.
