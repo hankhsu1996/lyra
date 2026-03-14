@@ -86,7 +86,17 @@ class Arena final {
     return processes_[id.value];
   }
 
+  // Mutable access for MIR optimization passes.
+  [[nodiscard]] auto GetMutableProcess(ProcessId id) -> Process& {
+    return processes_[id.value];
+  }
+
   [[nodiscard]] auto operator[](FunctionId id) const -> const Function& {
+    return functions_[id.value];
+  }
+
+  // Mutable access for MIR optimization passes.
+  [[nodiscard]] auto GetMutableFunction(FunctionId id) -> Function& {
     return functions_[id.value];
   }
 
