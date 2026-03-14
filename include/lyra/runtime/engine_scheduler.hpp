@@ -4,7 +4,6 @@
 #include <type_traits>
 
 #include "lyra/runtime/activation_trace.hpp"
-#include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/small_byte_buffer.hpp"
 
 namespace lyra::runtime {
@@ -17,12 +16,26 @@ enum class Region : uint8_t {
   kNBA,       // Nonblocking assignment updates
 };
 
-// Scheduled event: a process ready to resume at a specific point.
-// Wake metadata is part of activation identity -- it describes why this
-// activation exists, not debug/trace adornment.
-struct ScheduledEvent {
-  ProcessHandle handle;
-  ResumePoint resume;
+// Hot queue entry for process wakeup (12 bytes). Contains only the fields
+// needed for dispatch. Trace-only fields (cause, trigger_slot) are stored
+// per-process in wake_trace_ when activation tracing is enabled.
+struct WakeupEntry {
+  uint32_t process_id;
+  uint32_t instance_id;
+  uint32_t resume_block;
+};
+
+// Trace-only wakeup annotation. Stored per-process (indexed by process_id),
+// populated at enqueue time only when activation tracing is enabled.
+//
+// Per-process storage is safe because each process has at most one pending
+// wake source at a time:
+//   - Delay/DelayZero/ScheduleNextDelta: called after ResetInstalledWait
+//     clears all subscriptions, so flush cannot race with EnqueueProcessWakeup.
+//   - EnqueueProcessWakeup: is_enqueued dedup prevents multiple writes
+//     per delta.
+//   - ScheduleInitial: one-time at startup, before any flush activity.
+struct WakeTraceInfo {
   WakeCause cause = WakeCause::kDelay;
   uint32_t trigger_slot = kNoTriggerSlot;
 };

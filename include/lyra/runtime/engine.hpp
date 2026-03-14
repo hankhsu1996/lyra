@@ -51,7 +51,10 @@ struct ProcessDispatch {
 // Always-on summary counters: one increment per major event.
 struct CoreRuntimeStats {
   uint64_t total_activations = 0;
-  uint64_t activations_no_write = 0;
+  // Activations where the process body made no direct dirty marks (only
+  // scheduled NBAs or read-only). Not a wasted-wakeup metric: always_ff
+  // processes legitimately schedule NBAs without marking slots dirty.
+  uint64_t activations_nba_only = 0;
   uint64_t propagation_calls = 0;
   uint64_t propagation_iterations = 0;
   uint64_t propagation_max_iterations = 0;
@@ -111,10 +114,16 @@ class Engine {
       throw common::InternalError(
           "Engine::Engine", "process_dispatch.fn must not be null");
     }
+    // Pre-reserve wakeup queue to avoid reallocation during flush.
+    // Each process can be enqueued at most once per delta (dedup by
+    // is_enqueued), so num_processes is a tight upper bound.
+    next_delta_queue_.reserve(num_processes);
+    active_queue_.reserve(num_processes);
     if (HasFlag(
             static_cast<FeatureFlag>(feature_flags_),
             FeatureFlag::kEnableActivationTrace)) {
       activation_trace_.emplace();
+      wake_trace_.resize(num_processes);
     }
     detailed_stats_enabled_ = HasFlag(
         static_cast<FeatureFlag>(feature_flags_), FeatureFlag::kDetailedStats);
@@ -515,7 +524,7 @@ class Engine {
   // Run a single process activation.
   // Establishes clean activation-entry state (trap reset, loop budget),
   // then invokes the runner which owns exit-status interpretation.
-  void RunOneActivation(const ScheduledEvent& event);
+  void RunOneActivation(const WakeupEntry& entry);
 
   void ExecuteTimeSlot();
   void ExecuteRegion(Region region);
@@ -573,8 +582,9 @@ class Engine {
   // Trace helpers: append event + live stderr print.
   // TraceWake is called at the single point where an activation becomes
   // runnable (ExecuteRegion kActive), not at producer-side queue insertion.
-  void TraceWake(const ScheduledEvent& event);
-  void TraceRun(const ScheduledEvent& event);
+  // Reads trace-only fields (cause, trigger_slot) from wake_trace_.
+  void TraceWake(const WakeupEntry& entry);
+  void TraceRun(const WakeupEntry& entry);
 
   // Per-kind flush helpers (called from FlushDirtySlot).
   void FlushSlotRebindSubs(
@@ -599,17 +609,25 @@ class Engine {
 
   // Deduplicated wakeup enqueue: push to next_delta_queue_ if not already
   // enqueued. Shared by edge, change, and container flush paths.
-  // Inline: the common case (already enqueued) is a single load + branch.
+  //
+  // Fully inline: the hot path (already enqueued) is a single load + branch.
+  // The cold path (first enqueue) constructs a 12-byte WakeupEntry and
+  // pushes to the pre-reserved queue. Trace-only fields (cause, trigger_slot)
+  // are stored per-process only when activation tracing is enabled.
   void EnqueueProcessWakeup(
       uint32_t process_id, uint32_t instance_id, uint32_t resume_block,
       uint32_t trigger_slot, WakeCause cause) {
-    if (process_states_[process_id].is_enqueued) return;
-    EnqueueProcessWakeupCold(
-        process_id, instance_id, resume_block, trigger_slot, cause);
+    if (detailed_stats_enabled_) ++stats_.detailed.wakeup_attempts;
+    if (process_states_[process_id].is_enqueued) {
+      if (detailed_stats_enabled_) ++stats_.detailed.wakeup_deduped;
+      return;
+    }
+    next_delta_queue_.push_back({process_id, instance_id, resume_block});
+    process_states_[process_id].is_enqueued = true;
+    if (activation_trace_.has_value()) {
+      wake_trace_[process_id] = {.cause = cause, .trigger_slot = trigger_slot};
+    }
   }
-  void EnqueueProcessWakeupCold(
-      uint32_t process_id, uint32_t instance_id, uint32_t resume_block,
-      uint32_t trigger_slot, WakeCause cause);
 
   // Resource limit checking
   auto CheckSubscriptionLimits(const ProcessState& proc_state) -> bool;
@@ -630,14 +648,19 @@ class Engine {
   common::TimeFormatState time_format_;  // Mutable via $timeformat
 
   // Time-based scheduling: time -> events
-  std::map<SimTime, std::vector<ScheduledEvent>> delay_queue_;
+  std::map<SimTime, std::vector<WakeupEntry>> delay_queue_;
 
   // Region queues for current time slot
-  std::vector<ScheduledEvent> active_queue_;
-  std::queue<ScheduledEvent> inactive_queue_;
+  std::vector<WakeupEntry> active_queue_;
+  std::queue<WakeupEntry> inactive_queue_;
 
   // Next-delta queue: events scheduled for the next delta cycle
-  std::vector<ScheduledEvent> next_delta_queue_;
+  std::vector<WakeupEntry> next_delta_queue_;
+
+  // Per-process trace annotations (only populated when tracing enabled).
+  // Indexed by process_id. Safe because each process is enqueued at most
+  // once per delta (dedup guard prevents overwrite).
+  std::vector<WakeTraceInfo> wake_trace_;
 
   // NBA queue: deferred writes committed in ExecuteRegion(kNBA)
   std::vector<NbaEntry> nba_queue_;

@@ -7,9 +7,8 @@ namespace lyra::runtime {
 
 static constexpr uint32_t kNoTriggerSlot = UINT32_MAX;
 
-// Why an activation exists. This is runtime scheduling metadata, not
-// debug/trace adornment. Carried on ScheduledEvent through the scheduler
-// queues and reused by activation trace for observability.
+// Why an activation exists. Stored per-process in WakeTraceInfo when
+// activation tracing is enabled. Used by activation trace for observability.
 enum class WakeCause : uint8_t {
   kEdge,
   kChange,

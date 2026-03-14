@@ -22,10 +22,10 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
   // (conn_full_slot, conn_narrow, comb_full_slot, comb_narrow).
 
   // Core sanity checks.
-  if (c.activations_no_write > c.total_activations) {
+  if (c.activations_nba_only > c.total_activations) {
     fmt::print(
         sink,
-        "[lyra][stats][warning] activations_no_write > total_activations\n");
+        "[lyra][stats][warning] activations_nba_only > total_activations\n");
   }
   if (c.nba_elided > c.nba_entries) {
     fmt::print(sink, "[lyra][stats][warning] nba_elided > nba_entries\n");
@@ -39,13 +39,13 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
   fmt::print(
       sink,
       "[lyra][stats][core]"
-      " total_activations={} activations_no_write={}"
+      " total_activations={} activations_nba_only={}"
       " propagation_calls={} propagation_iterations={}"
       " propagation_max_iterations={}"
       " nba_entries={} nba_elided={} nba_changed={}"
       " conn_full_slot={} conn_narrow={}"
       " comb_full_slot={} comb_narrow={}\n",
-      c.total_activations, c.activations_no_write, c.propagation_calls,
+      c.total_activations, c.activations_nba_only, c.propagation_calls,
       c.propagation_iterations, c.propagation_max_iterations, c.nba_entries,
       c.nba_elided, c.nba_changed, conn_full_slot_count_, conn_narrow_count_,
       comb_full_slot_count_, comb_narrow_count_);
@@ -176,32 +176,34 @@ void Engine::DumpSchedulerStatusAsyncSignalSafe(int fd) const {
   SafeWrite(fd, "\n", 1);
 }
 
-void Engine::TraceWake(const ScheduledEvent& event) {
+void Engine::TraceWake(const WakeupEntry& entry) {
   if (!activation_trace_.has_value()) return;
+  const auto& trace = wake_trace_[entry.process_id];
   ActivationEvent ae{
       .time = current_time_,
       .delta = current_delta_,
-      .process_id = event.handle.process_id,
-      .trigger_slot = event.trigger_slot,
-      .resume_block = event.resume.block_index,
+      .process_id = entry.process_id,
+      .trigger_slot = trace.trigger_slot,
+      .resume_block = entry.resume_block,
       .kind = ActivationEventKind::kWake,
-      .cause = event.cause,
+      .cause = trace.cause,
       .slots_dirtied = 0,
   };
   activation_trace_->Append(ae);
   fmt::print(stderr, "{}\n", FormatActivationEvent(ae, process_meta_));
 }
 
-void Engine::TraceRun(const ScheduledEvent& event) {
+void Engine::TraceRun(const WakeupEntry& entry) {
   if (!activation_trace_.has_value()) return;
+  const auto& trace = wake_trace_[entry.process_id];
   ActivationEvent ae{
       .time = current_time_,
       .delta = current_delta_,
-      .process_id = event.handle.process_id,
-      .trigger_slot = event.trigger_slot,
-      .resume_block = event.resume.block_index,
+      .process_id = entry.process_id,
+      .trigger_slot = trace.trigger_slot,
+      .resume_block = entry.resume_block,
       .kind = ActivationEventKind::kRun,
-      .cause = event.cause,
+      .cause = trace.cause,
       .slots_dirtied = activation_ctx_.dirty_count,
   };
   activation_trace_->Append(ae);
