@@ -226,7 +226,6 @@ auto BuildSpecCodegenViews(
               .local_nonfinal_proc_index = local_nonfinal,
               .layout_process_index = sched_indices[local_nonfinal],
               .process_id = proc_id,
-              .representative_module_index = rep_module_index,
               .func_name = std::format(
                   "body_{}_proc_{}", unit.body_id.value, local_nonfinal),
           });
@@ -376,10 +375,6 @@ auto CompileModuleSpecSession(
 
   for (const auto& proc_view : input.view.processes) {
     context.SetCurrentProcess(proc_view.layout_process_index);
-    // Compatibility: process lowering still needs a representative instance ID
-    // for %m path support. This is transitional -- true specialization codegen
-    // should not require instance identity.
-    context.SetCurrentInstanceId(proc_view.representative_module_index.value);
     context.SetSpecSlotLayout(&input.layout.slot_layout);
 
     const auto& mir_process = arena[proc_view.process_id];
@@ -697,7 +692,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
     const auto& bp = layout->scheduled_processes[i];
     const auto& mir_process = (*input.mir_arena)[bp.process_id];
-    context->SetCurrentInstanceId(bp.module_index.value);
 
     // Init and connection processes are standalone (no module binding)
     if (i < num_init || bp.module_index.value == ModuleIndex::kNone) {

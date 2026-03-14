@@ -3,7 +3,6 @@
 #include <expected>
 #include <format>
 #include <optional>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -241,42 +240,54 @@ auto Context::GetCanonicalRootSignalId(mir::PlaceId place_id)
   const mir::Place& resolved = arena_[place_id];
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
     return EmitSignalId(
-        {mir::SignalRef::Scope::kModuleLocal,
-         static_cast<uint32_t>(resolved.root.id)});
+        {.scope = mir::SignalRef::Scope::kModuleLocal,
+         .id = static_cast<uint32_t>(resolved.root.id)});
   }
   if (resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
     return EmitSignalId(
-        {mir::SignalRef::Scope::kDesignGlobal,
-         static_cast<uint32_t>(resolved.root.id)});
+        {.scope = mir::SignalRef::Scope::kDesignGlobal,
+         .id = static_cast<uint32_t>(resolved.root.id)});
   }
   return std::nullopt;
 }
 
 auto Context::ResolveDesignGlobalSlotId(const mir::PlaceRoot& root) const
     -> uint32_t {
-  if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
-    return module_base_slot_id_ + static_cast<uint32_t>(root.id);
-  }
   if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
     return static_cast<uint32_t>(root.id);
   }
   throw common::InternalError(
       "ResolveDesignGlobalSlotId",
-      "expected kModuleSlot or kDesignGlobal root");
+      std::format(
+          "module-local root (kind={}) has no design-global identity; "
+          "module-scoped code must use specialization-local addressing",
+          static_cast<int>(root.kind)));
 }
 
 auto Context::ResolveDesignGlobalSlotId(const mir::SignalRef& sig) const
     -> uint32_t {
-  return (sig.scope == mir::SignalRef::Scope::kModuleLocal)
-             ? module_base_slot_id_ + sig.id
-             : sig.id;
+  if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
+    return sig.id;
+  }
+  throw common::InternalError(
+      "ResolveDesignGlobalSlotId",
+      std::format(
+          "module-local signal (id={}) has no design-global identity; "
+          "module-scoped code must use specialization-local addressing",
+          sig.id));
 }
 
 auto Context::ResolveDesignGlobalSlotId(const mir::ScopedSlotRef& ref) const
     -> uint32_t {
-  return (ref.scope == mir::ScopedSlotRef::Scope::kModuleLocal)
-             ? module_base_slot_id_ + ref.id
-             : ref.id;
+  if (ref.scope == mir::ScopedSlotRef::Scope::kDesignGlobal) {
+    return ref.id;
+  }
+  throw common::InternalError(
+      "ResolveDesignGlobalSlotId",
+      std::format(
+          "module-local scoped slot (id={}) has no design-global identity; "
+          "module-scoped code must use specialization-local addressing",
+          ref.id));
 }
 
 auto Context::EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr {
@@ -286,8 +297,12 @@ auto Context::EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr {
           builder_.CreateAdd(signal_id_offset_, builder_.getInt32(sig.id));
       return SignalIdExpr::Dynamic(abs);
     }
-    uint32_t global_id = module_base_slot_id_ + sig.id;
-    return SignalIdExpr::Const(global_id);
+    throw common::InternalError(
+        "EmitSignalId",
+        std::format(
+            "module-local signal (id={}) in design-global addressing mode; "
+            "module-scoped code must use specialization-local addressing",
+            sig.id));
   }
   return SignalIdExpr::Const(sig.id);
 }
@@ -353,8 +368,12 @@ auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {
     if (slot_addressing_ == SlotAddressingMode::kSpecializationLocal) {
       return GetModuleSlotPointer(static_cast<uint32_t>(root.id));
     }
-    uint32_t global_id = ResolveDesignGlobalSlotId(root);
-    return GetDesignGlobalSlotPointer(global_id);
+    throw common::InternalError(
+        "GetSlotRootPointer",
+        std::format(
+            "module-local slot (id={}) in design-global addressing mode; "
+            "module-scoped code must use specialization-local addressing",
+            root.id));
   }
   if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
     return GetDesignGlobalSlotPointer(static_cast<uint32_t>(root.id));
@@ -368,8 +387,12 @@ auto Context::GetSignalSlotPointer(const mir::SignalRef& sig) -> llvm::Value* {
     if (slot_addressing_ == SlotAddressingMode::kSpecializationLocal) {
       return GetModuleSlotPointer(sig.id);
     }
-    uint32_t global_id = module_base_slot_id_ + sig.id;
-    return GetDesignGlobalSlotPointer(global_id);
+    throw common::InternalError(
+        "GetSignalSlotPointer",
+        std::format(
+            "module-local signal (id={}) in design-global addressing mode; "
+            "module-scoped code must use specialization-local addressing",
+            sig.id));
   }
   return GetDesignGlobalSlotPointer(sig.id);
 }

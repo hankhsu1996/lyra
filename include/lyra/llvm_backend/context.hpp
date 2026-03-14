@@ -49,10 +49,11 @@ struct WriteTarget;
 //   local_id). Used in shared module behavioral process bodies and
 //   module-scoped user functions.
 //
-// kDesignGlobal: Module slots accessed via design_ptr + struct GEP,
-//   rebased through module_base_slot_id_. Signal identity is a constant
-//   design-global slot ID. Used in standalone non-module processes
-//   (init, connection) and thunks with runtime-defined calling conventions.
+// kDesignGlobal: Design-global slots accessed via design_ptr + struct GEP.
+//   Signal identity is a constant design-global slot ID. Used in standalone
+//   non-module processes (init, connection). Module-local (kModuleSlot)
+//   references are invalid in this mode -- they indicate an architecture
+//   violation and will throw InternalError.
 enum class SlotAddressingMode {
   kDesignGlobal,
   kSpecializationLocal,
@@ -271,10 +272,6 @@ class Context {
   void SetCurrentProcess(size_t process_index);
   [[nodiscard]] auto GetCurrentProcessIndex() const -> size_t;
 
-  // Per-process instance_id for %m support
-  void SetCurrentInstanceId(uint32_t instance_id);
-  [[nodiscard]] auto GetCurrentInstanceId() const -> uint32_t;
-
   // Slot addressing mode -- controls how kModuleSlot roots are lowered.
   // Must be set explicitly per function scope.
   void SetSlotAddressingMode(SlotAddressingMode mode);
@@ -320,14 +317,14 @@ class Context {
 
   // Emit runtime signal ID for a signal ref (scope-based, not flag-based).
   // kModuleLocal + kSpecializationLocal: Dynamic(signal_id_offset_ + sig.id)
-  // kModuleLocal + kDesignGlobal: Const(module_base_slot_id_ + sig.id)
+  // kModuleLocal + kDesignGlobal: InternalError (architecture violation).
   // kDesignGlobal: Const(sig.id) -- always constant.
   [[nodiscard]] auto EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr;
 
   // Resolution: MIR storage root -> design-global slot ID.
-  // Used for alias map lookup (all contexts) and design-global pointer
-  // formation (kDesignGlobal addressing mode). Rebases kModuleSlot roots
-  // through module_base_slot_id_.
+  // kDesignGlobal roots: identity (root.id is already design-global).
+  // kModuleSlot roots: InternalError (module-local roots have no
+  //   design-global identity in design-global addressing mode).
   [[nodiscard]] auto ResolveDesignGlobalSlotId(const mir::PlaceRoot& root) const
       -> uint32_t;
   [[nodiscard]] auto ResolveDesignGlobalSlotId(const mir::SignalRef& sig) const
@@ -691,9 +688,6 @@ class Context {
   // Current process index (set before generating each process)
   size_t current_process_index_ = 0;
 
-  // Current instance_id for %m support (set before generating each process)
-  uint32_t current_instance_id_ = UINT32_MAX;
-
   // Cached pointers for current process function
   llvm::Value* state_ptr_ = nullptr;
   llvm::Value* design_ptr_ = nullptr;
@@ -710,12 +704,6 @@ class Context {
   llvm::Value* signal_id_offset_ = nullptr;     // i32 fn arg
   const SpecSlotLayout* spec_slot_layout_ = nullptr;
   llvm::Value* unstable_slot_offsets_ptr_ = nullptr;
-
-  // Design-global base slot ID for the current module instance.
-  // Only used in non-shared / explicitly design-global lowering contexts:
-  // kModuleSlot -> design_ptr GEP when slot_addressing_ == kDesignGlobal
-  // (user functions, standalone mode). Not used in shared behavioral code.
-  uint32_t module_base_slot_id_ = 0;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();

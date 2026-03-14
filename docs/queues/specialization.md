@@ -162,9 +162,18 @@ Remaining:
 
 ## E4: Delete compatibility adapters
 
-- Remove transitional codegen adapters from Phase B5
-- Remove representative-instance ID usage for %m path support
-- Codegen operates natively on `ModuleBody` + instance records
+Deleted (core contract tightening):
+
+- `representative_module_index` from `SpecProcessView` (backend-only compatibility field)
+- `current_instance_id_` / `SetCurrentInstanceId` / `GetCurrentInstanceId` from `Context` (static instance identity for shared process lowering)
+- `module_base_slot_id_` from `Context` (fake design-global rebasing)
+- `%m` lowering now requires `kSpecializationLocal` with dynamic instance identity
+- kModuleSlot + kDesignGlobal identity mapping removed from `ResolveDesignGlobalSlotId`, `EmitSignalId`, `GetSlotRootPointer`, `GetSignalSlotPointer` -- replaced with `InternalError` (architecture violation)
+
+Remaining (observer/callback redesign):
+
+- Monitor check/setup/strobe thunks still use design-global addressing in thunk bodies
+- Needs real compiled-observer object model with explicit per-instance captured state
 
 ## B6: HIR ownership split
 
