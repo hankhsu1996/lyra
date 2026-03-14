@@ -9,7 +9,8 @@
 // Layout stability: fields are append-only. New fields are added after
 // existing ones. The version field gates which fields the runtime reads.
 // Runtime ABI version history:
-//   1: Initial version (slot meta, process meta, back-edge site meta, connections,
+//   1: Initial version (slot meta, process meta, back-edge site meta,
+//   connections,
 //      comb kernels, feature flags)
 //   2: Added wait-site metadata word table (wait_site_words,
 //      wait_site_word_count)

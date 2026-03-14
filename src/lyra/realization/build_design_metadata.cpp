@@ -192,7 +192,8 @@ auto BuildDesignMetadata(const DesignMetadataInputs& input) -> DesignMetadata {
   auto back_edge_site_meta = BuildBackEdgeSiteMeta(input.back_edge_sites);
 
   if (!back_edge_site_meta.words.empty() &&
-      back_edge_site_meta.words.size() % runtime::back_edge_site_abi::kStride != 0) {
+      back_edge_site_meta.words.size() % runtime::back_edge_site_abi::kStride !=
+          0) {
     throw common::InternalError(
         "BuildDesignMetadata",
         "back_edge_site_meta words size not divisible by kStride");

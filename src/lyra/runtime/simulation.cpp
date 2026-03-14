@@ -19,12 +19,12 @@
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
-#include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/signal_dump.hpp"
@@ -467,7 +467,8 @@ extern "C" void LyraRunSimulation(
         abi->back_edge_site_meta_word_count > 0) {
       engine.InitBackEdgeSiteMeta(
           lyra::runtime::BackEdgeSiteRegistry(
-              abi->back_edge_site_meta_words, abi->back_edge_site_meta_word_count,
+              abi->back_edge_site_meta_words,
+              abi->back_edge_site_meta_word_count,
               abi->back_edge_site_meta_string_pool,
               abi->back_edge_site_meta_string_pool_size));
     }

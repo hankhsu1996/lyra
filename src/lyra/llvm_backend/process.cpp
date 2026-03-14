@@ -1539,7 +1539,8 @@ auto GenerateProcessFunction(
 
     // Emit back-edge guard before loop back-edge terminators
     if (HasBackEdge(block.terminator, i)) {
-      EmitBackEdgeGuard(context, block.terminator.origin, func, out_arg, limit_ptr);
+      EmitBackEdgeGuard(
+          context, block.terminator.origin, func, out_arg, limit_ptr);
     }
 
     auto term_result = LowerTerminator(

@@ -45,7 +45,8 @@ auto BackEdgeSiteRegistry::IsPopulated() const -> bool {
   return !sites_.empty();
 }
 
-auto BackEdgeSiteRegistry::Get(uint32_t site_id) const -> const BackEdgeSiteMeta& {
+auto BackEdgeSiteRegistry::Get(uint32_t site_id) const
+    -> const BackEdgeSiteMeta& {
   if (site_id >= sites_.size()) {
     throw common::InternalError(
         "BackEdgeSiteRegistry::Get",

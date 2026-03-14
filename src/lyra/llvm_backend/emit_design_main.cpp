@@ -729,11 +729,12 @@ auto BuildRuntimeAbi(
       6, llvm::ConstantInt::get(i32_ty, meta_globals.process_meta_pool_size));
   store_field(7, meta_globals.back_edge_site_meta_words);
   store_field(
-      8, llvm::ConstantInt::get(i32_ty, meta_globals.back_edge_site_meta_count));
+      8,
+      llvm::ConstantInt::get(i32_ty, meta_globals.back_edge_site_meta_count));
   store_field(9, meta_globals.back_edge_site_meta_pool);
   store_field(
-      10,
-      llvm::ConstantInt::get(i32_ty, meta_globals.back_edge_site_meta_pool_size));
+      10, llvm::ConstantInt::get(
+              i32_ty, meta_globals.back_edge_site_meta_pool_size));
   store_field(11, meta_globals.conn_desc_table);
   store_field(12, llvm::ConstantInt::get(i32_ty, meta_globals.conn_desc_count));
   store_field(13, meta_globals.comb_kernel_words);

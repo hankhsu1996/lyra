@@ -335,7 +335,8 @@ void Engine::HandleTrap(uint32_t process_id, const TrapPayload& payload) {
     case TrapReason::kIterationLimitExceeded: {
       std::string proc_str = FormatProcess(process_id);
       std::string loc_str;
-      if (back_edge_site_meta_.IsPopulated() && payload.a < back_edge_site_meta_.Size()) {
+      if (back_edge_site_meta_.IsPopulated() &&
+          payload.a < back_edge_site_meta_.Size()) {
         loc_str = back_edge_site_meta_.Format(payload.a);
       }
 

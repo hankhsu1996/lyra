@@ -18,12 +18,12 @@
 #include "lyra/common/mutation_event.hpp"
 #include "lyra/common/time_format.hpp"
 #include "lyra/runtime/activation_trace.hpp"
+#include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
-#include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -491,7 +491,8 @@ class Engine {
     return process_meta_;
   }
 
-  [[nodiscard]] auto GetBackEdgeSiteRegistry() const -> const BackEdgeSiteRegistry& {
+  [[nodiscard]] auto GetBackEdgeSiteRegistry() const
+      -> const BackEdgeSiteRegistry& {
     return back_edge_site_meta_;
   }
 

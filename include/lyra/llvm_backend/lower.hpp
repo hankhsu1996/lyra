@@ -93,8 +93,8 @@ struct LoweringInput {
   // Text signal trace output path: empty = stdout, non-empty = file path.
   // Only meaningful when kEnableSignalTrace is set in feature_flags.
   std::string signal_trace_path;
-  uint32_t iteration_limit = 0;       // 0 = default (1B)
-  bool force_two_state = false;       // Force 2-state LLVM representation
+  uint32_t iteration_limit = 0;  // 0 = default (1B)
+  bool force_two_state = false;  // Force 2-state LLVM representation
   MainAbi main_abi = MainAbi::kEmbeddedPlusargs;
 };
 
