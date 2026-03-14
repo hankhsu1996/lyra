@@ -368,10 +368,10 @@ def get_git_sha() -> str:
 
 
 def fmt_time(val: float) -> str:
-    """Format seconds as integer milliseconds for display."""
+    """Format seconds as integer milliseconds with thousands separators."""
     if val == 0.0:
         return "-"
-    return f"{int(round(val * 1000))}"
+    return f"{int(round(val * 1000)):,}"
 
 
 def group_by_design(
@@ -400,7 +400,7 @@ def print_markdown(
     print("### Simulation Performance")
     print()
     print("| Design | Lyra 4-state (ms) | Lyra 2-state (ms) | Verilator (ms) |")
-    print("|--------|-------------------|-------------------|----------------|")
+    print("|--------|------------------:|------------------:|---------------:|")
     for design in designs:
         backends = grouped.get(design, {})
         aot = backends.get("aot")
@@ -418,7 +418,7 @@ def print_markdown(
     print("### Compile Time")
     print()
     print("| Design | AOT (ms) | JIT (ms) | Verilator (ms) |")
-    print("|--------|----------|----------|----------------|")
+    print("|--------|---------:|---------:|---------------:|")
     for design in designs:
         backends = grouped.get(design, {})
         aot = backends.get("aot")
