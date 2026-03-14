@@ -39,12 +39,13 @@ struct SpecCompilationUnit {
 };
 
 // Narrow backend view for one body-owned process belonging to a
-// specialization. Contains codegen routing data for the process.
+// specialization. Contains codegen routing data for shared process compilation.
+// Does not carry instance identity -- dynamic instance identity flows through
+// wrapper/runtime inputs, not through static codegen state.
 struct SpecProcessView {
   uint32_t local_nonfinal_proc_index;  // Position among body's non-final procs
   uint32_t layout_process_index;       // Matching entry in layout.processes
   mir::ProcessId process_id;
-  ModuleIndex representative_module_index;  // Compatibility only (%m / path)
   std::string func_name;  // body_{body_id}_proc_{local_nonfinal_proc_index}
 };
 

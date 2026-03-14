@@ -23,6 +23,7 @@
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
+#include "lyra/llvm_backend/observer_abi.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
@@ -60,50 +61,57 @@ auto LowerTimeFormatEffect(Context& context, const mir::TimeFormatEffect& tf)
 
 auto LowerStrobeEffect(Context& context, const mir::StrobeEffect& strobe)
     -> Result<void> {
-  auto& builder = context.GetBuilder();
-
-  // Get the thunk function (already declared via DeclareUserFunction)
-  llvm::Function* thunk_fn = context.GetUserFunction(strobe.thunk);
-  if (thunk_fn == nullptr) {
+  // Get the strobe program function (already declared via DeclareMirFunction)
+  llvm::Function* program_fn = context.GetUserFunction(strobe.program);
+  if (program_fn == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-        context.GetCurrentOrigin(), "$strobe thunk function not found",
+        context.GetCurrentOrigin(), "$strobe program function not found",
         UnsupportedCategory::kFeature));
   }
 
-  // Get engine and design state pointers from process state header
   llvm::Value* engine_ptr = context.GetEnginePointer();
   llvm::Value* design_ptr = context.GetDesignPointer();
 
-  // Schedule the thunk for the Postponed region
-  // LyraSchedulePostponed(engine, callback, design_state)
-  builder.CreateCall(
-      context.GetLyraSchedulePostponed(), {engine_ptr, thunk_fn, design_ptr});
+  // Get observer context fields from current process environment.
+  // Module-scoped callers provide specialization-local state;
+  // design-global callers get null/zero defaults.
+  auto obs_fields = GetObserverContextFieldValues(context);
+
+  // LyraRegisterStrobe(engine, program, design_state,
+  //                     this_ptr, instance_id, signal_id_offset,
+  //                     unstable_offsets)
+  context.GetBuilder().CreateCall(
+      context.GetLyraRegisterStrobe(),
+      {engine_ptr, program_fn, design_ptr, obs_fields.this_ptr,
+       obs_fields.instance_id, obs_fields.signal_id_offset,
+       obs_fields.unstable_offsets});
 
   return {};
 }
 
 auto LowerMonitorEffect(Context& context, const mir::MonitorEffect& monitor)
     -> Result<void> {
-  auto& builder = context.GetBuilder();
-
-  // Get the setup thunk function (already declared via DeclareUserFunction).
-  // The setup thunk handles: initial print, serialization, and registration.
-  llvm::Function* setup_fn = context.GetUserFunction(monitor.setup_thunk);
+  // Get the setup program (already declared via DeclareMirFunction).
+  // The setup program handles: initial print, serialization, and registration.
+  llvm::Function* setup_fn = context.GetUserFunction(monitor.setup_program);
   if (setup_fn == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-        context.GetCurrentOrigin(), "$monitor setup thunk function not found",
+        context.GetCurrentOrigin(), "$monitor setup program not found",
         UnsupportedCategory::kFeature));
   }
 
-  // Get design and engine pointers
   llvm::Value* design_ptr = context.GetDesignPointer();
   llvm::Value* engine_ptr = context.GetEnginePointer();
 
-  // Call setup thunk - it handles initial print + serialization + registration
-  // Setup thunk signature: void (DesignState*, Engine*)
-  std::vector<llvm::Value*> setup_args = {design_ptr, engine_ptr};
+  // Materialize ObserverContext on the stack from current process environment.
+  // The setup program receives this as its third argument and forwards it
+  // to the monitor registration API.
+  auto* ctx_alloca = MaterializeObserverContext(context);
+
+  // Call setup program: void (DesignState*, Engine*, ObserverContext*)
+  std::vector<llvm::Value*> setup_args = {design_ptr, engine_ptr, ctx_alloca};
   VerifyCallAbi(setup_fn, setup_args, "MonitorSetup");
-  builder.CreateCall(setup_fn, setup_args);
+  context.GetBuilder().CreateCall(setup_fn, setup_args);
 
   return {};
 }

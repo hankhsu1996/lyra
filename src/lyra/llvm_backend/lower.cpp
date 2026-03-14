@@ -107,13 +107,13 @@ void RegisterMonitorInfo(
           .total_size = monitor->prev_buffer_size,
       };
       context.RegisterMonitorLayout(
-          monitor->check_thunk, std::move(mon_layout));
+          monitor->check_program, std::move(mon_layout));
 
       Context::MonitorSetupInfo setup_info{
-          .check_thunk = monitor->check_thunk,
+          .check_program = monitor->check_program,
       };
       context.RegisterMonitorSetupInfo(
-          monitor->setup_thunk, std::move(setup_info));
+          monitor->setup_program, std::move(setup_info));
     }
   }
 }
@@ -226,7 +226,6 @@ auto BuildSpecCodegenViews(
               .local_nonfinal_proc_index = local_nonfinal,
               .layout_process_index = sched_indices[local_nonfinal],
               .process_id = proc_id,
-              .representative_module_index = rep_module_index,
               .func_name = std::format(
                   "body_{}_proc_{}", unit.body_id.value, local_nonfinal),
           });
@@ -339,14 +338,12 @@ auto CompileModuleSpecSession(
   }
 
   // Step 2: Register module-scoped function lowering metadata.
-  // Once per function, not per instance -- spec_slot_layout is
-  // specialization-owned and shared across all instances.
+  // All body functions share the same spec slot layout. Observer ABI vs
+  // regular ABI is determined by mir::IsObserverProgram(runtime_kind) at
+  // declare/define time, not by metadata here.
   for (mir::FunctionId func_id : input.functions) {
-    const auto& func = arena[func_id];
-    if (func.thunk_kind == mir::ThunkKind::kNone) {
-      context.RegisterModuleScopedFunction(
-          func_id, {.spec_slot_layout = &input.layout.slot_layout});
-    }
+    context.RegisterModuleScopedFunction(
+        func_id, {.spec_slot_layout = &input.layout.slot_layout});
   }
 
   // Step 3: Declare all body functions
@@ -354,7 +351,7 @@ auto CompileModuleSpecSession(
   std::unordered_set<uint32_t> seen_func_ids;
   for (mir::FunctionId func_id : input.functions) {
     if (!seen_func_ids.insert(func_id.value).second) continue;
-    auto llvm_func_or_err = DeclareUserFunction(
+    auto llvm_func_or_err = DeclareMirFunction(
         context, func_id,
         std::format("body_{}_func_{}", input.body_id.value, func_id.value));
     if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
@@ -363,7 +360,7 @@ auto CompileModuleSpecSession(
 
   // Step 4: Define all body functions
   for (const auto& [func_id, llvm_func] : declared_funcs) {
-    auto result = DefineUserFunction(context, func_id, llvm_func);
+    auto result = DefineMirFunction(context, func_id, llvm_func);
     if (!result) return std::unexpected(result.error());
   }
 
@@ -376,10 +373,6 @@ auto CompileModuleSpecSession(
 
   for (const auto& proc_view : input.view.processes) {
     context.SetCurrentProcess(proc_view.layout_process_index);
-    // Compatibility: process lowering still needs a representative instance ID
-    // for %m path support. This is transitional -- true specialization codegen
-    // should not require instance identity.
-    context.SetCurrentInstanceId(proc_view.representative_module_index.value);
     context.SetSpecSlotLayout(&input.layout.slot_layout);
 
     const auto& mir_process = arena[proc_view.process_id];
@@ -561,14 +554,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
   std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_funcs;
   declared_funcs.reserve(global_func_ids.size());
   for (mir::FunctionId func_id : global_func_ids) {
-    auto llvm_func_or_err = DeclareUserFunction(
+    auto llvm_func_or_err = DeclareMirFunction(
         *context, func_id, std::format("global_func_{}", func_id.value));
     if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
     declared_funcs.emplace_back(func_id, *llvm_func_or_err);
   }
 
   for (const auto& [func_id, llvm_func] : declared_funcs) {
-    auto result = DefineUserFunction(*context, func_id, llvm_func);
+    auto result = DefineMirFunction(*context, func_id, llvm_func);
     if (!result) return std::unexpected(result.error());
   }
 
@@ -697,7 +690,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
     const auto& bp = layout->scheduled_processes[i];
     const auto& mir_process = (*input.mir_arena)[bp.process_id];
-    context->SetCurrentInstanceId(bp.module_index.value);
 
     // Init and connection processes are standalone (no module binding)
     if (i < num_init || bp.module_index.value == ModuleIndex::kNone) {

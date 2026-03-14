@@ -71,21 +71,25 @@ void Engine::ScheduleNextDelta(ProcessHandle handle, ResumePoint resume) {
   next_delta_queue_.push_back(event);
 }
 
-void Engine::SchedulePostponed(PostponedCallback callback, void* design_state) {
+void Engine::RegisterStrobe(
+    StrobeProgramFn program, void* design_state,
+    const ObserverContext& context) {
   postponed_queue_.push_back(
-      PostponedRecord{
-          .callback = callback,
+      StrobeRecord{
+          .program = program,
           .design_state = design_state,
+          .context = context,
       });
 }
 
 void Engine::RegisterMonitor(
-    MonitorCheckCallback check_thunk, void* design_state,
-    const void* initial_prev, uint32_t size) {
-  active_monitor_ = MonitorState{
+    MonitorCheckProgramFn program, void* design_state,
+    const ObserverContext& context, const void* initial_prev, uint32_t size) {
+  active_monitor_ = MonitorRecord{
       .enabled = true,
-      .check_thunk = check_thunk,
+      .program = program,
       .design_state = design_state,
+      .context = context,
       .prev_values = {},
   };
 
@@ -215,14 +219,14 @@ void Engine::ExecuteInactiveRegion() {
 void Engine::ExecutePostponedRegion() {
   for (const auto& record : postponed_queue_) {
     if (finished_) break;
-    record.callback(record.design_state, this);
+    record.program(record.design_state, this, &record.context);
   }
   postponed_queue_.clear();
 
   if (!finished_ && active_monitor_.has_value() && active_monitor_->enabled &&
-      active_monitor_->check_thunk != nullptr) {
-    active_monitor_->check_thunk(
-        active_monitor_->design_state, this,
+      active_monitor_->program != nullptr) {
+    active_monitor_->program(
+        active_monitor_->design_state, this, &active_monitor_->context,
         active_monitor_->prev_values.data());
   }
 }

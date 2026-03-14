@@ -155,8 +155,8 @@ struct Context {
   // Function-specific: map symbols to MIR function IDs (for call lowering)
   const SymbolToMirFunctionMap* symbol_to_mir_function = nullptr;
 
-  // Optional sink for dynamically generated functions (e.g., strobe thunks).
-  // If set, LowerStrobeEffect will push thunk FunctionIds here.
+  // Optional sink for dynamically generated functions (e.g., observer
+  // programs). If set, LowerStrobeEffect will push program FunctionIds here.
   // Caller merges these into the parent element's functions list.
   std::vector<mir::FunctionId>* generated_functions = nullptr;
 

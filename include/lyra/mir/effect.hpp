@@ -66,9 +66,10 @@ struct SystemTfEffect {
 // StrobeEffect: $strobe system task (IEEE 1800-2023 21.2.2).
 // Unlike $display (immediate output), $strobe defers printing to the Postponed
 // region and re-evaluates expressions using end-of-timestep values.
-// The thunk is a synthetic MIR function that reads fresh values and prints.
+// The program is a synthetic MIR function that reads fresh values and prints.
 struct StrobeEffect {
-  FunctionId thunk;  // Synthetic function that performs the print
+  // Synthetic function that performs the print
+  FunctionId program;
 };
 
 // $timeformat: sets global time format for %t.
@@ -81,12 +82,12 @@ struct TimeFormatEffect {
 };
 
 // $monitor: persistent change-triggered display (IEEE 1800 21.2.3).
-// The setup_thunk performs initial print and registers the check_thunk with
-// runtime. The check_thunk FunctionId is passed to runtime at registration,
+// The setup program performs initial print and registers the check program with
+// runtime. The check_program FunctionId is passed to runtime at registration,
 // not stored in MIR.
 struct MonitorEffect {
-  FunctionId setup_thunk;            // Initial print + registration
-  FunctionId check_thunk;            // Check for changes and print
+  FunctionId setup_program;
+  FunctionId check_program;
   PrintKind print_kind;              // For print end call
   std::vector<FormatOp> format_ops;  // For LLVM comparison code generation
   std::vector<uint32_t> offsets;     // Per-operand offset into prev_buffer

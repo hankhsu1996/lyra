@@ -24,6 +24,7 @@
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/loop_site_meta.hpp"
+#include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/suspend_record.hpp"
@@ -202,9 +203,11 @@ class Engine {
       void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
       const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id);
 
-  // Schedule a callback for the Postponed region ($strobe, future $monitor).
-  // Callback executes at end of time slot with final signal values.
-  void SchedulePostponed(PostponedCallback callback, void* design_state);
+  // Register a strobe observer for the Postponed region.
+  // Executes at end of time slot with final signal values.
+  void RegisterStrobe(
+      StrobeProgramFn program, void* design_state,
+      const ObserverContext& context);
 
   // Flush all pending signal updates, waking subscribed processes.
   // Called at delta boundaries (after active/inactive regions, after NBA).
@@ -367,8 +370,8 @@ class Engine {
   // Register a new monitor, atomically replacing any existing one.
   // Copies initial_prev to runtime-owned buffer.
   void RegisterMonitor(
-      MonitorCheckCallback check_thunk, void* design_state,
-      const void* initial_prev, uint32_t size);
+      MonitorCheckProgramFn program, void* design_state,
+      const ObserverContext& context, const void* initial_prev, uint32_t size);
 
   // Enable/disable the active monitor. No-op if no active monitor.
   void SetMonitorEnabled(bool enabled);
@@ -669,9 +672,9 @@ class Engine {
   // File manager for $fopen/$fclose
   FileManager file_manager_;
 
-  // Postponed queue: callbacks executed at end of time slot ($strobe, etc.)
+  // Strobe observer queue: executed at end of time slot ($strobe, etc.)
   // Executed in append order after all delta cycles complete.
-  std::vector<PostponedRecord> postponed_queue_;
+  std::vector<StrobeRecord> postponed_queue_;
 
   // Plusargs for $test$plusargs and $value$plusargs queries.
   std::vector<std::string> plusargs_;
@@ -681,7 +684,7 @@ class Engine {
 
   // Active monitor state ($monitor). Only one can be active at a time.
   // Checked after all strobe callbacks complete in ExecutePostponedRegion.
-  std::optional<MonitorState> active_monitor_;
+  std::optional<MonitorRecord> active_monitor_;
 
   // Flush epoch: incremented at start of each FlushSignalUpdates.
   // Used by rebind epoch guard to avoid redundant re-evaluations.

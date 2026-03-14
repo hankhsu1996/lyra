@@ -48,14 +48,24 @@ enum class ReturnPolicy {
   kSretOutParam,  // Return via out-param pointer (value aggregates only)
 };
 
-// Calling convention for runtime-invoked thunks.
-// Determines LLVM function signature for functions called via runtime ABI.
-enum class ThunkKind {
-  kNone,          // Regular function: (DesignState*, Engine*)
-  kStrobe,        // Strobe callback: (DesignState*, Engine*)
-  kMonitorCheck,  // Monitor check: (DesignState*, Engine*, prev_buffer*)
-  kMonitorSetup,  // Monitor setup: (DesignState*, Engine*)
+// Classifies runtime-invoked functions by their ABI family.
+// kNone: regular function (signature-derived ABI).
+// kStrobe / kMonitorSetup / kMonitorCheck: observer programs that always use
+//   the observer ABI (DesignState*, Engine*, ObserverContext*[, prev_buf*]).
+// IsObserverProgram() is the canonical predicate for the observer-ABI class.
+enum class RuntimeProgramKind {
+  kNone,
+  kStrobe,
+  kMonitorCheck,
+  kMonitorSetup,
 };
+
+// True for runtime program kinds that use the observer program ABI.
+inline auto IsObserverProgram(RuntimeProgramKind kind) -> bool {
+  return kind == RuntimeProgramKind::kStrobe ||
+         kind == RuntimeProgramKind::kMonitorSetup ||
+         kind == RuntimeProgramKind::kMonitorCheck;
+}
 
 struct FunctionParam {
   TypeId type;
@@ -72,8 +82,8 @@ struct FunctionSignature {
 // A function is a callable unit that cannot suspend.
 // Allowed terminators: Control (Jump/Branch/Switch), Return.
 struct Function {
-  FunctionSignature signature;              // Frozen at pre-allocation
-  ThunkKind thunk_kind = ThunkKind::kNone;  // Calling convention for thunks
+  FunctionSignature signature;  // Frozen at pre-allocation
+  RuntimeProgramKind runtime_kind = RuntimeProgramKind::kNone;
 
   BasicBlockId entry;              // Local index within blocks
   std::vector<BasicBlock> blocks;  // Direct ownership

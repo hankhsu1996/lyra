@@ -49,10 +49,11 @@ struct WriteTarget;
 //   local_id). Used in shared module behavioral process bodies and
 //   module-scoped user functions.
 //
-// kDesignGlobal: Module slots accessed via design_ptr + struct GEP,
-//   rebased through module_base_slot_id_. Signal identity is a constant
-//   design-global slot ID. Used in standalone non-module processes
-//   (init, connection) and thunks with runtime-defined calling conventions.
+// kDesignGlobal: Design-global slots accessed via design_ptr + struct GEP.
+//   Signal identity is a constant design-global slot ID. Used in standalone
+//   non-module processes (init, connection). Module-local (kModuleSlot)
+//   references are invalid in this mode -- they indicate an architecture
+//   violation and will throw InternalError.
 enum class SlotAddressingMode {
   kDesignGlobal,
   kSpecializationLocal,
@@ -166,7 +167,7 @@ class Context {
   [[nodiscard]] auto GetLyraFclose() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFflush() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFWrite() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraSchedulePostponed() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraRegisterStrobe() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMonitorSetEnabled() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMonitorRegister() -> llvm::Function*;
   [[nodiscard]] auto GetLyraReadmem() -> llvm::Function*;
@@ -271,10 +272,6 @@ class Context {
   void SetCurrentProcess(size_t process_index);
   [[nodiscard]] auto GetCurrentProcessIndex() const -> size_t;
 
-  // Per-process instance_id for %m support
-  void SetCurrentInstanceId(uint32_t instance_id);
-  [[nodiscard]] auto GetCurrentInstanceId() const -> uint32_t;
-
   // Slot addressing mode -- controls how kModuleSlot roots are lowered.
   // Must be set explicitly per function scope.
   void SetSlotAddressingMode(SlotAddressingMode mode);
@@ -320,14 +317,14 @@ class Context {
 
   // Emit runtime signal ID for a signal ref (scope-based, not flag-based).
   // kModuleLocal + kSpecializationLocal: Dynamic(signal_id_offset_ + sig.id)
-  // kModuleLocal + kDesignGlobal: Const(module_base_slot_id_ + sig.id)
+  // kModuleLocal + kDesignGlobal: InternalError (architecture violation).
   // kDesignGlobal: Const(sig.id) -- always constant.
   [[nodiscard]] auto EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr;
 
   // Resolution: MIR storage root -> design-global slot ID.
-  // Used for alias map lookup (all contexts) and design-global pointer
-  // formation (kDesignGlobal addressing mode). Rebases kModuleSlot roots
-  // through module_base_slot_id_.
+  // kDesignGlobal roots: identity (root.id is already design-global).
+  // kModuleSlot roots: InternalError (module-local roots have no
+  //   design-global identity in design-global addressing mode).
   [[nodiscard]] auto ResolveDesignGlobalSlotId(const mir::PlaceRoot& root) const
       -> uint32_t;
   [[nodiscard]] auto ResolveDesignGlobalSlotId(const mir::SignalRef& sig) const
@@ -442,15 +439,15 @@ class Context {
   [[nodiscard]] auto HasUserFunction(mir::FunctionId func_id) const -> bool;
 
   // Module-scoped function lowering metadata.
-  // Module-scoped functions use the specialization-local calling convention:
-  // they receive (this_ptr, signal_id_offset, instance_id, unstable_offsets)
-  // and use kSpecializationLocal addressing for module-local slot access.
+  // Module-scoped functions use kSpecializationLocal addressing for
+  // module-local slot access. How the specialization-local context is
+  // received (ObserverContext* vs exploded args) is determined by
+  // mir::IsObserverProgram(runtime_kind), not by this struct.
   //
   // spec_slot_layout is specialization-owned addressing data (owned by
   // SpecLayout, shared across all instances of the same specialization).
-  // DefineUserFunction queries this to set up addressing state.
   struct ModuleFunctionLowering {
-    const SpecSlotLayout* spec_slot_layout;
+    const SpecSlotLayout* spec_slot_layout = nullptr;
   };
   void RegisterModuleScopedFunction(
       mir::FunctionId func_id, ModuleFunctionLowering lowering);
@@ -460,27 +457,28 @@ class Context {
       -> const ModuleFunctionLowering&;
 
   // Monitor layout: snapshot encoding info (codegen artifact, not in MIR).
-  // Keyed by check_thunk FunctionId. Contains only layout info (offsets,
-  // sizes). format_ops come from the check thunk's own DisplayEffect (correct
-  // MIR context).
+  // Keyed by check_program FunctionId. Contains only layout info (offsets,
+  // sizes). format_ops come from the check program's own DisplayEffect
+  // (correct MIR context).
   struct MonitorLayout {
     std::vector<uint32_t> offsets;     // Per-operand offset into buffer
     std::vector<uint32_t> byte_sizes;  // Per-operand byte size
     uint32_t total_size = 0;           // Total buffer size
   };
-  void RegisterMonitorLayout(mir::FunctionId check_thunk, MonitorLayout layout);
-  [[nodiscard]] auto GetMonitorLayout(mir::FunctionId check_thunk) const
+  void RegisterMonitorLayout(
+      mir::FunctionId check_program, MonitorLayout layout);
+  [[nodiscard]] auto GetMonitorLayout(mir::FunctionId check_program) const
       -> const MonitorLayout*;
 
-  // Monitor setup thunk marker (codegen artifact, not stored in MIR).
+  // Monitor setup program marker (codegen artifact, not stored in MIR).
   // When present, LLVM lowering appends serialization + registration.
-  // Layout is looked up via check_thunk (single source of truth).
+  // Layout is looked up via check_program (single source of truth).
   struct MonitorSetupInfo {
-    mir::FunctionId check_thunk;  // For registration and layout lookup
+    mir::FunctionId check_program;
   };
   void RegisterMonitorSetupInfo(
-      mir::FunctionId setup_thunk, MonitorSetupInfo info);
-  [[nodiscard]] auto GetMonitorSetupInfo(mir::FunctionId setup_thunk) const
+      mir::FunctionId setup_program, MonitorSetupInfo info);
+  [[nodiscard]] auto GetMonitorSetupInfo(mir::FunctionId setup_program) const
       -> const MonitorSetupInfo*;
 
   // Build LLVM function type from MIR function signature.
@@ -635,7 +633,7 @@ class Context {
   llvm::Function* lyra_fclose_ = nullptr;
   llvm::Function* lyra_fflush_ = nullptr;
   llvm::Function* lyra_fwrite_ = nullptr;
-  llvm::Function* lyra_schedule_postponed_ = nullptr;
+  llvm::Function* lyra_register_strobe_ = nullptr;
   llvm::Function* lyra_monitor_set_enabled_ = nullptr;
   llvm::Function* lyra_monitor_register_ = nullptr;
   llvm::Function* lyra_readmem_ = nullptr;
@@ -691,9 +689,6 @@ class Context {
   // Current process index (set before generating each process)
   size_t current_process_index_ = 0;
 
-  // Current instance_id for %m support (set before generating each process)
-  uint32_t current_instance_id_ = UINT32_MAX;
-
   // Cached pointers for current process function
   llvm::Value* state_ptr_ = nullptr;
   llvm::Value* design_ptr_ = nullptr;
@@ -710,12 +705,6 @@ class Context {
   llvm::Value* signal_id_offset_ = nullptr;     // i32 fn arg
   const SpecSlotLayout* spec_slot_layout_ = nullptr;
   llvm::Value* unstable_slot_offsets_ptr_ = nullptr;
-
-  // Design-global base slot ID for the current module instance.
-  // Only used in non-shared / explicitly design-global lowering contexts:
-  // kModuleSlot -> design_ptr GEP when slot_addressing_ == kDesignGlobal
-  // (user functions, standalone mode). Not used in shared behavioral code.
-  uint32_t module_base_slot_id_ = 0;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();
@@ -734,11 +723,11 @@ class Context {
       module_function_lowering_;
 
   // Monitor layouts (codegen artifact, not MIR semantics).
-  // Keyed by check_thunk FunctionId - single source of truth for encoding.
+  // Keyed by check_program FunctionId - single source of truth for encoding.
   absl::flat_hash_map<mir::FunctionId, MonitorLayout> monitor_layouts_;
 
-  // Monitor setup thunk markers (codegen artifact, not MIR semantics).
-  // Just stores check_thunk reference; layout is looked up from
+  // Monitor setup program markers (codegen artifact, not MIR semantics).
+  // Just stores check_program reference; layout is looked up from
   // monitor_layouts_.
   absl::flat_hash_map<mir::FunctionId, MonitorSetupInfo> monitor_setup_infos_;
 

@@ -15,6 +15,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/cast.hpp"
@@ -323,19 +324,21 @@ auto LowerValueOp(Context& context, const mir::FormatOp& op) -> Result<void> {
 }
 
 void LowerModulePathOp(Context& context) {
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
-
-  auto* engine_ptr = context.GetEnginePointer();
-  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  llvm::Value* instance_id = nullptr;
-  if (context.GetSlotAddressingMode() ==
+  // %m requires module-instance identity, which is only available in
+  // specialization-local context where dynamic instance ID flows through
+  // wrapper/runtime inputs. Design-global processes have no module-instance
+  // identity.
+  if (context.GetSlotAddressingMode() !=
       SlotAddressingMode::kSpecializationLocal) {
-    instance_id = context.GetDynamicInstanceId();
-  } else {
-    instance_id =
-        llvm::ConstantInt::get(i32_ty, context.GetCurrentInstanceId());
+    throw common::InternalError(
+        "LowerModulePathOp",
+        "%m (module path) requires specialization-local addressing: "
+        "design-global processes have no module-instance identity");
   }
+
+  auto& builder = context.GetBuilder();
+  auto* engine_ptr = context.GetEnginePointer();
+  auto* instance_id = context.GetDynamicInstanceId();
 
   builder.CreateCall(
       context.GetLyraPrintModulePath(), {engine_ptr, instance_id});

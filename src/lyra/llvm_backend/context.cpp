@@ -382,14 +382,6 @@ auto Context::GetCurrentProcessIndex() const -> size_t {
   return current_process_index_;
 }
 
-void Context::SetCurrentInstanceId(uint32_t instance_id) {
-  current_instance_id_ = instance_id;
-}
-
-auto Context::GetCurrentInstanceId() const -> uint32_t {
-  return current_instance_id_;
-}
-
 void Context::SetSlotAddressingMode(SlotAddressingMode mode) {
   slot_addressing_ = mode;
 }
@@ -563,13 +555,13 @@ auto Context::GetModuleFunctionLowering(mir::FunctionId func_id) const
 }
 
 void Context::RegisterMonitorLayout(
-    mir::FunctionId check_thunk, MonitorLayout layout) {
-  monitor_layouts_.emplace(check_thunk, std::move(layout));
+    mir::FunctionId check_program, MonitorLayout layout) {
+  monitor_layouts_.emplace(check_program, std::move(layout));
 }
 
-auto Context::GetMonitorLayout(mir::FunctionId check_thunk) const
+auto Context::GetMonitorLayout(mir::FunctionId check_program) const
     -> const MonitorLayout* {
-  auto it = monitor_layouts_.find(check_thunk);
+  auto it = monitor_layouts_.find(check_program);
   if (it == monitor_layouts_.end()) {
     return nullptr;
   }
@@ -577,13 +569,13 @@ auto Context::GetMonitorLayout(mir::FunctionId check_thunk) const
 }
 
 void Context::RegisterMonitorSetupInfo(
-    mir::FunctionId setup_thunk, MonitorSetupInfo info) {
-  monitor_setup_infos_.emplace(setup_thunk, std::move(info));
+    mir::FunctionId setup_program, MonitorSetupInfo info) {
+  monitor_setup_infos_.emplace(setup_program, std::move(info));
 }
 
-auto Context::GetMonitorSetupInfo(mir::FunctionId setup_thunk) const
+auto Context::GetMonitorSetupInfo(mir::FunctionId setup_program) const
     -> const MonitorSetupInfo* {
-  auto it = monitor_setup_infos_.find(setup_thunk);
+  auto it = monitor_setup_infos_.find(setup_program);
   if (it == monitor_setup_infos_.end()) {
     return nullptr;
   }

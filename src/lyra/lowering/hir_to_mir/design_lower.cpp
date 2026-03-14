@@ -155,7 +155,7 @@ auto LowerDesign(
   }
 
   // Lower package init processes
-  // Collect dynamically generated functions (e.g., strobe thunks)
+  // Collect dynamically generated functions (e.g., observer programs)
   DeclView init_view{
       .design_places = &decls.design_places,
       .functions = &decls.functions,

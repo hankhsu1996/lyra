@@ -735,7 +735,7 @@ void CollectPlacesFromEffectOp(
             }
           },
           [&](const mir::StrobeEffect&) {
-            // StrobeEffect only has FunctionId thunk, no operands
+            // StrobeEffect only has FunctionId program, no operands
           },
           [&](const mir::MonitorEffect&) {
             // MonitorEffect only has FunctionIds and buffer size, no operands

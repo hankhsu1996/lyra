@@ -44,6 +44,7 @@
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
+#include "lyra/llvm_backend/observer_abi.hpp"
 #include "lyra/llvm_backend/statement.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -1772,7 +1773,7 @@ auto GenerateProcessWrapper(
   return wrapper;
 }
 
-auto DeclareUserFunction(
+auto DeclareMirFunction(
     Context& context, mir::FunctionId func_id, const std::string& name)
     -> Result<llvm::Function*> {
   auto& module = context.GetModule();
@@ -1782,25 +1783,30 @@ auto DeclareUserFunction(
 
   llvm::FunctionType* fn_type = nullptr;
 
-  // Determine LLVM function type based on thunk_kind (from MIR, not side
-  // table). MIR is the source of truth for calling convention.
-  switch (func.thunk_kind) {
-    case mir::ThunkKind::kMonitorCheck: {
-      // Monitor check: (design*, engine*, prev_buf*)
-      auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
-      auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+  // Determine LLVM function type based on function kind.
+  // Observer programs unconditionally use the observer ABI with
+  // ObserverContext*, regardless of module-scoped vs design-global.
+  // Regular functions use signature-derived types.
+  bool is_module_scoped = context.IsModuleScopedFunction(func_id);
+  bool is_observer = mir::IsObserverProgram(func.runtime_kind);
+
+  if (is_observer) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+    auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+    if (func.runtime_kind == mir::RuntimeProgramKind::kMonitorCheck) {
+      // Monitor check: (design*, engine*, observer_ctx*, prev_buf*)
+      fn_type = llvm::FunctionType::get(
+          void_ty, {ptr_ty, ptr_ty, ptr_ty, ptr_ty}, false);
+    } else {
+      // Strobe / monitor setup: (design*, engine*, observer_ctx*)
       fn_type =
           llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty, ptr_ty}, false);
-      break;
     }
-    default: {
-      bool is_module_scoped = context.IsModuleScopedFunction(func_id);
-      auto fn_type_or_err =
-          context.BuildUserFunctionType(func.signature, is_module_scoped);
-      if (!fn_type_or_err) return std::unexpected(fn_type_or_err.error());
-      fn_type = *fn_type_or_err;
-      break;
-    }
+  } else {
+    auto fn_type_or_err =
+        context.BuildUserFunctionType(func.signature, is_module_scoped);
+    if (!fn_type_or_err) return std::unexpected(fn_type_or_err.error());
+    fn_type = *fn_type_or_err;
   }
 
   // Create function declaration
@@ -1818,6 +1824,34 @@ auto DeclareUserFunction(
 }
 
 namespace {
+
+// Common entry setup for all observer programs (strobe, monitor-setup,
+// monitor-check). Sets design/engine pointers, names the observer_ctx arg,
+// and enters specialization-local mode when the function is module-scoped.
+// Returns the observer_ctx argument value.
+//
+// arg_base: LLVM arg index where (design, engine, observer_ctx) starts.
+//   0 for monitor-check (no sret), arg_offset for strobe/setup (may have sret).
+auto SetupObserverProgramEntry(
+    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
+    unsigned arg_base) -> llvm::Value* {
+  auto* design_arg = llvm_func->getArg(arg_base);
+  design_arg->setName("design");
+  context.SetDesignPointer(design_arg);
+
+  auto* engine_arg = llvm_func->getArg(arg_base + 1);
+  engine_arg->setName("engine");
+  context.SetEnginePointer(engine_arg);
+
+  auto* observer_ctx_arg = llvm_func->getArg(arg_base + 2);
+  observer_ctx_arg->setName("observer_ctx");
+
+  if (context.IsModuleScopedFunction(func_id)) {
+    EnterObserverSpecializationLocalContext(context, func_id, observer_ctx_arg);
+  }
+
+  return observer_ctx_arg;
+}
 
 // Collect all unique place roots (Local or Temp) from a function.
 // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root
@@ -2060,10 +2094,10 @@ struct PlaceCollector {
 
 }  // namespace
 
-// Special lowering for monitor check thunks that adds comparison logic.
-// The thunk evaluates expressions, compares against prev_buffer, and only
-// prints if values changed.
-auto DefineMonitorCheckThunk(
+// Special lowering for monitor check observer programs with comparison logic.
+// Evaluates expressions, compares against prev_buffer, and only prints if
+// values changed.
+auto DefineMonitorCheckProgram(
     Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
     const Context::MonitorLayout& layout) -> Result<void> {
   auto& llvm_ctx = context.GetLlvmContext();
@@ -2088,16 +2122,12 @@ auto DefineMonitorCheckThunk(
   builder.SetInsertPoint(entry_block);
   context.BeginFunction(*llvm_func);
 
-  // Arguments: design*, engine*, prev_buffer*
-  auto* design_arg = llvm_func->getArg(0);
-  design_arg->setName("design");
-  context.SetDesignPointer(design_arg);
+  // Observer program entry: design, engine, observer_ctx, prev_buf.
+  // SetupObserverProgramEntry handles the common (design, engine, observer_ctx)
+  // triple and conditionally enters specialization-local mode.
+  SetupObserverProgramEntry(context, func_id, llvm_func, 0);
 
-  auto* engine_arg = llvm_func->getArg(1);
-  engine_arg->setName("engine");
-  context.SetEnginePointer(engine_arg);
-
-  auto* prev_buf_arg = llvm_func->getArg(2);
+  auto* prev_buf_arg = llvm_func->getArg(3);
   prev_buf_arg->setName("prev_buf");
 
   // Collect local/temp places for storage allocation
@@ -2105,8 +2135,9 @@ auto DefineMonitorCheckThunk(
   collector.CollectFromFunction(func, arena);
 
   // Allocate and initialize all collected places at function entry.
-  // INVARIANT: Thunks must follow the same allocate-all + init-all policy as
-  // user functions; no lazy storage creation is allowed. ComputePlacePointer
+  // INVARIANT: Observer programs must follow the same allocate-all + init-all
+  // policy as regular functions; no lazy storage creation is allowed.
+  // ComputePlacePointer
   // will throw InternalError if storage is missing.
   for (const auto& [key, root] : collector.roots) {
     auto alloca_or_err = context.GetOrCreatePlaceStorage(root);
@@ -2114,9 +2145,9 @@ auto DefineMonitorCheckThunk(
     context.InitializePlaceStorage(*alloca_or_err, root.type);
   }
 
-  // Find the DisplayEffect from check thunk's MIR body (correct operand
+  // Find the DisplayEffect from check program's MIR body (correct operand
   // context). layout only provides offsets/byte_sizes; format_ops come from the
-  // thunk itself.
+  // program itself.
   const mir::DisplayEffect* display_effect = nullptr;
   for (const auto& block : func.blocks) {
     for (const auto& inst : block.statements) {
@@ -2131,7 +2162,7 @@ auto DefineMonitorCheckThunk(
   }
   if (display_effect == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-        func.origin, "monitor check thunk missing DisplayEffect",
+        func.origin, "monitor check program missing DisplayEffect",
         UnsupportedCategory::kFeature));
   }
 
@@ -2198,12 +2229,12 @@ auto DefineMonitorCheckThunk(
               return LowerBranch(context, t, llvm_blocks, phi_state);
             },
             [&](const mir::Return&) -> Result<void> {
-              // At Return: evaluate operands from check thunk's DisplayEffect
+              // At Return: evaluate operands from check program's DisplayEffect
               // (correct MIR operand context), store to temp buffer, compare.
               if (temp_buf != nullptr) {
                 auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
 
-                // Evaluate each operand from the check thunk's DisplayEffect
+                // Evaluate each operand from the check program's DisplayEffect
                 for (size_t j = 0; j < display_effect->ops.size(); ++j) {
                   const auto& op = display_effect->ops[j];
                   if (!op.value.has_value()) continue;
@@ -2307,7 +2338,7 @@ auto DefineMonitorCheckThunk(
               return std::unexpected(
                   context.GetDiagnosticContext().MakeUnsupported(
                       context.GetCurrentOrigin(),
-                      "terminator not yet supported in monitor check thunk",
+                      "terminator not yet supported in monitor check program",
                       UnsupportedCategory::kFeature));
             },
         },
@@ -2355,7 +2386,7 @@ auto DefineMonitorCheckThunk(
   builder.SetInsertPoint(exit_block);
   builder.CreateRetVoid();
 
-  VerifyLlvmFunction(llvm_func, "DefineMonitorCheckThunk");
+  VerifyLlvmFunction(llvm_func, "DefineMonitorCheckProgram");
 
   context.EndFunction();
   context.SetDesignPointer(nullptr);
@@ -2364,11 +2395,11 @@ auto DefineMonitorCheckThunk(
   return {};
 }
 
-// Emit setup thunk epilogue: serialize current values + call
-// LyraMonitorRegister. Called at end of setup thunk's exit block, before
+// Emit setup program epilogue: serialize current values + call
+// LyraMonitorRegister. Called at end of setup program's exit block, before
 // return.
 auto EmitMonitorSetupEpilogue(
-    Context& context, mir::FunctionId setup_thunk_id,
+    Context& context, mir::FunctionId setup_program_id,
     const Context::MonitorSetupInfo& info, llvm::Value* design_ptr,
     llvm::Value* engine_ptr) -> Result<void> {
   auto& builder = context.GetBuilder();
@@ -2379,9 +2410,9 @@ auto EmitMonitorSetupEpilogue(
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
-  // Find the DisplayEffect from setup thunk's MIR body (correct operand
+  // Find the DisplayEffect from setup program's MIR body (correct operand
   // context).
-  const mir::Function& setup_func = arena[setup_thunk_id];
+  const mir::Function& setup_func = arena[setup_program_id];
   const mir::DisplayEffect* display_effect = nullptr;
   for (const auto& block : setup_func.blocks) {
     for (const auto& inst : block.statements) {
@@ -2397,21 +2428,21 @@ auto EmitMonitorSetupEpilogue(
   if (display_effect == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
-        "$monitor setup thunk missing DisplayEffect",
+        "$monitor setup program missing DisplayEffect",
         UnsupportedCategory::kFeature));
   }
 
-  // Get check thunk function pointer for registration
-  llvm::Function* check_fn = context.GetUserFunction(info.check_thunk);
+  // Get check program function pointer for registration
+  llvm::Function* check_fn = context.GetUserFunction(info.check_program);
   if (check_fn == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
-        "$monitor check thunk not found for setup epilogue",
+        "$monitor check program not found for setup epilogue",
         UnsupportedCategory::kFeature));
   }
 
-  // Look up layout via check_thunk (single source of truth)
-  const auto* layout = context.GetMonitorLayout(info.check_thunk);
+  // Look up layout via check_program (single source of truth)
+  const auto* layout = context.GetMonitorLayout(info.check_program);
   if (layout == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
@@ -2439,7 +2470,7 @@ auto EmitMonitorSetupEpilogue(
          llvm::ConstantInt::get(llvm::Type::getInt1Ty(llvm_ctx), 0)});
 
     // Serialize each value operand to the buffer.
-    // Use display_effect->ops (correct MIR operand context for setup thunk).
+    // Use display_effect->ops (correct MIR operand context for setup program).
     // The offsets/byte_sizes arrays are indexed by ops position.
     for (size_t i = 0; i < display_effect->ops.size(); ++i) {
       const auto& op = display_effect->ops[i];
@@ -2462,7 +2493,7 @@ auto EmitMonitorSetupEpilogue(
 
       // Use exact-width integer type (i8, i16, i24, i32, i40, etc.)
       // to avoid clobbering adjacent slots for non-power-of-2 sizes.
-      // Must match check thunk's serialization.
+      // Must match check program's serialization.
       uint32_t bit_width = byte_size * 8;
       llvm::Type* store_ty = llvm::Type::getIntNTy(llvm_ctx, bit_width);
 
@@ -2491,32 +2522,41 @@ auto EmitMonitorSetupEpilogue(
     init_buf = llvm::ConstantPointerNull::get(ptr_ty);
   }
 
-  // Call LyraMonitorRegister(engine, check_fn, design, init_buf, size)
+  // Pass ObserverContext fields to LyraMonitorRegister for capture.
+  // If the setup program is module-scoped, these are loaded from the incoming
+  // ObserverContext. If design-global, they are null/zero.
+  auto obs_fields = GetObserverContextFieldValues(context);
+
+  // Call LyraMonitorRegister(engine, check_fn, design,
+  //                          this_ptr, instance_id, signal_id_offset,
+  //                          unstable_offsets, init_buf, size)
   builder.CreateCall(
       context.GetLyraMonitorRegister(),
-      {engine_ptr, check_fn, design_ptr, init_buf,
+      {engine_ptr, check_fn, design_ptr, obs_fields.this_ptr,
+       obs_fields.instance_id, obs_fields.signal_id_offset,
+       obs_fields.unstable_offsets, init_buf,
        llvm::ConstantInt::get(i32_ty, layout->total_size)});
 
   return {};
 }
 
-auto DefineUserFunction(
+auto DefineMirFunction(
     Context& context, mir::FunctionId func_id, llvm::Function* llvm_func)
     -> Result<void> {
   const auto& arena = context.GetMirArena();
   const auto& func = arena[func_id];
 
-  // Monitor check thunks have special lowering with comparison logic.
-  // Use thunk_kind from MIR (source of truth), layout from side table (codegen
-  // artifact).
-  if (func.thunk_kind == mir::ThunkKind::kMonitorCheck) {
+  // Monitor check observer programs have special lowering with comparison
+  // logic. Use runtime_kind from MIR (source of truth), layout from side table
+  // (codegen artifact).
+  if (func.runtime_kind == mir::RuntimeProgramKind::kMonitorCheck) {
     const auto* layout = context.GetMonitorLayout(func_id);
     if (layout == nullptr) {
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          func.origin, "monitor check thunk missing layout",
+          func.origin, "monitor check observer program missing layout",
           UnsupportedCategory::kFeature));
     }
-    return DefineMonitorCheckThunk(context, func_id, llvm_func, *layout);
+    return DefineMonitorCheckProgram(context, func_id, llvm_func, *layout);
   }
 
   auto& llvm_ctx = context.GetLlvmContext();
@@ -2558,20 +2598,34 @@ auto DefineUserFunction(
     sret_ptr->setName("sret");
   }
 
-  // DesignState* and Engine* follow sret (if present)
+  // DesignState* and Engine* are always at arg_offset, arg_offset+1.
   auto* design_arg = llvm_func->getArg(arg_offset);
-  design_arg->setName("design");
-  context.SetDesignPointer(design_arg);
-
   auto* engine_arg = llvm_func->getArg(arg_offset + 1);
-  engine_arg->setName("engine");
-  context.SetEnginePointer(engine_arg);
 
-  // Module-scoped functions receive specialization-local context and set up
-  // their own addressing state from the registered lowering metadata.
+  // Two orthogonal axes determine function entry:
+  //   1. ABI: observer programs always receive ObserverContext* (from
+  //   runtime_kind)
+  //   2. Entry: module-scoped functions enter specialization-local mode
+  // These are independent: a design-global observer receives ObserverContext*
+  // but does not enter specialization-local mode (context fields are
+  // zero/null).
   bool is_module_scoped = context.IsModuleScopedFunction(func_id);
+  bool is_observer = mir::IsObserverProgram(func.runtime_kind);
   unsigned context_arg_count = 0;
-  if (is_module_scoped) {
+  if (is_observer) {
+    // SetupObserverProgramEntry handles design/engine/observer_ctx setup
+    // and conditionally enters specialization-local mode.
+    SetupObserverProgramEntry(context, func_id, llvm_func, arg_offset);
+    context_arg_count = 0;
+  } else {
+    // Non-observer: set design/engine on context (observer path does this
+    // inside SetupObserverProgramEntry).
+    design_arg->setName("design");
+    context.SetDesignPointer(design_arg);
+    engine_arg->setName("engine");
+    context.SetEnginePointer(engine_arg);
+  }
+  if (!is_observer && is_module_scoped) {
     const auto& lowering = context.GetModuleFunctionLowering(func_id);
     context.SetSpecSlotLayout(lowering.spec_slot_layout);
 
@@ -2768,7 +2822,7 @@ auto DefineUserFunction(
                       std::get_if<mir::PlaceId>(&t.value->payload);
                   if (place_id == nullptr) {
                     throw common::InternalError(
-                        "DefineUserFunction",
+                        "DefineMirFunction",
                         "sret return operand must be a Place, not a constant");
                   }
                   auto src_ptr_result = context.GetPlacePointer(*place_id);
@@ -2816,14 +2870,14 @@ auto DefineUserFunction(
   // Exit block: return the value
   builder.SetInsertPoint(exit_block);
 
-  // Setup thunks need serialization + registration before returning.
-  // Use thunk_kind from MIR (source of truth), setup_info from side table
+  // Setup programs need serialization + registration before returning.
+  // Use runtime_kind from MIR (source of truth), setup_info from side table
   // (codegen artifact).
-  if (func.thunk_kind == mir::ThunkKind::kMonitorSetup) {
+  if (func.runtime_kind == mir::RuntimeProgramKind::kMonitorSetup) {
     const auto* setup_info = context.GetMonitorSetupInfo(func_id);
     if (setup_info == nullptr) {
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          func.origin, "monitor setup thunk missing info",
+          func.origin, "monitor setup program missing info",
           UnsupportedCategory::kFeature));
     }
     auto result = EmitMonitorSetupEpilogue(
@@ -2851,7 +2905,7 @@ auto DefineUserFunction(
     builder.CreateRet(ret_val);
   }
 
-  VerifyLlvmFunction(llvm_func, "DefineUserFunction");
+  VerifyLlvmFunction(llvm_func, "DefineMirFunction");
 
   // Clean up function scope
   context.EndFunction();
