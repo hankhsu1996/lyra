@@ -1,0 +1,46 @@
+feature: bounds_check_elimination_four_state
+description: >
+  Tests that bounds-check elimination preserves 4-state semantics.
+  In 4-state mode, the validity chain is LogicalAnd(IndexInRange, IsKnown).
+  The pass should eliminate IndexInRange but preserve the IsKnown guard.
+
+cases:
+  - name: four_state_loop_read
+    description: 4-state array read in canonical loop preserves correctness
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          logic [31:0] arr [0:3];
+          arr[0] = 32'd10;
+          arr[1] = 32'd20;
+          arr[2] = 32'd30;
+          arr[3] = 32'd40;
+          result = 0;
+          for (int i = 0; i < 4; i++)
+            result = result + int'(arr[i]);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 100
+
+  - name: four_state_nested_loops
+    description: Nested 4-state loops both optimized correctly
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          logic [7:0] grid [0:2][0:2];
+          for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+              grid[i][j] = i * 3 + j + 1;
+          result = 0;
+          for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+              result = result + int'(grid[i][j]);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 45

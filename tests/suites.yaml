@@ -23,6 +23,7 @@ suites:
       - metadata/
       - mutation/
       - operators/
+      - optimization/
       - packages/
       - processes/
       - scheduling/
@@ -44,6 +45,7 @@ suites:
       - metadata/
       - mutation/
       - operators/
+      - optimization/
       - packages/
       - processes/
       - scheduling/
@@ -93,6 +95,7 @@ suites:
       - metadata/
       - mutation/
       - operators/
+      - optimization/
       - packages/
       - processes/
       - scheduling/
@@ -118,6 +121,7 @@ suites:
       - lifecycle/
       - metadata/
       - operators/
+      - optimization/
       - packages/
       - processes/
       - scheduling/

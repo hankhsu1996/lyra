@@ -1,0 +1,129 @@
+feature: bounds_check_elimination
+description: >
+  Tests that bounds-check elimination preserves correctness for
+  canonical for-loop array access patterns.
+
+cases:
+  - name: canonical_lt_loop
+    description: Canonical i < N loop with array read
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[8];
+          for (int i = 0; i < 8; i++) arr[i] = i * 10;
+          result = 0;
+          for (int i = 0; i < 8; i++) result = result + arr[i];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 280
+
+  - name: canonical_lte_loop
+    description: Canonical i <= N loop with array read
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[8];
+          for (int i = 0; i <= 7; i++) arr[i] = i + 1;
+          result = 0;
+          for (int i = 0; i <= 7; i++) result = result + arr[i];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 36
+
+  - name: body_modifies_iv
+    description: Loop body reassigns IV -- optimization must not fire
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[10];
+          for (int i = 0; i < 10; i++) arr[i] = i;
+          result = 0;
+          for (int i = 0; i < 5; i++) begin
+            result = result + arr[i];
+            i = i;
+          end
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10
+
+  - name: nested_canonical_loops
+    description: Nested loops both get optimized correctly
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[4][4];
+          for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 4; j++)
+              arr[i][j] = i * 4 + j;
+          result = 0;
+          for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 4; j++)
+              result = result + arr[i][j];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 120
+
+  - name: non_constant_bound
+    description: Non-constant bound -- optimization must not fire
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[8];
+          int n;
+          for (int i = 0; i < 8; i++) arr[i] = i + 1;
+          n = 5;
+          result = 0;
+          for (int i = 0; i < n; i++) result = result + arr[i];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 15
+
+  - name: array_write_in_loop
+    description: Array write (GuardedAssign) in canonical loop
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          int arr[6];
+          for (int i = 0; i < 6; i++) arr[i] = (i + 1) * (i + 1);
+          result = arr[0] + arr[1] + arr[2] + arr[3] + arr[4] + arr[5];
+        end
+      endmodule
+    expect:
+      variables:
+        result: 91
+
+  - name: stress_array_pattern
+    description: >
+      Stress-array pattern: init loop + nested read loops.
+      Exercises the nested loop preheader detection.
+    sv: |
+      module Test;
+        int sum;
+        initial begin
+          logic [31:0] data [0:63];
+          for (int i = 0; i < 64; i++) data[i] = i * 3 + 1;
+          sum = 0;
+          for (int iter = 0; iter < 4; iter++)
+            for (int i = 0; i < 64; i++)
+              sum = sum + int'(data[i]);
+          $display("sum = %0d", sum);
+        end
+      endmodule
+    expect:
+      stdout: "sum = 24832\n"

@@ -21,6 +21,7 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/optimize.hpp"
 #include "lyra/mir/package.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/verify.hpp"
@@ -158,7 +159,13 @@ auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
   mir::Design design = std::move(design_result->design);
   auto compiled_bindings = std::move(design_result->compiled_bindings);
 
-  // Single verification gate at the end of lowering
+  // Pre-optimization verification: lowered MIR must be structurally valid
+  VerifyLoweredMir(design, *mir_arena, *input.type_arena);
+
+  // MIR optimization stage: routine-local transforms on verified MIR
+  mir::RunMirOptimizations(design, *mir_arena);
+
+  // Post-optimization verification: optimized MIR must remain valid
   VerifyLoweredMir(design, *mir_arena, *input.type_arena);
 
   LoweringStats stats = ComputeMirStats(design, *mir_arena);
