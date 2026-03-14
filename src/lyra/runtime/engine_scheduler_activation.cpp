@@ -24,13 +24,12 @@ void Engine::ScheduleInitial(ProcessHandle handle) {
     return;
   }
 
-  ScheduledEvent event{
-      .handle = handle,
-      .resume = ResumePoint{.block_index = 0, .instruction_index = 0},
-      .cause = WakeCause::kInitial,
-      .trigger_slot = kNoTriggerSlot,
-  };
-  active_queue_.push_back(event);
+  active_queue_.push_back(
+      {handle.process_id, handle.instance_id, /*resume_block=*/0});
+  if (activation_trace_.has_value()) {
+    wake_trace_[handle.process_id] = {
+        .cause = WakeCause::kInitial, .trigger_slot = kNoTriggerSlot};
+  }
 }
 
 void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
@@ -42,33 +41,30 @@ void Engine::Delay(ProcessHandle handle, ResumePoint resume, SimTime ticks) {
                              current_time_, ticks));
   }
   SimTime wake_time = current_time_ + ticks;
-  ScheduledEvent event{
-      .handle = handle,
-      .resume = resume,
-      .cause = WakeCause::kDelay,
-      .trigger_slot = kNoTriggerSlot,
-  };
-  delay_queue_[wake_time].push_back(event);
+  delay_queue_[wake_time].push_back(
+      {handle.process_id, handle.instance_id, resume.block_index});
+  if (activation_trace_.has_value()) {
+    wake_trace_[handle.process_id] = {
+        .cause = WakeCause::kDelay, .trigger_slot = kNoTriggerSlot};
+  }
 }
 
 void Engine::DelayZero(ProcessHandle handle, ResumePoint resume) {
-  ScheduledEvent event{
-      .handle = handle,
-      .resume = resume,
-      .cause = WakeCause::kDelayZero,
-      .trigger_slot = kNoTriggerSlot,
-  };
-  inactive_queue_.push(event);
+  inactive_queue_.push(
+      {handle.process_id, handle.instance_id, resume.block_index});
+  if (activation_trace_.has_value()) {
+    wake_trace_[handle.process_id] = {
+        .cause = WakeCause::kDelayZero, .trigger_slot = kNoTriggerSlot};
+  }
 }
 
 void Engine::ScheduleNextDelta(ProcessHandle handle, ResumePoint resume) {
-  ScheduledEvent event{
-      .handle = handle,
-      .resume = resume,
-      .cause = WakeCause::kRepeat,
-      .trigger_slot = kNoTriggerSlot,
-  };
-  next_delta_queue_.push_back(event);
+  next_delta_queue_.push_back(
+      {handle.process_id, handle.instance_id, resume.block_index});
+  if (activation_trace_.has_value()) {
+    wake_trace_[handle.process_id] = {
+        .cause = WakeCause::kRepeat, .trigger_slot = kNoTriggerSlot};
+  }
 }
 
 void Engine::RegisterStrobe(
@@ -107,8 +103,8 @@ void Engine::SetMonitorEnabled(bool enabled) {
   }
 }
 
-void Engine::RunOneActivation(const ScheduledEvent& event) {
-  uint32_t pid = event.handle.process_id;
+void Engine::RunOneActivation(const WakeupEntry& entry) {
+  uint32_t pid = entry.process_id;
 
   // Update progress counters (signal-safe reads by SIGUSR1 handler).
   last_process_id_.store(pid, std::memory_order_release);
@@ -130,16 +126,17 @@ void Engine::RunOneActivation(const ScheduledEvent& event) {
   // Reset loop budget before each process activation.
   LyraResetLoopBudget(kDefaultLoopBudget);
 
-  process_dispatch_.fn(
-      process_dispatch_.ctx, *this, event.handle, event.resume);
+  ProcessHandle handle{entry.process_id, entry.instance_id};
+  ResumePoint resume{entry.resume_block, 0};
+  process_dispatch_.fn(process_dispatch_.ctx, *this, handle, resume);
 
   // End activation context.
   activation_ctx_.active = false;
   if (activation_ctx_.dirty_count == 0) {
-    ++stats_.core.activations_no_write;
+    ++stats_.core.activations_nba_only;
   }
   if (activation_trace_.has_value()) {
-    TraceRun(event);
+    TraceRun(entry);
   }
 
   current_running_process_.store(UINT32_MAX, std::memory_order_release);
@@ -163,34 +160,35 @@ void Engine::ExecuteRegion(Region region) {
 void Engine::ExecuteActiveRegion() {
   uint32_t active_iterations = 0;
   while (!finished_ && !active_queue_.empty()) {
-    auto events = std::move(active_queue_);
+    auto entries = std::move(active_queue_);
     active_queue_.clear();
-    for (const auto& event : events) {
+    for (const auto& entry : entries) {
       if (finished_) {
         break;
       }
 
       if (num_processes_ > 0) {
-        if (event.handle.process_id >= num_processes_) {
+        if (entry.process_id >= num_processes_) {
           throw common::InternalError(
               "Engine::ExecuteRegion",
               std::format(
-                  "process_id {} exceeds num_processes {}",
-                  event.handle.process_id, num_processes_));
+                  "process_id {} exceeds num_processes {}", entry.process_id,
+                  num_processes_));
         }
-        process_states_[event.handle.process_id].is_enqueued = false;
+        process_states_[entry.process_id].is_enqueued = false;
       }
 
       if (activation_trace_.has_value()) {
-        TraceWake(event);
+        TraceWake(entry);
       }
 
+      ProcessHandle handle{entry.process_id, entry.instance_id};
       if (!HasPostActivationReconciliation()) {
-        ClearProcessSubscriptions(event.handle);
+        ClearProcessSubscriptions(handle);
       }
-      RunOneActivation(event);
+      RunOneActivation(entry);
       if (!finished_ && HasPostActivationReconciliation()) {
-        ReconcilePostActivation(event.handle);
+        ReconcilePostActivation(handle);
       }
     }
     ++active_iterations;

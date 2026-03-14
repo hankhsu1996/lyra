@@ -248,20 +248,6 @@ void Engine::FlushContainerSub(
   }
 }
 
-void Engine::EnqueueProcessWakeupCold(
-    uint32_t process_id, uint32_t instance_id, uint32_t resume_block,
-    uint32_t trigger_slot, WakeCause cause) {
-  if (detailed_stats_enabled_) ++stats_.detailed.wakeup_attempts;
-  ScheduledEvent event{
-      .handle = ProcessHandle{process_id, instance_id},
-      .resume = ResumePoint{resume_block, 0},
-      .cause = cause,
-      .trigger_slot = trigger_slot,
-  };
-  next_delta_queue_.push_back(event);
-  process_states_[process_id].is_enqueued = true;
-}
-
 void Engine::FlushSlotRebindSubs(
     std::vector<RebindWatcherSub>& subs, const SlotMeta& meta,
     std::span<const uint8_t> design_state) {
@@ -421,8 +407,15 @@ void Engine::FlushSignalUpdates() {
       slot_meta_registry_.MaxExtent());
 
   for (uint32_t slot_id : newly_dirty) {
-    if (detailed) ++stats_.detailed.flush_dirty_slots;
     auto& slot = signal_subs_[slot_id];
+    // Skip slots with no subscribers. Connection/comb propagation dirties many
+    // intermediate slots that have no edge/change/rebind/container subs.
+    // Checking four sizes (4 loads) is much cheaper than the full
+    // FlushDirtySlot dispatch (slot_meta lookup + typed flusher calls).
+    if (slot.edge_subs.empty() && slot.change_subs.empty() &&
+        slot.rebind_subs.empty() && slot.container_subs.empty())
+      continue;
+    if (detailed) ++stats_.detailed.flush_dirty_slots;
     const auto& meta = slot_meta_registry_.Get(slot_id);
     FlushDirtySlot(slot_id, slot, meta, design_state);
   }
