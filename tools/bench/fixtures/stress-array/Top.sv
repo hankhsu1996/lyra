@@ -1,6 +1,6 @@
 module Top;
-  localparam int ARRAY_SIZE = 16384;
-  localparam int NUM_ITERS = 512;
+  localparam int ARRAY_SIZE = 32768;
+  localparam int NUM_ITERS = 4096;
 
   logic [31:0] data [0:ARRAY_SIZE-1];
   int sum;
