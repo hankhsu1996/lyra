@@ -80,6 +80,8 @@ The `run`, `check`, and `dump` commands accept these options:
 | `--pedantic`              | Enable strict LRM compliance (disallow implicit enum conversions)            |
 | `-v, --verbose`           | Verbosity level (-v, -vv, -vvv or --verbose=0-3)                             |
 | `--stats[=N]`             | Show LLVM IR statistics (top N functions, default 10; 0 for summary only)    |
+| `--trace-summary`         | Enable trace summary output (event counts at end of simulation)              |
+| `--trace-signals[=FILE]`  | Enable text signal trace (to stdout or file)                                 |
 | `--trace-activations`     | Enable activation trace (live per-process wake/run log to stderr)            |
 | `-f <file>`               | Command file (paths relative to CWD)                                         |
 | `-F <file>`               | Command file (paths relative to file itself)                                 |
