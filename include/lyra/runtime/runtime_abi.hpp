@@ -17,7 +17,8 @@
 //   4: Added trace signal metadata (trace_signal_meta_words,
 //      trace_signal_meta_word_count, trace_signal_meta_string_pool,
 //      trace_signal_meta_string_pool_size)
-inline constexpr uint32_t kRuntimeAbiVersion = 4;
+//   5: Added trace output configuration (signal_trace_path)
+inline constexpr uint32_t kRuntimeAbiVersion = 5;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -60,4 +61,9 @@ struct LyraRuntimeAbi {
   uint32_t trace_signal_meta_word_count;
   const char* trace_signal_meta_string_pool;
   uint32_t trace_signal_meta_string_pool_size;
+
+  // v5: Trace output configuration.
+  // Text signal trace destination. Only meaningful when kEnableSignalTrace is
+  // set in feature_flags. nullptr = write to stdout, non-null = file path.
+  const char* signal_trace_path;
 };

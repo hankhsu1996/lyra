@@ -449,8 +449,15 @@ auto PrepareLlvmModule(
           ? std::filesystem::absolute(std::filesystem::current_path()).string()
           : std::filesystem::absolute(work_directory).string();
   uint32_t feature_flags = 0;
-  if (test_case.trace) {
+  if (test_case.trace_summary) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
+    feature_flags |=
+        runtime::ToUint32(runtime::FeatureFlag::kEnableTraceSummary);
+  }
+  if (test_case.signal_trace) {
+    feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
+    feature_flags |=
+        runtime::ToUint32(runtime::FeatureFlag::kEnableSignalTrace);
   }
   if (test_case.dump_slot_meta) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDumpSlotMeta);

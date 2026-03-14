@@ -65,7 +65,7 @@ class TraceManager {
   // no replay or initialization occurs.
   void AddSink(std::unique_ptr<TraceSink> sink);
 
-  void EmitTimeAdvance(uint64_t time);
+  void EmitTimeAdvance(uint64_t time, uint32_t delta = 0);
   void EmitValueChange(uint32_t slot_id, TraceValue value);
   void EmitMemoryDirty(uint32_t slot_id);
 

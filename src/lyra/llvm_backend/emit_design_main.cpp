@@ -693,18 +693,18 @@ auto EmitCombWrappers(
 auto BuildRuntimeAbi(
     Context& context, const MetadataGlobals& meta_globals,
     const WaitSiteMetaResult& wait_site_meta,
-    const CombWrappersResult& comb_wrappers, uint32_t feature_flags)
-    -> llvm::Value* {
+    const CombWrappersResult& comb_wrappers, uint32_t feature_flags,
+    const std::string& signal_trace_path) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
 
-  constexpr unsigned kAbiFieldCount = 24;
+  constexpr unsigned kAbiFieldCount = 25;
   std::array<llvm::Type*, kAbiFieldCount> abi_fields = {
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
+      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
+      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty,
+      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
   };
   auto* abi_struct_type = llvm::StructType::get(ctx, abi_fields, false);
 
@@ -749,6 +749,16 @@ auto BuildRuntimeAbi(
   store_field(
       23,
       llvm::ConstantInt::get(i32_ty, meta_globals.trace_signal_meta_pool_size));
+
+  if (signal_trace_path.empty()) {
+    store_field(
+        24,
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
+  } else {
+    store_field(
+        24,
+        builder.CreateGlobalStringPtr(signal_trace_path, "signal_trace_path"));
+  }
 
   return abi_alloca;
 }
@@ -801,6 +811,7 @@ auto BuildEmitDesignMainInput(const lowering::mir_to_llvm::LoweringInput& input)
       .fs_base_dir = input.fs_base_dir,
       .plusargs = input.plusargs,
       .feature_flags = input.feature_flags,
+      .signal_trace_path = input.signal_trace_path,
   };
 }
 
@@ -859,7 +870,7 @@ auto EmitDesignMain(
 
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, comb_wrappers,
-        input.feature_flags);
+        input.feature_flags, input.signal_trace_path);
 
     EmitRunSimulation(
         context, funcs_array, states_array, packed_layout.count, plusargs,

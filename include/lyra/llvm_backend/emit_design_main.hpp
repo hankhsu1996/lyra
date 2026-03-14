@@ -27,6 +27,7 @@ struct EmitDesignMainInput {
   std::string fs_base_dir;
   std::vector<std::string> plusargs;
   uint32_t feature_flags = 0;
+  std::string signal_trace_path;
 };
 
 // Emit the design-wide main() function into the LLVM module owned by session.

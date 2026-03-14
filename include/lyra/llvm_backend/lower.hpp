@@ -90,7 +90,10 @@ struct LoweringInput {
   std::string fs_base_dir;            // Base directory for file I/O (absolute)
   std::vector<std::string> plusargs;  // Command-line plusargs for $plusargs
   uint32_t feature_flags = 0;         // FeatureFlag bitmask for runtime
-  bool force_two_state = false;       // Force 2-state LLVM representation
+  // Text signal trace output path: empty = stdout, non-empty = file path.
+  // Only meaningful when kEnableSignalTrace is set in feature_flags.
+  std::string signal_trace_path;
+  bool force_two_state = false;  // Force 2-state LLVM representation
   MainAbi main_abi = MainAbi::kEmbeddedPlusargs;
 };
 

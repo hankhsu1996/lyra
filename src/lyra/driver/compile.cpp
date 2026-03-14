@@ -40,8 +40,15 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
 
   uint32_t feature_flags =
       runtime::ToUint32(runtime::FeatureFlag::kEnableLoopGuard);
-  if (input.enable_trace) {
+  if (input.enable_trace_summary) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
+    feature_flags |=
+        runtime::ToUint32(runtime::FeatureFlag::kEnableTraceSummary);
+  }
+  if (input.trace_signals_output.has_value()) {
+    feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
+    feature_flags |=
+        runtime::ToUint32(runtime::FeatureFlag::kEnableSignalTrace);
   }
   if (input.enable_system) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableSystem);
@@ -66,6 +73,7 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = {},
       .feature_flags = feature_flags,
+      .signal_trace_path = input.trace_signals_output.value_or(""),
       .force_two_state = input.two_state,
       .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
   };

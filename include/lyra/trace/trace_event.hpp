@@ -21,8 +21,15 @@ struct PackedSnapshot {
 // content.
 using TraceValue = std::variant<PackedSnapshot, std::string>;
 
+// End-of-time-slot committed context marker. Emitted once per time slot at
+// flush time, immediately before any ValueChange events for that slot. The
+// delta is the final delta cycle count after convergence, not the delta at
+// which any particular value was last written. Sinks use this to set their
+// current (time, delta) context for subsequent ValueChange formatting.
+// Emitted for every time slot, including slots with no dirty signals.
 struct TimeAdvance {
-  uint64_t time;
+  uint64_t time = 0;
+  uint32_t delta = 0;
 };
 
 // Scalar value change. Snapshot captures the *new* value after the store.

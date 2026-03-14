@@ -12,7 +12,7 @@ cases:
           $display("done");
         end
       endmodule
-    trace: true
+    trace_summary: true
     expect:
       stdout:
         contains:
@@ -32,7 +32,7 @@ cases:
           $display("done");
         end
       endmodule
-    trace: true
+    trace_summary: true
     expect:
       stdout:
         contains:
@@ -57,7 +57,7 @@ cases:
         content: |
           AA
           BB
-    trace: true
+    trace_summary: true
     expect:
       stdout:
         contains:
@@ -78,7 +78,7 @@ cases:
           $display("done");
         end
       endmodule
-    trace: true
+    trace_summary: true
     expect:
       stdout:
         contains:

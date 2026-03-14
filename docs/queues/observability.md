@@ -55,73 +55,64 @@ Output format (one line per event, machine-parsable prefix):
 [act] t=100 d=0 run  always_ff@top.u_reg dirtied=2 resume=5
 ```
 
-## Active Gaps
+## Architecture
 
-### Architecture
+The signal-change observability stack shares a common architecture. The center is a **scoped signal-change stream**, not VCD and not engine-owned old-value storage.
 
-The signal-change observability stack (O3 text trace, O2 VCD) shares a common architecture. The center is a **scoped signal-change stream**, not VCD and not engine-owned old-value storage.
-
-#### Existing infrastructure
-
-The core runtime change bus already exists:
-
-- `TraceManager` dispatches events to pluggable `TraceSink` implementations
-- `FlushDirtySlotsToTrace` iterates dirty slots at end of time slot, snapshots current values, emits `ValueChange(slot_id, new_value)`
-- `TraceEvent` vocabulary: `TimeAdvance`, `ValueChange`, `MemoryDirty`
-- `SnapshotSlotValue` handles all storage kinds (packed2, packed4, string, handle, aggregate)
-
-#### Layering
+### Layering
 
 ```
 Runtime core            -- identify dirty traced slots, snapshot, emit
 Trace metadata          -- signal identity, names, widths, formatting class
-Trace selection         -- per-slot enable/disable (runtime-owned, not in TraceManager)
+Trace selection         -- per-slot enable/disable, owned by Engine
 TraceManager            -- sink fanout, dispatch
 Sinks                   -- text formatting, VCD serialization, sink-local state
 ```
 
-Key architectural rules:
+### Architectural rules
 
 - Runtime emits new values only. No engine-owned old-value storage.
 - Sinks own presentation-specific state (e.g., last-emitted value for `old -> new` display).
-- Trace metadata is separate from `SlotMetaRegistry` (storage layout vs presentation identity).
-- Selection is runtime-owned (`Engine`), not dispatcher-owned (`TraceManager`). Producer-side filtering happens before snapshotting.
-- `TraceManager` is a streaming dispatcher only -- no selection policy, no event retention. Retaining sinks are add-on test/debug tooling.
+- Trace metadata (`TraceSignalMetaRegistry`) is separate from `SlotMetaRegistry` (storage layout vs presentation identity).
+- Selection (`TraceSelectionRegistry`) is owned by `Engine`, not `TraceManager`. Producer-side filtering in `FlushDirtySlotsToTrace` skips deselected slots before snapshotting.
+- `TraceManager` is a streaming dispatcher only -- no selection policy, no event retention.
 
-#### Missing pieces
+### Event stream semantics
 
-1. **~~Streaming fanout~~** -- Done (Phase 1).
-2. **~~Trace signal metadata~~** -- Done (Phase 2). `TraceSignalMetaRegistry` provides slot-to-name/width/kind mapping, built at compile time.
-3. **~~Trace selection/scoping~~** -- Done (Phase 3). `TraceSelectionRegistry` provides dense per-slot enable/disable, owned by `Engine`. Producer-side filtering in `FlushDirtySlotsToTrace` skips deselected slots before snapshotting. Default is all-selected. Future `$dumpvars(level, scope)` compiles down to selection mutations.
-4. **Output sinks** -- no text formatter, no VCD writer.
+`TimeAdvance` is an end-of-time-slot committed context marker, emitted once per time slot at flush time. It carries the final delta cycle count after convergence, not the delta at which any particular value was last written. `TimeAdvance` is emitted for every time slot, including slots with no dirty signals, so sinks can track time progression without value changes.
 
-### Implementation phases
+`ValueChange` events follow immediately after the `TimeAdvance` for their time slot. They represent the final committed state after all delta cycles complete.
 
-Priority order reflects dependency chain, not user-facing priority.
+### Components
 
-#### Phase 1: Streaming TraceManager (done)
+- **`TraceManager`** -- Streaming fanout dispatcher with pluggable sinks. A built-in `SummaryTraceSink` provides `--trace-summary` output. External sinks added via `AddSink()` share the same dispatch path.
+- **`TraceSignalMetaRegistry`** -- Dense, immutable slot-to-signal-identity table built at compile time. Each entry has hierarchical name, bit width, and trace kind. Engine owns the registry and passes a non-owning pointer to `TraceManager` for sink formatting context.
+- **`TraceSelectionRegistry`** -- Dense per-slot enable/disable, owned by `Engine`. Default is all-selected when trace metadata is present. Future `$dumpvars(level, scope)` and CLI scoping compile down to selection mutations.
+- **`TextTraceSink`** -- Consumes `TimeAdvance` + `ValueChange` and emits compact one-line value-change output via `--trace-signals[=FILE]`.
+- **`FlushDirtySlotsToTrace`** -- Producer path: iterates dirty slots at end of time slot, snapshots current values via `SnapshotSlotValue`, emits `ValueChange(slot_id, new_value)`.
 
-`TraceManager` is a streaming fanout dispatcher. Core event retention removed. A built-in `SummaryTraceSink` provides `--trace` summary output. External sinks added via `AddSink()` share the same dispatch path. Producer path (`FlushDirtySlotsToTrace`) unchanged.
+### CLI flags
 
-#### Phase 2: Trace signal metadata (done)
+Every `--trace-*` flag is self-contained and output-describing. `TraceManager` is enabled implicitly by any trace-output flag.
 
-`TraceSignalMetaRegistry` provides a dense, immutable slot-to-signal-identity table built at compile time. Each entry has hierarchical name, bit width, and trace kind. Separate from `SlotMetaRegistry` (which owns byte layout for the scheduler). Engine owns the registry and passes a non-owning pointer to `TraceManager` for sink formatting context.
+- `--trace-summary` -- summary output (gated by `kEnableTraceSummary`)
+- `--trace-signals[=FILE]` -- text signal trace to stdout or file (gated by `kEnableSignalTrace`)
+- `--trace-activations` -- scheduler activation trace (separate from value-change trace)
 
-#### Phase 3: Trace selection/filtering (done)
+### Text signal trace output
 
-`TraceSelectionRegistry` provides dense per-slot enable/disable, owned by `Engine` (not `TraceManager`). Producer-side filtering in `FlushDirtySlotsToTrace` consults the selection registry before snapshotting, so deselected slots incur zero snapshot cost. Default is all-selected when trace metadata is present. `TraceManager` remains a pure dispatcher with no selection policy. Future `$dumpvars(level, scope)` and CLI scoping compile down to `TraceSelectionRegistry` mutations without changing the runtime core.
+End-of-time-slot committed value trace. One line per value change, time and final delta from the committed flush:
 
-#### Phase 4: O3 -- Text change trace sink
+```
+t=0 d=0 top.clk = 1'b0
+t=100 d=3 top.data = 8'hff
+```
 
-**Question:** Which signals changed, when, and to what value?
+Value rendering: 1-bit as `1'b0`/`1'b1`, wider packed as `N'h<hex>`, strings as quoted. No old-value state. Richer rendering requires future `TraceValue` model expansion, not sink-side metadata coupling.
 
-First real user-facing signal trace feature. A `TextTraceSink` consuming `TimeAdvance` + `ValueChange`, outputting one line per selected signal change. If `old -> new` display is wanted, the text sink keeps previous emitted value for traced signals only (sink-local state, not engine state).
+## Active Gaps
 
-**Flag:** `--signal-trace`
-
-Validates the full architecture: metadata, scoping, streaming.
-
-#### Phase 5: O2 -- VCD waveform sink
+### Phase 5: O2 -- VCD waveform sink
 
 **Question:** What is the full signal history, viewable alongside a reference simulator?
 
@@ -131,6 +122,6 @@ A `VcdTraceSink` implementing `TraceSink`. Header emission from trace metadata, 
 
 Standard RTL debugging workflow. Enables side-by-side comparison with Verilator traces.
 
-#### Phase 6: Control surface
+### Phase 6: Control surface
 
-User-facing options: `--trace-format=text|vcd`, `--trace-file=...`, later `$dumpfile` / `$dumpvars` SystemVerilog task support. Not blocked on full SV dump task semantics -- the runtime core already supports it by this point.
+User-facing options: `--trace-vcd=FILE`, later `$dumpfile` / `$dumpvars` SystemVerilog task support. Not blocked on full SV dump task semantics -- the runtime core already supports it by this point.

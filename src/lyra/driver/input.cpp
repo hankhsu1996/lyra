@@ -177,8 +177,17 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .help(
           "Enable SystemVerilog $system shell command execution (SECURITY: "
           "disabled by default)");
-  cmd.add_argument("--trace").default_value(false).implicit_value(true).help(
-      "Enable simulation tracing (event recording)");
+  cmd.add_argument("--trace-summary")
+      .default_value(false)
+      .implicit_value(true)
+      .help("Enable trace summary output (event counts)");
+  cmd.add_argument("--trace-signals")
+      .default_value(std::string{})
+      .implicit_value(std::string{})
+      .nargs(0, 1)
+      .help(
+          "Enable text signal trace output (optional: =FILE for file output, "
+          "default: stdout)");
   cmd.add_argument("--trace-activations")
       .default_value(false)
       .implicit_value(true)
@@ -330,8 +339,14 @@ auto BuildInput(
   // Security: $system execution (CLI only, default disabled)
   input.enable_system = cmd.get<bool>("--enable-system");
 
-  // Tracing (CLI only)
-  input.enable_trace = cmd.get<bool>("--trace");
+  // Trace summary (CLI only)
+  input.enable_trace_summary = cmd.get<bool>("--trace-summary");
+
+  // Text signal trace (CLI only)
+  if (cmd.is_used("--trace-signals")) {
+    auto val = cmd.get<std::string>("--trace-signals");
+    input.trace_signals_output = val;
+  }
 
   // Activation trace (CLI only)
   input.trace_activations = cmd.get<bool>("--trace-activations");
