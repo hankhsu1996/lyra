@@ -248,23 +248,18 @@ void Engine::FlushContainerSub(
   }
 }
 
-void Engine::EnqueueProcessWakeup(
+void Engine::EnqueueProcessWakeupCold(
     uint32_t process_id, uint32_t instance_id, uint32_t resume_block,
     uint32_t trigger_slot, WakeCause cause) {
   if (detailed_stats_enabled_) ++stats_.detailed.wakeup_attempts;
-  auto& proc_state = process_states_[process_id];
-  if (!proc_state.is_enqueued) {
-    ScheduledEvent event{
-        .handle = ProcessHandle{process_id, instance_id},
-        .resume = ResumePoint{resume_block, 0},
-        .cause = cause,
-        .trigger_slot = trigger_slot,
-    };
-    next_delta_queue_.push_back(event);
-    proc_state.is_enqueued = true;
-  } else {
-    if (detailed_stats_enabled_) ++stats_.detailed.wakeup_deduped;
-  }
+  ScheduledEvent event{
+      .handle = ProcessHandle{process_id, instance_id},
+      .resume = ResumePoint{resume_block, 0},
+      .cause = cause,
+      .trigger_slot = trigger_slot,
+  };
+  next_delta_queue_.push_back(event);
+  process_states_[process_id].is_enqueued = true;
 }
 
 void Engine::FlushSlotRebindSubs(
@@ -377,23 +372,26 @@ void Engine::FlushDirtySlot(
   //   4. Container -- independent, unfiltered (heap-chasing comparison)
   FlushSlotRebindSubs(slot.rebind_subs, meta, design_state);
 
-  // Decode dirty-range filter mode once per slot (shared by edge + change).
-  RangeFilterMode mode = RangeFilterMode::kNone;
-  const common::RangeSet* dirty_ranges = nullptr;
   if (!slot.edge_subs.empty() || !slot.change_subs.empty()) {
-    dirty_ranges = &update_set_.DeltaRangesFor(slot_id);
-    if (dirty_ranges->IsFullExtent()) {
-      mode = RangeFilterMode::kFull;
-    } else if (!dirty_ranges->IsEmpty()) {
-      mode = RangeFilterMode::kPartial;
+    const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
+    if (dirty_ranges.IsFullExtent()) {
+      // Fast path: full-slot dirty (most common on clocked designs).
+      // Skip range filtering entirely -- all subs are in range.
+      FlushSlotEdgeSubs(
+          slot_id, slot.edge_subs, meta, dirty_ranges, RangeFilterMode::kFull,
+          design_state);
+      FlushSlotChangeSubs(
+          slot_id, slot.change_subs, meta, dirty_ranges, RangeFilterMode::kFull,
+          design_state);
+    } else if (!dirty_ranges.IsEmpty()) {
+      // Slow path: partial dirty ranges -- per-sub range filtering.
+      FlushSlotEdgeSubs(
+          slot_id, slot.edge_subs, meta, dirty_ranges,
+          RangeFilterMode::kPartial, design_state);
+      FlushSlotChangeSubs(
+          slot_id, slot.change_subs, meta, dirty_ranges,
+          RangeFilterMode::kPartial, design_state);
     }
-  }
-
-  if (mode != RangeFilterMode::kNone) {
-    FlushSlotEdgeSubs(
-        slot_id, slot.edge_subs, meta, *dirty_ranges, mode, design_state);
-    FlushSlotChangeSubs(
-        slot_id, slot.change_subs, meta, *dirty_ranges, mode, design_state);
   }
 
   FlushSlotContainerSubs(slot_id, slot.container_subs, design_state);

@@ -596,7 +596,15 @@ class Engine {
 
   // Deduplicated wakeup enqueue: push to next_delta_queue_ if not already
   // enqueued. Shared by edge, change, and container flush paths.
+  // Inline: the common case (already enqueued) is a single load + branch.
   void EnqueueProcessWakeup(
+      uint32_t process_id, uint32_t instance_id, uint32_t resume_block,
+      uint32_t trigger_slot, WakeCause cause) {
+    if (process_states_[process_id].is_enqueued) return;
+    EnqueueProcessWakeupCold(
+        process_id, instance_id, resume_block, trigger_slot, cause);
+  }
+  void EnqueueProcessWakeupCold(
       uint32_t process_id, uint32_t instance_id, uint32_t resume_block,
       uint32_t trigger_slot, WakeCause cause);
 
