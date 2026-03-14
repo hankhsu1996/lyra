@@ -1,5 +1,6 @@
-// Synthetic benchmark: 8-stage pipeline with comb + sequential logic per stage.
-// Exercises: clock, NBA, connection propagation, comb kernels, edge subscriptions.
+`ifndef NUM_CYCLES
+`define NUM_CYCLES 500000
+`endif
 
 module pipe_stage #(parameter int WIDTH = 32) (
   input  logic clk,
@@ -33,7 +34,7 @@ module pipe_stage #(parameter int WIDTH = 32) (
 endmodule
 
 module Top;
-  localparam int NUM_CYCLES = 500000;
+  localparam int NUM_CYCLES = `NUM_CYCLES;
   localparam int WIDTH = 32;
 
   logic clk;

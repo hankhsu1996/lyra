@@ -513,11 +513,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
       *input.mir_arena, *input.type_arena, *layout, std::move(llvm_ctx),
       std::move(module), input.diag_ctx, force_two_state);
 
-  bool loop_guard_enabled = runtime::HasFlag(
-      static_cast<runtime::FeatureFlag>(input.feature_flags),
-      runtime::FeatureFlag::kEnableLoopGuard);
-  context->SetLoopGuardEnabled(loop_guard_enabled);
-
   // Phase 1: Build specialization inputs (units + layouts + codegen views)
   auto units = BuildSpecCompilationUnits(*input.design);
   auto modidx_to_sched_indices = BuildModuleSchedIndices(*layout);

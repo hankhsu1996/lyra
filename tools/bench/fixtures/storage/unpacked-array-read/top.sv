@@ -1,6 +1,10 @@
+`ifndef NUM_ITERS
+`define NUM_ITERS 4096
+`endif
+
 module Top;
   localparam int ARRAY_SIZE = 32768;
-  localparam int NUM_ITERS = 4096;
+  localparam int NUM_ITERS = `NUM_ITERS;
 
   logic [31:0] data [0:ARRAY_SIZE-1];
   int sum;

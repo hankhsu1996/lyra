@@ -347,29 +347,30 @@ auto HasBackEdge(const mir::Terminator& term, size_t current_block_idx)
       term.data);
 }
 
-// Emit a loop budget guard before a back-edge terminator.
-// Decrements TLS budget, and if exhausted stores a kTrap ProcessOutcome
-// into %out and returns void.
+// Emit a back-edge guard before a loop back-edge terminator.
+// Decrements the TLS iteration limit counter; if exhausted, stores a kTrap
+// ProcessOutcome into %out and returns void. The runtime iteration limit
+// policy (bounded or saturating-max) determines whether trapping occurs.
 //
-// budget_ptr is the TLS budget pointer, hoisted to process entry so the
-// LyraLoopBudgetPtr() call happens once per activation instead of per
+// limit_ptr is the TLS counter pointer, hoisted to process entry so the
+// LyraIterationLimitPtr() call happens once per activation instead of per
 // back-edge.
-void EmitLoopGuard(
+void EmitBackEdgeGuard(
     Context& context, common::OriginId origin, llvm::Function* func,
-    llvm::Value* out_ptr, llvm::Value* budget_ptr) {
+    llvm::Value* out_ptr, llvm::Value* limit_ptr) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
-  uint32_t site_id = context.RegisterLoopSite(origin);
+  uint32_t site_id = context.RegisterBackEdgeSite(origin);
 
-  auto* budget = builder.CreateLoad(i32_ty, budget_ptr, "budget");
-  auto* new_budget = builder.CreateSub(
-      budget, llvm::ConstantInt::get(i32_ty, 1), "budget_dec");
-  builder.CreateStore(new_budget, budget_ptr);
+  auto* limit = builder.CreateLoad(i32_ty, limit_ptr, "limit");
+  auto* new_limit =
+      builder.CreateSub(limit, llvm::ConstantInt::get(i32_ty, 1), "limit_dec");
+  builder.CreateStore(new_limit, limit_ptr);
 
   auto* exhausted =
-      builder.CreateICmpEQ(new_budget, llvm::ConstantInt::get(i32_ty, 0));
+      builder.CreateICmpEQ(new_limit, llvm::ConstantInt::get(i32_ty, 0));
 
   auto* trap_bb = llvm::BasicBlock::Create(llvm_ctx, "loop_trap", func);
   auto* continue_bb = llvm::BasicBlock::Create(llvm_ctx, "loop_continue", func);
@@ -381,7 +382,7 @@ void EmitLoopGuard(
   EmitStoreOutcome(
       builder, llvm_ctx, out_ptr,
       static_cast<uint32_t>(runtime::ProcessExitCode::kTrap),
-      static_cast<uint32_t>(runtime::TrapReason::kLoopBudgetExceeded),
+      static_cast<uint32_t>(runtime::TrapReason::kIterationLimitExceeded),
       llvm::ConstantInt::get(i32_ty, site_id),
       llvm::ConstantInt::get(i32_ty, 0));
   builder.CreateRetVoid();
@@ -1502,13 +1503,10 @@ auto GenerateProcessFunction(
     }
   }
 
-  // Hoist TLS budget pointer lookup to process entry (once per activation
-  // instead of once per back-edge).
-  llvm::Value* budget_ptr = nullptr;
-  if (context.IsLoopGuardEnabled()) {
-    budget_ptr =
-        builder.CreateCall(context.GetLyraLoopBudgetPtr(), {}, "budget_ptr");
-  }
+  // Hoist TLS iteration counter pointer to process entry (once per
+  // activation instead of once per back-edge).
+  auto* limit_ptr =
+      builder.CreateCall(context.GetLyraIterationLimitPtr(), {}, "limit_ptr");
 
   // Create switch with bb0 as default (initial execution)
   auto* sw = builder.CreateSwitch(
@@ -1539,10 +1537,10 @@ auto GenerateProcessFunction(
       if (!result) return std::unexpected(result.error());
     }
 
-    // Emit loop guard before back-edge terminators
-    if (context.IsLoopGuardEnabled() && HasBackEdge(block.terminator, i)) {
-      EmitLoopGuard(
-          context, block.terminator.origin, func, out_arg, budget_ptr);
+    // Emit back-edge guard before loop back-edge terminators
+    if (HasBackEdge(block.terminator, i)) {
+      EmitBackEdgeGuard(
+          context, block.terminator.origin, func, out_arg, limit_ptr);
     }
 
     auto term_result = LowerTerminator(
@@ -1658,11 +1656,8 @@ auto GenerateSharedProcessFunction(
   auto [sfirst, slast] = std::ranges::unique(resume_targets);
   resume_targets.erase(sfirst, slast);
 
-  llvm::Value* budget_ptr = nullptr;
-  if (context.IsLoopGuardEnabled()) {
-    budget_ptr =
-        builder.CreateCall(context.GetLyraLoopBudgetPtr(), {}, "budget_ptr");
-  }
+  auto* limit_ptr =
+      builder.CreateCall(context.GetLyraIterationLimitPtr(), {}, "limit_ptr");
 
   auto* sw = builder.CreateSwitch(
       func->getArg(1), llvm_blocks[0],
@@ -1688,10 +1683,10 @@ auto GenerateSharedProcessFunction(
       if (!result) return std::unexpected(result.error());
     }
 
-    // Emit loop guard before back-edge terminators
-    if (context.IsLoopGuardEnabled() && HasBackEdge(block.terminator, i)) {
-      EmitLoopGuard(
-          context, block.terminator.origin, func, func->getArg(6), budget_ptr);
+    // Emit back-edge guard before loop back-edge terminators
+    if (HasBackEdge(block.terminator, i)) {
+      EmitBackEdgeGuard(
+          context, block.terminator.origin, func, func->getArg(6), limit_ptr);
     }
 
     auto term_result = LowerTerminator(

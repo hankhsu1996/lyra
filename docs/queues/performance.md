@@ -20,23 +20,27 @@ All measurements use `-c opt` callgrind on AOT binary. See `docs/profiling.md` f
 
 ### Fixture sizes
 
-| Fixture      | Parameters                 |
-| ------------ | -------------------------- |
-| stress-array | 32768 elements, 4096 iters |
-| pipeline     | 8-stage pipe, 500K cycles  |
+| Fixture              | Family     | Parameters                 |
+| -------------------- | ---------- | -------------------------- |
+| unpacked-array-read  | storage    | 32768 elements, 4096 iters |
+| unpacked-array-write | storage    | 32768 elements, 4096 iters |
+| clock-pipeline       | scheduling | 8-stage pipe, 500K cycles  |
+| fanout-comb          | scheduling | 64-way fanout, 500K cycles |
+| nba-heavy            | scheduling | 32 regs, 500K cycles       |
+| edge-sub-dense       | scheduling | 128 procs, 500K cycles     |
 
 ### Current baselines (post dirty-path-thinning PR, 2026-03-14)
 
-| Fixture      | Total Ir | Top buckets                                                      |
-| ------------ | -------- | ---------------------------------------------------------------- |
-| stress-array | 632M     | MarkSlotDirty 51%, generated code 40%, LyraMarkDirty 9%          |
-| pipeline     | 21.94B   | fixpoint 12%, flush 17%, dirty-mark 11%, dispatch 9%, suspend 5% |
+| Fixture             | Total Ir | Top buckets                                                      |
+| ------------------- | -------- | ---------------------------------------------------------------- |
+| unpacked-array-read | 632M     | MarkSlotDirty 51%, generated code 40%, LyraMarkDirty 9%          |
+| clock-pipeline      | 21.94B   | fixpoint 12%, flush 17%, dirty-mark 11%, dispatch 9%, suspend 5% |
 
 ## Gap Inventory
 
 ### G7: Connection/comb fixpoint region
 
-The single largest performance problem on the pipeline fixture.
+The single largest performance problem on the clock-pipeline fixture.
 
 **G7a: fixpoint infrastructure.**
 
@@ -62,7 +66,7 @@ Full-extent fast path (G5a), dense subscriber storage (G5b), and compile-time tr
 
 ## Prioritized Working Queue
 
-Ranked by relative profile weight (pipeline fixture). Re-profile to get current absolute numbers.
+Ranked by relative profile weight (clock-pipeline fixture). Re-profile to get current absolute numbers.
 
 ### Tier 1: Highest impact
 

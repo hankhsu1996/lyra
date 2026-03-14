@@ -1,6 +1,5 @@
 #include "lyra/common/source_span.hpp"
 
-#include <cstdint>
 #include <format>
 #include <string>
 
@@ -19,17 +18,9 @@ auto FormatSourceLocation(const SourceSpan& span, const SourceManager& mgr)
     return "";
   }
 
-  // Count line and column by scanning content up to span.begin
-  uint32_t line = 1;
-  uint32_t col = 1;
-  const std::string& content = file->content;
-  for (uint32_t i = 0; i < span.begin && i < content.size(); ++i) {
-    if (content[i] == '\n') {
-      ++line;
-      col = 1;
-    } else {
-      ++col;
-    }
+  auto [line, col] = mgr.OffsetToLineCol(span.file_id, span.begin);
+  if (line == 0) {
+    return "";
   }
 
   return std::format("{}:{}:{}", file->path, line, col);

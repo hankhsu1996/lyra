@@ -286,7 +286,10 @@ void EmitRuntimeInit(
     fs_base_dir_str =
         builder.CreateGlobalStringPtr(input.fs_base_dir, "fs_base_dir");
   }
-  builder.CreateCall(context.GetLyraInitRuntime(), {fs_base_dir_str});
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  builder.CreateCall(
+      context.GetLyraInitRuntime(),
+      {fs_base_dir_str, llvm::ConstantInt::get(i32_ty, input.iteration_limit)});
 }
 
 void EmitInitProcesses(
@@ -592,8 +595,8 @@ auto BuildDesignMetadata(
   auto comb_inputs = PrepareCombKernelInputs(
       realization.slot_types, mir_arena, type_arena, layout, dl, ctx,
       force_two_state, num_init);
-  auto loop_site_inputs =
-      PrepareLoopSiteInputs(context, input.diag_ctx, input.source_manager);
+  auto back_edge_site_inputs =
+      PrepareBackEdgeSiteInputs(context, input.diag_ctx, input.source_manager);
 
   auto trace_signal_inputs = PrepareTraceSignalMetaInputs(
       realization.slot_trace_provenance, realization.slot_trace_string_pool,
@@ -603,7 +606,7 @@ auto BuildDesignMetadata(
   realization::DesignMetadataInputs metadata_inputs{
       .slot_meta = std::move(slot_meta_inputs),
       .scheduled_processes = std::move(scheduled_inputs),
-      .loop_sites = std::move(loop_site_inputs),
+      .back_edge_sites = std::move(back_edge_site_inputs),
       .connection_descriptors = std::move(conn_desc_entries),
       .comb_kernels = std::move(comb_inputs),
       .instance_paths = realization.instance_paths,
@@ -724,13 +727,14 @@ auto BuildRuntimeAbi(
   store_field(5, meta_globals.process_meta_pool);
   store_field(
       6, llvm::ConstantInt::get(i32_ty, meta_globals.process_meta_pool_size));
-  store_field(7, meta_globals.loop_site_meta_words);
+  store_field(7, meta_globals.back_edge_site_meta_words);
   store_field(
-      8, llvm::ConstantInt::get(i32_ty, meta_globals.loop_site_meta_count));
-  store_field(9, meta_globals.loop_site_meta_pool);
+      8,
+      llvm::ConstantInt::get(i32_ty, meta_globals.back_edge_site_meta_count));
+  store_field(9, meta_globals.back_edge_site_meta_pool);
   store_field(
-      10,
-      llvm::ConstantInt::get(i32_ty, meta_globals.loop_site_meta_pool_size));
+      10, llvm::ConstantInt::get(
+              i32_ty, meta_globals.back_edge_site_meta_pool_size));
   store_field(11, meta_globals.conn_desc_table);
   store_field(12, llvm::ConstantInt::get(i32_ty, meta_globals.conn_desc_count));
   store_field(13, meta_globals.comb_kernel_words);
@@ -812,6 +816,7 @@ auto BuildEmitDesignMainInput(const lowering::mir_to_llvm::LoweringInput& input)
       .plusargs = input.plusargs,
       .feature_flags = input.feature_flags,
       .signal_trace_path = input.signal_trace_path,
+      .iteration_limit = input.iteration_limit,
   };
 }
 

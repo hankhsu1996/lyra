@@ -66,11 +66,11 @@ struct CombKernelInput {
   bool has_self_edge = false;
 };
 
-// Input facts for a loop site.
-// loop_site_index is the canonical 0-based row index, assigned at extraction
-// time. Serialized in this order.
-struct LoopSiteInput {
-  uint32_t loop_site_index = 0;
+// Input facts for a back-edge site.
+// back_edge_site_index is the canonical 0-based row index, assigned at
+// extraction time. Serialized in this order.
+struct BackEdgeSiteInput {
+  uint32_t back_edge_site_index = 0;
   std::string file;
   uint32_t line = 0;
   uint32_t col = 0;
@@ -89,7 +89,7 @@ struct TraceSignalMetaInput {
 struct DesignMetadataInputs {
   std::vector<SlotMetaInput> slot_meta;
   std::vector<ScheduledProcessInput> scheduled_processes;
-  std::vector<LoopSiteInput> loop_sites;
+  std::vector<BackEdgeSiteInput> back_edge_sites;
   std::vector<ConnectionDescriptorEntry> connection_descriptors;
   std::vector<CombKernelInput> comb_kernels;
   std::vector<std::string> instance_paths;
@@ -101,7 +101,7 @@ struct DesignMetadataInputs {
 struct DesignMetadata {
   std::vector<uint32_t> slot_meta_words;
   MetaWordTable process_meta;
-  MetaWordTable loop_site_meta;
+  MetaWordTable back_edge_site_meta;
   std::vector<ConnectionDescriptorEntry> connection_descriptors;
   std::vector<uint32_t> comb_kernel_words;
   std::vector<std::string> instance_paths;

@@ -19,12 +19,12 @@
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"
-#include "lyra/runtime/loop_budget.hpp"
-#include "lyra/runtime/loop_site_meta.hpp"
+#include "lyra/runtime/iteration_limit.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/signal_dump.hpp"
@@ -251,10 +251,13 @@ extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
   // Entry block is always block 0 (ABI contract with process generation)
   constexpr uint32_t kEntryBlock = 0;
 
-  // Reset suspend record and loop budget before execution.
+  // Reset suspend record and iteration limit before execution.
+  // LyraGetIterationLimit() returns the process-global configured limit.
+  // 0 = unlimited: set counter to UINT32_MAX so the guard never fires.
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
   suspend->tag = lyra::runtime::SuspendTag::kFinished;
-  LyraResetLoopBudget(kDefaultLoopBudget);
+  uint32_t limit = LyraGetIterationLimit();
+  LyraResetIterationLimit(limit > 0 ? limit : UINT32_MAX);
 
   // Pointer-out ABI contract: caller owns the outcome buffer, callee must
   // write exactly one valid ProcessOutcome before returning. Sentinel tag
@@ -459,14 +462,15 @@ extern "C" void LyraRunSimulation(
               abi->process_meta_string_pool_size));
     }
 
-    // Loop site metadata
-    if (abi->loop_site_meta_words != nullptr &&
-        abi->loop_site_meta_word_count > 0) {
-      engine.InitLoopSiteMeta(
-          lyra::runtime::LoopSiteRegistry(
-              abi->loop_site_meta_words, abi->loop_site_meta_word_count,
-              abi->loop_site_meta_string_pool,
-              abi->loop_site_meta_string_pool_size));
+    // Back-edge site metadata
+    if (abi->back_edge_site_meta_words != nullptr &&
+        abi->back_edge_site_meta_word_count > 0) {
+      engine.InitBackEdgeSiteMeta(
+          lyra::runtime::BackEdgeSiteRegistry(
+              abi->back_edge_site_meta_words,
+              abi->back_edge_site_meta_word_count,
+              abi->back_edge_site_meta_string_pool,
+              abi->back_edge_site_meta_string_pool_size));
     }
     // Connection descriptors
     if (abi->conn_descs != nullptr && abi->num_conn_descs > 0) {
@@ -761,7 +765,8 @@ extern "C" auto LyraResolveBaseDir(const char* argv0) -> const char* {
   return resolved.c_str();
 }
 
-extern "C" void LyraInitRuntime(const char* fs_base_dir) {
+extern "C" void LyraInitRuntime(
+    const char* fs_base_dir, uint32_t iteration_limit) {
   std::filesystem::path base(fs_base_dir);
   if (!base.is_absolute()) {
     throw lyra::common::InternalError(
@@ -769,6 +774,7 @@ extern "C" void LyraInitRuntime(const char* fs_base_dir) {
   }
   FsBaseDir() = base.lexically_normal();
   FinalTime() = 0;
+  LyraSetIterationLimit(iteration_limit);
 }
 
 namespace lyra::runtime {

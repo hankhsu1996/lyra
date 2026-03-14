@@ -10,6 +10,7 @@
 #include <slang/text/SourceManager.h>
 
 #include "lyra/common/opt_level.hpp"
+#include "lyra/runtime/iteration_limit.hpp"
 
 namespace lyra::driver {
 
@@ -33,6 +34,7 @@ struct CompilationInput {
   bool trace_activations = false;  // Enable activation trace
   bool time_trace = false;         // LLVM time-trace profiling
   bool two_state = false;          // Force 2-state LLVM representation
+  uint32_t iteration_limit = kDefaultIterationLimit;    // 0 = unlimited
   std::optional<std::filesystem::path> stats_out_path;  // JSON stats output
 };
 

@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "lyra/common/internal_error.hpp"
-#include "lyra/runtime/loop_site_meta.hpp"
+#include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/trace_signal_meta_abi.hpp"
@@ -70,7 +70,7 @@ auto BuildProcessMeta(const std::vector<ScheduledProcessInput>& processes)
   return {.words = std::move(words), .pool = std::move(pool)};
 }
 
-auto BuildLoopSiteMeta(const std::vector<LoopSiteInput>& sites)
+auto BuildBackEdgeSiteMeta(const std::vector<BackEdgeSiteInput>& sites)
     -> MetaWordTable {
   if (sites.empty()) {
     return {};
@@ -88,7 +88,7 @@ auto BuildLoopSiteMeta(const std::vector<LoopSiteInput>& sites)
   };
 
   std::vector<uint32_t> words;
-  words.reserve(sites.size() * runtime::loop_site_meta_abi::kStride);
+  words.reserve(sites.size() * runtime::back_edge_site_abi::kStride);
 
   for (const auto& site : sites) {
     uint32_t file_off = add_string(site.file);
@@ -164,11 +164,11 @@ auto BuildDesignMetadata(const DesignMetadataInputs& input) -> DesignMetadata {
     }
   }
 
-  // Verify loop_site_index values are dense and monotonic.
-  for (uint32_t i = 0; i < input.loop_sites.size(); ++i) {
-    if (input.loop_sites[i].loop_site_index != i) {
+  // Verify back_edge_site_index values are dense and monotonic.
+  for (uint32_t i = 0; i < input.back_edge_sites.size(); ++i) {
+    if (input.back_edge_sites[i].back_edge_site_index != i) {
       throw common::InternalError(
-          "BuildDesignMetadata", "loop_site_index not dense/monotonic");
+          "BuildDesignMetadata", "back_edge_site_index not dense/monotonic");
     }
   }
 
@@ -189,13 +189,14 @@ auto BuildDesignMetadata(const DesignMetadataInputs& input) -> DesignMetadata {
         "process_meta words size not divisible by kStride");
   }
 
-  auto loop_site_meta = BuildLoopSiteMeta(input.loop_sites);
+  auto back_edge_site_meta = BuildBackEdgeSiteMeta(input.back_edge_sites);
 
-  if (!loop_site_meta.words.empty() &&
-      loop_site_meta.words.size() % runtime::loop_site_meta_abi::kStride != 0) {
+  if (!back_edge_site_meta.words.empty() &&
+      back_edge_site_meta.words.size() % runtime::back_edge_site_abi::kStride !=
+          0) {
     throw common::InternalError(
         "BuildDesignMetadata",
-        "loop_site_meta words size not divisible by kStride");
+        "back_edge_site_meta words size not divisible by kStride");
   }
 
   auto trace_signal_meta = BuildTraceSignalMeta(input.trace_signal_meta);
@@ -212,7 +213,7 @@ auto BuildDesignMetadata(const DesignMetadataInputs& input) -> DesignMetadata {
   return DesignMetadata{
       .slot_meta_words = std::move(slot_meta_words),
       .process_meta = std::move(process_meta),
-      .loop_site_meta = std::move(loop_site_meta),
+      .back_edge_site_meta = std::move(back_edge_site_meta),
       .connection_descriptors = input.connection_descriptors,
       .comb_kernel_words = BuildCombKernelWords(input.comb_kernels),
       .instance_paths = input.instance_paths,

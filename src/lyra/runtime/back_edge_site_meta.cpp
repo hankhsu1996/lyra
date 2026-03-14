@@ -1,4 +1,4 @@
-#include "lyra/runtime/loop_site_meta.hpp"
+#include "lyra/runtime/back_edge_site_meta.hpp"
 
 #include <cstdint>
 #include <format>
@@ -8,7 +8,7 @@
 
 namespace lyra::runtime {
 
-LoopSiteRegistry::LoopSiteRegistry(
+BackEdgeSiteRegistry::BackEdgeSiteRegistry(
     const uint32_t* words, uint32_t count, const char* pool,
     uint32_t pool_size) {
   if (pool != nullptr && pool_size > 0) {
@@ -17,16 +17,16 @@ LoopSiteRegistry::LoopSiteRegistry(
 
   sites_.reserve(count);
   for (uint32_t i = 0; i < count; ++i) {
-    auto base = static_cast<size_t>(i) * loop_site_meta_abi::kStride;
+    auto base = static_cast<size_t>(i) * back_edge_site_abi::kStride;
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    uint32_t file_off = words[base + loop_site_meta_abi::kFieldFileStrOff];
+    uint32_t file_off = words[base + back_edge_site_abi::kFieldFileStrOff];
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    uint32_t line = words[base + loop_site_meta_abi::kFieldLine];
+    uint32_t line = words[base + back_edge_site_abi::kFieldLine];
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    uint32_t col = words[base + loop_site_meta_abi::kFieldCol];
+    uint32_t col = words[base + back_edge_site_abi::kFieldCol];
 
     sites_.push_back(
-        LoopSiteMeta{
+        BackEdgeSiteMeta{
             .loc =
                 SvLoc{
                     .file_str_off = file_off,
@@ -37,34 +37,35 @@ LoopSiteRegistry::LoopSiteRegistry(
   }
 }
 
-auto LoopSiteRegistry::Size() const -> uint32_t {
+auto BackEdgeSiteRegistry::Size() const -> uint32_t {
   return static_cast<uint32_t>(sites_.size());
 }
 
-auto LoopSiteRegistry::IsPopulated() const -> bool {
+auto BackEdgeSiteRegistry::IsPopulated() const -> bool {
   return !sites_.empty();
 }
 
-auto LoopSiteRegistry::Get(uint32_t site_id) const -> const LoopSiteMeta& {
+auto BackEdgeSiteRegistry::Get(uint32_t site_id) const
+    -> const BackEdgeSiteMeta& {
   if (site_id >= sites_.size()) {
     throw common::InternalError(
-        "LoopSiteRegistry::Get",
+        "BackEdgeSiteRegistry::Get",
         std::format(
             "site_id {} out of range (size {})", site_id, sites_.size()));
   }
   return sites_[site_id];
 }
 
-auto LoopSiteRegistry::PoolString(uint32_t offset) const -> const char* {
+auto BackEdgeSiteRegistry::PoolString(uint32_t offset) const -> const char* {
   if (string_pool_.empty() || offset >= string_pool_.size()) {
     return "";
   }
   return string_pool_.data() + offset;  // NOLINT
 }
 
-auto LoopSiteRegistry::Format(uint32_t site_id) const -> std::string {
+auto BackEdgeSiteRegistry::Format(uint32_t site_id) const -> std::string {
   if (site_id >= sites_.size()) {
-    return std::format("<loop site {}>", site_id);
+    return std::format("<back-edge site {}>", site_id);
   }
 
   const auto& site = sites_[site_id];

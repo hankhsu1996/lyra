@@ -124,7 +124,7 @@ What Phase 1 does NOT cover:
 - Field paths, constant indices, constant slices
 - The `Covers()` relation for sub-path coverage
 
-Covers the pipeline fixture pattern (simple variable write-then-read). Result: 737M -> 634M Ir (-14%) on pipeline benchmark.
+Covers the clock-pipeline fixture pattern (simple variable write-then-read). Result: 737M -> 634M Ir (-14%) on clock-pipeline benchmark.
 
 ### Phase 2: projections + covers relation
 

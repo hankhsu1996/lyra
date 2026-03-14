@@ -1,0 +1,23 @@
+[benchmark]
+name = "unpacked-array-write"
+family = "storage"
+focus = "runtime"
+primary = "unpacked array write throughput"
+secondary = ["loop overhead", "index computation"]
+regression_means = "storage/indexing/store path regressed"
+
+[tiers]
+pr = true
+nightly = true
+
+[params.defaults]
+NUM_ITERS = 4096
+
+[params.pr]
+NUM_ITERS = 512
+
+[params.nightly]
+NUM_ITERS = 4096
+
+[counters]
+relevant = []
