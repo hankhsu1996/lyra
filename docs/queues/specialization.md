@@ -19,7 +19,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
   - [x] M2c-2a -- Artifact inventory with generate availability paths
   - [x] M2c-2b -- Definition-owned repertoire descriptor (inspection scaffold + declaration payload)
   - [x] M2c-3 -- Specialization fingerprint from definition-scoped type store (v1 removed)
-- [x] B6 -- HIR ownership split (`hir::ModuleBody` per spec group, `hir::Module` instance record, shared member discovery)
+- [x] B6 -- HIR ownership split (`hir::ModuleBody` per spec group, `hir::Module` instance record, ownership-shaped lowering inputs)
 - [ ] m1 -- DesignState struct is monolithic
 - [x] m2 -- Instance paths deferred to runtime (LyraPrintModulePath + instance_id)
 - [ ] m3 -- ParamTransmissionTable uses raw ParameterSymbol\* as key (should be group-scoped)
@@ -176,7 +176,7 @@ Deleted (observer program model, PR #548):
 
 `hir::ModuleBody` is specialization-owned shared behavioral HIR (processes, functions, tasks). `hir::Module` is an instance/realization record (symbol, per-instance SymbolIds, param values, body_id reference). `hir::Design.module_bodies` owns all shared bodies.
 
-AST->HIR lowering uses a three-phase structure: (1) shared member discovery via `CollectScopeMembers` once per instance, (2) `LowerModuleBody` once per specialization group consuming pre-collected members (lookup-only for module-level symbols), (3) `CollectModuleInstance` per instance consuming pre-collected members (lookup-only, born-complete records). HIR->MIR: `LowerModule` takes `const hir::ModuleBody&` for behavioral content, `CollectBodyLocalDecls` takes `hir::Module&` for per-instance registration SymbolIds.
+AST->HIR lowering uses ownership-shaped prepared inputs. `PrepareModuleLoweringInputs` does one structural walk per instance, then immediately partitions into `BodyLoweringInput` (definition-scoped behavioral content + prepared var_init tuples) and `InstanceRegistrationInput` (per-instance registration pointers). `CollectedMembers` is internal to preparation only. `LowerModuleBody` consumes `BodyLoweringInput` once per specialization group. `CollectModuleInstance` consumes `InstanceRegistrationInput` per instance (lookup-only, born-complete records). HIR->MIR: `LowerModule` takes `const hir::ModuleBody&` for behavioral content, `CollectBodyLocalDecls` takes `hir::Module&` for per-instance registration SymbolIds.
 
 Variables/nets/param_slots remain on `hir::Module` as per-instance registration artifacts (not body-owned declarations). This is the current justified ownership boundary: these SymbolIds are consumed by design-global place allocation (`CollectDesignDeclarations`) and port binding compilation, both of which are instance-scoped consumers. If any subset is later identified as specialization-shared semantic ownership, it should move into `hir::ModuleBody`.
 
