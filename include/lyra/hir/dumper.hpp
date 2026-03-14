@@ -19,6 +19,7 @@ class Dumper {
 
   void Dump(const Design& design);
   void Dump(const Module& module);
+  void Dump(const ModuleBody& body);
   void Dump(const Package& package);
   void Dump(ProcessId id);
   void Dump(FunctionId id);
@@ -41,6 +42,7 @@ class Dumper {
   const SymbolTable* symbols_;
   std::ostream* out_;
   int indent_ = 0;
+  const Design* current_design_ = nullptr;
 };
 
 }  // namespace lyra::hir

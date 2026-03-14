@@ -23,6 +23,7 @@
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
+#include "lyra/hir/module_body.hpp"
 #include "lyra/hir/operator.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/hir/routine.hpp"
@@ -90,6 +91,7 @@ auto Dumper::ConstantString(ConstId id) const -> std::string {
 }
 
 void Dumper::Dump(const Design& design) {
+  current_design_ = &design;
   *out_ << "Design {\n";
   Indent();
   for (const auto& element : design.elements) {
@@ -97,6 +99,7 @@ void Dumper::Dump(const Design& design) {
   }
   Dedent();
   *out_ << "}\n";
+  current_design_ = nullptr;
 }
 
 void Dumper::Dump(const Module& module) {
@@ -104,19 +107,38 @@ void Dumper::Dump(const Module& module) {
   *out_ << std::format("Module {} {{\n", SymbolName(module.symbol));
   Indent();
 
-  for (ProcessId id : module.processes) {
-    Dump(id);
+  if (current_design_ == nullptr) {
+    throw common::InternalError(
+        "Dumper::Dump(Module)", "missing design context for body resolution");
   }
-  for (FunctionId id : module.functions) {
-    Dump(id);
+  if (!module.body_id) {
+    throw common::InternalError(
+        "Dumper::Dump(Module)", "invalid body_id on module instance record");
   }
-  for (TaskId id : module.tasks) {
-    Dump(id);
+  if (module.body_id.value >= current_design_->module_bodies.size()) {
+    throw common::InternalError(
+        "Dumper::Dump(Module)",
+        std::format(
+            "body_id {} out of range (module_bodies size {})",
+            module.body_id.value, current_design_->module_bodies.size()));
   }
+  Dump(current_design_->module_bodies[module.body_id.value]);
 
   Dedent();
   PrintIndent();
   *out_ << "}\n";
+}
+
+void Dumper::Dump(const ModuleBody& body) {
+  for (ProcessId id : body.processes) {
+    Dump(id);
+  }
+  for (FunctionId id : body.functions) {
+    Dump(id);
+  }
+  for (TaskId id : body.tasks) {
+    Dump(id);
+  }
 }
 
 void Dumper::Dump(const Package& package) {

@@ -500,11 +500,45 @@ auto LowerDesign(
     elements.emplace_back(LowerPackage(*pkg, registrar, ctx));
   }
 
-  // Phase 1: Lower module bodies.
-  // Port bindings are now handled at HIR->MIR level, not here.
+  // Pre-collect module members for all instances (shared structural discovery).
+  // Per-instance because slang creates distinct InstanceBodySymbol objects per
+  // instance, so member pointers are per-instance even within the same
+  // specialization group. Body lowering consumes the representative's pointers
+  // for expression lowering; instance collection consumes each instance's own
+  // pointers for registration Lookup.
+  std::vector<CollectedMembers> instance_members(all_instances.size());
   for (size_t i = 0; i < all_instances.size(); ++i) {
-    auto mod = LowerModule(*all_instances[i], registrar, ctx);
-    mod.module_def_id = spec_map.spec_id_by_instance[i].def_id;
+    ScopeGuard scope_guard(registrar, ScopeKind::kModule);
+    CollectScopeMembers(all_instances[i]->body, registrar, instance_members[i]);
+  }
+
+  // Phase 1a: Lower one shared body per specialization group.
+  // The representative instance is needed as an input vehicle for timescale
+  // extraction (ModuleLowerer) and source span generation, not for identity.
+  std::vector<hir::ModuleBody> module_bodies;
+  module_bodies.reserve(spec_map.groups.size());
+
+  // Flat body_id assignment: group iteration order determines body_id,
+  // then broadcast to all member instances for Phase 1b lookup.
+  std::vector<hir::ModuleBodyId> body_id_by_instance(all_instances.size());
+
+  for (const auto& group : spec_map.groups) {
+    uint32_t rep_idx = group.instance_indices[0];
+    auto body = LowerModuleBody(
+        *all_instances[rep_idx], instance_members[rep_idx], registrar, ctx);
+    hir::ModuleBodyId body_id{static_cast<uint32_t>(module_bodies.size())};
+    module_bodies.push_back(std::move(body));
+    for (uint32_t idx : group.instance_indices) {
+      body_id_by_instance[idx] = body_id;
+    }
+  }
+
+  // Phase 1b: Collect per-instance data (lightweight instance records).
+  // Each instance record is born complete with identity fields.
+  for (size_t i = 0; i < all_instances.size(); ++i) {
+    auto mod = CollectModuleInstance(
+        *all_instances[i], instance_members[i], registrar, ctx,
+        spec_map.spec_id_by_instance[i].def_id, body_id_by_instance[i]);
     elements.emplace_back(std::move(mod));
   }
 
@@ -521,7 +555,11 @@ auto LowerDesign(
   }
 
   return DesignLoweringResult{
-      .design = hir::Design{.elements = std::move(elements)},
+      .design =
+          hir::Design{
+              .elements = std::move(elements),
+              .module_bodies = std::move(module_bodies),
+          },
       .binding_plan = std::move(binding_plan),
       .specialization_map = std::move(spec_map),
       .instance_table = std::move(instance_table),

@@ -11,18 +11,17 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] C1-C3 -- Local storage (`CollectBodyLocalDecls`, `mir::InstancePlacement`, alias resolution eliminated)
 - [x] D1-D4 -- Realization extraction (bindings, metadata, `EmitDesignMain`, `InstanceConstBlock`)
 - [x] E1-E2 -- Per-spec codegen (`CompileModuleSpecSession`, variant/template-dedup deleted)
-- [x] E3 partial -- `CodegenSession` has no `const mir::Design*`
+- [x] E3 -- Backend API narrowing (no `mir::Design` in codegen, layout, realization paths)
+- [x] E4 -- Delete B5 compatibility adapters, representative-instance scaffolding, observer program model
 - [x] M2a -- Storage assignment derived from within-group variance (ParamTransmissionTable)
 - [x] M2b partial -- Declaration-based grouping, param-role deleted.
 - [x] M2c partial -- Compile-owned discriminator (current pipeline complete; process body identity deferred to constructor-repertoire model)
   - [x] M2c-2a -- Artifact inventory with generate availability paths
   - [x] M2c-2b -- Definition-owned repertoire descriptor (inspection scaffold + declaration payload)
   - [x] M2c-3 -- Specialization fingerprint from definition-scoped type store (v1 removed)
-- [ ] E3 remaining -- `LoweringInput` still holds `const mir::Design*` (orchestration-level, acceptable)
-- [ ] E4 -- Delete B5 compatibility adapters, representative-instance scaffolding
-- [ ] B6 -- HIR ownership split (depends on post-M2 grouping contract)
+- [x] B6 -- HIR ownership split (`hir::ModuleBody` per spec group, `hir::Module` instance record, shared member discovery)
 - [ ] m1 -- DesignState struct is monolithic
-- [ ] m2 -- Instance paths baked into codegen
+- [x] m2 -- Instance paths deferred to runtime (LyraPrintModulePath + instance_id)
 - [ ] m3 -- ParamTransmissionTable uses raw ParameterSymbol\* as key (should be group-scoped)
 - [ ] F1 -- Parallel specialization compilation
 - [ ] F2 -- Specialization caching
@@ -147,8 +146,6 @@ Files: `specialization.cpp`, `specialization.hpp`. Tests: `specialization_groupi
 
 ## E3 remaining: Backend API narrowing
 
-Done:
-
 - `CodegenSession` has no `const mir::Design*`
 - `BuildLayout()` takes narrow `LayoutModulePlan` spans, not `mir::Design`
 - `BuildSlotInfo()` takes `span<SlotDesc>`, not `mir::Design`
@@ -156,9 +153,7 @@ Done:
 - Wrapper generation uses pre-extracted `module_base_slots`, not `design.placement`
 - `Context` holds `const Layout&` (pure LLVM artifact, no `mir::Design` reference)
 
-Remaining:
-
-- `LoweringInput` still holds `const mir::Design*` -- this is the orchestration entry point and is acceptable. `CompileDesignProcesses` extracts narrow inputs from design during setup; no per-spec compilation, wrapper generation, or realization-building path requires `mir::Design` directly. Orchestration-level reads (element iteration, init-process collection) remain in `CompileDesignProcesses` by design.
+`LoweringInput` holds `const mir::Design*` by design -- it is the orchestration entry point. `CompileDesignProcesses` extracts narrow inputs from design during setup; no per-spec compilation, codegen, or realization path reads `mir::Design` directly.
 
 ## E4: Delete compatibility adapters
 
@@ -170,16 +165,20 @@ Deleted (core contract tightening):
 - `%m` lowering now requires `kSpecializationLocal` with dynamic instance identity
 - kModuleSlot + kDesignGlobal identity mapping removed from `ResolveDesignGlobalSlotId`, `EmitSignalId`, `GetSlotRootPointer`, `GetSignalSlotPointer` -- replaced with `InternalError` (architecture violation)
 
-Remaining (observer/callback redesign):
+Deleted (observer program model, PR #548):
 
-- Monitor check/setup/strobe thunks still use design-global addressing in thunk bodies
-- Needs real compiled-observer object model with explicit per-instance captured state
+- Observer programs (strobe, monitor-setup, monitor-check) use uniform ABI with `ObserverContext*`
+- `EnterObserverSpecializationLocalContext()` installs `kSpecializationLocal` addressing for module-scoped observers
+- Design-global rebasing paths (`kModuleSlot + kDesignGlobal`) replaced with `InternalError`
+- Thunk terminology replaced: `ThunkKind` -> `RuntimeProgramKind`, thunk fields -> program fields
 
 ## B6: HIR ownership split
 
-Same body/instance split at HIR level. `hir::ModuleBody` owned by specialization, `hir::Module` becomes instance record. AST->HIR lowering produces one body per specialization group.
+`hir::ModuleBody` is specialization-owned shared behavioral HIR (processes, functions, tasks). `hir::Module` is an instance/realization record (symbol, per-instance SymbolIds, param values, body_id reference). `hir::Design.module_bodies` owns all shared bodies.
 
-Depends on the post-M2 grouping contract: the specialization groups that define which instances share a body are now defined by compile-owned body equivalence.
+AST->HIR lowering uses a three-phase structure: (1) shared member discovery via `CollectScopeMembers` once per instance, (2) `LowerModuleBody` once per specialization group consuming pre-collected members (lookup-only for module-level symbols), (3) `CollectModuleInstance` per instance consuming pre-collected members (lookup-only, born-complete records). HIR->MIR: `LowerModule` takes `const hir::ModuleBody&` for behavioral content, `CollectBodyLocalDecls` takes `hir::Module&` for per-instance registration SymbolIds.
+
+Variables/nets/param_slots remain on `hir::Module` as per-instance registration artifacts (not body-owned declarations). This is the current justified ownership boundary: these SymbolIds are consumed by design-global place allocation (`CollectDesignDeclarations`) and port binding compilation, both of which are instance-scoped consumers. If any subset is later identified as specialization-shared semantic ownership, it should move into `hir::ModuleBody`.
 
 ## CI / Policy Gates
 

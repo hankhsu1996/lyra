@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace lyra::common {
@@ -27,6 +28,14 @@ struct ModuleSpecId {
 
   auto operator==(const ModuleSpecId&) const -> bool = default;
   auto operator<=>(const ModuleSpecId&) const = default;
+};
+
+struct ModuleSpecIdHash {
+  auto operator()(const ModuleSpecId& id) const noexcept -> size_t {
+    auto h1 = std::hash<uint32_t>{}(id.def_id.value);
+    auto h2 = std::hash<uint64_t>{}(id.fingerprint.value);
+    return h1 ^ (h2 << 1);
+  }
 };
 
 struct SpecializationGroup {
