@@ -125,6 +125,11 @@ class UpdateSet {
   // Monotonically increasing epoch, incremented at each ClearDelta().
   // Used with DeltaDirtySlots().size() as a watermark to skip redundant
   // snapshot refresh scans within the same delta.
+  //
+  // Invariant: within a delta, delta_dirty_ is append-only (deduped by
+  // delta_seen_). Existing entries are never removed or reordered until
+  // ClearDelta(). This makes (epoch, size) a valid watermark: if both
+  // match, no new dirty slots have appeared since the watermark was set.
   [[nodiscard]] auto DeltaEpoch() const -> uint32_t {
     return delta_epoch_;
   }
