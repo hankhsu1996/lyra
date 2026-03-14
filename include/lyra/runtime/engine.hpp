@@ -300,11 +300,11 @@ class Engine {
   // design - both identify the same design slot. Callers may pass either type.
   void MarkSlotDirty(uint32_t slot_id) {
     if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
-    update_set_.MarkSlotDirty(slot_id);
+    bool first_dirty = update_set_.MarkSlotDirty(slot_id);
     if (comb_write_capture_ != nullptr) {
       comb_write_capture_->push_back(slot_id);
     }
-    if (activation_ctx_.active) {
+    if (first_dirty && activation_ctx_.active) {
       NoteActivationDirty(slot_id);
     }
   }
