@@ -9,6 +9,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/string.hpp"
+#include "lyra/runtime/trace_selection.hpp"
 #include "lyra/runtime/update_set.hpp"
 #include "lyra/trace/trace_event.hpp"
 #include "lyra/trace/trace_manager.hpp"
@@ -107,10 +108,12 @@ auto SnapshotSlotValue(
 
 void FlushDirtySlotsToTrace(
     trace::TraceManager& trace, const SlotMetaRegistry& registry,
-    const void* design_state_base, const UpdateSet& updates) {
+    const void* design_state_base, const UpdateSet& updates,
+    const TraceSelectionRegistry& selection) {
   std::span<const uint8_t> design_state(
       static_cast<const uint8_t*>(design_state_base), registry.MaxExtent());
   for (uint32_t slot_id : updates.DirtySlots()) {
+    if (!selection.IsSelected(slot_id)) continue;
     const auto& meta = registry.Get(slot_id);
     const auto* slot_base =
         design_state.subspan(meta.base_off, meta.total_bytes).data();

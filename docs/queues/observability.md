@@ -75,7 +75,8 @@ The core runtime change bus already exists:
 ```
 Runtime core            -- identify dirty traced slots, snapshot, emit
 Trace metadata          -- signal identity, names, widths, formatting class
-TraceManager            -- sink fanout, selection/filtering, dispatch
+Trace selection         -- per-slot enable/disable (runtime-owned, not in TraceManager)
+TraceManager            -- sink fanout, dispatch
 Sinks                   -- text formatting, VCD serialization, sink-local state
 ```
 
@@ -84,13 +85,14 @@ Key architectural rules:
 - Runtime emits new values only. No engine-owned old-value storage.
 - Sinks own presentation-specific state (e.g., last-emitted value for `old -> new` display).
 - Trace metadata is separate from `SlotMetaRegistry` (storage layout vs presentation identity).
-- No core event retention in `TraceManager`. Retaining sinks are add-on test/debug tooling.
+- Selection is runtime-owned (`Engine`), not dispatcher-owned (`TraceManager`). Producer-side filtering happens before snapshotting.
+- `TraceManager` is a streaming dispatcher only -- no selection policy, no event retention. Retaining sinks are add-on test/debug tooling.
 
 #### Missing pieces
 
-1. **~~Streaming fanout~~** -- Done. `TraceManager` is now a streaming dispatcher. Core event retention removed. Summary is a built-in `SummaryTraceSink`. Retaining sinks can be added later via `AddSink` if needed for test/debug tooling.
-2. **Trace signal metadata** -- no slot_id to hierarchical signal name mapping exists in the runtime. Both text and VCD sinks need `TraceSignalInfo` (name, bit width, trace kind).
-3. **Trace selection/scoping** -- currently all-or-nothing. Need per-signal enable with path to `$dumpvars(level, scope)`.
+1. **~~Streaming fanout~~** -- Done (Phase 1).
+2. **~~Trace signal metadata~~** -- Done (Phase 2). `TraceSignalMetaRegistry` provides slot-to-name/width/kind mapping, built at compile time.
+3. **~~Trace selection/scoping~~** -- Done (Phase 3). `TraceSelectionRegistry` provides dense per-slot enable/disable, owned by `Engine`. Producer-side filtering in `FlushDirtySlotsToTrace` skips deselected slots before snapshotting. Default is all-selected. Future `$dumpvars(level, scope)` compiles down to selection mutations.
 4. **Output sinks** -- no text formatter, no VCD writer.
 
 ### Implementation phases
@@ -101,19 +103,13 @@ Priority order reflects dependency chain, not user-facing priority.
 
 `TraceManager` is a streaming fanout dispatcher. Core event retention removed. A built-in `SummaryTraceSink` provides `--trace` summary output. External sinks added via `AddSink()` share the same dispatch path. Producer path (`FlushDirtySlotsToTrace`) unchanged.
 
-#### Phase 2: Trace signal metadata
+#### Phase 2: Trace signal metadata (done)
 
-Add a dedicated trace metadata table built at compile/lowering time:
+`TraceSignalMetaRegistry` provides a dense, immutable slot-to-signal-identity table built at compile time. Each entry has hierarchical name, bit width, and trace kind. Separate from `SlotMetaRegistry` (which owns byte layout for the scheduler). Engine owns the registry and passes a non-owning pointer to `TraceManager` for sink formatting context.
 
-- `slot_id` to hierarchical signal name
-- bit width / printable width
-- trace kind (wire, reg, string, etc.)
+#### Phase 3: Trace selection/filtering (done)
 
-Separate from `SlotMetaRegistry` (which owns byte layout for the scheduler). This is the hardest design task -- getting signal identity ownership clean makes everything else straightforward.
-
-#### Phase 3: Trace selection/filtering
-
-Add per-signal trace enable. Start with CLI-wide "trace everything" but infrastructure supports per-signal enablement from day one. Producer only snapshots/emits selected signals. Gives a clean path to `$dumpvars(level, scope)` later.
+`TraceSelectionRegistry` provides dense per-slot enable/disable, owned by `Engine` (not `TraceManager`). Producer-side filtering in `FlushDirtySlotsToTrace` consults the selection registry before snapshotting, so deselected slots incur zero snapshot cost. Default is all-selected when trace metadata is present. `TraceManager` remains a pure dispatcher with no selection policy. Future `$dumpvars(level, scope)` and CLI scoping compile down to `TraceSelectionRegistry` mutations without changing the runtime core.
 
 #### Phase 4: O3 -- Text change trace sink
 

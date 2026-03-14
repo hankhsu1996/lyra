@@ -59,10 +59,12 @@ auto TraceManager::SnapshotString(const void* str_handle) -> TraceValue {
   if (str_handle == nullptr) {
     return std::string{};
   }
-  std::string_view view = LyraStringAsView(
-      const_cast<void*>(
-          str_handle));  // NOLINT(cppcoreguidelines-pro-type-const-cast)
+  std::string_view view = LyraStringAsView(str_handle);
   return std::string(view);
+}
+
+void TraceManager::SetSignalMeta(const runtime::TraceSignalMetaRegistry* meta) {
+  signal_meta_ = meta;
 }
 
 void TraceManager::PrintSummary() const {
