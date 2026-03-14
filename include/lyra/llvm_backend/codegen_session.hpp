@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -180,6 +181,16 @@ auto CompileDesignProcesses(const LoweringInput& input)
 auto CompileModuleSpecSession(
     Context& context, const mir::Arena& arena,
     const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec>;
+
+// Extract design-derived realization data from narrow inputs.
+// Setup helper: called from CompileDesignProcesses during orchestration,
+// not part of per-spec compilation. Declared here because RealizationData
+// (its return type) is defined in this header.
+auto ExtractRealizationData(
+    const mir::PlacementMap& placement, std::span<const mir::SlotDesc> slots,
+    const mir::InstanceTable& instance_table,
+    std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
+    std::span<const char> slot_trace_string_pool) -> RealizationData;
 
 // Backend phase: extract LLVM ownership from a completed session.
 auto FinalizeModule(CodegenSession session) -> LoweringResult;

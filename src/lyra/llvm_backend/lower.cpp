@@ -398,6 +398,64 @@ auto CompileModuleSpecSession(
   return product;
 }
 
+auto ExtractRealizationData(
+    const mir::PlacementMap& placement, std::span<const mir::SlotDesc> slots,
+    const mir::InstanceTable& instance_table,
+    std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
+    std::span<const char> slot_trace_string_pool) -> RealizationData {
+  RealizationData realization;
+
+  if (placement.instances.size() != placement.const_blocks.size()) {
+    throw common::InternalError(
+        "ExtractRealizationData",
+        std::format(
+            "placement instances/const_blocks size mismatch: {} vs {}",
+            placement.instances.size(), placement.const_blocks.size()));
+  }
+  realization.param_inits.reserve(placement.const_blocks.size());
+  for (size_t i = 0; i < placement.const_blocks.size(); ++i) {
+    const auto& inst = placement.instances[i];
+    const auto& const_block = placement.const_blocks[i];
+    auto& resolved = realization.param_inits.emplace_back();
+    resolved.reserve(const_block.slot_inits.size());
+    for (const auto& init : const_block.slot_inits) {
+      uint32_t abs_slot = inst.design_state_base_slot + init.body_local_slot;
+      if (abs_slot >= slots.size()) {
+        throw common::InternalError(
+            "ExtractRealizationData",
+            std::format(
+                "param init abs_slot {} out of range (slots.size() = {})",
+                abs_slot, slots.size()));
+      }
+      resolved.push_back(
+          ResolvedParamInit{
+              .slot_id = abs_slot,
+              .type_id = slots[abs_slot].type,
+              .value = init.value,
+          });
+    }
+  }
+
+  realization.slot_types.reserve(slots.size());
+  realization.slot_kinds.reserve(slots.size());
+  for (const auto& slot : slots) {
+    realization.slot_types.push_back(slot.type);
+    realization.slot_kinds.push_back(slot.kind);
+  }
+
+  realization.instance_paths.reserve(instance_table.entries.size());
+  for (const auto& entry : instance_table.entries) {
+    realization.instance_paths.push_back(entry.full_path);
+  }
+
+  realization.slot_trace_provenance.assign(
+      slot_trace_provenance.begin(), slot_trace_provenance.end());
+  realization.slot_trace_string_pool.assign(
+      slot_trace_string_pool.begin(), slot_trace_string_pool.end());
+
+  return realization;
+}
+
 auto CompileDesignProcesses(const LoweringInput& input)
     -> Result<CodegenSession> {
   // Phase 0: Backend/session setup
@@ -408,15 +466,53 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   bool force_two_state = input.force_two_state;
 
-  auto slot_info = BuildSlotInfoFromDesign(
-      *input.design, *input.type_arena, force_two_state);
+  auto slot_info =
+      BuildSlotInfo(input.design->slots, *input.type_arena, force_two_state);
 
   auto design_layout = BuildDesignLayout(
       slot_info, *input.type_arena, *llvm_ctx, module->getDataLayout(),
       force_two_state);
 
+  // Extract narrow layout-planning inputs from design.
+  // module_plans and module_base_slots are produced once and consumed by
+  // BuildLayout and wrapper generation respectively.
+  //
+  // Contract: module_plans[i] corresponds to the i-th Module element in
+  // design.elements (skipping non-Module variants). This ordering matches
+  // placement.instances[i], which is how ModuleIndex is assigned during
+  // MIR construction. BuildLayout and wrapper generation depend on this.
+  std::vector<LayoutModulePlan> module_plans;
+  std::vector<uint32_t> module_base_slots;
+  {
+    uint32_t module_idx = 0;
+    for (const auto& element : input.design->elements) {
+      const auto* mod = std::get_if<mir::Module>(&element);
+      if (mod == nullptr) continue;
+      const auto& body = input.design->module_bodies.at(mod->body_id.value);
+      const auto& placement =
+          mir::GetInstancePlacement(input.design->placement, module_idx);
+      module_plans.push_back(
+          LayoutModulePlan{
+              .body_processes = body.processes,
+              .design_state_base_slot = placement.design_state_base_slot,
+              .slot_count = placement.slot_count,
+          });
+      module_base_slots.push_back(placement.design_state_base_slot);
+      ++module_idx;
+    }
+    if (module_idx != input.design->placement.instances.size()) {
+      throw common::InternalError(
+          "CompileDesignProcesses",
+          std::format(
+              "module count {} from elements does not match placement "
+              "instance count {}",
+              module_idx, input.design->placement.instances.size()));
+    }
+  }
+
   auto layout = std::make_unique<Layout>(BuildLayout(
-      *input.design, *input.mir_arena, *input.type_arena,
+      input.design->init_processes, input.design->connection_processes,
+      module_plans, *input.mir_arena, *input.type_arena,
       std::move(design_layout), *llvm_ctx, module->getDataLayout(),
       force_two_state));
 
@@ -628,8 +724,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
     uint64_t base_byte_offset =
         layout->GetInstanceBaseByteOffset(bp.module_index);
-    uint32_t base_slot_id = mir::GetInstanceBaseSlot(
-        input.design->placement, bp.module_index.value);
+    if (bp.module_index.value >= module_base_slots.size()) {
+      throw common::InternalError(
+          "CompileDesignProcesses",
+          std::format(
+              "module_index {} out of range for module_base_slots (size={})",
+              bp.module_index.value, module_base_slots.size()));
+    }
+    uint32_t base_slot_id = module_base_slots[bp.module_index.value];
 
     // Look up the instance's unstable offset global (nullptr if all stable).
     auto unstable_it = instance_unstable_globals.find(bp.module_index.value);
@@ -643,56 +745,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
     process_funcs.push_back(wrapper);
   }
 
-  // Build realization data: extract design-derived facts needed by assembly.
-  RealizationData realization;
-
-  const auto& placement = input.design->placement;
-  if (placement.instances.size() != placement.const_blocks.size()) {
-    throw common::InternalError(
-        "CompileDesignProcesses",
-        std::format(
-            "placement instances/const_blocks size mismatch: {} vs {}",
-            placement.instances.size(), placement.const_blocks.size()));
-  }
-  realization.param_inits.reserve(placement.const_blocks.size());
-  for (size_t i = 0; i < placement.const_blocks.size(); ++i) {
-    const auto& inst = placement.instances[i];
-    const auto& const_block = placement.const_blocks[i];
-    auto& resolved = realization.param_inits.emplace_back();
-    resolved.reserve(const_block.slot_inits.size());
-    for (const auto& init : const_block.slot_inits) {
-      uint32_t abs_slot = inst.design_state_base_slot + init.body_local_slot;
-      if (abs_slot >= input.design->slots.size()) {
-        throw common::InternalError(
-            "CompileDesignProcesses",
-            std::format(
-                "param init abs_slot {} out of range (slots.size() = {})",
-                abs_slot, input.design->slots.size()));
-      }
-      resolved.push_back(
-          ResolvedParamInit{
-              .slot_id = abs_slot,
-              .type_id = input.design->slots[abs_slot].type,
-              .value = init.value,
-          });
-    }
-  }
-
-  realization.slot_types.reserve(input.design->slots.size());
-  realization.slot_kinds.reserve(input.design->slots.size());
-  for (const auto& slot : input.design->slots) {
-    realization.slot_types.push_back(slot.type);
-    realization.slot_kinds.push_back(slot.kind);
-  }
-
-  realization.instance_paths.reserve(
-      input.design->instance_table.entries.size());
-  for (const auto& entry : input.design->instance_table.entries) {
-    realization.instance_paths.push_back(entry.full_path);
-  }
-
-  realization.slot_trace_provenance = input.design->slot_trace_provenance;
-  realization.slot_trace_string_pool = input.design->slot_trace_string_pool;
+  auto realization = ExtractRealizationData(
+      input.design->placement, input.design->slots,
+      input.design->instance_table, input.design->slot_trace_provenance,
+      input.design->slot_trace_string_pool);
 
   return CodegenSession{
       .layout = std::move(layout),

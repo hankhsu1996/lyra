@@ -8,7 +8,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <llvm/IR/DataLayout.h>
@@ -26,7 +25,6 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/rhs.hpp"
@@ -1242,14 +1240,14 @@ auto IsScalarPatchable(
   return width <= 64;
 }
 
-auto BuildSlotInfoFromDesign(
-    const mir::Design& design, const TypeArena& types, bool force_two_state)
-    -> std::vector<SlotInfo> {
+auto BuildSlotInfo(
+    std::span<const mir::SlotDesc> slots_in, const TypeArena& types,
+    bool force_two_state) -> std::vector<SlotInfo> {
   std::vector<SlotInfo> slots;
-  slots.reserve(design.slots.size());
+  slots.reserve(slots_in.size());
 
-  for (size_t i = 0; i < design.slots.size(); ++i) {
-    TypeId type_id = design.slots[i].type;
+  for (size_t i = 0; i < slots_in.size(); ++i) {
+    TypeId type_id = slots_in[i].type;
     const Type& type = types[type_id];
 
     SlotTypeInfo type_info{};
@@ -1316,8 +1314,10 @@ auto Layout::GetInstanceRelByteOffsets(ModuleIndex idx) const
 }
 
 auto BuildLayout(
-    const mir::Design& design, const mir::Arena& arena, const TypeArena& types,
-    DesignLayout design_layout, llvm::LLVMContext& ctx,
+    std::span<const mir::ProcessId> init_processes,
+    std::span<const mir::ProcessId> connection_processes,
+    std::span<const LayoutModulePlan> module_plans, const mir::Arena& arena,
+    const TypeArena& types, DesignLayout design_layout, llvm::LLVMContext& ctx,
     const llvm::DataLayout& dl, bool force_two_state) -> Layout {
   Layout layout;
 
@@ -1329,16 +1329,14 @@ auto BuildLayout(
   layout.design = std::move(design_layout);
 
   // Phase 1: Collect init processes (package variable initialization)
-  // These run synchronously before scheduling, in design.init_processes order
-  for (mir::ProcessId proc_id : design.init_processes) {
+  for (mir::ProcessId proc_id : init_processes) {
     layout.scheduled_processes.push_back({proc_id, ModuleIndex{}});
   }
   layout.num_init_processes = layout.scheduled_processes.size();
 
   // Phase 2: Collect connection processes (scheduled, always_comb semantics)
-  // These implement port drive bindings (kDriveParentToChild,
-  // kDriveChildToParent). Kernelizable ones are separated out.
-  for (mir::ProcessId proc_id : design.connection_processes) {
+  // Kernelizable ones are separated out.
+  for (mir::ProcessId proc_id : connection_processes) {
     const auto& process = arena[proc_id];
     auto entry = TryKernelizeConnection(process, arena);
     if (entry) {
@@ -1351,31 +1349,18 @@ auto BuildLayout(
 
   // Phase 3: Collect module processes (run through scheduler)
   // Also detect pure combinational processes for comb kernel batching.
-  // Each instance gets its own entries even when sharing a body.
-  uint32_t module_idx_counter = 0;
-  for (const auto& element : design.elements) {
-    if (!std::holds_alternative<mir::Module>(element)) {
-      continue;
-    }
-    uint32_t current_module_idx = module_idx_counter++;
-    const auto& mir_module = std::get<mir::Module>(element);
-    const auto& body = mir::GetModuleBody(design, mir_module);
-    for (mir::ProcessId proc_id : body.processes) {
+  for (uint32_t mi = 0; mi < module_plans.size(); ++mi) {
+    const auto& plan = module_plans[mi];
+    for (mir::ProcessId proc_id : plan.body_processes) {
       const auto& process = arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
 
-      uint32_t slot_base = 0;
-      if (current_module_idx < design.placement.instances.size()) {
-        slot_base =
-            mir::GetInstanceBaseSlot(design.placement, current_module_idx);
-      }
-      auto comb = TryKernelizeComb(process, arena, slot_base);
+      auto comb = TryKernelizeComb(process, arena, plan.design_state_base_slot);
       if (comb) {
         comb->process_id = proc_id;
         layout.comb_kernel_entries.push_back(std::move(*comb));
       }
-      layout.scheduled_processes.push_back(
-          {proc_id, ModuleIndex{current_module_idx}});
+      layout.scheduled_processes.push_back({proc_id, ModuleIndex{mi}});
     }
   }
 
@@ -1403,53 +1388,46 @@ auto BuildLayout(
   }
 
   // Compute instance base byte offsets and body-owned relative byte offsets
-  if (!design.placement.instances.empty()) {
+  if (!module_plans.empty()) {
     const auto* struct_layout = dl.getStructLayout(layout.design.llvm_type);
-    size_t num_instances = design.placement.instances.size();
+    size_t num_instances = module_plans.size();
     layout.instance_base_byte_offsets.resize(num_instances);
 
     for (size_t mi = 0; mi < num_instances; ++mi) {
-      const auto& p = mir::GetInstancePlacement(
-          design.placement, static_cast<uint32_t>(mi));
-      if (p.slot_count > 0) {
-        if (p.design_state_base_slot + p.slot_count >
+      const auto& plan = module_plans[mi];
+      if (plan.slot_count > 0) {
+        if (plan.design_state_base_slot + plan.slot_count >
             layout.design.llvm_type->getNumElements()) {
           throw common::InternalError(
               "BuildLayout",
               std::format(
                   "slot range [{}, {}) exceeds DesignState field count {}",
-                  p.design_state_base_slot,
-                  p.design_state_base_slot + p.slot_count,
+                  plan.design_state_base_slot,
+                  plan.design_state_base_slot + plan.slot_count,
                   layout.design.llvm_type->getNumElements()));
         }
         layout.instance_base_byte_offsets[mi] =
-            struct_layout->getElementOffset(p.design_state_base_slot);
+            struct_layout->getElementOffset(plan.design_state_base_slot);
       }
     }
 
     // Compute per-instance raw relative byte offsets.
-    // These are consumed by the spec compilation pipeline to classify
-    // slots into stable/unstable/absent (specialization-local, not here).
+    // Consumed by spec compilation to classify slots as stable/unstable.
     layout.instance_rel_byte_offsets_.resize(num_instances);
 
-    uint32_t mod_idx = 0;
-    for (const auto& element : design.elements) {
-      const auto* mod = std::get_if<mir::Module>(&element);
-      if (mod == nullptr) continue;
-
-      const auto& p = mir::GetInstancePlacement(design.placement, mod_idx);
-      std::vector<uint64_t> rel_offsets(p.slot_count);
-      if (p.slot_count > 0) {
+    for (size_t mi = 0; mi < num_instances; ++mi) {
+      const auto& plan = module_plans[mi];
+      std::vector<uint64_t> rel_offsets(plan.slot_count);
+      if (plan.slot_count > 0) {
         uint64_t base =
-            struct_layout->getElementOffset(p.design_state_base_slot);
-        for (uint32_t i = 0; i < p.slot_count; ++i) {
+            struct_layout->getElementOffset(plan.design_state_base_slot);
+        for (uint32_t i = 0; i < plan.slot_count; ++i) {
           rel_offsets[i] =
-              struct_layout->getElementOffset(p.design_state_base_slot + i) -
+              struct_layout->getElementOffset(plan.design_state_base_slot + i) -
               base;
         }
       }
-      layout.instance_rel_byte_offsets_[mod_idx] = std::move(rel_offsets);
-      ++mod_idx;
+      layout.instance_rel_byte_offsets_[mi] = std::move(rel_offsets);
     }
   }
 
