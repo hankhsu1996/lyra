@@ -37,13 +37,24 @@ class UpdateSet {
 
   // Mark an entire slot as dirty. Full-extent is a terminal state: once set,
   // no further range work is needed for this slot in the current delta.
-  void MarkSlotDirty(
+  //
+  // Returns true if this is the first dirty mark for this slot in the current
+  // delta (all per-delta bookkeeping is done on this call). Returns false if
+  // the slot's delta state is already fully established and no further work
+  // is needed.
+  //
+  // Note: MarkDirtyRange does NOT have this fast path because each call may
+  // contribute a new byte range that affects subscriber filtering precision.
+  // Do not apply the same shortcut to MarkDirtyRange without careful analysis.
+  auto MarkSlotDirty(
       uint32_t slot_id,
       common::MutationKind kind = common::MutationKind::kValueWrite,
-      common::EpochEffect epoch = common::EpochEffect::kNone) {
-    if (slot_id >= seen_.size()) return;
+      common::EpochEffect epoch = common::EpochEffect::kNone) -> bool {
+    if (slot_id >= seen_.size()) return false;
+    if (delta_seen_[slot_id] != 0) return false;
     TouchSlot(slot_id, kind, epoch);
     delta_slot_ranges_[slot_id].MarkFullExtent();
+    return true;
   }
 
   // All dirty slots this time slot (deduped across time slot). For trace.
