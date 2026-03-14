@@ -230,6 +230,12 @@ struct ProcessState {
   std::vector<SubRef> sub_refs;
   IndexPlanPool plan_pool;
   InstalledWaitState installed_wait;
+
+  // Snapshot refresh watermark: epoch + dirty count at last refresh.
+  // If both match the current UpdateSet state, no new dirty slots appeared
+  // since the last refresh and the scan can be skipped entirely.
+  uint32_t last_refresh_epoch = 0;
+  uint32_t last_refresh_dirty_count = 0;
 };
 
 }  // namespace lyra::runtime

@@ -93,6 +93,7 @@ void UpdateSet::ClearDelta() {
     delta_seen_[id] = 0;
   }
   delta_dirty_.clear();
+  ++delta_epoch_;
   if (!delta_external_ranges_.empty()) {
     delta_external_ranges_.clear();
   }

@@ -122,6 +122,13 @@ class UpdateSet {
     return slot_id < delta_seen_.size() && delta_seen_[slot_id] != 0;
   }
 
+  // Monotonically increasing epoch, incremented at each ClearDelta().
+  // Used with DeltaDirtySlots().size() as a watermark to skip redundant
+  // snapshot refresh scans within the same delta.
+  [[nodiscard]] auto DeltaEpoch() const -> uint32_t {
+    return delta_epoch_;
+  }
+
   // Check if any slots are dirty (time-slot level).
   [[nodiscard]] auto IsEmpty() const -> bool {
     return dirty_list_.empty();
@@ -149,6 +156,7 @@ class UpdateSet {
   std::vector<uint8_t> seen_;
   std::vector<uint32_t> delta_dirty_;
   std::vector<uint8_t> delta_seen_;
+  uint32_t delta_epoch_ = 0;
 
   // Per-slot total_bytes (cached from SlotMetaRegistry at Init).
   std::vector<uint32_t> slot_sizes_;
