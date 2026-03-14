@@ -283,10 +283,6 @@ void Engine::ExecuteTimeSlot() {
 }
 
 auto Engine::Run(SimTime max_time) -> SimTime {
-  if (trace_manager_.IsEnabled()) {
-    trace_manager_.EmitTimeAdvance(current_time_);
-  }
-
   while (!finished_ && current_time_ <= max_time) {
     ExecuteTimeSlot();
 
@@ -308,10 +304,6 @@ auto Engine::Run(SimTime max_time) -> SimTime {
       break;
     }
 
-    if (trace_manager_.IsEnabled()) {
-      trace_manager_.EmitTimeAdvance(current_time_);
-    }
-
     for (auto& event : it->second) {
       active_queue_.push_back(std::move(event));
     }
@@ -322,11 +314,13 @@ auto Engine::Run(SimTime max_time) -> SimTime {
 }
 
 void Engine::FlushDirtySlots() {
-  if (trace_manager_.IsEnabled() && !update_set_.IsEmpty() &&
-      design_state_base_ != nullptr) {
-    FlushDirtySlotsToTrace(
-        trace_manager_, slot_meta_registry_, design_state_base_, update_set_,
-        trace_selection_);
+  if (trace_manager_.IsEnabled()) {
+    trace_manager_.EmitTimeAdvance(current_time_, current_delta_);
+    if (!update_set_.IsEmpty() && design_state_base_ != nullptr) {
+      FlushDirtySlotsToTrace(
+          trace_manager_, slot_meta_registry_, design_state_base_, update_set_,
+          trace_selection_);
+    }
   }
   update_set_.Clear();
 }

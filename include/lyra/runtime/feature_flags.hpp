@@ -25,6 +25,10 @@ enum class FeatureFlag : uint32_t {
   kEnableActivationTrace = 1 << 6,
   // Collect detailed per-element counters (subscription, connection, etc.)
   kDetailedStats = 1 << 7,
+  // Enable trace summary output (--trace-summary)
+  kEnableTraceSummary = 1 << 8,
+  // Enable text signal trace output (--trace-signals)
+  kEnableSignalTrace = 1 << 9,
 };
 
 constexpr auto operator|(FeatureFlag a, FeatureFlag b) -> FeatureFlag {

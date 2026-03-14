@@ -30,9 +30,9 @@ void TraceManager::AddSink(std::unique_ptr<TraceSink> sink) {
   owned_sinks_.push_back(std::move(sink));
 }
 
-void TraceManager::EmitTimeAdvance(uint64_t time) {
+void TraceManager::EmitTimeAdvance(uint64_t time, uint32_t delta) {
   if (!enabled_) return;
-  TimeAdvance event{.time = time};
+  TimeAdvance event{.time = time, .delta = delta};
   Dispatch(event);
 }
 

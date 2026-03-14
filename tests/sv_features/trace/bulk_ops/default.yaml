@@ -20,7 +20,7 @@ cases:
           02
           03
           04
-    trace: true
+    trace_summary: true
     expect:
       stdout:
         contains:
@@ -47,7 +47,7 @@ cases:
         content: |
           0101
           1010
-    trace: true
+    trace_summary: true
     expect:
       stdout:
         contains:
@@ -78,7 +78,7 @@ cases:
           endmodule
       - name: data.txt
         content: "abc"
-    trace: true
+    trace_summary: true
     expect:
       stdout:
         contains:

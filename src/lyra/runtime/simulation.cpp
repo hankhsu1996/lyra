@@ -33,6 +33,7 @@
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
+#include "lyra/trace/text_trace_sink.hpp"
 
 namespace {
 
@@ -522,6 +523,19 @@ extern "C" void LyraRunSimulation(
   if (HasFlag(flags, FeatureFlag::kDumpProcessMeta)) {
     engine.GetProcessMetaRegistry().DumpSummary();
   }
+  // Register trace sinks before enabling TraceManager.
+  if (HasFlag(flags, FeatureFlag::kEnableSignalTrace)) {
+    const auto* meta = engine.GetTraceManager().GetSignalMeta();
+    if (abi != nullptr && abi->signal_trace_path != nullptr) {
+      engine.GetTraceManager().AddSink(
+          std::make_unique<lyra::trace::TextTraceSink>(
+              meta, std::string(abi->signal_trace_path)));
+    } else {
+      engine.GetTraceManager().AddSink(
+          std::make_unique<lyra::trace::TextTraceSink>(meta));
+    }
+  }
+
   if (HasFlag(flags, FeatureFlag::kEnableTrace)) {
     engine.GetTraceManager().SetEnabled(true);
   }
@@ -533,7 +547,7 @@ extern "C" void LyraRunSimulation(
 
   lyra::runtime::RemoveSignalDumpHandler();
 
-  if (HasFlag(flags, FeatureFlag::kEnableTrace)) {
+  if (HasFlag(flags, FeatureFlag::kEnableTraceSummary)) {
     engine.GetTraceManager().PrintSummary();
   }
 

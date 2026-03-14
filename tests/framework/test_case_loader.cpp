@@ -317,8 +317,9 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     ValidateKeys(
         node,
         {"name", "description", "sv", "files", "plusargs", "param_overrides",
-         "pedantic", "trace", "dump_slot_meta", "dump_specialization_map",
-         "dump_repertoire", "dump_repertoire_desc", "expect"},
+         "pedantic", "trace_summary", "signal_trace", "dump_slot_meta",
+         "dump_specialization_map", "dump_repertoire", "dump_repertoire_desc",
+         "expect"},
         case_context, path);
 
     // Single-file format: sv: |
@@ -363,9 +364,14 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       test_case.pedantic = node["pedantic"].as<bool>();
     }
 
-    // Trace mode
-    if (node["trace"]) {
-      test_case.trace = node["trace"].as<bool>();
+    // Trace summary mode
+    if (node["trace_summary"]) {
+      test_case.trace_summary = node["trace_summary"].as<bool>();
+    }
+
+    // Signal trace mode
+    if (node["signal_trace"]) {
+      test_case.signal_trace = node["signal_trace"].as<bool>();
     }
 
     // Dump slot metadata (test-only)

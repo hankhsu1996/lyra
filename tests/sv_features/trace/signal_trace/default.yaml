@@ -1,0 +1,138 @@
+feature: signal_trace
+description: Tests for text signal trace output (--trace-signals)
+
+cases:
+  - name: packed-1bit
+    description: 1-bit signal renders as 1'b0/1'b1
+    sv: |
+      module Test;
+        logic clk;
+        initial begin
+          clk = 1'b0;
+          #10;
+          clk = 1'b1;
+          $display("done");
+        end
+      endmodule
+    signal_trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "= 1'b0"
+          - "= 1'b1"
+
+  - name: packed-8bit
+    description: 8-bit signal renders as hex
+    sv: |
+      module Test;
+        logic [7:0] data;
+        initial begin
+          data = 8'hff;
+          $display("done");
+        end
+      endmodule
+    signal_trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "= 8'hff"
+
+  - name: packed-wider
+    description: 16-bit and 32-bit signals render as hex
+    sv: |
+      module Test;
+        logic [15:0] a;
+        logic [31:0] b;
+        initial begin
+          a = 16'habcd;
+          b = 32'h1234_5678;
+          $display("done");
+        end
+      endmodule
+    signal_trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "= 16'habcd"
+          - "= 32'h12345678"
+
+  - name: string-value
+    description: String signal renders with quotes
+    sv: |
+      module Test;
+        string msg;
+        initial begin
+          msg = "hello";
+          $display("done");
+        end
+      endmodule
+    signal_trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - '= "hello"'
+
+  - name: multi-time-delta
+    description: Time and delta are tracked across time slots
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a = 8'h01;
+          #10;
+          a = 8'h02;
+          #20;
+          a = 8'h03;
+          $display("done");
+        end
+      endmodule
+    signal_trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "t=0 d=0"
+          - "t=10 d=0"
+          - "t=30 d=0"
+
+  - name: combined-summary-and-signal
+    description: Both trace_summary and signal_trace can work together
+    sv: |
+      module Test;
+        logic [7:0] x;
+        initial begin
+          x = 8'haa;
+          $display("done");
+        end
+      endmodule
+    trace_summary: true
+    signal_trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "__LYRA_TRACE__:"
+          - "= 8'haa"
+
+  - name: summary-only-no-signal-lines
+    description: trace_summary alone does not produce signal trace lines
+    sv: |
+      module Test;
+        logic [7:0] a;
+        initial begin
+          a = 8'h42;
+          $display("done");
+        end
+      endmodule
+    trace_summary: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "__LYRA_TRACE__:"
+        not_contains:
+          - "t=0 d=0"

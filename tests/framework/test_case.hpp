@@ -46,7 +46,8 @@ struct TestCase {
   std::optional<ExpectedOutput> expected_error;  // Expected compilation error
   std::optional<MutationExpectation> expected_mutations;
   bool pedantic = false;        // Strict LRM compliance mode for this test
-  bool trace = false;           // Enable simulation tracing for this test
+  bool trace_summary = false;   // Enable trace summary output for this test
+  bool signal_trace = false;    // Enable text signal trace for this test
   bool dump_slot_meta = false;  // Dump slot metadata registry (test-only)
   bool dump_specialization_map = false;  // Dump specialization grouping
   bool dump_repertoire = false;          // Dump generate repertoire observation
