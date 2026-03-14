@@ -597,55 +597,67 @@ def print_markdown(
     print()
     print(f"> git: `{get_git_sha()}` | tier: {tier} | trials: {trial_note}")
 
-    for family, fixture_names in family_fixtures.items():
-        family_title = family.capitalize()
-        print()
-        print(f"### {family_title}")
-        print()
+    # Table 1: Simulation Performance
+    print()
+    print("### Simulation Performance")
+    print()
+    print(
+        "| Fixture | Lyra 4-state (ms) "
+        "| Lyra 2-state (ms) | Verilator (ms) |")
+    print(
+        "|---------|------------------:"
+        "|------------------:|---------------:|")
+
+    for fixture_name in ordered:
+        backends = by_fixture.get(fixture_name, {})
+        aot = backends.get("aot")
+        aot_2s = backends.get("aot-two-state")
+        ver = backends.get("verilator")
+
+        aot_sim = (
+            fmt_time(aot.sim_s) if aot and not aot.error
+            else "FAIL" if aot else "-")
+        aot_2s_sim = (
+            fmt_time(aot_2s.sim_s) if aot_2s and not aot_2s.error
+            else "FAIL" if aot_2s else "-")
+        ver_sim = (
+            fmt_time(ver.sim_s) if ver and not ver.error
+            else "FAIL" if ver else "-")
+
         print(
-            "| Fixture | Focus | Lyra 4s (ms) | Lyra 2s (ms) "
-            "| Verilator (ms) | Compile (ms) "
-            "| LLVM Insts | Peak RSS (MB) |")
+            f"| {fixture_name} "
+            f"| {aot_sim} | {aot_2s_sim} | {ver_sim} |")
+
+    # Table 2: Compile Time
+    print()
+    print("### Compile Time")
+    print()
+    print(
+        "| Fixture | AOT (ms) "
+        "| JIT (ms) | Verilator (ms) |")
+    print(
+        "|--------|---------:"
+        "|---------:|---------------:|")
+
+    for fixture_name in ordered:
+        backends = by_fixture.get(fixture_name, {})
+        aot = backends.get("aot")
+        jit = backends.get("jit")
+        ver = backends.get("verilator")
+
+        aot_c = (
+            fmt_time(aot.compile_s) if aot and not aot.error
+            else "FAIL" if aot else "-")
+        jit_c = (
+            fmt_time(jit.compile_s) if jit and not jit.error
+            else "FAIL" if jit else "-")
+        ver_c = (
+            fmt_time(ver.compile_s) if ver and not ver.error
+            else "FAIL" if ver else "-")
+
         print(
-            "|---------|-------|-------------:|-------------:"
-            "|---------------:|-------------:"
-            "|-----------:|--------------:|")
-
-        for fixture_name in fixture_names:
-            backends = by_fixture.get(fixture_name, {})
-            aot = backends.get("aot")
-            aot_2s = backends.get("aot-two-state")
-            ver = backends.get("verilator")
-
-            # Use any available result for metadata
-            any_r = aot or aot_2s or ver or next(
-                iter(backends.values()), None)
-            focus = any_r.focus if any_r else ""
-
-            aot_sim = (
-                fmt_time(aot.sim_s) if aot and not aot.error
-                else "FAIL" if aot else "-")
-            aot_2s_sim = (
-                fmt_time(aot_2s.sim_s) if aot_2s and not aot_2s.error
-                else "FAIL" if aot_2s else "-")
-            ver_sim = (
-                fmt_time(ver.sim_s) if ver and not ver.error
-                else "FAIL" if ver else "-")
-
-            compile_ms = (
-                fmt_time(aot.compile_s) if aot and not aot.error
-                else "-")
-            llvm_insts = (
-                fmt_int(aot.llvm_insts) if aot and not aot.error
-                else "-")
-            rss = (
-                fmt_float(aot.rss_max_mb) if aot and not aot.error
-                else "-")
-
-            print(
-                f"| {fixture_name} | {focus} "
-                f"| {aot_sim} | {aot_2s_sim} | {ver_sim} "
-                f"| {compile_ms} | {llvm_insts} | {rss} |")
+            f"| {fixture_name} "
+            f"| {aot_c} | {jit_c} | {ver_c} |")
 
     # Errors
     errors = [r for r in results if r.error and r.error != "verilator not found"]
