@@ -33,7 +33,7 @@ module pipe_stage #(parameter int WIDTH = 32) (
 endmodule
 
 module Top;
-  localparam int NUM_CYCLES = 100000;
+  localparam int NUM_CYCLES = 500000;
   localparam int WIDTH = 32;
 
   logic clk;
