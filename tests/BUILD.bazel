@@ -98,6 +98,15 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "trace_selection_test",
+    srcs = ["trace_selection_test.cpp"],
+    deps = [
+        "//:runtime",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # LLI development suite - out-of-process LLI execution (for debugging/comparison)
 cc_test(
     name = "lli_dev_tests",

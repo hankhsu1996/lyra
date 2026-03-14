@@ -325,7 +325,8 @@ void Engine::FlushDirtySlots() {
   if (trace_manager_.IsEnabled() && !update_set_.IsEmpty() &&
       design_state_base_ != nullptr) {
     FlushDirtySlotsToTrace(
-        trace_manager_, slot_meta_registry_, design_state_base_, update_set_);
+        trace_manager_, slot_meta_registry_, design_state_base_, update_set_,
+        trace_selection_);
   }
   update_set_.Clear();
 }

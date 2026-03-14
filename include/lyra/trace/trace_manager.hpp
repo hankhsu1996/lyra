@@ -77,9 +77,7 @@ class TraceManager {
 
   // Set non-owning pointer to trace signal metadata registry.
   // Must be called before SetEnabled(true) for sinks to observe metadata.
-  void SetSignalMeta(const runtime::TraceSignalMetaRegistry* meta) {
-    signal_meta_ = meta;
-  }
+  void SetSignalMeta(const runtime::TraceSignalMetaRegistry* meta);
 
   // Get trace signal metadata registry (may be null if not set).
   [[nodiscard]] auto GetSignalMeta() const

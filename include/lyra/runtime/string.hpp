@@ -52,7 +52,7 @@ void LyraPrintString(
 // out_ptr/out_len must not be null. If handle is null, sets *out_ptr="",
 // *out_len=0.
 void LyraStringGetView(
-    LyraStringHandle handle, const char** out_ptr, uint64_t* out_len);
+    const void* handle, const char** out_ptr, uint64_t* out_len);
 
 // Opaque buffer handle for string formatting (C ABI)
 struct LyraStringFormatBuffer;
@@ -96,7 +96,7 @@ auto LyraStringFormatRuntime(
 
 // C++ convenience wrapper: returns non-owning view of string data.
 // If handle is null, returns empty string_view.
-inline auto LyraStringAsView(LyraStringHandle handle) -> std::string_view {
+inline auto LyraStringAsView(const void* handle) -> std::string_view {
   const char* ptr = nullptr;
   uint64_t len = 0;
   LyraStringGetView(handle, &ptr, &len);

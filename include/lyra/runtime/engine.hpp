@@ -27,6 +27,7 @@
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/suspend_record.hpp"
+#include "lyra/runtime/trace_selection.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
 #include "lyra/runtime/trap.hpp"
 #include "lyra/runtime/update_set.hpp"
@@ -420,18 +421,44 @@ class Engine {
     wait_site_meta_ = std::move(registry);
   }
 
-  // One-time init for trace signal metadata registry.
-  // Engine owns the registry as a stable value member. The non-owning pointer
-  // passed to TraceManager remains valid for Engine's lifetime because
-  // trace_signal_meta_ is never moved after this call.
+  // One-time init for trace signal metadata registry. Must be called exactly
+  // once, after InitSlotMeta. Engine owns both the registry and the selection
+  // mask. The non-owning pointer passed to TraceManager remains valid for
+  // Engine's lifetime because trace_signal_meta_ is never moved after this
+  // call. Validates that signal count matches slot count (compile-time
+  // invariant: one trace signal per design slot).
   void InitTraceSignalMeta(TraceSignalMetaRegistry registry) {
+    if (trace_signal_meta_.IsPopulated()) {
+      throw common::InternalError(
+          "Engine::InitTraceSignalMeta",
+          "trace signal metadata already initialized");
+    }
+    auto signal_count = static_cast<uint32_t>(registry.Count());
+    if (slot_meta_registry_.IsPopulated() &&
+        signal_count != slot_meta_registry_.Size()) {
+      throw common::InternalError(
+          "Engine::InitTraceSignalMeta",
+          std::format(
+              "signal count {} does not match slot count {}", signal_count,
+              slot_meta_registry_.Size()));
+    }
     trace_signal_meta_ = std::move(registry);
     trace_manager_.SetSignalMeta(&trace_signal_meta_);
+    trace_selection_.Init(signal_count);
   }
 
   [[nodiscard]] auto GetTraceSignalMetaRegistry() const
       -> const TraceSignalMetaRegistry& {
     return trace_signal_meta_;
+  }
+
+  [[nodiscard]] auto GetTraceSelection() const
+      -> const TraceSelectionRegistry& {
+    return trace_selection_;
+  }
+
+  auto GetTraceSelection() -> TraceSelectionRegistry& {
+    return trace_selection_;
   }
 
   // Register suspend record pointers for post-activation reconciliation.
@@ -755,6 +782,10 @@ class Engine {
 
   // Trace signal metadata registry (empty until populated).
   TraceSignalMetaRegistry trace_signal_meta_;
+
+  // Per-slot selection mask for producer-side trace filtering.
+  // Initialized alongside trace_signal_meta_ in InitTraceSignalMeta().
+  TraceSelectionRegistry trace_selection_;
 
   // Suspend record access for post-activation reconciliation.
   std::vector<SuspendRecord*> suspend_records_;

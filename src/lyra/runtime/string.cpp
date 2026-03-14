@@ -200,13 +200,13 @@ extern "C" void LyraPackedFromString(
 }
 
 extern "C" void LyraStringGetView(
-    LyraStringHandle handle, const char** out_ptr, uint64_t* out_len) {
+    const void* handle, const char** out_ptr, uint64_t* out_len) {
   if (handle == nullptr) {
     *out_ptr = "";
     *out_len = 0;
     return;
   }
-  auto* str = static_cast<LyraStringData*>(handle);
+  const auto* str = static_cast<const LyraStringData*>(handle);
   *out_ptr = str->data;
   *out_len = str->len;
 }
