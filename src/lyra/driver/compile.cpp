@@ -38,8 +38,7 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
       &compilation.mir.origin_map, compilation.hir.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
-  uint32_t feature_flags =
-      runtime::ToUint32(runtime::FeatureFlag::kEnableLoopGuard);
+  uint32_t feature_flags = 0;
   if (input.enable_trace_summary) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
     feature_flags |=
@@ -74,6 +73,7 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
       .plusargs = {},
       .feature_flags = feature_flags,
       .signal_trace_path = input.trace_signals_output.value_or(""),
+      .iteration_limit = input.iteration_limit,
       .force_two_state = input.two_state,
       .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
   };

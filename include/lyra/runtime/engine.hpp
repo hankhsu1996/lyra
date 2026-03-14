@@ -23,7 +23,7 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
-#include "lyra/runtime/loop_site_meta.hpp"
+#include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -423,9 +423,9 @@ class Engine {
     process_meta_ = std::move(registry);
   }
 
-  // One-time init for loop site metadata registry.
-  void InitLoopSiteMeta(LoopSiteRegistry registry) {
-    loop_site_meta_ = std::move(registry);
+  // One-time init for back-edge site metadata registry.
+  void InitBackEdgeSiteMeta(BackEdgeSiteRegistry registry) {
+    back_edge_site_meta_ = std::move(registry);
   }
 
   // One-time init for wait-site metadata registry.
@@ -491,8 +491,8 @@ class Engine {
     return process_meta_;
   }
 
-  [[nodiscard]] auto GetLoopSiteRegistry() const -> const LoopSiteRegistry& {
-    return loop_site_meta_;
+  [[nodiscard]] auto GetBackEdgeSiteRegistry() const -> const BackEdgeSiteRegistry& {
+    return back_edge_site_meta_;
   }
 
   // Format process identity for diagnostics (normal code path).
@@ -808,8 +808,8 @@ class Engine {
   // Process metadata registry for diagnostics and signal-safe dumps.
   ProcessMetaRegistry process_meta_;
 
-  // Loop site metadata registry for loop guard diagnostics.
-  LoopSiteRegistry loop_site_meta_;
+  // Back-edge site metadata registry for iteration limit diagnostics.
+  BackEdgeSiteRegistry back_edge_site_meta_;
 
   // Wait-site metadata registry for persistent wait installation.
   WaitSiteRegistry wait_site_meta_;

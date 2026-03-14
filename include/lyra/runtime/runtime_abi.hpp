@@ -9,7 +9,7 @@
 // Layout stability: fields are append-only. New fields are added after
 // existing ones. The version field gates which fields the runtime reads.
 // Runtime ABI version history:
-//   1: Initial version (slot meta, process meta, loop site meta, connections,
+//   1: Initial version (slot meta, process meta, back-edge site meta, connections,
 //      comb kernels, feature flags)
 //   2: Added wait-site metadata word table (wait_site_words,
 //      wait_site_word_count)
@@ -31,10 +31,10 @@ struct LyraRuntimeAbi {
   const char* process_meta_string_pool;
   uint32_t process_meta_string_pool_size;
 
-  const uint32_t* loop_site_meta_words;
-  uint32_t loop_site_meta_word_count;
-  const char* loop_site_meta_string_pool;
-  uint32_t loop_site_meta_string_pool_size;
+  const uint32_t* back_edge_site_meta_words;
+  uint32_t back_edge_site_meta_word_count;
+  const char* back_edge_site_meta_string_pool;
+  uint32_t back_edge_site_meta_string_pool_size;
 
   // Connection descriptors for batched connection evaluation.
   const void* conn_descs;

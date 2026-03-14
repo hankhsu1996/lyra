@@ -201,6 +201,10 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .default_value(false)
       .implicit_value(true)
       .help("[Experimental] Force 2-state LLVM representation (no X encoding)");
+  cmd.add_argument("--iteration-limit")
+      .scan<'u', uint32_t>()
+      .metavar("N")
+      .help("Max loop iterations per activation (0 = unlimited)");
   cmd.add_argument("--stats-out")
       .metavar("PATH")
       .help("Write structured JSON stats to PATH");
@@ -356,6 +360,11 @@ auto BuildInput(
 
   // Two-state mode (CLI only)
   input.two_state = cmd.get<bool>("--two-state");
+
+  // Iteration limit (CLI only)
+  if (auto val = cmd.present<uint32_t>("--iteration-limit")) {
+    input.iteration_limit = *val;
+  }
 
   // Stats JSON output (CLI only)
   if (auto path = cmd.present<std::string>("--stats-out")) {

@@ -35,6 +35,12 @@ class DiagnosticContext {
         }) {
   }
 
+  // Resolve an OriginId to its SourceSpan.
+  [[nodiscard]] auto ResolveToSpan(common::OriginId origin) const
+      -> std::optional<SourceSpan> {
+    return resolve_fn_(origin);
+  }
+
   // Create an Unsupported diagnostic with resolved span.
   // If the origin cannot be resolved, returns UnknownSpan (recoverable for UX
   // but indicates a compiler bug).

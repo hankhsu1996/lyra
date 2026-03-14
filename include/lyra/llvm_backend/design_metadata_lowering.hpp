@@ -39,11 +39,11 @@ auto PrepareScheduledProcessInputs(
     const std::vector<struct ScheduledProcess>& scheduled_processes,
     size_t num_init) -> std::vector<realization::ScheduledProcessInput>;
 
-// Extract loop site inputs from accumulated codegen origins.
-auto PrepareLoopSiteInputs(
+// Extract back-edge site inputs from accumulated codegen origins.
+auto PrepareBackEdgeSiteInputs(
     const Context& context, const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager)
-    -> std::vector<realization::LoopSiteInput>;
+    -> std::vector<realization::BackEdgeSiteInput>;
 
 // Extract connection descriptor entries from LLVM layout.
 auto ExtractConnectionDescriptorEntries(
@@ -80,10 +80,10 @@ struct MetadataGlobals {
   uint32_t process_meta_count = 0;
   llvm::Constant* process_meta_pool = nullptr;
   uint32_t process_meta_pool_size = 0;
-  llvm::Constant* loop_site_meta_words = nullptr;
-  uint32_t loop_site_meta_count = 0;
-  llvm::Constant* loop_site_meta_pool = nullptr;
-  uint32_t loop_site_meta_pool_size = 0;
+  llvm::Constant* back_edge_site_meta_words = nullptr;
+  uint32_t back_edge_site_meta_count = 0;
+  llvm::Constant* back_edge_site_meta_pool = nullptr;
+  uint32_t back_edge_site_meta_pool_size = 0;
   llvm::Value* conn_desc_table = nullptr;
   uint32_t conn_desc_count = 0;
   llvm::Value* comb_kernel_words = nullptr;

@@ -38,6 +38,32 @@ class SourceManager {
     return &files_[id.value - 1];
   }
 
+  struct LineCol {
+    uint32_t line = 0;
+    uint32_t col = 0;
+  };
+
+  // Convert a byte offset within a file to line/col (1-based).
+  // Returns {0,0} if the file is invalid.
+  [[nodiscard]] auto OffsetToLineCol(FileId id, uint32_t offset) const
+      -> LineCol {
+    const FileInfo* file = GetFile(id);
+    if (file == nullptr) {
+      return {};
+    }
+    uint32_t line = 1;
+    uint32_t col = 1;
+    for (uint32_t i = 0; i < offset && i < file->content.size(); ++i) {
+      if (file->content[i] == '\n') {
+        ++line;
+        col = 1;
+      } else {
+        ++col;
+      }
+    }
+    return {.line = line, .col = col};
+  }
+
  private:
   std::vector<FileInfo> files_;
 };

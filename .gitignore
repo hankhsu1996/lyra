@@ -6,6 +6,10 @@
 /bazel-testlogs
 /external
 
+# Python
+__pycache__/
+*.pyc
+
 # Build artifacts
 /compile_commands.json
 /.cache/

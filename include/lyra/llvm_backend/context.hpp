@@ -119,7 +119,7 @@ class Context {
   [[nodiscard]] auto GetLyraPackedFromString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunSimulation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRunProcessSync() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraLoopBudgetPtr() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraIterationLimitPtr() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPlusargsTest() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPlusargsValueInt() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPlusargsValueString() -> llvm::Function*;
@@ -493,20 +493,12 @@ class Context {
   // Check if a function uses out-param calling convention (managed return).
   [[nodiscard]] auto FunctionUsesSret(mir::FunctionId func_id) const -> bool;
 
-  // Loop guard gating: when false, no loop guards are emitted.
-  void SetLoopGuardEnabled(bool enabled) {
-    loop_guard_enabled_ = enabled;
-  }
-  [[nodiscard]] auto IsLoopGuardEnabled() const -> bool {
-    return loop_guard_enabled_;
-  }
-
-  // Loop site tracking for loop guard emission.
-  // Returns the assigned loop_site_id.
-  auto RegisterLoopSite(common::OriginId origin) -> uint32_t;
-  [[nodiscard]] auto GetLoopSiteOrigins() const
+  // Iteration limit site tracking for back-edge guard emission.
+  // Returns the assigned back-edge site id.
+  auto RegisterBackEdgeSite(common::OriginId origin) -> uint32_t;
+  [[nodiscard]] auto GetBackEdgeSiteOrigins() const
       -> const std::vector<common::OriginId>& {
-    return loop_site_origins_;
+    return back_edge_site_origins_;
   }
 
   // Wait-site ID allocation for persistent wait installation.
@@ -603,7 +595,7 @@ class Context {
   llvm::Function* lyra_init_runtime_ = nullptr;
   llvm::Function* lyra_resolve_base_dir_ = nullptr;
   llvm::Function* lyra_report_time_ = nullptr;
-  llvm::Function* lyra_loop_budget_ptr_ = nullptr;
+  llvm::Function* lyra_iteration_limit_ptr_ = nullptr;
   llvm::Function* lyra_dynarray_new_ = nullptr;
   llvm::Function* lyra_dynarray_new_copy_ = nullptr;
   llvm::Function* lyra_dynarray_size_ = nullptr;
@@ -737,12 +729,9 @@ class Context {
   absl::flat_hash_map<int, llvm::Value*> temp_values_;
   absl::flat_hash_map<int, TypeId> temp_types_;
 
-  // Loop guard gating (default: off; driver sets via kEnableLoopGuard).
-  bool loop_guard_enabled_ = false;
-
-  // Loop site origins accumulated during process codegen.
-  // Index = loop_site_id, value = origin of the back-edge terminator.
-  std::vector<common::OriginId> loop_site_origins_;
+  // Iteration limit site origins accumulated during process codegen.
+  // Index = back-edge site id, value = origin of the back-edge terminator.
+  std::vector<common::OriginId> back_edge_site_origins_;
 
   // Wait-site ID counter. Incremented by NextWaitSiteId().
   uint32_t next_wait_site_id_ = 0;

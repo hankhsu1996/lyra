@@ -11,7 +11,7 @@
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_types.hpp"
-#include "lyra/runtime/loop_budget.hpp"
+#include "lyra/runtime/iteration_limit.hpp"
 #include "lyra/runtime/trace_flush.hpp"
 
 namespace lyra::runtime {
@@ -123,8 +123,11 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
   }
   activation_ctx_.dirty_count = 0;
 
-  // Reset loop budget before each process activation.
-  LyraResetLoopBudget(kDefaultLoopBudget);
+  // Reset iteration limit before each process activation.
+  // LyraGetIterationLimit() returns the process-global configured limit.
+  // 0 = unlimited: set counter to UINT32_MAX so the guard never fires.
+  uint32_t limit = LyraGetIterationLimit();
+  LyraResetIterationLimit(limit > 0 ? limit : UINT32_MAX);
 
   ProcessHandle handle{entry.process_id, entry.instance_id};
   ResumePoint resume{entry.resume_block, 0};
@@ -329,21 +332,20 @@ void Engine::FlushDirtySlots() {
 
 void Engine::HandleTrap(uint32_t process_id, const TrapPayload& payload) {
   switch (payload.reason) {
-    case TrapReason::kLoopBudgetExceeded: {
+    case TrapReason::kIterationLimitExceeded: {
       std::string proc_str = FormatProcess(process_id);
       std::string loc_str;
-      if (loop_site_meta_.IsPopulated() && payload.a < loop_site_meta_.Size()) {
-        loc_str = loop_site_meta_.Format(payload.a);
+      if (back_edge_site_meta_.IsPopulated() && payload.a < back_edge_site_meta_.Size()) {
+        loc_str = back_edge_site_meta_.Format(payload.a);
       }
 
       if (loc_str.empty()) {
         lyra::PrintError(
-            std::format("loop iteration limit exceeded in {}", proc_str));
+            std::format("iteration limit exceeded in {}", proc_str));
       } else {
         lyra::PrintError(
             std::format(
-                "loop iteration limit exceeded in {} at {}", proc_str,
-                loc_str));
+                "iteration limit exceeded in {} at {}", proc_str, loc_str));
       }
 
       finished_ = true;

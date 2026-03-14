@@ -251,6 +251,8 @@ See [scheduling.md](scheduling.md) for implemented regions.
 
 ## Runtime Behavior
 
+- **Iteration limit**: A per-activation iteration limit of 1B back-edge traversals protects against runaway loops. The limit is not yet configurable via CLI.
+
 - **Bounds checking**: Out-of-bounds array/vector accesses produce undefined behavior instead of X values. SystemVerilog specifies that out-of-bounds reads return X and out-of-bounds writes are ignored, but Lyra does not currently implement this check. This applies to:
   - Array element access (`arr[i]` where `i` is out of range)
   - Bit/part select (`vec[i]`, `vec[i+:w]`, `vec[i-:w]` where the selection extends beyond the vector bounds)

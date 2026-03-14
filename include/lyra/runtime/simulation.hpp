@@ -26,7 +26,7 @@ enum class ProcessExitCode : uint32_t {
 struct ProcessOutcome {
   uint32_t tag;     // ProcessExitCode
   uint32_t reason;  // TrapReason as uint32_t; meaningful only for kTrap
-  uint32_t a;       // trap payload field (e.g., loop_site_id)
+  uint32_t a;       // trap payload field (e.g., back_edge_site_id)
   uint32_t b;       // trap payload field / spare
 };
 
@@ -180,7 +180,8 @@ auto LyraResolveBaseDir(const char* argv0) -> const char*;
 
 // Initialize runtime state (call before running processes).
 // fs_base_dir: absolute path for relative file I/O resolution.
-void LyraInitRuntime(const char* fs_base_dir);
+// iteration_limit: per-activation back-edge limit (0 = unlimited).
+void LyraInitRuntime(const char* fs_base_dir, uint32_t iteration_limit);
 
 // Print final simulation time as __LYRA_TIME__=<N> for test harness.
 void LyraReportTime();

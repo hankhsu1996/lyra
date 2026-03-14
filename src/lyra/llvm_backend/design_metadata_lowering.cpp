@@ -25,7 +25,7 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/instance.hpp"
 #include "lyra/mir/place.hpp"
-#include "lyra/runtime/loop_site_meta.hpp"
+#include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -87,8 +87,23 @@ auto ResolveProcessOrigin(
     return {};
   }
 
-  // TODO(hankhsu): Thread ResolveToSpan access for full source location.
-  return {};
+  auto span = diag_ctx->ResolveToSpan(origin);
+  if (!span || !span->file_id) {
+    return {};
+  }
+
+  const FileInfo* file = source_manager->GetFile(span->file_id);
+  if (file == nullptr) {
+    return {};
+  }
+
+  auto [line, col] =
+      source_manager->OffsetToLineCol(span->file_id, span->begin);
+  if (line == 0) {
+    return {};
+  }
+
+  return {.file = file->path, .line = line, .col = col};
 }
 
 auto EmitWordArrayGlobal(
@@ -399,18 +414,18 @@ auto PrepareScheduledProcessInputs(
   return entries;
 }
 
-auto PrepareLoopSiteInputs(
+auto PrepareBackEdgeSiteInputs(
     const Context& context, const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager)
-    -> std::vector<realization::LoopSiteInput> {
-  const auto& origins = context.GetLoopSiteOrigins();
-  std::vector<realization::LoopSiteInput> entries;
+    -> std::vector<realization::BackEdgeSiteInput> {
+  const auto& origins = context.GetBackEdgeSiteOrigins();
+  std::vector<realization::BackEdgeSiteInput> entries;
   entries.reserve(origins.size());
 
   for (size_t i = 0; i < origins.size(); ++i) {
     auto loc = ResolveProcessOrigin(origins[i], diag_ctx, source_manager);
     entries.push_back({
-        .loop_site_index = static_cast<uint32_t>(i),
+        .back_edge_site_index = static_cast<uint32_t>(i),
         .file = std::move(loc.file),
         .line = loc.line,
         .col = loc.col,
@@ -659,13 +674,13 @@ auto EmitDesignMetadataGlobals(
         "EmitDesignMetadataGlobals",
         "process_meta words size not divisible by kStride");
   }
-  if (!metadata.loop_site_meta.words.empty() &&
-      metadata.loop_site_meta.words.size() %
-              runtime::loop_site_meta_abi::kStride !=
+  if (!metadata.back_edge_site_meta.words.empty() &&
+      metadata.back_edge_site_meta.words.size() %
+              runtime::back_edge_site_abi::kStride !=
           0) {
     throw common::InternalError(
         "EmitDesignMetadataGlobals",
-        "loop_site_meta words size not divisible by kStride");
+        "back_edge_site_meta words size not divisible by kStride");
   }
 
   // Slot meta: already serialized as word array by link
@@ -684,16 +699,18 @@ auto EmitDesignMetadataGlobals(
   result.process_meta_pool_size =
       static_cast<uint32_t>(metadata.process_meta.pool.size());
 
-  // Loop site meta
-  result.loop_site_meta_words = EmitWordArrayGlobal(
-      mod, ctx, metadata.loop_site_meta.words, "__lyra_loop_site_meta_table");
-  result.loop_site_meta_count = static_cast<uint32_t>(
-      metadata.loop_site_meta.words.size() /
-      runtime::loop_site_meta_abi::kStride);
-  result.loop_site_meta_pool = EmitPoolGlobal(
-      mod, ctx, metadata.loop_site_meta.pool, "__lyra_loop_site_meta_pool");
-  result.loop_site_meta_pool_size =
-      static_cast<uint32_t>(metadata.loop_site_meta.pool.size());
+  // Back-edge site meta
+  result.back_edge_site_meta_words = EmitWordArrayGlobal(
+      mod, ctx, metadata.back_edge_site_meta.words,
+      "__lyra_back_edge_site_meta_table");
+  result.back_edge_site_meta_count = static_cast<uint32_t>(
+      metadata.back_edge_site_meta.words.size() /
+      runtime::back_edge_site_abi::kStride);
+  result.back_edge_site_meta_pool = EmitPoolGlobal(
+      mod, ctx, metadata.back_edge_site_meta.pool,
+      "__lyra_back_edge_site_meta_pool");
+  result.back_edge_site_meta_pool_size =
+      static_cast<uint32_t>(metadata.back_edge_site_meta.pool.size());
 
   // Connection descriptors
   auto num_conn = static_cast<uint32_t>(metadata.connection_descriptors.size());

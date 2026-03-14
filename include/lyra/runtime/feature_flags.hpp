@@ -17,8 +17,6 @@ enum class FeatureFlag : uint32_t {
   kEnableSystem = 1 << 2,
   // Dump process metadata registry (test-only)
   kDumpProcessMeta = 1 << 3,
-  // Enable loop guard checks (back-edge budget)
-  kEnableLoopGuard = 1 << 4,
   // Print runtime stats (core counters) after simulation
   kDumpRuntimeStats = 1 << 5,
   // Enable activation trace ring buffer + live output

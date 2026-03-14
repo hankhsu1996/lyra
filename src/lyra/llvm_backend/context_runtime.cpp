@@ -262,16 +262,16 @@ auto Context::GetLyraRunProcessSync() -> llvm::Function* {
   return lyra_run_process_sync_;
 }
 
-auto Context::GetLyraLoopBudgetPtr() -> llvm::Function* {
-  if (lyra_loop_budget_ptr_ == nullptr) {
-    // uint32_t* LyraLoopBudgetPtr()
+auto Context::GetLyraIterationLimitPtr() -> llvm::Function* {
+  if (lyra_iteration_limit_ptr_ == nullptr) {
+    // uint32_t* LyraIterationLimitPtr()
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(ptr_ty, {}, false);
-    lyra_loop_budget_ptr_ = llvm::Function::Create(
-        fn_type, llvm::Function::ExternalLinkage, "LyraLoopBudgetPtr",
+    lyra_iteration_limit_ptr_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraIterationLimitPtr",
         llvm_module_.get());
   }
-  return lyra_loop_budget_ptr_;
+  return lyra_iteration_limit_ptr_;
 }
 
 auto Context::GetLyraPlusargsTest() -> llvm::Function* {
@@ -503,10 +503,11 @@ auto Context::GetLyraGetTime() -> llvm::Function* {
 
 auto Context::GetLyraInitRuntime() -> llvm::Function* {
   if (lyra_init_runtime_ == nullptr) {
-    // void LyraInitRuntime(const char* fs_base_dir)
+    // void LyraInitRuntime(const char* fs_base_dir, uint32_t iteration_limit)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty}, false);
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty}, false);
     lyra_init_runtime_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraInitRuntime",
         llvm_module_.get());
