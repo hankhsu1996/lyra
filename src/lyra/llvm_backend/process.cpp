@@ -349,18 +349,19 @@ auto HasBackEdge(const mir::Terminator& term, size_t current_block_idx)
 // Emit a loop budget guard before a back-edge terminator.
 // Decrements TLS budget, and if exhausted stores a kTrap ProcessOutcome
 // into %out and returns void.
+//
+// budget_ptr is the TLS budget pointer, hoisted to process entry so the
+// LyraLoopBudgetPtr() call happens once per activation instead of per
+// back-edge.
 void EmitLoopGuard(
     Context& context, common::OriginId origin, llvm::Function* func,
-    llvm::Value* out_ptr) {
+    llvm::Value* out_ptr, llvm::Value* budget_ptr) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
   uint32_t site_id = context.RegisterLoopSite(origin);
 
-  // Get TLS budget pointer and decrement
-  auto* budget_ptr =
-      builder.CreateCall(context.GetLyraLoopBudgetPtr(), {}, "budget_ptr");
   auto* budget = builder.CreateLoad(i32_ty, budget_ptr, "budget");
   auto* new_budget = builder.CreateSub(
       budget, llvm::ConstantInt::get(i32_ty, 1), "budget_dec");
@@ -1264,20 +1265,13 @@ auto LowerQualifiedDispatch(
     cnt = builder.CreateAdd(cnt, ext);
   }
 
-  // Helper: create a per-site uint32 global counter for rate-limited warnings.
-  auto make_warn_counter = [&](const char* name) -> llvm::GlobalVariable* {
-    auto* counter_ty = llvm::Type::getInt32Ty(llvm_ctx);
-    return new llvm::GlobalVariable(
-        context.GetModule(), counter_ty, false,
-        llvm::GlobalValue::InternalLinkage,
-        llvm::ConstantInt::get(counter_ty, 0), name);
-  };
-
   // Overlap warning: cnt > 1
   auto overlap_msg = ComputeOverlapMessage(dispatch);
   auto* overlap_str =
       builder.CreateGlobalStringPtr(overlap_msg, "qd.overlap.str");
-  auto* overlap_counter = make_warn_counter("qd.overlap.cnt");
+  auto* overlap_counter = new llvm::GlobalVariable(
+      context.GetModule(), i32_ty, false, llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantInt::get(i32_ty, 0), "qd.overlap.cnt");
   auto* after_overlap =
       llvm::BasicBlock::Create(llvm_ctx, "qd.after_overlap", func);
   auto* overlap_bb =
@@ -1299,7 +1293,9 @@ auto LowerQualifiedDispatch(
     auto nomatch_msg = ComputeNomatchMessage(dispatch);
     auto* nomatch_str =
         builder.CreateGlobalStringPtr(nomatch_msg, "qd.nomatch.str");
-    auto* nomatch_counter = make_warn_counter("qd.nomatch.cnt");
+    auto* nomatch_counter = new llvm::GlobalVariable(
+        context.GetModule(), i32_ty, false, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantInt::get(i32_ty, 0), "qd.nomatch.cnt");
     auto* dispatch_bb = llvm::BasicBlock::Create(llvm_ctx, "qd.dispatch", func);
     auto* nomatch_bb =
         llvm::BasicBlock::Create(llvm_ctx, "qd.warn_nomatch", func);
@@ -1505,6 +1501,14 @@ auto GenerateProcessFunction(
     }
   }
 
+  // Hoist TLS budget pointer lookup to process entry (once per activation
+  // instead of once per back-edge).
+  llvm::Value* budget_ptr = nullptr;
+  if (context.IsLoopGuardEnabled()) {
+    budget_ptr =
+        builder.CreateCall(context.GetLyraLoopBudgetPtr(), {}, "budget_ptr");
+  }
+
   // Create switch with bb0 as default (initial execution)
   auto* sw = builder.CreateSwitch(
       resume_block_arg, llvm_blocks[0],
@@ -1536,7 +1540,8 @@ auto GenerateProcessFunction(
 
     // Emit loop guard before back-edge terminators
     if (context.IsLoopGuardEnabled() && HasBackEdge(block.terminator, i)) {
-      EmitLoopGuard(context, block.terminator.origin, func, out_arg);
+      EmitLoopGuard(
+          context, block.terminator.origin, func, out_arg, budget_ptr);
     }
 
     auto term_result = LowerTerminator(
@@ -1652,6 +1657,12 @@ auto GenerateSharedProcessFunction(
   auto [sfirst, slast] = std::ranges::unique(resume_targets);
   resume_targets.erase(sfirst, slast);
 
+  llvm::Value* budget_ptr = nullptr;
+  if (context.IsLoopGuardEnabled()) {
+    budget_ptr =
+        builder.CreateCall(context.GetLyraLoopBudgetPtr(), {}, "budget_ptr");
+  }
+
   auto* sw = builder.CreateSwitch(
       func->getArg(1), llvm_blocks[0],
       static_cast<unsigned>(resume_targets.size()));
@@ -1678,7 +1689,8 @@ auto GenerateSharedProcessFunction(
 
     // Emit loop guard before back-edge terminators
     if (context.IsLoopGuardEnabled() && HasBackEdge(block.terminator, i)) {
-      EmitLoopGuard(context, block.terminator.origin, func, func->getArg(6));
+      EmitLoopGuard(
+          context, block.terminator.origin, func, func->getArg(6), budget_ptr);
     }
 
     auto term_result = LowerTerminator(
