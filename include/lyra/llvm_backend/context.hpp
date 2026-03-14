@@ -167,7 +167,7 @@ class Context {
   [[nodiscard]] auto GetLyraFclose() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFflush() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFWrite() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraSchedulePostponed() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraRegisterStrobe() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMonitorSetEnabled() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMonitorRegister() -> llvm::Function*;
   [[nodiscard]] auto GetLyraReadmem() -> llvm::Function*;
@@ -439,15 +439,15 @@ class Context {
   [[nodiscard]] auto HasUserFunction(mir::FunctionId func_id) const -> bool;
 
   // Module-scoped function lowering metadata.
-  // Module-scoped functions use the specialization-local calling convention:
-  // they receive (this_ptr, signal_id_offset, instance_id, unstable_offsets)
-  // and use kSpecializationLocal addressing for module-local slot access.
+  // Module-scoped functions use kSpecializationLocal addressing for
+  // module-local slot access. How the specialization-local context is
+  // received (ObserverContext* vs exploded args) is determined by
+  // mir::IsObserverProgram(runtime_kind), not by this struct.
   //
   // spec_slot_layout is specialization-owned addressing data (owned by
   // SpecLayout, shared across all instances of the same specialization).
-  // DefineUserFunction queries this to set up addressing state.
   struct ModuleFunctionLowering {
-    const SpecSlotLayout* spec_slot_layout;
+    const SpecSlotLayout* spec_slot_layout = nullptr;
   };
   void RegisterModuleScopedFunction(
       mir::FunctionId func_id, ModuleFunctionLowering lowering);
@@ -457,27 +457,28 @@ class Context {
       -> const ModuleFunctionLowering&;
 
   // Monitor layout: snapshot encoding info (codegen artifact, not in MIR).
-  // Keyed by check_thunk FunctionId. Contains only layout info (offsets,
-  // sizes). format_ops come from the check thunk's own DisplayEffect (correct
-  // MIR context).
+  // Keyed by check_program FunctionId. Contains only layout info (offsets,
+  // sizes). format_ops come from the check program's own DisplayEffect
+  // (correct MIR context).
   struct MonitorLayout {
     std::vector<uint32_t> offsets;     // Per-operand offset into buffer
     std::vector<uint32_t> byte_sizes;  // Per-operand byte size
     uint32_t total_size = 0;           // Total buffer size
   };
-  void RegisterMonitorLayout(mir::FunctionId check_thunk, MonitorLayout layout);
-  [[nodiscard]] auto GetMonitorLayout(mir::FunctionId check_thunk) const
+  void RegisterMonitorLayout(
+      mir::FunctionId check_program, MonitorLayout layout);
+  [[nodiscard]] auto GetMonitorLayout(mir::FunctionId check_program) const
       -> const MonitorLayout*;
 
-  // Monitor setup thunk marker (codegen artifact, not stored in MIR).
+  // Monitor setup program marker (codegen artifact, not stored in MIR).
   // When present, LLVM lowering appends serialization + registration.
-  // Layout is looked up via check_thunk (single source of truth).
+  // Layout is looked up via check_program (single source of truth).
   struct MonitorSetupInfo {
-    mir::FunctionId check_thunk;  // For registration and layout lookup
+    mir::FunctionId check_program;
   };
   void RegisterMonitorSetupInfo(
-      mir::FunctionId setup_thunk, MonitorSetupInfo info);
-  [[nodiscard]] auto GetMonitorSetupInfo(mir::FunctionId setup_thunk) const
+      mir::FunctionId setup_program, MonitorSetupInfo info);
+  [[nodiscard]] auto GetMonitorSetupInfo(mir::FunctionId setup_program) const
       -> const MonitorSetupInfo*;
 
   // Build LLVM function type from MIR function signature.
@@ -632,7 +633,7 @@ class Context {
   llvm::Function* lyra_fclose_ = nullptr;
   llvm::Function* lyra_fflush_ = nullptr;
   llvm::Function* lyra_fwrite_ = nullptr;
-  llvm::Function* lyra_schedule_postponed_ = nullptr;
+  llvm::Function* lyra_register_strobe_ = nullptr;
   llvm::Function* lyra_monitor_set_enabled_ = nullptr;
   llvm::Function* lyra_monitor_register_ = nullptr;
   llvm::Function* lyra_readmem_ = nullptr;
@@ -722,11 +723,11 @@ class Context {
       module_function_lowering_;
 
   // Monitor layouts (codegen artifact, not MIR semantics).
-  // Keyed by check_thunk FunctionId - single source of truth for encoding.
+  // Keyed by check_program FunctionId - single source of truth for encoding.
   absl::flat_hash_map<mir::FunctionId, MonitorLayout> monitor_layouts_;
 
-  // Monitor setup thunk markers (codegen artifact, not MIR semantics).
-  // Just stores check_thunk reference; layout is looked up from
+  // Monitor setup program markers (codegen artifact, not MIR semantics).
+  // Just stores check_program reference; layout is looked up from
   // monitor_layouts_.
   absl::flat_hash_map<mir::FunctionId, MonitorSetupInfo> monitor_setup_infos_;
 

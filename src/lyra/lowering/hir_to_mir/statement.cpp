@@ -206,15 +206,16 @@ auto LowerFormatOps(
   return std::make_pair(std::move(mir_ops), std::move(mir_descriptor));
 }
 
-// Generate a synthetic thunk function for $strobe.
-// The thunk re-evaluates expressions and prints at Postponed time.
+// Generate a synthetic observer program for $strobe.
+// The program re-evaluates expressions and prints at Postponed time.
 auto LowerStrobeEffect(
     const hir::DisplaySystemCallData& data, MirBuilder& builder)
     -> Result<void> {
   Context& original_ctx = builder.GetContext();
 
-  // Create a new context for the thunk function (shares design state mappings).
-  Context thunk_ctx{
+  // Create a new context for the program function (shares design state
+  // mappings).
+  Context program_ctx{
       .mir_arena = original_ctx.mir_arena,
       .hir_arena = original_ctx.hir_arena,
       .type_arena = original_ctx.type_arena,
@@ -222,7 +223,7 @@ auto LowerStrobeEffect(
       .symbol_table = original_ctx.symbol_table,
       .body_places = original_ctx.body_places,
       .design_places = original_ctx.design_places,
-      .local_places = {},  // Fresh local mapping (thunk has no SV locals)
+      .local_places = {},  // Fresh local mapping (program has no SV locals)
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
@@ -234,63 +235,63 @@ auto LowerStrobeEffect(
       .return_type = original_ctx.builtin_types.void_type,
   };
 
-  // Create builder for the thunk function
-  MirBuilder thunk_builder(original_ctx.mir_arena, &thunk_ctx);
+  // Create builder for the program function
+  MirBuilder program_builder(original_ctx.mir_arena, &program_ctx);
 
-  // Create entry block for thunk
-  BlockIndex entry = thunk_builder.CreateBlock();
-  thunk_builder.SetCurrentBlock(entry);
+  // Create entry block
+  BlockIndex entry = program_builder.CreateBlock();
+  program_builder.SetCurrentBlock(entry);
 
-  // Lower format ops into thunk (re-evaluates expressions at Postponed time)
-  auto ops_result = LowerFormatOps(data.ops, data.descriptor, thunk_builder);
+  // Lower format ops (re-evaluates expressions at Postponed time)
+  auto ops_result = LowerFormatOps(data.ops, data.descriptor, program_builder);
   if (!ops_result) return std::unexpected(ops_result.error());
   auto [mir_ops, mir_descriptor] = std::move(*ops_result);
 
-  // Emit DisplayEffect in thunk
+  // Emit DisplayEffect
   mir::DisplayEffect display{
       .print_kind = data.print_kind,
       .ops = std::move(mir_ops),
       .descriptor = std::move(mir_descriptor),
   };
-  thunk_builder.EmitEffect(std::move(display));
+  program_builder.EmitEffect(std::move(display));
 
-  // Emit void return (thunk is always void)
-  thunk_builder.EmitTerminate(std::nullopt);
+  // Emit void return
+  program_builder.EmitTerminate(std::nullopt);
 
-  // Build thunk function
-  auto blocks = thunk_builder.Finish();
-  mir::Function thunk{
+  // Build program function
+  auto blocks = program_builder.Finish();
+  mir::Function program{
       .signature =
           {
               .return_type = original_ctx.builtin_types.void_type,
               .params = {},  // Called via runtime ABI, not MIR call
           },
-      .thunk_kind = mir::ThunkKind::kStrobe,
+      .runtime_kind = mir::RuntimeProgramKind::kStrobe,
       .entry = mir::BasicBlockId{0},
       .blocks = std::move(blocks),
-      .local_types = std::move(thunk_ctx.local_types),
-      .temp_types = std::move(thunk_ctx.temp_types),
-      .temp_metadata = std::move(thunk_ctx.temp_metadata),
+      .local_types = std::move(program_ctx.local_types),
+      .temp_types = std::move(program_ctx.temp_types),
+      .temp_metadata = std::move(program_ctx.temp_metadata),
       .param_local_slots = {},
       .param_origins = {},
   };
-  mir::FunctionId thunk_id =
-      original_ctx.mir_arena->AddFunction(std::move(thunk));
+  mir::FunctionId program_id =
+      original_ctx.mir_arena->AddFunction(std::move(program));
 
-  // Track the thunk so it gets declared in LLVM lowering
+  // Track the program so it gets declared in LLVM lowering
   if (original_ctx.generated_functions != nullptr) {
-    original_ctx.generated_functions->push_back(thunk_id);
+    original_ctx.generated_functions->push_back(program_id);
   }
 
   // Emit StrobeEffect in original builder
-  builder.EmitEffect(mir::StrobeEffect{.thunk = thunk_id});
+  builder.EmitEffect(mir::StrobeEffect{.program = program_id});
   return {};
 }
 
 auto LowerDisplayEffect(
     const hir::DisplaySystemCallData& data, MirBuilder& builder)
     -> Result<void> {
-  // $strobe: create a thunk function and schedule for Postponed region
+  // $strobe: create an observer program and schedule for Postponed region
   if (data.is_strobe) {
     return LowerStrobeEffect(data, builder);
   }
@@ -490,16 +491,15 @@ auto ComputeSnapshotLayout(
   return layout;
 }
 
-// Generate a synthetic check thunk function for $monitor.
-// The check thunk re-evaluates expressions and compares with prev_values.
+// Generate a synthetic check program for $monitor.
+// The check program re-evaluates expressions and compares with prev_values.
 // If any changed, it prints and updates prev_values.
-auto LowerMonitorCheckThunk(
+auto LowerMonitorCheckProgram(
     const hir::MonitorSystemCallData& data, MirBuilder& original_builder,
     [[maybe_unused]] const SnapshotLayout& layout) -> Result<mir::FunctionId> {
   Context& original_ctx = original_builder.GetContext();
 
-  // Create a new context for the thunk function
-  Context thunk_ctx{
+  Context program_ctx{
       .mir_arena = original_ctx.mir_arena,
       .hir_arena = original_ctx.hir_arena,
       .type_arena = original_ctx.type_arena,
@@ -519,13 +519,13 @@ auto LowerMonitorCheckThunk(
       .return_type = original_ctx.builtin_types.void_type,
   };
 
-  MirBuilder thunk_builder(original_ctx.mir_arena, &thunk_ctx);
+  MirBuilder program_builder(original_ctx.mir_arena, &program_ctx);
 
-  BlockIndex entry = thunk_builder.CreateBlock();
-  thunk_builder.SetCurrentBlock(entry);
+  BlockIndex entry = program_builder.CreateBlock();
+  program_builder.SetCurrentBlock(entry);
 
-  // Lower format ops into thunk (re-evaluates at Postponed time)
-  auto ops_result = LowerFormatOps(data.ops, data.descriptor, thunk_builder);
+  // Lower format ops (re-evaluates at Postponed time)
+  auto ops_result = LowerFormatOps(data.ops, data.descriptor, program_builder);
   if (!ops_result) return std::unexpected(ops_result.error());
   auto [mir_ops, mir_descriptor] = std::move(*ops_result);
 
@@ -535,48 +535,49 @@ auto LowerMonitorCheckThunk(
       .ops = std::move(mir_ops),
       .descriptor = std::move(mir_descriptor),
   };
-  thunk_builder.EmitEffect(std::move(display));
+  program_builder.EmitEffect(std::move(display));
 
   // Emit void return
-  thunk_builder.EmitTerminate(std::nullopt);
+  program_builder.EmitTerminate(std::nullopt);
 
-  // Build thunk function
-  // Signature: void check_thunk(DesignState*, Engine*, prev_buffer*)
-  auto blocks = thunk_builder.Finish();
-  mir::Function thunk{
+  // Build check program
+  // Signature: void check_program(DesignState*, Engine*, ObserverContext*,
+  // prev_buffer*)
+  auto blocks = program_builder.Finish();
+  mir::Function program{
       .signature =
           {
               .return_type = original_ctx.builtin_types.void_type,
               .params = {},
           },
-      .thunk_kind = mir::ThunkKind::kMonitorCheck,
+      .runtime_kind = mir::RuntimeProgramKind::kMonitorCheck,
       .entry = mir::BasicBlockId{0},
       .blocks = std::move(blocks),
-      .local_types = std::move(thunk_ctx.local_types),
-      .temp_types = std::move(thunk_ctx.temp_types),
-      .temp_metadata = std::move(thunk_ctx.temp_metadata),
+      .local_types = std::move(program_ctx.local_types),
+      .temp_types = std::move(program_ctx.temp_types),
+      .temp_metadata = std::move(program_ctx.temp_metadata),
       .param_local_slots = {},
       .param_origins = {},
   };
-  mir::FunctionId thunk_id =
-      original_ctx.mir_arena->AddFunction(std::move(thunk));
+  mir::FunctionId program_id =
+      original_ctx.mir_arena->AddFunction(std::move(program));
 
   if (original_ctx.generated_functions != nullptr) {
-    original_ctx.generated_functions->push_back(thunk_id);
+    original_ctx.generated_functions->push_back(program_id);
   }
 
-  return thunk_id;
+  return program_id;
 }
 
-// Generate a synthetic setup thunk function for $monitor.
-// The setup thunk performs initial print and registers the check thunk.
-auto LowerMonitorSetupThunk(
+// Generate a synthetic setup program for $monitor.
+// The setup program performs initial print and registers the check program.
+auto LowerMonitorSetupProgram(
     const hir::MonitorSystemCallData& data, MirBuilder& original_builder,
-    [[maybe_unused]] mir::FunctionId check_thunk_id,
+    [[maybe_unused]] mir::FunctionId check_program_id,
     [[maybe_unused]] const SnapshotLayout& layout) -> Result<mir::FunctionId> {
   Context& original_ctx = original_builder.GetContext();
 
-  Context thunk_ctx{
+  Context program_ctx{
       .mir_arena = original_ctx.mir_arena,
       .hir_arena = original_ctx.hir_arena,
       .type_arena = original_ctx.type_arena,
@@ -596,13 +597,13 @@ auto LowerMonitorSetupThunk(
       .return_type = original_ctx.builtin_types.void_type,
   };
 
-  MirBuilder thunk_builder(original_ctx.mir_arena, &thunk_ctx);
+  MirBuilder program_builder(original_ctx.mir_arena, &program_ctx);
 
-  BlockIndex entry = thunk_builder.CreateBlock();
-  thunk_builder.SetCurrentBlock(entry);
+  BlockIndex entry = program_builder.CreateBlock();
+  program_builder.SetCurrentBlock(entry);
 
   // Lower format ops for initial print
-  auto ops_result = LowerFormatOps(data.ops, data.descriptor, thunk_builder);
+  auto ops_result = LowerFormatOps(data.ops, data.descriptor, program_builder);
   if (!ops_result) return std::unexpected(ops_result.error());
   auto [mir_ops, mir_descriptor] = std::move(*ops_result);
 
@@ -612,39 +613,39 @@ auto LowerMonitorSetupThunk(
       .ops = std::move(mir_ops),
       .descriptor = std::move(mir_descriptor),
   };
-  thunk_builder.EmitEffect(std::move(display));
+  program_builder.EmitEffect(std::move(display));
 
-  // The setup thunk is called with (DesignState*, Engine*).
+  // The setup program is called with (DesignState*, Engine*, ObserverContext*).
   // LLVM lowering appends serialization + LyraMonitorRegister() in the
   // epilogue.
 
   // Emit void return
-  thunk_builder.EmitTerminate(std::nullopt);
+  program_builder.EmitTerminate(std::nullopt);
 
-  auto blocks = thunk_builder.Finish();
-  mir::Function thunk{
+  auto blocks = program_builder.Finish();
+  mir::Function program{
       .signature =
           {
               .return_type = original_ctx.builtin_types.void_type,
               .params = {},
           },
-      .thunk_kind = mir::ThunkKind::kMonitorSetup,
+      .runtime_kind = mir::RuntimeProgramKind::kMonitorSetup,
       .entry = mir::BasicBlockId{0},
       .blocks = std::move(blocks),
-      .local_types = std::move(thunk_ctx.local_types),
-      .temp_types = std::move(thunk_ctx.temp_types),
-      .temp_metadata = std::move(thunk_ctx.temp_metadata),
+      .local_types = std::move(program_ctx.local_types),
+      .temp_types = std::move(program_ctx.temp_types),
+      .temp_metadata = std::move(program_ctx.temp_metadata),
       .param_local_slots = {},
       .param_origins = {},
   };
-  mir::FunctionId thunk_id =
-      original_ctx.mir_arena->AddFunction(std::move(thunk));
+  mir::FunctionId program_id =
+      original_ctx.mir_arena->AddFunction(std::move(program));
 
   if (original_ctx.generated_functions != nullptr) {
-    original_ctx.generated_functions->push_back(thunk_id);
+    original_ctx.generated_functions->push_back(program_id);
   }
 
-  return thunk_id;
+  return program_id;
 }
 
 auto LowerMonitorEffect(
@@ -660,22 +661,22 @@ auto LowerMonitorEffect(
   // Compute snapshot layout
   SnapshotLayout layout = ComputeSnapshotLayout(mir_ops, *ctx.type_arena);
 
-  // Create check thunk
-  auto check_result = LowerMonitorCheckThunk(data, builder, layout);
+  // Create check program
+  auto check_result = LowerMonitorCheckProgram(data, builder, layout);
   if (!check_result) return std::unexpected(check_result.error());
-  mir::FunctionId check_thunk_id = *check_result;
+  mir::FunctionId check_program_id = *check_result;
 
-  // Create setup thunk
+  // Create setup program
   auto setup_result =
-      LowerMonitorSetupThunk(data, builder, check_thunk_id, layout);
+      LowerMonitorSetupProgram(data, builder, check_program_id, layout);
   if (!setup_result) return std::unexpected(setup_result.error());
-  mir::FunctionId setup_thunk_id = *setup_result;
+  mir::FunctionId setup_program_id = *setup_result;
 
   // Emit MonitorEffect with format ops for LLVM comparison code generation
   builder.EmitEffect(
       mir::MonitorEffect{
-          .setup_thunk = setup_thunk_id,
-          .check_thunk = check_thunk_id,
+          .setup_program = setup_program_id,
+          .check_program = check_program_id,
           .print_kind = data.print_kind,
           .format_ops = std::move(mir_ops),
           .offsets = layout.offsets,
@@ -2414,7 +2415,7 @@ auto LowerStatement(hir::StatementId stmt_id, MirBuilder& builder)
           if (exit_block != kInvalidBlockIndex) {
             builder.EmitJump(exit_block);
           } else {
-            // Legacy path for processes or thunks without single-exit form
+            // Legacy path for processes without single-exit form
             builder.EmitTerminate(std::nullopt);
           }
         } else if constexpr (std::is_same_v<T, hir::DelayStatementData>) {

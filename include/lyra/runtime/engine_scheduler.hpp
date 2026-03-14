@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <type_traits>
-#include <vector>
 
 #include "lyra/runtime/activation_trace.hpp"
 #include "lyra/runtime/engine_types.hpp"
@@ -57,28 +56,5 @@ static_assert(
 
 // Forward declaration for callback
 class Engine;
-
-// Callback for Postponed region ($strobe, future $monitor, etc.).
-// Called at end of time slot to re-evaluate and print with final values.
-// Matches user function ABI: void (DesignState*, Engine*)
-using PostponedCallback = void (*)(void*, void*);
-
-// Monitor check callback: evaluates expressions, compares with prev buffer.
-// void check_thunk(DesignState*, Engine*, prev_buffer*)
-using MonitorCheckCallback = void (*)(void*, void*, void*);
-
-// State for active $monitor (only one can be active at a time per IEEE 1800).
-struct MonitorState {
-  bool enabled = true;
-  MonitorCheckCallback check_thunk = nullptr;
-  void* design_state = nullptr;
-  std::vector<uint8_t> prev_values;  // Runtime-owned prev buffer
-};
-
-// Postponed queue entry: callback + captured context.
-struct PostponedRecord {
-  PostponedCallback callback;
-  void* design_state;  // DesignState*
-};
 
 }  // namespace lyra::runtime

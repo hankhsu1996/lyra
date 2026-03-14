@@ -68,8 +68,8 @@ struct Design {
   // slots.size() == num_design_slots.
   std::vector<SlotDesc> slots;
   std::vector<ProcessId> init_processes;
-  // Functions dynamically generated during lowering (e.g., strobe thunks from
-  // init processes). These are not associated with any specific module.
+  // Functions dynamically generated during lowering (e.g., observer programs
+  // from init processes). These are not associated with any specific module.
   std::vector<FunctionId> generated_functions;
 
   // Global precision power for %t formatting (e.g., -12 for 1ps).

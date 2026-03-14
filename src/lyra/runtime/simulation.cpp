@@ -652,10 +652,18 @@ extern "C" void LyraScheduleNba(
       notify_slot_id);
 }
 
-extern "C" void LyraSchedulePostponed(
-    void* engine_ptr, LyraPostponedCallback callback, void* design_state) {
+extern "C" void LyraRegisterStrobe(
+    void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
+    void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset,
+    const void* unstable_offsets) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  engine->SchedulePostponed(callback, design_state);
+  lyra::runtime::ObserverContext ctx{
+      .this_ptr = this_ptr,
+      .instance_id = instance_id,
+      .signal_id_offset = signal_id_offset,
+      .unstable_offsets = unstable_offsets,
+  };
+  engine->RegisterStrobe(program, design_state, ctx);
 }
 
 extern "C" void LyraTerminate(
@@ -777,10 +785,17 @@ extern "C" void LyraReportTime() {
 }
 
 extern "C" void LyraMonitorRegister(
-    void* engine_ptr, LyraMonitorCheckCallback check_thunk, void* design_state,
-    const void* initial_prev, uint32_t size) {
+    void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
+    void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset,
+    const void* unstable_offsets, const void* initial_prev, uint32_t size) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  engine->RegisterMonitor(check_thunk, design_state, initial_prev, size);
+  lyra::runtime::ObserverContext ctx{
+      .this_ptr = this_ptr,
+      .instance_id = instance_id,
+      .signal_id_offset = signal_id_offset,
+      .unstable_offsets = unstable_offsets,
+  };
+  engine->RegisterMonitor(program, design_state, ctx, initial_prev, size);
 }
 
 extern "C" void LyraMonitorSetEnabled(void* engine_ptr, bool enabled) {

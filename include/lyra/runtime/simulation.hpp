@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 
+#include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
 #include "lyra/runtime/string.hpp"
 
@@ -141,14 +142,17 @@ void LyraScheduleNba(
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size,
     uint32_t notify_slot_id);
 
-// Postponed callback type for $strobe and related TFs.
-// Thunk matches user function ABI: void (DesignState*, Engine*)
-using LyraPostponedCallback = void (*)(void*, void*);
+// Strobe observer program type: uses canonical StrobeProgramFn from
+// observer.hpp.
+using LyraStrobeProgramFn = lyra::runtime::StrobeProgramFn;
 
-// Schedule a callback to execute in the Postponed region.
-// Used by $strobe to defer printing until end of time slot.
-void LyraSchedulePostponed(
-    void* engine_ptr, LyraPostponedCallback callback, void* design_state);
+// Register a strobe observer for the Postponed region.
+// ObserverContext fields are passed flat for C ABI, reconstructed on the
+// runtime side.
+void LyraRegisterStrobe(
+    void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
+    void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset,
+    const void* unstable_offsets);
 
 // Unified termination with kind/level/message support.
 // kind: 0=finish, 1=fatal, 2=stop, 3=exit
@@ -181,19 +185,18 @@ void LyraInitRuntime(const char* fs_base_dir);
 // Print final simulation time as __LYRA_TIME__=<N> for test harness.
 void LyraReportTime();
 
-// Monitor check callback type: void (DesignState*, Engine*, prev_buffer*)
-using LyraMonitorCheckCallback = void (*)(void*, void*, void*);
+// Monitor check program type: uses canonical MonitorCheckProgramFn from
+// observer.hpp.
+using LyraMonitorCheckProgramFn = lyra::runtime::MonitorCheckProgramFn;
 
 // Register a new monitor, atomically replacing any existing one.
 // The initial_prev buffer is copied to runtime-owned storage.
-// - engine_ptr: pointer to Engine
-// - check_thunk: callback for checking value changes
-// - design_state: DesignState* to pass to check_thunk
-// - initial_prev: initial prev_values buffer
-// - size: size of prev_values buffer in bytes
+// ObserverContext fields are passed flat for C ABI, reconstructed on the
+// runtime side.
 void LyraMonitorRegister(
-    void* engine_ptr, LyraMonitorCheckCallback check_thunk, void* design_state,
-    const void* initial_prev, uint32_t size);
+    void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
+    void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset,
+    const void* unstable_offsets, const void* initial_prev, uint32_t size);
 
 // Enable/disable the active monitor. No-op if no active monitor.
 // - engine_ptr: pointer to Engine

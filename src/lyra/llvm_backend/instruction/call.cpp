@@ -57,7 +57,7 @@ auto LowerUserCall(
     //   This is the ONLY place where we deliberately create uninitialized
     //   storage at an ABI boundary.
     //
-    // Callee (DefineUserFunction exit block):
+    // Callee (DefineMirFunction exit block):
     //   MUST fully initialize the out slot via MoveInit before returning.
     //   Valid values include nullptr (represents empty string/container).
     //
