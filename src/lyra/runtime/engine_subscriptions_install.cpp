@@ -177,27 +177,35 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
 // post-activation snapshot refresh can be skipped.
 //
 // Precondition: all sub_refs are snapshot-bearing (kEdge or kChange).
-// This is structurally guaranteed by the caller -- can_refresh requires
-// WaitShapeKind::kStatic, and static waits have fixed trigger sets with no
-// late-bound indices. Validated at the can_refresh boundary, not here.
-[[nodiscard]] static auto NeedsSnapshotRefresh(
-    const UpdateSet& update_set, const ProcessState& proc_state) -> bool {
-  if (update_set.DeltaDirtySlots().empty()) return false;
-  return std::ranges::any_of(proc_state.sub_refs, [&](const SubRef& ref) {
-    return update_set.IsDeltaDirty(ref.slot_id);
-  });
-}
-
+// Refresh snapshots for installed subscriptions whose slots were dirtied in
+// the current delta. Single-pass: checks IsDeltaDirty per sub and only
+// refreshes those that changed, avoiding a separate NeedsSnapshotRefresh scan.
+//
+// This is only called on the can_refresh path (WaitShapeKind::kStatic), so
+// all subs are snapshot-bearing (kEdge or kChange). Rebind watchers and
+// container subs are structurally impossible here.
 void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
   if (handle.process_id >= num_processes_) return;
 
   auto& proc_state = process_states_[handle.process_id];
+
+  // Watermark skip: if no new dirty slots appeared since our last refresh
+  // in this delta, the installed snapshots are already current.
+  auto current_epoch = update_set_.DeltaEpoch();
+  auto current_dirty_count =
+      static_cast<uint32_t>(update_set_.DeltaDirtySlots().size());
+  if (current_epoch == proc_state.last_refresh_epoch &&
+      current_dirty_count == proc_state.last_refresh_dirty_count) {
+    return;
+  }
 
   std::span design_state(
       static_cast<const uint8_t*>(design_state_base_),
       slot_meta_registry_.MaxExtent());
 
   for (const auto& ref : proc_state.sub_refs) {
+    if (!update_set_.IsDeltaDirty(ref.slot_id)) continue;
+
     const auto& meta = slot_meta_registry_.Get(ref.slot_id);
 
     switch (ref.kind) {
@@ -205,7 +213,6 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
         auto& sub = signal_subs_[ref.slot_id].edge_subs[ref.index];
         uint8_t current_byte = design_state[meta.base_off + sub.byte_offset];
         sub.last_bit = (current_byte >> sub.bit_index) & 1;
-        // Update byte snapshot if this is a rebind target.
         if (sub.cold_idx != UINT32_MAX) {
           auto& cold = edge_cold_pool_[sub.cold_idx];
           cold.edge_last_byte = current_byte;
@@ -228,10 +235,6 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
         break;
       }
       case SubKind::kRebindWatcher: {
-        // Structural invariant: RefreshInstalledSnapshots is only called when
-        // can_refresh is true, which requires WaitShapeKind::kStatic. Static
-        // waits have fixed trigger sets with no late-bound indices, so rebind
-        // watchers are structurally impossible here.
         throw common::InternalError(
             "Engine::RefreshInstalledSnapshots",
             std::format(
@@ -239,9 +242,6 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
                 handle.process_id));
       }
       case SubKind::kContainer: {
-        // Structural invariant: container element triggers require late-bound
-        // index computation, so they are always WaitShapeKind::kDynamic and
-        // never reach the static refresh path.
         throw common::InternalError(
             "Engine::RefreshInstalledSnapshots",
             std::format(
@@ -250,6 +250,9 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
       }
     }
   }
+
+  proc_state.last_refresh_epoch = current_epoch;
+  proc_state.last_refresh_dirty_count = current_dirty_count;
 }
 
 void Engine::InstallTriggers(
@@ -498,6 +501,12 @@ void Engine::InstallWaitSite(
       .wait_site_id = descriptor.id,
       .valid = true,
       .can_refresh_snapshot = (descriptor.shape == WaitShapeKind::kStatic)};
+
+  // Snapshots are fresh from install -- set watermark so the next
+  // RefreshInstalledSnapshots skips unless new dirty slots appear.
+  proc_state.last_refresh_epoch = update_set_.DeltaEpoch();
+  proc_state.last_refresh_dirty_count =
+      static_cast<uint32_t>(update_set_.DeltaDirtySlots().size());
 }
 
 void Engine::RegisterSuspendRecords(std::span<SuspendRecord*> records) {
@@ -554,12 +563,8 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
       auto& proc_state = process_states_[handle.process_id];
 
       if (CanRefreshInPlace(proc_state.installed_wait, suspend->wait_site_id)) {
-        // Fast path: only per-activation dynamic state.
-        // No descriptor lookup. Installed subscriptions are all
-        // snapshot-bearing (validated at install time).
-        if (NeedsSnapshotRefresh(update_set_, proc_state)) {
-          RefreshInstalledSnapshots(handle);
-        }
+        // Fast path: refresh only dirty-slot snapshots in one pass.
+        RefreshInstalledSnapshots(handle);
       } else {
         // Slow path: descriptor lookup + full reinstall.
         const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
