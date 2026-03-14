@@ -1166,13 +1166,28 @@ auto BuildDesignLayout(
 
   std::vector<llvm::Type*> field_types;
 
+  // Resolve storage mode once for all slots.
+  auto storage_mode =
+      force_two_state ? StorageMode::kTwoState : StorageMode::kNormal;
+  auto pointer_size = static_cast<uint32_t>(dl.getPointerSize());
+  auto pointer_align =
+      static_cast<uint32_t>(dl.getPointerABIAlignment(0).value());
+  TargetStorageAbi target_abi{
+      .pointer_byte_size = pointer_size,
+      .pointer_alignment = pointer_align,
+  };
+
   for (size_t i = 0; i < slots.size(); ++i) {
     const auto& slot = slots[i];
     layout.slots.push_back(slot.slot_id);
     layout.slot_to_field[slot.slot_id] = static_cast<uint32_t>(i);
-    // Use actual TypeId for LLVM type derivation (not SlotTypeInfo)
     field_types.push_back(
         GetLlvmTypeForTypeId(ctx, slot.type_id, types, force_two_state));
+
+    // Resolve canonical storage spec for this slot.
+    layout.slot_storage_specs.push_back(ResolveStorageSpec(
+        slot.type_id, types, storage_mode, target_abi,
+        layout.storage_spec_arena));
   }
 
   // Empty struct needs sentinel for valid LLVM struct

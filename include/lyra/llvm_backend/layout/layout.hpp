@@ -15,6 +15,7 @@
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/layout/storage_contract.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
@@ -82,6 +83,11 @@ struct DesignLayout {
   llvm::StructType* llvm_type = nullptr;
   // Patches for 4-state X-encoding (byte offsets to unknown planes)
   FourStatePatchTable four_state_patches;
+
+  // Canonical Lyra storage spec per slot, indexed by slot position.
+  std::vector<SlotStorageSpec> slot_storage_specs;
+  // Arena for child storage specs (array elements, struct fields).
+  StorageSpecArena storage_spec_arena;
 };
 
 // Process frame layout - one per process
