@@ -117,7 +117,7 @@ The primary Phase 1 product is `hir::ModuleBody` -- the first-class per-body own
 
 - Body structure: processes, functions, tasks (IDs are body-local)
 - Body-local arena: all expressions, statements, processes, functions, tasks, patterns
-- Future: body-local symbol environment, diagnostics
+- Future: body-local symbol environment
 
 **Downstream dependency contract for HIR->MIR**: Lowering one body unit to MIR requires:
 
@@ -219,7 +219,7 @@ All groups' diagnostics concatenated in group order. If any diagnostic is an err
 | `mir::Arena` (body content)         | Single shared arena                           | Per-body owned arena. Body-local IDs.                                                                              |
 | Body-local symbols                  | Appended to global SymbolTable during Phase 1 | Group-local symbol environment. Stays in body unit. No current consumer needs global publication.                  |
 | Lowering scopes                     | Appended to global ScopeTable                 | Ephemeral group-local state. Not merged.                                                                           |
-| `DiagnosticSink`                    | Single shared sink                            | Per-body diagnostic vector. Concatenated in Phase 2.                                                               |
+| `DiagnosticSink`                    | Per-body sink in AST->HIR; shared in HIR->MIR | Per-body diagnostic vector. Concatenated in Phase 2.                                                               |
 | `OriginMap` entries                 | Single shared map                             | Per-body origin entries. Collected in Phase 2.                                                                     |
 | `Context::temp_counter`             | Non-atomic global counter                     | Per-body counter (names only need body-local uniqueness).                                                          |
 | `SymbolRegistrar` (Phase 1 portion) | Shared registrar with mixed read/write        | Phase 1 uses a group-local registrar that reads from frozen Phase 0 state and writes to body-local symbol storage. |

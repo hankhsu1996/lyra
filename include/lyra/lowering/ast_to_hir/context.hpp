@@ -64,12 +64,14 @@ struct Context {
   BuiltinTypes builtin_types{};
 
   // Fork a body-lowering context that directs all HIR allocation into
-  // the given body-local arena. All shared state (type_arena, sink, etc.)
-  // is inherited by shallow copy.
-  [[nodiscard]] auto ForkForBodyLowering(hir::Arena& body_arena) const
-      -> Context {
+  // the given body-local arena and all diagnostics into the given
+  // body-local sink. All other shared state (type_arena, symbol_table,
+  // etc.) is inherited by shallow copy.
+  [[nodiscard]] auto ForkForBodyLowering(
+      hir::Arena& body_arena, DiagnosticSink& body_sink) const -> Context {
     Context body_ctx = *this;
     body_ctx.hir_arena = &body_arena;
+    body_ctx.sink = &body_sink;
     return body_ctx;
   }
 

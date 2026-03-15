@@ -39,6 +39,13 @@ class DiagnosticSink {
     return diagnostics_;
   }
 
+  // Transfer ownership of collected diagnostics. Rvalue-only to make
+  // ownership transfer terminal -- prevents "take then keep using" patterns.
+  [[nodiscard]] auto TakeDiagnostics() && -> std::vector<Diagnostic> {
+    has_errors_ = false;
+    return std::move(diagnostics_);
+  }
+
   void Clear() {
     diagnostics_.clear();
     has_errors_ = false;

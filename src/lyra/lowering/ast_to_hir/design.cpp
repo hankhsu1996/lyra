@@ -568,20 +568,33 @@ auto LowerDesign(
   auto [body_inputs, instance_inputs] =
       PrepareModuleLoweringInputs(all_instances, spec_map, registrar);
 
-  // Phase 1a: Lower one shared body per specialization group.
-  // The representative instance provides timescale (ModuleLowerer) and
-  // source span context, not identity.
-  std::vector<hir::ModuleBody> module_bodies;
-  module_bodies.reserve(spec_map.groups.size());
-
-  std::vector<hir::ModuleBodyId> body_id_by_instance(all_instances.size());
+  // Phase 1: Lower one shared body per specialization group.
+  // Each call returns an isolated BodyLoweringResult with body-local
+  // diagnostics. No body-lowering path writes to the pipeline sink.
+  std::vector<BodyLoweringResult> body_results;
+  body_results.reserve(spec_map.groups.size());
 
   for (size_t g = 0; g < spec_map.groups.size(); ++g) {
     uint32_t rep_idx = spec_map.groups[g].instance_indices[0];
-    auto body = LowerModuleBody(
-        *all_instances[rep_idx], body_inputs[g], registrar, ctx);
+    body_results.push_back(LowerModuleBody(
+        *all_instances[rep_idx], body_inputs[g], registrar, ctx));
+  }
+
+  // Phase 2: Merge diagnostics and assemble module bodies in stable
+  // group order. This is the deterministic assembly step.
+  std::vector<hir::ModuleBody> module_bodies;
+  module_bodies.reserve(body_results.size());
+
+  std::vector<hir::ModuleBodyId> body_id_by_instance(all_instances.size());
+
+  for (size_t g = 0; g < body_results.size(); ++g) {
+    for (auto& diag : body_results[g].diagnostics) {
+      ctx->sink->Report(std::move(diag));
+    }
+
     hir::ModuleBodyId body_id{static_cast<uint32_t>(module_bodies.size())};
-    module_bodies.push_back(std::move(body));
+    module_bodies.push_back(std::move(body_results[g].body));
+
     for (uint32_t idx : spec_map.groups[g].instance_indices) {
       body_id_by_instance[idx] = body_id;
     }

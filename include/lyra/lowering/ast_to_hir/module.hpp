@@ -4,6 +4,7 @@
 
 #include <slang/ast/symbols/InstanceSymbols.h>
 
+#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/hir/module.hpp"
@@ -50,13 +51,22 @@ struct InstanceRegistrationInput {
   std::vector<const slang::ast::ParameterSymbol*> parameters;
 };
 
+// Product of per-body AST->HIR lowering.
+// Contains the body unit and any diagnostics produced during body lowering.
+// Diagnostics are merged into the pipeline sink during Phase 2 assembly.
+struct BodyLoweringResult {
+  hir::ModuleBody body;
+  std::vector<Diagnostic> diagnostics;
+};
+
 // Lower specialization-shared behavioral content for one spec group.
 // Called once per group. The representative instance provides timescale
 // (ModuleLowerer) and source span context, not identity.
+// Returns a self-contained body-lowering product with isolated diagnostics.
 auto LowerModuleBody(
     const slang::ast::InstanceSymbol& representative,
     const BodyLoweringInput& input, SymbolRegistrar& registrar, Context* ctx)
-    -> hir::ModuleBody;
+    -> BodyLoweringResult;
 
 // Collect per-instance registration data. No behavioral lowering.
 // All symbols are looked up from Phase 0 context.

@@ -24,7 +24,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [ ] F1 -- Parallel specialization compilation (next milestone, see [parallel-compilation.md](../parallel-compilation.md))
   - [x] F1-design -- Parallel ownership model: per-body owned unit, identity contract, phase split
   - [x] F1-prep Cut 1 -- Per-body HIR ownership (`ModuleBody` owns arena, body-aware OriginMap, `ForkForBodyLowering`)
-  - [ ] F1-prep Cut 3 -- Per-body diagnostics
+  - [x] F1-prep Cut 3a -- Per-body AST->HIR diagnostics (`BodyLoweringResult`, Phase 1/2 split in orchestration)
   - [ ] F1-prep Cut 2 -- Per-body MIR ownership
   - [ ] F1-prep Cut 4 -- TypeArena/ConstantArena investigation
   - [ ] m3 -- ParamTransmissionTable: replace raw ParameterSymbol\* with group-scoped key (Phase 0 only, not F1-blocking)
