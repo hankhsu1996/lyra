@@ -197,9 +197,9 @@ class Engine {
   // Validates target_slot and target_index against current dense storage.
   void SubscribeRebind(
       ProcessHandle handle, uint32_t edge_target_id, SignalId target_slot,
-      SubKind target_kind, uint32_t target_index,
-      std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
-      std::span<const uint32_t> dep_slots);
+      SubKind target_kind, uint32_t target_index, uint8_t target_edge_group,
+      EdgeBucket target_edge_bucket, std::span<const IndexPlanOp> plan,
+      BitTargetMapping mapping, std::span<const uint32_t> dep_slots);
 
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.
@@ -555,8 +555,25 @@ class Engine {
   auto AllocEdgeTarget(EdgeTargetHandle handle) -> uint32_t;
   void FreeEdgeTarget(uint32_t id);
 
+  // Grouped edge subscription accessors.
+  auto GetEdgeGroup(uint32_t slot_id, uint32_t group) -> EdgeWatchGroup&;
+  auto EdgeSubVec(uint32_t slot_id, uint32_t group, EdgeBucket bucket)
+      -> std::vector<EdgeSub>&;
+  auto ResolveEdgeSub(const SubRef& ref) -> EdgeSub&;
+
+  // Find or create an EdgeWatchGroup for the given observation point.
+  // Returns the group index. Reuses empty groups before appending.
+  auto FindOrCreateEdgeGroup(
+      uint32_t slot_id, uint32_t byte_offset, uint8_t bit_index,
+      uint8_t initial_last_bit) -> uint32_t;
+
+  // Low-level edge sub removal from a specific group/bucket.
+  // Handles swap-and-pop with SubRef and EdgeTargetHandle fixup.
+  void RemoveEdgeSubFromBucket(
+      uint32_t slot_id, uint32_t group, EdgeBucket bucket, uint32_t index);
+
   // Typed swap-and-pop removal from dense vectors.
-  void RemoveEdgeSub(uint32_t slot_id, uint32_t index);
+  void RemoveEdgeSub(const SubRef& ref);
   void RemoveChangeSub(uint32_t slot_id, uint32_t index);
   void RemoveRebindWatcherSub(uint32_t slot_id, uint32_t index);
   void RemoveContainerSub(uint32_t slot_id, uint32_t index);
@@ -591,10 +608,11 @@ class Engine {
   void FlushSlotRebindSubs(
       std::vector<RebindWatcherSub>& subs, const SlotMeta& meta,
       std::span<const uint8_t> design_state);
-  void FlushSlotEdgeSubs(
-      uint32_t slot_id, std::vector<EdgeSub>& subs, const SlotMeta& meta,
-      const common::RangeSet& dirty_ranges, RangeFilterMode mode,
-      std::span<const uint8_t> design_state);
+  void FlushSlotEdgeGroups(
+      uint32_t slot_id, std::vector<EdgeWatchGroup>& groups,
+      const SlotMeta& meta, const common::RangeSet& dirty_ranges,
+      RangeFilterMode mode, std::span<const uint8_t> design_state);
+  void UpdateEdgeColdSnapshots(EdgeWatchGroup& group, uint8_t current_byte);
   void FlushSlotChangeSubs(
       uint32_t slot_id, std::vector<ChangeSub>& subs, const SlotMeta& meta,
       const common::RangeSet& dirty_ranges, RangeFilterMode mode,

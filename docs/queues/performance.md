@@ -72,7 +72,7 @@ Ranked by relative profile weight (clock-pipeline fixture). Re-profile to get cu
 
 1. **FlushAndPropagateConnections remaining overhead** -- fixpoint iteration logic (connection memcmp, trigger map traversal, worklist management). Further gains require algorithmic changes (topological ordering, narrower triggers).
 2. **Process dispatch** -- region loop + dispatch trampoline overhead.
-3. **Signal flush** -- per-kind subscription helpers (FlushDirtySlot, FlushSlotEdgeSubs, FlushSlotChangeSubs).
+3. **Signal flush** -- per-kind subscription helpers (FlushDirtySlot, FlushSlotEdgeGroups, FlushSlotChangeSubs).
 4. **ReconcilePostActivation overhead** -- validation + WaitSiteRegistry::Get on every activation.
 
 ### Tier 2: Moderate impact
@@ -98,21 +98,22 @@ Separate from simulation throughput. AOT binary links `liblyra_runtime.so` (6MB)
 
 ## Completed
 
-| Gap | Description                        | PR   | Impact                                                         |
-| --- | ---------------------------------- | ---- | -------------------------------------------------------------- |
-| G1  | Dense runtime tables               | #476 | Foundation for G2                                              |
-| G2  | Compiled wait-site plans           | #478 | Eliminated interpreter overhead                                |
-| G3  | Small-buffer NBA storage           | #484 | Eliminates NBA heap allocs (common case)                       |
-| G4  | Explicit process dispatch ABI      |      | Code quality; no measurable perf impact                        |
-| G6a | Pointer-out process ABI            | #481 | Removes nonlocal jump from hot path                            |
-| G9  | Static event-loop back-edge        | #493 | Eliminated per-cycle region scheduling overhead                |
-| G7b | Comb kernel trigger precision      | #497 | Infrastructure only; comb_narrow=0 on benchmarks               |
-| G5a | Dirty-slot full-extent fast path   | #501 | Bypass RangeSet for full-slot marks; inline TouchSlot          |
-| G5b | Dense typed subscriber storage     | #503 | Typed hot-path vectors, cold pools                             |
-| G5c | Compile-time trigger descriptors   | #506 | Canonical install path, eliminated runtime descriptor alloc    |
-| G6b | Snapshot refresh guard             |      | Skip snapshot refresh when no observed slot is delta-dirty     |
-| G11 | Fused FlushSignalUpdates traversal | #511 | Single-pass flush; dispersed into per-kind helpers             |
-| G7c | Comb self-trigger bucket fix       | #516 | Correctness fix; worklist dedup + snapshot comparison          |
-| G7d | Must-def sensitivity (Phase 1)     | #520 | Whole-variable must-def exclusion in comb sensitivity          |
-| G7e | Self-edge gating + scratch hoist   | #521 | Per-kernel self-edge metadata + hoisted scratch allocs         |
-| G7f | Fixpoint workspace hoisting        | #523 | All fixpoint vectors persistent with capacity-preserving reuse |
+| Gap | Description                        | PR   | Impact                                                                                          |
+| --- | ---------------------------------- | ---- | ----------------------------------------------------------------------------------------------- |
+| G1  | Dense runtime tables               | #476 | Foundation for G2                                                                               |
+| G2  | Compiled wait-site plans           | #478 | Eliminated interpreter overhead                                                                 |
+| G3  | Small-buffer NBA storage           | #484 | Eliminates NBA heap allocs (common case)                                                        |
+| G4  | Explicit process dispatch ABI      |      | Code quality; no measurable perf impact                                                         |
+| G6a | Pointer-out process ABI            | #481 | Removes nonlocal jump from hot path                                                             |
+| G9  | Static event-loop back-edge        | #493 | Eliminated per-cycle region scheduling overhead                                                 |
+| G7b | Comb kernel trigger precision      | #497 | Infrastructure only; comb_narrow=0 on benchmarks                                                |
+| G5a | Dirty-slot full-extent fast path   | #501 | Bypass RangeSet for full-slot marks; inline TouchSlot                                           |
+| G5b | Dense typed subscriber storage     | #503 | Typed hot-path vectors, cold pools                                                              |
+| G5c | Compile-time trigger descriptors   | #506 | Canonical install path, eliminated runtime descriptor alloc                                     |
+| G6b | Snapshot refresh guard             |      | Skip snapshot refresh when no observed slot is delta-dirty                                      |
+| G11 | Fused FlushSignalUpdates traversal | #511 | Single-pass flush; dispersed into per-kind helpers                                              |
+| G7c | Comb self-trigger bucket fix       | #516 | Correctness fix; worklist dedup + snapshot comparison                                           |
+| G7d | Must-def sensitivity (Phase 1)     | #520 | Whole-variable must-def exclusion in comb sensitivity                                           |
+| G7e | Self-edge gating + scratch hoist   | #521 | Per-kernel self-edge metadata + hoisted scratch allocs                                          |
+| G7f | Fixpoint workspace hoisting        | #523 | All fixpoint vectors persistent with capacity-preserving reuse                                  |
+| G12 | Polarity-aware edge dispatch       |      | Observation-point groups + direction-aware flush; edge_sub_checks 11M -> 5.5M on clock-pipeline |

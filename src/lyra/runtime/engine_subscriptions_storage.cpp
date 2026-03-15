@@ -96,8 +96,8 @@ auto Engine::AllocEdgeTarget(EdgeTargetHandle handle) -> uint32_t {
 }
 
 void Engine::FreeEdgeTarget(uint32_t id) {
-  edge_target_table_[id] =
-      EdgeTargetHandle{UINT32_MAX, SubKind::kEdge, UINT32_MAX};
+  edge_target_table_[id] = EdgeTargetHandle{
+      .slot_id = UINT32_MAX, .kind = SubKind::kEdge, .index = UINT32_MAX};
   edge_target_free_list_.push_back(id);
 }
 
@@ -140,8 +140,12 @@ void Engine::PrintTopWaiters(size_t count) {
 
   for (uint32_t signal = 0; signal < signal_subs_.size(); ++signal) {
     const auto& slot = signal_subs_[signal];
-    size_t n = slot.edge_subs.size() + slot.change_subs.size() +
-               slot.rebind_subs.size() + slot.container_subs.size();
+    size_t n = 0;
+    for (const auto& g : slot.edge_groups) {
+      n += g.posedge_subs.size() + g.negedge_subs.size();
+    }
+    n += slot.change_subs.size() + slot.rebind_subs.size() +
+         slot.container_subs.size();
     if (n == 0) continue;
     waiter_counts.emplace_back(signal, n);
   }

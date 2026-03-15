@@ -22,36 +22,101 @@
 
 namespace lyra::runtime {
 
-void Engine::RemoveEdgeSub(uint32_t slot_id, uint32_t index) {
-  auto& vec = signal_subs_[slot_id].edge_subs;
-  auto& sub = vec[index];
+auto Engine::GetEdgeGroup(uint32_t slot_id, uint32_t group) -> EdgeWatchGroup& {
+  return signal_subs_[slot_id].edge_groups[group];
+}
 
-  // Free cold entry if present.
-  if (sub.cold_idx != UINT32_MAX) {
-    auto& cold = edge_cold_pool_[sub.cold_idx];
-    if (cold.edge_target_id != UINT32_MAX) {
-      FreeEdgeTarget(cold.edge_target_id);
+auto Engine::EdgeSubVec(uint32_t slot_id, uint32_t group, EdgeBucket bucket)
+    -> std::vector<EdgeSub>& {
+  auto& g = signal_subs_[slot_id].edge_groups[group];
+  return (bucket == EdgeBucket::kPosedge) ? g.posedge_subs : g.negedge_subs;
+}
+
+auto Engine::ResolveEdgeSub(const SubRef& ref) -> EdgeSub& {
+  return EdgeSubVec(ref.slot_id, ref.edge_group, ref.edge_bucket)[ref.index];
+}
+
+auto Engine::FindOrCreateEdgeGroup(
+    uint32_t slot_id, uint32_t byte_offset, uint8_t bit_index,
+    uint8_t initial_last_bit) -> uint32_t {
+  auto& groups = signal_subs_[slot_id].edge_groups;
+
+  // Search for existing group with matching observation point.
+  for (uint32_t i = 0; i < groups.size(); ++i) {
+    if (groups[i].byte_offset == byte_offset &&
+        groups[i].bit_index == bit_index) {
+      // Refresh last_bit when group is empty (all subs removed by prior
+      // ClearInstalledSubscriptions). Without this, a stale last_bit from
+      // the original install would cause false edge detection on reinstall.
+      if (groups[i].posedge_subs.empty() && groups[i].negedge_subs.empty()) {
+        groups[i].last_bit = initial_last_bit;
+      }
+      return i;
     }
-    FreeEdgeCold(sub.cold_idx);
   }
 
-  // Swap-and-pop.
+  // Reuse an empty group slot if available.
+  for (uint32_t i = 0; i < groups.size(); ++i) {
+    if (groups[i].posedge_subs.empty() && groups[i].negedge_subs.empty()) {
+      groups[i].byte_offset = byte_offset;
+      groups[i].bit_index = bit_index;
+      groups[i].last_bit = initial_last_bit;
+      return i;
+    }
+  }
+
+  // Append new group.
+  auto idx = static_cast<uint32_t>(groups.size());
+  groups.push_back(
+      EdgeWatchGroup{
+          .byte_offset = byte_offset,
+          .bit_index = bit_index,
+          .last_bit = initial_last_bit});
+  return idx;
+}
+
+void Engine::RemoveEdgeSubFromBucket(
+    uint32_t slot_id, uint32_t group, EdgeBucket bucket, uint32_t index) {
+  auto& vec = EdgeSubVec(slot_id, group, bucket);
+
+  // Swap-and-pop with full grouped-location invariant restoration.
   uint32_t last = static_cast<uint32_t>(vec.size()) - 1;
   if (index != last) {
     vec[index] = vec[last];
-    // Update moved element's owning SubRef.
     auto& moved = vec[index];
-    auto& moved_proc = process_states_[moved.process_id];
-    moved_proc.sub_refs[moved.process_sub_idx].index = index;
-    // Update edge_target_table_ if moved element is a rebind target.
+    auto& moved_ref =
+        process_states_[moved.process_id].sub_refs[moved.process_sub_idx];
+    moved_ref.index = index;
+    moved_ref.edge_group = group;
+    moved_ref.edge_bucket = bucket;
     if (moved.cold_idx != UINT32_MAX) {
       auto& moved_cold = edge_cold_pool_[moved.cold_idx];
       if (moved_cold.edge_target_id != UINT32_MAX) {
-        edge_target_table_[moved_cold.edge_target_id].index = index;
+        auto& moved_handle = edge_target_table_[moved_cold.edge_target_id];
+        moved_handle.index = index;
+        moved_handle.edge_group = group;
+        moved_handle.edge_bucket = bucket;
       }
     }
   }
   vec.pop_back();
+}
+
+void Engine::RemoveEdgeSub(const SubRef& ref) {
+  // Copy cold_idx before removal invalidates the reference.
+  uint32_t cold_idx = ResolveEdgeSub(ref).cold_idx;
+
+  // Free cold entry if present.
+  if (cold_idx != UINT32_MAX) {
+    auto& cold = edge_cold_pool_[cold_idx];
+    if (cold.edge_target_id != UINT32_MAX) {
+      FreeEdgeTarget(cold.edge_target_id);
+    }
+    FreeEdgeCold(cold_idx);
+  }
+
+  RemoveEdgeSubFromBucket(
+      ref.slot_id, ref.edge_group, ref.edge_bucket, ref.index);
 }
 
 void Engine::RemoveChangeSub(uint32_t slot_id, uint32_t index) {
@@ -131,7 +196,7 @@ void Engine::ClearInstalledSubscriptions(ProcessHandle handle) {
        ++it) {
     switch (it->kind) {
       case SubKind::kEdge:
-        RemoveEdgeSub(it->slot_id, it->index);
+        RemoveEdgeSub(*it);
         break;
       case SubKind::kChange:
         RemoveChangeSub(it->slot_id, it->index);
@@ -210,9 +275,10 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
 
     switch (ref.kind) {
       case SubKind::kEdge: {
-        auto& sub = signal_subs_[ref.slot_id].edge_subs[ref.index];
-        uint8_t current_byte = design_state[meta.base_off + sub.byte_offset];
-        sub.last_bit = (current_byte >> sub.bit_index) & 1;
+        auto& group = GetEdgeGroup(ref.slot_id, ref.edge_group);
+        uint8_t current_byte = design_state[meta.base_off + group.byte_offset];
+        group.last_bit = (current_byte >> group.bit_index) & 1;
+        auto& sub = ResolveEdgeSub(ref);
         if (sub.cold_idx != UINT32_MAX) {
           auto& cold = edge_cold_pool_[sub.cold_idx];
           cold.edge_last_byte = current_byte;
@@ -270,12 +336,15 @@ void Engine::InstallTriggers(
     SignalId slot_id;
     SubKind kind;
     uint32_t index;
+    uint8_t edge_group = 0;
+    EdgeBucket edge_bucket = EdgeBucket::kPosedge;
   };
   bool has_late_bound = !late_bound.empty();
   std::vector<CreatedSub> created_subs;
   if (has_late_bound) {
     created_subs.resize(
-        triggers.size(), CreatedSub{0, SubKind::kEdge, UINT32_MAX});
+        triggers.size(),
+        CreatedSub{.slot_id = 0, .kind = SubKind::kEdge, .index = UINT32_MAX});
   }
 
   for (uint32_t i = 0; i < triggers.size(); ++i) {
@@ -374,7 +443,14 @@ void Engine::InstallTriggers(
     }
 
     if (has_late_bound) {
-      created_subs[i] = CreatedSub{trigger.signal_id, sub_kind, sub_idx};
+      CreatedSub cs{
+          .slot_id = trigger.signal_id, .kind = sub_kind, .index = sub_idx};
+      if (sub_kind == SubKind::kEdge && sub_idx != UINT32_MAX) {
+        auto& last_ref = process_states_[handle.process_id].sub_refs.back();
+        cs.edge_group = last_ref.edge_group;
+        cs.edge_bucket = last_ref.edge_bucket;
+      }
+      created_subs[i] = cs;
     }
   }
 
@@ -417,8 +493,8 @@ void Engine::InstallTriggers(
     auto hdr_plan = plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
     auto hdr_deps = dep_slots.subspan(hdr.dep_slots_start, hdr.dep_slots_count);
     SubscribeRebind(
-        handle, UINT32_MAX, target.slot_id, target.kind, target.index, hdr_plan,
-        mapping, hdr_deps);
+        handle, UINT32_MAX, target.slot_id, target.kind, target.index,
+        target.edge_group, target.edge_bucket, hdr_plan, mapping, hdr_deps);
   }
 }
 
@@ -697,25 +773,37 @@ auto Engine::Subscribe(
         "Engine::Subscribe", "bit_index must be in [0,7]");
   }
 
-  auto sub_idx = static_cast<uint32_t>(slot.edge_subs.size());
   auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
+
+  // Find or create the observation-point group for (byte_offset, bit_index).
+  uint8_t initial_last_bit =
+      (design_state[meta.base_off + byte_offset] >> bit_index) & 1;
+  uint8_t group_idx =
+      FindOrCreateEdgeGroup(signal, byte_offset, bit_index, initial_last_bit);
+
+  // Determine polarity bucket.
+  EdgeBucket bucket = (edge == common::EdgeKind::kPosedge)
+                          ? EdgeBucket::kPosedge
+                          : EdgeBucket::kNegedge;
+  auto& target_vec = EdgeSubVec(signal, group_idx, bucket);
+  auto sub_idx = static_cast<uint32_t>(target_vec.size());
 
   EdgeSub sub{};
   sub.process_id = handle.process_id;
   sub.instance_id = handle.instance_id;
   sub.resume_block = resume.block_index;
-  sub.byte_offset = byte_offset;
-  sub.byte_size = byte_size;
-  sub.bit_index = bit_index;
-  sub.edge = edge;
-  sub.last_bit = (design_state[meta.base_off + byte_offset] >> bit_index) & 1;
   sub.flags = initially_active ? kSubActive : 0;
   sub.process_sub_idx = proc_sub_idx;
   sub.cold_idx = UINT32_MAX;
 
-  slot.edge_subs.push_back(sub);
+  target_vec.push_back(sub);
   proc_state.sub_refs.push_back(
-      SubRef{.slot_id = signal, .index = sub_idx, .kind = SubKind::kEdge});
+      SubRef{
+          .slot_id = signal,
+          .index = sub_idx,
+          .kind = SubKind::kEdge,
+          .edge_bucket = bucket,
+          .edge_group = group_idx});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
   return sub_idx;
@@ -819,9 +907,9 @@ auto Engine::SubscribeContainerElement(
 
 void Engine::SubscribeRebind(
     ProcessHandle handle, uint32_t edge_target_id, SignalId target_slot,
-    SubKind target_kind, uint32_t target_index,
-    std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
-    std::span<const uint32_t> dep_slots) {
+    SubKind target_kind, uint32_t target_index, uint8_t target_edge_group,
+    EdgeBucket target_edge_bucket, std::span<const IndexPlanOp> plan,
+    BitTargetMapping mapping, std::span<const uint32_t> dep_slots) {
   if (finished_) return;
 
   if (design_state_base_ == nullptr) {
@@ -855,12 +943,13 @@ void Engine::SubscribeRebind(
                                        target_slot, signal_subs_.size()));
   }
   if (target_kind == SubKind::kEdge) {
-    if (target_index >= signal_subs_[target_slot].edge_subs.size()) {
+    auto& tvec = EdgeSubVec(target_slot, target_edge_group, target_edge_bucket);
+    if (target_index >= tvec.size()) {
       throw common::InternalError(
           "Engine::SubscribeRebind",
           std::format(
-              "target_index {} >= edge_subs size {} for slot {}", target_index,
-              signal_subs_[target_slot].edge_subs.size(), target_slot));
+              "target_index {} >= edge bucket size {} for slot {}",
+              target_index, tvec.size(), target_slot));
     }
   } else {
     if (target_index >= signal_subs_[target_slot].container_subs.size()) {
@@ -902,7 +991,9 @@ void Engine::SubscribeRebind(
 
   // Ensure the target has a cold entry and store plan/mapping.
   if (target_kind == SubKind::kEdge) {
-    auto& esub = signal_subs_[target_slot].edge_subs[target_index];
+    auto& esub = EdgeSubVec(
+        target_slot, target_edge_group, target_edge_bucket)[target_index];
+    auto& group = GetEdgeGroup(target_slot, target_edge_group);
     if (esub.cold_idx == UINT32_MAX) {
       esub.cold_idx = AllocEdgeCold();
       esub.flags |= kSubHasCold;
@@ -911,17 +1002,21 @@ void Engine::SubscribeRebind(
       const auto& tmeta = slot_meta_registry_.Get(target_slot);
       std::span ds(
           static_cast<const uint8_t*>(design_state_base_),
-          tmeta.base_off + esub.byte_offset + 1);
-      new_cold.edge_last_byte = ds[tmeta.base_off + esub.byte_offset];
+          tmeta.base_off + group.byte_offset + 1);
+      new_cold.edge_last_byte = ds[tmeta.base_off + group.byte_offset];
       new_cold.has_edge_last_byte = true;
     }
     auto& ecold = edge_cold_pool_[esub.cold_idx];
     ecold.plan_ref = plan_ref;
     ecold.rebind_mapping = mapping;
-    // Allocate edge target handle if not provided (legacy path).
     if (edge_target_id == UINT32_MAX) {
       edge_target_id = AllocEdgeTarget(
-          EdgeTargetHandle{target_slot, SubKind::kEdge, target_index});
+          EdgeTargetHandle{
+              .slot_id = target_slot,
+              .kind = SubKind::kEdge,
+              .edge_bucket = target_edge_bucket,
+              .edge_group = target_edge_group,
+              .index = target_index});
       ecold.edge_target_id = edge_target_id;
     }
   } else {
@@ -930,10 +1025,12 @@ void Engine::SubscribeRebind(
     auto& ccold = container_cold_pool_[csub.cold_idx];
     ccold.plan_ref = plan_ref;
     ccold.rebind_mapping = mapping;
-    // Allocate edge target handle if not provided (legacy path).
     if (edge_target_id == UINT32_MAX) {
       edge_target_id = AllocEdgeTarget(
-          EdgeTargetHandle{target_slot, SubKind::kContainer, target_index});
+          EdgeTargetHandle{
+              .slot_id = target_slot,
+              .kind = SubKind::kContainer,
+              .index = target_index});
       ccold.edge_target_id = edge_target_id;
     }
   }

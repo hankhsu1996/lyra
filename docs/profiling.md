@@ -159,18 +159,18 @@ Raw Ir totals and hotspot rankings are necessary but not sufficient. Every profi
 
 Classify every self-cost function into exactly one bucket. The bucket list is fixed across profiles so trends are comparable:
 
-| Bucket                 | What it contains                                                                                                                              |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| actual logic           | Emitted process bodies (`body_*_proc_*`, `process_*`)                                                                                         |
-| dirty tracking         | MarkSlotDirty, TouchSlot, MarkDirtyRange, ClearDelta                                                                                          |
-| subscriptions          | FlushSignalUpdates, FlushDirtySlot, FlushSlotEdgeSubs, FlushSlotChangeSubs, FlushSlotRebindSubs, FlushSlotContainerSubs, EnqueueProcessWakeup |
-| dispatch / reconcile   | ExecuteRegion, RunOneActivation, AotProcessDispatch, ReconcilePostActivation, LyraSuspendWait, TraceWake, LyraResetIterationLimit             |
-| connection propagation | FlushAndPropagateConnections (connection phase)                                                                                               |
-| comb propagation       | FlushAndPropagateConnections (comb phase), comb kernel functions                                                                              |
-| NBA lifecycle          | ScheduleNba, SmallByteBuffer, ApplyFullOverwriteNba, ApplyMaskedMergeNba                                                                      |
-| memory ops             | memcpy, memset, memcmp (libc)                                                                                                                 |
-| allocator              | malloc, free, \_int_free, operator new, operator delete                                                                                       |
-| other                  | Everything not in the above buckets                                                                                                           |
+| Bucket                 | What it contains                                                                                                                                |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| actual logic           | Emitted process bodies (`body_*_proc_*`, `process_*`)                                                                                           |
+| dirty tracking         | MarkSlotDirty, TouchSlot, MarkDirtyRange, ClearDelta                                                                                            |
+| subscriptions          | FlushSignalUpdates, FlushDirtySlot, FlushSlotEdgeGroups, FlushSlotChangeSubs, FlushSlotRebindSubs, FlushSlotContainerSubs, EnqueueProcessWakeup |
+| dispatch / reconcile   | ExecuteRegion, RunOneActivation, AotProcessDispatch, ReconcilePostActivation, LyraSuspendWait, TraceWake, LyraResetIterationLimit               |
+| connection propagation | FlushAndPropagateConnections (connection phase)                                                                                                 |
+| comb propagation       | FlushAndPropagateConnections (comb phase), comb kernel functions                                                                                |
+| NBA lifecycle          | ScheduleNba, SmallByteBuffer, ApplyFullOverwriteNba, ApplyMaskedMergeNba                                                                        |
+| memory ops             | memcpy, memset, memcmp (libc)                                                                                                                   |
+| allocator              | malloc, free, \_int_free, operator new, operator delete                                                                                         |
+| other                  | Everything not in the above buckets                                                                                                             |
 
 FlushAndPropagateConnections contains both connection and comb phases. Splitting its self cost between the two buckets requires manual attribution: either source-level annotation in KCachegrind, or instrumented builds with phase-specific counters. Runtime stats (`conn_considered`, `comb_considered`) provide call counts but not per-phase Ir. Treat the connection/comb bucket split as approximate when based on callgrind alone.
 
