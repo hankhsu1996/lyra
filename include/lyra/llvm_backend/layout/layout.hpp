@@ -71,23 +71,30 @@ struct PlaceRootKeyHash {
   }
 };
 
-// Design-wide state layout analysis artifact.
-// Defines the LLVM struct shape and slot-to-field mapping for DesignState.
-// Computed independently of mir::Design by BuildDesignLayout().
+// Design-wide state layout artifact.
+// DesignState is a Lyra-owned byte arena. Layout is defined by the
+// canonical storage contract, not by LLVM struct types.
 struct DesignLayout {
-  // Ordered slots for DesignState, in declaration order
+  // Ordered slots, in declaration order.
   std::vector<mir::SlotId> slots;
-  // Map from SlotId to field index
-  std::unordered_map<mir::SlotId, uint32_t, SlotIdHash> slot_to_field;
-  // LLVM struct type for DesignState (built by BuildLayout)
-  llvm::StructType* llvm_type = nullptr;
-  // Patches for 4-state X-encoding (byte offsets to unknown planes)
-  FourStatePatchTable four_state_patches;
 
-  // Canonical Lyra storage spec per slot, indexed by slot position.
+  // Map from SlotId to slot position index (into slots/offsets/specs vectors).
+  std::unordered_map<mir::SlotId, uint32_t, SlotIdHash> slot_to_index;
+
+  // Byte offset of each slot in the arena, from canonical storage contract.
+  std::vector<uint64_t> slot_byte_offsets;
+
+  // Total byte size of the design state arena.
+  uint64_t arena_size = 0;
+
+  // Canonical storage spec per slot, indexed by slot position.
   std::vector<SlotStorageSpec> slot_storage_specs;
+
   // Arena for child storage specs (array elements, struct fields).
   StorageSpecArena storage_spec_arena;
+
+  // Patches for 4-state X-encoding (byte offsets to unknown planes).
+  FourStatePatchTable four_state_patches;
 };
 
 // Process frame layout - one per process

@@ -52,21 +52,13 @@ Before lowering, MIR has already fixed:
 
 LLVM is a backend, not a language layer. See [pipeline-contract.md](pipeline-contract.md) for layer boundaries.
 
-## 2-State Execution Contract
+## State Modes
 
-The LLVM backend operates in 2-state mode. It does not model X/Z propagation, unknown initialization, or any 4-state semantics. All storage is zeroinit'd (not X-filled). Operations on 4-state-typed values produce correct results only when those values are known 2-state at runtime.
+The LLVM backend supports both 2-state and 4-state execution, controlled by the `--two-state` CLI flag.
 
-This is a deliberate semantic limitation, not an incidental property.
+**4-state mode** (default): Packed 4-state types use `{iN, iN}` SSA structs (value lane + unknown lane). Storage uses dense canonical layout (see [state-layout.md](state-layout.md)). Design state is X-initialized via the patch table.
 
-**Enforcement boundary:** The 2-state contract is enforced at value entry points:
-
-| Entry point    | Mechanism                                             |
-| -------------- | ----------------------------------------------------- |
-| Constants      | `LowerConstant` rejects integral constants with X/Z   |
-| Initialization | LLVM zeroinits all storage (design state, frame)      |
-| Future         | Backend entry point rejects 4-state processes/modules |
-
-The `is_four_state` type annotation is irrelevant for computation correctness under this contract. All arithmetic, logic, and cast operations produce correct 2-state results on `iN` integers regardless of whether the type could theoretically hold X/Z.
+**2-state mode**: All packed types forced to 2-state representation. Storage uses single integer lanes. Design state is zero-initialized. Controlled by `StorageMode::kTwoState` at layout resolution time.
 
 ## Lowering Decision Framework
 
@@ -122,33 +114,54 @@ Always lower to runtime calls:
 
 The threshold may be tuned, but the principle is fixed: LLVM handles what it's good at; runtime handles the rest.
 
-## Layout Calculation
+## Layout and Storage Boundary
 
-Layout always derived from TypeId:
+Layout is derived from `SlotStorageSpec`, not from LLVM type introspection. The storage spec is resolved once per slot at layout time and drives all downstream decisions (commit, metadata, initialization). See [state-layout.md](state-layout.md) for the canonical storage contract.
 
-| Field         | Calculation            |
-| ------------- | ---------------------- |
-| bitwidth      | From type              |
-| words         | `(bitwidth + 63) / 64` |
-| is_four_state | From type              |
+### SSA Compute Form vs Storage Form
 
-Padding bits are not tracked separately. The `bitwidth` defines semantic validity.
+LLVM SSA types are transient compute form. Canonical arena storage may differ in layout. Crossing between them happens only at explicit storage-boundary helpers.
+
+| Type           | SSA compute form      | Storage form                            |
+| -------------- | --------------------- | --------------------------------------- |
+| Packed 2-state | `iN` (semantic width) | `iM` (storage lane width, M >= N)       |
+| Packed 4-state | `{iN, iN}` struct     | Two dense integer lanes at byte offsets |
+| Float          | `float` / `double`    | IEEE 754 bytes                          |
+| Aggregate      | LLVM struct/array     | Recursive canonical bytes per spec      |
+
+For widths <= 64, semantic width equals storage width (both power-of-2 rounded). For widths > 64, storage rounds up to byte alignment (e.g., 65-bit -> 9 bytes -> i72).
+
+### Storage Boundary Helpers
+
+| Helper                         | Purpose                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| `LowerToStorageLaneWidth`      | Explicit lowering from semantic to storage width. Callers must invoke before store/flatten. |
+| `EmitStoreToCanonicalStorage`  | Store SSA value to canonical bytes. Asserts storage-width input. Recurses for aggregates.   |
+| `EmitLoadFromCanonicalStorage` | Load canonical bytes into SSA form. Scalar only (aggregates use projections).               |
+| `EmitPackedToCanonicalBits`    | Flatten to canonical integer for inline compare/store. Asserts storage-width input.         |
+
+### Anti-Patterns
+
+| Violation                                               | Why it breaks                                         |
+| ------------------------------------------------------- | ----------------------------------------------------- |
+| Store typed LLVM object directly to arena               | LLVM padding may differ from canonical layout         |
+| Derive storage layout from LLVM `StructLayout`          | Couples to LLVM internals, wrong for wide 4-state     |
+| Local "try/guess" from LLVM type shape                  | Fragile, misses edge cases, spreads storage knowledge |
+| `alloca + store + reload as another type`               | Type-punning hides layout mismatch                    |
+| Re-derive storage facts from `TypeId + force_two_state` | Duplicates resolved spec, can drift                   |
 
 ## Four-State Representation
 
-Four-state values use three arrays:
+Four-state packed values use a two-lane model:
 
-| Array  | Purpose             |
-| ------ | ------------------- |
-| value  | The 0/1 bit pattern |
-| x_mask | Unknown bits        |
-| z_mask | High-impedance bits |
+| Lane          | Purpose                |
+| ------------- | ---------------------- |
+| value (known) | The 0/1 bit pattern    |
+| unknown       | X/Z bits (1 = unknown) |
 
-Invariant: `x_mask & z_mask == 0` (checked in debug builds).
+SSA compute form is `{iN, iN}` (value, unknown). Storage form is two dense integer lanes at canonical byte offsets (see [state-layout.md](state-layout.md)).
 
-**Branchless propagation** for hot paths--masks flow through bitwise operations so unknown bits contaminate results.
-
-**case/casez/casex** inspect masks directly. Correctness over performance.
+Branchless propagation for hot paths -- masks flow through bitwise operations so unknown bits contaminate results. `case`/`casez`/`casex` inspect masks directly.
 
 ## Runtime APIs vs LLVM Intrinsics
 

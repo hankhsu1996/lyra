@@ -16,15 +16,13 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/instance.hpp"
-#include "lyra/mir/place.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
@@ -37,29 +35,34 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-auto ClassifySlotStorageKind(
-    TypeId type_id, const TypeArena& types, bool force_two_state)
+// Derive slot storage kind entirely from resolved storage spec.
+auto ClassifySlotStorageKind(const SlotStorageSpec& spec)
     -> runtime::SlotStorageKind {
-  const Type& type = types[type_id];
-  switch (type.Kind()) {
-    case TypeKind::kString:
-      return runtime::SlotStorageKind::kString;
-    case TypeKind::kDynamicArray:
-    case TypeKind::kQueue:
-      return runtime::SlotStorageKind::kHandle;
-    case TypeKind::kUnpackedArray:
-    case TypeKind::kUnpackedStruct:
-    case TypeKind::kUnpackedUnion:
-      return runtime::SlotStorageKind::kAggregate;
-    case TypeKind::kAssociativeArray:
-      return runtime::SlotStorageKind::kHandle;
-    default:
-      break;
-  }
-  if (IsPacked(type) && IsFourState(type_id, types, force_two_state)) {
-    return runtime::SlotStorageKind::kPacked4;
-  }
-  return runtime::SlotStorageKind::kPacked2;
+  return std::visit(
+      common::Overloaded{
+          [](const PackedStorageSpec& s) {
+            return s.is_four_state ? runtime::SlotStorageKind::kPacked4
+                                   : runtime::SlotStorageKind::kPacked2;
+          },
+          [](const FloatStorageSpec&) {
+            return runtime::SlotStorageKind::kPacked2;
+          },
+          [](const ArrayStorageSpec&) {
+            return runtime::SlotStorageKind::kAggregate;
+          },
+          [](const StructStorageSpec&) {
+            return runtime::SlotStorageKind::kAggregate;
+          },
+          [](const UnionStorageSpec&) {
+            return runtime::SlotStorageKind::kAggregate;
+          },
+          [](const HandleStorageSpec& s) {
+            return s.kind == HandleKind::kString
+                       ? runtime::SlotStorageKind::kString
+                       : runtime::SlotStorageKind::kHandle;
+          },
+      },
+      spec.data);
 }
 
 auto MapProcessKind(mir::ProcessKind kind) -> runtime::ProcessKind {
@@ -190,7 +193,7 @@ auto ReadPoolString(const std::vector<char>& pool, uint32_t offset)
         std::format(
             "offset {} out of range (pool size {})", offset, pool.size()));
   }
-  return {pool.data() + offset};
+  return {&pool[offset]};
 }
 
 // Map SlotKind to runtime TraceSignalKind. This is the sole conversion point
@@ -291,68 +294,37 @@ auto PrepareTraceSignalMetaInputs(
 }
 
 auto ExtractSlotMetaInputs(
-    Context& context, const std::vector<SlotInfo>& slots,
-    const DesignLayout& design_layout, const llvm::DataLayout& dl,
-    const TypeArena& types) -> std::vector<realization::SlotMetaInput> {
+    const std::vector<SlotInfo>& slots, const DesignLayout& design_layout)
+    -> std::vector<realization::SlotMetaInput> {
   std::vector<realization::SlotMetaInput> entries;
   entries.reserve(slots.size());
 
-  auto* design_struct = design_layout.llvm_type;
-  const llvm::StructLayout* sl = dl.getStructLayout(design_struct);
-
   for (const auto& slot : slots) {
-    auto it = design_layout.slot_to_field.find(slot.slot_id);
-    if (it == design_layout.slot_to_field.end()) {
+    auto it = design_layout.slot_to_index.find(slot.slot_id);
+    if (it == design_layout.slot_to_index.end()) {
       throw common::InternalError(
           "ExtractSlotMetaInputs",
           std::format("slot_id {} not in design layout", slot.slot_id.value));
     }
-    uint32_t field_idx = it->second;
-    auto* field_type = design_struct->getElementType(field_idx);
+    uint32_t idx = it->second;
+    uint64_t byte_offset = design_layout.slot_byte_offsets[idx];
+    const auto& spec = design_layout.slot_storage_specs[idx];
 
-    uint64_t raw_base_off = sl->getElementOffset(field_idx);
-    uint64_t raw_total_bytes = dl.getTypeAllocSize(field_type);
-    if (raw_base_off > UINT32_MAX || raw_total_bytes > UINT32_MAX) {
-      throw common::InternalError(
-          "ExtractSlotMetaInputs", "DesignState exceeds 4GB (not supported)");
-    }
-
-    auto kind =
-        ClassifySlotStorageKind(slot.type_id, types, context.IsForceTwoState());
+    auto kind = ClassifySlotStorageKind(spec);
 
     realization::SlotMetaInput entry{
-        .byte_offset = static_cast<uint32_t>(raw_base_off),
-        .total_bytes = static_cast<uint32_t>(raw_total_bytes),
+        .byte_offset = NarrowToU32(byte_offset, "ExtractSlotMetaInputs"),
+        .total_bytes = spec.TotalByteSize(),
         .storage_kind = static_cast<uint32_t>(kind),
     };
 
     if (kind == runtime::SlotStorageKind::kPacked4) {
-      auto* four_state = llvm::dyn_cast<llvm::StructType>(field_type);
-      if (four_state == nullptr) {
-        throw common::InternalError(
-            "ExtractSlotMetaInputs",
-            std::format(
-                "expected StructType for kPacked4 slot {}",
-                slot.slot_id.value));
-      }
-      const llvm::StructLayout* fs_layout = dl.getStructLayout(four_state);
-      uint64_t raw_value_off = fs_layout->getElementOffset(0);
-      uint64_t raw_value_bytes =
-          dl.getTypeAllocSize(four_state->getElementType(0));
-      uint64_t raw_unk_off = fs_layout->getElementOffset(1);
-      uint64_t raw_unk_bytes =
-          dl.getTypeAllocSize(four_state->getElementType(1));
-
-      if (raw_value_off > UINT32_MAX || raw_value_bytes > UINT32_MAX ||
-          raw_unk_off > UINT32_MAX || raw_unk_bytes > UINT32_MAX) {
-        throw common::InternalError(
-            "ExtractSlotMetaInputs",
-            "4-state plane layout exceeds 4GB (not supported)");
-      }
-      entry.value_offset = static_cast<uint32_t>(raw_value_off);
-      entry.value_bytes = static_cast<uint32_t>(raw_value_bytes);
-      entry.unk_offset = static_cast<uint32_t>(raw_unk_off);
-      entry.unk_bytes = static_cast<uint32_t>(raw_unk_bytes);
+      const auto& packed = std::get<PackedStorageSpec>(spec.data);
+      uint32_t lane_bytes = packed.LaneByteSize();
+      entry.value_offset = 0;
+      entry.value_bytes = lane_bytes;
+      entry.unk_offset = packed.UnknownLaneOffset();
+      entry.unk_bytes = lane_bytes;
     }
 
     entries.push_back(entry);
@@ -444,45 +416,32 @@ auto ExtractConnectionDescriptorEntries(
   std::vector<realization::ConnectionDescriptorEntry> entries;
   entries.reserve(kernel_entries.size());
 
-  auto* design_struct = layout.design.llvm_type;
-  const llvm::StructLayout* design_sl = dl.getStructLayout(design_struct);
+  const auto& design = layout.design;
 
   for (const auto& entry : kernel_entries) {
-    auto src_it = layout.design.slot_to_field.find(entry.src_slot);
-    auto dst_it = layout.design.slot_to_field.find(entry.dst_slot);
-    if (src_it == layout.design.slot_to_field.end() ||
-        dst_it == layout.design.slot_to_field.end()) {
+    auto src_it = design.slot_to_index.find(entry.src_slot);
+    auto dst_it = design.slot_to_index.find(entry.dst_slot);
+    if (src_it == design.slot_to_index.end() ||
+        dst_it == design.slot_to_index.end()) {
       throw common::InternalError(
           "ExtractConnectionDescriptorEntries",
           "kernelized connection slot not in design layout");
     }
 
-    uint32_t src_field = src_it->second;
-    uint32_t dst_field = dst_it->second;
-
-    uint64_t raw_src_offset = design_sl->getElementOffset(src_field);
-    uint64_t raw_dst_offset = design_sl->getElementOffset(dst_field);
-    auto* dst_field_type = design_struct->getElementType(dst_field);
-    uint64_t raw_byte_size = dl.getTypeAllocSize(dst_field_type);
-
-    if (raw_src_offset > UINT32_MAX || raw_dst_offset > UINT32_MAX ||
-        raw_byte_size > UINT32_MAX) {
-      throw common::InternalError(
-          "ExtractConnectionDescriptorEntries",
-          "connection descriptor offset/size exceeds 4GB (not supported)");
-    }
-
-    auto src_offset = static_cast<uint32_t>(raw_src_offset);
-    auto dst_offset = static_cast<uint32_t>(raw_dst_offset);
-    auto byte_size = static_cast<uint32_t>(raw_byte_size);
+    auto src_offset = NarrowToU32(
+        design.slot_byte_offsets[src_it->second],
+        "ExtractConnectionDescriptorEntries src");
+    auto dst_offset = NarrowToU32(
+        design.slot_byte_offsets[dst_it->second],
+        "ExtractConnectionDescriptorEntries dst");
+    auto byte_size = design.slot_storage_specs[dst_it->second].TotalByteSize();
 
     uint32_t trigger_byte_offset = 0;
     uint32_t trigger_byte_size = 0;
     uint8_t trigger_bit_index = 0;
     if (entry.trigger_observed_place) {
-      auto trigger_slot_it =
-          layout.design.slot_to_field.find(entry.trigger_slot);
-      if (trigger_slot_it != layout.design.slot_to_field.end()) {
+      auto trigger_slot_it = design.slot_to_index.find(entry.trigger_slot);
+      if (trigger_slot_it != design.slot_to_index.end()) {
         if (trigger_slot_it->first.value >= slot_types.size()) {
           throw common::InternalError(
               "ExtractConnectionDescriptorEntries",
@@ -580,7 +539,7 @@ auto PrepareCombKernelInputs(
 
       // Verify slot exists in design layout (byte-range resolution requires
       // it).
-      if (!layout.design.slot_to_field.contains(trigger.slot)) {
+      if (!layout.design.slot_to_index.contains(trigger.slot)) {
         accum.is_full_slot = true;
         accum.byte_offset = 0;
         accum.byte_size = 0;
@@ -655,7 +614,7 @@ auto EmitDesignMetadataGlobals(
   auto& mod = context.GetModule();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto null_ptr =
+  auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
   MetadataGlobals result;

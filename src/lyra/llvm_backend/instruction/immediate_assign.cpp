@@ -25,6 +25,7 @@
 #include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
@@ -54,6 +55,11 @@ auto StoreBitRange(
   auto base_type_result = context.GetPlaceBaseType(target);
   if (!base_type_result) return std::unexpected(base_type_result.error());
   llvm::Type* base_type = *base_type_result;
+
+  // Resolve base TypeId for CommitPackedValueRaw
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
+  TypeId base_type_id = mir::TypeOfPlaceBase(types, arena[target]);
 
   if (IsFourStateScalarStruct(base_type)) {
     // 4-state base: RMW both planes independently
@@ -107,7 +113,7 @@ auto StoreBitRange(
     llvm::Value* packed = llvm::UndefValue::get(base_struct);
     packed = builder.CreateInsertValue(packed, result_val, 0);
     packed = builder.CreateInsertValue(packed, result_unk, 1);
-    CommitPackedValueRaw(context, target, packed);
+    CommitPackedValueRaw(context, target, packed, base_type_id);
     return {};
   }
 
@@ -135,7 +141,7 @@ auto StoreBitRange(
   src = builder.CreateZExtOrTrunc(src, base_type, "rmw.src.ext");
   auto* new_shifted = builder.CreateShl(src, shift_amt, "rmw.src.shl");
   auto* result = builder.CreateOr(cleared, new_shifted, "rmw.result");
-  CommitPackedValueRaw(context, target, result);
+  CommitPackedValueRaw(context, target, result, base_type_id);
   return {};
 }
 
@@ -274,7 +280,7 @@ auto LowerRvalueAssign(
 
   // For packed types, use raw store (no ownership semantics)
   if (IsPacked(type)) {
-    CommitPackedValueRaw(context, target, value);
+    CommitPackedValueRaw(context, target, value, result_type);
     return {};
   }
 

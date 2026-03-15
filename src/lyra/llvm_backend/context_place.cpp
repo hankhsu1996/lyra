@@ -358,9 +358,10 @@ auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)
     throw common::InternalError(
         "GetDesignGlobalSlotPointer", "design pointer not set");
   }
-  uint32_t field_index = GetDesignFieldIndex(mir::SlotId{global_slot_id});
-  return builder_.CreateStructGEP(
-      GetDesignStateType(), design_ptr_, field_index, "design_global_slot_ptr");
+  uint64_t offset = GetDesignSlotByteOffset(mir::SlotId{global_slot_id});
+  return builder_.CreateGEP(
+      llvm::Type::getInt8Ty(*llvm_context_), design_ptr_,
+      builder_.getInt64(offset), "design_global_slot_ptr");
 }
 
 auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {

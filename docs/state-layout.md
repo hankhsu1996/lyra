@@ -90,6 +90,29 @@ Two instances with the same `ModuleSpecId` but different unpacked array sizes sh
 | Packed field access       | `this_base + constant`                | No                                    |
 | Unpacked container access | `this_base + metadata_offset + index` | New: metadata indirection             |
 
+## Canonical Storage Contract
+
+Lyra owns the byte-level storage layout for all persistent state. LLVM is a codegen vehicle -- its type system describes transient SSA compute form, not storage layout. The two may differ (e.g., wide 4-state values have different padding rules). Crossing between them happens only at explicit storage-boundary helpers.
+
+This contract is defined by `SlotStorageSpec`, resolved once per slot at layout time. All downstream consumers (commit, metadata, initialization) derive layout facts from the resolved spec, never from LLVM type introspection.
+
+### Per-Type Storage Rules
+
+| Type kind                  | Storage form                  | Rule                                                                                                     |
+| -------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Packed 2-state             | Single integer lane           | `GetStorageByteSize(bit_width)` bytes. Power-of-2 up to 8; byte-aligned above 64 bits.                   |
+| Packed 4-state             | Two dense integer lanes       | Known lane at offset 0, unknown lane at `lane_byte_size`. No inter-lane padding. Total = 2 \* lane size. |
+| Float (real)               | IEEE 754 double               | 8 bytes, 8-byte aligned.                                                                                 |
+| Float (shortreal)          | IEEE 754 single               | 4 bytes, 4-byte aligned.                                                                                 |
+| Unpacked array             | N elements at constant stride | Stride = align_up(element_size, element_align). Recursive through element spec.                          |
+| Unpacked struct            | Fields at computed offsets    | Each field aligned per its spec. Recursive through field specs.                                          |
+| Unpacked union             | Max-member overlay            | Size = max member size, aligned to max member alignment. All bytes written on every store.               |
+| Handle (string, container) | Pointer-width slot            | Committed through separate handle paths, not canonical storage materialization.                          |
+
+### Key Invariant
+
+No typed LLVM object is ever stored directly to arena bytes. All stores go through `EmitStoreToCanonicalStorage` (which decomposes aggregates recursively) or `EmitPackedToCanonicalBits` (which flattens scalars to canonical integer form). This ensures the arena layout matches the canonical contract, not LLVM's internal padding/alignment choices.
+
 ## Non-Goals
 
 - Packed types remain specialization boundaries. Packed width affects arithmetic instructions and must produce different compiled code.

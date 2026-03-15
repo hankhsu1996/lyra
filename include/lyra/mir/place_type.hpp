@@ -10,4 +10,9 @@ namespace lyra::mir {
 // structure (root + projections), not cached types.
 auto TypeOfPlace(const TypeArena& types, const Place& place) -> TypeId;
 
+// Computes the type of a place's base by applying all projections except
+// BitRangeProjections. This is the type that GetPlacePointer() points to
+// (the RMW target for bit-range writes).
+auto TypeOfPlaceBase(const TypeArena& types, const Place& place) -> TypeId;
+
 }  // namespace lyra::mir

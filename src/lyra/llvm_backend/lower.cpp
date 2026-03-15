@@ -767,7 +767,7 @@ void EmitVariableInspection(
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
-  auto* design_type = context.GetDesignStateType();
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
 
   for (const auto& var : variables) {
     if (var.slot_id >= slots.size()) {
@@ -775,9 +775,9 @@ void EmitVariableInspection(
     }
 
     auto slot_id = mir::SlotId{static_cast<uint32_t>(var.slot_id)};
-    uint32_t field_index = context.GetDesignFieldIndex(slot_id);
-    auto* slot_ptr = builder.CreateStructGEP(
-        design_type, design_state, field_index, "var_ptr");
+    uint64_t offset = context.GetDesignSlotByteOffset(slot_id);
+    auto* slot_ptr = builder.CreateGEP(
+        i8_ty, design_state, builder.getInt64(offset), "var_ptr");
 
     const auto& type_info = slots[var.slot_id].type_info;
 

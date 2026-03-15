@@ -4,19 +4,22 @@
 #include <cstdint>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
-namespace {
-
-auto AlignUp(uint32_t value, uint32_t align) -> uint32_t {
-  return (value + align - 1) / align * align;
+auto IsPatchTableEligible(const SlotStorageSpec& spec) -> bool {
+  const auto* packed = std::get_if<PackedStorageSpec>(&spec.data);
+  if (packed == nullptr || !packed->is_four_state) {
+    return false;
+  }
+  uint32_t lane_bytes = packed->LaneByteSize();
+  return lane_bytes == 1 || lane_bytes == 2 || lane_bytes == 4 ||
+         lane_bytes == 8;
 }
-
-}  // namespace
 
 auto GetStorageByteSize(uint32_t bit_width) -> uint32_t {
   if (bit_width <= 8) return 1;
@@ -46,6 +49,28 @@ auto SlotStorageSpec::TotalByteSize() const -> uint32_t {
 auto SlotStorageSpec::Alignment() const -> uint32_t {
   return std::visit(
       [](const auto& s) -> uint32_t { return s.layout.alignment; }, data);
+}
+
+auto HasFourStateContent(
+    const SlotStorageSpec& spec, const StorageSpecArena& arena) -> bool {
+  return std::visit(
+      common::Overloaded{
+          [](const PackedStorageSpec& s) -> bool { return s.is_four_state; },
+          [](const FloatStorageSpec&) -> bool { return false; },
+          [&](const ArrayStorageSpec& s) -> bool {
+            return HasFourStateContent(arena.Get(s.element_spec_id), arena);
+          },
+          [&](const StructStorageSpec& s) -> bool {
+            return std::ranges::any_of(s.fields, [&](const auto& field) {
+              return HasFourStateContent(arena.Get(field.field_spec_id), arena);
+            });
+          },
+          [](const UnionStorageSpec& s) -> bool {
+            return s.has_four_state_content;
+          },
+          [](const HandleStorageSpec&) -> bool { return false; },
+      },
+      spec.data);
 }
 
 namespace {
@@ -81,9 +106,13 @@ auto ResolveArraySpec(
   uint32_t elem_align = elem_spec.Alignment();
   auto elem_id = arena.Alloc(std::move(elem_spec));
 
-  uint32_t stride = AlignUp(elem_size, elem_align);
+  auto stride = NarrowToU32(AlignUp(elem_size, elem_align), "ArrayStorageSpec");
   uint32_t count = info.range.Size();
-  uint32_t total = count > 0 ? ((stride * (count - 1)) + elem_size) : 0;
+  // Compute in uint64_t to avoid overflow, then narrow with check.
+  uint64_t total_u64 =
+      count > 0 ? ((static_cast<uint64_t>(stride) * (count - 1)) + elem_size)
+                : 0;
+  auto total = NarrowToU32(total_u64, "ArrayStorageSpec total");
 
   return {
       .layout = {.total_byte_size = total, .alignment = elem_align},
@@ -98,7 +127,7 @@ auto ResolveStructSpec(
     const TargetStorageAbi& target, StorageSpecArena& arena)
     -> StructStorageSpec {
   std::vector<StructFieldSpec> fields;
-  uint32_t offset = 0;
+  uint64_t offset = 0;
   uint32_t max_align = 1;
 
   for (const auto& field : info.fields) {
@@ -109,12 +138,13 @@ auto ResolveStructSpec(
 
     max_align = std::max(max_align, field_align);
     offset = AlignUp(offset, field_align);
+    auto field_offset = NarrowToU32(offset, "StructStorageSpec field offset");
 
-    fields.push_back({.byte_offset = offset, .field_spec_id = field_id});
+    fields.push_back({.byte_offset = field_offset, .field_spec_id = field_id});
     offset += field_size;
   }
 
-  uint32_t total = AlignUp(offset, max_align);
+  auto total = NarrowToU32(AlignUp(offset, max_align), "StructStorageSpec");
 
   return {
       .layout = {.total_byte_size = total, .alignment = max_align},
@@ -129,17 +159,24 @@ auto ResolveUnionSpec(
   const auto& info = types[type_id].AsUnpackedUnion();
   uint32_t max_size = 0;
   uint32_t max_align = 1;
+  bool has_four_state = false;
 
   for (const auto& member : info.members) {
     auto member_spec = ResolveImpl(member.type, types, mode, target, arena);
     max_size = std::max(max_size, member_spec.TotalByteSize());
     max_align = std::max(max_align, member_spec.Alignment());
-    // Member specs are not retained. Union layout only needs max size and
-    // max alignment. Do not allocate into the arena.
+    if (HasFourStateContent(member_spec, arena)) {
+      has_four_state = true;
+    }
+    // Member specs are not retained individually. The union only needs
+    // max size, max alignment, and the 4-state summary.
   }
 
-  uint32_t total = AlignUp(max_size, max_align);
-  return {.layout = {.total_byte_size = total, .alignment = max_align}};
+  auto total = NarrowToU32(AlignUp(max_size, max_align), "UnionStorageSpec");
+  return {
+      .layout = {.total_byte_size = total, .alignment = max_align},
+      .has_four_state_content = has_four_state,
+  };
 }
 
 auto ResolveImpl(
@@ -179,14 +216,22 @@ auto ResolveImpl(
       return {.data = ResolveUnionSpec(type_id, types, mode, target, arena)};
 
     case TypeKind::kString:
+      return {
+          .data = HandleStorageSpec{
+              .layout =
+                  {.total_byte_size = target.pointer_byte_size,
+                   .alignment = target.pointer_alignment},
+              .kind = HandleKind::kString}};
+
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
     case TypeKind::kAssociativeArray:
       return {
           .data = HandleStorageSpec{
-              .layout = {
-                  .total_byte_size = target.pointer_byte_size,
-                  .alignment = target.pointer_alignment}}};
+              .layout =
+                  {.total_byte_size = target.pointer_byte_size,
+                   .alignment = target.pointer_alignment},
+              .kind = HandleKind::kContainer}};
 
     case TypeKind::kVoid:
       throw common::InternalError(

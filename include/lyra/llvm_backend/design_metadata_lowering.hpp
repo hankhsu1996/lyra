@@ -27,9 +27,8 @@ struct SlotInfo;
 
 // Extract slot metadata inputs from LLVM layout into plain link structs.
 auto ExtractSlotMetaInputs(
-    Context& context, const std::vector<SlotInfo>& slots,
-    const DesignLayout& design_layout, const llvm::DataLayout& dl,
-    const TypeArena& types) -> std::vector<realization::SlotMetaInput>;
+    const std::vector<SlotInfo>& slots, const DesignLayout& design_layout)
+    -> std::vector<realization::SlotMetaInput>;
 
 // Extract scheduled process inputs into plain link structs.
 auto PrepareScheduledProcessInputs(

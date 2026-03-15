@@ -232,7 +232,13 @@ class Context {
 
   // Type accessors from layout
   [[nodiscard]] auto GetHeaderType() const -> llvm::StructType*;
-  [[nodiscard]] auto GetDesignStateType() const -> llvm::StructType*;
+  [[nodiscard]] auto GetDesignArenaSize() const -> uint64_t;
+  [[nodiscard]] auto GetDesignSlotByteOffset(mir::SlotId slot_id) const
+      -> uint64_t;
+  [[nodiscard]] auto GetDesignSlotStorageSpec(mir::SlotId slot_id) const
+      -> const SlotStorageSpec&;
+  [[nodiscard]] auto GetDesignStorageSpecArena() const
+      -> const StorageSpecArena&;
   [[nodiscard]] auto GetProcessFrameType() const -> llvm::StructType*;
   [[nodiscard]] auto GetProcessStateType() const -> llvm::StructType*;
 
@@ -263,8 +269,6 @@ class Context {
   // parameters with managed types where we want reference semantics.
   void SetPlaceAlias(const mir::PlaceRoot& root, llvm::Value* ptr);
 
-  // FieldIndex accessors (encapsulate map lookups)
-  [[nodiscard]] auto GetDesignFieldIndex(mir::SlotId slot_id) const -> uint32_t;
   [[nodiscard]] auto GetFrameFieldIndex(mir::PlaceId place_id) const
       -> uint32_t;
 
@@ -526,6 +530,10 @@ class Context {
   void ClearTemps();
 
  private:
+  // Internal helper: resolve SlotId to position index in design layout.
+  [[nodiscard]] auto ResolveDesignSlotIndex(mir::SlotId slot_id) const
+      -> uint32_t;
+
   // Commit-module-only methods (accessed via friend class commit::Access)
   // Get unified write target (pointer + signal_id) from a place.
   // All fields derived from the same alias-resolved place, ensuring

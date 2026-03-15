@@ -1164,9 +1164,6 @@ auto BuildDesignLayout(
     -> DesignLayout {
   DesignLayout layout;
 
-  std::vector<llvm::Type*> field_types;
-
-  // Resolve storage mode once for all slots.
   auto storage_mode =
       force_two_state ? StorageMode::kTwoState : StorageMode::kNormal;
   auto pointer_size = static_cast<uint32_t>(dl.getPointerSize());
@@ -1177,34 +1174,75 @@ auto BuildDesignLayout(
       .pointer_alignment = pointer_align,
   };
 
+  // Resolve canonical storage spec for each slot.
   for (size_t i = 0; i < slots.size(); ++i) {
     const auto& slot = slots[i];
     layout.slots.push_back(slot.slot_id);
-    layout.slot_to_field[slot.slot_id] = static_cast<uint32_t>(i);
-    field_types.push_back(
-        GetLlvmTypeForTypeId(ctx, slot.type_id, types, force_two_state));
-
-    // Resolve canonical storage spec for this slot.
+    layout.slot_to_index[slot.slot_id] = static_cast<uint32_t>(i);
     layout.slot_storage_specs.push_back(ResolveStorageSpec(
         slot.type_id, types, storage_mode, target_abi,
         layout.storage_spec_arena));
   }
 
-  // Empty struct needs sentinel for valid LLVM struct
-  if (field_types.empty()) {
-    layout.llvm_type = llvm::StructType::create(
-        ctx, {llvm::Type::getInt8Ty(ctx)}, "DesignState");
-  } else {
-    layout.llvm_type =
-        llvm::StructType::create(ctx, field_types, "DesignState");
+  // Compute byte offsets from canonical storage specs.
+  uint64_t offset = 0;
+  uint64_t max_align = 1;
+  for (size_t i = 0; i < slots.size(); ++i) {
+    const auto& spec = layout.slot_storage_specs[i];
+    uint64_t align = spec.Alignment();
+    max_align = std::max(max_align, align);
+    offset = AlignUp(offset, align);
+    layout.slot_byte_offsets.push_back(offset);
+    offset += spec.TotalByteSize();
   }
+  // Canonical logical design-state size may be 0 (no slots). Emitted arena
+  // object size is clamped to 1 byte for LLVM alloca/array-type legality.
+  // This 1 byte is not part of the semantic storage contract.
+  layout.arena_size = std::max(uint64_t{1}, AlignUp(offset, max_align));
 
-  // Collect 4-state patches for scalar patchable fields
-  if (!slots.empty()) {
-    CollectPatches(
-        layout.four_state_patches, layout.llvm_type, dl, types,
-        [&](size_t i) { return slots[i].type_id; }, slots.size(),
-        force_two_state);
+  // Collect 4-state patches using canonical byte offsets.
+  // IsPatchTableEligible encodes the full eligibility rule: packed type,
+  // 4-state, and lane size fits patch table (1/2/4/8 bytes).
+  for (size_t i = 0; i < slots.size(); ++i) {
+    if (!IsPatchTableEligible(layout.slot_storage_specs[i])) {
+      continue;
+    }
+    const auto& spec = layout.slot_storage_specs[i];
+    const auto& packed = std::get<PackedStorageSpec>(spec.data);
+
+    uint64_t slot_offset = layout.slot_byte_offsets[i];
+    uint32_t lane_byte_size = packed.LaneByteSize();
+    uint32_t semantic_width = packed.bit_width;
+
+    auto patch_offset = NarrowToU32(
+        slot_offset + packed.UnknownLaneOffset(), "BuildDesignLayout");
+
+    uint32_t mask_width = lane_byte_size * 8;
+    uint64_t mask = semantic_width >= mask_width
+                        ? ~uint64_t{0}
+                        : (uint64_t{1} << semantic_width) - 1;
+
+    switch (lane_byte_size) {
+      case 1:
+        layout.four_state_patches.patches_8.push_back(
+            {patch_offset, static_cast<uint8_t>(mask)});
+        break;
+      case 2:
+        layout.four_state_patches.patches_16.push_back(
+            {patch_offset, static_cast<uint16_t>(mask)});
+        break;
+      case 4:
+        layout.four_state_patches.patches_32.push_back(
+            {patch_offset, static_cast<uint32_t>(mask)});
+        break;
+      case 8:
+        layout.four_state_patches.patches_64.push_back({patch_offset, mask});
+        break;
+      default:
+        throw common::InternalError(
+            "BuildDesignLayout",
+            "IsPatchTableEligible passed but lane size is not 1/2/4/8");
+    }
   }
 
   return layout;
@@ -1426,26 +1464,26 @@ auto BuildLayout(
   }
 
   // Compute instance base byte offsets and body-owned relative byte offsets
+  // from canonical slot_byte_offsets.
   if (!module_plans.empty()) {
-    const auto* struct_layout = dl.getStructLayout(layout.design.llvm_type);
+    const auto& offsets = layout.design.slot_byte_offsets;
     size_t num_instances = module_plans.size();
     layout.instance_base_byte_offsets.resize(num_instances);
 
     for (size_t mi = 0; mi < num_instances; ++mi) {
       const auto& plan = module_plans[mi];
       if (plan.slot_count > 0) {
-        if (plan.design_state_base_slot + plan.slot_count >
-            layout.design.llvm_type->getNumElements()) {
+        if (plan.design_state_base_slot + plan.slot_count > offsets.size()) {
           throw common::InternalError(
               "BuildLayout",
               std::format(
-                  "slot range [{}, {}) exceeds DesignState field count {}",
+                  "slot range [{}, {}) exceeds design slot count {}",
                   plan.design_state_base_slot,
                   plan.design_state_base_slot + plan.slot_count,
-                  layout.design.llvm_type->getNumElements()));
+                  offsets.size()));
         }
         layout.instance_base_byte_offsets[mi] =
-            struct_layout->getElementOffset(plan.design_state_base_slot);
+            offsets[plan.design_state_base_slot];
       }
     }
 
@@ -1457,12 +1495,9 @@ auto BuildLayout(
       const auto& plan = module_plans[mi];
       std::vector<uint64_t> rel_offsets(plan.slot_count);
       if (plan.slot_count > 0) {
-        uint64_t base =
-            struct_layout->getElementOffset(plan.design_state_base_slot);
+        uint64_t base = offsets[plan.design_state_base_slot];
         for (uint32_t i = 0; i < plan.slot_count; ++i) {
-          rel_offsets[i] =
-              struct_layout->getElementOffset(plan.design_state_base_slot + i) -
-              base;
+          rel_offsets[i] = offsets[plan.design_state_base_slot + i] - base;
         }
       }
       layout.instance_rel_byte_offsets_[mi] = std::move(rel_offsets);

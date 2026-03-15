@@ -10,6 +10,22 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+// Align a value up to the given alignment boundary.
+// Alignment must be non-zero.
+inline auto AlignUp(uint64_t value, uint64_t align) -> uint64_t {
+  return (value + align - 1) / align * align;
+}
+
+// Narrow uint64_t to uint32_t with overflow check.
+// Design invariant: storage sizes, field offsets, and patch offsets within
+// individual specs fit in 32 bits. Arena-level offsets use uint64_t.
+inline auto NarrowToU32(uint64_t value, const char* context) -> uint32_t {
+  if (value > UINT32_MAX) {
+    throw common::InternalError(context, "value exceeds uint32_t range");
+  }
+  return static_cast<uint32_t>(value);
+}
+
 // Canonical storage byte size for a packed integer lane.
 //
 // Lyra ABI rule: packed values are stored in power-of-2 rounded integer
@@ -98,10 +114,22 @@ struct StructStorageSpec {
 // This ensures bytewise change detection (memcmp) is correct without
 // partial-field reasoning.
 //
-// Member specs are not retained. The union only needs max size and max
-// alignment for layout and materialization.
+// Member specs are not retained individually. has_four_state_content
+// summarizes whether any member contains 4-state packed content,
+// computed during resolution.
 struct UnionStorageSpec {
   StorageLayoutFacts layout;
+  // True if any union member contains 4-state packed content.
+  // Computed during ResolveStorageSpec from member specs.
+  bool has_four_state_content;
+};
+
+// Distinguishes handle sub-kinds for metadata classification.
+// The storage layout is identical (pointer-width slot), but runtime
+// metadata needs to distinguish string from container handles.
+enum class HandleKind : uint8_t {
+  kString,
+  kContainer,
 };
 
 // Storage for managed handles (string, dynamic array, queue, associative
@@ -109,6 +137,7 @@ struct UnionStorageSpec {
 // storage materialization.
 struct HandleStorageSpec {
   StorageLayoutFacts layout;
+  HandleKind kind;
 };
 
 // The fully resolved canonical storage specification.
@@ -122,6 +151,14 @@ struct SlotStorageSpec {
   [[nodiscard]] auto TotalByteSize() const -> uint32_t;
   [[nodiscard]] auto Alignment() const -> uint32_t;
 };
+
+// Returns true if a resolved storage spec is eligible for X-initialization
+// via the scalar patch table. The full rule:
+// - Must be PackedStorageSpec (not aggregate/handle/float)
+// - Must be 4-state
+// - Lane byte size must be 1, 2, 4, or 8 (patch table entry sizes)
+// Slots that fail this check use recursive default initialization instead.
+auto IsPatchTableEligible(const SlotStorageSpec& spec) -> bool;
 
 // Arena for storage specs. Child specs (array elements, struct fields)
 // are allocated here. References use StorageSpecId (index), not pointers,
@@ -177,5 +214,12 @@ enum class StorageMode : uint8_t {
 auto ResolveStorageSpec(
     TypeId type_id, const TypeArena& types, StorageMode mode,
     const TargetStorageAbi& target, StorageSpecArena& arena) -> SlotStorageSpec;
+
+// Query whether a storage spec contains any 4-state content.
+// Recurses through arrays and structs via the arena.
+// Used to determine whether a slot needs recursive 4-state default
+// initialization after memset zero.
+auto HasFourStateContent(
+    const SlotStorageSpec& spec, const StorageSpecArena& arena) -> bool;
 
 }  // namespace lyra::lowering::mir_to_llvm

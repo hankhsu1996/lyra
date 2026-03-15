@@ -92,4 +92,13 @@ auto TypeOfPlace(const TypeArena& types, const Place& place) -> TypeId {
   return t;
 }
 
+auto TypeOfPlaceBase(const TypeArena& types, const Place& place) -> TypeId {
+  TypeId t = place.root.type;
+  for (const auto& proj : place.projections) {
+    if (std::holds_alternative<BitRangeProjection>(proj.info)) break;
+    t = TypeAfterProjection(types, t, proj);
+  }
+  return t;
+}
+
 }  // namespace lyra::mir
