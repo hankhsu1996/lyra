@@ -14,6 +14,7 @@ namespace lyra::lowering::mir_to_llvm {
 struct JitCompileTimings {
   double create_jit = 0.0;
   double load_runtime = 0.0;
+  double optimize_ir = 0.0;
   double add_ir = 0.0;
   double lookup_main = 0.0;
   double codegen = 0.0;        // Object emission (inside lookup_main)

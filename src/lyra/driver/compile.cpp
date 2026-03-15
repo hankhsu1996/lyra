@@ -9,6 +9,7 @@
 #include "llvm_stats.hpp"
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/llvm_backend/emit.hpp"
+#include "lyra/llvm_backend/ir_optimize.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/llvm_backend/toolchain.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -89,10 +90,17 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
     return std::unexpected(1);
   }
 
-  // Collect LLVM stats before module is consumed
+  // Collect raw lowered IR stats before optimization.
   LlvmStats llvm_stats;
   if (input.stats_out_path) {
     llvm_stats = CollectLlvmStats(*llvm_result->module);
+  }
+
+  // Shared pre-codegen IR optimization stage.
+  {
+    PhaseTimer timer(vlog, "optimize_ir");
+    lowering::mir_to_llvm::OptimizeModule(
+        *llvm_result->module, input.opt_level);
   }
 
   // Create target machine for object emission

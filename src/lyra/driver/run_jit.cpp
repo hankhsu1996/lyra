@@ -200,10 +200,10 @@ auto RunJit(const CompilationInput& input) -> int {
       fmt::print(
           stderr,
           "[lyra][stats][jit] create_jit={:.3f}s load_runtime={:.3f}s "
-          "add_ir={:.3f}s lookup_main={:.3f}s "
+          "optimize_ir={:.3f}s add_ir={:.3f}s lookup_main={:.3f}s "
           "codegen={:.3f}s linking={:.3f}s",
-          jt.create_jit, jt.load_runtime, jt.add_ir, jt.lookup_main, jt.codegen,
-          jt.linking);
+          jt.create_jit, jt.load_runtime, jt.optimize_ir, jt.add_ir,
+          jt.lookup_main, jt.codegen, jt.linking);
       if (jt.has_link_detail) {
         fmt::print(
             stderr,

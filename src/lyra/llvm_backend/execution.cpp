@@ -30,6 +30,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/opt_level.hpp"
+#include "lyra/llvm_backend/ir_optimize.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -426,8 +427,13 @@ auto CompileJitImpl(
         });
   }
 
-  // Sub-phase 3: add_ir
+  // Sub-phase 3: optimize_ir
   auto t2 = Clock::now();
+  OptimizeModule(*result.module, options.opt_level);
+  timings.optimize_ir = ElapsedSeconds(t2);
+
+  // Sub-phase 4: add_ir
+  auto t3 = Clock::now();
   llvm::orc::ThreadSafeContext tsc(std::move(result.context));
   auto tsm = llvm::orc::ThreadSafeModule(std::move(result.module), tsc);
   if (auto err = (*jit)->addIRModule(std::move(tsm))) {
@@ -435,9 +441,9 @@ auto CompileJitImpl(
         std::format(
             "failed to add module: {}", llvm::toString(std::move(err))));
   }
-  timings.add_ir = ElapsedSeconds(t2);
+  timings.add_ir = ElapsedSeconds(t3);
 
-  // Sub-phase 4: lookup_main (triggers full JIT compilation + linking)
+  // Sub-phase 5: lookup_main (triggers full JIT compilation + linking)
   if (progress) {
     progress->lookup_start = Clock::now();
   }

@@ -86,6 +86,7 @@ void WriteStatsJson(
     out << ",\n  \"jit\": {\n";
     out << "    \"create_jit\": " << dur(jt.create_jit) << ",\n";
     out << "    \"load_runtime\": " << dur(jt.load_runtime) << ",\n";
+    out << "    \"optimize_ir\": " << dur(jt.optimize_ir) << ",\n";
     out << "    \"add_ir\": " << dur(jt.add_ir) << ",\n";
     out << "    \"lookup_main\": " << dur(jt.lookup_main) << ",\n";
     out << "    \"codegen\": " << dur(jt.codegen) << ",\n";
