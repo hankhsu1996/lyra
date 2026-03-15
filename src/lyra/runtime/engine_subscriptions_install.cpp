@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <format>
@@ -71,7 +70,9 @@ auto Engine::FindOrCreateEdgeGroup(
       EdgeWatchGroup{
           .byte_offset = byte_offset,
           .bit_index = bit_index,
-          .last_bit = initial_last_bit});
+          .last_bit = initial_last_bit,
+          .posedge_subs = {},
+          .negedge_subs = {}});
   return idx;
 }
 
@@ -236,20 +237,25 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
   ResetInstalledWait(handle);
 }
 
-// Check whether any installed subscription for the given process observes a
-// slot that was dirtied in the current delta. If false, the previous
-// FlushSignalUpdates already established correct baselines and the
-// post-activation snapshot refresh can be skipped.
+// Refresh installed edge/change baselines for subscriptions whose slots
+// were dirtied after the most recent flush.
 //
-// Precondition: all sub_refs are snapshot-bearing (kEdge or kChange).
-// Refresh snapshots for installed subscriptions whose slots were dirtied in
-// the current delta. Single-pass: checks IsDeltaDirty per sub and only
-// refreshes those that changed, avoiding a separate NeedsSnapshotRefresh scan.
+// Precondition: the caller (ReconcilePostActivation) has already verified
+// that DeltaDirtySlots() is non-empty. When no post-flush dirties exist,
+// installed baselines are already correct from FlushSlotEdgeGroups
+// (group.last_bit) and FlushSlotChangeSubs (snapshot memcpy), and this
+// function must not be called.
 //
-// This is only called on the can_refresh path (WaitShapeKind::kStatic), so
-// all subs are snapshot-bearing (kEdge or kChange). Rebind watchers and
+// Only called on the can_refresh path (WaitShapeKind::kStatic), so all
+// sub_refs are snapshot-bearing (kEdge or kChange). Rebind watchers and
 // container subs are structurally impossible here.
 void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
+  if (update_set_.DeltaDirtySlots().empty()) {
+    throw common::InternalError(
+        "Engine::RefreshInstalledSnapshots",
+        "called with empty DeltaDirtySlots; flush already established "
+        "correct baselines and caller should have skipped this call");
+  }
   if (handle.process_id >= num_processes_) return;
 
   auto& proc_state = process_states_[handle.process_id];
@@ -627,7 +633,6 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
       break;
 
     case SuspendTag::kWait: {
-      // Validate wait_site_id before use.
       if (suspend->wait_site_id == kInvalidWaitSiteId) {
         throw common::InternalError(
             "Engine::ReconcilePostActivation",
@@ -638,15 +643,27 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
 
       auto& proc_state = process_states_[handle.process_id];
 
-      if (CanRefreshInPlace(proc_state.installed_wait, suspend->wait_site_id)) {
-        // Fast path: refresh only dirty-slot snapshots in one pass.
-        RefreshInstalledSnapshots(handle);
-      } else {
-        // Slow path: descriptor lookup + full reinstall.
+      if (!CanRefreshInPlace(
+              proc_state.installed_wait, suspend->wait_site_id)) {
+        // Reinstall required: different wait site or non-static shape.
         const auto& descriptor = wait_site_meta_.Get(suspend->wait_site_id);
         ResetInstalledWait(handle);
         InstallWaitSite(handle, suspend, descriptor);
+        break;
       }
+
+      // Flush owns baseline advancement for installed edge/change waits.
+      // FlushSlotEdgeGroups sets group.last_bit; FlushSlotChangeSubs
+      // memcpy's snapshots. ClearDelta() resets post-flush dirtiness
+      // tracking but does NOT invalidate those installed baselines.
+      // Post-activation refresh is only needed when post-flush slot
+      // dirties are recorded in delta_dirty_ (any active-region mutation
+      // path that calls MarkSlotDirty or MarkDirtyRange).
+      if (update_set_.DeltaDirtySlots().empty()) {
+        break;
+      }
+
+      RefreshInstalledSnapshots(handle);
       break;
     }
 

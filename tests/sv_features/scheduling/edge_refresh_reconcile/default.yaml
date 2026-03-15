@@ -1,0 +1,136 @@
+feature: edge_refresh_reconcile
+description: >
+  Tests that wait reconciliation correctly handles the boundary between
+  flush-owned baselines (no post-flush dirties) and post-activation refresh
+  (direct writes during active region). Pins the contract: empty
+  DeltaDirtySlots after flush means refresh-in-place is a safe no-op.
+
+cases:
+  - name: nba_only_multiple_cycles
+    description: >
+      Multiple always_ff processes on the same posedge clk, all NBA-only.
+      No active-region direct writes means delta_dirty is empty during
+      reconciliation. Verifies correct edge detection across many cycles
+      when post-activation refresh is skipped.
+    sv: |
+      module Test;
+        bit clk;
+        int a, b, c, d;
+
+        always_ff @(posedge clk) a <= a + 1;
+        always_ff @(posedge clk) b <= b + 10;
+        always_ff @(posedge clk) c <= c + 100;
+        always_ff @(posedge clk) d <= d + 1000;
+
+        initial begin
+          clk = 0;
+          repeat (10) #5 clk = ~clk;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        a: 5
+        b: 50
+        c: 500
+        d: 5000
+
+  - name: nba_only_generated_processes
+    description: >
+      Generated always_ff processes on the same clock edge (dense
+      subscription pattern). All NBA-only, exercises the empty delta_dirty
+      reconciliation path at scale.
+    sv: |
+      module Test;
+        bit clk;
+        int accum [4];
+
+        for (genvar i = 0; i < 4; i++) begin : blk
+          always_ff @(posedge clk) accum[i] <= accum[i] + i + 1;
+        end
+
+        initial begin
+          clk = 0;
+          repeat (20) #5 clk = ~clk;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        accum[0]: 10
+        accum[1]: 20
+        accum[2]: 30
+        accum[3]: 40
+
+  - name: mixed_direct_write_and_nba
+    description: >
+      One process directly writes to a signal during active-region execution,
+      making delta_dirty non-empty. Other processes use NBA. Verifies that
+      post-activation refresh still runs when direct writes exist.
+    sv: |
+      module Test;
+        bit clk;
+        int counter, doubled;
+
+        always_ff @(posedge clk) counter <= counter + 1;
+
+        // Direct write (blocking assignment in always_ff) makes delta_dirty
+        // non-empty during active-region execution.
+        always_ff @(posedge clk) doubled = counter * 2;
+
+        initial begin
+          clk = 0;
+          repeat (8) #5 clk = ~clk;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        counter: 4
+        doubled: 8
+
+  - name: nba_only_negedge
+    description: >
+      Negedge-triggered processes (NBA-only) verify the reconciliation
+      no-op path works for both edge polarities.
+    sv: |
+      module Test;
+        bit clk;
+        int fall_count;
+
+        always_ff @(negedge clk) fall_count <= fall_count + 1;
+
+        initial begin
+          clk = 0;
+          repeat (12) #5 clk = ~clk;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        fall_count: 6
+
+  - name: nba_chain_across_deltas
+    description: >
+      Two always_ff processes forming a pipeline: a feeds b across delta
+      cycles. Verifies that NBA application -> flush -> edge wakeup chain
+      works correctly when reconciliation is a no-op during each active
+      region.
+    sv: |
+      module Test;
+        bit clk;
+        int stage1, stage2;
+
+        always_ff @(posedge clk) stage1 <= stage1 + 1;
+        always_ff @(posedge clk) stage2 <= stage1;
+
+        initial begin
+          clk = 0;
+          repeat (10) #5 clk = ~clk;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        stage1: 5
+        stage2: 4
