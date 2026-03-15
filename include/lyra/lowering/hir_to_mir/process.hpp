@@ -19,7 +19,7 @@ auto LowerProcess(
     hir::ProcessId hir_proc_id, const hir::Process& process,
     const LoweringInput& input, mir::Arena& mir_arena,
     const DeclView& decl_view, OriginMap* origin_map,
-    std::vector<mir::FunctionId>* generated_functions = nullptr)
-    -> Result<mir::ProcessId>;
+    std::vector<mir::FunctionId>* generated_functions,
+    hir::ModuleBodyId body_id) -> Result<mir::ProcessId>;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -37,6 +37,13 @@ inline auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes {
   };
 }
 
+// Lowering context for AST->HIR.
+// All pointer fields are non-owning references to shared compilation state.
+//
+// This struct is intentionally shallow-copyable: ForkForBodyLowering()
+// copies all shared references and overrides hir_arena to point to a
+// body-local arena. All other fields (type_arena, constant_arena,
+// symbol_table, sink, etc.) remain shared across the fork.
 struct Context {
   DiagnosticSink* sink = nullptr;
   hir::Arena* hir_arena = nullptr;
@@ -55,6 +62,16 @@ struct Context {
 
   // Canonical builtin types. Initialized once in LowerDesign.
   BuiltinTypes builtin_types{};
+
+  // Fork a body-lowering context that directs all HIR allocation into
+  // the given body-local arena. All shared state (type_arena, sink, etc.)
+  // is inherited by shallow copy.
+  [[nodiscard]] auto ForkForBodyLowering(hir::Arena& body_arena) const
+      -> Context {
+    Context body_ctx = *this;
+    body_ctx.hir_arena = &body_arena;
+    return body_ctx;
+  }
 
   [[nodiscard]] auto GetTickType() const -> TypeId {
     return builtin_types.tick_type;

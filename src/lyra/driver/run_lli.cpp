@@ -110,7 +110,8 @@ auto RunLli(const CompilationInput& input) -> int {
 
   // Create diagnostic context for LLVM backend error reporting
   lowering::OriginMapLookup origin_lookup(
-      &compilation.mir.origin_map, compilation.hir.hir_arena.get());
+      &compilation.mir.origin_map, &compilation.hir.design,
+      compilation.hir.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
@@ -138,8 +139,9 @@ auto RunLli(const CompilationInput& input) -> int {
     PrintLlvmStats(llvm_stats_data, input.stats_top_n);
     PrintProcessStats(
         compilation.mir.design, *compilation.mir.mir_arena,
-        compilation.mir.origin_map, *compilation.hir.hir_arena,
-        *compilation.hir.source_manager, llvm_stats_data);
+        compilation.mir.origin_map, compilation.hir.design,
+        *compilation.hir.hir_arena, *compilation.hir.source_manager,
+        llvm_stats_data);
   }
 
   std::string ir_path = CreateTempFile(".ll");

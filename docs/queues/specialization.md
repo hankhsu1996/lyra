@@ -20,10 +20,15 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
   - [x] M2c-2b -- Definition-owned repertoire descriptor (inspection scaffold + declaration payload)
   - [x] M2c-3 -- Specialization fingerprint from definition-scoped type store (v1 removed)
 - [x] B6 -- HIR ownership split (`hir::ModuleBody` per spec group, `hir::Module` instance record, ownership-shaped lowering inputs)
-- [ ] m1 -- DesignState struct is monolithic
 - [x] m2 -- Instance paths deferred to runtime (LyraPrintModulePath + instance_id)
-- [ ] m3 -- ParamTransmissionTable uses raw ParameterSymbol\* as key (should be group-scoped)
-- [ ] F1 -- Parallel specialization compilation
+- [ ] F1 -- Parallel specialization compilation (next milestone, see [parallel-compilation.md](../parallel-compilation.md))
+  - [x] F1-design -- Parallel ownership model: per-body owned unit, identity contract, phase split
+  - [x] F1-prep Cut 1 -- Per-body HIR ownership (`ModuleBody` owns arena, body-aware OriginMap, `ForkForBodyLowering`)
+  - [ ] F1-prep Cut 3 -- Per-body diagnostics
+  - [ ] F1-prep Cut 2 -- Per-body MIR ownership
+  - [ ] F1-prep Cut 4 -- TypeArena/ConstantArena investigation
+  - [ ] m3 -- ParamTransmissionTable: replace raw ParameterSymbol\* with group-scoped key (Phase 0 only, not F1-blocking)
+  - [ ] F1-impl -- Per-group isolated compilation with deterministic merge
 - [ ] F2 -- Specialization caching
 
 ## M2: Invert specialization/param-role dependency
@@ -179,6 +184,14 @@ Deleted (observer program model, PR #548):
 AST->HIR lowering uses ownership-shaped prepared inputs. `PrepareModuleLoweringInputs` does one structural walk per instance, then immediately partitions into `BodyLoweringInput` (definition-scoped behavioral content + prepared var_init tuples) and `InstanceRegistrationInput` (per-instance registration pointers). `CollectedMembers` is internal to preparation only. `LowerModuleBody` consumes `BodyLoweringInput` once per specialization group. `CollectModuleInstance` consumes `InstanceRegistrationInput` per instance (lookup-only, born-complete records). HIR->MIR: `LowerModule` takes `const hir::ModuleBody&` for behavioral content, `CollectBodyLocalDecls` takes `hir::Module&` for per-instance registration SymbolIds.
 
 Variables/nets/param_slots remain on `hir::Module` as per-instance registration artifacts (not body-owned declarations). This is the current justified ownership boundary: these SymbolIds are consumed by design-global place allocation (`CollectDesignDeclarations`) and port binding compilation, both of which are instance-scoped consumers. If any subset is later identified as specialization-shared semantic ownership, it should move into `hir::ModuleBody`.
+
+## F1: Parallel specialization compilation
+
+See [parallel-compilation.md](../parallel-compilation.md) for the full design.
+
+The core model: Phase 0 (sequential global setup) produces immutable shared reference data. Phase 1 (per-group isolated compilation) produces per-body owned units (`hir::ModuleBody` with embedded arena, body-local IDs). Phase 2 (deterministic assembly) collects bodies and builds design-wide artifacts. Body-local IDs stay body-local permanently -- no rebasing.
+
+The old "m1 -- DesignState struct is monolithic" label is retired. There is no `DesignState` struct. The real concern (monolithic boundary bags) is addressed as part of F1-prep, not as standalone cleanup.
 
 ## CI / Policy Gates
 

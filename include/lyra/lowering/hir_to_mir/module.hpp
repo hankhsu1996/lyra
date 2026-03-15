@@ -13,7 +13,7 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerModule(
     const hir::ModuleBody& body, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map,
-    const DesignDeclarations& decls, const BodyLocalDecls& body_decls)
-    -> Result<mir::ModuleBody>;
+    const DesignDeclarations& decls, const BodyLocalDecls& body_decls,
+    hir::ModuleBodyId body_id) -> Result<mir::ModuleBody>;
 
 }  // namespace lyra::lowering::hir_to_mir

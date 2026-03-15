@@ -162,7 +162,7 @@ auto LowerDesign(
         const hir::Process& proc = (*input.hir_arena)[hir_proc_id];
         Result<mir::ProcessId> mir_proc_result = LowerProcess(
             hir_proc_id, proc, input, mir_arena, init_view, origin_map,
-            &result.generated_functions);
+            &result.generated_functions, hir::kInvalidModuleBodyId);
         if (!mir_proc_result) {
           return std::unexpected(mir_proc_result.error());
         }
@@ -199,8 +199,11 @@ auto LowerDesign(
         design.module_bodies[rep_mod.body_id.value];
     BodyLocalDecls body_decls =
         CollectBodyLocalDecls(rep_mod, *input.symbol_table, mir_arena);
-    Result<mir::ModuleBody> body_result =
-        LowerModule(hir_body, input, mir_arena, origin_map, decls, body_decls);
+    LoweringInput body_input = input;
+    body_input.hir_arena = &hir_body.arena;
+    Result<mir::ModuleBody> body_result = LowerModule(
+        hir_body, body_input, mir_arena, origin_map, decls, body_decls,
+        rep_mod.body_id);
     if (!body_result) {
       return std::unexpected(body_result.error());
     }

@@ -39,9 +39,14 @@ auto LowerModuleBody(
     const slang::ast::InstanceSymbol& representative,
     const BodyLoweringInput& input, SymbolRegistrar& registrar, Context* ctx)
     -> hir::ModuleBody {
-  ModuleLowerer lowerer(*ctx, registrar, representative);
+  // Body-local arena and context. All HIR nodes created during body lowering
+  // are allocated into body_arena via body_ctx.
+  hir::Arena body_arena;
+  Context body_ctx = ctx->ForkForBodyLowering(body_arena);
 
-  SourceSpan span = ctx->SpanOf(GetSourceRange(representative));
+  ModuleLowerer lowerer(body_ctx, registrar, representative);
+
+  SourceSpan span = body_ctx.SpanOf(GetSourceRange(representative));
 
   // All module-level symbols are pre-registered in Phase 0. Body lowering
   // consumes prepared ownership-shaped input only. Process/function-local
@@ -66,11 +71,11 @@ auto LowerModuleBody(
 
     // Desugar continuous assignments into synthetic always_comb
     for (const auto* ca : input.continuous_assigns) {
-      SourceSpan ca_span = ctx->SpanOf(GetSourceRange(*ca));
+      SourceSpan ca_span = body_ctx.SpanOf(GetSourceRange(*ca));
 
       if (const auto* delay = ca->getDelay()) {
-        ctx->sink->Error(
-            ctx->SpanOf(delay->sourceRange),
+        body_ctx.sink->Error(
+            body_ctx.SpanOf(delay->sourceRange),
             "continuous assignment delays not supported");
         continue;
       }
@@ -79,26 +84,26 @@ auto LowerModuleBody(
       const auto& assign = assign_expr.as<slang::ast::AssignmentExpression>();
 
       hir::ExpressionId target = LowerScopedExpression(
-          assign.left(), *ctx, registrar, lowerer.Frame());
+          assign.left(), body_ctx, registrar, lowerer.Frame());
       if (!target) {
         continue;
       }
 
-      const auto& target_data = (*ctx->hir_arena)[target];
+      const auto& target_data = (*body_ctx.hir_arena)[target];
       if (!hir::IsPlaceExpressionKind(target_data.kind)) {
-        ctx->sink->Error(
+        body_ctx.sink->Error(
             target_data.span,
             "continuous assignment target is not a simple place expression");
         continue;
       }
 
       hir::ExpressionId value = LowerScopedExpression(
-          assign.right(), *ctx, registrar, lowerer.Frame());
+          assign.right(), body_ctx, registrar, lowerer.Frame());
       if (!value) {
         continue;
       }
 
-      hir::StatementId stmt = ctx->hir_arena->AddStatement(
+      hir::StatementId stmt = body_ctx.hir_arena->AddStatement(
           hir::Statement{
               .kind = hir::StatementKind::kAssignment,
               .span = ca_span,
@@ -109,7 +114,7 @@ auto LowerModuleBody(
                   },
           });
 
-      hir::ProcessId proc = ctx->hir_arena->AddProcess(
+      hir::ProcessId proc = body_ctx.hir_arena->AddProcess(
           hir::Process{
               .kind = hir::ProcessKind::kAlwaysComb,
               .span = ca_span,
@@ -146,13 +151,13 @@ auto LowerModuleBody(
 
       for (const auto& var_init : input.var_inits) {
         hir::ExpressionId init_expr = LowerScopedExpression(
-            *var_init.initializer, *ctx, registrar, lowerer.Frame());
+            *var_init.initializer, body_ctx, registrar, lowerer.Frame());
         if (!init_expr) {
           continue;
         }
 
-        TypeId var_type = (*ctx->symbol_table)[var_init.target].type;
-        hir::ExpressionId target_expr = ctx->hir_arena->AddExpression(
+        TypeId var_type = (*body_ctx.symbol_table)[var_init.target].type;
+        hir::ExpressionId target_expr = body_ctx.hir_arena->AddExpression(
             hir::Expression{
                 .kind = hir::ExpressionKind::kNameRef,
                 .type = var_type,
@@ -160,7 +165,7 @@ auto LowerModuleBody(
                 .data = hir::NameRefExpressionData{.symbol = var_init.target},
             });
 
-        hir::StatementId stmt = ctx->hir_arena->AddStatement(
+        hir::StatementId stmt = body_ctx.hir_arena->AddStatement(
             hir::Statement{
                 .kind = hir::StatementKind::kAssignment,
                 .span = span,
@@ -174,7 +179,7 @@ auto LowerModuleBody(
       }
 
       if (!init_stmts.empty()) {
-        hir::StatementId body_stmt = ctx->hir_arena->AddStatement(
+        hir::StatementId body_stmt = body_ctx.hir_arena->AddStatement(
             hir::Statement{
                 .kind = hir::StatementKind::kBlock,
                 .span = span,
@@ -183,7 +188,7 @@ auto LowerModuleBody(
                         .statements = std::move(init_stmts)},
             });
 
-        hir::ProcessId init_proc = ctx->hir_arena->AddProcess(
+        hir::ProcessId init_proc = body_ctx.hir_arena->AddProcess(
             hir::Process{
                 .kind = hir::ProcessKind::kInitial,
                 .span = span,
@@ -199,6 +204,7 @@ auto LowerModuleBody(
       .processes = std::move(processes),
       .functions = std::move(functions),
       .tasks = std::move(tasks),
+      .arena = std::move(body_arena),
   };
 }
 

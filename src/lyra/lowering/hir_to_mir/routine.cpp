@@ -107,8 +107,8 @@ auto BuildFunctionSignature(
 
 auto LowerFunctionBody(
     const hir::Function& function, const LoweringInput& input,
-    mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map)
-    -> Result<mir::Function> {
+    mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map,
+    hir::ModuleBodyId body_id) -> Result<mir::Function> {
   Context ctx{
       .mir_arena = &mir_arena,
       .hir_arena = input.hir_arena,
@@ -130,7 +130,7 @@ auto LowerFunctionBody(
       .body_slots = decl_view.body_slots,
   };
 
-  MirBuilder builder(&mir_arena, &ctx, origin_map);
+  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id);
   BlockIndex entry_idx = builder.CreateBlock();
   BlockIndex exit_idx = builder.CreateBlock();
   builder.SetExitBlock(exit_idx);

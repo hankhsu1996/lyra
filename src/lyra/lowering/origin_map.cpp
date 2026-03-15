@@ -8,10 +8,11 @@
 
 namespace lyra::lowering {
 
-auto OriginMap::Record(MirNode mir_node, HirSource hir_source)
+auto OriginMap::Record(
+    MirNode mir_node, HirSource hir_source, hir::ModuleBodyId body_id)
     -> common::OriginId {
   common::OriginId id{static_cast<uint32_t>(entries_.size())};
-  entries_.push_back({std::move(mir_node), std::move(hir_source)});
+  entries_.push_back({std::move(mir_node), std::move(hir_source), body_id});
   return id;
 }
 
