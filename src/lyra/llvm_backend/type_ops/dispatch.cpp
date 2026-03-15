@@ -3,8 +3,6 @@
 #include <expected>
 #include <variant>
 
-#include <llvm/IR/Type.h>
-
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -52,9 +50,6 @@ auto AssignPlace(
   const Type& type = types[type_id];
 
   OwnershipPolicy policy = DetermineOwnership(context, source);
-  auto storage_type_or_err = context.GetPlaceLlvmType(target);
-  if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
-  llvm::Type* storage_type = *storage_type_or_err;
 
   // Dispatch based on managed kind first
   switch (GetManagedKind(type.Kind())) {
@@ -93,13 +88,11 @@ auto AssignPlace(
       break;
   }
 
-  // Packed types: dispatch on LLVM storage type
-  if (storage_type->isStructTy()) {
-    // 4-state target
+  // Packed types: 4-state vs 2-state dispatch from type system
+  if (IsPacked(type) && context.IsPackedFourState(type)) {
     auto result = AssignFourState(context, target, source, policy, type_id);
     if (!result) return std::unexpected(result.error());
   } else {
-    // 2-state target
     auto result = AssignTwoState(context, target, source, policy, type_id);
     if (!result) return std::unexpected(result.error());
   }
