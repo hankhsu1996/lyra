@@ -51,7 +51,7 @@ auto AssignStruct(
   auto val_result = LowerOperandRaw(context, source);
   if (!val_result) return std::unexpected(val_result.error());
   llvm::Value* val = *val_result;
-  CommitPackedValueRaw(context, target, val);
+  CommitPackedValueRaw(context, target, val, struct_type_id);
   return {};
 }
 

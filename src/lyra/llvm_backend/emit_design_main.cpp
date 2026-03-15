@@ -30,6 +30,7 @@
 #include "lyra/llvm_backend/design_metadata_lowering.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
+#include "lyra/llvm_backend/storage_boundary.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
 #include "lyra/mir/handle.hpp"
@@ -109,26 +110,32 @@ void InitializeDesignState(
     const std::vector<SlotInfo>& slots,
     const lowering::mir_to_llvm::FourStatePatchTable& patches) {
   auto& builder = context.GetBuilder();
-  auto* design_type = context.GetDesignStateType();
-  bool force_two_state = context.IsForceTwoState();
+  auto& ctx = context.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  auto* arena_ty = llvm::ArrayType::get(i8_ty, context.GetDesignArenaSize());
 
-  EmitMemsetZero(context, design_state, design_type);
+  EmitMemsetZero(context, design_state, arena_ty);
 
-  if (force_two_state) return;
+  if (context.IsForceTwoState()) return;
 
   EmitApply4StatePatches(context, design_state, patches, "design");
 
-  const auto& types = context.GetTypeArena();
+  // Non-patch-table-eligible 4-state slots need recursive default init.
+  // Both queries are fully spec-driven: HasFourStateContent checks the
+  // resolved spec tree for any 4-state packed content; IsPatchTableEligible
+  // checks whether the patch table already handled it.
+  const auto& arena = context.GetDesignStorageSpecArena();
   for (const auto& slot : slots) {
-    if (!context.IsFourState(slot.type_id)) {
+    const auto& spec = context.GetDesignSlotStorageSpec(slot.slot_id);
+    if (!HasFourStateContent(spec, arena)) {
       continue;
     }
-    if (IsScalarPatchable(slot.type_id, types, force_two_state)) {
+    if (IsPatchTableEligible(spec)) {
       continue;
     }
-    uint32_t field_index = context.GetDesignFieldIndex(slot.slot_id);
-    auto* slot_ptr =
-        builder.CreateStructGEP(design_type, design_state, field_index);
+    uint64_t offset = context.GetDesignSlotByteOffset(slot.slot_id);
+    auto* slot_ptr = builder.CreateGEP(
+        i8_ty, design_state, builder.getInt64(offset), "slot_init_ptr");
     EmitSVDefaultInitAfterZero(context, slot_ptr, slot.type_id);
   }
 }
@@ -177,16 +184,18 @@ void ReleaseStringSlots(
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
-  auto* design_type = context.GetDesignStateType();
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
 
   for (const auto& slot : slots) {
     if (slot.type_info.kind != lowering::mir_to_llvm::VarTypeKind::kString) {
       continue;
     }
 
-    uint32_t field_index = context.GetDesignFieldIndex(slot.slot_id);
-    auto* slot_ptr =
-        builder.CreateStructGEP(design_type, design_state, field_index);
+    // Handle slots (string, dynarray, queue) store a canonical pointer-width
+    // value. Direct typed pointer load is correct for handle storage.
+    uint64_t offset = context.GetDesignSlotByteOffset(slot.slot_id);
+    auto* slot_ptr = builder.CreateGEP(
+        i8_ty, design_state, builder.getInt64(offset), "str_release_ptr");
     auto* val = builder.CreateLoad(ptr_ty, slot_ptr);
     builder.CreateCall(context.GetLyraStringRelease(), {val});
   }
@@ -198,15 +207,15 @@ void EmitParamInitStores(
   if (realization.param_inits.empty()) return;
 
   auto& builder = context.GetBuilder();
-  auto* design_type = context.GetDesignStateType();
+  auto* i8_ty = llvm::Type::getInt8Ty(context.GetLlvmContext());
 
   for (const auto& entries : realization.param_inits) {
     for (const auto& entry : entries) {
       auto slot_id = mir::SlotId{entry.slot_id};
-      uint32_t field_index = context.GetDesignFieldIndex(slot_id);
+      uint64_t offset = context.GetDesignSlotByteOffset(slot_id);
 
-      auto* slot_ptr =
-          builder.CreateStructGEP(design_type, design_state, field_index);
+      auto* slot_ptr = builder.CreateGEP(
+          i8_ty, design_state, builder.getInt64(offset), "param_ptr");
 
       Constant constant{.type = entry.type_id, .value = entry.value};
       auto value_result = LowerConstant(context, constant);
@@ -214,7 +223,16 @@ void EmitParamInitStores(
         throw common::InternalError(
             "EmitParamInitStores", "failed to materialize param constant");
       }
-      builder.CreateStore(*value_result, slot_ptr);
+      const auto& spec = context.GetDesignSlotStorageSpec(slot_id);
+      const auto& arena = context.GetDesignStorageSpecArena();
+
+      // Lower packed values from semantic width to storage lane width
+      // before passing to the storage boundary.
+      llvm::Value* lowered = *value_result;
+      if (const auto* packed = std::get_if<PackedStorageSpec>(&spec.data)) {
+        lowered = LowerToStorageLaneWidth(builder, lowered, *packed);
+      }
+      EmitStoreToCanonicalStorage(builder, slot_ptr, lowered, spec, arena);
     }
   }
 }
@@ -249,8 +267,9 @@ auto CreateMainFunction(
   auto* exit_block = llvm::BasicBlock::Create(ctx, "exit", main_func);
   builder.SetInsertPoint(entry);
 
-  auto* design_state = builder.CreateAlloca(
-      context.GetDesignStateType(), nullptr, "design_state");
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  auto* arena_ty = llvm::ArrayType::get(i8_ty, context.GetDesignArenaSize());
+  auto* design_state = builder.CreateAlloca(arena_ty, nullptr, "design_state");
 
   return {
       .main_func = main_func,
@@ -577,24 +596,16 @@ auto BuildDesignMetadata(
     const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input,
     size_t num_init) -> MetadataGlobals {
   auto& builder = context.GetBuilder();
-  auto& ctx = context.GetLlvmContext();
-  auto& mod = context.GetModule();
-  const auto& dl = mod.getDataLayout();
   const auto& mir_arena = context.GetMirArena();
   const auto& type_arena = context.GetTypeArena();
-  bool force_two_state = context.IsForceTwoState();
 
-  auto slot_meta_inputs =
-      ExtractSlotMetaInputs(context, slot_info, layout.design, dl, type_arena);
-  auto conn_desc_entries = ExtractConnectionDescriptorEntries(
-      realization.slot_types, mir_arena, type_arena, layout, dl, ctx,
-      force_two_state);
+  auto slot_meta_inputs = ExtractSlotMetaInputs(slot_info, layout.design);
+  auto conn_desc_entries =
+      ExtractConnectionDescriptorEntries(mir_arena, layout);
   auto scheduled_inputs = PrepareScheduledProcessInputs(
       realization.instance_paths, mir_arena, input.diag_ctx,
       input.source_manager, layout.scheduled_processes, num_init);
-  auto comb_inputs = PrepareCombKernelInputs(
-      realization.slot_types, mir_arena, type_arena, layout, dl, ctx,
-      force_two_state, num_init);
+  auto comb_inputs = PrepareCombKernelInputs(mir_arena, layout, num_init);
   auto back_edge_site_inputs =
       PrepareBackEdgeSiteInputs(context, input.diag_ctx, input.source_manager);
 

@@ -37,17 +37,23 @@ auto CommitValue(
     Context& ctx, mir::PlaceId target, llvm::Value* raw_value, TypeId type_id,
     OwnershipPolicy policy) -> Result<void>;
 
-// Low-level escape hatch for already-coerced packed values.
-// Use when caller has performed RMW or type coercion and has final LLVM value.
-// Does NOT accept TypeId or OwnershipPolicy - caller asserts value is ready.
-// Resolves WriteTarget internally, stores, notifies if design slot.
+// Store a non-managed value to a target place.
+//
+// Caller provides the value in SSA compute form (iN for 2-state packed,
+// {iN, iN} for 4-state packed, float/double, or SSA aggregate compute
+// form for non-managed unpacked structs/arrays). This function performs:
+// 1. Storage-lane width lowering (semantic -> storage width for packed)
+// 2. Canonical storage materialization (for design-slot aggregates)
+// 3. Design-slot notification (compare/store + dirty mark)
+//
+// Not for managed types (string/container) -- those go through CommitValue.
+// TypeId is needed to resolve storage spec for the lowering and commit.
 void CommitPackedValueRaw(
-    Context& ctx, mir::PlaceId target, llvm::Value* value);
+    Context& ctx, mir::PlaceId target, llvm::Value* value, TypeId type_id);
 
 // Get pointers to packed storage planes for direct write access.
-// For 4-state {iN, iN}: GEPs to field 0 (val) and field 1 (unk).
-// For 2-state iN: val_ptr is storage pointer, unk_ptr is null.
-// Pointers are bitcast to i64* for word-level runtime access.
+// For 4-state: val_ptr is slot_ptr, unk_ptr is GEP to unknown lane offset.
+// For 2-state: val_ptr is slot_ptr, unk_ptr is null.
 auto GetPackedPlanesPtr(Context& ctx, mir::PlaceId target, TypeId type_id)
     -> Result<PackedPlanesPtr>;
 

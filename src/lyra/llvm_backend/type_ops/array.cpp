@@ -35,7 +35,7 @@ auto AssignArray(
   auto val_or_err = LowerOperandRaw(context, source);
   if (!val_or_err) return std::unexpected(val_or_err.error());
   llvm::Value* val = *val_or_err;
-  CommitPackedValueRaw(context, target, val);
+  CommitPackedValueRaw(context, target, val, array_type_id);
   return {};
 }
 

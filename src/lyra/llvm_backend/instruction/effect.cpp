@@ -184,7 +184,7 @@ void CommitFilledValue(
         builder.CreateZExtOrTrunc(known_val, t.storage_type, "store.val");
   }
 
-  CommitPackedValueRaw(ctx, t.place_id, final_value);
+  CommitPackedValueRaw(ctx, t.place_id, final_value, t.type_id);
 }
 
 // Bit fill: replicate single bit to all positions using SExt.

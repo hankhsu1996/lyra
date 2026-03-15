@@ -216,11 +216,10 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
       }
       return std::nullopt;
     };
-    // Use the resolved root's type directly (carried by MIR place metadata)
-    // rather than detouring through the design-global slot table.
-    auto range = ResolveByteRange(
-        *llvm_context_, llvm_module_->getDataLayout(), types_, resolved,
-        resolved.root.type, resolver, force_two_state_);
+    auto slot_id = mir::SlotId{static_cast<uint32_t>(resolved.root.id)};
+    const auto& spec = GetDesignSlotStorageSpec(slot_id);
+    const auto& spec_arena = GetDesignStorageSpecArena();
+    auto range = ResolveByteRange(spec, spec_arena, resolved, resolver);
     if (range.kind == RangeKind::kPrecise) {
       dirty_off = range.byte_offset;
       dirty_size = range.byte_size;
@@ -358,9 +357,10 @@ auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)
     throw common::InternalError(
         "GetDesignGlobalSlotPointer", "design pointer not set");
   }
-  uint32_t field_index = GetDesignFieldIndex(mir::SlotId{global_slot_id});
-  return builder_.CreateStructGEP(
-      GetDesignStateType(), design_ptr_, field_index, "design_global_slot_ptr");
+  uint64_t offset = GetDesignSlotByteOffset(mir::SlotId{global_slot_id});
+  return builder_.CreateGEP(
+      llvm::Type::getInt8Ty(*llvm_context_), design_ptr_,
+      builder_.getInt64(offset), "design_global_slot_ptr");
 }
 
 auto Context::GetSlotRootPointer(const mir::PlaceRoot& root) -> llvm::Value* {

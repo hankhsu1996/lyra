@@ -27,9 +27,8 @@ struct SlotInfo;
 
 // Extract slot metadata inputs from LLVM layout into plain link structs.
 auto ExtractSlotMetaInputs(
-    Context& context, const std::vector<SlotInfo>& slots,
-    const DesignLayout& design_layout, const llvm::DataLayout& dl,
-    const TypeArena& types) -> std::vector<realization::SlotMetaInput>;
+    const std::vector<SlotInfo>& slots, const DesignLayout& design_layout)
+    -> std::vector<realization::SlotMetaInput>;
 
 // Extract scheduled process inputs into plain link structs.
 auto PrepareScheduledProcessInputs(
@@ -45,20 +44,16 @@ auto PrepareBackEdgeSiteInputs(
     const SourceManager* source_manager)
     -> std::vector<realization::BackEdgeSiteInput>;
 
-// Extract connection descriptor entries from LLVM layout.
+// Extract connection descriptor entries from canonical layout.
 auto ExtractConnectionDescriptorEntries(
-    const std::vector<TypeId>& slot_types, const mir::Arena& mir_arena,
-    const TypeArena& type_arena, const Layout& layout,
-    const llvm::DataLayout& dl, llvm::LLVMContext& ctx, bool force_two_state)
+    const mir::Arena& mir_arena, const Layout& layout)
     -> std::vector<realization::ConnectionDescriptorEntry>;
 
 // Prepare comb kernel inputs from layout data.
 // Resolves symbolic trigger observations to concrete byte ranges and
 // canonicalizes to one trigger per (kernel, slot).
 auto PrepareCombKernelInputs(
-    const std::vector<TypeId>& slot_types, const mir::Arena& mir_arena,
-    const TypeArena& types, const Layout& layout, const llvm::DataLayout& dl,
-    llvm::LLVMContext& ctx, bool force_two_state, size_t num_init)
+    const mir::Arena& mir_arena, const Layout& layout, size_t num_init)
     -> std::vector<realization::CombKernelInput>;
 
 // Build final trace-signal metadata inputs from compile-owned provenance.

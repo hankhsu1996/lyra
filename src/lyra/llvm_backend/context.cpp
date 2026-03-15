@@ -154,8 +154,30 @@ auto Context::GetHeaderType() const -> llvm::StructType* {
   return layout_.header_type;
 }
 
-auto Context::GetDesignStateType() const -> llvm::StructType* {
-  return layout_.design.llvm_type;
+auto Context::GetDesignArenaSize() const -> uint64_t {
+  return layout_.design.arena_size;
+}
+
+auto Context::ResolveDesignSlotIndex(mir::SlotId slot_id) const -> uint32_t {
+  auto it = layout_.design.slot_to_index.find(slot_id);
+  if (it == layout_.design.slot_to_index.end()) {
+    throw common::InternalError(
+        "ResolveDesignSlotIndex", "design slot not found in layout");
+  }
+  return it->second;
+}
+
+auto Context::GetDesignSlotByteOffset(mir::SlotId slot_id) const -> uint64_t {
+  return layout_.design.slot_byte_offsets[ResolveDesignSlotIndex(slot_id)];
+}
+
+auto Context::GetDesignSlotStorageSpec(mir::SlotId slot_id) const
+    -> const SlotStorageSpec& {
+  return layout_.design.slot_storage_specs[ResolveDesignSlotIndex(slot_id)];
+}
+
+auto Context::GetDesignStorageSpecArena() const -> const StorageSpecArena& {
+  return layout_.design.storage_spec_arena;
 }
 
 auto Context::GetProcessFrameType() const -> llvm::StructType* {
@@ -292,14 +314,7 @@ void Context::InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id) {
   builder_.restoreIP(saved_point);
 }
 
-auto Context::GetDesignFieldIndex(mir::SlotId slot_id) const -> uint32_t {
-  auto it = layout_.design.slot_to_field.find(slot_id);
-  if (it == layout_.design.slot_to_field.end()) {
-    throw common::InternalError(
-        "llvm_backend", "design slot not found in layout");
-  }
-  return it->second;
-}
+// GetDesignFieldIndex removed -- DesignState is byte arena, not struct.
 
 auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
   const auto& place = arena_[place_id];
