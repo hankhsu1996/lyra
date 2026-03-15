@@ -50,8 +50,13 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   uint32_t target_process_id = 0;
 
   if (target_handle.kind == SubKind::kEdge) {
-    auto& esub =
-        signal_subs_[target_handle.slot_id].edge_subs[target_handle.index];
+    auto& esub = ResolveEdgeSub(
+        SubRef{
+            .slot_id = target_handle.slot_id,
+            .index = target_handle.index,
+            .kind = SubKind::kEdge,
+            .edge_bucket = target_handle.edge_bucket,
+            .edge_group = target_handle.edge_group});
     if (esub.cold_idx == UINT32_MAX) return;
     auto& ecold = edge_cold_pool_[esub.cold_idx];
     plan_ref = ecold.plan_ref;
@@ -91,8 +96,13 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   // Helper lambdas for active/inactive flag setting.
   auto set_inactive = [&]() {
     if (target_handle.kind == SubKind::kEdge) {
-      signal_subs_[target_handle.slot_id]
-          .edge_subs[target_handle.index]
+      ResolveEdgeSub(
+          SubRef{
+              .slot_id = target_handle.slot_id,
+              .index = target_handle.index,
+              .kind = SubKind::kEdge,
+              .edge_bucket = target_handle.edge_bucket,
+              .edge_group = target_handle.edge_group})
           .flags &= ~kSubActive;
     } else {
       signal_subs_[target_handle.slot_id]
@@ -107,12 +117,6 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   }
 
   // Container rebind path: recompute which element is observed.
-  // After index plan evaluation, we update container_sv_index to the new
-  // element index, chase the heap handle to validate bounds, and re-seed
-  // last_bit from the new element's LSB. This is sufficient because container
-  // edge triggers observe only bit 0 of byte 0 of the element (see
-  // ContainerSub observation model). The next FlushContainerSub will compare
-  // the reseeded last_bit against the current element value.
   if (target_handle.kind == SubKind::kContainer) {
     auto& csub =
         signal_subs_[target_handle.slot_id].container_subs[target_handle.index];
@@ -140,7 +144,6 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
       return;
     }
     csub.flags |= kSubActive;
-    // Capture initial bit for edge detection.
     auto byte_off =
         static_cast<uint32_t>(index_val) * ccold.container_elem_stride;
     auto heap_data =
@@ -150,6 +153,8 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   }
 
   // Edge path: packed/unpacked DesignState bit position update.
+  // Rebinding is group migration: the sub moves from its current observation-
+  // point group to the group for the new (byte_offset, bit_index).
   int64_t logical_offset =
       static_cast<int64_t>(index_val - mapping.index_base) * mapping.index_step;
 
@@ -159,33 +164,84 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
     return;
   }
 
-  auto& esub =
-      signal_subs_[target_handle.slot_id].edge_subs[target_handle.index];
-  esub.flags |= kSubActive;
   auto bit = static_cast<uint64_t>(logical_offset);
   auto new_byte_offset = static_cast<uint32_t>(bit / 8);
   auto new_bit_index = static_cast<uint8_t>(bit % 8);
 
-  // Update the target's observation position.
-  auto& ecold = edge_cold_pool_[esub.cold_idx];
+  // Read current byte for cold snapshot and last_bit initialization.
   const auto& meta = slot_meta_registry_.Get(target_handle.slot_id);
   auto ds = std::span(
       static_cast<const uint8_t*>(design_state_base_),
       meta.base_off + new_byte_offset + 1);
 
-  // Same-byte rebinding: extract old bit from the saved byte snapshot
-  // so the edge pass detects the 0->1 / 1->0 transition correctly.
-  // Different-byte: read from current design state (no prior observation).
-  if (new_byte_offset == esub.byte_offset && ecold.has_edge_last_byte) {
-    esub.last_bit = (ecold.edge_last_byte >> new_bit_index) & 1;
-  } else {
-    esub.last_bit = (ds[meta.base_off + new_byte_offset] >> new_bit_index) & 1;
+  // Resolve old group to get the sub and its cold state.
+  auto& old_group =
+      GetEdgeGroup(target_handle.slot_id, target_handle.edge_group);
+  auto& old_vec = (target_handle.edge_bucket == EdgeBucket::kPosedge)
+                      ? old_group.posedge_subs
+                      : old_group.negedge_subs;
+  auto& esub = old_vec[target_handle.index];
+
+  // Update cold snapshot for same-byte rebind detection.
+  auto& ecold = edge_cold_pool_[esub.cold_idx];
+  uint8_t current_byte = ds[meta.base_off + new_byte_offset];
+
+  // Check if the new observation point is in the same group.
+  bool same_group =
+      (new_byte_offset == old_group.byte_offset &&
+       new_bit_index == old_group.bit_index);
+
+  if (same_group) {
+    // No migration needed. Just update cold state and activate.
+    esub.flags |= kSubActive;
+    ecold.edge_last_byte = current_byte;
+    ecold.has_edge_last_byte = true;
+    return;
   }
-  // Save full byte snapshot for potential future same-byte rebinding.
-  ecold.edge_last_byte = ds[meta.base_off + new_byte_offset];
+
+  // Group migration: remove from old group, insert into new group.
+  // Save sub data before removal (swap-and-pop may invalidate the reference).
+  EdgeSub sub_copy = esub;
+  sub_copy.flags |= kSubActive;
+
+  // Remove from old bucket via centralized helper.
+  RemoveEdgeSubFromBucket(
+      target_handle.slot_id, target_handle.edge_group,
+      target_handle.edge_bucket, target_handle.index);
+
+  // Find or create the target group.
+  // For the initial_last_bit of a new group, use the pre-change byte snapshot
+  // (from the cold pool) when available. This preserves transition detection:
+  // if the bit was 0 before and is now 1, the group starts with last_bit=0
+  // so the flush detects the 0->1 posedge.
+  uint8_t pre_change_bit = 0;
+  if (new_byte_offset == old_group.byte_offset && ecold.has_edge_last_byte) {
+    pre_change_bit = (ecold.edge_last_byte >> new_bit_index) & 1;
+  } else {
+    pre_change_bit = (current_byte >> new_bit_index) & 1;
+  }
+  uint8_t new_group_idx = FindOrCreateEdgeGroup(
+      target_handle.slot_id, new_byte_offset, new_bit_index, pre_change_bit);
+
+  // Insert into target group's matching polarity bucket.
+  auto& new_vec = EdgeSubVec(
+      target_handle.slot_id, new_group_idx, target_handle.edge_bucket);
+  auto new_index = static_cast<uint32_t>(new_vec.size());
+  new_vec.push_back(sub_copy);
+
+  // Update SubRef.
+  auto& proc = process_states_[sub_copy.process_id];
+  auto& ref = proc.sub_refs[sub_copy.process_sub_idx];
+  ref.edge_group = new_group_idx;
+  ref.index = new_index;
+
+  // Update EdgeTargetHandle.
+  target_handle.edge_group = new_group_idx;
+  target_handle.index = new_index;
+
+  // Update cold snapshot.
+  ecold.edge_last_byte = current_byte;
   ecold.has_edge_last_byte = true;
-  esub.byte_offset = new_byte_offset;
-  esub.bit_index = new_bit_index;
 }
 
 void Engine::FlushContainerSub(
@@ -253,9 +309,6 @@ void Engine::FlushSlotRebindSubs(
     std::span<const uint8_t> design_state) {
   if (subs.empty()) return;
 
-  // Invariant: rebind watchers are always active once installed (never
-  // deactivated) and always have valid cold storage (cold_idx != UINT32_MAX).
-  // No kSubActive check or cold_idx guard needed.
   for (auto& sub : subs) {
     auto& wcold = watcher_cold_pool_[sub.cold_idx];
     const auto* current = &design_state[meta.base_off + sub.byte_offset];
@@ -267,41 +320,60 @@ void Engine::FlushSlotRebindSubs(
   }
 }
 
-void Engine::FlushSlotEdgeSubs(
-    uint32_t slot_id, std::vector<EdgeSub>& subs, const SlotMeta& meta,
+void Engine::UpdateEdgeColdSnapshots(
+    EdgeWatchGroup& group, uint8_t current_byte) {
+  // Update edge_last_byte for rebind-capable subs only.
+  // This is pay-for-play: normal edge dispatch does not carry rebind cost.
+  auto update = [&](std::vector<EdgeSub>& subs) {
+    for (auto& sub : subs) {
+      if (sub.cold_idx != UINT32_MAX) {
+        auto& ecold = edge_cold_pool_[sub.cold_idx];
+        ecold.edge_last_byte = current_byte;
+        ecold.has_edge_last_byte = true;
+      }
+    }
+  };
+  update(group.posedge_subs);
+  update(group.negedge_subs);
+}
+
+void Engine::FlushSlotEdgeGroups(
+    uint32_t slot_id, std::vector<EdgeWatchGroup>& groups, const SlotMeta& meta,
     const common::RangeSet& dirty_ranges, RangeFilterMode mode,
     std::span<const uint8_t> design_state) {
-  if (subs.empty()) return;
   const bool detailed = detailed_stats_enabled_;
 
-  for (auto& sub : subs) {
-    if (!(sub.flags & kSubActive)) continue;
+  for (auto& group : groups) {
     if (mode == RangeFilterMode::kPartial &&
-        !dirty_ranges.Overlaps(sub.byte_offset, sub.byte_size))
+        !dirty_ranges.Overlaps(group.byte_offset, 1)) {
       continue;
-
-    if (detailed) ++stats_.detailed.edge_sub_checks;
-    uint8_t current_byte = design_state[meta.base_off + sub.byte_offset];
-    uint8_t current_bit = (current_byte >> sub.bit_index) & 1;
-
-    bool should_wake = false;
-    if (sub.last_bit != current_bit) {
-      should_wake = EvaluateEdge(sub.edge, sub.last_bit != 0, current_bit != 0);
-      sub.last_bit = current_bit;
-    }
-    // Update byte snapshot for potential same-byte rebinding.
-    if (sub.cold_idx != UINT32_MAX) {
-      auto& ecold = edge_cold_pool_[sub.cold_idx];
-      ecold.edge_last_byte = current_byte;
-      ecold.has_edge_last_byte = true;
     }
 
-    if (should_wake) {
+    uint8_t current_byte = design_state[meta.base_off + group.byte_offset];
+    uint8_t current_bit = (current_byte >> group.bit_index) & 1;
+
+    // Cold byte snapshot must be refreshed whenever the observed byte is
+    // dirty, even if the observed bit did not transition. Another bit in the
+    // same byte may have changed, and a later same-byte rebind needs the
+    // current byte to seed the new bit position correctly.
+    UpdateEdgeColdSnapshots(group, current_byte);
+
+    if (group.last_bit == current_bit) continue;
+
+    // Direction known: dispatch only the matching polarity bucket.
+    auto& wake_subs =
+        (current_bit != 0) ? group.posedge_subs : group.negedge_subs;
+
+    for (auto& sub : wake_subs) {
+      if (!(sub.flags & kSubActive)) continue;
+      if (detailed) ++stats_.detailed.edge_sub_checks;
       if (detailed) ++stats_.detailed.edge_sub_wakeups;
       EnqueueProcessWakeup(
           sub.process_id, sub.instance_id, sub.resume_block, slot_id,
           WakeCause::kEdge);
     }
+
+    group.last_bit = current_bit;
   }
 }
 
@@ -352,27 +424,24 @@ void Engine::FlushDirtySlot(
     uint32_t slot_id, SlotSubscriptions& slot, const SlotMeta& meta,
     std::span<const uint8_t> design_state) {
   // Phase ordering contract:
-  //   1. Rebind  -- must precede edge (rebind updates byte_offset/bit_index)
-  //   2. Edge    -- range-filtered, wakes on bit transitions
+  //   1. Rebind  -- must precede edge (rebind updates observation point)
+  //   2. Edge    -- group-level direction-aware dispatch
   //   3. Change  -- range-filtered, wakes on byte-level value change
   //   4. Container -- independent, unfiltered (heap-chasing comparison)
   FlushSlotRebindSubs(slot.rebind_subs, meta, design_state);
 
-  if (!slot.edge_subs.empty() || !slot.change_subs.empty()) {
+  if (!slot.edge_groups.empty() || !slot.change_subs.empty()) {
     const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
     if (dirty_ranges.IsFullExtent()) {
-      // Fast path: full-slot dirty (most common on clocked designs).
-      // Skip range filtering entirely -- all subs are in range.
-      FlushSlotEdgeSubs(
-          slot_id, slot.edge_subs, meta, dirty_ranges, RangeFilterMode::kFull,
+      FlushSlotEdgeGroups(
+          slot_id, slot.edge_groups, meta, dirty_ranges, RangeFilterMode::kFull,
           design_state);
       FlushSlotChangeSubs(
           slot_id, slot.change_subs, meta, dirty_ranges, RangeFilterMode::kFull,
           design_state);
     } else if (!dirty_ranges.IsEmpty()) {
-      // Slow path: partial dirty ranges -- per-sub range filtering.
-      FlushSlotEdgeSubs(
-          slot_id, slot.edge_subs, meta, dirty_ranges,
+      FlushSlotEdgeGroups(
+          slot_id, slot.edge_groups, meta, dirty_ranges,
           RangeFilterMode::kPartial, design_state);
       FlushSlotChangeSubs(
           slot_id, slot.change_subs, meta, dirty_ranges,
@@ -408,11 +477,7 @@ void Engine::FlushSignalUpdates() {
 
   for (uint32_t slot_id : newly_dirty) {
     auto& slot = signal_subs_[slot_id];
-    // Skip slots with no subscribers. Connection/comb propagation dirties many
-    // intermediate slots that have no edge/change/rebind/container subs.
-    // Checking four sizes (4 loads) is much cheaper than the full
-    // FlushDirtySlot dispatch (slot_meta lookup + typed flusher calls).
-    if (slot.edge_subs.empty() && slot.change_subs.empty() &&
+    if (slot.edge_groups.empty() && slot.change_subs.empty() &&
         slot.rebind_subs.empty() && slot.container_subs.empty())
       continue;
     if (detailed) ++stats_.detailed.flush_dirty_slots;

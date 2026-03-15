@@ -38,6 +38,12 @@ enum class SubKind : uint8_t {
   kContainer,
 };
 
+// Polarity bucket within an EdgeWatchGroup.
+enum class EdgeBucket : uint8_t {
+  kPosedge,
+  kNegedge,
+};
+
 // Per-process ownership record. Indexes into the typed vector for a given slot.
 //
 // Invariants maintained by swap-and-pop removal:
@@ -49,17 +55,28 @@ enum class SubKind : uint8_t {
 //   process_sub_idx and its SubRef.index are updated atomically.
 // - If the moved sub is a rebind target (has edge_target_id),
 //   edge_target_table_[edge_target_id].index is also updated.
+//
+// For kEdge subs, edge_group and edge_bucket locate the sub within the
+// grouped edge storage: signal_subs_[slot_id].edge_groups[edge_group]
+//   .posedge_subs or .negedge_subs (selected by edge_bucket) [index].
 struct SubRef {
   uint32_t slot_id;
   uint32_t index;
   SubKind kind;
+  EdgeBucket edge_bucket = EdgeBucket::kPosedge;  // polarity (kEdge only)
+  uint16_t padding_ = 0;
+  uint32_t edge_group = 0;  // group index (kEdge only)
 };
+static_assert(sizeof(SubRef) == 16);
 
 // Stable indirection handle for rebind targets.
 // Stored in edge_target_table_, updated on swap-and-pop.
 struct EdgeTargetHandle {
   uint32_t slot_id;
   SubKind kind;  // kEdge or kContainer
+  EdgeBucket edge_bucket = EdgeBucket::kPosedge;
+  uint16_t padding_ = 0;
+  uint32_t edge_group = 0;
   uint32_t index;
 };
 
@@ -109,30 +126,34 @@ struct ContainerCold {
   uint32_t last_rebind_epoch = 0;
 };
 
-// Dense hot-path record for posedge/negedge signal wakeup (32B).
-// This is the dominant pipeline shape -- FlushSignalUpdates iterates
-// a dense std::vector<EdgeSub> and touches only this layout.
+// Dense hot-path record for edge wakeup (24B).
+// Contains only process wakeup identity and cold-path linkage.
+// Observation-point state (byte_offset, bit_index, last_bit) is owned by
+// the enclosing EdgeWatchGroup. Polarity (posedge/negedge) is implicit in
+// which bucket the sub lives in.
 struct EdgeSub {
-  // Wakeup identity (12B)
   uint32_t process_id;
   uint32_t instance_id;
   uint32_t resume_block;
-
-  // Observation target (8B)
-  uint32_t byte_offset;
-  uint32_t byte_size;
-
-  // Edge / state (4B)
-  uint8_t bit_index;
-  common::EdgeKind edge;
-  uint8_t last_bit;
   uint8_t flags;  // kActive=0x01, kHasCold=0x02
-
-  // Removal / ownership (8B)
+  uint8_t padding_[3] = {};
   uint32_t process_sub_idx;  // index in owning process_state.sub_refs
   uint32_t cold_idx;         // UINT32_MAX = no cold state (edge_cold_pool_)
 };
-static_assert(sizeof(EdgeSub) == 32);
+static_assert(sizeof(EdgeSub) == 24);
+
+// Observation-point group for edge subscriptions.
+// Groups all edge watchers on a slot that observe the same (byte_offset,
+// bit_index). Edge state (last_bit) is owned by the group and authoritative.
+// Subs are split by polarity for direction-aware flush dispatch.
+struct EdgeWatchGroup {
+  uint32_t byte_offset;
+  uint8_t bit_index;
+  uint8_t last_bit;
+  uint16_t padding_ = 0;
+  std::vector<EdgeSub> posedge_subs;
+  std::vector<EdgeSub> negedge_subs;
+};
 
 // Dense record for kAnyChange subscribers (48B).
 // Has a different hot path from edge detection -- splitting from EdgeSub
@@ -201,10 +222,11 @@ enum class RangeFilterMode : uint8_t {
   kPartial,  // Partial ranges (per-sub Overlaps required)
 };
 
-// Per-slot subscription storage. Four dense typed arrays.
-// The flush path becomes four dense scans with no mixed-node branching.
+// Per-slot subscription storage.
+// Edge subscriptions are grouped by observation point (byte_offset, bit_index)
+// and split by polarity within each group for direction-aware dispatch.
 struct SlotSubscriptions {
-  std::vector<EdgeSub> edge_subs;
+  std::vector<EdgeWatchGroup> edge_groups;
   std::vector<ChangeSub> change_subs;
   std::vector<RebindWatcherSub> rebind_subs;
   std::vector<ContainerSub> container_subs;
