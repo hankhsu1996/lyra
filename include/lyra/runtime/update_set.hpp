@@ -122,6 +122,14 @@ class UpdateSet {
     return slot_id < delta_seen_.size() && delta_seen_[slot_id] != 0;
   }
 
+  // Direct pointer to the per-delta seen bitmap. Generated code uses this
+  // for inline first-dirty guards: load delta_seen_[slot_id], skip the
+  // runtime call if already dirty. The pointer is stable for the duration
+  // of a process activation (ClearDelta only runs between activations).
+  [[nodiscard]] auto DeltaSeenData() -> uint8_t* {
+    return delta_seen_.empty() ? nullptr : delta_seen_.data();
+  }
+
   // Monotonically increasing epoch, incremented at each ClearDelta().
   // Used with DeltaDirtySlots().size() as a watermark to skip redundant
   // snapshot refresh scans within the same delta.

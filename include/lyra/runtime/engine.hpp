@@ -308,6 +308,33 @@ class Engine {
   // Route a MutationEvent to the UpdateSet (design slots only; heap NYI).
   void OnMutation(const common::MutationEvent& event);
 
+  // Whether the inline first-dirty fast path is allowed in the current
+  // execution context. Returns false during comb-fixpoint evaluation, where
+  // repeated dirty marks carry semantic work (comb_write_capture_ bookkeeping
+  // for convergence). Returns true during normal process-body execution.
+  [[nodiscard]] auto IsFirstDirtyFastPathAllowed() const -> bool {
+    return comb_write_capture_ == nullptr;
+  }
+
+  // Pointer to the per-delta first-dirty seen bitmap. Pure data accessor;
+  // does not encode execution-policy decisions. Returns null if the update
+  // set is not yet initialized.
+  auto GetFirstDirtySeenPtr() -> uint8_t* {
+    return update_set_.DeltaSeenData();
+  }
+
+  // First-dirty slow path: called by generated code when the inline guard
+  // detects a slot not yet dirty in the current delta. Performs all first-
+  // dirty bookkeeping (dedup tracking, activation dirty count, stats).
+  // Precondition: the inline guard already confirmed delta_seen[slot] == 0.
+  void MarkSlotDirtyFirst(uint32_t slot_id) {
+    if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
+    update_set_.MarkSlotDirty(slot_id);
+    if (activation_ctx_.active) {
+      NoteActivationDirty(slot_id);
+    }
+  }
+
   // Mark slot dirty for scheduler wakeup and deferred trace snapshot.
   // Note: SignalId == slot_id in the current runtime. This equivalence is by
   // design - both identify the same design slot. Callers may pass either type.

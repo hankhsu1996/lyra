@@ -441,6 +441,30 @@ auto Context::GetLyraMarkDirty() -> llvm::Function* {
   return lyra_mark_dirty_;
 }
 
+auto Context::GetLyraGetFirstDirtySeenPtr() -> llvm::Function* {
+  if (lyra_get_first_dirty_seen_ptr_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    lyra_get_first_dirty_seen_ptr_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraGetFirstDirtySeenPtr",
+        llvm_module_.get());
+  }
+  return lyra_get_first_dirty_seen_ptr_;
+}
+
+auto Context::GetLyraMarkDirtyFirst() -> llvm::Function* {
+  if (lyra_mark_dirty_first_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty}, false);
+    lyra_mark_dirty_first_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraMarkDirtyFirst",
+        llvm_module_.get());
+  }
+  return lyra_mark_dirty_first_;
+}
+
 auto Context::GetLyraStoreString() -> llvm::Function* {
   if (lyra_store_string_ == nullptr) {
     // void LyraStoreString(ptr engine, ptr slot, ptr new_str, i32 signal_id)

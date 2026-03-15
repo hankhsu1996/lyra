@@ -500,6 +500,14 @@ auto Context::GetEnginePointer() -> llvm::Value* {
   return engine_ptr_;
 }
 
+void Context::SetFirstDirtySeenPtr(llvm::Value* ptr) {
+  first_dirty_seen_ptr_ = ptr;
+}
+
+auto Context::GetFirstDirtySeenPtr() -> llvm::Value* {
+  return first_dirty_seen_ptr_;
+}
+
 auto Context::TakeOwnership() -> std::pair<
     std::unique_ptr<llvm::LLVMContext>, std::unique_ptr<llvm::Module>> {
   return {std::move(llvm_context_), std::move(llvm_module_)};

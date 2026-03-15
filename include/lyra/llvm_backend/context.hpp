@@ -131,6 +131,8 @@ class Context {
   [[nodiscard]] auto GetLyraFreeTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStorePacked() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMarkDirty() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraGetFirstDirtySeenPtr() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraMarkDirtyFirst() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNba() -> llvm::Function*;
   [[nodiscard]] auto GetLyraTerminate() -> llvm::Function*;
@@ -364,6 +366,11 @@ class Context {
   void SetEnginePointer(llvm::Value* engine_ptr);
   [[nodiscard]] auto GetEnginePointer() -> llvm::Value*;
 
+  // first_dirty_seen_ptr: per-delta first-dirty bitmap, hoisted once per
+  // activation. Generated code uses this for inline first-dirty guards.
+  void SetFirstDirtySeenPtr(llvm::Value* ptr);
+  [[nodiscard]] auto GetFirstDirtySeenPtr() -> llvm::Value*;
+
   // Get pointer to a place's base storage via GEP into design or frame.
   // Applies all non-BitRange projections (IndexProjection, etc.) and stops
   // at the first BitRangeProjection. For bitrange reads/writes, use
@@ -596,6 +603,8 @@ class Context {
   llvm::Function* lyra_free_triggers_ = nullptr;
   llvm::Function* lyra_store_packed_ = nullptr;
   llvm::Function* lyra_mark_dirty_ = nullptr;
+  llvm::Function* lyra_get_first_dirty_seen_ptr_ = nullptr;
+  llvm::Function* lyra_mark_dirty_first_ = nullptr;
   llvm::Function* lyra_store_string_ = nullptr;
   llvm::Function* lyra_schedule_nba_ = nullptr;
   llvm::Function* lyra_terminate_ = nullptr;
@@ -694,6 +703,7 @@ class Context {
   llvm::Value* design_ptr_ = nullptr;
   llvm::Value* frame_ptr_ = nullptr;
   llvm::Value* engine_ptr_ = nullptr;
+  llvm::Value* first_dirty_seen_ptr_ = nullptr;
 
   // How module-local slots are addressed in the current function scope.
   SlotAddressingMode slot_addressing_ = SlotAddressingMode::kDesignGlobal;

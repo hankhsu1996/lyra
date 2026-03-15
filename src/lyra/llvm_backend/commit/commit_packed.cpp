@@ -58,11 +58,19 @@ auto IsInlineStoreSize(uint32_t byte_size) -> bool {
 
 // Emit inline compare+store+conditional dirty mark for canonical bits.
 // Precondition: canonical_bits is an integer in canonical storage form.
+//
+// For full-slot dirty marks (dirty_off == 0, dirty_size == 0) when the
+// first-dirty bitmap pointer is available, emits an inline first-dirty
+// guard: loads delta_seen[slot_id] and skips the runtime call if the
+// slot is already dirty in the current delta. Only the rare first-dirty
+// case calls LyraMarkDirtyFirst. This eliminates repeated function call
+// overhead in tight inner loops.
 void EmitInlineStore(
     Context& ctx, llvm::Value* canonical_bits, const WriteTarget& target) {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* bits_type = canonical_bits->getType();
 
   auto* old_bits = builder.CreateLoad(bits_type, target.ptr, "old");
@@ -77,18 +85,77 @@ void EmitInlineStore(
       builder.CreateAnd(changed, engine_not_null, "should_mark");
 
   auto* fn = builder.GetInsertBlock()->getParent();
-  auto* dirty_bb = llvm::BasicBlock::Create(llvm_ctx, "mark_dirty", fn);
   auto* done_bb = llvm::BasicBlock::Create(llvm_ctx, "store_done", fn);
 
-  builder.CreateCondBr(should_mark, dirty_bb, done_bb);
+  bool is_full_slot = (target.dirty_off == 0 && target.dirty_size == 0);
+  // Hoisted SSA value from process entry. Non-null at the C++ level means
+  // a hoisted LLVM value exists; the runtime value may still be null (when
+  // the fast path is forbidden or the update set is uninitialized).
+  auto* first_dirty_seen_base = ctx.GetFirstDirtySeenPtr();
 
-  builder.SetInsertPoint(dirty_bb);
-  builder.CreateCall(
-      ctx.GetLyraMarkDirty(),
-      {ctx.GetEnginePointer(), target.canonical_signal_id->Emit(builder),
-       llvm::ConstantInt::get(i32_ty, target.dirty_off),
-       llvm::ConstantInt::get(i32_ty, target.dirty_size)});
-  builder.CreateBr(done_bb);
+  if (is_full_slot && first_dirty_seen_base != nullptr) {
+    // Inline first-dirty fast path: check the per-delta seen bitmap.
+    // Common case (already dirty) skips the runtime call entirely.
+    //
+    // At runtime, the bitmap pointer is null when the fast path is
+    // forbidden in the current execution context (e.g., comb-fixpoint
+    // evaluation where repeated writes carry convergence bookkeeping)
+    // or when the update set is not yet initialized. Either way, null
+    // falls through to the full runtime dirty-mark path.
+    auto* null_ptr =
+        llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(llvm_ctx));
+    auto* check_bitmap_bb =
+        llvm::BasicBlock::Create(llvm_ctx, "check_bitmap", fn);
+    auto* check_seen_bb = llvm::BasicBlock::Create(llvm_ctx, "check_seen", fn);
+    auto* mark_first_bb = llvm::BasicBlock::Create(llvm_ctx, "mark_first", fn);
+    auto* fallback_bb =
+        llvm::BasicBlock::Create(llvm_ctx, "mark_dirty_fallback", fn);
+
+    builder.CreateCondBr(should_mark, check_bitmap_bb, done_bb);
+
+    // Runtime null: fast path forbidden or update set uninitialized.
+    builder.SetInsertPoint(check_bitmap_bb);
+    auto* slot_id = target.canonical_signal_id->Emit(builder);
+    auto* bitmap_nonnull =
+        builder.CreateICmpNE(first_dirty_seen_base, null_ptr, "bitmap.nonnull");
+    builder.CreateCondBr(bitmap_nonnull, check_seen_bb, fallback_bb);
+
+    // Check delta_seen[slot_id] for first-dirty dedup.
+    builder.SetInsertPoint(check_seen_bb);
+    auto* seen_ptr =
+        builder.CreateGEP(i8_ty, first_dirty_seen_base, {slot_id}, "seen_ptr");
+    auto* seen = builder.CreateLoad(i8_ty, seen_ptr, "seen");
+    auto* already_dirty = builder.CreateICmpNE(
+        seen, llvm::ConstantInt::get(i8_ty, 0), "already_dirty");
+    builder.CreateCondBr(already_dirty, done_bb, mark_first_bb);
+
+    // First dirty in this delta: call runtime slow path.
+    builder.SetInsertPoint(mark_first_bb);
+    builder.CreateCall(
+        ctx.GetLyraMarkDirtyFirst(), {ctx.GetEnginePointer(), slot_id});
+    builder.CreateBr(done_bb);
+
+    // Fallback: bitmap not available, use old runtime path.
+    builder.SetInsertPoint(fallback_bb);
+    builder.CreateCall(
+        ctx.GetLyraMarkDirty(),
+        {ctx.GetEnginePointer(), slot_id, llvm::ConstantInt::get(i32_ty, 0),
+         llvm::ConstantInt::get(i32_ty, 0)});
+    builder.CreateBr(done_bb);
+  } else {
+    // Fallback: range-dirty or no bitmap available. Call runtime directly.
+    auto* dirty_bb = llvm::BasicBlock::Create(llvm_ctx, "mark_dirty", fn);
+
+    builder.CreateCondBr(should_mark, dirty_bb, done_bb);
+
+    builder.SetInsertPoint(dirty_bb);
+    builder.CreateCall(
+        ctx.GetLyraMarkDirty(),
+        {ctx.GetEnginePointer(), target.canonical_signal_id->Emit(builder),
+         llvm::ConstantInt::get(i32_ty, target.dirty_off),
+         llvm::ConstantInt::get(i32_ty, target.dirty_size)});
+    builder.CreateBr(done_bb);
+  }
 
   builder.SetInsertPoint(done_bb);
 }
