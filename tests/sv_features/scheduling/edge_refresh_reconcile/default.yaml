@@ -103,7 +103,7 @@ cases:
         initial begin
           clk = 0;
           repeat (12) #5 clk = ~clk;
-          $finish;
+          #1 $finish;
         end
       endmodule
     expect:

@@ -7,8 +7,7 @@
 
 #include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/edge_kind.hpp"
-#include "lyra/runtime/engine_types.hpp"
-#include "lyra/runtime/index_plan.hpp"
+#include "lyra/common/index_plan.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::runtime {
@@ -60,11 +59,11 @@ enum class EdgeBucket : uint8_t {
 // grouped edge storage: signal_subs_[slot_id].edge_groups[edge_group]
 //   .posedge_subs or .negedge_subs (selected by edge_bucket) [index].
 struct SubRef {
-  uint32_t slot_id;
-  uint32_t index;
-  SubKind kind;
+  uint32_t slot_id = 0;
+  uint32_t index = 0;
+  SubKind kind = SubKind::kEdge;
   EdgeBucket edge_bucket = EdgeBucket::kPosedge;  // polarity (kEdge only)
-  uint16_t padding_ = 0;
+  uint16_t padding = 0;
   uint32_t edge_group = 0;  // group index (kEdge only)
 };
 static_assert(sizeof(SubRef) == 16);
@@ -72,12 +71,12 @@ static_assert(sizeof(SubRef) == 16);
 // Stable indirection handle for rebind targets.
 // Stored in edge_target_table_, updated on swap-and-pop.
 struct EdgeTargetHandle {
-  uint32_t slot_id;
-  SubKind kind;  // kEdge or kContainer
+  uint32_t slot_id = 0;
+  SubKind kind = SubKind::kEdge;  // kEdge or kContainer
   EdgeBucket edge_bucket = EdgeBucket::kPosedge;
-  uint16_t padding_ = 0;
+  uint16_t padding = 0;
   uint32_t edge_group = 0;
-  uint32_t index;
+  uint32_t index = 0;
 };
 
 // Cold state for EdgeSub rebind targets. Lives in edge_cold_pool_, indexed
@@ -132,13 +131,13 @@ struct ContainerCold {
 // the enclosing EdgeWatchGroup. Polarity (posedge/negedge) is implicit in
 // which bucket the sub lives in.
 struct EdgeSub {
-  uint32_t process_id;
-  uint32_t instance_id;
-  uint32_t resume_block;
-  uint8_t flags;  // kActive=0x01, kHasCold=0x02
-  uint8_t padding_[3] = {};
-  uint32_t process_sub_idx;  // index in owning process_state.sub_refs
-  uint32_t cold_idx;         // UINT32_MAX = no cold state (edge_cold_pool_)
+  uint32_t process_id = 0;
+  uint32_t instance_id = 0;
+  uint32_t resume_block = 0;
+  uint8_t flags = 0;  // kActive=0x01, kHasCold=0x02
+  std::array<uint8_t, 3> padding = {};
+  uint32_t process_sub_idx = 0;  // index in owning process_state.sub_refs
+  uint32_t cold_idx = 0;         // UINT32_MAX = no cold state (edge_cold_pool_)
 };
 static_assert(sizeof(EdgeSub) == 24);
 
@@ -147,10 +146,10 @@ static_assert(sizeof(EdgeSub) == 24);
 // bit_index). Edge state (last_bit) is owned by the group and authoritative.
 // Subs are split by polarity for direction-aware flush dispatch.
 struct EdgeWatchGroup {
-  uint32_t byte_offset;
-  uint8_t bit_index;
-  uint8_t last_bit;
-  uint16_t padding_ = 0;
+  uint32_t byte_offset = 0;
+  uint8_t bit_index = 0;
+  uint8_t last_bit = 0;
+  uint16_t padding = 0;
   std::vector<EdgeSub> posedge_subs;
   std::vector<EdgeSub> negedge_subs;
 };
@@ -159,20 +158,21 @@ struct EdgeWatchGroup {
 // Has a different hot path from edge detection -- splitting from EdgeSub
 // keeps the dominant clock-edge path smaller.
 struct ChangeSub {
-  uint32_t process_id;
-  uint32_t instance_id;
-  uint32_t resume_block;
-  uint32_t byte_offset;
-  uint32_t byte_size;
-  uint32_t process_sub_idx;
-  uint32_t cold_idx;  // UINT32_MAX if inline snapshot only (change_cold_pool_)
+  uint32_t process_id = 0;
+  uint32_t instance_id = 0;
+  uint32_t resume_block = 0;
+  uint32_t byte_offset = 0;
+  uint32_t byte_size = 0;
+  uint32_t process_sub_idx = 0;
+  uint32_t cold_idx =
+      0;  // UINT32_MAX if inline snapshot only (change_cold_pool_)
 
   // Inline snapshot for small observed ranges.
   static constexpr uint32_t kInlineSnapshotCap = 16;
   std::array<uint8_t, kInlineSnapshotCap> snapshot_inline{};
 
-  uint8_t flags;  // kActive=0x01
-  std::array<uint8_t, 3> padding_{};
+  uint8_t flags = 0;  // kActive=0x01
+  std::array<uint8_t, 3> padding{};
 };
 static_assert(sizeof(ChangeSub) == 48);
 
@@ -180,12 +180,12 @@ static_assert(sizeof(ChangeSub) == 48);
 // Logically a different pass -- lives in its own dense array so
 // pass 2 never branches over them.
 struct RebindWatcherSub {
-  uint32_t process_id;
-  uint32_t byte_offset;
-  uint32_t byte_size;
-  uint32_t process_sub_idx;
-  uint32_t cold_idx;  // always valid (watcher_cold_pool_)
-  uint32_t flags;     // kActive=0x01
+  uint32_t process_id = 0;
+  uint32_t byte_offset = 0;
+  uint32_t byte_size = 0;
+  uint32_t process_sub_idx = 0;
+  uint32_t cold_idx = 0;  // always valid (watcher_cold_pool_)
+  uint32_t flags = 0;     // kActive=0x01
 };
 static_assert(sizeof(RebindWatcherSub) == 24);
 
@@ -198,15 +198,15 @@ static_assert(sizeof(RebindWatcherSub) == 24);
 // defined over the LSB of the element, matching the scalar edge semantics.
 // Multi-bit or multi-byte element observation is not supported.
 struct ContainerSub {
-  uint32_t process_id;
-  uint32_t instance_id;
-  uint32_t resume_block;
-  uint32_t process_sub_idx;
-  uint32_t cold_idx;      // always valid (container_cold_pool_)
-  common::EdgeKind edge;  // trigger kind (posedge/negedge/anychange)
-  uint8_t last_bit;       // last observed bit value for edge detection
-  uint8_t flags;          // kActive=0x01
-  uint8_t padding_ = 0;
+  uint32_t process_id = 0;
+  uint32_t instance_id = 0;
+  uint32_t resume_block = 0;
+  uint32_t process_sub_idx = 0;
+  uint32_t cold_idx = 0;  // always valid (container_cold_pool_)
+  common::EdgeKind edge = common::EdgeKind::kAnyChange;  // trigger kind
+  uint8_t last_bit = 0;  // last observed bit value for edge detection
+  uint8_t flags = 0;     // kActive=0x01
+  uint8_t padding = 0;
 };
 static_assert(sizeof(ContainerSub) == 24);
 
@@ -243,6 +243,14 @@ struct InstalledWaitState {
   // structural subscription shape. Derived from compiled shape at install
   // time: true iff shape is kStatic.
   bool can_refresh_snapshot = false;
+
+  // Snapshot refresh watermark: delta epoch + dirty count at last refresh.
+  // Used inside RefreshInstalledSnapshots to skip redundant per-sub scans
+  // when no new dirty slots appeared since the last refresh.
+  // Automatically reset when the installed wait is cleared or replaced
+  // (default construction zeros both fields).
+  uint32_t last_refresh_epoch = 0;
+  uint32_t last_refresh_dirty_count = 0;
 };
 
 // Per-process state (keyed by ProcessHandle).
@@ -252,12 +260,6 @@ struct ProcessState {
   std::vector<SubRef> sub_refs;
   IndexPlanPool plan_pool;
   InstalledWaitState installed_wait;
-
-  // Snapshot refresh watermark: epoch + dirty count at last refresh.
-  // If both match the current UpdateSet state, no new dirty slots appeared
-  // since the last refresh and the scan can be skipped entirely.
-  uint32_t last_refresh_epoch = 0;
-  uint32_t last_refresh_dirty_count = 0;
 };
 
 }  // namespace lyra::runtime

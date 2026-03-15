@@ -265,8 +265,9 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
   auto current_epoch = update_set_.DeltaEpoch();
   auto current_dirty_count =
       static_cast<uint32_t>(update_set_.DeltaDirtySlots().size());
-  if (current_epoch == proc_state.last_refresh_epoch &&
-      current_dirty_count == proc_state.last_refresh_dirty_count) {
+  if (current_epoch == proc_state.installed_wait.last_refresh_epoch &&
+      current_dirty_count ==
+          proc_state.installed_wait.last_refresh_dirty_count) {
     return;
   }
 
@@ -323,8 +324,8 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
     }
   }
 
-  proc_state.last_refresh_epoch = current_epoch;
-  proc_state.last_refresh_dirty_count = current_dirty_count;
+  proc_state.installed_wait.last_refresh_epoch = current_epoch;
+  proc_state.installed_wait.last_refresh_dirty_count = current_dirty_count;
 }
 
 void Engine::InstallTriggers(
@@ -586,8 +587,8 @@ void Engine::InstallWaitSite(
 
   // Snapshots are fresh from install -- set watermark so the next
   // RefreshInstalledSnapshots skips unless new dirty slots appear.
-  proc_state.last_refresh_epoch = update_set_.DeltaEpoch();
-  proc_state.last_refresh_dirty_count =
+  proc_state.installed_wait.last_refresh_epoch = update_set_.DeltaEpoch();
+  proc_state.installed_wait.last_refresh_dirty_count =
       static_cast<uint32_t>(update_set_.DeltaDirtySlots().size());
 }
 
@@ -659,6 +660,12 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
       // Post-activation refresh is only needed when post-flush slot
       // dirties are recorded in delta_dirty_ (any active-region mutation
       // path that calls MarkSlotDirty or MarkDirtyRange).
+      //
+      // Note: MarkExternalDirtyRange (container heap mutations) also
+      // pushes to delta_dirty_ via TouchSlot, which is intentional
+      // over-invalidation. Edge/change baselines observe design-state
+      // bytes, not heap data, so the per-sub IsDeltaDirty checks inside
+      // RefreshInstalledSnapshots filter these out harmlessly.
       if (update_set_.DeltaDirtySlots().empty()) {
         break;
       }
