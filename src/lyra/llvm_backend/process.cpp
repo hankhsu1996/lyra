@@ -1505,6 +1505,16 @@ auto GenerateProcessFunction(
   auto* limit_ptr =
       builder.CreateCall(context.GetLyraIterationLimitPtr(), {}, "limit_ptr");
 
+  // Hoist first-dirty bitmap pointer to process entry (once per activation).
+  // Returns non-null when the inline first-dirty fast path is allowed in the
+  // current execution context, null when forbidden (e.g., comb-fixpoint
+  // evaluation). The same function body may be called in different contexts,
+  // so the policy is resolved at activation time, not at compile time.
+  auto* first_dirty_seen_ptr = builder.CreateCall(
+      context.GetLyraGetFirstDirtySeenPtr(), {context.GetEnginePointer()},
+      "first_dirty_seen_ptr");
+  context.SetFirstDirtySeenPtr(first_dirty_seen_ptr);
+
   // Create switch with bb0 as default (initial execution)
   auto* sw = builder.CreateSwitch(
       resume_block_arg, llvm_blocks[0],
@@ -1655,6 +1665,11 @@ auto GenerateSharedProcessFunction(
 
   auto* limit_ptr =
       builder.CreateCall(context.GetLyraIterationLimitPtr(), {}, "limit_ptr");
+
+  auto* first_dirty_seen_ptr = builder.CreateCall(
+      context.GetLyraGetFirstDirtySeenPtr(), {context.GetEnginePointer()},
+      "first_dirty_seen_ptr");
+  context.SetFirstDirtySeenPtr(first_dirty_seen_ptr);
 
   auto* sw = builder.CreateSwitch(
       func->getArg(1), llvm_blocks[0],

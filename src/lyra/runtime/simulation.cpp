@@ -620,6 +620,18 @@ extern "C" void LyraStorePacked(
   }
 }
 
+extern "C" auto LyraGetFirstDirtySeenPtr(void* engine_ptr) -> uint8_t* {
+  if (engine_ptr == nullptr) return nullptr;
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  if (!engine->IsFirstDirtyFastPathAllowed()) return nullptr;
+  return engine->GetFirstDirtySeenPtr();
+}
+
+extern "C" void LyraMarkDirtyFirst(void* engine_ptr, uint32_t slot_id) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->MarkSlotDirtyFirst(slot_id);
+}
+
 extern "C" void LyraMarkDirty(
     void* engine_ptr, uint32_t signal_id, uint32_t dirty_off,
     uint32_t dirty_size) {
