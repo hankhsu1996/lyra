@@ -596,23 +596,16 @@ auto BuildDesignMetadata(
     const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input,
     size_t num_init) -> MetadataGlobals {
   auto& builder = context.GetBuilder();
-  auto& ctx = context.GetLlvmContext();
-  auto& mod = context.GetModule();
-  const auto& dl = mod.getDataLayout();
   const auto& mir_arena = context.GetMirArena();
   const auto& type_arena = context.GetTypeArena();
-  bool force_two_state = context.IsForceTwoState();
 
   auto slot_meta_inputs = ExtractSlotMetaInputs(slot_info, layout.design);
-  auto conn_desc_entries = ExtractConnectionDescriptorEntries(
-      realization.slot_types, mir_arena, type_arena, layout, dl, ctx,
-      force_two_state);
+  auto conn_desc_entries =
+      ExtractConnectionDescriptorEntries(mir_arena, layout);
   auto scheduled_inputs = PrepareScheduledProcessInputs(
       realization.instance_paths, mir_arena, input.diag_ctx,
       input.source_manager, layout.scheduled_processes, num_init);
-  auto comb_inputs = PrepareCombKernelInputs(
-      realization.slot_types, mir_arena, type_arena, layout, dl, ctx,
-      force_two_state, num_init);
+  auto comb_inputs = PrepareCombKernelInputs(mir_arena, layout, num_init);
   auto back_edge_site_inputs =
       PrepareBackEdgeSiteInputs(context, input.diag_ctx, input.source_manager);
 

@@ -107,6 +107,15 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "resolve_byte_range_test",
+    srcs = ["resolve_byte_range_test.cpp"],
+    deps = [
+        "//:llvm_backend",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # LLI development suite - out-of-process LLI execution (for debugging/comparison)
 cc_test(
     name = "lli_dev_tests",

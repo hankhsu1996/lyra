@@ -379,38 +379,34 @@ auto GetLlvmTypeForTypeId(
 }
 
 auto ResolveByteRange(
-    llvm::LLVMContext& llvm_ctx, const llvm::DataLayout& dl,
-    const TypeArena& types, const mir::Place& place, TypeId root_type,
-    const IndexResolver& resolve_index, bool force_two_state) -> ByteRange {
+    const SlotStorageSpec& root_spec, const StorageSpecArena& arena,
+    const mir::Place& place, const IndexResolver& resolve_index) -> ByteRange {
   if (place.projections.empty()) {
     return {.kind = RangeKind::kFullSlot};
   }
 
-  TypeId current_type = root_type;
+  const SlotStorageSpec* current_spec = &root_spec;
   uint64_t byte_offset = 0;
   uint8_t bit_index = 0;
   bool is_bit_range = false;
 
   for (const auto& proj : place.projections) {
-    auto* current_llvm_type =
-        GetLlvmTypeForTypeId(llvm_ctx, current_type, types, force_two_state);
-
     auto ok = std::visit(
         common::Overloaded{
             [&](const mir::FieldProjection& fp) -> bool {
-              auto* st = llvm::cast<llvm::StructType>(current_llvm_type);
-              const auto* sl = dl.getStructLayout(st);
-              byte_offset += sl->getElementOffset(fp.field_index);
-              const auto& info = types[current_type].AsUnpackedStruct();
-              current_type = info.fields[fp.field_index].type;
+              const auto* s =
+                  std::get_if<StructStorageSpec>(&current_spec->data);
+              if (s == nullptr) return false;
+              auto field_idx = static_cast<size_t>(fp.field_index);
+              if (field_idx >= s->fields.size()) return false;
+              byte_offset += s->fields[field_idx].byte_offset;
+              current_spec = &arena.Get(s->fields[field_idx].field_spec_id);
               return true;
             },
             [&](const mir::IndexProjection& ip) -> bool {
-              auto type_kind = types[current_type].Kind();
-              if (type_kind == TypeKind::kDynamicArray ||
-                  type_kind == TypeKind::kQueue) {
-                return false;
-              }
+              const auto* s =
+                  std::get_if<ArrayStorageSpec>(&current_spec->data);
+              if (s == nullptr) return false;
               std::optional<uint64_t> index;
               if (ip.index.kind == mir::Operand::Kind::kConst) {
                 const auto& constant = std::get<Constant>(ip.index.payload);
@@ -421,12 +417,8 @@ auto ResolveByteRange(
                 index = resolve_index(ip.index);
               }
               if (!index) return false;
-              const auto& arr_info = types[current_type].AsUnpackedArray();
-              auto* elem_llvm_type = GetLlvmTypeForTypeId(
-                  llvm_ctx, arr_info.element_type, types, force_two_state);
-              uint64_t elem_size = dl.getTypeAllocSize(elem_llvm_type);
-              byte_offset += *index * elem_size;
-              current_type = arr_info.element_type;
+              byte_offset += *index * static_cast<uint64_t>(s->element_stride);
+              current_spec = &arena.Get(s->element_spec_id);
               return true;
             },
             [&](const mir::BitRangeProjection& br) -> bool {
@@ -459,12 +451,7 @@ auto ResolveByteRange(
 
   if (byte_offset > UINT32_MAX) return {.kind = RangeKind::kFullSlot};
 
-  uint32_t leaf_byte_size = 1;
-  if (!is_bit_range) {
-    auto* leaf_llvm_type =
-        GetLlvmTypeForTypeId(llvm_ctx, current_type, types, force_two_state);
-    leaf_byte_size = static_cast<uint32_t>(dl.getTypeAllocSize(leaf_llvm_type));
-  }
+  uint32_t leaf_byte_size = is_bit_range ? 1 : current_spec->TotalByteSize();
   return {
       .kind = RangeKind::kPrecise,
       .byte_offset = static_cast<uint32_t>(byte_offset),
@@ -1160,8 +1147,7 @@ auto BuildHeaderType(llvm::LLVMContext& ctx, llvm::StructType* suspend_type)
 
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
-    llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
-    -> DesignLayout {
+    const llvm::DataLayout& dl, bool force_two_state) -> DesignLayout {
   DesignLayout layout;
 
   auto storage_mode =

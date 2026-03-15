@@ -216,11 +216,10 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
       }
       return std::nullopt;
     };
-    // Use the resolved root's type directly (carried by MIR place metadata)
-    // rather than detouring through the design-global slot table.
-    auto range = ResolveByteRange(
-        *llvm_context_, llvm_module_->getDataLayout(), types_, resolved,
-        resolved.root.type, resolver, force_two_state_);
+    auto slot_id = mir::SlotId{static_cast<uint32_t>(resolved.root.id)};
+    const auto& spec = GetDesignSlotStorageSpec(slot_id);
+    const auto& spec_arena = GetDesignStorageSpecArena();
+    auto range = ResolveByteRange(spec, spec_arena, resolved, resolver);
     if (range.kind == RangeKind::kPrecise) {
       dirty_off = range.byte_offset;
       dirty_size = range.byte_size;

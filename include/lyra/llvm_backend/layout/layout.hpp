@@ -305,12 +305,11 @@ auto IsScalarPatchable(
     TypeId type_id, const TypeArena& types, bool force_two_state) -> bool;
 
 // Build the design-wide DesignState layout from precomputed slot metadata.
-// This analysis is independent of mir::Design and defines the LLVM struct
-// shape and slot-to-field mapping used by downstream layout/codegen.
+// Computes canonical byte offsets and storage specs for all slots.
+// DataLayout is needed only for TargetStorageAbi (pointer size/alignment).
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
-    llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
-    -> DesignLayout;
+    const llvm::DataLayout& dl, bool force_two_state) -> DesignLayout;
 
 // Per-module-instance layout-planning entry.
 // Borrowed view into MIR data; valid only for the synchronous BuildLayout call.
@@ -353,16 +352,27 @@ using IndexResolver =
     std::function<std::optional<uint64_t>(const mir::Operand&)>;
 
 // Resolve a Place's projection chain to a byte range within its root slot.
-// Supports multi-step chains of FieldProjection and const IndexProjection.
-// Returns kFullSlot for dynamic indices, BitRange, Slice, Deref, Union, or
-// empty projection chains.
+//
+// Walks the canonical storage spec tree in lockstep with the projection
+// chain. All byte offsets come from the resolved SlotStorageSpec -- no
+// LLVM type layout queries.
+//
+// Supported projections:
+// - FieldProjection: byte offset from StructStorageSpec field table
+// - IndexProjection: byte offset from ArrayStorageSpec element stride
+// - BitRangeProjection: single-bit only (for edge triggers); produces
+//   byte_size=1 with bit_index for the bit position within that byte
+//
+// Degraded to kFullSlot (conservative full-slot observation/dirty range):
+// - Union member projections (UnionStorageSpec does not retain member
+//   specs; all union writes are full-slot by the union storage contract)
+// - Dynamic (non-constant) array indices
+// - Slice, deref, or empty projection chains
 //
 // The optional resolve_index callback handles kUseTemp operands that are
-// ultimately constants (e.g., a cast of a literal). When provided, it is
-// called for IndexProjection operands that are not kConst.
+// ultimately constants (e.g., a cast of a literal).
 auto ResolveByteRange(
-    llvm::LLVMContext& llvm_ctx, const llvm::DataLayout& dl,
-    const TypeArena& types, const mir::Place& place, TypeId root_type,
-    const IndexResolver& resolve_index, bool force_two_state) -> ByteRange;
+    const SlotStorageSpec& root_spec, const StorageSpecArena& arena,
+    const mir::Place& place, const IndexResolver& resolve_index) -> ByteRange;
 
 }  // namespace lyra::lowering::mir_to_llvm

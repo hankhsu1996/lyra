@@ -518,11 +518,8 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
     -> ObservationRange {
   if (!trigger.observed_place) return {};
 
-  const auto& arena = context.GetMirArena();
-  const auto& place = arena[*trigger.observed_place];
-  // Use the place's root type directly (carried by MIR place metadata)
-  // rather than detouring through the design-global slot table.
-  TypeId root_type = place.root.type;
+  const auto& mir_arena = context.GetMirArena();
+  const auto& place = mir_arena[*trigger.observed_place];
 
   auto resolver =
       [&context](const mir::Operand& op) -> std::optional<uint64_t> {
@@ -535,10 +532,10 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
     }
     return std::nullopt;
   };
-  auto range = ResolveByteRange(
-      context.GetLlvmContext(), context.GetModule().getDataLayout(),
-      context.GetTypeArena(), place, root_type, resolver,
-      context.IsForceTwoState());
+  auto slot_id = mir::SlotId{static_cast<uint32_t>(place.root.id)};
+  const auto& spec = context.GetDesignSlotStorageSpec(slot_id);
+  const auto& spec_arena = context.GetDesignStorageSpecArena();
+  auto range = ResolveByteRange(spec, spec_arena, place, resolver);
   if (range.kind == RangeKind::kPrecise) {
     return {
         .byte_offset = range.byte_offset,

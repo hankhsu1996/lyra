@@ -463,8 +463,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       BuildSlotInfo(input.design->slots, *input.type_arena, force_two_state);
 
   auto design_layout = BuildDesignLayout(
-      slot_info, *input.type_arena, *llvm_ctx, module->getDataLayout(),
-      force_two_state);
+      slot_info, *input.type_arena, module->getDataLayout(), force_two_state);
 
   // Extract narrow layout-planning inputs from design.
   // module_plans and module_base_slots are produced once and consumed by

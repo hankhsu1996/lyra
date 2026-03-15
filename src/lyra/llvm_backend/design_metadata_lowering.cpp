@@ -408,9 +408,7 @@ auto PrepareBackEdgeSiteInputs(
 }
 
 auto ExtractConnectionDescriptorEntries(
-    const std::vector<TypeId>& slot_types, const mir::Arena& mir_arena,
-    const TypeArena& type_arena, const Layout& layout,
-    const llvm::DataLayout& dl, llvm::LLVMContext& ctx, bool force_two_state)
+    const mir::Arena& mir_arena, const Layout& layout)
     -> std::vector<realization::ConnectionDescriptorEntry> {
   const auto& kernel_entries = layout.connection_kernel_entries;
   std::vector<realization::ConnectionDescriptorEntry> entries;
@@ -442,18 +440,11 @@ auto ExtractConnectionDescriptorEntries(
     if (entry.trigger_observed_place) {
       auto trigger_slot_it = design.slot_to_index.find(entry.trigger_slot);
       if (trigger_slot_it != design.slot_to_index.end()) {
-        if (trigger_slot_it->first.value >= slot_types.size()) {
-          throw common::InternalError(
-              "ExtractConnectionDescriptorEntries",
-              std::format(
-                  "trigger slot_id {} out of range (slot_types size {})",
-                  trigger_slot_it->first.value, slot_types.size()));
-        }
-        TypeId trigger_root_type = slot_types[trigger_slot_it->first.value];
+        const auto& trigger_spec =
+            design.slot_storage_specs[trigger_slot_it->second];
         const auto& trigger_place = mir_arena[*entry.trigger_observed_place];
         auto range = ResolveByteRange(
-            ctx, dl, type_arena, trigger_place, trigger_root_type, nullptr,
-            force_two_state);
+            trigger_spec, design.storage_spec_arena, trigger_place, nullptr);
         if (range.kind == RangeKind::kPrecise) {
           trigger_byte_offset = range.byte_offset;
           trigger_byte_size = range.byte_size;
@@ -479,9 +470,7 @@ auto ExtractConnectionDescriptorEntries(
 }
 
 auto PrepareCombKernelInputs(
-    const std::vector<TypeId>& slot_types, const mir::Arena& mir_arena,
-    const TypeArena& types, const Layout& layout, const llvm::DataLayout& dl,
-    llvm::LLVMContext& ctx, bool force_two_state, size_t num_init)
+    const mir::Arena& mir_arena, const Layout& layout, size_t num_init)
     -> std::vector<realization::CombKernelInput> {
   const auto& comb_entries = layout.comb_kernel_entries;
   if (comb_entries.empty()) {
@@ -537,26 +526,18 @@ auto PrepareCombKernelInputs(
         continue;
       }
 
-      // Verify slot exists in design layout (byte-range resolution requires
-      // it).
-      if (!layout.design.slot_to_index.contains(trigger.slot)) {
+      auto trigger_slot_it = layout.design.slot_to_index.find(trigger.slot);
+      if (trigger_slot_it == layout.design.slot_to_index.end()) {
         accum.is_full_slot = true;
         accum.byte_offset = 0;
         accum.byte_size = 0;
         continue;
       }
-
-      if (trigger.slot.value >= slot_types.size()) {
-        throw common::InternalError(
-            "PrepareCombKernelInputs",
-            std::format(
-                "trigger slot_id {} out of range (slot_types size {})",
-                trigger.slot.value, slot_types.size()));
-      }
-      TypeId root_type = slot_types[trigger.slot.value];
+      const auto& trigger_spec =
+          layout.design.slot_storage_specs[trigger_slot_it->second];
       const auto& place = mir_arena[*trigger.observed_place];
       auto range = ResolveByteRange(
-          ctx, dl, types, place, root_type, nullptr, force_two_state);
+          trigger_spec, layout.design.storage_spec_arena, place, nullptr);
 
       if (range.kind != RangeKind::kPrecise) {
         accum.is_full_slot = true;
