@@ -19,8 +19,8 @@ namespace lyra::driver {
 // Takes the OriginMap and HIR storage domain references directly.
 // Span resolution uses lowering::ResolveHirArena internally.
 void PrintProcessStats(
-    const mir::Design& design, const mir::Arena& arena,
-    const lowering::OriginMap& origin_map, const hir::Design& hir_design,
+    const mir::Design& design, const mir::Arena& design_arena,
+    const lowering::OriginMap& design_origins, const hir::Design& hir_design,
     const hir::Arena& global_hir_arena, const SourceManager& source_manager,
     const LlvmStats& llvm_stats, FILE* sink = stderr);
 

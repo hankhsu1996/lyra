@@ -119,8 +119,8 @@ struct ProcessEntry {
 }  // namespace
 
 void PrintProcessStats(
-    const mir::Design& design, const mir::Arena& arena,
-    const lowering::OriginMap& origin_map, const hir::Design& hir_design,
+    const mir::Design& design, const mir::Arena& design_arena,
+    const lowering::OriginMap& design_origins, const hir::Design& hir_design,
     const hir::Arena& global_hir_arena, const SourceManager& source_manager,
     const LlvmStats& llvm_stats, FILE* sink) {
   // Reconstruct process ordering (same as BuildLayout):
@@ -128,12 +128,16 @@ void PrintProcessStats(
   // 2. non-kernelized connection_processes
   // 3. module processes (non-final)
   // Kernelized connections share a runtime kernel and have no LLVM function.
-  std::vector<mir::ProcessId> process_ids;
+  struct ProcessRef {
+    mir::ProcessId id;
+    const mir::Arena* arena;
+  };
+  std::vector<ProcessRef> process_refs;
 
   for (mir::ProcessId pid : design.init_processes) {
-    process_ids.push_back(pid);
+    process_refs.push_back({pid, &design_arena});
   }
-  size_t num_init = process_ids.size();
+  size_t num_init = process_refs.size();
 
   // Count kernelized vs non-kernelized connections.
   // A connection is kernelizable if it has 1 block, 1 Assign stmt with
@@ -141,7 +145,7 @@ void PrintProcessStats(
   // trigger.
   size_t num_kernelized = 0;
   for (mir::ProcessId pid : design.connection_processes) {
-    const auto& process = arena[pid];
+    const auto& process = design_arena[pid];
     bool kernelizable = false;
     if (process.blocks.size() == 1) {
       const auto& block = process.blocks[0];
@@ -152,13 +156,13 @@ void PrintProcessStats(
         if (assign != nullptr && wait != nullptr &&
             wait->triggers.size() == 1 &&
             !wait->triggers[0].late_bound.has_value()) {
-          const auto& dest = arena[assign->dest];
+          const auto& dest = design_arena[assign->dest];
           const auto* rhs_op = std::get_if<mir::Operand>(&assign->rhs);
           if (dest.root.kind == mir::PlaceRoot::Kind::kDesignGlobal &&
               dest.projections.empty() && rhs_op != nullptr &&
               rhs_op->kind == mir::Operand::Kind::kUse) {
             auto src_pid = std::get<mir::PlaceId>(rhs_op->payload);
-            const auto& src = arena[src_pid];
+            const auto& src = design_arena[src_pid];
             if (src.root.kind == mir::PlaceRoot::Kind::kDesignGlobal &&
                 src.projections.empty()) {
               kernelizable = true;
@@ -170,7 +174,7 @@ void PrintProcessStats(
     if (kernelizable) {
       ++num_kernelized;
     } else {
-      process_ids.push_back(pid);
+      process_refs.push_back({pid, &design_arena});
     }
   }
   size_t num_connection = design.connection_processes.size();
@@ -182,13 +186,13 @@ void PrintProcessStats(
     const auto& mir_module = std::get<mir::Module>(element);
     const auto& body = mir::GetModuleBody(design, mir_module);
     for (mir::ProcessId pid : body.processes) {
-      if (arena[pid].kind != mir::ProcessKind::kFinal) {
-        process_ids.push_back(pid);
+      if (body.arena[pid].kind != mir::ProcessKind::kFinal) {
+        process_refs.push_back({pid, &body.arena});
       }
     }
   }
   size_t num_module =
-      process_ids.size() - num_init - (num_connection - num_kernelized);
+      process_refs.size() - num_init - (num_connection - num_kernelized);
 
   // Build LLVM stats lookup: function name -> stats
   std::unordered_map<std::string, const LlvmFunctionStats*> llvm_lookup;
@@ -198,7 +202,7 @@ void PrintProcessStats(
 
   // Build process entries with all metadata
   std::vector<ProcessEntry> entries;
-  entries.reserve(process_ids.size());
+  entries.reserve(process_refs.size());
 
   // Kind counters (HIR-level for detailed breakdown)
   uint32_t count_initial = 0;
@@ -211,13 +215,13 @@ void PrintProcessStats(
 
   uint64_t total_proc_insts = 0;
 
-  for (size_t i = 0; i < process_ids.size(); ++i) {
-    const auto& process = arena[process_ids[i]];
+  for (size_t i = 0; i < process_refs.size(); ++i) {
+    const auto& process = (*process_refs[i].arena)[process_refs[i].id];
 
     auto hir_kind =
-        ResolveHirKind(process, origin_map, hir_design, global_hir_arena);
+        ResolveHirKind(process, design_origins, hir_design, global_hir_arena);
     auto source_loc = ResolveSourceLocation(
-        process, origin_map, hir_design, global_hir_arena, source_manager);
+        process, design_origins, hir_design, global_hir_arena, source_manager);
 
     // Count MIR statements
     uint32_t mir_stmts = 0;
@@ -267,7 +271,7 @@ void PrintProcessStats(
     entries.push_back(
         ProcessEntry{
             .layout_index = static_cast<uint32_t>(i),
-            .mir_id = process_ids[i],
+            .mir_id = process_refs[i].id,
             .mir_kind = process.kind,
             .hir_kind = hir_kind,
             .source_location = std::move(source_loc),
@@ -283,7 +287,7 @@ void PrintProcessStats(
       sink,
       "[lyra][stats][proc] total={} init={} connection={} "
       "kernelized={} module={}\n",
-      process_ids.size() + num_kernelized, num_init, num_connection,
+      process_refs.size() + num_kernelized, num_init, num_connection,
       num_kernelized, num_module);
 
   // Include kernelized connections in the connection count

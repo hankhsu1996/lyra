@@ -35,8 +35,8 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
   auto compilation = std::move(*result);
 
   lowering::OriginMapLookup origin_lookup(
-      &compilation.mir.origin_map, &compilation.hir.design,
-      compilation.hir.hir_arena.get());
+      &compilation.mir.design_origins, &compilation.mir.body_origins,
+      &compilation.hir.design, compilation.hir.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   uint32_t feature_flags = 0;
@@ -65,7 +65,7 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
   }
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &compilation.mir.design,
-      .mir_arena = compilation.mir.mir_arena.get(),
+      .mir_arena = compilation.mir.design_arena.get(),
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),

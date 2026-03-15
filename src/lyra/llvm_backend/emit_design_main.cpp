@@ -33,6 +33,7 @@
 #include "lyra/llvm_backend/storage_boundary.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
+#include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/realization/build_design_metadata.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
@@ -596,16 +597,16 @@ auto BuildDesignMetadata(
     const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input,
     size_t num_init) -> MetadataGlobals {
   auto& builder = context.GetBuilder();
-  const auto& mir_arena = context.GetMirArena();
+  const auto& design_arena = *input.design_arena;
   const auto& type_arena = context.GetTypeArena();
 
   auto slot_meta_inputs = ExtractSlotMetaInputs(slot_info, layout.design);
   auto conn_desc_entries =
-      ExtractConnectionDescriptorEntries(mir_arena, layout);
+      ExtractConnectionDescriptorEntries(design_arena, layout);
   auto scheduled_inputs = PrepareScheduledProcessInputs(
-      realization.instance_paths, mir_arena, input.diag_ctx,
+      realization.instance_paths, *input.design, design_arena, input.diag_ctx,
       input.source_manager, layout.scheduled_processes, num_init);
-  auto comb_inputs = PrepareCombKernelInputs(mir_arena, layout, num_init);
+  auto comb_inputs = PrepareCombKernelInputs(design_arena, layout, num_init);
   auto back_edge_site_inputs =
       PrepareBackEdgeSiteInputs(context, input.diag_ctx, input.source_manager);
 
@@ -819,6 +820,8 @@ void EmitMainExit(
 auto BuildEmitDesignMainInput(const lowering::mir_to_llvm::LoweringInput& input)
     -> EmitDesignMainInput {
   return {
+      .design = input.design,
+      .design_arena = input.mir_arena,
       .diag_ctx = input.diag_ctx,
       .source_manager = input.source_manager,
       .hooks = input.hooks,

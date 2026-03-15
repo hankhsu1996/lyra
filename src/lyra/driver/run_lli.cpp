@@ -110,18 +110,23 @@ auto RunLli(const CompilationInput& input) -> int {
 
   // Create diagnostic context for LLVM backend error reporting
   lowering::OriginMapLookup origin_lookup(
-      &compilation.mir.origin_map, &compilation.hir.design,
-      compilation.hir.hir_arena.get());
+      &compilation.mir.design_origins, &compilation.mir.body_origins,
+      &compilation.hir.design, compilation.hir.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &compilation.mir.design,
-      .mir_arena = compilation.mir.mir_arena.get(),
+      .mir_arena = compilation.mir.design_arena.get(),
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = input.plusargs,
+      .feature_flags = 0,
+      .signal_trace_path = input.trace_signals_output.value_or(""),
+      .iteration_limit = input.iteration_limit,
+      .force_two_state = input.two_state,
+      .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
   };
 
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
@@ -138,8 +143,8 @@ auto RunLli(const CompilationInput& input) -> int {
     LlvmStats llvm_stats_data = CollectLlvmStats(*llvm_result->module);
     PrintLlvmStats(llvm_stats_data, input.stats_top_n);
     PrintProcessStats(
-        compilation.mir.design, *compilation.mir.mir_arena,
-        compilation.mir.origin_map, compilation.hir.design,
+        compilation.mir.design, *compilation.mir.design_arena,
+        compilation.mir.design_origins, compilation.hir.design,
         *compilation.hir.hir_arena, *compilation.hir.source_manager,
         llvm_stats_data);
   }
@@ -173,7 +178,7 @@ auto RunLli(const CompilationInput& input) -> int {
     return 1;
   }
 
-  int exit_code;
+  int exit_code = 0;
   {
     PhaseTimer timer(vlog, "lli", true);
     exit_code = SpawnLli(runtime_path.string(), ir_path);

@@ -269,6 +269,7 @@ auto LowerStrobeEffect(
               .params = {},  // Called via runtime ABI, not MIR call
           },
       .runtime_kind = mir::RuntimeProgramKind::kStrobe,
+      .canonical_symbol = kInvalidSymbolId,
       .entry = mir::BasicBlockId{0},
       .blocks = std::move(blocks),
       .local_types = std::move(program_ctx.local_types),
@@ -555,6 +556,7 @@ auto LowerMonitorCheckProgram(
               .params = {},
           },
       .runtime_kind = mir::RuntimeProgramKind::kMonitorCheck,
+      .canonical_symbol = kInvalidSymbolId,
       .entry = mir::BasicBlockId{0},
       .blocks = std::move(blocks),
       .local_types = std::move(program_ctx.local_types),
@@ -636,6 +638,7 @@ auto LowerMonitorSetupProgram(
               .params = {},
           },
       .runtime_kind = mir::RuntimeProgramKind::kMonitorSetup,
+      .canonical_symbol = kInvalidSymbolId,
       .entry = mir::BasicBlockId{0},
       .blocks = std::move(blocks),
       .local_types = std::move(program_ctx.local_types),
@@ -1709,7 +1712,7 @@ auto LowerEventWait(
         }
       }
 
-      place_id = ctx.mir_arena->DerivePlace(
+      place_id = ctx.DerivePlace(
           base_place_id, mir::Projection{
                              .info = mir::BitRangeProjection{
                                  .bit_offset = storage_offset,
@@ -1741,7 +1744,7 @@ auto LowerEventWait(
       uint32_t proj_width =
           (hir_trigger.edge != hir::EventEdgeKind::kNone) ? 1 : field_bit_width;
 
-      place_id = ctx.mir_arena->DerivePlace(
+      place_id = ctx.DerivePlace(
           base_place_id, mir::Projection{
                              .info = mir::BitRangeProjection{
                                  .bit_offset = storage_offset,
@@ -1797,7 +1800,7 @@ auto LowerEventWait(
       uint32_t proj_width =
           (hir_trigger.edge != hir::EventEdgeKind::kNone) ? 1 : select_width;
 
-      place_id = ctx.mir_arena->DerivePlace(
+      place_id = ctx.DerivePlace(
           base_place_id, mir::Projection{
                              .info = mir::BitRangeProjection{
                                  .bit_offset = storage_offset,
@@ -1934,7 +1937,7 @@ auto LowerEventWait(
       uint32_t proj_width =
           (hir_trigger.edge != hir::EventEdgeKind::kNone) ? 1 : ips_data.width;
 
-      place_id = ctx.mir_arena->DerivePlace(
+      place_id = ctx.DerivePlace(
           base_place_id, mir::Projection{
                              .info = mir::BitRangeProjection{
                                  .bit_offset = storage_offset,
@@ -1976,7 +1979,7 @@ auto LowerEventWait(
         mir::Operand index_op = std::move(*index_result);
 
         // Store index in BitRangeProjection for codegen to read.
-        place_id = ctx.mir_arena->DerivePlace(
+        place_id = ctx.DerivePlace(
             base_place_id, mir::Projection{
                                .info = mir::BitRangeProjection{
                                    .bit_offset = index_op,
@@ -2056,7 +2059,7 @@ auto LowerEventWait(
         // Store the SV index in a BitRangeProjection. Codegen reads
         // this value and multiplies by element_bit_stride to compute
         // the actual byte_offset.
-        place_id = ctx.mir_arena->DerivePlace(
+        place_id = ctx.DerivePlace(
             base_place_id, mir::Projection{
                                .info = mir::BitRangeProjection{
                                    .bit_offset = index_op,
@@ -2124,7 +2127,7 @@ auto LowerEventWait(
         mir::Operand storage_offset =
             mir::Operand::Const(MakeIntConstant(0, offset_type));
 
-        place_id = ctx.mir_arena->DerivePlace(
+        place_id = ctx.DerivePlace(
             base_place_id, mir::Projection{
                                .info = mir::BitRangeProjection{
                                    .bit_offset = storage_offset,
@@ -2152,7 +2155,7 @@ auto LowerEventWait(
       mir::Operand storage_offset =
           mir::Operand::Const(MakeIntConstant(0, offset_type));
 
-      place_id = ctx.mir_arena->DerivePlace(
+      place_id = ctx.DerivePlace(
           base_place_id, mir::Projection{
                              .info = mir::BitRangeProjection{
                                  .bit_offset = storage_offset,

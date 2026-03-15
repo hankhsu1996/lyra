@@ -401,7 +401,7 @@ auto PrepareLlvmModule(
 
   // Realization: attach compiled bindings to design.
   realization::AssembleBindings(
-      std::move(mir_result->compiled_bindings), *mir_result->mir_arena,
+      std::move(mir_result->compiled_bindings), *mir_result->design_arena,
       mir_result->design);
 
   double mir_lower_seconds =
@@ -438,7 +438,8 @@ auto PrepareLlvmModule(
 
   // Create diagnostic context for LLVM backend error reporting
   auto origin_lookup = std::make_unique<lowering::OriginMapLookup>(
-      &mir_result->origin_map, &hir_result.design, hir_result.hir_arena.get());
+      &mir_result->design_origins, &mir_result->body_origins,
+      &hir_result.design, hir_result.hir_arena.get());
   auto diag_ctx = std::make_unique<lowering::DiagnosticContext>(*origin_lookup);
 
   // Lower MIR to LLVM IR
@@ -465,13 +466,15 @@ auto PrepareLlvmModule(
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,
-      .mir_arena = mir_result->mir_arena.get(),
+      .mir_arena = mir_result->design_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = diag_ctx.get(),
       .hooks = g_hooks_holder->hooks.get(),
       .fs_base_dir = fs_base_dir,
       .plusargs = test_case.plusargs,
       .feature_flags = feature_flags,
+      .signal_trace_path = {},
+      .iteration_limit = 0,
       .force_two_state = force_two_state,
   };
 

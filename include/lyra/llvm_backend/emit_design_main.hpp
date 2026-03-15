@@ -9,6 +9,11 @@
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 
+namespace lyra::mir {
+struct Design;
+class Arena;
+}  // namespace lyra::mir
+
 namespace lyra::lowering::mir_to_llvm {
 struct CodegenSession;
 }  // namespace lyra::lowering::mir_to_llvm
@@ -20,6 +25,8 @@ namespace lyra::lowering::mir_to_llvm {
 // accessible through CodegenSession (Context carries type_arena, layout,
 // force_two_state, etc.; session carries design).
 struct EmitDesignMainInput {
+  const mir::Design* design = nullptr;
+  const mir::Arena* design_arena = nullptr;
   const DiagnosticContext* diag_ctx = nullptr;
   const SourceManager* source_manager = nullptr;
   SimulationHooks* hooks = nullptr;

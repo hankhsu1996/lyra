@@ -25,7 +25,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
   - [x] F1-design -- Parallel ownership model: per-body owned unit, identity contract, phase split
   - [x] F1-prep Cut 1 -- Per-body HIR ownership (`ModuleBody` owns arena, body-aware OriginMap, `ForkForBodyLowering`)
   - [x] F1-prep Cut 3a -- Per-body AST->HIR diagnostics (`BodyLoweringResult`, Phase 1/2 split in orchestration)
-  - [ ] F1-prep Cut 2 -- Per-body MIR ownership
+  - [x] F1-prep Cut 2 -- Per-body MIR ownership (ModuleBody owns arena, MirBodyLoweringResult, Phase 0/1/2 split, per-body origins, explicit cross-domain refs: kDesignGlobal roots + DesignFunctionRef, backend scope-aware arena dispatch)
   - [ ] F1-prep Cut 4 -- TypeArena/ConstantArena investigation
   - [ ] m3 -- ParamTransmissionTable: replace raw ParameterSymbol\* with group-scoped key (Phase 0 only, not F1-blocking)
   - [ ] F1-impl -- Per-group isolated compilation with deterministic merge

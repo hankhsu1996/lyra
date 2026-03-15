@@ -550,11 +550,22 @@ void VerifyRhsDefBeforeUse(
 }
 
 // Verify PlaceRoot::kTemp in all places referenced by a statement.
-void VerifyStatementPlaceTemps(
+// Also enforces ownership: all PlaceIds and FunctionIds must resolve
+// within the owning arena.
+void VerifyStatementOwnership(
     const Statement& stmt, const Arena& arena,
     const std::vector<TempMetadata>& temp_metadata, size_t block_idx,
     size_t stmt_idx, std::string_view routine_kind) {
   auto verify_place = [&](PlaceId place_id, std::string_view ctx) {
+    if (place_id.value >= arena.PlaceCount()) {
+      throw common::InternalError(
+          "MIR verify",
+          std::format(
+              "{}: block {} stmt {}: {}: PlaceId {} out of arena range "
+              "(arena has {} places)",
+              routine_kind, block_idx, stmt_idx, ctx, place_id.value,
+              arena.PlaceCount()));
+    }
     const auto& place = arena[place_id];
     std::string location =
         std::format("block {} stmt {}: {}", block_idx, stmt_idx, ctx);
@@ -600,6 +611,18 @@ void VerifyStatementPlaceTemps(
             verify_rhs_places(da.rhs, "DeferredAssign.rhs");
           },
           [&](const Call& call) {
+            // Verify callee ownership: FunctionId must be arena-local.
+            if (const auto* func_id = std::get_if<FunctionId>(&call.callee)) {
+              if (func_id->value >= arena.FunctionCount()) {
+                throw common::InternalError(
+                    "MIR verify",
+                    std::format(
+                        "{}: block {} stmt {}: Call.callee FunctionId {} "
+                        "out of arena range (arena has {} functions)",
+                        routine_kind, block_idx, stmt_idx, func_id->value,
+                        arena.FunctionCount()));
+              }
+            }
             for (size_t i = 0; i < call.in_args.size(); ++i) {
               verify_operand_place(
                   call.in_args[i], std::format("Call.in_args[{}]", i));
@@ -788,7 +811,7 @@ void VerifyBlockParamsAndEdgeArgs(
 
     // Verify PlaceRoot::kTemp in all statements
     for (size_t j = 0; j < block.statements.size(); ++j) {
-      VerifyStatementPlaceTemps(
+      VerifyStatementOwnership(
           block.statements[j], arena, temp_metadata, i, j, routine_kind);
     }
   }

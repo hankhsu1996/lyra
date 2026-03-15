@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lyra/common/origin_id.hpp"
+#include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
@@ -84,6 +85,11 @@ struct FunctionSignature {
 struct Function {
   FunctionSignature signature;  // Frozen at pre-allocation
   RuntimeProgramKind runtime_kind = RuntimeProgramKind::kNone;
+
+  // Canonical symbol identity for design-global callables (package functions,
+  // generated design-level functions). Body-local functions leave this
+  // as kInvalidSymbolId. Used by the backend for DesignFunctionRef resolution.
+  SymbolId canonical_symbol = kInvalidSymbolId;
 
   BasicBlockId entry;              // Local index within blocks
   std::vector<BasicBlock> blocks;  // Direct ownership

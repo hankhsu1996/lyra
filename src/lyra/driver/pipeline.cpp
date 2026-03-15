@@ -77,7 +77,7 @@ auto CompileToMir(const CompilationInput& input, VerboseLogger& vlog)
 
   // Realization: attach compiled bindings to design (no HIR dependency).
   realization::AssembleBindings(
-      std::move(mir_result->compiled_bindings), *mir_result->mir_arena,
+      std::move(mir_result->compiled_bindings), *mir_result->design_arena,
       mir_result->design);
 
   return CompilationResult{

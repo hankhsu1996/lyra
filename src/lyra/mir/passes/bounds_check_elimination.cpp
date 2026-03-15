@@ -623,13 +623,13 @@ void OptimizeRoutineBoundsChecks(
 
 }  // namespace
 
-void EliminateRedundantBoundsChecks(const Design& design, Arena& arena) {
-  auto optimize_process = [&](ProcessId pid) {
+void EliminateRedundantBoundsChecks(Design& design, Arena& design_arena) {
+  auto optimize_process = [](ProcessId pid, Arena& arena) {
     auto& proc = arena.GetMutableProcess(pid);
     OptimizeRoutineBoundsChecks(proc.blocks, proc.temp_metadata.size(), arena);
   };
 
-  auto optimize_function = [&](FunctionId fid) {
+  auto optimize_function = [](FunctionId fid, Arena& arena) {
     auto& func = arena.GetMutableFunction(fid);
     OptimizeRoutineBoundsChecks(func.blocks, func.temp_metadata.size(), arena);
   };
@@ -638,19 +638,22 @@ void EliminateRedundantBoundsChecks(const Design& design, Arena& arena) {
     std::visit(
         common::Overloaded{
             [&](const Module& mod) {
-              const auto& body = GetModuleBody(design, mod);
-              for (auto fid : body.functions) optimize_function(fid);
-              for (auto pid : body.processes) optimize_process(pid);
+              auto& body = design.module_bodies.at(mod.body_id.value);
+              for (auto fid : body.functions)
+                optimize_function(fid, body.arena);
+              for (auto pid : body.processes) optimize_process(pid, body.arena);
             },
             [&](const Package& pkg) {
-              for (auto fid : pkg.functions) optimize_function(fid);
+              for (auto fid : pkg.functions)
+                optimize_function(fid, design_arena);
             },
         },
         element);
   }
 
-  for (auto fid : design.generated_functions) optimize_function(fid);
-  for (auto pid : design.init_processes) optimize_process(pid);
+  for (auto fid : design.generated_functions)
+    optimize_function(fid, design_arena);
+  for (auto pid : design.init_processes) optimize_process(pid, design_arena);
 }
 
 }  // namespace lyra::mir::passes

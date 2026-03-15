@@ -30,16 +30,23 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-auto LowerUserCall(
-    Context& context, const mir::Call& call, mir::FunctionId func_id)
+// Resolved callee info for LowerUserCallImpl.
+struct ResolvedCallee {
+  llvm::Function* llvm_func;
+  const mir::FunctionSignature* signature;
+  TypeId return_type;
+  bool uses_sret;
+  bool is_module_scoped;
+  mir::FunctionId func_id;  // For error messages
+};
+
+auto LowerUserCallImpl(
+    Context& context, const mir::Call& call, const ResolvedCallee& resolved)
     -> Result<void> {
   auto& builder = context.GetBuilder();
-  const auto& arena = context.GetMirArena();
-  const auto& func = arena[func_id];
-
-  llvm::Function* callee = context.GetUserFunction(func_id);
-  TypeId return_type = func.signature.return_type;
-  bool uses_sret = context.FunctionUsesSret(func_id);
+  llvm::Function* callee = resolved.llvm_func;
+  TypeId return_type = resolved.return_type;
+  bool uses_sret = resolved.uses_sret;
   bool is_void = callee->getReturnType()->isVoidTy() && !uses_sret;
 
   // Lower arguments
@@ -74,14 +81,14 @@ auto LowerUserCall(
   // Module-scoped functions receive specialization-local context.
   // Hard invariant: caller must be in kSpecializationLocal mode with valid
   // module behavioral state when calling a module-scoped callee.
-  if (context.IsModuleScopedFunction(func_id)) {
+  if (resolved.is_module_scoped) {
     if (context.GetSlotAddressingMode() !=
         SlotAddressingMode::kSpecializationLocal) {
       throw common::InternalError(
           "LowerUserCall",
           std::format(
               "module-scoped function {} called from kDesignGlobal context",
-              func_id.value));
+              resolved.func_id.value));
     }
     if (context.GetThisPointer() == nullptr ||
         context.GetSignalIdOffset() == nullptr ||
@@ -90,7 +97,7 @@ auto LowerUserCall(
           "LowerUserCall", std::format(
                                "module-scoped function {} called without valid "
                                "specialization-local state",
-                               func_id.value));
+                               resolved.func_id.value));
     }
     args.push_back(context.GetThisPointer());
     args.push_back(context.GetSignalIdOffset());
@@ -104,9 +111,9 @@ auto LowerUserCall(
   // writebacks.
   size_t in_arg_idx = 0;
 
-  for (size_t param_idx = 0; param_idx < func.signature.params.size();
+  for (size_t param_idx = 0; param_idx < resolved.signature->params.size();
        ++param_idx) {
-    const auto& param = func.signature.params[param_idx];
+    const auto& param = resolved.signature->params[param_idx];
 
     if (param.kind == mir::PassingKind::kValue) {
       // Input parameter: pass value coerced to expected ABI type
@@ -237,7 +244,31 @@ auto LowerCall(Context& context, const mir::Call& call) -> Result<void> {
   return std::visit(
       common::Overloaded{
           [&](mir::FunctionId func_id) -> Result<void> {
-            return LowerUserCall(context, call, func_id);
+            const auto& arena = context.GetMirArena();
+            const auto& func = arena[func_id];
+            ResolvedCallee resolved{
+                .llvm_func = context.GetUserFunction(func_id),
+                .signature = &func.signature,
+                .return_type = func.signature.return_type,
+                .uses_sret = context.FunctionUsesSret(func_id),
+                .is_module_scoped = context.IsModuleScopedFunction(func_id),
+                .func_id = func_id,
+            };
+            return LowerUserCallImpl(context, call, resolved);
+          },
+          [&](const mir::DesignFunctionRef& ref) -> Result<void> {
+            const auto& entry = context.GetDesignFunction(ref.symbol);
+            const auto& func = context.GetDesignArena()[entry.func_id];
+            ResolvedCallee resolved{
+                .llvm_func = entry.llvm_func,
+                .signature = &func.signature,
+                .return_type = func.signature.return_type,
+                .uses_sret = func.signature.return_policy ==
+                             mir::ReturnPolicy::kSretOutParam,
+                .is_module_scoped = false,
+                .func_id = entry.func_id,
+            };
+            return LowerUserCallImpl(context, call, resolved);
           },
           [&](SystemTfOpcode opcode) -> Result<void> {
             return LowerSystemTfCall(context, call, opcode);

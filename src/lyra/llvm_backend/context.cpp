@@ -44,7 +44,8 @@ Context::Context(
     std::unique_ptr<llvm::LLVMContext> llvm_ctx,
     std::unique_ptr<llvm::Module> module,
     const lowering::DiagnosticContext* diag_ctx, bool force_two_state)
-    : arena_(arena),
+    : arena_(&arena),
+      design_arena_(&arena),
       types_(types),
       layout_(layout),
       force_two_state_(force_two_state),
@@ -317,7 +318,7 @@ void Context::InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id) {
 // GetDesignFieldIndex removed -- DesignState is byte arena, not struct.
 
 auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
-  const auto& place = arena_[place_id];
+  const auto& place = (*arena_)[place_id];
   PlaceRootKey key{.kind = place.root.kind, .id = place.root.id};
   const auto& frame = layout_.processes[current_process_index_].frame;
   auto it = frame.root_to_field.find(key);
@@ -540,6 +541,23 @@ auto Context::HasUserFunction(mir::FunctionId func_id) const -> bool {
   return user_functions_.contains(func_id);
 }
 
+void Context::RegisterDesignFunction(
+    SymbolId symbol, mir::FunctionId func_id, llvm::Function* llvm_func) {
+  design_functions_.insert_or_assign(
+      symbol, DesignFunctionEntry{func_id, llvm_func});
+}
+
+auto Context::GetDesignFunction(SymbolId symbol) const
+    -> const DesignFunctionEntry& {
+  auto it = design_functions_.find(symbol);
+  if (it == design_functions_.end()) {
+    throw common::InternalError(
+        "GetDesignFunction",
+        std::format("design function (symbol {}) not found", symbol.value));
+  }
+  return it->second;
+}
+
 void Context::RegisterModuleScopedFunction(
     mir::FunctionId func_id, ModuleFunctionLowering lowering) {
   auto [it, inserted] = module_function_lowering_.emplace(func_id, lowering);
@@ -680,7 +698,7 @@ auto Context::BuildUserFunctionType(
 }
 
 auto Context::FunctionUsesSret(mir::FunctionId func_id) const -> bool {
-  const auto& func = arena_[func_id];
+  const auto& func = (*arena_)[func_id];
   return func.signature.return_policy == mir::ReturnPolicy::kSretOutParam;
 }
 

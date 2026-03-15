@@ -12,6 +12,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/origin_id.hpp"
+#include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
@@ -82,8 +83,33 @@ class Context {
   }
 
   [[nodiscard]] auto GetMirArena() const -> const mir::Arena& {
-    return arena_;
+    return *arena_;
   }
+
+  // Get the design arena for cross-domain resolution.
+  // Always valid -- set once at Context construction, never changed.
+  [[nodiscard]] auto GetDesignArena() const -> const mir::Arena& {
+    return *design_arena_;
+  }
+
+  // Scoped arena guard: sets the arena on construction, restores on
+  // destruction. Only way to switch arenas -- no public setter exposed.
+  class ArenaScope {
+   public:
+    ArenaScope(Context& ctx, const mir::Arena* arena)
+        : ctx_(ctx), saved_(ctx.arena_) {
+      ctx_.arena_ = arena;
+    }
+    ~ArenaScope() {
+      ctx_.arena_ = saved_;
+    }
+    ArenaScope(const ArenaScope&) = delete;
+    auto operator=(const ArenaScope&) -> ArenaScope& = delete;
+
+   private:
+    Context& ctx_;
+    const mir::Arena* saved_;
+  };
   [[nodiscard]] auto GetTypeArena() const -> const TypeArena& {
     return types_;
   }
@@ -442,6 +468,19 @@ class Context {
       -> llvm::Function*;
   [[nodiscard]] auto HasUserFunction(mir::FunctionId func_id) const -> bool;
 
+  // Design-global function registry (keyed by SymbolId).
+  // Used for DesignFunctionRef resolution in body MIR.
+  // Stores the design-arena FunctionId alongside the llvm::Function* so
+  // callers can use FunctionId-keyed metadata (sret, module-scoped, etc.).
+  struct DesignFunctionEntry {
+    mir::FunctionId func_id;
+    llvm::Function* llvm_func;
+  };
+  void RegisterDesignFunction(
+      SymbolId symbol, mir::FunctionId func_id, llvm::Function* llvm_func);
+  [[nodiscard]] auto GetDesignFunction(SymbolId symbol) const
+      -> const DesignFunctionEntry&;
+
   // Module-scoped function lowering metadata.
   // Module-scoped functions use kSpecializationLocal addressing for
   // module-local slot access. How the specialization-local context is
@@ -455,6 +494,9 @@ class Context {
   };
   void RegisterModuleScopedFunction(
       mir::FunctionId func_id, ModuleFunctionLowering lowering);
+  void ClearModuleScopedFunctions() {
+    module_function_lowering_.clear();
+  }
   [[nodiscard]] auto IsModuleScopedFunction(mir::FunctionId func_id) const
       -> bool;
   [[nodiscard]] auto GetModuleFunctionLowering(mir::FunctionId func_id) const
@@ -554,7 +596,8 @@ class Context {
       const mir::Place& resolved, mir::PlaceId original_place_id)
       -> Result<llvm::Value*>;
 
-  const mir::Arena& arena_;
+  const mir::Arena* arena_;
+  const mir::Arena* design_arena_ = nullptr;
   const TypeArena& types_;
   const Layout& layout_;
   bool force_two_state_ = false;
@@ -717,6 +760,16 @@ class Context {
 
   // User function registry: FunctionId -> llvm::Function*
   absl::flat_hash_map<mir::FunctionId, llvm::Function*> user_functions_;
+
+  // Design-global function registry: SymbolId -> llvm::Function*
+  // For DesignFunctionRef resolution in body MIR.
+  struct SymbolIdHash {
+    auto operator()(SymbolId id) const noexcept -> size_t {
+      return std::hash<uint32_t>{}(id.value);
+    }
+  };
+  absl::flat_hash_map<SymbolId, DesignFunctionEntry, SymbolIdHash>
+      design_functions_;
 
   // Module-scoped functions: lowering metadata keyed by FunctionId.
   absl::flat_hash_map<mir::FunctionId, ModuleFunctionLowering>

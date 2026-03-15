@@ -1369,8 +1369,9 @@ auto Layout::GetInstanceRelByteOffsets(ModuleIndex idx) const
 auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
     std::span<const mir::ProcessId> connection_processes,
-    std::span<const LayoutModulePlan> module_plans, const mir::Arena& arena,
-    const TypeArena& types, DesignLayout design_layout, llvm::LLVMContext& ctx,
+    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
+    const mir::Arena& design_arena, const TypeArena& types,
+    DesignLayout design_layout, llvm::LLVMContext& ctx,
     const llvm::DataLayout& dl, bool force_two_state) -> Layout {
   Layout layout;
 
@@ -1390,8 +1391,8 @@ auto BuildLayout(
   // Phase 2: Collect connection processes (scheduled, always_comb semantics)
   // Kernelizable ones are separated out.
   for (mir::ProcessId proc_id : connection_processes) {
-    const auto& process = arena[proc_id];
-    auto entry = TryKernelizeConnection(process, arena);
+    const auto& process = design_arena[proc_id];
+    auto entry = TryKernelizeConnection(process, design_arena);
     if (entry) {
       entry->process_id = proc_id;
       layout.connection_kernel_entries.push_back(*entry);
@@ -1404,11 +1405,13 @@ auto BuildLayout(
   // Also detect pure combinational processes for comb kernel batching.
   for (uint32_t mi = 0; mi < module_plans.size(); ++mi) {
     const auto& plan = module_plans[mi];
+    const auto& body_arena = design.module_bodies.at(plan.body_id.value).arena;
     for (mir::ProcessId proc_id : plan.body_processes) {
-      const auto& process = arena[proc_id];
+      const auto& process = body_arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
 
-      auto comb = TryKernelizeComb(process, arena, plan.design_state_base_slot);
+      auto comb =
+          TryKernelizeComb(process, body_arena, plan.design_state_base_slot);
       if (comb) {
         comb->process_id = proc_id;
         layout.comb_kernel_entries.push_back(std::move(*comb));
@@ -1417,17 +1420,29 @@ auto BuildLayout(
     }
   }
 
-  // Build process layouts
+  // Build process layouts.
+  // Resolve the correct arena for each scheduled process:
+  // init/connection processes use design_arena, body processes use body arena.
+  auto resolve_arena = [&](const ScheduledProcess& sp) -> const mir::Arena& {
+    if (sp.module_index.value < module_plans.size()) {
+      return design.module_bodies
+          .at(module_plans[sp.module_index.value].body_id.value)
+          .arena;
+    }
+    return design_arena;
+  };
+
   layout.processes.reserve(layout.scheduled_processes.size());
 
   for (size_t i = 0; i < layout.scheduled_processes.size(); ++i) {
-    const auto& process = arena[layout.scheduled_processes[i].process_id];
+    const auto& sched_arena = resolve_arena(layout.scheduled_processes[i]);
+    const auto& process = sched_arena[layout.scheduled_processes[i].process_id];
 
     ProcessLayout proc_layout;
     proc_layout.process_index = i;
     proc_layout.has_suspension = ProcessHasSuspension(process);
 
-    auto roots = CollectProcessRoots(process, arena, types);
+    auto roots = CollectProcessRoots(process, sched_arena, types);
 
     if (proc_layout.has_suspension) {
       proc_layout.frame =

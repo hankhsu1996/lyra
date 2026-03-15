@@ -20,6 +20,7 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/module_body.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/optimize.hpp"
 #include "lyra/mir/package.hpp"
@@ -42,10 +43,11 @@ auto ProcessKindStr(mir::ProcessKind kind) -> std::string_view {
   return "process";
 }
 
-// Verify all MIR produced by lowering. Called once at the end of the pipeline.
-// Failures throw InternalError (compiler bug - we emitted invalid MIR).
+// Verify all MIR produced by lowering. Dispatches to the correct arena
+// by ownership domain: body routines use body.arena, design-global
+// routines use the design arena.
 void VerifyLoweredMir(
-    const mir::Design& design, const mir::Arena& arena,
+    const mir::Design& design, const mir::Arena& design_arena,
     const TypeArena& type_arena) {
   for (size_t ei = 0; ei < design.elements.size(); ++ei) {
     const auto& element = design.elements[ei];
@@ -53,7 +55,7 @@ void VerifyLoweredMir(
         common::Overloaded{
             [&](const mir::Module& mod) {
               const auto& body = mir::GetModuleBody(design, mod);
-              // Use instance-side module record + typed InstanceTable lookup.
+              const auto& arena = body.arena;
               std::string_view module_path =
                   design.instance_table.GetPathBySymbol(mod.instance_sym);
               for (size_t fi = 0; fi < body.functions.size(); ++fi) {
@@ -81,7 +83,8 @@ void VerifyLoweredMir(
                 std::string label =
                     std::format("element[{}]: function[{}]", ei, fi);
                 mir::VerifyFunction(
-                    arena[pkg.functions[fi]], arena, type_arena, label);
+                    design_arena[pkg.functions[fi]], design_arena, type_arena,
+                    label);
               }
             },
         },
@@ -90,7 +93,9 @@ void VerifyLoweredMir(
 }
 
 // Compute MIR statistics for --stats output.
-auto ComputeMirStats(const mir::Design& design, const mir::Arena& arena)
+// Dispatches to body arenas for body routines, design arena for
+// design-global routines.
+auto ComputeMirStats(const mir::Design& design, const mir::Arena& design_arena)
     -> LoweringStats {
   LoweringStats stats;
 
@@ -114,15 +119,15 @@ auto ComputeMirStats(const mir::Design& design, const mir::Arena& arena)
             [&](const mir::Module& mod) {
               const auto& body = mir::GetModuleBody(design, mod);
               for (auto fid : body.functions) {
-                count_routine(arena[fid]);
+                count_routine(body.arena[fid]);
               }
               for (auto pid : body.processes) {
-                count_routine(arena[pid]);
+                count_routine(body.arena[pid]);
               }
             },
             [&](const mir::Package& pkg) {
               for (auto fid : pkg.functions) {
-                count_routine(arena[fid]);
+                count_routine(design_arena[fid]);
               }
             },
         },
@@ -130,10 +135,10 @@ auto ComputeMirStats(const mir::Design& design, const mir::Arena& arena)
   }
 
   for (auto fid : design.generated_functions) {
-    count_routine(arena[fid]);
+    count_routine(design_arena[fid]);
   }
   for (auto pid : design.init_processes) {
-    count_routine(arena[pid]);
+    count_routine(design_arena[pid]);
   }
 
   return stats;
@@ -147,33 +152,35 @@ auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
         "LowerHirToMir", "specialization_map must not be null");
   }
 
-  auto mir_arena = std::make_unique<mir::Arena>();
-  OriginMap origin_map;
+  auto design_arena = std::make_unique<mir::Arena>();
+  OriginMap design_origins;
 
   LoweringInput full_input = input;
   full_input.builtin_types = InternBuiltinTypes(*input.type_arena);
 
   auto design_result =
-      LowerDesign(*input.design, full_input, *mir_arena, &origin_map);
+      LowerDesign(*input.design, full_input, *design_arena, &design_origins);
   if (!design_result) return std::unexpected(design_result.error());
   mir::Design design = std::move(design_result->design);
   auto compiled_bindings = std::move(design_result->compiled_bindings);
+  auto body_origins = std::move(design_result->body_origins);
 
   // Pre-optimization verification: lowered MIR must be structurally valid
-  VerifyLoweredMir(design, *mir_arena, *input.type_arena);
+  VerifyLoweredMir(design, *design_arena, *input.type_arena);
 
   // MIR optimization stage: routine-local transforms on verified MIR
-  mir::RunMirOptimizations(design, *mir_arena);
+  mir::RunMirOptimizations(design, *design_arena);
 
   // Post-optimization verification: optimized MIR must remain valid
-  VerifyLoweredMir(design, *mir_arena, *input.type_arena);
+  VerifyLoweredMir(design, *design_arena, *input.type_arena);
 
-  LoweringStats stats = ComputeMirStats(design, *mir_arena);
+  LoweringStats stats = ComputeMirStats(design, *design_arena);
 
   return LoweringResult{
       .design = std::move(design),
-      .mir_arena = std::move(mir_arena),
-      .origin_map = std::move(origin_map),
+      .design_arena = std::move(design_arena),
+      .design_origins = std::move(design_origins),
+      .body_origins = std::move(body_origins),
       .stats = stats,
       .compiled_bindings = std::move(compiled_bindings),
   };

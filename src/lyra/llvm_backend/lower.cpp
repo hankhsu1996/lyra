@@ -173,7 +173,7 @@ auto BuildModuleSchedIndices(const Layout& layout)
 }
 
 auto BuildSpecCodegenViews(
-    const std::vector<SpecCompilationUnit>& units, const mir::Arena& arena,
+    const std::vector<SpecCompilationUnit>& units, const mir::Design& design,
     const std::unordered_map<uint32_t, std::vector<uint32_t>>&
         modidx_to_sched_indices) -> std::vector<SpecCodegenView> {
   std::vector<SpecCodegenView> views(units.size());
@@ -188,10 +188,11 @@ auto BuildSpecCodegenViews(
               unit.body_id.value));
     }
 
-    // Count non-final processes
+    // Count non-final processes (resolve from body arena)
+    const auto& body_arena = design.module_bodies.at(unit.body_id.value).arena;
     uint32_t num_nonfinal = 0;
     for (mir::ProcessId proc_id : unit.processes) {
-      if (arena[proc_id].kind != mir::ProcessKind::kFinal) ++num_nonfinal;
+      if (body_arena[proc_id].kind != mir::ProcessKind::kFinal) ++num_nonfinal;
     }
     if (num_nonfinal == 0) continue;
 
@@ -219,7 +220,7 @@ auto BuildSpecCodegenViews(
 
     uint32_t local_nonfinal = 0;
     for (mir::ProcessId proc_id : unit.processes) {
-      if (arena[proc_id].kind == mir::ProcessKind::kFinal) continue;
+      if (body_arena[proc_id].kind == mir::ProcessKind::kFinal) continue;
 
       views[u].processes.push_back(
           SpecProcessView{
@@ -330,11 +331,20 @@ auto BuildCompiledModuleSpecInputs(
 }  // namespace
 
 auto CompileModuleSpecSession(
-    Context& context, const mir::Arena& arena,
+    Context& context, const mir::Design& design,
     const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec> {
+  // Set the body arena as the current arena for this compilation scope.
+  // ArenaScope restores the previous arena on exit.
+  const auto& body = design.module_bodies.at(input.body_id.value);
+  Context::ArenaScope arena_scope(context, &body.arena);
+
+  // Clear per-spec state: body-local FunctionIds are 0-based per body,
+  // so registrations from a previous spec session would collide.
+  context.ClearModuleScopedFunctions();
+
   // Step 1: Register monitor info for body processes
   for (mir::ProcessId proc_id : input.processes) {
-    RegisterMonitorInfo(context, arena, proc_id);
+    RegisterMonitorInfo(context, body.arena, proc_id);
   }
 
   // Step 2: Register module-scoped function lowering metadata.
@@ -375,7 +385,7 @@ auto CompileModuleSpecSession(
     context.SetCurrentProcess(proc_view.layout_process_index);
     context.SetSpecSlotLayout(&input.layout.slot_layout);
 
-    const auto& mir_process = arena[proc_view.process_id];
+    const auto& mir_process = body.arena[proc_view.process_id];
     auto func_result = GenerateSharedProcessFunction(
         context, mir_process, proc_view.func_name);
     if (!func_result) return std::unexpected(func_result.error());
@@ -486,6 +496,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       module_plans.push_back(
           LayoutModulePlan{
               .body_processes = body.processes,
+              .body_id = mod->body_id,
               .design_state_base_slot = placement.design_state_base_slot,
               .slot_count = placement.slot_count,
           });
@@ -504,7 +515,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   auto layout = std::make_unique<Layout>(BuildLayout(
       input.design->init_processes, input.design->connection_processes,
-      module_plans, *input.mir_arena, *input.type_arena,
+      module_plans, *input.design, *input.mir_arena, *input.type_arena,
       std::move(design_layout), *llvm_ctx, module->getDataLayout(),
       force_two_state));
 
@@ -516,7 +527,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto units = BuildSpecCompilationUnits(*input.design);
   auto modidx_to_sched_indices = BuildModuleSchedIndices(*layout);
   auto views =
-      BuildSpecCodegenViews(units, *input.mir_arena, modidx_to_sched_indices);
+      BuildSpecCodegenViews(units, *input.design, modidx_to_sched_indices);
   auto spec_layouts = BuildSpecLayouts(units, *layout);
   auto spec_inputs = BuildCompiledModuleSpecInputs(
       units, std::move(spec_layouts), std::move(views));
@@ -557,6 +568,13 @@ auto CompileDesignProcesses(const LoweringInput& input)
   for (const auto& [func_id, llvm_func] : declared_funcs) {
     auto result = DefineMirFunction(*context, func_id, llvm_func);
     if (!result) return std::unexpected(result.error());
+
+    // Register by canonical symbol for DesignFunctionRef resolution
+    const auto& func = (*input.mir_arena)[func_id];
+    if (func.canonical_symbol) {
+      context->RegisterDesignFunction(
+          func.canonical_symbol, func_id, llvm_func);
+    }
   }
 
   // Phase 4: Compile each specialization via CompileModuleSpecSession
@@ -568,7 +586,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   for (size_t si = 0; si < spec_inputs.size(); ++si) {
     const auto& spec_input = spec_inputs[si];
     auto product =
-        CompileModuleSpecSession(*context, *input.mir_arena, spec_input);
+        CompileModuleSpecSession(*context, *input.design, spec_input);
     if (!product) return std::unexpected(product.error());
 
     auto [it, inserted] = body_to_compiled_funcs.try_emplace(
@@ -585,6 +603,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
         std::make_move_iterator(product->wait_sites.begin()),
         std::make_move_iterator(product->wait_sites.end()));
   }
+
+  // ArenaScope in CompileModuleSpecSession restores design arena automatically.
 
   // Build explicit sched_index -> shared compiled function routing table.
   // This maps each scheduled module process to its body-owned compiled
@@ -683,10 +703,21 @@ auto CompileDesignProcesses(const LoweringInput& input)
     context->SetCurrentProcess(i);
 
     const auto& bp = layout->scheduled_processes[i];
-    const auto& mir_process = (*input.mir_arena)[bp.process_id];
+
+    // Resolve the correct arena for this process.
+    // Init and connection processes use design arena.
+    // Module body processes use body arena (resolved via module_index).
+    const mir::Arena& proc_arena =
+        (bp.module_index.value < module_plans.size())
+            ? input.design->module_bodies
+                  .at(module_plans[bp.module_index.value].body_id.value)
+                  .arena
+            : *input.mir_arena;
+    const auto& mir_process = proc_arena[bp.process_id];
 
     // Init and connection processes are standalone (no module binding)
     if (i < num_init || bp.module_index.value == ModuleIndex::kNone) {
+      Context::ArenaScope arena_scope(*context, input.mir_arena);
       auto func_result = GenerateProcessFunction(
           *context, mir_process, std::format("process_{}", i));
       if (!func_result) return std::unexpected(func_result.error());
@@ -699,6 +730,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
 
     // Module process: route through explicit sched_idx -> shared_func table
+    Context::ArenaScope arena_scope(*context, &proc_arena);
     auto func_it = sched_idx_to_shared_func.find(static_cast<uint32_t>(i));
     if (func_it == sched_idx_to_shared_func.end()) {
       throw common::InternalError(

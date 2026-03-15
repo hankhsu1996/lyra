@@ -21,6 +21,7 @@
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/math_fn.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
@@ -118,7 +119,7 @@ void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
       const auto& info = type.AsUnpackedStruct();
       for (int i = 0; i < static_cast<int>(info.fields.size()); ++i) {
         if (!IsFourStateType(info.fields[i].type, types)) continue;
-        mir::PlaceId field_place = ctx.mir_arena->DerivePlace(
+        mir::PlaceId field_place = ctx.DerivePlace(
             place,
             mir::Projection{.info = mir::FieldProjection{.field_index = i}});
         EmitOOBDefault(field_place, info.fields[i].type, builder);
@@ -136,7 +137,7 @@ void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
                 .type = offset_type,
                 .value = IntegralConstant{
                     .value = {static_cast<uint64_t>(idx)}, .unknown = {0}}});
-        mir::PlaceId elem_place = ctx.mir_arena->DerivePlace(
+        mir::PlaceId elem_place = ctx.DerivePlace(
             place,
             mir::Projection{.info = mir::IndexProjection{.index = idx_op}});
         EmitOOBDefault(elem_place, info.element_type, builder);
@@ -149,7 +150,7 @@ void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
       // Union storage is a single blob; fill via its first 4-state member.
       for (uint32_t i = 0; i < info.members.size(); ++i) {
         if (!IsFourStateType(info.members[i].type, types)) continue;
-        mir::PlaceId member_place = ctx.mir_arena->DerivePlace(
+        mir::PlaceId member_place = ctx.DerivePlace(
             place, mir::Projection{
                        .info = mir::UnionMemberProjection{.member_index = i}});
         EmitOOBDefault(member_place, info.members[i].type, builder);
@@ -1379,11 +1380,11 @@ auto LowerCall(
     -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
-  // Resolve mir::FunctionId from symbol (throws if not found)
-  mir::FunctionId callee = ctx.ResolveCallee(data.callee);
+  // Resolve callee: body-local FunctionId or design-global DesignFunctionRef
+  mir::Callee callee = ctx.ResolveCallTarget(data.callee);
 
-  // Validate against the frozen signature
-  const mir::FunctionSignature& sig = builder.GetArena()[callee].signature;
+  // Get signature for argument validation from the correct arena.
+  const mir::FunctionSignature& sig = ctx.ResolveCallSignature(callee);
   if (data.arguments.size() != sig.params.size()) {
     throw common::InternalError(
         "LowerCall", "argument count mismatch with frozen signature");
@@ -1925,7 +1926,7 @@ auto LowerPackedElementSelect(
       builder.EnsurePlaceCached(base_expr.type, base_operand, cache);
 
   // Create BitRangeProjection (address-only)
-  mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
+  mir::PlaceId slice_place = ctx.DerivePlace(
       base_place, mir::Projection{
                       .info = mir::BitRangeProjection{
                           .bit_offset = offset,
@@ -1969,7 +1970,7 @@ auto LowerBitSelect(
       builder.EnsurePlaceCached(base_expr.type, base_operand, cache);
 
   // Create BitRangeProjection (width=1)
-  mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
+  mir::PlaceId slice_place = ctx.DerivePlace(
       base_place,
       mir::Projection{
           .info = mir::BitRangeProjection{
@@ -2043,7 +2044,7 @@ auto LowerRangeSelect(
   }
 
   // Create BitRangeProjection (address-only)
-  mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
+  mir::PlaceId slice_place = ctx.DerivePlace(
       base_place, mir::Projection{
                       .info = mir::BitRangeProjection{
                           .bit_offset = offset,
@@ -2201,7 +2202,7 @@ auto LowerIndexedPartSelect(
       builder.EnsurePlaceCached(base_expr.type, base_operand, cache);
 
   // Create BitRangeProjection
-  mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
+  mir::PlaceId slice_place = ctx.DerivePlace(
       base_place, mir::Projection{
                       .info = mir::BitRangeProjection{
                           .bit_offset = offset,
@@ -2244,7 +2245,7 @@ auto LowerPackedFieldAccess(
   }
 
   // Create BitRangeProjection (address-only)
-  mir::PlaceId slice_place = ctx.mir_arena->DerivePlace(
+  mir::PlaceId slice_place = ctx.DerivePlace(
       base_place, mir::Projection{
                       .info = mir::BitRangeProjection{
                           .bit_offset = offset,
@@ -2414,8 +2415,7 @@ auto LowerElementAccessRvalue(
   mir::Projection proj{
       .info = mir::IndexProjection{.index = index_operand},
   };
-  mir::PlaceId result_place =
-      ctx.mir_arena->DerivePlace(base_place, std::move(proj));
+  mir::PlaceId result_place = ctx.DerivePlace(base_place, std::move(proj));
 
   if (IsAlwaysValid(validity)) {
     return mir::Operand::Use(result_place);

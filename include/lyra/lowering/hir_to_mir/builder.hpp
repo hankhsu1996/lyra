@@ -93,14 +93,14 @@ class MirBuilder {
   // If return_type is void, dest is nullopt. Otherwise allocates temp.
   // Returns Use of result place, or Poison for void calls.
   auto EmitCall(
-      mir::FunctionId callee, std::vector<mir::Operand> args,
-      TypeId return_type) -> mir::Operand;
+      mir::Callee callee, std::vector<mir::Operand> args, TypeId return_type)
+      -> mir::Operand;
 
   // Emit a Call instruction with writebacks for output/inout parameters.
   // writebacks: list of output/inout parameter destinations.
   // For direct destination passing, dest is passed directly to callee.
   auto EmitCallWithWritebacks(
-      mir::FunctionId callee, std::vector<mir::Operand> in_args,
+      mir::Callee callee, std::vector<mir::Operand> in_args,
       std::vector<mir::CallWriteback> writebacks, TypeId return_type)
       -> mir::Operand;
 

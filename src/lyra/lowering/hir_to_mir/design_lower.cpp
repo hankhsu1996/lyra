@@ -29,7 +29,9 @@
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/module_body.hpp"
 #include "lyra/mir/package.hpp"
+#include "lyra/mir/place.hpp"
 #include "lyra/mir/placement.hpp"
+#include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -121,6 +123,9 @@ auto LowerDesign(
     const hir::Design& design, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map)
     -> Result<DesignLoweringResult> {
+  // Phase 0: Design-global declaration collection.
+  // All design-global places and package function reservations go into
+  // the design arena (mir_arena). This is immutable after Phase 0.
   const DesignDeclarations decls =
       CollectDesignDeclarations(design, input, mir_arena);
 
@@ -149,8 +154,8 @@ auto LowerDesign(
     result.instance_table = *input.instance_table;
   }
 
-  // Lower package init processes
-  // Collect dynamically generated functions (e.g., observer programs)
+  // Phase 0: Lower package init processes into design arena.
+  // Design-global origin storage for design-global MIR.
   DeclView init_view{
       .design_places = &decls.design_places,
       .functions = &decls.functions,
@@ -182,9 +187,11 @@ auto LowerDesign(
   const auto& spec_map = *input.specialization_map;
 
   // Phase 1: Lower one ModuleBody per specialization group.
-  // spec_id -> body_id mapping for Phase 2.
-  std::unordered_map<common::ModuleSpecId, mir::ModuleBodyId, ModuleSpecIdHash>
-      spec_to_body;
+  // Each call produces an isolated MirBodyLoweringResult with body-local
+  // MIR arena and body-local origins. No body-lowering path writes to the
+  // design arena.
+  std::vector<Result<MirBodyLoweringResult>> body_results;
+  body_results.reserve(spec_map.groups.size());
 
   auto spec_groups =
       BuildMirSpecGroups(spec_map, static_cast<uint32_t>(hir_modules.size()));
@@ -197,20 +204,40 @@ auto LowerDesign(
     const hir::Module& rep_mod = *hir_modules[rep_idx];
     const hir::ModuleBody& hir_body =
         design.module_bodies[rep_mod.body_id.value];
+
+    // Create fresh body arena for this specialization group
+    mir::Arena body_arena;
+
+    // Collect body-local declarations into body arena
     BodyLocalDecls body_decls =
-        CollectBodyLocalDecls(rep_mod, *input.symbol_table, mir_arena);
+        CollectBodyLocalDecls(rep_mod, *input.symbol_table, body_arena);
+
     LoweringInput body_input = input;
     body_input.hir_arena = &hir_body.arena;
-    Result<mir::ModuleBody> body_result = LowerModule(
-        hir_body, body_input, mir_arena, origin_map, decls, body_decls,
-        rep_mod.body_id);
-    if (!body_result) {
-      return std::unexpected(body_result.error());
+
+    body_results.push_back(LowerModule(
+        hir_body, body_input, std::move(body_arena), mir_arena, decls,
+        body_decls, rep_mod.body_id));
+  }
+
+  // Phase 2: Assemble body results in stable group order.
+  // Merge body units and origins.
+  std::unordered_map<common::ModuleSpecId, mir::ModuleBodyId, ModuleSpecIdHash>
+      spec_to_body;
+  std::vector<std::vector<OriginEntry>> body_origins;
+  body_origins.reserve(body_results.size());
+
+  for (size_t g = 0; g < body_results.size(); ++g) {
+    if (!body_results[g]) {
+      return std::unexpected(body_results[g].error());
     }
+    auto& product = *body_results[g];
+
     mir::ModuleBodyId body_id{
         static_cast<uint32_t>(result.module_bodies.size())};
-    result.module_bodies.push_back(std::move(*body_result));
-    spec_to_body[group.spec_id] = body_id;
+    result.module_bodies.push_back(std::move(product.body));
+    body_origins.push_back(std::move(product.origins));
+    spec_to_body[spec_groups[g].spec_id] = body_id;
   }
 
   // Phase 2: Emit one mir::Module per HIR module instance and build placement.
@@ -319,6 +346,7 @@ auto LowerDesign(
   return DesignLoweringResult{
       .design = std::move(result),
       .compiled_bindings = std::move(compiled_bindings),
+      .body_origins = std::move(body_origins),
   };
 }
 

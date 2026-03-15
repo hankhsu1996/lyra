@@ -25,10 +25,11 @@ class Arena final {
     return id;
   }
 
-  // Creates a derived place by appending a projection to an existing place.
-  // Pure structural operation - does not compute or store types.
-  auto DerivePlace(PlaceId base, Projection proj) -> PlaceId {
-    const Place& base_place = places_[base.value];
+  // Creates a derived place by appending a projection to a resolved base.
+  // Caller resolves the base Place from the correct arena. The derived
+  // result is allocated in this arena. This avoids cross-arena PlaceId
+  // indexing -- the caller is responsible for domain-aware resolution.
+  auto DerivePlace(const Place& base_place, Projection proj) -> PlaceId {
     Place new_place{
         .root = base_place.root,
         .projections = base_place.projections,
@@ -63,18 +64,23 @@ class Arena final {
 
   // Reserve a FunctionId with a frozen signature (pre-allocation for
   // recursion). The signature is immutable after this point.
-  auto ReserveFunction(FunctionSignature signature) -> FunctionId {
+  // canonical_symbol identifies design-global callables for backend dispatch.
+  auto ReserveFunction(
+      FunctionSignature signature, SymbolId canonical_symbol = kInvalidSymbolId)
+      -> FunctionId {
     FunctionId id{static_cast<uint32_t>(functions_.size())};
     Function placeholder;
     placeholder.signature = std::move(signature);
+    placeholder.canonical_symbol = canonical_symbol;
     functions_.push_back(std::move(placeholder));
     return id;
   }
 
   // Fill in a previously reserved function's body. Preserves the frozen
-  // signature from ReserveFunction.
+  // signature and canonical_symbol from ReserveFunction.
   void SetFunctionBody(FunctionId id, Function func) {
     func.signature = std::move(functions_[id.value].signature);
+    func.canonical_symbol = functions_[id.value].canonical_symbol;
     functions_[id.value] = std::move(func);
   }
 
@@ -102,6 +108,9 @@ class Arena final {
 
   [[nodiscard]] auto PlaceCount() const -> size_t {
     return places_.size();
+  }
+  [[nodiscard]] auto FunctionCount() const -> size_t {
+    return functions_.size();
   }
 
  private:

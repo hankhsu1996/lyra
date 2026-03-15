@@ -146,7 +146,8 @@ auto CollectDesignDeclarations(
         const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
         mir::FunctionSignature sig = BuildFunctionSignature(
             hir_func, *input.symbol_table, *input.type_arena);
-        mir::FunctionId mir_func_id = mir_arena.ReserveFunction(std::move(sig));
+        mir::FunctionId mir_func_id =
+            mir_arena.ReserveFunction(std::move(sig), hir_func.symbol);
         decls.functions[hir_func.symbol] = mir_func_id;
       }
     }

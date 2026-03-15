@@ -32,6 +32,10 @@ auto CollectBodyLocalDecls(
 struct DesignLoweringResult {
   mir::Design design;
   mir::CompiledBindingPlan compiled_bindings;
+  // Per-body origin entries, indexed by ModuleBodyId.
+  // Body-local MIR origins stay body-local -- not merged into the
+  // design-global origin map.
+  std::vector<std::vector<OriginEntry>> body_origins;
 };
 
 auto LowerDesign(

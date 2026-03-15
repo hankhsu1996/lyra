@@ -85,6 +85,12 @@ class OriginMap {
     return entries_.size();
   }
 
+  // Transfer ownership of collected entries. Rvalue-only to make
+  // ownership transfer terminal.
+  [[nodiscard]] auto TakeEntries() && -> std::vector<OriginEntry> {
+    return std::move(entries_);
+  }
+
   // Typed overloads - prevent cross-kind misuse at call sites.
   auto Record(
       mir::FunctionId mir, hir::FunctionId hir, hir::ModuleBodyId body_id)

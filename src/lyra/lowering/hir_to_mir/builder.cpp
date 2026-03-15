@@ -388,13 +388,14 @@ auto MirBuilder::EnsurePlaceCached(
 }
 
 auto MirBuilder::EmitCall(
-    mir::FunctionId callee, std::vector<mir::Operand> args, TypeId return_type)
+    mir::Callee callee, std::vector<mir::Operand> args, TypeId return_type)
     -> mir::Operand {
-  return EmitCallWithWritebacks(callee, std::move(args), {}, return_type);
+  return EmitCallWithWritebacks(
+      std::move(callee), std::move(args), {}, return_type);
 }
 
 auto MirBuilder::EmitCallWithWritebacks(
-    mir::FunctionId callee, std::vector<mir::Operand> in_args,
+    mir::Callee callee, std::vector<mir::Operand> in_args,
     std::vector<mir::CallWriteback> writebacks, TypeId return_type)
     -> mir::Operand {
   for (const auto& wb : writebacks) {
