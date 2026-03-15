@@ -97,12 +97,15 @@ void CheckWriteableSlot(
 
 }  // namespace
 
-MirBuilder::MirBuilder(mir::Arena* arena, Context* ctx, OriginMap* origin_map)
+MirBuilder::MirBuilder(
+    mir::Arena* arena, Context* ctx, OriginMap* origin_map,
+    hir::ModuleBodyId body_id)
     : arena_(arena),
       ctx_(ctx),
       origin_map_(origin_map),
       current_block_(kInvalidBlockIndex),
-      blocks_{} {
+      blocks_{},
+      body_id_(body_id) {
   if (arena_ == nullptr || ctx_ == nullptr) {
     throw common::InternalError("MirBuilder", "arena and ctx must not be null");
   }
@@ -125,7 +128,7 @@ auto MirBuilder::RecordProjectionOrigin(hir::ExpressionId expr_id)
   if (origin_map_ == nullptr) {
     return common::OriginId::Invalid();
   }
-  return origin_map_->Record(std::monostate{}, expr_id);
+  return origin_map_->Record(std::monostate{}, expr_id, body_id_);
 }
 
 auto MirBuilder::IsReachable() const -> bool {
@@ -165,7 +168,7 @@ void MirBuilder::EmitInst(InstT inst) {
         .statement_index = stmt_index,
     };
     origin = std::visit(
-        [&](auto id) { return origin_map_->Record(ref, id); },
+        [&](auto id) { return origin_map_->Record(ref, id, body_id_); },
         *current_hir_source_);
   }
 
@@ -201,7 +204,7 @@ void MirBuilder::EmitTerm(TermT term) {
   if (origin_map_ != nullptr && current_hir_source_.has_value()) {
     TerminatorRef ref{.block = mir::BasicBlockId{current_block_.value}};
     origin = std::visit(
-        [&](auto id) { return origin_map_->Record(ref, id); },
+        [&](auto id) { return origin_map_->Record(ref, id, body_id_); },
         *current_hir_source_);
   }
 

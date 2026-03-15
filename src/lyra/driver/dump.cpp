@@ -176,7 +176,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
 
   // Create diagnostic context for LLVM backend error reporting
   lowering::OriginMapLookup origin_lookup(
-      &mir_result->origin_map, hir_result.hir_arena.get());
+      &mir_result->origin_map, &hir_result.design, hir_result.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{

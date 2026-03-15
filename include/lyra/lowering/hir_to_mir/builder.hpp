@@ -54,7 +54,9 @@ struct LoopContext {
 
 class MirBuilder {
  public:
-  MirBuilder(mir::Arena* arena, Context* ctx, OriginMap* origin_map = nullptr);
+  MirBuilder(
+      mir::Arena* arena, Context* ctx, OriginMap* origin_map,
+      hir::ModuleBodyId body_id);
 
   // Instruction emission.
   void EmitAssign(mir::PlaceId target, mir::Operand source);
@@ -290,6 +292,12 @@ class MirBuilder {
   auto GetContext() -> Context& {
     return *ctx_;
   }
+  auto GetOriginMap() -> OriginMap* {
+    return origin_map_;
+  }
+  auto GetBodyId() const -> hir::ModuleBodyId {
+    return body_id_;
+  }
 
   void PushLoop(LoopContext ctx);
   void PopLoop();
@@ -367,6 +375,7 @@ class MirBuilder {
   common::OriginId current_origin_ = common::OriginId::Invalid();
   std::optional<InstructionHirSource>
       current_hir_source_;  // For deferred recording
+  hir::ModuleBodyId body_id_ = hir::kInvalidModuleBodyId;
   bool finished_ = false;
   BlockIndex exit_block_ = kInvalidBlockIndex;  // Single-exit form
 };

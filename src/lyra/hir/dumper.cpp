@@ -122,7 +122,11 @@ void Dumper::Dump(const Module& module) {
             "body_id {} out of range (module_bodies size {})",
             module.body_id.value, current_design_->module_bodies.size()));
   }
-  Dump(current_design_->module_bodies[module.body_id.value]);
+  const auto& body = current_design_->module_bodies[module.body_id.value];
+  const hir::Arena* saved_arena = arena_;
+  arena_ = &body.arena;
+  Dump(body);
+  arena_ = saved_arena;
 
   Dedent();
   PrintIndent();

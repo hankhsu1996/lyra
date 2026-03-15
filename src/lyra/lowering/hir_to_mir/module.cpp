@@ -24,8 +24,8 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerModule(
     const hir::ModuleBody& body, const LoweringInput& input,
     mir::Arena& mir_arena, OriginMap* origin_map,
-    const DesignDeclarations& decls, const BodyLocalDecls& body_decls)
-    -> Result<mir::ModuleBody> {
+    const DesignDeclarations& decls, const BodyLocalDecls& body_decls,
+    hir::ModuleBodyId body_id) -> Result<mir::ModuleBody> {
   mir::ModuleBody result;
 
   // Body-local slot descriptors come from specialization-local collection,
@@ -62,8 +62,8 @@ auto LowerModule(
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
-    Result<mir::Function> mir_func_result =
-        LowerFunctionBody(hir_func, input, mir_arena, decl_view, origin_map);
+    Result<mir::Function> mir_func_result = LowerFunctionBody(
+        hir_func, input, mir_arena, decl_view, origin_map, body_id);
     if (!mir_func_result) {
       return std::unexpected(mir_func_result.error());
     }
@@ -71,14 +71,15 @@ auto LowerModule(
 
     // Record function and parameter origins (caller has both IDs)
     if (origin_map != nullptr) {
-      mir_func.origin = origin_map->Record(mir_func_id, hir_func_id);
+      mir_func.origin = origin_map->Record(mir_func_id, hir_func_id, body_id);
 
       // Record per-parameter origins for prologue error reporting
       mir_func.param_origins.reserve(hir_func.parameters.size());
       for (uint32_t i = 0; i < hir_func.parameters.size(); ++i) {
         PrologueParamRef mir_ref{.func = mir_func_id, .param_index = i};
         FunctionParamRef hir_ref{.func = hir_func_id, .param_index = i};
-        mir_func.param_origins.push_back(origin_map->Record(mir_ref, hir_ref));
+        mir_func.param_origins.push_back(
+            origin_map->Record(mir_ref, hir_ref, body_id));
       }
     }
 
@@ -92,7 +93,7 @@ auto LowerModule(
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
     Result<mir::ProcessId> mir_proc_result = LowerProcess(
         proc_id, hir_process, input, mir_arena, decl_view, origin_map,
-        &generated_functions);
+        &generated_functions, body_id);
     if (!mir_proc_result) {
       return std::unexpected(mir_proc_result.error());
     }

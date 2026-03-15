@@ -35,7 +35,8 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
   auto compilation = std::move(*result);
 
   lowering::OriginMapLookup origin_lookup(
-      &compilation.mir.origin_map, compilation.hir.hir_arena.get());
+      &compilation.mir.origin_map, &compilation.hir.design,
+      compilation.hir.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   uint32_t feature_flags = 0;

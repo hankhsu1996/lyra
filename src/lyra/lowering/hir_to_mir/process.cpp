@@ -99,8 +99,8 @@ auto LowerProcess(
     hir::ProcessId hir_proc_id, const hir::Process& process,
     const LoweringInput& input, mir::Arena& mir_arena,
     const DeclView& decl_view, OriginMap* origin_map,
-    std::vector<mir::FunctionId>* generated_functions)
-    -> Result<mir::ProcessId> {
+    std::vector<mir::FunctionId>* generated_functions,
+    hir::ModuleBodyId body_id) -> Result<mir::ProcessId> {
   Context ctx{
       .mir_arena = &mir_arena,
       .hir_arena = input.hir_arena,
@@ -123,7 +123,7 @@ auto LowerProcess(
       .body_slots = decl_view.body_slots,
   };
 
-  MirBuilder builder(&mir_arena, &ctx, origin_map);
+  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id);
 
   BlockIndex entry_idx = builder.CreateBlock();
   builder.SetCurrentBlock(entry_idx);
@@ -176,7 +176,7 @@ auto LowerProcess(
   // designated initializer ordering requirements)
   common::OriginId origin = common::OriginId::Invalid();
   if (origin_map != nullptr) {
-    origin = origin_map->Record(mir_proc_id, hir_proc_id);
+    origin = origin_map->Record(mir_proc_id, hir_proc_id, body_id);
   }
 
   mir::Process mir_process{

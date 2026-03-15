@@ -236,7 +236,9 @@ auto LowerStrobeEffect(
   };
 
   // Create builder for the program function
-  MirBuilder program_builder(original_ctx.mir_arena, &program_ctx);
+  MirBuilder program_builder(
+      original_ctx.mir_arena, &program_ctx, builder.GetOriginMap(),
+      builder.GetBodyId());
 
   // Create entry block
   BlockIndex entry = program_builder.CreateBlock();
@@ -519,7 +521,9 @@ auto LowerMonitorCheckProgram(
       .return_type = original_ctx.builtin_types.void_type,
   };
 
-  MirBuilder program_builder(original_ctx.mir_arena, &program_ctx);
+  MirBuilder program_builder(
+      original_ctx.mir_arena, &program_ctx, original_builder.GetOriginMap(),
+      original_builder.GetBodyId());
 
   BlockIndex entry = program_builder.CreateBlock();
   program_builder.SetCurrentBlock(entry);
@@ -597,7 +601,9 @@ auto LowerMonitorSetupProgram(
       .return_type = original_ctx.builtin_types.void_type,
   };
 
-  MirBuilder program_builder(original_ctx.mir_arena, &program_ctx);
+  MirBuilder program_builder(
+      original_ctx.mir_arena, &program_ctx, original_builder.GetOriginMap(),
+      original_builder.GetBodyId());
 
   BlockIndex entry = program_builder.CreateBlock();
   program_builder.SetCurrentBlock(entry);

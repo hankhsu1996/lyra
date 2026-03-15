@@ -57,7 +57,7 @@ auto CreateConnectionProcess(
     mir::Arena& mir_arena, const DesignDeclarations& decls)
     -> Result<mir::Process> {
   Context ctx = MakeDesignContext(input, mir_arena, decls);
-  MirBuilder builder(&mir_arena, &ctx);
+  MirBuilder builder(&mir_arena, &ctx, nullptr, hir::kInvalidModuleBodyId);
 
   BlockIndex entry_idx = builder.CreateBlock();
   builder.SetCurrentBlock(entry_idx);

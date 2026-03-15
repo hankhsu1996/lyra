@@ -438,7 +438,7 @@ auto PrepareLlvmModule(
 
   // Create diagnostic context for LLVM backend error reporting
   auto origin_lookup = std::make_unique<lowering::OriginMapLookup>(
-      &mir_result->origin_map, hir_result.hir_arena.get());
+      &mir_result->origin_map, &hir_result.design, hir_result.hir_arena.get());
   auto diag_ctx = std::make_unique<lowering::DiagnosticContext>(*origin_lookup);
 
   // Lower MIR to LLVM IR
