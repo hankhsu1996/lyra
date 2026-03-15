@@ -2,9 +2,9 @@
 
 namespace lyra {
 
-// Optimization level for JIT compilation.
-// Currently affects LLVM codegen optimization only.
-// IR optimization passes are not yet threaded through this enum.
+// Optimization level for compilation.
+// Controls both the pre-codegen IR optimization pipeline (OptimizeModule)
+// and the backend CodeGen optimization level.
 enum class OptLevel { kO0, kO1, kO2, kO3 };
 
 }  // namespace lyra
