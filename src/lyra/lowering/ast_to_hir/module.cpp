@@ -13,6 +13,7 @@
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/scope_types.hpp"
 #include "lyra/common/source_span.hpp"
@@ -38,11 +39,12 @@ namespace lyra::lowering::ast_to_hir {
 auto LowerModuleBody(
     const slang::ast::InstanceSymbol& representative,
     const BodyLoweringInput& input, SymbolRegistrar& registrar, Context* ctx)
-    -> hir::ModuleBody {
-  // Body-local arena and context. All HIR nodes created during body lowering
-  // are allocated into body_arena via body_ctx.
+    -> BodyLoweringResult {
+  // Body-local arena, sink, and context. All HIR nodes and diagnostics
+  // produced during body lowering are isolated in body-local storage.
   hir::Arena body_arena;
-  Context body_ctx = ctx->ForkForBodyLowering(body_arena);
+  DiagnosticSink body_sink;
+  Context body_ctx = ctx->ForkForBodyLowering(body_arena, body_sink);
 
   ModuleLowerer lowerer(body_ctx, registrar, representative);
 
@@ -200,11 +202,15 @@ auto LowerModuleBody(
     }
   }
 
-  return hir::ModuleBody{
-      .processes = std::move(processes),
-      .functions = std::move(functions),
-      .tasks = std::move(tasks),
-      .arena = std::move(body_arena),
+  return BodyLoweringResult{
+      .body =
+          hir::ModuleBody{
+              .processes = std::move(processes),
+              .functions = std::move(functions),
+              .tasks = std::move(tasks),
+              .arena = std::move(body_arena),
+          },
+      .diagnostics = std::move(body_sink).TakeDiagnostics(),
   };
 }
 
