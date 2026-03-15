@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check LLVM backend boundaries
         run: python3 tools/policy/check_llvm_backend_boundaries.py
