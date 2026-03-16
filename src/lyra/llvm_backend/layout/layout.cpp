@@ -902,9 +902,58 @@ auto ProcessHasSuspension(const mir::Process& process) -> bool {
 
 // Check if a connection process can be kernelized (single Assign + Wait with
 // 1 trigger, source is a design slot read, dest is a design slot write).
+// File-local intermediates for kernelization.
+// These carry raw PlaceIds from the owning arena. BuildLayout converts them
+// into final boundary structs with ResolvedObservation before they escape.
+
+struct PendingConnectionKernelEntry {
+  mir::ProcessId process_id;
+  mir::SlotId src_slot;
+  mir::SlotId dst_slot;
+  mir::SlotId trigger_slot;
+  common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
+  std::optional<mir::PlaceId> trigger_observed_place;
+};
+
+struct PendingCombTrigger {
+  mir::SlotId slot;
+  std::optional<mir::PlaceId> observed_place;
+};
+
+struct PendingCombKernelEntry {
+  mir::ProcessId process_id;
+  std::vector<PendingCombTrigger> triggers;
+  bool has_self_edge = false;
+};
+
+auto ResolveObservation(
+    const mir::Arena& arena, const DesignLayout& design_layout,
+    mir::SlotId design_global_slot, mir::PlaceId place_id)
+    -> std::optional<ResolvedObservation> {
+  auto slot_it = design_layout.slot_to_index.find(design_global_slot);
+  if (slot_it == design_layout.slot_to_index.end()) {
+    throw common::InternalError(
+        "ResolveObservation", std::format(
+                                  "design-global slot {} not found in layout",
+                                  design_global_slot.value));
+  }
+  const auto& spec = design_layout.slot_storage_specs[slot_it->second];
+  const auto& place = arena[place_id];
+  auto range =
+      ResolveByteRange(spec, design_layout.storage_spec_arena, place, nullptr);
+  if (range.kind != RangeKind::kPrecise) {
+    return std::nullopt;
+  }
+  return ResolvedObservation{
+      .byte_offset = range.byte_offset,
+      .byte_size = range.byte_size,
+      .bit_index = range.bit_index,
+  };
+}
+
 auto TryKernelizeConnection(
     const mir::Process& process, const mir::Arena& arena)
-    -> std::optional<ConnectionKernelEntry> {
+    -> std::optional<PendingConnectionKernelEntry> {
   // Must have exactly 1 basic block
   if (process.blocks.size() != 1) {
     return std::nullopt;
@@ -974,7 +1023,7 @@ auto TryKernelizeConnection(
         "TryKernelizeConnection", "connection trigger must be design-global");
   }
 
-  return ConnectionKernelEntry{
+  return PendingConnectionKernelEntry{
       .process_id = {},  // Set by caller
       .src_slot = mir::SlotId{static_cast<uint32_t>(src_place.root.id)},
       .dst_slot = mir::SlotId{static_cast<uint32_t>(dest_place.root.id)},
@@ -1037,7 +1086,7 @@ auto ResolveSignalToGlobalSlot(const mir::SignalRef& signal, uint32_t slot_base)
 // exactly one Wait terminator with kAnyChange triggers and no late-bound.
 auto TryKernelizeComb(
     const mir::Process& process, const mir::Arena& arena, uint32_t slot_base)
-    -> std::optional<CombKernelEntry> {
+    -> std::optional<PendingCombKernelEntry> {
   if (process.kind != mir::ProcessKind::kLooping) return std::nullopt;
 
   const mir::Wait* wait_term = nullptr;
@@ -1089,7 +1138,7 @@ auto TryKernelizeComb(
   if (wait_term == nullptr) return std::nullopt;
 
   // All triggers must be kAnyChange with no late-bound
-  std::vector<CombTrigger> triggers;
+  std::vector<PendingCombTrigger> triggers;
   triggers.reserve(wait_term->triggers.size());
   for (const auto& trigger : wait_term->triggers) {
     if (trigger.edge != common::EdgeKind::kAnyChange) return std::nullopt;
@@ -1115,7 +1164,7 @@ auto TryKernelizeComb(
     }
   }
 
-  return CombKernelEntry{
+  return PendingCombKernelEntry{
       .process_id = {},  // Set by caller
       .triggers = std::move(triggers),
       .has_self_edge = has_self_edge,
@@ -1392,10 +1441,22 @@ auto BuildLayout(
   // Kernelizable ones are separated out.
   for (mir::ProcessId proc_id : connection_processes) {
     const auto& process = design_arena[proc_id];
-    auto entry = TryKernelizeConnection(process, design_arena);
-    if (entry) {
-      entry->process_id = proc_id;
-      layout.connection_kernel_entries.push_back(*entry);
+    auto pending = TryKernelizeConnection(process, design_arena);
+    if (pending) {
+      std::optional<ResolvedObservation> obs;
+      if (pending->trigger_observed_place) {
+        obs = ResolveObservation(
+            design_arena, layout.design, pending->trigger_slot,
+            *pending->trigger_observed_place);
+      }
+      layout.connection_kernel_entries.push_back({
+          .process_id = proc_id,
+          .src_slot = pending->src_slot,
+          .dst_slot = pending->dst_slot,
+          .trigger_slot = pending->trigger_slot,
+          .trigger_edge = pending->trigger_edge,
+          .trigger_observation = obs,
+      });
     } else {
       layout.scheduled_processes.push_back({proc_id, ModuleIndex{}});
     }
@@ -1410,11 +1471,25 @@ auto BuildLayout(
       const auto& process = body_arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
 
-      auto comb =
+      auto pending =
           TryKernelizeComb(process, body_arena, plan.design_state_base_slot);
-      if (comb) {
-        comb->process_id = proc_id;
-        layout.comb_kernel_entries.push_back(std::move(*comb));
+      if (pending) {
+        std::vector<CombTrigger> resolved_triggers;
+        resolved_triggers.reserve(pending->triggers.size());
+        for (const auto& pt : pending->triggers) {
+          std::optional<ResolvedObservation> obs;
+          if (pt.observed_place) {
+            obs = ResolveObservation(
+                body_arena, layout.design, pt.slot, *pt.observed_place);
+          }
+          resolved_triggers.push_back({.slot = pt.slot, .observation = obs});
+        }
+        layout.comb_kernel_entries.push_back({
+            .process_id = proc_id,
+            .module_index = ModuleIndex{mi},
+            .triggers = std::move(resolved_triggers),
+            .has_self_edge = pending->has_self_edge,
+        });
       }
       layout.scheduled_processes.push_back({proc_id, ModuleIndex{mi}});
     }

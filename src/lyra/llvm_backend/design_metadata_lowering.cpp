@@ -425,8 +425,7 @@ auto PrepareBackEdgeSiteInputs(
   return entries;
 }
 
-auto ExtractConnectionDescriptorEntries(
-    const mir::Arena& mir_arena, const Layout& layout)
+auto ExtractConnectionDescriptorEntries(const Layout& layout)
     -> std::vector<realization::ConnectionDescriptorEntry> {
   const auto& kernel_entries = layout.connection_kernel_entries;
   std::vector<realization::ConnectionDescriptorEntry> entries;
@@ -455,20 +454,10 @@ auto ExtractConnectionDescriptorEntries(
     uint32_t trigger_byte_offset = 0;
     uint32_t trigger_byte_size = 0;
     uint8_t trigger_bit_index = 0;
-    if (entry.trigger_observed_place) {
-      auto trigger_slot_it = design.slot_to_index.find(entry.trigger_slot);
-      if (trigger_slot_it != design.slot_to_index.end()) {
-        const auto& trigger_spec =
-            design.slot_storage_specs[trigger_slot_it->second];
-        const auto& trigger_place = mir_arena[*entry.trigger_observed_place];
-        auto range = ResolveByteRange(
-            trigger_spec, design.storage_spec_arena, trigger_place, nullptr);
-        if (range.kind == RangeKind::kPrecise) {
-          trigger_byte_offset = range.byte_offset;
-          trigger_byte_size = range.byte_size;
-          trigger_bit_index = range.bit_index;
-        }
-      }
+    if (entry.trigger_observation) {
+      trigger_byte_offset = entry.trigger_observation->byte_offset;
+      trigger_byte_size = entry.trigger_observation->byte_size;
+      trigger_bit_index = entry.trigger_observation->bit_index;
     }
 
     entries.push_back({
@@ -487,8 +476,7 @@ auto ExtractConnectionDescriptorEntries(
   return entries;
 }
 
-auto PrepareCombKernelInputs(
-    const mir::Arena& mir_arena, const Layout& layout, size_t num_init)
+auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
     -> std::vector<realization::CombKernelInput> {
   const auto& comb_entries = layout.comb_kernel_entries;
   if (comb_entries.empty()) {
@@ -502,28 +490,44 @@ auto PrepareCombKernelInputs(
 
   auto num_module = layout.scheduled_processes.size() - num_init;
 
-  // Build ProcessId -> scheduled_process_index mapping.
+  // Build (module_index, process_id) -> scheduled_process_index mapping.
   // scheduled_process_index is 0-based from the first module process
   // (after init processes), matching the process meta table row order.
-  std::unordered_map<uint32_t, uint32_t> proc_id_to_scheduled_index;
+  struct ScheduledProcessKey {
+    ModuleIndex module_index;
+    mir::ProcessId process_id;
+    auto operator==(const ScheduledProcessKey&) const -> bool = default;
+  };
+  struct ScheduledProcessKeyHash {
+    auto operator()(const ScheduledProcessKey& k) const noexcept -> size_t {
+      return std::hash<uint64_t>{}(
+          (static_cast<uint64_t>(k.module_index.value) << 32) |
+          k.process_id.value);
+    }
+  };
+  std::unordered_map<ScheduledProcessKey, uint32_t, ScheduledProcessKeyHash>
+      key_to_scheduled_index;
   for (uint32_t pi = 0; pi < num_module; ++pi) {
-    auto proc_id = layout.scheduled_processes[num_init + pi].process_id;
-    proc_id_to_scheduled_index[proc_id.value] = pi;
+    const auto& sp = layout.scheduled_processes[num_init + pi];
+    key_to_scheduled_index[{
+        .module_index = sp.module_index, .process_id = sp.process_id}] = pi;
   }
 
   std::vector<realization::CombKernelInput> inputs;
   inputs.reserve(comb_entries.size());
 
   for (const auto& ck : comb_entries) {
-    auto it = proc_id_to_scheduled_index.find(ck.process_id.value);
-    if (it == proc_id_to_scheduled_index.end()) {
+    ScheduledProcessKey key{
+        .module_index = ck.module_index, .process_id = ck.process_id};
+    auto it = key_to_scheduled_index.find(key);
+    if (it == key_to_scheduled_index.end()) {
       throw common::InternalError(
           "PrepareCombKernelInputs",
           "comb kernel process not found in scheduled process list");
     }
 
-    // Resolve each symbolic trigger to a concrete byte range, then group
-    // by slot_id and merge into one trigger per (kernel, slot).
+    // Group pre-resolved observations by slot_id and merge into one trigger
+    // per (kernel, slot).
     struct SlotAccum {
       uint32_t byte_offset = 0;
       uint32_t byte_size = 0;
@@ -537,27 +541,7 @@ auto PrepareCombKernelInputs(
 
       if (accum.is_full_slot) continue;
 
-      if (!trigger.observed_place) {
-        accum.is_full_slot = true;
-        accum.byte_offset = 0;
-        accum.byte_size = 0;
-        continue;
-      }
-
-      auto trigger_slot_it = layout.design.slot_to_index.find(trigger.slot);
-      if (trigger_slot_it == layout.design.slot_to_index.end()) {
-        accum.is_full_slot = true;
-        accum.byte_offset = 0;
-        accum.byte_size = 0;
-        continue;
-      }
-      const auto& trigger_spec =
-          layout.design.slot_storage_specs[trigger_slot_it->second];
-      const auto& place = mir_arena[*trigger.observed_place];
-      auto range = ResolveByteRange(
-          trigger_spec, layout.design.storage_spec_arena, place, nullptr);
-
-      if (range.kind != RangeKind::kPrecise) {
+      if (!trigger.observation) {
         accum.is_full_slot = true;
         accum.byte_offset = 0;
         accum.byte_size = 0;
@@ -565,14 +549,15 @@ auto PrepareCombKernelInputs(
       }
 
       if (accum.byte_size == 0 && !accum.is_full_slot) {
-        // First precise range on this slot
-        accum.byte_offset = range.byte_offset;
-        accum.byte_size = range.byte_size;
+        accum.byte_offset = trigger.observation->byte_offset;
+        accum.byte_size = trigger.observation->byte_size;
       } else {
         // Merge: bounding range [min_offset, max_end)
         uint32_t existing_end = accum.byte_offset + accum.byte_size;
-        uint32_t new_end = range.byte_offset + range.byte_size;
-        accum.byte_offset = std::min(accum.byte_offset, range.byte_offset);
+        uint32_t new_end =
+            trigger.observation->byte_offset + trigger.observation->byte_size;
+        accum.byte_offset =
+            std::min(accum.byte_offset, trigger.observation->byte_offset);
         accum.byte_size = std::max(existing_end, new_end) - accum.byte_offset;
       }
     }

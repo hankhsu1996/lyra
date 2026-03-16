@@ -601,12 +601,11 @@ auto BuildDesignMetadata(
   const auto& type_arena = context.GetTypeArena();
 
   auto slot_meta_inputs = ExtractSlotMetaInputs(slot_info, layout.design);
-  auto conn_desc_entries =
-      ExtractConnectionDescriptorEntries(design_arena, layout);
+  auto conn_desc_entries = ExtractConnectionDescriptorEntries(layout);
   auto scheduled_inputs = PrepareScheduledProcessInputs(
       realization.instance_paths, *input.design, design_arena, input.diag_ctx,
       input.source_manager, layout.scheduled_processes, num_init);
-  auto comb_inputs = PrepareCombKernelInputs(design_arena, layout, num_init);
+  auto comb_inputs = PrepareCombKernelInputs(layout, num_init);
   auto back_edge_site_inputs =
       PrepareBackEdgeSiteInputs(context, input.diag_ctx, input.source_manager);
 
@@ -650,11 +649,24 @@ auto EmitCombWrappers(
     return {.funcs_ptr = null_ptr, .count = 0};
   }
 
-  // Build ProcessId -> module process index mapping.
-  std::unordered_map<uint32_t, uint32_t> proc_id_to_module_idx;
+  // Build (module_index, process_id) -> module process index mapping.
+  struct ProcKey {
+    ModuleIndex module_index;
+    mir::ProcessId process_id;
+    auto operator==(const ProcKey&) const -> bool = default;
+  };
+  struct ProcKeyHash {
+    auto operator()(const ProcKey& k) const noexcept -> size_t {
+      return std::hash<uint64_t>{}(
+          (static_cast<uint64_t>(k.module_index.value) << 32) |
+          k.process_id.value);
+    }
+  };
+  std::unordered_map<ProcKey, uint32_t, ProcKeyHash> proc_key_to_module_idx;
   for (uint32_t pi = 0; pi < num_module_processes; ++pi) {
-    auto proc_id = layout.scheduled_processes[num_init + pi].process_id;
-    proc_id_to_module_idx[proc_id.value] = pi;
+    const auto& sp = layout.scheduled_processes[num_init + pi];
+    proc_key_to_module_idx[{
+        .module_index = sp.module_index, .process_id = sp.process_id}] = pi;
   }
 
   // Process functions use pointer-out ABI: void(ptr, i32, ptr %out).
@@ -672,7 +684,8 @@ auto EmitCombWrappers(
   comb_func_constants.reserve(num_comb);
   for (uint32_t ki = 0; ki < num_comb; ++ki) {
     const auto& ck = layout.comb_kernel_entries[ki];
-    auto it = proc_id_to_module_idx.find(ck.process_id.value);
+    auto it = proc_key_to_module_idx.find(
+        {.module_index = ck.module_index, .process_id = ck.process_id});
     uint32_t module_idx = it->second;
     auto* proc_fn = process_funcs[num_init + module_idx];
 
