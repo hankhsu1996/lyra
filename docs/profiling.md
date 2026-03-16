@@ -18,7 +18,7 @@ sudo apt install -y valgrind kcachegrind
 
 ## Canonical profiling fixture
 
-All profiling runs use the **pipeline benchmark** (`tools/bench/fixtures/scheduling/clock-pipeline/`). This is the fixed profiling target -- do not use other designs for profiling unless comparing specific behaviors.
+All profiling runs use the **pipeline benchmark** (`tools/bench/fixtures/simulation-engine/clock-pipeline/`). This is the fixed profiling target -- do not use other designs for profiling unless comparing specific behaviors.
 
 The fixture must stay fixed so that profiles are comparable across gap rankings and before/after measurements. Changing the fixture invalidates all previous profile baselines.
 
@@ -45,7 +45,7 @@ If you must profile through `lyra run` (e.g., to include compile time), use `--t
 ```bash
 valgrind --tool=callgrind --trace-children=yes \
   --callgrind-out-file=callgrind.out \
-  ./bazel-bin/lyra -C tools/bench/fixtures/scheduling/clock-pipeline run
+  ./bazel-bin/lyra -C tools/bench/fixtures/simulation-engine/clock-pipeline run
 ```
 
 This produces separate output files per process. The simulation process will have the higher instruction count.
@@ -60,7 +60,7 @@ Compile the pipeline AOT binary with optimization. The AOT path produces a nativ
 
 ```bash
 bazel build -c opt //:lyra
-./bazel-bin/lyra -C tools/bench/fixtures/scheduling/clock-pipeline compile
+./bazel-bin/lyra -C tools/bench/fixtures/simulation-engine/clock-pipeline compile
 ```
 
 ### 2. Profile
@@ -68,7 +68,7 @@ bazel build -c opt //:lyra
 Run under Callgrind. Output goes to a fixed filename for easy comparison.
 
 ```bash
-cd tools/bench/fixtures/scheduling/clock-pipeline
+cd tools/bench/fixtures/simulation-engine/clock-pipeline
 valgrind --tool=callgrind \
   --callgrind-out-file=callgrind.out \
   out/Top
@@ -123,8 +123,8 @@ cp callgrind.out callgrind.before
 
 # After: rebuild with -c opt, reprofile
 bazel build -c opt //:lyra
-./bazel-bin/lyra -C tools/bench/fixtures/scheduling/clock-pipeline compile
-cd tools/bench/fixtures/scheduling/clock-pipeline
+./bazel-bin/lyra -C tools/bench/fixtures/simulation-engine/clock-pipeline compile
+cd tools/bench/fixtures/simulation-engine/clock-pipeline
 valgrind --tool=callgrind --callgrind-out-file=callgrind.out out/Top
 
 # Compare total instruction counts
@@ -145,10 +145,10 @@ For function-level comparison, open both files in KCachegrind side by side, or d
 
 Callgrind output files (`callgrind.out`, `callgrind.before`) are gitignored. They are local profiling artifacts, not checked in.
 
-The `tools/bench/fixtures/scheduling/clock-pipeline/` directory may contain these files after profiling. Clean up with:
+The `tools/bench/fixtures/simulation-engine/clock-pipeline/` directory may contain these files after profiling. Clean up with:
 
 ```bash
-rm -f tools/bench/fixtures/scheduling/clock-pipeline/callgrind.*
+rm -f tools/bench/fixtures/simulation-engine/clock-pipeline/callgrind.*
 ```
 
 ## Cost model

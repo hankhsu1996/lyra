@@ -3,7 +3,7 @@
 
 Discovers benchmark fixtures via bench.toml manifests, runs lyra (and
 optionally Verilator) against each fixture, collects compile-time and
-simulation-time metrics, and prints a family-grouped Markdown report.
+simulation-time metrics, and prints a Markdown report sorted by category.
 
 Usage:
     python3 tools/bench/run_benchmarks.py [--json PATH] [--trials N]
@@ -33,38 +33,36 @@ TIMEOUT_SECONDS = 120
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURES_ROOT = REPO_ROOT / "tools" / "bench" / "fixtures"
-
-TIER_DEFAULTS = {
-    "pr": {"default_trials": 1},
-    "nightly": {"default_trials": 3},
-}
+CONFIG_PATH = REPO_ROOT / "tools" / "bench" / "config.toml"
 
 BACKENDS = ["aot", "aot-two-state", "jit", "verilator"]
 
-REQUIRED_BENCHMARK_FIELDS = [
-    "name", "family", "focus", "primary", "regression_means",
-]
+
+@dataclass(frozen=True)
+class TierConfig:
+    profile: str
+    trials: int
 
 
 @dataclass(frozen=True)
 class Fixture:
     name: str
-    family: str
+    category: str
+    subcategory: str | None
+    intent: str
     focus: str
     primary: str
     secondary: tuple[str, ...]
-    regression_means: str
     path: Path
-    tiers: dict[str, bool]
-    default_params: dict[str, str | int | float | bool]
-    tier_params: dict[str, dict[str, str | int | float | bool]]
-    relevant_counters: tuple[str, ...]
+    scale: dict[str, dict[str, str | int | float | bool]]
 
 
 @dataclass
 class BenchResult:
     fixture: str = ""
-    family: str = ""
+    category: str = ""
+    subcategory: str | None = None
+    intent: str = ""
     focus: str = ""
     primary: str = ""
     secondary: tuple[str, ...] = ()
@@ -82,102 +80,181 @@ class BenchResult:
     error: str = ""
 
 
-def parse_manifest(manifest_path: Path) -> dict:
+# Manifest schema: maps field name -> (type, required, non_empty).
+# This is the single definition of the bench.toml [benchmark] shape.
+_BENCHMARK_SCHEMA: dict[str, tuple[type, bool, bool]] = {
+    "name":        (str,  True,  True),
+    "category":    (str,  True,  True),
+    "subcategory": (str,  False, False),
+    "intent":      (str,  True,  True),
+    "focus":       (str,  True,  True),
+    "primary":     (str,  True,  True),
+    "secondary":   (list, True,  False),
+}
+
+_ALLOWED_SECTIONS = {"benchmark", "scale"}
+
+
+def load_config() -> dict[str, TierConfig]:
+    """Load central tier configuration from config.toml."""
+    if not CONFIG_PATH.exists():
+        print(f"Error: config not found at {CONFIG_PATH}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(CONFIG_PATH, "rb") as f:
+        data = tomllib.load(f)
+
+    tiers_data = data.get("tiers")
+    if not tiers_data:
+        print("Error: config.toml missing [tiers] section", file=sys.stderr)
+        sys.exit(1)
+
+    tier_configs: dict[str, TierConfig] = {}
+    for tier_name, tier_data in tiers_data.items():
+        if "profile" not in tier_data or "trials" not in tier_data:
+            print(
+                f"Error: config.toml [tiers.{tier_name}] missing "
+                f"'profile' or 'trials'", file=sys.stderr)
+            sys.exit(1)
+        tier_configs[tier_name] = TierConfig(
+            profile=tier_data["profile"],
+            trials=tier_data["trials"],
+        )
+
+    return tier_configs
+
+
+def parse_fixture_manifest(
+    manifest_path: Path, fixtures_root: Path,
+) -> Fixture:
+    """Parse a bench.toml into a Fixture, or raise ValueError."""
     with open(manifest_path, "rb") as f:
-        return tomllib.load(f)
+        data = tomllib.load(f)
 
+    ctx = str(manifest_path)
 
-def validate_manifest(data: dict, manifest_path: Path) -> None:
+    # Reject unknown top-level sections
+    unexpected = set(data.keys()) - _ALLOWED_SECTIONS
+    if unexpected:
+        raise ValueError(f"{ctx}: unexpected sections: {unexpected}")
+
     bench = data.get("benchmark")
     if not bench:
-        raise ValueError(f"{manifest_path}: missing [benchmark] section")
+        raise ValueError(f"{ctx}: missing [benchmark] section")
 
-    for field_name in REQUIRED_BENCHMARK_FIELDS:
+    # Reject unknown benchmark fields
+    unexpected_fields = set(bench.keys()) - set(_BENCHMARK_SCHEMA.keys())
+    if unexpected_fields:
+        raise ValueError(
+            f"{ctx}: unexpected benchmark fields: {unexpected_fields}")
+
+    # Validate each field against the schema
+    for field_name, (expected_type, required, non_empty) in (
+        _BENCHMARK_SCHEMA.items()
+    ):
         if field_name not in bench:
-            raise ValueError(
-                f"{manifest_path}: missing benchmark.{field_name}")
-
-    if "secondary" not in bench:
-        raise ValueError(f"{manifest_path}: missing benchmark.secondary")
-
-    if "tiers" not in data:
-        raise ValueError(f"{manifest_path}: missing [tiers] section")
-
-    if "counters" not in data:
-        raise ValueError(f"{manifest_path}: missing [counters] section")
-    if "relevant" not in data["counters"]:
-        raise ValueError(
-            f"{manifest_path}: missing counters.relevant")
-
-    # Validate directory family matches manifest family
-    family_dir = manifest_path.parent.parent.name
-    if family_dir != bench["family"]:
-        raise ValueError(
-            f"{manifest_path}: directory family '{family_dir}' "
-            f"does not match manifest family '{bench['family']}'")
-
-    # Validate tier param blocks reference known tiers
-    params = data.get("params", {})
-    known_tiers = set(data["tiers"].keys())
-    for key in params:
-        if key == "defaults":
+            if required:
+                raise ValueError(f"{ctx}: missing benchmark.{field_name}")
             continue
-        if key not in known_tiers:
+        val = bench[field_name]
+        if not isinstance(val, expected_type):
             raise ValueError(
-                f"{manifest_path}: params.{key} references "
-                f"unknown tier (known: {known_tiers})")
+                f"{ctx}: benchmark.{field_name} must be "
+                f"{expected_type.__name__}, got {type(val).__name__}")
+        if non_empty and isinstance(val, str) and not val.strip():
+            raise ValueError(
+                f"{ctx}: benchmark.{field_name} must not be empty")
+
+    # secondary items must be strings
+    for i, item in enumerate(bench["secondary"]):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"{ctx}: benchmark.secondary[{i}] must be a string, "
+                f"got {type(item).__name__}")
+
+    # Parse [scale] profiles
+    scale_raw = data.get("scale")
+    if not scale_raw:
+        raise ValueError(f"{ctx}: missing [scale] section")
+
+    scale: dict[str, dict[str, str | int | float | bool]] = {}
+    for profile_name, profile_params in scale_raw.items():
+        if not isinstance(profile_params, dict) or not profile_params:
+            raise ValueError(
+                f"{ctx}: scale.{profile_name} must be a non-empty table")
+        for k, v in profile_params.items():
+            if not isinstance(v, (str, int, float, bool)):
+                raise ValueError(
+                    f"{ctx}: scale.{profile_name}.{k} must be a scalar, "
+                    f"got {type(v).__name__}")
+        scale[profile_name] = dict(profile_params)
+
+    # Directory path must match category[/subcategory]/name
+    name = bench["name"]
+    category = bench["category"]
+    subcategory = bench.get("subcategory")
+
+    try:
+        rel = (
+            manifest_path.parent.resolve()
+            .relative_to(fixtures_root.resolve())
+        )
+    except ValueError:
+        raise ValueError(f"{ctx}: fixture not under {fixtures_root}")
+
+    if subcategory:
+        expected = (category, subcategory, name)
+    else:
+        expected = (category, name)
+
+    if rel.parts != expected:
+        raise ValueError(
+            f"{ctx}: directory path '{'/'.join(rel.parts)}' does not match "
+            f"manifest '{'/'.join(expected)}'")
+
+    return Fixture(
+        name=name,
+        category=category,
+        subcategory=subcategory,
+        intent=bench["intent"],
+        focus=bench["focus"],
+        primary=bench["primary"],
+        secondary=tuple(bench["secondary"]),
+        path=manifest_path.parent,
+        scale=scale,
+    )
 
 
 def discover_fixtures(fixtures_root: Path) -> list[Fixture]:
-    """Discover, validate, and return fixtures sorted by (family, name)."""
+    """Discover, parse, and return fixtures sorted by (category, name)."""
     fixtures: list[Fixture] = []
     seen_names: dict[str, Path] = {}
 
     for manifest_path in sorted(fixtures_root.rglob("bench.toml")):
-        data = parse_manifest(manifest_path)
-        validate_manifest(data, manifest_path)
+        fixture = parse_fixture_manifest(manifest_path, fixtures_root)
 
-        bench = data["benchmark"]
-        name = bench["name"]
-
-        if name in seen_names:
+        if fixture.name in seen_names:
             raise ValueError(
-                f"Duplicate fixture name '{name}': "
-                f"{manifest_path} and {seen_names[name]}")
-        seen_names[name] = manifest_path
-
-        params = data.get("params", {})
-        default_params = dict(params.get("defaults", {}))
-        tier_params = {}
-        for key, val in params.items():
-            if key != "defaults":
-                tier_params[key] = dict(val)
-
-        fixture = Fixture(
-            name=name,
-            family=bench["family"],
-            focus=bench["focus"],
-            primary=bench["primary"],
-            secondary=tuple(bench.get("secondary", [])),
-            regression_means=bench["regression_means"],
-            path=manifest_path.parent,
-            tiers=dict(data["tiers"]),
-            default_params=default_params,
-            tier_params=tier_params,
-            relevant_counters=tuple(data["counters"].get("relevant", [])),
-        )
+                f"Duplicate fixture name '{fixture.name}': "
+                f"{manifest_path} and {seen_names[fixture.name]}")
+        seen_names[fixture.name] = manifest_path
         fixtures.append(fixture)
 
-    fixtures.sort(key=lambda f: (f.family, f.name))
+    fixtures.sort(key=lambda f: (f.category, f.subcategory or "", f.name))
     return fixtures
 
 
 def resolve_fixture_params(
-    fixture: Fixture, tier: str,
-) -> dict[str, str | int | float | bool]:
-    params = dict(fixture.default_params)
-    params.update(fixture.tier_params.get(tier, {}))
-    return params
+    fixture: Fixture, profile: str,
+) -> dict[str, str | int | float | bool] | None:
+    """Resolve parameters for a fixture given a scale profile.
+
+    Returns None if the fixture does not have the requested profile.
+    """
+    params = fixture.scale.get(profile)
+    if params is None:
+        return None
+    return dict(params)
 
 
 def read_stats_json(path: str) -> dict:
@@ -188,26 +265,31 @@ def read_stats_json(path: str) -> dict:
         return {}
 
 
-def compute_compile_time(stats: dict) -> float:
-    phases = stats.get("phases", {})
-    total = 0.0
-    for key, val in phases.items():
-        if key == "sim":
-            continue
-        total += val
-    return total
-
-
 def populate_from_stats(result: BenchResult, stats: dict) -> None:
+    """Populate phases, llvm_insts, and mir_stmts from stats JSON.
+
+    Does NOT set compile_s -- callers set that explicitly because the source
+    differs by backend: JIT derives it from phase timings, AOT uses wall time
+    of the compile subprocess.
+    """
     phases = stats.get("phases", {})
     result.phases = dict(phases)
-    result.compile_s = compute_compile_time(stats)
 
     llvm = stats.get("llvm", {})
     result.llvm_insts = llvm.get("instructions", 0)
 
     mir = stats.get("mir", {})
     result.mir_stmts = mir.get("mir_stmts", 0)
+
+
+def sum_compile_phases(stats: dict) -> float:
+    """Sum all phase timings except 'sim' to get compile time."""
+    total = 0.0
+    for key, val in stats.get("phases", {}).items():
+        if key == "sim":
+            continue
+        total += val
+    return total
 
 
 def get_rss_children_kb() -> int:
@@ -260,25 +342,32 @@ def build_verilator_define_args(
     return args
 
 
-def run_lyra_jit(
-    lyra: str, fixture: Fixture, params: dict,
-    stats_path: str, two_state: bool = False,
-) -> BenchResult:
-    backend_name = "jit-two-state" if two_state else "jit"
-    result = BenchResult(
-        fixture=fixture.name, family=fixture.family,
-        focus=fixture.focus, primary=fixture.primary,
-        secondary=fixture.secondary, backend=backend_name,
+def make_result(fixture: Fixture, backend: str, params: dict) -> BenchResult:
+    """Create a BenchResult pre-populated with fixture metadata."""
+    return BenchResult(
+        fixture=fixture.name,
+        category=fixture.category,
+        subcategory=fixture.subcategory,
+        intent=fixture.intent,
+        focus=fixture.focus,
+        primary=fixture.primary,
+        secondary=fixture.secondary,
+        backend=backend,
         params=dict(params),
     )
+
+
+def run_lyra_jit(
+    lyra: str, fixture: Fixture, params: dict,
+    stats_path: str,
+) -> BenchResult:
+    result = make_result(fixture, "jit", params)
     cmd = [
         lyra, "-C", str(fixture.path), "run",
         "--backend=jit",
         "--stats-out", stats_path,
     ]
     cmd.extend(build_define_args(params))
-    if two_state:
-        cmd.append("--two-state")
     try:
         t0 = time.monotonic()
         proc = subprocess.run(
@@ -299,6 +388,7 @@ def run_lyra_jit(
             return result
 
         populate_from_stats(result, stats)
+        result.compile_s = sum_compile_phases(stats)
         result.sim_s = max(0.0, result.wall_s - result.compile_s)
 
     except subprocess.TimeoutExpired:
@@ -314,12 +404,7 @@ def run_lyra_aot(
     stats_path: str, output_dir: str, two_state: bool = False,
 ) -> BenchResult:
     backend_name = "aot-two-state" if two_state else "aot"
-    result = BenchResult(
-        fixture=fixture.name, family=fixture.family,
-        focus=fixture.focus, primary=fixture.primary,
-        secondary=fixture.secondary, backend=backend_name,
-        params=dict(params),
-    )
+    result = make_result(fixture, backend_name, params)
 
     cmd = [
         lyra, "-C", str(fixture.path), "compile",
@@ -396,12 +481,7 @@ def parse_lyra_toml(project_dir: str) -> tuple[str, list[str]]:
 def run_verilator(
     fixture: Fixture, params: dict, work_dir: str,
 ) -> BenchResult:
-    result = BenchResult(
-        fixture=fixture.name, family=fixture.family,
-        focus=fixture.focus, primary=fixture.primary,
-        secondary=fixture.secondary, backend="verilator",
-        params=dict(params),
-    )
+    result = make_result(fixture, "verilator", params)
 
     verilator = shutil.which("verilator")
     if not verilator:
@@ -476,13 +556,10 @@ def run_one_trial(
     tag = f"{fixture.name}-{backend}-{trial_idx}"
     stats_path = os.path.join(tmpdir, f"{tag}.json")
 
-    two_state = backend.endswith("-two-state")
-    base_backend = backend.removesuffix("-two-state")
-
-    if base_backend == "jit":
-        return run_lyra_jit(
-            lyra, fixture, params, stats_path, two_state)
-    elif base_backend == "aot":
+    if backend == "jit":
+        return run_lyra_jit(lyra, fixture, params, stats_path)
+    elif backend in ("aot", "aot-two-state"):
+        two_state = backend == "aot-two-state"
         aot_out = os.path.join(tmpdir, tag)
         os.makedirs(aot_out, exist_ok=True)
         return run_lyra_aot(
@@ -492,9 +569,9 @@ def run_one_trial(
         os.makedirs(ver_dir, exist_ok=True)
         return run_verilator(fixture, params, ver_dir)
     else:
-        return BenchResult(
-            fixture=fixture.name, family=fixture.family,
-            backend=backend, error=f"unknown backend: {backend}")
+        result = make_result(fixture, backend, params)
+        result.error = f"unknown backend: {backend}"
+        return result
 
 
 def pick_median_trial(trials: list[BenchResult]) -> BenchResult:
@@ -535,28 +612,6 @@ def fmt_time(val: float) -> str:
     return f"{int(round(val * 1000)):,}"
 
 
-def fmt_int(val: int) -> str:
-    if val == 0:
-        return "-"
-    return f"{val:,}"
-
-
-def fmt_float(val: float) -> str:
-    if val == 0.0:
-        return "-"
-    return f"{val:.1f}"
-
-
-def group_by_family(
-    results: list[BenchResult],
-) -> dict[str, list[BenchResult]]:
-    """Group results into {family: [results]}."""
-    grouped: dict[str, list[BenchResult]] = {}
-    for r in results:
-        grouped.setdefault(r.family, []).append(r)
-    return grouped
-
-
 def group_fixture_backends(
     results: list[BenchResult],
 ) -> dict[str, dict[str, BenchResult]]:
@@ -570,10 +625,13 @@ def group_fixture_backends(
 def get_ordered_fixtures(
     results: list[BenchResult],
 ) -> list[str]:
-    """Get fixture names in stable order (by family, then name)."""
+    """Get fixture names in stable order (by category, subcategory, name)."""
     seen = set()
     ordered = []
-    for r in sorted(results, key=lambda r: (r.family, r.fixture)):
+    for r in sorted(
+        results,
+        key=lambda r: (r.category, r.subcategory or "", r.fixture),
+    ):
         if r.fixture not in seen:
             seen.add(r.fixture)
             ordered.append(r.fixture)
@@ -581,24 +639,29 @@ def get_ordered_fixtures(
 
 
 def print_markdown(
-    results: list[BenchResult], num_trials: int, tier: str,
+    results: list[BenchResult], num_trials: int, tier: str, profile: str,
+    num_discovered: int, num_runnable: int,
+    skipped: list[tuple[str, str]],
 ) -> None:
     trial_note = f"{num_trials} (median)" if num_trials > 1 else "1"
     by_fixture = group_fixture_backends(results)
     ordered = get_ordered_fixtures(results)
 
-    # Build family -> [fixture_name] map preserving order
-    family_fixtures: dict[str, list[str]] = {}
-    for r in sorted(results, key=lambda r: (r.family, r.fixture)):
-        if r.family not in family_fixtures:
-            family_fixtures[r.family] = []
-        if r.fixture not in family_fixtures[r.family]:
-            family_fixtures[r.family].append(r.fixture)
-
     print()
     print("## Lyra Benchmark Report")
     print()
-    print(f"> git: `{get_git_sha()}` | tier: {tier} | trials: {trial_note}")
+    print(
+        f"> git: `{get_git_sha()}` | tier: {tier} | "
+        f"profile: {profile} | trials: {trial_note}")
+    print(
+        f"> Discovered {num_discovered} fixtures, "
+        f"{num_runnable} runnable for tier '{tier}'")
+
+    if skipped:
+        skip_items = [f"{name} ({reason})" for name, reason in skipped]
+        print(f">   Skipped: {', '.join(skip_items)}")
+    else:
+        print(">   Skipped: (none)")
 
     # Table 1: Simulation Performance
     print()
@@ -677,7 +740,9 @@ def print_markdown(
 def result_to_dict(r: BenchResult) -> dict:
     return {
         "fixture": r.fixture,
-        "family": r.family,
+        "category": r.category,
+        "subcategory": r.subcategory,
+        "intent": r.intent,
         "focus": r.focus,
         "primary": r.primary,
         "secondary": list(r.secondary),
@@ -697,12 +762,13 @@ def result_to_dict(r: BenchResult) -> dict:
 
 
 def write_json(
-    results: list[BenchResult], path: str, tier: str,
+    results: list[BenchResult], path: str, tier: str, profile: str,
 ) -> None:
     data = {
-        "version": 2,
+        "schema_version": 3,
         "git": get_git_sha(),
         "tier": tier,
+        "profile": profile,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "results": [result_to_dict(r) for r in results],
     }
@@ -712,13 +778,15 @@ def write_json(
 
 
 def main() -> None:
+    tier_configs = load_config()
+
     parser = argparse.ArgumentParser(description="Lyra performance benchmarks")
     parser.add_argument(
         "--json", default=None, help="Write JSON results to this path")
     parser.add_argument(
         "--trials", type=int, default=None, help="Override number of trials")
     parser.add_argument(
-        "--tier", choices=["pr", "nightly"], default="nightly",
+        "--tier", choices=sorted(tier_configs.keys()), default="nightly",
         help="Benchmark tier (default: nightly)")
     parser.add_argument(
         "--ci", action="store_true",
@@ -737,27 +805,48 @@ def main() -> None:
         print("Error: no fixtures found", file=sys.stderr)
         sys.exit(1)
 
-    # Filter by tier
+    # Resolve tier config
     tier_name = args.tier
-    tier_fixtures = [f for f in all_fixtures if f.tiers.get(tier_name, False)]
-    if not tier_fixtures:
-        print(
-            f"Error: no fixtures enabled for tier '{tier_name}'",
-            file=sys.stderr)
-        sys.exit(1)
-
-    tier_config = TIER_DEFAULTS.get(tier_name, {"default_trials": 1})
+    tier_cfg = tier_configs[tier_name]
+    profile = tier_cfg.profile
     num_trials = (
         args.trials if args.trials is not None
-        else tier_config["default_trials"])
+        else tier_cfg.trials)
+
+    # Filter fixtures by profile availability
+    runnable: list[tuple[Fixture, dict]] = []
+    skipped: list[tuple[str, str]] = []
+
+    for fixture in all_fixtures:
+        params = resolve_fixture_params(fixture, profile)
+        if params is not None:
+            runnable.append((fixture, params))
+        else:
+            skipped.append((fixture.name, f"no '{profile}' profile"))
+
+    num_discovered = len(all_fixtures)
+    num_runnable = len(runnable)
+
+    if not runnable:
+        print(
+            f"Error: no fixtures runnable for tier '{tier_name}' "
+            f"(profile: {profile})", file=sys.stderr)
+        sys.exit(1)
+
+    # Print discovery summary
+    print(
+        f"Discovered {num_discovered} fixtures, "
+        f"{num_runnable} runnable for tier '{tier_name}' "
+        f"(profile: {profile})", file=sys.stderr)
+    if skipped:
+        skip_items = [f"{name} ({reason})" for name, reason in skipped]
+        print(f"  Skipped: {', '.join(skip_items)}", file=sys.stderr)
 
     all_results: list[BenchResult] = []
     has_failure = False
 
     with tempfile.TemporaryDirectory(prefix="lyra-bench-") as tmpdir:
-        for fixture in tier_fixtures:
-            params = resolve_fixture_params(fixture, tier_name)
-
+        for fixture, params in runnable:
             for backend in BACKENDS:
                 r = run_fixture_backend(
                     lyra, fixture, params,
@@ -766,10 +855,12 @@ def main() -> None:
                 if r.error and r.error != "verilator not found":
                     has_failure = True
 
-    print_markdown(all_results, num_trials, tier_name)
+    print_markdown(
+        all_results, num_trials, tier_name, profile,
+        num_discovered, num_runnable, skipped)
 
     if args.json:
-        write_json(all_results, args.json, tier_name)
+        write_json(all_results, args.json, tier_name, profile)
         print(f"JSON written to {args.json}", file=sys.stderr)
 
     if has_failure and not args.ci:
