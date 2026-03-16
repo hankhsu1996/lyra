@@ -12,6 +12,20 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+// Codegen-time execution contract for a generated process body.
+// This is not a runtime value. It selects which codegen policy applies
+// to the generated function: what state to load, whether to emit dirty
+// tracking, whether to support resume dispatch, etc.
+enum class ProcessExecutionKind {
+  // Init processes: no engine, no dirty tracking, no suspend/resume.
+  // Design-slot stores are plain writes with no compare or notify.
+  kInit,
+  // Normal scheduled simulation: engine guaranteed non-null, dirty tracking
+  // enabled, suspend/resume supported. Design-slot stores use compare +
+  // dirty-mark with no engine-null runtime check.
+  kSimulation,
+};
+
 // Per-wait-site entry produced during process codegen.
 // Index = wait_site_id (assigned sequentially via Context::NextWaitSiteId).
 struct WaitSiteEntry {
@@ -27,11 +41,13 @@ struct ProcessCodegenResult {
   std::vector<WaitSiteEntry> wait_sites;
 };
 
-// Generate a complete process function with resume dispatch.
-// The function signature is: void process_N(void* state, uint32_t resume_block)
+// Generate a standalone process function.
+// The execution_kind selects the codegen contract: init processes get direct
+// stores and no engine access; simulation processes get full dirty tracking
+// and resume dispatch.
 auto GenerateProcessFunction(
-    Context& context, const mir::Process& process, const std::string& name)
-    -> Result<ProcessCodegenResult>;
+    Context& context, const mir::Process& process, const std::string& name,
+    ProcessExecutionKind execution_kind) -> Result<ProcessCodegenResult>;
 
 // Generate a template process function with extra arguments for sharing.
 // Signature: void(ptr state, i32 resume, ptr this_ptr, i32 inst_id,
@@ -39,6 +55,7 @@ auto GenerateProcessFunction(
 // this_ptr points to instance storage; the wrapper computes it from
 // design_ptr + base_byte_offset. The context must have template-mode fields
 // configured before calling.
+// Simulation-only: shared module processes always run with a non-null engine.
 auto GenerateSharedProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
     -> Result<ProcessCodegenResult>;

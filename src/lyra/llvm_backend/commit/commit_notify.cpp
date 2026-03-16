@@ -15,6 +15,9 @@ namespace lyra::lowering::mir_to_llvm {
 
 void CommitNotifyUnionMemcpyIfDesignSlot(
     Context& ctx, mir::PlaceId target, uint32_t byte_size) {
+  // Init contract: no engine, no notification needed.
+  if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) return;
+
   auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
   if (!wt_or_err) {
     throw common::InternalError(
@@ -40,6 +43,9 @@ void CommitNotifyUnionMemcpyIfDesignSlot(
 }
 
 void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
+  // Init contract: no engine, no notification needed.
+  if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) return;
+
   auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
 
   // Conditional: no-op if not design slot
@@ -73,6 +79,9 @@ auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> SignalIdExpr {
 }
 
 void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
+  // Init contract: no engine, no notification needed.
+  if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) return;
+
   auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
   if (!signal_id_opt.has_value()) {
     return;  // No-op for non-design slots

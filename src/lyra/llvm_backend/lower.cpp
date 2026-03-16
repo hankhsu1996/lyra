@@ -715,11 +715,15 @@ auto CompileDesignProcesses(const LoweringInput& input)
             : *input.mir_arena;
     const auto& mir_process = proc_arena[bp.process_id];
 
-    // Init and connection processes are standalone (no module binding)
+    // Init and connection processes are standalone (no module binding).
+    // Init processes use the init contract (no engine, no dirty tracking).
+    // Connection processes are simulation-time and use the simulation contract.
     if (i < num_init || bp.module_index.value == ModuleIndex::kNone) {
       Context::ArenaScope arena_scope(*context, input.mir_arena);
+      auto execution_kind = (i < num_init) ? ProcessExecutionKind::kInit
+                                           : ProcessExecutionKind::kSimulation;
       auto func_result = GenerateProcessFunction(
-          *context, mir_process, std::format("process_{}", i));
+          *context, mir_process, std::format("process_{}", i), execution_kind);
       if (!func_result) return std::unexpected(func_result.error());
       process_funcs.push_back(func_result->function);
       all_wait_sites.insert(

@@ -501,12 +501,56 @@ auto Context::GetEnginePointer() -> llvm::Value* {
   return engine_ptr_;
 }
 
+void Context::SetDesignStoreMode(DesignStoreMode mode) {
+  design_store_mode_ = mode;
+}
+
+auto Context::GetDesignStoreMode() const -> DesignStoreMode {
+  return design_store_mode_;
+}
+
 void Context::SetFirstDirtySeenPtr(llvm::Value* ptr) {
   first_dirty_seen_ptr_ = ptr;
 }
 
 auto Context::GetFirstDirtySeenPtr() -> llvm::Value* {
   return first_dirty_seen_ptr_;
+}
+
+auto Context::SaveExecutionContractState() -> ExecutionContractState {
+  return {
+      .design_store_mode = design_store_mode_,
+      .state_ptr = state_ptr_,
+      .design_ptr = design_ptr_,
+      .frame_ptr = frame_ptr_,
+      .engine_ptr = engine_ptr_,
+      .first_dirty_seen_ptr = first_dirty_seen_ptr_,
+  };
+}
+
+void Context::RestoreExecutionContractState(
+    const ExecutionContractState& state) {
+  design_store_mode_ = state.design_store_mode;
+  state_ptr_ = state.state_ptr;
+  design_ptr_ = state.design_ptr;
+  frame_ptr_ = state.frame_ptr;
+  engine_ptr_ = state.engine_ptr;
+  first_dirty_seen_ptr_ = state.first_dirty_seen_ptr;
+}
+
+ExecutionContractScope::ExecutionContractScope(
+    Context& ctx, DesignStoreMode mode)
+    : ctx_(ctx), saved_(ctx.SaveExecutionContractState()) {
+  ctx.SetDesignStoreMode(mode);
+  ctx.SetStatePointer(nullptr);
+  ctx.SetDesignPointer(nullptr);
+  ctx.SetFramePointer(nullptr);
+  ctx.SetEnginePointer(nullptr);
+  ctx.SetFirstDirtySeenPtr(nullptr);
+}
+
+ExecutionContractScope::~ExecutionContractScope() {
+  ctx_.RestoreExecutionContractState(saved_);
 }
 
 auto Context::TakeOwnership() -> std::pair<

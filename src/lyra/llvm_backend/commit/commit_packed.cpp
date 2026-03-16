@@ -59,16 +59,33 @@ auto IsInlineStoreSize(uint32_t byte_size) -> bool {
 // Emit inline compare+store+conditional dirty mark for canonical bits.
 // Precondition: canonical_bits is an integer in canonical storage form.
 //
-// For full-slot dirty marks (dirty_off == 0, dirty_size == 0) when the
-// first-dirty bitmap pointer is available, emits an inline first-dirty
-// guard: loads delta_seen[slot_id] and skips the runtime call if the
-// slot is already dirty in the current delta. Only the rare first-dirty
-// case calls LyraMarkDirtyFirst. This eliminates repeated function call
-// overhead in tight inner loops.
+// Dispatches on DesignStoreMode:
+// - kDirect: plain store, no compare, no dirty-mark (init processes)
+// - kNotify: compare + store + dirty-mark with engine guaranteed non-null
+//
+// For kNotify with full-slot dirty marks when the first-dirty bitmap pointer
+// is available, emits an inline first-dirty guard that skips the runtime
+// call if the slot is already dirty in the current delta.
 void EmitInlineStore(
     Context& ctx, llvm::Value* canonical_bits, const WriteTarget& target) {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
+
+  if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) {
+    // Init contract: plain store, no compare, no dirty-mark.
+    builder.CreateStore(canonical_bits, target.ptr);
+    return;
+  }
+
+  // Notify contract: compare + store + conditional dirty-mark.
+  // Both kNotifySimulation and kNotifyCrossContext require engine_ptr to
+  // exist as an LLVM value on Context (even if it may be null at runtime
+  // for kNotifyCrossContext).
+  if (ctx.GetEnginePointer() == nullptr) {
+    throw common::InternalError(
+        "EmitInlineStore", "notify store mode requires engine_ptr on Context");
+  }
+
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* bits_type = canonical_bits->getType();
@@ -77,12 +94,17 @@ void EmitInlineStore(
   builder.CreateStore(canonical_bits, target.ptr);
 
   auto* changed = builder.CreateICmpNE(old_bits, canonical_bits, "changed");
-  auto* engine_not_null = builder.CreateICmpNE(
-      ctx.GetEnginePointer(),
-      llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(llvm_ctx)),
-      "engine.nonnull");
-  auto* should_mark =
-      builder.CreateAnd(changed, engine_not_null, "should_mark");
+
+  // For kNotifyGuarded (cross-context callables like user functions),
+  // engine may be null at runtime. Guard with a branch.
+  llvm::Value* should_mark = changed;
+  if (ctx.GetDesignStoreMode() == DesignStoreMode::kNotifyCrossContext) {
+    auto* engine_not_null = builder.CreateICmpNE(
+        ctx.GetEnginePointer(),
+        llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(llvm_ctx)),
+        "engine.nonnull");
+    should_mark = builder.CreateAnd(changed, engine_not_null, "should_mark");
+  }
 
   auto* fn = builder.GetInsertBlock()->getParent();
   auto* done_bb = llvm::BasicBlock::Create(llvm_ctx, "store_done", fn);
@@ -160,8 +182,20 @@ void EmitInlineStore(
   builder.SetInsertPoint(done_bb);
 }
 
+// Store canonical bytes to a design slot via memcpy (no notification).
+// Used for init processes and as a subroutine for non-inline stores.
+void EmitDirectCanonicalBytesStore(
+    Context& ctx, llvm::Value* canonical_buf, const WriteTarget& target,
+    uint32_t byte_size) {
+  auto& builder = ctx.GetBuilder();
+  builder.CreateMemCpy(
+      target.ptr, llvm::MaybeAlign(), canonical_buf, llvm::MaybeAlign(),
+      byte_size);
+}
+
 // Materialize canonical storage bytes and call LyraStorePacked.
 // LyraStorePacked consumes canonical bytes by pointer.
+// Simulation contract only: engine must be non-null.
 void EmitStoreCanonicalBytesCall(
     Context& ctx, llvm::Value* canonical_buf, const WriteTarget& target,
     uint32_t byte_size) {
@@ -177,8 +211,11 @@ void EmitStoreCanonicalBytesCall(
        llvm::ConstantInt::get(i32_ty, target.dirty_size)});
 }
 
-// Store to design slot with runtime notification.
+// Store to design slot with mode-appropriate notification.
 // All decisions driven by SlotStorageSpec. No LLVM type introspection.
+//
+// In kDirect mode (init): plain store/memcpy, no compare, no dirty-mark.
+// In kNotify mode (simulation): compare + store + conditional dirty-mark.
 //
 // Precondition: for packed values, new_value must already be at storage
 // lane width (caller must have invoked LowerToStorageLaneWidth).
@@ -192,6 +229,7 @@ void StoreDesignWithNotify(
 
   auto& builder = ctx.GetBuilder();
   uint32_t byte_size = spec.TotalByteSize();
+  bool is_direct = ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit;
 
   bool is_scalar = std::holds_alternative<PackedStorageSpec>(spec.data) ||
                    std::holds_alternative<FloatStorageSpec>(spec.data);
@@ -208,11 +246,14 @@ void StoreDesignWithNotify(
       auto* temp = entry_builder.CreateAlloca(
           canonical->getType(), nullptr, "canon_buf");
       builder.CreateStore(canonical, temp);
-      EmitStoreCanonicalBytesCall(ctx, temp, target, byte_size);
+      if (is_direct) {
+        EmitDirectCanonicalBytesStore(ctx, temp, target, byte_size);
+      } else {
+        EmitStoreCanonicalBytesCall(ctx, temp, target, byte_size);
+      }
     }
   } else {
-    // Aggregate: materialize canonical bytes into entry-block buffer,
-    // then pass to LyraStorePacked. No typed LLVM object is stored directly.
+    // Aggregate: materialize canonical bytes into entry-block buffer.
     auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
     auto* func = builder.GetInsertBlock()->getParent();
     llvm::IRBuilder<> entry_builder(
@@ -223,7 +264,11 @@ void StoreDesignWithNotify(
     builder.CreateMemSet(
         temp, builder.getInt8(0), byte_size, llvm::MaybeAlign());
     EmitStoreToCanonicalStorage(builder, temp, new_value, spec, arena);
-    EmitStoreCanonicalBytesCall(ctx, temp, target, byte_size);
+    if (is_direct) {
+      EmitDirectCanonicalBytesStore(ctx, temp, target, byte_size);
+    } else {
+      EmitStoreCanonicalBytesCall(ctx, temp, target, byte_size);
+    }
   }
 }
 
