@@ -1891,15 +1891,8 @@ auto GenerateSharedProcessFunction(
     context.EndFunction();
   }
 
-  // Clear shared-body-specific state. Execution-contract fields
-  // (state_ptr, design_ptr, frame_ptr, engine_ptr, first_dirty_seen_ptr,
-  // design_store_mode) are restored by contract_scope destructor.
-  context.SetSlotAddressingMode(SlotAddressingMode::kDesignGlobal);
-  context.SetThisPointer(nullptr);
-  context.SetDynamicInstanceId(nullptr);
-  context.SetSignalIdOffset(nullptr);
-  context.SetUnstableSlotOffsetsPtr(nullptr);
-
+  // contract_scope destructor restores all execution-contract state
+  // including shared-body fields (slot_addressing, this_ptr, etc.).
   VerifyLlvmFunction(func, "GenerateSharedProcessFunction");
   return ProcessCodegenResult{
       .function = func, .wait_sites = std::move(wait_sites)};
@@ -3097,15 +3090,7 @@ auto DefineMirFunction(
   // Clean up function scope. Execution-contract fields are restored by
   // contract_scope destructor; only module-scoped fields need manual cleanup.
   context.EndFunction();
-  if (is_module_scoped) {
-    context.SetSlotAddressingMode(SlotAddressingMode::kDesignGlobal);
-    context.SetThisPointer(nullptr);
-    context.SetSignalIdOffset(nullptr);
-    context.SetDynamicInstanceId(nullptr);
-    context.SetSpecSlotLayout(nullptr);
-    context.SetUnstableSlotOffsetsPtr(nullptr);
-  }
-
+  // contract_scope destructor restores all execution-contract state.
   return {};
 }
 

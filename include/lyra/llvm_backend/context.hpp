@@ -78,6 +78,25 @@ enum class NotificationPolicy {
   kDeferred,
 };
 
+// How module-local slots (kModuleSlot) are addressed in the current lowering
+// scope. Set explicitly per function scope -- never inferred from nullable
+// fields.
+//
+// kSpecializationLocal: Module slots accessed via this_ptr +
+//   rel_byte_offsets. Signal identity is dynamic (signal_id_offset +
+//   local_id). Used in shared module behavioral process bodies and
+//   module-scoped user functions.
+//
+// kDesignGlobal: Design-global slots accessed via design_ptr + struct GEP.
+//   Signal identity is a constant design-global slot ID. Used in standalone
+//   non-module processes (init, connection). Module-local (kModuleSlot)
+//   references are invalid in this mode -- they indicate an architecture
+//   violation and will throw InternalError.
+enum class SlotAddressingMode {
+  kDesignGlobal,
+  kSpecializationLocal,
+};
+
 // Snapshot of per-function execution-contract state on Context.
 // Used by ExecutionContractScope for save/restore.
 //
@@ -85,19 +104,23 @@ enum class NotificationPolicy {
 // affects codegen semantics and is set per function/process scope.
 // If you add a new mutable field to Context that controls codegen
 // behavior (store mode, notification policy, cached pointers, etc.),
-// you must either:
-//   (a) add it here so ExecutionContractScope saves/restores it, or
-//   (b) document it as local scratch with its own explicit lifecycle.
-// Failure to do so causes state leakage between process compilations
-// that share the same Context.
+// add it here so ExecutionContractScope saves/restores it. Failure to
+// do so causes state leakage between process compilations that share
+// the same Context.
 struct ExecutionContractState {
   DesignStoreMode design_store_mode = DesignStoreMode::kNotifySimulation;
   NotificationPolicy notification_policy = NotificationPolicy::kImmediate;
+  SlotAddressingMode slot_addressing = SlotAddressingMode::kDesignGlobal;
   llvm::Value* state_ptr = nullptr;
   llvm::Value* design_ptr = nullptr;
   llvm::Value* frame_ptr = nullptr;
   llvm::Value* engine_ptr = nullptr;
   llvm::Value* first_dirty_seen_ptr = nullptr;
+  llvm::Value* this_ptr = nullptr;
+  llvm::Value* dynamic_instance_id = nullptr;
+  llvm::Value* signal_id_offset = nullptr;
+  const SpecSlotLayout* spec_slot_layout = nullptr;
+  llvm::Value* unstable_slot_offsets_ptr = nullptr;
 };
 
 // RAII guard that sets execution-contract state on Context and restores it
@@ -136,25 +159,6 @@ class NotificationPolicyScope {
  private:
   Context& ctx_;
   NotificationPolicy saved_;
-};
-
-// How module-local slots (kModuleSlot) are addressed in the current lowering
-// scope. Set explicitly per function scope -- never inferred from nullable
-// fields.
-//
-// kSpecializationLocal: Module slots accessed via this_ptr +
-//   rel_byte_offsets. Signal identity is dynamic (signal_id_offset +
-//   local_id). Used in shared module behavioral process bodies and
-//   module-scoped user functions.
-//
-// kDesignGlobal: Design-global slots accessed via design_ptr + struct GEP.
-//   Signal identity is a constant design-global slot ID. Used in standalone
-//   non-module processes (init, connection). Module-local (kModuleSlot)
-//   references are invalid in this mode -- they indicate an architecture
-//   violation and will throw InternalError.
-enum class SlotAddressingMode {
-  kDesignGlobal,
-  kSpecializationLocal,
 };
 
 // Shared context for MIR -> LLVM lowering
@@ -867,11 +871,7 @@ class Context {
   DesignStoreMode design_store_mode_ = DesignStoreMode::kNotifySimulation;
   NotificationPolicy notification_policy_ = NotificationPolicy::kImmediate;
 
-  // Per-function scope fields NOT in ExecutionContractState.
-  // These have their own explicit set/clear lifecycle managed by the
-  // specific generator that uses them (GenerateSharedProcessFunction,
-  // GenerateMirFunction). They must be explicitly reset to defaults
-  // after each use. Not saved/restored by ExecutionContractScope.
+  // Per-function shared-body state. Saved/restored by ExecutionContractScope.
   SlotAddressingMode slot_addressing_ = SlotAddressingMode::kDesignGlobal;
   llvm::Value* this_ptr_ = nullptr;
   llvm::Value* dynamic_instance_id_ = nullptr;
