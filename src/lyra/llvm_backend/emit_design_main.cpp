@@ -635,8 +635,7 @@ struct CombWrappersResult {
 
 auto EmitCombWrappers(
     Context& context, const Layout& layout,
-    const std::vector<llvm::Function*>& process_funcs, size_t num_init,
-    uint32_t num_module_processes) -> CombWrappersResult {
+    const std::vector<llvm::Function*>& process_funcs) -> CombWrappersResult {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
@@ -647,26 +646,6 @@ auto EmitCombWrappers(
   auto num_comb = static_cast<uint32_t>(layout.comb_kernel_entries.size());
   if (num_comb == 0) {
     return {.funcs_ptr = null_ptr, .count = 0};
-  }
-
-  // Build (module_index, process_id) -> module process index mapping.
-  struct ProcKey {
-    ModuleIndex module_index;
-    mir::ProcessId process_id;
-    auto operator==(const ProcKey&) const -> bool = default;
-  };
-  struct ProcKeyHash {
-    auto operator()(const ProcKey& k) const noexcept -> size_t {
-      return std::hash<uint64_t>{}(
-          (static_cast<uint64_t>(k.module_index.value) << 32) |
-          k.process_id.value);
-    }
-  };
-  std::unordered_map<ProcKey, uint32_t, ProcKeyHash> proc_key_to_module_idx;
-  for (uint32_t pi = 0; pi < num_module_processes; ++pi) {
-    const auto& sp = layout.scheduled_processes[num_init + pi];
-    proc_key_to_module_idx[{
-        .module_index = sp.module_index, .process_id = sp.process_id}] = pi;
   }
 
   // Process functions use pointer-out ABI: void(ptr, i32, ptr %out).
@@ -680,14 +659,28 @@ auto EmitCombWrappers(
   auto* proc_fn_ty =
       llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty, ptr_ty}, false);
 
+  if (layout.num_module_process_base > layout.scheduled_processes.size()) {
+    throw common::InternalError(
+        "EmitCombWrappers",
+        "num_module_process_base exceeds scheduled_processes.size()");
+  }
+  auto num_module =
+      layout.scheduled_processes.size() - layout.num_module_process_base;
+
   std::vector<llvm::Constant*> comb_func_constants;
   comb_func_constants.reserve(num_comb);
   for (uint32_t ki = 0; ki < num_comb; ++ki) {
     const auto& ck = layout.comb_kernel_entries[ki];
-    auto it = proc_key_to_module_idx.find(
-        {.module_index = ck.module_index, .process_id = ck.process_id});
-    uint32_t module_idx = it->second;
-    auto* proc_fn = process_funcs[num_init + module_idx];
+    if (ck.scheduled_process_index >= num_module) {
+      throw common::InternalError(
+          "EmitCombWrappers",
+          std::format(
+              "scheduled_process_index {} exceeds module process "
+              "count {}",
+              ck.scheduled_process_index, num_module));
+    }
+    auto* proc_fn = process_funcs
+        [layout.num_module_process_base + ck.scheduled_process_index];
 
     auto* wrapper = llvm::Function::Create(
         comb_fn_ty, llvm::Function::InternalLinkage,
@@ -897,8 +890,7 @@ auto EmitDesignMain(
 
     auto wait_site_meta = EmitWaitSiteMetaTable(context, session.wait_sites);
 
-    auto comb_wrappers = EmitCombWrappers(
-        context, layout, process_funcs, num_init, packed_layout.count);
+    auto comb_wrappers = EmitCombWrappers(context, layout, process_funcs);
 
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, comb_wrappers,
