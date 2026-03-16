@@ -103,6 +103,7 @@ auto LowerProcess(
     hir::ModuleBodyId body_id) -> Result<mir::ProcessId> {
   Context ctx{
       .mir_arena = &mir_arena,
+      .design_arena = decl_view.design_arena,
       .hir_arena = input.hir_arena,
       .type_arena = input.type_arena,
       .constant_arena = input.constant_arena,
@@ -116,6 +117,7 @@ auto LowerProcess(
       .temp_types = {},
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = decl_view.functions,
+      .design_functions = decl_view.design_functions,
       .generated_functions = generated_functions,
       .return_slot = std::nullopt,
       .return_type = input.builtin_types.void_type,

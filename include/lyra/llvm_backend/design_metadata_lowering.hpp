@@ -31,9 +31,11 @@ auto ExtractSlotMetaInputs(
     -> std::vector<realization::SlotMetaInput>;
 
 // Extract scheduled process inputs into plain link structs.
+// Resolves each process from its owning arena: design arena for
+// standalone processes, body arena for module-bound processes.
 auto PrepareScheduledProcessInputs(
-    const std::vector<std::string>& instance_paths, const mir::Arena& mir_arena,
-    const lowering::DiagnosticContext* diag_ctx,
+    const std::vector<std::string>& instance_paths, const mir::Design& design,
+    const mir::Arena& design_arena, const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager,
     const std::vector<struct ScheduledProcess>& scheduled_processes,
     size_t num_init) -> std::vector<realization::ScheduledProcessInput>;

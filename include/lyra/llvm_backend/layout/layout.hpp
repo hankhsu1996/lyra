@@ -222,9 +222,10 @@ struct Layout {
       std::span<const mir::ProcessId> init_processes,
       std::span<const mir::ProcessId> connection_processes,
       std::span<const struct LayoutModulePlan> module_plans,
-      const mir::Arena& arena, const TypeArena& types,
-      DesignLayout design_layout, llvm::LLVMContext& ctx,
-      const llvm::DataLayout& dl, bool force_two_state) -> Layout;
+      const mir::Design& design, const mir::Arena& design_arena,
+      const TypeArena& types, DesignLayout design_layout,
+      llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
+      -> Layout;
 
   // Pre-computed byte offset of each instance's slot base in DesignState.
   // Parallel to placement.instances. Access via GetInstanceBaseByteOffset.
@@ -316,6 +317,7 @@ auto BuildDesignLayout(
 // Do not store beyond the call scope.
 struct LayoutModulePlan {
   std::span<const mir::ProcessId> body_processes;
+  mir::ModuleBodyId body_id;
   uint32_t design_state_base_slot;
   uint32_t slot_count;
 };
@@ -328,8 +330,9 @@ struct LayoutModulePlan {
 auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
     std::span<const mir::ProcessId> connection_processes,
-    std::span<const LayoutModulePlan> module_plans, const mir::Arena& arena,
-    const TypeArena& types, DesignLayout design_layout, llvm::LLVMContext& ctx,
+    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
+    const mir::Arena& design_arena, const TypeArena& types,
+    DesignLayout design_layout, llvm::LLVMContext& ctx,
     const llvm::DataLayout& dl, bool force_two_state) -> Layout;
 
 // Discriminant for byte range resolution results.

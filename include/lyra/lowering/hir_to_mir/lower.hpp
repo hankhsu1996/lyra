@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
@@ -49,8 +50,15 @@ struct LoweringStats {
 
 struct LoweringResult {
   mir::Design design;
-  std::unique_ptr<mir::Arena> mir_arena;
-  OriginMap origin_map;
+  // Design-level arena for design-global MIR (package places, package
+  // functions, init processes, connection processes). Body-local MIR
+  // is in each ModuleBody's embedded arena.
+  std::unique_ptr<mir::Arena> design_arena;
+  // Design-global origins (package init processes, generated functions).
+  OriginMap design_origins;
+  // Per-body origins, indexed by ModuleBodyId. Body-local MIR origins
+  // stay body-local -- not merged into design_origins.
+  std::vector<std::vector<OriginEntry>> body_origins;
   LoweringStats stats;
   mir::CompiledBindingPlan compiled_bindings;
 };

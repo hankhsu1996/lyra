@@ -23,19 +23,24 @@ namespace lyra::lowering::hir_to_mir {
 
 auto LowerModule(
     const hir::ModuleBody& body, const LoweringInput& input,
-    mir::Arena& mir_arena, OriginMap* origin_map,
+    mir::Arena body_arena, const mir::Arena& design_arena,
     const DesignDeclarations& decls, const BodyLocalDecls& body_decls,
-    hir::ModuleBodyId body_id) -> Result<mir::ModuleBody> {
+    hir::ModuleBodyId body_id) -> Result<MirBodyLoweringResult> {
   mir::ModuleBody result;
 
   // Body-local slot descriptors come from specialization-local collection,
   // not from design-global declaration state.
   result.slots = body_decls.slots;
 
-  // Phase 1: Pre-allocate mir::FunctionIds and build symbol map
-  // Start with design-wide functions (package functions) so module code can
-  // call them.
-  SymbolToMirFunctionMap symbol_to_mir_function = decls.functions;
+  // Body-local origin storage. All origins produced during body lowering
+  // are isolated here, not in a shared origin map.
+  OriginMap body_origins;
+
+  // Phase 1: Pre-allocate mir::FunctionIds and build symbol map.
+  // Contains only body-local FunctionIds. Package functions are resolved
+  // as DesignFunctionRef by ResolveCallTarget.
+  SymbolToMirFunctionMap symbol_to_mir_function;
+
   std::vector<std::pair<hir::FunctionId, mir::FunctionId>> function_pairs;
 
   for (hir::FunctionId hir_func_id : body.functions) {
@@ -44,7 +49,7 @@ auto LowerModule(
     // Reserve the mir::FunctionId with frozen signature
     mir::FunctionSignature sig = BuildFunctionSignature(
         hir_func, *input.symbol_table, *input.type_arena);
-    mir::FunctionId mir_func_id = mir_arena.ReserveFunction(std::move(sig));
+    mir::FunctionId mir_func_id = body_arena.ReserveFunction(std::move(sig));
     symbol_to_mir_function[hir_func.symbol] = mir_func_id;
     function_pairs.emplace_back(hir_func_id, mir_func_id);
     result.functions.push_back(mir_func_id);
@@ -52,38 +57,38 @@ auto LowerModule(
 
   // Phase 2: Lower function bodies (map is complete, recursion works)
   // Module body lowering uses body-local places (kModuleSlot) for module-owned
-  // state, with design-global places as fallback for package/global references.
+  // state. Design-global places are created lazily by LookupPlace with
+  // explicit kDesignGlobal roots.
   DeclView decl_view{
       .body_places = &body_decls.places,
       .design_places = &decls.design_places,
       .functions = &symbol_to_mir_function,
       .slots = &decls.slots,
-      .body_slots = &result.slots};
+      .body_slots = &result.slots,
+      .design_arena = &design_arena,
+      .design_functions = &decls.functions};
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
     Result<mir::Function> mir_func_result = LowerFunctionBody(
-        hir_func, input, mir_arena, decl_view, origin_map, body_id);
+        hir_func, input, body_arena, decl_view, &body_origins, body_id);
     if (!mir_func_result) {
       return std::unexpected(mir_func_result.error());
     }
     mir::Function mir_func = std::move(*mir_func_result);
 
-    // Record function and parameter origins (caller has both IDs)
-    if (origin_map != nullptr) {
-      mir_func.origin = origin_map->Record(mir_func_id, hir_func_id, body_id);
+    // Record function and parameter origins
+    mir_func.origin = body_origins.Record(mir_func_id, hir_func_id, body_id);
 
-      // Record per-parameter origins for prologue error reporting
-      mir_func.param_origins.reserve(hir_func.parameters.size());
-      for (uint32_t i = 0; i < hir_func.parameters.size(); ++i) {
-        PrologueParamRef mir_ref{.func = mir_func_id, .param_index = i};
-        FunctionParamRef hir_ref{.func = hir_func_id, .param_index = i};
-        mir_func.param_origins.push_back(
-            origin_map->Record(mir_ref, hir_ref, body_id));
-      }
+    mir_func.param_origins.reserve(hir_func.parameters.size());
+    for (uint32_t i = 0; i < hir_func.parameters.size(); ++i) {
+      PrologueParamRef mir_ref{.func = mir_func_id, .param_index = i};
+      FunctionParamRef hir_ref{.func = hir_func_id, .param_index = i};
+      mir_func.param_origins.push_back(
+          body_origins.Record(mir_ref, hir_ref, body_id));
     }
 
-    mir_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
+    body_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
   }
 
   // Phase 3: Lower module processes (can reference functions)
@@ -92,7 +97,7 @@ auto LowerModule(
   for (hir::ProcessId proc_id : body.processes) {
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
     Result<mir::ProcessId> mir_proc_result = LowerProcess(
-        proc_id, hir_process, input, mir_arena, decl_view, origin_map,
+        proc_id, hir_process, input, body_arena, decl_view, &body_origins,
         &generated_functions, body_id);
     if (!mir_proc_result) {
       return std::unexpected(mir_proc_result.error());
@@ -110,7 +115,13 @@ auto LowerModule(
     (void)task_id;
   }
 
-  return result;
+  // Move body arena into the result body unit
+  result.arena = std::move(body_arena);
+
+  return MirBodyLoweringResult{
+      .body = std::move(result),
+      .origins = std::move(body_origins).TakeEntries(),
+  };
 }
 
 }  // namespace lyra::lowering::hir_to_mir

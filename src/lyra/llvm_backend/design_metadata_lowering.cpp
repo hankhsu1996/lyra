@@ -23,6 +23,7 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/design.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
@@ -334,8 +335,8 @@ auto ExtractSlotMetaInputs(
 }
 
 auto PrepareScheduledProcessInputs(
-    const std::vector<std::string>& instance_paths, const mir::Arena& mir_arena,
-    const lowering::DiagnosticContext* diag_ctx,
+    const std::vector<std::string>& instance_paths, const mir::Design& design,
+    const mir::Arena& design_arena, const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager,
     const std::vector<ScheduledProcess>& scheduled_processes, size_t num_init)
     -> std::vector<realization::ScheduledProcessInput> {
@@ -345,13 +346,30 @@ auto PrepareScheduledProcessInputs(
         "scheduled_processes.size() < num_init");
   }
 
+  // Build module_index -> body_id mapping from design elements.
+  // module_index corresponds to the i-th Module element (skipping Packages).
+  std::vector<mir::ModuleBodyId> module_body_ids;
+  for (const auto& elem : design.elements) {
+    if (const auto* mod = std::get_if<mir::Module>(&elem)) {
+      module_body_ids.push_back(mod->body_id);
+    }
+  }
+
   std::vector<realization::ScheduledProcessInput> entries;
   auto num_module = scheduled_processes.size() - num_init;
   entries.reserve(num_module);
 
   for (size_t i = num_init; i < scheduled_processes.size(); ++i) {
     const auto& bp = scheduled_processes[i];
-    const auto& proc = mir_arena[bp.process_id];
+    // Resolve from the correct arena: body arena for module-bound,
+    // design arena for standalone.
+    const mir::Arena& proc_arena =
+        (bp.module_index && bp.module_index.value < module_body_ids.size())
+            ? design.module_bodies
+                  .at(module_body_ids[bp.module_index.value].value)
+                  .arena
+            : design_arena;
+    const auto& proc = proc_arena[bp.process_id];
 
     std::string inst_path;
     if (bp.module_index) {

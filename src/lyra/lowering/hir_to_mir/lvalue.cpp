@@ -302,8 +302,7 @@ auto LowerElementAccessLvalue(
       .info = mir::IndexProjection{.index = index_operand},
       .origin = origin,
   };
-  mir::PlaceId result_place =
-      ctx.mir_arena->DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
 
   mir::Operand total_validity =
       ComposeValidity(base.validity, our_validity, builder);
@@ -335,8 +334,7 @@ auto LowerMemberAccessLvalue(
       .info = mir::FieldProjection{.field_index = data.field_index},
       .origin = origin,
   };
-  mir::PlaceId result_place =
-      ctx.mir_arena->DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
 
   // Field access is always valid - validity inherited from base.
   // Writeback propagated from base (for AA copy-in/copy-out).
@@ -371,8 +369,7 @@ auto LowerUnionMemberAccessLvalue(
               .member_index = static_cast<uint32_t>(data.member_index)},
       .origin = origin,
   };
-  mir::PlaceId result_place =
-      ctx.mir_arena->DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
 
   // Union member access is always valid - validity inherited from base
   return LvalueResult{
@@ -423,8 +420,7 @@ auto LowerPackedElementSelectLvalue(
           },
       .origin = origin,
   };
-  mir::PlaceId result_place =
-      ctx.mir_arena->DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
 
   return LvalueResult{
       .place = result_place,
@@ -571,8 +567,7 @@ auto LowerIndexedPartSelectLvalue(
           },
       .origin = origin,
   };
-  mir::PlaceId result_place =
-      ctx.mir_arena->DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
 
   return LvalueResult{
       .place = result_place,
@@ -605,8 +600,7 @@ auto LowerPackedFieldAccessLvalue(
           },
       .origin = origin,
   };
-  mir::PlaceId result_place =
-      ctx.mir_arena->DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
 
   // Packed field access with constant offset is always valid
   // Just inherit base validity
@@ -676,8 +670,7 @@ auto LowerRangeSelectLvalue(
           },
       .origin = origin,
   };
-  mir::PlaceId result_place =
-      ctx.mir_arena->DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
 
   // Range select with constant bounds is always valid - inherit base validity
   return LvalueResult{
@@ -805,7 +798,7 @@ auto LowerPureLvaluePlaceImpl(hir::ExpressionId expr_id, const Context& ctx)
               .info = mir::FieldProjection{.field_index = data.field_index},
               .origin = common::OriginId::Invalid(),
           };
-          return ctx.mir_arena->DerivePlace(*base_result, std::move(proj));
+          return ctx.DerivePlace(*base_result, std::move(proj));
 
         } else if constexpr (std::is_same_v<
                                  T, hir::UnionMemberAccessExpressionData>) {
@@ -819,7 +812,7 @@ auto LowerPureLvaluePlaceImpl(hir::ExpressionId expr_id, const Context& ctx)
                       .member_index = static_cast<uint32_t>(data.member_index)},
               .origin = common::OriginId::Invalid(),
           };
-          return ctx.mir_arena->DerivePlace(*base_result, std::move(proj));
+          return ctx.DerivePlace(*base_result, std::move(proj));
 
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedFieldAccessExpressionData>) {
@@ -840,7 +833,7 @@ auto LowerPureLvaluePlaceImpl(hir::ExpressionId expr_id, const Context& ctx)
                   },
               .origin = common::OriginId::Invalid(),
           };
-          return ctx.mir_arena->DerivePlace(*base_result, std::move(proj));
+          return ctx.DerivePlace(*base_result, std::move(proj));
 
         } else if constexpr (std::is_same_v<
                                  T, hir::ElementAccessExpressionData>) {
@@ -895,7 +888,7 @@ auto LowerPureLvaluePlaceImpl(hir::ExpressionId expr_id, const Context& ctx)
               .info = mir::IndexProjection{.index = index_operand},
               .origin = common::OriginId::Invalid(),
           };
-          return ctx.mir_arena->DerivePlace(*base_result, std::move(proj));
+          return ctx.DerivePlace(*base_result, std::move(proj));
 
         } else if constexpr (std::is_same_v<
                                  T, hir::PackedElementSelectExpressionData>) {

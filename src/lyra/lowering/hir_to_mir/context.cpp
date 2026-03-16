@@ -111,6 +111,26 @@ auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
   if (design_places != nullptr) {
     auto design_it = design_places->find(sym);
     if (design_it != design_places->end()) {
+      // During body lowering (design_arena set): create a body-local Place
+      // with the design-global root. This is not import -- it is normal
+      // body-local MIR that references design-global storage through an
+      // explicit kDesignGlobal root.
+      //
+      // Invariant: design-global places for top-level declarations have
+      // only a root (kDesignGlobal, slot_id, type) and empty projections.
+      // The copy reads canonical root data, not deep MIR structure.
+      if (design_arena != nullptr) {
+        auto cache_it = design_place_cache.find(sym);
+        if (cache_it != design_place_cache.end()) {
+          return cache_it->second;
+        }
+        const mir::Place& design_place = (*design_arena)[design_it->second];
+        mir::PlaceId body_place_id =
+            mir_arena->AddPlace(mir::Place(design_place));
+        design_place_cache[sym] = body_place_id;
+        return body_place_id;
+      }
+      // Design-level lowering: return design-arena PlaceId directly.
       return design_it->second;
     }
   }
@@ -118,6 +138,42 @@ auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
   throw common::InternalError(
       "HIR to MIR lowering",
       std::format("symbol {} not found in place mapping", sym.value));
+}
+
+auto Context::ResolveCallTarget(SymbolId sym) const -> mir::Callee {
+  // During body lowering: check design-global functions first.
+  // Safe because SymbolIds are globally unique (monotonic from SymbolTable).
+  // Package functions (design_functions) and body-local functions
+  // (symbol_to_mir_function) have disjoint SymbolId sets by construction.
+  if (design_functions != nullptr) {
+    auto design_it = design_functions->find(sym);
+    if (design_it != design_functions->end()) {
+      return mir::DesignFunctionRef{.symbol = sym};
+    }
+  }
+  // Body-local or design-level: resolve as arena-local FunctionId
+  return ResolveCallee(sym);
+}
+
+auto Context::ResolveCallSignature(const mir::Callee& callee) const
+    -> const mir::FunctionSignature& {
+  return std::visit(
+      common::Overloaded{
+          [this](mir::FunctionId func_id) -> const mir::FunctionSignature& {
+            return (*mir_arena)[func_id].signature;
+          },
+          [this](const mir::DesignFunctionRef& ref)
+              -> const mir::FunctionSignature& {
+            auto it = design_functions->find(ref.symbol);
+            return (*design_arena)[it->second].signature;
+          },
+          [](SystemTfOpcode) -> const mir::FunctionSignature& {
+            throw common::InternalError(
+                "ResolveCallSignature",
+                "cannot resolve signature for SystemTfOpcode");
+          },
+      },
+      callee);
 }
 
 auto Context::ResolveCallee(SymbolId sym) const -> mir::FunctionId {

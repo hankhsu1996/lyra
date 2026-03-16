@@ -215,12 +215,12 @@ All groups' diagnostics concatenated in group order. If any diagnostic is an err
 
 | Thing                               | Current state                                 | Body unit shape                                                                                                    |
 | ----------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `hir::Arena` (body content)         | Single shared arena, all groups write         | Per-body owned arena. Body-local IDs.                                                                              |
-| `mir::Arena` (body content)         | Single shared arena                           | Per-body owned arena. Body-local IDs.                                                                              |
+| `hir::Arena` (body content)         | Per-body owned arena (Cut 1)                  | Per-body owned arena. Body-local IDs.                                                                              |
+| `mir::Arena` (body content)         | Per-body owned arena (Cut 2)                  | Per-body owned arena. Body-local IDs.                                                                              |
 | Body-local symbols                  | Appended to global SymbolTable during Phase 1 | Group-local symbol environment. Stays in body unit. No current consumer needs global publication.                  |
 | Lowering scopes                     | Appended to global ScopeTable                 | Ephemeral group-local state. Not merged.                                                                           |
-| `DiagnosticSink`                    | Per-body sink in AST->HIR; shared in HIR->MIR | Per-body diagnostic vector. Concatenated in Phase 2.                                                               |
-| `OriginMap` entries                 | Single shared map                             | Per-body origin entries. Collected in Phase 2.                                                                     |
+| `DiagnosticSink`                    | Per-body sink in AST->HIR (Cut 3a)            | Per-body diagnostic vector. Concatenated in Phase 2.                                                               |
+| `OriginMap` entries                 | Per-body in both layers (Cut 2/3a)            | Per-body origin entries. Body-local permanently.                                                                   |
 | `Context::temp_counter`             | Non-atomic global counter                     | Per-body counter (names only need body-local uniqueness).                                                          |
 | `SymbolRegistrar` (Phase 1 portion) | Shared registrar with mixed read/write        | Phase 1 uses a group-local registrar that reads from frozen Phase 0 state and writes to body-local symbol storage. |
 

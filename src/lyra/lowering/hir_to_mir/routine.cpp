@@ -111,6 +111,7 @@ auto LowerFunctionBody(
     hir::ModuleBodyId body_id) -> Result<mir::Function> {
   Context ctx{
       .mir_arena = &mir_arena,
+      .design_arena = decl_view.design_arena,
       .hir_arena = input.hir_arena,
       .type_arena = input.type_arena,
       .constant_arena = input.constant_arena,
@@ -124,6 +125,7 @@ auto LowerFunctionBody(
       .temp_types = {},
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = decl_view.functions,
+      .design_functions = decl_view.design_functions,
       .return_slot = std::nullopt,
       .return_type = function.return_type,
       .design_slots = decl_view.slots,
@@ -178,6 +180,8 @@ auto LowerFunctionBody(
   // here
   return mir::Function{
       .signature = {},
+      .runtime_kind = mir::RuntimeProgramKind::kNone,
+      .canonical_symbol = kInvalidSymbolId,
       .entry = mir::BasicBlockId{entry_idx.value},
       .blocks = std::move(blocks),
       .local_types = std::move(ctx.local_types),

@@ -4,15 +4,27 @@
 #include <optional>
 #include <variant>
 
+#include "lyra/common/symbol_types.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::mir {
 
-// Callee discriminator: user function vs system TF.
-// Uses existing SystemTfOpcode to avoid parallel dispatch universe.
-using Callee = std::variant<FunctionId, SystemTfOpcode>;
+// Explicit cross-domain reference to a design-global callable.
+// Used when body MIR calls any design-global function (package functions,
+// design-level generated functions). The SymbolId identifies the callable
+// in the design-global function namespace. The backend resolves this to
+// a pre-compiled LLVM Function* by symbol identity.
+struct DesignFunctionRef {
+  SymbolId symbol;
+};
+
+// Callee discriminator: body-local function, design-global function, or
+// system TF. FunctionId is always arena-local (body or design arena).
+// DesignFunctionRef is an explicit cross-domain reference resolved by
+// symbol identity.
+using Callee = std::variant<FunctionId, DesignFunctionRef, SystemTfOpcode>;
 
 // Argument passing mode for writeback parameters only.
 enum class PassMode : uint8_t {

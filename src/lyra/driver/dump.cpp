@@ -114,7 +114,7 @@ auto DumpMir(const CompilationInput& input) -> int {
   }
 
   mir::Dumper dumper(
-      mir_result->mir_arena.get(), hir_result.type_arena.get(), &std::cout);
+      mir_result->design_arena.get(), hir_result.type_arena.get(), &std::cout);
   dumper.Dump(mir_result->design);
 
   return 0;
@@ -176,17 +176,21 @@ auto DumpLlvm(const CompilationInput& input) -> int {
 
   // Create diagnostic context for LLVM backend error reporting
   lowering::OriginMapLookup origin_lookup(
-      &mir_result->origin_map, &hir_result.design, hir_result.hir_arena.get());
+      &mir_result->design_origins, &mir_result->body_origins,
+      &hir_result.design, hir_result.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,
-      .mir_arena = mir_result->mir_arena.get(),
+      .mir_arena = mir_result->design_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = hir_result.source_manager.get(),
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = {},
+      .feature_flags = 0,
+      .signal_trace_path = {},
+      .iteration_limit = 0,
       .force_two_state = input.two_state,
   };
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;

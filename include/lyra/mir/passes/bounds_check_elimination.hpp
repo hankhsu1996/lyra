@@ -36,6 +36,6 @@ namespace lyra::mir::passes {
 //   - Direct IV used as IndexInRange operand
 //   - No derived indices (i + k), no nested proofs, no dynamic arrays
 //   - Non-overlapping canonical loops (nested loops have distinct IVs)
-void EliminateRedundantBoundsChecks(const Design& design, Arena& arena);
+void EliminateRedundantBoundsChecks(Design& design, Arena& design_arena);
 
 }  // namespace lyra::mir::passes

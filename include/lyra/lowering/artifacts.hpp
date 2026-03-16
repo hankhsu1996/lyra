@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
@@ -16,8 +17,13 @@ namespace lyra::lowering {
 struct LoweringArtifacts {
   // Owned: MIR output
   mir::Design design;
-  std::unique_ptr<mir::Arena> mir_arena;
-  OriginMap origin_map;
+  // Design-level arena for design-global MIR. Body-local MIR is in
+  // each ModuleBody's embedded arena.
+  std::unique_ptr<mir::Arena> design_arena;
+  // Design-global origins (package init processes, generated functions).
+  OriginMap design_origins;
+  // Per-body origins, indexed by ModuleBodyId.
+  std::vector<std::vector<OriginEntry>> body_origins;
 
   // Non-owning references (caller guarantees lifetime)
   const hir::Arena* hir_arena = nullptr;

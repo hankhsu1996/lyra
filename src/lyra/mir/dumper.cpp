@@ -245,6 +245,11 @@ void Dumper::Dump(const Design& design) {
 }
 
 void Dumper::DumpModuleBody(const ModuleBody& body, ModuleBodyId body_id) {
+  // Scoped arena swap for body-local content
+  const Arena* saved_arena = arena_;
+  arena_ = &body.arena;
+  auto restore = [&] { arena_ = saved_arena; };
+
   PrintIndent();
   *out_ << std::format("body_{} {{\n", body_id.value);
   Indent();
@@ -259,6 +264,8 @@ void Dumper::DumpModuleBody(const ModuleBody& body, ModuleBodyId body_id) {
   Dedent();
   PrintIndent();
   *out_ << "}\n";
+
+  restore();
 }
 
 void Dumper::Dump(const Package& /*package*/) {
@@ -338,6 +345,8 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
                   using C = std::decay_t<decltype(c)>;
                   if constexpr (std::is_same_v<C, FunctionId>) {
                     return std::format("@fn{}", c.value);
+                  } else if constexpr (std::is_same_v<C, DesignFunctionRef>) {
+                    return std::format("@design_fn(sym={})", c.symbol.value);
                   } else {
                     return ToString(c);
                   }

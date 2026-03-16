@@ -9,6 +9,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/call.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -110,6 +111,12 @@ struct DeclView {
   const SymbolToMirFunctionMap* functions = nullptr;
   const std::vector<mir::SlotDesc>* slots = nullptr;       // design-global
   const std::vector<mir::SlotDesc>* body_slots = nullptr;  // body-local
+  // Design arena for cross-domain place resolution during body lowering.
+  // Null for design-level lowering (init processes, connection processes).
+  const mir::Arena* design_arena = nullptr;
+  // Design-global function map for DesignFunctionRef resolution.
+  // Null for design-level lowering.
+  const SymbolToMirFunctionMap* design_functions = nullptr;
 };
 
 // Result of AllocLocal - provides both the PlaceId and the local slot index.
@@ -123,6 +130,12 @@ struct LocalAllocation {
 // Context for lowering within a process or function activation.
 struct Context {
   mir::Arena* mir_arena;
+
+  // Design arena for cross-domain place resolution. When set (body lowering),
+  // LookupPlace creates body-local Places for design-global symbols instead
+  // of returning design-arena PlaceIds. When null (design-level lowering),
+  // design_places PlaceIds are returned directly.
+  const mir::Arena* design_arena = nullptr;
 
   const hir::Arena* hir_arena;
   const TypeArena* type_arena;
@@ -138,6 +151,11 @@ struct Context {
   const PlaceMap* design_places = nullptr;
   PlaceMap local_places;
 
+  // Cache of body-local PlaceIds for design-global symbols.
+  // Avoids creating duplicate body-local Places for the same design-global
+  // symbol within one body. Only used during body lowering.
+  mutable PlaceMap design_place_cache;
+
   int next_local_id = 0;
   int next_temp_id = 0;
 
@@ -152,8 +170,15 @@ struct Context {
 
   BuiltinTypes builtin_types;
 
-  // Function-specific: map symbols to MIR function IDs (for call lowering)
+  // Function-specific: map symbols to MIR function IDs (for call lowering).
+  // During body lowering, contains only body-local FunctionIds.
   const SymbolToMirFunctionMap* symbol_to_mir_function = nullptr;
+
+  // Design-global function map for cross-domain callee resolution.
+  // When set, ResolveCallTarget checks here first and returns
+  // DesignFunctionRef for package functions. When null (design-level
+  // lowering), all functions are resolved as arena-local FunctionIds.
+  const SymbolToMirFunctionMap* design_functions = nullptr;
 
   // Optional sink for dynamically generated functions (e.g., observer
   // programs). If set, LowerStrobeEffect will push program FunctionIds here.
@@ -185,10 +210,36 @@ struct Context {
   // Throws InternalError if symbol not found (compiler bug, not user error).
   auto LookupPlace(SymbolId sym) const -> mir::PlaceId;
 
+  // Resolve a PlaceId to its Place from the correct arena.
+  // All PlaceIds in body MIR are body-arena-local, so this resolves
+  // from mir_arena.
+  [[nodiscard]] auto ResolvePlace(mir::PlaceId id) const -> const mir::Place& {
+    return (*mir_arena)[id];
+  }
+
+  // Create a derived place in the body arena from a resolved base Place.
+  // Convenience wrapper that resolves the base and calls Arena::DerivePlace.
+  auto DerivePlace(mir::PlaceId base, mir::Projection proj) const
+      -> mir::PlaceId {
+    return mir_arena->DerivePlace(ResolvePlace(base), std::move(proj));
+  }
+
   // Resolve a function symbol to its pre-allocated mir::FunctionId.
   // Throws InternalError if symbol not found (HIR guarantees all functions
   // are pre-allocated, so missing = compiler bug).
   [[nodiscard]] auto ResolveCallee(SymbolId sym) const -> mir::FunctionId;
+
+  // Resolve a function symbol to a domain-aware callee reference.
+  // During body lowering: returns DesignFunctionRef for package functions,
+  // FunctionId for body-local functions.
+  // During design-level lowering: returns FunctionId for all functions.
+  [[nodiscard]] auto ResolveCallTarget(SymbolId sym) const -> mir::Callee;
+
+  // Resolve a callee to its function signature from the correct arena.
+  // FunctionId reads from the body/design arena (mir_arena).
+  // DesignFunctionRef reads from the design arena via symbol lookup.
+  [[nodiscard]] auto ResolveCallSignature(const mir::Callee& callee) const
+      -> const mir::FunctionSignature&;
 
   [[nodiscard]] auto GetBitType() const -> TypeId {
     return builtin_types.bit_type;
