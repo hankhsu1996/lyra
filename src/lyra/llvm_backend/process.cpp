@@ -52,6 +52,7 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/passes/canonical_loop_analysis.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
@@ -94,6 +95,23 @@ void ValidateInitProcessContract(const mir::Process& process) {
               suspension_name));
     }
   }
+}
+
+// Build a sorted vector of bounded latch block indices for cheap lookup.
+// Routines typically have very few loops, so a tiny sorted vector with
+// binary search is simpler and cheaper than a hash set.
+auto BuildBoundedLatchSet(
+    const std::vector<mir::passes::BoundedBackEdge>& bounded)
+    -> std::vector<uint32_t> {
+  std::vector<uint32_t> result;
+  result.reserve(bounded.size());
+  for (const auto& edge : bounded) {
+    result.push_back(edge.latch_block);
+  }
+  std::ranges::sort(result);
+  auto [first, last] = std::ranges::unique(result);
+  result.erase(first, last);
+  return result;
 }
 
 // Canonical memory layout type for ProcessOutcome: { i32, i32, i32, i32 }.
@@ -1448,6 +1466,11 @@ auto GenerateProcessFunction(
       context, is_simulation ? DesignStoreMode::kNotifySimulation
                              : DesignStoreMode::kDirectInit);
 
+  // Identify provably bounded back-edges to skip iteration-limit guards.
+  auto bounded_latches = BuildBoundedLatchSet(
+      mir::passes::FindBoundedBackEdges(
+          process.blocks, context.GetMirArena(), context.GetTypeArena()));
+
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
@@ -1592,8 +1615,11 @@ auto GenerateProcessFunction(
       if (!result) return std::unexpected(result.error());
     }
 
-    // Emit back-edge guard before loop back-edge terminators
-    if (HasBackEdge(block.terminator, i)) {
+    // Emit back-edge guard before loop back-edge terminators.
+    // Skip for provably bounded canonical for-loops.
+    if (HasBackEdge(block.terminator, i) &&
+        !std::ranges::binary_search(
+            bounded_latches, static_cast<uint32_t>(i))) {
       EmitBackEdgeGuard(
           context, block.terminator.origin, func, out_arg, limit_ptr);
     }
@@ -1633,6 +1659,10 @@ auto GenerateSharedProcessFunction(
   // Shared module processes are simulation-only by architecture.
   ExecutionContractScope contract_scope(
       context, DesignStoreMode::kNotifySimulation);
+
+  auto bounded_latches = BuildBoundedLatchSet(
+      mir::passes::FindBoundedBackEdges(
+          process.blocks, context.GetMirArena(), context.GetTypeArena()));
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -1742,8 +1772,11 @@ auto GenerateSharedProcessFunction(
       if (!result) return std::unexpected(result.error());
     }
 
-    // Emit back-edge guard before loop back-edge terminators
-    if (HasBackEdge(block.terminator, i)) {
+    // Emit back-edge guard before loop back-edge terminators.
+    // Skip for provably bounded canonical for-loops.
+    if (HasBackEdge(block.terminator, i) &&
+        !std::ranges::binary_search(
+            bounded_latches, static_cast<uint32_t>(i))) {
       EmitBackEdgeGuard(
           context, block.terminator.origin, func, func->getArg(6), limit_ptr);
     }
