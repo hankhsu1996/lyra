@@ -28,6 +28,7 @@ jobs:
               - 'BUILD.bazel'
               - 'MODULE.bazel'
               - '.bazelrc'
+              - '.github/workflows/benchmark.yml'
 
   benchmark:
     name: Run Benchmarks
