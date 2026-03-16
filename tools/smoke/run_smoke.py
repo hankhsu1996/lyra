@@ -23,8 +23,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DESIGNS = [
     "examples/hello",
     "examples/riscv-cpu",
-    "tools/bench/fixtures/storage/unpacked-array-read",
-    "tools/bench/fixtures/scheduling/clock-pipeline",
+    "tools/bench/fixtures/process-kernel/memory/unpacked-array-read",
+    "tools/bench/fixtures/simulation-engine/clock-pipeline",
 ]
 
 DEFAULT_TIMEOUT_SECS = 60

@@ -1,0 +1,14 @@
+[benchmark]
+name = "unpacked-array-read"
+category = "process-kernel"
+subcategory = "memory"
+intent = "Protect unpacked array load path, index computation, and loop overhead from regression."
+focus = "runtime"
+primary = "unpacked array read throughput"
+secondary = ["loop overhead", "scalar add"]
+
+[scale.small]
+NUM_ITERS = 512
+
+[scale.large]
+NUM_ITERS = 4_096

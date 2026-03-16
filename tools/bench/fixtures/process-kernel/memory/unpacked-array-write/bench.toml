@@ -1,0 +1,14 @@
+[benchmark]
+name = "unpacked-array-write"
+category = "process-kernel"
+subcategory = "memory"
+intent = "Protect unpacked array store path, index computation, and loop overhead from regression."
+focus = "runtime"
+primary = "unpacked array write throughput"
+secondary = ["loop overhead", "index computation"]
+
+[scale.small]
+NUM_ITERS = 512
+
+[scale.large]
+NUM_ITERS = 4_096
