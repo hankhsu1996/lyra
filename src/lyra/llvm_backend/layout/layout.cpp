@@ -921,7 +921,6 @@ struct PendingCombTrigger {
 };
 
 struct PendingCombKernelEntry {
-  mir::ProcessId process_id;
   std::vector<PendingCombTrigger> triggers;
   bool has_self_edge = false;
 };
@@ -1165,7 +1164,6 @@ auto TryKernelizeComb(
   }
 
   return PendingCombKernelEntry{
-      .process_id = {},  // Set by caller
       .triggers = std::move(triggers),
       .has_self_edge = has_self_edge,
   };
@@ -1464,6 +1462,11 @@ auto BuildLayout(
 
   // Phase 3: Collect module processes (run through scheduler)
   // Also detect pure combinational processes for comb kernel batching.
+  layout.num_module_process_base = layout.scheduled_processes.size();
+  // module_process_counter is 0-based within the module-process slice
+  // of scheduled_processes. Comb kernels receive this as their canonical
+  // scheduled_process_index.
+  uint32_t module_process_counter = 0;
   for (uint32_t mi = 0; mi < module_plans.size(); ++mi) {
     const auto& plan = module_plans[mi];
     const auto& body_arena = design.module_bodies.at(plan.body_id.value).arena;
@@ -1485,13 +1488,13 @@ auto BuildLayout(
           resolved_triggers.push_back({.slot = pt.slot, .observation = obs});
         }
         layout.comb_kernel_entries.push_back({
-            .process_id = proc_id,
-            .module_index = ModuleIndex{mi},
+            .scheduled_process_index = module_process_counter,
             .triggers = std::move(resolved_triggers),
             .has_self_edge = pending->has_self_edge,
         });
       }
       layout.scheduled_processes.push_back({proc_id, ModuleIndex{mi}});
+      ++module_process_counter;
     }
   }
 

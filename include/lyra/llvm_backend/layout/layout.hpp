@@ -190,9 +190,15 @@ struct CombTrigger {
 // Entry for a pure combinational process that can be evaluated inline.
 // Unlike connections (memcpy), comb kernels run compiled code but skip
 // the full scheduler overhead (subscriptions, queuing, SuspendRecord).
+//
+// Process identity is the canonical scheduled-process row, assigned once
+// during BuildLayout. Later phases consume this directly -- they must not
+// reconstruct identity from arena-local IDs.
 struct CombKernelEntry {
-  mir::ProcessId process_id;
-  ModuleIndex module_index;
+  // 0-based index into the module-process portion of scheduled_processes,
+  // i.e. scheduled_processes[num_init + scheduled_process_index].
+  // Assigned once during BuildLayout.
+  uint32_t scheduled_process_index = 0;
   std::vector<CombTrigger> triggers;
   // True if the kernel's write slot set overlaps its trigger slot set.
   // Conservative: slot-granular, so sub-slot disjointness is not considered.
@@ -216,12 +222,17 @@ struct Layout {
   DesignLayout design;
   std::vector<ProcessLayout> processes;
   // Canonical list of scheduled processes with instance binding.
-  // Layout: init processes [0..num_init_processes),
-  //         then module processes [num_init_processes..)
+  // Layout:
+  //   [0 .. num_init_processes)            init processes
+  //   [num_init_processes .. num_module_process_base)  design-level scheduled
+  //   [num_module_process_base .. end)     module processes
   // For design-level processes (init, connection), module_index is kNone.
   std::vector<ScheduledProcess> scheduled_processes;
-  // Boundary marker: number of init processes at start of scheduled_processes
   size_t num_init_processes = 0;
+  // Absolute index into scheduled_processes where module processes begin.
+  // Design-level scheduled processes (non-kernelized connections) occupy
+  // [num_init_processes .. num_module_process_base).
+  size_t num_module_process_base = 0;
   // Connection processes evaluated as batch memcpy
   std::vector<ConnectionKernelEntry> connection_kernel_entries;
   // Pure combinational processes evaluated inline via compiled function

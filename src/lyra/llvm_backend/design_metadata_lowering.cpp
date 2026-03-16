@@ -487,43 +487,34 @@ auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
     throw common::InternalError(
         "PrepareCombKernelInputs", "scheduled_processes.size() < num_init");
   }
-
-  auto num_module = layout.scheduled_processes.size() - num_init;
-
-  // Build (module_index, process_id) -> scheduled_process_index mapping.
-  // scheduled_process_index is 0-based from the first module process
-  // (after init processes), matching the process meta table row order.
-  struct ScheduledProcessKey {
-    ModuleIndex module_index;
-    mir::ProcessId process_id;
-    auto operator==(const ScheduledProcessKey&) const -> bool = default;
-  };
-  struct ScheduledProcessKeyHash {
-    auto operator()(const ScheduledProcessKey& k) const noexcept -> size_t {
-      return std::hash<uint64_t>{}(
-          (static_cast<uint64_t>(k.module_index.value) << 32) |
-          k.process_id.value);
-    }
-  };
-  std::unordered_map<ScheduledProcessKey, uint32_t, ScheduledProcessKeyHash>
-      key_to_scheduled_index;
-  for (uint32_t pi = 0; pi < num_module; ++pi) {
-    const auto& sp = layout.scheduled_processes[num_init + pi];
-    key_to_scheduled_index[{
-        .module_index = sp.module_index, .process_id = sp.process_id}] = pi;
+  if (layout.num_module_process_base < num_init) {
+    throw common::InternalError(
+        "PrepareCombKernelInputs", "num_module_process_base < num_init");
   }
+  if (layout.num_module_process_base > layout.scheduled_processes.size()) {
+    throw common::InternalError(
+        "PrepareCombKernelInputs",
+        "num_module_process_base exceeds scheduled_processes.size()");
+  }
+
+  auto num_module_processes =
+      layout.scheduled_processes.size() - layout.num_module_process_base;
+  // Post-init offset of the module-process slice, used to convert
+  // module-relative scheduled_process_index to absolute post-init index.
+  auto module_post_init_offset =
+      static_cast<uint32_t>(layout.num_module_process_base - num_init);
 
   std::vector<realization::CombKernelInput> inputs;
   inputs.reserve(comb_entries.size());
 
   for (const auto& ck : comb_entries) {
-    ScheduledProcessKey key{
-        .module_index = ck.module_index, .process_id = ck.process_id};
-    auto it = key_to_scheduled_index.find(key);
-    if (it == key_to_scheduled_index.end()) {
+    if (ck.scheduled_process_index >= num_module_processes) {
       throw common::InternalError(
           "PrepareCombKernelInputs",
-          "comb kernel process not found in scheduled process list");
+          std::format(
+              "scheduled_process_index {} exceeds module process "
+              "count {}",
+              ck.scheduled_process_index, num_module_processes));
     }
 
     // Group pre-resolved observations by slot_id and merge into one trigger
@@ -582,7 +573,8 @@ auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
         merged_triggers, {}, &realization::CombTriggerInput::slot_id);
 
     inputs.push_back({
-        .scheduled_process_index = it->second,
+        .scheduled_process_index =
+            module_post_init_offset + ck.scheduled_process_index,
         .triggers = std::move(merged_triggers),
         .has_self_edge = ck.has_self_edge,
     });
