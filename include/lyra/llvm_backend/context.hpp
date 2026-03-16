@@ -80,6 +80,16 @@ enum class NotificationPolicy {
 
 // Snapshot of per-function execution-contract state on Context.
 // Used by ExecutionContractScope for save/restore.
+//
+// IMPORTANT: This struct must mirror every mutable Context field that
+// affects codegen semantics and is set per function/process scope.
+// If you add a new mutable field to Context that controls codegen
+// behavior (store mode, notification policy, cached pointers, etc.),
+// you must either:
+//   (a) add it here so ExecutionContractScope saves/restores it, or
+//   (b) document it as local scratch with its own explicit lifecycle.
+// Failure to do so causes state leakage between process compilations
+// that share the same Context.
 struct ExecutionContractState {
   DesignStoreMode design_store_mode = DesignStoreMode::kNotifySimulation;
   NotificationPolicy notification_policy = NotificationPolicy::kImmediate;
@@ -857,14 +867,15 @@ class Context {
   DesignStoreMode design_store_mode_ = DesignStoreMode::kNotifySimulation;
   NotificationPolicy notification_policy_ = NotificationPolicy::kImmediate;
 
-  // How module-local slots are addressed in the current function scope.
+  // Per-function scope fields NOT in ExecutionContractState.
+  // These have their own explicit set/clear lifecycle managed by the
+  // specific generator that uses them (GenerateSharedProcessFunction,
+  // GenerateMirFunction). They must be explicitly reset to defaults
+  // after each use. Not saved/restored by ExecutionContractScope.
   SlotAddressingMode slot_addressing_ = SlotAddressingMode::kDesignGlobal;
-
-  // Module behavioral shared-body state.
-  // Set when lowering a shared process function, null/empty otherwise.
-  llvm::Value* this_ptr_ = nullptr;  // Instance storage base pointer (fn arg)
-  llvm::Value* dynamic_instance_id_ = nullptr;  // i32 fn arg
-  llvm::Value* signal_id_offset_ = nullptr;     // i32 fn arg
+  llvm::Value* this_ptr_ = nullptr;
+  llvm::Value* dynamic_instance_id_ = nullptr;
+  llvm::Value* signal_id_offset_ = nullptr;
   const SpecSlotLayout* spec_slot_layout_ = nullptr;
   llvm::Value* unstable_slot_offsets_ptr_ = nullptr;
 
