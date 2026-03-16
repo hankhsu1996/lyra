@@ -41,6 +41,60 @@ class Access;
 // Forward declaration for WriteTarget (defined in commit/access.hpp)
 struct WriteTarget;
 
+// How design-slot stores are emitted in the current codegen context.
+// Set from the process execution contract at function generation time.
+// Queried by the commit layer to select between direct store and
+// compare+notify paths.
+//
+// The three modes correspond to three execution-context categories:
+// - init-only: no engine, no subscriptions
+// - simulation-only: engine guaranteed non-null, known context
+// - cross-context: compiled once, callable from both init and simulation
+enum class DesignStoreMode {
+  // Init-only contract. Direct store with no compare, no dirty-mark,
+  // no engine access. Used for init processes where no runtime engine exists.
+  kDirectInit,
+  // Simulation-only contract. Compare old/new, store, dirty-mark if changed.
+  // Engine guaranteed non-null. No engine-null branch in generated IR.
+  // Used for process bodies with a known simulation execution context.
+  kNotifySimulation,
+  // Cross-context contract. Compare old/new, store, dirty-mark if changed.
+  // Engine may be null at runtime (guarded with a branch). Used for
+  // user-defined functions/tasks that can be called from both init and
+  // simulation contexts.
+  kNotifyCrossContext,
+};
+
+// Snapshot of per-function execution-contract state on Context.
+// Used by ExecutionContractScope for save/restore.
+struct ExecutionContractState {
+  DesignStoreMode design_store_mode = DesignStoreMode::kNotifySimulation;
+  llvm::Value* state_ptr = nullptr;
+  llvm::Value* design_ptr = nullptr;
+  llvm::Value* frame_ptr = nullptr;
+  llvm::Value* engine_ptr = nullptr;
+  llvm::Value* first_dirty_seen_ptr = nullptr;
+};
+
+// RAII guard that sets execution-contract state on Context and restores it
+// on scope exit. Covers all per-function execution-contract fields.
+// Every executable-body generator (process, shared process, MIR function)
+// must enter one of these scopes to set its contract explicitly.
+class ExecutionContractScope {
+ public:
+  ExecutionContractScope(Context& ctx, DesignStoreMode mode);
+  ~ExecutionContractScope();
+  ExecutionContractScope(const ExecutionContractScope&) = delete;
+  auto operator=(const ExecutionContractScope&)
+      -> ExecutionContractScope& = delete;
+  ExecutionContractScope(ExecutionContractScope&&) = delete;
+  auto operator=(ExecutionContractScope&&) -> ExecutionContractScope& = delete;
+
+ private:
+  Context& ctx_;
+  ExecutionContractState saved_;
+};
+
 // How module-local slots (kModuleSlot) are addressed in the current lowering
 // scope. Set explicitly per function scope -- never inferred from nullable
 // fields.
@@ -63,6 +117,7 @@ enum class SlotAddressingMode {
 // Shared context for MIR -> LLVM lowering
 class Context {
   friend class commit::Access;
+  friend class ExecutionContractScope;
 
  public:
   Context(
@@ -370,6 +425,10 @@ class Context {
   [[nodiscard]] auto GetStorageRootPointer(mir::PlaceId place_id)
       -> llvm::Value*;
 
+  // Save and restore execution-contract state. Used by ExecutionContractScope.
+  [[nodiscard]] auto SaveExecutionContractState() -> ExecutionContractState;
+  void RestoreExecutionContractState(const ExecutionContractState& state);
+
   // Emit GEPs and loads to extract design_ptr, engine_ptr, and frame_ptr from
   // the process state argument, then cache them in the context via the setters
   // below. Must be called once per process function entry block.
@@ -391,6 +450,12 @@ class Context {
   // engine_ptr: loaded from state->header.engine, points to shared Engine
   void SetEnginePointer(llvm::Value* engine_ptr);
   [[nodiscard]] auto GetEnginePointer() -> llvm::Value*;
+
+  // Design-slot store mode for the current process body.
+  // Controls whether stores emit compare+dirty-mark (kNotify) or plain
+  // writes (kDirect). Set from the ProcessExecutionKind contract.
+  void SetDesignStoreMode(DesignStoreMode mode);
+  [[nodiscard]] auto GetDesignStoreMode() const -> DesignStoreMode;
 
   // first_dirty_seen_ptr: per-delta first-dirty bitmap, hoisted once per
   // activation. Generated code uses this for inline first-dirty guards.
@@ -747,6 +812,7 @@ class Context {
   llvm::Value* frame_ptr_ = nullptr;
   llvm::Value* engine_ptr_ = nullptr;
   llvm::Value* first_dirty_seen_ptr_ = nullptr;
+  DesignStoreMode design_store_mode_ = DesignStoreMode::kNotifySimulation;
 
   // How module-local slots are addressed in the current function scope.
   SlotAddressingMode slot_addressing_ = SlotAddressingMode::kDesignGlobal;

@@ -61,13 +61,15 @@ void StoreStringToWriteTarget(
   // Safe for aliasing: if new == old, store completes before release.
   auto* old_val = builder.CreateLoad(ptr_ty, wt.ptr, "str.old");
 
-  if (wt.canonical_signal_id.has_value()) {
-    // Design slot: atomic store+notify
+  if (wt.canonical_signal_id.has_value() &&
+      ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit) {
+    // Notify contract: store+notify via runtime helper.
+    // LyraStoreString handles null engine defensively (for kNotifyGuarded).
     builder.CreateCall(
         ctx.GetLyraStoreString(), {ctx.GetEnginePointer(), wt.ptr, new_val,
                                    wt.canonical_signal_id->Emit(builder)});
   } else {
-    // Non-design: plain store
+    // Non-design or init contract: plain store, no notification.
     builder.CreateStore(new_val, wt.ptr);
   }
 

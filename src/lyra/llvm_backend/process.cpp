@@ -52,6 +52,7 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/passes/canonical_loop_analysis.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
@@ -65,6 +66,53 @@
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
+
+// Validate that a process meets the init execution contract:
+// no suspension-capable terminators (Delay, Wait, Repeat).
+// Init processes run to completion before the simulation engine exists.
+// If MIR gains new suspension-capable terminators, add them here.
+void ValidateInitProcessContract(const mir::Process& process) {
+  for (const auto& block : process.blocks) {
+    const char* suspension_name = nullptr;
+    std::visit(
+        [&](const auto& term) {
+          using T = std::decay_t<decltype(term)>;
+          if constexpr (std::is_same_v<T, mir::Delay>) {
+            suspension_name = "Delay";
+          } else if constexpr (std::is_same_v<T, mir::Wait>) {
+            suspension_name = "Wait";
+          } else if constexpr (std::is_same_v<T, mir::Repeat>) {
+            suspension_name = "Repeat";
+          }
+        },
+        block.terminator.data);
+    if (suspension_name != nullptr) {
+      throw common::InternalError(
+          "ValidateInitProcessContract",
+          std::format(
+              "init process contains {} terminator; init processes must "
+              "run to completion without suspension",
+              suspension_name));
+    }
+  }
+}
+
+// Build a sorted vector of bounded latch block indices for cheap lookup.
+// Routines typically have very few loops, so a tiny sorted vector with
+// binary search is simpler and cheaper than a hash set.
+auto BuildBoundedLatchSet(
+    const std::vector<mir::passes::BoundedBackEdge>& bounded)
+    -> std::vector<uint32_t> {
+  std::vector<uint32_t> result;
+  result.reserve(bounded.size());
+  for (const auto& edge : bounded) {
+    result.push_back(edge.latch_block);
+  }
+  std::ranges::sort(result);
+  auto [first, last] = std::ranges::unique(result);
+  result.erase(first, last);
+  return result;
+}
 
 // Canonical memory layout type for ProcessOutcome: { i32, i32, i32, i32 }.
 // Used only as a memory shape for stores through the %out pointer.
@@ -1402,12 +1450,26 @@ static auto MaterializeAllocaStorage(
 }
 
 auto GenerateProcessFunction(
-    Context& context, const mir::Process& process, const std::string& name)
-    -> Result<ProcessCodegenResult> {
+    Context& context, const mir::Process& process, const std::string& name,
+    ProcessExecutionKind execution_kind) -> Result<ProcessCodegenResult> {
   // Process-level origin scope for errors during code generation.
   // If process.origin is Invalid, this is a no-op.
   OriginScope proc_scope(context, process.origin);
   std::vector<WaitSiteEntry> wait_sites;
+
+  const bool is_simulation =
+      execution_kind == ProcessExecutionKind::kSimulation;
+
+  // RAII scope for execution-contract state. Saves and restores all
+  // per-function state (design_store_mode, engine_ptr, etc.) on exit.
+  ExecutionContractScope contract_scope(
+      context, is_simulation ? DesignStoreMode::kNotifySimulation
+                             : DesignStoreMode::kDirectInit);
+
+  // Identify provably bounded back-edges to skip iteration-limit guards.
+  auto bounded_latches = BuildBoundedLatchSet(
+      mir::passes::FindBoundedBackEdges(
+          process.blocks, context.GetMirArena(), context.GetTypeArena()));
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -1444,87 +1506,96 @@ auto GenerateProcessFunction(
 
   auto& builder = context.GetBuilder();
 
-  // Entry block: set up cached pointers and switch dispatch
+  if (!is_simulation) {
+    ValidateInitProcessContract(process);
+  }
+
+  // Entry block: set up cached pointers and dispatch
   builder.SetInsertPoint(entry_block);
 
-  context.EmitProcessStateSetup(state_arg);
+  if (is_simulation) {
+    // Simulation contract: load all state pointers including engine.
+    context.EmitProcessStateSetup(state_arg);
+  } else {
+    // Init contract: load design_ptr and frame_ptr only. No engine.
+    context.SetStatePointer(state_arg);
+    auto* header_ptr = builder.CreateStructGEP(
+        context.GetProcessStateType(), state_arg, 0, "header_ptr");
+    auto* design_ptr_ptr = builder.CreateStructGEP(
+        context.GetHeaderType(), header_ptr, 1, "design_ptr_ptr");
+    auto* design_ptr = builder.CreateLoad(ptr_ty, design_ptr_ptr, "design_ptr");
+    context.SetDesignPointer(design_ptr);
+    auto* frame_ptr = builder.CreateStructGEP(
+        context.GetProcessStateType(), state_arg, 1, "frame_ptr");
+    context.SetFramePointer(frame_ptr);
+  }
 
   const auto& proc_layout =
       context.GetLayout().processes[context.GetCurrentProcessIndex()];
   auto alloca_result = MaterializeAllocaStorage(context, *func, proc_layout);
   if (!alloca_result) return std::unexpected(alloca_result.error());
 
-  // Collect actual resume targets: blocks that are jumped to after Delay/Wait.
-  // bb0 is always accessible (initial execution) but handled as the default
-  // case.
-  std::vector<size_t> resume_targets;
-  for (const auto& block : process.blocks) {
-    std::visit(
-        [&](const auto& term) {
-          using T = std::decay_t<decltype(term)>;
-          if constexpr (std::is_same_v<T, mir::Delay>) {
-            resume_targets.push_back(term.resume.value);
-          } else if constexpr (std::is_same_v<T, mir::Wait>) {
-            resume_targets.push_back(term.resume.value);
-          }
-          // Repeat doesn't have an explicit resume target in terminator
-        },
-        block.terminator.data);
-  }
-  // Deduplicate: the G9 lowering rewrite for static event-controlled processes
-  // (always_ff, always @(...)) clones the entry Wait onto the body epilogue
-  // block, producing two Wait terminators with the same resume target. The
-  // switch dispatch requires unique case values.
-  std::ranges::sort(resume_targets);
-  auto [first, last] = std::ranges::unique(resume_targets);
-  resume_targets.erase(first, last);
-
-  // Assert: resume target blocks (and bb0) must NOT have block params.
-  // Resume edges are additional predecessors that can't provide PHI incoming
-  // values.
-  if (!process.blocks[0].params.empty()) {
-    throw common::InternalError(
-        "GenerateProcessFunction", std::format(
-                                       "entry block 0 has {} params; entry "
-                                       "block must have no block params",
-                                       process.blocks[0].params.size()));
-  }
-  for (size_t target : resume_targets) {
-    if (!process.blocks[target].params.empty()) {
-      throw common::InternalError(
-          "GenerateProcessFunction",
-          std::format(
-              "resume target block {} has {} params; resume targets must have "
-              "no block params",
-              target, process.blocks[target].params.size()));
-    }
-  }
-
   // Hoist TLS iteration counter pointer to process entry (once per
   // activation instead of once per back-edge).
   auto* limit_ptr =
       builder.CreateCall(context.GetLyraIterationLimitPtr(), {}, "limit_ptr");
 
-  // Hoist first-dirty bitmap pointer to process entry (once per activation).
-  // Returns non-null when the inline first-dirty fast path is allowed in the
-  // current execution context, null when forbidden (e.g., comb-fixpoint
-  // evaluation). The same function body may be called in different contexts,
-  // so the policy is resolved at activation time, not at compile time.
-  auto* first_dirty_seen_ptr = builder.CreateCall(
-      context.GetLyraGetFirstDirtySeenPtr(), {context.GetEnginePointer()},
-      "first_dirty_seen_ptr");
-  context.SetFirstDirtySeenPtr(first_dirty_seen_ptr);
+  if (is_simulation) {
+    // Collect actual resume targets: blocks jumped to after Delay/Wait.
+    std::vector<size_t> resume_targets;
+    for (const auto& block : process.blocks) {
+      std::visit(
+          [&](const auto& term) {
+            using T = std::decay_t<decltype(term)>;
+            if constexpr (std::is_same_v<T, mir::Delay>) {
+              resume_targets.push_back(term.resume.value);
+            } else if constexpr (std::is_same_v<T, mir::Wait>) {
+              resume_targets.push_back(term.resume.value);
+            }
+          },
+          block.terminator.data);
+    }
+    std::ranges::sort(resume_targets);
+    auto [first, last] = std::ranges::unique(resume_targets);
+    resume_targets.erase(first, last);
 
-  // Create switch with bb0 as default (initial execution)
-  auto* sw = builder.CreateSwitch(
-      resume_block_arg, llvm_blocks[0],
-      static_cast<unsigned>(resume_targets.size()));
+    // Assert: resume target blocks (and bb0) must NOT have block params.
+    if (!process.blocks[0].params.empty()) {
+      throw common::InternalError(
+          "GenerateProcessFunction", std::format(
+                                         "entry block 0 has {} params; entry "
+                                         "block must have no block params",
+                                         process.blocks[0].params.size()));
+    }
+    for (size_t target : resume_targets) {
+      if (!process.blocks[target].params.empty()) {
+        throw common::InternalError(
+            "GenerateProcessFunction",
+            std::format(
+                "resume target block {} has {} params; resume targets must "
+                "have no block params",
+                target, process.blocks[target].params.size()));
+      }
+    }
 
-  // Add cases only for actual resume targets (bb0 is the default, not a case)
-  for (size_t target : resume_targets) {
-    sw->addCase(
-        llvm::ConstantInt::get(i32_ty, static_cast<uint64_t>(target)),
-        llvm_blocks[target]);
+    // Hoist first-dirty bitmap pointer (once per activation).
+    auto* first_dirty_seen_ptr = builder.CreateCall(
+        context.GetLyraGetFirstDirtySeenPtr(), {context.GetEnginePointer()},
+        "first_dirty_seen_ptr");
+    context.SetFirstDirtySeenPtr(first_dirty_seen_ptr);
+
+    // Resume dispatch switch with bb0 as default (initial execution).
+    auto* sw = builder.CreateSwitch(
+        resume_block_arg, llvm_blocks[0],
+        static_cast<unsigned>(resume_targets.size()));
+    for (size_t target : resume_targets) {
+      sw->addCase(
+          llvm::ConstantInt::get(i32_ty, static_cast<uint64_t>(target)),
+          llvm_blocks[target]);
+    }
+  } else {
+    // Init contract: always enters at bb0, no resume dispatch.
+    builder.CreateBr(llvm_blocks[0]);
   }
 
   // Clear stale temp bindings and setup PHI nodes for block params
@@ -1544,8 +1615,11 @@ auto GenerateProcessFunction(
       if (!result) return std::unexpected(result.error());
     }
 
-    // Emit back-edge guard before loop back-edge terminators
-    if (HasBackEdge(block.terminator, i)) {
+    // Emit back-edge guard before loop back-edge terminators.
+    // Skip for provably bounded canonical for-loops.
+    if (HasBackEdge(block.terminator, i) &&
+        !std::ranges::binary_search(
+            bounded_latches, static_cast<uint32_t>(i))) {
       EmitBackEdgeGuard(
           context, block.terminator.origin, func, out_arg, limit_ptr);
     }
@@ -1570,12 +1644,7 @@ auto GenerateProcessFunction(
     context.EndFunction();
   }
 
-  // Clear cached pointers for next function
-  context.SetStatePointer(nullptr);
-  context.SetDesignPointer(nullptr);
-  context.SetFramePointer(nullptr);
-  context.SetEnginePointer(nullptr);
-
+  // contract_scope destructor restores all execution-contract state.
   VerifyLlvmFunction(func, "GenerateProcessFunction");
   return ProcessCodegenResult{
       .function = func, .wait_sites = std::move(wait_sites)};
@@ -1586,6 +1655,14 @@ auto GenerateSharedProcessFunction(
     -> Result<ProcessCodegenResult> {
   OriginScope proc_scope(context, process.origin);
   std::vector<WaitSiteEntry> wait_sites;
+
+  // Shared module processes are simulation-only by architecture.
+  ExecutionContractScope contract_scope(
+      context, DesignStoreMode::kNotifySimulation);
+
+  auto bounded_latches = BuildBoundedLatchSet(
+      mir::passes::FindBoundedBackEdges(
+          process.blocks, context.GetMirArena(), context.GetTypeArena()));
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -1695,8 +1772,11 @@ auto GenerateSharedProcessFunction(
       if (!result) return std::unexpected(result.error());
     }
 
-    // Emit back-edge guard before loop back-edge terminators
-    if (HasBackEdge(block.terminator, i)) {
+    // Emit back-edge guard before loop back-edge terminators.
+    // Skip for provably bounded canonical for-loops.
+    if (HasBackEdge(block.terminator, i) &&
+        !std::ranges::binary_search(
+            bounded_latches, static_cast<uint32_t>(i))) {
       EmitBackEdgeGuard(
           context, block.terminator.origin, func, func->getArg(6), limit_ptr);
     }
@@ -1719,12 +1799,10 @@ auto GenerateSharedProcessFunction(
     context.EndFunction();
   }
 
-  // Clear shared-body state and revert to design-global addressing.
+  // Clear shared-body-specific state. Execution-contract fields
+  // (state_ptr, design_ptr, frame_ptr, engine_ptr, first_dirty_seen_ptr,
+  // design_store_mode) are restored by contract_scope destructor.
   context.SetSlotAddressingMode(SlotAddressingMode::kDesignGlobal);
-  context.SetStatePointer(nullptr);
-  context.SetDesignPointer(nullptr);
-  context.SetFramePointer(nullptr);
-  context.SetEnginePointer(nullptr);
   context.SetThisPointer(nullptr);
   context.SetDynamicInstanceId(nullptr);
   context.SetSignalIdOffset(nullptr);
@@ -2107,6 +2185,10 @@ struct PlaceCollector {
 auto DefineMonitorCheckProgram(
     Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
     const Context::MonitorLayout& layout) -> Result<void> {
+  // Observer programs are simulation-only (engine passed as explicit param).
+  ExecutionContractScope contract_scope(
+      context, DesignStoreMode::kNotifySimulation);
+
   auto& llvm_ctx = context.GetLlvmContext();
   auto& builder = context.GetBuilder();
   const auto& arena = context.GetMirArena();
@@ -2396,9 +2478,7 @@ auto DefineMonitorCheckProgram(
   VerifyLlvmFunction(llvm_func, "DefineMonitorCheckProgram");
 
   context.EndFunction();
-  context.SetDesignPointer(nullptr);
-  context.SetEnginePointer(nullptr);
-
+  // contract_scope destructor restores execution-contract fields.
   return {};
 }
 
@@ -2569,6 +2649,14 @@ auto DefineMirFunction(
   auto& llvm_ctx = context.GetLlvmContext();
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
+
+  // Select execution contract based on callable category:
+  // - Observer programs (strobe/setup): simulation-only, engine always non-null
+  // - User-defined functions/tasks: cross-context, engine may be null
+  bool is_observer_program = mir::IsObserverProgram(func.runtime_kind);
+  auto store_mode = is_observer_program ? DesignStoreMode::kNotifySimulation
+                                        : DesignStoreMode::kNotifyCrossContext;
+  ExecutionContractScope contract_scope(context, store_mode);
 
   // Function-level origin scope for prologue errors.
   // If func.origin is Invalid, this is a no-op.
@@ -2914,9 +3002,9 @@ auto DefineMirFunction(
 
   VerifyLlvmFunction(llvm_func, "DefineMirFunction");
 
-  // Clean up function scope
+  // Clean up function scope. Execution-contract fields are restored by
+  // contract_scope destructor; only module-scoped fields need manual cleanup.
   context.EndFunction();
-  context.SetDesignPointer(nullptr);
   if (is_module_scoped) {
     context.SetSlotAddressingMode(SlotAddressingMode::kDesignGlobal);
     context.SetThisPointer(nullptr);

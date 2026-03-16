@@ -25,8 +25,10 @@ void StoreContainerToWriteTarget(
   auto& builder = ctx.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
 
-  if (wt.canonical_signal_id.has_value()) {
-    // Design slot: load old first, then atomic store+notify, then release old
+  if (wt.canonical_signal_id.has_value() &&
+      ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit) {
+    // Notify contract: load old, atomic store+notify, release old.
+    // LyraStoreDynArray handles null engine defensively (for kNotifyGuarded).
     auto* old_handle = builder.CreateLoad(ptr_ty, wt.ptr, "ctr.old");
     builder.CreateCall(
         ctx.GetLyraStoreDynArray(), {ctx.GetEnginePointer(), wt.ptr, new_handle,
