@@ -40,6 +40,7 @@
 #include "lyra/lowering/ast_to_hir/specialization.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
+#include "lyra/lowering/ast_to_hir/type_seeder.hpp"
 #include "lyra/mir/instance.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -567,6 +568,15 @@ auto LowerDesign(
 
   auto [body_inputs, instance_inputs] =
       PrepareModuleLoweringInputs(all_instances, spec_map, registrar);
+
+  // Phase 0b: seed body-reachable types into TypeArena.
+  // Walks the Phase 1 body frontier to intern expression-result types that
+  // declaration registration does not cover. Closes the AST-reachable type
+  // gap; synthetic builtin-type creation during lowering (e.g. kString for
+  // $display) remains a separate cleanup before freeze enforcement.
+  for (size_t g = 0; g < spec_map.groups.size(); ++g) {
+    SeedBodyTypes(body_inputs[g], ctx);
+  }
 
   // Phase 1: Lower one shared body per specialization group.
   // Each call returns an isolated BodyLoweringResult with body-local

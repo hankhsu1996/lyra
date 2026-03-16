@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -28,6 +29,10 @@ class ConstantArena final {
   auto Intern(TypeId type, ConstantValue value) -> ConstId;
 
   [[nodiscard]] auto operator[](ConstId id) const -> const Constant&;
+
+  [[nodiscard]] auto ConstantCount() const -> uint32_t {
+    return static_cast<uint32_t>(constants_.size());
+  }
 
  private:
   std::vector<Constant> constants_;

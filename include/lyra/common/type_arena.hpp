@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -34,6 +35,14 @@ class TypeArena final {
   [[nodiscard]] auto GetFieldId(TypeId type, uint32_t ordinal) const -> FieldId;
 
   [[nodiscard]] auto GetField(FieldId id) const -> const FieldInfo&;
+
+  [[nodiscard]] auto TypeCount() const -> uint32_t {
+    return static_cast<uint32_t>(types_.size());
+  }
+
+  [[nodiscard]] auto FieldCount() const -> uint32_t {
+    return static_cast<uint32_t>(fields_.size());
+  }
 
  private:
   std::vector<Type> types_;
