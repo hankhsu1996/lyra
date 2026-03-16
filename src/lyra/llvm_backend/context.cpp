@@ -538,6 +538,7 @@ auto Context::GetFirstDirtySeenPtr() -> llvm::Value* {
 auto Context::SaveExecutionContractState() -> ExecutionContractState {
   return {
       .design_store_mode = design_store_mode_,
+      .notification_policy = notification_policy_,
       .state_ptr = state_ptr_,
       .design_ptr = design_ptr_,
       .frame_ptr = frame_ptr_,
@@ -549,6 +550,7 @@ auto Context::SaveExecutionContractState() -> ExecutionContractState {
 void Context::RestoreExecutionContractState(
     const ExecutionContractState& state) {
   design_store_mode_ = state.design_store_mode;
+  notification_policy_ = state.notification_policy;
   state_ptr_ = state.state_ptr;
   design_ptr_ = state.design_ptr;
   frame_ptr_ = state.frame_ptr;
@@ -560,6 +562,7 @@ ExecutionContractScope::ExecutionContractScope(
     Context& ctx, DesignStoreMode mode)
     : ctx_(ctx), saved_(ctx.SaveExecutionContractState()) {
   ctx.SetDesignStoreMode(mode);
+  ctx.SetNotificationPolicy(NotificationPolicy::kImmediate);
   ctx.SetStatePointer(nullptr);
   ctx.SetDesignPointer(nullptr);
   ctx.SetFramePointer(nullptr);

@@ -18,12 +18,6 @@ void CommitNotifyUnionMemcpyIfDesignSlot(
   // Init contract: no engine, no notification needed.
   if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) return;
 
-  if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
-    throw common::InternalError(
-        "CommitNotifyUnionMemcpyIfDesignSlot",
-        "deferred notification not supported for union memcpy path");
-  }
-
   auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
   if (!wt_or_err) {
     throw common::InternalError(
@@ -35,6 +29,12 @@ void CommitNotifyUnionMemcpyIfDesignSlot(
   // Conditional: no-op if not design slot
   if (!wt.canonical_signal_id.has_value()) {
     return;
+  }
+
+  if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
+    throw common::InternalError(
+        "CommitNotifyUnionMemcpyIfDesignSlot",
+        "deferred notification not supported for union memcpy path");
   }
 
   auto& builder = ctx.GetBuilder();
@@ -52,17 +52,17 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
   // Init contract: no engine, no notification needed.
   if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) return;
 
-  if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
-    throw common::InternalError(
-        "CommitNotifyMutationIfDesignSlot",
-        "deferred notification not supported for container mutation path");
-  }
-
   auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
 
   // Conditional: no-op if not design slot
   if (!signal_id_opt.has_value()) {
     return;
+  }
+
+  if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
+    throw common::InternalError(
+        "CommitNotifyMutationIfDesignSlot",
+        "deferred notification not supported for container mutation path");
   }
 
   auto& builder = ctx.GetBuilder();
@@ -94,15 +94,15 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
   // Init contract: no engine, no notification needed.
   if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) return;
 
+  auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
+  if (!signal_id_opt.has_value()) {
+    return;  // No-op for non-design slots
+  }
+
   if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
     throw common::InternalError(
         "CommitNotifyAggregateIfDesignSlot",
         "deferred notification not supported for aggregate notify path");
-  }
-
-  auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
-  if (!signal_id_opt.has_value()) {
-    return;  // No-op for non-design slots
   }
 
   auto target_ptr_or_err = ctx.GetPlacePointer(target);

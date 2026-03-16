@@ -133,6 +133,18 @@ auto CollectWrittenRoots(
       return false;
     }
 
+    // Whole-aggregate writes to unpacked containers go through the
+    // aggregate notify path (CommitNotifyAggregateIfDesignSlot), which
+    // is not a supported deferred-store path. Only element-level writes
+    // (with at least one projection) use the packed inline store path.
+    bool is_unpacked_aggregate =
+        root_type.Kind() == TypeKind::kUnpackedArray ||
+        root_type.Kind() == TypeKind::kUnpackedStruct ||
+        root_type.Kind() == TypeKind::kUnpackedUnion;
+    if (is_unpacked_aggregate && place.projections.empty()) {
+      return false;
+    }
+
     InsertRoot(roots, *root);
   }
   return true;
@@ -170,11 +182,7 @@ auto QualifyLoop(
   for (const auto& stmt : blocks[loop.latch].statements) {
     if (!IsAllowedStatement(stmt)) return false;
   }
-  if (!CollectWrittenRoots(blocks[loop.latch], arena, types, notified_roots)) {
-    return false;
-  }
-
-  return true;
+  return CollectWrittenRoots(blocks[loop.latch], arena, types, notified_roots);
 }
 
 // Determine the exit block for a canonical loop.

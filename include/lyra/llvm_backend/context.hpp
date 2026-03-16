@@ -82,6 +82,7 @@ enum class NotificationPolicy {
 // Used by ExecutionContractScope for save/restore.
 struct ExecutionContractState {
   DesignStoreMode design_store_mode = DesignStoreMode::kNotifySimulation;
+  NotificationPolicy notification_policy = NotificationPolicy::kImmediate;
   llvm::Value* state_ptr = nullptr;
   llvm::Value* design_ptr = nullptr;
   llvm::Value* frame_ptr = nullptr;
