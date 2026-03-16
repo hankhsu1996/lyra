@@ -37,6 +37,14 @@ jobs:
       - name: Setup Verilator
         uses: veryl-lang/setup-verilator@v1
 
+      - name: Log tool versions
+        run: |
+          echo "## Tool Versions" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          verilator --version >> "$GITHUB_STEP_SUMMARY"
+          clang++ --version | head -1 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build lyra
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
