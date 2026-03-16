@@ -509,6 +509,24 @@ auto Context::GetDesignStoreMode() const -> DesignStoreMode {
   return design_store_mode_;
 }
 
+void Context::SetNotificationPolicy(NotificationPolicy policy) {
+  notification_policy_ = policy;
+}
+
+auto Context::GetNotificationPolicy() const -> NotificationPolicy {
+  return notification_policy_;
+}
+
+NotificationPolicyScope::NotificationPolicyScope(
+    Context& ctx, NotificationPolicy policy)
+    : ctx_(ctx), saved_(ctx.GetNotificationPolicy()) {
+  ctx_.SetNotificationPolicy(policy);
+}
+
+NotificationPolicyScope::~NotificationPolicyScope() {
+  ctx_.SetNotificationPolicy(saved_);
+}
+
 void Context::SetFirstDirtySeenPtr(llvm::Value* ptr) {
   first_dirty_seen_ptr_ = ptr;
 }
@@ -520,33 +538,56 @@ auto Context::GetFirstDirtySeenPtr() -> llvm::Value* {
 auto Context::SaveExecutionContractState() -> ExecutionContractState {
   return {
       .design_store_mode = design_store_mode_,
+      .notification_policy = notification_policy_,
+      .slot_addressing = slot_addressing_,
       .state_ptr = state_ptr_,
       .design_ptr = design_ptr_,
       .frame_ptr = frame_ptr_,
       .engine_ptr = engine_ptr_,
       .first_dirty_seen_ptr = first_dirty_seen_ptr_,
+      .this_ptr = this_ptr_,
+      .dynamic_instance_id = dynamic_instance_id_,
+      .signal_id_offset = signal_id_offset_,
+      .spec_slot_layout = spec_slot_layout_,
+      .unstable_slot_offsets_ptr = unstable_slot_offsets_ptr_,
   };
 }
 
 void Context::RestoreExecutionContractState(
     const ExecutionContractState& state) {
   design_store_mode_ = state.design_store_mode;
+  notification_policy_ = state.notification_policy;
+  slot_addressing_ = state.slot_addressing;
   state_ptr_ = state.state_ptr;
   design_ptr_ = state.design_ptr;
   frame_ptr_ = state.frame_ptr;
   engine_ptr_ = state.engine_ptr;
   first_dirty_seen_ptr_ = state.first_dirty_seen_ptr;
+  this_ptr_ = state.this_ptr;
+  dynamic_instance_id_ = state.dynamic_instance_id;
+  signal_id_offset_ = state.signal_id_offset;
+  spec_slot_layout_ = state.spec_slot_layout;
+  unstable_slot_offsets_ptr_ = state.unstable_slot_offsets_ptr;
 }
 
 ExecutionContractScope::ExecutionContractScope(
     Context& ctx, DesignStoreMode mode)
     : ctx_(ctx), saved_(ctx.SaveExecutionContractState()) {
   ctx.SetDesignStoreMode(mode);
+  ctx.SetNotificationPolicy(NotificationPolicy::kImmediate);
+  ctx.SetSlotAddressingMode(SlotAddressingMode::kDesignGlobal);
   ctx.SetStatePointer(nullptr);
   ctx.SetDesignPointer(nullptr);
   ctx.SetFramePointer(nullptr);
   ctx.SetEnginePointer(nullptr);
   ctx.SetFirstDirtySeenPtr(nullptr);
+  ctx.SetThisPointer(nullptr);
+  ctx.SetDynamicInstanceId(nullptr);
+  ctx.SetSignalIdOffset(nullptr);
+  // spec_slot_layout is NOT reset: it is session-scoped (set by
+  // CompileModuleSpecSession), not per-function. Save/restore handles
+  // cross-session leakage; the constructor must not clear session state.
+  ctx.SetUnstableSlotOffsetsPtr(nullptr);
 }
 
 ExecutionContractScope::~ExecutionContractScope() {
@@ -596,7 +637,7 @@ auto Context::HasUserFunction(mir::FunctionId func_id) const -> bool {
 void Context::RegisterDesignFunction(
     SymbolId symbol, mir::FunctionId func_id, llvm::Function* llvm_func) {
   design_functions_.insert_or_assign(
-      symbol, DesignFunctionEntry{func_id, llvm_func});
+      symbol, DesignFunctionEntry{.func_id = func_id, .llvm_func = llvm_func});
 }
 
 auto Context::GetDesignFunction(SymbolId symbol) const

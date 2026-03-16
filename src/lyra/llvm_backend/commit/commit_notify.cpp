@@ -31,6 +31,12 @@ void CommitNotifyUnionMemcpyIfDesignSlot(
     return;
   }
 
+  if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
+    throw common::InternalError(
+        "CommitNotifyUnionMemcpyIfDesignSlot",
+        "deferred notification not supported for union memcpy path");
+  }
+
   auto& builder = ctx.GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
   builder.CreateCall(
@@ -51,6 +57,12 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
   // Conditional: no-op if not design slot
   if (!signal_id_opt.has_value()) {
     return;
+  }
+
+  if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
+    throw common::InternalError(
+        "CommitNotifyMutationIfDesignSlot",
+        "deferred notification not supported for container mutation path");
   }
 
   auto& builder = ctx.GetBuilder();
@@ -85,6 +97,12 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
   auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
   if (!signal_id_opt.has_value()) {
     return;  // No-op for non-design slots
+  }
+
+  if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
+    throw common::InternalError(
+        "CommitNotifyAggregateIfDesignSlot",
+        "deferred notification not supported for aggregate notify path");
   }
 
   auto target_ptr_or_err = ctx.GetPlacePointer(target);

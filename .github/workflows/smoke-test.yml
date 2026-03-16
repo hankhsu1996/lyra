@@ -23,7 +23,8 @@ jobs:
 
       - name: Install LLVM 20
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key
+          sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg /tmp/llvm.key
           . /etc/lsb-release
           echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update

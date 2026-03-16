@@ -63,6 +63,11 @@ void StoreStringToWriteTarget(
 
   if (wt.canonical_signal_id.has_value() &&
       ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit) {
+    if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
+      throw common::InternalError(
+          "StoreStringToWriteTarget",
+          "deferred notification not supported for string store path");
+    }
     // Notify contract: store+notify via runtime helper.
     // LyraStoreString handles null engine defensively (for kNotifyGuarded).
     builder.CreateCall(

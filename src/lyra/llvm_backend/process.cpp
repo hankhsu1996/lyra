@@ -53,6 +53,7 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/passes/canonical_loop_analysis.hpp"
+#include "lyra/mir/passes/non_yielding_loop_analysis.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
@@ -112,6 +113,52 @@ auto BuildBoundedLatchSet(
   auto [first, last] = std::ranges::unique(result);
   result.erase(first, last);
   return result;
+}
+
+// Build a sorted vector of block indices inside deferred-notification regions.
+// Invariant: exit_block must never appear in region_blocks. If it did,
+// codegen would both suppress notifications and emit deferred marks for the
+// same block, which is contradictory. The analysis guarantees this by
+// construction (region_blocks = header + body + latch, exit is the
+// successor outside the loop), but we verify it here as a backstop.
+auto BuildDeferredPolicyBlocks(
+    const std::vector<mir::passes::DeferredNotificationLoop>& loops)
+    -> std::vector<uint32_t> {
+  std::vector<uint32_t> result;
+  for (const auto& loop : loops) {
+    for (uint32_t bi : loop.region_blocks) {
+      if (bi == loop.exit_block) {
+        throw common::InternalError(
+            "BuildDeferredPolicyBlocks",
+            "exit_block must not appear in region_blocks");
+      }
+      result.push_back(bi);
+    }
+  }
+  std::ranges::sort(result);
+  auto [first, last] = std::ranges::unique(result);
+  result.erase(first, last);
+  return result;
+}
+
+// Emit deferred dirty-mark calls for a set of canonical notified roots.
+//
+// This models the loop-exit edge effect: unconditional full-slot marks
+// for every root that may have been written within the qualifying loop.
+// Semantically, the marks belong to the edge leaving the loop, not to
+// the successor block's own logic. They must be emitted before any
+// non-PHI work in the successor block.
+void EmitLoopExitDeferredMarks(
+    Context& context, const std::vector<mir::SignalRef>& roots) {
+  auto& builder = context.GetBuilder();
+  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
+  for (const auto& root : roots) {
+    auto signal_id = context.EmitSignalId(root);
+    builder.CreateCall(
+        context.GetLyraMarkDirty(),
+        {context.GetEnginePointer(), signal_id.Emit(builder),
+         llvm::ConstantInt::get(i32_ty, 0), llvm::ConstantInt::get(i32_ty, 0)});
+  }
 }
 
 // Canonical memory layout type for ProcessOutcome: { i32, i32, i32, i32 }.
@@ -1471,6 +1518,16 @@ auto GenerateProcessFunction(
       mir::passes::FindBoundedBackEdges(
           process.blocks, context.GetMirArena(), context.GetTypeArena()));
 
+  // Identify qualifying canonical loops for deferred notification.
+  // Only applies to simulation processes (init uses kDirectInit which
+  // already skips notification entirely).
+  auto deferred_loops =
+      is_simulation
+          ? mir::passes::FindDeferredNotificationLoops(
+                process.blocks, context.GetMirArena(), context.GetTypeArena())
+          : std::vector<mir::passes::DeferredNotificationLoop>{};
+  auto deferred_blocks = BuildDeferredPolicyBlocks(deferred_loops);
+
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
@@ -1610,6 +1667,25 @@ auto GenerateProcessFunction(
     const auto& block = process.blocks[i];
     builder.SetInsertPoint(llvm_blocks[i]);
 
+    // Scoped notification policy: kDeferred for blocks inside a
+    // qualifying non-yielding loop, kImmediate otherwise. RAII guard
+    // restores the policy on scope exit (including early returns).
+    auto policy =
+        std::ranges::binary_search(deferred_blocks, static_cast<uint32_t>(i))
+            ? NotificationPolicy::kDeferred
+            : NotificationPolicy::kImmediate;
+    NotificationPolicyScope policy_scope(context, policy);
+
+    // Loop-exit edge effect: emit deferred dirty-marks for qualifying
+    // loops whose exit edge targets this block. These marks model the
+    // edge leaving the loop, not block-entry logic. They must appear
+    // before any non-PHI work in this block.
+    for (const auto& loop : deferred_loops) {
+      if (loop.exit_block == static_cast<uint32_t>(i)) {
+        EmitLoopExitDeferredMarks(context, loop.notified_roots);
+      }
+    }
+
     for (const auto& instruction : block.statements) {
       auto result = LowerStatement(context, instruction);
       if (!result) return std::unexpected(result.error());
@@ -1663,6 +1739,11 @@ auto GenerateSharedProcessFunction(
   auto bounded_latches = BuildBoundedLatchSet(
       mir::passes::FindBoundedBackEdges(
           process.blocks, context.GetMirArena(), context.GetTypeArena()));
+
+  // Shared module processes are always simulation-only.
+  auto deferred_loops = mir::passes::FindDeferredNotificationLoops(
+      process.blocks, context.GetMirArena(), context.GetTypeArena());
+  auto deferred_blocks = BuildDeferredPolicyBlocks(deferred_loops);
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -1767,13 +1848,24 @@ auto GenerateSharedProcessFunction(
     const auto& block = process.blocks[i];
     builder.SetInsertPoint(llvm_blocks[i]);
 
+    auto policy =
+        std::ranges::binary_search(deferred_blocks, static_cast<uint32_t>(i))
+            ? NotificationPolicy::kDeferred
+            : NotificationPolicy::kImmediate;
+    NotificationPolicyScope policy_scope(context, policy);
+
+    // Loop-exit edge effect: deferred dirty-marks.
+    for (const auto& loop : deferred_loops) {
+      if (loop.exit_block == static_cast<uint32_t>(i)) {
+        EmitLoopExitDeferredMarks(context, loop.notified_roots);
+      }
+    }
+
     for (const auto& instruction : block.statements) {
       auto result = LowerStatement(context, instruction);
       if (!result) return std::unexpected(result.error());
     }
 
-    // Emit back-edge guard before loop back-edge terminators.
-    // Skip for provably bounded canonical for-loops.
     if (HasBackEdge(block.terminator, i) &&
         !std::ranges::binary_search(
             bounded_latches, static_cast<uint32_t>(i))) {
@@ -1799,15 +1891,8 @@ auto GenerateSharedProcessFunction(
     context.EndFunction();
   }
 
-  // Clear shared-body-specific state. Execution-contract fields
-  // (state_ptr, design_ptr, frame_ptr, engine_ptr, first_dirty_seen_ptr,
-  // design_store_mode) are restored by contract_scope destructor.
-  context.SetSlotAddressingMode(SlotAddressingMode::kDesignGlobal);
-  context.SetThisPointer(nullptr);
-  context.SetDynamicInstanceId(nullptr);
-  context.SetSignalIdOffset(nullptr);
-  context.SetUnstableSlotOffsetsPtr(nullptr);
-
+  // contract_scope destructor restores all execution-contract state
+  // including shared-body fields (slot_addressing, this_ptr, etc.).
   VerifyLlvmFunction(func, "GenerateSharedProcessFunction");
   return ProcessCodegenResult{
       .function = func, .wait_sites = std::move(wait_sites)};
@@ -3005,15 +3090,7 @@ auto DefineMirFunction(
   // Clean up function scope. Execution-contract fields are restored by
   // contract_scope destructor; only module-scoped fields need manual cleanup.
   context.EndFunction();
-  if (is_module_scoped) {
-    context.SetSlotAddressingMode(SlotAddressingMode::kDesignGlobal);
-    context.SetThisPointer(nullptr);
-    context.SetSignalIdOffset(nullptr);
-    context.SetDynamicInstanceId(nullptr);
-    context.SetSpecSlotLayout(nullptr);
-    context.SetUnstableSlotOffsetsPtr(nullptr);
-  }
-
+  // contract_scope destructor restores all execution-contract state.
   return {};
 }
 

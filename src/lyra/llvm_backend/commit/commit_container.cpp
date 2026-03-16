@@ -27,6 +27,11 @@ void StoreContainerToWriteTarget(
 
   if (wt.canonical_signal_id.has_value() &&
       ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit) {
+    if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
+      throw common::InternalError(
+          "StoreContainerToWriteTarget",
+          "deferred notification not supported for container store path");
+    }
     // Notify contract: load old, atomic store+notify, release old.
     // LyraStoreDynArray handles null engine defensively (for kNotifyGuarded).
     auto* old_handle = builder.CreateLoad(ptr_ty, wt.ptr, "ctr.old");
