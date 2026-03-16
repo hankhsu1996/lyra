@@ -47,15 +47,15 @@ auto PrepareBackEdgeSiteInputs(
     -> std::vector<realization::BackEdgeSiteInput>;
 
 // Extract connection descriptor entries from canonical layout.
-auto ExtractConnectionDescriptorEntries(
-    const mir::Arena& mir_arena, const Layout& layout)
+// Trigger observation data is pre-resolved in the layout; no arena access
+// needed.
+auto ExtractConnectionDescriptorEntries(const Layout& layout)
     -> std::vector<realization::ConnectionDescriptorEntry>;
 
 // Prepare comb kernel inputs from layout data.
-// Resolves symbolic trigger observations to concrete byte ranges and
-// canonicalizes to one trigger per (kernel, slot).
-auto PrepareCombKernelInputs(
-    const mir::Arena& mir_arena, const Layout& layout, size_t num_init)
+// Trigger observation data is pre-resolved in the layout; no arena access
+// needed. Canonicalizes to one trigger per (kernel, slot).
+auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
     -> std::vector<realization::CombKernelInput>;
 
 // Build final trace-signal metadata inputs from compile-owned provenance.

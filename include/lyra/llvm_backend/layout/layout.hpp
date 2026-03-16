@@ -133,38 +133,6 @@ struct ProcessLayout {
   std::vector<AllocaRootInfo> alloca_roots;
 };
 
-// Entry for a connection process that has been kernelized.
-// Instead of generating a per-process LLVM function, these are batched
-// into a connection descriptor table evaluated inline by the engine.
-struct ConnectionKernelEntry {
-  mir::ProcessId process_id;
-  mir::SlotId src_slot;
-  mir::SlotId dst_slot;
-  mir::SlotId trigger_slot;
-  common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
-  // Optional observed place for sub-slot trigger narrowing
-  std::optional<mir::PlaceId> trigger_observed_place;
-};
-
-// Symbolic trigger observation for a comb kernel input slot.
-// Preserves the observed_place from sensitivity analysis for later byte-range
-// resolution in metadata lowering.
-struct CombTrigger {
-  mir::SlotId slot;
-  std::optional<mir::PlaceId> observed_place;
-};
-
-// Entry for a pure combinational process that can be evaluated inline.
-// Unlike connections (memcpy), comb kernels run compiled code but skip
-// the full scheduler overhead (subscriptions, queuing, SuspendRecord).
-struct CombKernelEntry {
-  mir::ProcessId process_id;
-  std::vector<CombTrigger> triggers;
-  // True if the kernel's write slot set overlaps its trigger slot set.
-  // Conservative: slot-granular, so sub-slot disjointness is not considered.
-  bool has_self_edge = false;
-};
-
 // Index into module-instance parallel arrays (instance_base_byte_offsets,
 // placement.instances, etc.).
 struct ModuleIndex {
@@ -175,6 +143,60 @@ struct ModuleIndex {
   explicit operator bool() const {
     return value != kNone;
   }
+};
+
+// Cross-boundary metadata contract:
+//
+// The structs below are produced during layout and consumed later during
+// metadata lowering. Arena-local MIR IDs must not appear here without an
+// explicit boundary contract:
+//
+// - Prefer resolved derived data when the consumer does not need MIR identity
+//   (for example, ResolvedObservation instead of PlaceId).
+// - If later code must perform arena lookup, carry the arena-local ID together
+//   with explicit provenance (ModuleIndex).
+//
+// This keeps wrong-arena lookup unrepresentable in cross-phase metadata.
+
+// Pre-resolved trigger observation for sub-slot narrowing in metadata lowering.
+// Computed during layout while the owning MIR arena is still known, so no
+// arena-local PlaceId survives into cross-boundary metadata.
+struct ResolvedObservation {
+  uint32_t byte_offset = 0;
+  uint32_t byte_size = 0;
+  uint8_t bit_index = 0;
+};
+
+// Entry for a connection process that has been kernelized.
+// Instead of generating a per-process LLVM function, these are batched
+// into a connection descriptor table evaluated inline by the engine.
+struct ConnectionKernelEntry {
+  mir::ProcessId process_id;
+  mir::SlotId src_slot;
+  mir::SlotId dst_slot;
+  mir::SlotId trigger_slot;
+  common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
+  std::optional<ResolvedObservation> trigger_observation;
+};
+
+// Trigger observation for a comb kernel input slot.
+// Stores pre-resolved byte-range data, not arena-local PlaceId.
+struct CombTrigger {
+  mir::SlotId slot;
+  // nullopt => observe full slot.
+  std::optional<ResolvedObservation> observation;
+};
+
+// Entry for a pure combinational process that can be evaluated inline.
+// Unlike connections (memcpy), comb kernels run compiled code but skip
+// the full scheduler overhead (subscriptions, queuing, SuspendRecord).
+struct CombKernelEntry {
+  mir::ProcessId process_id;
+  ModuleIndex module_index;
+  std::vector<CombTrigger> triggers;
+  // True if the kernel's write slot set overlaps its trigger slot set.
+  // Conservative: slot-granular, so sub-slot disjointness is not considered.
+  bool has_self_edge = false;
 };
 
 // Scheduled process record: pairs a ProcessId with optional module instance.
