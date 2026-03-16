@@ -71,8 +71,11 @@ void EmitInlineStore(
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
 
-  if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) {
-    // Init contract: plain store, no compare, no dirty-mark.
+  if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit ||
+      ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
+    // Init contract or deferred notification: plain store, no compare,
+    // no dirty-mark. For kDeferred, the dirty-mark is emitted as a
+    // loop-exit edge effect.
     builder.CreateStore(canonical_bits, target.ptr);
     return;
   }
@@ -229,7 +232,13 @@ void StoreDesignWithNotify(
 
   auto& builder = ctx.GetBuilder();
   uint32_t byte_size = spec.TotalByteSize();
-  bool is_direct = ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit;
+  // True when the commit path should store without inline notification.
+  // Two distinct reasons: kDirectInit (no engine exists) and kDeferred
+  // (engine exists but notification is deferred to loop-exit edge).
+  // Both share the same immediate-store codegen path.
+  bool skip_inline_notify =
+      ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit ||
+      ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred;
 
   bool is_scalar = std::holds_alternative<PackedStorageSpec>(spec.data) ||
                    std::holds_alternative<FloatStorageSpec>(spec.data);
@@ -246,7 +255,7 @@ void StoreDesignWithNotify(
       auto* temp = entry_builder.CreateAlloca(
           canonical->getType(), nullptr, "canon_buf");
       builder.CreateStore(canonical, temp);
-      if (is_direct) {
+      if (skip_inline_notify) {
         EmitDirectCanonicalBytesStore(ctx, temp, target, byte_size);
       } else {
         EmitStoreCanonicalBytesCall(ctx, temp, target, byte_size);
@@ -264,7 +273,7 @@ void StoreDesignWithNotify(
     builder.CreateMemSet(
         temp, builder.getInt8(0), byte_size, llvm::MaybeAlign());
     EmitStoreToCanonicalStorage(builder, temp, new_value, spec, arena);
-    if (is_direct) {
+    if (skip_inline_notify) {
       EmitDirectCanonicalBytesStore(ctx, temp, target, byte_size);
     } else {
       EmitStoreCanonicalBytesCall(ctx, temp, target, byte_size);

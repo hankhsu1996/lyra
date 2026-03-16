@@ -509,6 +509,24 @@ auto Context::GetDesignStoreMode() const -> DesignStoreMode {
   return design_store_mode_;
 }
 
+void Context::SetNotificationPolicy(NotificationPolicy policy) {
+  notification_policy_ = policy;
+}
+
+auto Context::GetNotificationPolicy() const -> NotificationPolicy {
+  return notification_policy_;
+}
+
+NotificationPolicyScope::NotificationPolicyScope(
+    Context& ctx, NotificationPolicy policy)
+    : ctx_(ctx), saved_(ctx.GetNotificationPolicy()) {
+  ctx_.SetNotificationPolicy(policy);
+}
+
+NotificationPolicyScope::~NotificationPolicyScope() {
+  ctx_.SetNotificationPolicy(saved_);
+}
+
 void Context::SetFirstDirtySeenPtr(llvm::Value* ptr) {
   first_dirty_seen_ptr_ = ptr;
 }
@@ -596,7 +614,7 @@ auto Context::HasUserFunction(mir::FunctionId func_id) const -> bool {
 void Context::RegisterDesignFunction(
     SymbolId symbol, mir::FunctionId func_id, llvm::Function* llvm_func) {
   design_functions_.insert_or_assign(
-      symbol, DesignFunctionEntry{func_id, llvm_func});
+      symbol, DesignFunctionEntry{.func_id = func_id, .llvm_func = llvm_func});
 }
 
 auto Context::GetDesignFunction(SymbolId symbol) const

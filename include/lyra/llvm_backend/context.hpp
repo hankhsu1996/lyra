@@ -65,6 +65,19 @@ enum class DesignStoreMode {
   kNotifyCrossContext,
 };
 
+// When dirty-mark notification fires for design-slot writes.
+// Orthogonal to DesignStoreMode (which identifies the execution context).
+//
+// kImmediate: notification fires inline at each store (default).
+// kDeferred: notification is suppressed; the store commits immediately
+// to DesignState but the dirty-mark is emitted as a loop-exit edge
+// effect. Only legal within qualifying non-yielding regions where
+// no scheduler-visible observation can occur before the deferred point.
+enum class NotificationPolicy {
+  kImmediate,
+  kDeferred,
+};
+
 // Snapshot of per-function execution-contract state on Context.
 // Used by ExecutionContractScope for save/restore.
 struct ExecutionContractState {
@@ -93,6 +106,25 @@ class ExecutionContractScope {
  private:
   Context& ctx_;
   ExecutionContractState saved_;
+};
+
+// Scoped notification policy guard. Sets the policy on construction,
+// restores the previous policy on destruction. Used per-block in the
+// codegen block loop to ensure early returns cannot leak kDeferred.
+class NotificationPolicyScope {
+ public:
+  NotificationPolicyScope(Context& ctx, NotificationPolicy policy);
+  ~NotificationPolicyScope();
+  NotificationPolicyScope(const NotificationPolicyScope&) = delete;
+  auto operator=(const NotificationPolicyScope&)
+      -> NotificationPolicyScope& = delete;
+  NotificationPolicyScope(NotificationPolicyScope&&) = delete;
+  auto operator=(NotificationPolicyScope&&)
+      -> NotificationPolicyScope& = delete;
+
+ private:
+  Context& ctx_;
+  NotificationPolicy saved_;
 };
 
 // How module-local slots (kModuleSlot) are addressed in the current lowering
@@ -160,6 +192,8 @@ class Context {
     }
     ArenaScope(const ArenaScope&) = delete;
     auto operator=(const ArenaScope&) -> ArenaScope& = delete;
+    ArenaScope(ArenaScope&&) = delete;
+    auto operator=(ArenaScope&&) -> ArenaScope& = delete;
 
    private:
     Context& ctx_;
@@ -457,6 +491,13 @@ class Context {
   void SetDesignStoreMode(DesignStoreMode mode);
   [[nodiscard]] auto GetDesignStoreMode() const -> DesignStoreMode;
 
+  // Controls when dirty-mark notification fires. Orthogonal to
+  // DesignStoreMode. Set per-block during codegen for qualifying
+  // non-yielding loops. kDeferred means the store commits immediately
+  // but the dirty-mark is emitted at the loop-exit edge.
+  void SetNotificationPolicy(NotificationPolicy policy);
+  [[nodiscard]] auto GetNotificationPolicy() const -> NotificationPolicy;
+
   // first_dirty_seen_ptr: per-delta first-dirty bitmap, hoisted once per
   // activation. Generated code uses this for inline first-dirty guards.
   void SetFirstDirtySeenPtr(llvm::Value* ptr);
@@ -546,7 +587,7 @@ class Context {
   // callers can use FunctionId-keyed metadata (sret, module-scoped, etc.).
   struct DesignFunctionEntry {
     mir::FunctionId func_id;
-    llvm::Function* llvm_func;
+    llvm::Function* llvm_func = nullptr;
   };
   void RegisterDesignFunction(
       SymbolId symbol, mir::FunctionId func_id, llvm::Function* llvm_func);
@@ -813,6 +854,7 @@ class Context {
   llvm::Value* engine_ptr_ = nullptr;
   llvm::Value* first_dirty_seen_ptr_ = nullptr;
   DesignStoreMode design_store_mode_ = DesignStoreMode::kNotifySimulation;
+  NotificationPolicy notification_policy_ = NotificationPolicy::kImmediate;
 
   // How module-local slots are addressed in the current function scope.
   SlotAddressingMode slot_addressing_ = SlotAddressingMode::kDesignGlobal;

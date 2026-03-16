@@ -61,6 +61,13 @@ void StoreStringToWriteTarget(
   // Safe for aliasing: if new == old, store completes before release.
   auto* old_val = builder.CreateLoad(ptr_ty, wt.ptr, "str.old");
 
+  if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred &&
+      wt.canonical_signal_id.has_value()) {
+    throw common::InternalError(
+        "StoreStringToWriteTarget",
+        "deferred notification not supported for string store path");
+  }
+
   if (wt.canonical_signal_id.has_value() &&
       ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit) {
     // Notify contract: store+notify via runtime helper.
