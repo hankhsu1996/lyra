@@ -427,10 +427,13 @@ def run_verilator(
     build_cmd.extend(sv_paths)
 
     try:
+        env = os.environ.copy()
+        env["CCACHE_DISABLE"] = "1"
+
         t0 = time.monotonic()
         proc = subprocess.run(
             build_cmd, capture_output=True, text=True,
-            timeout=TIMEOUT_SECONDS, cwd=work_dir,
+            timeout=TIMEOUT_SECONDS, cwd=work_dir, env=env,
         )
         result.compile_s = time.monotonic() - t0
 
