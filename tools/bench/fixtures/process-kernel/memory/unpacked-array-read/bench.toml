@@ -8,7 +8,7 @@ primary = "unpacked array read throughput"
 secondary = ["loop overhead", "scalar add"]
 
 [scale.small]
-NUM_ITERS = 512
+NUM_ITERS = 2_560
 
 [scale.large]
-NUM_ITERS = 4_096
+NUM_ITERS = 20_480

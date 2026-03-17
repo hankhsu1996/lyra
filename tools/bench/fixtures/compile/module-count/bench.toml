@@ -1,0 +1,13 @@
+[benchmark]
+name = "module-count"
+category = "compile"
+intent = "Protect compile-time scaling and code dedup effectiveness as module count grows."
+focus = "compile"
+primary = "compile time scaling by module count"
+secondary = ["binary size scaling", "LLVM IR size scaling"]
+
+[scale.small]
+NUM_MODULES = 64
+
+[scale.large]
+NUM_MODULES = 512

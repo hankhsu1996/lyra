@@ -1,0 +1,13 @@
+[benchmark]
+name = "sparse-wakeup"
+category = "simulation-engine"
+intent = "Protect per-subscription scan cost and wakeup filtering fast path from regression."
+focus = "runtime"
+primary = "edge subscription scan-but-don't-fire cost"
+secondary = ["wakeup dedup effectiveness"]
+
+[scale.small]
+NUM_CYCLES = 50_000
+
+[scale.large]
+NUM_CYCLES = 500_000

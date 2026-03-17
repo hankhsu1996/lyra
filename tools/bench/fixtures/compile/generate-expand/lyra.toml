@@ -1,0 +1,6 @@
+[package]
+name = "generate-expand"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

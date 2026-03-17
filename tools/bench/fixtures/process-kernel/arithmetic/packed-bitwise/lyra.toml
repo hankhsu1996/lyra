@@ -1,0 +1,6 @@
+[package]
+name = "packed-bitwise"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

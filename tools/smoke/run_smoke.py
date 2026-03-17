@@ -24,6 +24,7 @@ DESIGNS = [
     "examples/hello",
     "examples/riscv-cpu",
     "tools/bench/fixtures/process-kernel/memory/unpacked-array-read",
+    "tools/bench/fixtures/process-kernel/representative/compute-block",
     "tools/bench/fixtures/simulation-engine/clock-pipeline",
 ]
 

@@ -1,0 +1,14 @@
+[benchmark]
+name = "loop-tight"
+category = "process-kernel"
+subcategory = "control-flow"
+intent = "Protect loop back-edge codegen and iteration overhead from regression (body is trivial XOR/shift to prevent constant folding)."
+focus = "runtime"
+primary = "tight loop overhead (loop + trivial XOR/shift body)"
+secondary = ["iteration limit checking", "back-edge codegen"]
+
+[scale.small]
+NUM_ITERS = 20_000
+
+[scale.large]
+NUM_ITERS = 200_000

@@ -1,0 +1,6 @@
+[package]
+name = "packed-array-read"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

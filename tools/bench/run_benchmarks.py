@@ -502,6 +502,8 @@ def run_verilator(
         "-Wno-UNUSEDSIGNAL", "-Wno-UNDRIVEN",
         "-Wno-UNUSEDPARAM", "-Wno-PINMISSING",
         "-Wno-CASEINCOMPLETE", "-Wno-IMPORTSTAR",
+        "-Wno-ALWCOMBORDER", "-Wno-UNOPTFLAT",
+        "-Wno-MULTIDRIVEN", "-Wno-WIDTHCONCAT",
     ]
     build_cmd.extend(build_verilator_define_args(params))
     build_cmd.extend(sv_paths)
@@ -612,6 +614,12 @@ def fmt_time(val: float) -> str:
     return f"{int(round(val * 1000)):,}"
 
 
+def fmt_int(val: int) -> str:
+    if val == 0:
+        return "-"
+    return f"{val:,}"
+
+
 def group_fixture_backends(
     results: list[BenchResult],
 ) -> dict[str, dict[str, BenchResult]]:
@@ -622,60 +630,20 @@ def group_fixture_backends(
     return grouped
 
 
-def get_ordered_fixtures(
-    results: list[BenchResult],
-) -> list[str]:
-    """Get fixture names in stable order (by category, subcategory, name)."""
-    seen = set()
-    ordered = []
-    for r in sorted(
-        results,
-        key=lambda r: (r.category, r.subcategory or "", r.fixture),
-    ):
-        if r.fixture not in seen:
-            seen.add(r.fixture)
-            ordered.append(r.fixture)
-    return ordered
-
-
-def print_markdown(
-    results: list[BenchResult], num_trials: int, tier: str, profile: str,
-    num_discovered: int, num_runnable: int,
-    skipped: list[tuple[str, str]],
+def print_runtime_table(
+    fixture_names: list[str],
+    by_fixture: dict[str, dict[str, BenchResult]],
 ) -> None:
-    trial_note = f"{num_trials} (median)" if num_trials > 1 else "1"
-    by_fixture = group_fixture_backends(results)
-    ordered = get_ordered_fixtures(results)
-
-    print()
-    print("## Lyra Benchmark Report")
-    print()
+    """Print a runtime sim_s table for a group of fixtures."""
     print(
-        f"> git: `{get_git_sha()}` | tier: {tier} | "
-        f"profile: {profile} | trials: {trial_note}")
+        "| Fixture | Lyra 4s (ms) "
+        "| Lyra 2s (ms) | Verilator (ms) |")
     print(
-        f"> Discovered {num_discovered} fixtures, "
-        f"{num_runnable} runnable for tier '{tier}'")
+        "|---------|-------------:"
+        "|-------------:|---------------:|")
 
-    if skipped:
-        skip_items = [f"{name} ({reason})" for name, reason in skipped]
-        print(f">   Skipped: {', '.join(skip_items)}")
-    else:
-        print(">   Skipped: (none)")
-
-    # Table 1: Simulation Performance
-    print()
-    print("### Simulation Performance")
-    print()
-    print(
-        "| Fixture | Lyra 4-state (ms) "
-        "| Lyra 2-state (ms) | Verilator (ms) |")
-    print(
-        "|---------|------------------:"
-        "|------------------:|---------------:|")
-
-    for fixture_name in ordered:
-        backends = by_fixture.get(fixture_name, {})
+    for name in fixture_names:
+        backends = by_fixture.get(name, {})
         aot = backends.get("aot")
         aot_2s = backends.get("aot-two-state")
         ver = backends.get("verilator")
@@ -690,23 +658,25 @@ def print_markdown(
             fmt_time(ver.sim_s) if ver and not ver.error
             else "FAIL" if ver else "-")
 
-        print(
-            f"| {fixture_name} "
-            f"| {aot_sim} | {aot_2s_sim} | {ver_sim} |")
+        print(f"| {name} | {aot_sim} | {aot_2s_sim} | {ver_sim} |")
 
-    # Table 2: Compile Time
-    print()
-    print("### Compile Time")
-    print()
+
+def print_compile_table(
+    fixture_names: list[str],
+    by_fixture: dict[str, dict[str, BenchResult]],
+) -> None:
+    """Print a compile-focused table for a group of fixtures."""
     print(
         "| Fixture | AOT (ms) "
-        "| JIT (ms) | Verilator (ms) |")
+        "| JIT (ms) | Verilator (ms) "
+        "| LLVM insts | Binary (KB) |")
     print(
-        "|--------|---------:"
-        "|---------:|---------------:|")
+        "|---------|--------:"
+        "|--------:|---------------:"
+        "|-----------:|------------:|")
 
-    for fixture_name in ordered:
-        backends = by_fixture.get(fixture_name, {})
+    for name in fixture_names:
+        backends = by_fixture.get(name, {})
         aot = backends.get("aot")
         jit = backends.get("jit")
         ver = backends.get("verilator")
@@ -720,12 +690,109 @@ def print_markdown(
         ver_c = (
             fmt_time(ver.compile_s) if ver and not ver.error
             else "FAIL" if ver else "-")
+        llvm = (
+            fmt_int(aot.llvm_insts) if aot and not aot.error
+            else "-")
+        binary = (
+            fmt_int(aot.binary_kb) if aot and not aot.error
+            else "-")
 
         print(
-            f"| {fixture_name} "
-            f"| {aot_c} | {jit_c} | {ver_c} |")
+            f"| {name} | {aot_c} | {jit_c} | {ver_c} "
+            f"| {llvm} | {binary} |")
 
-    # Errors
+
+def build_grouped_fixtures(
+    results: list[BenchResult],
+) -> dict[tuple[str, str | None], list[str]]:
+    """Group fixture names by (category, subcategory) in stable order."""
+    groups: dict[tuple[str, str | None], list[str]] = {}
+    seen: set[str] = set()
+    for r in sorted(
+        results,
+        key=lambda r: (r.category, r.subcategory or "", r.fixture),
+    ):
+        if r.fixture in seen:
+            continue
+        seen.add(r.fixture)
+        key = (r.category, r.subcategory)
+        groups.setdefault(key, []).append(r.fixture)
+    return groups
+
+
+def print_markdown(
+    results: list[BenchResult], num_trials: int, tier: str, profile: str,
+    num_discovered: int, num_runnable: int,
+    skipped: list[tuple[str, str]],
+) -> None:
+    trial_note = f"{num_trials} (median)" if num_trials > 1 else "1"
+    by_fixture = group_fixture_backends(results)
+
+    _KNOWN_FOCUS = {"runtime", "compile"}
+    unknown_focus = {r.focus for r in results} - _KNOWN_FOCUS
+    if unknown_focus:
+        print(
+            f"ERROR: unknown focus values: {unknown_focus}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    runtime_results = [r for r in results if r.focus == "runtime"]
+    compile_results = [r for r in results if r.focus == "compile"]
+
+    print()
+    print("## Lyra Benchmark Report")
+    print()
+    print(
+        f"> git: `{get_git_sha()}` | tier: {tier} | "
+        f"profile: {profile} | trials: {trial_note}")
+    print(
+        f"> discovered: {num_discovered} | "
+        f"runnable: {num_runnable} | "
+        f"skipped: ", end="")
+    if skipped:
+        skip_items = [f"{name} ({reason})" for name, reason in skipped]
+        print(", ".join(skip_items))
+    else:
+        print("none")
+
+    if runtime_results:
+        print()
+        print("# Runtime Benchmarks")
+
+        runtime_groups = build_grouped_fixtures(runtime_results)
+
+        # Collect all fixtures per category into a flat list.
+        cat_fixtures: dict[str, list[str]] = {}
+        for (category, _subcategory), fixtures in runtime_groups.items():
+            cat_fixtures.setdefault(category, []).extend(fixtures)
+
+        for category in cat_fixtures:
+            print()
+            print(f"## {category}")
+            print()
+            print_runtime_table(cat_fixtures[category], by_fixture)
+
+    if compile_results:
+        print()
+        print("# Compile Benchmarks")
+
+        compile_groups = build_grouped_fixtures(compile_results)
+        current_category = ""
+
+        for (category, subcategory), fixtures in compile_groups.items():
+            if category != current_category:
+                print()
+                print(f"## {category}")
+                current_category = category
+
+            if subcategory:
+                print()
+                print(f"### {subcategory}")
+
+            print()
+            print_compile_table(fixtures, by_fixture)
+
     errors = [r for r in results if r.error and r.error != "verilator not found"]
     if errors:
         print()

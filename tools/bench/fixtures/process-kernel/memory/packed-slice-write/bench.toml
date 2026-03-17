@@ -1,0 +1,14 @@
+[benchmark]
+name = "packed-slice-write"
+category = "process-kernel"
+subcategory = "memory"
+intent = "Protect indexed part-select insertion into wide packed storage from regression."
+focus = "runtime"
+primary = "packed part-select insertion throughput"
+secondary = ["wide bitvector slicing", "index computation"]
+
+[scale.small]
+NUM_ITERS = 2_560
+
+[scale.large]
+NUM_ITERS = 20_480

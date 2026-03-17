@@ -1,0 +1,14 @@
+[benchmark]
+name = "call-chain"
+category = "process-kernel"
+subcategory = "control-flow"
+intent = "Protect codegen quality for deep function call chains from regression (may be fully inlined by LLVM)."
+focus = "runtime"
+primary = "function call chain codegen (16-deep, likely inlined)"
+secondary = ["inlining effectiveness", "argument passing"]
+
+[scale.small]
+NUM_ITERS = 20_000_000
+
+[scale.large]
+NUM_ITERS = 200_000_000

@@ -1,0 +1,14 @@
+[benchmark]
+name = "packed-bitwise"
+category = "process-kernel"
+subcategory = "arithmetic"
+intent = "Protect wide packed bitvector bitwise and slice operation codegen from regression."
+focus = "runtime"
+primary = "wide packed bitwise/concat/slice throughput (256-bit)"
+secondary = ["4-state wide-integer lowering"]
+
+[scale.small]
+NUM_ITERS = 50_000_000
+
+[scale.large]
+NUM_ITERS = 500_000_000

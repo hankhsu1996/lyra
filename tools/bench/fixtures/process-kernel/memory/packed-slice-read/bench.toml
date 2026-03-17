@@ -1,0 +1,14 @@
+[benchmark]
+name = "packed-slice-read"
+category = "process-kernel"
+subcategory = "memory"
+intent = "Protect indexed part-select extraction from wide packed storage from regression."
+focus = "runtime"
+primary = "packed part-select extraction throughput"
+secondary = ["wide bitvector slicing", "packed-to-int conversion"]
+
+[scale.small]
+NUM_ITERS = 2_560
+
+[scale.large]
+NUM_ITERS = 20_480
