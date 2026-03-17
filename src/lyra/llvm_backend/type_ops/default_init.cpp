@@ -181,7 +181,6 @@ void EmitSVDefaultInitImpl(
 
       // Get element type info for init
       const Type& elem_type = types[info.element_type];
-      auto* elem_llvm_type = array_llvm_type->getElementType();
 
       // For small arrays, unroll directly (no loop, no extra basic blocks).
       // This avoids 4 basic blocks + phi + branch overhead for tiny arrays.
