@@ -1,0 +1,6 @@
+[package]
+name = "loop-tight"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

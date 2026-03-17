@@ -1,0 +1,13 @@
+[benchmark]
+name = "generate-expand"
+category = "compile"
+intent = "Protect compile overhead from generate block expansion scaling."
+focus = "compile"
+primary = "generate elaboration and codegen scaling"
+secondary = ["specialization compilation scaling"]
+
+[scale.small]
+NUM_INSTANCES = 128
+
+[scale.large]
+NUM_INSTANCES = 1024

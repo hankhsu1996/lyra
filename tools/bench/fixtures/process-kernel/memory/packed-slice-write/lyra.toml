@@ -1,0 +1,6 @@
+[package]
+name = "packed-slice-write"
+top = "Top"
+
+[sources]
+files = ["top.sv"]

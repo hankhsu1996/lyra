@@ -1,0 +1,13 @@
+[benchmark]
+name = "change-sub-dense"
+category = "simulation-engine"
+intent = "Protect any-change subscription flush and memcmp snapshot comparison from regression."
+focus = "runtime"
+primary = "any-change subscription flush (ChangeSub memcmp path)"
+secondary = ["wakeup dispatch cost"]
+
+[scale.small]
+NUM_CYCLES = 50_000
+
+[scale.large]
+NUM_CYCLES = 500_000
