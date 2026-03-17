@@ -80,6 +80,49 @@ struct DetailedRuntimeStats {
   uint64_t change_sub_wakeups = 0;
   uint64_t wakeup_attempts = 0;
   uint64_t wakeup_deduped = 0;
+
+  // MarkSlotDirty cost breakdown.
+  uint64_t dirty_mark_fast_path = 0;
+  uint64_t dirty_mark_first_touch = 0;
+
+  // Worklist propagation internals.
+  uint64_t prop_pending_slots = 0;
+  uint64_t prop_conn_trigger_lookups = 0;
+  uint64_t prop_conn_trigger_hits = 0;
+  uint64_t prop_comb_trigger_lookups = 0;
+  uint64_t prop_comb_trigger_hits = 0;
+  uint64_t prop_enqueue_attempts = 0;
+  uint64_t prop_enqueue_deduped = 0;
+
+  // Propagation entry-point breakdown.
+  uint64_t prop_calls_total = 0;
+  uint64_t prop_calls_with_work = 0;
+  uint64_t prop_calls_without_work = 0;
+  uint64_t prop_pending_slots_total = 0;
+};
+
+// Per-process wakeup/activation counters. Collected when kDetailedStats is
+// enabled. Allows post-simulation analysis of which processes are hot,
+// what wakes them, and what kind of work each activation does.
+struct ProcessWakeStats {
+  // Wake attempts by cause (includes deduped).
+  uint64_t wake_edge = 0;
+  uint64_t wake_change = 0;
+  uint64_t wake_container = 0;
+  uint64_t wake_delay = 0;
+  uint64_t wake_initial = 0;
+  uint64_t wake_other = 0;
+  // Deduped wake attempts (process already enqueued).
+  uint64_t wake_deduped = 0;
+  // Actual activations (process body executed).
+  uint64_t runs = 0;
+  // Total distinct slots dirtied (direct MarkSlotDirty) across all runs.
+  uint64_t total_slots_dirtied = 0;
+  // Activations with no direct dirty marks. These are typically always_ff
+  // processes that write only via NBA (nonblocking assignment). NOT a
+  // wasted-wakeup indicator: always_ff processes legitimately schedule
+  // NBAs without calling MarkSlotDirty during their body.
+  uint64_t nba_only_runs = 0;
 };
 
 // Composite runtime stats: core (always-on) + detailed (opt-in).
@@ -128,6 +171,9 @@ class Engine {
     }
     detailed_stats_enabled_ = HasFlag(
         static_cast<FeatureFlag>(feature_flags_), FeatureFlag::kDetailedStats);
+    if (detailed_stats_enabled_) {
+      per_process_stats_.resize(num_processes);
+    }
   }
 
   ~Engine() = default;
@@ -340,8 +386,17 @@ class Engine {
   // Note: SignalId == slot_id in the current runtime. This equivalence is by
   // design - both identify the same design slot. Callers may pass either type.
   void MarkSlotDirty(uint32_t slot_id) {
-    if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
+    if (detailed_stats_enabled_) {
+      ++stats_.detailed.dirty_mark_calls;
+    }
     bool first_dirty = update_set_.MarkSlotDirty(slot_id);
+    if (detailed_stats_enabled_) {
+      if (first_dirty) {
+        ++stats_.detailed.dirty_mark_first_touch;
+      } else {
+        ++stats_.detailed.dirty_mark_fast_path;
+      }
+    }
     if (comb_write_capture_ != nullptr) {
       comb_write_capture_->push_back(slot_id);
     }
@@ -668,9 +723,35 @@ class Engine {
   void EnqueueProcessWakeup(
       uint32_t process_id, uint32_t instance_id, uint32_t resume_block,
       uint32_t trigger_slot, WakeCause cause) {
-    if (detailed_stats_enabled_) ++stats_.detailed.wakeup_attempts;
+    if (detailed_stats_enabled_) {
+      ++stats_.detailed.wakeup_attempts;
+      auto& ps = per_process_stats_[process_id];
+      switch (cause) {
+        case WakeCause::kEdge:
+          ++ps.wake_edge;
+          break;
+        case WakeCause::kChange:
+          ++ps.wake_change;
+          break;
+        case WakeCause::kContainer:
+          ++ps.wake_container;
+          break;
+        case WakeCause::kDelay:
+          ++ps.wake_delay;
+          break;
+        case WakeCause::kInitial:
+          ++ps.wake_initial;
+          break;
+        default:
+          ++ps.wake_other;
+          break;
+      }
+    }
     if (process_states_[process_id].is_enqueued) {
-      if (detailed_stats_enabled_) ++stats_.detailed.wakeup_deduped;
+      if (detailed_stats_enabled_) {
+        ++stats_.detailed.wakeup_deduped;
+        ++per_process_stats_[process_id].wake_deduped;
+      }
       return;
     }
     next_delta_queue_.push_back({process_id, instance_id, resume_block});
@@ -884,6 +965,10 @@ class Engine {
 
   // Execution-discipline counters (accumulated during Run).
   RuntimeStats stats_;
+
+  // Per-process wakeup/activation counters (opt-in, kDetailedStats).
+  // Indexed by process_id. Empty when detailed stats are disabled.
+  std::vector<ProcessWakeStats> per_process_stats_;
 
   // Static connection batch shape (populated once in InitConnectionBatch).
   uint32_t conn_full_slot_count_ = 0;

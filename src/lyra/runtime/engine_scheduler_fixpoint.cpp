@@ -205,6 +205,16 @@ void Engine::SeedCombKernelDirtyMarks() {
 }
 
 void Engine::FlushAndPropagateConnections() {
+  if (detailed_stats_enabled_) {
+    auto pending = update_set_.DeltaDirtySlots().size();
+    ++stats_.detailed.prop_calls_total;
+    stats_.detailed.prop_pending_slots_total += pending;
+    if (pending > 0) {
+      ++stats_.detailed.prop_calls_with_work;
+    } else {
+      ++stats_.detailed.prop_calls_without_work;
+    }
+  }
   bool has_conns = !all_connections_.empty();
   bool has_combs = !comb_kernels_.empty();
   if (!has_conns && !has_combs) {
@@ -259,9 +269,12 @@ void Engine::FlushAndPropagateConnections() {
 
   // Helper: enqueue a slot into next_pending with dedup.
   auto enqueue_pending = [&](uint32_t slot_id) {
+    if (detailed) ++stats_.detailed.prop_enqueue_attempts;
     if (slot_id < slot_count && fp_work_.pending_seen[slot_id] == 0) {
       fp_work_.pending_seen[slot_id] = 1;
       fp_work_.next_pending.push_back(slot_id);
+    } else {
+      if (detailed) ++stats_.detailed.prop_enqueue_deduped;
     }
   };
 
@@ -285,12 +298,16 @@ void Engine::FlushAndPropagateConnections() {
     // Reset seen bits for slots in the current work list.
     for (uint32_t s : fp_work_.pending) fp_work_.pending_seen[s] = 0;
 
+    if (detailed) stats_.detailed.prop_pending_slots += fp_work_.pending.size();
+
     // Phase 1: connection propagation (memcmp guards actual change).
     if (has_conns) {
       for (uint32_t slot_id : fp_work_.pending) {
         if (slot_id >= conn_trigger_map_.size()) continue;
+        if (detailed) ++stats_.detailed.prop_conn_trigger_lookups;
         auto [start, count] = conn_trigger_map_[slot_id];
         if (count == 0) continue;
+        if (detailed) ++stats_.detailed.prop_conn_trigger_hits;
         for (uint32_t ci = start; ci < start + count; ++ci) {
           if (detailed) ++stats_.detailed.conn_considered;
           const auto& conn = all_connections_[ci];
@@ -352,8 +369,10 @@ void Engine::FlushAndPropagateConnections() {
 
       for (uint32_t slot_id : fp_work_.pending) {
         if (slot_id >= comb_trigger_map_.size()) continue;
+        if (detailed) ++stats_.detailed.prop_comb_trigger_lookups;
         auto [cstart, ccount] = comb_trigger_map_[slot_id];
         if (ccount == 0) continue;
+        if (detailed) ++stats_.detailed.prop_comb_trigger_hits;
 
         const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
 
