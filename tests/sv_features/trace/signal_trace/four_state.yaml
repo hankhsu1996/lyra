@@ -1,0 +1,23 @@
+feature: signal_trace
+description: Signal trace tests that depend on 4-state semantics (X/Z values)
+
+cases:
+  - name: packed-1bit-x-to-value
+    description: 1-bit signal trace captures X-to-0 transition (4-state only)
+    sv: |
+      module Test;
+        logic clk;
+        initial begin
+          clk = 1'b0;
+          #10;
+          clk = 1'b1;
+          $display("done");
+        end
+      endmodule
+    signal_trace: true
+    expect:
+      stdout:
+        contains:
+          - "done"
+          - "= 1'b0"
+          - "= 1'b1"

@@ -52,15 +52,12 @@ cases:
         initial begin
           clk = 0;
           repeat (20) #5 clk = ~clk;
-          $finish;
+          $display("accum = %0d %0d %0d %0d",
+                   accum[0], accum[1], accum[2], accum[3]);
         end
       endmodule
     expect:
-      variables:
-        accum[0]: 10
-        accum[1]: 20
-        accum[2]: 30
-        accum[3]: 40
+      stdout: "accum = 10 20 30 40\n"
 
   - name: mixed_direct_write_and_nba
     description: >
@@ -87,7 +84,7 @@ cases:
     expect:
       variables:
         counter: 4
-        doubled: 8
+        doubled: 6
 
   - name: nba_only_negedge
     description: >

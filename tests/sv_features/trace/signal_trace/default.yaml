@@ -8,9 +8,9 @@ cases:
       module Test;
         logic clk;
         initial begin
-          clk = 1'b0;
-          #10;
           clk = 1'b1;
+          #10;
+          clk = 1'b0;
           $display("done");
         end
       endmodule
@@ -19,8 +19,8 @@ cases:
       stdout:
         contains:
           - "done"
-          - "= 1'b0"
           - "= 1'b1"
+          - "= 1'b0"
 
   - name: packed-8bit
     description: 8-bit signal renders as hex
