@@ -150,6 +150,35 @@ auto StoreManagedStructLiteralToPtr(
     Context& context, llvm::Value* target_ptr, TypeId struct_type_id,
     const std::vector<mir::Operand>& operands) -> Result<void>;
 
+// Determine ownership policy for a field assignment from an operand.
+// Constants produce freshly-owned values (kMove); place/temp references
+// alias existing storage and need cloning (kClone).
+auto OwnershipForFieldOperand(const mir::Operand& operand) -> OwnershipPolicy {
+  return std::holds_alternative<Constant>(operand.payload)
+             ? OwnershipPolicy::kMove
+             : OwnershipPolicy::kClone;
+}
+
+// Materialize an operand as a pointer suitable for field-by-field transfer.
+// Uses LowerOperandRaw (not LowerOperand) to preserve aggregate struct types
+// that would otherwise be misinterpreted as 4-state {value, unknown} pairs.
+// The returned pointer is a temporary alloca valid for the current function.
+auto MaterializeOperandAsPtr(
+    Context& context, const mir::Operand& operand, TypeId type_id)
+    -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, operand);
+  if (!val_or_err) return std::unexpected(val_or_err.error());
+
+  auto llvm_type_result = BuildLlvmTypeForTypeId(context, type_id);
+  if (!llvm_type_result) return std::unexpected(llvm_type_result.error());
+
+  auto& builder = context.GetBuilder();
+  auto* alloca =
+      builder.CreateAlloca(*llvm_type_result, nullptr, "operand.spill");
+  builder.CreateStore(*val_or_err, alloca);
+  return alloca;
+}
+
 // Store a single field from an operand, handling managed types recursively.
 auto StoreFieldFromOperand(
     Context& context, llvm::Value* field_ptr, TypeId field_type_id,
@@ -158,26 +187,22 @@ auto StoreFieldFromOperand(
   const Type& field_type = types[field_type_id];
 
   if (field_type.Kind() == TypeKind::kString) {
-    // String field: compute operand -> store with lifecycle (no notify)
     auto val_or_err = LowerOperand(context, operand);
     if (!val_or_err) return std::unexpected(val_or_err.error());
-
-    // For constants, the operand produces a freshly-owned handle (from
-    // LyraStringFromLiteral). For places, we need to determine ownership.
-    OwnershipPolicy policy = std::holds_alternative<Constant>(operand.payload)
-                                 ? OwnershipPolicy::kMove
-                                 : OwnershipPolicy::kClone;
-    detail::CommitStringField(context, field_ptr, *val_or_err, policy);
+    detail::CommitStringField(
+        context, field_ptr, *val_or_err, OwnershipForFieldOperand(operand));
     return {};
   }
 
   if (field_type.Kind() == TypeKind::kUnpackedStruct &&
       NeedsFieldByField(field_type_id, types)) {
-    // Nested managed struct: currently not supported
-    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-        context.GetCurrentOrigin(),
-        "nested struct with managed fields in aggregate literal",
-        UnsupportedCategory::kType));
+    // Nested managed struct: materialize the operand to a pointer, then
+    // delegate to the canonical lifecycle-aware struct transfer path.
+    auto src_ptr = MaterializeOperandAsPtr(context, operand, field_type_id);
+    if (!src_ptr) return std::unexpected(src_ptr.error());
+    return detail::TransferManagedStructFields(
+        context, *src_ptr, field_ptr, field_type_id,
+        OwnershipForFieldOperand(operand));
   }
 
   // Plain field: compute operand -> store (no notify)

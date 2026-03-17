@@ -112,6 +112,15 @@ auto GetDesignSignalId(Context& ctx, mir::PlaceId target)
 
 namespace detail {
 
+// Lifecycle-aware struct field-by-field transfer from source pointer to
+// destination pointer. Threads ownership policy through recursion, dispatches
+// managed field lifecycle (string retain/release) via CopyAssign/MoveAssign.
+// Callers should not reimplement field traversal or managed dispatch for
+// unpacked structs containing managed fields.
+auto TransferManagedStructFields(
+    Context& ctx, llvm::Value* source_ptr, llvm::Value* target_ptr,
+    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void>;
+
 // Field-level store for struct field-by-field assignment.
 // No WriteTarget (fields don't have signal_id), no notify.
 void CommitStringField(
