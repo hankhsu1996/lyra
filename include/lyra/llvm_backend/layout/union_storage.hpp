@@ -31,9 +31,11 @@ auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
 auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id)
     -> Result<llvm::Type*>;
 
-// Build LLVM type for a TypeId (LLVMContext-only version).
-// WARNING: This version cannot correctly handle unions (throws InternalError).
-// Only use for types guaranteed not to contain unions.
+// Build LLVM type for a TypeId (LLVMContext-only, intrinsic semantics).
+// Uses intrinsic type four-state-ness only -- does NOT respect force_two_state.
+// For backend-effective storage decisions, use
+// BuildLlvmTypeForTypeId(Context&). WARNING: Cannot handle unions (throws
+// InternalError).
 auto BuildLlvmTypeForTypeId(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
     -> llvm::Type*;

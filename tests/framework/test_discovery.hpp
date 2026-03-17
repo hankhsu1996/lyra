@@ -18,6 +18,7 @@ struct CommandLineArgs {
   std::string shard_count;  // Framework-level sharding (0 = disabled)
   std::string shard_index;  // 0-based shard index
   bool timing = false;      // Print per-phase timing summary
+  bool two_state = false;   // Force two-state mode (--test_file only)
 };
 
 // Result of resolving args to test configuration

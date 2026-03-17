@@ -124,6 +124,7 @@ auto GetTestConfiguration(const CommandLineArgs& args) -> TestConfiguration {
 
     return TestConfiguration{
         .backend = ParseBackendKind(args.backend),
+        .force_two_state = args.two_state,
         .yaml_paths = {target},
         .yaml_directory = paths.yaml_directory,
     };
