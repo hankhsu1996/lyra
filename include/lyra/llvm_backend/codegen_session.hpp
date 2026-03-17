@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -26,7 +27,7 @@ struct LoweringResult;
 // Stores stable IDs/values; variant is looked up from Layout when needed.
 struct SpecInstanceBinding {
   ModuleIndex module_index;
-  uint32_t base_slot_id;  // From placement
+  uint32_t base_slot_id = 0;
 };
 
 // Specialization-owned MIR content: identity + behavioral IR references.
@@ -119,13 +120,17 @@ struct CompiledModuleSpec {
   // Parallel to input.view.processes: one compiled function per body process
   std::vector<llvm::Function*> process_functions;
   std::vector<WaitSiteEntry> wait_sites;
+  // Parallel to process_functions: one optional trigger entry per body
+  // process. Index by body process ordinal to get trigger facts.
+  // scheduled_process_index is NOT yet set (stamped per-instance later).
+  std::vector<std::optional<ProcessTriggerEntry>> process_triggers;
 };
 
 // Parameter initialization entry with pre-resolved type information.
 // type_id is intentionally duplicated from the design slot table so that
 // realization code does not need a backpointer to mir::Design.
 struct ResolvedParamInit {
-  uint32_t slot_id;
+  uint32_t slot_id = 0;
   TypeId type_id;
   IntegralConstant value;
 };
@@ -166,6 +171,12 @@ struct CodegenSession {
   RealizationData realization;
   std::vector<llvm::Function*> process_funcs;
   std::vector<WaitSiteEntry> wait_sites;
+  // Canonical process-trigger entries for non-init scheduled processes
+  // that have at least one Wait terminator. Each entry's
+  // scheduled_process_index is the post-init runtime-facing index.
+  // Not every non-init process has an entry (init and trigger-free
+  // processes are absent).
+  std::vector<ProcessTriggerEntry> process_triggers;
   std::vector<SlotInfo> slot_info;
   size_t num_init_processes = 0;
 };

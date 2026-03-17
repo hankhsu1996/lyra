@@ -6,7 +6,6 @@
 #include <format>
 #include <span>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include <llvm/IR/BasicBlock.h>
@@ -33,7 +32,6 @@
 #include "lyra/llvm_backend/storage_boundary.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
-#include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/realization/build_design_metadata.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
@@ -594,8 +592,9 @@ auto BuildPlusargs(
 
 auto BuildDesignMetadata(
     Context& context, const RealizationData& realization, const Layout& layout,
-    const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input,
-    size_t num_init) -> MetadataGlobals {
+    const std::vector<SlotInfo>& slot_info,
+    const std::vector<ProcessTriggerEntry>& process_triggers,
+    const EmitDesignMainInput& input, size_t num_init) -> MetadataGlobals {
   auto& builder = context.GetBuilder();
   const auto& design_arena = *input.design_arena;
   const auto& type_arena = context.GetTypeArena();
@@ -608,6 +607,9 @@ auto BuildDesignMetadata(
   auto comb_inputs = PrepareCombKernelInputs(layout, num_init);
   auto back_edge_site_inputs =
       PrepareBackEdgeSiteInputs(context, input.diag_ctx, input.source_manager);
+  auto slot_count = static_cast<uint32_t>(slot_meta_inputs.size());
+  auto process_trigger_inputs =
+      BuildProcessTriggerInputs(process_triggers, slot_count);
 
   auto trace_signal_inputs = PrepareTraceSignalMetaInputs(
       realization.slot_trace_provenance, realization.slot_trace_string_pool,
@@ -620,6 +622,7 @@ auto BuildDesignMetadata(
       .back_edge_sites = std::move(back_edge_site_inputs),
       .connection_descriptors = std::move(conn_desc_entries),
       .comb_kernels = std::move(comb_inputs),
+      .process_triggers = std::move(process_trigger_inputs),
       .instance_paths = realization.instance_paths,
       .trace_signal_meta = std::move(trace_signal_inputs),
   };
@@ -721,11 +724,11 @@ auto BuildRuntimeAbi(
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
 
-  constexpr unsigned kAbiFieldCount = 25;
+  constexpr unsigned kAbiFieldCount = 27;
   std::array<llvm::Type*, kAbiFieldCount> abi_fields = {
       i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
       ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty,
   };
   auto* abi_struct_type = llvm::StructType::get(ctx, abi_fields, false);
 
@@ -781,6 +784,12 @@ auto BuildRuntimeAbi(
         24,
         builder.CreateGlobalStringPtr(signal_trace_path, "signal_trace_path"));
   }
+
+  // v6: process trigger metadata
+  store_field(25, meta_globals.process_trigger_words);
+  store_field(
+      26,
+      llvm::ConstantInt::get(i32_ty, meta_globals.process_trigger_word_count));
 
   return abi_alloca;
 }
@@ -886,7 +895,8 @@ auto EmitDesignMain(
     auto plusargs = BuildPlusargs(context, main_func, input);
 
     auto meta_globals = BuildDesignMetadata(
-        context, realization, layout, slot_info, input, num_init);
+        context, realization, layout, slot_info, session.process_triggers,
+        input, num_init);
 
     auto wait_site_meta = EmitWaitSiteMetaTable(context, session.wait_sites);
 

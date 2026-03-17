@@ -1,9 +1,12 @@
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <numeric>
 #include <span>
 #include <string_view>
 #include <unistd.h>
+#include <vector>
 
 #include <fmt/core.h>
 
@@ -50,6 +53,35 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
       c.nba_elided, c.nba_changed, conn_full_slot_count_, conn_narrow_count_,
       comb_full_slot_count_, comb_narrow_count_);
 
+  // Trigger group stats (G13 metadata).
+  const auto& reg = process_trigger_registry_;
+  if (!reg.groups.empty() || !reg.descriptors.empty()) {
+    // Count unique grouped and ungrouped process indices.
+    std::vector<bool> seen(num_processes_, false);
+    std::vector<bool> is_grouped(num_processes_, false);
+    for (const auto& g : reg.groups) {
+      for (uint32_t pi = g.process_start;
+           pi < g.process_start + g.process_count; ++pi) {
+        is_grouped[reg.group_process_backing[pi]] = true;
+      }
+    }
+    uint32_t total_with_triggers = 0;
+    uint32_t grouped_count = 0;
+    for (const auto& d : reg.descriptors) {
+      if (!seen[d.scheduled_process_index]) {
+        seen[d.scheduled_process_index] = true;
+        ++total_with_triggers;
+        if (is_grouped[d.scheduled_process_index]) ++grouped_count;
+      }
+    }
+    fmt::print(
+        sink,
+        "[lyra][stats][trigger_groups]"
+        " trigger_groups={} grouped_processes={}"
+        " ungrouped_processes={}\n",
+        reg.groups.size(), grouped_count, total_with_triggers - grouped_count);
+  }
+
   if (detailed_stats_enabled_) {
     const auto& d = stats_.detailed;
 
@@ -83,6 +115,98 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
         d.comb_executed, d.comb_skipped_range, d.edge_sub_checks,
         d.edge_sub_wakeups, d.change_sub_checks, d.change_sub_wakeups,
         d.wakeup_attempts, d.wakeup_deduped);
+
+    fmt::print(
+        sink,
+        "[lyra][stats][dirty_mark]"
+        " calls={} fast_path={} first_touch={}\n",
+        d.dirty_mark_calls, d.dirty_mark_fast_path, d.dirty_mark_first_touch);
+
+    fmt::print(
+        sink,
+        "[lyra][stats][prop_worklist]"
+        " pending_slots={}"
+        " conn_lookups={} conn_hits={}"
+        " comb_lookups={} comb_hits={}"
+        " enqueue_attempts={} enqueue_deduped={}\n",
+        d.prop_pending_slots, d.prop_conn_trigger_lookups,
+        d.prop_conn_trigger_hits, d.prop_comb_trigger_lookups,
+        d.prop_comb_trigger_hits, d.prop_enqueue_attempts,
+        d.prop_enqueue_deduped);
+
+    fmt::print(
+        sink,
+        "[lyra][stats][prop_entry]"
+        " calls={} with_work={} without_work={}"
+        " pending_total={}\n",
+        d.prop_calls_total, d.prop_calls_with_work, d.prop_calls_without_work,
+        d.prop_pending_slots_total);
+
+    // Per-process wakeup/activation summary, sorted by total wake count
+    // descending. Shows which processes are hot, what wakes them, and
+    // what kind of work each activation does.
+    //
+    // Activation categories:
+    //   direct_dirty: process called MarkSlotDirty (direct state change)
+    //   nba_only:     no direct dirty marks; process likely writes via
+    //                 NBA (nonblocking assignment). This is normal for
+    //                 always_ff and is NOT a wasted-wakeup indicator.
+    //   no_effect:    runs - direct_dirty - nba_only (should be 0;
+    //                 nonzero means accounting bug)
+    if (!per_process_stats_.empty()) {
+      // Build sorted index by total wake attempts (descending).
+      std::vector<uint32_t> order(per_process_stats_.size());
+      std::iota(order.begin(), order.end(), 0U);
+      std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
+        auto total_a = per_process_stats_[a].wake_edge +
+                       per_process_stats_[a].wake_change +
+                       per_process_stats_[a].wake_container +
+                       per_process_stats_[a].wake_delay +
+                       per_process_stats_[a].wake_initial +
+                       per_process_stats_[a].wake_other;
+        auto total_b = per_process_stats_[b].wake_edge +
+                       per_process_stats_[b].wake_change +
+                       per_process_stats_[b].wake_container +
+                       per_process_stats_[b].wake_delay +
+                       per_process_stats_[b].wake_initial +
+                       per_process_stats_[b].wake_other;
+        return total_a > total_b;
+      });
+
+      fmt::print(
+          sink, "[lyra][stats][per_process] {} processes\n",
+          per_process_stats_.size());
+
+      for (uint32_t pid : order) {
+        const auto& ps = per_process_stats_[pid];
+        uint64_t total_wakes = ps.wake_edge + ps.wake_change +
+                               ps.wake_container + ps.wake_delay +
+                               ps.wake_initial + ps.wake_other;
+        if (total_wakes == 0 && ps.runs == 0) continue;
+
+        std::string name;
+        if (process_meta_.IsPopulated()) {
+          name = process_meta_.Format(pid);
+        } else {
+          name = std::format("process_{}", pid);
+        }
+
+        uint64_t direct_dirty_runs =
+            ps.runs > ps.nba_only_runs ? ps.runs - ps.nba_only_runs : 0;
+
+        fmt::print(
+            sink,
+            "[lyra][stats][per_process] pid={} name={}"
+            " wakes={} (edge={} change={} container={}"
+            " delay={} initial={} other={})"
+            " deduped={}"
+            " runs={} direct_dirty={} nba_only={} dirtied={}\n",
+            pid, name, total_wakes, ps.wake_edge, ps.wake_change,
+            ps.wake_container, ps.wake_delay, ps.wake_initial, ps.wake_other,
+            ps.wake_deduped, ps.runs, direct_dirty_runs, ps.nba_only_runs,
+            ps.total_slots_dirtied);
+      }
+    }
   }
 
   std::fflush(sink);

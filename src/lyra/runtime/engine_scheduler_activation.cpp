@@ -138,6 +138,14 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
   if (activation_ctx_.dirty_count == 0) {
     ++stats_.core.activations_nba_only;
   }
+  if (detailed_stats_enabled_) {
+    auto& ps = per_process_stats_[pid];
+    ++ps.runs;
+    ps.total_slots_dirtied += activation_ctx_.dirty_count;
+    if (activation_ctx_.dirty_count == 0) {
+      ++ps.nba_only_runs;
+    }
+  }
   if (activation_trace_.has_value()) {
     TraceRun(entry);
   }
@@ -245,7 +253,7 @@ void Engine::ExecuteTimeSlot() {
 
     phase_.store(
         static_cast<uint32_t>(Phase::kFlushUpdates), std::memory_order_release);
-    FlushAndPropagateConnections();  // Flush + connection propagation
+    FlushAndPropagateConnections();
 
     phase_.store(
         static_cast<uint32_t>(Phase::kCommitNba), std::memory_order_release);
@@ -253,7 +261,7 @@ void Engine::ExecuteTimeSlot() {
 
     phase_.store(
         static_cast<uint32_t>(Phase::kFlushUpdates), std::memory_order_release);
-    FlushAndPropagateConnections();  // Flush + connection propagation
+    FlushAndPropagateConnections();
 
     if (finished_ || next_delta_queue_.empty()) {
       break;
