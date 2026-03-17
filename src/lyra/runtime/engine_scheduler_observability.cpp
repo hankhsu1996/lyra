@@ -50,6 +50,35 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
       c.nba_elided, c.nba_changed, conn_full_slot_count_, conn_narrow_count_,
       comb_full_slot_count_, comb_narrow_count_);
 
+  // Trigger group stats (G13 metadata).
+  const auto& reg = process_trigger_registry_;
+  if (!reg.groups.empty() || !reg.descriptors.empty()) {
+    // Count unique grouped and ungrouped process indices.
+    std::vector<bool> seen(num_processes_, false);
+    std::vector<bool> is_grouped(num_processes_, false);
+    for (const auto& g : reg.groups) {
+      for (uint32_t pi = g.process_start;
+           pi < g.process_start + g.process_count; ++pi) {
+        is_grouped[reg.group_process_backing[pi]] = true;
+      }
+    }
+    uint32_t total_with_triggers = 0;
+    uint32_t grouped_count = 0;
+    for (const auto& d : reg.descriptors) {
+      if (!seen[d.scheduled_process_index]) {
+        seen[d.scheduled_process_index] = true;
+        ++total_with_triggers;
+        if (is_grouped[d.scheduled_process_index]) ++grouped_count;
+      }
+    }
+    fmt::print(
+        sink,
+        "[lyra][stats][trigger_groups]"
+        " trigger_groups={} grouped_processes={}"
+        " ungrouped_processes={}\n",
+        reg.groups.size(), grouped_count, total_with_triggers - grouped_count);
+  }
+
   if (detailed_stats_enabled_) {
     const auto& d = stats_.detailed;
 

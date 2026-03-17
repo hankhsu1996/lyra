@@ -10,6 +10,7 @@
 
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/process.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/realization/design_metadata.hpp"
@@ -58,6 +59,18 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
 auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
     -> std::vector<realization::CombKernelInput>;
 
+// Build constructor-visible process trigger inputs from canonical entries.
+// Validates the design-global signal invariant, classifies Stage-1
+// groupability (static shape, uniform edge, full-slot), and flattens
+// to one ProcessTriggerInput row per trigger fact.
+//
+// Precondition: all signal refs in entries must be design-global.
+// Module-local signals must have been canonicalized by the caller
+// (lower.cpp per-instance trigger collection).
+auto BuildProcessTriggerInputs(
+    const std::vector<ProcessTriggerEntry>& entries, uint32_t slot_count)
+    -> std::vector<realization::ProcessTriggerInput>;
+
 // Build final trace-signal metadata inputs from compile-owned provenance.
 // Assembles hierarchical names, computes bit widths, maps trace kinds.
 // Each slot's provenance carries its scope kind and scope ref for O(1) lookup.
@@ -85,6 +98,8 @@ struct MetadataGlobals {
   uint32_t conn_desc_count = 0;
   llvm::Value* comb_kernel_words = nullptr;
   uint32_t comb_kernel_word_count = 0;
+  llvm::Value* process_trigger_words = nullptr;
+  uint32_t process_trigger_word_count = 0;
   llvm::Value* instance_paths_array = nullptr;
   uint32_t instance_path_count = 0;
   llvm::Constant* trace_signal_meta_words = nullptr;

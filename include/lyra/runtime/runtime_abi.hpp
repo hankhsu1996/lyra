@@ -19,7 +19,9 @@
 //      trace_signal_meta_word_count, trace_signal_meta_string_pool,
 //      trace_signal_meta_string_pool_size)
 //   5: Added trace output configuration (signal_trace_path)
-inline constexpr uint32_t kRuntimeAbiVersion = 5;
+//   6: Added process trigger metadata (process_trigger_words,
+//      num_process_trigger_words)
+inline constexpr uint32_t kRuntimeAbiVersion = 6;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -67,4 +69,9 @@ struct LyraRuntimeAbi {
   // Text signal trace destination. Only meaningful when kEnableSignalTrace is
   // set in feature_flags. nullptr = write to stdout, non-null = file path.
   const char* signal_trace_path;
+
+  // v6: Process trigger metadata word table for constructor-time
+  // trigger-group formation (G13).
+  const uint32_t* process_trigger_words;
+  uint32_t num_process_trigger_words;
 };

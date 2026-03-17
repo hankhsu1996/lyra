@@ -26,6 +26,7 @@
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/process_meta.hpp"
+#include "lyra/runtime/process_trigger_registry.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_selection.hpp"
@@ -440,6 +441,10 @@ class Engine {
 
   // Mark all comb kernel trigger slots dirty to ensure initial evaluation.
   void SeedCombKernelDirtyMarks();
+
+  // Parse process trigger word table and build constructor-time trigger
+  // groups in one call. Must be called after InitSlotMeta.
+  void InitProcessTriggerRegistry(std::span<const uint32_t> words);
 
   // Flush signal updates + evaluate triggered connections/comb kernels until
   // convergence. Also used for initial value propagation before Run().
@@ -925,6 +930,10 @@ class Engine {
     std::vector<uint32_t> snapshotted_slots;
   };
   FixpointWorkspace fp_work_;
+
+  // Constructor-time process trigger registry. Owns parsed descriptors,
+  // trigger groups, and flat-backed group membership.
+  ProcessTriggerRegistry process_trigger_registry_;
 };
 
 }  // namespace lyra::runtime

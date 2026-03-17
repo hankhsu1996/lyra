@@ -37,7 +37,6 @@
 #include "lyra/mir/placement.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/statement.hpp"
-#include "lyra/runtime/feature_flags.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -328,6 +327,21 @@ auto BuildCompiledModuleSpecInputs(
   return inputs;
 }
 
+// Canonicalize module-local signal refs in a ProcessTriggerEntry to
+// design-global slot IDs using the instance's base slot offset.
+// Does not validate the resulting slot IDs against slot_count; that
+// validation happens later in BuildProcessTriggerInputs.
+void CanonicalizeProcessTriggerSignals(
+    ProcessTriggerEntry& entry, uint32_t base_slot_id) {
+  for (auto& fact : entry.triggers) {
+    if (fact.signal.scope == mir::SignalRef::Scope::kModuleLocal) {
+      fact.signal = {
+          .scope = mir::SignalRef::Scope::kDesignGlobal,
+          .id = base_slot_id + fact.signal.id};
+    }
+  }
+}
+
 }  // namespace
 
 auto CompileModuleSpecSession(
@@ -379,6 +393,7 @@ auto CompileModuleSpecSession(
       .body_id = input.body_id,
       .process_functions = {},
       .wait_sites = {},
+      .process_triggers = {},
   };
 
   for (const auto& proc_view : input.view.processes) {
@@ -391,6 +406,7 @@ auto CompileModuleSpecSession(
     if (!func_result) return std::unexpected(func_result.error());
 
     product.process_functions.push_back(func_result->function);
+    product.process_triggers.push_back(std::move(func_result->process_trigger));
 
     product.wait_sites.insert(
         product.wait_sites.end(),
@@ -581,13 +597,17 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // Build body_id -> compiled process functions routing table
   std::unordered_map<uint32_t, std::vector<llvm::Function*>>
       body_to_compiled_funcs;
+  std::unordered_map<uint32_t, std::vector<std::optional<ProcessTriggerEntry>>>
+      body_to_process_triggers;
   std::vector<WaitSiteEntry> all_wait_sites;
 
-  for (size_t si = 0; si < spec_inputs.size(); ++si) {
-    const auto& spec_input = spec_inputs[si];
+  for (const auto& spec_input : spec_inputs) {
     auto product =
         CompileModuleSpecSession(*context, *input.design, spec_input);
     if (!product) return std::unexpected(product.error());
+
+    body_to_process_triggers.try_emplace(
+        product->body_id.value, std::move(product->process_triggers));
 
     auto [it, inserted] = body_to_compiled_funcs.try_emplace(
         product->body_id.value, std::move(product->process_functions));
@@ -609,7 +629,15 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // Build explicit sched_index -> shared compiled function routing table.
   // This maps each scheduled module process to its body-owned compiled
   // function, using the pre-computed per-instance scheduled-process indices.
+  // sched_idx_to_body_process maps scheduled-process index to
+  // (body_id, body_process_ordinal) for direct indexing into
+  // body-parallel arrays (compiled_funcs, process_triggers).
+  struct BodyProcessRef {
+    uint32_t body_id;
+    uint32_t ordinal;
+  };
   std::unordered_map<uint32_t, llvm::Function*> sched_idx_to_shared_func;
+  std::unordered_map<uint32_t, BodyProcessRef> sched_idx_to_body_process;
   for (const auto& unit : units) {
     auto funcs_it = body_to_compiled_funcs.find(unit.body_id.value);
     if (funcs_it == body_to_compiled_funcs.end()) {
@@ -653,6 +681,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
                   "duplicate routing for scheduled process index {}",
                   sched_indices[k]));
         }
+        sched_idx_to_body_process.try_emplace(
+            sched_indices[k], BodyProcessRef{
+                                  .body_id = unit.body_id.value,
+                                  .ordinal = static_cast<uint32_t>(k)});
       }
     }
   }
@@ -697,6 +729,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // Phase 5: Per-instance wrappers / standalone entrypoints
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout->scheduled_processes.size());
+  std::vector<ProcessTriggerEntry> all_process_triggers;
 
   size_t num_init = layout->num_init_processes;
   for (size_t i = 0; i < layout->scheduled_processes.size(); ++i) {
@@ -730,6 +763,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
           all_wait_sites.end(),
           std::make_move_iterator(func_result->wait_sites.begin()),
           std::make_move_iterator(func_result->wait_sites.end()));
+      if (i >= num_init && func_result->process_trigger) {
+        auto& entry = *func_result->process_trigger;
+        entry.scheduled_process_index = static_cast<uint32_t>(i - num_init);
+        all_process_triggers.push_back(std::move(entry));
+      }
       continue;
     }
 
@@ -765,6 +803,23 @@ auto CompileDesignProcesses(const LoweringInput& input)
         *context, shared_func, bp.module_index.value, base_byte_offset,
         base_slot_id, unstable_global, std::format("process_{}", i));
     process_funcs.push_back(wrapper);
+
+    // Collect trigger metadata for this module instance process.
+    // Use the explicit body-process ordinal (from the routing table)
+    // to directly index the body's parallel process_triggers array.
+    auto body_ref_it = sched_idx_to_body_process.find(static_cast<uint32_t>(i));
+    if (body_ref_it != sched_idx_to_body_process.end()) {
+      const auto& ref = body_ref_it->second;
+      auto triggers_it = body_to_process_triggers.find(ref.body_id);
+      if (triggers_it != body_to_process_triggers.end() &&
+          ref.ordinal < triggers_it->second.size() &&
+          triggers_it->second[ref.ordinal].has_value()) {
+        auto entry = *triggers_it->second[ref.ordinal];
+        entry.scheduled_process_index = static_cast<uint32_t>(i - num_init);
+        CanonicalizeProcessTriggerSignals(entry, base_slot_id);
+        all_process_triggers.push_back(std::move(entry));
+      }
+    }
   }
 
   auto realization = ExtractRealizationData(
@@ -778,6 +833,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .realization = std::move(realization),
       .process_funcs = std::move(process_funcs),
       .wait_sites = std::move(all_wait_sites),
+      .process_triggers = std::move(all_process_triggers),
       .slot_info = std::move(slot_info),
       .num_init_processes = num_init,
   };

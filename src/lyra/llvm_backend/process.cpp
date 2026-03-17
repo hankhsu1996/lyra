@@ -1144,7 +1144,9 @@ auto EmitLateBoundData(
         if (op.kind == runtime::IndexPlanOp::Kind::kReadSlot &&
             scoped_op.slot_scope == mir::ScopedSlotRef::Scope::kModuleLocal) {
           auto signal_expr = context.EmitSignalId(
-              mir::SignalRef{mir::SignalRef::Scope::kModuleLocal, op.slot_id});
+              mir::SignalRef{
+                  .scope = mir::SignalRef::Scope::kModuleLocal,
+                  .id = op.slot_id});
           builder.CreateStore(signal_expr.Emit(builder), pf4);
         } else {
           builder.CreateStore(llvm::ConstantInt::get(i32_ty, op.slot_id), pf4);
@@ -1171,8 +1173,8 @@ auto EmitLateBoundData(
             (ref.scope == mir::ScopedSlotRef::Scope::kModuleLocal)
                 ? mir::SignalRef::Scope::kModuleLocal
                 : mir::SignalRef::Scope::kDesignGlobal;
-        auto signal_expr =
-            context.EmitSignalId(mir::SignalRef{signal_scope, ref.id});
+        auto signal_expr = context.EmitSignalId(
+            mir::SignalRef{.scope = signal_scope, .id = ref.id});
         auto* slot_ptr = builder.CreateConstGEP2_32(
             dep_array_type, dep_slots_alloca, 0, dep_offset + d);
         builder.CreateStore(signal_expr.Emit(builder), slot_ptr);
@@ -1222,7 +1224,10 @@ auto LowerWait(
   uint32_t wait_site_id = context.NextWaitSiteId();
   wait_sites.push_back(
       WaitSiteEntry{
-          wait.resume.value, num_triggers, has_late_bound, has_container});
+          .resume_block = wait.resume.value,
+          .num_triggers = num_triggers,
+          .has_late_bound = has_late_bound,
+          .has_container = has_container});
   auto* wait_site_id_val = llvm::ConstantInt::get(i32_ty, wait_site_id);
 
   // Compile-time branching: different codegen for small vs large trigger counts
@@ -1723,7 +1728,9 @@ auto GenerateProcessFunction(
   // contract_scope destructor restores all execution-contract state.
   VerifyLlvmFunction(func, "GenerateProcessFunction");
   return ProcessCodegenResult{
-      .function = func, .wait_sites = std::move(wait_sites)};
+      .function = func,
+      .wait_sites = std::move(wait_sites),
+      .process_trigger = ExtractProcessTriggerEntry(process)};
 }
 
 auto GenerateSharedProcessFunction(
@@ -1895,7 +1902,9 @@ auto GenerateSharedProcessFunction(
   // including shared-body fields (slot_addressing, this_ptr, etc.).
   VerifyLlvmFunction(func, "GenerateSharedProcessFunction");
   return ProcessCodegenResult{
-      .function = func, .wait_sites = std::move(wait_sites)};
+      .function = func,
+      .wait_sites = std::move(wait_sites),
+      .process_trigger = ExtractProcessTriggerEntry(process)};
 }
 
 auto GenerateProcessWrapper(
@@ -3092,6 +3101,45 @@ auto DefineMirFunction(
   context.EndFunction();
   // contract_scope destructor restores all execution-contract state.
   return {};
+}
+
+auto ExtractProcessTriggerEntry(const mir::Process& process)
+    -> std::optional<ProcessTriggerEntry> {
+  ProcessTriggerEntry entry;
+  bool found_wait = false;
+  bool has_dynamic = false;
+  bool has_rebindable = false;
+
+  for (const auto& block : process.blocks) {
+    const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+    if (wait == nullptr) continue;
+
+    found_wait = true;
+    for (const auto& t : wait->triggers) {
+      if (t.late_bound) {
+        if (t.late_bound->is_container) {
+          has_dynamic = true;
+        } else {
+          has_rebindable = true;
+        }
+      }
+      entry.triggers.push_back({
+          .signal = t.signal,
+          .edge = t.edge,
+          .has_observed_place = t.observed_place.has_value(),
+      });
+    }
+  }
+
+  if (!found_wait) return std::nullopt;
+
+  if (has_dynamic) {
+    entry.shape = runtime::WaitShapeKind::kDynamic;
+  } else if (has_rebindable) {
+    entry.shape = runtime::WaitShapeKind::kRebindable;
+  }
+
+  return entry;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

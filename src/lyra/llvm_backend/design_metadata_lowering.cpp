@@ -21,6 +21,7 @@
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/process.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
@@ -698,6 +699,12 @@ auto EmitDesignMetadataGlobals(
   result.comb_kernel_word_count =
       static_cast<uint32_t>(metadata.comb_kernel_words.size());
 
+  // Process trigger words
+  result.process_trigger_words = EmitWordArrayGlobal(
+      mod, ctx, metadata.process_trigger_words, "__lyra_process_trigger_words");
+  result.process_trigger_word_count =
+      static_cast<uint32_t>(metadata.process_trigger_words.size());
+
   // Trace signal meta
   if (!metadata.trace_signal_meta.words.empty() &&
       metadata.trace_signal_meta.words.size() %
@@ -745,6 +752,74 @@ auto EmitDesignMetadataGlobals(
   }
 
   return result;
+}
+
+// Stage-1 groupability policy: a process is groupable when its trigger
+// entry has static wait shape, all triggers are full-slot observations
+// with a uniform edge kind, and all slot IDs are valid.
+//
+// Precondition: all signals are already design-global (enforced by the
+// caller's invariant check). This classifier handles only Stage-1 policy.
+auto IsStage1Groupable(const ProcessTriggerEntry& entry, uint32_t slot_count)
+    -> bool {
+  if (entry.triggers.empty()) return false;
+  if (entry.shape != runtime::WaitShapeKind::kStatic) return false;
+
+  common::EdgeKind uniform_edge = entry.triggers[0].edge;
+  for (const auto& fact : entry.triggers) {
+    if (fact.signal.id >= slot_count) {
+      throw common::InternalError(
+          "IsStage1Groupable",
+          std::format(
+              "design-global slot_id {} exceeds slot count {}", fact.signal.id,
+              slot_count));
+    }
+    if (fact.has_observed_place) return false;
+    if (fact.edge != uniform_edge) return false;
+  }
+
+  return true;
+}
+
+auto BuildProcessTriggerInputs(
+    const std::vector<ProcessTriggerEntry>& entries, uint32_t slot_count)
+    -> std::vector<realization::ProcessTriggerInput> {
+  size_t total_facts = 0;
+  for (const auto& e : entries) total_facts += e.triggers.size();
+
+  std::vector<realization::ProcessTriggerInput> inputs;
+  inputs.reserve(total_facts);
+
+  for (const auto& entry : entries) {
+    if (entry.triggers.empty()) continue;
+
+    // Validate invariant: all signals must be design-global.
+    // Module-local signals must have been canonicalized in lower.cpp.
+    for (const auto& fact : entry.triggers) {
+      if (fact.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
+        throw common::InternalError(
+            "BuildProcessTriggerInputs",
+            std::format(
+                "non-design-global signal (scope={}, id={}) in process "
+                "trigger entry for scheduled_process_index {}",
+                static_cast<int>(fact.signal.scope), fact.signal.id,
+                entry.scheduled_process_index));
+      }
+    }
+
+    bool groupable = IsStage1Groupable(entry, slot_count);
+
+    for (const auto& fact : entry.triggers) {
+      inputs.push_back({
+          .scheduled_process_index = entry.scheduled_process_index,
+          .slot_id = fact.signal.id,
+          .edge = fact.edge,
+          .is_groupable = groupable,
+      });
+    }
+  }
+
+  return inputs;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

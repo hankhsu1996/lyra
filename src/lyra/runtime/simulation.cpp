@@ -490,6 +490,14 @@ extern "C" void LyraRunSimulation(
           abi->comb_funcs, states_raw);
     }
 
+    // Process trigger metadata and constructor-time trigger groups (G13).
+    if (abi->process_trigger_words != nullptr &&
+        abi->num_process_trigger_words > 0) {
+      engine.InitProcessTriggerRegistry(
+          std::span(
+              abi->process_trigger_words, abi->num_process_trigger_words));
+    }
+
     // Wait-site metadata
     if (abi->wait_site_words != nullptr && abi->wait_site_word_count > 0) {
       engine.InitWaitSiteMeta(
