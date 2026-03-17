@@ -75,28 +75,71 @@ cases:
     expect:
       stdout: "PASS\n"
 
-  # TODO(hankhsu): Nested managed struct literals not yet supported
-  # (requires ConstantArena access). Re-enable when implemented.
-  # - name: nested_struct_with_string
-  #   description: Nested struct with string field triggers notification
-  #   sv: |
-  #     module Test;
-  #       typedef struct { string name; } inner_t;
-  #       typedef struct { inner_t data; int id; } outer_t;
-  #       outer_t sig;
-  #       int result;
-  #
-  #       always_comb result = sig.id + 1;
-  #
-  #       initial begin
-  #         sig = '{'{default: "nested"}, 42};
-  #         #1;
-  #         if (result != 43) $fatal(1, "expected result=43, got %0d", result);
-  #         $display("PASS");
-  #       end
-  #     endmodule
-  #   expect:
-  #     stdout: "PASS\n"
+  - name: nested_struct_with_string
+    description: Nested struct with string field via literal (exercises move path)
+    sv: |
+      module Test;
+        typedef struct { string name; } inner_t;
+        typedef struct { inner_t data; int id; } outer_t;
+        outer_t sig;
+        int result;
+
+        always_comb result = sig.id + 1;
+
+        initial begin
+          sig = '{'{default: "nested"}, 42};
+          #1;
+          if (result != 43) $fatal(1, "expected result=43, got %0d", result);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: nested_struct_clone_from_variable
+    description: Nested managed struct from variable (exercises clone path)
+    sv: |
+      module Test;
+        typedef struct { string label; } tag_t;
+        typedef struct { tag_t tag; int value; } item_t;
+        item_t sig;
+        int result;
+
+        always_comb result = sig.value + 1;
+
+        initial begin
+          tag_t t;
+          t.label = "cloned";
+          sig = '{t, 99};
+          #1;
+          if (result != 100) $fatal(1, "expected 100, got %0d", result);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
+
+  - name: deeply_nested_struct_with_string
+    description: Three-level nested struct with string (exercises recursive transfer)
+    sv: |
+      module Test;
+        typedef struct { string s; } leaf_t;
+        typedef struct { leaf_t leaf; int mid_val; } mid_t;
+        typedef struct { mid_t mid; int top_val; } top_t;
+        top_t sig;
+        int result;
+
+        always_comb result = sig.top_val + sig.mid.mid_val;
+
+        initial begin
+          sig = '{'{'{default: "deep"}, 10}, 20};
+          #1;
+          if (result != 30) $fatal(1, "expected 30, got %0d", result);
+          $display("PASS");
+        end
+      endmodule
+    expect:
+      stdout: "PASS\n"
 
   - name: local_struct_no_spurious_comb
     description: Local struct assignment does NOT trigger always_comb

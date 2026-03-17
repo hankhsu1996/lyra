@@ -117,6 +117,17 @@ auto AssignStructFieldByField(
 
 }  // namespace
 
+namespace detail {
+
+auto TransferManagedStructFields(
+    Context& ctx, llvm::Value* source_ptr, llvm::Value* target_ptr,
+    TypeId struct_type_id, OwnershipPolicy policy) -> Result<void> {
+  return AssignStructFieldByField(
+      ctx, source_ptr, target_ptr, struct_type_id, policy);
+}
+
+}  // namespace detail
+
 auto CommitStructFieldByField(
     Context& ctx, mir::PlaceId target, mir::PlaceId source,
     TypeId struct_type_id, OwnershipPolicy policy) -> Result<void> {
