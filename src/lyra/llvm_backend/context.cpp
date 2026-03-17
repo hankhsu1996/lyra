@@ -305,14 +305,11 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
 }
 
 void Context::InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id) {
-  // Use unified EmitSVDefaultInit which handles all types including unpacked
-  // aggregates with 4-state fields. The builder_ is used for the IR emission.
-  // Save current insert point and temporarily switch to alloca_builder_'s
-  // insert point (in entry block, after allocas) for initialization.
-  auto saved_point = builder_.saveIP();
-  builder_.restoreIP(alloca_builder_->saveIP());
+  // Emit default init at the current builder position (not the alloca builder).
+  // EmitSVDefaultInit may create new basic blocks (e.g., for large 4-state
+  // unpacked array init loops), which is only valid at the current control
+  // flow point, not in the entry block after allocas.
   EmitSVDefaultInit(*this, alloca, type_id);
-  builder_.restoreIP(saved_point);
 }
 
 // GetDesignFieldIndex removed -- DesignState is byte arena, not struct.

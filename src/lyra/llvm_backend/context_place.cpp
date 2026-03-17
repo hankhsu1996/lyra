@@ -533,8 +533,17 @@ auto Context::LoadPlaceValue(mir::PlaceId place_id) -> Result<llvm::Value*> {
   TypeId type_id = mir::TypeOfPlace(types_, place);
   const Type& type = types_[type_id];
 
-  if (auto canonical = TryLoadCanonicalFourStateValue(*ptr_result, type)) {
-    return *canonical;
+  // Canonical 4-state load only for design storage (module slots, design
+  // globals). Process-local variables use LLVM struct layout which differs
+  // from the flat canonical byte layout for wide types (e.g., {i80, i80}
+  // struct places element 1 at offset 16 due to alignment, while canonical
+  // layout places it at offset 10).
+  auto root_kind = place.root.kind;
+  if (root_kind == mir::PlaceRoot::Kind::kModuleSlot ||
+      root_kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+    if (auto canonical = TryLoadCanonicalFourStateValue(*ptr_result, type)) {
+      return *canonical;
+    }
   }
 
   auto type_result = GetPlaceLlvmType(place_id);
@@ -551,8 +560,12 @@ auto Context::LoadPlaceBaseValue(mir::PlaceId place_id)
   TypeId base_type_id = mir::TypeOfPlaceBase(types_, place);
   const Type& type = types_[base_type_id];
 
-  if (auto canonical = TryLoadCanonicalFourStateValue(*ptr_result, type)) {
-    return *canonical;
+  auto root_kind = place.root.kind;
+  if (root_kind == mir::PlaceRoot::Kind::kModuleSlot ||
+      root_kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+    if (auto canonical = TryLoadCanonicalFourStateValue(*ptr_result, type)) {
+      return *canonical;
+    }
   }
 
   auto type_result = GetPlaceBaseType(place_id);
