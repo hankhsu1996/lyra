@@ -21,12 +21,15 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/layout/storage_contract.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
+#include "lyra/llvm_backend/storage_boundary.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
@@ -500,13 +503,42 @@ auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   return BuildLlvmTypeForTypeId(*this, base_type_id);
 }
 
+// Shared logic: if the type is 4-state packed, load via canonical storage
+// helper (plane-separated byte GEP). Otherwise return nullopt to let the
+// caller fall through to a typed LLVM load.
+auto Context::TryLoadCanonicalFourStateValue(llvm::Value* ptr, const Type& type)
+    -> std::optional<llvm::Value*> {
+  // Only packed types and integrals can be 4-state packed.
+  // Must check before calling IsPackedFourState which requires a packed type.
+  uint32_t bit_width = 0;
+  if (IsPacked(type)) {
+    if (!IsPackedFourState(type)) return std::nullopt;
+    bit_width = PackedBitWidth(type, types_);
+  } else if (type.Kind() == TypeKind::kIntegral) {
+    if (!IsPackedFourState(type)) return std::nullopt;
+    bit_width = type.AsIntegral().bit_width;
+  } else {
+    return std::nullopt;
+  }
+
+  return EmitLoadFourStateFromCanonical(
+      builder_, *llvm_context_, ptr, bit_width);
+}
+
 auto Context::LoadPlaceValue(mir::PlaceId place_id) -> Result<llvm::Value*> {
   auto ptr_result = GetPlacePointer(place_id);
   if (!ptr_result) return std::unexpected(ptr_result.error());
 
+  const auto& place = (*arena_)[place_id];
+  TypeId type_id = mir::TypeOfPlace(types_, place);
+  const Type& type = types_[type_id];
+
+  if (auto canonical = TryLoadCanonicalFourStateValue(*ptr_result, type)) {
+    return *canonical;
+  }
+
   auto type_result = GetPlaceLlvmType(place_id);
   if (!type_result) return std::unexpected(type_result.error());
-
   return builder_.CreateLoad(*type_result, *ptr_result, "load");
 }
 
@@ -515,9 +547,16 @@ auto Context::LoadPlaceBaseValue(mir::PlaceId place_id)
   auto ptr_result = GetPlacePointer(place_id);
   if (!ptr_result) return std::unexpected(ptr_result.error());
 
+  const auto& place = (*arena_)[place_id];
+  TypeId base_type_id = mir::TypeOfPlaceBase(types_, place);
+  const Type& type = types_[base_type_id];
+
+  if (auto canonical = TryLoadCanonicalFourStateValue(*ptr_result, type)) {
+    return *canonical;
+  }
+
   auto type_result = GetPlaceBaseType(place_id);
   if (!type_result) return std::unexpected(type_result.error());
-
   return builder_.CreateLoad(*type_result, *ptr_result, "base");
 }
 

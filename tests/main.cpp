@@ -117,6 +117,14 @@ auto main(int argc, char** argv) -> int {
         }
       }
       paths = std::move(filtered);
+
+      // Disable gtest's internal sharding. Bazel sets GTEST_TOTAL_SHARDS
+      // and GTEST_SHARD_INDEX alongside TEST_TOTAL_SHARDS/TEST_SHARD_INDEX.
+      // Without clearing these, gtest applies a second layer of sharding
+      // on top of the framework's YAML-path sharding, causing test cases
+      // to be silently dropped when a shard has few YAML files.
+      unsetenv("GTEST_TOTAL_SHARDS");
+      unsetenv("GTEST_SHARD_INDEX");
     }
 
     lyra::test::g_test_cases = lyra::test::LoadTestCases(
@@ -126,6 +134,22 @@ auto main(int argc, char** argv) -> int {
 
     // Register tests dynamically with the configured backend
     lyra::test::RegisterTests();
+
+    // Invariant: gtest must have registered exactly as many tests as the
+    // framework loaded. total_test_count() includes all registered tests
+    // regardless of --gtest_filter, so this check is valid even when
+    // intentional filtering is applied via BUILD.bazel args.
+    auto* unit_test = testing::UnitTest::GetInstance();
+    auto registered = static_cast<size_t>(unit_test->total_test_count());
+    auto expected = lyra::test::g_test_cases.size();
+    if (registered != expected) {
+      std::cerr << std::format(
+          "Test registration mismatch: gtest has {} tests but framework "
+          "loaded {} cases. This indicates a bug in test discovery or "
+          "registration, not in filtering.\n",
+          registered, expected);
+      return 1;
+    }
   } catch (const std::exception& e) {
     std::cerr << "Error loading test cases: " << e.what() << "\n";
     return 1;

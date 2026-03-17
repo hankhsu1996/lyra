@@ -18,6 +18,7 @@
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/memfile.hpp"
+#include "lyra/common/packed_storage_abi.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/file_manager.hpp"
@@ -48,23 +49,9 @@ struct VarEntry {
 std::vector<VarEntry> g_registered_vars;
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables)
 
-// Compute storage size for an integral type per ABI contract.
-// Narrow types use power-of-2 rounding; wide types use 64-bit words.
+// Delegates to the shared ABI contract.
 auto GetIntegralStorageBytes(uint32_t width) -> size_t {
-  if (width <= 8) {
-    return 1;
-  }
-  if (width <= 16) {
-    return 2;
-  }
-  if (width <= 32) {
-    return 4;
-  }
-  if (width <= 64) {
-    return 8;
-  }
-  // Wide types: 64-bit words, 8-byte aligned
-  return ((width + 63) / 64) * 8;
+  return lyra::PackedStorageByteSize(width);
 }
 
 // Read a packed integral from a slot. All ABI layout knowledge lives here.

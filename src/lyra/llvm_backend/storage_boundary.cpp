@@ -256,4 +256,54 @@ auto EmitPackedToCanonicalBits(
       spec.data);
 }
 
+void EmitStoreFourStateXToCanonical(
+    llvm::IRBuilderBase& builder, llvm::Value* slot_ptr, uint32_t bit_width) {
+  auto& ctx = builder.getContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  uint32_t storage_bits = GetStorageByteSize(bit_width) * 8;
+  auto* lane_ty = llvm::IntegerType::get(ctx, storage_bits);
+
+  builder.CreateStore(llvm::ConstantInt::get(lane_ty, 0), slot_ptr);
+
+  auto mask = llvm::APInt::getLowBitsSet(storage_bits, bit_width);
+  auto* unk_ptr = builder.CreateGEP(
+      i8_ty, slot_ptr, builder.getInt64(FourStateUnknownLaneOffset(bit_width)),
+      "x_init.unk");
+  builder.CreateStore(llvm::ConstantInt::get(lane_ty, mask), unk_ptr);
+}
+
+void EmitStoreUnknownMaskToCanonical(
+    llvm::IRBuilderBase& builder, llvm::Value* slot_ptr, uint32_t bit_width) {
+  auto& ctx = builder.getContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  uint32_t storage_bits = GetStorageByteSize(bit_width) * 8;
+  auto* lane_ty = llvm::IntegerType::get(ctx, storage_bits);
+
+  auto mask = llvm::APInt::getLowBitsSet(storage_bits, bit_width);
+  auto* unk_ptr = builder.CreateGEP(
+      i8_ty, slot_ptr, builder.getInt64(FourStateUnknownLaneOffset(bit_width)),
+      "unk_init");
+  builder.CreateStore(llvm::ConstantInt::get(lane_ty, mask), unk_ptr);
+}
+
+auto EmitLoadFourStateFromCanonical(
+    llvm::IRBuilderBase& builder, llvm::LLVMContext& llvm_ctx,
+    llvm::Value* slot_ptr, uint32_t bit_width) -> llvm::Value* {
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  uint32_t storage_bits = GetStorageByteSize(bit_width) * 8;
+  auto* lane_ty = llvm::IntegerType::get(llvm_ctx, storage_bits);
+
+  auto* val = builder.CreateLoad(lane_ty, slot_ptr, "canon.val");
+  auto* unk_ptr = builder.CreateGEP(
+      i8_ty, slot_ptr, builder.getInt64(FourStateUnknownLaneOffset(bit_width)),
+      "canon.unk.ptr");
+  auto* unk = builder.CreateLoad(lane_ty, unk_ptr, "canon.unk");
+
+  auto* struct_ty = llvm::StructType::get(llvm_ctx, {lane_ty, lane_ty});
+  llvm::Value* result = llvm::UndefValue::get(struct_ty);
+  result = builder.CreateInsertValue(result, val, 0);
+  result = builder.CreateInsertValue(result, unk, 1);
+  return result;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

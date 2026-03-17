@@ -19,7 +19,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
+#include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -28,90 +28,11 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-// Load a place with BitRangeProjection: load base, lshr by offset, mask.
-// Invariant: offset is always in-range (dynamic offsets are guarded by
-// GuardedUse/IndexValidity which branches to OOB default before reaching here).
 auto LoadBitRange(Context& context, mir::PlaceId place_id)
     -> Result<llvm::Value*> {
-  auto& builder = context.GetBuilder();
-  auto br_result = context.ComposeBitRange(place_id);
-  if (!br_result) return std::unexpected(br_result.error());
-  auto [offset, width] = *br_result;
-
-  // Load the full base value (via read-only API)
-  auto base_result = context.LoadPlaceBaseValue(place_id);
-  if (!base_result) return std::unexpected(base_result.error());
-  llvm::Value* base = *base_result;
-  llvm::Type* base_type = base->getType();
-
-  // Get the element LLVM type for the result
   auto elem_type_result = context.GetPlaceLlvmType(place_id);
   if (!elem_type_result) return std::unexpected(elem_type_result.error());
-  llvm::Type* elem_type = *elem_type_result;
-
-  if (base_type->isStructTy()) {
-    // 4-state base: shift+trunc both planes
-    auto* base_struct = llvm::cast<llvm::StructType>(base_type);
-    auto* plane_type = base_struct->getElementType(0);
-
-    llvm::Value* val = builder.CreateExtractValue(base, 0, "br.val");
-    llvm::Value* unk = builder.CreateExtractValue(base, 1, "br.unk");
-
-    auto* shift_amt =
-        builder.CreateZExtOrTrunc(offset, plane_type, "br.offset");
-    val = builder.CreateLShr(val, shift_amt, "br.val.shr");
-    unk = builder.CreateLShr(unk, shift_amt, "br.unk.shr");
-
-    if (elem_type->isStructTy()) {
-      // 4-state result
-      auto* result_struct = llvm::cast<llvm::StructType>(elem_type);
-      auto* result_elem = result_struct->getElementType(0);
-      if (result_elem != plane_type) {
-        val = builder.CreateTrunc(val, result_elem, "br.val.trunc");
-        unk = builder.CreateTrunc(unk, result_elem, "br.unk.trunc");
-      }
-
-      // Mask to semantic width (storage type may be wider due to rounding)
-      uint32_t result_width = result_elem->getIntegerBitWidth();
-      if (width < result_width) {
-        auto mask = llvm::APInt::getLowBitsSet(result_width, width);
-        auto* mask_val = llvm::ConstantInt::get(result_elem, mask);
-        val = builder.CreateAnd(val, mask_val, "br.val.mask");
-        unk = builder.CreateAnd(unk, mask_val, "br.unk.mask");
-      }
-
-      llvm::Value* result = llvm::UndefValue::get(result_struct);
-      result = builder.CreateInsertValue(result, val, 0);
-      result = builder.CreateInsertValue(result, unk, 1);
-      return result;
-    }
-
-    // 2-state result from 4-state base: trunc/mask, then extract known bits
-    if (elem_type != plane_type) {
-      val = builder.CreateTrunc(val, elem_type, "br.val.trunc");
-      unk = builder.CreateTrunc(unk, elem_type, "br.unk.trunc");
-    }
-    uint32_t elem_width = elem_type->getIntegerBitWidth();
-    if (width < elem_width) {
-      auto mask = llvm::APInt::getLowBitsSet(elem_width, width);
-      auto* mask_val = llvm::ConstantInt::get(elem_type, mask);
-      val = builder.CreateAnd(val, mask_val, "br.val.mask");
-      unk = builder.CreateAnd(unk, mask_val, "br.unk.mask");
-    }
-    auto* not_unk = builder.CreateNot(unk, "br.notunk");
-    return builder.CreateAnd(val, not_unk, "br.known");
-  }
-
-  // 2-state base: shift + mask to semantic width
-  auto* shift_amt = builder.CreateZExtOrTrunc(offset, base_type, "br.offset");
-  llvm::Value* shifted = builder.CreateLShr(base, shift_amt, "br.shr");
-  uint32_t base_width = base_type->getIntegerBitWidth();
-  if (width < base_width) {
-    auto mask = llvm::APInt::getLowBitsSet(base_width, width);
-    shifted = builder.CreateAnd(
-        shifted, llvm::ConstantInt::get(base_type, mask), "br.mask");
-  }
-  return shifted;
+  return LoadPackedPlace(context, place_id, *elem_type_result);
 }
 
 }  // namespace

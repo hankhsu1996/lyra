@@ -93,4 +93,24 @@ auto EmitPackedToCanonicalBits(
     llvm::IRBuilderBase& builder, llvm::Value* value,
     const SlotStorageSpec& spec) -> llvm::Value*;
 
+// Store X-encoded value (value=0, unknown=semantic_mask) to canonical
+// 4-state packed storage. Uses canonical byte-offset addressing only.
+void EmitStoreFourStateXToCanonical(
+    llvm::IRBuilderBase& builder, llvm::Value* slot_ptr, uint32_t bit_width);
+
+// Store the unknown-plane mask to canonical 4-state packed storage.
+// Value plane is assumed to already be zero (e.g., after memset).
+// Uses canonical byte-offset addressing only.
+void EmitStoreUnknownMaskToCanonical(
+    llvm::IRBuilderBase& builder, llvm::Value* slot_ptr, uint32_t bit_width);
+
+// Load a 4-state packed value from canonical storage into SSA {iN, iN} form.
+// Loads planes separately via byte GEP using canonical offsets.
+// Returns the packed struct value.
+// For use when the caller knows the type is 4-state packed and needs
+// the SSA struct form (e.g., for assignment, display, etc.).
+auto EmitLoadFourStateFromCanonical(
+    llvm::IRBuilderBase& builder, llvm::LLVMContext& llvm_ctx,
+    llvm::Value* slot_ptr, uint32_t bit_width) -> llvm::Value*;
+
 }  // namespace lyra::lowering::mir_to_llvm
