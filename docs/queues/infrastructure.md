@@ -131,3 +131,61 @@ Centralized metadata (`expected_failures.yaml` or similar) that marks individual
 - Add framework support: read overlay at test registration, apply GTEST_SKIP / xfail
 - Migrate current gtest_filter exclusions to overlay
 - Add ratchet checks
+
+## I3: Four-state query layer boundary
+
+### The problem
+
+Two functions named `IsPackedFourState` exist with different semantics:
+
+- `lyra::IsPackedFourState(type, types)` in `common/type_queries.hpp` -- intrinsic type property, ignores `force_two_state`.
+- `mir_to_llvm::IsPackedFourState(type, types, force_two_state)` in `llvm_backend/type_query.hpp` -- effective backend/codegen property, respects `force_two_state`.
+- `Context::IsPackedFourState(type)` -- wraps the backend version with the stored flag.
+
+Backend code can call the common version by accident. It compiles, produces correct results in 4-state mode, and fails silently in `--two-state`. This caused `array_query.cpp` to produce 4-state struct results in two-state mode. Same pattern exists for `IsFourStateType` vs `Context::IsFourState`.
+
+**Root cause:** Two distinct semantic concepts (intrinsic type four-state-ness vs effective lowering four-state-ness) share the same name and are both visible from backend code.
+
+### Invariant
+
+**Intrinsic type queries and effective lowering queries must not share the same name.** Backend code that queries four-state-ness for storage/codegen decisions must go through `Context::` only. The common type query layer answers intrinsic semantic questions. The backend layer answers representation questions. These two layers must not be interchangeable.
+
+### Immediate fixes applied
+
+- `array_query.cpp`: changed from `IsPackedFourState(res_type, types)` to `context.IsPackedFourState(res_type)` -- the actual bug
+- `packed_storage_view.cpp`: converged from 3-arg wrapper to `ctx.IsPackedFourState()`
+- `union_storage.hpp`: clarified that the non-Context `BuildLlvmTypeForTypeId` overload uses intrinsic four-state-ness only; structural cleanup (pulling it to an explicitly intrinsic contract) remains queued in follow-up item 3
+- Policy check: `check_llvm_backend_boundaries.py` now bans `lyra::IsPackedFourState(` from backend code, with annotated allowlist for `common/type_queries.hpp` includes
+- Test infra: added `--two-state` flag to ad-hoc `--test_file` mode
+- Removed stale `array_query` two-state suite exclusion
+
+### Follow-up work
+
+#### 1. Rename intrinsic queries
+
+Rename `IsPackedFourState` in `common/type_queries.hpp` to `IsIntrinsicallyPackedFourState`. Rename `IsFourStateType` in `common/type_utils.hpp` to `IsIntrinsicallyFourState`. This makes the semantic distinction visible at every call site. Mechanical rename across ~31 files.
+
+#### 2. Remove backend wrapper layer
+
+Remove the free-function wrappers in `llvm_backend/type_query.hpp` (`IsPackedFourState(type, types, force_two_state)` and `IsFourState(tid, types, force_two_state)`). Backend code should use `Context::` methods. Layout-phase code that has `force_two_state` as a parameter but no `Context` should call the renamed intrinsic query with an explicit `if (force_two_state) return false` guard, making the override visible at the call site.
+
+#### 3. Pull union_storage type builders back to intrinsic-only contract
+
+The non-Context `BuildLlvmTypeForTypeId(LLVMContext&, TypeId, TypeArena&)` and its internal `BuildLlvmTypeForTypeIdNoUnion` helper use intrinsic four-state-ness (they call `IsPackedFourState(type, types)` without `force_two_state`). This is currently documented as intrinsic-only in the header, but the API shape does not enforce it. After the intrinsic rename (item 1), these helpers will naturally call `IsIntrinsicallyPackedFourState`, making the contract self-documenting. Verify that the non-Context overload has no external callers (it currently does not) and consider removing it from the public header if unused.
+
+#### 4. Same-family audit
+
+Audit other type queries for the same pattern: one intrinsic API in `common/` and one effective API in the backend, with overlapping names. Candidates: `IsFourStateIndex`, signedness queries, packed bit width (these may not have the same problem since they don't vary with `force_two_state`, but should be checked).
+
+#### 5. Include boundary enforcement
+
+Investigate whether `common/type_queries.hpp` should be banned from backend `.cpp` files entirely. If backend code only needs effective queries (through `Context`) and layout helpers (through the renamed intrinsic), the common header inclusion is unnecessary and should be flagged. The current allowlist (10 files, all annotated with reasons) is the starting point for removal.
+
+### Stages
+
+- Bug fixes + policy check + convergence -- done
+- Rename intrinsic queries (mechanical, ~31 files)
+- Remove wrapper layer in `type_query.hpp`
+- Pull union_storage builders to intrinsic-only contract
+- Same-family audit
+- Include boundary enforcement

@@ -358,15 +358,47 @@ FOUR_STATE_FORBIDDEN_PATTERNS = [
 ]
 
 # IsPackedFourState( without a bool third arg - detect the common:: overload.
-# The wrapper overload has 3 args (type, arena, force_two_state). We detect
-# the 2-arg common:: overload by checking for the function name. Since both
-# the common:: and wrapper versions are called IsPackedFourState, we need a
-# heuristic: the wrapper is always in namespace mir_to_llvm and typically
-# called via ctx.IsPackedFourState(). We forbid the free-function call pattern
-# common::IsPackedFourState( as well as bare IsPackedFourState(type, types)
-# that doesn't have a bool third argument. For simplicity, we just check that
-# files include type_query.hpp and don't use the common:: qualified form.
-FOUR_STATE_COMMON_PATTERN = re.compile(r'\bcommon::IsPackedFourState\s*\(')
+# The canonical backend path is Context::IsPackedFourState() which embeds
+# force_two_state. The 3-arg wrapper in type_query.hpp is transitional --
+# it exists for layout-phase code that has force_two_state as a parameter
+# but no Context, and should be removed once those call sites are cleaned up.
+# We forbid qualified calls to the 2-arg lyra::IsPackedFourState( and
+# common::IsPackedFourState( forms, which bypass force_two_state entirely.
+FOUR_STATE_QUALIFIED_PATTERNS = [
+    (re.compile(r'\bcommon::IsPackedFourState\s*\('), "common::IsPackedFourState("),
+    (re.compile(r'\blyra::IsPackedFourState\s*\('), "lyra::IsPackedFourState("),
+]
+
+# Direct include of common/type_queries.hpp in backend .cpp files is
+# suspicious -- it enables calling the 2-arg IsPackedFourState without
+# force_two_state. Each allowlisted file is audited to use only non-four-state
+# queries (PackedBitWidth, IsPacked, etc.) from this header. These inclusions
+# should be removed when the intrinsic rename (I3 follow-up) makes the
+# type_queries.hpp include unnecessary.
+TYPE_QUERIES_INCLUDE = '#include "lyra/common/type_queries.hpp"'
+
+TYPE_QUERIES_INCLUDE_ALLOWLIST = {
+    # PackedBitWidth, IsPacked -- Context methods used for 4-state decisions
+    "src/lyra/llvm_backend/context_place.cpp",
+    # PackedBitWidth for format width computation
+    "src/lyra/llvm_backend/format_lowering.cpp",
+    # PackedBitWidth, IsPacked, PackedArrayElementWidth -- layout ABI oracle
+    "src/lyra/llvm_backend/layout/layout.cpp",
+    # PackedBitWidth for slot sizing
+    "src/lyra/llvm_backend/context.cpp",
+    # PackedBitWidth for string conversion width
+    "src/lyra/llvm_backend/compute/string.cpp",
+    # PackedBitWidth for operator width
+    "src/lyra/llvm_backend/compute/ops.cpp",
+    # IsPacked for real/shortreal dispatch
+    "src/lyra/llvm_backend/compute/real.cpp",
+    # TypeContainsManaged, TypeContainsString
+    "src/lyra/llvm_backend/type_ops/managed.cpp",
+    # PackedBitWidth for string conversion
+    "src/lyra/llvm_backend/emit_string_conv.cpp",
+    # PackedBitWidth for metadata layout
+    "src/lyra/llvm_backend/design_metadata_lowering.cpp",
+}
 
 
 def is_type_query_hpp(rel_path: str) -> bool:
@@ -380,6 +412,11 @@ def check_four_state_wrappers(repo_root: Path) -> list[str]:
     Scope: all .cpp and .hpp under src/lyra/llvm_backend/ and
     include/lyra/llvm_backend/ (excluding type_query.hpp itself and
     common/ headers which define the wrapped functions).
+
+    Checks:
+    1. Forbidden patterns: IsFourStateType(, AsIntegral().is_four_state
+    2. Qualified 2-arg calls: common::IsPackedFourState(, lyra::IsPackedFourState(
+    3. Direct include of common/type_queries.hpp in non-allowlisted files
     """
     errors = []
 
@@ -395,9 +432,17 @@ def check_four_state_wrappers(repo_root: Path) -> list[str]:
             for pattern, token in FOUR_STATE_FORBIDDEN_PATTERNS:
                 if pattern.search(code):
                     errors.append(f"  {rel_path}:{lineno}: {token}")
-            if FOUR_STATE_COMMON_PATTERN.search(code):
-                errors.append(
-                    f"  {rel_path}:{lineno}: common::IsPackedFourState(")
+            for pattern, token in FOUR_STATE_QUALIFIED_PATTERNS:
+                if pattern.search(code):
+                    errors.append(f"  {rel_path}:{lineno}: {token}")
+
+        # Check for direct type_queries.hpp include in non-allowlisted files
+        if rel_path not in TYPE_QUERIES_INCLUDE_ALLOWLIST:
+            for lineno, line in enumerate(lines, 1):
+                if TYPE_QUERIES_INCLUDE in line:
+                    errors.append(
+                        f"  {rel_path}:{lineno}: {TYPE_QUERIES_INCLUDE} "
+                        f"(use llvm_backend/type_query.hpp instead)")
 
     # Check .hpp files (excluding type_query.hpp)
     llvm_backend_inc = repo_root / "include/lyra/llvm_backend"
@@ -414,9 +459,9 @@ def check_four_state_wrappers(repo_root: Path) -> list[str]:
                 for pattern, token in FOUR_STATE_FORBIDDEN_PATTERNS:
                     if pattern.search(code):
                         errors.append(f"  {rel_path}:{lineno}: {token}")
-                if FOUR_STATE_COMMON_PATTERN.search(code):
-                    errors.append(
-                        f"  {rel_path}:{lineno}: common::IsPackedFourState(")
+                for pattern, token in FOUR_STATE_QUALIFIED_PATTERNS:
+                    if pattern.search(code):
+                        errors.append(f"  {rel_path}:{lineno}: {token}")
 
     return errors
 
@@ -551,8 +596,23 @@ def run_self_tests() -> bool:
         return False
 
     test_code6 = "common::IsPackedFourState(type, types)"
-    if not FOUR_STATE_COMMON_PATTERN.search(test_code6):
+    found = False
+    for pattern, _ in FOUR_STATE_QUALIFIED_PATTERNS:
+        if pattern.search(test_code6):
+            found = True
+            break
+    if not found:
         print("SELF-TEST FAILED: common::IsPackedFourState pattern not detected")
+        return False
+
+    test_code7 = "lyra::IsPackedFourState(type, types)"
+    found = False
+    for pattern, _ in FOUR_STATE_QUALIFIED_PATTERNS:
+        if pattern.search(test_code7):
+            found = True
+            break
+    if not found:
+        print("SELF-TEST FAILED: lyra::IsPackedFourState pattern not detected")
         return False
 
     # Verify type_query.hpp is recognized
@@ -628,7 +688,7 @@ def main() -> int:
                 print(e)
             print()
         if four_state_errors:
-            print("ERROR: Direct 4-state calls in LLVM backend (use type_query.hpp wrappers):")
+            print("ERROR: Direct 4-state calls in LLVM backend (use Context::IsPackedFourState):")
             print()
             for e in four_state_errors:
                 print(e)

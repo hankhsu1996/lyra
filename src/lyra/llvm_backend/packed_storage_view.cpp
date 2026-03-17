@@ -13,7 +13,6 @@
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
@@ -74,8 +73,7 @@ auto ResolvePackedStorageRoot(Context& ctx, mir::PlaceId place_id)
   TypeId base_type_id = mir::TypeOfPlaceBase(types, place);
   const Type& base_type = types[base_type_id];
   uint32_t total_bits = PackedBitWidth(base_type, types);
-  bool is_four_state =
-      IsPackedFourState(base_type, types, ctx.IsForceTwoState());
+  bool is_four_state = ctx.IsPackedFourState(base_type);
   uint32_t value_plane_bytes = GetStorageByteSize(total_bits);
 
   // GetPlacePointer skips BitRangeProjection suffix.

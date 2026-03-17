@@ -51,6 +51,8 @@ auto ParseArgs(std::span<char*> argv)
 
     if (arg == "--timing") {
       args.timing = true;
+    } else if (arg == "--two-state") {
+      args.two_state = true;
     } else if (
         TryParseFlag(arg, next_arg, "suite", args.suite, consumed_next) ||
         TryParseFlag(arg, next_arg, "backend", args.backend, consumed_next) ||

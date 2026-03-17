@@ -11,7 +11,6 @@
 
 #include "lyra/common/array_query_kind.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -146,7 +145,7 @@ auto LowerArrayQueryRvalue(
       res_type.Kind() == TypeKind::kPackedStruct ||
       res_type.Kind() == TypeKind::kEnum ||
       res_type.Kind() == TypeKind::kPackedArray) {
-    is_four_state = IsPackedFourState(res_type, types);
+    is_four_state = context.IsPackedFourState(res_type);
   }
 
   // $dimensions / $unpacked_dimensions: always compile-time constants
