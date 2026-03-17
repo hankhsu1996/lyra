@@ -19,6 +19,7 @@
 #include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
+#include "lyra/llvm_backend/storage_boundary.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -31,28 +32,9 @@ namespace {
 // ~24 IR lines (3 per element) vs ~37 for a loop, and avoids 4 basic blocks.
 constexpr uint32_t kSmallArrayUnrollThreshold = 8;
 
-// Store X-encoded value to a 4-state pointer.
-// X encoding: {value=0, unknown=semantic_mask}
-// semantic_mask has 1s in the low semantic_width bits.
-//
-// CONTRACT: ptr must point to storage with the exact layout of struct_type,
-// i.e., {iN, iN} where N is the storage width for the packed bit_width.
-// This matches the 4-state storage layout used throughout the LLVM backend.
-void EmitStoreFourStateX(
-    Context& ctx, llvm::Value* ptr, llvm::StructType* struct_type,
-    uint32_t semantic_width) {
-  auto& builder = ctx.GetBuilder();
-  auto* elem_type = struct_type->getElementType(0);
-  auto* zero = llvm::ConstantInt::get(elem_type, 0);
-  uint32_t storage_width = elem_type->getIntegerBitWidth();
-  auto unk_mask = llvm::APInt::getLowBitsSet(storage_width, semantic_width);
-  auto* unk_val = llvm::ConstantInt::get(elem_type, unk_mask);
-
-  // Build {value=0, unknown=semantic_mask}
-  llvm::Value* init = llvm::UndefValue::get(struct_type);
-  init = builder.CreateInsertValue(init, zero, 0);
-  init = builder.CreateInsertValue(init, unk_val, 1);
-  builder.CreateStore(init, ptr);
+// Delegates to shared canonical storage helper.
+void EmitStoreFourStateX(Context& ctx, llvm::Value* ptr, uint32_t bit_width) {
+  EmitStoreFourStateXToCanonical(ctx.GetBuilder(), ptr, bit_width);
 }
 
 // Local helper that forwards to the public EmitMemsetZero.
@@ -74,21 +56,10 @@ void EmitSVDefaultInitImpl(
     case TypeKind::kIntegral: {
       uint32_t bit_width = type.AsIntegral().bit_width;
       if (ctx.IsPackedFourState(type)) {
-        // 4-state: must write X encoding (value=0, unknown=mask)
-        // CONTRACT: ptr must point to storage with {iN,iN} layout matching
-        // GetPlaceLlvmType4State(bit_width). Callers obtain ptr via typed GEP
-        // or alloca with the correct type.
-        auto* struct_type = ctx.GetPlaceLlvmType4State(bit_width);
         if (already_zeroed) {
-          // Only write unknown plane (value plane already 0)
-          auto* elem_type = struct_type->getElementType(0);
-          uint32_t storage_width = elem_type->getIntegerBitWidth();
-          auto unk_mask = llvm::APInt::getLowBitsSet(storage_width, bit_width);
-          auto* unk_val = llvm::ConstantInt::get(elem_type, unk_mask);
-          auto* unk_ptr = builder.CreateStructGEP(struct_type, ptr, 1);
-          builder.CreateStore(unk_val, unk_ptr);
+          EmitStoreUnknownMaskToCanonical(builder, ptr, bit_width);
         } else {
-          EmitStoreFourStateX(ctx, ptr, struct_type, bit_width);
+          EmitStoreFourStateX(ctx, ptr, bit_width);
         }
       } else {
         // 2-state: store zero (skip if already zeroed)
@@ -142,21 +113,11 @@ void EmitSVDefaultInitImpl(
     case TypeKind::kEnum: {
       uint32_t width = PackedBitWidth(type, types);
       if (ctx.IsPackedFourState(type)) {
-        // 4-state packed: must write X encoding
-        // CONTRACT: ptr must point to storage with {iN,iN} layout matching
-        // GetPlaceLlvmType4State(width). Callers obtain ptr via typed GEP
-        // or alloca with the correct type.
-        auto* struct_type = ctx.GetPlaceLlvmType4State(width);
+        // 4-state packed: write X encoding using canonical storage layout.
         if (already_zeroed) {
-          // Only write unknown plane (value plane already 0)
-          auto* elem_type = struct_type->getElementType(0);
-          uint32_t storage_width = elem_type->getIntegerBitWidth();
-          auto unk_mask = llvm::APInt::getLowBitsSet(storage_width, width);
-          auto* unk_val = llvm::ConstantInt::get(elem_type, unk_mask);
-          auto* unk_ptr = builder.CreateStructGEP(struct_type, ptr, 1);
-          builder.CreateStore(unk_val, unk_ptr);
+          EmitStoreUnknownMaskToCanonical(builder, ptr, width);
         } else {
-          EmitStoreFourStateX(ctx, ptr, struct_type, width);
+          EmitStoreFourStateX(ctx, ptr, width);
         }
       } else {
         // 2-state packed: store zero (skip if already zeroed)
@@ -220,7 +181,6 @@ void EmitSVDefaultInitImpl(
 
       // Get element type info for init
       const Type& elem_type = types[info.element_type];
-      auto* elem_llvm_type = array_llvm_type->getElementType();
 
       // For small arrays, unroll directly (no loop, no extra basic blocks).
       // This avoids 4 basic blocks + phi + branch overhead for tiny arrays.
@@ -231,22 +191,8 @@ void EmitSVDefaultInitImpl(
 
           if (elem_type.Kind() == TypeKind::kIntegral &&
               ctx.IsPackedFourState(elem_type)) {
-            // 4-state scalar: only write unknown plane (value plane already 0)
-            auto* struct_type =
-                llvm::dyn_cast<llvm::StructType>(elem_llvm_type);
-            if (struct_type == nullptr || struct_type->getNumElements() != 2) {
-              throw common::InternalError(
-                  "EmitSVDefaultInitImpl",
-                  "4-state array element is not a 2-field struct");
-            }
-            auto* field0_type = struct_type->getElementType(0);
-            auto* elem_int_type = llvm::cast<llvm::IntegerType>(field0_type);
             uint32_t bit_width = elem_type.AsIntegral().bit_width;
-            auto unk_mask = llvm::APInt::getLowBitsSet(
-                elem_int_type->getIntegerBitWidth(), bit_width);
-            auto* unk_ptr = builder.CreateStructGEP(struct_type, elem_ptr, 1);
-            builder.CreateStore(
-                llvm::ConstantInt::get(elem_int_type, unk_mask), unk_ptr);
+            EmitStoreUnknownMaskToCanonical(builder, elem_ptr, bit_width);
           } else {
             // Nested type containing 4-state
             EmitSVDefaultInitImpl(ctx, elem_ptr, info.element_type, true);
@@ -285,35 +231,8 @@ void EmitSVDefaultInitImpl(
 
       if (elem_type.Kind() == TypeKind::kIntegral &&
           ctx.IsPackedFourState(elem_type)) {
-        // 4-state scalar: only write unknown plane (value plane already 0)
-        auto* struct_type = llvm::dyn_cast<llvm::StructType>(elem_llvm_type);
-        // Validate 4-state layout: must be {iN, iN} struct
-        if (struct_type == nullptr || struct_type->getNumElements() != 2) {
-          throw common::InternalError(
-              "EmitSVDefaultInitImpl",
-              "4-state array element is not a 2-field struct");
-        }
-        auto* field0_type = struct_type->getElementType(0);
-        auto* field1_type = struct_type->getElementType(1);
-        if (field0_type != field1_type || !field0_type->isIntegerTy()) {
-          throw common::InternalError(
-              "EmitSVDefaultInitImpl",
-              "4-state struct fields must be identical integer types");
-        }
-        auto* elem_int_type = llvm::cast<llvm::IntegerType>(field0_type);
         uint32_t bit_width = elem_type.AsIntegral().bit_width;
-        if (elem_int_type->getIntegerBitWidth() < bit_width) {
-          throw common::InternalError(
-              "EmitSVDefaultInitImpl",
-              "4-state storage width smaller than semantic width");
-        }
-        // Only write unknown plane - value is already 0 from memset
-        auto* unk_ptr =
-            builder.CreateStructGEP(struct_type, elem_ptr, 1, "arr.init.unk");
-        auto unk_mask = llvm::APInt::getLowBitsSet(
-            elem_int_type->getIntegerBitWidth(), bit_width);
-        builder.CreateStore(
-            llvm::ConstantInt::get(elem_int_type, unk_mask), unk_ptr);
+        EmitStoreUnknownMaskToCanonical(builder, elem_ptr, bit_width);
       } else {
         // Nested type containing 4-state (struct/array with 4-state fields).
         // Recursive call with already_zeroed=true since we already memset'd

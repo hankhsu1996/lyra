@@ -550,6 +550,13 @@ class Context {
   [[nodiscard]] auto LoadPlaceBaseValue(mir::PlaceId place_id)
       -> Result<llvm::Value*>;
 
+ private:
+  // Shared 4-state canonical load. Returns the loaded value if the type
+  // is 4-state packed, nullopt otherwise (caller falls through to typed load).
+  auto TryLoadCanonicalFourStateValue(llvm::Value* ptr, const Type& type)
+      -> std::optional<llvm::Value*>;
+
+ public:
   struct ComposedBitRange {
     llvm::Value* offset;
     uint32_t width;

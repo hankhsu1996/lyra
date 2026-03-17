@@ -181,6 +181,20 @@ Full-extent fast path (G5a), dense subscriber storage (G5b), and compile-time tr
 - `ClearDelta` resets per-slot vectors on every region boundary (3% on clock-pipeline)
 - External range lookup uses `absl::flat_hash_map` on every dirty mark
 
+### G13: Packed object localized access
+
+Packed objects are stored as contiguous packed storage but the LLVM backend reasons about them as monolithic wide integers. Localized access (`data[i]`, `s.field`, part-selects) degrades into full-width shift/mask and full-slot RMW.
+
+**Target direction:** Backend packed storage view model where localized subview access and whole-value materialization are separate explicit consumers of canonical packed storage. First consumer is packed-array element access; the model extends to packed struct fields, nested aggregates, and part-selects.
+
+**Stages:**
+
+- Stage 0: module boundary + data model -- done
+- Stage 1: byte-addressable localized read -- done (packed-array-read at Verilator parity)
+- Stage 2: byte-addressable localized immediate write
+- Stage 3: byte-addressable localized deferred/NBA write
+- Stage 4: whole-value materialization boundary enforcement
+
 ### G4b: Per-activation atomic stores
 
 Make conditional (only store when signal handler is registered) or sample every Nth activation.

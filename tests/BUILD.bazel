@@ -25,7 +25,6 @@ _UNSUPPORTED_FEATURES = ":".join([
     "*assoc_arrays_subfield_write",
 ])
 
-# JIT development suite - tests for in-process ORC JIT backend (used in PR CI)
 cc_test(
     name = "jit_dev_tests",
     srcs = ["main.cpp"],

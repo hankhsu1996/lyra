@@ -5,6 +5,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/common/packed_storage_abi.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
@@ -21,20 +22,18 @@ auto IsPatchTableEligible(const SlotStorageSpec& spec) -> bool {
          lane_bytes == 8;
 }
 
+// Delegates to the shared ABI contract in lyra::PackedStorageByteSize.
 auto GetStorageByteSize(uint32_t bit_width) -> uint32_t {
-  if (bit_width <= 8) return 1;
-  if (bit_width <= 16) return 2;
-  if (bit_width <= 32) return 4;
-  if (bit_width <= 64) return 8;
-  return (bit_width + 7) / 8;
+  return lyra::PackedStorageByteSize(bit_width);
 }
 
 auto GetStorageAlignment(uint32_t bit_width) -> uint32_t {
   return std::min(GetStorageByteSize(bit_width), uint32_t{8});
 }
 
+// Delegates to the shared ABI contract in lyra::FourStateUnknownByteOffset.
 auto FourStateUnknownLaneOffset(uint32_t bit_width) -> uint32_t {
-  return GetStorageByteSize(bit_width);
+  return lyra::FourStateUnknownByteOffset(bit_width);
 }
 
 auto FourStateTotalByteSize(uint32_t bit_width) -> uint32_t {

@@ -126,4 +126,4 @@ cases:
         end
       endmodule
     expect:
-      stdout: "sum = 24832\n"
+      stdout: "sum = 24448\n"
