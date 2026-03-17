@@ -215,6 +215,9 @@ void Engine::FlushAndPropagateConnections() {
       ++stats_.detailed.prop_calls_without_work;
     }
   }
+  if (update_set_.DeltaDirtySlots().empty()) {
+    return;
+  }
   bool has_conns = !all_connections_.empty();
   bool has_combs = !comb_kernels_.empty();
   if (!has_conns && !has_combs) {
