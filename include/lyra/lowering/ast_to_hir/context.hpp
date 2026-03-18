@@ -47,6 +47,10 @@ class BuiltinTypeCatalog {
             .bit_width = 1, .is_signed = false, .is_four_state = true});
     real_type_ = arena.Intern(TypeKind::kReal, std::monostate{});
     shortreal_type_ = arena.Intern(TypeKind::kShortReal, std::monostate{});
+    uint32_type_ = arena.Intern(
+        TypeKind::kIntegral,
+        IntegralInfo{
+            .bit_width = 32, .is_signed = false, .is_four_state = false});
     string_type_ = arena.Intern(TypeKind::kString, std::monostate{});
     void_type_ = arena.Intern(TypeKind::kVoid, std::monostate{});
   }
@@ -65,6 +69,9 @@ class BuiltinTypeCatalog {
   }
   [[nodiscard]] auto LogicType() const -> TypeId {
     return Checked(logic_type_);
+  }
+  [[nodiscard]] auto UInt32Type() const -> TypeId {
+    return Checked(uint32_type_);
   }
   [[nodiscard]] auto RealType() const -> TypeId {
     return Checked(real_type_);
@@ -93,6 +100,7 @@ class BuiltinTypeCatalog {
   TypeId int4_type_ = kInvalidTypeId;
   TypeId bit_type_ = kInvalidTypeId;
   TypeId logic_type_ = kInvalidTypeId;
+  TypeId uint32_type_ = kInvalidTypeId;
   TypeId real_type_ = kInvalidTypeId;
   TypeId shortreal_type_ = kInvalidTypeId;
   TypeId string_type_ = kInvalidTypeId;
@@ -151,6 +159,9 @@ struct Context {
   }
   [[nodiscard]] auto LogicType() const -> TypeId {
     return builtin_types.LogicType();
+  }
+  [[nodiscard]] auto UInt32Type() const -> TypeId {
+    return builtin_types.UInt32Type();
   }
   [[nodiscard]] auto RealType() const -> TypeId {
     return builtin_types.RealType();

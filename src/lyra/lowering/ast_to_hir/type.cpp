@@ -422,4 +422,13 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
   return kInvalidTypeId;
 }
 
+auto ForeachSnapshotKeyType(TypeId aa_type, Context* ctx) -> TypeId {
+  const auto& aa_info = (*ctx->type_arena)[aa_type].AsAssociativeArray();
+  TypeId key_type = aa_info.key_type;
+  if (!key_type) {
+    key_type = ctx->IntType();
+  }
+  return key_type;
+}
+
 }  // namespace lyra::lowering::ast_to_hir

@@ -20,7 +20,4 @@ auto MakeSignedVariant(TypeId type, TypeArena& arena)
 auto MakeUnsignedVariant(TypeId type, TypeArena& arena)
     -> std::expected<TypeId, std::string>;
 
-// Returns canonical 2-state unsigned bit vector: bit[width-1:0]
-auto GetBitVectorType(TypeArena& arena, uint32_t width) -> TypeId;
-
 }  // namespace lyra::semantic
