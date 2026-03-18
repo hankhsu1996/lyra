@@ -219,18 +219,63 @@ Many slots, connections, and comb kernels in the current runtime representation 
 - Connection chains (reg -> out -> in -> comb -> out -> in) where intermediate slots carry no independent runtime purpose
 - Slots with full dirty/range/epoch tracking machinery when they only need value storage
 
-**Next investigation: runtime work elimination audit.** For clock-pipeline, classify every runtime object:
+**Runtime work elimination audit (clock-pipeline, 2026-03-17):**
 
-1. **Architecturally necessary** -- needs signal identity, subscriber visibility, event semantics, NBA region boundaries
-2. **Implementation-convenient** -- exists because the current lowering creates a slot for every SV net, whether needed or not
-3. **Fusible or eliminable** -- copy chain collapse, producer-consumer direct path, subscriber-free internal net elimination, comb result fusion into consuming process
+Structural slot classification for the clock-pipeline benchmark (~70 realized slots). This is an observational audit, not a proven transform-safe analysis. Unresolved proof gaps (active trace/display references, process-body reads) remain.
 
-**Directions to explore (not yet prioritized):**
+| Category                                                           | Slots | Connections | Structural observation                  |
+| ------------------------------------------------------------------ | ----- | ----------- | --------------------------------------- |
+| Architectural registers (clk, rst_n, counter, data_reg, valid_reg) | 20    | 0           | Required: NBA targets, real state       |
+| Clock port forwarding (clk -> pipe_stage.clk)                      | 8     | 8           | Required: has edge subscribers          |
+| Reset port forwarding (rst_n -> pipe_stage.rst_n)                  | 8     | 8           | Candidate: stable after reset           |
+| Data/valid port forwarding (out -> parent -> in)                   | 32    | 32          | Candidate: structurally forwarding-only |
+| Top-level wire forwarding (counter -> d0, rst_n -> v0)             | 2     | 2           | Candidate: structurally forwarding-only |
+| Comb temporaries (data_comb in each pipe_stage)                    | 8     | 0           | Candidate: single-consumer internal     |
 
-- **Slot elimination for subscriber-free internal nets.** If a slot has no edge/change subscribers and no external observers, its dirty-tracking machinery is pure overhead. The value still needs to exist in design state, but it may not need independent runtime slot identity.
-- **Connection chain collapse.** Multi-hop copy chains (A -> B -> C) through port-forwarding slots could collapse to direct copies (A -> C), eliminating intermediate dirty marks and trigger-map entries.
-- **Comb fusion into consuming processes.** Trivial always_comb blocks whose output is read by exactly one always_ff could be inlined into the consuming process body, eliminating the comb kernel, its trigger entry, and the intermediate slot.
-- **Lowering-level representation change.** Instead of materializing every SV net as a runtime slot, lower trivial propagation/comb regions into compiled dataflow regions that LLVM can optimize (copy propagation, dead store elimination, scalar replacement). This preserves process semantic boundaries for real process semantics (wait/suspend/NBA) but removes them for trivial dataflow.
+"Candidate" means the slot appears structurally forwarding-only based on connection graph shape (single writer, single downstream, no process triggers, no comb triggers). This does NOT prove the slot is safe to eliminate -- active trace references and process-body reads are not yet checked.
+
+Automated analysis (connection origin provenance + forwarding candidate scan) identifies 14 parent-side routing nets as high-confidence candidates. All 14 pass the current provable checks; trace/display reference proof remains unresolved.
+
+The current pipeline chain per stage is: `data_reg -> (comb) data_out -> (connection) d_parent -> (connection) data_in -> (comb) data_comb -> (read by ff)`. Each intermediate hop costs one connection evaluation + one MarkSlotDirty + one trigger-map entry.
+
+**Elimination targets:**
+
+All three are compile-time / lowering-level changes, not runtime executor changes. They reduce the realized design graph before it reaches the runtime engine.
+
+1. **Port-forwarding chain collapse** (32 slots, 32 connections on clock-pipeline). `data_reg_sN -> data_out_sN -> data_in_sN+1` becomes `data_reg_sN -> data_in_sN+1`. Same for valid chain. Eliminates intermediate slots, connections, and MarkSlotDirty calls per propagation episode. The pipeline cascade drives most propagation work.
+
+2. **Single-consumer non-observable dataflow fusion** (8 slots, 8 comb kernels on clock-pipeline). `data_comb` is computed by `always_comb` and read only by the same module's `always_ff`. Fuse the comb computation into the consuming process body. Eliminates the comb kernel, its intermediate slot, trigger entry, and dirty machinery. This is a special case of a more general pattern: any intermediate value with no independent observability, no subscribers, and a single consumer path.
+
+3. **Top-level wire forwarding** (2 slots, 2 connections on clock-pipeline). Trivial assigns like `d0 = counter`. Useful as a test case but too benchmark-specific to be a primary direction.
+
+**Primary strategic direction: non-observable forwarding identity elimination (G15)**
+
+The core observation from the audit is not about specific SV syntax patterns. It is about a general structural problem: the current lowering materializes every port binding, internal wire, and module-boundary forwarding path as a full runtime slot with independent signal identity, dirty tracking, and propagation participation. For any design with module hierarchy, this creates large numbers of runtime objects that exist only because of the lowering's representation choices, not because they carry independent runtime semantics.
+
+The right framing is not "connection chain collapse" or "comb fusion" as separate features. It is a single general analysis:
+
+**Which realized runtime objects lack independent observability and can be eliminated from the propagation graph?**
+
+An object is non-observable if:
+
+- No edge/change subscribers watch it
+- No external observer (trace, display, strobe) references it
+- It is not a timing/event boundary (NBA target, suspend point, etc.)
+- It serves only as a forwarding/aliasing path between producer and consumer
+
+For such objects, the value may still need to exist in design state (for correct read access), but the slot does not need independent runtime identity: no trigger-map entry, no dirty tracking, no propagation-graph participation. The connection that writes it can instead directly target the downstream consumer.
+
+The most impactful sub-problem within this direction is **cross-module port-forwarding collapse**. Input ports that are pure pass-through of upstream values, and output ports that are pure aliases of internal registers, are the dominant source of non-observable forwarding objects in hierarchical RTL designs. This is not benchmark-specific -- it applies to any design with module instantiation.
+
+Concrete analysis required before implementation:
+
+- Which lowering stage creates port-forwarding slots (realization? layout?)
+- Whether port slots carry any semantic obligation beyond value storage
+- How connection descriptors reference port slots vs internal slots
+- Whether eliminating a port slot changes the design state layout
+- How trace/display references interact with port slot identity
+
+This direction is compile-time / lowering-level work, not runtime work. The runtime engine stays unchanged; it simply receives a smaller, denser propagation graph.
 
 The key architectural distinction: process semantic boundaries (wait, suspend, resume, edge-triggered sequential logic, NBA ordering) must be preserved. But a large fraction of the runtime's propagation work is not process-semantic -- it is dataflow that happens to be expressed through the same generic dirty/slot/subscriber protocol. Lowering that dataflow into a form LLVM can reason about is more likely to produce multi-x wins than further runtime scheduling optimization.
 

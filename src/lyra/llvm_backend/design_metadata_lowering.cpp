@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <format>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -471,6 +473,7 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
         .trigger_bit_index = trigger_bit_index,
         .trigger_byte_offset = trigger_byte_offset,
         .trigger_byte_size = trigger_byte_size,
+        .origin = entry.origin,
     });
   }
 
@@ -820,6 +823,157 @@ auto BuildProcessTriggerInputs(
   }
 
   return inputs;
+}
+
+auto FindPortBindingForwardingCandidates(
+    std::span<const realization::ConnectionDescriptorEntry> connections,
+    std::span<const realization::ProcessTriggerInput> process_triggers,
+    std::span<const realization::CombKernelInput> comb_inputs,
+    uint32_t num_slots) -> std::vector<PortBindingForwardingCandidate> {
+  // Dense per-slot connection usage counts and indices.
+  std::vector<uint32_t> slot_write_count(num_slots, 0);
+  std::vector<uint32_t> slot_trigger_count(num_slots, 0);
+  std::vector<uint32_t> slot_writer_conn(num_slots, UINT32_MAX);
+  std::vector<uint32_t> slot_trigger_conn(num_slots, UINT32_MAX);
+
+  for (uint32_t ci = 0; ci < connections.size(); ++ci) {
+    const auto& conn = connections[ci];
+    if (conn.dst_slot_id >= num_slots) {
+      throw common::InternalError(
+          "FindPortBindingForwardingCandidates",
+          std::format(
+              "dst_slot_id {} >= num_slots {}", conn.dst_slot_id, num_slots));
+    }
+    if (conn.trigger_slot_id >= num_slots) {
+      throw common::InternalError(
+          "FindPortBindingForwardingCandidates",
+          std::format(
+              "trigger_slot_id {} >= num_slots {}", conn.trigger_slot_id,
+              num_slots));
+    }
+    ++slot_write_count[conn.dst_slot_id];
+    slot_writer_conn[conn.dst_slot_id] = ci;
+    ++slot_trigger_count[conn.trigger_slot_id];
+    slot_trigger_conn[conn.trigger_slot_id] = ci;
+  }
+
+  // Build exclusion sets from process triggers and comb triggers.
+  std::vector<bool> is_process_trigger(num_slots, false);
+  for (const auto& pt : process_triggers) {
+    if (pt.slot_id < num_slots) is_process_trigger[pt.slot_id] = true;
+  }
+
+  std::vector<bool> is_comb_trigger(num_slots, false);
+  for (const auto& ck : comb_inputs) {
+    for (const auto& trigger : ck.triggers) {
+      if (trigger.slot_id < num_slots) is_comb_trigger[trigger.slot_id] = true;
+    }
+  }
+
+  // Analyze slots with exactly one writer and one downstream connection.
+  // This is a broad candidate scan -- candidates are NOT proven safe for
+  // transformation. Unresolved proof gaps (active trace/display references,
+  // process-body reads) are flagged but do not exclude.
+  std::vector<PortBindingForwardingCandidate> candidates;
+
+  for (uint32_t slot_id = 0; slot_id < num_slots; ++slot_id) {
+    if (slot_write_count[slot_id] != 1) continue;
+    if (slot_trigger_count[slot_id] != 1) continue;
+
+    uint32_t upstream_ci = slot_writer_conn[slot_id];
+    uint32_t downstream_ci = slot_trigger_conn[slot_id];
+    const auto& upstream = connections[upstream_ci];
+    const auto& downstream = connections[downstream_ci];
+
+    PortBindingForwardingCandidate candidate;
+    candidate.intermediate_slot_id = slot_id;
+    candidate.upstream_connection_index = upstream_ci;
+    candidate.downstream_connection_index = downstream_ci;
+    candidate.single_writer = true;
+    candidate.single_downstream = true;
+
+    // Today all kernelized connections are port-binding origin.
+    // This check is currently always true but structurally correct.
+    candidate.both_port_binding =
+        upstream.origin == realization::ConnectionKernelOrigin::kPortBinding &&
+        downstream.origin == realization::ConnectionKernelOrigin::kPortBinding;
+
+    candidate.no_process_trigger = !is_process_trigger[slot_id];
+    candidate.no_comb_trigger = !is_comb_trigger[slot_id];
+
+    // Upstream full-copy shape: uses full-slot trigger observation
+    // (trigger_byte_size == 0) and copies a nonzero byte region.
+    // This does NOT prove the copy covers the entire intermediate slot
+    // extent -- that would require comparing against the slot's total
+    // byte size, which is not available in the connection descriptor.
+    candidate.upstream_full_copy_shape = upstream.byte_size > 0 &&
+                                         upstream.trigger_byte_size == 0 &&
+                                         upstream.trigger_byte_offset == 0;
+
+    // Downstream matching read shape: reads from the same byte offset
+    // that upstream writes to, with the same byte count, and uses
+    // full-slot trigger observation. This checks shape compatibility
+    // but does NOT prove semantic equivalence of the forwarded value.
+    candidate.downstream_matching_read_shape =
+        downstream.src_byte_offset == upstream.dst_byte_offset &&
+        downstream.byte_size == upstream.byte_size &&
+        downstream.trigger_byte_size == 0 &&
+        downstream.trigger_byte_offset == 0;
+
+    // trace_ref_unresolved stays true (default). Active trace/display
+    // references cannot be determined from compile-time metadata alone.
+
+    candidates.push_back(candidate);
+  }
+
+  return candidates;
+}
+
+void LogPortBindingForwardingCandidates(
+    std::span<const PortBindingForwardingCandidate> candidates) {
+  if (candidates.empty()) return;
+
+  uint32_t provable_pass_count = 0;
+  for (const auto& c : candidates) {
+    if (c.single_writer && c.single_downstream && c.both_port_binding &&
+        c.no_process_trigger && c.no_comb_trigger &&
+        c.upstream_full_copy_shape && c.downstream_matching_read_shape) {
+      ++provable_pass_count;
+    }
+  }
+
+  fprintf(
+      stderr,
+      "[lyra][forwarding_analysis] total=%zu provable_pass=%u"
+      " (trace_ref unresolved on all; not transform-safe yet)\n",
+      candidates.size(), provable_pass_count);
+
+  for (const auto& c : candidates) {
+    int provable_pass =
+        (c.single_writer && c.single_downstream && c.both_port_binding &&
+         c.no_process_trigger && c.no_comb_trigger &&
+         c.upstream_full_copy_shape && c.downstream_matching_read_shape)
+            ? 1
+            : 0;
+    fprintf(
+        stderr,
+        "[lyra][forwarding_analysis] slot=%u"
+        " up=%u down=%u"
+        " provable_pass=%d"
+        " writer=%d down_ok=%d port=%d"
+        " no_proc=%d no_comb=%d"
+        " up_copy=%d down_read=%d"
+        " trace=unresolved\n",
+        c.intermediate_slot_id, c.upstream_connection_index,
+        c.downstream_connection_index, provable_pass,
+        static_cast<int>(c.single_writer),
+        static_cast<int>(c.single_downstream),
+        static_cast<int>(c.both_port_binding),
+        static_cast<int>(c.no_process_trigger),
+        static_cast<int>(c.no_comb_trigger),
+        static_cast<int>(c.upstream_full_copy_shape),
+        static_cast<int>(c.downstream_matching_read_shape));
+  }
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

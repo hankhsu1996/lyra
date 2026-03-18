@@ -24,7 +24,19 @@ struct SlotMetaInput {
   uint32_t unk_bytes = 0;
 };
 
-// Runtime-shaped connection descriptor. Already final form, passed through.
+// Semantic origin of a kernelized connection.
+// kPortBinding: created from a port-binding connection process.
+// kContinuousAssign: created from a module-internal continuous assign.
+// Today all kernelized connections are kPortBinding because continuous
+// assigns are lowered as always_comb and kernelized as CombKernels.
+// The second value exists to make the provenance model explicit and
+// ready for future use if continuous assigns ever become connections.
+enum class ConnectionKernelOrigin : uint8_t {
+  kPortBinding,
+  kContinuousAssign,
+};
+
+// Runtime-shaped connection descriptor with compile-time provenance.
 struct ConnectionDescriptorEntry {
   uint32_t src_byte_offset = 0;
   uint32_t dst_byte_offset = 0;
@@ -35,6 +47,8 @@ struct ConnectionDescriptorEntry {
   uint8_t trigger_bit_index = 0;
   uint32_t trigger_byte_offset = 0;
   uint32_t trigger_byte_size = 0;
+  // Compile-time-only provenance. Not serialized to runtime ABI.
+  ConnectionKernelOrigin origin = ConnectionKernelOrigin::kPortBinding;
 };
 
 // Input facts for a scheduled module process.

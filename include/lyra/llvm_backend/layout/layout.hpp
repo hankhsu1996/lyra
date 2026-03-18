@@ -20,6 +20,7 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/realization/design_metadata.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -170,6 +171,10 @@ struct ResolvedObservation {
 // Entry for a connection process that has been kernelized.
 // Instead of generating a per-process LLVM function, these are batched
 // into a connection descriptor table evaluated inline by the engine.
+//
+// Today, all kernelized connections come from port bindings (Phase 2
+// of BuildLayout). Module-internal continuous assigns are lowered as
+// always_comb processes and kernelized as CombKernels, not connections.
 struct ConnectionKernelEntry {
   mir::ProcessId process_id;
   mir::SlotId src_slot;
@@ -177,6 +182,8 @@ struct ConnectionKernelEntry {
   mir::SlotId trigger_slot;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
   std::optional<ResolvedObservation> trigger_observation;
+  realization::ConnectionKernelOrigin origin =
+      realization::ConnectionKernelOrigin::kPortBinding;
 };
 
 // Trigger observation for a comb kernel input slot.
