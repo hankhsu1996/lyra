@@ -11,6 +11,7 @@
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
@@ -21,6 +22,7 @@
 #include "lyra/llvm_backend/instruction/assign_core.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
+#include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/type_ops/dispatch.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/llvm_backend/type_query.hpp"
@@ -32,117 +34,88 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-using detail::IsFourStateScalarStruct;
 using detail::LowerRhsRaw;
 
 namespace {
 
-// Read-modify-write for BitRangeProjection assignment.
-// Clears the target bit range in the base value, then OR's in the new value.
-auto StoreBitRange(
-    Context& context, mir::PlaceId target, llvm::Value* source_raw)
-    -> Result<void> {
-  auto& builder = context.GetBuilder();
-  auto br_result = context.ComposeBitRange(target);
-  if (!br_result) return std::unexpected(br_result.error());
-  auto [offset, width] = *br_result;
+// Convert a legacy llvm::Value* (iN or {iN, iN}) to a PackedRValue.
+// This is caller-side representation adapting, not storage logic.
+auto ConvertRawToPackedRValue(
+    Context& ctx, llvm::Value* raw, uint32_t semantic_bits, bool is_four_state)
+    -> PackedRValue {
+  auto& builder = ctx.GetBuilder();
+  PackedRValue result;
+  result.semantic_bits = semantic_bits;
+  result.is_four_state = is_four_state;
 
-  // Get pointer for RMW load
-  auto ptr_or_err = context.GetPlacePointer(target);
-  if (!ptr_or_err) return std::unexpected(ptr_or_err.error());
-  llvm::Value* ptr = *ptr_or_err;
-
-  auto base_type_result = context.GetPlaceBaseType(target);
-  if (!base_type_result) return std::unexpected(base_type_result.error());
-  llvm::Type* base_type = *base_type_result;
-
-  // Resolve base TypeId for CommitPackedValueRaw
-  const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
-  TypeId base_type_id = mir::TypeOfPlaceBase(types, arena[target]);
-
-  if (IsFourStateScalarStruct(base_type)) {
-    // 4-state base: RMW both planes independently
-    auto* base_struct = llvm::cast<llvm::StructType>(base_type);
-    auto* plane_type = base_struct->getElementType(0);
-    uint32_t plane_width = plane_type->getIntegerBitWidth();
-
-    llvm::Value* old_packed = builder.CreateLoad(base_type, ptr, "rmw.old");
-    llvm::Value* old_val =
-        builder.CreateExtractValue(old_packed, 0, "rmw.old.val");
-    llvm::Value* old_unk =
-        builder.CreateExtractValue(old_packed, 1, "rmw.old.unk");
-
-    auto* shift_amt =
-        builder.CreateZExtOrTrunc(offset, plane_type, "rmw.offset");
-
-    auto mask_ap = llvm::APInt::getLowBitsSet(plane_width, width);
-    auto* mask = llvm::ConstantInt::get(plane_type, mask_ap);
-    auto* mask_shifted = builder.CreateShl(mask, shift_amt, "rmw.mask");
-    auto* not_mask = builder.CreateNot(mask_shifted, "rmw.notmask");
-
-    // Extract source value/unknown planes
-    llvm::Value* src_val = nullptr;
-    llvm::Value* src_unk = nullptr;
-    if (source_raw->getType()->isStructTy()) {
-      src_val = builder.CreateExtractValue(source_raw, 0, "rmw.src.val");
-      src_unk = builder.CreateExtractValue(source_raw, 1, "rmw.src.unk");
-    } else {
-      // 2-state source into 4-state target: unknown = 0 in the range
-      src_val = source_raw;
-      src_unk = llvm::ConstantInt::get(plane_type, 0);
+  if (raw->getType()->isStructTy()) {
+    result.val = builder.CreateExtractValue(raw, 0, "rhs.val");
+    result.unk = builder.CreateExtractValue(raw, 1, "rhs.unk");
+  } else {
+    result.val = raw;
+    if (is_four_state) {
+      // 2-state source into 4-state target: unknown = 0
+      result.unk = llvm::ConstantInt::get(raw->getType(), 0);
     }
+  }
+  return result;
+}
 
-    // Extend source to plane width and shift into position
-    src_val = builder.CreateZExtOrTrunc(src_val, plane_type, "rmw.src.val.ext");
-    src_unk = builder.CreateZExtOrTrunc(src_unk, plane_type, "rmw.src.unk.ext");
-    auto* new_val_shifted =
-        builder.CreateShl(src_val, shift_amt, "rmw.val.shl");
-    auto* new_unk_shifted =
-        builder.CreateShl(src_unk, shift_amt, "rmw.unk.shl");
+// Build a PackedStorePolicy from context state and target place.
+// Reads context execution contract and resolves signal ID.
+auto BuildStorePolicy(Context& ctx, mir::PlaceId target) -> PackedStorePolicy {
+  PackedStorePolicy policy;
 
-    // Clear + OR for both planes
-    auto* cleared_val = builder.CreateAnd(old_val, not_mask, "rmw.val.clear");
-    auto* result_val =
-        builder.CreateOr(cleared_val, new_val_shifted, "rmw.val");
-    auto* cleared_unk = builder.CreateAnd(old_unk, not_mask, "rmw.unk.clear");
-    auto* result_unk =
-        builder.CreateOr(cleared_unk, new_unk_shifted, "rmw.unk");
-
-    // Pack and store (with notify if design place)
-    llvm::Value* packed = llvm::UndefValue::get(base_struct);
-    packed = builder.CreateInsertValue(packed, result_val, 0);
-    packed = builder.CreateInsertValue(packed, result_unk, 1);
-    CommitPackedValueRaw(context, target, packed, base_type_id);
-    return {};
+  auto signal_id = GetDesignSignalId(ctx, target);
+  if (!signal_id.has_value()) {
+    // Non-design target (process-local): direct store, no notification.
+    policy.store_mode = PackedStoreMode::kDirectInit;
+    return policy;
   }
 
-  // 2-state base: simple RMW
-  uint32_t base_width = base_type->getIntegerBitWidth();
-  auto* shift_amt = builder.CreateZExtOrTrunc(offset, base_type, "rmw.offset");
+  policy.signal_id = *signal_id;
+  policy.engine_ptr = ctx.GetEnginePointer();
+  policy.first_dirty_seen = ctx.GetFirstDirtySeenPtr();
+  policy.notification_deferred =
+      ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred;
 
-  auto mask_ap = llvm::APInt::getLowBitsSet(base_width, width);
-  auto* mask = llvm::ConstantInt::get(base_type, mask_ap);
-  auto* mask_shifted = builder.CreateShl(mask, shift_amt, "rmw.mask");
-  auto* not_mask = builder.CreateNot(mask_shifted, "rmw.notmask");
-
-  llvm::Value* old_val = builder.CreateLoad(base_type, ptr, "rmw.old");
-  auto* cleared = builder.CreateAnd(old_val, not_mask, "rmw.clear");
-
-  // Extend source to base width and shift into position
-  llvm::Value* src = source_raw;
-  if (src->getType()->isStructTy()) {
-    // Coerce 4-state source to 2-state
-    auto* val = builder.CreateExtractValue(src, 0, "rmw.src.val");
-    auto* unk = builder.CreateExtractValue(src, 1, "rmw.src.unk");
-    auto* not_unk = builder.CreateNot(unk);
-    src = builder.CreateAnd(val, not_unk);
+  switch (ctx.GetDesignStoreMode()) {
+    case DesignStoreMode::kDirectInit:
+      policy.store_mode = PackedStoreMode::kDirectInit;
+      break;
+    case DesignStoreMode::kNotifySimulation:
+      policy.store_mode = PackedStoreMode::kNotifySimulation;
+      break;
+    case DesignStoreMode::kNotifyCrossContext:
+      policy.store_mode = PackedStoreMode::kNotifyCrossContext;
+      break;
   }
-  src = builder.CreateZExtOrTrunc(src, base_type, "rmw.src.ext");
-  auto* new_shifted = builder.CreateShl(src, shift_amt, "rmw.src.shl");
-  auto* result = builder.CreateOr(cleared, new_shifted, "rmw.result");
-  CommitPackedValueRaw(context, target, result, base_type_id);
-  return {};
+
+  // Validate: notify modes require a valid engine_ptr LLVM value.
+  if (policy.store_mode != PackedStoreMode::kDirectInit &&
+      policy.engine_ptr == nullptr) {
+    throw common::InternalError(
+        "BuildStorePolicy", "notify store mode requires engine_ptr on Context");
+  }
+
+  return policy;
+}
+
+// Packed subview write via the packed storage view module.
+auto StoreBitRange(Context& ctx, mir::PlaceId target, llvm::Value* source_raw)
+    -> Result<void> {
+  auto path = ExtractPackedAccessPath(ctx, target);
+  if (!path) return std::unexpected(path.error());
+
+  auto subview = ResolvePackedSubview(ctx, *path);
+  if (!subview) return std::unexpected(subview.error());
+
+  auto rvalue = ConvertRawToPackedRValue(
+      ctx, source_raw, subview->semantic_bit_width,
+      subview->storage.is_four_state);
+  auto policy = BuildStorePolicy(ctx, target);
+
+  return EmitStoreToPackedSubview(ctx, *subview, rvalue, policy);
 }
 
 // Forward declaration for mutual recursion

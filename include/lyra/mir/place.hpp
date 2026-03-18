@@ -48,6 +48,13 @@ struct BitRangeProjection {
   Operand bit_offset;   // Bit offset from base (dynamic expression)
   uint32_t width = 0;   // Number of bits to extract (static)
   TypeId element_type;  // Type of the extracted element
+
+  // True when bit_offset was produced by element-index scaling:
+  // offset = (index +/- lower) * element_width. This guarantees
+  // the offset is always a multiple of element_width. Set only by
+  // packed array element access lowering. Part-selects, range selects,
+  // and bit selects leave this false.
+  bool is_element_scaled = false;
 };
 
 // UnionMember: access a union member by index.

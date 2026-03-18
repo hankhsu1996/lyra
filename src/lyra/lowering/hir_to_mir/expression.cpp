@@ -1931,7 +1931,8 @@ auto LowerPackedElementSelect(
                       .info = mir::BitRangeProjection{
                           .bit_offset = offset,
                           .width = element_width,
-                          .element_type = expr.type}});
+                          .element_type = expr.type,
+                          .is_element_scaled = true}});
 
   // Use GuardedUse for OOB-safe read: valid ? Use(place) : oob_default
   return builder.EmitGuardedUse(valid, slice_place, expr.type);
