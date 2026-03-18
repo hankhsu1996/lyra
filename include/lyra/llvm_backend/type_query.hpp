@@ -11,7 +11,8 @@ namespace lyra::lowering::mir_to_llvm {
 //
 // All LLVM backend code must use these wrappers (or Context::IsFourState /
 // Context::IsPackedFourState) instead of the common:: free functions
-// (IsFourStateType, IsPackedFourState) or direct field access (.is_four_state).
+// (IsIntrinsicallyFourState, IsIntrinsicallyPackedFourState) or direct field
+// access (.is_four_state).
 // This allows --two-state mode to force all types to be treated as 2-state
 // during LLVM lowering without changing the type system.
 //
@@ -23,13 +24,13 @@ namespace lyra::lowering::mir_to_llvm {
 inline auto IsFourState(
     TypeId tid, const TypeArena& types, bool force_two_state) -> bool {
   if (force_two_state) return false;
-  return IsFourStateType(tid, types);
+  return IsIntrinsicallyFourState(tid, types);
 }
 
 inline auto IsPackedFourState(
     const Type& type, const TypeArena& types, bool force_two_state) -> bool {
   if (force_two_state) return false;
-  return lyra::IsPackedFourState(type, types);
+  return lyra::IsIntrinsicallyPackedFourState(type, types);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

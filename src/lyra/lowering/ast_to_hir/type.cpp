@@ -378,7 +378,7 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
     for (const auto& member : members) {
       uint32_t member_width = BlobBitSize(member.type, *ctx->type_arena);
       max_width = std::max(max_width, member_width);
-      if (IsFourStateType(member.type, *ctx->type_arena)) {
+      if (IsIntrinsicallyFourState(member.type, *ctx->type_arena)) {
         storage_is_four_state = true;
       }
       if (ContainsFloat(member.type, *ctx->type_arena)) {

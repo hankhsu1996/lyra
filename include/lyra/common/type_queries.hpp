@@ -61,20 +61,22 @@ inline auto IsPackedSigned(const Type& type, const TypeArena& arena) -> bool {
   }
 }
 
-inline auto IsPackedFourState(const Type& type, const TypeArena& arena)
-    -> bool {
+inline auto IsIntrinsicallyPackedFourState(
+    const Type& type, const TypeArena& arena) -> bool {
   switch (type.Kind()) {
     case TypeKind::kIntegral:
       return type.AsIntegral().is_four_state;
     case TypeKind::kPackedStruct:
       return type.AsPackedStruct().is_four_state;
     case TypeKind::kEnum:
-      return IsPackedFourState(arena[type.AsEnum().base_type], arena);
+      return IsIntrinsicallyPackedFourState(
+          arena[type.AsEnum().base_type], arena);
     case TypeKind::kPackedArray:
-      return IsPackedFourState(arena[type.AsPackedArray().element_type], arena);
+      return IsIntrinsicallyPackedFourState(
+          arena[type.AsPackedArray().element_type], arena);
     default:
       throw common::InternalError(
-          "IsPackedFourState",
+          "IsIntrinsicallyPackedFourState",
           std::format("expected packed type, got {}", ToString(type.Kind())));
   }
 }
@@ -96,7 +98,7 @@ inline auto IsFourStateIndex(TypeId index_type, const TypeArena& arena)
     -> bool {
   const Type& type = arena[index_type];
   if (IsPacked(type)) {
-    return IsPackedFourState(type, arena);
+    return IsIntrinsicallyPackedFourState(type, arena);
   }
   return false;
 }

@@ -130,7 +130,8 @@ auto CreateFilledConstant(
     -> ConstId {
   const Type& target = (*ctx->type_arena)[target_type];
   uint32_t width = PackedBitWidth(target, *ctx->type_arena);
-  bool target_is_four_state = IsPackedFourState(target, *ctx->type_arena);
+  bool target_is_four_state =
+      IsIntrinsicallyPackedFourState(target, *ctx->type_arena);
 
   // Determine fill kind from the tick literal's bit0.
   TickFillKind fill_kind = ExtractTickFillKind(tick_value);

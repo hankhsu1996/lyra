@@ -94,7 +94,7 @@ auto BuildLlvmTypeForTypeIdNoUnion(
   }
   if (IsPacked(type)) {
     auto bit_width = PackedBitWidth(type, types);
-    if (IsPackedFourState(type, types)) {
+    if (IsIntrinsicallyPackedFourState(type, types)) {
       auto* plane_type = GetLlvmStorageType(ctx, bit_width);
       return llvm::StructType::get(ctx, {plane_type, plane_type});
     }

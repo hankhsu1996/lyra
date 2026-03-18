@@ -41,7 +41,7 @@ auto ValidatePackedIntegralSide(
         ToString(type));
   }
 
-  if (IsPackedFourState(type, arena)) {
+  if (IsIntrinsicallyPackedFourState(type, arena)) {
     return std::format(
         "bitcast {}: requires 2-state integral (bit), got 4-state (logic)",
         context);
