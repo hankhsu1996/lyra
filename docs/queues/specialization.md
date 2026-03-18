@@ -28,7 +28,12 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
   - [x] F1-prep Cut 1 -- Per-body HIR ownership
   - [x] F1-prep Cut 3a -- Per-body AST-to-HIR diagnostics
   - [x] F1-prep Cut 2 -- Per-body MIR ownership
-  - [ ] F1-prep Cut 4 -- Type/constant arena investigation
+  - [ ] F1-prep Cut 4 -- Type/constant arena freeze
+    - [x] F1-prep Cut 4a -- TypeArena investigation and design decision
+    - [x] F1-prep Cut 4b -- Phase 0 body-type seeding (closes AST-reachable type gap)
+    - [x] F1-prep Cut 4c -- Builtin semantic type catalog (eliminates fixed synthetic Phase 1 writes)
+    - [ ] F1-prep Cut 4d -- TypeArena Freeze() enforcement (verify parameterized residual, add freeze gate)
+    - [ ] F1-prep Cut 4e -- ConstantArena ownership split (design-global + body-local arenas)
   - [ ] m3 -- Param transmission table: replace raw symbol pointers with group-scoped key
   - [ ] F1-impl -- Per-group isolated compilation with deterministic merge
 - [ ] F2 -- Specialization caching
@@ -41,7 +46,7 @@ See [parallel-compilation.md](../parallel-compilation.md) for the full design.
 
 Core model: Phase 0 (sequential global setup) produces immutable shared reference data. Phase 1 (per-group isolated compilation) produces per-body owned units. Phase 2 (deterministic assembly) collects bodies and builds design-wide artifacts. Body-local IDs stay body-local permanently.
 
-Next steps: F1-prep Cut 4 investigates type/constant arena sharing strategy. After prep cuts complete, F1-impl builds the parallel compilation pipeline.
+Next steps: TypeArena Freeze() enforcement (Cut 4d), then ConstantArena ownership split (Cut 4e). After prep cuts complete, F1-impl builds the parallel compilation pipeline.
 
 ## F2: Specialization caching
 

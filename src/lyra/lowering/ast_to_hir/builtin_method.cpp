@@ -256,10 +256,7 @@ auto LowerBuiltinMethodCall(
   switch (info.method) {
     case BuiltinMethodKind::kSize: {
       hir_method = hir::BuiltinMethod::kSize;
-      result_type = ctx->type_arena->Intern(
-          TypeKind::kIntegral,
-          IntegralInfo{
-              .bit_width = 32, .is_signed = true, .is_four_state = false});
+      result_type = ctx->IntType();
       break;
     }
     case BuiltinMethodKind::kPopBack:
@@ -278,7 +275,7 @@ auto LowerBuiltinMethodCall(
     }
     case BuiltinMethodKind::kDelete: {
       hir_method = hir::BuiltinMethod::kDelete;
-      result_type = ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+      result_type = ctx->VoidType();
       // delete() or delete(idx): 0 or 1 arg after receiver
       if (call.arguments().size() > 2) {
         ctx->sink->Error(span, "delete() takes at most one argument");
@@ -298,7 +295,7 @@ auto LowerBuiltinMethodCall(
       hir_method = (info.method == BuiltinMethodKind::kPushBack)
                        ? hir::BuiltinMethod::kPushBack
                        : hir::BuiltinMethod::kPushFront;
-      result_type = ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+      result_type = ctx->VoidType();
       // push_back(val) / push_front(val): exactly 1 arg after receiver
       if (call.arguments().size() != 2) {
         ctx->sink->Error(
@@ -316,7 +313,7 @@ auto LowerBuiltinMethodCall(
     }
     case BuiltinMethodKind::kInsert: {
       hir_method = hir::BuiltinMethod::kInsert;
-      result_type = ctx->type_arena->Intern(TypeKind::kVoid, std::monostate{});
+      result_type = ctx->VoidType();
       // insert(idx, val): exactly 2 args after receiver
       if (call.arguments().size() != 3) {
         ctx->sink->Error(
@@ -365,12 +362,8 @@ auto LowerBuiltinMethodCall(
 
       if (info.method == BuiltinMethodKind::kEnumNum) {
         // num() returns int (32-bit signed 2-state)
-        TypeId int_type = ctx->type_arena->Intern(
-            TypeKind::kIntegral,
-            IntegralInfo{
-                .bit_width = 32, .is_signed = true, .is_four_state = false});
         auto num_val = static_cast<uint64_t>(enum_info.members.size());
-        return MakeConstant(num_val, int_type, span, ctx);
+        return MakeConstant(num_val, ctx->IntType(), span, ctx);
       }
 
       // first() and last() return the enum type
@@ -419,10 +412,7 @@ auto LowerBuiltinMethodCall(
     case BuiltinMethodKind::kAssocExists: {
       // exists(key) -> int (0 or 1)
       hir_method = hir::BuiltinMethod::kAssocExists;
-      result_type = ctx->type_arena->Intern(
-          TypeKind::kIntegral,
-          IntegralInfo{
-              .bit_width = 32, .is_signed = true, .is_four_state = false});
+      result_type = ctx->IntType();
       // key arg
       if (call.arguments().size() != 2) {
         ctx->sink->Error(span, "exists() requires exactly one argument");
@@ -436,10 +426,7 @@ auto LowerBuiltinMethodCall(
 
     case BuiltinMethodKind::kAssocNum: {
       hir_method = hir::BuiltinMethod::kSize;
-      result_type = ctx->type_arena->Intern(
-          TypeKind::kIntegral,
-          IntegralInfo{
-              .bit_width = 32, .is_signed = true, .is_four_state = false});
+      result_type = ctx->IntType();
       break;
     }
 
@@ -451,10 +438,7 @@ auto LowerBuiltinMethodCall(
       } else {
         hir_method = hir::BuiltinMethod::kAssocLast;
       }
-      result_type = ctx->type_arena->Intern(
-          TypeKind::kIntegral,
-          IntegralInfo{
-              .bit_width = 32, .is_signed = true, .is_four_state = false});
+      result_type = ctx->IntType();
       // key ref arg
       if (call.arguments().size() != 2) {
         ctx->sink->Error(
@@ -476,10 +460,7 @@ auto LowerBuiltinMethodCall(
       } else {
         hir_method = hir::BuiltinMethod::kAssocPrev;
       }
-      result_type = ctx->type_arena->Intern(
-          TypeKind::kIntegral,
-          IntegralInfo{
-              .bit_width = 32, .is_signed = true, .is_four_state = false});
+      result_type = ctx->IntType();
       // key ref arg
       if (call.arguments().size() != 2) {
         ctx->sink->Error(
@@ -502,8 +483,7 @@ auto LowerBuiltinMethodCall(
       }
 
       hir_method = hir::BuiltinMethod::kEnumName;
-      result_type =
-          ctx->type_arena->Intern(TypeKind::kString, std::monostate{});
+      result_type = ctx->StringType();
       break;
     }
   }

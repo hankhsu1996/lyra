@@ -513,8 +513,8 @@ auto PrepareModuleLoweringInputs(
 auto LowerDesign(
     slang::ast::Compilation& compilation, SymbolRegistrar& registrar,
     Context* ctx) -> DesignLoweringResult {
-  // Initialize canonical builtin types (tick_type for $time, etc.)
-  ctx->builtin_types = InternBuiltinTypes(*ctx->type_arena);
+  // Initialize the builtin semantic type catalog (Phase 0).
+  ctx->builtin_types.Init(*ctx->type_arena);
 
   const slang::ast::RootSymbol& root = compilation.getRoot();
 

@@ -258,17 +258,11 @@ auto LowerConversion(
     }
 
     case ConversionSysFnKind::kItor: {
-      TypeId real_type =
-          ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
-      return MakeCast(operand, real_type, span, ctx);
+      return MakeCast(operand, ctx->RealType(), span, ctx);
     }
 
     case ConversionSysFnKind::kRtoi: {
-      TypeId integer_type = ctx->type_arena->Intern(
-          TypeKind::kIntegral,
-          IntegralInfo{
-              .bit_width = 32, .is_signed = true, .is_four_state = true});
-      return MakeCast(operand, integer_type, span, ctx);
+      return MakeCast(operand, ctx->Int4Type(), span, ctx);
     }
 
     case ConversionSysFnKind::kRealToBits: {
@@ -277,9 +271,7 @@ auto LowerConversion(
     }
 
     case ConversionSysFnKind::kBitsToReal: {
-      TypeId real_type =
-          ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
-      return MakeBitCast(operand, real_type, span, ctx);
+      return MakeBitCast(operand, ctx->RealType(), span, ctx);
     }
 
     case ConversionSysFnKind::kShortRealToBits: {
@@ -288,9 +280,7 @@ auto LowerConversion(
     }
 
     case ConversionSysFnKind::kBitsToShortReal: {
-      TypeId shortreal_type =
-          ctx->type_arena->Intern(TypeKind::kShortReal, std::monostate{});
-      return MakeBitCast(operand, shortreal_type, span, ctx);
+      return MakeBitCast(operand, ctx->ShortRealType(), span, ctx);
     }
   }
 
@@ -301,49 +291,44 @@ auto LowerConversion(
 
 auto MakeIntConstant(int32_t value, SourceSpan span, Context* ctx)
     -> hir::ExpressionId {
-  TypeId int_type = ctx->type_arena->Intern(
-      TypeKind::kIntegral,
-      IntegralInfo{.bit_width = 32, .is_signed = true, .is_four_state = false});
+  TypeId type = ctx->IntType();
   auto bits = static_cast<uint32_t>(value);
   IntegralConstant ic;
   ic.value = {static_cast<uint64_t>(bits)};
   ic.unknown = {0};
-  ConstId cid = ctx->constant_arena->Intern(int_type, std::move(ic));
+  ConstId cid = ctx->constant_arena->Intern(type, std::move(ic));
   return ctx->hir_arena->AddExpression(
       hir::Expression{
           .kind = hir::ExpressionKind::kConstant,
-          .type = int_type,
+          .type = type,
           .span = span,
           .data = hir::ConstantExpressionData{.constant = cid}});
 }
 
 auto MakeBitConstant(uint8_t value, SourceSpan span, Context* ctx)
     -> hir::ExpressionId {
-  TypeId bit_type = ctx->type_arena->Intern(
-      TypeKind::kIntegral,
-      IntegralInfo{.bit_width = 1, .is_signed = false, .is_four_state = false});
+  TypeId type = ctx->BitType();
   IntegralConstant ic;
   ic.value = {static_cast<uint64_t>(value & 1)};
   ic.unknown = {0};
-  ConstId cid = ctx->constant_arena->Intern(bit_type, std::move(ic));
+  ConstId cid = ctx->constant_arena->Intern(type, std::move(ic));
   return ctx->hir_arena->AddExpression(
       hir::Expression{
           .kind = hir::ExpressionKind::kConstant,
-          .type = bit_type,
+          .type = type,
           .span = span,
           .data = hir::ConstantExpressionData{.constant = cid}});
 }
 
 auto MakeStringConstant(std::string value, SourceSpan span, Context* ctx)
     -> hir::ExpressionId {
-  TypeId string_type =
-      ctx->type_arena->Intern(TypeKind::kString, std::monostate{});
+  TypeId type = ctx->StringType();
   ConstId cid = ctx->constant_arena->Intern(
-      string_type, StringConstant{.value = std::move(value)});
+      type, StringConstant{.value = std::move(value)});
   return ctx->hir_arena->AddExpression(
       hir::Expression{
           .kind = hir::ExpressionKind::kConstant,
-          .type = string_type,
+          .type = type,
           .span = span,
           .data = hir::ConstantExpressionData{.constant = cid}});
 }
@@ -419,17 +404,15 @@ auto IsArrayVariable(const slang::ast::Expression& expr) -> bool {
 
 // Create a 32-bit signed 'x (unknown) constant.
 auto MakeIntX(SourceSpan span, Context* ctx) -> hir::ExpressionId {
-  TypeId int_type = ctx->type_arena->Intern(
-      TypeKind::kIntegral,
-      IntegralInfo{.bit_width = 32, .is_signed = true, .is_four_state = true});
+  TypeId type = ctx->Int4Type();
   IntegralConstant ic;
   ic.value = {0};
   ic.unknown = {0xFFFF'FFFFU};  // All bits unknown
-  ConstId cid = ctx->constant_arena->Intern(int_type, std::move(ic));
+  ConstId cid = ctx->constant_arena->Intern(type, std::move(ic));
   return ctx->hir_arena->AddExpression(
       hir::Expression{
           .kind = hir::ExpressionKind::kConstant,
-          .type = int_type,
+          .type = type,
           .span = span,
           .data = hir::ConstantExpressionData{.constant = cid}});
 }
