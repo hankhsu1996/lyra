@@ -234,7 +234,7 @@ auto PrepareTraceSignalMetaInputs(
     const std::vector<TypeId>& slot_types,
     const std::vector<mir::SlotKind>& slot_kinds,
     const std::vector<std::string>& instance_paths, const TypeArena& types)
-    -> std::vector<realization::TraceSignalMetaInput> {
+    -> std::vector<metadata::TraceSignalMetaInput> {
   if (provenance.empty()) return {};
 
   if (provenance.size() != slot_types.size()) {
@@ -257,7 +257,7 @@ auto PrepareTraceSignalMetaInputs(
         "trace_string_pool must be non-empty and start with '\\0'");
   }
 
-  std::vector<realization::TraceSignalMetaInput> entries;
+  std::vector<metadata::TraceSignalMetaInput> entries;
   entries.reserve(provenance.size());
 
   for (uint32_t slot_id = 0; slot_id < provenance.size(); ++slot_id) {
@@ -299,8 +299,8 @@ auto PrepareTraceSignalMetaInputs(
 
 auto ExtractSlotMetaInputs(
     const std::vector<SlotInfo>& slots, const DesignLayout& design_layout)
-    -> std::vector<realization::SlotMetaInput> {
-  std::vector<realization::SlotMetaInput> entries;
+    -> std::vector<metadata::SlotMetaInput> {
+  std::vector<metadata::SlotMetaInput> entries;
   entries.reserve(slots.size());
 
   for (const auto& slot : slots) {
@@ -316,7 +316,7 @@ auto ExtractSlotMetaInputs(
 
     auto kind = ClassifySlotStorageKind(spec);
 
-    realization::SlotMetaInput entry{
+    metadata::SlotMetaInput entry{
         .byte_offset = NarrowToU32(byte_offset, "ExtractSlotMetaInputs"),
         .total_bytes = spec.TotalByteSize(),
         .storage_kind = static_cast<uint32_t>(kind),
@@ -342,7 +342,7 @@ auto PrepareScheduledProcessInputs(
     const mir::Arena& design_arena, const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager,
     const std::vector<ScheduledProcess>& scheduled_processes, size_t num_init)
-    -> std::vector<realization::ScheduledProcessInput> {
+    -> std::vector<metadata::ScheduledProcessInput> {
   if (scheduled_processes.size() < num_init) {
     throw common::InternalError(
         "PrepareScheduledProcessInputs",
@@ -358,7 +358,7 @@ auto PrepareScheduledProcessInputs(
     }
   }
 
-  std::vector<realization::ScheduledProcessInput> entries;
+  std::vector<metadata::ScheduledProcessInput> entries;
   auto num_module = scheduled_processes.size() - num_init;
   entries.reserve(num_module);
 
@@ -410,9 +410,9 @@ auto PrepareScheduledProcessInputs(
 auto PrepareBackEdgeSiteInputs(
     const Context& context, const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager)
-    -> std::vector<realization::BackEdgeSiteInput> {
+    -> std::vector<metadata::BackEdgeSiteInput> {
   const auto& origins = context.GetBackEdgeSiteOrigins();
-  std::vector<realization::BackEdgeSiteInput> entries;
+  std::vector<metadata::BackEdgeSiteInput> entries;
   entries.reserve(origins.size());
 
   for (size_t i = 0; i < origins.size(); ++i) {
@@ -429,9 +429,9 @@ auto PrepareBackEdgeSiteInputs(
 }
 
 auto ExtractConnectionDescriptorEntries(const Layout& layout)
-    -> std::vector<realization::ConnectionDescriptorEntry> {
+    -> std::vector<metadata::ConnectionDescriptorEntry> {
   const auto& kernel_entries = layout.connection_kernel_entries;
-  std::vector<realization::ConnectionDescriptorEntry> entries;
+  std::vector<metadata::ConnectionDescriptorEntry> entries;
   entries.reserve(kernel_entries.size());
 
   const auto& design = layout.design;
@@ -481,7 +481,7 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
 }
 
 auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
-    -> std::vector<realization::CombKernelInput> {
+    -> std::vector<metadata::CombKernelInput> {
   const auto& comb_entries = layout.comb_kernel_entries;
   if (comb_entries.empty()) {
     return {};
@@ -508,7 +508,7 @@ auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
   auto module_post_init_offset =
       static_cast<uint32_t>(layout.num_module_process_base - num_init);
 
-  std::vector<realization::CombKernelInput> inputs;
+  std::vector<metadata::CombKernelInput> inputs;
   inputs.reserve(comb_entries.size());
 
   for (const auto& ck : comb_entries) {
@@ -557,7 +557,7 @@ auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
       }
     }
 
-    std::vector<realization::CombTriggerInput> merged_triggers;
+    std::vector<metadata::CombTriggerInput> merged_triggers;
     merged_triggers.reserve(per_slot.size());
     for (const auto& [slot_id, accum] : per_slot) {
       if (accum.is_full_slot) {
@@ -574,7 +574,7 @@ auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
     // Deterministic output: sort by slot_id (unordered_map iteration is
     // random).
     std::ranges::sort(
-        merged_triggers, {}, &realization::CombTriggerInput::slot_id);
+        merged_triggers, {}, &metadata::CombTriggerInput::slot_id);
 
     inputs.push_back({
         .scheduled_process_index =
@@ -588,7 +588,7 @@ auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
 }
 
 auto EmitDesignMetadataGlobals(
-    Context& context, const realization::DesignMetadata& metadata,
+    Context& context, const metadata::DesignMetadata& metadata,
     llvm::IRBuilder<>& builder) -> MetadataGlobals {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
@@ -786,11 +786,11 @@ auto IsStage1Groupable(const ProcessTriggerEntry& entry, uint32_t slot_count)
 
 auto BuildProcessTriggerInputs(
     const std::vector<ProcessTriggerEntry>& entries, uint32_t slot_count)
-    -> std::vector<realization::ProcessTriggerInput> {
+    -> std::vector<metadata::ProcessTriggerInput> {
   size_t total_facts = 0;
   for (const auto& e : entries) total_facts += e.triggers.size();
 
-  std::vector<realization::ProcessTriggerInput> inputs;
+  std::vector<metadata::ProcessTriggerInput> inputs;
   inputs.reserve(total_facts);
 
   for (const auto& entry : entries) {
@@ -826,10 +826,10 @@ auto BuildProcessTriggerInputs(
 }
 
 auto FindPortBindingForwardingCandidates(
-    std::span<const realization::ConnectionDescriptorEntry> connections,
-    std::span<const realization::ProcessTriggerInput> process_triggers,
-    std::span<const realization::CombKernelInput> comb_inputs,
-    uint32_t num_slots) -> std::vector<PortBindingForwardingCandidate> {
+    std::span<const metadata::ConnectionDescriptorEntry> connections,
+    std::span<const metadata::ProcessTriggerInput> process_triggers,
+    std::span<const metadata::CombKernelInput> comb_inputs, uint32_t num_slots)
+    -> std::vector<PortBindingForwardingCandidate> {
   // Dense per-slot connection usage counts and indices.
   std::vector<uint32_t> slot_write_count(num_slots, 0);
   std::vector<uint32_t> slot_trigger_count(num_slots, 0);
@@ -895,8 +895,8 @@ auto FindPortBindingForwardingCandidates(
     // Today all kernelized connections are port-binding origin.
     // This check is currently always true but structurally correct.
     candidate.both_port_binding =
-        upstream.origin == realization::ConnectionKernelOrigin::kPortBinding &&
-        downstream.origin == realization::ConnectionKernelOrigin::kPortBinding;
+        upstream.origin == metadata::ConnectionKernelOrigin::kPortBinding &&
+        downstream.origin == metadata::ConnectionKernelOrigin::kPortBinding;
 
     candidate.no_process_trigger = !is_process_trigger[slot_id];
     candidate.no_comb_trigger = !is_comb_trigger[slot_id];

@@ -13,8 +13,8 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/metadata/design_metadata.hpp"
 #include "lyra/mir/design.hpp"
-#include "lyra/realization/design_metadata.hpp"
 
 namespace lyra::mir {
 class Arena;
@@ -30,7 +30,7 @@ struct SlotInfo;
 // Extract slot metadata inputs from LLVM layout into plain link structs.
 auto ExtractSlotMetaInputs(
     const std::vector<SlotInfo>& slots, const DesignLayout& design_layout)
-    -> std::vector<realization::SlotMetaInput>;
+    -> std::vector<metadata::SlotMetaInput>;
 
 // Extract scheduled process inputs into plain link structs.
 // Resolves each process from its owning arena: design arena for
@@ -40,25 +40,25 @@ auto PrepareScheduledProcessInputs(
     const mir::Arena& design_arena, const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager,
     const std::vector<struct ScheduledProcess>& scheduled_processes,
-    size_t num_init) -> std::vector<realization::ScheduledProcessInput>;
+    size_t num_init) -> std::vector<metadata::ScheduledProcessInput>;
 
 // Extract back-edge site inputs from accumulated codegen origins.
 auto PrepareBackEdgeSiteInputs(
     const Context& context, const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager)
-    -> std::vector<realization::BackEdgeSiteInput>;
+    -> std::vector<metadata::BackEdgeSiteInput>;
 
 // Extract connection descriptor entries from canonical layout.
 // Trigger observation data is pre-resolved in the layout; no arena access
 // needed.
 auto ExtractConnectionDescriptorEntries(const Layout& layout)
-    -> std::vector<realization::ConnectionDescriptorEntry>;
+    -> std::vector<metadata::ConnectionDescriptorEntry>;
 
 // Prepare comb kernel inputs from layout data.
 // Trigger observation data is pre-resolved in the layout; no arena access
 // needed. Canonicalizes to one trigger per (kernel, slot).
 auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
-    -> std::vector<realization::CombKernelInput>;
+    -> std::vector<metadata::CombKernelInput>;
 
 // Build constructor-visible process trigger inputs from canonical entries.
 // Validates the design-global signal invariant, classifies Stage-1
@@ -70,7 +70,7 @@ auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
 // (lower.cpp per-instance trigger collection).
 auto BuildProcessTriggerInputs(
     const std::vector<ProcessTriggerEntry>& entries, uint32_t slot_count)
-    -> std::vector<realization::ProcessTriggerInput>;
+    -> std::vector<metadata::ProcessTriggerInput>;
 
 // Build final trace-signal metadata inputs from compile-owned provenance.
 // Assembles hierarchical names, computes bit widths, maps trace kinds.
@@ -81,7 +81,7 @@ auto PrepareTraceSignalMetaInputs(
     const std::vector<TypeId>& slot_types,
     const std::vector<mir::SlotKind>& slot_kinds,
     const std::vector<std::string>& instance_paths, const TypeArena& types)
-    -> std::vector<realization::TraceSignalMetaInput>;
+    -> std::vector<metadata::TraceSignalMetaInput>;
 
 // Port-binding forwarding candidate. Analysis-only result; does NOT
 // authorize transformation. Each field records the result of one
@@ -118,10 +118,10 @@ struct PortBindingForwardingCandidate {
 // candidates that pass the current provable checks. Unresolved checks
 // (like active trace references) are flagged but do not exclude.
 auto FindPortBindingForwardingCandidates(
-    std::span<const realization::ConnectionDescriptorEntry> connections,
-    std::span<const realization::ProcessTriggerInput> process_triggers,
-    std::span<const realization::CombKernelInput> comb_inputs,
-    uint32_t num_slots) -> std::vector<PortBindingForwardingCandidate>;
+    std::span<const metadata::ConnectionDescriptorEntry> connections,
+    std::span<const metadata::ProcessTriggerInput> process_triggers,
+    std::span<const metadata::CombKernelInput> comb_inputs, uint32_t num_slots)
+    -> std::vector<PortBindingForwardingCandidate>;
 
 // Log forwarding candidate analysis results to stderr.
 void LogPortBindingForwardingCandidates(
@@ -157,7 +157,7 @@ struct MetadataGlobals {
 // table packing or serialization. All tables in DesignMetadata are already
 // runtime-shaped.
 auto EmitDesignMetadataGlobals(
-    Context& context, const realization::DesignMetadata& metadata,
+    Context& context, const metadata::DesignMetadata& metadata,
     llvm::IRBuilder<>& builder) -> MetadataGlobals;
 
 }  // namespace lyra::lowering::mir_to_llvm

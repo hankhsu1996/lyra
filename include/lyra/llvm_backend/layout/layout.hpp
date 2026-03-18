@@ -16,11 +16,11 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
+#include "lyra/metadata/design_metadata.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
-#include "lyra/realization/design_metadata.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -182,8 +182,8 @@ struct ConnectionKernelEntry {
   mir::SlotId trigger_slot;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
   std::optional<ResolvedObservation> trigger_observation;
-  realization::ConnectionKernelOrigin origin =
-      realization::ConnectionKernelOrigin::kPortBinding;
+  metadata::ConnectionKernelOrigin origin =
+      metadata::ConnectionKernelOrigin::kPortBinding;
 };
 
 // Trigger observation for a comb kernel input slot.

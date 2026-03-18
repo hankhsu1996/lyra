@@ -624,7 +624,7 @@ auto BuildDesignMetadata(
       conn_desc_entries, process_trigger_inputs, comb_inputs, slot_count);
   LogPortBindingForwardingCandidates(forwarding_candidates);
 
-  realization::DesignMetadataInputs metadata_inputs{
+  metadata::DesignMetadataInputs metadata_inputs{
       .slot_meta = std::move(slot_meta_inputs),
       .scheduled_processes = std::move(scheduled_inputs),
       .back_edge_sites = std::move(back_edge_site_inputs),

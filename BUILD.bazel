@@ -28,6 +28,14 @@ cc_library(
 )
 
 cc_library(
+    name = "metadata",
+    hdrs = glob(["include/lyra/metadata/**/*.hpp"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [":common"],
+)
+
+cc_library(
     name = "semantic",
     srcs = glob(["src/lyra/semantic/*.cpp"]),
     hdrs = glob(["include/lyra/semantic/*.hpp"]),
@@ -95,6 +103,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":common",
+        ":metadata",
         ":mir",
         ":runtime",
     ],
@@ -124,6 +133,7 @@ cc_library(
     deps = [
         ":common",
         ":lowering",
+        ":metadata",
         ":mir",
         ":realization",
         ":runtime",

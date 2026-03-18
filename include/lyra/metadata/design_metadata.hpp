@@ -6,7 +6,7 @@
 
 #include "lyra/common/edge_kind.hpp"
 
-namespace lyra::realization {
+namespace lyra::metadata {
 
 struct MetaWordTable {
   std::vector<uint32_t> words;
@@ -137,4 +137,4 @@ struct DesignMetadata {
   MetaWordTable trace_signal_meta;
 };
 
-}  // namespace lyra::realization
+}  // namespace lyra::metadata
