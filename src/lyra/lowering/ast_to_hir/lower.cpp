@@ -41,17 +41,14 @@ auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
   RegisterSourceFiles(
       *compilation.getSourceManager(), *source_manager, *source_mapper);
 
-  Context ctx{
-      .sink = &sink,
-      .hir_arena = hir_arena.get(),
-      .type_arena = type_arena.get(),
-      .constant_arena = constant_arena.get(),
-      .symbol_table = symbol_table.get(),
-      .scope_table = scope_table.get(),
-      .source_mapper = source_mapper.get(),
-      .temp_counter = 0,
-      .cached_global_precision = std::nullopt,
-  };
+  Context ctx;
+  ctx.sink = &sink;
+  ctx.hir_arena = hir_arena.get();
+  ctx.type_arena = type_arena.get();
+  ctx.constant_arena = constant_arena.get();
+  ctx.symbol_table = symbol_table.get();
+  ctx.scope_table = scope_table.get();
+  ctx.source_mapper = source_mapper.get();
 
   SymbolRegistrar registrar(&ctx);
 

@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <string_view>
 #include <utility>
-#include <variant>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
 
@@ -44,7 +43,7 @@ auto ComputeTimeDivisor(const LoweringFrame& frame) -> uint64_t {
 }
 
 auto EmitRawTicksQuery(SourceSpan span, Context* ctx) -> hir::ExpressionId {
-  TypeId tick_type = ctx->GetTickType();
+  TypeId tick_type = ctx->TickType();
   return ctx->hir_arena->AddExpression(
       hir::Expression{
           .kind = hir::ExpressionKind::kSystemCall,
@@ -71,7 +70,7 @@ auto MakeConstant(uint64_t value, TypeId type, SourceSpan span, Context* ctx)
 auto EmitIntegerTimeScaling(
     hir::ExpressionId raw_ticks, uint64_t divisor, TypeId result_type,
     SourceSpan span, Context* ctx) -> hir::ExpressionId {
-  TypeId tick_type = ctx->GetTickType();
+  TypeId tick_type = ctx->TickType();
   hir::ExpressionId scaled = raw_ticks;
 
   if (divisor > 1) {
@@ -102,8 +101,8 @@ auto EmitIntegerTimeScaling(
 auto EmitRealTimeScaling(
     hir::ExpressionId raw_ticks, uint64_t divisor, SourceSpan span,
     Context* ctx) -> hir::ExpressionId {
-  TypeId tick_type = ctx->GetTickType();
-  TypeId real_type = ctx->type_arena->Intern(TypeKind::kReal, std::monostate{});
+  TypeId tick_type = ctx->TickType();
+  TypeId real_type = ctx->RealType();
 
   // Cast raw ticks to real first
   hir::ExpressionId raw_real = ctx->hir_arena->AddExpression(

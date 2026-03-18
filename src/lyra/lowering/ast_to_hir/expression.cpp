@@ -5,7 +5,6 @@
 #include <optional>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <slang/ast/expressions/AssignmentExpressions.h>
@@ -494,8 +493,7 @@ auto LowerExpression(
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
       // String literals always use kString type, regardless of slang's
       // reported type (which may be a packed bit array for format strings).
-      TypeId type =
-          ctx->type_arena->Intern(TypeKind::kString, std::monostate{});
+      TypeId type = ctx->StringType();
       ConstId constant = ctx->constant_arena->Intern(
           type, StringConstant{.value = std::string(literal.getValue())});
       return ctx->hir_arena->AddExpression(

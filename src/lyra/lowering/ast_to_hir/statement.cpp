@@ -814,10 +814,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       }
 
       // 1-bit result type for predicates
-      TypeId bit_type = ctx->type_arena->Intern(
-          TypeKind::kIntegral,
-          IntegralInfo{
-              .bit_width = 1, .is_signed = false, .is_four_state = true});
+      TypeId bit_type = ctx->LogicType();
 
       // Build case items with predicates
       std::vector<hir::CaseItem> items;
@@ -1177,20 +1174,16 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       SourceSpan span = ctx->SpanOf(stmt.sourceRange);
 
       // Create constant "1" expression for while(1)
-      // Use 1-bit logic type (standard for boolean conditions)
-      TypeId bit_type = ctx->type_arena->Intern(
-          TypeKind::kIntegral,
-          IntegralInfo{
-              .bit_width = 1, .is_signed = false, .is_four_state = true});
+      TypeId logic_type = ctx->LogicType();
       IntegralConstant one_const;
       one_const.value.push_back(1);
       one_const.unknown.push_back(0);
       ConstId const_id =
-          ctx->constant_arena->Intern(bit_type, std::move(one_const));
+          ctx->constant_arena->Intern(logic_type, std::move(one_const));
       hir::ExpressionId true_expr = ctx->hir_arena->AddExpression(
           hir::Expression{
               .kind = hir::ExpressionKind::kConstant,
-              .type = bit_type,
+              .type = logic_type,
               .span = span,
               .data = hir::ConstantExpressionData{.constant = const_id},
           });
@@ -1292,10 +1285,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
         TypeId key_type_id = aa_info.key_type;
         // Wildcard [*] uses int (32-bit signed)
         if (!key_type_id) {
-          key_type_id = ctx->type_arena->Intern(
-              TypeKind::kIntegral,
-              IntegralInfo{
-                  .bit_width = 32, .is_signed = true, .is_four_state = false});
+          key_type_id = ctx->IntType();
         }
 
         // Create dynamic array type for snapshot keys
@@ -1343,10 +1333,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
                     .symbol = key_sym, .initializer = std::nullopt}});
 
         // Create __i loop index variable (int type)
-        TypeId int_type = ctx->type_arena->Intern(
-            TypeKind::kIntegral,
-            IntegralInfo{
-                .bit_width = 32, .is_signed = true, .is_four_state = false});
+        TypeId int_type = ctx->IntType();
 
         SymbolId idx_sym = registrar.RegisterSynthetic(
             ctx->MakeTempName("aa_idx"), SymbolKind::kVariable, int_type);
@@ -1433,10 +1420,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
         // Build for loop: for (__i = 0; __i < size; __i++)
         hir::ExpressionId idx_ref2 = MakeNameRef(idx_sym, int_type, span, ctx);
 
-        TypeId bool_type = ctx->type_arena->Intern(
-            TypeKind::kIntegral,
-            IntegralInfo{
-                .bit_width = 1, .is_signed = false, .is_four_state = false});
+        TypeId bool_type = ctx->BitType();
 
         hir::ExpressionId condition = ctx->hir_arena->AddExpression(
             hir::Expression{
@@ -1639,13 +1623,9 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           // Determine result type
           TypeId elem_type_id;
           if (select_kind == hir::ExpressionKind::kBitSelect) {
-            // Bit select returns 1-bit logic
-            elem_type_id = ctx->type_arena->Intern(
-                TypeKind::kIntegral,
-                IntegralInfo{
-                    .bit_width = 1,
-                    .is_signed = false,
-                    .is_four_state = current_type->isFourState()});
+            // Bit select returns 1-bit type matching source 4-state nature
+            elem_type_id =
+                current_type->isFourState() ? ctx->LogicType() : ctx->BitType();
           } else if (elem_type != nullptr) {
             elem_type_id = LowerType(*elem_type, span, ctx);
           } else {
@@ -1712,11 +1692,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       // Build nested for loops (reverse order: innermost first)
       hir::StatementId current = *body_result;
 
-      // Signed 32-bit int type for size() return
-      TypeId int_type = ctx->type_arena->Intern(
-          TypeKind::kIntegral,
-          IntegralInfo{
-              .bit_width = 32, .is_signed = true, .is_four_state = false});
+      TypeId int_type = ctx->IntType();
 
       for (auto dim_it = fs.loopDims.rbegin(); dim_it != fs.loopDims.rend();
            ++dim_it) {
@@ -1791,10 +1767,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
         }
 
         // Build condition: var_ref cmp_op bound
-        TypeId bool_type = ctx->type_arena->Intern(
-            TypeKind::kIntegral,
-            IntegralInfo{
-                .bit_width = 1, .is_signed = false, .is_four_state = false});
+        TypeId bool_type = ctx->BitType();
 
         hir::ExpressionId condition = ctx->hir_arena->AddExpression(
             hir::Expression{

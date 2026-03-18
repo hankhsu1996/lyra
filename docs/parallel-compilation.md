@@ -43,8 +43,8 @@ These IDs are referenced across specialization group boundaries or consumed by d
 | ID type                      | Why global                                                                                                                        | Produced in                        |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | `SymbolId` (module-level)    | Port bindings, design declarations, placement reference symbols across instances                                                  | Phase 0                            |
-| `TypeId`                     | Types are shared reference data. A `bit[31:0]` in group A and group B must resolve to the same TypeId for design-wide consistency | Phase 0 (see below)                |
-| `ConstId`                    | Constants are shared reference data. Same reasoning as TypeId -- constants are interned with dedup semantics                      | Phase 0 (see below)                |
+| `TypeId`                     | Types are shared reference data. A `bit[31:0]` in group A and group B must resolve to the same TypeId for design-wide consistency | Phase 0                            |
+| `ConstId`                    | Constants are shared reference data. Same reasoning as TypeId -- constants are interned with dedup semantics                      | Phase 0 + Phase 1 (see below)      |
 | `ModuleBodyId`               | Cross-reference between instance records and shared bodies                                                                        | Phase 2 (assembly-time assignment) |
 | `ModuleDefId`                | Definition identity, used across groups                                                                                           | Phase 0                            |
 | Design-global `mir::PlaceId` | Package/design-level place references used by bindings and cross-group consumers                                                  | Phase 0                            |
@@ -82,35 +82,53 @@ Types and constants are shared reference data with dedup (interning) semantics. 
 
 **Contract**: TypeIds and ConstIds are design-global. All groups must agree on identity.
 
-**Current state**: Both TypeArena and ConstantArena are global mutable arenas. Phase 0 body-type seeding covers expression-reachable types; Phase 1 still writes to both arenas (residual synthetic types, all constants).
+**TypeArena target shape**: Built entirely in Phase 0 and frozen before Phase 1. Phase 0 seeds all body-reachable types (via AST visitor prepass) and interns the compile-global builtin semantic type catalog. Phase 1 body lowering reads TypeArena as immutable shared reference data. No synchronized shared interner needed.
 
-**Target mechanisms** (see section 6 for design decisions and rationale):
+Rationale -- measured Phase 1 type interning on representative designs:
 
-- TypeArena: frozen after Phase 0; residual Phase 1 synthetic-type creation eliminated
-- ConstantArena: split into design-global (Phase 0) and body-local (Phase 1) arenas
+| Design   | Phase 1 intern calls | Hits   | Misses | Hit rate |
+| -------- | -------------------- | ------ | ------ | -------- |
+| ibex     | 45,689               | 45,598 | 91     | 99.8%    |
+| pipeline | 185                  | 180    | 5      | 97.3%    |
+
+All misses concentrated in packed-array expression-result types not visited by Phase 0 declaration registration. Body-type seeding closes this gap.
+
+**ConstantArena target shape**: Split into design-global (Phase 0) and body-local (Phase 1) arenas. Phase 0 owns parameter defaults, package constants, port binding constants -- frozen after Phase 0. Each Phase 1 body owns its own arena for behavioral literals and desugared constants. ConstId remains arena-local. Cross-domain constant references (body-local HIR referencing Phase 0 constants) use an explicit reference variant, analogous to DesignFunctionRef and PlaceRoot::kDesignGlobal. Body-local constants resolve from the body-owned arena; design-global constants resolve from the design arena through the explicit cross-domain reference.
+
+Rationale -- measured Phase 1 constant interning on representative designs:
+
+| Design   | Phase 1 intern calls | Hits  | Misses | New constants | Hit rate |
+| -------- | -------------------- | ----- | ------ | ------------- | -------- |
+| ibex     | 6,640                | 5,178 | 1,462  | +1,462        | 78%      |
+| pipeline | 13                   | 6     | 7      | +7            | 46%      |
+
+Phase 1 constant creation is real and body-driven. Misses concentrated in behavioral literals. Top body (ibex_tracer) created 962 constants alone. A synchronized shared interner is not the right shape -- the miss rate is too high and the creation is genuinely body-local. Ownership split is the correct mechanism.
+
+**Note**: The ConstantArena split is target architecture, not yet landed. Today ConstantArena is a single global mutable arena written by both Phase 0 and Phase 1.
 
 ## 3. Artifact Ownership Table
 
-Classification by permanent identity, not by implementation container:
+Target-state classification by permanent identity, not by implementation container. Rows marked with (\*) are not yet implemented.
 
-| Artifact                                                     | Permanent scope                                     | Produced in                | Mutability after production                   |
-| ------------------------------------------------------------ | --------------------------------------------------- | -------------------------- | --------------------------------------------- |
-| SymbolTable (module-level entries)                           | Design-global                                       | Phase 0                    | Immutable after Phase 0                       |
-| Body-local symbol environment (function/task params, locals) | Body-local (group-owned, not in global SymbolTable) | Phase 1                    | Immutable after Phase 1                       |
-| TypeArena                                                    | Design-global (shared reference)                    | Phase 0 + Phase 1 (intern) | Append-only (target: immutable after Phase 0) |
-| ConstantArena                                                | Design-global (shared reference)                    | Phase 0 + Phase 1 (intern) | Append-only (target: ownership split, see S6) |
-| hir::Arena (body content)                                    | Body-local                                          | Phase 1                    | Immutable after Phase 1                       |
-| hir::Arena (design-level: port bindings)                     | Design-global                                       | Phase 0                    | Immutable after Phase 0                       |
-| hir::ModuleBody                                              | Body-local (in body unit)                           | Phase 1                    | Immutable after Phase 1                       |
-| hir::Module                                                  | Per-instance                                        | Phase 2                    | Immutable after Phase 2                       |
-| DesignDeclarations                                           | Design-global                                       | Phase 0 (HIR->MIR)         | Immutable after Phase 0                       |
-| mir::Arena (design-global places)                            | Design-global                                       | Phase 0 (HIR->MIR)         | Immutable after Phase 0                       |
-| mir::Arena (body content)                                    | Body-local                                          | Phase 1 (HIR->MIR)         | Immutable after Phase 1                       |
-| mir::ModuleBody                                              | Body-local (in body unit)                           | Phase 1 (HIR->MIR)         | Immutable after Phase 1                       |
-| OriginMap entries                                            | Body-local                                          | Phase 1 (HIR->MIR)         | Immutable after Phase 1                       |
-| Diagnostics                                                  | Body-local (during Phase 1)                         | Phase 1                    | Collected in Phase 2                          |
-| mir::Design (placement, modules, slots)                      | Design-global                                       | Phase 2 (HIR->MIR)         | Immutable after Phase 2                       |
-| LLVM Module / Context                                        | Design-global                                       | Sequential (F1 MVP)        | N/A for F1                                    |
+| Artifact                                                     | Permanent scope                                     | Produced in        | Mutability after production |
+| ------------------------------------------------------------ | --------------------------------------------------- | ------------------ | --------------------------- |
+| SymbolTable (module-level entries)                           | Design-global                                       | Phase 0            | Immutable after Phase 0     |
+| Body-local symbol environment (function/task params, locals) | Body-local (group-owned, not in global SymbolTable) | Phase 1            | Immutable after Phase 1     |
+| TypeArena                                                    | Design-global (shared reference)                    | Phase 0            | Immutable after Phase 0     |
+| ConstantArena (design-global) (\*)                           | Design-global (shared reference)                    | Phase 0            | Immutable after Phase 0     |
+| ConstantArena (body-local) (\*)                              | Body-local                                          | Phase 1            | Immutable after Phase 1     |
+| hir::Arena (body content)                                    | Body-local                                          | Phase 1            | Immutable after Phase 1     |
+| hir::Arena (design-level: port bindings)                     | Design-global                                       | Phase 0            | Immutable after Phase 0     |
+| hir::ModuleBody                                              | Body-local (in body unit)                           | Phase 1            | Immutable after Phase 1     |
+| hir::Module                                                  | Per-instance                                        | Phase 2            | Immutable after Phase 2     |
+| DesignDeclarations                                           | Design-global                                       | Phase 0 (HIR->MIR) | Immutable after Phase 0     |
+| mir::Arena (design-global places)                            | Design-global                                       | Phase 0 (HIR->MIR) | Immutable after Phase 0     |
+| mir::Arena (body content)                                    | Body-local                                          | Phase 1 (HIR->MIR) | Immutable after Phase 1     |
+| mir::ModuleBody                                              | Body-local (in body unit)                           | Phase 1 (HIR->MIR) | Immutable after Phase 1     |
+| OriginMap entries                                            | Body-local                                          | Phase 1 (HIR->MIR) | Immutable after Phase 1     |
+| Diagnostics                                                  | Body-local (during Phase 1)                         | Phase 1            | Collected in Phase 2        |
+| mir::Design (placement, modules, slots)                      | Design-global                                       | Phase 2 (HIR->MIR) | Immutable after Phase 2     |
+| LLVM Module / Context                                        | Design-global                                       | Sequential (F1)    | N/A for F1                  |
 
 ## 4. Per-Group Compilation Product: The Per-Body Owned Unit
 
@@ -122,7 +140,7 @@ The primary Phase 1 product is `hir::ModuleBody` -- the first-class per-body own
 
 - Body structure: processes, functions, tasks (IDs are body-local)
 - Body-local arena: all expressions, statements, processes, functions, tasks, patterns
-- Future: body-local symbol environment
+- Body-local symbol environment
 
 **Downstream dependency contract for HIR->MIR**: Lowering one body unit to MIR requires:
 
@@ -203,68 +221,27 @@ No ID rebasing. No global arena merge. Body units stay owned and indexed.
 
 All groups' diagnostics concatenated in group order. If any diagnostic is an error, assembly still completes (to collect all errors), then the pipeline reports all diagnostics before proceeding to the next layer.
 
-## 6. Blocker Inventory
+## 6. Sequential Blockers
 
-### Must stay sequential (Phase 0)
+| Thing                                  | Why sequential                                                                                                                             |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `RegisterModuleDeclarations`           | Builds global symbol identity for all instances. Foundation for all Phase 1 work.                                                          |
+| `PrepareModuleLoweringInputs`          | Structural walk per instance. Writes to shared registrar. Produces Phase 1 inputs.                                                         |
+| Package lowering                       | No specialization groups. Design-global.                                                                                                   |
+| Port binding lowering                  | Cross-instance, design-global.                                                                                                             |
+| `CollectDesignDeclarations` (HIR->MIR) | Builds design-global place map, slot descriptors. Foundation for Phase 1 MIR lowering.                                                     |
+| LLVM codegen (entire layer)            | LLVM Module/Context are not thread-safe. Parallelizable separately via per-group IR modules + linking if profiling shows it is bottleneck. |
 
-| Thing                                  | Why                                                                                                                                                                                                                                                                                                            |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RegisterModuleDeclarations`           | Builds global symbol identity for all instances. Foundation for all Phase 1 work.                                                                                                                                                                                                                              |
-| `PrepareModuleLoweringInputs`          | Structural walk per instance. Writes to shared registrar. Produces Phase 1 inputs.                                                                                                                                                                                                                             |
-| Package lowering                       | No specialization groups. Design-global.                                                                                                                                                                                                                                                                       |
-| Port binding lowering                  | Cross-instance, design-global.                                                                                                                                                                                                                                                                                 |
-| `CollectDesignDeclarations` (HIR->MIR) | Builds design-global place map, slot descriptors. Foundation for Phase 1 MIR lowering.                                                                                                                                                                                                                         |
-| LLVM codegen (entire layer)            | F1's core milestone is parallelizing semantic specialization compilation (AST->HIR and HIR->MIR). LLVM codegen is downstream of MIR and can be parallelized separately (per-group IR modules + linking) if profiling shows it is the bottleneck. Keeping LLVM sequential preserves a clean first parallel cut. |
+## 7. Prep Shape
 
-### Can become group-local (body unit owned)
+Goal: make the sequential pipeline produce body units so the future threading change is mechanical. No threading, no mutexes, no std::async.
 
-| Thing                               | Current state                                 | Body unit shape                                                                                                    |
-| ----------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `hir::Arena` (body content)         | Per-body owned arena (Cut 1)                  | Per-body owned arena. Body-local IDs.                                                                              |
-| `mir::Arena` (body content)         | Per-body owned arena (Cut 2)                  | Per-body owned arena. Body-local IDs.                                                                              |
-| Body-local symbols                  | Appended to global SymbolTable during Phase 1 | Group-local symbol environment. Stays in body unit. No current consumer needs global publication.                  |
-| Lowering scopes                     | Appended to global ScopeTable                 | Ephemeral group-local state. Not merged.                                                                           |
-| `DiagnosticSink`                    | Per-body sink in AST->HIR (Cut 3a)            | Per-body diagnostic vector. Concatenated in Phase 2.                                                               |
-| `OriginMap` entries                 | Per-body in both layers (Cut 2/3a)            | Per-body origin entries. Body-local permanently.                                                                   |
-| `Context::temp_counter`             | Non-atomic global counter                     | Per-body counter (names only need body-local uniqueness).                                                          |
-| `SymbolRegistrar` (Phase 1 portion) | Shared registrar with mixed read/write        | Phase 1 uses a group-local registrar that reads from frozen Phase 0 state and writes to body-local symbol storage. |
+Four prep areas:
 
-### Resolved design decisions: TypeArena and ConstantArena
-
-**TypeArena target: Phase 0-produced design-global frozen artifact.**
-
-Investigation measured Phase 1 type interning on representative designs:
-
-| Design   | Phase 1 intern calls | Hits   | Misses | Hit rate |
-| -------- | -------------------- | ------ | ------ | -------- |
-| ibex     | 45,689               | 45,598 | 91     | 99.8%    |
-| pipeline | 185                  | 180    | 5      | 97.3%    |
-
-All misses concentrated in packed-array expression-result types not visited by current Phase 0 declaration registration.
-
-Target mechanism: TypeArena is built in Phase 0 and frozen before Phase 1. No synchronized shared interner. Phase 1 body lowering reads TypeArena as immutable shared reference data.
-
-Implementation status: Phase 0 body-type seeding pass closes the AST-reachable type gap (packed-array expression-result types). Remaining work: eliminate synthetic builtin-type creation in Phase 1 lowering paths (e.g. kString for $display), then add Freeze() enforcement.
-
-**ConstantArena target: ownership split (design-global + body-local).**
-
-Investigation measured Phase 1 constant interning:
-
-| Design   | Phase 1 intern calls | Hits  | Misses | New constants | Hit rate |
-| -------- | -------------------- | ----- | ------ | ------------- | -------- |
-| ibex     | 6,640                | 5,178 | 1,462  | +1,462        | 78%      |
-| pipeline | 13                   | 6     | 7      | +7            | 46%      |
-
-Phase 1 constant creation is real and body-driven. Misses concentrated in behavioral literals (integral from constant.cpp, string from expression_access.cpp). Top body (ibex_tracer) created 962 constants alone.
-
-Target mechanism:
-
-- Phase 0 owns a design-global ConstantArena for design-global content (parameter defaults, package constants, port binding constants). Frozen after Phase 0.
-- Each Phase 1 body owns its own per-body ConstantArena for body-local behavioral literals and desugared constants.
-- ConstId remains arena-local. Cross-domain constant references (body-local HIR referencing Phase 0 constants) use an explicit reference variant, analogous to DesignFunctionRef and PlaceRoot::kDesignGlobal.
-- Body-local constants resolve from the body-owned arena. Design-global constants resolve from the design arena through the explicit cross-domain reference.
-
-Implementation status: not yet started. Design decided, implementation is a separate PR.
+1. **HIR body unit**: `hir::ModuleBody` becomes the per-body owned artifact with its own arena. Body-local IDs. Group-local symbol environment.
+2. **MIR body unit**: Same principle at MIR level. Phase 0 design arena frozen. Each group writes to a body-owned arena.
+3. **Per-body diagnostics**: Each body lowering call receives its own diagnostic sink. Phase 2 concatenates in group order.
+4. **Type/constant arena ownership**: TypeArena frozen after Phase 0. ConstantArena split into design-global (frozen) and body-local arenas.
 
 ### Not part of F1 scope
 
@@ -273,45 +250,3 @@ Implementation status: not yet started. Design decided, implementation is a sepa
 | `ParamTransmissionTable` (m3)                       | Used only in Phase 0. Not a parallelization blocker. Fix when reshaping parameter transmission boundary. |
 | `LoweringResult` / `LoweringInput` boundary structs | Work fine as-is. Restructuring them does not enable parallelism.                                         |
 | HIR->MIR `Context` struct fields                    | Per-process/function lowering context. Already group-scoped in practice.                                 |
-
-## 7. Minimal F1-Prep Cuts
-
-Goal: make the sequential pipeline produce body units, so the future threading change is mechanical. No threading, no mutexes, no std::async.
-
-### Cut 1: HIR body unit
-
-`hir::ModuleBody` becomes the per-body owned artifact. Each `LowerModuleBody` call produces a self-contained body unit with its own arena, instead of writing to the shared global arena.
-
-- `hir::Design` accesses body content through body units (indexed by `body_id`)
-- HIR->MIR resolves the body arena from the body unit
-- Body-local symbol registration uses a group-local environment (not published to global SymbolTable)
-
-This is the structural prerequisite. Once this works, the HIR layer has the right isolation shape.
-
-### Cut 2: MIR body unit
-
-Same principle at MIR level. Phase 0 `CollectDesignDeclarations` writes to a frozen design arena. Each group's `LowerModule + CollectBodyLocalDecls` writes to a body-owned `mir::Arena`.
-
-- `mir::Design` accesses body content through body units
-- Backend resolves body MIR arena from the body unit
-
-### Cut 3: Per-body diagnostics
-
-Each body lowering call receives its own diagnostic sink. Phase 2 concatenates in group order.
-
-### Cut 4: TypeArena / ConstantArena mechanism
-
-Investigation complete. Design decisions resolved and documented in section 6.
-
-Current implementation status:
-
-- TypeArena: Phase 0 body-type seeding pass landed (closes AST-reachable gap). Remaining: eliminate synthetic builtin-type creation in Phase 1, then add Freeze() enforcement.
-- ConstantArena: design decided (ownership split). Not yet implemented.
-
-### What NOT to do in F1-prep
-
-- Do not add threading or synchronization primitives
-- Do not refactor the LLVM backend
-- Do not restructure `LoweringResult` / `LoweringInput` boundary structs
-- Do not fix m3 (ParamTransmissionTable) -- separate scope, fix when reshaping parameter transmission boundary
-- Do not do broad cleanup without an explicit parallelization target

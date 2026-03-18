@@ -40,10 +40,7 @@ auto LowerPattern(
   const Type& target_type = (*ctx->type_arena)[target_type_id];
   bool is_four_state =
       IsIntrinsicallyPackedFourState(target_type, *ctx->type_arena);
-  TypeId bit_type = ctx->type_arena->Intern(
-      TypeKind::kIntegral,
-      IntegralInfo{
-          .bit_width = 1, .is_signed = false, .is_four_state = is_four_state});
+  TypeId bit_type = is_four_state ? ctx->LogicType() : ctx->BitType();
   PackedFillShape shape =
       ComputePackedFillShape(target_type_id, *ctx->type_arena, bit_type);
 
