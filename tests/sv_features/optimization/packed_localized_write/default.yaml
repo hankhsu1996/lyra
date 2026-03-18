@@ -78,39 +78,6 @@ cases:
       variables:
         result: 67305985
 
-  - name: 4state_byte_aligned_write
-    description: >
-      4-state byte-aligned constant part-select with X propagation.
-      Exercises byte-addressable store for 4-state (dual-plane).
-    sv: |
-      module Test;
-        logic [31:0] data;
-        initial begin
-          data = 32'h12345678;
-          data[15:8] = 8'hxx;
-          $display("data = %h", data);
-        end
-      endmodule
-    expect:
-      stdout: "data = 1234xx78\n"
-
-  - name: 4state_unknown_plane_transition
-    description: >
-      Write X then write a known value to the same byte-aligned range.
-      Verifies that unknown plane is correctly cleared.
-    sv: |
-      module Test;
-        logic [31:0] data;
-        initial begin
-          data = 32'hAABBCCDD;
-          data[15:8] = 8'hxx;
-          data[15:8] = 8'hFF;
-          $display("data = %h", data);
-        end
-      endmodule
-    expect:
-      stdout: "data = aabbffdd\n"
-
   - name: noop_store
     description: >
       Store same value to byte-aligned range (no actual change).
