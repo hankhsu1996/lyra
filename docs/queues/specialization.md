@@ -1,5 +1,7 @@
 # Specialization
 
+> **Queue rules.** Checkboxes at top for progress. Unchecked = gap. Finished items: remove the section, keep one checked line. No code in items (no function names, variable names, snippets). Items describe what the gap is, where to look, and why it matters -- enough to re-investigate from scratch. Investigation logs and design details belong in conversation history, not here.
+
 Working queue for migrating Lyra toward specialization-based compilation.
 
 For the stable architecture: see [compilation-model.md](../compilation-model.md).
