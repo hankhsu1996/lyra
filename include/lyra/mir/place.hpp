@@ -49,12 +49,24 @@ struct BitRangeProjection {
   uint32_t width = 0;   // Number of bits to extract (static)
   TypeId element_type;  // Type of the extracted element
 
-  // True when bit_offset was produced by element-index scaling:
-  // offset = (index +/- lower) * element_width. This guarantees
-  // the offset is always a multiple of element_width. Set only by
-  // packed array element access lowering. Part-selects, range selects,
-  // and bit selects leave this false.
-  bool is_element_scaled = false;
+  // Guaranteed power-of-two alignment of bit_offset in bits. The offset
+  // is provably always a multiple of this value at all runtime evaluations.
+  // Must be a power of two; 1 means no alignment guarantee.
+  //
+  // Set at MIR construction time by lowering, based on the semantic
+  // origin of the projection:
+  //
+  //   - Packed element access: alignment = element_width
+  //   - Indexed part-select: alignment from the index expression's
+  //     known scale factor and the subtracted constant
+  //   - Constant offset: handled by the backend's constant check
+  //   - Otherwise: 1 (no alignment guarantee)
+  //
+  // The backend uses this to classify byte-addressable subviews:
+  // when guaranteed_alignment_bits >= 8 AND width % 8 == 0, the
+  // subview can use localized byte-addressed access instead of
+  // full-width bit manipulation.
+  uint32_t guaranteed_alignment_bits = 1;
 };
 
 // UnionMember: access a union member by index.

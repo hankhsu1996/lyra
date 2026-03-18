@@ -97,3 +97,107 @@ cases:
       variables:
         result0: 0
         result9: 0
+
+  - name: part_select_byte_aligned
+    description: NBA via indexed part-select with byte-aligned offset
+    sv: |
+      module Test;
+        logic [127:0] data;
+        int result0, result1;
+        initial begin
+          data = '0;
+          for (int i = 0; i < 4; i++)
+            data[i*32 +: 32] <= 32'(i + 10);
+          #0;
+          result0 = int'(data[0 +: 32]);
+          result1 = int'(data[32 +: 32]);
+        end
+      endmodule
+    expect:
+      variables:
+        result0: 10
+        result1: 11
+
+  - name: part_select_non_byte_aligned
+    description: NBA via indexed part-select with non-byte-aligned width
+    sv: |
+      module Test;
+        logic [41:0] data;
+        int result0, result1;
+        initial begin
+          data = '0;
+          data[0 +: 7] <= 7'd100;
+          data[7 +: 7] <= 7'd50;
+          #0;
+          result0 = int'(data[0 +: 7]);
+          result1 = int'(data[7 +: 7]);
+        end
+      endmodule
+    expect:
+      variables:
+        result0: 100
+        result1: 50
+
+  - name: part_select_overwrite_sequence
+    description: Multiple NBA part-selects to same target, last-scheduled wins
+    sv: |
+      module Test;
+        logic [63:0] data;
+        int result;
+        initial begin
+          data = '0;
+          data[0 +: 32] <= 32'hAAAAAAAA;
+          data[0 +: 32] <= 32'hBBBBBBBB;
+          #0;
+          result = int'(data[0 +: 32]);
+        end
+      endmodule
+    expect:
+      variables:
+        result: "0xBBBBBBBB"
+
+  - name: part_select_wide_array
+    description: NBA part-selects into a wide packed array (stress test)
+    sv: |
+      module Test;
+        logic [255:0] data;
+        int sum;
+        initial begin
+          data = '0;
+          for (int i = 0; i < 8; i++)
+            data[i*32 +: 32] <= 32'(i * 3 + 1);
+          #0;
+          sum = 0;
+          for (int i = 0; i < 8; i++)
+            sum = sum + int'(data[i*32 +: 32]);
+        end
+      endmodule
+    expect:
+      variables:
+        sum: 92
+
+  - name: part_select_byte_aligned_24bit_element
+    description: NBA part-select with non-power-of-two element width (24-bit)
+    sv: |
+      module Test;
+        logic [95:0] data;
+        int result0, result1, result2, result3;
+        initial begin
+          data = '0;
+          data[0 +: 24] <= 24'hABCDEF;
+          data[24 +: 24] <= 24'h123456;
+          data[48 +: 24] <= 24'h789ABC;
+          data[72 +: 24] <= 24'hDEF012;
+          #0;
+          result0 = int'(data[0 +: 24]);
+          result1 = int'(data[24 +: 24]);
+          result2 = int'(data[48 +: 24]);
+          result3 = int'(data[72 +: 24]);
+        end
+      endmodule
+    expect:
+      variables:
+        result0: "0xABCDEF"
+        result1: "0x123456"
+        result2: "0x789ABC"
+        result3: "0xDEF012"

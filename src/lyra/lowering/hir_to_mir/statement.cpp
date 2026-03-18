@@ -33,6 +33,7 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/expression.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
+#include "lyra/lowering/hir_to_mir/packed_alignment.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -1712,16 +1713,18 @@ auto LowerEventWait(
         }
       }
 
-      bool is_scaled =
-          hir_expr.kind == hir::ExpressionKind::kPackedElementSelect &&
-          element_bit_width > 1;
+      uint32_t alignment =
+          (hir_expr.kind == hir::ExpressionKind::kPackedElementSelect &&
+           element_bit_width > 1)
+              ? PowerOfTwoAlignment(element_bit_width)
+              : 1;
       place_id = ctx.DerivePlace(
           base_place_id, mir::Projection{
                              .info = mir::BitRangeProjection{
                                  .bit_offset = storage_offset,
                                  .width = proj_width,
                                  .element_type = hir_expr.type,
-                                 .is_element_scaled = is_scaled}});
+                                 .guaranteed_alignment_bits = alignment}});
     } else if (hir_expr.kind == hir::ExpressionKind::kPackedFieldAccess) {
       // Packed struct field: constant bit offset from field.
       // For multi-bit fields, edge triggers observe the LSB (width=1);

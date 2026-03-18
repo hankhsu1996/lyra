@@ -34,6 +34,7 @@
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/materialize_cache.hpp"
+#include "lyra/lowering/hir_to_mir/packed_alignment.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/builtin.hpp"
@@ -1932,7 +1933,8 @@ auto LowerPackedElementSelect(
                           .bit_offset = offset,
                           .width = element_width,
                           .element_type = expr.type,
-                          .is_element_scaled = true}});
+                          .guaranteed_alignment_bits =
+                              PowerOfTwoAlignment(element_width)}});
 
   // Use GuardedUse for OOB-safe read: valid ? Use(place) : oob_default
   return builder.EmitGuardedUse(valid, slice_place, expr.type);
@@ -2057,14 +2059,14 @@ auto LowerRangeSelect(
   return mir::Operand::Use(slice_place);
 }
 
-// Compute offset and validity for indexed part-select.
+// Compute offset, validity, and alignment for indexed part-select.
 // For ascending (+:): select bits [index .. index + width - 1]
 // For descending (-:): select bits [index - width + 1 .. index]
-// Returns {offset, valid} pair.
+// Returns {offset, valid, alignment} tuple.
 auto EmitIndexedPartSelectOffset(
     mir::Operand index, TypeId index_type, const Type& base_type,
-    uint32_t width, bool ascending, MirBuilder& builder)
-    -> std::pair<mir::Operand, mir::Operand> {
+    uint32_t width, bool ascending, uint32_t index_alignment,
+    MirBuilder& builder) -> std::tuple<mir::Operand, mir::Operand, uint32_t> {
   const Context& ctx = builder.GetContext();
   TypeId offset_type = ctx.GetOffsetType();
 
@@ -2116,49 +2118,33 @@ auto EmitIndexedPartSelectOffset(
         static_cast<int32_t>(eff_upper_64));
   }
 
-  // Compute physical bit offset based on base direction and part-select
-  // direction Physical layout: bit at Lower() is at physical position 0
-  //
-  // Base descending [H:L]:
-  //   +: offset = index - L
-  //   -: offset = (index - width + 1) - L = index - width + 1 - L
-  //
-  // Base ascending [L:H]:
-  //   +: offset = H - (index + width - 1) = H - index - width + 1
-  //   -: offset = H - index
-  //
-  // kIntegral (implicit [W-1:0] descending):
-  //   +: offset = index
-  //   -: offset = index - width + 1
-  //
-  // Use int64_t for intermediate calculations to avoid overflow
+  // Compute physical bit offset and alignment. Alignment is co-produced
+  // with the offset so there is one authority for both.
   mir::Operand offset;
+  int64_t subtracted_constant = 0;
   if (base_descending) {
     if (ascending) {
-      // offset = index - lower
+      subtracted_constant = lower;
       auto lower_const =
           mir::Operand::Const(MakeIntegralConst(lower, offset_type));
       offset = builder.EmitBinary(
           mir::BinaryOp::kSubtract, index, lower_const, offset_type);
     } else {
-      // offset = index - width + 1 - lower = index - (lower + width - 1)
-      int64_t adjust = static_cast<int64_t>(lower) + width - 1;
-      auto adjust_const =
-          mir::Operand::Const(MakeIntegralConst(adjust, offset_type));
+      subtracted_constant = static_cast<int64_t>(lower) + width - 1;
+      auto adjust_const = mir::Operand::Const(
+          MakeIntegralConst(subtracted_constant, offset_type));
       offset = builder.EmitBinary(
           mir::BinaryOp::kSubtract, index, adjust_const, offset_type);
     }
   } else {
-    // Ascending base
     if (ascending) {
-      // offset = upper - index - width + 1 = (upper - width + 1) - index
-      int64_t adjust = static_cast<int64_t>(upper) - width + 1;
-      auto adjust_const =
-          mir::Operand::Const(MakeIntegralConst(adjust, offset_type));
+      subtracted_constant = static_cast<int64_t>(upper) - width + 1;
+      auto adjust_const = mir::Operand::Const(
+          MakeIntegralConst(subtracted_constant, offset_type));
       offset = builder.EmitBinary(
           mir::BinaryOp::kSubtract, adjust_const, index, offset_type);
     } else {
-      // offset = upper - index
+      subtracted_constant = upper;
       auto upper_const =
           mir::Operand::Const(MakeIntegralConst(upper, offset_type));
       offset = builder.EmitBinary(
@@ -2166,7 +2152,10 @@ auto EmitIndexedPartSelectOffset(
     }
   }
 
-  return {offset, valid};
+  uint32_t alignment =
+      ComputePartSelectOffsetAlignment(index_alignment, subtracted_constant);
+
+  return {offset, valid, alignment};
 }
 
 auto LowerIndexedPartSelect(
@@ -2193,10 +2182,14 @@ auto LowerIndexedPartSelect(
   const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
   const Type& base_type = (*ctx.type_arena)[base_expr.type];
 
-  // Compute offset and validity
-  auto [offset, valid] = EmitIndexedPartSelectOffset(
+  // Compute index alignment from HIR expression tree.
+  uint32_t index_alignment = GetHirExpressionAlignmentBits(
+      *ctx.hir_arena, *ctx.constant_arena, data.index);
+
+  // Compute offset, validity, and alignment together.
+  auto [offset, valid, alignment] = EmitIndexedPartSelectOffset(
       index_operand, index_expr.type, base_type, data.width, data.ascending,
-      builder);
+      index_alignment, builder);
 
   // Get base as Place (memoize UseTemp -> PlaceTemp materialization)
   mir::PlaceId base_place =
@@ -2208,7 +2201,8 @@ auto LowerIndexedPartSelect(
                       .info = mir::BitRangeProjection{
                           .bit_offset = offset,
                           .width = data.width,
-                          .element_type = expr.type}});
+                          .element_type = expr.type,
+                          .guaranteed_alignment_bits = alignment}});
 
   // Use GuardedUse for OOB-safe read: valid ? Use(place) : oob_default
   return builder.EmitGuardedUse(valid, slice_place, expr.type);

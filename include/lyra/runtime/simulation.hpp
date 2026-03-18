@@ -142,6 +142,15 @@ void LyraScheduleNba(
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size,
     uint32_t notify_slot_id);
 
+// Schedule a canonical two-plane packed narrow NBA write.
+// Writes region_byte_size bytes to write_ptr (value plane) and to
+// write_ptr + second_region_offset (unknown plane) as one semantic record.
+// Used for byte-addressable 4-state packed subview deferred writes.
+void LyraScheduleNbaCanonicalPacked(
+    void* engine_ptr, void* write_ptr, const void* notify_base_ptr,
+    const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
+    uint32_t second_region_offset, uint32_t notify_slot_id);
+
 // Strobe observer program type: uses canonical StrobeProgramFn from
 // observer.hpp.
 using LyraStrobeProgramFn = lyra::runtime::StrobeProgramFn;

@@ -259,6 +259,14 @@ class Engine {
       void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
       const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id);
 
+  // Schedule a canonical two-plane packed narrow NBA write as one semantic
+  // record. Writes region_byte_size bytes to write_ptr (value plane) and to
+  // write_ptr + second_region_offset (unknown plane).
+  void ScheduleNbaCanonicalPacked(
+      void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
+      const void* unk_ptr, uint32_t region_byte_size,
+      uint32_t second_region_offset, uint32_t notify_slot_id);
+
   // Register a strobe observer for the Postponed region.
   // Executes at end of time slot with final signal values.
   void RegisterStrobe(

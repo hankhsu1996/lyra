@@ -1,0 +1,60 @@
+feature: nba_packed_four_state
+description: Non-blocking assignment to packed types with 4-state semantics
+
+cases:
+  - name: part_select_4state_byte_aligned
+    description: NBA part-select to 4-state packed array, byte-aligned
+    sv: |
+      module Test;
+        logic [127:0] data;
+        int result0, result1;
+        initial begin
+          data = '0;
+          data[0 +: 32] <= 32'hDEADBEEF;
+          data[32 +: 32] <= 32'hCAFEBABE;
+          #0;
+          result0 = int'(data[0 +: 32]);
+          result1 = int'(data[32 +: 32]);
+        end
+      endmodule
+    expect:
+      variables:
+        result0: "0xDEADBEEF"
+        result1: "0xCAFEBABE"
+
+  - name: part_select_4state_24bit_plane
+    description: NBA part-select with non-power-of-two 4-state plane width (24-bit)
+    sv: |
+      module Test;
+        logic [47:0] data;
+        int result0, result1;
+        initial begin
+          data = '0;
+          data[0 +: 24] <= 24'hABCDEF;
+          data[24 +: 24] <= 24'h123456;
+          #0;
+          result0 = int'(data[0 +: 24]);
+          result1 = int'(data[24 +: 24]);
+        end
+      endmodule
+    expect:
+      variables:
+        result0: "0xABCDEF"
+        result1: "0x123456"
+
+  - name: part_select_4state_x_clear
+    description: NBA to 4-state packed array clears X bits
+    sv: |
+      module Test;
+        logic [63:0] data;
+        int result;
+        initial begin
+          data = 'x;
+          data[0 +: 32] <= 32'd42;
+          #0;
+          result = int'(data[0 +: 32]);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42

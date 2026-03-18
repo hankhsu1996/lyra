@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
+#include <variant>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
@@ -11,9 +12,6 @@ namespace lyra::runtime {
 
 namespace {
 
-// Fast-fail validation: notify_base_ptr must be the true slot root,
-// not a projected sub-field pointer. Catches codegen bugs where
-// write_ptr is passed instead of the slot base.
 void ValidateSlotRootPointer(
     const void* ptr, uint32_t slot_id, const SlotMetaRegistry& registry,
     const void* design_state_base, const char* caller) {
@@ -29,43 +27,6 @@ void ValidateSlotRootPointer(
   }
 }
 
-// Apply a full-overwrite NBA entry: direct compare/copy.
-// Returns true if the target was changed.
-auto ApplyFullOverwriteNba(const NbaEntry& entry, std::span<uint8_t> target)
-    -> bool {
-  if (entry.mask.Size() != 0) {
-    throw common::InternalError(
-        "ApplyFullOverwriteNba", "mask must be empty for full overwrite");
-  }
-  bool changed =
-      std::memcmp(target.data(), entry.value.Data(), entry.byte_size) != 0;
-  if (changed) {
-    std::memcpy(target.data(), entry.value.Data(), entry.byte_size);
-  }
-  return changed;
-}
-
-// Apply a masked-merge NBA entry: per-byte (old & ~mask) | (new & mask).
-// Returns true if any byte was changed.
-auto ApplyMaskedMergeNba(const NbaEntry& entry, std::span<uint8_t> target)
-    -> bool {
-  if (entry.mask.Size() != entry.byte_size) {
-    throw common::InternalError("ApplyMaskedMergeNba", "mask size mismatch");
-  }
-  auto val = std::span(entry.value.Data(), entry.byte_size);
-  auto mask = std::span(entry.mask.Data(), entry.byte_size);
-  bool changed = false;
-  for (uint32_t i = 0; i < entry.byte_size; ++i) {
-    uint8_t old_byte = target[i];
-    uint8_t new_byte = (old_byte & ~mask[i]) | (val[i] & mask[i]);
-    if (old_byte != new_byte) {
-      changed = true;
-    }
-    target[i] = new_byte;
-  }
-  return changed;
-}
-
 }  // namespace
 
 void Engine::ScheduleNba(
@@ -79,10 +40,6 @@ void Engine::ScheduleNba(
         "Engine::ScheduleNba", "null pointer or zero byte_size");
   }
 
-  // Early-out for full-overwrite NBAs where the value hasn't changed.
-  // Skips buffer allocation, queue push, and later memcmp in kNBA region.
-  // Only applied to unmasked writes; masked-merge has different semantics
-  // (partial byte update) and is rare enough not to warrant the complexity.
   if (mask_ptr == nullptr &&
       std::memcmp(write_ptr, value_ptr, byte_size) == 0) {
     ++stats_.core.nba_elided;
@@ -96,18 +53,118 @@ void Engine::ScheduleNba(
   NbaEntry entry;
   entry.write_ptr = write_ptr;
   entry.notify_base_ptr = notify_base_ptr;
-  entry.byte_size = byte_size;
   entry.notify_slot_id = notify_slot_id;
-  entry.value.AssignCopy(value_ptr, byte_size);
 
   if (mask_ptr != nullptr) {
-    entry.mode = NbaWriteMode::kMaskedMerge;
-    entry.mask.AssignCopy(mask_ptr, byte_size);
+    NbaMaskedMerge p;
+    p.byte_size = byte_size;
+    p.value.AssignCopy(value_ptr, byte_size);
+    p.mask.AssignCopy(mask_ptr, byte_size);
+    entry.payload = std::move(p);
   } else {
-    entry.mode = NbaWriteMode::kFullOverwrite;
+    NbaFullOverwrite p;
+    p.byte_size = byte_size;
+    p.value.AssignCopy(value_ptr, byte_size);
+    entry.payload = std::move(p);
   }
 
   nba_queue_.push_back(std::move(entry));
+}
+
+void Engine::ScheduleNbaCanonicalPacked(
+    void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
+    const void* unk_ptr, uint32_t region_byte_size,
+    uint32_t second_region_offset, uint32_t notify_slot_id) {
+  ++stats_.core.nba_entries;
+
+  if (write_ptr == nullptr || notify_base_ptr == nullptr ||
+      value_ptr == nullptr || unk_ptr == nullptr || region_byte_size == 0) {
+    throw common::InternalError(
+        "Engine::ScheduleNbaCanonicalPacked",
+        "null pointer or zero region_byte_size");
+  }
+
+  ValidateSlotRootPointer(
+      notify_base_ptr, notify_slot_id, slot_meta_registry_, design_state_base_,
+      "Engine::ScheduleNbaCanonicalPacked");
+
+  NbaEntry entry;
+  entry.write_ptr = write_ptr;
+  entry.notify_base_ptr = notify_base_ptr;
+  entry.notify_slot_id = notify_slot_id;
+
+  NbaCanonicalPackedTwoPlane p;
+  p.region_byte_size = region_byte_size;
+  p.second_region_offset = second_region_offset;
+  p.value.AssignCopy(value_ptr, region_byte_size);
+  p.unk.AssignCopy(unk_ptr, region_byte_size);
+  entry.payload = std::move(p);
+
+  nba_queue_.push_back(std::move(entry));
+}
+
+// Per-mode NBA apply result: which dirty ranges to mark.
+struct NbaDirtyResult {
+  bool changed = false;
+  // For single-range modes (full overwrite, masked merge):
+  uint32_t dirty_size = 0;
+  // For two-plane mode: separate tracking per plane.
+  bool val_changed = false;
+  bool unk_changed = false;
+  uint32_t region_byte_size = 0;
+  uint32_t second_region_offset = 0;
+};
+
+auto ApplyNba(const NbaFullOverwrite& p, void* write_ptr) -> NbaDirtyResult {
+  auto target = std::span(static_cast<uint8_t*>(write_ptr), p.byte_size);
+  bool changed = std::memcmp(target.data(), p.value.Data(), p.byte_size) != 0;
+  if (changed) {
+    std::memcpy(target.data(), p.value.Data(), p.byte_size);
+  }
+  return {.changed = changed, .dirty_size = p.byte_size};
+}
+
+auto ApplyNba(const NbaMaskedMerge& p, void* write_ptr) -> NbaDirtyResult {
+  auto target = std::span(static_cast<uint8_t*>(write_ptr), p.byte_size);
+  auto val = std::span(p.value.Data(), p.byte_size);
+  auto mask = std::span(p.mask.Data(), p.byte_size);
+  bool changed = false;
+  for (uint32_t i = 0; i < p.byte_size; ++i) {
+    uint8_t old_byte = target[i];
+    uint8_t new_byte = (old_byte & ~mask[i]) | (val[i] & mask[i]);
+    if (old_byte != new_byte) {
+      changed = true;
+    }
+    target[i] = new_byte;
+  }
+  return {.changed = changed, .dirty_size = p.byte_size};
+}
+
+auto ApplyNba(const NbaCanonicalPackedTwoPlane& p, void* write_ptr)
+    -> NbaDirtyResult {
+  auto base = std::span(
+      static_cast<uint8_t*>(write_ptr),
+      p.second_region_offset + p.region_byte_size);
+  uint32_t n = p.region_byte_size;
+
+  auto val_region = base.subspan(0, n);
+  bool val_changed = std::memcmp(val_region.data(), p.value.Data(), n) != 0;
+  if (val_changed) {
+    std::memcpy(val_region.data(), p.value.Data(), n);
+  }
+
+  auto unk_region = base.subspan(p.second_region_offset, n);
+  bool unk_changed = std::memcmp(unk_region.data(), p.unk.Data(), n) != 0;
+  if (unk_changed) {
+    std::memcpy(unk_region.data(), p.unk.Data(), n);
+  }
+
+  return {
+      .changed = val_changed || unk_changed,
+      .val_changed = val_changed,
+      .unk_changed = unk_changed,
+      .region_byte_size = n,
+      .second_region_offset = p.second_region_offset};
 }
 
 void Engine::ExecuteNbaRegion() {
@@ -115,34 +172,35 @@ void Engine::ExecuteNbaRegion() {
     return;
   }
   for (const auto& entry : nba_queue_) {
-    if (entry.value.Size() != entry.byte_size) {
+    if (static_cast<const uint8_t*>(entry.write_ptr) <
+        static_cast<const uint8_t*>(entry.notify_base_ptr)) {
       throw common::InternalError(
-          "Engine::ExecuteRegion(kNBA)", "value size mismatch");
+          "Engine::ExecuteRegion(kNBA)", "write_ptr before notify_base_ptr");
     }
-    auto target =
-        std::span(static_cast<uint8_t*>(entry.write_ptr), entry.byte_size);
-    bool changed = false;
+    auto diff = static_cast<uint32_t>(
+        static_cast<const uint8_t*>(entry.write_ptr) -
+        static_cast<const uint8_t*>(entry.notify_base_ptr));
 
-    switch (entry.mode) {
-      case NbaWriteMode::kFullOverwrite:
-        changed = ApplyFullOverwriteNba(entry, target);
-        break;
-      case NbaWriteMode::kMaskedMerge:
-        changed = ApplyMaskedMergeNba(entry, target);
-        break;
-    }
+    auto result = std::visit(
+        [&](const auto& p) { return ApplyNba(p, entry.write_ptr); },
+        entry.payload);
 
-    if (changed) {
-      ++stats_.core.nba_changed;
-      if (static_cast<const uint8_t*>(entry.write_ptr) <
-          static_cast<const uint8_t*>(entry.notify_base_ptr)) {
-        throw common::InternalError(
-            "Engine::ExecuteRegion(kNBA)", "write_ptr before notify_base_ptr");
+    if (!result.changed) continue;
+    ++stats_.core.nba_changed;
+
+    // Dirty-mark dispatch: single-range for full-overwrite and masked-merge,
+    // precise two-range for canonical packed two-plane.
+    if (std::holds_alternative<NbaCanonicalPackedTwoPlane>(entry.payload)) {
+      if (result.val_changed) {
+        MarkDirtyRange(entry.notify_slot_id, diff, result.region_byte_size);
       }
-      auto diff = static_cast<uint32_t>(
-          static_cast<const uint8_t*>(entry.write_ptr) -
-          static_cast<const uint8_t*>(entry.notify_base_ptr));
-      MarkDirtyRange(entry.notify_slot_id, diff, entry.byte_size);
+      if (result.unk_changed) {
+        MarkDirtyRange(
+            entry.notify_slot_id, diff + result.second_region_offset,
+            result.region_byte_size);
+      }
+    } else {
+      MarkDirtyRange(entry.notify_slot_id, diff, result.dirty_size);
     }
   }
   nba_queue_.clear();
