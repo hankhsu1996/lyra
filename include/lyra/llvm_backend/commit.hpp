@@ -29,10 +29,10 @@ struct PackedPlanesPtr {
   std::optional<SignalIdExpr> signal_id;
 };
 
-// Store raw value to target place with type-appropriate handling.
-// Handles: WriteTarget resolution, ownership (retain/clone), stateness
-// coercion, store+notify. Contract: raw_value from LowerOperandRaw, caller
-// handles source cleanup.
+// Raw-value commit adapter. Routes through DispatchWrite with RawValueSource.
+// Does not own semantic write routing -- see write_plan.hpp for the canonical
+// write dispatch boundary. Retained for callers (assoc_op, call, etc.) that
+// have an already-loaded llvm::Value*.
 auto CommitValue(
     Context& ctx, mir::PlaceId target, llvm::Value* raw_value, TypeId type_id,
     OwnershipPolicy policy) -> Result<void>;

@@ -1,15 +1,10 @@
 #include "lyra/llvm_backend/type_ops/dispatch.hpp"
 
-#include <expected>
 #include <variant>
 
-#include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
-#include "lyra/llvm_backend/type_ops/handlers.hpp"
-#include "lyra/llvm_backend/type_ops/managed.hpp"
+#include "lyra/llvm_backend/write_plan.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -21,7 +16,6 @@ namespace lyra::lowering::mir_to_llvm {
 auto DetermineOwnership(Context& context, const mir::Operand& source)
     -> OwnershipPolicy {
   if (!std::holds_alternative<mir::PlaceId>(source.payload)) {
-    // Constants/literals: no ownership transfer
     return OwnershipPolicy::kClone;
   }
 
@@ -30,73 +24,24 @@ auto DetermineOwnership(Context& context, const mir::Operand& source)
   const auto& src_place = arena[src_place_id];
 
   if (src_place.root.kind == mir::PlaceRoot::Kind::kTemp) {
-    // MIR invariant: temps are single-owner; Use(temp) is a consuming move
     return OwnershipPolicy::kMove;
   }
 
-  // Persistent places (design, frame) require clone for shared ownership
   return OwnershipPolicy::kClone;
 }
 
+// Operand-based assignment adapter. Determines ownership policy, then
+// delegates to DispatchWrite with OperandSource. Does not own semantic
+// write-shape decisions.
 auto AssignPlace(
     Context& context, mir::PlaceId target, const mir::Operand& source)
     -> Result<void> {
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-
-  // Get the effective type (element type if projected, root type otherwise)
-  const auto& place = arena[target];
-  TypeId type_id = mir::TypeOfPlace(types, place);
-  const Type& type = types[type_id];
-
+  TypeId type_id = mir::TypeOfPlace(types, arena[target]);
   OwnershipPolicy policy = DetermineOwnership(context, source);
-
-  // Dispatch based on managed kind first
-  switch (GetManagedKind(type.Kind())) {
-    case ManagedKind::kString: {
-      auto result = AssignString(context, target, source, policy, type_id);
-      if (!result) return std::unexpected(result.error());
-      return {};
-    }
-    case ManagedKind::kContainer: {
-      auto result = AssignDynArray(context, target, source, policy, type_id);
-      if (!result) return std::unexpected(result.error());
-      return {};
-    }
-    case ManagedKind::kNone:
-      break;
-  }
-
-  // Non-managed types: dispatch by TypeKind
-  switch (type.Kind()) {
-    case TypeKind::kUnpackedStruct: {
-      auto result = AssignStruct(context, target, source, policy, type_id);
-      if (!result) return std::unexpected(result.error());
-      return {};
-    }
-    case TypeKind::kUnpackedArray: {
-      auto result = AssignArray(context, target, source, policy, type_id);
-      if (!result) return std::unexpected(result.error());
-      return {};
-    }
-    case TypeKind::kUnpackedUnion: {
-      auto result = AssignUnion(context, target, source, type_id);
-      if (!result) return std::unexpected(result.error());
-      return {};
-    }
-    default:
-      break;
-  }
-
-  // Packed types: 4-state vs 2-state dispatch from type system
-  if (IsPacked(type) && context.IsPackedFourState(type)) {
-    auto result = AssignFourState(context, target, source, policy, type_id);
-    if (!result) return std::unexpected(result.error());
-  } else {
-    auto result = AssignTwoState(context, target, source, policy, type_id);
-    if (!result) return std::unexpected(result.error());
-  }
-  return {};
+  return DispatchWrite(
+      context, target, OperandSource{&source}, type_id, policy);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

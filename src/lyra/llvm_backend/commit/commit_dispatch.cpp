@@ -1,58 +1,26 @@
 #include <expected>
 
-#include <llvm/IR/Value.h>
-
-#include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
-#include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/lifecycle/detail.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
-#include "lyra/llvm_backend/type_ops/managed.hpp"
+#include "lyra/llvm_backend/write_plan.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
-// Forward declarations for family-specific implementations (internal linkage in
-// their respective files)
-auto CommitStringValue(
-    Context& ctx, const WriteTarget& wt, llvm::Value* handle,
-    OwnershipPolicy policy, TypeId type_id) -> Result<void>;
-auto CommitContainerValue(
-    Context& ctx, const WriteTarget& wt, llvm::Value* handle,
-    OwnershipPolicy policy, TypeId type_id) -> Result<void>;
-auto CommitPackedValue(
-    Context& ctx, const WriteTarget& wt, llvm::Value* raw, TypeId type_id)
-    -> Result<void>;
-
+// Raw-value commit adapter. Routes through DispatchWrite with RawValueSource.
+// Does not own semantic write routing -- that lives in
+// write_plan/write_dispatch. Retained for backward compatibility with callers
+// (assoc_op, call, etc.) that have an already-loaded llvm::Value*.
 auto CommitValue(
     Context& ctx, mir::PlaceId target, llvm::Value* raw_value, TypeId type_id,
     OwnershipPolicy policy) -> Result<void> {
-  // Resolve WriteTarget internally - callers pass PlaceId, not WriteTarget
-  auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
-  if (!wt_or_err) return std::unexpected(wt_or_err.error());
-  const WriteTarget& wt = *wt_or_err;
-
-  const auto& types = ctx.GetTypeArena();
-  const Type& type = types[type_id];
-
-  // Managed types: ownership matters
-  switch (GetManagedKind(type.Kind())) {
-    case ManagedKind::kString:
-      return CommitStringValue(ctx, wt, raw_value, policy, type_id);
-    case ManagedKind::kContainer:
-      return CommitContainerValue(ctx, wt, raw_value, policy, type_id);
-    case ManagedKind::kNone:
-      break;
-  }
-
-  // Non-managed types: ownership is no-op (kClone == kMove == plain store)
-  return CommitPackedValue(ctx, wt, raw_value, type_id);
+  return DispatchWrite(ctx, target, RawValueSource{raw_value}, type_id, policy);
 }
 
 void CommitMoveCleanupIfTemp(
