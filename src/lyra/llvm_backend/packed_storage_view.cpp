@@ -25,27 +25,23 @@ namespace lyra::lowering::mir_to_llvm {
 
 // BitRangeProjection byte-alignment proof.
 //
-// For constant offsets, checks the actual value.
-// For dynamic offsets, relies on the explicit is_element_scaled flag
-// set at the MIR lowering site. Element-scaled offsets are always
-// multiples of element_width (= br.width), so when br.width % 8 == 0,
-// the offset is provably byte-aligned.
+// Uses MIR-owned guaranteed_alignment_bits metadata set at lowering time.
+// For constant offsets, also checks the actual value as a backstop.
 auto IsBitRangeStepProvablyByteAligned(const mir::BitRangeProjection& br)
     -> bool {
   if (br.width % 8 != 0) return false;
 
-  // Constant offset: check the actual value.
+  // MIR-owned alignment: set at lowering time from semantic analysis.
+  if (br.guaranteed_alignment_bits >= 8) return true;
+
+  // Constant offset backstop: check the actual value.
   if (const auto* constant = std::get_if<Constant>(&br.bit_offset.payload)) {
     const auto* integral = std::get_if<IntegralConstant>(&constant->value);
     if (integral == nullptr || integral->value.empty()) return false;
     return (integral->value[0] % 8) == 0;
   }
 
-  // Dynamic offset: only provably byte-aligned when the offset was
-  // produced by element-index scaling (offset = index * element_width).
-  // This flag is set at the MIR lowering site for packed array element
-  // access. Part-selects, range selects, and bit selects leave it false.
-  return br.is_element_scaled;
+  return false;
 }
 
 // Resolve the packed storage root for a place with BitRangeProjection.
@@ -68,7 +64,7 @@ auto ResolvePackedStorageRoot(Context& ctx, mir::PlaceId place_id)
   const Type& base_type = types[base_type_id];
   uint32_t total_bits = PackedBitWidth(base_type, types);
   bool is_four_state = ctx.IsPackedFourState(base_type);
-  uint32_t value_plane_bytes = GetStorageByteSize(total_bits);
+  uint32_t storage_plane_byte_size = GetStorageByteSize(total_bits);
 
   // GetPlacePointer skips BitRangeProjection suffix.
   auto ptr_result = ctx.GetPlacePointer(place_id);
@@ -80,7 +76,7 @@ auto ResolvePackedStorageRoot(Context& ctx, mir::PlaceId place_id)
   PackedStorageView view{
       .base_ptr = *ptr_result,
       .total_semantic_bits = total_bits,
-      .value_plane_bytes = value_plane_bytes,
+      .storage_plane_byte_size = storage_plane_byte_size,
       .unk_plane_offset_bytes =
           is_four_state ? FourStateUnknownLaneOffset(total_bits) : 0,
       .is_four_state = is_four_state,
@@ -117,6 +113,16 @@ auto ExtractPackedAccessPath(Context& ctx, mir::PlaceId place_id)
   for (const auto& proj : place.projections) {
     if (const auto* br = std::get_if<mir::BitRangeProjection>(&proj.info)) {
       seen_bitrange = true;
+
+      // Invariant check: guaranteed_alignment_bits must be a nonzero
+      // power of two. Catches producer drift immediately.
+      if (br->guaranteed_alignment_bits == 0 ||
+          (br->guaranteed_alignment_bits &
+           (br->guaranteed_alignment_bits - 1)) != 0) {
+        throw common::InternalError(
+            "ExtractPackedAccessPath",
+            "guaranteed_alignment_bits must be a nonzero power of two");
+      }
 
       PackedProjectionStep step;
       step.semantic_bits = br->width;
@@ -197,7 +203,12 @@ auto ResolvePackedSubview(Context& ctx, const PackedAccessPath& path)
     access.kind = PackedSubviewKind::kByteAddressable;
     access.byte_offset =
         builder.CreateLShr(total_bit_offset, 3, "psv.byte_off");
-    access.storage_byte_width = GetStorageByteSize(final_width);
+    // Use exact byte span (ceil(width/8)), not standalone allocation size
+    // (GetStorageByteSize which rounds up to power-of-two). Within a packed
+    // value, elements are packed at bit boundaries and span exactly
+    // ceil(width/8) bytes. Using the rounded-up size would read/write past
+    // the plane boundary for non-power-of-two widths at the tail.
+    access.subview_byte_span = (final_width + 7) / 8;
   } else {
     access.kind = PackedSubviewKind::kBitAddressable;
   }
@@ -244,7 +255,7 @@ struct FullPlaneValues {
 auto LoadFullPlanes(Context& ctx, const PackedStorageView& storage)
     -> FullPlaneValues {
   auto& builder = ctx.GetBuilder();
-  uint32_t base_storage_bits = storage.value_plane_bytes * 8;
+  uint32_t base_storage_bits = storage.storage_plane_byte_size * 8;
 
   if (storage.is_canonical_storage) {
     FullPlaneValues planes;
@@ -327,7 +338,7 @@ auto EmitByteAddressableLoad(Context& ctx, const PackedSubviewAccess& access)
     -> PackedRValue {
   auto& builder = ctx.GetBuilder();
   auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
-  uint32_t storage_bits = access.storage_byte_width * 8;
+  uint32_t storage_bits = access.subview_byte_span * 8;
   auto* load_ty = llvm::IntegerType::get(ctx.GetLlvmContext(), storage_bits);
 
   auto* val_ptr = builder.CreateGEP(
@@ -375,7 +386,7 @@ auto EmitBitAddressableLoad(Context& ctx, const PackedSubviewAccess& access)
     -> PackedRValue {
   auto& builder = ctx.GetBuilder();
 
-  uint32_t base_storage_bits = access.storage.value_plane_bytes * 8;
+  uint32_t base_storage_bits = access.storage.storage_plane_byte_size * 8;
   auto planes = LoadFullPlanes(ctx, access.storage);
 
   PackedRValue result;
@@ -446,7 +457,7 @@ auto EmitByteAddressableStore(
 
   auto& builder = ctx.GetBuilder();
   auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
-  uint32_t storage_bits = access.storage_byte_width * 8;
+  uint32_t storage_bits = access.subview_byte_span * 8;
   auto* store_ty = llvm::IntegerType::get(ctx.GetLlvmContext(), storage_bits);
 
   // Value plane
@@ -508,7 +519,7 @@ auto EmitBitAddressableStore(
     -> llvm::Value* {
   auto& builder = ctx.GetBuilder();
 
-  uint32_t base_storage_bits = access.storage.value_plane_bytes * 8;
+  uint32_t base_storage_bits = access.storage.storage_plane_byte_size * 8;
   auto* lane_ty =
       llvm::IntegerType::get(ctx.GetLlvmContext(), base_storage_bits);
 
@@ -572,7 +583,7 @@ auto GetSubviewDirtyRange(Context& ctx, const PackedSubviewAccess& access)
     return PackedDirtyRange{
         .byte_offset = ctx.GetBuilder().CreateZExtOrTrunc(
             access.byte_offset, i32_ty, "dirty.off"),
-        .byte_size = llvm::ConstantInt::get(i32_ty, access.storage_byte_width),
+        .byte_size = llvm::ConstantInt::get(i32_ty, access.subview_byte_span),
     };
   }
   return PackedDirtyRange{
@@ -644,13 +655,195 @@ auto EmitStoreToPackedSubview(
   return {};
 }
 
-auto EmitSchedulePackedSubviewWrite(
-    [[maybe_unused]] Context& ctx,
-    [[maybe_unused]] const PackedSubviewAccess& access,
-    [[maybe_unused]] const PackedRValue& value,
-    [[maybe_unused]] const PackedStorePolicy& policy) -> Result<void> {
-  throw common::InternalError(
-      "EmitSchedulePackedSubviewWrite", "not yet implemented in new module");
+// Write a packed integer value into a canonical flat byte buffer at the
+// given byte offset via memcpy from a typed alloca. This avoids implicit
+// alignment assumptions from storing a wide integer through a byte pointer.
+// This is the single write path for all canonical packed buffer construction.
+void WriteCanonicalPlaneToBuffer(
+    llvm::IRBuilder<>& builder, llvm::LLVMContext& llvm_ctx,
+    llvm::Value* buf_ptr, uint64_t byte_offset, llvm::Value* plane_value) {
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* value_ty = plane_value->getType();
+  uint64_t byte_size =
+      builder.GetInsertBlock()->getModule()->getDataLayout().getTypeStoreSize(
+          value_ty);
+  auto* src_alloca = builder.CreateAlloca(value_ty, nullptr, "cbuf.src");
+  builder.CreateStore(plane_value, src_alloca);
+  auto* dest_ptr = builder.CreateGEP(
+      i8_ty, buf_ptr, builder.getInt64(byte_offset), "cbuf.dst");
+  builder.CreateMemCpy(
+      dest_ptr, llvm::Align(1), src_alloca, llvm::Align(1), byte_size);
+}
+
+// Prepare a narrow plane value for NBA: truncate/extend and mask.
+auto PrepareNarrowPlaneValue(
+    llvm::IRBuilder<>& builder, llvm::LLVMContext& llvm_ctx,
+    llvm::Value* raw_value, uint32_t subview_byte_span,
+    uint32_t semantic_bit_width) -> llvm::Value* {
+  uint32_t storage_bits = subview_byte_span * 8;
+  auto* store_ty = llvm::IntegerType::get(llvm_ctx, storage_bits);
+  auto* store_val = builder.CreateZExtOrTrunc(raw_value, store_ty, "nba.val");
+  if (storage_bits > semantic_bit_width) {
+    auto mask = llvm::APInt::getLowBitsSet(storage_bits, semantic_bit_width);
+    store_val = builder.CreateAnd(
+        store_val, llvm::ConstantInt::get(store_ty, mask), "nba.val.fit");
+  }
+  return store_val;
+}
+
+// Emit a 2-state byte-addressable narrow NBA overwrite.
+void EmitNarrow2StateNbaCall(
+    Context& ctx, const PackedSubviewAccess& access,
+    const PackedNbaPolicy& policy, llvm::Value* plane_value) {
+  auto& builder = ctx.GetBuilder();
+  auto& llvm_ctx = ctx.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  auto* store_val = PrepareNarrowPlaneValue(
+      builder, llvm_ctx, plane_value, access.subview_byte_span,
+      access.semantic_bit_width);
+
+  auto* write_ptr = builder.CreateGEP(
+      i8_ty, access.storage.base_ptr, access.byte_offset, "nba.write.ptr");
+
+  uint32_t narrow_bytes = access.subview_byte_span;
+  auto* buf_ty = llvm::ArrayType::get(i8_ty, narrow_bytes);
+  auto* val_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.val.a");
+  WriteCanonicalPlaneToBuffer(builder, llvm_ctx, val_alloca, 0, store_val);
+
+  auto* null_ptr =
+      llvm::ConstantPointerNull::get(llvm::PointerType::get(llvm_ctx, 0));
+  builder.CreateCall(
+      ctx.GetLyraScheduleNba(),
+      {policy.engine_ptr, write_ptr, policy.notify_base_ptr, val_alloca,
+       null_ptr, llvm::ConstantInt::get(i32_ty, narrow_bytes),
+       policy.signal_id.Emit(builder)});
+}
+
+// Emit a 4-state byte-addressable narrow NBA using the canonical two-plane
+// runtime helper. One semantic record, no plane decomposition leak.
+void EmitNarrow4StateNbaCall(
+    Context& ctx, const PackedSubviewAccess& access,
+    const PackedNbaPolicy& policy, const PackedRValue& value) {
+  auto& builder = ctx.GetBuilder();
+  auto& llvm_ctx = ctx.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  uint32_t narrow_bytes = access.subview_byte_span;
+
+  auto* val_store = PrepareNarrowPlaneValue(
+      builder, llvm_ctx, value.val, narrow_bytes, access.semantic_bit_width);
+
+  llvm::Value* unk_raw = value.unk;
+  if (unk_raw == nullptr) {
+    unk_raw = llvm::ConstantInt::get(value.val->getType(), 0);
+  }
+  auto* unk_store = PrepareNarrowPlaneValue(
+      builder, llvm_ctx, unk_raw, narrow_bytes, access.semantic_bit_width);
+
+  auto* write_ptr = builder.CreateGEP(
+      i8_ty, access.storage.base_ptr, access.byte_offset, "nba.write.ptr");
+
+  auto* buf_ty = llvm::ArrayType::get(i8_ty, narrow_bytes);
+  auto* val_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.val.a");
+  WriteCanonicalPlaneToBuffer(builder, llvm_ctx, val_alloca, 0, val_store);
+
+  auto* unk_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.unk.a");
+  WriteCanonicalPlaneToBuffer(builder, llvm_ctx, unk_alloca, 0, unk_store);
+
+  builder.CreateCall(
+      ctx.GetLyraScheduleNbaCanonicalPacked(),
+      {policy.engine_ptr, write_ptr, policy.notify_base_ptr, val_alloca,
+       unk_alloca, llvm::ConstantInt::get(i32_ty, narrow_bytes),
+       llvm::ConstantInt::get(i32_ty, access.storage.unk_plane_offset_bytes),
+       policy.signal_id.Emit(builder)});
+}
+
+// Emit a full-width masked NBA call for a bit-addressable subview.
+// Uses canonical packed storage ABI for byte sizes (not LLVM DataLayout).
+void EmitFullWidthMaskedNbaCall(
+    Context& ctx, const PackedSubviewAccess& access,
+    const PackedNbaPolicy& policy, const PackedRValue& value) {
+  auto& builder = ctx.GetBuilder();
+  auto& llvm_ctx = ctx.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  uint32_t base_storage_bits = access.storage.storage_plane_byte_size * 8;
+  auto* lane_ty = llvm::IntegerType::get(llvm_ctx, base_storage_bits);
+
+  auto* shift_amt = builder.CreateZExtOrTrunc(
+      access.semantic_bit_offset, lane_ty, "nba.offset");
+  auto mask_ap =
+      llvm::APInt::getLowBitsSet(base_storage_bits, access.semantic_bit_width);
+  auto* mask = llvm::ConstantInt::get(lane_ty, mask_ap);
+  auto* mask_shifted = builder.CreateShl(mask, shift_amt, "nba.mask");
+
+  auto* src_val = builder.CreateZExtOrTrunc(value.val, lane_ty, "nba.src.val");
+  auto* val_shifted = builder.CreateShl(src_val, shift_amt, "nba.val.shl");
+
+  uint32_t plane_bytes = access.storage.storage_plane_byte_size;
+
+  if (access.storage.is_four_state) {
+    uint32_t total_bytes = plane_bytes + plane_bytes;
+
+    llvm::Value* src_unk = nullptr;
+    if (value.unk != nullptr) {
+      src_unk = builder.CreateZExtOrTrunc(value.unk, lane_ty, "nba.src.unk");
+    } else {
+      src_unk = llvm::ConstantInt::get(lane_ty, 0);
+    }
+    auto* unk_shifted = builder.CreateShl(src_unk, shift_amt, "nba.unk.shl");
+
+    auto* buf_ty = llvm::ArrayType::get(i8_ty, total_bytes);
+    auto* val_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.val.a");
+    auto* mask_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.mask.a");
+
+    WriteCanonicalPlaneToBuffer(builder, llvm_ctx, val_alloca, 0, val_shifted);
+    WriteCanonicalPlaneToBuffer(
+        builder, llvm_ctx, val_alloca, plane_bytes, unk_shifted);
+    WriteCanonicalPlaneToBuffer(
+        builder, llvm_ctx, mask_alloca, 0, mask_shifted);
+    WriteCanonicalPlaneToBuffer(
+        builder, llvm_ctx, mask_alloca, plane_bytes, mask_shifted);
+
+    builder.CreateCall(
+        ctx.GetLyraScheduleNba(),
+        {policy.engine_ptr, access.storage.base_ptr, policy.notify_base_ptr,
+         val_alloca, mask_alloca, llvm::ConstantInt::get(i32_ty, total_bytes),
+         policy.signal_id.Emit(builder)});
+  } else {
+    auto* buf_ty = llvm::ArrayType::get(i8_ty, plane_bytes);
+    auto* val_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.val.a");
+    auto* mask_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.mask.a");
+
+    WriteCanonicalPlaneToBuffer(builder, llvm_ctx, val_alloca, 0, val_shifted);
+    WriteCanonicalPlaneToBuffer(
+        builder, llvm_ctx, mask_alloca, 0, mask_shifted);
+
+    builder.CreateCall(
+        ctx.GetLyraScheduleNba(),
+        {policy.engine_ptr, access.storage.base_ptr, policy.notify_base_ptr,
+         val_alloca, mask_alloca, llvm::ConstantInt::get(i32_ty, plane_bytes),
+         policy.signal_id.Emit(builder)});
+  }
+}
+
+auto EmitDeferredStoreToPackedSubview(
+    Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
+    const PackedNbaPolicy& policy) -> Result<void> {
+  if (access.kind == PackedSubviewKind::kByteAddressable) {
+    if (access.storage.is_four_state) {
+      EmitNarrow4StateNbaCall(ctx, access, policy, value);
+    } else {
+      EmitNarrow2StateNbaCall(ctx, access, policy, value.val);
+    }
+  } else {
+    EmitFullWidthMaskedNbaCall(ctx, access, policy, value);
+  }
+  return {};
 }
 
 auto MaterializePackedValue(
@@ -667,6 +860,26 @@ auto StorePackedValue(
     [[maybe_unused]] const PackedStorePolicy& policy) -> Result<void> {
   throw common::InternalError(
       "StorePackedValue", "not yet implemented in new module");
+}
+
+auto ConvertRawToPackedRValue(
+    Context& ctx, llvm::Value* raw, uint32_t semantic_bits, bool is_four_state)
+    -> PackedRValue {
+  auto& builder = ctx.GetBuilder();
+  PackedRValue result;
+  result.semantic_bits = semantic_bits;
+  result.is_four_state = is_four_state;
+
+  if (raw->getType()->isStructTy()) {
+    result.val = builder.CreateExtractValue(raw, 0, "rhs.val");
+    result.unk = builder.CreateExtractValue(raw, 1, "rhs.unk");
+  } else {
+    result.val = raw;
+    if (is_four_state) {
+      result.unk = llvm::ConstantInt::get(raw->getType(), 0);
+    }
+  }
+  return result;
 }
 
 auto LoadPackedPlace(

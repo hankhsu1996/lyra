@@ -34,7 +34,7 @@ class Context;
 struct PackedStorageView {
   llvm::Value* base_ptr = nullptr;
   uint32_t total_semantic_bits = 0;
-  uint32_t value_plane_bytes = 0;
+  uint32_t storage_plane_byte_size = 0;
   uint32_t unk_plane_offset_bytes = 0;
   bool is_four_state = false;
 
@@ -114,9 +114,9 @@ struct PackedSubviewAccess {
   llvm::Value* semantic_bit_offset = nullptr;
   uint32_t semantic_bit_width = 0;
 
-  // Only valid for kByteAddressable:
+  // Only valid for kByteAddressable: localized byte window within the plane.
   llvm::Value* byte_offset = nullptr;
-  uint32_t storage_byte_width = 0;
+  uint32_t subview_byte_span = 0;
 
   TypeId result_type;
 };
@@ -205,10 +205,22 @@ auto EmitStoreToPackedSubview(
     Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
     const PackedStorePolicy& policy) -> Result<void>;
 
+// Deferred/NBA scheduling policy. Separate from PackedStorePolicy because
+// NBA scheduling requires runtime pointers (engine, notify_base) and a
+// signal ID for the runtime call, while immediate writes use a different
+// notification contract (inline dirty-mark via LyraMarkDirty).
+struct PackedNbaPolicy {
+  llvm::Value* engine_ptr = nullptr;
+  llvm::Value* notify_base_ptr = nullptr;
+  SignalIdExpr signal_id;
+};
+
 // Localized subview deferred/NBA write.
-auto EmitSchedulePackedSubviewWrite(
+// Internally selects byte-addressable (narrow overwrite) or bit-addressable
+// (full-width masked merge) based on the resolved subview kind.
+auto EmitDeferredStoreToPackedSubview(
     Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
-    const PackedStorePolicy& policy) -> Result<void>;
+    const PackedNbaPolicy& policy) -> Result<void>;
 
 // Whole-value materialization: load full packed value from canonical storage.
 auto MaterializePackedValue(Context& ctx, const PackedStorageView& storage)
@@ -225,6 +237,13 @@ auto StorePackedValue(
 auto LoadPackedPlace(
     Context& ctx, mir::PlaceId place_id, llvm::Type* target_type)
     -> Result<llvm::Value*>;
+
+// Convert a legacy llvm::Value* (iN or {iN, iN}) to a PackedRValue.
+// Handles both 2-state (raw integer) and 4-state ({val, unk} struct) inputs.
+// This is operand normalization, not storage logic.
+auto ConvertRawToPackedRValue(
+    Context& ctx, llvm::Value* raw, uint32_t semantic_bits, bool is_four_state)
+    -> PackedRValue;
 
 // Convert a PackedRValue to legacy LLVM value form ({iN, iN} for 4-state,
 // iN for 2-state). Used at the module boundary where callers still expect

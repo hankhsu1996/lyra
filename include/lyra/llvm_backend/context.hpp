@@ -268,6 +268,7 @@ class Context {
   [[nodiscard]] auto GetLyraMarkDirtyFirst() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNba() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraScheduleNbaCanonicalPacked() -> llvm::Function*;
   [[nodiscard]] auto GetLyraTerminate() -> llvm::Function*;
   [[nodiscard]] auto GetLyraGetTime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraInitRuntime() -> llvm::Function*;
@@ -781,6 +782,7 @@ class Context {
   llvm::Function* lyra_mark_dirty_first_ = nullptr;
   llvm::Function* lyra_store_string_ = nullptr;
   llvm::Function* lyra_schedule_nba_ = nullptr;
+  llvm::Function* lyra_schedule_nba_canonical_packed_ = nullptr;
   llvm::Function* lyra_terminate_ = nullptr;
   llvm::Function* lyra_get_time_ = nullptr;
   llvm::Function* lyra_init_runtime_ = nullptr;

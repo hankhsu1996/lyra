@@ -497,6 +497,25 @@ auto Context::GetLyraScheduleNba() -> llvm::Function* {
   return lyra_schedule_nba_;
 }
 
+auto Context::GetLyraScheduleNbaCanonicalPacked() -> llvm::Function* {
+  if (lyra_schedule_nba_canonical_packed_ == nullptr) {
+    // void LyraScheduleNbaCanonicalPacked(
+    //   ptr engine, ptr write_ptr, ptr notify_base_ptr,
+    //   ptr value_ptr, ptr unk_ptr,
+    //   i32 region_byte_size, i32 second_region_offset, i32 notify_slot_id)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_),
+        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i32_ty},
+        false);
+    lyra_schedule_nba_canonical_packed_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage,
+        "LyraScheduleNbaCanonicalPacked", llvm_module_.get());
+  }
+  return lyra_schedule_nba_canonical_packed_;
+}
+
 auto Context::GetLyraTerminate() -> llvm::Function* {
   if (lyra_terminate_ == nullptr) {
     // void LyraTerminate(ptr engine, i32 kind, i32 level, ptr message)

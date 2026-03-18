@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <type_traits>
+#include <variant>
 
 #include "lyra/runtime/activation_trace.hpp"
 #include "lyra/runtime/small_byte_buffer.hpp"
@@ -40,27 +41,42 @@ struct WakeTraceInfo {
   uint32_t trigger_slot = kNoTriggerSlot;
 };
 
-// NBA write mode: distinguishes full-width overwrite from partial masked merge.
-// Explicit in the type so runtime logic branches on meaning, not storage state.
-enum class NbaWriteMode : uint8_t {
-  kFullOverwrite,  // Direct compare/copy (most common)
-  kMaskedMerge,    // Per-byte mask: (old & ~mask) | (new & mask)
+// Typed NBA payloads. Each mode has its own struct with exactly the fields
+// it needs, so field semantics never depend on a mode tag.
+
+// Full overwrite: direct compare/copy of byte_size bytes at write_ptr.
+struct NbaFullOverwrite {
+  uint32_t byte_size;
+  SmallByteBuffer value;
 };
 
+// Masked merge: per-byte (old & ~mask) | (new & mask).
+struct NbaMaskedMerge {
+  uint32_t byte_size;
+  SmallByteBuffer value;
+  SmallByteBuffer mask;
+};
+
+// Canonical packed two-plane narrow overwrite for 4-state byte-addressable
+// packed subview writes. Writes region_byte_size bytes at write_ptr (value
+// plane) and at write_ptr + second_region_offset (unknown plane).
+struct NbaCanonicalPackedTwoPlane {
+  uint32_t region_byte_size;
+  uint32_t second_region_offset;
+  SmallByteBuffer value;
+  SmallByteBuffer unk;
+};
+
+using NbaPayload =
+    std::variant<NbaFullOverwrite, NbaMaskedMerge, NbaCanonicalPackedTwoPlane>;
+
 // NBA queue entry: deferred write committed in the NBA region.
-//
-// Invariants:
-//   value.Size() == byte_size (always)
-//   kFullOverwrite: mask is empty (mask.Size() == 0)
-//   kMaskedMerge:   mask.Size() == byte_size
+// Common header (write target + notification) plus typed payload.
 struct NbaEntry {
-  void* write_ptr;              // Exact write address
-  const void* notify_base_ptr;  // Slot root pointer (for offset computation)
-  uint32_t byte_size;           // Size of write region at write_ptr
-  uint32_t notify_slot_id;      // Slot ID for trigger lookup
-  NbaWriteMode mode = NbaWriteMode::kFullOverwrite;
-  SmallByteBuffer value;  // New value bytes; size == byte_size
-  SmallByteBuffer mask;   // Byte mask; populated iff mode == kMaskedMerge
+  void* write_ptr;
+  const void* notify_base_ptr;
+  uint32_t notify_slot_id;
+  NbaPayload payload;
 };
 
 static_assert(

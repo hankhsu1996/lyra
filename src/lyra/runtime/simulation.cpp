@@ -676,6 +676,16 @@ extern "C" void LyraScheduleNba(
       notify_slot_id);
 }
 
+extern "C" void LyraScheduleNbaCanonicalPacked(
+    void* engine_ptr, void* write_ptr, const void* notify_base_ptr,
+    const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
+    uint32_t second_region_offset, uint32_t notify_slot_id) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->ScheduleNbaCanonicalPacked(
+      write_ptr, notify_base_ptr, value_ptr, unk_ptr, region_byte_size,
+      second_region_offset, notify_slot_id);
+}
+
 extern "C" void LyraRegisterStrobe(
     void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
     void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset,

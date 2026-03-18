@@ -17,6 +17,7 @@
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/instruction/assign_core.hpp"
+#include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
 
@@ -177,30 +178,6 @@ auto CoerceValueToShape(
   return nullptr;
 }
 
-// Emit the LyraScheduleNba call with value/mask stored in allocas.
-void EmitScheduleNbaCall(
-    Context& context, llvm::Value* write_ptr, llvm::Value* notify_base_ptr,
-    llvm::Value* value, llvm::Value* mask, llvm::Type* storage_type,
-    const SignalIdExpr& signal_id) {
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
-  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-
-  auto byte_size = static_cast<uint32_t>(
-      context.GetModule().getDataLayout().getTypeAllocSize(storage_type));
-
-  auto* val_alloca = builder.CreateAlloca(storage_type, nullptr, "nba.val");
-  builder.CreateStore(value, val_alloca);
-  auto* mask_alloca = builder.CreateAlloca(storage_type, nullptr, "nba.mask");
-  builder.CreateStore(mask, mask_alloca);
-
-  builder.CreateCall(
-      context.GetLyraScheduleNba(),
-      {context.GetEnginePointer(), write_ptr, notify_base_ptr, val_alloca,
-       mask_alloca, llvm::ConstantInt::get(i32_ty, byte_size),
-       signal_id.Emit(builder)});
-}
-
 // Shared core for deferred store emission (used by Direct and WithOobGuard).
 // Handles value/mask construction uniformly via StoreShape classification.
 auto EmitDeferredStoreCore(
@@ -241,97 +218,33 @@ auto EmitDeferredStoreCore(
   return {};
 }
 
-// BitRangeProjection NBA: partial bit-range writes with shifted value/mask.
-// Kept separate because it uses partial masks (not full-width).
+// BitRangeProjection NBA: route through packed storage view module.
+// The storage layer owns subview classification and emission shape;
+// this function is a thin routing wrapper.
 auto LowerDeferredAssignBitRange(
     Context& context, const mir::DeferredAssign& deferred,
     const SignalIdExpr& signal_id) -> Result<void> {
-  auto& builder = context.GetBuilder();
+  auto path = ExtractPackedAccessPath(context, deferred.dest);
+  if (!path) return std::unexpected(path.error());
 
-  auto br_result = context.ComposeBitRange(deferred.dest);
-  if (!br_result) return std::unexpected(br_result.error());
-  auto [offset, width] = *br_result;
+  auto subview = ResolvePackedSubview(context, *path);
+  if (!subview) return std::unexpected(subview.error());
 
-  auto ptr_or_err = context.GetPlacePointer(deferred.dest);
-  if (!ptr_or_err) return std::unexpected(ptr_or_err.error());
-  llvm::Value* ptr = *ptr_or_err;
+  auto rhs_raw = LowerRhsRaw(context, deferred.rhs, deferred.dest);
+  if (!rhs_raw) return std::unexpected(rhs_raw.error());
 
-  auto base_type_result = context.GetPlaceBaseType(deferred.dest);
-  if (!base_type_result) return std::unexpected(base_type_result.error());
-  llvm::Type* base_type = *base_type_result;
+  auto rvalue = ConvertRawToPackedRValue(
+      context, *rhs_raw, subview->semantic_bit_width,
+      subview->storage.is_four_state);
 
-  // INVARIANT: BitRange is only valid on scalar bases
-  if (!base_type->isIntegerTy() && !IsFourStateScalarStruct(base_type)) {
-    throw common::InternalError(
-        "LowerDeferredAssignBitRange", "BitRange on non-scalar base type");
-  }
+  PackedNbaPolicy nba_policy{
+      .engine_ptr = context.GetEnginePointer(),
+      .notify_base_ptr = context.GetStorageRootPointer(deferred.dest),
+      .signal_id = signal_id,
+  };
 
-  llvm::Value* notify_base_ptr = context.GetStorageRootPointer(deferred.dest);
-
-  if (IsFourStateScalarStruct(base_type)) {
-    // 4-state base: mask both planes
-    auto* base_struct = llvm::cast<llvm::StructType>(base_type);
-    auto* plane_type = base_struct->getElementType(0);
-    uint32_t plane_width = plane_type->getIntegerBitWidth();
-
-    auto* shift_amt =
-        builder.CreateZExtOrTrunc(offset, plane_type, "nba.offset");
-    auto mask_ap = llvm::APInt::getLowBitsSet(plane_width, width);
-    auto* mask_val = llvm::ConstantInt::get(plane_type, mask_ap);
-    auto* mask_shifted = builder.CreateShl(mask_val, shift_amt, "nba.mask");
-
-    // Evaluate rhs
-    auto rhs_raw_or_err = LowerRhsRaw(context, deferred.rhs, deferred.dest);
-    if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
-    llvm::Value* source_raw = *rhs_raw_or_err;
-    llvm::Value* src_val = nullptr;
-    llvm::Value* src_unk = nullptr;
-    if (source_raw->getType()->isStructTy()) {
-      src_val = builder.CreateExtractValue(source_raw, 0, "nba.src.val");
-      src_unk = builder.CreateExtractValue(source_raw, 1, "nba.src.unk");
-    } else {
-      src_val = source_raw;
-      src_unk = llvm::ConstantInt::get(plane_type, 0);
-    }
-    src_val = builder.CreateZExtOrTrunc(src_val, plane_type, "nba.src.val.ext");
-    src_unk = builder.CreateZExtOrTrunc(src_unk, plane_type, "nba.src.unk.ext");
-    auto* val_shifted = builder.CreateShl(src_val, shift_amt, "nba.val.shl");
-    auto* unk_shifted = builder.CreateShl(src_unk, shift_amt, "nba.unk.shl");
-
-    // Pack into struct for value and mask
-    llvm::Value* packed_val = llvm::UndefValue::get(base_struct);
-    packed_val = builder.CreateInsertValue(packed_val, val_shifted, 0);
-    packed_val = builder.CreateInsertValue(packed_val, unk_shifted, 1);
-
-    llvm::Value* packed_mask = llvm::UndefValue::get(base_struct);
-    packed_mask = builder.CreateInsertValue(packed_mask, mask_shifted, 0);
-    packed_mask = builder.CreateInsertValue(packed_mask, mask_shifted, 1);
-
-    EmitScheduleNbaCall(
-        context, ptr, notify_base_ptr, packed_val, packed_mask, base_type,
-        signal_id);
-  } else {
-    // 2-state base
-    uint32_t base_width = base_type->getIntegerBitWidth();
-    auto* shift_amt =
-        builder.CreateZExtOrTrunc(offset, base_type, "nba.offset");
-
-    auto mask_ap = llvm::APInt::getLowBitsSet(base_width, width);
-    auto* mask_val = llvm::ConstantInt::get(base_type, mask_ap);
-    auto* mask_shifted = builder.CreateShl(mask_val, shift_amt, "nba.mask");
-
-    // Evaluate rhs, coerce to base width, shift into position
-    auto rhs_or_err = LowerRhsRaw(context, deferred.rhs, deferred.dest);
-    if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
-    llvm::Value* src = *rhs_or_err;
-    src = builder.CreateZExtOrTrunc(src, base_type, "nba.src.ext");
-    auto* val_shifted = builder.CreateShl(src, shift_amt, "nba.val.shl");
-
-    EmitScheduleNbaCall(
-        context, ptr, notify_base_ptr, val_shifted, mask_shifted, base_type,
-        signal_id);
-  }
-  return {};
+  return EmitDeferredStoreToPackedSubview(
+      context, *subview, rvalue, nba_policy);
 }
 
 // IndexProjection NBA: array element write with OOB guard.

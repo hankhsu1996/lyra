@@ -37,29 +37,6 @@ using detail::LowerRhsRaw;
 
 namespace {
 
-// Convert a legacy llvm::Value* (iN or {iN, iN}) to a PackedRValue.
-// This is caller-side representation adapting, not storage logic.
-auto ConvertRawToPackedRValue(
-    Context& ctx, llvm::Value* raw, uint32_t semantic_bits, bool is_four_state)
-    -> PackedRValue {
-  auto& builder = ctx.GetBuilder();
-  PackedRValue result;
-  result.semantic_bits = semantic_bits;
-  result.is_four_state = is_four_state;
-
-  if (raw->getType()->isStructTy()) {
-    result.val = builder.CreateExtractValue(raw, 0, "rhs.val");
-    result.unk = builder.CreateExtractValue(raw, 1, "rhs.unk");
-  } else {
-    result.val = raw;
-    if (is_four_state) {
-      // 2-state source into 4-state target: unknown = 0
-      result.unk = llvm::ConstantInt::get(raw->getType(), 0);
-    }
-  }
-  return result;
-}
-
 // Build a PackedStorePolicy from context state and target place.
 // Reads context execution contract and resolves signal ID.
 auto BuildStorePolicy(Context& ctx, mir::PlaceId target) -> PackedStorePolicy {
