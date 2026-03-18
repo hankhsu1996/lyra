@@ -1,0 +1,168 @@
+feature: packed_localized_write
+description: >
+  Tests that packed localized write (byte-addressable and bit-addressable
+  fallback) produces correct values for various packed subview patterns.
+  Uses module-level packed variables with part-select writes, which
+  generate BitRangeProjection and route through EmitStoreToPackedSubview.
+
+cases:
+  - name: byte_aligned_constant_write
+    description: >
+      Byte-aligned constant part-select write (offset=8, width=8).
+      Exercises the byte-addressable store path on canonical storage.
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'h00000000;
+          data[15:8] = 8'hFF;
+          result = int'(data);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 65280
+
+  - name: byte_aligned_constant_write_16bit
+    description: >
+      Byte-aligned 16-bit constant part-select write (offset=16, width=16).
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'hDEADBEEF;
+          data[31:16] = 16'hCAFE;
+          result = int'(data);
+        end
+      endmodule
+    expect:
+      variables:
+        result: -889274641
+
+  - name: non_byte_aligned_constant_write
+    description: >
+      Non-byte-aligned constant part-select write (offset=4, width=8).
+      Must use bit-addressable fallback since offset 4 is not byte-aligned.
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'h00000000;
+          data[11:4] = 8'hFF;
+          result = int'(data);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 4080
+
+  - name: dynamic_part_select_write
+    description: >
+      Dynamic part-select with non-byte-aligned offset.
+      Must use bit-addressable fallback.
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'h00000000;
+          for (int i = 0; i < 4; i++)
+            data[i*8+:8] = 8'(i + 1);
+          result = int'(data);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 67305985
+
+  - name: 4state_byte_aligned_write
+    description: >
+      4-state byte-aligned constant part-select with X propagation.
+      Exercises byte-addressable store for 4-state (dual-plane).
+    sv: |
+      module Test;
+        logic [31:0] data;
+        initial begin
+          data = 32'h12345678;
+          data[15:8] = 8'hxx;
+          $display("data = %h", data);
+        end
+      endmodule
+    expect:
+      stdout: "data = 1234xx78\n"
+
+  - name: 4state_unknown_plane_transition
+    description: >
+      Write X then write a known value to the same byte-aligned range.
+      Verifies that unknown plane is correctly cleared.
+    sv: |
+      module Test;
+        logic [31:0] data;
+        initial begin
+          data = 32'hAABBCCDD;
+          data[15:8] = 8'hxx;
+          data[15:8] = 8'hFF;
+          $display("data = %h", data);
+        end
+      endmodule
+    expect:
+      stdout: "data = aabbffdd\n"
+
+  - name: noop_store
+    description: >
+      Store same value to byte-aligned range (no actual change).
+      Verify value unchanged.
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'hAABBCCDD;
+          data[15:8] = 8'hCC;
+          result = int'(data);
+        end
+      endmodule
+    expect:
+      variables:
+        result: -1430532899
+
+  - name: multiple_range_writes
+    description: >
+      Write to multiple byte-aligned ranges in sequence.
+    sv: |
+      module Test;
+        bit [31:0] data;
+        int result;
+        initial begin
+          data = 32'h00000000;
+          data[7:0] = 8'h11;
+          data[15:8] = 8'h22;
+          data[23:16] = 8'h33;
+          data[31:24] = 8'h44;
+          result = int'(data);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1144201745
+
+  - name: local_packed_part_select
+    description: >
+      Process-local packed variable with constant part-select write.
+      Exercises the bit-addressable fallback for non-canonical storage.
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          bit [31:0] local_val;
+          local_val = 32'h00000000;
+          local_val[15:8] = 8'hFF;
+          result = int'(local_val);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 65280

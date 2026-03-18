@@ -19,16 +19,33 @@ namespace lyra::lowering::mir_to_llvm {
 
 class Context;
 
-// Canonical descriptor for one packed storage root.
+// Descriptor for one packed storage root.
 //
 // 2-state: one value plane (unk_plane_offset_bytes == 0).
 // 4-state: value plane at offset 0, unknown plane at unk_plane_offset_bytes.
+//
+// Storage kind:
+// - canonical (design slots): byte-addressed arena storage where plane offsets
+//   follow the canonical packed ABI (GetStorageByteSize /
+//   FourStateUnknownLaneOffset).
+// - non-canonical (process locals): LLVM-managed alloca storage where plane
+//   layout follows LLVM struct alignment rules. Byte-addressable localized
+//   access is not valid for non-canonical storage.
 struct PackedStorageView {
   llvm::Value* base_ptr = nullptr;
   uint32_t total_semantic_bits = 0;
   uint32_t value_plane_bytes = 0;
   uint32_t unk_plane_offset_bytes = 0;
   bool is_four_state = false;
+
+  // True for design slots (kModuleSlot, kDesignGlobal) where storage follows
+  // the canonical byte-addressed packed ABI. False for process-local allocas
+  // (kLocal, kTemp) where LLVM struct alignment may diverge from canonical.
+  bool is_canonical_storage = false;
+
+  // Non-null only when !is_canonical_storage. The LLVM type of the base
+  // alloca, needed for typed load/store on the bit-addressable fallback path.
+  llvm::Type* local_llvm_type = nullptr;
 };
 
 // A single step in a packed projection path.
@@ -105,11 +122,13 @@ struct PackedSubviewAccess {
 };
 
 // Backend-owned SSA carrier for packed values.
+// Carries the value/unknown SSA values and semantic metadata.
+// Does not carry storage byte size -- that is determined by the
+// resolved subview or storage descriptor at the point of use.
 struct PackedRValue {
   llvm::Value* val = nullptr;
   llvm::Value* unk = nullptr;
   uint32_t semantic_bits = 0;
-  uint32_t storage_bytes = 0;
   bool is_four_state = false;
 };
 
@@ -142,6 +161,28 @@ struct PackedStorePolicy {
   llvm::Value* engine_ptr = nullptr;
   llvm::Value* first_dirty_seen = nullptr;
 };
+
+// Dirty range for packed store notification.
+// Both fields are i32 LLVM values (ConstantInt for static, runtime for
+// dynamic).
+struct PackedDirtyRange {
+  llvm::Value* byte_offset = nullptr;
+  llvm::Value* byte_size = nullptr;
+};
+
+// Derive the notification dirty range from a resolved subview.
+// kByteAddressable: localized range from subview byte offset and storage width.
+// kBitAddressable: full-slot range (0, 0).
+auto GetSubviewDirtyRange(Context& ctx, const PackedSubviewAccess& access)
+    -> PackedDirtyRange;
+
+// Emit conditional dirty-mark notification for a packed store.
+// Owns the full notification contract: no-op for init/deferred,
+// engine-null guard for cross-context, branch on changed, call LyraMarkDirty.
+// Shared by localized writes and future whole-value writes.
+void EmitPackedStoreNotification(
+    Context& ctx, llvm::Value* changed, const PackedStorePolicy& policy,
+    const PackedDirtyRange& dirty_range);
 
 // Extract a packed access path from a MIR place with BitRangeProjection.
 // Resolves the storage view eagerly. The place must have at least one

@@ -417,6 +417,7 @@ auto LowerPackedElementSelectLvalue(
               .bit_offset = offset,
               .width = element_width,
               .element_type = expr.type,
+              .is_element_scaled = true,
           },
       .origin = origin,
   };
