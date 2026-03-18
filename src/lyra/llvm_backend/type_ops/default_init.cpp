@@ -20,7 +20,6 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/storage_boundary.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

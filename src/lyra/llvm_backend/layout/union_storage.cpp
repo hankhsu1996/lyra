@@ -15,25 +15,12 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-// Build LLVM type for an unpacked struct TypeId (LLVMContext-only version).
-// Does NOT support unions in struct fields - use Context-aware version instead.
-auto BuildUnpackedStructTypeNoUnion(
-    llvm::LLVMContext& ctx, const UnpackedStructInfo& info,
-    const TypeArena& types) -> llvm::Type*;
-
-// Forward declaration of LLVMContext-only version
-auto BuildLlvmTypeForTypeIdNoUnion(
-    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
-    -> llvm::Type*;
-
-// Build LLVM type for an unpacked struct with Context (supports unions).
 auto BuildUnpackedStructTypeWithContext(
     Context& context, const UnpackedStructInfo& info) -> Result<llvm::Type*> {
   std::vector<llvm::Type*> field_types;
@@ -44,65 +31,6 @@ auto BuildUnpackedStructTypeWithContext(
     field_types.push_back(*field_type);
   }
   return llvm::StructType::get(context.GetLlvmContext(), field_types);
-}
-
-auto BuildUnpackedStructTypeNoUnion(
-    llvm::LLVMContext& ctx, const UnpackedStructInfo& info,
-    const TypeArena& types) -> llvm::Type* {
-  std::vector<llvm::Type*> field_types;
-  field_types.reserve(info.fields.size());
-  for (const auto& field : info.fields) {
-    field_types.push_back(
-        BuildLlvmTypeForTypeIdNoUnion(ctx, field.type, types));
-  }
-  return llvm::StructType::get(ctx, field_types);
-}
-
-auto BuildLlvmTypeForTypeIdNoUnion(
-    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
-    -> llvm::Type* {
-  const Type& type = types[type_id];
-
-  if (type.Kind() == TypeKind::kString) {
-    return llvm::PointerType::getUnqual(ctx);
-  }
-  if (type.Kind() == TypeKind::kUnpackedStruct) {
-    return BuildUnpackedStructTypeNoUnion(ctx, type.AsUnpackedStruct(), types);
-  }
-  if (type.Kind() == TypeKind::kUnpackedUnion) {
-    throw common::InternalError(
-        "BuildLlvmTypeForTypeId",
-        "union types require Context for correct DataLayout-based sizing; "
-        "use BuildLlvmTypeForTypeId(Context&, TypeId) instead");
-  }
-  if (type.Kind() == TypeKind::kUnpackedArray) {
-    const auto& info = type.AsUnpackedArray();
-    llvm::Type* elem =
-        BuildLlvmTypeForTypeIdNoUnion(ctx, info.element_type, types);
-    return llvm::ArrayType::get(elem, info.range.Size());
-  }
-  if (type.Kind() == TypeKind::kDynamicArray ||
-      type.Kind() == TypeKind::kQueue ||
-      type.Kind() == TypeKind::kAssociativeArray) {
-    return llvm::PointerType::getUnqual(ctx);
-  }
-  if (type.Kind() == TypeKind::kReal) {
-    return llvm::Type::getDoubleTy(ctx);
-  }
-  if (type.Kind() == TypeKind::kShortReal) {
-    return llvm::Type::getFloatTy(ctx);
-  }
-  if (IsPacked(type)) {
-    auto bit_width = PackedBitWidth(type, types);
-    if (IsIntrinsicallyPackedFourState(type, types)) {
-      auto* plane_type = GetLlvmStorageType(ctx, bit_width);
-      return llvm::StructType::get(ctx, {plane_type, plane_type});
-    }
-    return GetLlvmStorageType(ctx, bit_width);
-  }
-  throw common::InternalError(
-      "BuildLlvmTypeForTypeIdNoUnion",
-      std::format("unsupported type: {}", ToString(type)));
 }
 
 }  // namespace
@@ -155,14 +83,6 @@ auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id)
   throw common::InternalError(
       "BuildLlvmTypeForTypeId",
       std::format("unsupported type: {}", ToString(type)));
-}
-
-auto BuildLlvmTypeForTypeId(
-    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types)
-    -> llvm::Type* {
-  // Delegate to the NoUnion version which throws for unions.
-  // Use the Context-aware overload when unions may be present.
-  return BuildLlvmTypeForTypeIdNoUnion(ctx, type_id, types);
 }
 
 namespace {

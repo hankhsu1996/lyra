@@ -30,7 +30,6 @@
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/storage_boundary.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
@@ -412,7 +411,7 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
 
   if (type.Kind() == TypeKind::kIntegral) {
     uint32_t bit_width = type.AsIntegral().bit_width;
-    if (mir_to_llvm::IsPackedFourState(type, types_, force_two_state_)) {
+    if (IsPackedFourState(type)) {
       return GetFourStateStructType(*llvm_context_, bit_width);
     }
     return GetLlvmStorageType(*llvm_context_, bit_width);
@@ -431,7 +430,7 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   }
   if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
-    if (mir_to_llvm::IsPackedFourState(type, types_, force_two_state_)) {
+    if (IsPackedFourState(type)) {
       return GetFourStateStructType(*llvm_context_, width);
     }
     return GetLlvmStorageType(*llvm_context_, width);

@@ -24,7 +24,6 @@
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/observer_abi.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"

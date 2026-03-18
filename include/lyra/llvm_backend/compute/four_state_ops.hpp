@@ -4,19 +4,12 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
-#include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
-
 namespace lyra::lowering::mir_to_llvm {
 
 struct FourStateValue {
   llvm::Value* value;
   llvm::Value* unknown;
 };
-
-// Type queries (no Context needed)
-auto IsTypeFourState(
-    const TypeArena& types, TypeId type_id, bool force_two_state) -> bool;
 
 // Extract value and unknown planes from a 4-state struct {iN, iN}
 auto ExtractFourState(llvm::IRBuilderBase& builder, llvm::Value* struct_val)

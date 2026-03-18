@@ -20,7 +20,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
+#include "lyra/llvm_backend/layout/layout_four_state.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
@@ -85,7 +85,7 @@ auto GetLlvmAbiTypeForValue(
   // Packed integrals (2-state or 4-state)
   if (IsPacked(type)) {
     uint32_t width = PackedBitWidth(type, types);
-    if (IsPackedFourState(type, types, force_two_state)) {
+    if (IsLayoutPackedFourState(type, types, force_two_state)) {
       return GetFourStateStructType(ctx, width);
     }
     return GetLlvmStorageType(ctx, width);
@@ -321,7 +321,7 @@ auto GetLlvmTypeForTypeId(
   switch (type.Kind()) {
     case TypeKind::kIntegral: {
       uint32_t bit_width = type.AsIntegral().bit_width;
-      if (IsPackedFourState(type, types, force_two_state)) {
+      if (IsLayoutPackedFourState(type, types, force_two_state)) {
         return GetFourStateStructType(ctx, bit_width);
       }
       return GetLlvmStorageType(ctx, bit_width);
@@ -337,7 +337,7 @@ auto GetLlvmTypeForTypeId(
     case TypeKind::kPackedStruct:
     case TypeKind::kEnum: {
       auto width = PackedBitWidth(type, types);
-      if (IsPackedFourState(type, types, force_two_state)) {
+      if (IsLayoutPackedFourState(type, types, force_two_state)) {
         return GetFourStateStructType(ctx, width);
       }
       return GetLlvmStorageType(ctx, width);
@@ -527,7 +527,7 @@ auto IsFieldScalarPatchable(
 
   // Must be packed and 4-state
   if (!IsPacked(type)) return false;
-  if (!IsPackedFourState(type, types, force_two_state)) return false;
+  if (!IsLayoutPackedFourState(type, types, force_two_state)) return false;
 
   // Must be a struct type with exactly 2 identical integer fields
   auto* struct_ty = llvm::dyn_cast<llvm::StructType>(field_type);
@@ -1333,7 +1333,7 @@ auto IsScalarPatchable(
 
   // Must be packed and 4-state
   if (!IsPacked(type)) return false;
-  if (!IsPackedFourState(type, types, force_two_state)) return false;
+  if (!IsLayoutPackedFourState(type, types, force_two_state)) return false;
 
   uint32_t width = PackedBitWidth(type, types);
   // Storage width must fit in 8/16/32/64 bits
@@ -1368,7 +1368,8 @@ auto BuildSlotInfo(
     } else if (IsPacked(type)) {
       uint32_t width = PackedBitWidth(type, types);
       bool is_signed = IsPackedSigned(type, types);
-      bool is_four_state = IsPackedFourState(type, types, force_two_state);
+      bool is_four_state =
+          IsLayoutPackedFourState(type, types, force_two_state);
       type_info = {
           .kind = VarTypeKind::kIntegral,
           .width = width > 0 ? width : 32,

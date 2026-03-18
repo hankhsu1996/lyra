@@ -344,77 +344,61 @@ def check_layout_boundaries(repo_root: Path) -> list[str]:
     return errors
 
 
-TYPE_QUERY_HPP = "include/lyra/llvm_backend/type_query.hpp"
-
-# Patterns that must go through type_query.hpp wrappers in backend code.
-# The wrappers respect force_two_state mode.
+# Intrinsic four-state query patterns forbidden in non-layout backend code.
+#
+# Architecture:
+# - Raw type facts: lyra::IsIntrinsically... (in common/)
+# - Session-owned effective queries: Context::IsFourState / IsPackedFourState
+# - Layout-phase pre-Context code: layout_four_state.hpp helpers (in layout/)
+#
+# Non-layout backend code must use Context methods. Direct intrinsic calls
+# bypass force_two_state and produce wrong results in --two-state mode.
 FOUR_STATE_FORBIDDEN_PATTERNS = [
     (re.compile(r'\bIsIntrinsicallyFourState\s*\('), "IsIntrinsicallyFourState("),
-    # Only catch direct type field access (AsIntegral().is_four_state).
-    # Struct field reads/writes on SlotTypeInfo, PlaceTypeInfo,
-    # PackedComputeContext are safe since those values are computed
-    # through the wrapper functions.
+    (re.compile(r'\bIsIntrinsicallyPackedFourState\s*\('), "IsIntrinsicallyPackedFourState("),
+    # Direct type field access bypasses all query layers.
     (re.compile(r'AsIntegral\(\)\.is_four_state'), "AsIntegral().is_four_state"),
 ]
 
-# IsIntrinsicallyPackedFourState( -- detect the common:: overload.
-# The canonical backend path is Context::IsPackedFourState() which embeds
-# force_two_state. The 3-arg wrapper in type_query.hpp is transitional --
-# it exists for layout-phase code that has force_two_state as a parameter
-# but no Context, and should be removed once those call sites are cleaned up.
-# We forbid qualified calls to the 2-arg intrinsic forms, which bypass
-# force_two_state entirely.
-FOUR_STATE_QUALIFIED_PATTERNS = [
-    (re.compile(r'\bcommon::IsIntrinsicallyPackedFourState\s*\('), "common::IsIntrinsicallyPackedFourState("),
-    (re.compile(r'\blyra::IsIntrinsicallyPackedFourState\s*\('), "lyra::IsIntrinsicallyPackedFourState("),
-]
-
-# Direct include of common/type_queries.hpp in backend .cpp files is
-# suspicious -- it enables calling IsIntrinsicallyPackedFourState without
-# force_two_state. Each allowlisted file is audited to use only non-four-state
-# queries (PackedBitWidth, IsPacked, etc.) from this header.
-TYPE_QUERIES_INCLUDE = '#include "lyra/common/type_queries.hpp"'
-
-TYPE_QUERIES_INCLUDE_ALLOWLIST = {
-    # PackedBitWidth, IsPacked -- Context methods used for 4-state decisions
-    "src/lyra/llvm_backend/context_place.cpp",
-    # PackedBitWidth for format width computation
-    "src/lyra/llvm_backend/format_lowering.cpp",
-    # PackedBitWidth, IsPacked, PackedArrayElementWidth -- layout ABI oracle
-    "src/lyra/llvm_backend/layout/layout.cpp",
-    # PackedBitWidth for slot sizing
-    "src/lyra/llvm_backend/context.cpp",
-    # PackedBitWidth for string conversion width
-    "src/lyra/llvm_backend/compute/string.cpp",
-    # PackedBitWidth for operator width
-    "src/lyra/llvm_backend/compute/ops.cpp",
-    # IsPacked for real/shortreal dispatch
-    "src/lyra/llvm_backend/compute/real.cpp",
-    # TypeContainsManaged, TypeContainsString
-    "src/lyra/llvm_backend/type_ops/managed.cpp",
-    # PackedBitWidth for string conversion
-    "src/lyra/llvm_backend/emit_string_conv.cpp",
-    # PackedBitWidth for metadata layout
-    "src/lyra/llvm_backend/design_metadata_lowering.cpp",
+# Files allowed to call raw intrinsic four-state queries.
+# These are the composition owners: layout_four_state.hpp defines the
+# layout-local helpers, and union_storage.cpp has an intrinsic-only builder.
+# All other layout files must use IsLayoutPackedFourState/IsLayoutFourState.
+FOUR_STATE_INTRINSIC_ALLOWED_SRC = {
+    "src/lyra/llvm_backend/layout/intrinsic_type_builder.cpp",
 }
 
+FOUR_STATE_INTRINSIC_ALLOWED_HPP = {
+    "include/lyra/llvm_backend/context.hpp",
+    "include/lyra/llvm_backend/layout/layout_four_state.hpp",
+}
 
-def is_type_query_hpp(rel_path: str) -> bool:
-    """Check if this is the type_query.hpp wrapper header."""
-    return rel_path == TYPE_QUERY_HPP
+# Layout files that must use IsLayout* helpers, not raw intrinsic queries.
+FOUR_STATE_LAYOUT_HELPER_REQUIRED = {
+    "src/lyra/llvm_backend/layout/layout.cpp",
+    "src/lyra/llvm_backend/layout/storage_contract.cpp",
+}
+
+# Patterns detecting raw intrinsic calls that layout helper files should
+# route through IsLayoutPackedFourState / IsLayoutFourState instead.
+FOUR_STATE_RAW_INTRINSIC_PATTERNS = [
+    (re.compile(r'\bIsIntrinsicallyFourState\s*\('), "IsIntrinsicallyFourState("),
+    (re.compile(r'\bIsIntrinsicallyPackedFourState\s*\('), "IsIntrinsicallyPackedFourState("),
+]
 
 
-def check_four_state_wrappers(repo_root: Path) -> list[str]:
-    """Check that backend code uses type_query.hpp wrappers for 4-state checks.
+def check_four_state_boundaries(repo_root: Path) -> list[str]:
+    """Check four-state query boundaries across the LLVM backend.
 
-    Scope: all .cpp and .hpp under src/lyra/llvm_backend/ and
-    include/lyra/llvm_backend/ (excluding type_query.hpp itself and
-    common/ headers which define the wrapped functions).
-
-    Checks:
-    1. Forbidden patterns: IsIntrinsicallyFourState(, AsIntegral().is_four_state
-    2. Qualified 2-arg calls: common::IsIntrinsicallyPackedFourState(, lyra::IsIntrinsicallyPackedFourState(
-    3. Direct include of common/type_queries.hpp in non-allowlisted files
+    Rules:
+    1. Non-layout backend .cpp: intrinsic four-state queries are forbidden.
+       Use Context::IsFourState / IsPackedFourState.
+    2. Layout helper files (layout.cpp, storage_contract.cpp): raw intrinsic
+       queries are forbidden. Use IsLayoutPackedFourState / IsLayoutFourState.
+    3. Intrinsic-allowed files (union_storage.cpp): raw intrinsic queries OK
+       (intrinsic-only contract, no force_two_state involved).
+    4. Backend .hpp files: intrinsic queries forbidden except in context.hpp
+       (owns the effective API) and layout_four_state.hpp (defines helpers).
     """
     errors = []
 
@@ -422,32 +406,34 @@ def check_four_state_wrappers(repo_root: Path) -> list[str]:
     llvm_backend_src = repo_root / "src/lyra/llvm_backend"
     for cpp in llvm_backend_src.rglob("*.cpp"):
         rel_path = cpp.relative_to(repo_root).as_posix()
+        if rel_path in FOUR_STATE_INTRINSIC_ALLOWED_SRC:
+            continue
         content = cpp.read_text()
         lines = content.split('\n')
 
-        for lineno, line in enumerate(lines, 1):
-            code = strip_comment(line)
-            for pattern, token in FOUR_STATE_FORBIDDEN_PATTERNS:
-                if pattern.search(code):
-                    errors.append(f"  {rel_path}:{lineno}: {token}")
-            for pattern, token in FOUR_STATE_QUALIFIED_PATTERNS:
-                if pattern.search(code):
-                    errors.append(f"  {rel_path}:{lineno}: {token}")
-
-        # Check for direct type_queries.hpp include in non-allowlisted files
-        if rel_path not in TYPE_QUERIES_INCLUDE_ALLOWLIST:
+        if rel_path in FOUR_STATE_LAYOUT_HELPER_REQUIRED:
+            # Layout files: ban raw intrinsic calls (must use IsLayout*)
             for lineno, line in enumerate(lines, 1):
-                if TYPE_QUERIES_INCLUDE in line:
-                    errors.append(
-                        f"  {rel_path}:{lineno}: {TYPE_QUERIES_INCLUDE} "
-                        f"(use llvm_backend/type_query.hpp instead)")
+                code = strip_comment(line)
+                for pattern, token in FOUR_STATE_RAW_INTRINSIC_PATTERNS:
+                    if pattern.search(code):
+                        errors.append(
+                            f"  {rel_path}:{lineno}: {token}"
+                            f" (use IsLayout* from layout_four_state.hpp)")
+        else:
+            # All other backend code: ban all intrinsic four-state patterns
+            for lineno, line in enumerate(lines, 1):
+                code = strip_comment(line)
+                for pattern, token in FOUR_STATE_FORBIDDEN_PATTERNS:
+                    if pattern.search(code):
+                        errors.append(f"  {rel_path}:{lineno}: {token}")
 
-    # Check .hpp files (excluding type_query.hpp)
+    # Check .hpp files
     llvm_backend_inc = repo_root / "include/lyra/llvm_backend"
     if llvm_backend_inc.exists():
         for hpp in llvm_backend_inc.rglob("*.hpp"):
             rel_path = hpp.relative_to(repo_root).as_posix()
-            if is_type_query_hpp(rel_path):
+            if rel_path in FOUR_STATE_INTRINSIC_ALLOWED_HPP:
                 continue
             content = hpp.read_text()
             lines = content.split('\n')
@@ -455,9 +441,6 @@ def check_four_state_wrappers(repo_root: Path) -> list[str]:
             for lineno, line in enumerate(lines, 1):
                 code = strip_comment(line)
                 for pattern, token in FOUR_STATE_FORBIDDEN_PATTERNS:
-                    if pattern.search(code):
-                        errors.append(f"  {rel_path}:{lineno}: {token}")
-                for pattern, token in FOUR_STATE_QUALIFIED_PATTERNS:
                     if pattern.search(code):
                         errors.append(f"  {rel_path}:{lineno}: {token}")
 
@@ -572,7 +555,7 @@ def run_self_tests() -> bool:
         print("SELF-TEST FAILED: GetPlacePointer pattern doesn't match expected code")
         return False
 
-    # Test 6: Four-state wrapper detection
+    # Test 6: Four-state boundary detection
     test_code4 = "if (IsIntrinsicallyFourState(type_id, types)) {"
     found = False
     for pattern, _ in FOUR_STATE_FORBIDDEN_PATTERNS:
@@ -593,29 +576,25 @@ def run_self_tests() -> bool:
         print("SELF-TEST FAILED: .is_four_state pattern not detected")
         return False
 
-    test_code6 = "common::IsIntrinsicallyPackedFourState(type, types)"
+    test_code6 = "IsIntrinsicallyPackedFourState(type, types)"
     found = False
-    for pattern, _ in FOUR_STATE_QUALIFIED_PATTERNS:
+    for pattern, _ in FOUR_STATE_FORBIDDEN_PATTERNS:
         if pattern.search(test_code6):
             found = True
             break
     if not found:
-        print("SELF-TEST FAILED: common::IsIntrinsicallyPackedFourState pattern not detected")
+        print("SELF-TEST FAILED: IsIntrinsicallyPackedFourState pattern not detected")
         return False
 
-    test_code7 = "lyra::IsIntrinsicallyPackedFourState(type, types)"
-    found = False
-    for pattern, _ in FOUR_STATE_QUALIFIED_PATTERNS:
-        if pattern.search(test_code7):
-            found = True
-            break
-    if not found:
-        print("SELF-TEST FAILED: lyra::IsIntrinsicallyPackedFourState pattern not detected")
+    # Verify allowlist membership
+    if "src/lyra/llvm_backend/layout/layout.cpp" not in FOUR_STATE_LAYOUT_HELPER_REQUIRED:
+        print("SELF-TEST FAILED: layout.cpp not in helper-required set")
         return False
-
-    # Verify type_query.hpp is recognized
-    if not is_type_query_hpp("include/lyra/llvm_backend/type_query.hpp"):
-        print("SELF-TEST FAILED: type_query.hpp not recognized")
+    if "src/lyra/llvm_backend/context.cpp" in FOUR_STATE_INTRINSIC_ALLOWED_SRC:
+        print("SELF-TEST FAILED: context.cpp incorrectly in intrinsic-allowed set")
+        return False
+    if "include/lyra/llvm_backend/context.hpp" not in FOUR_STATE_INTRINSIC_ALLOWED_HPP:
+        print("SELF-TEST FAILED: context.hpp not in intrinsic-allowed set")
         return False
 
     return True
@@ -636,7 +615,7 @@ def main() -> int:
     compute_errors = check_compute_boundaries(repo_root)
     layout_errors = check_layout_boundaries(repo_root)
     instruction_errors = check_instruction_boundaries(repo_root)
-    four_state_errors = check_four_state_wrappers(repo_root)
+    four_state_errors = check_four_state_boundaries(repo_root)
 
     all_errors = (store_errors + commit_errors + isdesign_errors +
                   writetarget_errors + compute_errors + layout_errors +
@@ -686,7 +665,7 @@ def main() -> int:
                 print(e)
             print()
         if four_state_errors:
-            print("ERROR: Direct 4-state calls in LLVM backend (use Context methods):")
+            print("ERROR: Intrinsic 4-state calls in non-layout backend code (use Context methods):")
             print()
             for e in four_state_errors:
                 print(e)

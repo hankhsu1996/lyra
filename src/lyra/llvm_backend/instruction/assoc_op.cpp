@@ -14,7 +14,6 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/runtime/assoc_map.hpp"
 
@@ -51,10 +50,8 @@ auto GetElemType(Context& ctx, mir::PlaceId receiver) -> TypeId {
 }
 
 // Determine LyraAssocElemKind for a type
-auto ClassifyElemKind(
-    TypeId elem_type, const TypeArena& types, bool force_two_state)
-    -> uint32_t {
-  const auto& type = types[elem_type];
+auto ClassifyElemKind(TypeId elem_type, const Context& ctx) -> uint32_t {
+  const auto& type = ctx.GetTypeArena()[elem_type];
   switch (type.Kind()) {
     case TypeKind::kString:
       return kLyraAssocElemString;
@@ -65,9 +62,8 @@ auto ClassifyElemKind(
     case TypeKind::kAssociativeArray:
       return kLyraAssocElemAssocArray;
     default:
-      return IsFourState(elem_type, types, force_two_state)
-                 ? kLyraAssocElemPod4State
-                 : kLyraAssocElemPod;
+      return ctx.IsFourState(elem_type) ? kLyraAssocElemPod4State
+                                        : kLyraAssocElemPod;
   }
 }
 
@@ -254,8 +250,7 @@ auto LoadOrAllocHandle(Context& ctx, mir::PlaceId receiver)
   builder.SetInsertPoint(alloc_bb);
   auto [receiver_type, aa_info] = GetAATypeInfo(ctx, receiver);
   auto key_consts = GetKeySpecConstants(aa_info.key_type, ctx.GetTypeArena());
-  uint32_t elem_kind = ClassifyElemKind(
-      aa_info.element_type, ctx.GetTypeArena(), ctx.IsForceTwoState());
+  uint32_t elem_kind = ClassifyElemKind(aa_info.element_type, ctx);
   uint32_t elem_size = GetElemByteSize(ctx, aa_info.element_type);
 
   auto* new_handle = builder.CreateCall(

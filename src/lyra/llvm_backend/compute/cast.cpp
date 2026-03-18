@@ -24,7 +24,6 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/emit_string_conv.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -98,21 +97,17 @@ auto LoadFourStateOperand(Context& context, const mir::Operand& operand)
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
 
-  bool force_2s = context.IsForceTwoState();
   bool is_four_state = std::visit(
       common::Overloaded{
           [&](const Constant& c) -> bool {
-            return IsTypeFourState(types, c.type, force_2s);
+            return context.IsFourState(c.type);
           },
           [&](mir::PlaceId place_id) -> bool {
             const auto& place = arena[place_id];
-            return IsTypeFourState(
-                types, mir::TypeOfPlace(types, place), force_2s);
+            return context.IsFourState(mir::TypeOfPlace(types, place));
           },
           [&](mir::TempId temp_id) -> bool {
-            // Look up the MIR type (source of truth), not the LLVM type
-            TypeId type = context.GetTempType(temp_id.value);
-            return IsTypeFourState(types, type, force_2s);
+            return context.IsFourState(context.GetTempType(temp_id.value));
           },
       },
       operand.payload);

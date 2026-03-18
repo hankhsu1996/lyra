@@ -27,7 +27,6 @@
 #include "lyra/llvm_backend/compute/result.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"

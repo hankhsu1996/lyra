@@ -8,7 +8,7 @@
 #include "lyra/common/packed_storage_abi.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
+#include "lyra/llvm_backend/layout/layout_four_state.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -83,7 +83,7 @@ auto ResolvePackedSpec(
     -> PackedStorageSpec {
   uint32_t width = PackedBitWidth(type, types);
   bool is_four_state =
-      IsPackedFourState(type, types, mode == StorageMode::kTwoState);
+      IsLayoutPackedFourState(type, types, mode == StorageMode::kTwoState);
   uint32_t lane_size = GetStorageByteSize(width);
   uint32_t align = GetStorageAlignment(width);
   // Dense storage: known lane immediately followed by unknown lane.
