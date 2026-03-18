@@ -16,6 +16,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
+#include "lyra/metadata/design_metadata.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
@@ -57,8 +58,8 @@ struct PlaceIdHash {
 // Multiple PlaceIds with the same root (but different projections) share
 // one frame slot.
 struct PlaceRootKey {
-  mir::PlaceRoot::Kind kind;
-  int id;
+  mir::PlaceRoot::Kind kind = {};
+  int id = 0;
 
   auto operator==(const PlaceRootKey&) const -> bool = default;
 };
@@ -170,6 +171,10 @@ struct ResolvedObservation {
 // Entry for a connection process that has been kernelized.
 // Instead of generating a per-process LLVM function, these are batched
 // into a connection descriptor table evaluated inline by the engine.
+//
+// Today, all kernelized connections come from port bindings (Phase 2
+// of BuildLayout). Module-internal continuous assigns are lowered as
+// always_comb processes and kernelized as CombKernels, not connections.
 struct ConnectionKernelEntry {
   mir::ProcessId process_id;
   mir::SlotId src_slot;
@@ -177,6 +182,8 @@ struct ConnectionKernelEntry {
   mir::SlotId trigger_slot;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
   std::optional<ResolvedObservation> trigger_observation;
+  metadata::ConnectionKernelOrigin origin =
+      metadata::ConnectionKernelOrigin::kPortBinding;
 };
 
 // Trigger observation for a comb kernel input slot.
@@ -250,22 +257,12 @@ struct Layout {
   auto GetInstanceRelByteOffsets(ModuleIndex idx) const
       -> const std::vector<uint64_t>&;
 
- private:
-  friend auto BuildLayout(
-      std::span<const mir::ProcessId> init_processes,
-      std::span<const mir::ProcessId> connection_processes,
-      std::span<const struct LayoutModulePlan> module_plans,
-      const mir::Design& design, const mir::Arena& design_arena,
-      const TypeArena& types, DesignLayout design_layout,
-      llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
-      -> Layout;
-
   // Pre-computed byte offset of each instance's slot base in DesignState.
-  // Parallel to placement.instances. Access via GetInstanceBaseByteOffset.
+  // Parallel to placement.instances.
   std::vector<uint64_t> instance_base_byte_offsets;
   // Per-instance raw relative byte offsets (body-local slot order).
   // Indexed by module_index, each inner vector has slot_count entries.
-  std::vector<std::vector<uint64_t>> instance_rel_byte_offsets_;
+  std::vector<std::vector<uint64_t>> instance_rel_byte_offsets;
 };
 
 // Type kind for variable inspection (also used in layout)
@@ -277,10 +274,10 @@ enum class VarTypeKind : uint8_t {
 
 // Type info for a design slot (for layout and initialization)
 struct SlotTypeInfo {
-  VarTypeKind kind;
-  uint32_t width;      // Bit width (64 for real)
-  bool is_signed;      // Signedness (integral only)
-  bool is_four_state;  // 4-state (logic, reg) vs 2-state (bit, int)
+  VarTypeKind kind = VarTypeKind::kIntegral;
+  uint32_t width = 0;
+  bool is_signed = false;
+  bool is_four_state = false;
 };
 
 // Input for slot type information (provided by caller)
@@ -351,8 +348,8 @@ auto BuildDesignLayout(
 struct LayoutModulePlan {
   std::span<const mir::ProcessId> body_processes;
   mir::ModuleBodyId body_id;
-  uint32_t design_state_base_slot;
-  uint32_t slot_count;
+  uint32_t design_state_base_slot = 0;
+  uint32_t slot_count = 0;
 };
 
 // Build complete backend layout from narrow planning inputs.

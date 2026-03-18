@@ -616,7 +616,15 @@ auto BuildDesignMetadata(
       realization.slot_types, realization.slot_kinds,
       realization.instance_paths, type_arena);
 
-  realization::DesignMetadataInputs metadata_inputs{
+  // Port-binding forwarding candidate analysis (analysis only, no transform).
+  // TODO(hankhsu): Gate behind verbose/debug flag when one is available
+  // in the emit_design_main input. Currently always runs (cheap) but
+  // logging is conditional on candidates existing.
+  auto forwarding_candidates = FindPortBindingForwardingCandidates(
+      conn_desc_entries, process_trigger_inputs, comb_inputs, slot_count);
+  LogPortBindingForwardingCandidates(forwarding_candidates);
+
+  metadata::DesignMetadataInputs metadata_inputs{
       .slot_meta = std::move(slot_meta_inputs),
       .scheduled_processes = std::move(scheduled_inputs),
       .back_edge_sites = std::move(back_edge_site_inputs),

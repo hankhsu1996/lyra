@@ -1403,14 +1403,14 @@ auto Layout::GetInstanceBaseByteOffset(ModuleIndex idx) const -> uint64_t {
 
 auto Layout::GetInstanceRelByteOffsets(ModuleIndex idx) const
     -> const std::vector<uint64_t>& {
-  if (idx.value >= instance_rel_byte_offsets_.size()) {
+  if (idx.value >= instance_rel_byte_offsets.size()) {
     throw common::InternalError(
         "GetInstanceRelByteOffsets",
         std::format(
             "module_index {} out of range (size={})", idx.value,
-            instance_rel_byte_offsets_.size()));
+            instance_rel_byte_offsets.size()));
   }
-  return instance_rel_byte_offsets_[idx.value];
+  return instance_rel_byte_offsets[idx.value];
 }
 
 auto BuildLayout(
@@ -1568,7 +1568,7 @@ auto BuildLayout(
 
     // Compute per-instance raw relative byte offsets.
     // Consumed by spec compilation to classify slots as stable/unstable.
-    layout.instance_rel_byte_offsets_.resize(num_instances);
+    layout.instance_rel_byte_offsets.resize(num_instances);
 
     for (size_t mi = 0; mi < num_instances; ++mi) {
       const auto& plan = module_plans[mi];
@@ -1579,7 +1579,7 @@ auto BuildLayout(
           rel_offsets[i] = offsets[plan.design_state_base_slot + i] - base;
         }
       }
-      layout.instance_rel_byte_offsets_[mi] = std::move(rel_offsets);
+      layout.instance_rel_byte_offsets[mi] = std::move(rel_offsets);
     }
   }
 

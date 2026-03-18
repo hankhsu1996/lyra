@@ -1,9 +1,10 @@
 #pragma once
 
-#include "lyra/realization/design_metadata.hpp"
+#include "lyra/metadata/design_metadata.hpp"
 
 namespace lyra::realization {
 
-auto BuildDesignMetadata(const DesignMetadataInputs& input) -> DesignMetadata;
+auto BuildDesignMetadata(const metadata::DesignMetadataInputs& input)
+    -> metadata::DesignMetadata;
 
 }  // namespace lyra::realization

@@ -15,7 +15,7 @@ namespace lyra::realization {
 
 namespace {
 
-auto BuildSlotMetaWords(const std::vector<SlotMetaInput>& slots)
+auto BuildSlotMetaWords(const std::vector<metadata::SlotMetaInput>& slots)
     -> std::vector<uint32_t> {
   if (slots.empty()) {
     return {};
@@ -37,8 +37,9 @@ auto BuildSlotMetaWords(const std::vector<SlotMetaInput>& slots)
   return words;
 }
 
-auto BuildProcessMeta(const std::vector<ScheduledProcessInput>& processes)
-    -> MetaWordTable {
+auto BuildProcessMeta(
+    const std::vector<metadata::ScheduledProcessInput>& processes)
+    -> metadata::MetaWordTable {
   if (processes.empty()) {
     return {};
   }
@@ -71,8 +72,9 @@ auto BuildProcessMeta(const std::vector<ScheduledProcessInput>& processes)
   return {.words = std::move(words), .pool = std::move(pool)};
 }
 
-auto BuildBackEdgeSiteMeta(const std::vector<BackEdgeSiteInput>& sites)
-    -> MetaWordTable {
+auto BuildBackEdgeSiteMeta(
+    const std::vector<metadata::BackEdgeSiteInput>& sites)
+    -> metadata::MetaWordTable {
   if (sites.empty()) {
     return {};
   }
@@ -101,7 +103,7 @@ auto BuildBackEdgeSiteMeta(const std::vector<BackEdgeSiteInput>& sites)
   return {.words = std::move(words), .pool = std::move(pool)};
 }
 
-auto BuildCombKernelWords(const std::vector<CombKernelInput>& kernels)
+auto BuildCombKernelWords(const std::vector<metadata::CombKernelInput>& kernels)
     -> std::vector<uint32_t> {
   if (kernels.empty()) {
     return {};
@@ -126,8 +128,9 @@ auto BuildCombKernelWords(const std::vector<CombKernelInput>& kernels)
   return words;
 }
 
-auto BuildTraceSignalMeta(const std::vector<TraceSignalMetaInput>& signals)
-    -> MetaWordTable {
+auto BuildTraceSignalMeta(
+    const std::vector<metadata::TraceSignalMetaInput>& signals)
+    -> metadata::MetaWordTable {
   if (signals.empty()) return {};
 
   std::vector<char> pool;
@@ -156,7 +159,8 @@ auto BuildTraceSignalMeta(const std::vector<TraceSignalMetaInput>& signals)
 
 }  // namespace
 
-auto BuildDesignMetadata(const DesignMetadataInputs& input) -> DesignMetadata {
+auto BuildDesignMetadata(const metadata::DesignMetadataInputs& input)
+    -> metadata::DesignMetadata {
   // Verify scheduled_process_index values are dense and monotonic.
   for (uint32_t i = 0; i < input.scheduled_processes.size(); ++i) {
     if (input.scheduled_processes[i].scheduled_process_index != i) {
@@ -241,7 +245,7 @@ auto BuildDesignMetadata(const DesignMetadataInputs& input) -> DesignMetadata {
     }
   }
 
-  return DesignMetadata{
+  return metadata::DesignMetadata{
       .slot_meta_words = std::move(slot_meta_words),
       .process_meta = std::move(process_meta),
       .back_edge_site_meta = std::move(back_edge_site_meta),
