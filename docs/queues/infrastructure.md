@@ -29,13 +29,3 @@ Test cases should stay in their feature YAML files. CI exclusion and expected-fa
 Target direction: centralized expectations overlay with per-case metadata: status (unsupported / xfail / quarantine / skip), reason, issue ID, scope. Framework reads the overlay at test registration and applies GTEST_SKIP or xfail. Ratchet checks prevent stale entries.
 
 Current workaround: gtest_filter exclusion in BUILD.bazel. This is not the target structure.
-
-## I3: Four-state query layer boundary
-
-Two distinct semantic concepts (intrinsic type four-state-ness vs effective lowering four-state-ness) shared the same name and were both visible from backend code. Backend code could call the intrinsic version by accident, producing correct results in 4-state mode but failing silently in two-state mode.
-
-Immediate fixes applied: the actual bug was fixed, a policy check was added to ban the intrinsic call from backend code, and two-state test coverage was added.
-
-Remaining work: rename the intrinsic queries to make the semantic distinction visible at every call site, remove the backend free-function wrapper layer (route through Context only), pull union_storage type builders to an explicitly intrinsic contract, audit other type queries for the same pattern, and investigate banning the common type query header from backend code entirely.
-
-See the four-state query helpers in the common type query layer and the backend type query layer for where to look.

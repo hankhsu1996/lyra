@@ -26,11 +26,9 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
-#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
@@ -244,7 +242,7 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
   llvm::Type* llvm_type = nullptr;
   if (type.Kind() == TypeKind::kIntegral) {
     uint32_t bit_width = type.AsIntegral().bit_width;
-    if (mir_to_llvm::IsPackedFourState(type, types_, force_two_state_)) {
+    if (IsPackedFourState(type)) {
       llvm_type = GetFourStateStructType(*llvm_context_, bit_width);
     } else {
       llvm_type = GetLlvmStorageType(*llvm_context_, bit_width);
@@ -261,7 +259,7 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
     llvm_type = llvm::PointerType::getUnqual(*llvm_context_);
   } else if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
-    if (mir_to_llvm::IsPackedFourState(type, types_, force_two_state_)) {
+    if (IsPackedFourState(type)) {
       llvm_type = GetFourStateStructType(*llvm_context_, width);
     } else {
       llvm_type = GetLlvmStorageType(*llvm_context_, width);
@@ -337,7 +335,7 @@ void Context::BindTemp(int temp_id, llvm::Value* v, TypeId type) {
   //
   // GetLlvmAbiTypeForValue returns storage types (i8 for 1-bit), but temps
   // use semantic types (i1 for 1-bit). The key invariant is 2s vs 4s.
-  bool mir_is_4s = IsTypeFourState(types_, type, force_two_state_);
+  bool mir_is_4s = IsFourState(type);
   bool llvm_is_struct = v->getType()->isStructTy();
   if (mir_is_4s != llvm_is_struct) {
     throw common::InternalError(

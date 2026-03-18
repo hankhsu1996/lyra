@@ -25,7 +25,6 @@
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/type_ops/dispatch.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"

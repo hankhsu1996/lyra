@@ -22,7 +22,6 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/marshal.hpp"

@@ -14,10 +14,11 @@
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
+#include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
-#include "lyra/llvm_backend/type_query.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
@@ -225,10 +226,12 @@ class Context {
     return force_two_state_;
   }
   [[nodiscard]] auto IsFourState(TypeId type_id) const -> bool {
-    return mir_to_llvm::IsFourState(type_id, types_, force_two_state_);
+    if (force_two_state_) return false;
+    return lyra::IsIntrinsicallyFourState(type_id, types_);
   }
   [[nodiscard]] auto IsPackedFourState(const Type& type) const -> bool {
-    return mir_to_llvm::IsPackedFourState(type, types_, force_two_state_);
+    if (force_two_state_) return false;
+    return lyra::IsIntrinsicallyPackedFourState(type, types_);
   }
 
   [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
