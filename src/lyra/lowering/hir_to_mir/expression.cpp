@@ -89,7 +89,7 @@ void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
   const Type& type = types[type_id];
 
   if (IsPacked(type)) {
-    if (IsPackedFourState(type, types)) {
+    if (IsIntrinsicallyPackedFourState(type, types)) {
       uint32_t bw = PackedBitWidth(type, types);
       IntegralConstant ic;
       if (bw <= 64) {
@@ -118,7 +118,7 @@ void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
     case TypeKind::kUnpackedStruct: {
       const auto& info = type.AsUnpackedStruct();
       for (int i = 0; i < static_cast<int>(info.fields.size()); ++i) {
-        if (!IsFourStateType(info.fields[i].type, types)) continue;
+        if (!IsIntrinsicallyFourState(info.fields[i].type, types)) continue;
         mir::PlaceId field_place = ctx.DerivePlace(
             place,
             mir::Projection{.info = mir::FieldProjection{.field_index = i}});
@@ -128,7 +128,7 @@ void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
     }
     case TypeKind::kUnpackedArray: {
       const auto& info = type.AsUnpackedArray();
-      if (!IsFourStateType(info.element_type, types)) break;
+      if (!IsIntrinsicallyFourState(info.element_type, types)) break;
       TypeId offset_type = ctx.GetOffsetType();
       for (int64_t idx = 0; idx < static_cast<int64_t>(info.range.Size());
            ++idx) {
@@ -149,7 +149,7 @@ void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
       if (!info.storage_is_four_state) break;
       // Union storage is a single blob; fill via its first 4-state member.
       for (uint32_t i = 0; i < info.members.size(); ++i) {
-        if (!IsFourStateType(info.members[i].type, types)) continue;
+        if (!IsIntrinsicallyFourState(info.members[i].type, types)) continue;
         mir::PlaceId member_place = ctx.DerivePlace(
             place, mir::Projection{
                        .info = mir::UnionMemberProjection{.member_index = i}});
@@ -2444,7 +2444,7 @@ auto LowerElementAccessRvalue(
 
   // OOB path: fill 4-state sub-content with X (2-state stays zero).
   builder.SetCurrentBlock(oob_bb);
-  if (IsFourStateType(expr.type, *ctx.type_arena)) {
+  if (IsIntrinsicallyFourState(expr.type, *ctx.type_arena)) {
     EmitOOBDefault(result_temp, expr.type, builder);
   }
   builder.EmitJump(merge_bb);

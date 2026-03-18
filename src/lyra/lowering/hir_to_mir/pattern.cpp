@@ -31,7 +31,8 @@ auto LowerPattern(
     }
 
     // Get bit_type for kIntegral case (use 4-state nature from target)
-    bool is_four_state = IsPackedFourState(target_type, *ctx.type_arena);
+    bool is_four_state =
+        IsIntrinsicallyPackedFourState(target_type, *ctx.type_arena);
     TypeId bit_type = ctx.GetUnitBitType(is_four_state);
     PackedFillShape shape =
         ComputePackedFillShape(target_type_id, *ctx.type_arena, bit_type);

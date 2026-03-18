@@ -38,7 +38,8 @@ auto LowerPattern(
   // Compute fill shape to get unit_type
   // For kIntegral targets, we need a 1-bit type matching the 4-state nature
   const Type& target_type = (*ctx->type_arena)[target_type_id];
-  bool is_four_state = IsPackedFourState(target_type, *ctx->type_arena);
+  bool is_four_state =
+      IsIntrinsicallyPackedFourState(target_type, *ctx->type_arena);
   TypeId bit_type = ctx->type_arena->Intern(
       TypeKind::kIntegral,
       IntegralInfo{

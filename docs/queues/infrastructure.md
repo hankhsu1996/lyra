@@ -181,11 +181,16 @@ Audit other type queries for the same pattern: one intrinsic API in `common/` an
 
 Investigate whether `common/type_queries.hpp` should be banned from backend `.cpp` files entirely. If backend code only needs effective queries (through `Context`) and layout helpers (through the renamed intrinsic), the common header inclusion is unnecessary and should be flagged. The current allowlist (10 files, all annotated with reasons) is the starting point for removal.
 
-### Stages
+### Remaining work
 
-- Bug fixes + policy check + convergence -- done
-- Rename intrinsic queries (mechanical, ~31 files)
-- Remove wrapper layer in `type_query.hpp`
-- Pull union_storage builders to intrinsic-only contract
-- Same-family audit
-- Include boundary enforcement
+#### Remove wrapper layer in `type_query.hpp`
+
+The 3-arg free-function wrappers (`mir_to_llvm::IsPackedFourState`, `mir_to_llvm::IsFourState`) are still used by layout-phase code that has `force_two_state` as a parameter but no `Context`: 7 sites in `layout.cpp`, 1 in `storage_contract.cpp`. Removing the wrappers requires either passing `Context` into layout helpers or inlining the `if (force_two_state) return false` guard at each call site.
+
+#### Same-family audit
+
+Audit other type queries for the same pattern: one intrinsic API in `common/` and one effective API in the backend, with overlapping names. Candidates: `IsFourStateIndex`, signedness queries, packed bit width.
+
+#### Include boundary enforcement
+
+Investigate whether `common/type_queries.hpp` should be banned from backend `.cpp` files entirely. The current allowlist (10 files, annotated with reasons) is the starting point for removal.

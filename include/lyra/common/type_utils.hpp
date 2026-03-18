@@ -138,7 +138,8 @@ inline auto BlobBitSize(TypeId type_id, const TypeArena& types) -> uint32_t {
   }
 }
 
-inline auto IsFourStateType(TypeId type_id, const TypeArena& types) -> bool {
+inline auto IsIntrinsicallyFourState(TypeId type_id, const TypeArena& types)
+    -> bool {
   const auto& type = types[type_id];
   switch (type.Kind()) {
     case TypeKind::kReal:
@@ -149,21 +150,21 @@ inline auto IsFourStateType(TypeId type_id, const TypeArena& types) -> bool {
     case TypeKind::kPackedArray:
     case TypeKind::kPackedStruct:
     case TypeKind::kEnum:
-      return IsPackedFourState(type, types);
+      return IsIntrinsicallyPackedFourState(type, types);
     case TypeKind::kUnpackedStruct: {
       const auto& info = type.AsUnpackedStruct();
       return std::ranges::any_of(info.fields, [&](const auto& field) {
-        return IsFourStateType(field.type, types);
+        return IsIntrinsicallyFourState(field.type, types);
       });
     }
     case TypeKind::kUnpackedArray: {
       const auto& info = type.AsUnpackedArray();
-      return IsFourStateType(info.element_type, types);
+      return IsIntrinsicallyFourState(info.element_type, types);
     }
     case TypeKind::kUnpackedUnion: {
       const auto& info = type.AsUnpackedUnion();
       return std::ranges::any_of(info.members, [&](const auto& member) {
-        return IsFourStateType(member.type, types);
+        return IsIntrinsicallyFourState(member.type, types);
       });
     }
     default:
