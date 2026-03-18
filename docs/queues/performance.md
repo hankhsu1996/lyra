@@ -31,8 +31,11 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 - [x] Packed storage view Stage 0: module boundary + data model
 - [x] Packed storage view Stage 1: byte-addressable localized read
 - [x] Packed storage view Stage 2: byte-addressable localized immediate write (benchmark pending)
-- [ ] Packed storage view Stage 3: localized deferred/NBA write
+- [x] Packed storage view Stage 3: localized deferred/NBA write (#585)
 - [ ] Packed storage view Stage 4: whole-value materialization boundary
+- [ ] Commit-boundary model: visibility/commit boundary definition
+- [ ] Commit-boundary model: region-local read/write/observation analysis
+- [ ] Commit-boundary model: delayed-commit register promotion
 - [ ] G14: NBA arena (bump-allocator for value/mask bytes)
 - [ ] G5 remaining: RangeSet linear scan + ClearDelta per-region reset
 - [ ] Signal flush helpers optimization
@@ -41,13 +44,21 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 
 ## Active Gaps
 
-### Packed storage view Stage 3: localized deferred/NBA write
+### Commit-boundary model: visibility/commit boundary definition
 
-NBA bit-range writes still use the old full-width shifted value + mask path. The deferred assign handler bypasses the packed storage view module entirely. Same optimization opportunity as Stage 2 -- narrow the write region for byte-aligned elements instead of building full-width masks.
+Slot-backed scalar variables (module-level `int`, `logic`, etc.) are currently materialized as load/store through slot memory on every access, even inside tight non-yielding loops where no external observation is possible. The existing deferred-notification mechanism delays dirty-mark calls to loop exit, but does not delay the storage commit itself. The result is a load-add-store chain through memory every iteration for patterns like loop accumulators, instead of register-resident computation with a single commit at the boundary.
 
-See the deferred assign handler in the instruction lowering layer and the stub in the packed storage view module. No runtime interface changes needed.
+The first layer needed is a clear model for when a slot-backed value must be materialized back to visible slot state. Inside a region, values may exist only as local temporary truth. At boundaries, they must be committed because the outside world may observe them. This must be defined conservatively and specialization-locally, because a specialization cannot see the whole design. The question is not "can we prove no other module ever cares" but "at what points must we assume external visibility can matter."
 
-Test gap: existing NBA packed tests cover whole-element writes but not partial bit-range NBA within packed arrays.
+The natural commit-boundary scope is activation-local (resume to next yield/return), not loop-local or basic-block-local. Within an activation, no other process runs, so single-writer exclusivity holds. Commit points are yield (`#delay`), NBA region boundaries, calls that may externally observe slot state, and process return.
+
+### Commit-boundary model: region-local read/write/observation analysis
+
+Analysis facts for the region between commit boundaries. Not just which roots become dirty, but which slot-backed values are read, written, or potentially observed inside the region. This is the proof that tells us whether a slot-backed scalar is safe to keep as local temporary state until the next commit boundary. The current deferred-notification analysis tracks notified roots (write set) but not the read set or observation set. Must be specialization-local.
+
+### Commit-boundary model: delayed-commit register promotion
+
+Keep eligible slot-backed scalars in registers across a region, commit back to slot storage only at required boundaries. This is the downstream optimization that uses the commit-boundary definition and region-local analysis. It is not the first thing to build.
 
 ### Packed storage view Stage 4: whole-value materialization boundary
 
