@@ -187,13 +187,33 @@ Packed objects are stored as contiguous packed storage but the LLVM backend reas
 
 **Target direction:** Backend packed storage view model where localized subview access and whole-value materialization are separate explicit consumers of canonical packed storage. First consumer is packed-array element access; the model extends to packed struct fields, nested aggregates, and part-selects.
 
-**Stages:**
+**Progress: 2/4 stages complete.**
 
-- Stage 0: module boundary + data model -- done
-- Stage 1: byte-addressable localized read -- done (packed-array-read at Verilator parity)
-- Stage 2: byte-addressable localized immediate write
-- Stage 3: byte-addressable localized deferred/NBA write
-- Stage 4: whole-value materialization boundary enforcement
+- [x] Stage 0: module boundary + data model
+- [x] Stage 1: byte-addressable localized read (packed-array-read at Verilator parity)
+- [x] Stage 2: byte-addressable localized immediate write (benchmark validation pending)
+- [ ] Stage 3: byte-addressable localized deferred/NBA write
+- [ ] Stage 4: whole-value materialization boundary enforcement
+
+**Stage 2 details (completed):** `StoreBitRange` routes through `EmitStoreToPackedSubview`. Byte-addressable path does narrow GEP + narrow load/store/compare per plane. Bit-addressable fallback does full-width RMW via `LoadFullPlanes`/`StoreFullPlanes`. Storage-kind awareness (canonical vs local) with forced fallback for locals. `is_element_scaled` flag on `BitRangeProjection` for sound alignment proof. Shared `EmitPackedStoreNotification` with dirty-range derivation. Targeted tests in `optimization/packed_localized_write/`.
+
+**Stage 3 gap: localized deferred/NBA write.**
+
+Current path (`LowerDeferredAssignBitRange`, deferred_assign.cpp:246-335): builds full-width shifted value + full-width shifted mask, calls `EmitScheduleNbaCall` which allocates allocas and calls `LyraScheduleNba(engine, write_ptr, notify_base_ptr, val_ptr, mask_ptr, byte_size, signal_id)`.
+
+Byte-addressable optimization: for `data[i] <= val` where element is byte-aligned, pass `write_ptr = GEP to element byte offset`, `byte_size = element storage bytes`, `mask_ptr = nullptr` (full overwrite of narrow region). Avoids full-width shift/mask construction and per-byte masked merge in runtime.
+
+Implementation: stub `EmitSchedulePackedSubviewWrite` in packed_storage_view.cpp. Caller side (`LowerDeferredAssign` in deferred_assign.cpp:438-439) checks `HasBitRangeProjection` and dispatches. Migration makes it route through `ExtractPackedAccessPath` -> `ResolvePackedSubview` -> `EmitSchedulePackedSubviewWrite` instead.
+
+Key difference from Stage 2: Stage 2 stores directly to memory. Stage 3 must allocate allocas for value (and optionally mask), store into them, then call `LyraScheduleNba` with pointers. The runtime applies the write later in the NBA region.
+
+No runtime interface changes needed. `LyraScheduleNba` already takes separate `write_ptr` and `byte_size` parameters.
+
+Test gap: `scheduling/nba_packed/default.yaml` covers whole-element NBA but not partial bit-range NBA within packed arrays.
+
+**Stage 4 gap: whole-value materialization boundary.**
+
+`CommitPackedValueRaw` in `commit_packed.cpp` (lines 373-391) is the old whole-value path. Stubs `MaterializePackedValue` + `StorePackedValue` need implementation. Callers: init effects (`effect.cpp`), array/struct initialization (`type_ops/array.cpp`, `type_ops/struct.cpp`), direct packed assigns. Architecture goal: no direct whole-value load/store outside the packed storage view module.
 
 ### G4b: Per-activation atomic stores
 
