@@ -56,6 +56,10 @@ suites:
 
   # AOT smoke suite - small, stable subset for fast PR gating.
   # Keep ~20-40 YAML files max. Tighten patterns if they expand.
+  #
+  # PR-gate smoke coverage families (distinct lowering/write paths):
+  #   assoc_arrays, dynamic_arrays, queues, unpacked_struct, unpacked_arrays
+  # Extend this list when a new family introduces a distinct write/commit path.
   aot_smoke:
     backend: aot
     include_regex:
@@ -63,7 +67,11 @@ suites:
       - ^control_flow/for/
       - ^datatypes/integral/variables/
       - ^datatypes/packed/packed_struct/
+      - ^datatypes/unpacked/assoc_arrays/
       - ^datatypes/unpacked/dynamic_arrays/
+      - ^datatypes/unpacked/queues/
+      - ^datatypes/unpacked/unpacked_arrays/
+      - ^datatypes/unpacked/unpacked_struct/
       - ^directives/timescale/
       - ^functions/basic/
       - ^generate/generate/

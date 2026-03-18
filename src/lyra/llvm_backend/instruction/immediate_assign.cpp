@@ -25,8 +25,8 @@
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/type_ops/dispatch.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
+#include "lyra/llvm_backend/write_plan.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
@@ -232,6 +232,9 @@ auto LowerManagedStructLiteral(
 }
 
 // Lower an Rvalue source assignment.
+// Rvalue adapter: determines result type, handles rvalue-specific
+// preprocessing (aggregate literals, 4-state packing), then routes
+// through DispatchWrite. Does not own semantic write-shape decisions.
 auto LowerRvalueAssign(
     Context& context, mir::PlaceId target, const mir::Rvalue& rvalue)
     -> Result<void> {
@@ -240,31 +243,51 @@ auto LowerRvalueAssign(
   TypeId result_type = mir::TypeOfPlace(types, arena[target]);
   const Type& type = types[result_type];
 
-  // Check for managed aggregate literal: handle field-by-field
-  if (std::holds_alternative<mir::AggregateRvalueInfo>(rvalue.info) &&
-      NeedsFieldByField(result_type, types)) {
-    if (type.Kind() == TypeKind::kUnpackedStruct) {
+  // Aggregate literal special case: some write shapes cannot be represented
+  // as a single raw value. Route explicitly by plan before falling through
+  // to the generic raw-value path.
+  if (std::holds_alternative<mir::AggregateRvalueInfo>(rvalue.info)) {
+    auto plan = BuildWritePlan(result_type, types);
+
+    if (plan.op == WriteOp::kCommitFieldByFieldStruct) {
       return LowerManagedStructLiteral(context, target, rvalue, result_type);
     }
-    return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-        context.GetCurrentOrigin(), "managed array literal not yet supported",
-        UnsupportedCategory::kType));
+    if (plan.op == WriteOp::kCommitFieldByFieldArray) {
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          context.GetCurrentOrigin(), "managed array literal not yet supported",
+          UnsupportedCategory::kType));
+    }
+    if (plan.op == WriteOp::kRejectUnsupported) {
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          context.GetCurrentOrigin(),
+          "unpacked aggregate with container fields "
+          "(dynamic array/queue) not yet supported",
+          UnsupportedCategory::kFeature));
+    }
+    if (plan.op == WriteOp::kCommitUnionMemcpy) {
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          context.GetCurrentOrigin(),
+          "union aggregate rvalue assignment not yet supported",
+          UnsupportedCategory::kFeature));
+    }
+    // Other plans (kStorePlainAggregate, kCommitPackedOrFloatScalar,
+    // kCommitManagedScalar) can proceed to the generic raw-value path.
   }
 
-  // Standard path: evaluate rvalue, store via commit
+  // Standard path: evaluate rvalue to raw LLVM value(s)
   auto rv_result = LowerRvalue(context, rvalue, result_type);
   if (!rv_result) return std::unexpected(rv_result.error());
   llvm::Value* value = rv_result->value;
   llvm::Value* unknown = rv_result->unknown;
 
-  // For packed 4-state, pack value + unknown into struct before storing
+  // Rvalue-specific 4-state packing: LowerRvalue produces value+unknown
+  // separately; pack into {val, unk} struct for the commit path.
   if (IsPacked(type) && context.IsPackedFourState(type)) {
     auto storage_type_or_err = context.GetPlaceLlvmType(target);
     if (!storage_type_or_err)
       return std::unexpected(storage_type_or_err.error());
     auto* struct_type = llvm::cast<llvm::StructType>(*storage_type_or_err);
     auto* elem_type = struct_type->getElementType(0);
-    // Coerce value and unknown to struct element type
     auto& builder = context.GetBuilder();
     value = builder.CreateZExtOrTrunc(value, elem_type, "rv.val.fit");
     if (unknown == nullptr) {
@@ -275,26 +298,10 @@ auto LowerRvalueAssign(
     value = PackFourState(builder, struct_type, value, unknown);
   }
 
-  // For packed types, use raw store (no ownership semantics)
-  if (IsPacked(type)) {
-    CommitPackedValueRaw(context, target, value, result_type);
-    return {};
-  }
-
-  // For POD unpacked aggregates (no managed fields), use simple store.
-  if ((type.Kind() == TypeKind::kUnpackedStruct ||
-       type.Kind() == TypeKind::kUnpackedArray) &&
-      !NeedsFieldByField(result_type, types)) {
-    auto target_ptr_result = context.GetPlacePointer(target);
-    if (!target_ptr_result) return std::unexpected(target_ptr_result.error());
-    context.GetBuilder().CreateStore(value, *target_ptr_result);
-    CommitNotifyAggregateIfDesignSlot(context, target);
-    return {};
-  }
-
-  // For managed types, use CommitValue which handles Destroy internally
-  return CommitValue(
-      context, target, value, result_type, OwnershipPolicy::kMove);
+  // Dispatch through shared write orchestrator
+  return DispatchWrite(
+      context, target, RawValueSource{value}, result_type,
+      OwnershipPolicy::kMove);
 }
 
 }  // namespace

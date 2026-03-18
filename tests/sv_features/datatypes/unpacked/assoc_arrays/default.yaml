@@ -479,3 +479,63 @@ cases:
       variables:
         a: 99
         b: 10
+
+  - name: struct_element_whole_write
+    description: Write and read struct-typed element
+    sv: |
+      module Test;
+        int a;
+        int b;
+        initial begin
+          typedef struct { int x; int y; } point_t;
+          point_t aa[int];
+          aa[0] = '{x: 10, y: 20};
+          a = aa[0].x;
+          b = aa[0].y;
+        end
+      endmodule
+    expect:
+      variables:
+        a: 10
+        b: 20
+
+  - name: array_element_write
+    description: Write and read unpacked-array-typed element
+    sv: |
+      module Test;
+        int a;
+        int b;
+        initial begin
+          typedef int pair_t[2];
+          pair_t aa[int];
+          aa[0] = '{10, 20};
+          a = aa[0][0];
+          b = aa[0][1];
+        end
+      endmodule
+    expect:
+      variables:
+        a: 10
+        b: 20
+
+  - name: managed_struct_element_read
+    description: >
+      Assoc array with string-field struct element. Reading an element
+      requires field-by-field commit (kCommitFieldByFieldStruct), which
+      is not yet supported from raw-value sources (assoc get returns a
+      loaded value, not a place operand). Exercises the dispatcher
+      boundary that rejects this combination.
+    sv: |
+      module Test;
+        int result;
+        initial begin
+          typedef struct { int id; string name; } record_t;
+          record_t aa[int];
+          aa[0] = '{id: 42, name: "hello"};
+          result = aa[0].id;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "field-by-field struct commit from raw value source"
