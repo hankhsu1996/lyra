@@ -77,7 +77,9 @@ void Engine::EvaluateAllConnections() {
 }
 
 void Engine::InitCombKernels(
-    std::span<const uint32_t> words, CombFunc* comb_funcs, void** states) {
+    std::span<const uint32_t> words,
+    std::span<const ProcessDescriptorEntry> descriptors,
+    uint32_t num_standalone, void** states) {
   if (words.empty()) return;
 
   // Word table format:
@@ -85,20 +87,15 @@ void Engine::InitCombKernels(
   uint32_t pos = 0;
   uint32_t num_comb = words[pos++];
 
-  // Validate init order: slot meta must be populated for trigger map sizing.
   if (!slot_meta_registry_.IsPopulated()) {
     throw common::InternalError(
         "Engine::InitCombKernels", "InitCombKernels before InitSlotMeta");
   }
 
-  // Wrap raw ABI pointers in spans for safe indexing.
-  auto funcs = std::span(comb_funcs, num_comb);
   auto proc_states = std::span(states, num_processes_);
 
-  // Size comb_kernel_flags_ once from authoritative process count.
   comb_kernel_flags_.resize(num_processes_, 0);
 
-  // First pass: parse kernels, collect per-slot trigger entries.
   struct ParsedTrigger {
     uint32_t slot_id;
     uint32_t kernel_idx;
@@ -129,15 +126,37 @@ void Engine::InitCombKernels(
               num_processes_));
     }
 
+    // Comb kernels are always module processes.
+    if (proc_idx < num_standalone) {
+      throw common::InternalError(
+          "Engine::InitCombKernels",
+          std::format(
+              "comb kernel proc_idx {} is below standalone boundary {}",
+              proc_idx, num_standalone));
+    }
+
+    uint32_t desc_idx = proc_idx - num_standalone;
+    if (desc_idx >= descriptors.size()) {
+      throw common::InternalError(
+          "Engine::InitCombKernels",
+          std::format(
+              "descriptor index {} exceeds descriptor count {}", desc_idx,
+              descriptors.size()));
+    }
+
     if ((flags & CombKernel::kSelfEdge) != 0) {
       has_any_self_edge_comb_ = true;
     }
 
+    // Resolve body pointer from descriptor table.
+    auto body =
+        reinterpret_cast<SharedBodyFn>(descriptors[desc_idx].shared_body);
+
     auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
     comb_kernels_.push_back(
         CombKernel{
-            .func = funcs[ki],
-            .state = proc_states[proc_idx],
+            .body = body,
+            .frame = proc_states[proc_idx],
             .process_index = proc_idx,
             .flags = flags,
         });
@@ -391,7 +410,7 @@ void Engine::FlushAndPropagateConnections() {
 
           if (detailed) ++stats_.detailed.comb_executed;
           const auto& ck = comb_kernels_[entry.kernel_idx];
-          ck.func(ck.state, 0);
+          ck.body(ck.frame, 0);
         }
       }
 

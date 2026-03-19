@@ -133,7 +133,7 @@ auto BuildSpecCompilationUnits(const mir::Design& design)
 
     SpecInstanceBinding binding{
         .module_index = ModuleIndex{module_idx},
-        .base_slot_id = placement.design_state_base_slot,
+        .signal_id_offset = placement.design_state_base_slot,
     };
 
     auto [it, inserted] = body_to_unit.try_emplace(body_id.value, units.size());
@@ -332,12 +332,12 @@ auto BuildCompiledModuleSpecInputs(
 // Does not validate the resulting slot IDs against slot_count; that
 // validation happens later in BuildProcessTriggerInputs.
 void CanonicalizeProcessTriggerSignals(
-    ProcessTriggerEntry& entry, uint32_t base_slot_id) {
+    ProcessTriggerEntry& entry, uint32_t signal_id_offset) {
   for (auto& fact : entry.triggers) {
     if (fact.signal.scope == mir::SignalRef::Scope::kModuleLocal) {
       fact.signal = {
           .scope = mir::SignalRef::Scope::kDesignGlobal,
-          .id = base_slot_id + fact.signal.id};
+          .id = signal_id_offset + fact.signal.id};
     }
   }
 }
@@ -799,7 +799,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
               "module_index {} out of range for module_base_slots (size={})",
               bp.module_index.value, module_base_slots.size()));
     }
-    uint32_t base_slot_id = module_base_slots[bp.module_index.value];
+    uint32_t signal_id_offset = module_base_slots[bp.module_index.value];
 
     // Look up the instance's unstable offset global (nullptr if all stable).
     auto unstable_it = instance_unstable_globals.find(bp.module_index.value);
@@ -814,7 +814,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
             .shared_body = shared_func,
             .base_byte_offset = base_byte_offset,
             .instance_id = bp.module_index.value,
-            .base_slot_id = base_slot_id,
+            .signal_id_offset = signal_id_offset,
             .unstable_offsets = unstable_global,
         });
     // Null entry as structural guard: any accidental dispatch through the
@@ -834,7 +834,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
           triggers_it->second[ref.ordinal].has_value()) {
         auto entry = *triggers_it->second[ref.ordinal];
         entry.scheduled_process_index = static_cast<uint32_t>(i - num_init);
-        CanonicalizeProcessTriggerSignals(entry, base_slot_id);
+        CanonicalizeProcessTriggerSignals(entry, signal_id_offset);
         all_process_triggers.push_back(std::move(entry));
       }
     }

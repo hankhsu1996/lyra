@@ -185,15 +185,16 @@ Branchless propagation for hot paths -- masks flow through bitwise operations so
 
 Per-instance binding must not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- must be determined by the number of unique specializations, not the number of instances. Changing instance counts or generate expansion must not increase heavy LLVM codegen work (IR construction, LLVM optimization, code emission).
 
-Shared body functions are the correct long-term shape: one function per (body, process) pair, parameterized by instance-specific constants passed as arguments. Process and comb dispatch must carry instance-specific binding via runtime-owned realization data, not per-instance LLVM wrapper functions.
+Shared body functions are the correct long-term shape: one function per (body, process) pair, with a 2-arg call contract `(frame, resume)`. Instance-specific binding lives in the process frame header, populated at runtime init from the descriptor table. No per-instance LLVM executable artifacts exist for process or comb dispatch.
 
 ### Current state
 
-Module-process dispatch is descriptor-driven (G1 complete). Codegen emits a constant descriptor table (`__lyra_process_descriptors`) with per-module-process binding data. The runtime reads descriptors and calls shared body functions directly with the 7-arg ABI. No per-instance process wrapper functions exist. Standalone (connection) processes keep the existing 3-arg direct dispatch path. A single shared trampoline (`__lyra_descriptor_dispatch`) bridges comb wrappers to the descriptor table; comb dispatch itself is not yet migrated to the runtime (G2).
+Module-process and comb dispatch use frame-header-cached binding (G1 + G2 complete). Codegen emits a constant descriptor table (`__lyra_process_descriptors`) consumed at init time to populate process frame headers. After init, the descriptor table is not consulted during dispatch. Both comb and process dispatch call shared body functions via `header->body(frame, resume)`. No per-instance process wrappers, comb wrappers, or dispatch trampolines exist. Standalone (connection) processes keep the existing 3-arg direct dispatch path.
 
-**Remaining per-instance LLVM artifacts** (tracked as G2-G4):
+One init-time ownership split: `design_ptr` is written by codegen during process state initialization (init processes need it before the runtime exists). All other frame header binding fields are runtime-init from descriptors.
 
-- Per-instance comb wrapper functions (`__lyra_comb_wrapper_N`) -- adapted to call the shared trampoline instead of deleted process wrappers; still per-instance LLVM functions (G2)
+**Remaining per-instance LLVM artifacts** (tracked as G3-G4):
+
 - Per-instance unstable-offset globals (`inst_N_unstable_offsets`) -- constant data, not executable artifacts (G3)
 - Per-scheduled-process named LLVM struct types (`ProcessStateN`, `ProcessFrameN`) -- cosmetic, should be per-body (G4)
 - `__lyra_module_funcs` function pointer array with null module entries -- temporary compatibility residue (G4)

@@ -26,6 +26,8 @@
 #include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
 #include "lyra/runtime/output_sink.hpp"
+#include "lyra/runtime/process_descriptor.hpp"
+#include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/signal_dump.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -42,12 +44,9 @@ auto FsBaseDir() -> std::filesystem::path& {
   return value;
 }
 
-// Process state header layout (matches LLVM-generated struct)
-struct StateHeader {
-  lyra::runtime::SuspendRecord suspend;
-  void* design_ptr = nullptr;
-  void* engine_ptr = nullptr;
-};
+// Process state header layout. Must match ProcessFrameHeader in
+// process_frame.hpp and the LLVM struct emitted by BuildHeaderType.
+using StateHeader = lyra::runtime::ProcessFrameHeader;
 
 auto FinalTime() -> uint64_t& {
   static uint64_t value = 0;
@@ -296,37 +295,13 @@ extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
 
 namespace {
 
-// Process descriptor entry layout. Binary ABI contract between codegen and
-// runtime. The authoritative field order is defined in runtime_abi.hpp
-// (v7 comment block). Codegen produces this layout via
-// GetDescriptorEntryType() in emit_design_main.cpp; runtime consumes it here.
-struct ProcessDescriptorEntry {
-  void* shared_body;
-  uint64_t base_byte_offset;
-  uint32_t instance_id;
-  uint32_t base_slot_id;
-  const uint64_t* unstable_offsets;
-};
-static_assert(
-    sizeof(ProcessDescriptorEntry) == 32,
-    "descriptor entry size must match LLVM struct layout");
-static_assert(offsetof(ProcessDescriptorEntry, shared_body) == 0);
-static_assert(offsetof(ProcessDescriptorEntry, base_byte_offset) == 8);
-static_assert(offsetof(ProcessDescriptorEntry, instance_id) == 16);
-static_assert(offsetof(ProcessDescriptorEntry, base_slot_id) == 20);
-static_assert(offsetof(ProcessDescriptorEntry, unstable_offsets) == 24);
-
-// 7-arg shared body function signature.
-using SharedBodyFn = void (*)(
-    void*, uint32_t, void*, uint32_t, uint32_t, const uint64_t*,
-    lyra::runtime::ProcessOutcome*);
+using ProcessDescriptorEntry = lyra::runtime::ProcessDescriptorEntry;
+using SharedBodyFn = lyra::runtime::SharedBodyFn;
 
 struct ProcessDispatchContext {
   std::span<LyraProcessFunc> standalone_procs;
   std::span<void*> states;
   uint32_t num_standalone;
-  std::span<const ProcessDescriptorEntry> descriptors;
-  void* design_state_base;
 };
 
 void DescriptorProcessDispatch(
@@ -338,26 +313,23 @@ void DescriptorProcessDispatch(
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
   SuspendReset(suspend);
 
-  // Pointer-out ABI contract: caller owns the outcome buffer, callee must
-  // write exactly one valid ProcessOutcome before returning. Sentinel tag
-  // (UINT32_MAX) detects codegen bugs where a process path misses the write.
   lyra::runtime::ProcessOutcome outcome{};
   outcome.tag = UINT32_MAX;
 
   // Partition invariant (established by BuildLayout, validated at init):
   //   [0, num_standalone) = standalone processes (direct 3-arg call)
-  //   [num_standalone, num_processes) = module processes (descriptor dispatch)
+  //   [num_standalone, num_processes) = module processes (frame-header
+  //   dispatch)
   if (proc_idx < dctx->num_standalone) {
     dctx->standalone_procs[proc_idx](state, resume.block_index, &outcome);
   } else {
-    uint32_t desc_idx = proc_idx - dctx->num_standalone;
-    const auto& desc = dctx->descriptors[desc_idx];
-    auto body = reinterpret_cast<SharedBodyFn>(desc.shared_body);
-    auto* this_ptr =
-        static_cast<char*>(dctx->design_state_base) + desc.base_byte_offset;
-    body(
-        state, resume.block_index, this_ptr, desc.instance_id,
-        desc.base_slot_id, desc.unstable_offsets, &outcome);
+    // Module process: 2-arg shared body call.
+    // Body pointer and all instance binding are in the frame header,
+    // populated at init time from descriptor data.
+    auto* header = static_cast<StateHeader*>(state);
+    header->outcome.tag = UINT32_MAX;
+    header->body(state, resume.block_index);
+    outcome = header->outcome;
   }
 
   switch (static_cast<lyra::runtime::ProcessExitCode>(outcome.tag)) {
@@ -381,9 +353,6 @@ void DescriptorProcessDispatch(
               outcome.tag));
   }
 
-  // When the engine has wait-site metadata and suspend-record access,
-  // post-activation reconciliation is handled by the engine.
-  // Otherwise, fall back to the legacy HandleSuspendRecord path.
   if (!eng.HasPostActivationReconciliation()) {
     HandleSuspendRecord(eng, handle, suspend);
   }
@@ -519,13 +488,26 @@ extern "C" void LyraRunSimulation(
     }
   }
 
+  // Populate module-process frame headers with realized instance binding
+  // from descriptor data. After this loop, the descriptor table is no
+  // longer needed for dispatch -- all binding lives in the frame headers.
+  for (uint32_t i = 0; i < descriptors.size(); ++i) {
+    uint32_t proc_idx = num_standalone + i;
+    auto* header = static_cast<StateHeader*>(states[proc_idx]);
+    const auto& desc = descriptors[i];
+    header->body = reinterpret_cast<SharedBodyFn>(desc.shared_body);
+    header->this_ptr =
+        static_cast<char*>(design_state_base) + desc.base_byte_offset;
+    header->instance_id = desc.instance_id;
+    header->signal_id_offset = desc.signal_id_offset;
+    header->unstable_offsets = desc.unstable_offsets;
+  }
+
   auto standalone_procs = std::span(processes, num_standalone);
   ProcessDispatchContext dispatch_ctx{
       .standalone_procs = standalone_procs,
       .states = states,
       .num_standalone = num_standalone,
-      .descriptors = descriptors,
-      .design_state_base = design_state_base,
   };
   lyra::runtime::Engine engine(
       lyra::runtime::ProcessDispatch{
@@ -578,13 +560,11 @@ extern "C" void LyraRunSimulation(
       engine.InitConnectionBatch(conn_descs);
     }
 
-    // Comb kernel word table + comb function pointers.
-    // Comb functions are void-returning wrappers generated by codegen,
-    // separate from the process return-code ABI.
+    // Comb kernel word table. Body pointers resolved from descriptor table.
     if (abi->comb_kernel_words != nullptr && abi->num_comb_kernel_words > 0) {
       engine.InitCombKernels(
           std::span(abi->comb_kernel_words, abi->num_comb_kernel_words),
-          abi->comb_funcs, states_raw);
+          descriptors, num_standalone, states_raw);
     }
 
     // Process trigger metadata and constructor-time trigger groups (G13).

@@ -25,6 +25,7 @@
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/observer.hpp"
+#include "lyra/runtime/process_descriptor.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_trigger_registry.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -493,14 +494,15 @@ class Engine {
   // Evaluate all connections once (used for initial value propagation).
   void EvaluateAllConnections();
 
-  // Initialize comb kernels from word table and comb function array.
-  // Parses trigger metadata, builds trigger map.
-  // comb_funcs: one void-returning entry per comb kernel, in word-table order.
+  // Initialize comb kernels from word table and descriptor table.
+  // Resolves shared body pointers from descriptors. Builds trigger map.
+  // descriptors: module-process descriptor entries.
+  // num_standalone: standalone process count (partition boundary).
   // states: full process state array, indexed by proc_idx from word table.
-  // Comb kernels do not participate in the process trap/return-code contract.
-  using CombFunc = void (*)(void*, uint32_t);
   void InitCombKernels(
-      std::span<const uint32_t> words, CombFunc* comb_funcs, void** states);
+      std::span<const uint32_t> words,
+      std::span<const ProcessDescriptorEntry> descriptors,
+      uint32_t num_standalone, void** states);
 
   // Mark all comb kernel trigger slots dirty to ensure initial evaluation.
   void SeedCombKernelDirtyMarks();
@@ -893,10 +895,10 @@ class Engine {
   // Comb kernel batch: pure combinational processes evaluated inline.
   // Each kernel has a compiled function pointer and state pointer.
   struct CombKernel {
-    CombFunc func;
-    void* state;
-    uint32_t process_index;  // Original index in processes array (for skip)
-    uint32_t flags;          // Bit 0 = kSelfEdge
+    SharedBodyFn body;
+    void* frame;
+    uint32_t process_index;
+    uint32_t flags;
     static constexpr uint32_t kSelfEdge = 1U;
   };
   std::vector<CombKernel> comb_kernels_;

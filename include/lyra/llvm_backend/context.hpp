@@ -487,6 +487,11 @@ class Context {
   // below. Must be called once per process function entry block.
   void EmitProcessStateSetup(llvm::Value* state_arg);
 
+  // Load realized instance binding from the frame header for shared bodies.
+  // Loads this_ptr, unstable_offsets, instance_id, signal_id_offset.
+  // Called after EmitProcessStateSetup by shared body generation only.
+  void EmitSharedBodyBindingSetup(llvm::Value* state_arg);
+
   // Cached pointers (computed in entry block, reused for all place accesses)
   // state_ptr: the function argument pointing to ProcessStateN
   void SetStatePointer(llvm::Value* state_ptr);

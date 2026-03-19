@@ -27,7 +27,7 @@ struct LoweringResult;
 // Stores stable IDs/values; variant is looked up from Layout when needed.
 struct SpecInstanceBinding {
   ModuleIndex module_index;
-  uint32_t base_slot_id = 0;
+  uint32_t signal_id_offset = 0;
 };
 
 // Specialization-owned MIR content: identity + behavioral IR references.
@@ -165,7 +165,7 @@ struct ProcessDescriptorData {
   llvm::Function* shared_body;
   uint64_t base_byte_offset;
   uint32_t instance_id;
-  uint32_t base_slot_id;
+  uint32_t signal_id_offset;
   llvm::Constant* unstable_offsets;  // nullptr if all stable
 };
 

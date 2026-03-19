@@ -63,6 +63,7 @@
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
+#include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/simulation.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trap.hpp"
@@ -1603,11 +1604,12 @@ auto GenerateProcessFunction(
     context.EmitProcessStateSetup(state_arg);
   } else {
     // Init contract: load design_ptr and frame_ptr only. No engine.
+    using F = lyra::runtime::ProcessFrameHeaderField;
     context.SetStatePointer(state_arg);
     auto* header_ptr = builder.CreateStructGEP(
         context.GetProcessStateType(), state_arg, 0, "header_ptr");
     auto* design_ptr_ptr = builder.CreateStructGEP(
-        context.GetHeaderType(), header_ptr, 1, "design_ptr_ptr");
+        context.GetHeaderType(), header_ptr, F::kDesignPtr, "design_ptr_ptr");
     auto* design_ptr = builder.CreateLoad(ptr_ty, design_ptr_ptr, "design_ptr");
     context.SetDesignPointer(design_ptr);
     auto* frame_ptr = builder.CreateStructGEP(
@@ -1781,25 +1783,18 @@ auto GenerateSharedProcessFunction(
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
-  // Shared function signature:
-  // void(ptr state, i32 resume, ptr this_ptr, i32 inst_id,
-  //      i32 signal_id_offset, ptr unstable_offsets, ptr out)
+  // Shared body call contract: void(ptr frame, i32 resume).
+  // Instance binding is loaded from the frame header at entry.
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
-  auto* fn_type = llvm::FunctionType::get(
-      void_ty, {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, ptr_ty}, false);
+  auto* fn_type = llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty}, false);
 
   auto* func = llvm::Function::Create(
       fn_type, llvm::Function::InternalLinkage, name, &module);
 
-  func->getArg(0)->setName("state");
+  func->getArg(0)->setName("frame");
   func->getArg(1)->setName("resume_block");
-  func->getArg(2)->setName("this_ptr");
-  func->getArg(3)->setName("inst_id");
-  func->getArg(4)->setName("signal_id_offset");
-  func->getArg(5)->setName("unstable_offsets");
-  func->getArg(6)->setName("out");
 
   auto* entry_block = llvm::BasicBlock::Create(llvm_ctx, "entry", func);
   auto* exit_block = llvm::BasicBlock::Create(llvm_ctx, "exit", func);
@@ -1824,15 +1819,12 @@ auto GenerateSharedProcessFunction(
     return std::unexpected(shared_alloca_result.error());
   }
 
-  // Enter specialization-local addressing mode for module-local slots.
-  // Module slots accessed via this_ptr + spec_slot_layout (stable offsets are
-  // compile-time constants; unstable offsets loaded from unstable_offsets arg).
+  // Load realized instance binding from the frame header.
+  // Module slots accessed via this_ptr + spec_slot_layout (stable offsets
+  // are compile-time constants; unstable offsets loaded from header).
   // Signal identity via signal_id_offset + local_id.
   context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
-  context.SetThisPointer(func->getArg(2));
-  context.SetDynamicInstanceId(func->getArg(3));
-  context.SetSignalIdOffset(func->getArg(4));
-  context.SetUnstableSlotOffsetsPtr(func->getArg(5));
+  context.EmitSharedBodyBindingSetup(func->getArg(0));
 
   // Create activation-local managed slot storage (shadow allocas).
   // Must be after slot addressing setup (this_ptr, signal_id_offset).
@@ -1915,8 +1907,13 @@ auto GenerateSharedProcessFunction(
     if (HasBackEdge(block.terminator, i) &&
         !std::ranges::binary_search(
             bounded_latches, static_cast<uint32_t>(i))) {
+      using HF = lyra::runtime::ProcessFrameHeaderField;
+      auto* hdr = builder.CreateStructGEP(
+          context.GetProcessStateType(), func->getArg(0), 0);
+      auto* outcome_ptr = builder.CreateStructGEP(
+          context.GetHeaderType(), hdr, HF::kOutcome, "outcome_ptr");
       EmitBackEdgeGuard(
-          context, block.terminator.origin, func, func->getArg(6), limit_ptr);
+          context, block.terminator.origin, func, outcome_ptr, limit_ptr);
     }
 
     auto term_result = LowerTerminator(
@@ -1928,9 +1925,14 @@ auto GenerateSharedProcessFunction(
   phi_state.WireIncomingEdges(context.GetBuilder());
   phi_state.ValidatePhiWiring(llvm_blocks, func->getName().str());
 
-  // Exit block: store kOk outcome and return void
+  // Exit block: store kOk outcome to header and return void
+  using HF = lyra::runtime::ProcessFrameHeaderField;
   builder.SetInsertPoint(exit_block);
-  EmitStoreOkOutcome(builder, llvm_ctx, func->getArg(6));
+  auto* exit_hdr = builder.CreateStructGEP(
+      context.GetProcessStateType(), func->getArg(0), 0);
+  auto* exit_outcome_ptr = builder.CreateStructGEP(
+      context.GetHeaderType(), exit_hdr, HF::kOutcome, "outcome_ptr");
+  EmitStoreOkOutcome(builder, llvm_ctx, exit_outcome_ptr);
   builder.CreateRetVoid();
 
   if (!shared_proc_layout.has_suspension) {
