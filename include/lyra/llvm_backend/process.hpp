@@ -76,13 +76,10 @@ auto GenerateProcessFunction(
     Context& context, const mir::Process& process, const std::string& name,
     ProcessExecutionKind execution_kind) -> Result<ProcessCodegenResult>;
 
-// Generate a shared process function with the 7-arg specialization-scoped ABI.
-// Signature: void(ptr state, i32 resume, ptr this_ptr, i32 inst_id,
-//                 i32 signal_offset, ptr unstable_offsets, ptr out)
-// this_ptr points to instance storage, computed by the runtime dispatch path
-// from design_ptr + base_byte_offset. The context must have template-mode
-// fields configured before calling.
-// Simulation-only: shared module processes always run with a non-null engine.
+// Generate a shared process function with the 2-arg call contract.
+// Signature: void(ptr frame, i32 resume)
+// Instance binding is loaded from the frame header at entry.
+// The context must have template-mode fields configured before calling.
 auto GenerateSharedProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
     -> Result<ProcessCodegenResult>;

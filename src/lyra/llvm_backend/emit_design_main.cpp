@@ -34,6 +34,7 @@
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/realization/build_design_metadata.hpp"
+#include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
@@ -149,8 +150,10 @@ void InitializeProcessState(
 
   EmitMemsetZero(context, process_state, state_type);
 
+  using F = lyra::runtime::ProcessFrameHeaderField;
   auto* header_ptr = builder.CreateStructGEP(state_type, process_state, 0);
-  auto* design_ptr_ptr = builder.CreateStructGEP(header_type, header_ptr, 1);
+  auto* design_ptr_ptr =
+      builder.CreateStructGEP(header_type, header_ptr, F::kDesignPtr);
   builder.CreateStore(design_state, design_ptr_ptr);
 
   if (force_two_state) return;
@@ -441,7 +444,9 @@ auto EmitPackedStateInit(
 
   auto* header_llvm_type = context.GetHeaderType();
   const llvm::StructLayout* hdr_sl = dl.getStructLayout(header_llvm_type);
-  uint64_t design_ptr_offset_in_header = hdr_sl->getElementOffset(1);
+  using F = lyra::runtime::ProcessFrameHeaderField;
+  uint64_t design_ptr_offset_in_header =
+      hdr_sl->getElementOffset(F::kDesignPtr);
 
   // Emit loop: write design_state pointer into each header and store
   // process state pointer into states_array.
@@ -561,32 +566,13 @@ auto EmitProcessFuncArray(
 //   field 0: ptr   shared_body       (7-arg shared body function pointer)
 //   field 1: i64   base_byte_offset  (instance base offset in design state)
 //   field 2: i32   instance_id       (module instance index)
-//   field 3: i32   base_slot_id      (signal ID offset)
+//   field 3: i32   signal_id_offset      (signal ID offset)
 //   field 4: ptr   unstable_offsets  (pointer to unstable offset table or null)
 auto GetDescriptorEntryType(llvm::LLVMContext& ctx) -> llvm::StructType* {
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   return llvm::StructType::get(ctx, {ptr_ty, i64_ty, i32_ty, i32_ty, ptr_ty});
-}
-
-// Load the design_ptr field from a process-state header using the
-// canonical header layout (Context::GetHeaderType(), field index 1).
-// All process states share the same design_ptr (codegen invariant).
-auto EmitLoadDesignPtr(
-    Context& context, llvm::IRBuilder<>& builder, llvm::Value* state_arg)
-    -> llvm::Value* {
-  auto& llvm_ctx = context.GetLlvmContext();
-  auto& mod = context.GetModule();
-  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
-  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
-  auto* header_type = context.GetHeaderType();
-  const auto& dl = mod.getDataLayout();
-  const llvm::StructLayout* hdr_sl = dl.getStructLayout(header_type);
-  uint64_t design_ptr_offset = hdr_sl->getElementOffset(1);
-  auto* design_ptr_loc = builder.CreateGEP(
-      i8_ty, state_arg, {builder.getInt64(design_ptr_offset)});
-  return builder.CreateLoad(ptr_ty, design_ptr_loc, "design_ptr");
 }
 
 struct DescriptorTableResult {
@@ -630,7 +616,7 @@ auto EmitProcessDescriptorTable(
             desc_type, {desc.shared_body,
                         llvm::ConstantInt::get(i64_ty, desc.base_byte_offset),
                         llvm::ConstantInt::get(i32_ty, desc.instance_id),
-                        llvm::ConstantInt::get(i32_ty, desc.base_slot_id),
+                        llvm::ConstantInt::get(i32_ty, desc.signal_id_offset),
                         desc.unstable_offsets != nullptr ? desc.unstable_offsets
                                                          : null_ptr}));
   }
@@ -653,63 +639,6 @@ auto EmitProcessDescriptorTable(
       .count = count,
       .num_standalone = num_standalone,
   };
-}
-
-auto EmitDescriptorDispatchTrampoline(
-    Context& context, llvm::Constant* desc_table_ptr) -> llvm::Function* {
-  auto& ctx = context.GetLlvmContext();
-  auto& mod = context.GetModule();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
-  auto* void_ty = llvm::Type::getVoidTy(ctx);
-
-  // Trampoline signature: void(ptr state, i32 resume, ptr out, i32 desc_idx)
-  auto* fn_type =
-      llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty, ptr_ty, i32_ty}, false);
-  auto* func = llvm::Function::Create(
-      fn_type, llvm::Function::InternalLinkage, "__lyra_descriptor_dispatch",
-      mod);
-
-  auto* entry = llvm::BasicBlock::Create(ctx, "entry", func);
-  llvm::IRBuilder<> builder(entry);
-
-  auto* state_arg = func->getArg(0);
-  auto* resume_arg = func->getArg(1);
-  auto* out_arg = func->getArg(2);
-  auto* desc_idx_arg = func->getArg(3);
-
-  auto* desc_type = GetDescriptorEntryType(ctx);
-
-  // desc_table_ptr points to the first descriptor entry (typed as
-  // GetDescriptorEntryType*). GEP with desc_idx_arg selects the entry.
-  auto* desc_ptr = builder.CreateGEP(desc_type, desc_table_ptr, {desc_idx_arg});
-  auto* body_fn = builder.CreateLoad(
-      ptr_ty, builder.CreateStructGEP(desc_type, desc_ptr, 0), "body_fn");
-  auto* base_offset = builder.CreateLoad(
-      llvm::Type::getInt64Ty(ctx),
-      builder.CreateStructGEP(desc_type, desc_ptr, 1), "base_offset");
-  auto* inst_id = builder.CreateLoad(
-      i32_ty, builder.CreateStructGEP(desc_type, desc_ptr, 2), "inst_id");
-  auto* base_slot_id = builder.CreateLoad(
-      i32_ty, builder.CreateStructGEP(desc_type, desc_ptr, 3), "base_slot_id");
-  auto* unstable = builder.CreateLoad(
-      ptr_ty, builder.CreateStructGEP(desc_type, desc_ptr, 4), "unstable");
-
-  auto* design_ptr = EmitLoadDesignPtr(context, builder, state_arg);
-  auto* this_ptr =
-      builder.CreateGEP(i8_ty, design_ptr, {base_offset}, "this_ptr");
-
-  // Call the shared body with 7-arg ABI.
-  auto* body_fn_type = llvm::FunctionType::get(
-      void_ty, {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, ptr_ty}, false);
-  builder.CreateCall(
-      body_fn_type, body_fn,
-      {state_arg, resume_arg, this_ptr, inst_id, base_slot_id, unstable,
-       out_arg});
-  builder.CreateRetVoid();
-
-  return func;
 }
 
 struct PlusargsSetup {
@@ -810,119 +739,26 @@ auto BuildDesignMetadata(
   return EmitDesignMetadataGlobals(context, metadata, builder);
 }
 
-struct CombWrappersResult {
-  llvm::Value* funcs_ptr;
-  uint32_t count;
-};
-
-auto EmitCombWrappers(
-    Context& context, const Layout& layout, llvm::Function* trampoline,
-    uint32_t num_descriptors) -> CombWrappersResult {
-  auto& ctx = context.GetLlvmContext();
-  auto& mod = context.GetModule();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  auto* null_ptr =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-
-  auto num_comb = static_cast<uint32_t>(layout.comb_kernel_entries.size());
-  if (num_comb == 0) {
-    return {.funcs_ptr = null_ptr, .count = 0};
-  }
-
-  // Comb runtime ABI is void(ptr state, i32 resume) -- no outcome pointer.
-  // Each wrapper allocates a local outcome buffer, calls the descriptor-
-  // dispatch trampoline with the module-process descriptor index, and
-  // discards the outcome.
-  auto* void_ty = llvm::Type::getVoidTy(ctx);
-  auto* comb_fn_ty = llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty}, false);
-  auto* outcome_mem_ty =
-      llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty});
-  // Trampoline ABI: void(ptr state, i32 resume, ptr out, i32 desc_idx)
-  auto* trampoline_fn_ty =
-      llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty, ptr_ty, i32_ty}, false);
-
-  if (layout.num_module_process_base > layout.scheduled_processes.size()) {
-    throw common::InternalError(
-        "EmitCombWrappers",
-        "num_module_process_base exceeds scheduled_processes.size()");
-  }
-  auto num_module =
-      layout.scheduled_processes.size() - layout.num_module_process_base;
-
-  std::vector<llvm::Constant*> comb_func_constants;
-  comb_func_constants.reserve(num_comb);
-  for (uint32_t ki = 0; ki < num_comb; ++ki) {
-    const auto& ck = layout.comb_kernel_entries[ki];
-    if (ck.scheduled_process_index >= num_module) {
-      throw common::InternalError(
-          "EmitCombWrappers",
-          std::format(
-              "scheduled_process_index {} exceeds module process "
-              "count {}",
-              ck.scheduled_process_index, num_module));
-    }
-    if (ck.scheduled_process_index >= num_descriptors) {
-      throw common::InternalError(
-          "EmitCombWrappers",
-          std::format(
-              "scheduled_process_index {} exceeds descriptor "
-              "count {} (module-process ordering diverged)",
-              ck.scheduled_process_index, num_descriptors));
-    }
-    // Indexing contract: CombKernelEntry::scheduled_process_index is
-    // module-relative (assigned by BuildLayout Phase 3 via
-    // module_process_counter). This is exactly the index into the
-    // descriptor table emitted by EmitProcessDescriptorTable, which
-    // has one entry per module process in the same order.
-    auto* desc_idx = llvm::ConstantInt::get(i32_ty, ck.scheduled_process_index);
-
-    auto* wrapper = llvm::Function::Create(
-        comb_fn_ty, llvm::Function::InternalLinkage,
-        std::format("__lyra_comb_wrapper_{}", ki), mod);
-    auto* entry = llvm::BasicBlock::Create(ctx, "entry", wrapper);
-    llvm::IRBuilder<> wb(entry);
-    auto* outcome_buf = wb.CreateAlloca(outcome_mem_ty, nullptr, "outcome");
-    wb.CreateCall(
-        trampoline_fn_ty, trampoline,
-        {wrapper->getArg(0), wrapper->getArg(1), outcome_buf, desc_idx});
-    wb.CreateRetVoid();
-
-    comb_func_constants.push_back(wrapper);
-  }
-
-  auto* comb_func_array_type = llvm::ArrayType::get(ptr_ty, num_comb);
-  auto* comb_funcs_global = new llvm::GlobalVariable(
-      mod, comb_func_array_type, true, llvm::GlobalValue::InternalLinkage,
-      llvm::ConstantArray::get(comb_func_array_type, comb_func_constants),
-      "__lyra_comb_funcs");
-  comb_funcs_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-  auto* comb_funcs_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
-      comb_func_array_type, comb_funcs_global,
-      llvm::ArrayRef<llvm::Constant*>{
-          llvm::ConstantInt::get(i32_ty, 0),
-          llvm::ConstantInt::get(i32_ty, 0)});
-
-  return {.funcs_ptr = comb_funcs_ptr, .count = num_comb};
-}
-
 auto BuildRuntimeAbi(
     Context& context, const MetadataGlobals& meta_globals,
     const WaitSiteMetaResult& wait_site_meta,
-    const CombWrappersResult& comb_wrappers,
     const DescriptorTableResult& desc_table, uint32_t feature_flags,
     const std::string& signal_trace_path) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* null_ptr =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
-  constexpr unsigned kAbiFieldCount = 30;
+  // v8: comb_funcs/num_comb_funcs removed (were fields 18-19).
+  // Field indices shifted accordingly.
+  constexpr unsigned kAbiFieldCount = 28;
   std::array<llvm::Type*, kAbiFieldCount> abi_fields = {
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-      ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty,
+      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
+      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+      i32_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+      i32_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty,
   };
   auto* abi_struct_type = llvm::StructType::get(ctx, abi_fields, false);
 
@@ -958,37 +794,34 @@ auto BuildRuntimeAbi(
   store_field(15, llvm::ConstantInt::get(i32_ty, feature_flags));
   store_field(16, wait_site_meta.words_ptr);
   store_field(17, llvm::ConstantInt::get(i32_ty, wait_site_meta.count));
-  store_field(18, comb_wrappers.funcs_ptr);
-  store_field(19, llvm::ConstantInt::get(i32_ty, comb_wrappers.count));
-  store_field(20, meta_globals.trace_signal_meta_words);
+  // Fields 18-19: trace signal metadata (was 20-23 in v7)
+  store_field(18, meta_globals.trace_signal_meta_words);
   store_field(
-      21, llvm::ConstantInt::get(
+      19, llvm::ConstantInt::get(
               i32_ty, meta_globals.trace_signal_meta_word_count));
-  store_field(22, meta_globals.trace_signal_meta_pool);
+  store_field(20, meta_globals.trace_signal_meta_pool);
   store_field(
-      23,
+      21,
       llvm::ConstantInt::get(i32_ty, meta_globals.trace_signal_meta_pool_size));
 
   if (signal_trace_path.empty()) {
-    store_field(
-        24,
-        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
+    store_field(22, null_ptr);
   } else {
     store_field(
-        24,
+        22,
         builder.CreateGlobalStringPtr(signal_trace_path, "signal_trace_path"));
   }
 
-  // v6: process trigger metadata
-  store_field(25, meta_globals.process_trigger_words);
+  // Process trigger metadata
+  store_field(23, meta_globals.process_trigger_words);
   store_field(
-      26,
+      24,
       llvm::ConstantInt::get(i32_ty, meta_globals.process_trigger_word_count));
 
-  // v7: descriptor-driven process dispatch
-  store_field(27, desc_table.table_ptr);
-  store_field(28, llvm::ConstantInt::get(i32_ty, desc_table.count));
-  store_field(29, llvm::ConstantInt::get(i32_ty, desc_table.num_standalone));
+  // Descriptor-driven process dispatch
+  store_field(25, desc_table.table_ptr);
+  store_field(26, llvm::ConstantInt::get(i32_ty, desc_table.count));
+  store_field(27, llvm::ConstantInt::get(i32_ty, desc_table.num_standalone));
 
   return abi_alloca;
 }
@@ -1117,24 +950,9 @@ auto EmitDesignMain(
     auto desc_table = EmitProcessDescriptorTable(
         context, session.process_descriptors, num_standalone);
 
-    llvm::Function* trampoline = nullptr;
-    if (!layout.comb_kernel_entries.empty()) {
-      // Comb wrappers call the trampoline with descriptor indices, so
-      // module-process descriptors must exist for indexing to be valid.
-      if (desc_table.count == 0) {
-        throw common::InternalError(
-            "EmitDesignMain",
-            "comb kernels exist but no module-process descriptors");
-      }
-      trampoline =
-          EmitDescriptorDispatchTrampoline(context, desc_table.table_ptr);
-    }
-    auto comb_wrappers =
-        EmitCombWrappers(context, layout, trampoline, desc_table.count);
-
     auto* abi_alloca = BuildRuntimeAbi(
-        context, meta_globals, wait_site_meta, comb_wrappers, desc_table,
-        input.feature_flags, input.signal_trace_path);
+        context, meta_globals, wait_site_meta, desc_table, input.feature_flags,
+        input.signal_trace_path);
 
     EmitRunSimulation(
         context, funcs_array, states_array, packed_layout.count, plusargs,

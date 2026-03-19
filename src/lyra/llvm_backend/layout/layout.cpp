@@ -32,6 +32,7 @@
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
+#include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -1182,12 +1183,21 @@ auto BuildSuspendRecordType(llvm::LLVMContext& ctx) -> llvm::StructType* {
   return llvm::StructType::create(ctx, {payload}, "SuspendRecord");
 }
 
-// Build ProcessStateHeader: {SuspendRecord, DesignState*, Engine*}
+// Build ProcessStateHeader with realized instance binding.
+// Field order and count must match ProcessFrameHeader and
+// ProcessFrameHeaderField in process_frame.hpp.
 auto BuildHeaderType(llvm::LLVMContext& ctx, llvm::StructType* suspend_type)
     -> llvm::StructType* {
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  return llvm::StructType::create(
-      ctx, {suspend_type, ptr_ty, ptr_ty}, "ProcessStateHeader");
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* outcome_ty =
+      llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty});
+  // { suspend, body, engine_ptr, design_ptr, this_ptr,
+  //   unstable_offsets, instance_id, signal_id_offset, outcome }
+  std::array<llvm::Type*, lyra::runtime::ProcessFrameHeaderField::kFieldCount>
+      fields = {suspend_type, ptr_ty, ptr_ty, ptr_ty,    ptr_ty,
+                ptr_ty,       i32_ty, i32_ty, outcome_ty};
+  return llvm::StructType::create(ctx, fields, "ProcessStateHeader");
 }
 
 }  // namespace

@@ -28,7 +28,9 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [ ] G -- Instance-independent LLVM codegen (descriptor-driven realization)
   - [x] G0 -- Investigation and documentation of instance-shaped LLVM artifacts
   - [x] G1 -- Migrate process dispatch from per-instance wrappers to descriptor-driven dispatch
-  - [ ] G2 -- Migrate comb dispatch off per-instance LLVM wrappers
+  - [x] G2 -- Migrate comb dispatch off per-instance LLVM wrappers
+    - [ ] G2 follow-up: frame/header access abstraction (helper API for GEP+load)
+    - [ ] G2 follow-up: design_ptr init ownership unification
   - [ ] G3 -- Move unstable-offset realization out of LLVM globals into constructor/runtime-owned data
   - [ ] G4 -- Remove remaining instance-shaped LLVM residue and re-validate scaling
 - [ ] F1 -- Parallel specialization compilation
@@ -50,9 +52,9 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 
 ## G: Instance-independent LLVM codegen
 
-Shared-body migration is complete at the body-dedup level. Module-process dispatch is descriptor-driven: the runtime reads per-instance binding from a constant descriptor table and calls shared bodies directly. Per-instance process wrapper functions are eliminated.
+Module-process and comb dispatch are both frame-header-cached (G1 + G2 complete). The shared body ABI is 2-arg `(frame, resume)`. Instance binding lives in the process frame header, populated at init from the descriptor table. No per-instance LLVM executable artifacts exist for process or comb dispatch. The descriptor table is consumed at init time only.
 
-Remaining instance-shaped LLVM artifacts: per-instance comb wrappers (adapted to call through a shared trampoline, not process wrappers), per-instance unstable-offset globals, instance-count-shaped data arrays, and per-process named types. These are tracked as G2-G4 follow-up items. Comb dispatch still uses a temporary trampoline bridge and is not yet migrated to the runtime.
+Remaining instance-shaped LLVM artifacts: per-instance unstable-offset globals, instance-count-shaped data arrays, and per-process named types. These are tracked as G3-G4 follow-up items.
 
 See [investigations/instance-shaped-llvm-artifacts.md](../investigations/instance-shaped-llvm-artifacts.md) for the full investigation.
 
@@ -62,23 +64,23 @@ Completed full boundary investigation of all per-instance LLVM artifacts. Identi
 
 ### G1: Migrate process dispatch to descriptor-driven dispatch (done)
 
-Per-instance process wrapper functions (`process_N`) are eliminated. Codegen emits a constant descriptor table (`__lyra_process_descriptors`) with per-module-process binding data (shared body pointer, base byte offset, instance ID, base slot ID, unstable offsets pointer). The runtime dispatch callback reads descriptors and calls shared bodies directly with the 7-arg ABI. `GenerateProcessWrapper` is deleted.
+Per-instance process wrapper functions (`process_N`) are eliminated. Codegen emits a constant descriptor table (`__lyra_process_descriptors`) with per-module-process binding data (shared body pointer, base byte offset, instance ID, base slot ID, unstable offsets pointer). `GenerateProcessWrapper` is deleted.
 
-A single non-instance-shaped trampoline (`__lyra_descriptor_dispatch`) bridges comb wrappers to the descriptor table. Comb wrappers are adapted to call the trampoline instead of deleted process wrappers. The trampoline is **not** part of the target architecture -- it exists only because comb dispatch remains on the old per-instance LLVM wrapper path until G2. G2 deletes both the trampoline and the comb wrappers.
+Runtime ABI bumped to v7 with descriptor table pointer, descriptor count, and standalone/module process boundary. Connection processes keep the existing 3-arg direct dispatch path.
 
-Runtime ABI bumped to v7 with descriptor table pointer, descriptor count, and standalone/module process boundary. `LyraRunSimulation` signature unchanged. Connection processes keep the existing 3-arg direct dispatch path.
+**Bridge residue resolved by G2**: The G1 trampoline (`__lyra_descriptor_dispatch`) and per-instance comb wrappers were deleted in G2 along with the 7-arg shared body ABI they depended on. **Remaining bridge residue**: `__lyra_module_funcs` array with null module entries (temporary compatibility), per-instance unstable-offset globals (G3), per-process state types and init code (G4).
 
-**Bridge residue left for follow-up items**: `__lyra_module_funcs` array with null module entries (temporary compatibility), per-instance comb wrappers (G2), per-instance unstable-offset globals (G3), per-process state types and init code (G4).
+### G2: Migrate comb dispatch off per-instance LLVM wrappers (done)
 
-### G2: Migrate comb dispatch off per-instance LLVM wrappers
+Boundary rewrite that narrowed the shared body ABI from 7-arg to 2-arg `(frame, resume)` and deleted all per-instance comb dispatch LLVM artifacts.
 
-**Goal**: Remove per-instance comb wrapper LLVM functions. Comb dispatch must call shared body functions through runtime-owned descriptor data without per-instance LLVM code.
+Instance binding (body pointer, this_ptr, instance_id, signal_id_offset, unstable_offsets) moved from shared body call arguments into the process frame header. The runtime populates frame headers from descriptor data at init time. After init, the descriptor table is not consulted during dispatch. Both comb and process dispatch call shared bodies via frame-cached binding: `header->body(frame, resume)`.
 
-**Current state after G1**: Comb wrappers (`__lyra_comb_wrapper_N`) still exist as per-instance LLVM functions, but they no longer call per-instance process wrappers. Each comb wrapper calls the shared `__lyra_descriptor_dispatch` trampoline with a descriptor index. The comb wrapper count still scales with instance count.
+One exception: `design_ptr` is written by codegen during process state initialization because init processes need it before the runtime exists. All other binding fields are runtime-init from descriptors.
 
-**What the migration will change**: Comb dispatch will move into the runtime. The `CombKernel` struct will resolve shared body calls through the descriptor table (the canonical source of process binding). The trampoline, `__lyra_comb_funcs`, and all `__lyra_comb_wrapper_N` functions will be deleted.
+Deleted: all `__lyra_comb_wrapper_N` functions, `__lyra_descriptor_dispatch` trampoline, `__lyra_comb_funcs` array, `comb_funcs`/`num_comb_funcs` ABI fields. Runtime ABI bumped to v8.
 
-**Completion means**: No per-instance comb wrapper LLVM functions. Comb kernel dispatch is runtime-owned. The `__lyra_descriptor_dispatch` trampoline is deleted (no longer needed once comb dispatch is in the runtime).
+Canonical contracts: `process_frame.hpp` (ProcessFrameHeader, field indices), `process_descriptor.hpp` (ProcessDescriptorEntry, SharedBodyFn).
 
 ### G3: Move unstable-offset realization out of LLVM globals
 
@@ -99,6 +101,22 @@ Runtime ABI bumped to v7 with descriptor table pointer, descriptor count, and st
 **What the migration will change**: LLVM type generation will use one type per body, not per instance. State allocation and initialization will move to the runtime constructor. The main function will delegate to a runtime entry point that receives metadata, not instance-shaped code.
 
 **Completion means**: Re-running the module-count and generate-expand compile benchmarks shows LLVM instruction count and compile time are flat across instance count changes. Only realization/construction time scales with instances.
+
+### G2 follow-up: frame/header access abstraction
+
+**Current state**: Frame header field access is canonical (ProcessFrameHeaderField constants used everywhere), but each codegen call site still does raw GEP + load. Runtime access uses struct member access (clean). The boundary contract is hardened with sizeof/offsetof assertions.
+
+**Deferred**: A higher-level helper API for frame header reads/writes (e.g., `EmitLoadFromHeader(context, field)`) that would centralize all GEP + load patterns into one place. The current approach is safe because all GEP indices use the shared constants, but a helper layer would make the contract even harder to misuse.
+
+**Why acceptable now**: All field indices are canonical constants. Adding a helper layer is a convenience improvement, not a correctness gap. The binary contract is enforced by hard assertions in process_frame.hpp.
+
+### G2 follow-up: design_ptr init ownership unification
+
+**Current state**: design_ptr is written by codegen during process state initialization because init processes need it before the runtime exists. All other frame header binding fields are runtime-init from descriptors. This split is documented as an explicit exception in process_frame.hpp.
+
+**Deferred**: Moving design_ptr population to runtime init would require restructuring the init process execution model so that design_ptr is available before init processes run without codegen writing it. This may become natural when G4 moves state allocation to the runtime constructor.
+
+**Why acceptable now**: The split is documented, the exception is small (one field), and it does not violate the architectural story that frame headers carry realized binding. design_ptr is not instance-specific -- it is the same for all processes.
 
 ## F1: Parallel specialization compilation
 
