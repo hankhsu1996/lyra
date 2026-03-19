@@ -14,6 +14,8 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+class SlotAccessResolver;
+
 // Apply width mask to a ComputeResult.
 // Masks both value AND unknown planes to semantic width.
 auto ApplyWidthMaskToResult(
@@ -33,5 +35,10 @@ auto FinalizeCompute(
 auto LowerPackedCoreRvalue(
     Context& context, const mir::Rvalue& rvalue, TypeId result_type)
     -> Result<RvalueValue>;
+
+// Resolver-aware overload.
+auto LowerPackedCoreRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue>;
 
 }  // namespace lyra::lowering::mir_to_llvm

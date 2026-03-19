@@ -8,6 +8,8 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+class SlotAccessResolver;
+
 // Returns true if the rvalue is a math function (IEEE 1800 20.8).
 // This includes both real-typed ($ln, $sin, $pow, ...) and integral ($clog2).
 auto IsMathRvalue(const mir::Rvalue& rvalue) -> bool;
@@ -17,5 +19,10 @@ auto IsMathRvalue(const mir::Rvalue& rvalue) -> bool;
 auto LowerMathRvalue(
     Context& context, const mir::Rvalue& rvalue, TypeId result_type)
     -> Result<RvalueValue>;
+
+// Resolver-aware overload.
+auto LowerMathRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue>;
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -110,6 +110,20 @@ auto CommitArrayFieldByField(
 auto GetDesignSignalId(Context& ctx, mir::PlaceId target)
     -> std::optional<SignalIdExpr>;
 
+// Flush an activation-local managed value to canonical whole-slot storage
+// under the current store mode and notification policy.
+//
+// Performs store + compare + dirty-mark (or plain store under kDirectInit
+// or kDeferred policy). The value must already be in canonical storage
+// representation (same LLVM type as the slot's canonical memory layout).
+//
+// This is the single synchronization boundary for activation-local ->
+// canonical slot commits. Do not open-code store + dirty-mark in
+// slot_access.cpp or elsewhere.
+void EmitActivationLocalFlush(
+    Context& ctx, llvm::Value* canonical_ptr, llvm::Value* value,
+    const SignalIdExpr& signal_id);
+
 namespace detail {
 
 // Lifecycle-aware struct field-by-field transfer from source pointer to

@@ -8,6 +8,8 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+class SlotAccessResolver;
+
 // Check if rvalue is a real-typed math operation (unary or binary).
 // Does NOT match casts - casts are handled by LowerCastUnified.
 auto IsRealMathRvalue(Context& context, const mir::Rvalue& rvalue) -> bool;
@@ -18,5 +20,10 @@ auto IsRealMathRvalue(Context& context, const mir::Rvalue& rvalue) -> bool;
 auto LowerRealRvalue(
     Context& context, const mir::Rvalue& rvalue, TypeId result_type)
     -> Result<RvalueValue>;
+
+// Resolver-aware overload.
+auto LowerRealRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue>;
 
 }  // namespace lyra::lowering::mir_to_llvm

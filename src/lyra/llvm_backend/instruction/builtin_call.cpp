@@ -17,6 +17,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -298,6 +299,14 @@ auto LowerBuiltinCall(Context& context, const mir::BuiltinCall& call)
               "unexpected builtin method in BuiltinCall: {}",
               static_cast<int>(call.method)));
   }
+}
+
+auto LowerBuiltinCall(
+    Context& context, SlotAccessResolver& /*resolver*/,
+    const mir::BuiltinCall& call) -> Result<void> {
+  // BuiltinCalls are boundary statements -- sync happens before them.
+  // Delegate to canonical version.
+  return LowerBuiltinCall(context, call);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

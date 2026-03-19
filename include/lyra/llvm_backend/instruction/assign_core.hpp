@@ -14,6 +14,10 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/place.hpp"
 
+namespace lyra::lowering::mir_to_llvm {
+class SlotAccessResolver;
+}  // namespace lyra::lowering::mir_to_llvm
+
 namespace lyra::lowering::mir_to_llvm::detail {
 
 // Helper to convert LLVM type to string for error messages.
@@ -46,5 +50,10 @@ inline auto HasIndexProjection(const mir::Place& place) -> bool {
 auto LowerRhsRaw(
     Context& context, const mir::RightHandSide& rhs, mir::PlaceId target)
     -> Result<llvm::Value*>;
+
+// Resolver-aware overload.
+auto LowerRhsRaw(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::RightHandSide& rhs, mir::PlaceId target) -> Result<llvm::Value*>;
 
 }  // namespace lyra::lowering::mir_to_llvm::detail

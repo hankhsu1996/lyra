@@ -21,6 +21,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/emit_string_conv.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/operand.hpp"
@@ -28,60 +29,15 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto LowerArgAsStringHandle(
-    Context& context, const mir::Operand& operand, TypeId type_id)
-    -> Result<std::pair<llvm::Value*, bool>> {
-  const auto& types = context.GetTypeArena();
-  const Type& operand_type = types[type_id];
-
-  if (operand_type.Kind() == TypeKind::kString) {
-    // String operand: use directly (no release needed)
-    auto handle_or_err = LowerOperand(context, operand);
-    if (!handle_or_err) return std::unexpected(handle_or_err.error());
-    return std::pair{*handle_or_err, false};
-  }
-
-  if (IsPacked(operand_type)) {
-    // Packed operand: convert to string (needs release)
-    auto value_or_err = LowerOperand(context, operand);
-    if (!value_or_err) return std::unexpected(value_or_err.error());
-    llvm::Value* packed_val = *value_or_err;
-
-    // Invariant: packed operands lower to integer or struct, not pointer
-    if (!packed_val->getType()->isIntegerTy() &&
-        !packed_val->getType()->isStructTy()) {
-      throw common::InternalError(
-          "LowerArgAsStringHandle",
-          "packed operand should be iN or {iN,iN}, not pointer");
-    }
-
-    llvm::Value* handle = EmitPackedToString(context, packed_val, operand_type);
-    return std::pair{handle, true};
-  }
-
-  return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-      context.GetCurrentOrigin(),
-      std::format(
-          "unsupported type for %s format: got {}, expected string or packed",
-          ToString(operand_type.Kind())),
-      UnsupportedCategory::kType));
-}
-
 auto ValidateFormatOps(Context& context, std::span<const mir::FormatOp> ops)
     -> Result<void> {
   const auto& types = context.GetTypeArena();
-
   for (const auto& op : ops) {
-    if (op.kind == FormatKind::kLiteral) {
-      continue;  // Always supported
+    if (op.kind == FormatKind::kLiteral || op.kind == FormatKind::kString) {
+      continue;
     }
-    if (op.kind == FormatKind::kString) {
-      continue;  // String handle
-    }
-    // Value formatting - check constraints
     if (op.type) {
       const Type& ty = types[op.type];
-      // Check supported type kinds
       if (ty.Kind() != TypeKind::kIntegral && ty.Kind() != TypeKind::kReal &&
           ty.Kind() != TypeKind::kShortReal && !IsPacked(ty)) {
         return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
@@ -89,7 +45,6 @@ auto ValidateFormatOps(Context& context, std::span<const mir::FormatOp> ops)
             std::format("unsupported type kind in format op: {}", ToString(ty)),
             UnsupportedCategory::kType));
       }
-      // Check width limit
       int32_t width = 32;
       if (ty.Kind() == TypeKind::kIntegral) {
         width = static_cast<int32_t>(ty.AsIntegral().bit_width);
@@ -110,15 +65,63 @@ auto ValidateFormatOps(Context& context, std::span<const mir::FormatOp> ops)
                 width),
             UnsupportedCategory::kType));
       }
-      // 4-state types use the value plane directly for display formatting.
     }
   }
   return {};
 }
 
+auto LowerArgAsStringHandle(
+    Context& context, const mir::Operand& operand, TypeId type_id)
+    -> Result<std::pair<llvm::Value*, bool>> {
+  CanonicalSlotAccess canonical(context);
+  return LowerArgAsStringHandle(context, canonical, operand, type_id);
+}
+
 auto LowerFormatOpToBuffer(
-    Context& context, llvm::Value* buf, const mir::FormatOp& op)
+    Context& context, llvm::Value* buffer_ptr, const mir::FormatOp& op)
     -> Result<void> {
+  CanonicalSlotAccess canonical(context);
+  return LowerFormatOpToBuffer(context, canonical, buffer_ptr, op);
+}
+auto LowerArgAsStringHandle(
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
+    TypeId type_id) -> Result<std::pair<llvm::Value*, bool>> {
+  const auto& types = context.GetTypeArena();
+  const Type& operand_type = types[type_id];
+
+  if (operand_type.Kind() == TypeKind::kString) {
+    auto handle_or_err = LowerOperand(context, resolver, operand);
+    if (!handle_or_err) return std::unexpected(handle_or_err.error());
+    return std::pair{*handle_or_err, false};
+  }
+
+  if (IsPacked(operand_type)) {
+    auto value_or_err = LowerOperand(context, resolver, operand);
+    if (!value_or_err) return std::unexpected(value_or_err.error());
+    llvm::Value* packed_val = *value_or_err;
+
+    if (!packed_val->getType()->isIntegerTy() &&
+        !packed_val->getType()->isStructTy()) {
+      throw common::InternalError(
+          "LowerArgAsStringHandle",
+          "packed operand should be iN or {iN,iN}, not pointer");
+    }
+
+    llvm::Value* handle = EmitPackedToString(context, packed_val, operand_type);
+    return std::pair{handle, true};
+  }
+
+  return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+      context.GetCurrentOrigin(),
+      std::format(
+          "unsupported type for %s format: got {}, expected string or packed",
+          ToString(operand_type.Kind())),
+      UnsupportedCategory::kType));
+}
+
+auto LowerFormatOpToBuffer(
+    Context& context, SlotAccessResolver& resolver, llvm::Value* buf,
+    const mir::FormatOp& op) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& types = context.GetTypeArena();
@@ -133,7 +136,6 @@ auto LowerFormatOpToBuffer(
   auto* timeunit_val = llvm::ConstantInt::get(i8_ty, op.module_timeunit_power);
 
   if (op.kind == FormatKind::kLiteral) {
-    // Append literal string
     auto* str_const = builder.CreateGlobalStringPtr(op.literal);
     auto* len = llvm::ConstantInt::get(i64_ty, op.literal.size());
     builder.CreateCall(
@@ -142,10 +144,10 @@ auto LowerFormatOpToBuffer(
   }
 
   if (op.kind == FormatKind::kString) {
-    // Append string handle contents - may be string or packed operand
     if (op.value.has_value()) {
       return WithStringHandle(
-          context, *op.value, op.type, [&](llvm::Value* h) -> Result<void> {
+          context, resolver, *op.value, op.type,
+          [&](llvm::Value* h) -> Result<void> {
             builder.CreateCall(context.GetLyraStringFormatString(), {buf, h});
             return {};
           });
@@ -153,20 +155,14 @@ auto LowerFormatOpToBuffer(
     return {};
   }
 
-  // %t special case: MUST use LowerTimeToTicks64 to handle both int and real
-  // operands. No direct getIntegerBitWidth() assumptions allowed for time
-  // formatting.
   if (op.kind == FormatKind::kTime && op.value.has_value()) {
-    auto value_or_err = LowerOperand(context, *op.value);
+    auto value_or_err = LowerOperand(context, resolver, *op.value);
     if (!value_or_err) return std::unexpected(value_or_err.error());
 
     llvm::Value* ticks = LowerTimeToTicks64(context, *value_or_err);
     auto* alloca = builder.CreateAlloca(i64_ty);
     builder.CreateStore(ticks, alloca);
 
-    // Note: value_kind is ignored by runtime for FormatKind::kTime (dispatch on
-    // format kind takes precedence in FormatRuntimeValue). Passing kIntegral is
-    // safe.
     builder.CreateCall(
         context.GetLyraStringFormatValue(),
         {buf, engine_ptr,
@@ -184,7 +180,6 @@ auto LowerFormatOpToBuffer(
     return {};
   }
 
-  // Value formatting - mirrors LowerDisplayEffect
   int32_t width = 32;
   bool is_signed = false;
   auto value_kind = runtime::RuntimeValueKind::kIntegral;
@@ -206,20 +201,17 @@ auto LowerFormatOpToBuffer(
     }
   }
 
-  // Get pointer to the value
   llvm::Value* data_ptr = nullptr;
   if (op.value.has_value()) {
-    auto value_or_err = LowerOperand(context, *op.value);
+    auto value_or_err = LowerOperand(context, resolver, *op.value);
     if (!value_or_err) return std::unexpected(value_or_err.error());
     llvm::Value* value = *value_or_err;
 
     if (value_kind != runtime::RuntimeValueKind::kIntegral) {
-      // For real types, allocate matching float type and store
       auto* alloca = builder.CreateAlloca(value->getType());
       builder.CreateStore(value, alloca);
       data_ptr = alloca;
     } else {
-      // For integral types, allocate storage sized to match width
       llvm::Type* storage_ty = nullptr;
       if (width <= 8) {
         storage_ty = llvm::Type::getInt8Ty(llvm_ctx);
@@ -250,7 +242,6 @@ auto LowerFormatOpToBuffer(
     data_ptr = null_ptr;
   }
 
-  // Call LyraStringFormatValue
   auto* format_val =
       llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(op.kind));
   auto* value_kind_val =

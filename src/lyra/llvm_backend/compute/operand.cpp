@@ -20,9 +20,12 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -39,40 +42,14 @@ auto LoadBitRange(Context& context, mir::PlaceId place_id)
 
 auto LowerOperandRaw(Context& context, const mir::Operand& operand)
     -> Result<llvm::Value*> {
-  return std::visit(
-      common::Overloaded{
-          [&context](const Constant& constant) -> Result<llvm::Value*> {
-            return LowerConstant(context, constant);
-          },
-          [&context](mir::PlaceId place_id) -> Result<llvm::Value*> {
-            if (context.HasBitRangeProjection(place_id)) {
-              return LoadBitRange(context, place_id);
-            }
-            return context.LoadPlaceValue(place_id);
-          },
-          [&context](mir::TempId temp_id) -> Result<llvm::Value*> {
-            // Look up SSA temp value from context
-            return context.ReadTemp(temp_id.value);
-          },
-      },
-      operand.payload);
+  CanonicalSlotAccess canonical(context);
+  return LowerOperandRaw(context, canonical, operand);
 }
 
 auto LowerOperand(Context& context, const mir::Operand& operand)
     -> Result<llvm::Value*> {
-  auto val_or_err = LowerOperandRaw(context, operand);
-  if (!val_or_err) return std::unexpected(val_or_err.error());
-  llvm::Value* val = *val_or_err;
-
-  // Coerce 4-state struct to 2-state integer: value & ~unknown (known bits)
-  if (val->getType()->isStructTy()) {
-    auto& builder = context.GetBuilder();
-    auto* value_bits = builder.CreateExtractValue(val, 0, "coerce.val");
-    auto* unk_bits = builder.CreateExtractValue(val, 1, "coerce.unk");
-    auto* not_unk = builder.CreateNot(unk_bits, "coerce.notunk");
-    val = builder.CreateAnd(value_bits, not_unk, "coerce.known");
-  }
-  return val;
+  CanonicalSlotAccess canonical(context);
+  return LowerOperand(context, canonical, operand);
 }
 
 auto LowerOperandAsStorage(
@@ -209,6 +186,50 @@ auto LowerConstant(Context& context, const Constant& constant)
           },
       },
       constant.value);
+}
+
+auto LowerOperandRaw(
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
+    -> Result<llvm::Value*> {
+  return std::visit(
+      common::Overloaded{
+          [&context](const Constant& constant) -> Result<llvm::Value*> {
+            return LowerConstant(context, constant);
+          },
+          [&context, &resolver](mir::PlaceId place_id) -> Result<llvm::Value*> {
+            // Projected reads (bit-range) are canonical-only in v1.
+            if (context.HasBitRangeProjection(place_id)) {
+              return LoadBitRange(context, place_id);
+            }
+            const auto& place = context.GetMirArena()[place_id];
+            if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot &&
+                place.projections.empty()) {
+              return resolver.LoadSlotValue(place_id);
+            }
+            return context.LoadPlaceValue(place_id);
+          },
+          [&context](mir::TempId temp_id) -> Result<llvm::Value*> {
+            return context.ReadTemp(temp_id.value);
+          },
+      },
+      operand.payload);
+}
+
+auto LowerOperand(
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
+    -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, resolver, operand);
+  if (!val_or_err) return std::unexpected(val_or_err.error());
+  llvm::Value* val = *val_or_err;
+
+  if (val->getType()->isStructTy()) {
+    auto& builder = context.GetBuilder();
+    auto* value_bits = builder.CreateExtractValue(val, 0, "coerce.val");
+    auto* unk_bits = builder.CreateExtractValue(val, 1, "coerce.unk");
+    auto* not_unk = builder.CreateNot(unk_bits, "coerce.notunk");
+    val = builder.CreateAnd(value_bits, not_unk, "coerce.known");
+  }
+  return val;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

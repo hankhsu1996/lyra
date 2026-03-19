@@ -21,6 +21,7 @@
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -102,14 +103,14 @@ auto MapToFcmpPredicate(mir::BinaryOp op) -> llvm::CmpInst::Predicate {
 }
 
 auto LowerRealUnaryValue(
-    Context& context, const mir::UnaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands, TypeId result_type)
-    -> Result<llvm::Value*> {
+    Context& context, SlotAccessResolver& resolver,
+    const mir::UnaryRvalueInfo& info, const std::vector<mir::Operand>& operands,
+    TypeId result_type) -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
-  auto operand_or_err = LowerOperand(context, operands[0]);
+  auto operand_or_err = LowerOperand(context, resolver, operands[0]);
   if (!operand_or_err) return std::unexpected(operand_or_err.error());
   llvm::Value* operand = *operand_or_err;
 
@@ -139,17 +140,18 @@ auto LowerRealUnaryValue(
 }
 
 auto LowerRealBinaryValue(
-    Context& context, const mir::BinaryRvalueInfo& info,
+    Context& context, SlotAccessResolver& resolver,
+    const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, TypeId result_type)
     -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
 
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
-  auto lhs_or_err = LowerOperand(context, operands[0]);
+  auto lhs_or_err = LowerOperand(context, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   llvm::Value* lhs = *lhs_or_err;
-  auto rhs_or_err = LowerOperand(context, operands[1]);
+  auto rhs_or_err = LowerOperand(context, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   llvm::Value* rhs = *rhs_or_err;
 
@@ -159,7 +161,6 @@ auto LowerRealBinaryValue(
         "LowerRealBinaryValue", "real binary operands must be floating-point");
   }
 
-  // Defensive: if mixed types (float vs double), promote to double
   if (lhs->getType() != rhs->getType()) {
     auto* double_ty = llvm::Type::getDoubleTy(context.GetLlvmContext());
     if (!lhs->getType()->isDoubleTy()) {
@@ -171,7 +172,6 @@ auto LowerRealBinaryValue(
     float_ty = double_ty;
   }
 
-  // Helper to get target LLVM type for integral results
   auto get_target_type = [&]() -> llvm::Type* {
     const Type& type = types[result_type];
     uint32_t bit_width = IsPacked(type) ? PackedBitWidth(type, types) : 1;
@@ -202,7 +202,6 @@ auto LowerRealBinaryValue(
         logic_result, get_target_type(), "flog.ext");
   }
 
-  // Arithmetic operations
   switch (info.op) {
     case mir::BinaryOp::kAdd:
       result = builder.CreateFAdd(lhs, rhs, "fadd");
@@ -258,15 +257,22 @@ auto IsRealMathRvalue(Context& context, const mir::Rvalue& rvalue) -> bool {
 auto LowerRealRvalue(
     Context& context, const mir::Rvalue& rvalue, TypeId result_type)
     -> Result<RvalueValue> {
+  CanonicalSlotAccess canonical(context);
+  return LowerRealRvalue(context, canonical, rvalue, result_type);
+}
+
+auto LowerRealRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue> {
   auto result_or_err = std::visit(
       common::Overloaded{
           [&](const mir::UnaryRvalueInfo& info) -> Result<llvm::Value*> {
             return LowerRealUnaryValue(
-                context, info, rvalue.operands, result_type);
+                context, resolver, info, rvalue.operands, result_type);
           },
           [&](const mir::BinaryRvalueInfo& info) -> Result<llvm::Value*> {
             return LowerRealBinaryValue(
-                context, info, rvalue.operands, result_type);
+                context, resolver, info, rvalue.operands, result_type);
           },
           [&](const mir::CastRvalueInfo&) -> Result<llvm::Value*> {
             throw common::InternalError(

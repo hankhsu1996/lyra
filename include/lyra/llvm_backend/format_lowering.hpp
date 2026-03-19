@@ -17,6 +17,7 @@ class Value;
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
+class SlotAccessResolver;
 
 // Lower a string-like argument to a string handle.
 // - For string type: returns {handle, false} (no release needed)
@@ -28,6 +29,11 @@ class Context;
 auto LowerArgAsStringHandle(
     Context& context, const mir::Operand& operand, TypeId type_id)
     -> Result<std::pair<llvm::Value*, bool>>;
+
+// Resolver-aware overload.
+auto LowerArgAsStringHandle(
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
+    TypeId type_id) -> Result<std::pair<llvm::Value*, bool>>;
 
 // Execute body(handle) with automatic release of temporary handles.
 // - Calls LowerArgAsStringHandle to get (handle, needs_release)
@@ -50,6 +56,12 @@ auto WithStringHandle(
     Context& context, const mir::Operand& operand, TypeId type_id, F&& body)
     -> Result<void>;
 
+// Resolver-aware overload.
+template <class F>
+auto WithStringHandle(
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
+    TypeId type_id, F&& body) -> Result<void>;
+
 // Validate all format ops can be lowered (for early-exit before
 // LyraStringFormatStart). Returns error for unsupported types, 4-state values,
 // or values wider than 64 bits.
@@ -64,6 +76,11 @@ auto LowerFormatOpToBuffer(
     Context& context, llvm::Value* buf, const mir::FormatOp& op)
     -> Result<void>;
 
+// Resolver-aware overload.
+auto LowerFormatOpToBuffer(
+    Context& context, SlotAccessResolver& resolver, llvm::Value* buf,
+    const mir::FormatOp& op) -> Result<void>;
+
 // Template implementation (must be in header)
 template <class F>
 auto WithStringHandle(
@@ -74,6 +91,25 @@ auto WithStringHandle(
   auto [handle, needs_release] = *handle_result;
 
   // Call body, then release handle (even on error path)
+  auto body_result = body(handle);
+
+  if (needs_release) {
+    context.GetBuilder().CreateCall(context.GetLyraStringRelease(), {handle});
+  }
+
+  return body_result;
+}
+
+// Resolver-aware WithStringHandle template.
+template <class F>
+auto WithStringHandle(
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
+    TypeId type_id, F&& body) -> Result<void> {
+  auto handle_result =
+      LowerArgAsStringHandle(context, resolver, operand, type_id);
+  if (!handle_result) return std::unexpected(handle_result.error());
+  auto [handle, needs_release] = *handle_result;
+
   auto body_result = body(handle);
 
   if (needs_release) {

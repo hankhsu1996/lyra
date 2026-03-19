@@ -12,6 +12,8 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+class SlotAccessResolver;
+
 // Lower string binary comparison (==, !=, <, <=, >, >=).
 // Returns i1 zero-extended to result_type.
 auto LowerStringBinaryOp(
@@ -35,6 +37,28 @@ auto LowerStringReplicateValue(
 // Does NOT store to any place - caller must handle storage.
 auto LowerSFormatRvalueValue(
     Context& context, const mir::SFormatRvalueInfo& info,
+    const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
+
+// Resolver-aware overloads.
+auto LowerStringBinaryOp(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::BinaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* result_type)
+    -> Result<llvm::Value*>;
+
+auto LowerStringConcatValue(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::ConcatRvalueInfo& info,
+    const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
+
+auto LowerStringReplicateValue(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::ReplicateRvalueInfo& info,
+    const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
+
+auto LowerSFormatRvalueValue(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::SFormatRvalueInfo& info,
     const std::vector<mir::Operand>& operands) -> Result<llvm::Value*>;
 
 }  // namespace lyra::lowering::mir_to_llvm

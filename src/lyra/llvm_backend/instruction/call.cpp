@@ -21,6 +21,7 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/statement.hpp"
@@ -239,6 +240,14 @@ auto LowerSystemTfCall(
 }
 
 }  // namespace
+
+auto LowerCall(
+    Context& context, SlotAccessResolver& /*resolver*/, const mir::Call& call)
+    -> Result<void> {
+  // Calls are kMayWriteAny boundaries -- sync happens before them.
+  // Delegate to canonical version.
+  return LowerCall(context, call);
+}
 
 auto LowerCall(Context& context, const mir::Call& call) -> Result<void> {
   return std::visit(

@@ -8,6 +8,8 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+class SlotAccessResolver;
+
 // Cast lowering - returns computed value with unknown plane for 4-state.
 auto LowerCastRvalue(
     Context& context, const mir::Rvalue& rvalue, TypeId destination_type)
@@ -22,5 +24,14 @@ auto LowerBitCastRvalue(
 // Real values: truncate toward zero (LRM 21.2.1.2), clamp to [0, UINT64_MAX].
 auto LowerTimeToTicks64(Context& context, llvm::Value* time_value)
     -> llvm::Value*;
+
+// Resolver-aware overloads.
+auto LowerCastRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
+    TypeId destination_type) -> Result<RvalueValue>;
+
+auto LowerBitCastRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
+    TypeId destination_type) -> Result<RvalueValue>;
 
 }  // namespace lyra::lowering::mir_to_llvm

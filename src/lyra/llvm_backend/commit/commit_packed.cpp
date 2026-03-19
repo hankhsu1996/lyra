@@ -390,6 +390,36 @@ void CommitPackedValueRaw(
       ctx, lowered, *wt_or_err, resolved.spec, resolved.arena);
 }
 
+void EmitActivationLocalFlush(
+    Context& ctx, llvm::Value* canonical_ptr, llvm::Value* value,
+    const SignalIdExpr& signal_id) {
+  // EmitInlineStore uses ICmpNE for change detection, which is only
+  // valid for integer types. Float and 4-state struct types need
+  // unconditional store + dirty-mark.
+  if (value->getType()->isFloatingPointTy() || value->getType()->isStructTy()) {
+    ctx.GetBuilder().CreateStore(value, canonical_ptr);
+    if (ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit &&
+        ctx.GetNotificationPolicy() != NotificationPolicy::kDeferred) {
+      auto& builder = ctx.GetBuilder();
+      auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
+      builder.CreateCall(
+          ctx.GetLyraMarkDirty(),
+          {ctx.GetEnginePointer(), signal_id.Emit(builder),
+           llvm::ConstantInt::get(i32_ty, 0),
+           llvm::ConstantInt::get(i32_ty, 0)});
+    }
+    return;
+  }
+
+  WriteTarget target{
+      .ptr = canonical_ptr,
+      .canonical_signal_id = signal_id,
+      .dirty_off = 0,
+      .dirty_size = 0,
+  };
+  EmitInlineStore(ctx, value, target);
+}
+
 namespace {
 
 // 4-state: coerce raw to {val, unk} struct matching storage spec

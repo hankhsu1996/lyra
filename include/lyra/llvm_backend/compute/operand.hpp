@@ -8,12 +8,23 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+class SlotAccessResolver;
+
 // Lower a MIR operand to an LLVM Value (coerces 4-state to 2-state integer)
 auto LowerOperand(Context& context, const mir::Operand& operand)
     -> Result<llvm::Value*>;
 
 // Lower a MIR operand without 4-state coercion (returns struct for 4-state)
 auto LowerOperandRaw(Context& context, const mir::Operand& operand)
+    -> Result<llvm::Value*>;
+
+// Resolver-aware overloads: route module-slot reads through the resolver.
+auto LowerOperandRaw(
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
+    -> Result<llvm::Value*>;
+
+auto LowerOperand(
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
     -> Result<llvm::Value*>;
 
 // Lower a MIR operand as a storage representation matching target_type exactly.

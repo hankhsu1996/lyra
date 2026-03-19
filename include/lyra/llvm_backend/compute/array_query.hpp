@@ -8,11 +8,19 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+class SlotAccessResolver;
+
 // Evaluate array query rvalue ($left, $right, $low, $high, $increment, $size,
 // $dimensions, $unpacked_dimensions) and return the computed value.
 // Result is always i32. Returns FourState when result_type is 4-state.
 auto LowerArrayQueryRvalue(
     Context& context, const mir::Rvalue& rvalue,
+    const mir::ArrayQueryRvalueInfo& info, TypeId result_type)
+    -> Result<RvalueValue>;
+
+// Resolver-aware overload.
+auto LowerArrayQueryRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
     const mir::ArrayQueryRvalueInfo& info, TypeId result_type)
     -> Result<RvalueValue>;
 

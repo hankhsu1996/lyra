@@ -37,14 +37,17 @@
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/llvm_backend/activation_local.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
+#include "lyra/llvm_backend/contract_executor.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/observer_abi.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/llvm_backend/statement.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -361,12 +364,12 @@ void VerifyLlvmFunction(llvm::Function* func, const char* caller) {
   }
 }
 
-auto LoadConditionAsI1(Context& context, const mir::Operand& operand)
+auto LoadConditionAsI1(
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
     -> Result<llvm::Value*> {
   auto& builder = context.GetBuilder();
 
-  // Lower the operand to get the condition value
-  auto cond_val_or_err = LowerOperandRaw(context, operand);
+  auto cond_val_or_err = LowerOperandRaw(context, resolver, operand);
   if (!cond_val_or_err) return std::unexpected(cond_val_or_err.error());
   llvm::Value* cond_val = *cond_val_or_err;
 
@@ -391,20 +394,30 @@ auto LoadConditionAsI1(Context& context, const mir::Operand& operand)
   return cond_val;
 }
 
-// Lower edge args to LLVM values with full type representation.
-// Uses LowerOperandRaw (not LowerOperand) to preserve 4-state structure.
-// PHI nodes expect the full type representation, not just the "known-true"
-// value.
-auto LowerEdgeArgs(Context& context, const std::vector<mir::Operand>& args)
+auto LoadConditionAsI1(Context& context, const mir::Operand& operand)
+    -> Result<llvm::Value*> {
+  CanonicalSlotAccess canonical(context);
+  return LoadConditionAsI1(context, canonical, operand);
+}
+
+auto LowerEdgeArgs(
+    Context& context, SlotAccessResolver& resolver,
+    const std::vector<mir::Operand>& args)
     -> Result<std::vector<llvm::Value*>> {
   std::vector<llvm::Value*> llvm_args;
   llvm_args.reserve(args.size());
   for (const auto& arg : args) {
-    auto val_or_err = LowerOperandRaw(context, arg);
+    auto val_or_err = LowerOperandRaw(context, resolver, arg);
     if (!val_or_err) return std::unexpected(val_or_err.error());
     llvm_args.push_back(*val_or_err);
   }
   return llvm_args;
+}
+
+auto LowerEdgeArgs(Context& context, const std::vector<mir::Operand>& args)
+    -> Result<std::vector<llvm::Value*>> {
+  CanonicalSlotAccess canonical(context);
+  return LowerEdgeArgs(context, canonical, args);
 }
 
 // Check if a terminator has any back-edge targets (target index <= source
@@ -472,15 +485,14 @@ void EmitBackEdgeGuard(
 }
 
 auto LowerJump(
-    Context& context, const mir::Jump& jump,
+    Context& context, SlotAccessResolver& resolver, const mir::Jump& jump,
     const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
     -> Result<void> {
   auto* current_bb = context.GetBuilder().GetInsertBlock();
 
-  // Lower edge args BEFORE creating the terminator (they may emit loads)
   std::vector<llvm::Value*> arg_values;
   if (!jump.args.empty()) {
-    auto args_or_err = LowerEdgeArgs(context, jump.args);
+    auto args_or_err = LowerEdgeArgs(context, resolver, jump.args);
     if (!args_or_err) return std::unexpected(args_or_err.error());
     arg_values = std::move(*args_or_err);
   }
@@ -498,24 +510,31 @@ auto LowerJump(
   return {};
 }
 
+auto LowerJump(
+    Context& context, const mir::Jump& jump,
+    const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
+    -> Result<void> {
+  CanonicalSlotAccess canonical(context);
+  return LowerJump(context, canonical, jump, blocks, phi_state);
+}
+
 auto LowerBranch(
-    Context& context, const mir::Branch& branch,
+    Context& context, SlotAccessResolver& resolver, const mir::Branch& branch,
     const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
     -> Result<void> {
   auto* current_bb = context.GetBuilder().GetInsertBlock();
-  auto cond_or_err = LoadConditionAsI1(context, branch.condition);
+  auto cond_or_err = LoadConditionAsI1(context, resolver, branch.condition);
   if (!cond_or_err) return std::unexpected(cond_or_err.error());
 
-  // Lower edge args BEFORE creating the branch (while still in predecessor)
   std::vector<llvm::Value*> then_llvm_args;
   std::vector<llvm::Value*> else_llvm_args;
   if (!branch.then_args.empty()) {
-    auto args_or_err = LowerEdgeArgs(context, branch.then_args);
+    auto args_or_err = LowerEdgeArgs(context, resolver, branch.then_args);
     if (!args_or_err) return std::unexpected(args_or_err.error());
     then_llvm_args = std::move(*args_or_err);
   }
   if (!branch.else_args.empty()) {
-    auto args_or_err = LowerEdgeArgs(context, branch.else_args);
+    auto args_or_err = LowerEdgeArgs(context, resolver, branch.else_args);
     if (!args_or_err) return std::unexpected(args_or_err.error());
     else_llvm_args = std::move(*args_or_err);
   }
@@ -538,6 +557,14 @@ auto LowerBranch(
          .args = std::move(else_llvm_args)});
   }
   return {};
+}
+
+auto LowerBranch(
+    Context& context, const mir::Branch& branch,
+    const std::vector<llvm::BasicBlock*>& blocks, PhiWiringState& phi_state)
+    -> Result<void> {
+  CanonicalSlotAccess canonical(context);
+  return LowerBranch(context, canonical, branch, blocks, phi_state);
 }
 
 void LowerReturn(Context& context, llvm::BasicBlock* exit_block) {
@@ -1318,7 +1345,8 @@ auto ComputeNomatchMessage(const mir::QualifiedDispatch& d) -> std::string {
 }
 
 auto LowerQualifiedDispatch(
-    Context& context, const mir::QualifiedDispatch& dispatch,
+    Context& context, SlotAccessResolver& resolver,
+    const mir::QualifiedDispatch& dispatch,
     const std::vector<llvm::BasicBlock*>& blocks) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -1331,7 +1359,7 @@ auto LowerQualifiedDispatch(
   std::vector<llvm::Value*> conds;
   conds.reserve(dispatch.conditions.size());
   for (const auto& cond_op : dispatch.conditions) {
-    auto cond_or_err = LoadConditionAsI1(context, cond_op);
+    auto cond_or_err = LoadConditionAsI1(context, resolver, cond_op);
     if (!cond_or_err) return std::unexpected(cond_or_err.error());
     conds.push_back(*cond_or_err);
   }
@@ -1412,7 +1440,7 @@ auto LowerQualifiedDispatch(
 }
 
 auto LowerTerminator(
-    Context& context, const mir::Terminator& term,
+    Context& context, SlotAccessResolver& resolver, const mir::Terminator& term,
     const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block,
     PhiWiringState& phi_state, std::vector<WaitSiteEntry>& wait_sites)
     -> Result<void> {
@@ -1424,10 +1452,10 @@ auto LowerTerminator(
   return std::visit(
       common::Overloaded{
           [&](const mir::Jump& t) -> Result<void> {
-            return LowerJump(context, t, blocks, phi_state);
+            return LowerJump(context, resolver, t, blocks, phi_state);
           },
           [&](const mir::Branch& t) -> Result<void> {
-            return LowerBranch(context, t, blocks, phi_state);
+            return LowerBranch(context, resolver, t, blocks, phi_state);
           },
           [&](const mir::Return&) -> Result<void> {
             LowerReturn(context, exit_block);
@@ -1448,7 +1476,7 @@ auto LowerTerminator(
             return {};
           },
           [&](const mir::QualifiedDispatch& d) -> Result<void> {
-            return LowerQualifiedDispatch(context, d, blocks);
+            return LowerQualifiedDispatch(context, resolver, d, blocks);
           },
           [&](const auto&) -> Result<void> {
             return std::unexpected(
@@ -1458,6 +1486,16 @@ auto LowerTerminator(
           },
       },
       term.data);
+}
+
+auto LowerTerminator(
+    Context& context, const mir::Terminator& term,
+    const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block,
+    PhiWiringState& phi_state, std::vector<WaitSiteEntry>& wait_sites)
+    -> Result<void> {
+  CanonicalSlotAccess canonical(context);
+  return LowerTerminator(
+      context, canonical, term, blocks, exit_block, phi_state, wait_sites);
 }
 
 }  // namespace
@@ -1737,6 +1775,9 @@ auto GenerateSharedProcessFunction(
       process.blocks, context.GetMirArena(), context.GetTypeArena());
   auto deferred_blocks = BuildDeferredPolicyBlocks(deferred_loops);
 
+  auto activation_plan = BuildProcessActivationPlan(
+      process, context.GetMirArena(), context.GetTypeArena());
+
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
@@ -1793,6 +1834,10 @@ auto GenerateSharedProcessFunction(
   context.SetSignalIdOffset(func->getArg(4));
   context.SetUnstableSlotOffsetsPtr(func->getArg(5));
 
+  // Create activation-local managed slot storage (shadow allocas).
+  // Must be after slot addressing setup (this_ptr, signal_id_offset).
+  auto managed_storage = CreateManagedSlotStorage(activation_plan, context);
+
   // Resume dispatch (same logic as GenerateProcessFunction)
   std::vector<size_t> resume_targets;
   for (const auto& block : process.blocks) {
@@ -1836,27 +1881,36 @@ auto GenerateSharedProcessFunction(
   if (!phi_state_or_err) return std::unexpected(phi_state_or_err.error());
   auto& phi_state = *phi_state_or_err;
 
+  ContractExecutor executor(
+      context, activation_plan, std::move(managed_storage));
+
   for (size_t i = 0; i < process.blocks.size(); ++i) {
     const auto& block = process.blocks[i];
+    auto bi = static_cast<uint32_t>(i);
     builder.SetInsertPoint(llvm_blocks[i]);
 
-    auto policy =
-        std::ranges::binary_search(deferred_blocks, static_cast<uint32_t>(i))
-            ? NotificationPolicy::kDeferred
-            : NotificationPolicy::kImmediate;
+    auto policy = std::ranges::binary_search(deferred_blocks, bi)
+                      ? NotificationPolicy::kDeferred
+                      : NotificationPolicy::kImmediate;
     NotificationPolicyScope policy_scope(context, policy);
 
-    // Loop-exit edge effect: deferred dirty-marks.
     for (const auto& loop : deferred_loops) {
-      if (loop.exit_block == static_cast<uint32_t>(i)) {
+      if (loop.exit_block == bi) {
         EmitLoopExitDeferredMarks(context, loop.notified_roots);
       }
     }
 
-    for (const auto& instruction : block.statements) {
-      auto result = LowerStatement(context, instruction);
+    auto& resolver = executor.GetResolver(bi);
+    executor.ExecuteBlockEntry(bi);
+
+    for (uint32_t si = 0; si < block.statements.size(); ++si) {
+      executor.ExecutePreStatement(bi, si);
+      auto result = LowerStatement(context, resolver, block.statements[si]);
       if (!result) return std::unexpected(result.error());
+      executor.ExecutePostStatement(bi, si);
     }
+
+    executor.ExecuteBlockExit(bi);
 
     if (HasBackEdge(block.terminator, i) &&
         !std::ranges::binary_search(
@@ -1866,7 +1920,7 @@ auto GenerateSharedProcessFunction(
     }
 
     auto term_result = LowerTerminator(
-        context, block.terminator, llvm_blocks, exit_block, phi_state,
+        context, resolver, block.terminator, llvm_blocks, exit_block, phi_state,
         wait_sites);
     if (!term_result) return std::unexpected(term_result.error());
   }
@@ -2978,7 +3032,9 @@ auto DefineMirFunction(
               return {};
             },
             [&](const mir::QualifiedDispatch& d) -> Result<void> {
-              return LowerQualifiedDispatch(context, d, llvm_blocks);
+              CanonicalSlotAccess qd_canonical(context);
+              return LowerQualifiedDispatch(
+                  context, qd_canonical, d, llvm_blocks);
             },
             [&](const auto&) -> Result<void> {
               return std::unexpected(

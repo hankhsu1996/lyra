@@ -1,7 +1,6 @@
 #include "lyra/llvm_backend/instruction/immediate_assign.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <variant>
 
@@ -23,6 +22,7 @@
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/llvm_backend/type_ops/dispatch.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/llvm_backend/write_plan.hpp"
@@ -284,40 +284,126 @@ auto LowerRvalueAssign(
 }  // namespace
 
 auto LowerAssign(Context& context, const mir::Assign& assign) -> Result<void> {
-  // BitRangeProjection targets use read-modify-write
-  if (context.HasBitRangeProjection(assign.dest)) {
-    auto source_raw_or_err = LowerRhsRaw(context, assign.rhs, assign.dest);
-    if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
-    return StoreBitRange(context, assign.dest, *source_raw_or_err);
-  }
-
-  // Dispatch on RightHandSide: Operand or Rvalue
-  return std::visit(
-      common::Overloaded{
-          [&](const mir::Operand& operand) -> Result<void> {
-            // Delegate all value semantics to the TypeOps layer
-            return AssignPlace(context, assign.dest, operand);
-          },
-          [&](const mir::Rvalue& rvalue) -> Result<void> {
-            return LowerRvalueAssign(context, assign.dest, rvalue);
-          },
-      },
-      assign.rhs);
+  CanonicalSlotAccess canonical(context);
+  return LowerAssign(context, canonical, assign);
 }
 
 auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
     -> Result<void> {
-  auto& builder = context.GetBuilder();
+  CanonicalSlotAccess canonical(context);
+  return LowerGuardedAssign(context, canonical, guarded);
+}
+// Single resolver-aware write path for managed immediate assignments.
+//
+// Commits a raw value to a managed slot through the resolver. This is
+// the only write path for managed destinations. It handles:
+//
+//   1. Projected writes (bit-range) -> canonical StoreBitRange
+//      (projected writes are canonical-only in v1 and never managed)
+//   2. Managed whole-slot module slots -> resolver.CommitSlotValue
+//
+// Precondition: resolver.ManagesPlace(dest) is true, or dest has a
+// bit-range projection (which is canonical-only).
+//
+// Both LowerAssign and LowerGuardedAssign use this for managed
+// destinations. Non-managed destinations use the canonical assignment
+// path (AssignPlace / LowerRvalueAssign / CommitValue) which handles
+// full type-dispatch semantics (field-by-field structs, union memcpy,
+// string lifecycle, etc.).
+auto CommitManagedImmediate(
+    Context& context, SlotAccessResolver& resolver, mir::PlaceId dest,
+    llvm::Value* value, OwnershipPolicy policy) -> Result<void> {
+  if (context.HasBitRangeProjection(dest)) {
+    return StoreBitRange(context, dest, value);
+  }
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
+  TypeId type_id = mir::TypeOfPlace(types, arena[dest]);
+  return resolver.CommitSlotValue(dest, value, type_id, policy);
+}
 
-  // rhs evaluated BEFORE branch (per SystemVerilog spec)
-  auto rhs_raw_or_err = LowerRhsRaw(context, guarded.rhs, guarded.dest);
+auto LowerAssign(
+    Context& context, SlotAccessResolver& resolver, const mir::Assign& assign)
+    -> Result<void> {
+  // Managed destination: evaluate RHS via resolver-aware path, commit
+  // through the single managed write path.
+  if (resolver.ManagesPlace(assign.dest)) {
+    auto rhs_raw_or_err =
+        LowerRhsRaw(context, resolver, assign.rhs, assign.dest);
+    if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
+    return CommitManagedImmediate(
+        context, resolver, assign.dest, *rhs_raw_or_err,
+        OwnershipPolicy::kMove);
+  }
+
+  // Non-managed destination: evaluate RHS with resolver-aware reads,
+  // then commit through canonical write path.
+  //
+  // Projected writes (bit-range) are canonical-only in v1.
+  if (context.HasBitRangeProjection(assign.dest)) {
+    auto source_raw_or_err =
+        LowerRhsRaw(context, resolver, assign.rhs, assign.dest);
+    if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
+    return StoreBitRange(context, assign.dest, *source_raw_or_err);
+  }
+
+  // Check write plan: field-by-field struct/array and union memcpy
+  // require OperandSource (they need the source PlaceId for memcpy/
+  // field transfer). For these types, use AssignPlace which preserves
+  // operand identity. AssignPlace reads operands via canonical
+  // LowerOperandRaw, which is correct because these complex types
+  // are never v1-eligible managed slots (only plain scalars are managed).
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
+  TypeId type_id = mir::TypeOfPlace(types, arena[assign.dest]);
+  auto plan = BuildWritePlan(type_id, types);
+  if (plan.op == WriteOp::kCommitFieldByFieldStruct ||
+      plan.op == WriteOp::kCommitFieldByFieldArray ||
+      plan.op == WriteOp::kCommitUnionMemcpy) {
+    return std::visit(
+        common::Overloaded{
+            [&](const mir::Operand& operand) -> Result<void> {
+              return AssignPlace(context, assign.dest, operand);
+            },
+            [&](const mir::Rvalue& rvalue) -> Result<void> {
+              return LowerRvalueAssign(context, assign.dest, rvalue);
+            },
+        },
+        assign.rhs);
+  }
+
+  // All other types: evaluate RHS with resolver-aware operand reads,
+  // commit as raw value through canonical write path.
+  auto rhs_raw_or_err = LowerRhsRaw(context, resolver, assign.rhs, assign.dest);
+  if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
+  // Determine ownership: Rvalue sources produce temporaries (kMove).
+  // Operand sources from temps are kMove, all others are kClone.
+  auto policy = std::visit(
+      common::Overloaded{
+          [&](const mir::Operand& op) -> OwnershipPolicy {
+            return DetermineOwnership(context, op);
+          },
+          [](const mir::Rvalue&) -> OwnershipPolicy {
+            return OwnershipPolicy::kMove;
+          },
+      },
+      assign.rhs);
+  return CommitValue(context, assign.dest, *rhs_raw_or_err, type_id, policy);
+}
+
+auto LowerGuardedAssign(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::GuardedAssign& guarded) -> Result<void> {
+  auto& builder = context.GetBuilder();
+
+  // RHS evaluated BEFORE branch (per SystemVerilog spec).
+  auto rhs_raw_or_err =
+      LowerRhsRaw(context, resolver, guarded.rhs, guarded.dest);
   if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
   llvm::Value* rhs_raw = *rhs_raw_or_err;
 
-  // Guard check (coerce to i1)
-  auto guard_or_err = LowerOperand(context, guarded.guard);
+  // Guard check (coerce to i1).
+  auto guard_or_err = LowerOperand(context, resolver, guarded.guard);
   if (!guard_or_err) return std::unexpected(guard_or_err.error());
   llvm::Value* guard = *guard_or_err;
   if (guard->getType()->getIntegerBitWidth() > 1) {
@@ -325,7 +411,7 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
     guard = builder.CreateICmpNE(guard, zero, "ga.tobool");
   }
 
-  // Branch
+  // Branch.
   auto* func = builder.GetInsertBlock()->getParent();
   auto* do_write_bb =
       llvm::BasicBlock::Create(context.GetLlvmContext(), "ga.write", func);
@@ -333,23 +419,30 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
       llvm::BasicBlock::Create(context.GetLlvmContext(), "ga.skip", func);
   builder.CreateCondBr(guard, do_write_bb, skip_bb);
 
-  // Write path
+  // Write path.
   builder.SetInsertPoint(do_write_bb);
 
-  // BitRangeProjection: intentional bypass
-  if (context.HasBitRangeProjection(guarded.dest)) {
+  if (resolver.ManagesPlace(guarded.dest)) {
+    // Managed destination: single managed write path.
+    // INVARIANT: GuardedAssign always uses kClone, never kMove.
+    auto result = CommitManagedImmediate(
+        context, resolver, guarded.dest, rhs_raw, OwnershipPolicy::kClone);
+    if (!result) return result;
+  } else if (context.HasBitRangeProjection(guarded.dest)) {
     auto result = StoreBitRange(context, guarded.dest, rhs_raw);
     if (!result) return result;
   } else {
-    const auto& place = arena[guarded.dest];
-    TypeId type_id = mir::TypeOfPlace(types, place);
-
-    // INVARIANT: GuardedAssign always uses kClone, never kMove.
-    // Reason: We must not mutate/clear the rhs *place* when the assign is
-    // conditional. The rhs was evaluated BEFORE the guard check (per SV
-    // spec), and the rhs place may still be observable by other code.
-    // kClone ensures no "consume source" side effects (no null-out, no
-    // release). Do NOT "optimize" this to kMove.
+    // Non-managed: canonical CommitValue(raw).
+    // This uses CommitValue with a pre-evaluated raw value, while
+    // plain assign uses AssignPlace/LowerRvalueAssign with operand
+    // identity. This asymmetry is intentional: guarded assignment
+    // evaluates RHS before the guard branch (SV spec), so only a
+    // raw value is available at the write point. Both paths produce
+    // identical results for v1-eligible types (plain scalars).
+    // INVARIANT: GuardedAssign always uses kClone (see above).
+    const auto& arena = context.GetMirArena();
+    const auto& types = context.GetTypeArena();
+    TypeId type_id = mir::TypeOfPlace(types, arena[guarded.dest]);
     auto result = CommitValue(
         context, guarded.dest, rhs_raw, type_id, OwnershipPolicy::kClone);
     if (!result) return result;
