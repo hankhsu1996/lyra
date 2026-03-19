@@ -1,5 +1,5 @@
 `ifndef NUM_ITERS
-`define NUM_ITERS 200000000
+`define NUM_ITERS 40000000
 `endif
 
 // Fixed non-recursive call chain of 16 functions.

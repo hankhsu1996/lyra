@@ -8,7 +8,7 @@ primary = "function call chain codegen (16-deep, likely inlined)"
 secondary = ["inlining effectiveness", "argument passing"]
 
 [scale.small]
-NUM_ITERS = 20_000_000
+NUM_ITERS = 4_000_000
 
 [scale.large]
-NUM_ITERS = 200_000_000
+NUM_ITERS = 40_000_000

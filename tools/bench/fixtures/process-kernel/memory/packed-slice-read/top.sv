@@ -1,5 +1,5 @@
 `ifndef NUM_ITERS
-`define NUM_ITERS 20480
+`define NUM_ITERS 500000
 `endif
 
 // Packed 2D array read throughput.
