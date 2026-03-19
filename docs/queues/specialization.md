@@ -27,7 +27,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] m2 -- Instance paths deferred to runtime
 - [ ] G -- Instance-independent LLVM codegen (descriptor-driven realization)
   - [x] G0 -- Investigation and documentation of instance-shaped LLVM artifacts
-  - [ ] G1 -- Migrate process dispatch from per-instance wrappers to descriptor-driven dispatch
+  - [x] G1 -- Migrate process dispatch from per-instance wrappers to descriptor-driven dispatch
   - [ ] G2 -- Migrate comb dispatch off per-instance LLVM wrappers
   - [ ] G3 -- Move unstable-offset realization out of LLVM globals into constructor/runtime-owned data
   - [ ] G4 -- Remove remaining instance-shaped LLVM residue and re-validate scaling
@@ -50,11 +50,9 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 
 ## G: Instance-independent LLVM codegen
 
-Shared-body migration is complete only at the body-dedup level: MIR produces one body per specialization, and shared body functions with the 7-arg ABI are compiled once per body. This portion is in the correct long-term shape.
+Shared-body migration is complete at the body-dedup level. Module-process dispatch is descriptor-driven: the runtime reads per-instance binding from a constant descriptor table and calls shared bodies directly. Per-instance process wrapper functions are eliminated.
 
-Descriptor-driven instance realization is not yet implemented. Per-instance wrappers and globals remain a bridge shape, not the target architecture. The LLVM backend still generates per-instance wrapper functions, per-instance comb wrappers, per-instance unstable-offset globals, and instance-count-shaped function pointer arrays. These artifacts encode instance-specific binding in LLVM IR, causing LLVM IR size and optimization time to scale linearly with instance count.
-
-This violates the specialization boundary rule: instance count should primarily affect runtime construction work and runtime metadata/object-graph size, not heavy LLVM codegen shape.
+Remaining instance-shaped LLVM artifacts: per-instance comb wrappers (adapted to call through a shared trampoline, not process wrappers), per-instance unstable-offset globals, instance-count-shaped data arrays, and per-process named types. These are tracked as G2-G4 follow-up items. Comb dispatch still uses a temporary trampoline bridge and is not yet migrated to the runtime.
 
 See [investigations/instance-shaped-llvm-artifacts.md](../investigations/instance-shaped-llvm-artifacts.md) for the full investigation.
 
@@ -62,25 +60,25 @@ See [investigations/instance-shaped-llvm-artifacts.md](../investigations/instanc
 
 Completed full boundary investigation of all per-instance LLVM artifacts. Identified eight artifact classes, traced runtime dispatch paths, documented the root cause (runtime ABI lacks descriptor slot), and defined the clean replacement boundary. Architecture docs updated to describe the target shape and current gap explicitly.
 
-### G1: Migrate process dispatch to descriptor-driven dispatch
+### G1: Migrate process dispatch to descriptor-driven dispatch (done)
 
-**Goal**: Process dispatch must consume instance descriptors instead of per-instance wrapper function pointers. Shared body functions must be callable without per-instance wrapper generation.
+Per-instance process wrapper functions (`process_N`) are eliminated. Codegen emits a constant descriptor table (`__lyra_process_descriptors`) with per-module-process binding data (shared body pointer, base byte offset, instance ID, base slot ID, unstable offsets pointer). The runtime dispatch callback reads descriptors and calls shared bodies directly with the 7-arg ABI. `GenerateProcessWrapper` is deleted.
 
-**Why current state is insufficient**: The runtime dispatch ABI is a bare function pointer call with no descriptor argument. All instance-specific binding (base byte offset, instance ID, signal ID offset, unstable offsets) must be baked into per-instance LLVM wrapper functions. This generates O(instances) LLVM functions, each requiring LLVM function creation, verification, and machine code emission.
+A single non-instance-shaped trampoline (`__lyra_descriptor_dispatch`) bridges comb wrappers to the descriptor table. Comb wrappers are adapted to call the trampoline instead of deleted process wrappers. The trampoline is **not** part of the target architecture -- it exists only because comb dispatch remains on the old per-instance LLVM wrapper path until G2. G2 deletes both the trampoline and the comb wrappers.
 
-**What the migration will change**: The runtime dispatch path will read a per-instance descriptor (containing shared body pointer, base byte offset, instance ID, signal ID offset, unstable offset pointer) and call the shared body function directly. The LLVM backend will stop generating per-instance wrapper functions. The per-instance function pointer array will be replaced by a descriptor table built at construction time.
+Runtime ABI bumped to v7 with descriptor table pointer, descriptor count, and standalone/module process boundary. `LyraRunSimulation` signature unchanged. Connection processes keep the existing 3-arg direct dispatch path.
 
-**Completion means**: Adding module instances does not increase the number of LLVM functions. The per-instance wrapper generation code path is deleted, not just bypassed.
+**Bridge residue left for follow-up items**: `__lyra_module_funcs` array with null module entries (temporary compatibility), per-instance comb wrappers (G2), per-instance unstable-offset globals (G3), per-process state types and init code (G4).
 
 ### G2: Migrate comb dispatch off per-instance LLVM wrappers
 
-**Goal**: Remove the per-instance comb wrapper -> process wrapper -> shared body bridge chain. Comb dispatch must call shared body functions directly or through descriptors.
+**Goal**: Remove per-instance comb wrapper LLVM functions. Comb dispatch must call shared body functions through runtime-owned descriptor data without per-instance LLVM code.
 
-**Why current state is insufficient**: Each comb kernel generates a per-instance LLVM wrapper that allocates a local outcome buffer, calls the underlying process wrapper, and discards the result. This is a second level of per-instance LLVM code on top of G1.
+**Current state after G1**: Comb wrappers (`__lyra_comb_wrapper_N`) still exist as per-instance LLVM functions, but they no longer call per-instance process wrappers. Each comb wrapper calls the shared `__lyra_descriptor_dispatch` trampoline with a descriptor index. The comb wrapper count still scales with instance count.
 
-**What the migration will change**: Comb dispatch will use descriptors (same as G1) or the comb ABI will be unified with the process ABI so that no adapter wrapper is needed. The runtime will allocate the outcome buffer and call the shared body directly.
+**What the migration will change**: Comb dispatch will move into the runtime. The `CombKernel` struct will resolve shared body calls through the descriptor table (the canonical source of process binding). The trampoline, `__lyra_comb_funcs`, and all `__lyra_comb_wrapper_N` functions will be deleted.
 
-**Completion means**: The comb wrapper generation code path is deleted. Comb kernel count does not increase LLVM function count.
+**Completion means**: No per-instance comb wrapper LLVM functions. Comb kernel dispatch is runtime-owned. The `__lyra_descriptor_dispatch` trampoline is deleted (no longer needed once comb dispatch is in the runtime).
 
 ### G3: Move unstable-offset realization out of LLVM globals
 

@@ -156,6 +156,19 @@ struct RealizationData {
   std::vector<char> slot_trace_string_pool;
 };
 
+// Canonical module-process dispatch binding collected during Phase 5 of
+// CompileDesignProcesses. One entry per module process, identifying the
+// shared body and the instance-specific constants needed to call it.
+// Consumed by EmitProcessDescriptorTable to emit a constant descriptor
+// data global for runtime-side descriptor-driven dispatch.
+struct ProcessDescriptorData {
+  llvm::Function* shared_body;
+  uint64_t base_byte_offset;
+  uint32_t instance_id;
+  uint32_t base_slot_id;
+  llvm::Constant* unstable_offsets;  // nullptr if all stable
+};
+
 // Backend-owned intermediate state between behavioral codegen and assembly.
 // This is a strict bridge object: assembly may append IR (main()) to the
 // module owned by context, but must not own layout/process compilation
@@ -179,6 +192,11 @@ struct CodegenSession {
   std::vector<ProcessTriggerEntry> process_triggers;
   std::vector<SlotInfo> slot_info;
   size_t num_init_processes = 0;
+  // Per-module-process descriptor data for descriptor-driven dispatch.
+  // One entry per module process, in scheduled_processes order starting
+  // from num_module_process_base. Standalone (init/connection) processes
+  // are not represented here.
+  std::vector<ProcessDescriptorData> process_descriptors;
 };
 
 // Backend phase: compile all design processes into LLVM IR.

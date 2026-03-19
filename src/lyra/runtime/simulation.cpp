@@ -296,17 +296,45 @@ extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
 
 namespace {
 
-struct AotProcessDispatchContext {
-  std::span<LyraProcessFunc> procs;
+// Process descriptor entry layout. Binary ABI contract between codegen and
+// runtime. The authoritative field order is defined in runtime_abi.hpp
+// (v7 comment block). Codegen produces this layout via
+// GetDescriptorEntryType() in emit_design_main.cpp; runtime consumes it here.
+struct ProcessDescriptorEntry {
+  void* shared_body;
+  uint64_t base_byte_offset;
+  uint32_t instance_id;
+  uint32_t base_slot_id;
+  const uint64_t* unstable_offsets;
+};
+static_assert(
+    sizeof(ProcessDescriptorEntry) == 32,
+    "descriptor entry size must match LLVM struct layout");
+static_assert(offsetof(ProcessDescriptorEntry, shared_body) == 0);
+static_assert(offsetof(ProcessDescriptorEntry, base_byte_offset) == 8);
+static_assert(offsetof(ProcessDescriptorEntry, instance_id) == 16);
+static_assert(offsetof(ProcessDescriptorEntry, base_slot_id) == 20);
+static_assert(offsetof(ProcessDescriptorEntry, unstable_offsets) == 24);
+
+// 7-arg shared body function signature.
+using SharedBodyFn = void (*)(
+    void*, uint32_t, void*, uint32_t, uint32_t, const uint64_t*,
+    lyra::runtime::ProcessOutcome*);
+
+struct ProcessDispatchContext {
+  std::span<LyraProcessFunc> standalone_procs;
   std::span<void*> states;
+  uint32_t num_standalone;
+  std::span<const ProcessDescriptorEntry> descriptors;
+  void* design_state_base;
 };
 
-void AotProcessDispatch(
+void DescriptorProcessDispatch(
     void* ctx, lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
     lyra::runtime::ResumePoint resume) {
-  auto* aot = static_cast<AotProcessDispatchContext*>(ctx);
+  auto* dctx = static_cast<ProcessDispatchContext*>(ctx);
   uint32_t proc_idx = handle.process_id;
-  void* state = aot->states[proc_idx];
+  void* state = dctx->states[proc_idx];
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
   SuspendReset(suspend);
 
@@ -315,7 +343,22 @@ void AotProcessDispatch(
   // (UINT32_MAX) detects codegen bugs where a process path misses the write.
   lyra::runtime::ProcessOutcome outcome{};
   outcome.tag = UINT32_MAX;
-  aot->procs[proc_idx](state, resume.block_index, &outcome);
+
+  // Partition invariant (established by BuildLayout, validated at init):
+  //   [0, num_standalone) = standalone processes (direct 3-arg call)
+  //   [num_standalone, num_processes) = module processes (descriptor dispatch)
+  if (proc_idx < dctx->num_standalone) {
+    dctx->standalone_procs[proc_idx](state, resume.block_index, &outcome);
+  } else {
+    uint32_t desc_idx = proc_idx - dctx->num_standalone;
+    const auto& desc = dctx->descriptors[desc_idx];
+    auto body = reinterpret_cast<SharedBodyFn>(desc.shared_body);
+    auto* this_ptr =
+        static_cast<char*>(dctx->design_state_base) + desc.base_byte_offset;
+    body(
+        state, resume.block_index, this_ptr, desc.instance_id,
+        desc.base_slot_id, desc.unstable_offsets, &outcome);
+  }
 
   switch (static_cast<lyra::runtime::ProcessExitCode>(outcome.tag)) {
     case lyra::runtime::ProcessExitCode::kOk:
@@ -331,7 +374,7 @@ void AotProcessDispatch(
     }
     default:
       throw lyra::common::InternalError(
-          "AotProcessDispatch",
+          "DescriptorProcessDispatch",
           std::format(
               "process returned invalid exit tag {} (sentinel=codegen bug, "
               "other=unknown tag)",
@@ -429,10 +472,64 @@ extern "C" void LyraRunSimulation(
   using lyra::runtime::FeatureFlag;
   auto flags = static_cast<FeatureFlag>(feature_flags);
 
-  AotProcessDispatchContext dispatch_ctx{procs, states};
+  // Parse v7 descriptor data from ABI and build the dispatch context.
+  //
+  // Process index partition contract (established by BuildLayout):
+  //   post-init indices [0, num_standalone) = standalone (connection) processes
+  //   post-init indices [num_standalone, num_processes) = module processes
+  // DescriptorProcessDispatch depends on this exact partition shape:
+  //   proc_idx < num_standalone -> standalone direct call
+  //   proc_idx >= num_standalone -> descriptor lookup at (proc_idx -
+  //   num_standalone)
+  uint32_t num_standalone = num_processes;
+  std::span<const ProcessDescriptorEntry> descriptors;
+  if (abi != nullptr && abi->version >= 7) {
+    num_standalone = abi->num_standalone_processes;
+    if (abi->process_descriptors != nullptr &&
+        abi->num_process_descriptors > 0) {
+      descriptors = std::span(
+          static_cast<const ProcessDescriptorEntry*>(abi->process_descriptors),
+          abi->num_process_descriptors);
+    }
+    if (num_standalone + descriptors.size() != num_processes) {
+      throw lyra::common::InternalError(
+          "LyraRunSimulation",
+          std::format(
+              "descriptor partition mismatch: {} standalone + {} descriptors "
+              "!= {} total",
+              num_standalone, descriptors.size(), num_processes));
+    }
+  }
+
+  // Extract design_state_base before constructing the dispatch context.
+  // Codegen invariant: all process states share the same design_ptr.
+  // Validate this up front rather than deferring to SetupAndRunSimulation.
+  void* design_state_base = nullptr;
+  if (!states.empty()) {
+    const auto* first_header = static_cast<const StateHeader*>(states[0]);
+    design_state_base = first_header->design_ptr;
+    for (size_t i = 1; i < states.size(); ++i) {
+      const auto* header = static_cast<const StateHeader*>(states[i]);
+      if (header->design_ptr != design_state_base) {
+        throw lyra::common::InternalError(
+            "LyraRunSimulation",
+            std::format(
+                "process state {} has different design_ptr than state 0", i));
+      }
+    }
+  }
+
+  auto standalone_procs = std::span(processes, num_standalone);
+  ProcessDispatchContext dispatch_ctx{
+      .standalone_procs = standalone_procs,
+      .states = states,
+      .num_standalone = num_standalone,
+      .descriptors = descriptors,
+      .design_state_base = design_state_base,
+  };
   lyra::runtime::Engine engine(
       lyra::runtime::ProcessDispatch{
-          .fn = AotProcessDispatch, .ctx = &dispatch_ctx},
+          .fn = DescriptorProcessDispatch, .ctx = &dispatch_ctx},
       num_processes, std::span(plusargs_vec), std::move(instance_paths_vec),
       feature_flags);
 

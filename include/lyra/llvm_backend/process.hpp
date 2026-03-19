@@ -76,27 +76,16 @@ auto GenerateProcessFunction(
     Context& context, const mir::Process& process, const std::string& name,
     ProcessExecutionKind execution_kind) -> Result<ProcessCodegenResult>;
 
-// Generate a template process function with extra arguments for sharing.
+// Generate a shared process function with the 7-arg specialization-scoped ABI.
 // Signature: void(ptr state, i32 resume, ptr this_ptr, i32 inst_id,
-//                 i32 signal_offset)
-// this_ptr points to instance storage; the wrapper computes it from
-// design_ptr + base_byte_offset. The context must have template-mode fields
-// configured before calling.
+//                 i32 signal_offset, ptr unstable_offsets, ptr out)
+// this_ptr points to instance storage, computed by the runtime dispatch path
+// from design_ptr + base_byte_offset. The context must have template-mode
+// fields configured before calling.
 // Simulation-only: shared module processes always run with a non-null engine.
 auto GenerateSharedProcessFunction(
     Context& context, const mir::Process& process, const std::string& name)
     -> Result<ProcessCodegenResult>;
-
-// Generate a thin wrapper that calls the template function with baked-in args.
-// Computes this_ptr = design_ptr + base_byte_offset, then calls the shared
-// template function. Signature: void(ptr state, i32 resume).
-// unstable_offsets_global is a constant pointer to the instance's compact
-// unstable offset table (nullptr if the body has no unstable slots).
-auto GenerateProcessWrapper(
-    Context& context, llvm::Function* shared_fn, uint32_t instance_id,
-    uint64_t base_byte_offset, uint32_t base_slot_id,
-    llvm::Constant* unstable_offsets_global, const std::string& name)
-    -> llvm::Function*;
 
 // Declare a MIR function without generating its body.
 // Used for two-pass generation to enable mutual recursion.
