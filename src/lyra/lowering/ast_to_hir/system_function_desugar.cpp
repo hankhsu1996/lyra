@@ -266,8 +266,7 @@ auto LowerConversion(
     }
 
     case ConversionSysFnKind::kRealToBits: {
-      TypeId target = semantic::GetBitVectorType(*ctx->type_arena, 64);
-      return MakeBitCast(operand, target, span, ctx);
+      return MakeBitCast(operand, ctx->TickType(), span, ctx);
     }
 
     case ConversionSysFnKind::kBitsToReal: {
@@ -275,8 +274,7 @@ auto LowerConversion(
     }
 
     case ConversionSysFnKind::kShortRealToBits: {
-      TypeId target = semantic::GetBitVectorType(*ctx->type_arena, 32);
-      return MakeBitCast(operand, target, span, ctx);
+      return MakeBitCast(operand, ctx->UInt32Type(), span, ctx);
     }
 
     case ConversionSysFnKind::kBitsToShortReal: {

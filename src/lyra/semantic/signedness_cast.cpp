@@ -1,6 +1,5 @@
 #include "lyra/semantic/signedness_cast.hpp"
 
-#include <cstdint>
 #include <expected>
 #include <format>
 #include <string>
@@ -81,13 +80,6 @@ auto MakeSignedVariant(TypeId type, TypeArena& arena)
 auto MakeUnsignedVariant(TypeId type, TypeArena& arena)
     -> std::expected<TypeId, std::string> {
   return MakeSignednessVariant(type, arena, false);
-}
-
-auto GetBitVectorType(TypeArena& arena, uint32_t width) -> TypeId {
-  return arena.Intern(
-      TypeKind::kIntegral,
-      IntegralInfo{
-          .bit_width = width, .is_signed = false, .is_four_state = false});
 }
 
 }  // namespace lyra::semantic

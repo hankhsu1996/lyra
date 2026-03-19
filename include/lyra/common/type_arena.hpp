@@ -7,6 +7,16 @@
 #include "absl/hash/hash.h"
 #include "lyra/common/type.hpp"
 
+// TypeArena: interning arena for all compile-global types and fields.
+//
+// Mutation contract:
+//   - While mutable (initial state), Intern() and InternField() may create
+//     new entries or return existing ones (dedup).
+//   - After Freeze(), only lookups (hits) are allowed. A miss after freeze
+//     is an InternalError -- it means Phase 0 seeding failed to cover a type
+//     that Phase 1 body lowering needs.
+//   - Freeze() is a one-way transition. Calling it twice is an InternalError.
+
 namespace lyra {
 
 struct TypeKeyHash {
@@ -36,6 +46,12 @@ class TypeArena final {
 
   [[nodiscard]] auto GetField(FieldId id) const -> const FieldInfo&;
 
+  void Freeze();
+
+  [[nodiscard]] auto IsFrozen() const -> bool {
+    return mutation_state_ == MutationState::kFrozen;
+  }
+
   [[nodiscard]] auto TypeCount() const -> uint32_t {
     return static_cast<uint32_t>(types_.size());
   }
@@ -45,6 +61,9 @@ class TypeArena final {
   }
 
  private:
+  enum class MutationState { kMutable, kFrozen };
+
+  MutationState mutation_state_ = MutationState::kMutable;
   std::vector<Type> types_;
   absl::flat_hash_map<TypeKey, TypeId, TypeKeyHash> map_;
   std::vector<FieldInfo> fields_;

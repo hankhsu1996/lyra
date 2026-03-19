@@ -1278,17 +1278,11 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
         hir::ExpressionId aa_expr = lower_expr(fs.arrayRef);
         if (!aa_expr) return hir::kInvalidStatementId;
 
-        // Determine key type from AA info
+        // Determine snapshot key array type from AA info
         TypeId aa_type = LowerType(*fs.arrayRef.type, span, ctx);
         if (!aa_type) return hir::kInvalidStatementId;
-        const auto& aa_info = (*ctx->type_arena)[aa_type].AsAssociativeArray();
-        TypeId key_type_id = aa_info.key_type;
-        // Wildcard [*] uses int (32-bit signed)
-        if (!key_type_id) {
-          key_type_id = ctx->IntType();
-        }
-
-        // Create dynamic array type for snapshot keys
+        TypeId key_type_id = ForeachSnapshotKeyType(aa_type, ctx);
+        // Hit-only after freeze: seeder pre-interns this wrapper in Phase 0.
         TypeId keys_array_type = ctx->type_arena->Intern(
             TypeKind::kDynamicArray,
             DynamicArrayInfo{.element_type = key_type_id});
