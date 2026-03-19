@@ -6,6 +6,8 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+class SlotAccessResolver;
+
 // Lower deferred assignment (NBA region).
 // Schedules the write for the NBA region and handles notification.
 // Supports bit-range, index projection, and simple full-width writes.
@@ -17,5 +19,10 @@ namespace lyra::lowering::mir_to_llvm {
 // - kAggregateBytes: Aggregate types (byte-level 0xFF mask via runtime)
 auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     -> Result<void>;
+
+// Resolver-aware overload.
+auto LowerDeferredAssign(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::DeferredAssign& deferred) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

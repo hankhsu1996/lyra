@@ -14,6 +14,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/runtime/assoc_map.hpp"
 
@@ -682,6 +683,14 @@ auto LowerAssocOp(Context& ctx, const mir::AssocOp& op) -> Result<void> {
           },
       },
       op.data);
+}
+
+auto LowerAssocOp(
+    Context& ctx, SlotAccessResolver& /*resolver*/, const mir::AssocOp& op)
+    -> Result<void> {
+  // AssocOp is a boundary statement -- sync happens before it.
+  // Delegate to canonical version.
+  return LowerAssocOp(ctx, op);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

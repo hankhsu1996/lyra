@@ -22,6 +22,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -94,13 +95,13 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
 }
 
 auto LowerMathIntegralClog2(
-    Context& context, const std::vector<mir::Operand>& operands,
-    TypeId result_type_id) -> Result<RvalueValue> {
+    Context& context, SlotAccessResolver& resolver,
+    const std::vector<mir::Operand>& operands, TypeId result_type_id)
+    -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
   auto& module = context.GetModule();
   const auto& types = context.GetTypeArena();
 
-  // Get result type info
   const Type& result_type_ref = types[result_type_id];
   uint32_t target_width = PackedBitWidth(result_type_ref, types);
   bool target_is_four_state = context.IsPackedFourState(result_type_ref);
@@ -111,27 +112,23 @@ auto LowerMathIntegralClog2(
   auto* all_ones = llvm::ConstantInt::get(
       result_llvm_type, llvm::APInt::getAllOnes(target_width));
 
-  // Check if operand is 4-state
   bool operand_is_four_state = IsOperandFourState(context, operands[0]);
 
   llvm::Value* operand_val = nullptr;
   llvm::Value* operand_unk = nullptr;
 
   if (operand_is_four_state) {
-    // Extract {value, unknown} from 4-state operand
-    auto raw_or_err = LowerOperandRaw(context, operands[0]);
+    auto raw_or_err = LowerOperandRaw(context, resolver, operands[0]);
     if (!raw_or_err) return std::unexpected(raw_or_err.error());
     llvm::Value* raw = *raw_or_err;
     operand_val = builder.CreateExtractValue(raw, 0, "clog2.op.val");
     operand_unk = builder.CreateExtractValue(raw, 1, "clog2.op.unk");
-    // Coerce to result width
     operand_val = builder.CreateZExtOrTrunc(
         operand_val, result_llvm_type, "clog2.val.coerce");
     operand_unk = builder.CreateZExtOrTrunc(
         operand_unk, result_llvm_type, "clog2.unk.coerce");
   } else {
-    // 2-state operand
-    auto operand_val_or_err = LowerOperand(context, operands[0]);
+    auto operand_val_or_err = LowerOperand(context, resolver, operands[0]);
     if (!operand_val_or_err) return std::unexpected(operand_val_or_err.error());
     operand_val = *operand_val_or_err;
     operand_val = builder.CreateZExtOrTrunc(
@@ -139,36 +136,20 @@ auto LowerMathIntegralClog2(
     operand_unk = zero;
   }
 
-  // Check if operand has any unknown bits
   auto* has_unknown = builder.CreateICmpNE(operand_unk, zero, "clog2.hasunk");
-
-  // Compute clog2 of the value (assumes known)
   auto* one = llvm::ConstantInt::get(result_llvm_type, 1);
   auto* width_const = llvm::ConstantInt::get(result_llvm_type, target_width);
-
-  // n <= 1 means result is 0 (handles both n=0 and n=1)
   auto* is_le_one = builder.CreateICmpULE(operand_val, one, "clog2.le1");
-
-  // n - 1 (safe: when n=0, n-1 wraps to all-ones, but we select 0 anyway)
   auto* n_minus_1 = builder.CreateSub(operand_val, one, "clog2.nm1");
-
-  // ctlz(n-1, /*is_zero_undef=*/false)
   auto* ctlz_decl = llvm::Intrinsic::getDeclaration(
       &module, llvm::Intrinsic::ctlz, {result_llvm_type});
   auto* lz = builder.CreateCall(
       ctlz_decl, {n_minus_1, builder.getFalse()}, "clog2.lz");
-
-  // result = width - ctlz(n-1)
   auto* raw_result = builder.CreateSub(width_const, lz, "clog2.raw");
-
-  // select: if n <= 1 then 0 else result
   auto* known_result =
       builder.CreateSelect(is_le_one, zero, raw_result, "clog2.known");
 
   if (target_is_four_state) {
-    // 4-state target: if operand has unknown bits, result is all-X
-    // result_val = has_unknown ? 0 : known_result (value is 0 for X
-    // representation) result_unk = has_unknown ? all_ones : 0
     auto* result_val =
         builder.CreateSelect(has_unknown, zero, known_result, "clog2.res.val");
     auto* result_unk =
@@ -176,7 +157,6 @@ auto LowerMathIntegralClog2(
     return RvalueValue::FourState(result_val, result_unk);
   }
 
-  // 2-state target: just return the result (unknown bits become 0 implicitly)
   return RvalueValue::TwoState(known_result);
 }
 
@@ -309,7 +289,8 @@ auto LowerRealMathFnBinary(
 }
 
 auto LowerMathCallValue(
-    Context& context, const mir::MathCallRvalueInfo& info,
+    Context& context, SlotAccessResolver& resolver,
+    const mir::MathCallRvalueInfo& info,
     const std::vector<mir::Operand>& operands, TypeId result_type)
     -> Result<RvalueValue> {
   int expected_arity = GetMathFnArity(info.fn);
@@ -321,16 +302,14 @@ auto LowerMathCallValue(
             expected_arity, operands.size()));
   }
 
-  // Handle $clog2 specially (integral operand)
   if (info.fn == MathFn::kClog2) {
-    return LowerMathIntegralClog2(context, operands, result_type);
+    return LowerMathIntegralClog2(context, resolver, operands, result_type);
   }
 
-  // All other math functions are real-typed (no unknown plane)
   llvm::Type* float_ty = GetOperandFloatType(context, operands[0]);
 
   if (expected_arity == 1) {
-    auto operand_or_err = LowerOperand(context, operands[0]);
+    auto operand_or_err = LowerOperand(context, resolver, operands[0]);
     if (!operand_or_err) return std::unexpected(operand_or_err.error());
     auto result_or_err =
         LowerRealMathFnUnary(context, info.fn, *operand_or_err, float_ty);
@@ -338,9 +317,9 @@ auto LowerMathCallValue(
     return RvalueValue::TwoState(*result_or_err);
   }
 
-  auto lhs_or_err = LowerOperand(context, operands[0]);
+  auto lhs_or_err = LowerOperand(context, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
-  auto rhs_or_err = LowerOperand(context, operands[1]);
+  auto rhs_or_err = LowerOperand(context, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto result_or_err = LowerRealMathFnBinary(
       context, info.fn, *lhs_or_err, *rhs_or_err, float_ty);
@@ -357,12 +336,20 @@ auto IsMathRvalue(const mir::Rvalue& rvalue) -> bool {
 auto LowerMathRvalue(
     Context& context, const mir::Rvalue& rvalue, TypeId result_type)
     -> Result<RvalueValue> {
+  CanonicalSlotAccess canonical(context);
+  return LowerMathRvalue(context, canonical, rvalue, result_type);
+}
+
+auto LowerMathRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue> {
   const auto* info = std::get_if<mir::MathCallRvalueInfo>(&rvalue.info);
   if (info == nullptr) {
     throw common::InternalError(
         "LowerMathRvalue", "expected MathCallRvalueInfo");
   }
-  return LowerMathCallValue(context, *info, rvalue.operands, result_type);
+  return LowerMathCallValue(
+      context, resolver, *info, rvalue.operands, result_type);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

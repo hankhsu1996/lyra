@@ -12,6 +12,8 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+class SlotAccessResolver;
+
 // Result of evaluating an rvalue - contains both value and unknown planes.
 // For 2-state types, unknown is nullptr.
 // For 4-state types, unknown contains the unknown bit plane.
@@ -56,5 +58,10 @@ struct RvalueValue {
 auto LowerRvalue(
     Context& context, const mir::Rvalue& rvalue, TypeId result_type)
     -> Result<RvalueValue>;
+
+// Resolver-aware overload.
+auto LowerRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue>;
 
 }  // namespace lyra::lowering::mir_to_llvm

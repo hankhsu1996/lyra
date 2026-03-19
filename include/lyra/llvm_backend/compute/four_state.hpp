@@ -13,6 +13,8 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+class SlotAccessResolver;
+
 // Lower 4-state binary rvalue.
 auto LowerBinaryRvalue4State(
     Context& context, const mir::BinaryRvalueInfo& info,
@@ -59,6 +61,48 @@ auto LowerCaseMatchOp(
 // Used by both 2-state and 4-state paths.
 auto LowerCaseEqualityOp(
     Context& context, const mir::BinaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
+    -> Result<llvm::Value*>;
+
+// Resolver-aware overloads.
+auto LowerBinaryRvalue4State(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::BinaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
+
+auto LowerUnaryRvalue4State(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::UnaryRvalueInfo& info, const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
+
+auto LowerConcatRvalue4State(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::ConcatRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
+
+auto LowerReplicateRvalue4State(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::ReplicateRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
+
+auto LowerGuardedUse4State(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::GuardedUseRvalueInfo& info,
+    const std::vector<mir::Operand>& operands,
+    const PackedComputeContext& packed_context) -> Result<ComputeResult>;
+
+auto LowerCaseMatchOp(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::BinaryRvalueInfo& info,
+    const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
+    -> Result<llvm::Value*>;
+
+auto LowerCaseEqualityOp(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*>;
 

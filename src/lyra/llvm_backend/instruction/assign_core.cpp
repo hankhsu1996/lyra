@@ -10,6 +10,7 @@
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm::detail {
@@ -17,16 +18,25 @@ namespace lyra::lowering::mir_to_llvm::detail {
 auto LowerRhsRaw(
     Context& context, const mir::RightHandSide& rhs, mir::PlaceId target)
     -> Result<llvm::Value*> {
+  CanonicalSlotAccess canonical(context);
+  return LowerRhsRaw(context, canonical, rhs, target);
+}
+
+auto LowerRhsRaw(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::RightHandSide& rhs, mir::PlaceId target)
+    -> Result<llvm::Value*> {
   return std::visit(
       common::Overloaded{
           [&](const mir::Operand& operand) -> Result<llvm::Value*> {
-            return LowerOperandRaw(context, operand);
+            return LowerOperandRaw(context, resolver, operand);
           },
           [&](const mir::Rvalue& rvalue) -> Result<llvm::Value*> {
             const auto& arena = context.GetMirArena();
             const auto& types = context.GetTypeArena();
             TypeId result_type = mir::TypeOfPlace(types, arena[target]);
-            auto rv_result = LowerRvalue(context, rvalue, result_type);
+            auto rv_result =
+                LowerRvalue(context, resolver, rvalue, result_type);
             if (!rv_result) return std::unexpected(rv_result.error());
             // For 4-state, pack into struct
             if (IsPacked(types[result_type]) &&

@@ -13,6 +13,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -134,6 +135,14 @@ auto LowerArrayQueryRvalue(
     Context& context, const mir::Rvalue& rvalue,
     const mir::ArrayQueryRvalueInfo& info, TypeId result_type)
     -> Result<RvalueValue> {
+  CanonicalSlotAccess canonical(context);
+  return LowerArrayQueryRvalue(context, canonical, rvalue, info, result_type);
+}
+
+auto LowerArrayQueryRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
+    const mir::ArrayQueryRvalueInfo& info, TypeId result_type)
+    -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -148,7 +157,6 @@ auto LowerArrayQueryRvalue(
     is_four_state = context.IsPackedFourState(res_type);
   }
 
-  // $dimensions / $unpacked_dimensions: always compile-time constants
   if (info.kind == ArrayQuerySysFnKind::kDimensions) {
     auto* val = llvm::ConstantInt::get(i32_ty, info.total_dims);
     if (is_four_state) {
@@ -164,34 +172,28 @@ auto LowerArrayQueryRvalue(
     return RvalueValue::TwoState(val);
   }
 
-  // Lower dim operand (operands[1] is always present, default = 1)
-  auto dim_raw_or_err = LowerOperandRaw(context, rvalue.operands[1]);
+  auto dim_raw_or_err = LowerOperandRaw(context, resolver, rvalue.operands[1]);
   if (!dim_raw_or_err) return std::unexpected(dim_raw_or_err.error());
   llvm::Value* dim_raw = *dim_raw_or_err;
 
-  // Extract value plane and check for unknown bits (4-state dim operand)
   llvm::Value* dim_value = dim_raw;
   llvm::Value* dim_unknown = nullptr;
 
   if (llvm::isa<llvm::StructType>(dim_raw->getType())) {
-    // 4-state: {value, unknown}
     dim_value = builder.CreateExtractValue(dim_raw, 0, "aq.dim.val");
     dim_unknown = builder.CreateExtractValue(dim_raw, 1, "aq.dim.unk");
   }
 
-  // sext to i32: matches MIR sign-extension (interp_rvalue.cpp:994-1000)
   auto* dim_val_type = dim_value->getType();
   if (dim_val_type->getIntegerBitWidth() != 32) {
     dim_value = builder.CreateSExtOrTrunc(dim_value, i32_ty, "aq.dim.sext");
   }
 
-  // If dim has unknown bits, branch to X result
   llvm::BasicBlock* x_unknown_bb = nullptr;
   llvm::BasicBlock* continue_bb = nullptr;
   llvm::BasicBlock* merge_bb = nullptr;
 
   if (dim_unknown != nullptr) {
-    // Check if any unknown bit is set
     auto* unk_type = dim_unknown->getType();
     auto* zero_unk = llvm::ConstantInt::get(unk_type, 0);
     auto* has_unknown =
@@ -204,18 +206,15 @@ auto LowerArrayQueryRvalue(
 
     builder.CreateCondBr(has_unknown, x_unknown_bb, continue_bb);
 
-    // X result for unknown dim (values used by PHI at merge)
     builder.SetInsertPoint(x_unknown_bb);
     builder.CreateBr(merge_bb);
 
     builder.SetInsertPoint(continue_bb);
   }
 
-  // Now compute the result for known dim
   llvm::Value* result_val = nullptr;
   llvm::Value* result_unk = nullptr;
 
-  // Check for constant dim (fast path)
   if (auto* const_dim = llvm::dyn_cast<llvm::ConstantInt>(dim_value)) {
     auto dim = static_cast<int32_t>(const_dim->getSExtValue());
 
@@ -227,13 +226,12 @@ auto LowerArrayQueryRvalue(
       const auto& dim_info = info.dims.at(static_cast<size_t>(dim - 1));
 
       if (dim > 1 && dim_info.is_variable_sized) {
-        // IEEE 20.7.1: dim > 1 on variable-sized returns X
         auto x = MakeXResult(is_four_state, llvm_ctx);
         result_val = x.value;
         result_unk = x.unknown;
       } else if (dim_info.is_variable_sized) {
-        // dim == 1, variable-sized: get runtime size
-        auto handle_or_err = LowerOperand(context, rvalue.operands[0]);
+        auto handle_or_err =
+            LowerOperand(context, resolver, rvalue.operands[0]);
         if (!handle_or_err) return std::unexpected(handle_or_err.error());
         auto* size = builder.CreateCall(
             context.GetLyraDynArraySize(), {*handle_or_err}, "aq.da.size");
@@ -249,8 +247,6 @@ auto LowerArrayQueryRvalue(
       }
     }
   } else {
-    // Runtime dim: build select chain
-    // Start with X default (out-of-range)
     auto x_default = MakeXResult(is_four_state, llvm_ctx);
     result_val = x_default.value;
     result_unk = x_default.unknown;
@@ -260,12 +256,10 @@ auto LowerArrayQueryRvalue(
 
       DimResult dr = {};
       if (dim_info.is_variable_sized && d > 1) {
-        // IEEE 20.7.1: dim > 1 on variable-sized returns X
         dr = MakeXResult(is_four_state, llvm_ctx);
       } else if (dim_info.is_variable_sized) {
-        // Only dim 1 can be variable-sized and queried at runtime.
-        // operands[0] is a dynamic-array/queue handle only in this case.
-        auto handle_or_err = LowerOperand(context, rvalue.operands[0]);
+        auto handle_or_err =
+            LowerOperand(context, resolver, rvalue.operands[0]);
         if (!handle_or_err) return std::unexpected(handle_or_err.error());
         auto* runtime_size = builder.CreateCall(
             context.GetLyraDynArraySize(), {*handle_or_err}, "aq.da.size");
@@ -287,7 +281,6 @@ auto LowerArrayQueryRvalue(
     }
   }
 
-  // Merge with unknown-dim X path if needed
   if (merge_bb != nullptr) {
     auto* known_bb = builder.GetInsertBlock();
     builder.CreateBr(merge_bb);

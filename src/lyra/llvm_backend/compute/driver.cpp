@@ -20,6 +20,7 @@
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/compute/two_state.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -30,70 +31,86 @@ namespace lyra::lowering::mir_to_llvm {
 namespace {
 
 auto LowerBinaryRvalue(
-    Context& context, const mir::BinaryRvalueInfo& info,
+    Context& context, SlotAccessResolver& resolver,
+    const mir::BinaryRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
   if (packed_context.is_four_state) {
-    return LowerBinaryRvalue4State(context, info, operands, packed_context);
+    return LowerBinaryRvalue4State(
+        context, resolver, info, operands, packed_context);
   }
-  return LowerBinaryRvalue2State(context, info, operands, packed_context);
+  return LowerBinaryRvalue2State(
+      context, resolver, info, operands, packed_context);
 }
 
 auto LowerUnaryRvalue(
-    Context& context, const mir::UnaryRvalueInfo& info,
-    const std::vector<mir::Operand>& operands,
+    Context& context, SlotAccessResolver& resolver,
+    const mir::UnaryRvalueInfo& info, const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
   if (packed_context.is_four_state) {
-    return LowerUnaryRvalue4State(context, info, operands, packed_context);
+    return LowerUnaryRvalue4State(
+        context, resolver, info, operands, packed_context);
   }
-  return LowerUnaryRvalue2State(context, info, operands, packed_context);
+  return LowerUnaryRvalue2State(
+      context, resolver, info, operands, packed_context);
 }
 
 auto LowerConcatRvalue(
-    Context& context, const mir::ConcatRvalueInfo& info,
+    Context& context, SlotAccessResolver& resolver,
+    const mir::ConcatRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
   if (packed_context.is_four_state) {
-    return LowerConcatRvalue4State(context, info, operands, packed_context);
+    return LowerConcatRvalue4State(
+        context, resolver, info, operands, packed_context);
   }
-  return LowerConcatRvalue2State(context, info, operands, packed_context);
+  return LowerConcatRvalue2State(
+      context, resolver, info, operands, packed_context);
 }
 
 auto LowerReplicateRvalue(
-    Context& context, const mir::ReplicateRvalueInfo& info,
+    Context& context, SlotAccessResolver& resolver,
+    const mir::ReplicateRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
   if (packed_context.is_four_state) {
-    return LowerReplicateRvalue4State(context, info, operands, packed_context);
+    return LowerReplicateRvalue4State(
+        context, resolver, info, operands, packed_context);
   }
-  return LowerReplicateRvalue2State(context, info, operands, packed_context);
+  return LowerReplicateRvalue2State(
+      context, resolver, info, operands, packed_context);
 }
 
 auto LowerIsKnown(
-    Context& context, const std::vector<mir::Operand>& operands,
+    Context& context, SlotAccessResolver& resolver,
+    const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  // IsKnown always returns 2-state (bool)
-  return LowerIsKnown2State(context, operands, packed_context);
+  return LowerIsKnown2State(context, resolver, operands, packed_context);
 }
 
 auto LowerIndexInRange(
-    Context& context, const mir::IndexInRangeRvalueInfo& info,
+    Context& context, SlotAccessResolver& resolver,
+    const mir::IndexInRangeRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  // IndexInRange always returns 2-state (bool)
-  return LowerIndexInRange2State(context, info, operands, packed_context);
+  return LowerIndexInRange2State(
+      context, resolver, info, operands, packed_context);
 }
 
 auto LowerGuardedUse(
-    Context& context, const mir::GuardedUseRvalueInfo& info,
+    Context& context, SlotAccessResolver& resolver,
+    const mir::GuardedUseRvalueInfo& info,
     const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
   if (packed_context.is_four_state) {
-    return LowerGuardedUse4State(context, info, operands, packed_context);
+    return LowerGuardedUse4State(
+        context, resolver, info, operands, packed_context);
   }
-  return LowerGuardedUse2State(context, info, operands, packed_context);
+  return LowerGuardedUse2State(
+      context, resolver, info, operands, packed_context);
 }
 
+// RuntimeQuery does not read module-slot operands (queries runtime state).
 auto LowerRuntimeQuery(
     Context& context, const mir::RuntimeQueryRvalueInfo& info,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
@@ -102,7 +119,6 @@ auto LowerRuntimeQuery(
   }
   return LowerRuntimeQuery2State(context, info, packed_context);
 }
-
 }  // namespace
 
 auto ApplyWidthMaskToResult(
@@ -135,12 +151,16 @@ auto FinalizeCompute(
 auto LowerPackedCoreRvalue(
     Context& context, const mir::Rvalue& rvalue, TypeId result_type)
     -> Result<RvalueValue> {
-  // Validate and get type info from result_type
+  CanonicalSlotAccess canonical(context);
+  return LowerPackedCoreRvalue(context, canonical, rvalue, result_type);
+}
+auto LowerPackedCoreRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue> {
   auto type_info_or_err = GetTypeInfoFromType(context, result_type);
   if (!type_info_or_err) return std::unexpected(type_info_or_err.error());
   PlaceTypeInfo type_info = *type_info_or_err;
 
-  // Get storage type and element type
   auto storage_type_or_err = GetLlvmTypeForType(context, result_type);
   if (!storage_type_or_err) return std::unexpected(storage_type_or_err.error());
   llvm::Type* storage_type = *storage_type_or_err;
@@ -151,7 +171,6 @@ auto LowerPackedCoreRvalue(
     elem_type = struct_type->getElementType(0);
   }
 
-  // Create packed compute context
   PackedComputeContext packed_context{
       .storage_type = storage_type,
       .element_type = elem_type,
@@ -159,36 +178,36 @@ auto LowerPackedCoreRvalue(
       .is_four_state = type_info.is_four_state,
   };
 
-  // Dispatch to rvalue-specific handler (wrappers handle 2s/4s dispatch)
   auto result_or_err = std::visit(
       common::Overloaded{
           [&](const mir::BinaryRvalueInfo& info) -> Result<ComputeResult> {
             return LowerBinaryRvalue(
-                context, info, rvalue.operands, packed_context);
+                context, resolver, info, rvalue.operands, packed_context);
           },
           [&](const mir::UnaryRvalueInfo& info) -> Result<ComputeResult> {
             return LowerUnaryRvalue(
-                context, info, rvalue.operands, packed_context);
+                context, resolver, info, rvalue.operands, packed_context);
           },
           [&](const mir::ConcatRvalueInfo& info) -> Result<ComputeResult> {
             return LowerConcatRvalue(
-                context, info, rvalue.operands, packed_context);
+                context, resolver, info, rvalue.operands, packed_context);
           },
           [&](const mir::ReplicateRvalueInfo& info) -> Result<ComputeResult> {
             return LowerReplicateRvalue(
-                context, info, rvalue.operands, packed_context);
+                context, resolver, info, rvalue.operands, packed_context);
           },
           [&](const mir::IsKnownRvalueInfo&) -> Result<ComputeResult> {
-            return LowerIsKnown(context, rvalue.operands, packed_context);
+            return LowerIsKnown(
+                context, resolver, rvalue.operands, packed_context);
           },
           [&](const mir::IndexInRangeRvalueInfo& info)
               -> Result<ComputeResult> {
             return LowerIndexInRange(
-                context, info, rvalue.operands, packed_context);
+                context, resolver, info, rvalue.operands, packed_context);
           },
           [&](const mir::GuardedUseRvalueInfo& info) -> Result<ComputeResult> {
             return LowerGuardedUse(
-                context, info, rvalue.operands, packed_context);
+                context, resolver, info, rvalue.operands, packed_context);
           },
           [&](const mir::RuntimeQueryRvalueInfo& info)
               -> Result<ComputeResult> {
@@ -208,11 +227,9 @@ auto LowerPackedCoreRvalue(
 
   if (!result_or_err) return std::unexpected(result_or_err.error());
 
-  // Apply width mask to result
   auto masked =
       ApplyWidthMaskToResult(context, *result_or_err, type_info.bit_width);
 
-  // Return as RvalueValue
   if (masked.IsFourState()) {
     return RvalueValue::FourState(masked.value, masked.unknown);
   }

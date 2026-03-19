@@ -33,7 +33,9 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 - [x] Packed storage view Stage 2: byte-addressable localized immediate write (benchmark pending)
 - [x] Packed storage view Stage 3: localized deferred/NBA write (#585)
 - [ ] Packed storage view Stage 4: whole-value materialization boundary
-- [ ] Commit-boundary model: visibility/commit boundary definition
+- [x] Commit-boundary model: visibility/commit boundary definition
+- [x] Commit-boundary model: multi-segment activation-local support
+- [ ] Commit-boundary model: boundary taxonomy refinement
 - [ ] Commit-boundary model: region-local read/write/observation analysis
 - [ ] Commit-boundary model: delayed-commit register promotion
 - [ ] G14: NBA arena (bump-allocator for value/mask bytes)
@@ -44,13 +46,11 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 
 ## Active Gaps
 
-### Commit-boundary model: visibility/commit boundary definition
+### Commit-boundary model: boundary taxonomy refinement
 
-Slot-backed scalar variables (module-level `int`, `logic`, etc.) are currently materialized as load/store through slot memory on every access, even inside tight non-yielding loops where no external observation is possible. The existing deferred-notification mechanism delays dirty-mark calls to loop exit, but does not delay the storage commit itself. The result is a load-add-store chain through memory every iteration for patterns like loop accumulators, instead of register-resident computation with a single commit at the boundary.
+The v1 boundary model collapses two different concepts into kObservation: read-only external observation (e.g. $display reads format args) and notification-visible publication (module-slot write emits dirty-mark that triggers runtime subscriptions). These are not the same thing. A $display reads but does not trigger subscriptions. A module-slot write does not read managed slots but its dirty-mark can synchronously expose them through subscriber callbacks.
 
-The first layer needed is a clear model for when a slot-backed value must be materialized back to visible slot state. Inside a region, values may exist only as local temporary truth. At boundaries, they must be committed because the outside world may observe them. This must be defined conservatively and specialization-locally, because a specialization cannot see the whole design. The question is not "can we prove no other module ever cares" but "at what points must we assume external visibility can matter."
-
-The natural commit-boundary scope is activation-local (resume to next yield/return), not loop-local or basic-block-local. Within an activation, no other process runs, so single-writer exclusivity holds. Commit points are yield (`#delay`), NBA region boundaries, calls that may externally observe slot state, and process return.
+The v1 fix treats all module-slot writes as kObservation boundaries, which is correct but overly conservative. It forces a sync before every non-managed module-slot write, even when no managed slot has been modified since the last sync. The clean model should distinguish notification-publication boundaries from read-only observation boundaries, so the contract can decide whether sync is actually needed based on the managed-slot dirty state.
 
 ### Commit-boundary model: region-local read/write/observation analysis
 

@@ -25,6 +25,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -95,78 +96,100 @@ auto LowerFopenRvalue(Context& context, const mir::FopenRvalueInfo& info)
 auto LowerRvalue(
     Context& context, const mir::Rvalue& rvalue, TypeId result_type)
     -> Result<RvalueValue> {
+  CanonicalSlotAccess canonical(context);
+  return LowerRvalue(context, canonical, rvalue, result_type);
+}
+
+// Intentionally canonical-only rvalue kinds (no module-slot operand reads):
+// LowerTestPlusargsRvalue, LowerFopenRvalue, LowerSystemCmdRvalue.
+// These interact with the runtime or produce constants and never read
+// module-slot places as operands.
+
+auto LowerRvalue(
+    Context& context, SlotAccessResolver& resolver, const mir::Rvalue& rvalue,
+    TypeId result_type) -> Result<RvalueValue> {
   const auto& types = context.GetTypeArena();
 
   return std::visit(
       common::Overloaded{
           [&](const mir::CastRvalueInfo& info) -> Result<RvalueValue> {
-            return LowerCastRvalue(context, rvalue, info.target_type);
+            return LowerCastRvalue(context, resolver, rvalue, info.target_type);
           },
           [&](const mir::BitCastRvalueInfo& info) -> Result<RvalueValue> {
-            return LowerBitCastRvalue(context, rvalue, info.target_type);
+            return LowerBitCastRvalue(
+                context, resolver, rvalue, info.target_type);
           },
           [&](const mir::AggregateRvalueInfo& info) -> Result<RvalueValue> {
             return LowerAggregateRvalue(context, rvalue, result_type, info);
           },
           [&](const mir::SFormatRvalueInfo& info) -> Result<RvalueValue> {
-            auto val_or_err =
-                LowerSFormatRvalueValue(context, info, rvalue.operands);
+            auto val_or_err = LowerSFormatRvalueValue(
+                context, resolver, info, rvalue.operands);
             if (!val_or_err) return std::unexpected(val_or_err.error());
             return RvalueValue::TwoState(*val_or_err);
           },
           [&](const mir::BuiltinCallRvalueInfo& info) -> Result<RvalueValue> {
-            return LowerBuiltinRvalue(context, rvalue, result_type, info);
+            return LowerBuiltinRvalue(
+                context, resolver, rvalue, result_type, info);
           },
           [&](const mir::BinaryRvalueInfo&) -> Result<RvalueValue> {
             if (IsMathRvalue(rvalue)) {
-              return LowerMathRvalue(context, rvalue, result_type);
+              return LowerMathRvalue(context, resolver, rvalue, result_type);
             }
             if (IsRealMathRvalue(context, rvalue)) {
-              return LowerRealRvalue(context, rvalue, result_type);
+              return LowerRealRvalue(context, resolver, rvalue, result_type);
             }
-            return LowerPackedCoreRvalue(context, rvalue, result_type);
+            return LowerPackedCoreRvalue(
+                context, resolver, rvalue, result_type);
           },
           [&](const mir::UnaryRvalueInfo&) -> Result<RvalueValue> {
             if (IsMathRvalue(rvalue)) {
-              return LowerMathRvalue(context, rvalue, result_type);
+              return LowerMathRvalue(context, resolver, rvalue, result_type);
             }
             if (IsRealMathRvalue(context, rvalue)) {
-              return LowerRealRvalue(context, rvalue, result_type);
+              return LowerRealRvalue(context, resolver, rvalue, result_type);
             }
-            return LowerPackedCoreRvalue(context, rvalue, result_type);
+            return LowerPackedCoreRvalue(
+                context, resolver, rvalue, result_type);
           },
           [&](const mir::ConcatRvalueInfo& info) -> Result<RvalueValue> {
             if (types[info.result_type].Kind() == TypeKind::kString) {
-              auto val_or_err =
-                  LowerStringConcatValue(context, info, rvalue.operands);
+              auto val_or_err = LowerStringConcatValue(
+                  context, resolver, info, rvalue.operands);
               if (!val_or_err) return std::unexpected(val_or_err.error());
               return RvalueValue::TwoState(*val_or_err);
             }
-            return LowerPackedCoreRvalue(context, rvalue, result_type);
+            return LowerPackedCoreRvalue(
+                context, resolver, rvalue, result_type);
           },
           [&](const mir::ReplicateRvalueInfo& info) -> Result<RvalueValue> {
             if (types[info.result_type].Kind() == TypeKind::kString) {
-              auto val_or_err =
-                  LowerStringReplicateValue(context, info, rvalue.operands);
+              auto val_or_err = LowerStringReplicateValue(
+                  context, resolver, info, rvalue.operands);
               if (!val_or_err) return std::unexpected(val_or_err.error());
               return RvalueValue::TwoState(*val_or_err);
             }
-            return LowerPackedCoreRvalue(context, rvalue, result_type);
+            return LowerPackedCoreRvalue(
+                context, resolver, rvalue, result_type);
           },
           [&](const mir::RuntimeQueryRvalueInfo&) -> Result<RvalueValue> {
-            return LowerPackedCoreRvalue(context, rvalue, result_type);
+            return LowerPackedCoreRvalue(
+                context, resolver, rvalue, result_type);
           },
           [&](const mir::IsKnownRvalueInfo&) -> Result<RvalueValue> {
-            return LowerPackedCoreRvalue(context, rvalue, result_type);
+            return LowerPackedCoreRvalue(
+                context, resolver, rvalue, result_type);
           },
           [&](const mir::IndexInRangeRvalueInfo&) -> Result<RvalueValue> {
-            return LowerPackedCoreRvalue(context, rvalue, result_type);
+            return LowerPackedCoreRvalue(
+                context, resolver, rvalue, result_type);
           },
           [&](const mir::GuardedUseRvalueInfo&) -> Result<RvalueValue> {
-            return LowerPackedCoreRvalue(context, rvalue, result_type);
+            return LowerPackedCoreRvalue(
+                context, resolver, rvalue, result_type);
           },
           [&](const mir::MathCallRvalueInfo&) -> Result<RvalueValue> {
-            return LowerMathRvalue(context, rvalue, result_type);
+            return LowerMathRvalue(context, resolver, rvalue, result_type);
           },
           [&](const mir::TestPlusargsRvalueInfo& info) -> Result<RvalueValue> {
             return LowerTestPlusargsRvalue(context, rvalue, info);
@@ -175,10 +198,11 @@ auto LowerRvalue(
             return LowerFopenRvalue(context, info);
           },
           [&](const mir::SystemTfRvalueInfo& info) -> Result<RvalueValue> {
-            return LowerSystemTfRvalue(context, rvalue, info);
+            return LowerSystemTfRvalue(context, resolver, rvalue, info);
           },
           [&](const mir::ArrayQueryRvalueInfo& info) -> Result<RvalueValue> {
-            return LowerArrayQueryRvalue(context, rvalue, info, result_type);
+            return LowerArrayQueryRvalue(
+                context, resolver, rvalue, info, result_type);
           },
           [&](const mir::SystemCmdRvalueInfo& info) -> Result<RvalueValue> {
             auto& builder = context.GetBuilder();

@@ -6,6 +6,8 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+class SlotAccessResolver;
+
 // Lower container-mutating builtin call.
 //
 // Handles operations that mutate a receiver container:
@@ -17,5 +19,10 @@ namespace lyra::lowering::mir_to_llvm {
 // - kQueueInsert: insert element at index
 auto LowerBuiltinCall(Context& context, const mir::BuiltinCall& call)
     -> Result<void>;
+
+// Resolver-aware overload.
+auto LowerBuiltinCall(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::BuiltinCall& call) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

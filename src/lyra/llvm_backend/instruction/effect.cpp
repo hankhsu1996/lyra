@@ -24,6 +24,7 @@
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/observer_abi.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -521,33 +522,39 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
 
 auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
     -> Result<void> {
+  CanonicalSlotAccess canonical(context);
+  return LowerEffectOp(context, canonical, effect_op);
+}
+auto LowerEffectOp(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::EffectOp& effect_op) -> Result<void> {
   return std::visit(
       common::Overloaded{
-          [&context](const mir::DisplayEffect& display) -> Result<void> {
-            return LowerDisplayEffect(context, display);
+          [&](const mir::DisplayEffect& display) -> Result<void> {
+            return LowerDisplayEffect(context, resolver, display);
           },
-          [&context](const mir::SeverityEffect& severity) -> Result<void> {
-            return LowerSeverityEffect(context, severity);
+          [&](const mir::SeverityEffect& severity) -> Result<void> {
+            return LowerSeverityEffect(context, resolver, severity);
           },
-          [&context](const mir::MemIOEffect& mem_io) -> Result<void> {
+          [&](const mir::MemIOEffect& mem_io) -> Result<void> {
             return LowerMemIOEffect(context, mem_io);
           },
-          [&context](const mir::TimeFormatEffect& tf) -> Result<void> {
+          [&](const mir::TimeFormatEffect& tf) -> Result<void> {
             return LowerTimeFormatEffect(context, tf);
           },
-          [&context](const mir::SystemTfEffect& effect) -> Result<void> {
-            return LowerSystemTfEffect(context, effect);
+          [&](const mir::SystemTfEffect& effect) -> Result<void> {
+            return LowerSystemTfEffect(context, resolver, effect);
           },
-          [&context](const mir::StrobeEffect& strobe) -> Result<void> {
+          [&](const mir::StrobeEffect& strobe) -> Result<void> {
             return LowerStrobeEffect(context, strobe);
           },
-          [&context](const mir::MonitorEffect& monitor) -> Result<void> {
+          [&](const mir::MonitorEffect& monitor) -> Result<void> {
             return LowerMonitorEffect(context, monitor);
           },
-          [&context](const mir::MonitorControlEffect& control) -> Result<void> {
+          [&](const mir::MonitorControlEffect& control) -> Result<void> {
             return LowerMonitorControlEffect(context, control);
           },
-          [&context](const mir::FillPackedEffect& fill) -> Result<void> {
+          [&](const mir::FillPackedEffect& fill) -> Result<void> {
             return LowerFillPackedEffect(context, fill);
           },
       },

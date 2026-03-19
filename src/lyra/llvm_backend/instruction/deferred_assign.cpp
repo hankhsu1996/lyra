@@ -18,6 +18,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/instruction/assign_core.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
+#include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
 
@@ -364,6 +365,19 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
 
   // Case 3: Simple full-width write
   return LowerDeferredAssignDirect(context, deferred, shape, signal_id);
+}
+
+auto LowerDeferredAssign(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::DeferredAssign& deferred) -> Result<void> {
+  // DeferredAssign destinations are never managed (kDeferredWrite is
+  // ineligible), but the RHS operands may read managed module slots.
+  // Sync managed slots to canonical before delegating so canonical
+  // operand reads see up-to-date values.
+  if (auto* al = dynamic_cast<ActivationLocalSlotAccess*>(&resolver)) {
+    al->SyncToCanonical();
+  }
+  return LowerDeferredAssign(context, deferred);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm
