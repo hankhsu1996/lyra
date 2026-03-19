@@ -220,7 +220,7 @@ auto LowerStrobeEffect(
       .mir_arena = original_ctx.mir_arena,
       .hir_arena = original_ctx.hir_arena,
       .type_arena = original_ctx.type_arena,
-      .constant_arena = original_ctx.constant_arena,
+      .active_constant_arena = original_ctx.active_constant_arena,
       .symbol_table = original_ctx.symbol_table,
       .body_places = original_ctx.body_places,
       .design_places = original_ctx.design_places,
@@ -507,7 +507,7 @@ auto LowerMonitorCheckProgram(
       .mir_arena = original_ctx.mir_arena,
       .hir_arena = original_ctx.hir_arena,
       .type_arena = original_ctx.type_arena,
-      .constant_arena = original_ctx.constant_arena,
+      .active_constant_arena = original_ctx.active_constant_arena,
       .symbol_table = original_ctx.symbol_table,
       .body_places = original_ctx.body_places,
       .design_places = original_ctx.design_places,
@@ -588,7 +588,7 @@ auto LowerMonitorSetupProgram(
       .mir_arena = original_ctx.mir_arena,
       .hir_arena = original_ctx.hir_arena,
       .type_arena = original_ctx.type_arena,
-      .constant_arena = original_ctx.constant_arena,
+      .active_constant_arena = original_ctx.active_constant_arena,
       .symbol_table = original_ctx.symbol_table,
       .body_places = original_ctx.body_places,
       .design_places = original_ctx.design_places,
@@ -1417,7 +1417,7 @@ auto BuildIndexPlan(
   switch (expr.kind) {
     case hir::ExpressionKind::kConstant: {
       const auto& cdata = std::get<hir::ConstantExpressionData>(expr.data);
-      const Constant& constant = (*ctx.constant_arena)[cdata.constant];
+      const Constant& constant = (*ctx.active_constant_arena)[cdata.constant];
       const auto& ic = std::get<IntegralConstant>(constant.value);
       int64_t val = 0;
       if (!ic.value.empty()) {

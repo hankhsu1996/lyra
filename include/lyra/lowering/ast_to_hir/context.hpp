@@ -111,14 +111,16 @@ class BuiltinTypeCatalog {
 // All fields are non-owning references to shared compilation state.
 //
 // This struct is intentionally shallow-copyable: ForkForBodyLowering()
-// copies all shared references and overrides hir_arena to point to a
-// body-local arena. All other fields (type_arena, constant_arena,
-// symbol_table, etc.) remain shared across the fork.
+// copies all shared references and overrides hir_arena,
+// active_constant_arena, and sink to point to body-local storage.
+// All other fields (type_arena, symbol_table, etc.) remain shared.
 struct Context {
   DiagnosticSink* sink = nullptr;
   hir::Arena* hir_arena = nullptr;
   TypeArena* type_arena = nullptr;
-  ConstantArena* constant_arena = nullptr;
+  // Active constant domain: design-global during Phase 0, overridden to
+  // body-local constant arena during Phase 1 body lowering.
+  ConstantArena* active_constant_arena = nullptr;
   SymbolTable* symbol_table = nullptr;
   ScopeTable* scope_table = nullptr;
   SourceMapper* source_mapper = nullptr;
@@ -133,14 +135,16 @@ struct Context {
   // Compile-global builtin semantic types. Initialized once in LowerDesign.
   BuiltinTypeCatalog builtin_types;
 
-  // Fork a body-lowering context that directs all HIR allocation into
-  // the given body-local arena and all diagnostics into the given
-  // body-local sink. All other shared state (type_arena, symbol_table,
-  // etc.) is inherited by shallow copy.
+  // Fork a body-lowering context that enters the body-local artifact
+  // domain. HIR nodes and constants are directed into body-local storage;
+  // diagnostics go to the body-local sink. Shared design-global state
+  // (type_arena, symbol_table, etc.) is inherited by shallow copy.
   [[nodiscard]] auto ForkForBodyLowering(
-      hir::Arena& body_arena, DiagnosticSink& body_sink) const -> Context {
+      hir::Arena& body_arena, ConstantArena& body_constant_arena,
+      DiagnosticSink& body_sink) const -> Context {
     Context body_ctx = *this;
     body_ctx.hir_arena = &body_arena;
+    body_ctx.active_constant_arena = &body_constant_arena;
     body_ctx.sink = &body_sink;
     return body_ctx;
   }

@@ -21,8 +21,14 @@ namespace lyra::lowering::ast_to_hir {
 
 struct LoweringResult {
   hir::Design design;
+  // Design-global HIR arena for design-level HIR nodes (package lowering,
+  // port binding expressions). Body-local HIR is in each ModuleBody's arena.
   std::unique_ptr<hir::Arena> hir_arena;
   std::unique_ptr<TypeArena> type_arena;
+  // Design-global constant arena for Phase 0 constants (parameter defaults,
+  // package constants). Body-local constants are in each ModuleBody's
+  // constant_arena. This arena may be empty today but represents the
+  // design-global constant domain.
   std::unique_ptr<ConstantArena> constant_arena;
   std::unique_ptr<SymbolTable> symbol_table;
   std::unique_ptr<ScopeTable> scope_table;

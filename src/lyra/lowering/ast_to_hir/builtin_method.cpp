@@ -224,7 +224,7 @@ auto MakeConstant(uint64_t value, TypeId type, SourceSpan span, Context* ctx)
   IntegralConstant constant;
   constant.value.push_back(value);
   constant.unknown.push_back(0);
-  ConstId cid = ctx->constant_arena->Intern(type, std::move(constant));
+  ConstId cid = ctx->active_constant_arena->Intern(type, std::move(constant));
   return ctx->hir_arena->AddExpression(
       hir::Expression{
           .kind = hir::ExpressionKind::kConstant,
@@ -373,7 +373,7 @@ auto LowerBuiltinMethodCall(
               : enum_info.members.back().value;
       IntegralConstant ic_copy = member_val;
       ConstId member_const =
-          ctx->constant_arena->Intern(enum_type_id, std::move(ic_copy));
+          ctx->active_constant_arena->Intern(enum_type_id, std::move(ic_copy));
       return ctx->hir_arena->AddExpression(
           hir::Expression{
               .kind = hir::ExpressionKind::kConstant,

@@ -23,9 +23,13 @@ namespace lyra::lowering::hir_to_mir {
 
 struct LoweringInput {
   const hir::Design* design = nullptr;
+  // Design-global HIR arena by default; overridden to body-local arena
+  // per body in design_lower.cpp before body lowering begins.
   const hir::Arena* hir_arena = nullptr;
   TypeArena* type_arena = nullptr;
-  const ConstantArena* constant_arena = nullptr;
+  // Active constant domain: design-global by default, overridden to
+  // body-local constant arena per body before body lowering begins.
+  const ConstantArena* active_constant_arena = nullptr;
   const SymbolTable* symbol_table = nullptr;
   BuiltinTypes builtin_types;
   const ast_to_hir::DesignBindingPlan* binding_plan = nullptr;

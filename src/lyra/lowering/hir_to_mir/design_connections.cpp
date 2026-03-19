@@ -35,7 +35,7 @@ auto MakeDesignContext(
       .mir_arena = &mir_arena,
       .hir_arena = input.hir_arena,
       .type_arena = input.type_arena,
-      .constant_arena = input.constant_arena,
+      .active_constant_arena = input.active_constant_arena,
       .symbol_table = input.symbol_table,
       .design_places = &decls.design_places,
       .local_places = {},

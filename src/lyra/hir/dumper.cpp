@@ -124,9 +124,12 @@ void Dumper::Dump(const Module& module) {
   }
   const auto& body = current_design_->module_bodies[module.body_id.value];
   const hir::Arena* saved_arena = arena_;
+  const ConstantArena* saved_constants = constants_;
   arena_ = &body.arena;
+  constants_ = &body.constant_arena;
   Dump(body);
   arena_ = saved_arena;
+  constants_ = saved_constants;
 
   Dedent();
   PrintIndent();

@@ -167,7 +167,7 @@ void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
 auto LowerConstant(const hir::ConstantExpressionData& data, MirBuilder& builder)
     -> mir::Operand {
   const Constant& constant =
-      (*builder.GetContext().constant_arena)[data.constant];
+      (*builder.GetContext().active_constant_arena)[data.constant];
   return mir::Operand::Const(constant);
 }
 
@@ -615,7 +615,7 @@ auto LowerCast(
         // Direct constant?
         if (const auto* cd =
                 std::get_if<hir::ConstantExpressionData>(&e.data)) {
-          const Constant& c = (*ctx.constant_arena)[cd->constant];
+          const Constant& c = (*ctx.active_constant_arena)[cd->constant];
           return std::get_if<StringConstant>(&c.value);
         }
         // Single-element concat wrapping a constant? (replication expansion)
@@ -626,7 +626,7 @@ auto LowerCast(
                 (*ctx.hir_arena)[nested->operands[0]];
             if (const auto* cd =
                     std::get_if<hir::ConstantExpressionData>(&inner_e.data)) {
-              const Constant& c = (*ctx.constant_arena)[cd->constant];
+              const Constant& c = (*ctx.active_constant_arena)[cd->constant];
               return std::get_if<StringConstant>(&c.value);
             }
           }
@@ -2184,7 +2184,7 @@ auto LowerIndexedPartSelect(
 
   // Compute index alignment from HIR expression tree.
   uint32_t index_alignment = GetHirExpressionAlignmentBits(
-      *ctx.hir_arena, *ctx.constant_arena, data.index);
+      *ctx.hir_arena, *ctx.active_constant_arena, data.index);
 
   // Compute offset, validity, and alignment together.
   auto [offset, valid, alignment] = EmitIndexedPartSelectOffset(

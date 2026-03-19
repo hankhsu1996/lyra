@@ -61,7 +61,7 @@ auto LowerConversionExpression(
     }
     // getValue() returns std::string_view with explicit length,
     // preserving embedded NUL bytes.
-    ConstId constant = ctx->constant_arena->Intern(
+    ConstId constant = ctx->active_constant_arena->Intern(
         type, StringConstant{.value = std::string(literal.getValue())});
     return ctx->hir_arena->AddExpression(
         hir::Expression{

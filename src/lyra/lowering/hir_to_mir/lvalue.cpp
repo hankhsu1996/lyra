@@ -567,7 +567,7 @@ auto LowerIndexedPartSelectLvalue(
 
   // Compute index alignment from HIR expression tree.
   uint32_t index_alignment = GetHirExpressionAlignmentBits(
-      *ctx.hir_arena, *ctx.constant_arena, data.index);
+      *ctx.hir_arena, *ctx.active_constant_arena, data.index);
 
   // Compute offset, validity, and alignment together. The offset
   // construction site is the single authority for both the formula
@@ -879,7 +879,8 @@ auto LowerPureLvaluePlaceImpl(hir::ExpressionId expr_id, const Context& ctx)
           // Get constant index value from constant arena
           const auto& const_data =
               std::get<hir::ConstantExpressionData>(index_expr.data);
-          const Constant& constant = (*ctx.constant_arena)[const_data.constant];
+          const Constant& constant =
+              (*ctx.active_constant_arena)[const_data.constant];
           const auto* ic = std::get_if<IntegralConstant>(&constant.value);
           if (ic == nullptr || ic->value.empty()) {
             return std::unexpected(
