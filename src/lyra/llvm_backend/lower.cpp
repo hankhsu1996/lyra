@@ -726,9 +726,17 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
-  // Phase 5: Per-instance wrappers / standalone entrypoints
+  // Phase 5: Descriptor data collection and standalone entrypoints.
+  // Module processes get descriptor data instead of per-instance wrappers.
+  // Standalone (init/connection) processes keep direct function pointers.
+  //
+  // process_funcs: standalone call targets plus null module placeholders.
+  // Init and connection processes have valid function pointers. Module
+  // process entries are nullptr (structural guard -- dispatch for module
+  // processes goes through the descriptor table, not this array).
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout->scheduled_processes.size());
+  std::vector<ProcessDescriptorData> process_descriptors;
   std::vector<ProcessTriggerEntry> all_process_triggers;
 
   size_t num_init = layout->num_init_processes;
@@ -799,10 +807,20 @@ auto CompileDesignProcesses(const LoweringInput& input)
         (unstable_it != instance_unstable_globals.end()) ? unstable_it->second
                                                          : null_ptr;
 
-    auto* wrapper = GenerateProcessWrapper(
-        *context, shared_func, bp.module_index.value, base_byte_offset,
-        base_slot_id, unstable_global, std::format("process_{}", i));
-    process_funcs.push_back(wrapper);
+    // Collect descriptor data instead of generating a per-instance wrapper.
+    // The descriptor carries the same binding that wrappers used to bake in.
+    process_descriptors.push_back(
+        ProcessDescriptorData{
+            .shared_body = shared_func,
+            .base_byte_offset = base_byte_offset,
+            .instance_id = bp.module_index.value,
+            .base_slot_id = base_slot_id,
+            .unstable_offsets = unstable_global,
+        });
+    // Null entry as structural guard: any accidental dispatch through the
+    // old procs[] path will crash immediately rather than calling a stale
+    // wrapper.
+    process_funcs.push_back(nullptr);
 
     // Collect trigger metadata for this module instance process.
     // Use the explicit body-process ordinal (from the routing table)
@@ -836,6 +854,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .process_triggers = std::move(all_process_triggers),
       .slot_info = std::move(slot_info),
       .num_init_processes = num_init,
+      .process_descriptors = std::move(process_descriptors),
   };
 }
 

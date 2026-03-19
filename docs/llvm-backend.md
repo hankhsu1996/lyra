@@ -187,27 +187,17 @@ Per-instance binding must not appear in LLVM function or global identity. Heavy 
 
 Shared body functions are the correct long-term shape: one function per (body, process) pair, parameterized by instance-specific constants passed as arguments. Process and comb dispatch must carry instance-specific binding via runtime-owned realization data, not per-instance LLVM wrapper functions.
 
-### Current state (bridge)
+### Current state
 
-Shared-body specialization is complete at the body-dedup level. MIR produces one body per specialization, and shared body functions with the 7-arg ABI are compiled once per body. This portion is in the correct long-term shape.
+Module-process dispatch is descriptor-driven (G1 complete). Codegen emits a constant descriptor table (`__lyra_process_descriptors`) with per-module-process binding data. The runtime reads descriptors and calls shared body functions directly with the 7-arg ABI. No per-instance process wrapper functions exist. Standalone (connection) processes keep the existing 3-arg direct dispatch path. A single shared trampoline (`__lyra_descriptor_dispatch`) bridges comb wrappers to the descriptor table; comb dispatch itself is not yet migrated to the runtime (G2).
 
-Descriptor-driven instance realization is not yet implemented. Per-instance wrappers and globals remain a bridge shape, not the target architecture.
+**Remaining per-instance LLVM artifacts** (tracked as G2-G4):
 
-**Primary boundary violations** -- these encode per-instance binding in LLVM function/global identity and are the central gap:
-
-- Per-instance process wrapper functions (`process_N`) that bridge from the 3-arg runtime ABI to the 7-arg shared body ABI by baking instance-specific constants
-- Per-instance comb wrapper functions (`__lyra_comb_wrapper_N`) that adapt the comb ABI (no outcome pointer) to the process ABI
-- Per-instance unstable-offset globals (`inst_N_unstable_offsets`) for parameterized specializations with varying slot sizes
-
-**Secondary cleanup residue** -- lower priority, smaller impact on codegen cost:
-
-- Per-scheduled-process named LLVM struct types (`ProcessStateN`, `ProcessFrameN`) -- structurally identical types with instance-indexed names; cosmetic but should be per-body
-- `__lyra_module_funcs` function pointer array -- size scales with instance count; will be replaced by descriptor table or runtime-built metadata
-- `__lyra_proc_offsets` state offset array -- size scales with instance count; process state layout computation can move to the runtime constructor
-
-These artifacts exist because the runtime dispatch ABI has no mechanism to pass per-instance realization data alongside the function call. The runtime dispatches through a bare function pointer indexed by process ID, so all instance-specific binding must be baked into the function itself.
-
-This causes LLVM IR size and LLVM optimization time to scale linearly with instance count, violating the specialization boundary rule. See [compilation-model.md](compilation-model.md) for the target architecture.
+- Per-instance comb wrapper functions (`__lyra_comb_wrapper_N`) -- adapted to call the shared trampoline instead of deleted process wrappers; still per-instance LLVM functions (G2)
+- Per-instance unstable-offset globals (`inst_N_unstable_offsets`) -- constant data, not executable artifacts (G3)
+- Per-scheduled-process named LLVM struct types (`ProcessStateN`, `ProcessFrameN`) -- cosmetic, should be per-body (G4)
+- `__lyra_module_funcs` function pointer array with null module entries -- temporary compatibility residue (G4)
+- `__lyra_proc_offsets` state offset array -- instance-count-shaped data (G4)
 
 ## Engineering Guidelines
 

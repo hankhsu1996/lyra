@@ -21,7 +21,9 @@
 //   5: Added trace output configuration (signal_trace_path)
 //   6: Added process trigger metadata (process_trigger_words,
 //      num_process_trigger_words)
-inline constexpr uint32_t kRuntimeAbiVersion = 6;
+//   7: Descriptor-driven process dispatch (process_descriptors,
+//      num_process_descriptors, num_standalone_processes)
+inline constexpr uint32_t kRuntimeAbiVersion = 7;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -74,4 +76,27 @@ struct LyraRuntimeAbi {
   // trigger-group formation (G13).
   const uint32_t* process_trigger_words;
   uint32_t num_process_trigger_words;
+
+  // v7: Descriptor-driven module-process dispatch.
+  // process_descriptors points to a constant codegen-emitted array of
+  // fixed-size descriptor entries (one per module process).
+  //
+  // Authoritative entry layout (32 bytes, naturally aligned):
+  //   offset  0: ptr    shared_body       (7-arg shared body function pointer)
+  //   offset  8: u64    base_byte_offset  (instance base in design state)
+  //   offset 16: u32    instance_id       (module instance index)
+  //   offset 20: u32    base_slot_id      (signal ID offset)
+  //   offset 24: ptr    unstable_offsets  (unstable offset table, or null)
+  //
+  // This layout is the source of truth. Codegen (GetDescriptorEntryType
+  // in emit_design_main.cpp) and runtime (ProcessDescriptorEntry in
+  // simulation.cpp) must both conform to it. The runtime side enforces
+  // conformance via static_assert on sizeof and offsetof.
+  //
+  // num_process_descriptors is the module process count.
+  // num_standalone_processes is the standalone (connection) process count.
+  // Runtime contract: num_standalone + num_descriptors == num_processes.
+  const void* process_descriptors;
+  uint32_t num_process_descriptors;
+  uint32_t num_standalone_processes;
 };

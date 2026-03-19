@@ -161,10 +161,10 @@ Classify every self-cost function into exactly one bucket. The bucket list is fi
 
 | Bucket                 | What it contains                                                                                                                                |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| actual logic           | Emitted process bodies (`body_*_proc_*`, `process_*`)                                                                                           |
+| actual logic           | Emitted process bodies (`body_*_proc_*`), descriptor dispatch trampoline (`__lyra_descriptor_dispatch`)                                         |
 | dirty tracking         | MarkSlotDirty, TouchSlot, MarkDirtyRange, ClearDelta                                                                                            |
 | subscriptions          | FlushSignalUpdates, FlushDirtySlot, FlushSlotEdgeGroups, FlushSlotChangeSubs, FlushSlotRebindSubs, FlushSlotContainerSubs, EnqueueProcessWakeup |
-| dispatch / reconcile   | ExecuteRegion, RunOneActivation, AotProcessDispatch, ReconcilePostActivation, LyraSuspendWait, TraceWake, LyraResetIterationLimit               |
+| dispatch / reconcile   | ExecuteRegion, RunOneActivation, DescriptorProcessDispatch, ReconcilePostActivation, LyraSuspendWait, TraceWake, LyraResetIterationLimit        |
 | connection propagation | FlushAndPropagateConnections (connection phase)                                                                                                 |
 | comb propagation       | FlushAndPropagateConnections (comb phase), comb kernel functions                                                                                |
 | NBA lifecycle          | ScheduleNba, SmallByteBuffer, ApplyFullOverwriteNba, ApplyMaskedMergeNba                                                                        |

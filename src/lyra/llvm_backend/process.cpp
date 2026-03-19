@@ -197,21 +197,6 @@ void EmitStoreOkOutcome(
       static_cast<uint32_t>(runtime::ProcessExitCode::kOk), 0, zero, zero);
 }
 
-// Load design_ptr from state->header.design without setting context pointers.
-// Used by the wrapper which only needs design_ptr to compute this_ptr.
-auto EmitLoadDesignPtr(Context& context, llvm::Value* state_arg)
-    -> llvm::Value* {
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
-  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
-
-  auto* header_ptr = builder.CreateStructGEP(
-      context.GetProcessStateType(), state_arg, 0, "header_ptr");
-  auto* design_ptr_ptr = builder.CreateStructGEP(
-      context.GetHeaderType(), header_ptr, 1, "design_ptr_ptr");
-  return builder.CreateLoad(ptr_ty, design_ptr_ptr, "design_ptr");
-}
-
 // =============================================================================
 // Block Params and PHI Wiring
 // =============================================================================
@@ -1905,51 +1890,6 @@ auto GenerateSharedProcessFunction(
       .function = func,
       .wait_sites = std::move(wait_sites),
       .process_trigger = ExtractProcessTriggerEntry(process)};
-}
-
-auto GenerateProcessWrapper(
-    Context& context, llvm::Function* shared_fn, uint32_t instance_id,
-    uint64_t base_byte_offset, uint32_t base_slot_id,
-    llvm::Constant* unstable_offsets_global, const std::string& name)
-    -> llvm::Function* {
-  auto& llvm_ctx = context.GetLlvmContext();
-  auto& module = context.GetModule();
-
-  // Wrapper signature: void(ptr state, i32 resume, ptr out)
-  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
-  auto* fn_type =
-      llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty, ptr_ty}, false);
-
-  auto* wrapper = llvm::Function::Create(
-      fn_type, llvm::Function::InternalLinkage, name, &module);
-  wrapper->getArg(0)->setName("state");
-  wrapper->getArg(1)->setName("resume_block");
-  wrapper->getArg(2)->setName("out");
-
-  auto* entry = llvm::BasicBlock::Create(llvm_ctx, "entry", wrapper);
-  auto& builder = context.GetBuilder();
-  builder.SetInsertPoint(entry);
-
-  auto* design_ptr = EmitLoadDesignPtr(context, wrapper->getArg(0));
-
-  // this_ptr = design_ptr + base_byte_offset
-  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
-  auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
-  auto* this_ptr = builder.CreateGEP(
-      i8_ty, design_ptr, llvm::ConstantInt::get(i64_ty, base_byte_offset),
-      "this_ptr");
-
-  // Forward to shared process function with instance-specific unstable offsets
-  builder.CreateCall(
-      shared_fn, {wrapper->getArg(0), wrapper->getArg(1), this_ptr,
-                  llvm::ConstantInt::get(i32_ty, instance_id),
-                  llvm::ConstantInt::get(i32_ty, base_slot_id),
-                  unstable_offsets_global, wrapper->getArg(2)});
-  builder.CreateRetVoid();
-
-  return wrapper;
 }
 
 auto DeclareMirFunction(
