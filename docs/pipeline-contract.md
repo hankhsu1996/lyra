@@ -53,14 +53,15 @@ LLVM IR is not where language semantics live.
 
 ### Specialization -> Realization
 
-| Must Do                                   | Must NOT Do                          |
-| ----------------------------------------- | ------------------------------------ |
-| Produce self-contained CompiledModuleSpec | Reference design-global slot IDs     |
-| Use specialization-constant offsets only  | Embed instance paths in code         |
-| Classify parameters (structural vs value) | Depend on instance count or ordering |
-| Export SpecLayout, metadata, process info | Require design-global knowledge      |
+| Must Do                                       | Must NOT Do                                           |
+| --------------------------------------------- | ----------------------------------------------------- |
+| Produce self-contained CompiledModuleSpec     | Reference design-global slot IDs                      |
+| Use specialization-constant offsets only      | Embed instance paths in code                          |
+| Classify parameters (structural vs value)     | Depend on instance count or ordering                  |
+| Export SpecLayout, metadata, process info     | Require design-global knowledge                       |
+| Keep heavy LLVM codegen specialization-scoped | Encode per-instance binding in LLVM functions/globals |
 
-The specialization boundary is the key architectural invariant. Violations here break parallelism and incrementality.
+The specialization boundary is the key architectural invariant. Violations here break parallelism and incrementality. Per-instance binding must not appear in LLVM function or global identity. Heavy LLVM codegen shape must be determined by the number of unique specializations, not the number of instances.
 
 ### Realization -> Runtime
 

@@ -8,7 +8,7 @@ primary = "packed part-select insertion throughput"
 secondary = ["wide bitvector slicing", "index computation"]
 
 [scale.small]
-NUM_ITERS = 2_560
+NUM_ITERS = 50_000
 
 [scale.large]
-NUM_ITERS = 20_480
+NUM_ITERS = 500_000

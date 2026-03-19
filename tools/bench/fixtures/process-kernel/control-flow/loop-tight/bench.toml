@@ -8,7 +8,7 @@ primary = "tight loop overhead (loop + trivial XOR/shift body)"
 secondary = ["iteration limit checking", "back-edge codegen"]
 
 [scale.small]
-NUM_ITERS = 20_000
+NUM_ITERS = 6_000
 
 [scale.large]
-NUM_ITERS = 200_000
+NUM_ITERS = 60_000

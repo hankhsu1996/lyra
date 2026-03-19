@@ -335,12 +335,27 @@ Realization must NOT:
 - Re-run LLVM optimization or regenerate kernel bodies
 - Depend on full design flattening to create new IR
 - Modify specialization code
+- Generate per-instance LLVM functions, globals, or types
 
 Realization may:
 
 - Sort and build index tables
 - Compute instance memory placements
 - Create runtime lookup structures
+- Build per-instance descriptors that reference shared compiled code
+
+### Instance-Independence of Compiled Artifacts
+
+Changing instance counts, generate expansion, or topology must not materially change the LLVM codegen workload. The expected compile-time scaling property:
+
+- **Specialization compilation** scales with the number of unique specializations (unique `ModuleSpecId` values). Adding more instances of the same specialization does not increase compilation cost.
+- **Realization/construction** scales with total instance count. This is runtime construction work: allocating state, building per-instance metadata, wiring connectivity. This cost is expected and acceptable.
+
+The boundary rule: per-instance binding must not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- must be determined by the number of unique specializations, not the number of instances. Instance-specific constants (base byte offset, instance ID, signal ID offset, per-instance slot offset tables) belong in runtime-owned data materialized at construction time.
+
+Process and comb dispatch must carry instance-specific binding via runtime-owned realization data, not per-instance LLVM wrapper functions. Per-instance wrapper generation in LLVM IR is not the target architecture.
+
+Per-instance data (such as unstable slot offset tables for parameterized specializations) must be runtime-owned memory populated at construction time, not per-instance LLVM globals.
 
 ### Incrementality
 

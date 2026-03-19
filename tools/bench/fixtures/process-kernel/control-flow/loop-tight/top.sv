@@ -1,5 +1,5 @@
 `ifndef NUM_ITERS
-`define NUM_ITERS 200000
+`define NUM_ITERS 60000
 `endif
 
 // Tight inner loop with a trivial body that LLVM cannot constant-fold.

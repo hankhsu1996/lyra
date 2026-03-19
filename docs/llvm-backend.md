@@ -179,6 +179,36 @@ Branchless propagation for hot paths -- masks flow through bitwise operations so
 | Recompute bit offsets or slices   | MIR owns all address decisions |
 | Interpret SV semantics            | MIR is the semantic endpoint   |
 
+## Instance-Independence
+
+### Target shape
+
+Per-instance binding must not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- must be determined by the number of unique specializations, not the number of instances. Changing instance counts or generate expansion must not increase heavy LLVM codegen work (IR construction, LLVM optimization, code emission).
+
+Shared body functions are the correct long-term shape: one function per (body, process) pair, parameterized by instance-specific constants passed as arguments. Process and comb dispatch must carry instance-specific binding via runtime-owned realization data, not per-instance LLVM wrapper functions.
+
+### Current state (bridge)
+
+Shared-body specialization is complete at the body-dedup level. MIR produces one body per specialization, and shared body functions with the 7-arg ABI are compiled once per body. This portion is in the correct long-term shape.
+
+Descriptor-driven instance realization is not yet implemented. Per-instance wrappers and globals remain a bridge shape, not the target architecture.
+
+**Primary boundary violations** -- these encode per-instance binding in LLVM function/global identity and are the central gap:
+
+- Per-instance process wrapper functions (`process_N`) that bridge from the 3-arg runtime ABI to the 7-arg shared body ABI by baking instance-specific constants
+- Per-instance comb wrapper functions (`__lyra_comb_wrapper_N`) that adapt the comb ABI (no outcome pointer) to the process ABI
+- Per-instance unstable-offset globals (`inst_N_unstable_offsets`) for parameterized specializations with varying slot sizes
+
+**Secondary cleanup residue** -- lower priority, smaller impact on codegen cost:
+
+- Per-scheduled-process named LLVM struct types (`ProcessStateN`, `ProcessFrameN`) -- structurally identical types with instance-indexed names; cosmetic but should be per-body
+- `__lyra_module_funcs` function pointer array -- size scales with instance count; will be replaced by descriptor table or runtime-built metadata
+- `__lyra_proc_offsets` state offset array -- size scales with instance count; process state layout computation can move to the runtime constructor
+
+These artifacts exist because the runtime dispatch ABI has no mechanism to pass per-instance realization data alongside the function call. The runtime dispatches through a bare function pointer indexed by process ID, so all instance-specific binding must be baked into the function itself.
+
+This causes LLVM IR size and LLVM optimization time to scale linearly with instance count, violating the specialization boundary rule. See [compilation-model.md](compilation-model.md) for the target architecture.
+
 ## Engineering Guidelines
 
 - One lowering function per MIR construct
