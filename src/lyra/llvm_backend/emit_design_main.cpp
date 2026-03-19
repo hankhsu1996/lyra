@@ -563,7 +563,7 @@ auto EmitProcessFuncArray(
 // Binary ABI contract shared between codegen (EmitProcessDescriptorTable),
 // the trampoline (EmitDescriptorDispatchTrampoline), and the runtime
 // (ProcessDescriptorEntry in simulation.cpp). Layout:
-//   field 0: ptr   shared_body       (7-arg shared body function pointer)
+//   field 0: ptr   shared_body       (2-arg shared body function pointer)
 //   field 1: i64   base_byte_offset  (instance base offset in design state)
 //   field 2: i32   instance_id       (module instance index)
 //   field 3: i32   signal_id_offset      (signal ID offset)

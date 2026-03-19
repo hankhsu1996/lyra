@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // Versioned runtime descriptor passed from codegen to LyraRunSimulation.
@@ -68,3 +69,11 @@ struct LyraRuntimeAbi {
   uint32_t num_process_descriptors;
   uint32_t num_standalone_processes;
 };
+
+// Hard size/offset contract. If the struct layout changes (fields added,
+// removed, or reordered), these assertions fail at compile time rather
+// than manifesting as runtime SIGILL in AOT binaries.
+static_assert(sizeof(LyraRuntimeAbi) == 208);
+static_assert(offsetof(LyraRuntimeAbi, version) == 0);
+static_assert(offsetof(LyraRuntimeAbi, process_descriptors) == 192);
+static_assert(offsetof(LyraRuntimeAbi, num_standalone_processes) == 204);

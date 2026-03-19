@@ -61,7 +61,9 @@ struct ProcessFrameHeaderField {
   static constexpr unsigned kFieldCount = 9;
 };
 
-// Hard binary contract assertions.
+// Hard binary contract assertions. If the struct layout changes, these
+// fail at compile time rather than manifesting as runtime SIGILL in
+// AOT binaries.
 static_assert(offsetof(ProcessFrameHeader, body) == sizeof(SuspendRecord));
 static_assert(
     offsetof(ProcessFrameHeader, engine_ptr) ==
