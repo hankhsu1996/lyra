@@ -174,7 +174,7 @@ auto LowerConstantValueExpression(
     if (!type_id) {
       return hir::kInvalidExpressionId;
     }
-    ConstId constant = ctx->constant_arena->Intern(
+    ConstId constant = ctx->active_constant_arena->Intern(
         type_id, StringConstant{.value = std::string(cv.str())});
     return ctx->hir_arena->AddExpression(
         hir::Expression{
@@ -191,8 +191,8 @@ auto LowerConstantValueExpression(
     }
     double value = cv.isReal() ? static_cast<double>(cv.real())
                                : static_cast<double>(cv.shortReal());
-    ConstId constant =
-        ctx->constant_arena->Intern(type_id, RealConstant{.value = value});
+    ConstId constant = ctx->active_constant_arena->Intern(
+        type_id, RealConstant{.value = value});
     return ctx->hir_arena->AddExpression(
         hir::Expression{
             .kind = hir::ExpressionKind::kConstant,
@@ -494,7 +494,7 @@ auto LowerExpression(
       // String literals always use kString type, regardless of slang's
       // reported type (which may be a packed bit array for format strings).
       TypeId type = ctx->StringType();
-      ConstId constant = ctx->constant_arena->Intern(
+      ConstId constant = ctx->active_constant_arena->Intern(
           type, StringConstant{.value = std::string(literal.getValue())});
       return ctx->hir_arena->AddExpression(
           hir::Expression{
@@ -514,7 +514,7 @@ auto LowerExpression(
       if (!type) {
         return hir::kInvalidExpressionId;
       }
-      ConstId constant = ctx->constant_arena->Intern(
+      ConstId constant = ctx->active_constant_arena->Intern(
           type, RealConstant{.value = literal.getValue()});
       return ctx->hir_arena->AddExpression(
           hir::Expression{

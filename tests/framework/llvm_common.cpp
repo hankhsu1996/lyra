@@ -385,7 +385,7 @@ auto PrepareLlvmModule(
       .design = &hir_result.design,
       .hir_arena = hir_result.hir_arena.get(),
       .type_arena = hir_result.type_arena.get(),
-      .constant_arena = hir_result.constant_arena.get(),
+      .active_constant_arena = hir_result.constant_arena.get(),
       .symbol_table = hir_result.symbol_table.get(),
       .builtin_types = {},
       .binding_plan = &hir_result.binding_plan,

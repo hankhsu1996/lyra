@@ -372,7 +372,7 @@ auto MakeIntConstant(int64_t value, TypeId type, SourceSpan span, Context* ctx)
   IntegralConstant constant;
   constant.value.push_back(masked_value);
   constant.unknown.push_back(0);
-  ConstId cid = ctx->constant_arena->Intern(type, std::move(constant));
+  ConstId cid = ctx->active_constant_arena->Intern(type, std::move(constant));
   return ctx->hir_arena->AddExpression(
       hir::Expression{
           .kind = hir::ExpressionKind::kConstant,
@@ -949,8 +949,8 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           IntegralConstant one_const;
           one_const.value.push_back(1);
           one_const.unknown.push_back(0);
-          ConstId one_id =
-              ctx->constant_arena->Intern(bit_type, std::move(one_const));
+          ConstId one_id = ctx->active_constant_arena->Intern(
+              bit_type, std::move(one_const));
           hir::ExpressionId one_expr = ctx->hir_arena->AddExpression(
               hir::Expression{
                   .kind = hir::ExpressionKind::kConstant,
@@ -973,8 +973,8 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           IntegralConstant zero_const;
           zero_const.value.push_back(0);
           zero_const.unknown.push_back(0);
-          ConstId zero_id =
-              ctx->constant_arena->Intern(bit_type, std::move(zero_const));
+          ConstId zero_id = ctx->active_constant_arena->Intern(
+              bit_type, std::move(zero_const));
           predicate = ctx->hir_arena->AddExpression(
               hir::Expression{
                   .kind = hir::ExpressionKind::kConstant,
@@ -1179,7 +1179,7 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       one_const.value.push_back(1);
       one_const.unknown.push_back(0);
       ConstId const_id =
-          ctx->constant_arena->Intern(logic_type, std::move(one_const));
+          ctx->active_constant_arena->Intern(logic_type, std::move(one_const));
       hir::ExpressionId true_expr = ctx->hir_arena->AddExpression(
           hir::Expression{
               .kind = hir::ExpressionKind::kConstant,

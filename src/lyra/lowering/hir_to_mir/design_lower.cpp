@@ -205,15 +205,15 @@ auto LowerDesign(
     const hir::ModuleBody& hir_body =
         design.module_bodies[rep_mod.body_id.value];
 
-    // Create fresh body arena for this specialization group
-    mir::Arena body_arena;
-
-    // Collect body-local declarations into body arena
-    BodyLocalDecls body_decls =
-        CollectBodyLocalDecls(rep_mod, *input.symbol_table, body_arena);
-
+    // Enter body-local artifact domain: HIR, constants, and MIR all
+    // switch to body-owned storage for this specialization group.
     LoweringInput body_input = input;
     body_input.hir_arena = &hir_body.arena;
+    body_input.active_constant_arena = &hir_body.constant_arena;
+
+    mir::Arena body_arena;
+    BodyLocalDecls body_decls =
+        CollectBodyLocalDecls(rep_mod, *input.symbol_table, body_arena);
 
     body_results.push_back(LowerModule(
         hir_body, body_input, std::move(body_arena), mir_arena, decls,

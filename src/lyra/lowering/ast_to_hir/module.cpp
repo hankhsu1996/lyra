@@ -13,6 +13,7 @@
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/scope_types.hpp"
@@ -40,11 +41,13 @@ auto LowerModuleBody(
     const slang::ast::InstanceSymbol& representative,
     const BodyLoweringInput& input, SymbolRegistrar& registrar, Context* ctx)
     -> BodyLoweringResult {
-  // Body-local arena, sink, and context. All HIR nodes and diagnostics
+  // Body-local artifact domains. All HIR nodes, constants, and diagnostics
   // produced during body lowering are isolated in body-local storage.
   hir::Arena body_arena;
+  ConstantArena body_constant_arena;
   DiagnosticSink body_sink;
-  Context body_ctx = ctx->ForkForBodyLowering(body_arena, body_sink);
+  Context body_ctx =
+      ctx->ForkForBodyLowering(body_arena, body_constant_arena, body_sink);
 
   ModuleLowerer lowerer(body_ctx, registrar, representative);
 
@@ -209,6 +212,7 @@ auto LowerModuleBody(
               .functions = std::move(functions),
               .tasks = std::move(tasks),
               .arena = std::move(body_arena),
+              .constant_arena = std::move(body_constant_arena),
           },
       .diagnostics = std::move(body_sink).TakeDiagnostics(),
   };

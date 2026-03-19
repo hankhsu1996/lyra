@@ -106,7 +106,7 @@ auto LowerProcess(
       .design_arena = decl_view.design_arena,
       .hir_arena = input.hir_arena,
       .type_arena = input.type_arena,
-      .constant_arena = input.constant_arena,
+      .active_constant_arena = input.active_constant_arena,
       .symbol_table = input.symbol_table,
       .body_places = decl_view.body_places,
       .design_places = decl_view.design_places,

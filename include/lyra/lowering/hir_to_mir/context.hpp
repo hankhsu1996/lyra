@@ -137,9 +137,13 @@ struct Context {
   // design_places PlaceIds are returned directly.
   const mir::Arena* design_arena = nullptr;
 
+  // Points to the body-local HIR arena during body lowering,
+  // or design-global arena during design-level lowering.
   const hir::Arena* hir_arena;
   const TypeArena* type_arena;
-  const ConstantArena* constant_arena;
+  // Active constant domain: body-local constant arena during body
+  // lowering, design-global constant arena during design-level lowering.
+  const ConstantArena* active_constant_arena;
   const SymbolTable* symbol_table;
 
   // body_places: body-local (kModuleSlot) lookup, used for module body

@@ -58,7 +58,7 @@ auto MakeConstant(uint64_t value, TypeId type, SourceSpan span, Context* ctx)
   IntegralConstant constant;
   constant.value.push_back(value);
   constant.unknown.push_back(0);
-  ConstId cid = ctx->constant_arena->Intern(type, std::move(constant));
+  ConstId cid = ctx->active_constant_arena->Intern(type, std::move(constant));
   return ctx->hir_arena->AddExpression(
       hir::Expression{
           .kind = hir::ExpressionKind::kConstant,

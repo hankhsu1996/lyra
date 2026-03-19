@@ -45,7 +45,7 @@ auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
   ctx.sink = &sink;
   ctx.hir_arena = hir_arena.get();
   ctx.type_arena = type_arena.get();
-  ctx.constant_arena = constant_arena.get();
+  ctx.active_constant_arena = constant_arena.get();
   ctx.symbol_table = symbol_table.get();
   ctx.scope_table = scope_table.get();
   ctx.source_mapper = source_mapper.get();

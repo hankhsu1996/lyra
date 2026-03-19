@@ -48,7 +48,7 @@ auto LowerSVIntToIntegralConstant(const slang::SVInt& sv_int)
 auto LowerIntegralConstant(
     const slang::SVInt& sv_int, TypeId type, Context* ctx) -> ConstId {
   IntegralConstant constant = LowerSVIntToIntegralConstant(sv_int);
-  return ctx->constant_arena->Intern(type, std::move(constant));
+  return ctx->active_constant_arena->Intern(type, std::move(constant));
 }
 
 namespace {
@@ -145,7 +145,7 @@ auto CreateFilledConstant(
 
   IntegralConstant constant =
       MakeFilledIntegralConstant(width, bits.value_bit, bits.unknown_bit);
-  return ctx->constant_arena->Intern(target_type, std::move(constant));
+  return ctx->active_constant_arena->Intern(target_type, std::move(constant));
 }
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -294,7 +294,7 @@ auto MakeIntConstant(int32_t value, SourceSpan span, Context* ctx)
   IntegralConstant ic;
   ic.value = {static_cast<uint64_t>(bits)};
   ic.unknown = {0};
-  ConstId cid = ctx->constant_arena->Intern(type, std::move(ic));
+  ConstId cid = ctx->active_constant_arena->Intern(type, std::move(ic));
   return ctx->hir_arena->AddExpression(
       hir::Expression{
           .kind = hir::ExpressionKind::kConstant,
@@ -309,7 +309,7 @@ auto MakeBitConstant(uint8_t value, SourceSpan span, Context* ctx)
   IntegralConstant ic;
   ic.value = {static_cast<uint64_t>(value & 1)};
   ic.unknown = {0};
-  ConstId cid = ctx->constant_arena->Intern(type, std::move(ic));
+  ConstId cid = ctx->active_constant_arena->Intern(type, std::move(ic));
   return ctx->hir_arena->AddExpression(
       hir::Expression{
           .kind = hir::ExpressionKind::kConstant,
@@ -321,7 +321,7 @@ auto MakeBitConstant(uint8_t value, SourceSpan span, Context* ctx)
 auto MakeStringConstant(std::string value, SourceSpan span, Context* ctx)
     -> hir::ExpressionId {
   TypeId type = ctx->StringType();
-  ConstId cid = ctx->constant_arena->Intern(
+  ConstId cid = ctx->active_constant_arena->Intern(
       type, StringConstant{.value = std::move(value)});
   return ctx->hir_arena->AddExpression(
       hir::Expression{
@@ -406,7 +406,7 @@ auto MakeIntX(SourceSpan span, Context* ctx) -> hir::ExpressionId {
   IntegralConstant ic;
   ic.value = {0};
   ic.unknown = {0xFFFF'FFFFU};  // All bits unknown
-  ConstId cid = ctx->constant_arena->Intern(type, std::move(ic));
+  ConstId cid = ctx->active_constant_arena->Intern(type, std::move(ic));
   return ctx->hir_arena->AddExpression(
       hir::Expression{
           .kind = hir::ExpressionKind::kConstant,
