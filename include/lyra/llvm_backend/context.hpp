@@ -31,7 +31,7 @@ struct ScopedSlotRef;
 
 namespace lyra::lowering::mir_to_llvm {
 
-struct SpecSlotLayout;
+struct SpecSlotInfo;
 class Context;
 
 // Forward declaration for friend access
@@ -120,8 +120,6 @@ struct ExecutionContractState {
   llvm::Value* this_ptr = nullptr;
   llvm::Value* dynamic_instance_id = nullptr;
   llvm::Value* signal_id_offset = nullptr;
-  const SpecSlotLayout* spec_slot_layout = nullptr;
-  llvm::Value* unstable_slot_offsets_ptr = nullptr;
 };
 
 // RAII guard that sets execution-contract state on Context and restores it
@@ -425,18 +423,36 @@ class Context {
   void SetSignalIdOffset(llvm::Value* offset);
   [[nodiscard]] auto GetSignalIdOffset() const -> llvm::Value*;
   [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
-  void SetSpecSlotLayout(const SpecSlotLayout* layout);
-  void SetUnstableSlotOffsetsPtr(llvm::Value* ptr);
-  [[nodiscard]] auto GetUnstableSlotOffsetsPtr() const -> llvm::Value*;
+  void SetSpecSlotInfo(const SpecSlotInfo* info);
+  [[nodiscard]] auto GetSpecSlotInfo() const -> const SpecSlotInfo* {
+    return spec_slot_info_;
+  }
 
-  // Explicit address-space APIs for slot pointer formation.
-  // Call sites must choose the correct API based on the resolved root scope.
+  // Explicit access APIs for module-local slot pointer formation.
+  // Callers must choose the correct API based on the slot's storage shape.
 
-  // Module-local storage: this_ptr + rel_byte_offsets[local_slot_id].
-  // Requires module behavioral shared-context state (this_ptr_,
-  // rel_byte_offsets_).
+  // Inline value slot: returns pointer to the slot's value bytes.
+  // this_ptr + inline_offset. For kInlineValue slots only.
+  [[nodiscard]] auto EmitInlineSlotPtr(uint32_t local_slot_id) -> llvm::Value*;
+
+  // Owned handle pointer: returns pointer to the OwnedStorageHandle struct.
+  // this_ptr + inline_offset. For kOwnedContainer slots only.
+  [[nodiscard]] auto EmitOwnedHandlePtr(uint32_t local_slot_id) -> llvm::Value*;
+
+  // Owned data pointer: loads handle.data from the inline handle.
+  // Returns the arena-internal backing-data base pointer.
+  [[nodiscard]] auto EmitLoadOwnedDataPtr(llvm::Value* handle_ptr)
+      -> llvm::Value*;
+
+  // Transitional dispatch: routes to inline or owned path based on shape.
+  // Returns pointer to value bytes (inline) or backing data (owned).
+  // Existing callers use this; new code should call explicit APIs above.
+  // Will be removed when all callers are migrated.
   [[nodiscard]] auto GetModuleSlotPointer(uint32_t local_slot_id)
       -> llvm::Value*;
+
+  // Centralized LLVM type for OwnedStorageHandle: { ptr, i64 }.
+  [[nodiscard]] auto GetOwnedHandleLlvmType() -> llvm::StructType*;
 
   // Design-global storage: design_ptr + struct GEP via field index.
   [[nodiscard]] auto GetDesignGlobalSlotPointer(uint32_t global_slot_id)
@@ -498,7 +514,6 @@ class Context {
   auto EmitLoadEnginePtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadDesignPtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadThisPtr(llvm::Value* state_arg) -> llvm::Value*;
-  auto EmitLoadUnstableOffsets(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadInstanceId(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadSignalIdOffset(llvm::Value* state_arg) -> llvm::Value*;
   void EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value);
@@ -643,10 +658,10 @@ class Context {
   // received (ObserverContext* vs exploded args) is determined by
   // mir::IsObserverProgram(runtime_kind), not by this struct.
   //
-  // spec_slot_layout is specialization-owned addressing data (owned by
-  // SpecLayout, shared across all instances of the same specialization).
+  // spec_slot_info is specialization-owned addressing data (owned by
+  // SpecSlotInfo, shared across all instances of the same specialization).
   struct ModuleFunctionLowering {
-    const SpecSlotLayout* spec_slot_layout = nullptr;
+    const SpecSlotInfo* spec_slot_info = nullptr;
   };
   void RegisterModuleScopedFunction(
       mir::FunctionId func_id, ModuleFunctionLowering lowering);
@@ -905,8 +920,7 @@ class Context {
   llvm::Value* this_ptr_ = nullptr;
   llvm::Value* dynamic_instance_id_ = nullptr;
   llvm::Value* signal_id_offset_ = nullptr;
-  const SpecSlotLayout* spec_slot_layout_ = nullptr;
-  llvm::Value* unstable_slot_offsets_ptr_ = nullptr;
+  const SpecSlotInfo* spec_slot_info_ = nullptr;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();

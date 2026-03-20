@@ -32,6 +32,7 @@
 #include "lyra/llvm_backend/storage_boundary.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
+#include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/realization/build_design_metadata.hpp"
 #include "lyra/runtime/process_frame.hpp"
@@ -105,39 +106,108 @@ auto EmitWaitSiteMetaTable(
   return {.words_ptr = words_gep, .count = word_count};
 }
 
+void EmitConstructOwnedHandles(
+    Context& context, llvm::Value* design_state,
+    const std::vector<SlotInfo>& slots,
+    const lowering::mir_to_llvm::DesignLayout& design_layout) {
+  auto& builder = context.GetBuilder();
+  auto& ctx = context.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+
+  auto* handle_ty =
+      llvm::StructType::get(ctx, {llvm::PointerType::getUnqual(ctx), i64_ty});
+
+  for (size_t i = 0; i < slots.size(); ++i) {
+    if (slots[i].storage_shape != mir::StorageShape::kOwnedContainer) {
+      continue;
+    }
+
+    uint64_t handle_offset = design_layout.slot_byte_offsets[i];
+    uint64_t data_offset = *design_layout.owned_data_offsets[i];
+    uint64_t backing_size = design_layout.slot_storage_specs[i].TotalByteSize();
+
+    auto* handle_ptr = builder.CreateGEP(
+        i8_ty, design_state, builder.getInt64(handle_offset),
+        "owned_handle_ptr");
+    auto* data_ptr = builder.CreateGEP(
+        i8_ty, design_state, builder.getInt64(data_offset), "owned_data_ptr");
+
+    // Store handle.data
+    auto* data_field = builder.CreateStructGEP(handle_ty, handle_ptr, 0);
+    builder.CreateStore(data_ptr, data_field);
+
+    // Store handle.byte_size
+    auto* size_field = builder.CreateStructGEP(handle_ty, handle_ptr, 1);
+    builder.CreateStore(
+        llvm::ConstantInt::get(i64_ty, backing_size), size_field);
+  }
+}
+
+void EmitInitializeOwnedBackingStorage(
+    Context& context, llvm::Value* design_state,
+    const std::vector<SlotInfo>& slots,
+    const lowering::mir_to_llvm::DesignLayout& design_layout) {
+  if (context.IsForceTwoState()) return;
+
+  auto& builder = context.GetBuilder();
+  auto* i8_ty = llvm::Type::getInt8Ty(context.GetLlvmContext());
+  const auto& spec_arena = context.GetDesignStorageSpecArena();
+
+  for (size_t i = 0; i < slots.size(); ++i) {
+    if (slots[i].storage_shape != mir::StorageShape::kOwnedContainer) {
+      continue;
+    }
+    const auto& backing_spec = design_layout.slot_storage_specs[i];
+    if (!HasFourStateContent(backing_spec, spec_arena)) continue;
+
+    uint64_t data_offset = *design_layout.owned_data_offsets[i];
+    auto* data_ptr = builder.CreateGEP(
+        i8_ty, design_state, builder.getInt64(data_offset),
+        "owned_backing_init_ptr");
+    EmitSVDefaultInitAfterZero(context, data_ptr, slots[i].type_id);
+  }
+}
+
 void InitializeDesignState(
     Context& context, llvm::Value* design_state,
     const std::vector<SlotInfo>& slots,
-    const lowering::mir_to_llvm::FourStatePatchTable& patches) {
+    const lowering::mir_to_llvm::DesignLayout& design_layout) {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(ctx);
   auto* arena_ty = llvm::ArrayType::get(i8_ty, context.GetDesignArenaSize());
 
+  // Step 1: Zero entire arena (inline + appendix).
   EmitMemsetZero(context, design_state, arena_ty);
 
-  if (context.IsForceTwoState()) return;
+  if (!context.IsForceTwoState()) {
+    // Step 2: Apply 4-state patches for inline scalar slots.
+    EmitApply4StatePatches(
+        context, design_state, design_layout.four_state_patches, "design");
 
-  EmitApply4StatePatches(context, design_state, patches, "design");
-
-  // Non-patch-table-eligible 4-state slots need recursive default init.
-  // Both queries are fully spec-driven: HasFourStateContent checks the
-  // resolved spec tree for any 4-state packed content; IsPatchTableEligible
-  // checks whether the patch table already handled it.
-  const auto& arena = context.GetDesignStorageSpecArena();
-  for (const auto& slot : slots) {
-    const auto& spec = context.GetDesignSlotStorageSpec(slot.slot_id);
-    if (!HasFourStateContent(spec, arena)) {
-      continue;
+    // Step 3: Recursive 4-state init for inline non-patchable slots.
+    // Skips kOwnedContainer slots (their backing data is initialized in step
+    // 5).
+    const auto& arena = context.GetDesignStorageSpecArena();
+    for (const auto& slot : slots) {
+      if (slot.storage_shape == mir::StorageShape::kOwnedContainer) continue;
+      const auto& spec = context.GetDesignSlotStorageSpec(slot.slot_id);
+      if (!HasFourStateContent(spec, arena)) continue;
+      if (IsPatchTableEligible(spec)) continue;
+      uint64_t offset = context.GetDesignSlotByteOffset(slot.slot_id);
+      auto* slot_ptr = builder.CreateGEP(
+          i8_ty, design_state, builder.getInt64(offset), "slot_init_ptr");
+      EmitSVDefaultInitAfterZero(context, slot_ptr, slot.type_id);
     }
-    if (IsPatchTableEligible(spec)) {
-      continue;
-    }
-    uint64_t offset = context.GetDesignSlotByteOffset(slot.slot_id);
-    auto* slot_ptr = builder.CreateGEP(
-        i8_ty, design_state, builder.getInt64(offset), "slot_init_ptr");
-    EmitSVDefaultInitAfterZero(context, slot_ptr, slot.type_id);
   }
+
+  // Step 4: Construct owned storage handles.
+  EmitConstructOwnedHandles(context, design_state, slots, design_layout);
+
+  // Step 5: Initialize owned backing storage (4-state X-encoding).
+  EmitInitializeOwnedBackingStorage(
+      context, design_state, slots, design_layout);
 }
 
 void InitializeProcessState(
@@ -278,8 +348,7 @@ void EmitDesignStateInit(
     Context& context, llvm::Value* design_state,
     const std::vector<SlotInfo>& slot_info, const Layout& layout,
     const RealizationData& realization) {
-  InitializeDesignState(
-      context, design_state, slot_info, layout.design.four_state_patches);
+  InitializeDesignState(context, design_state, slot_info, layout.design);
   EmitParamInitStores(context, design_state, realization);
 }
 
@@ -550,13 +619,12 @@ auto EmitProcessFuncArray(
 //   field 0: ptr   shared_body       (2-arg shared body function pointer)
 //   field 1: i64   base_byte_offset  (instance base offset in design state)
 //   field 2: i32   instance_id       (module instance index)
-//   field 3: i32   signal_id_offset      (signal ID offset)
-//   field 4: ptr   unstable_offsets  (pointer to unstable offset table or null)
+//   field 3: i32   signal_id_offset  (signal ID offset)
 auto GetDescriptorEntryType(llvm::LLVMContext& ctx) -> llvm::StructType* {
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  return llvm::StructType::get(ctx, {ptr_ty, i64_ty, i32_ty, i32_ty, ptr_ty});
+  return llvm::StructType::get(ctx, {ptr_ty, i64_ty, i32_ty, i32_ty});
 }
 
 struct DescriptorTableResult {
@@ -589,20 +657,16 @@ auto EmitProcessDescriptorTable(
 
   auto* desc_type = GetDescriptorEntryType(ctx);
 
-  auto* null_ptr =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-
   std::vector<llvm::Constant*> entries;
   entries.reserve(count);
   for (const auto& desc : descriptors) {
     entries.push_back(
         llvm::ConstantStruct::get(
-            desc_type, {desc.shared_body,
-                        llvm::ConstantInt::get(i64_ty, desc.base_byte_offset),
-                        llvm::ConstantInt::get(i32_ty, desc.instance_id),
-                        llvm::ConstantInt::get(i32_ty, desc.signal_id_offset),
-                        desc.unstable_offsets != nullptr ? desc.unstable_offsets
-                                                         : null_ptr}));
+            desc_type,
+            {desc.shared_body,
+             llvm::ConstantInt::get(i64_ty, desc.base_byte_offset),
+             llvm::ConstantInt::get(i32_ty, desc.instance_id),
+             llvm::ConstantInt::get(i32_ty, desc.signal_id_offset)}));
   }
 
   auto* array_type = llvm::ArrayType::get(desc_type, count);

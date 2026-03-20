@@ -21,7 +21,10 @@
 //   9: Added design_state. Runtime owns all persistent simulation-process
 //      header binding initialization. Codegen no longer writes design_ptr
 //      into simulation-process headers.
-inline constexpr uint32_t kRuntimeAbiVersion = 9;
+// v10: Removed unstable_offsets from ProcessFrameHeader and
+//      ProcessDescriptorEntry. Owned-container slots use inline
+//      OwnedStorageHandle + appendix backing instead.
+inline constexpr uint32_t kRuntimeAbiVersion = 10;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion

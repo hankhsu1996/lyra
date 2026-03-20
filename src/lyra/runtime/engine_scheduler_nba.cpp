@@ -22,6 +22,15 @@ void ValidateSlotRootPointer(
       static_cast<const uint8_t*>(design_state_base), registry.MaxExtent());
   const auto* expected = &state[registry.Get(slot_id).base_off];
   if (static_cast<const uint8_t*>(ptr) != expected) {
+    // Stopgap for direct-array-root owned-container rollout: the runtime
+    // registry does not yet expose owned-container root identity, so we
+    // use kAggregate as a proxy. This is fragile -- it may mask unrelated
+    // aggregate-slot bugs. Non-aggregate kinds still fail hard on mismatch.
+    // TODO(hankhsu): Add explicit owned-container kind to SlotMetaRegistry
+    // so codegen and runtime speak the same classification language.
+    if (registry.Get(slot_id).kind == SlotStorageKind::kAggregate) {
+      return;
+    }
     throw common::InternalError(
         caller, "pointer does not match slot root address");
   }

@@ -10,7 +10,6 @@
 
 #include <llvm/IR/Function.h>
 
-#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
@@ -57,45 +56,29 @@ struct SpecCodegenView {
   std::vector<SpecProcessView> processes;
 };
 
-// Specialization-local slot layout classification.
-// Computed from raw per-instance relative byte offsets during spec compilation
-// setup. Classifies each body-local slot as either:
-//   stable: same relative offset across all instances (constant GEP)
-//   unstable: offset varies by instance (runtime load from metadata)
-//
-// Invariant: all instances in a specialization share the same body, so they
-// have the same slot set and slot count. The only variation is in relative
-// byte offsets (e.g., parameterized unpacked array dimensions change the size
-// of a slot, shifting subsequent slots).
-//
-// This invariant holds because specialization units share one compiled body
-// from representative lowering. If body compilation later becomes
-// constructor-repertoire-aware (including artifacts from all generate
-// branches), this assumption must be revisited.
-struct SpecSlotLayout {
-  enum class SlotState : uint8_t { kStable, kUnstable };
+// Per-specialization slot info for owned-container dispatch.
+// All inline offsets are stable (owned slots are fixed-size handles).
+// Used by body codegen to dispatch between inline and owned access paths.
+struct SpecSlotInfo {
+  // Per-slot inline-region relative offset from this_ptr.
+  // For kInlineValue: offset of the slot's value bytes.
+  // For kOwnedContainer: offset of the OwnedStorageHandle.
+  std::vector<uint64_t> inline_offsets;
+  // Per-slot storage shape.
+  std::vector<mir::StorageShape> shapes;
+  // Per-slot representative design-global slot index. Used to resolve
+  // compile-time metadata (e.g., element stride from ArrayStorageSpec).
+  // Valid because storage shape is specialization-invariant: all instances
+  // in the specialization share the same shape per body-local slot.
+  std::vector<uint32_t> representative_design_slots;
 
-  std::vector<SlotState> states;
-  // Per-slot relative offset for stable slots. UINT64_MAX if not stable.
-  std::vector<uint64_t> stable_offsets;
-  // Per-slot compact index into the per-instance unstable offset table.
-  // UINT32_MAX if not unstable.
-  std::vector<uint32_t> unstable_ordinals;
-  // Number of unstable slots (= length of each instance's unstable table).
-  uint32_t num_unstable = 0;
-  // Slot count (same across all instances in the specialization).
-  uint32_t num_slots = 0;
-
-  [[nodiscard]] auto IsStable(uint32_t local_slot_id) const -> bool {
-    return states[local_slot_id] == SlotState::kStable;
+  [[nodiscard]] auto SlotCount() const -> uint32_t {
+    return static_cast<uint32_t>(shapes.size());
   }
-};
-
-// Specialization-local layout data.
-// No design-global state, no wrapper data, no absolute offsets.
-// Computed from raw per-instance offsets during spec compilation setup.
-struct SpecLayout {
-  SpecSlotLayout slot_layout;
+  // Unchecked predicate. Callers must validate id < SlotCount() first.
+  [[nodiscard]] auto IsOwnedContainer(uint32_t id) const -> bool {
+    return shapes[id] == mir::StorageShape::kOwnedContainer;
+  }
 };
 
 // Specialization compilation input: all data needed to compile one
@@ -106,7 +89,6 @@ struct CompiledModuleSpecInput {
   mir::ModuleBodyId body_id;
   std::vector<mir::ProcessId> processes;
   std::vector<mir::FunctionId> functions;
-  SpecLayout layout;
   SpecCodegenView view;
 };
 
@@ -166,7 +148,6 @@ struct ProcessDescriptorData {
   uint64_t base_byte_offset;
   uint32_t instance_id;
   uint32_t signal_id_offset;
-  llvm::Constant* unstable_offsets;  // nullptr if all stable
 };
 
 // Backend-owned intermediate state between behavioral codegen and assembly.

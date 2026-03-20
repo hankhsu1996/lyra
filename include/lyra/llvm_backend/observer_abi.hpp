@@ -15,13 +15,10 @@ struct LoadedObserverContext {
   llvm::Value* this_ptr;
   llvm::Value* instance_id;
   llvm::Value* signal_id_offset;
-  llvm::Value* unstable_offsets;
 };
 
 // Get the LLVM struct type for ObserverContext.
-// Layout: { ptr this_ptr, i32 instance_id, i32 signal_id_offset,
-//           ptr unstable_offsets }
-// Single source of truth for the observer context ABI struct.
+// Layout: { ptr this_ptr, i32 instance_id, i32 signal_id_offset }
 auto GetObserverContextStructType(llvm::LLVMContext& llvm_ctx)
     -> llvm::StructType*;
 
@@ -31,8 +28,8 @@ auto LoadObserverContextFields(
     llvm::Value* observer_ctx_ptr) -> LoadedObserverContext;
 
 // Enter specialization-local lowering mode from an ObserverContext*.
-// Loads fields, installs this_ptr/instance_id/signal_id_offset/
-// unstable_offsets and sets kSpecializationLocal addressing mode.
+// Loads fields, installs this_ptr/instance_id/signal_id_offset
+// and sets kSpecializationLocal addressing mode.
 void EnterObserverSpecializationLocalContext(
     Context& context, mir::FunctionId func_id, llvm::Value* observer_ctx_ptr);
 

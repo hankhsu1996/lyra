@@ -1,0 +1,30 @@
+feature: owned_container_four_state
+description: >
+  Tests for owned container storage with 4-state (logic) elements.
+  Must go in four_state.yaml to be excluded from two-state test suites.
+
+cases:
+  - name: four_state_owned_array
+    description: >
+      Owned container array with 4-state elements (logic type).
+      Verifies that 4-state array elements can be written and read
+      correctly when the array dimension varies across instances.
+    sv: |
+      module M #(parameter int DEPTH = 4);
+        logic [7:0] data [DEPTH];
+        initial begin
+          data[0] = 8'hFF;
+          data[1] = 8'h42;
+          $display("depth=%0d d0=%h d1=%h", DEPTH, data[0], data[1]);
+        end
+      endmodule
+
+      module Top;
+        M #(.DEPTH(4)) m4();
+        M #(.DEPTH(8)) m8();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "depth=4 d0=ff d1=42"
+          - "depth=8 d0=ff d1=42"

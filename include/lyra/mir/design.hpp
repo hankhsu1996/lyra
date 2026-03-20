@@ -7,7 +7,6 @@
 
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/module_identity.hpp"
-#include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instance.hpp"
@@ -20,6 +19,14 @@
 namespace lyra::mir {
 
 enum class SlotKind : uint8_t { kVariable, kNet, kParamConst };
+
+// Backend storage shape for a design-global slot.
+// Determines whether the slot uses inline value storage or owned
+// container storage with an out-of-line backing region.
+enum class StorageShape : uint8_t {
+  kInlineValue,     // Inline in the containing state object
+  kOwnedContainer,  // Owned backing storage; inline handle + OOL region
+};
 
 // Scope ownership kind for trace provenance. Discriminates whether a slot
 // belongs to a package or a module instance.
@@ -46,13 +53,24 @@ struct SlotTraceProvenance {
 struct SlotDesc {
   TypeId type;
   SlotKind kind = SlotKind::kVariable;
+  // Backend storage-shape decision for this slot. Set during design-decl
+  // lowering by ClassifySlotStorageShape(). Consumed by layout building
+  // and codegen. Current rule: direct unpacked array roots in modules
+  // with promoted parameters are classified as kOwnedContainer.
+  // This is a conservative lowering approximation, not a semantic proof
+  // of constructor-sized extent dependence.
+  StorageShape storage_shape = StorageShape::kInlineValue;
+
+  [[nodiscard]] auto IsOwnedContainer() const -> bool {
+    return storage_shape == StorageShape::kOwnedContainer;
+  }
 };
 
 // Initialization entry for a promoted parameter slot.
 // Slot is identified by absolute design slot index.
 // Type is read from design.slots[slot_id].type (single source of truth).
 struct ParamInitEntry {
-  uint32_t slot_id;
+  uint32_t slot_id{};
   IntegralConstant value;
 };
 

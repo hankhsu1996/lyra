@@ -14,7 +14,6 @@ struct ObserverContext {
   void* this_ptr = nullptr;
   uint32_t instance_id = 0;
   uint32_t signal_id_offset = 0;
-  const void* unstable_offsets = nullptr;
 };
 
 // Observer program entrypoints.

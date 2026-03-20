@@ -1,0 +1,174 @@
+feature: owned_container_storage
+description: >
+  Tests for owned container storage of direct unpacked array roots
+  in parameterized modules. Verifies correctness when array
+  dimensions vary across instances of the same specialization.
+
+cases:
+  - name: multi_container_two_arrays_and_scalar
+    description: >
+      Two parameterized arrays with different sizes plus a scalar after them.
+      All slots must have stable offsets. Both arrays must be correctly
+      accessible and the scalar must be at the correct position.
+    sv: |
+      module M #(parameter int A = 4, parameter int B = 2);
+        int arr_a[A];
+        int arr_b[B];
+        int flag;
+        initial begin
+          arr_a[0] = 100;
+          arr_b[0] = 200;
+          flag = 42;
+          $display("a0=%0d b0=%0d flag=%0d", arr_a[0], arr_b[0], flag);
+        end
+      endmodule
+
+      module Top;
+        M #(.A(4), .B(2)) m1();
+        M #(.A(8), .B(6)) m2();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "a0=100 b0=200 flag=42"
+
+  - name: nba_to_owned_array_element
+    description: >
+      Non-blocking assignment to an element of an owned container array.
+      Verifies the NBA write path works through owned storage handles.
+    sv: |
+      module M #(parameter int DEPTH = 4);
+        bit [7:0] data [DEPTH];
+        bit clk;
+
+        initial begin
+          clk = 0;
+          #1 clk = 1;
+          #1 clk = 0;
+        end
+
+        always @(posedge clk) begin
+          data[0] <= 8'hAB;
+        end
+
+        initial begin
+          #3;
+          $display("depth=%0d v=%h", DEPTH, data[0]);
+        end
+      endmodule
+
+      module Top;
+        M #(.DEPTH(4)) m4();
+        M #(.DEPTH(8)) m8();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "depth=4 v=ab"
+          - "depth=8 v=ab"
+
+  - name: mixed_inline_and_owned
+    description: >
+      Module with both inline (scalar, fixed-size array) and owned
+      (parameterized array) slots. Verifies mixed storage works correctly.
+    sv: |
+      module M #(parameter int DEPTH = 4);
+        int fixed[2];
+        int dynamic[DEPTH];
+        int scalar;
+        initial begin
+          fixed[0] = 10;
+          fixed[1] = 20;
+          dynamic[0] = 30;
+          scalar = 40;
+          $display("f0=%0d f1=%0d d0=%0d s=%0d depth=%0d",
+                   fixed[0], fixed[1], dynamic[0], scalar, DEPTH);
+        end
+      endmodule
+
+      module Top;
+        M #(.DEPTH(3)) m3();
+        M #(.DEPTH(7)) m7();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "f0=10 f1=20 d0=30 s=40 depth=3"
+          - "f0=10 f1=20 d0=30 s=40 depth=7"
+
+  - name: nested_array_outer_varies
+    description: >
+      Nested unpacked array where the outer dimension varies.
+      int data[STAGES][8] where STAGES is parameterized.
+    sv: |
+      module M #(parameter int STAGES = 2);
+        int data[STAGES][8];
+        initial begin
+          data[0][0] = 100;
+          data[0][7] = 200;
+          $display("stages=%0d d00=%0d d07=%0d", STAGES, data[0][0], data[0][7]);
+        end
+      endmodule
+
+      module Top;
+        M #(.STAGES(2)) m2();
+        M #(.STAGES(4)) m4();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "stages=2 d00=100 d07=200"
+          - "stages=4 d00=100 d07=200"
+
+  - name: single_instance_parameterized
+    description: >
+      Single instance of a parameterized module with an unpacked array.
+      Validates the current conservative classification policy: direct
+      unpacked array roots in parameterized modules use owned-container
+      storage regardless of instance count. This is an intentional
+      policy choice, not a claim about semantic constructor-sized dependence.
+    sv: |
+      module M #(parameter int DEPTH = 4);
+        int data[DEPTH];
+        initial begin
+          data[0] = 99;
+          $display("depth=%0d first=%0d", DEPTH, data[0]);
+        end
+      endmodule
+
+      module Top;
+        M #(.DEPTH(4)) m1();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "depth=4 first=99"
+
+  - name: unrelated_param_fixed_array_over_classification
+    description: >
+      Tests intentional over-classification: a module with a promoted
+      parameter (WIDTH) that is unrelated to a fixed-size unpacked array.
+      Under the current conservative policy, the fixed-size array is
+      still classified as owned-container storage because the module
+      has promoted parameters. This documents the accepted tradeoff.
+    sv: |
+      module M #(parameter int WIDTH = 8);
+        bit [WIDTH-1:0] value;
+        int fixed_arr[4];
+        initial begin
+          value = '1;
+          fixed_arr[0] = 10;
+          fixed_arr[3] = 40;
+          $display("w=%0d v=%0d a0=%0d a3=%0d", WIDTH, value, fixed_arr[0], fixed_arr[3]);
+        end
+      endmodule
+
+      module Top;
+        M #(.WIDTH(8)) m8();
+        M #(.WIDTH(16)) m16();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "w=8 v=255 a0=10 a3=40"
+          - "w=16 v=65535 a0=10 a3=40"
