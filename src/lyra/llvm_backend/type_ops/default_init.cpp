@@ -16,7 +16,9 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/llvm_backend/canonical_plane_write.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/layout/storage_contract.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/storage_boundary.hpp"
 
@@ -41,10 +43,16 @@ void EmitMemsetZeroLocal(
   EmitMemsetZero(ctx, ptr, llvm_type);
 }
 
-// Internal implementation with already_zeroed flag.
-// When already_zeroed=true, skips redundant zeroing for 2-state types.
+// Internal implementation with already_zeroed and is_canonical flags.
+//
+// already_zeroed: skips redundant zeroing for 2-state types.
+// is_canonical: affects only 2-state packed/integral zero writes.
+//   Canonical destinations use the byte-oriented gateway for large widths;
+//   non-canonical local allocas keep typed stores (mem2reg benefits).
+//   4-state X/mask writes use the shared storage helpers in both cases.
 void EmitSVDefaultInitImpl(
-    Context& ctx, llvm::Value* ptr, TypeId type_id, bool already_zeroed) {
+    Context& ctx, llvm::Value* ptr, TypeId type_id, bool already_zeroed,
+    bool is_canonical) {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
   const auto& types = ctx.GetTypeArena();
@@ -60,11 +68,18 @@ void EmitSVDefaultInitImpl(
           EmitFourStateXInit(ctx, ptr, bit_width);
         }
       } else {
-        // 2-state: store zero (skip if already zeroed)
+        // 2-state: store zero (skip if already zeroed).
         if (!already_zeroed) {
-          auto* llvm_type = GetLlvmStorageType(llvm_ctx, bit_width);
-          auto* zero = llvm::Constant::getNullValue(llvm_type);
-          builder.CreateStore(zero, ptr);
+          if (is_canonical) {
+            EmitCanonicalPlaneWrite(
+                builder, ptr, 0,
+                {.kind = PlaneConstantKind::kZero,
+                 .semantic_bit_width = bit_width,
+                 .storage_byte_size = GetStorageByteSize(bit_width)});
+          } else {
+            auto* llvm_type = GetLlvmStorageType(llvm_ctx, bit_width);
+            builder.CreateStore(llvm::Constant::getNullValue(llvm_type), ptr);
+          }
         }
       }
       return;
@@ -118,11 +133,18 @@ void EmitSVDefaultInitImpl(
           EmitFourStateXInit(ctx, ptr, width);
         }
       } else {
-        // 2-state packed: store zero (skip if already zeroed)
+        // 2-state packed: store zero (skip if already zeroed).
         if (!already_zeroed) {
-          auto* llvm_type = GetLlvmStorageType(llvm_ctx, width);
-          auto* zero = llvm::Constant::getNullValue(llvm_type);
-          builder.CreateStore(zero, ptr);
+          if (is_canonical) {
+            EmitCanonicalPlaneWrite(
+                builder, ptr, 0,
+                {.kind = PlaneConstantKind::kZero,
+                 .semantic_bit_width = width,
+                 .storage_byte_size = GetStorageByteSize(width)});
+          } else {
+            auto* llvm_type = GetLlvmStorageType(llvm_ctx, width);
+            builder.CreateStore(llvm::Constant::getNullValue(llvm_type), ptr);
+          }
         }
       }
       return;
@@ -140,7 +162,7 @@ void EmitSVDefaultInitImpl(
         auto* field_ptr = builder.CreateStructGEP(
             struct_llvm_type, ptr, static_cast<unsigned>(i));
         EmitSVDefaultInitImpl(
-            ctx, field_ptr, info.fields[i].type, already_zeroed);
+            ctx, field_ptr, info.fields[i].type, already_zeroed, is_canonical);
       }
       return;
     }
@@ -193,7 +215,8 @@ void EmitSVDefaultInitImpl(
             EmitStoreUnknownMask(builder, elem_ptr, bit_width);
           } else {
             // Nested type containing 4-state
-            EmitSVDefaultInitImpl(ctx, elem_ptr, info.element_type, true);
+            EmitSVDefaultInitImpl(
+                ctx, elem_ptr, info.element_type, true, is_canonical);
           }
         }
         return;
@@ -235,7 +258,8 @@ void EmitSVDefaultInitImpl(
         // Nested type containing 4-state (struct/array with 4-state fields).
         // Recursive call with already_zeroed=true since we already memset'd
         // (or the caller did).
-        EmitSVDefaultInitImpl(ctx, elem_ptr, info.element_type, true);
+        EmitSVDefaultInitImpl(
+            ctx, elem_ptr, info.element_type, true, is_canonical);
       }
       builder.CreateBr(latch);
 
@@ -285,12 +309,15 @@ void EmitSVDefaultInitImpl(
 }  // namespace
 
 void EmitSVDefaultInit(Context& ctx, llvm::Value* ptr, TypeId type_id) {
-  EmitSVDefaultInitImpl(ctx, ptr, type_id, false);
+  // Process frame locals -- non-canonical, keep typed stores.
+  EmitSVDefaultInitImpl(ctx, ptr, type_id, false, false);
 }
 
 void EmitSVDefaultInitAfterZero(
     Context& ctx, llvm::Value* ptr, TypeId type_id) {
-  EmitSVDefaultInitImpl(ctx, ptr, type_id, true);
+  // Design-state slots after memset -- canonical, route large zero writes
+  // through the byte-oriented gateway.
+  EmitSVDefaultInitImpl(ctx, ptr, type_id, true, true);
 }
 
 void EmitMemsetZero(
