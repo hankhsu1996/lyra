@@ -22,6 +22,36 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+namespace {
+
+// Conservative storage-shape classifier for direct unpacked array roots
+// in module instances. Scoped to direct roots only -- does not attempt
+// aggregate-root or transitive containment classification.
+//
+// Current approximation: if the module has any promoted parameters AND the
+// slot type is a direct unpacked array root, classify as kOwnedContainer.
+// This over-classifies literal-dimensioned arrays in parameterized modules
+// (e.g., int arr[4] in a module with an unrelated value-only parameter).
+// Direct unpacked array roots whose extent varies via promoted parameters
+// will classify as kOwnedContainer under this rule. The cost of
+// over-classification is 16 bytes of handle overhead per false positive.
+//
+// param_slots contains value-only/elaboration-time params that are
+// transmitted per-instance. Structural-only params create different
+// specializations and cannot cause within-spec variation, so modules
+// with only structural params correctly return kInlineValue.
+auto ClassifySlotStorageShape(
+    const hir::Module& mod, TypeId type, const TypeArena& types)
+    -> mir::StorageShape {
+  if (mod.param_slots.empty()) return mir::StorageShape::kInlineValue;
+  if (types[type].Kind() == TypeKind::kUnpackedArray) {
+    return mir::StorageShape::kOwnedContainer;
+  }
+  return mir::StorageShape::kInlineValue;
+}
+
+}  // namespace
+
 auto CollectBodyLocalDecls(
     const hir::Module& module, const SymbolTable& symbol_table,
     mir::Arena& mir_arena) -> BodyLocalDecls {
@@ -177,7 +207,13 @@ auto CollectDesignDeclarations(
             .projections = {},
         };
         decls.design_places[var] = mir_arena.AddPlace(std::move(global_place));
-        decls.slots.push_back({sym.type, mir::SlotKind::kVariable});
+        decls.slots.push_back(
+            mir::SlotDesc{
+                .type = sym.type,
+                .kind = mir::SlotKind::kVariable,
+                .storage_shape =
+                    ClassifySlotStorageShape(*mod, sym.type, *input.type_arena),
+            });
         decls.slot_trace_provenance.push_back(
             {.local_name_str_off =
                  intern.Intern(decls.slot_trace_string_pool, sym.name),
@@ -197,7 +233,13 @@ auto CollectDesignDeclarations(
             .projections = {},
         };
         decls.design_places[net] = mir_arena.AddPlace(std::move(global_place));
-        decls.slots.push_back({sym.type, mir::SlotKind::kNet});
+        decls.slots.push_back(
+            mir::SlotDesc{
+                .type = sym.type,
+                .kind = mir::SlotKind::kNet,
+                .storage_shape =
+                    ClassifySlotStorageShape(*mod, sym.type, *input.type_arena),
+            });
         decls.slot_trace_provenance.push_back(
             {.local_name_str_off =
                  intern.Intern(decls.slot_trace_string_pool, sym.name),
