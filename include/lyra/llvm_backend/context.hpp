@@ -492,6 +492,18 @@ class Context {
   // Called after EmitProcessStateSetup by shared body generation only.
   void EmitSharedBodyBindingSetup(llvm::Value* state_arg);
 
+  // Canonical typed header-field accessors. All typed process-header field
+  // access in llvm backend code must go through these methods. Callers never
+  // pass raw field indices or choose LLVM result types for header fields.
+  auto EmitLoadEnginePtr(llvm::Value* state_arg) -> llvm::Value*;
+  auto EmitLoadDesignPtr(llvm::Value* state_arg) -> llvm::Value*;
+  auto EmitLoadThisPtr(llvm::Value* state_arg) -> llvm::Value*;
+  auto EmitLoadUnstableOffsets(llvm::Value* state_arg) -> llvm::Value*;
+  auto EmitLoadInstanceId(llvm::Value* state_arg) -> llvm::Value*;
+  auto EmitLoadSignalIdOffset(llvm::Value* state_arg) -> llvm::Value*;
+  void EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value);
+  auto EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value*;
+
   // Cached pointers (computed in entry block, reused for all place accesses)
   // state_ptr: the function argument pointing to ProcessStateN
   void SetStatePointer(llvm::Value* state_ptr);

@@ -407,6 +407,36 @@ void SetupAndRunSimulation(
   FinalTime() = std::max(FinalTime(), final_time);
 }
 
+// Canonical path for all persistent simulation-process header binding
+// initialization. Runtime is the sole owner of this contract.
+//
+// For every process: writes design_ptr (cached binding derived from
+// design_state_base, which is the ABI-level source of truth).
+// For module processes: also writes body, this_ptr, instance_id,
+// signal_id_offset, unstable_offsets from descriptor data.
+void InitSimulationProcessBindings(
+    std::span<void*> states, void* design_state_base,
+    std::span<const ProcessDescriptorEntry> descriptors,
+    uint32_t num_standalone) {
+  using StateHeader = lyra::runtime::ProcessFrameHeader;
+  using SharedBodyFn = lyra::runtime::SharedBodyFn;
+  for (size_t i = 0; i < states.size(); ++i) {
+    auto* header = static_cast<StateHeader*>(states[i]);
+    header->design_ptr = design_state_base;
+  }
+  for (uint32_t i = 0; i < descriptors.size(); ++i) {
+    uint32_t proc_idx = num_standalone + i;
+    auto* header = static_cast<StateHeader*>(states[proc_idx]);
+    const auto& desc = descriptors[i];
+    header->body = reinterpret_cast<SharedBodyFn>(desc.shared_body);
+    header->this_ptr =
+        static_cast<char*>(design_state_base) + desc.base_byte_offset;
+    header->instance_id = desc.instance_id;
+    header->signal_id_offset = desc.signal_id_offset;
+    header->unstable_offsets = desc.unstable_offsets;
+  }
+}
+
 }  // namespace
 
 extern "C" void LyraRunSimulation(
@@ -470,38 +500,23 @@ extern "C" void LyraRunSimulation(
     }
   }
 
-  // Extract design_state_base before constructing the dispatch context.
-  // Codegen invariant: all process states share the same design_ptr.
-  // Validate this up front rather than deferring to SetupAndRunSimulation.
-  void* design_state_base = nullptr;
-  if (!states.empty()) {
-    const auto* first_header = static_cast<const StateHeader*>(states[0]);
-    design_state_base = first_header->design_ptr;
-    for (size_t i = 1; i < states.size(); ++i) {
-      const auto* header = static_cast<const StateHeader*>(states[i]);
-      if (header->design_ptr != design_state_base) {
-        throw lyra::common::InternalError(
-            "LyraRunSimulation",
-            std::format(
-                "process state {} has different design_ptr than state 0", i));
-      }
-    }
+  // design_state is the ABI-level source of truth for design-state binding.
+  // Runtime owns all persistent simulation-process header initialization.
+  if (abi == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraRunSimulation", "abi is null (v9 required)");
+  }
+  void* design_state_base = abi->design_state;
+  if (design_state_base == nullptr && !states.empty()) {
+    throw lyra::common::InternalError(
+        "LyraRunSimulation", "abi->design_state is null");
   }
 
-  // Populate module-process frame headers with realized instance binding
-  // from descriptor data. After this loop, the descriptor table is no
-  // longer needed for dispatch -- all binding lives in the frame headers.
-  for (uint32_t i = 0; i < descriptors.size(); ++i) {
-    uint32_t proc_idx = num_standalone + i;
-    auto* header = static_cast<StateHeader*>(states[proc_idx]);
-    const auto& desc = descriptors[i];
-    header->body = reinterpret_cast<SharedBodyFn>(desc.shared_body);
-    header->this_ptr =
-        static_cast<char*>(design_state_base) + desc.base_byte_offset;
-    header->instance_id = desc.instance_id;
-    header->signal_id_offset = desc.signal_id_offset;
-    header->unstable_offsets = desc.unstable_offsets;
-  }
+  // Initialize all persistent simulation-process headers through one
+  // canonical path. After this, the descriptor table is not needed for
+  // dispatch -- all binding lives in the frame headers.
+  InitSimulationProcessBindings(
+      states, design_state_base, descriptors, num_standalone);
 
   auto standalone_procs = std::span(processes, num_standalone);
   ProcessDispatchContext dispatch_ctx{

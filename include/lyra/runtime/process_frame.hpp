@@ -16,14 +16,20 @@ namespace lyra::runtime {
 // must agree on field order and size. Hard assertions below enforce this.
 //
 // The header is the runtime-owned binding anchor for a realized process.
-// All binding fields are populated before simulation begins:
 //
-//   design_ptr: written by codegen during process state initialization
-//     (required because init processes run before the runtime exists).
-//   engine_ptr, body, this_ptr, instance_id, signal_id_offset,
-//   unstable_offsets: written by runtime init from descriptor data
-//     (after init processes complete, before simulation dispatch).
-//   outcome: live per-call state, written by shared body on every call.
+// Ownership domains:
+//   Init-process headers are codegen-private ephemeral stack objects.
+//   Codegen allocates, populates (including design_ptr), and passes them
+//   to LyraRunProcessSync. They are not part of persistent runtime state.
+//
+//   Simulation-process headers are runtime-owned persistent state.
+//   Runtime is the sole initializer of all binding fields:
+//     design_ptr: cached binding derived from ABI design_state (source of
+//       truth). Written by runtime before simulation dispatch.
+//     engine_ptr: written by runtime before simulation dispatch.
+//     body, this_ptr, instance_id, signal_id_offset, unstable_offsets:
+//       written by runtime from descriptor data.
+//     outcome: live per-call state, written by shared body on every call.
 //
 // After init, no field is written by codegen. The descriptor table is
 // consumed only at init time to populate these fields. All dispatch
@@ -45,20 +51,20 @@ struct ProcessFrameHeader {
   ProcessOutcome outcome = {};
 };
 
-// Field index constants matching the LLVM struct type emitted by
+// Strongly typed field indices matching the LLVM struct type emitted by
 // BuildHeaderType. Used by codegen GEP indices and runtime offsetof
 // checks. This is the single canonical source of field ordering.
-struct ProcessFrameHeaderField {
-  static constexpr unsigned kSuspend = 0;
-  static constexpr unsigned kBody = 1;
-  static constexpr unsigned kEnginePtr = 2;
-  static constexpr unsigned kDesignPtr = 3;
-  static constexpr unsigned kThisPtr = 4;
-  static constexpr unsigned kUnstableOffsets = 5;
-  static constexpr unsigned kInstanceId = 6;
-  static constexpr unsigned kSignalIdOffset = 7;
-  static constexpr unsigned kOutcome = 8;
-  static constexpr unsigned kFieldCount = 9;
+enum class ProcessFrameHeaderField : unsigned {
+  kSuspend = 0,
+  kBody = 1,
+  kEnginePtr = 2,
+  kDesignPtr = 3,
+  kThisPtr = 4,
+  kUnstableOffsets = 5,
+  kInstanceId = 6,
+  kSignalIdOffset = 7,
+  kOutcome = 8,
+  kFieldCount = 9,
 };
 
 // Hard binary contract assertions. If the struct layout changes, these

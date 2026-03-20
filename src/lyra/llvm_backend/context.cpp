@@ -438,24 +438,83 @@ auto Context::GetUnstableSlotOffsetsPtr() const -> llvm::Value* {
   return unstable_slot_offsets_ptr_;
 }
 
-void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
+// Low-level header-field GEP. Returns a pointer to the specified field
+// within the process frame header. This is the only place in codegen that
+// knows how to navigate from process state to header field address.
+auto EmitHeaderFieldGep(
+    Context& ctx, llvm::Value* state_arg,
+    lyra::runtime::ProcessFrameHeaderField field, llvm::StringRef name)
+    -> llvm::Value* {
+  auto& builder = ctx.GetBuilder();
+  auto* header_ptr = builder.CreateStructGEP(
+      ctx.GetProcessStateType(), state_arg, 0, "header_ptr");
+  return builder.CreateStructGEP(
+      ctx.GetHeaderType(), header_ptr, static_cast<unsigned>(field), name);
+}
+
+auto Context::EmitLoadEnginePtr(llvm::Value* state_arg) -> llvm::Value* {
   using F = lyra::runtime::ProcessFrameHeaderField;
+  auto* ptr =
+      EmitHeaderFieldGep(*this, state_arg, F::kEnginePtr, "engine_ptr_ptr");
+  return builder_.CreateLoad(
+      llvm::PointerType::getUnqual(*llvm_context_), ptr, "engine_ptr");
+}
+
+auto Context::EmitLoadDesignPtr(llvm::Value* state_arg) -> llvm::Value* {
+  using F = lyra::runtime::ProcessFrameHeaderField;
+  auto* ptr =
+      EmitHeaderFieldGep(*this, state_arg, F::kDesignPtr, "design_ptr_ptr");
+  return builder_.CreateLoad(
+      llvm::PointerType::getUnqual(*llvm_context_), ptr, "design_ptr");
+}
+
+auto Context::EmitLoadThisPtr(llvm::Value* state_arg) -> llvm::Value* {
+  using F = lyra::runtime::ProcessFrameHeaderField;
+  auto* ptr = EmitHeaderFieldGep(*this, state_arg, F::kThisPtr, "this_ptr_ptr");
+  return builder_.CreateLoad(
+      llvm::PointerType::getUnqual(*llvm_context_), ptr, "this_ptr");
+}
+
+auto Context::EmitLoadUnstableOffsets(llvm::Value* state_arg) -> llvm::Value* {
+  using F = lyra::runtime::ProcessFrameHeaderField;
+  auto* ptr = EmitHeaderFieldGep(
+      *this, state_arg, F::kUnstableOffsets, "unstable_offsets_ptr");
+  return builder_.CreateLoad(
+      llvm::PointerType::getUnqual(*llvm_context_), ptr, "unstable_offsets");
+}
+
+auto Context::EmitLoadInstanceId(llvm::Value* state_arg) -> llvm::Value* {
+  using F = lyra::runtime::ProcessFrameHeaderField;
+  auto* ptr =
+      EmitHeaderFieldGep(*this, state_arg, F::kInstanceId, "instance_id_ptr");
+  return builder_.CreateLoad(
+      llvm::Type::getInt32Ty(*llvm_context_), ptr, "instance_id");
+}
+
+auto Context::EmitLoadSignalIdOffset(llvm::Value* state_arg) -> llvm::Value* {
+  using F = lyra::runtime::ProcessFrameHeaderField;
+  auto* ptr = EmitHeaderFieldGep(
+      *this, state_arg, F::kSignalIdOffset, "signal_id_offset_ptr");
+  return builder_.CreateLoad(
+      llvm::Type::getInt32Ty(*llvm_context_), ptr, "signal_id_offset");
+}
+
+void Context::EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value) {
+  using F = lyra::runtime::ProcessFrameHeaderField;
+  auto* ptr =
+      EmitHeaderFieldGep(*this, state_arg, F::kDesignPtr, "design_ptr_ptr");
+  builder_.CreateStore(value, ptr);
+}
+
+auto Context::EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value* {
+  using F = lyra::runtime::ProcessFrameHeaderField;
+  return EmitHeaderFieldGep(*this, state_arg, F::kOutcome, "outcome_ptr");
+}
+
+void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
   SetStatePointer(state_arg);
-
-  auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
-
-  auto* header_ptr = builder_.CreateStructGEP(
-      GetProcessStateType(), state_arg, 0, "header_ptr");
-
-  auto* engine_ptr_ptr = builder_.CreateStructGEP(
-      GetHeaderType(), header_ptr, F::kEnginePtr, "engine_ptr_ptr");
-  auto* engine_ptr = builder_.CreateLoad(ptr_ty, engine_ptr_ptr, "engine_ptr");
-  SetEnginePointer(engine_ptr);
-
-  auto* design_ptr_ptr = builder_.CreateStructGEP(
-      GetHeaderType(), header_ptr, F::kDesignPtr, "design_ptr_ptr");
-  auto* design_ptr = builder_.CreateLoad(ptr_ty, design_ptr_ptr, "design_ptr");
-  SetDesignPointer(design_ptr);
+  SetEnginePointer(EmitLoadEnginePtr(state_arg));
+  SetDesignPointer(EmitLoadDesignPtr(state_arg));
 
   auto* frame_ptr = builder_.CreateStructGEP(
       GetProcessStateType(), state_arg, 1, "frame_ptr");
@@ -463,34 +522,10 @@ void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
 }
 
 void Context::EmitSharedBodyBindingSetup(llvm::Value* state_arg) {
-  using F = lyra::runtime::ProcessFrameHeaderField;
-  auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
-  auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
-
-  auto* header_ptr = builder_.CreateStructGEP(
-      GetProcessStateType(), state_arg, 0, "header_ptr");
-
-  auto* this_ptr_ptr = builder_.CreateStructGEP(
-      GetHeaderType(), header_ptr, F::kThisPtr, "this_ptr_ptr");
-  auto* this_ptr = builder_.CreateLoad(ptr_ty, this_ptr_ptr, "this_ptr");
-  SetThisPointer(this_ptr);
-
-  auto* unstable_ptr_ptr = builder_.CreateStructGEP(
-      GetHeaderType(), header_ptr, F::kUnstableOffsets, "unstable_offsets_ptr");
-  auto* unstable_ptr =
-      builder_.CreateLoad(ptr_ty, unstable_ptr_ptr, "unstable_offsets");
-  SetUnstableSlotOffsetsPtr(unstable_ptr);
-
-  auto* inst_id_ptr = builder_.CreateStructGEP(
-      GetHeaderType(), header_ptr, F::kInstanceId, "instance_id_ptr");
-  auto* inst_id = builder_.CreateLoad(i32_ty, inst_id_ptr, "instance_id");
-  SetDynamicInstanceId(inst_id);
-
-  auto* sig_offset_ptr = builder_.CreateStructGEP(
-      GetHeaderType(), header_ptr, F::kSignalIdOffset, "signal_id_offset_ptr");
-  auto* sig_offset =
-      builder_.CreateLoad(i32_ty, sig_offset_ptr, "signal_id_offset");
-  SetSignalIdOffset(sig_offset);
+  SetThisPointer(EmitLoadThisPtr(state_arg));
+  SetUnstableSlotOffsetsPtr(EmitLoadUnstableOffsets(state_arg));
+  SetDynamicInstanceId(EmitLoadInstanceId(state_arg));
+  SetSignalIdOffset(EmitLoadSignalIdOffset(state_arg));
 }
 
 void Context::SetStatePointer(llvm::Value* state_ptr) {

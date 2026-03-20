@@ -1604,14 +1604,8 @@ auto GenerateProcessFunction(
     context.EmitProcessStateSetup(state_arg);
   } else {
     // Init contract: load design_ptr and frame_ptr only. No engine.
-    using F = lyra::runtime::ProcessFrameHeaderField;
     context.SetStatePointer(state_arg);
-    auto* header_ptr = builder.CreateStructGEP(
-        context.GetProcessStateType(), state_arg, 0, "header_ptr");
-    auto* design_ptr_ptr = builder.CreateStructGEP(
-        context.GetHeaderType(), header_ptr, F::kDesignPtr, "design_ptr_ptr");
-    auto* design_ptr = builder.CreateLoad(ptr_ty, design_ptr_ptr, "design_ptr");
-    context.SetDesignPointer(design_ptr);
+    context.SetDesignPointer(context.EmitLoadDesignPtr(state_arg));
     auto* frame_ptr = builder.CreateStructGEP(
         context.GetProcessStateType(), state_arg, 1, "frame_ptr");
     context.SetFramePointer(frame_ptr);
@@ -1907,11 +1901,7 @@ auto GenerateSharedProcessFunction(
     if (HasBackEdge(block.terminator, i) &&
         !std::ranges::binary_search(
             bounded_latches, static_cast<uint32_t>(i))) {
-      using HF = lyra::runtime::ProcessFrameHeaderField;
-      auto* hdr = builder.CreateStructGEP(
-          context.GetProcessStateType(), func->getArg(0), 0);
-      auto* outcome_ptr = builder.CreateStructGEP(
-          context.GetHeaderType(), hdr, HF::kOutcome, "outcome_ptr");
+      auto* outcome_ptr = context.EmitOutcomePtr(func->getArg(0));
       EmitBackEdgeGuard(
           context, block.terminator.origin, func, outcome_ptr, limit_ptr);
     }
@@ -1926,12 +1916,8 @@ auto GenerateSharedProcessFunction(
   phi_state.ValidatePhiWiring(llvm_blocks, func->getName().str());
 
   // Exit block: store kOk outcome to header and return void
-  using HF = lyra::runtime::ProcessFrameHeaderField;
   builder.SetInsertPoint(exit_block);
-  auto* exit_hdr = builder.CreateStructGEP(
-      context.GetProcessStateType(), func->getArg(0), 0);
-  auto* exit_outcome_ptr = builder.CreateStructGEP(
-      context.GetHeaderType(), exit_hdr, HF::kOutcome, "outcome_ptr");
+  auto* exit_outcome_ptr = context.EmitOutcomePtr(func->getArg(0));
   EmitStoreOkOutcome(builder, llvm_ctx, exit_outcome_ptr);
   builder.CreateRetVoid();
 
