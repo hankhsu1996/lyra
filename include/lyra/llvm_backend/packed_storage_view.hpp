@@ -222,14 +222,67 @@ auto EmitDeferredStoreToPackedSubview(
     Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
     const PackedNbaPolicy& policy) -> Result<void>;
 
-// Whole-value materialization: load full packed value from canonical storage.
+// Build a PackedStorageView for whole-value access (no subview path).
+// Canonical storage uses the packed ABI layout (GetStorageByteSize /
+// FourStateUnknownLaneOffset). Non-canonical uses LLVM alloca layout.
+auto BuildWholeValueStorageView(
+    Context& ctx, llvm::Value* base_ptr, TypeId type_id, bool is_canonical)
+    -> PackedStorageView;
+
+// Build a PackedStorageView for canonical whole-object byte storage with
+// full-slot notification semantics. Used for union memcpy and similar
+// byte-level storage operations where the type system does not model the
+// storage as a language-level packed type, but the canonical storage
+// layout is a flat byte region that supports compare+notify.
+// The view has a single plane (no unknown plane) because the storage
+// is raw bytes, not because the source-language type is 2-state.
+auto BuildRawBytesStorageView(llvm::Value* base_ptr, uint32_t byte_size)
+    -> PackedStorageView;
+
+// Build PackedStorePolicy from current Context execution contract.
+// Single conversion point: DesignStoreMode -> PackedStoreMode, extracts
+// engine_ptr, first_dirty_seen, notification policy from Context.
+auto BuildStorePolicyFromContext(
+    Context& ctx, std::optional<SignalIdExpr> signal_id) -> PackedStorePolicy;
+
+// Plane pointers for runtime-helper interop.
+// Returns val_ptr and unk_ptr (null for 2-state) derived from the storage
+// descriptor. Callers must not reconstruct plane layout from raw descriptor
+// fields. PSV owns the canonical packed layout contract.
+struct PackedPlanePointers {
+  llvm::Value* val_ptr = nullptr;
+  llvm::Value* unk_ptr = nullptr;
+};
+
+auto GetPlanePointers(Context& ctx, const PackedStorageView& storage)
+    -> PackedPlanePointers;
+
+// Whole-value materialization: load full packed value from storage.
 auto MaterializePackedValue(Context& ctx, const PackedStorageView& storage)
     -> Result<PackedRValue>;
 
-// Whole-value store-back: store full packed value to canonical storage.
+// Typed whole-value packed store. The canonical entry point for callers
+// that have a typed PackedRValue. PSV performs store, compare, and
+// notification internally. Inline vs runtime-helper path selection is
+// invisible to callers.
 auto StorePackedValue(
     Context& ctx, const PackedStorageView& storage, const PackedRValue& value,
     const PackedStorePolicy& policy) -> Result<void>;
+
+// Whole-value packed store from a canonical byte buffer. The canonical
+// entry point for callers that have pre-materialized canonical bytes.
+// PSV performs store, compare, and notification internally.
+auto StorePackedValueFromCanonicalBytes(
+    Context& ctx, const PackedStorageView& storage, llvm::Value* src_bytes_ptr,
+    const PackedStorePolicy& policy) -> Result<void>;
+
+// Post-hoc compare+notify for already-written packed storage.
+// old_snapshot_ptr holds pre-write canonical bytes. PSV compares old
+// vs current storage contents and notifies if changed.
+auto NotifyPackedStorageWritten(
+    Context& ctx, const PackedStorageView& storage,
+    llvm::Value* old_snapshot_ptr, const PackedStorePolicy& policy)
+    -> Result<void>;
 
 // Top-level packed load for BitRangeProjection places.
 // Runs the full pipeline: extract path -> resolve subview -> emit load ->

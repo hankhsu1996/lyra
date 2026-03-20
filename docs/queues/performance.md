@@ -32,7 +32,7 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 - [x] Packed storage view Stage 1: byte-addressable localized read
 - [x] Packed storage view Stage 2: byte-addressable localized immediate write (benchmark pending)
 - [x] Packed storage view Stage 3: localized deferred/NBA write (#585)
-- [ ] PSV4: Packed storage view whole-value materialization boundary
+- [x] PSV4: Packed storage view whole-value materialization boundary
 - [ ] CQ1: Packed storage view bulk init lowering quality
 - [ ] CQ2: Packed storage view 2-state unknown-plane elision
 - [ ] CQ3: Packed storage view deferred-notification dead code elision
@@ -65,12 +65,6 @@ Per-region analysis of which managed slots have been modified since the last syn
 ### CB3: Commit-boundary model delayed-commit register promotion
 
 Keep eligible slot-backed scalars in registers across a region, commit back to slot storage only at required boundaries. This is the downstream optimization that uses the commit-boundary definition and region-local analysis. It is not the first thing to build.
-
-### PSV4: Packed storage view whole-value materialization boundary
-
-Whole-value packed stores (initialization, direct assignment) still go through the old commit path outside the packed storage view module. The architecture goal is to route all packed storage access through the module -- localized subview access for element operations, explicit materialization boundary for whole-value operations.
-
-See the commit layer for packed values and the stubs in the packed storage view module. Callers include init effects and array/struct initialization in the type ops layer.
 
 ### CQ1: Packed storage view bulk init lowering quality
 

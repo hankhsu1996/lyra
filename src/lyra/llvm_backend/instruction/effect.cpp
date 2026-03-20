@@ -24,6 +24,7 @@
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/observer_abi.hpp"
+#include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/effect.hpp"
@@ -148,11 +149,11 @@ auto UseShiftOr(uint32_t element_count, uint32_t total_bits) -> bool {
 struct FillTargetInfo {
   mir::PlaceId place_id;
   TypeId type_id;
-  uint32_t total_bits;
-  uint32_t element_bits;
-  uint32_t element_count;
-  bool is_four_state;
-  llvm::Type* storage_type;
+  uint32_t total_bits = 0;
+  uint32_t element_bits = 0;
+  uint32_t element_count = 0;
+  bool is_four_state = false;
+  llvm::Type* storage_type = nullptr;
 };
 
 // Build filled value and commit using CommitPackedValueRaw.
@@ -241,17 +242,45 @@ void LowerElementFillShiftOr(
 }
 
 // Element fill using runtime helper (for large arrays).
+// Semantically a whole-value replacement: LyraFillPackedElements fills
+// every element, replacing all packed storage content.
+// Operationally executed as: snapshot old canonical bytes, runtime helper
+// fills planes in-place via GetPlanePointers, PSV post-hoc compare+notify
+// via NotifyPackedStorageWritten. The runtime-side plane mutation is an
+// implementation detail; the semantic contract is whole-value replacement.
 auto LowerElementFillRuntime(
     Context& ctx, const FillTargetInfo& t, FourStateValue fs) -> Result<void> {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
 
-  // Get addressable storage for target
-  auto planes_result = GetPackedPlanesPtr(ctx, t.place_id, t.type_id);
-  if (!planes_result) {
-    return std::unexpected(planes_result.error());
+  auto target_ptr = ctx.GetPlacePointer(t.place_id);
+  if (!target_ptr) return std::unexpected(target_ptr.error());
+
+  auto signal_id = GetDesignSignalId(ctx, t.place_id);
+  bool is_canonical = signal_id.has_value();
+
+  auto view =
+      BuildWholeValueStorageView(ctx, *target_ptr, t.type_id, is_canonical);
+  auto plane_ptrs = GetPlanePointers(ctx, view);
+
+  bool needs_notify =
+      is_canonical && ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit;
+
+  // Snapshot old canonical bytes before the runtime fill for post-hoc
+  // change detection. Only needed for design slots with notification.
+  uint32_t total_bytes = view.is_four_state ? view.storage_plane_byte_size * 2
+                                            : view.storage_plane_byte_size;
+  llvm::AllocaInst* snapshot = nullptr;
+  if (needs_notify) {
+    auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+    auto* func = builder.GetInsertBlock()->getParent();
+    llvm::IRBuilder<> entry_builder(
+        &func->getEntryBlock(), func->getEntryBlock().begin());
+    auto* buf_ty = llvm::ArrayType::get(i8_ty, total_bytes);
+    snapshot = entry_builder.CreateAlloca(buf_ty, nullptr, "fill.snapshot");
+    builder.CreateMemCpy(
+        snapshot, llvm::Align(1), *target_ptr, llvm::MaybeAlign(), total_bytes);
   }
-  const auto& planes = *planes_result;
 
   // Normalize fill value to element width
   auto* elem_ty = llvm::Type::getIntNTy(llvm_ctx, t.element_bits);
@@ -260,14 +289,12 @@ auto LowerElementFillRuntime(
   llvm::Value* fill_unk_elem =
       builder.CreateZExtOrTrunc(fs.unknown, elem_ty, "fill.unk.elem");
 
-  // For 2-state source going to 2-state target, collapse X/Z to 0
   if (!t.is_four_state) {
     llvm::Value* not_unk = builder.CreateNot(fill_unk_elem, "fill.notunk");
     fill_val_elem = builder.CreateAnd(fill_val_elem, not_unk, "fill.known");
   }
 
   // Materialize element value in alloca for runtime helper.
-  // Runtime expects little-endian word layout (same as RuntimeIntegral planes).
   auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
 
@@ -275,7 +302,6 @@ auto LowerElementFillRuntime(
   llvm::AllocaInst* src_unk_alloca = nullptr;
 
   if (t.element_bits <= 64) {
-    // Single word: allocate i64, zero-extend and store
     src_val_alloca = builder.CreateAlloca(i64_ty, nullptr, "src.val");
     llvm::Value* val_word = builder.CreateZExt(fill_val_elem, i64_ty, "val.w0");
     builder.CreateStore(val_word, src_val_alloca);
@@ -286,9 +312,6 @@ auto LowerElementFillRuntime(
       builder.CreateStore(unk_word, src_unk_alloca);
     }
   } else {
-    // Multi-word: allocate iN directly and store.
-    // Memory layout is little-endian (LSB word first), which matches
-    // RuntimeIntegral plane convention. Runtime reads via memcpy.
     src_val_alloca = builder.CreateAlloca(elem_ty, nullptr, "src.val");
     builder.CreateStore(fill_val_elem, src_val_alloca);
     if (t.is_four_state) {
@@ -297,7 +320,6 @@ auto LowerElementFillRuntime(
     }
   }
 
-  // Call runtime helper
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* null_ptr = llvm::ConstantPointerNull::get(ptr_ty);
 
@@ -306,16 +328,20 @@ auto LowerElementFillRuntime(
                                  : static_cast<llvm::Value*>(null_ptr);
   builder.CreateCall(
       ctx.GetLyraFillPackedElements(),
-      {planes.val_ptr, planes.unk_ptr != nullptr ? planes.unk_ptr : null_ptr,
+      {plane_ptrs.val_ptr,
+       plane_ptrs.unk_ptr != nullptr ? plane_ptrs.unk_ptr : null_ptr,
        llvm::ConstantInt::get(i32_ty, t.total_bits), src_val_alloca,
        src_unk_arg, llvm::ConstantInt::get(i32_ty, t.element_bits),
        llvm::ConstantInt::get(i32_ty, t.element_count)});
 
-  // If design slot, notify after runtime write (use root_ptr, not val_ptr)
-  if (planes.signal_id.has_value()) {
-    builder.CreateCall(
-        ctx.GetLyraNotifySignal(), {ctx.GetEnginePointer(), planes.root_ptr,
-                                    planes.signal_id->Emit(builder)});
+  // Post-hoc compare+notify: the fill replaced all storage content.
+  if (needs_notify) {
+    auto policy = BuildStorePolicyFromContext(ctx, signal_id);
+    auto result = NotifyPackedStorageWritten(ctx, view, snapshot, policy);
+    if (!result) {
+      throw common::InternalError(
+          "LowerElementFillRuntime", "NotifyPackedStorageWritten failed");
+    }
   }
 
   return {};

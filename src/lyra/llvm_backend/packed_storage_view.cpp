@@ -625,17 +625,71 @@ void EmitPackedStoreNotification(
   }
 
   auto* fn = builder.GetInsertBlock()->getParent();
-  auto* dirty_bb = llvm::BasicBlock::Create(llvm_ctx, "psw.dirty", fn);
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* done_bb = llvm::BasicBlock::Create(llvm_ctx, "psw.done", fn);
 
-  builder.CreateCondBr(should_mark, dirty_bb, done_bb);
+  // Check if this is a full-slot dirty mark eligible for first-dirty fast path.
+  bool is_full_slot = false;
+  if (const auto* off_ci =
+          llvm::dyn_cast<llvm::ConstantInt>(dirty_range.byte_offset)) {
+    if (const auto* sz_ci =
+            llvm::dyn_cast<llvm::ConstantInt>(dirty_range.byte_size)) {
+      is_full_slot = off_ci->isZero() && sz_ci->isZero();
+    }
+  }
 
-  builder.SetInsertPoint(dirty_bb);
-  builder.CreateCall(
-      ctx.GetLyraMarkDirty(),
-      {policy.engine_ptr, policy.signal_id->Emit(builder),
-       dirty_range.byte_offset, dirty_range.byte_size});
-  builder.CreateBr(done_bb);
+  if (is_full_slot && policy.first_dirty_seen != nullptr &&
+      policy.store_mode == PackedStoreMode::kNotifySimulation) {
+    // Inline first-dirty fast path: check per-delta seen bitmap.
+    // Common case (already dirty) skips the runtime call entirely.
+    auto* null_ptr =
+        llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(llvm_ctx));
+    auto* check_bitmap_bb =
+        llvm::BasicBlock::Create(llvm_ctx, "check_bitmap", fn);
+    auto* check_seen_bb = llvm::BasicBlock::Create(llvm_ctx, "check_seen", fn);
+    auto* mark_first_bb = llvm::BasicBlock::Create(llvm_ctx, "mark_first", fn);
+    auto* fallback_bb =
+        llvm::BasicBlock::Create(llvm_ctx, "mark_dirty_fallback", fn);
+
+    builder.CreateCondBr(should_mark, check_bitmap_bb, done_bb);
+
+    builder.SetInsertPoint(check_bitmap_bb);
+    auto* slot_id = policy.signal_id->Emit(builder);
+    auto* bitmap_nonnull = builder.CreateICmpNE(
+        policy.first_dirty_seen, null_ptr, "bitmap.nonnull");
+    builder.CreateCondBr(bitmap_nonnull, check_seen_bb, fallback_bb);
+
+    builder.SetInsertPoint(check_seen_bb);
+    auto* seen_ptr = builder.CreateGEP(
+        i8_ty, policy.first_dirty_seen, {slot_id}, "seen_ptr");
+    auto* seen = builder.CreateLoad(i8_ty, seen_ptr, "seen");
+    auto* already_dirty = builder.CreateICmpNE(
+        seen, llvm::ConstantInt::get(i8_ty, 0), "already_dirty");
+    builder.CreateCondBr(already_dirty, done_bb, mark_first_bb);
+
+    builder.SetInsertPoint(mark_first_bb);
+    builder.CreateCall(
+        ctx.GetLyraMarkDirtyFirst(), {policy.engine_ptr, slot_id});
+    builder.CreateBr(done_bb);
+
+    builder.SetInsertPoint(fallback_bb);
+    builder.CreateCall(
+        ctx.GetLyraMarkDirty(),
+        {policy.engine_ptr, slot_id, llvm::ConstantInt::get(i32_ty, 0),
+         llvm::ConstantInt::get(i32_ty, 0)});
+    builder.CreateBr(done_bb);
+  } else {
+    auto* dirty_bb = llvm::BasicBlock::Create(llvm_ctx, "psw.dirty", fn);
+    builder.CreateCondBr(should_mark, dirty_bb, done_bb);
+
+    builder.SetInsertPoint(dirty_bb);
+    builder.CreateCall(
+        ctx.GetLyraMarkDirty(),
+        {policy.engine_ptr, policy.signal_id->Emit(builder),
+         dirty_range.byte_offset, dirty_range.byte_size});
+    builder.CreateBr(done_bb);
+  }
 
   builder.SetInsertPoint(done_bb);
 }
@@ -655,6 +709,18 @@ auto EmitStoreToPackedSubview(
   return {};
 }
 
+// Create an entry-block alloca for temporary canonical buffer operations.
+// All PSV canonical-buffer temporaries use entry-block placement for
+// predictable allocation and consistent stack layout.
+auto CreateEntryBlockAlloca(
+    llvm::IRBuilder<>& builder, llvm::Type* ty, const char* name)
+    -> llvm::AllocaInst* {
+  auto* func = builder.GetInsertBlock()->getParent();
+  llvm::IRBuilder<> entry_builder(
+      &func->getEntryBlock(), func->getEntryBlock().begin());
+  return entry_builder.CreateAlloca(ty, nullptr, name);
+}
+
 // Write a packed integer value into a canonical flat byte buffer at the
 // given byte offset via memcpy from a typed alloca. This avoids implicit
 // alignment assumptions from storing a wide integer through a byte pointer.
@@ -667,12 +733,32 @@ void WriteCanonicalPlaneToBuffer(
   uint64_t byte_size =
       builder.GetInsertBlock()->getModule()->getDataLayout().getTypeStoreSize(
           value_ty);
-  auto* src_alloca = builder.CreateAlloca(value_ty, nullptr, "cbuf.src");
+  auto* src_alloca = CreateEntryBlockAlloca(builder, value_ty, "cbuf.src");
   builder.CreateStore(plane_value, src_alloca);
   auto* dest_ptr = builder.CreateGEP(
       i8_ty, buf_ptr, builder.getInt64(byte_offset), "cbuf.dst");
   builder.CreateMemCpy(
       dest_ptr, llvm::Align(1), src_alloca, llvm::Align(1), byte_size);
+}
+
+// Read a packed integer value from a canonical flat byte buffer at the
+// given byte offset via memcpy to a typed alloca. Mirrors
+// WriteCanonicalPlaneToBuffer. All temporary allocas use entry-block
+// placement for predictable stack layout.
+auto ReadCanonicalPlaneFromBuffer(
+    llvm::IRBuilder<>& builder, llvm::LLVMContext& llvm_ctx,
+    llvm::Value* buf_ptr, uint64_t byte_offset, llvm::Type* plane_type)
+    -> llvm::Value* {
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  uint64_t byte_size =
+      builder.GetInsertBlock()->getModule()->getDataLayout().getTypeStoreSize(
+          plane_type);
+  auto* dest_alloca = CreateEntryBlockAlloca(builder, plane_type, "cbuf.rd");
+  auto* src_ptr = builder.CreateGEP(
+      i8_ty, buf_ptr, builder.getInt64(byte_offset), "cbuf.src");
+  builder.CreateMemCpy(
+      dest_alloca, llvm::Align(1), src_ptr, llvm::Align(1), byte_size);
+  return builder.CreateLoad(plane_type, dest_alloca, "cbuf.val");
 }
 
 // Prepare a narrow plane value for NBA: truncate/extend and mask.
@@ -846,20 +932,419 @@ auto EmitDeferredStoreToPackedSubview(
   return {};
 }
 
-auto MaterializePackedValue(
-    [[maybe_unused]] Context& ctx,
-    [[maybe_unused]] const PackedStorageView& storage) -> Result<PackedRValue> {
-  throw common::InternalError(
-      "MaterializePackedValue", "not yet implemented in new module");
+auto BuildWholeValueStorageView(
+    Context& ctx, llvm::Value* base_ptr, TypeId type_id, bool is_canonical)
+    -> PackedStorageView {
+  const auto& types = ctx.GetTypeArena();
+  const Type& type = types[type_id];
+  auto kind = type.Kind();
+  if (kind == TypeKind::kEnum) {
+    kind = types[type.AsEnum().base_type].Kind();
+  }
+
+  uint32_t total_bits = 0;
+  bool is_four_state = false;
+  if (kind == TypeKind::kReal) {
+    total_bits = 64;
+    is_four_state = false;
+  } else if (kind == TypeKind::kShortReal) {
+    total_bits = 32;
+    is_four_state = false;
+  } else {
+    total_bits = PackedBitWidth(type, types);
+    is_four_state = ctx.IsPackedFourState(type);
+  }
+  uint32_t storage_plane_byte_size = GetStorageByteSize(total_bits);
+
+  PackedStorageView view{
+      .base_ptr = base_ptr,
+      .total_semantic_bits = total_bits,
+      .storage_plane_byte_size = storage_plane_byte_size,
+      .unk_plane_offset_bytes =
+          is_four_state ? FourStateUnknownLaneOffset(total_bits) : 0,
+      .is_four_state = is_four_state,
+      .is_canonical_storage = is_canonical,
+  };
+
+  if (!is_canonical) {
+    auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
+    if (!llvm_type_result) {
+      throw common::InternalError(
+          "BuildWholeValueStorageView",
+          "failed to resolve LLVM type for non-canonical storage");
+    }
+    view.local_llvm_type = *llvm_type_result;
+  }
+
+  return view;
+}
+
+auto BuildRawBytesStorageView(llvm::Value* base_ptr, uint32_t byte_size)
+    -> PackedStorageView {
+  return PackedStorageView{
+      .base_ptr = base_ptr,
+      .total_semantic_bits = byte_size * 8,
+      .storage_plane_byte_size = byte_size,
+      .unk_plane_offset_bytes = 0,
+      .is_four_state = false,
+      .is_canonical_storage = true,
+  };
+}
+
+auto BuildStorePolicyFromContext(
+    Context& ctx, std::optional<SignalIdExpr> signal_id) -> PackedStorePolicy {
+  PackedStorePolicy policy;
+
+  switch (ctx.GetDesignStoreMode()) {
+    case DesignStoreMode::kDirectInit:
+      policy.store_mode = PackedStoreMode::kDirectInit;
+      break;
+    case DesignStoreMode::kNotifySimulation:
+      policy.store_mode = PackedStoreMode::kNotifySimulation;
+      break;
+    case DesignStoreMode::kNotifyCrossContext:
+      policy.store_mode = PackedStoreMode::kNotifyCrossContext;
+      break;
+  }
+
+  policy.notification_deferred =
+      ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred;
+  policy.signal_id = std::move(signal_id);
+  policy.engine_ptr = ctx.GetEnginePointer();
+  policy.first_dirty_seen = ctx.GetFirstDirtySeenPtr();
+
+  return policy;
+}
+
+auto GetPlanePointers(Context& ctx, const PackedStorageView& storage)
+    -> PackedPlanePointers {
+  auto& builder = ctx.GetBuilder();
+
+  PackedPlanePointers result;
+  result.val_ptr = storage.base_ptr;
+
+  if (storage.is_four_state) {
+    auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
+    result.unk_ptr = builder.CreateGEP(
+        i8_ty, storage.base_ptr,
+        builder.getInt64(storage.unk_plane_offset_bytes), "planes.unk");
+  }
+
+  return result;
+}
+
+namespace {
+
+// Returns true if byte_size is a power of 2 and <= 16 (eligible for inline
+// compare+store instead of runtime LyraStorePacked call).
+auto IsInlineStoreEligible(uint32_t byte_size) -> bool {
+  return byte_size > 0 && byte_size <= 16 && (byte_size & (byte_size - 1)) == 0;
+}
+
+// Full-slot dirty range (byte_offset=0, byte_size=0).
+auto MakeFullSlotDirtyRange(llvm::LLVMContext& llvm_ctx) -> PackedDirtyRange {
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  return PackedDirtyRange{
+      .byte_offset = llvm::ConstantInt::get(i32_ty, 0),
+      .byte_size = llvm::ConstantInt::get(i32_ty, 0),
+  };
+}
+
+// Flatten packed planes to a single canonical integer for inline compare+store.
+// 2-state: val (iN)
+// 4-state: val | (unk << lane_bits) -> i(2N)
+auto FlattenToCanonicalBits(
+    llvm::IRBuilder<>& builder, llvm::LLVMContext& llvm_ctx, llvm::Value* val,
+    llvm::Value* unk, uint32_t storage_plane_byte_size, bool is_four_state)
+    -> llvm::Value* {
+  uint32_t lane_bits = storage_plane_byte_size * 8;
+
+  if (!is_four_state) {
+    auto* lane_ty = llvm::IntegerType::get(llvm_ctx, lane_bits);
+    return builder.CreateZExtOrTrunc(val, lane_ty, "canon.val");
+  }
+
+  uint32_t total_bits = lane_bits * 2;
+  auto* total_ty = llvm::IntegerType::get(llvm_ctx, total_bits);
+  auto* val_ext = builder.CreateZExt(val, total_ty, "canon.val.ext");
+  auto* unk_ext = builder.CreateZExt(
+      unk != nullptr ? unk : llvm::ConstantInt::get(val->getType(), 0),
+      total_ty, "canon.unk.ext");
+  auto* unk_shifted = builder.CreateShl(
+      unk_ext, llvm::ConstantInt::get(total_ty, lane_bits), "canon.unk.shl");
+  return builder.CreateOr(val_ext, unk_shifted, "canon.bits");
+}
+
+// Compute total canonical byte size for a storage view.
+auto TotalCanonicalByteSize(const PackedStorageView& storage) -> uint32_t {
+  return storage.is_four_state ? storage.storage_plane_byte_size * 2
+                               : storage.storage_plane_byte_size;
+}
+
+// Emit the inline compare+store+notify path for whole-value packed stores.
+// Loads old canonical bits, stores new canonical bits, compares, notifies.
+void EmitInlineWholeValueStore(
+    Context& ctx, const PackedStorageView& storage,
+    llvm::Value* new_canonical_bits, const PackedStorePolicy& policy) {
+  auto& builder = ctx.GetBuilder();
+  auto* bits_type = new_canonical_bits->getType();
+
+  auto* old_bits = builder.CreateLoad(bits_type, storage.base_ptr, "wv.old");
+  builder.CreateStore(new_canonical_bits, storage.base_ptr);
+
+  auto* changed = builder.CreateICmpNE(old_bits, new_canonical_bits, "wv.chg");
+  auto dirty_range = MakeFullSlotDirtyRange(ctx.GetLlvmContext());
+  EmitPackedStoreNotification(ctx, changed, policy, dirty_range);
+}
+
+// Emit a guarded LyraStorePacked runtime call with cross-context engine-null
+// protection. This is the single internal call site for LyraStorePacked in
+// the PSV module. All large-value compare+store+notify paths funnel here.
+//
+// LyraStorePacked semantics: compares src_ptr bytes against dst_ptr bytes,
+// copies src_ptr to dst_ptr if different, dirty-marks on change.
+//
+// For kNotifyCrossContext, engine_ptr may be null at runtime. The call is
+// guarded with a branch so the runtime helper is never invoked with a null
+// engine.
+void EmitGuardedLyraStorePacked(
+    Context& ctx, const PackedStorePolicy& policy, llvm::Value* dst_ptr,
+    llvm::Value* src_ptr, uint32_t byte_size) {
+  if (policy.engine_ptr == nullptr) {
+    throw common::InternalError(
+        "EmitGuardedLyraStorePacked", "notify store mode requires engine_ptr");
+  }
+  if (!policy.signal_id.has_value()) {
+    throw common::InternalError(
+        "EmitGuardedLyraStorePacked", "notify store mode requires signal_id");
+  }
+
+  auto& builder = ctx.GetBuilder();
+  auto& llvm_ctx = ctx.GetLlvmContext();
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  auto emit_call = [&]() {
+    builder.CreateCall(
+        ctx.GetLyraStorePacked(),
+        {policy.engine_ptr, dst_ptr, src_ptr,
+         llvm::ConstantInt::get(i32_ty, byte_size),
+         policy.signal_id->Emit(builder), llvm::ConstantInt::get(i32_ty, 0),
+         llvm::ConstantInt::get(i32_ty, 0)});
+  };
+
+  if (policy.store_mode == PackedStoreMode::kNotifyCrossContext) {
+    auto* fn = builder.GetInsertBlock()->getParent();
+    auto* call_bb = llvm::BasicBlock::Create(llvm_ctx, "rt.store", fn);
+    auto* done_bb = llvm::BasicBlock::Create(llvm_ctx, "rt.done", fn);
+    auto* engine_not_null = builder.CreateICmpNE(
+        policy.engine_ptr,
+        llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(llvm_ctx)),
+        "engine.nonnull");
+    builder.CreateCondBr(engine_not_null, call_bb, done_bb);
+
+    builder.SetInsertPoint(call_bb);
+    emit_call();
+    builder.CreateBr(done_bb);
+
+    builder.SetInsertPoint(done_bb);
+  } else {
+    emit_call();
+  }
+}
+
+// Emit the large-value runtime-helper path for whole-value packed stores.
+// Materializes canonical bytes into an alloca buffer and calls LyraStorePacked.
+void EmitLargeWholeValueStore(
+    Context& ctx, const PackedStorageView& storage, llvm::Value* val,
+    llvm::Value* unk, const PackedStorePolicy& policy) {
+  auto& builder = ctx.GetBuilder();
+  auto& llvm_ctx = ctx.GetLlvmContext();
+
+  uint32_t total_bytes = TotalCanonicalByteSize(storage);
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+
+  auto* func = builder.GetInsertBlock()->getParent();
+  llvm::IRBuilder<> entry_builder(
+      &func->getEntryBlock(), func->getEntryBlock().begin());
+  auto* buf_ty = llvm::ArrayType::get(i8_ty, total_bytes);
+  auto* temp = entry_builder.CreateAlloca(buf_ty, nullptr, "wv.buf");
+
+  builder.CreateMemSet(temp, builder.getInt8(0), total_bytes, llvm::Align(1));
+
+  WriteCanonicalPlaneToBuffer(builder, llvm_ctx, temp, 0, val);
+  if (storage.is_four_state && unk != nullptr) {
+    WriteCanonicalPlaneToBuffer(
+        builder, llvm_ctx, temp, storage.unk_plane_offset_bytes, unk);
+  }
+
+  if (policy.store_mode == PackedStoreMode::kDirectInit ||
+      policy.notification_deferred) {
+    builder.CreateMemCpy(
+        storage.base_ptr, llvm::MaybeAlign(), temp, llvm::MaybeAlign(),
+        total_bytes);
+    return;
+  }
+
+  EmitGuardedLyraStorePacked(ctx, policy, storage.base_ptr, temp, total_bytes);
+}
+
+// Core whole-value store implementation shared by StorePackedValue and
+// StorePackedValueFromCanonicalBytes. Takes plane values already at
+// storage lane width.
+void EmitWholeValueStoreCore(
+    Context& ctx, const PackedStorageView& storage, llvm::Value* val,
+    llvm::Value* unk, const PackedStorePolicy& policy) {
+  auto& builder = ctx.GetBuilder();
+
+  if (policy.store_mode == PackedStoreMode::kDirectInit) {
+    StoreFullPlanes(ctx, storage, val, unk);
+    return;
+  }
+
+  if (!storage.is_canonical_storage) {
+    StoreFullPlanes(ctx, storage, val, unk);
+    return;
+  }
+
+  uint32_t total_bytes = TotalCanonicalByteSize(storage);
+  if (IsInlineStoreEligible(total_bytes)) {
+    auto* canonical_bits = FlattenToCanonicalBits(
+        builder, ctx.GetLlvmContext(), val, unk,
+        storage.storage_plane_byte_size, storage.is_four_state);
+    EmitInlineWholeValueStore(ctx, storage, canonical_bits, policy);
+  } else {
+    EmitLargeWholeValueStore(ctx, storage, val, unk, policy);
+  }
+}
+
+}  // namespace
+
+auto MaterializePackedValue(Context& ctx, const PackedStorageView& storage)
+    -> Result<PackedRValue> {
+  auto planes = LoadFullPlanes(ctx, storage);
+
+  uint32_t storage_bits = storage.storage_plane_byte_size * 8;
+  PackedRValue result;
+  result.semantic_bits = storage.total_semantic_bits;
+  result.is_four_state = storage.is_four_state;
+  result.val = planes.val;
+
+  if (storage_bits > storage.total_semantic_bits && planes.val != nullptr) {
+    auto mask =
+        llvm::APInt::getLowBitsSet(storage_bits, storage.total_semantic_bits);
+    result.val = ctx.GetBuilder().CreateAnd(
+        planes.val, llvm::ConstantInt::get(planes.val->getType(), mask),
+        "mat.val.mask");
+  }
+
+  if (storage.is_four_state && planes.unk != nullptr) {
+    result.unk = planes.unk;
+    if (storage_bits > storage.total_semantic_bits) {
+      auto mask =
+          llvm::APInt::getLowBitsSet(storage_bits, storage.total_semantic_bits);
+      result.unk = ctx.GetBuilder().CreateAnd(
+          planes.unk, llvm::ConstantInt::get(planes.unk->getType(), mask),
+          "mat.unk.mask");
+    }
+  }
+
+  return result;
 }
 
 auto StorePackedValue(
-    [[maybe_unused]] Context& ctx,
-    [[maybe_unused]] const PackedStorageView& storage,
-    [[maybe_unused]] const PackedRValue& value,
-    [[maybe_unused]] const PackedStorePolicy& policy) -> Result<void> {
-  throw common::InternalError(
-      "StorePackedValue", "not yet implemented in new module");
+    Context& ctx, const PackedStorageView& storage, const PackedRValue& value,
+    const PackedStorePolicy& policy) -> Result<void> {
+  uint32_t lane_bits = storage.storage_plane_byte_size * 8;
+  auto* lane_ty = llvm::IntegerType::get(ctx.GetLlvmContext(), lane_bits);
+
+  auto& builder = ctx.GetBuilder();
+  auto* val = builder.CreateZExtOrTrunc(value.val, lane_ty, "wv.val");
+
+  llvm::Value* unk = nullptr;
+  if (storage.is_four_state) {
+    if (value.unk != nullptr) {
+      unk = builder.CreateZExtOrTrunc(value.unk, lane_ty, "wv.unk");
+    } else {
+      unk = llvm::ConstantInt::get(lane_ty, 0);
+    }
+  }
+
+  EmitWholeValueStoreCore(ctx, storage, val, unk, policy);
+  return {};
+}
+
+auto StorePackedValueFromCanonicalBytes(
+    Context& ctx, const PackedStorageView& storage, llvm::Value* src_bytes_ptr,
+    const PackedStorePolicy& policy) -> Result<void> {
+  auto& builder = ctx.GetBuilder();
+  uint32_t total_bytes = TotalCanonicalByteSize(storage);
+
+  if (policy.store_mode == PackedStoreMode::kDirectInit ||
+      policy.notification_deferred) {
+    builder.CreateMemCpy(
+        storage.base_ptr, llvm::MaybeAlign(), src_bytes_ptr, llvm::MaybeAlign(),
+        total_bytes);
+    return {};
+  }
+
+  if (!storage.is_canonical_storage) {
+    builder.CreateMemCpy(
+        storage.base_ptr, llvm::MaybeAlign(), src_bytes_ptr, llvm::MaybeAlign(),
+        total_bytes);
+    return {};
+  }
+
+  // Load planes from the canonical byte buffer using the alignment-safe
+  // read helper, then route through the shared inline/large path.
+  uint32_t lane_bits = storage.storage_plane_byte_size * 8;
+  auto* lane_ty = llvm::IntegerType::get(ctx.GetLlvmContext(), lane_bits);
+
+  auto* val = ReadCanonicalPlaneFromBuffer(
+      builder, ctx.GetLlvmContext(), src_bytes_ptr, 0, lane_ty);
+
+  llvm::Value* unk = nullptr;
+  if (storage.is_four_state) {
+    unk = ReadCanonicalPlaneFromBuffer(
+        builder, ctx.GetLlvmContext(), src_bytes_ptr,
+        storage.unk_plane_offset_bytes, lane_ty);
+  }
+
+  EmitWholeValueStoreCore(ctx, storage, val, unk, policy);
+  return {};
+}
+
+auto NotifyPackedStorageWritten(
+    Context& ctx, const PackedStorageView& storage,
+    llvm::Value* old_snapshot_ptr, const PackedStorePolicy& policy)
+    -> Result<void> {
+  uint32_t total_bytes = TotalCanonicalByteSize(storage);
+
+  if (policy.store_mode == PackedStoreMode::kDirectInit ||
+      policy.notification_deferred) {
+    return {};
+  }
+
+  if (!storage.is_canonical_storage || !policy.signal_id.has_value()) {
+    return {};
+  }
+
+  if (IsInlineStoreEligible(total_bytes)) {
+    auto& builder = ctx.GetBuilder();
+    auto* bits_ty =
+        llvm::IntegerType::get(ctx.GetLlvmContext(), total_bytes * 8);
+    auto* old_bits =
+        builder.CreateLoad(bits_ty, old_snapshot_ptr, "posthoc.old");
+    auto* new_bits =
+        builder.CreateLoad(bits_ty, storage.base_ptr, "posthoc.new");
+    auto* changed = builder.CreateICmpNE(old_bits, new_bits, "posthoc.chg");
+    auto dirty_range = MakeFullSlotDirtyRange(ctx.GetLlvmContext());
+    EmitPackedStoreNotification(ctx, changed, policy, dirty_range);
+  } else {
+    EmitGuardedLyraStorePacked(
+        ctx, policy, storage.base_ptr, old_snapshot_ptr, total_bytes);
+  }
+
+  return {};
 }
 
 auto ConvertRawToPackedRValue(
