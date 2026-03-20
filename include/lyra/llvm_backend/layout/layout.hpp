@@ -73,8 +73,11 @@ struct PlaceRootKeyHash {
 };
 
 // Design-wide state layout artifact.
-// DesignState is a Lyra-owned byte arena. Layout is defined by the
-// canonical storage contract, not by LLVM struct types.
+// DesignState is a Lyra-owned byte arena with two regions:
+//   [inline region] [appendix region]
+// Inline region: all slots at fixed offsets. kOwnedContainer slots store
+// an OwnedStorageHandle here (fixed 16 bytes), not the backing data.
+// Appendix region: backing data for kOwnedContainer slots.
 struct DesignLayout {
   // Ordered slots, in declaration order.
   std::vector<mir::SlotId> slots;
@@ -82,20 +85,38 @@ struct DesignLayout {
   // Map from SlotId to slot position index (into slots/offsets/specs vectors).
   std::unordered_map<mir::SlotId, uint32_t, SlotIdHash> slot_to_index;
 
-  // Byte offset of each slot in the arena, from canonical storage contract.
+  // Inline-region byte offset of each slot's inline representation.
+  // For kInlineValue: offset of the slot's value bytes.
+  // For kOwnedContainer: offset of the OwnedStorageHandle (16 bytes).
+  // NOTE: For kOwnedContainer slots, this is NOT the offset of the
+  // logical backing data. Use owned_data_offsets for that.
   std::vector<uint64_t> slot_byte_offsets;
 
-  // Total byte size of the design state arena.
+  // Total byte size of the design state arena (inline + appendix).
   uint64_t arena_size = 0;
 
-  // Canonical storage spec per slot, indexed by slot position.
+  // Logical storage spec per slot. Describes the slot's semantic storage:
+  // For kInlineValue: describes the bytes at slot_byte_offsets[i].
+  // For kOwnedContainer: describes the backing data in the appendix
+  //   (e.g., ArrayStorageSpec with instance-specific element count).
+  //   Does NOT describe the inline handle at slot_byte_offsets[i].
   std::vector<SlotStorageSpec> slot_storage_specs;
 
   // Arena for child storage specs (array elements, struct fields).
   StorageSpecArena storage_spec_arena;
 
-  // Patches for 4-state X-encoding (byte offsets to unknown planes).
+  // Patches for 4-state X-encoding (byte offsets in inline region).
+  // Structurally restricted to inline scalar packed slots only:
+  // IsPatchTableEligible requires PackedStorageSpec, which excludes
+  // owned-container slots (their specs are ArrayStorageSpec).
   FourStatePatchTable four_state_patches;
+
+  // Appendix-region byte offset for each kOwnedContainer slot's
+  // backing data. Empty (nullopt) for kInlineValue slots.
+  std::vector<std::optional<uint64_t>> owned_data_offsets;
+
+  // Size of the inline region alone (before appendix).
+  uint64_t inline_region_size = 0;
 };
 
 // Process frame layout - one per process
@@ -285,6 +306,7 @@ struct SlotInfo {
   mir::SlotId slot_id;
   TypeId type_id;            // For LLVM type derivation (actual type)
   SlotTypeInfo type_info{};  // For variable registration (width, signedness)
+  mir::StorageShape storage_shape = mir::StorageShape::kInlineValue;
 };
 
 // Get the LLVM type for a TypeId. Handles all type kinds: integrals, reals,

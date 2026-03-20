@@ -114,7 +114,7 @@ class StringPoolIntern {
  public:
   auto Intern(std::vector<char>& pool, const std::string& name) -> uint32_t {
     if (name.empty()) return 0;
-    auto [it, inserted] = index_.emplace(name, 0u);
+    auto [it, inserted] = index_.emplace(name, 0U);
     if (!inserted) return it->second;
     auto off = static_cast<uint32_t>(pool.size());
     pool.insert(pool.end(), name.begin(), name.end());

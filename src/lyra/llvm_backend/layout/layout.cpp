@@ -32,6 +32,7 @@
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
+#include "lyra/runtime/owned_storage_handle.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 
@@ -1229,21 +1230,77 @@ auto BuildDesignLayout(
         layout.storage_spec_arena));
   }
 
-  // Compute byte offsets from canonical storage specs.
+  // Initialize owned data offset vector (nullopt for all slots initially).
+  layout.owned_data_offsets.resize(slots.size(), std::nullopt);
+
+  // Compute inline-region byte offsets.
+  // For kInlineValue: slot_byte_offsets[i] is the offset of the slot's
+  //   value bytes, and slot_storage_specs[i] describes those bytes.
+  // For kOwnedContainer: slot_byte_offsets[i] is the offset of the
+  //   OwnedStorageHandle (fixed size), and slot_storage_specs[i]
+  //   describes the backing data in the appendix (not the handle).
   uint64_t offset = 0;
   uint64_t max_align = 1;
   for (size_t i = 0; i < slots.size(); ++i) {
-    const auto& spec = layout.slot_storage_specs[i];
-    uint64_t align = spec.Alignment();
-    max_align = std::max(max_align, align);
-    offset = AlignUp(offset, align);
+    uint64_t slot_size = 0;
+    uint64_t slot_align = 0;
+    if (slots[i].storage_shape == mir::StorageShape::kOwnedContainer) {
+      slot_size = runtime::kOwnedStorageHandleByteSize;
+      slot_align = runtime::kOwnedStorageHandleAlignment;
+    } else {
+      const auto& spec = layout.slot_storage_specs[i];
+      slot_size = spec.TotalByteSize();
+      slot_align = spec.Alignment();
+    }
+    max_align = std::max(max_align, slot_align);
+    offset = AlignUp(offset, slot_align);
     layout.slot_byte_offsets.push_back(offset);
-    offset += spec.TotalByteSize();
+    offset += slot_size;
   }
-  // Canonical logical design-state size may be 0 (no slots). Emitted arena
-  // object size is clamped to 1 byte for LLVM alloca/array-type legality.
-  // This 1 byte is not part of the semantic storage contract.
-  layout.arena_size = std::max(uint64_t{1}, AlignUp(offset, max_align));
+  layout.inline_region_size = std::max(uint64_t{1}, AlignUp(offset, max_align));
+
+  // Compute appendix offsets for owned container backing data.
+  uint64_t appendix_offset = layout.inline_region_size;
+  for (size_t i = 0; i < slots.size(); ++i) {
+    if (slots[i].storage_shape != mir::StorageShape::kOwnedContainer) {
+      continue;
+    }
+    const auto& spec = layout.slot_storage_specs[i];
+    if (spec.Alignment() == 0 || spec.TotalByteSize() == 0) {
+      throw common::InternalError(
+          "BuildDesignLayout",
+          std::format(
+              "owned-container slot {} has invalid backing spec "
+              "(alignment={}, size={})",
+              i, spec.Alignment(), spec.TotalByteSize()));
+    }
+    uint64_t backing_align = spec.Alignment();
+    max_align = std::max(max_align, backing_align);
+    appendix_offset = AlignUp(appendix_offset, backing_align);
+    layout.owned_data_offsets[i] = appendix_offset;
+    appendix_offset += spec.TotalByteSize();
+  }
+
+  // Verify invariants: kInlineValue slots must have nullopt owned offset,
+  // kOwnedContainer slots must have engaged owned offset.
+  for (size_t i = 0; i < slots.size(); ++i) {
+    bool is_owned =
+        slots[i].storage_shape == mir::StorageShape::kOwnedContainer;
+    if (is_owned && !layout.owned_data_offsets[i].has_value()) {
+      throw common::InternalError(
+          "BuildDesignLayout",
+          std::format("owned-container slot {} missing appendix offset", i));
+    }
+    if (!is_owned && layout.owned_data_offsets[i].has_value()) {
+      throw common::InternalError(
+          "BuildDesignLayout",
+          std::format("inline-value slot {} has spurious appendix offset", i));
+    }
+  }
+
+  // Total arena size covers both inline and appendix regions.
+  layout.arena_size =
+      std::max(uint64_t{1}, AlignUp(appendix_offset, max_align));
 
   // Collect 4-state patches using canonical byte offsets.
   // IsPatchTableEligible encodes the full eligibility rule: packed type,
@@ -1404,6 +1461,7 @@ auto BuildSlotInfo(
             .slot_id = mir::SlotId{static_cast<uint32_t>(i)},
             .type_id = type_id,
             .type_info = type_info,
+            .storage_shape = slots_in[i].storage_shape,
         });
   }
 
