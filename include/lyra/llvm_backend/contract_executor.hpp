@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -13,9 +12,9 @@ namespace lyra::lowering::mir_to_llvm {
 class Context;
 
 // Executes the activation-local contract for one process.
-// Owns resolver creation, block-to-segment mapping, and boundary
-// action execution. Process lowering calls the executor API instead
-// of manually interpreting the contract.
+// Owns resolver creation, block-to-segment mapping, and per-statement
+// contract execution. Process lowering calls the executor API instead
+// of manually interpreting the contract plan.
 class ContractExecutor {
  public:
   ContractExecutor(
@@ -32,11 +31,11 @@ class ContractExecutor {
   // Call at the start of each block, after SetInsertPoint.
   void ExecuteBlockEntry(uint32_t block_index);
 
-  // Execute pre-statement boundary action, if any.
+  // Execute pre-statement contract action (sync), if any.
   // Call before lowering each statement.
   void ExecutePreStatement(uint32_t block_index, uint32_t statement_index);
 
-  // Execute post-statement boundary action, if any.
+  // Execute post-statement contract action (reload), if any.
   // Call after lowering each statement.
   void ExecutePostStatement(uint32_t block_index, uint32_t statement_index);
 
@@ -46,8 +45,8 @@ class ContractExecutor {
 
  private:
   auto FindSegmentIndex(uint32_t block_index) const -> std::optional<size_t>;
-  auto FindBoundary(uint32_t block_index, uint32_t statement_index) const
-      -> const ContractBoundaryAction*;
+  auto FindStatementContract(uint32_t block_index, uint32_t statement_index)
+      const -> const StatementContractPlan*;
   auto GetOrCreateResolver(size_t segment_index) -> ActivationLocalSlotAccess&;
 
   Context& ctx_;

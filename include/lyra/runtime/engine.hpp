@@ -684,8 +684,9 @@ class Engine {
   // Late-bound rebinding: re-read index value, recompute edge target.
   void RebindSubscription(uint32_t edge_target_id);
 
-  // Per-dirty-slot flush: ordered dispatch into per-kind helpers.
-  void FlushDirtySlot(
+  // Per-dirty-slot flush: edge, change, and container dispatch.
+  // Called after the global rebind phase completes.
+  void FlushDirtySlotPostRebind(
       uint32_t slot_id, SlotSubscriptions& slot, const SlotMeta& meta,
       std::span<const uint8_t> design_state);
 

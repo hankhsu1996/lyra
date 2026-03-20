@@ -301,128 +301,169 @@ void CollectStatementAccesses(
       stmt.data);
 }
 
-void ClassifyStatementBoundary(
+// Semantic analysis of a statement's interaction with canonical state.
+//
+// This function answers factual questions about what the statement does
+// to canonical storage. It does NOT decide sync/reload policy -- that
+// is the contract planner's job.
+//
+// Classification rules by family:
+//
+//   Assign/GuardedAssign to module slot:
+//     Managed writes go to shadow (no canonical interaction). Non-managed
+//     direct writes go to canonical but do not require prior publication
+//     of managed state. Dirty-marks (LyraMarkDirty) only mark the
+//     runtime update_set; they do not trigger synchronous subscriber
+//     callbacks or canonical reads.
+//
+//   DisplayEffect/SeverityEffect:
+//     Values come through the resolver/value lowering path. The runtime
+//     print functions read the provided data pointer, not canonical
+//     slot storage independently.
+//
+//   $fclose/$fflush:
+//     File I/O operations with no canonical slot interaction.
+//
+//   $writemem:
+//     Reads canonical array storage, but in v1 managed slots are
+//     whole-slot scalars that cannot overlap the target array.
+//     If managed slots later include arrays, this must be revisited.
+//
+//   $readmem*:
+//     Runtime writes directly to canonical target storage.
+//
+//   FillPackedEffect:
+//     Writes directly to canonical target storage.
+//
+//   Call/BuiltinCall/AssocOp:
+//     Callee/runtime can read and write any canonical slot via
+//     design_ptr or direct container access.
+//
+//   Unknown SystemTfEffect:
+//     Conservative fallback for unrecognized opcodes.
+void AnalyzeStatementSemantics(
     const Statement& stmt, const Arena& arena, uint32_t block_index,
-    uint32_t stmt_index, std::vector<BoundaryRecord>& boundaries) {
+    uint32_t stmt_index, std::vector<StatementSemanticFact>& facts) {
   std::visit(
       common::Overloaded{
-          [&](const Assign& a) {
-            // Writes to non-managed module slots emit dirty-marks that
-            // can trigger runtime subscriptions reading other (managed)
-            // slots. Treat these as observation boundaries so managed
-            // slots are synced before the dirty-mark fires.
-            const auto& place = arena[a.dest];
-            if (place.root.kind == PlaceRoot::Kind::kModuleSlot ||
-                place.root.kind == PlaceRoot::Kind::kDesignGlobal) {
-              boundaries.push_back(
-                  BoundaryRecord{
-                      .block_index = block_index,
-                      .statement_index = stmt_index,
-                      .kind = BoundaryKind::kObservation,
-                      .affected_slots = {},
-                  });
-            }
-          },
-          [&](const GuardedAssign& ga) {
-            const auto& place = arena[ga.dest];
-            if (place.root.kind == PlaceRoot::Kind::kModuleSlot ||
-                place.root.kind == PlaceRoot::Kind::kDesignGlobal) {
-              boundaries.push_back(
-                  BoundaryRecord{
-                      .block_index = block_index,
-                      .statement_index = stmt_index,
-                      .kind = BoundaryKind::kObservation,
-                      .affected_slots = {},
-                  });
-            }
-          },
+          // Assign/GuardedAssign to module slot: no canonical-state
+          // interaction relevant to activation-local coherence.
+          //
+          // Managed-slot writes go to the shadow alloca. Non-managed-
+          // slot writes commit directly to canonical and emit dirty-
+          // marks, but dirty-marks do not trigger synchronous
+          // subscriber callbacks or canonical reads in the current
+          // runtime. State updates become visible to other processes
+          // only after the process body returns and the fixpoint runs,
+          // at which point segment-exit sync has already published all
+          // managed values to canonical.
+          [](const Assign&) {},
+          [](const GuardedAssign&) {},
           [](const DeferredAssign&) {},
           [](const DefineTemp&) {},
           [&](const Effect& e) {
             std::visit(
                 common::Overloaded{
-                    [&](const DisplayEffect&) {
-                      boundaries.push_back(
-                          BoundaryRecord{
-                              .block_index = block_index,
-                              .statement_index = stmt_index,
-                              .kind = BoundaryKind::kObservation,
-                              .affected_slots = {},
-                          });
-                    },
-                    [&](const SeverityEffect&) {
-                      boundaries.push_back(
-                          BoundaryRecord{
-                              .block_index = block_index,
-                              .statement_index = stmt_index,
-                              .kind = BoundaryKind::kObservation,
-                              .affected_slots = {},
-                          });
-                    },
+                    // Display/severity: resolver-only consumer.
+                    [](const DisplayEffect&) {},
+                    [](const SeverityEffect&) {},
                     [&](const SystemTfEffect& stf) {
-                      // All SystemTfEffect opcodes in current MIR are
-                      // observation-only (kFclose, kFflush). Writeback-
-                      // capable system TFs ($fscanf, $fgets, $fread) are
-                      // lowered through the Call path, not SystemTfEffect.
                       switch (stf.opcode) {
+                        // $fclose/$fflush: file I/O, no canonical
+                        // slot interaction.
                         case SystemTfOpcode::kFclose:
                         case SystemTfOpcode::kFflush:
-                          boundaries.push_back(
-                              BoundaryRecord{
-                                  .block_index = block_index,
-                                  .statement_index = stmt_index,
-                                  .kind = BoundaryKind::kObservation,
-                                  .affected_slots = {},
-                              });
                           break;
                         default:
-                          // Conservative: unknown system TF effect treated
-                          // as may-write-any.
-                          boundaries.push_back(
-                              BoundaryRecord{
+                          // Unrecognized system TF: conservative.
+                          facts.push_back(
+                              StatementSemanticFact{
                                   .block_index = block_index,
                                   .statement_index = stmt_index,
-                                  .kind = BoundaryKind::kMayWriteAny,
-                                  .affected_slots = {},
+                                  .reads_canonical_state = false,
+                                  .writes_canonical_state = false,
+                                  .write_footprint =
+                                      CanonicalWriteFootprint::kNone,
+                                  .write_targets = {},
+                                  .conservative_unknown = true,
                               });
                           break;
                       }
                     },
                     [&](const MemIOEffect& mio) {
                       if (mio.is_read) {
+                        // $readmem*: runtime writes to canonical target.
+                        // Reload target is slot-granular (SignalRef).
+                        // In v1 this is correct because $readmem targets
+                        // unpacked arrays which are ineligible for managed
+                        // status. If eligibility broadens, verify reload
+                        // granularity still matches.
                         const auto& place = arena[mio.target];
                         auto info = ExtractModuleSlotInfo(place);
-                        std::vector<SignalRef> affected;
-                        if (info) affected.push_back(info->slot);
-                        boundaries.push_back(
-                            BoundaryRecord{
-                                .block_index = block_index,
-                                .statement_index = stmt_index,
-                                .kind = BoundaryKind::kWritebackSpecific,
-                                .affected_slots = std::move(affected),
-                            });
-                      } else {
-                        boundaries.push_back(
-                            BoundaryRecord{
-                                .block_index = block_index,
-                                .statement_index = stmt_index,
-                                .kind = BoundaryKind::kObservation,
-                                .affected_slots = {},
-                            });
+                        if (info) {
+                          facts.push_back(
+                              StatementSemanticFact{
+                                  .block_index = block_index,
+                                  .statement_index = stmt_index,
+                                  .reads_canonical_state = false,
+                                  .writes_canonical_state = true,
+                                  .write_footprint =
+                                      CanonicalWriteFootprint::kSpecific,
+                                  .write_targets = {info->slot},
+                                  .conservative_unknown = false,
+                              });
+                        } else {
+                          // Target is not a module slot (e.g., design-
+                          // global or unresolvable). Conservative.
+                          facts.push_back(
+                              StatementSemanticFact{
+                                  .block_index = block_index,
+                                  .statement_index = stmt_index,
+                                  .reads_canonical_state = false,
+                                  .writes_canonical_state = false,
+                                  .write_footprint =
+                                      CanonicalWriteFootprint::kNone,
+                                  .write_targets = {},
+                                  .conservative_unknown = true,
+                              });
+                        }
                       }
+                      // $writemem: reads canonical array, but in v1
+                      // managed slots are whole-slot scalars. No overlap
+                      // with the array target is possible. No fact needed.
                     },
                     [&](const FillPackedEffect& fp) {
+                      // Writes directly to canonical target storage.
+                      // Reload target is slot-granular. In v1 packed
+                      // targets are ineligible for managed status. If
+                      // eligibility broadens, verify granularity.
                       const auto& place = arena[fp.target];
                       auto info = ExtractModuleSlotInfo(place);
-                      std::vector<SignalRef> affected;
-                      if (info) affected.push_back(info->slot);
-                      boundaries.push_back(
-                          BoundaryRecord{
-                              .block_index = block_index,
-                              .statement_index = stmt_index,
-                              .kind = BoundaryKind::kWritebackSpecific,
-                              .affected_slots = std::move(affected),
-                          });
+                      if (info) {
+                        facts.push_back(
+                            StatementSemanticFact{
+                                .block_index = block_index,
+                                .statement_index = stmt_index,
+                                .reads_canonical_state = false,
+                                .writes_canonical_state = true,
+                                .write_footprint =
+                                    CanonicalWriteFootprint::kSpecific,
+                                .write_targets = {info->slot},
+                                .conservative_unknown = false,
+                            });
+                      } else {
+                        facts.push_back(
+                            StatementSemanticFact{
+                                .block_index = block_index,
+                                .statement_index = stmt_index,
+                                .reads_canonical_state = false,
+                                .writes_canonical_state = false,
+                                .write_footprint =
+                                    CanonicalWriteFootprint::kNone,
+                                .write_targets = {},
+                                .conservative_unknown = true,
+                            });
+                      }
                     },
                     [](const StrobeEffect&) {},
                     [](const MonitorEffect&) {},
@@ -431,31 +472,43 @@ void ClassifyStatementBoundary(
                 },
                 e.op);
           },
+          // Call: callee reads/writes canonical via design_ptr.
           [&](const Call&) {
-            boundaries.push_back(
-                BoundaryRecord{
+            facts.push_back(
+                StatementSemanticFact{
                     .block_index = block_index,
                     .statement_index = stmt_index,
-                    .kind = BoundaryKind::kMayWriteAny,
-                    .affected_slots = {},
+                    .reads_canonical_state = true,
+                    .writes_canonical_state = true,
+                    .write_footprint = CanonicalWriteFootprint::kAll,
+                    .write_targets = {},
+                    .conservative_unknown = false,
                 });
           },
+          // BuiltinCall: runtime modifies canonical container storage.
           [&](const BuiltinCall&) {
-            boundaries.push_back(
-                BoundaryRecord{
+            facts.push_back(
+                StatementSemanticFact{
                     .block_index = block_index,
                     .statement_index = stmt_index,
-                    .kind = BoundaryKind::kMayWriteAny,
-                    .affected_slots = {},
+                    .reads_canonical_state = true,
+                    .writes_canonical_state = true,
+                    .write_footprint = CanonicalWriteFootprint::kAll,
+                    .write_targets = {},
+                    .conservative_unknown = false,
                 });
           },
+          // AssocOp: runtime modifies canonical associative storage.
           [&](const AssocOp&) {
-            boundaries.push_back(
-                BoundaryRecord{
+            facts.push_back(
+                StatementSemanticFact{
                     .block_index = block_index,
                     .statement_index = stmt_index,
-                    .kind = BoundaryKind::kMayWriteAny,
-                    .affected_slots = {},
+                    .reads_canonical_state = true,
+                    .writes_canonical_state = true,
+                    .write_footprint = CanonicalWriteFootprint::kAll,
+                    .write_targets = {},
+                    .conservative_unknown = false,
                 });
           },
       },
@@ -555,15 +608,14 @@ auto AnalyzeActivationSegments(const Process& process, const Arena& arena)
     auto segment_blocks = ComputeSegmentBlocks(entry, process.blocks);
 
     std::vector<SlotAccessRecord> accesses;
-    std::vector<BoundaryRecord> boundaries;
+    std::vector<StatementSemanticFact> facts;
     std::vector<ObserverRegistration> observer_regs;
 
     for (uint32_t bi : segment_blocks) {
       const auto& block = process.blocks[bi];
       for (uint32_t si = 0; si < block.statements.size(); ++si) {
         CollectStatementAccesses(block.statements[si], arena, bi, si, accesses);
-        ClassifyStatementBoundary(
-            block.statements[si], arena, bi, si, boundaries);
+        AnalyzeStatementSemantics(block.statements[si], arena, bi, si, facts);
         CollectObserverRegistrations(
             block.statements[si], bi, si, observer_regs);
       }
@@ -573,7 +625,7 @@ auto AnalyzeActivationSegments(const Process& process, const Arena& arena)
         ActivationSegment{
             .entry_block = entry,
             .blocks = std::move(segment_blocks),
-            .boundaries = std::move(boundaries),
+            .semantic_facts = std::move(facts),
             .slot_accesses = std::move(accesses),
             .observer_registrations = std::move(observer_regs),
         });

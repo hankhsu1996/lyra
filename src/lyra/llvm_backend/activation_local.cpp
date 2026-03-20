@@ -2,11 +2,10 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <variant>
 #include <vector>
 
-#include "lyra/common/internal_error.hpp"
-#include "lyra/common/overloaded.hpp"
 #include "lyra/mir/passes/activation_segment_analysis.hpp"
 #include "lyra/mir/terminator.hpp"
 
@@ -25,32 +24,54 @@ auto IsSegmentExitBlock(const mir::BasicBlock& block) -> bool {
       block.terminator.data);
 }
 
-auto TranslateBoundary(const mir::passes::BoundaryRecord& boundary)
-    -> ContractBoundaryAction {
-  switch (boundary.kind) {
-    case mir::passes::BoundaryKind::kObservation:
-      return ContractBoundaryAction{
-          .block_index = boundary.block_index,
-          .statement_index = boundary.statement_index,
-          .action = SyncAction::kSyncManagedToCanonical,
-          .reload_slots = {},
-      };
-    case mir::passes::BoundaryKind::kMayWriteAny:
-      return ContractBoundaryAction{
-          .block_index = boundary.block_index,
-          .statement_index = boundary.statement_index,
-          .action = SyncAction::kSyncManagedAndReloadAllManaged,
-          .reload_slots = {},
-      };
-    case mir::passes::BoundaryKind::kWritebackSpecific:
-      return ContractBoundaryAction{
-          .block_index = boundary.block_index,
-          .statement_index = boundary.statement_index,
-          .action = SyncAction::kSyncManagedAndReloadSpecific,
-          .reload_slots = boundary.affected_slots,
-      };
+// Convert a semantic fact into an activation-local contract decision.
+// This is the only place where sync/reload policy is decided.
+//
+// Rules:
+//   conservative_unknown -> sync before + reload all after
+//   reads_canonical_state -> sync before
+//   writes_canonical_state + kSpecific -> reload specific after
+//   writes_canonical_state + kAll -> reload all after
+//   no canonical interaction -> no contract needed (nullopt)
+//
+// Pre-sync comes from canonical-read dependency or conservative
+// fallback. Canonical writes imply post-reload requirements, not
+// automatic pre-sync.
+auto PlanStatementContract(const mir::passes::StatementSemanticFact& fact)
+    -> std::optional<StatementContractPlan> {
+  using WF = mir::passes::CanonicalWriteFootprint;
+
+  bool sync_before = false;
+  auto reload_after = ReloadScope::kNone;
+  std::vector<mir::SignalRef> reload_targets;
+
+  if (fact.conservative_unknown) {
+    sync_before = true;
+    reload_after = ReloadScope::kAll;
+  } else {
+    sync_before = fact.reads_canonical_state;
+
+    if (fact.writes_canonical_state) {
+      if (fact.write_footprint == WF::kSpecific) {
+        reload_after = ReloadScope::kSpecific;
+        reload_targets = fact.write_targets;
+      } else if (fact.write_footprint == WF::kAll) {
+        reload_after = ReloadScope::kAll;
+      }
+    }
   }
-  throw common::InternalError("TranslateBoundary", "unhandled BoundaryKind");
+
+  if (!sync_before && reload_after == ReloadScope::kNone) {
+    return std::nullopt;
+  }
+
+  return StatementContractPlan{
+      .block_index = fact.block_index,
+      .statement_index = fact.statement_index,
+      .sync_before = sync_before,
+      .reload_after = reload_after,
+      .reload_targets = std::move(reload_targets),
+  };
 }
 
 }  // namespace
@@ -94,13 +115,17 @@ auto BuildProcessActivationPlan(
       }
     }
 
-    // Translate boundary records to contract boundary actions.
-    std::vector<ContractBoundaryAction> boundary_actions;
-    for (const auto& boundary : segment.boundaries) {
-      boundary_actions.push_back(TranslateBoundary(boundary));
+    // Convert semantic facts to contract plans. Only non-empty plans
+    // (those requiring sync or reload) are stored.
+    std::vector<StatementContractPlan> contracts;
+    for (const auto& fact : segment.semantic_facts) {
+      auto plan_entry = PlanStatementContract(fact);
+      if (plan_entry) {
+        contracts.push_back(std::move(*plan_entry));
+      }
     }
 
-    std::ranges::sort(boundary_actions, [](const auto& a, const auto& b) {
+    std::ranges::sort(contracts, [](const auto& a, const auto& b) {
       if (a.block_index != b.block_index) return a.block_index < b.block_index;
       return a.statement_index < b.statement_index;
     });
@@ -111,7 +136,7 @@ auto BuildProcessActivationPlan(
             .blocks = segment.blocks,
             .managed_slots = std::move(managed),
             .block_actions = std::move(block_actions),
-            .boundary_actions = std::move(boundary_actions),
+            .statement_contracts = std::move(contracts),
         });
   }
 
