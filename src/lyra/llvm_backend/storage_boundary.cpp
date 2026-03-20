@@ -9,6 +9,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
+#include "lyra/llvm_backend/canonical_plane_write.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -256,34 +257,34 @@ auto EmitPackedToCanonicalBits(
       spec.data);
 }
 
-void EmitStoreFourStateXToCanonical(
+void EmitStoreFourStateX(
     llvm::IRBuilderBase& builder, llvm::Value* slot_ptr, uint32_t bit_width) {
-  auto& ctx = builder.getContext();
-  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
-  uint32_t storage_bits = GetStorageByteSize(bit_width) * 8;
-  auto* lane_ty = llvm::IntegerType::get(ctx, storage_bits);
+  uint32_t lane_bytes = GetStorageByteSize(bit_width);
 
-  builder.CreateStore(llvm::ConstantInt::get(lane_ty, 0), slot_ptr);
+  // Value plane: zero.
+  EmitCanonicalPlaneWrite(
+      builder, slot_ptr, 0,
+      {.kind = PlaneConstantKind::kZero,
+       .semantic_bit_width = bit_width,
+       .storage_byte_size = lane_bytes});
 
-  auto mask = llvm::APInt::getLowBitsSet(storage_bits, bit_width);
-  auto* unk_ptr = builder.CreateGEP(
-      i8_ty, slot_ptr, builder.getInt64(FourStateUnknownLaneOffset(bit_width)),
-      "x_init.unk");
-  builder.CreateStore(llvm::ConstantInt::get(lane_ty, mask), unk_ptr);
+  // Unknown plane: low-bits-set mask (X-encoding).
+  EmitCanonicalPlaneWrite(
+      builder, slot_ptr, FourStateUnknownLaneOffset(bit_width),
+      {.kind = PlaneConstantKind::kLowBitsSetMask,
+       .semantic_bit_width = bit_width,
+       .storage_byte_size = lane_bytes});
 }
 
-void EmitStoreUnknownMaskToCanonical(
+void EmitStoreUnknownMask(
     llvm::IRBuilderBase& builder, llvm::Value* slot_ptr, uint32_t bit_width) {
-  auto& ctx = builder.getContext();
-  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
-  uint32_t storage_bits = GetStorageByteSize(bit_width) * 8;
-  auto* lane_ty = llvm::IntegerType::get(ctx, storage_bits);
+  uint32_t lane_bytes = GetStorageByteSize(bit_width);
 
-  auto mask = llvm::APInt::getLowBitsSet(storage_bits, bit_width);
-  auto* unk_ptr = builder.CreateGEP(
-      i8_ty, slot_ptr, builder.getInt64(FourStateUnknownLaneOffset(bit_width)),
-      "unk_init");
-  builder.CreateStore(llvm::ConstantInt::get(lane_ty, mask), unk_ptr);
+  EmitCanonicalPlaneWrite(
+      builder, slot_ptr, FourStateUnknownLaneOffset(bit_width),
+      {.kind = PlaneConstantKind::kLowBitsSetMask,
+       .semantic_bit_width = bit_width,
+       .storage_byte_size = lane_bytes});
 }
 
 auto EmitLoadFourStateFromCanonical(

@@ -16,7 +16,6 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/storage_boundary.hpp"
@@ -31,9 +30,9 @@ namespace {
 // ~24 IR lines (3 per element) vs ~37 for a loop, and avoids 4 basic blocks.
 constexpr uint32_t kSmallArrayUnrollThreshold = 8;
 
-// Delegates to shared canonical storage helper.
-void EmitStoreFourStateX(Context& ctx, llvm::Value* ptr, uint32_t bit_width) {
-  EmitStoreFourStateXToCanonical(ctx.GetBuilder(), ptr, bit_width);
+// Delegates to shared storage helper.
+void EmitFourStateXInit(Context& ctx, llvm::Value* ptr, uint32_t bit_width) {
+  EmitStoreFourStateX(ctx.GetBuilder(), ptr, bit_width);
 }
 
 // Local helper that forwards to the public EmitMemsetZero.
@@ -56,9 +55,9 @@ void EmitSVDefaultInitImpl(
       uint32_t bit_width = type.AsIntegral().bit_width;
       if (ctx.IsPackedFourState(type)) {
         if (already_zeroed) {
-          EmitStoreUnknownMaskToCanonical(builder, ptr, bit_width);
+          EmitStoreUnknownMask(builder, ptr, bit_width);
         } else {
-          EmitStoreFourStateX(ctx, ptr, bit_width);
+          EmitFourStateXInit(ctx, ptr, bit_width);
         }
       } else {
         // 2-state: store zero (skip if already zeroed)
@@ -114,9 +113,9 @@ void EmitSVDefaultInitImpl(
       if (ctx.IsPackedFourState(type)) {
         // 4-state packed: write X encoding using canonical storage layout.
         if (already_zeroed) {
-          EmitStoreUnknownMaskToCanonical(builder, ptr, width);
+          EmitStoreUnknownMask(builder, ptr, width);
         } else {
-          EmitStoreFourStateX(ctx, ptr, width);
+          EmitFourStateXInit(ctx, ptr, width);
         }
       } else {
         // 2-state packed: store zero (skip if already zeroed)
@@ -191,7 +190,7 @@ void EmitSVDefaultInitImpl(
           if (elem_type.Kind() == TypeKind::kIntegral &&
               ctx.IsPackedFourState(elem_type)) {
             uint32_t bit_width = elem_type.AsIntegral().bit_width;
-            EmitStoreUnknownMaskToCanonical(builder, elem_ptr, bit_width);
+            EmitStoreUnknownMask(builder, elem_ptr, bit_width);
           } else {
             // Nested type containing 4-state
             EmitSVDefaultInitImpl(ctx, elem_ptr, info.element_type, true);
@@ -231,7 +230,7 @@ void EmitSVDefaultInitImpl(
       if (elem_type.Kind() == TypeKind::kIntegral &&
           ctx.IsPackedFourState(elem_type)) {
         uint32_t bit_width = elem_type.AsIntegral().bit_width;
-        EmitStoreUnknownMaskToCanonical(builder, elem_ptr, bit_width);
+        EmitStoreUnknownMask(builder, elem_ptr, bit_width);
       } else {
         // Nested type containing 4-state (struct/array with 4-state fields).
         // Recursive call with already_zeroed=true since we already memset'd
