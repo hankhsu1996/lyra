@@ -1,6 +1,6 @@
 # Runtime Performance
 
-> **Queue rules.** Checkboxes at top for progress. Unchecked = gap. Finished items: remove the section, keep one checked line. No code in items (no function names, variable names, snippets). Items describe what the gap is, where to look, and why it matters -- enough to re-investigate from scratch. Investigation logs and design details belong in conversation history, not here.
+> **Queue rules.** Checkboxes at top for progress. Unchecked = gap. Finished items: remove the section, keep one checked line. Every unchecked item must have a short tag/ID for tracking (e.g. G14, CQ1). Each item should be independently addressable -- it can be investigated and landed as a standalone change. No code in items (no function names, variable names, snippets). Items describe what the gap is, where to look, and why it matters -- enough to re-investigate from scratch. Investigation logs and design details belong in conversation history, not here.
 
 Canonical working queue for closing the simulation performance gap between Lyra and Verilator.
 
@@ -32,39 +32,63 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 - [x] Packed storage view Stage 1: byte-addressable localized read
 - [x] Packed storage view Stage 2: byte-addressable localized immediate write (benchmark pending)
 - [x] Packed storage view Stage 3: localized deferred/NBA write (#585)
-- [ ] Packed storage view Stage 4: whole-value materialization boundary
+- [ ] PSV4: Packed storage view whole-value materialization boundary
+- [ ] CQ1: Packed storage view bulk init lowering quality
+- [ ] CQ2: Packed storage view 2-state unknown-plane elision
+- [ ] CQ3: Packed storage view deferred-notification dead code elision
 - [x] Commit-boundary model: visibility/commit boundary definition
 - [x] Commit-boundary model: multi-segment activation-local support
-- [ ] Commit-boundary model: boundary taxonomy refinement
-- [ ] Commit-boundary model: region-local read/write/observation analysis
-- [ ] Commit-boundary model: delayed-commit register promotion
+- [ ] CB1: Facts-to-contract model for activation-local statements
+- [ ] CB2: Region-local canonical dependency analysis
+- [ ] CB3: Commit-boundary model delayed-commit register promotion
 - [ ] G14: NBA arena (bump-allocator for value/mask bytes)
 - [ ] G5 remaining: RangeSet linear scan + ClearDelta per-region reset
-- [ ] Signal flush helpers optimization
+- [ ] G15: Signal flush helpers
 - [ ] G4b: Per-activation atomic stores (conditional on signal handler)
-- [ ] Runtime work elimination (slot/connection/comb fusion)
+- [ ] G16: Runtime work elimination
+- [ ] CQ4: Place-based value materialization overhead
 
 ## Active Gaps
 
-### Commit-boundary model: boundary taxonomy refinement
+### CB1: Facts-to-contract model for activation-local statements
 
-The v1 boundary model collapses two different concepts into kObservation: read-only external observation (e.g. $display reads format args) and notification-visible publication (module-slot write emits dirty-mark that triggers runtime subscriptions). These are not the same thing. A $display reads but does not trigger subscriptions. A module-slot write does not read managed slots but its dirty-mark can synchronously expose them through subscriber callbacks.
+Replace the taxonomy-centered activation-local boundary model (BoundaryKind -> TranslateBoundary -> SyncAction) with a facts-to-contract pipeline. Semantic analysis produces factual descriptions of each statement's canonical-state interaction relevant to managed coherence. Contract planning converts those facts into sync/reload decisions. Executor consumes the decisions mechanically.
 
-The v1 fix treats all module-slot writes as kObservation boundaries, which is correct but overly conservative. It forces a sync before every non-managed module-slot write, even when no managed slot has been modified since the last sync. The clean model should distinguish notification-publication boundaries from read-only observation boundaries, so the contract can decide whether sync is actually needed based on the managed-slot dirty state.
+The v1 model used a vague kObservation bucket that drifted from its real correctness requirements: display effects, module-slot assigns, and file I/O were all classified as observation boundaries requiring pre-sync, even though they do not interact with canonical storage in a way that affects managed-shadow coherence. The facts model eliminates these unnecessary syncs.
 
-### Commit-boundary model: region-local read/write/observation analysis
+Adjacent fix: the runtime flush architecture had a hidden cross-slot ordering dependency between rebind watchers and edge evaluation. When a rebind dependency slot and its target slot became dirty in the same pass, flush order determined whether the edge trigger evaluated at the stale or updated observation point. Fixed by splitting FlushSignalUpdates into two global phases: rebind first, then edge/change/container. This makes the flush order-independent and removes a correctness constraint that was previously masked by the old per-statement sync.
 
-Analysis facts for the region between commit boundaries. Not just which roots become dirty, but which slot-backed values are read, written, or potentially observed inside the region. This is the proof that tells us whether a slot-backed scalar is safe to keep as local temporary state until the next commit boundary. The current deferred-notification analysis tracks notified roots (write set) but not the read set or observation set. Must be specialization-local.
+### CB2: Region-local canonical dependency analysis
 
-### Commit-boundary model: delayed-commit register promotion
+Per-region analysis of which managed slots have been modified since the last sync. This is the proof that tells the contract planner whether a sync can be skipped for a specific managed slot at a given contract point. The current model syncs all managed slots at every contract point; CB2 would allow skipping sync for slots whose shadow has not been modified. Must be specialization-local.
+
+### CB3: Commit-boundary model delayed-commit register promotion
 
 Keep eligible slot-backed scalars in registers across a region, commit back to slot storage only at required boundaries. This is the downstream optimization that uses the commit-boundary definition and region-local analysis. It is not the first thing to build.
 
-### Packed storage view Stage 4: whole-value materialization boundary
+### PSV4: Packed storage view whole-value materialization boundary
 
 Whole-value packed stores (initialization, direct assignment) still go through the old commit path outside the packed storage view module. The architecture goal is to route all packed storage access through the module -- localized subview access for element operations, explicit materialization boundary for whole-value operations.
 
 See the commit layer for packed values and the stubs in the packed storage view module. Callers include init effects and array/struct initialization in the type ops layer.
+
+### CQ1: Packed storage view bulk init lowering quality
+
+Whole-value packed zero-initialization emits a single LLVM integer store (e.g. a 65536-bit integer zero) instead of a memset intrinsic. LLVM's backend unrolls this into hundreds of vector store instructions (~256 vmovups for an 8KB array), consuming instruction cache and producing a large code footprint for a single zero-fill. The issue is that the alloca for the canonical buffer is typed as a large integer rather than a byte array, which prevents LLVM from recognizing it as a bulk memory operation.
+
+The fix is to ensure the canonical buffer alloca is typed as a byte array and the zero-fill is emitted as a memset intrinsic that LLVM can lower to an efficient loop or rep-stos sequence. Look at the packed commit layer where canonical buffers are allocated and zero-initialized for aggregate stores.
+
+### CQ2: Packed storage view 2-state unknown-plane elision
+
+Per-element packed array writes unconditionally store to the unknown (X/Z) plane even when the RHS is provably 2-state (no unknown bits). In the packed-array-write benchmark, every inner-loop iteration writes a constant zero to the unknown plane alongside the value plane write. This doubles memory bandwidth for the hot loop.
+
+The packed storage view byte-addressable store path checks whether the storage is 4-state but does not check whether the specific RHS value has unknown bits. When the RHS unknown component is null (provably 2-state), the unknown-plane load, store, and compare should all be skipped. Look at the byte-addressable store function in the packed storage view module.
+
+### CQ3: Packed storage view deferred-notification dead code elision
+
+Per-element packed array writes compute a change-detection predicate (load old value, compare with new value) even when dirty notification is deferred to a loop-exit edge. The predicate is never used -- the deferred notification path returns early without consuming it. LLVM's dead code elimination removes the compare instructions from native code, so there is no runtime cost, but the unnecessary IR instructions increase IR size and optimization time.
+
+The fix is to skip change-detection computation when the notification policy is deferred. The notification deferral flag is available at the store call site but is not checked before emitting the compare sequence. Look at the byte-addressable store function and the notification dispatch in the packed storage view module.
 
 ### G14: NBA arena
 
@@ -74,15 +98,23 @@ Replace per-entry heap allocation for NBA value/mask bytes with a bump-allocator
 
 RangeSet linear scan is 10% on fanout-comb (many sub-slot dirty ranges, 0% on clock-pipeline which uses full-slot marks only). ClearDelta resets per-slot vectors on every region boundary (3% on clock-pipeline).
 
-### Signal flush helpers
+### G15: Signal flush helpers
 
 Per-slot flush functions are 2-12% depending on fixture. Possible inlining or specialization of the hot flush path.
 
-### Runtime work elimination
+### G16: Runtime work elimination
 
 Many runtime slots, connections, and comb kernels exist because the lowering materializes every SV semantic object with full signal/subscriber/dirty-tracking identity. A large fraction is pure dataflow that could be fused or eliminated. This is the strategic direction for multi-x wins beyond per-component optimization.
 
 Categories: subscriber-free internal nets, port-forwarding copy chains, trivial comb fusion into consuming processes, lowering-level dataflow compilation.
+
+### CQ4: Place-based value materialization overhead
+
+The MIR-to-LLVM lowering materializes every intermediate value through stack-allocated places (allocas). Simple operations like loop counter increments produce chains of load-store-load-store through multiple intermediate places. Similarly, boolean comparison results are extended to storage width and then re-narrowed to i1 for branch conditions, producing redundant zext/icmp sequences.
+
+LLVM's mem2reg and instcombine passes fully clean up both patterns -- native code shows tight loops with values in registers and direct branches. There is no runtime cost. However, the excessive IR increases LLVM optimization time and makes unoptimized IR dumps harder to read for debugging.
+
+The root cause is that the lowering always routes through place-backed storage rather than keeping pure SSA values in registers when the value has no storage identity (temporaries, comparison results, loop counters). A value-mode lowering path for expressions that do not need place-backed storage would produce cleaner IR.
 
 ## Closed Investigations
 

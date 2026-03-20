@@ -12,7 +12,6 @@
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
-#include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/index_plan.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/update_set.hpp"
@@ -274,7 +273,7 @@ void Engine::FlushContainerSub(
   }
 
   // Element is in range.
-  if (!(sub.flags & kSubActive)) {
+  if ((sub.flags & kSubActive) == 0) {
     // Was inactive, now in-range: reactivate, capture snapshot, no edge.
     sub.flags |= kSubActive;
     cold.container_epoch = arr->epoch;
@@ -365,7 +364,7 @@ void Engine::FlushSlotEdgeGroups(
         (current_bit != 0) ? group.posedge_subs : group.negedge_subs;
 
     for (auto& sub : wake_subs) {
-      if (!(sub.flags & kSubActive)) continue;
+      if ((sub.flags & kSubActive) == 0) continue;
       if (detailed) ++stats_.detailed.edge_sub_checks;
       if (detailed) ++stats_.detailed.edge_sub_wakeups;
       EnqueueProcessWakeup(
@@ -385,7 +384,7 @@ void Engine::FlushSlotChangeSubs(
   const bool detailed = detailed_stats_enabled_;
 
   for (auto& sub : subs) {
-    if (!(sub.flags & kSubActive)) continue;
+    if ((sub.flags & kSubActive) == 0) continue;
     if (mode == RangeFilterMode::kPartial &&
         !dirty_ranges.Overlaps(sub.byte_offset, sub.byte_size))
       continue;
@@ -420,16 +419,12 @@ void Engine::FlushSlotContainerSubs(
   }
 }
 
-void Engine::FlushDirtySlot(
+// Flush edge, change, and container subscriptions for one slot.
+// Rebind subscriptions are handled in the global rebind phase and
+// must not be repeated here.
+void Engine::FlushDirtySlotPostRebind(
     uint32_t slot_id, SlotSubscriptions& slot, const SlotMeta& meta,
     std::span<const uint8_t> design_state) {
-  // Phase ordering contract:
-  //   1. Rebind  -- must precede edge (rebind updates observation point)
-  //   2. Edge    -- group-level direction-aware dispatch
-  //   3. Change  -- range-filtered, wakes on byte-level value change
-  //   4. Container -- independent, unfiltered (heap-chasing comparison)
-  FlushSlotRebindSubs(slot.rebind_subs, meta, design_state);
-
   if (!slot.edge_groups.empty() || !slot.change_subs.empty()) {
     const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
     if (dirty_ranges.IsFullExtent()) {
@@ -475,14 +470,38 @@ void Engine::FlushSignalUpdates() {
       static_cast<const uint8_t*>(design_state_base_),
       slot_meta_registry_.MaxExtent());
 
+  // Two-phase flush: rebinds globally first, then edge/change/container.
+  //
+  // Phase 1: flush all rebind subscriptions across all dirty slots.
+  // Rebind watchers update observation points (e.g., which bit of a
+  // target slot an edge trigger watches). This must complete globally
+  // before any edge evaluation, because a dependency slot (e.g., a
+  // dynamic index) and its target slot (e.g., a bus) may both be dirty
+  // in the same pass. If the target were flushed before the dependency,
+  // the edge trigger would evaluate at the stale observation point.
+  //
+  // Load-bearing invariant: FlushSlotRebindSubs must only update
+  // observation points (cold state, bit targets, snapshot bytes).
+  // It must not trigger edge/change/container dispatch or add new
+  // dirty slots. If rebind handling ever gains side effects that
+  // require dispatch, the phase split must be revisited.
+  for (uint32_t slot_id : newly_dirty) {
+    auto& slot = signal_subs_[slot_id];
+    if (slot.rebind_subs.empty()) continue;
+    const auto& meta = slot_meta_registry_.Get(slot_id);
+    FlushSlotRebindSubs(slot.rebind_subs, meta, design_state);
+  }
+
+  // Phase 2: flush edge, change, and container subscriptions.
+  // All rebind observation points are now up-to-date.
   for (uint32_t slot_id : newly_dirty) {
     auto& slot = signal_subs_[slot_id];
     if (slot.edge_groups.empty() && slot.change_subs.empty() &&
-        slot.rebind_subs.empty() && slot.container_subs.empty())
+        slot.container_subs.empty())
       continue;
     if (detailed) ++stats_.detailed.flush_dirty_slots;
     const auto& meta = slot_meta_registry_.Get(slot_id);
-    FlushDirtySlot(slot_id, slot, meta, design_state);
+    FlushDirtySlotPostRebind(slot_id, slot, meta, design_state);
   }
 }
 

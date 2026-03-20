@@ -21,17 +21,22 @@ struct ManagedSlotSet {
   std::vector<ManagedSlot> slots;
 };
 
-enum class SyncAction : uint8_t {
-  kSyncManagedToCanonical,
-  kSyncManagedAndReloadAllManaged,
-  kSyncManagedAndReloadSpecific,
+enum class ReloadScope : uint8_t {
+  kNone,
+  kSpecific,
+  kAll,
 };
 
-struct ContractBoundaryAction {
+// Activation-local contract decision for one statement.
+// Produced by contract planning from semantic facts.
+// Consumed mechanically by the executor.
+struct StatementContractPlan {
   uint32_t block_index;
   uint32_t statement_index;
-  SyncAction action;
-  std::vector<mir::SignalRef> reload_slots;
+
+  bool sync_before;
+  ReloadScope reload_after;
+  std::vector<mir::SignalRef> reload_targets;
 };
 
 struct ContractBlockActions {
@@ -48,7 +53,7 @@ struct SegmentContract {
   std::unordered_map<uint32_t, ContractBlockActions> block_actions;
 
   // Sorted by (block_index, statement_index).
-  std::vector<ContractBoundaryAction> boundary_actions;
+  std::vector<StatementContractPlan> statement_contracts;
 };
 
 struct ProcessActivationPlan {

@@ -25,16 +25,16 @@ auto ContractExecutor::FindSegmentIndex(uint32_t block_index) const
   return it->second;
 }
 
-auto ContractExecutor::FindBoundary(
+auto ContractExecutor::FindStatementContract(
     uint32_t block_index, uint32_t statement_index) const
-    -> const ContractBoundaryAction* {
+    -> const StatementContractPlan* {
   auto seg_idx = FindSegmentIndex(block_index);
   if (!seg_idx) return nullptr;
   const auto& seg = plan_.segments[*seg_idx];
-  for (const auto& ba : seg.boundary_actions) {
-    if (ba.block_index == block_index &&
-        ba.statement_index == statement_index) {
-      return &ba;
+  for (const auto& sc : seg.statement_contracts) {
+    if (sc.block_index == block_index &&
+        sc.statement_index == statement_index) {
+      return &sc;
     }
   }
   return nullptr;
@@ -85,32 +85,29 @@ void ContractExecutor::ExecuteBlockEntry(uint32_t block_index) {
 
 void ContractExecutor::ExecutePreStatement(
     uint32_t block_index, uint32_t statement_index) {
-  const auto* boundary = FindBoundary(block_index, statement_index);
-  if (boundary == nullptr) return;
+  const auto* contract = FindStatementContract(block_index, statement_index);
+  if (contract == nullptr) return;
+  if (!contract->sync_before) return;
   auto seg_idx = FindSegmentIndex(block_index);
   if (!seg_idx) return;
-  // Pre-statement: sync managed slots to canonical so the boundary
-  // statement sees up-to-date values.
   GetOrCreateResolver(*seg_idx).SyncToCanonical();
 }
 
 void ContractExecutor::ExecutePostStatement(
     uint32_t block_index, uint32_t statement_index) {
-  const auto* boundary = FindBoundary(block_index, statement_index);
-  if (boundary == nullptr) return;
+  const auto* contract = FindStatementContract(block_index, statement_index);
+  if (contract == nullptr) return;
   auto seg_idx = FindSegmentIndex(block_index);
   if (!seg_idx) return;
-  // Post-statement: reload managed slots from canonical if the
-  // boundary statement may have modified them.
-  switch (boundary->action) {
-    case SyncAction::kSyncManagedToCanonical:
+  switch (contract->reload_after) {
+    case ReloadScope::kNone:
       break;
-    case SyncAction::kSyncManagedAndReloadAllManaged:
-      GetOrCreateResolver(*seg_idx).SeedFromCanonical();
-      break;
-    case SyncAction::kSyncManagedAndReloadSpecific:
+    case ReloadScope::kSpecific:
       GetOrCreateResolver(*seg_idx).SyncAndReloadSpecific(
-          boundary->reload_slots);
+          contract->reload_targets);
+      break;
+    case ReloadScope::kAll:
+      GetOrCreateResolver(*seg_idx).SeedFromCanonical();
       break;
   }
 }

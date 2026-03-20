@@ -138,10 +138,15 @@ void ActivationLocalSlotAccess::SeedFromCanonical() {
 
 void ActivationLocalSlotAccess::SyncToCanonical() {
   // Two-phase sync: store all managed values to canonical first, then
-  // emit dirty-marks. This ensures all canonical values are up-to-date
-  // before any notification triggers (which may evaluate other slots).
-  // Without this ordering, a dirty-mark on slot A can trigger a
-  // subscription that reads slot B before B is synced.
+  // emit dirty-marks.
+  //
+  // In the current runtime, dirty-marks (LyraMarkDirty) only mark the
+  // update_set and do not trigger synchronous subscriber callbacks.
+  // Subscribers are processed after the process body returns, during
+  // fixpoint propagation. The two-phase ordering is defensive: if the
+  // runtime ever gains synchronous subscriber dispatch, this ordering
+  // ensures all canonical values are consistent before any dirty-mark
+  // fires.
   auto& builder = ctx_.GetBuilder();
 
   // Phase 1: store all managed slot values to canonical memory.
