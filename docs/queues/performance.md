@@ -102,6 +102,10 @@ RangeSet linear scan is 10% on fanout-comb (many sub-slot dirty ranges, 0% on cl
 
 Per-slot flush functions are 2-12% depending on fixture. Possible inlining or specialization of the hot flush path.
 
+### G4b: Per-activation atomic stores
+
+Every process activation writes several atomic stores (phase, activation sequence, current process ID) for the signal-handler crash dump path. These are memory-order-release stores on every dispatch and return, adding per-activation overhead even when no signal handler is installed. Conditional on whether a signal handler is registered, these could be skipped entirely or downgraded to plain stores.
+
 ### G16: Runtime work elimination
 
 Many runtime slots, connections, and comb kernels exist because the lowering materializes every SV semantic object with full signal/subscriber/dirty-tracking identity. A large fraction is pure dataflow that could be fused or eliminated. This is the strategic direction for multi-x wins beyond per-component optimization.
@@ -132,16 +136,21 @@ All measurements use `-c opt` callgrind on AOT binary. See `docs/profiling.md` f
 
 ### Fixtures
 
-| Fixture              | Family     | Parameters                 |
-| -------------------- | ---------- | -------------------------- |
-| unpacked-array-read  | storage    | 32768 elements, 4096 iters |
-| unpacked-array-write | storage    | 32768 elements, 4096 iters |
-| clock-pipeline       | scheduling | 8-stage pipe, 500K cycles  |
-| fanout-comb          | scheduling | 64-way fanout, 500K cycles |
-| nba-heavy            | scheduling | 32 regs, 500K cycles       |
-| edge-sub-dense       | scheduling | 128 procs, 500K cycles     |
+| Fixture              | Family     | Parameters                       |
+| -------------------- | ---------- | -------------------------------- |
+| unpacked-array-read  | storage    | 32768 elements, 4096 iters       |
+| unpacked-array-write | storage    | 32768 elements, 4096 iters       |
+| clock-pipeline       | scheduling | 8-stage pipe, 500K cycles        |
+| fanout-comb          | scheduling | 64-way fanout, 500K cycles       |
+| nba-heavy            | scheduling | 32 regs, 500K cycles             |
+| edge-sub-dense       | scheduling | 128 procs, 500K cycles           |
+| delta-converge       | scheduling | 32-stage comb chain, 500K cycles |
+| change-sub-dense     | scheduling | 128 observers, 500K cycles       |
+| sparse-wakeup        | scheduling | 256 regs, 500K cycles            |
 
 ### Baselines (post split-init-codegen PR #565, 2026-03-16)
+
+delta-converge, change-sub-dense, and sparse-wakeup need callgrind profiling to establish baselines.
 
 | Fixture        | Total Ir | Top self-cost categories                                          |
 | -------------- | -------- | ----------------------------------------------------------------- |

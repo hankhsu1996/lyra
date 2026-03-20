@@ -145,16 +145,10 @@ void InitializeProcessState(
     const ProcessLayout& proc_layout, size_t process_index) {
   auto& builder = context.GetBuilder();
   auto* state_type = proc_layout.state_type;
-  auto* header_type = context.GetHeaderType();
   bool force_two_state = context.IsForceTwoState();
 
   EmitMemsetZero(context, process_state, state_type);
-
-  using F = lyra::runtime::ProcessFrameHeaderField;
-  auto* header_ptr = builder.CreateStructGEP(state_type, process_state, 0);
-  auto* design_ptr_ptr =
-      builder.CreateStructGEP(header_type, header_ptr, F::kDesignPtr);
-  builder.CreateStore(design_state, design_ptr_ptr);
+  context.EmitStoreDesignPtr(process_state, design_state);
 
   if (force_two_state) return;
 
@@ -401,9 +395,8 @@ auto ComputePackedProcessLayout(
 }
 
 auto EmitPackedStateInit(
-    Context& context, llvm::Function* main_func, llvm::Value* design_state,
-    const Layout& layout, const PackedProcessLayout& packed_layout)
-    -> llvm::Value* {
+    Context& context, llvm::Function* main_func, const Layout& layout,
+    const PackedProcessLayout& packed_layout) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
@@ -411,7 +404,6 @@ auto EmitPackedStateInit(
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(ctx);
-  const auto& dl = mod.getDataLayout();
   bool force_two_state = context.IsForceTwoState();
   uint32_t count = packed_layout.count;
 
@@ -442,14 +434,9 @@ auto EmitPackedStateInit(
       "__lyra_proc_offsets");
   offsets_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
-  auto* header_llvm_type = context.GetHeaderType();
-  const llvm::StructLayout* hdr_sl = dl.getStructLayout(header_llvm_type);
-  using F = lyra::runtime::ProcessFrameHeaderField;
-  uint64_t design_ptr_offset_in_header =
-      hdr_sl->getElementOffset(F::kDesignPtr);
-
-  // Emit loop: write design_state pointer into each header and store
-  // process state pointer into states_array.
+  // Emit loop: materialize state pointers into states_array.
+  // Simulation-header binding (including design_ptr) is not written here;
+  // runtime owns all persistent simulation-process header initialization.
   auto* proc_loop_preheader = builder.GetInsertBlock();
   auto* proc_loop_header =
       llvm::BasicBlock::Create(ctx, "proc_init_header", main_func);
@@ -472,9 +459,6 @@ auto EmitPackedStateInit(
       offset_array_type, offsets_global, {builder.getInt32(0), proc_phi});
   auto* offset_val = builder.CreateLoad(i64_ty, offset_ptr);
   auto* state_ptr = builder.CreateGEP(i8_ty, packed_states, {offset_val});
-  auto* design_ptr_loc = builder.CreateGEP(
-      i8_ty, state_ptr, {builder.getInt64(design_ptr_offset_in_header)});
-  builder.CreateStore(design_state, design_ptr_loc);
   auto* state_slot = builder.CreateGEP(ptr_ty, states_array, {proc_phi});
   builder.CreateStore(state_ptr, state_slot);
 
@@ -743,7 +727,8 @@ auto BuildRuntimeAbi(
     Context& context, const MetadataGlobals& meta_globals,
     const WaitSiteMetaResult& wait_site_meta,
     const DescriptorTableResult& desc_table, uint32_t feature_flags,
-    const std::string& signal_trace_path) -> llvm::Value* {
+    const std::string& signal_trace_path, llvm::Value* design_state)
+    -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -751,14 +736,13 @@ auto BuildRuntimeAbi(
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
-  // v8: comb_funcs/num_comb_funcs removed (were fields 18-19).
-  // Field indices shifted accordingly.
-  constexpr unsigned kAbiFieldCount = 28;
+  // v9: added design_state (field 28).
+  constexpr unsigned kAbiFieldCount = 29;
   std::array<llvm::Type*, kAbiFieldCount> abi_fields = {
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-      i32_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-      i32_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty,
+      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty,
+      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty,
+      i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty,
   };
   auto* abi_struct_type = llvm::StructType::get(ctx, abi_fields, false);
 
@@ -822,6 +806,9 @@ auto BuildRuntimeAbi(
   store_field(25, desc_table.table_ptr);
   store_field(26, llvm::ConstantInt::get(i32_ty, desc_table.count));
   store_field(27, llvm::ConstantInt::get(i32_ty, desc_table.num_standalone));
+
+  // Design-state binding (source of truth for persistent header design_ptr)
+  store_field(28, design_state);
 
   return abi_alloca;
 }
@@ -918,8 +905,8 @@ auto EmitDesignMain(
     auto packed_layout = ComputePackedProcessLayout(
         context, layout, process_funcs, num_init, dl);
 
-    auto* states_array = EmitPackedStateInit(
-        context, main_func, design_state, layout, packed_layout);
+    auto* states_array =
+        EmitPackedStateInit(context, main_func, layout, packed_layout);
 
     auto* funcs_array = EmitProcessFuncArray(
         context, process_funcs, num_init, packed_layout.count);
@@ -952,7 +939,7 @@ auto EmitDesignMain(
 
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, desc_table, input.feature_flags,
-        input.signal_trace_path);
+        input.signal_trace_path, design_state);
 
     EmitRunSimulation(
         context, funcs_array, states_array, packed_layout.count, plusargs,

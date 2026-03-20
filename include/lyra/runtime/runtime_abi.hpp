@@ -18,7 +18,10 @@
 //      via descriptor resolution). Shared body ABI narrowed to 2-arg
 //      (frame, resume). Descriptor shared_body pointers now point to
 //      2-arg shared body functions.
-inline constexpr uint32_t kRuntimeAbiVersion = 8;
+//   9: Added design_state. Runtime owns all persistent simulation-process
+//      header binding initialization. Codegen no longer writes design_ptr
+//      into simulation-process headers.
+inline constexpr uint32_t kRuntimeAbiVersion = 9;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -68,12 +71,18 @@ struct LyraRuntimeAbi {
   const void* process_descriptors;
   uint32_t num_process_descriptors;
   uint32_t num_standalone_processes;
+
+  // Source of truth for design-state binding. Runtime uses this to populate
+  // design_ptr in all persistent simulation-process headers. Per-header
+  // design_ptr is runtime-populated cached binding derived from this field.
+  void* design_state;
 };
 
 // Hard size/offset contract. If the struct layout changes (fields added,
 // removed, or reordered), these assertions fail at compile time rather
 // than manifesting as runtime SIGILL in AOT binaries.
-static_assert(sizeof(LyraRuntimeAbi) == 208);
+static_assert(sizeof(LyraRuntimeAbi) == 216);
 static_assert(offsetof(LyraRuntimeAbi, version) == 0);
 static_assert(offsetof(LyraRuntimeAbi, process_descriptors) == 192);
 static_assert(offsetof(LyraRuntimeAbi, num_standalone_processes) == 204);
+static_assert(offsetof(LyraRuntimeAbi, design_state) == 208);

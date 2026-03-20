@@ -29,8 +29,8 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
   - [x] G0 -- Investigation and documentation of instance-shaped LLVM artifacts
   - [x] G1 -- Migrate process dispatch from per-instance wrappers to descriptor-driven dispatch
   - [x] G2 -- Migrate comb dispatch off per-instance LLVM wrappers
-    - [ ] G2 follow-up: frame/header access abstraction (helper API for GEP+load)
-    - [ ] G2 follow-up: design_ptr init ownership unification
+    - [x] G2 follow-up: canonical header-access layer
+    - [x] G2 follow-up: runtime-owned simulation-header binding initialization
   - [ ] G3 -- Move unstable-offset realization out of LLVM globals into constructor/runtime-owned data
   - [ ] G4 -- Remove remaining instance-shaped LLVM residue and re-validate scaling
 - [ ] F1 -- Parallel specialization compilation
@@ -102,21 +102,13 @@ Canonical contracts: `process_frame.hpp` (ProcessFrameHeader, field indices), `p
 
 **Completion means**: Re-running the module-count and generate-expand compile benchmarks shows LLVM instruction count and compile time are flat across instance count changes. Only realization/construction time scales with instances.
 
-### G2 follow-up: frame/header access abstraction
+### G2 follow-up: canonical header-access layer (done)
 
-**Current state**: Frame header field access is canonical (ProcessFrameHeaderField constants used everywhere), but each codegen call site still does raw GEP + load. Runtime access uses struct member access (clean). The boundary contract is hardened with sizeof/offsetof assertions.
+All typed process-header field access in the llvm backend now goes through semantic accessors on Context (EmitLoadEnginePtr, EmitLoadDesignPtr, etc.). One private low-level GEP helper owns the header-field navigation. Callers no longer pass raw field indices or choose LLVM result types.
 
-**Deferred**: A higher-level helper API for frame header reads/writes (e.g., `EmitLoadFromHeader(context, field)`) that would centralize all GEP + load patterns into one place. The current approach is safe because all GEP indices use the shared constants, but a helper layer would make the contract even harder to misuse.
+### G2 follow-up: runtime-owned simulation-header binding initialization (done)
 
-**Why acceptable now**: All field indices are canonical constants. Adding a helper layer is a convenience improvement, not a correctness gap. The binary contract is enforced by hard assertions in process_frame.hpp.
-
-### G2 follow-up: design_ptr init ownership unification
-
-**Current state**: design_ptr is written by codegen during process state initialization because init processes need it before the runtime exists. All other frame header binding fields are runtime-init from descriptors. This split is documented as an explicit exception in process_frame.hpp.
-
-**Deferred**: Moving design_ptr population to runtime init would require restructuring the init process execution model so that design_ptr is available before init processes run without codegen writing it. This may become natural when G4 moves state allocation to the runtime constructor.
-
-**Why acceptable now**: The split is documented, the exception is small (one field), and it does not violate the architectural story that frame headers carry realized binding. design_ptr is not instance-specific -- it is the same for all processes.
+Runtime is the sole initializer of all persistent simulation-process header binding fields. ABI v9 added design_state as the source of truth. Per-header design_ptr is runtime-populated cached binding. Codegen writes design_ptr only for ephemeral init-process stack headers (codegen-private memory, not part of persistent runtime state). Codegen no longer writes binding fields into simulation-process headers.
 
 ## F1: Parallel specialization compilation
 
