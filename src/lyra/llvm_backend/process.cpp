@@ -2692,12 +2692,11 @@ auto EmitMonitorSetupEpilogue(
 
   // Call LyraMonitorRegister(engine, check_fn, design,
   //                          this_ptr, instance_id, signal_id_offset,
-  //                          unstable_offsets, init_buf, size)
+  //                          init_buf, size)
   builder.CreateCall(
       context.GetLyraMonitorRegister(),
       {engine_ptr, check_fn, design_ptr, obs_fields.this_ptr,
-       obs_fields.instance_id, obs_fields.signal_id_offset,
-       obs_fields.unstable_offsets, init_buf,
+       obs_fields.instance_id, obs_fields.signal_id_offset, init_buf,
        llvm::ConstantInt::get(i32_ty, layout->total_size)});
 
   return {};
@@ -2798,7 +2797,7 @@ auto DefineMirFunction(
   }
   if (!is_observer && is_module_scoped) {
     const auto& lowering = context.GetModuleFunctionLowering(func_id);
-    context.SetSpecSlotLayout(lowering.spec_slot_layout);
+    context.SetSpecSlotInfo(lowering.spec_slot_info);
 
     auto* this_arg = llvm_func->getArg(arg_offset + 2);
     this_arg->setName("this_ptr");
@@ -2812,12 +2811,8 @@ auto DefineMirFunction(
     instance_id_arg->setName("instance_id");
     context.SetDynamicInstanceId(instance_id_arg);
 
-    auto* unstable_offsets_arg = llvm_func->getArg(arg_offset + 5);
-    unstable_offsets_arg->setName("unstable_offsets");
-    context.SetUnstableSlotOffsetsPtr(unstable_offsets_arg);
-
     context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
-    context_arg_count = 4;
+    context_arg_count = 3;
   }
 
   // Collect all local/temp places referenced in the function

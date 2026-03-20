@@ -426,20 +426,8 @@ auto Context::GetDynamicInstanceId() const -> llvm::Value* {
   return dynamic_instance_id_;
 }
 
-void Context::SetSpecSlotLayout(const SpecSlotLayout* layout) {
-  spec_slot_layout_ = layout;
-}
-
 void Context::SetSpecSlotInfo(const SpecSlotInfo* info) {
   spec_slot_info_ = info;
-}
-
-void Context::SetUnstableSlotOffsetsPtr(llvm::Value* ptr) {
-  unstable_slot_offsets_ptr_ = ptr;
-}
-
-auto Context::GetUnstableSlotOffsetsPtr() const -> llvm::Value* {
-  return unstable_slot_offsets_ptr_;
 }
 
 // Low-level header-field GEP. Returns a pointer to the specified field
@@ -477,14 +465,6 @@ auto Context::EmitLoadThisPtr(llvm::Value* state_arg) -> llvm::Value* {
   auto* ptr = EmitHeaderFieldGep(*this, state_arg, F::kThisPtr, "this_ptr_ptr");
   return builder_.CreateLoad(
       llvm::PointerType::getUnqual(*llvm_context_), ptr, "this_ptr");
-}
-
-auto Context::EmitLoadUnstableOffsets(llvm::Value* state_arg) -> llvm::Value* {
-  using F = lyra::runtime::ProcessFrameHeaderField;
-  auto* ptr = EmitHeaderFieldGep(
-      *this, state_arg, F::kUnstableOffsets, "unstable_offsets_ptr");
-  return builder_.CreateLoad(
-      llvm::PointerType::getUnqual(*llvm_context_), ptr, "unstable_offsets");
 }
 
 auto Context::EmitLoadInstanceId(llvm::Value* state_arg) -> llvm::Value* {
@@ -527,7 +507,6 @@ void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
 
 void Context::EmitSharedBodyBindingSetup(llvm::Value* state_arg) {
   SetThisPointer(EmitLoadThisPtr(state_arg));
-  SetUnstableSlotOffsetsPtr(EmitLoadUnstableOffsets(state_arg));
   SetDynamicInstanceId(EmitLoadInstanceId(state_arg));
   SetSignalIdOffset(EmitLoadSignalIdOffset(state_arg));
 }
@@ -611,8 +590,6 @@ auto Context::SaveExecutionContractState() -> ExecutionContractState {
       .this_ptr = this_ptr_,
       .dynamic_instance_id = dynamic_instance_id_,
       .signal_id_offset = signal_id_offset_,
-      .spec_slot_layout = spec_slot_layout_,
-      .unstable_slot_offsets_ptr = unstable_slot_offsets_ptr_,
   };
 }
 
@@ -629,8 +606,6 @@ void Context::RestoreExecutionContractState(
   this_ptr_ = state.this_ptr;
   dynamic_instance_id_ = state.dynamic_instance_id;
   signal_id_offset_ = state.signal_id_offset;
-  spec_slot_layout_ = state.spec_slot_layout;
-  unstable_slot_offsets_ptr_ = state.unstable_slot_offsets_ptr;
 }
 
 ExecutionContractScope::ExecutionContractScope(
@@ -647,10 +622,8 @@ ExecutionContractScope::ExecutionContractScope(
   ctx.SetThisPointer(nullptr);
   ctx.SetDynamicInstanceId(nullptr);
   ctx.SetSignalIdOffset(nullptr);
-  // spec_slot_layout is NOT reset: it is session-scoped (set by
-  // CompileModuleSpecSession), not per-function. Save/restore handles
-  // cross-session leakage; the constructor must not clear session state.
-  ctx.SetUnstableSlotOffsetsPtr(nullptr);
+  // spec_slot_info is NOT reset: it is session-scoped (set by
+  // CompileModuleSpecSession), not per-function.
 }
 
 ExecutionContractScope::~ExecutionContractScope() {
@@ -796,7 +769,6 @@ auto Context::BuildUserFunctionType(
     param_types.push_back(ptr_ty);  // this_ptr (module instance storage)
     param_types.push_back(i32_ty);  // signal_id_offset
     param_types.push_back(i32_ty);  // instance_id
-    param_types.push_back(ptr_ty);  // unstable_offsets
   }
 
   // Add parameter types from signature

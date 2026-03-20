@@ -382,56 +382,24 @@ auto Context::EmitLoadOwnedDataPtr(llvm::Value* handle_ptr) -> llvm::Value* {
 }
 
 auto Context::GetModuleSlotPointer(uint32_t local_slot_id) -> llvm::Value* {
-  // Owned-container path: load data pointer from inline handle.
-  if (spec_slot_info_ != nullptr &&
-      spec_slot_info_->IsOwnedContainer(local_slot_id)) {
+  // Transitional dispatch. Routes to explicit owned or inline path.
+  // Will be removed when all callers are migrated.
+  if (spec_slot_info_ == nullptr) {
+    throw common::InternalError(
+        "GetModuleSlotPointer", "spec_slot_info not set");
+  }
+  if (local_slot_id >= spec_slot_info_->SlotCount()) {
+    throw common::InternalError(
+        "GetModuleSlotPointer",
+        std::format(
+            "local_slot_id {} out of range (count={})", local_slot_id,
+            spec_slot_info_->SlotCount()));
+  }
+  if (spec_slot_info_->IsOwnedContainer(local_slot_id)) {
     auto* handle_ptr = EmitOwnedHandlePtr(local_slot_id);
     return EmitLoadOwnedDataPtr(handle_ptr);
   }
-
-  // Inline value path (existing stable/unstable logic via spec_slot_layout_).
-  if (this_ptr_ == nullptr) {
-    throw common::InternalError(
-        "GetModuleSlotPointer",
-        "this_ptr not set (module-local access requires shared-body context)");
-  }
-  if (spec_slot_layout_ == nullptr) {
-    throw common::InternalError(
-        "GetModuleSlotPointer",
-        "spec_slot_layout not set (requires specialization-local context)");
-  }
-  if (local_slot_id >= spec_slot_layout_->num_slots) {
-    throw common::InternalError(
-        "GetModuleSlotPointer",
-        std::format(
-            "local_slot_id {} out of range (num_slots={})", local_slot_id,
-            spec_slot_layout_->num_slots));
-  }
-
-  auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
-  if (spec_slot_layout_->IsStable(local_slot_id)) {
-    uint64_t rel_offset = spec_slot_layout_->stable_offsets[local_slot_id];
-    return builder_.CreateGEP(
-        i8_ty, this_ptr_, builder_.getInt64(rel_offset), "module_slot_ptr");
-  }
-
-  // Unstable slot: load offset from per-instance metadata table.
-  if (unstable_slot_offsets_ptr_ == nullptr) {
-    throw common::InternalError(
-        "GetModuleSlotPointer",
-        std::format(
-            "local_slot_id {} is unstable but unstable_slot_offsets_ptr is "
-            "null",
-            local_slot_id));
-  }
-  uint32_t ordinal = spec_slot_layout_->unstable_ordinals[local_slot_id];
-  auto* i64_ty = llvm::Type::getInt64Ty(*llvm_context_);
-  auto* offset_ptr = builder_.CreateGEP(
-      i64_ty, unstable_slot_offsets_ptr_, builder_.getInt32(ordinal),
-      "unstable_offset_ptr");
-  auto* rel_offset =
-      builder_.CreateLoad(i64_ty, offset_ptr, "unstable_rel_offset");
-  return builder_.CreateGEP(i8_ty, this_ptr_, rel_offset, "module_slot_ptr");
+  return EmitInlineSlotPtr(local_slot_id);
 }
 
 auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)

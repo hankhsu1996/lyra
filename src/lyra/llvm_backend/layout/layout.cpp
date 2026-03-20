@@ -1194,12 +1194,11 @@ auto BuildHeaderType(llvm::LLVMContext& ctx, llvm::StructType* suspend_type)
   auto* outcome_ty =
       llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty});
   // { suspend, body, engine_ptr, design_ptr, this_ptr,
-  //   unstable_offsets, instance_id, signal_id_offset, outcome }
+  //   instance_id, signal_id_offset, outcome }
   using F = lyra::runtime::ProcessFrameHeaderField;
   constexpr auto kFieldCount = static_cast<size_t>(F::kFieldCount);
   std::array<llvm::Type*, kFieldCount> fields = {
-      suspend_type, ptr_ty, ptr_ty, ptr_ty,    ptr_ty,
-      ptr_ty,       i32_ty, i32_ty, outcome_ty};
+      suspend_type, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, outcome_ty};
   return llvm::StructType::create(ctx, fields, "ProcessStateHeader");
 }
 

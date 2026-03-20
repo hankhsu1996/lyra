@@ -20,17 +20,15 @@ struct ProcessDescriptorEntry {
   uint64_t base_byte_offset;
   uint32_t instance_id;
   uint32_t signal_id_offset;
-  const uint64_t* unstable_offsets;
 };
 
 static_assert(
-    sizeof(ProcessDescriptorEntry) == 32,
+    sizeof(ProcessDescriptorEntry) == 24,
     "descriptor entry size must match LLVM struct layout");
 static_assert(offsetof(ProcessDescriptorEntry, shared_body) == 0);
 static_assert(offsetof(ProcessDescriptorEntry, base_byte_offset) == 8);
 static_assert(offsetof(ProcessDescriptorEntry, instance_id) == 16);
 static_assert(offsetof(ProcessDescriptorEntry, signal_id_offset) == 20);
-static_assert(offsetof(ProcessDescriptorEntry, unstable_offsets) == 24);
 
 // 2-arg shared body function signature (frame, resume).
 // Instance binding lives in the process frame header, not in the call

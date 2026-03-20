@@ -103,7 +103,6 @@ auto LowerUserCallImpl(
     args.push_back(context.GetThisPointer());
     args.push_back(context.GetSignalIdOffset());
     args.push_back(context.GetDynamicInstanceId());
-    args.push_back(context.GetUnstableSlotOffsetsPtr());
   }
 
   // Build argument list: input values + output/inout destination pointers

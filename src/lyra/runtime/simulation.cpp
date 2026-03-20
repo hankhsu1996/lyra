@@ -413,7 +413,7 @@ void SetupAndRunSimulation(
 // For every process: writes design_ptr (cached binding derived from
 // design_state_base, which is the ABI-level source of truth).
 // For module processes: also writes body, this_ptr, instance_id,
-// signal_id_offset, unstable_offsets from descriptor data.
+// signal_id_offset from descriptor data.
 void InitSimulationProcessBindings(
     std::span<void*> states, void* design_state_base,
     std::span<const ProcessDescriptorEntry> descriptors,
@@ -433,7 +433,6 @@ void InitSimulationProcessBindings(
         static_cast<char*>(design_state_base) + desc.base_byte_offset;
     header->instance_id = desc.instance_id;
     header->signal_id_offset = desc.signal_id_offset;
-    header->unstable_offsets = desc.unstable_offsets;
   }
 }
 
@@ -780,14 +779,12 @@ extern "C" void LyraScheduleNbaCanonicalPacked(
 
 extern "C" void LyraRegisterStrobe(
     void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset,
-    const void* unstable_offsets) {
+    void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
       .instance_id = instance_id,
       .signal_id_offset = signal_id_offset,
-      .unstable_offsets = unstable_offsets,
   };
   engine->RegisterStrobe(program, design_state, ctx);
 }
@@ -915,13 +912,12 @@ extern "C" void LyraReportTime() {
 extern "C" void LyraMonitorRegister(
     void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
     void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset,
-    const void* unstable_offsets, const void* initial_prev, uint32_t size) {
+    const void* initial_prev, uint32_t size) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
       .instance_id = instance_id,
       .signal_id_offset = signal_id_offset,
-      .unstable_offsets = unstable_offsets,
   };
   engine->RegisterMonitor(program, design_state, ctx, initial_prev, size);
 }

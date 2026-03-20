@@ -27,7 +27,7 @@ namespace lyra::runtime {
 //     design_ptr: cached binding derived from ABI design_state (source of
 //       truth). Written by runtime before simulation dispatch.
 //     engine_ptr: written by runtime before simulation dispatch.
-//     body, this_ptr, instance_id, signal_id_offset, unstable_offsets:
+//     body, this_ptr, instance_id, signal_id_offset:
 //       written by runtime from descriptor data.
 //     outcome: live per-call state, written by shared body on every call.
 //
@@ -36,16 +36,15 @@ namespace lyra::runtime {
 // paths (process and comb) read from the header, not from descriptors.
 //
 // For standalone (connection/init) processes, module-process binding
-// fields (body, this_ptr, instance_id, signal_id_offset,
-// unstable_offsets) are null/zero. Standalone processes use the 3-arg
-// LyraProcessFunc path and do not dispatch through shared bodies.
+// fields (body, this_ptr, instance_id, signal_id_offset) are null/zero.
+// Standalone processes use the 3-arg LyraProcessFunc path and do not
+// dispatch through shared bodies.
 struct ProcessFrameHeader {
   SuspendRecord suspend;
   SharedBodyFn body = nullptr;
   void* engine_ptr = nullptr;
   void* design_ptr = nullptr;
   void* this_ptr = nullptr;
-  const uint64_t* unstable_offsets = nullptr;
   uint32_t instance_id = 0;
   uint32_t signal_id_offset = 0;
   ProcessOutcome outcome = {};
@@ -60,11 +59,10 @@ enum class ProcessFrameHeaderField : unsigned {
   kEnginePtr = 2,
   kDesignPtr = 3,
   kThisPtr = 4,
-  kUnstableOffsets = 5,
-  kInstanceId = 6,
-  kSignalIdOffset = 7,
-  kOutcome = 8,
-  kFieldCount = 9,
+  kInstanceId = 5,
+  kSignalIdOffset = 6,
+  kOutcome = 7,
+  kFieldCount = 8,
 };
 
 // Hard binary contract assertions. If the struct layout changes, these
@@ -81,11 +79,8 @@ static_assert(
     offsetof(ProcessFrameHeader, this_ptr) ==
     offsetof(ProcessFrameHeader, design_ptr) + sizeof(void*));
 static_assert(
-    offsetof(ProcessFrameHeader, unstable_offsets) ==
-    offsetof(ProcessFrameHeader, this_ptr) + sizeof(void*));
-static_assert(
     offsetof(ProcessFrameHeader, instance_id) ==
-    offsetof(ProcessFrameHeader, unstable_offsets) + sizeof(const uint64_t*));
+    offsetof(ProcessFrameHeader, this_ptr) + sizeof(void*));
 static_assert(
     offsetof(ProcessFrameHeader, signal_id_offset) ==
     offsetof(ProcessFrameHeader, instance_id) + sizeof(uint32_t));

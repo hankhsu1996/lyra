@@ -619,13 +619,12 @@ auto EmitProcessFuncArray(
 //   field 0: ptr   shared_body       (2-arg shared body function pointer)
 //   field 1: i64   base_byte_offset  (instance base offset in design state)
 //   field 2: i32   instance_id       (module instance index)
-//   field 3: i32   signal_id_offset      (signal ID offset)
-//   field 4: ptr   unstable_offsets  (pointer to unstable offset table or null)
+//   field 3: i32   signal_id_offset  (signal ID offset)
 auto GetDescriptorEntryType(llvm::LLVMContext& ctx) -> llvm::StructType* {
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  return llvm::StructType::get(ctx, {ptr_ty, i64_ty, i32_ty, i32_ty, ptr_ty});
+  return llvm::StructType::get(ctx, {ptr_ty, i64_ty, i32_ty, i32_ty});
 }
 
 struct DescriptorTableResult {
@@ -658,20 +657,16 @@ auto EmitProcessDescriptorTable(
 
   auto* desc_type = GetDescriptorEntryType(ctx);
 
-  auto* null_ptr =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-
   std::vector<llvm::Constant*> entries;
   entries.reserve(count);
   for (const auto& desc : descriptors) {
     entries.push_back(
         llvm::ConstantStruct::get(
-            desc_type, {desc.shared_body,
-                        llvm::ConstantInt::get(i64_ty, desc.base_byte_offset),
-                        llvm::ConstantInt::get(i32_ty, desc.instance_id),
-                        llvm::ConstantInt::get(i32_ty, desc.signal_id_offset),
-                        desc.unstable_offsets != nullptr ? desc.unstable_offsets
-                                                         : null_ptr}));
+            desc_type,
+            {desc.shared_body,
+             llvm::ConstantInt::get(i64_ty, desc.base_byte_offset),
+             llvm::ConstantInt::get(i32_ty, desc.instance_id),
+             llvm::ConstantInt::get(i32_ty, desc.signal_id_offset)}));
   }
 
   auto* array_type = llvm::ArrayType::get(desc_type, count);

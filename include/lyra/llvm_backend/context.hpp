@@ -31,7 +31,6 @@ struct ScopedSlotRef;
 
 namespace lyra::lowering::mir_to_llvm {
 
-struct SpecSlotLayout;
 struct SpecSlotInfo;
 class Context;
 
@@ -121,8 +120,6 @@ struct ExecutionContractState {
   llvm::Value* this_ptr = nullptr;
   llvm::Value* dynamic_instance_id = nullptr;
   llvm::Value* signal_id_offset = nullptr;
-  const SpecSlotLayout* spec_slot_layout = nullptr;
-  llvm::Value* unstable_slot_offsets_ptr = nullptr;
 };
 
 // RAII guard that sets execution-contract state on Context and restores it
@@ -426,10 +423,10 @@ class Context {
   void SetSignalIdOffset(llvm::Value* offset);
   [[nodiscard]] auto GetSignalIdOffset() const -> llvm::Value*;
   [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
-  void SetSpecSlotLayout(const SpecSlotLayout* layout);
   void SetSpecSlotInfo(const SpecSlotInfo* info);
-  void SetUnstableSlotOffsetsPtr(llvm::Value* ptr);
-  [[nodiscard]] auto GetUnstableSlotOffsetsPtr() const -> llvm::Value*;
+  [[nodiscard]] auto GetSpecSlotInfo() const -> const SpecSlotInfo* {
+    return spec_slot_info_;
+  }
 
   // Explicit access APIs for module-local slot pointer formation.
   // Callers must choose the correct API based on the slot's storage shape.
@@ -517,7 +514,6 @@ class Context {
   auto EmitLoadEnginePtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadDesignPtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadThisPtr(llvm::Value* state_arg) -> llvm::Value*;
-  auto EmitLoadUnstableOffsets(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadInstanceId(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadSignalIdOffset(llvm::Value* state_arg) -> llvm::Value*;
   void EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value);
@@ -662,10 +658,10 @@ class Context {
   // received (ObserverContext* vs exploded args) is determined by
   // mir::IsObserverProgram(runtime_kind), not by this struct.
   //
-  // spec_slot_layout is specialization-owned addressing data (owned by
-  // SpecLayout, shared across all instances of the same specialization).
+  // spec_slot_info is specialization-owned addressing data (owned by
+  // SpecSlotInfo, shared across all instances of the same specialization).
   struct ModuleFunctionLowering {
-    const SpecSlotLayout* spec_slot_layout = nullptr;
+    const SpecSlotInfo* spec_slot_info = nullptr;
   };
   void RegisterModuleScopedFunction(
       mir::FunctionId func_id, ModuleFunctionLowering lowering);
@@ -924,9 +920,7 @@ class Context {
   llvm::Value* this_ptr_ = nullptr;
   llvm::Value* dynamic_instance_id_ = nullptr;
   llvm::Value* signal_id_offset_ = nullptr;
-  const SpecSlotLayout* spec_slot_layout_ = nullptr;
   const SpecSlotInfo* spec_slot_info_ = nullptr;
-  llvm::Value* unstable_slot_offsets_ptr_ = nullptr;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();
