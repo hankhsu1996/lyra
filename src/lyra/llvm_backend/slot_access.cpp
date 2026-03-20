@@ -10,9 +10,11 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/place.hpp"
 
@@ -123,11 +125,42 @@ void ActivationLocalSlotAccess::SyncSlot(const ManagedSlotStorage& storage) {
   auto* canonical_ptr = ctx_.GetSignalSlotPointer(storage.slot);
   auto signal_id = ctx_.EmitSignalId(storage.slot);
 
-  // Delegate to the single activation-local flush helper.
-  // This handles store + compare + dirty-mark under the current
-  // DesignStoreMode and NotificationPolicy without duplicating
-  // commit/notification logic here.
-  EmitActivationLocalFlush(ctx_, canonical_ptr, val, signal_id);
+  const auto& types = ctx_.GetTypeArena();
+  const Type& type = types[storage.root_type];
+  auto kind = type.Kind();
+  if (kind == TypeKind::kEnum) {
+    kind = types[type.AsEnum().base_type].Kind();
+  }
+
+  uint32_t semantic_bits = 0;
+  bool is_four_state = false;
+  llvm::Value* store_val = val;
+
+  if (kind == TypeKind::kReal) {
+    semantic_bits = 64;
+    is_four_state = false;
+    store_val = builder.CreateBitCast(
+        val, llvm::Type::getInt64Ty(ctx_.GetLlvmContext()), "sync.as.i64");
+  } else if (kind == TypeKind::kShortReal) {
+    semantic_bits = 32;
+    is_four_state = false;
+    store_val = builder.CreateBitCast(
+        val, llvm::Type::getInt32Ty(ctx_.GetLlvmContext()), "sync.as.i32");
+  } else {
+    semantic_bits = PackedBitWidth(type, types);
+    is_four_state = ctx_.IsPackedFourState(type);
+  }
+
+  auto rvalue =
+      ConvertRawToPackedRValue(ctx_, store_val, semantic_bits, is_four_state);
+  auto view =
+      BuildWholeValueStorageView(ctx_, canonical_ptr, storage.root_type, true);
+  auto policy = BuildStorePolicyFromContext(ctx_, signal_id);
+
+  auto result = StorePackedValue(ctx_, view, rvalue, policy);
+  if (!result) {
+    throw common::InternalError("SyncSlot", "StorePackedValue failed");
+  }
 }
 
 void ActivationLocalSlotAccess::SeedFromCanonical() {
@@ -137,55 +170,8 @@ void ActivationLocalSlotAccess::SeedFromCanonical() {
 }
 
 void ActivationLocalSlotAccess::SyncToCanonical() {
-  // Two-phase sync: store all managed values to canonical first, then
-  // emit dirty-marks.
-  //
-  // In the current runtime, dirty-marks (LyraMarkDirty) only mark the
-  // update_set and do not trigger synchronous subscriber callbacks.
-  // Subscribers are processed after the process body returns, during
-  // fixpoint propagation. The two-phase ordering is defensive: if the
-  // runtime ever gains synchronous subscriber dispatch, this ordering
-  // ensures all canonical values are consistent before any dirty-mark
-  // fires.
-  auto& builder = ctx_.GetBuilder();
-
-  // Phase 1: store all managed slot values to canonical memory.
-  struct SyncEntry {
-    llvm::Value* val;
-    llvm::Value* canonical_ptr;
-    SignalIdExpr signal_id;
-  };
-  std::vector<SyncEntry> entries;
   for (const auto& [id, storage] : managed_) {
-    if (storage.slot.scope != mir::SignalRef::Scope::kModuleLocal) {
-      throw common::InternalError(
-          "SyncToCanonical", "managed slot must be module-local");
-    }
-    auto* llvm_type = storage.alloca_inst->getAllocatedType();
-    auto* val =
-        builder.CreateLoad(llvm_type, storage.alloca_inst, "actlocal.sync");
-    auto* canonical_ptr = ctx_.GetSignalSlotPointer(storage.slot);
-    builder.CreateStore(val, canonical_ptr);
-    entries.push_back(
-        SyncEntry{
-            .val = val,
-            .canonical_ptr = canonical_ptr,
-            .signal_id = ctx_.EmitSignalId(storage.slot),
-        });
-  }
-
-  // Phase 2: emit dirty-marks (all canonical values already up-to-date).
-  if (ctx_.GetDesignStoreMode() == DesignStoreMode::kDirectInit ||
-      ctx_.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
-    return;
-  }
-  auto& llvm_ctx = ctx_.GetLlvmContext();
-  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  for (const auto& entry : entries) {
-    builder.CreateCall(
-        ctx_.GetLyraMarkDirty(),
-        {ctx_.GetEnginePointer(), entry.signal_id.Emit(builder),
-         llvm::ConstantInt::get(i32_ty, 0), llvm::ConstantInt::get(i32_ty, 0)});
+    SyncSlot(storage);
   }
 }
 

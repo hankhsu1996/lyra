@@ -1,8 +1,6 @@
-#include <cstdint>
 #include <optional>
 
 #include <llvm/IR/Constants.h>
-#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Type.h>
 
 #include "lyra/common/internal_error.hpp"
@@ -12,41 +10,6 @@
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
-
-void CommitNotifyUnionMemcpyIfDesignSlot(
-    Context& ctx, mir::PlaceId target, uint32_t byte_size) {
-  // Init contract: no engine, no notification needed.
-  if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) return;
-
-  auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
-  if (!wt_or_err) {
-    throw common::InternalError(
-        "CommitNotifyUnionMemcpyIfDesignSlot",
-        "failed to resolve WriteTarget for target");
-  }
-  const WriteTarget& wt = *wt_or_err;
-
-  // Conditional: no-op if not design slot
-  if (!wt.canonical_signal_id.has_value()) {
-    return;
-  }
-
-  if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
-    throw common::InternalError(
-        "CommitNotifyUnionMemcpyIfDesignSlot",
-        "deferred notification not supported for union memcpy path");
-  }
-
-  auto& builder = ctx.GetBuilder();
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
-  builder.CreateCall(
-      ctx.GetLyraStorePacked(),
-      {ctx.GetEnginePointer(), wt.ptr,
-       wt.ptr,  // For unions, source = target after memcpy
-       llvm::ConstantInt::get(i32_ty, byte_size),
-       wt.canonical_signal_id->Emit(builder), llvm::ConstantInt::get(i32_ty, 0),
-       llvm::ConstantInt::get(i32_ty, 0)});
-}
 
 void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
   // Init contract: no engine, no notification needed.

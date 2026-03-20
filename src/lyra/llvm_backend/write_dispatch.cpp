@@ -13,6 +13,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
+#include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/type_ops/managed.hpp"
 #include "lyra/llvm_backend/write_plan.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -133,7 +134,6 @@ auto EmitUnionMemcpyWrite(
   auto info = GetUnionStorageInfo(ctx, type_id);
   if (!info) return std::unexpected(info.error());
 
-  // Verify source type matches target union type
   TypeId src_type = mir::TypeOfPlace(types, ctx.GetMirArena()[source_place]);
   if (src_type != type_id) {
     throw common::InternalError(
@@ -144,11 +144,50 @@ auto EmitUnionMemcpyWrite(
   auto source_ptr = ctx.GetPlacePointer(source_place);
   if (!source_ptr) return std::unexpected(source_ptr.error());
 
-  builder.CreateMemCpy(
-      *target_ptr, llvm::Align(info->align), *source_ptr,
-      llvm::Align(info->align), info->size);
+  // Determine if post-hoc notification is needed.
+  auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
+  if (!wt_or_err) {
+    throw common::InternalError(
+        "EmitUnionMemcpyWrite", "failed to resolve WriteTarget");
+  }
+  const auto& wt = *wt_or_err;
 
-  CommitNotifyUnionMemcpyIfDesignSlot(ctx, target, info->size);
+  bool needs_notify = wt.canonical_signal_id.has_value() &&
+                      ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit;
+
+  if (needs_notify) {
+    // Snapshot old bytes before memcpy for post-hoc change detection.
+    auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
+    auto* func = builder.GetInsertBlock()->getParent();
+    llvm::IRBuilder<> entry_builder(
+        &func->getEntryBlock(), func->getEntryBlock().begin());
+    auto* buf_ty = llvm::ArrayType::get(i8_ty, info->size);
+    auto* snapshot =
+        entry_builder.CreateAlloca(buf_ty, nullptr, "union.snapshot");
+    builder.CreateMemCpy(
+        snapshot, llvm::Align(1), *target_ptr, llvm::Align(info->align),
+        info->size);
+
+    // Perform the union memcpy.
+    builder.CreateMemCpy(
+        *target_ptr, llvm::Align(info->align), *source_ptr,
+        llvm::Align(info->align), info->size);
+
+    // Post-hoc compare+notify through PSV.
+    auto view = BuildRawBytesStorageView(*target_ptr, info->size);
+    auto policy = BuildStorePolicyFromContext(ctx, wt.canonical_signal_id);
+    auto result = NotifyPackedStorageWritten(ctx, view, snapshot, policy);
+    if (!result) {
+      throw common::InternalError(
+          "EmitUnionMemcpyWrite", "NotifyPackedStorageWritten failed");
+    }
+  } else {
+    // No notification needed: just memcpy.
+    builder.CreateMemCpy(
+        *target_ptr, llvm::Align(info->align), *source_ptr,
+        llvm::Align(info->align), info->size);
+  }
+
   return {};
 }
 
