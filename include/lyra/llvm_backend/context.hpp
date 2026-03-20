@@ -32,6 +32,7 @@ struct ScopedSlotRef;
 namespace lyra::lowering::mir_to_llvm {
 
 struct SpecSlotLayout;
+struct SpecSlotInfo;
 class Context;
 
 // Forward declaration for friend access
@@ -426,17 +427,35 @@ class Context {
   [[nodiscard]] auto GetSignalIdOffset() const -> llvm::Value*;
   [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
   void SetSpecSlotLayout(const SpecSlotLayout* layout);
+  void SetSpecSlotInfo(const SpecSlotInfo* info);
   void SetUnstableSlotOffsetsPtr(llvm::Value* ptr);
   [[nodiscard]] auto GetUnstableSlotOffsetsPtr() const -> llvm::Value*;
 
-  // Explicit address-space APIs for slot pointer formation.
-  // Call sites must choose the correct API based on the resolved root scope.
+  // Explicit access APIs for module-local slot pointer formation.
+  // Callers must choose the correct API based on the slot's storage shape.
 
-  // Module-local storage: this_ptr + rel_byte_offsets[local_slot_id].
-  // Requires module behavioral shared-context state (this_ptr_,
-  // rel_byte_offsets_).
+  // Inline value slot: returns pointer to the slot's value bytes.
+  // this_ptr + inline_offset. For kInlineValue slots only.
+  [[nodiscard]] auto EmitInlineSlotPtr(uint32_t local_slot_id) -> llvm::Value*;
+
+  // Owned handle pointer: returns pointer to the OwnedStorageHandle struct.
+  // this_ptr + inline_offset. For kOwnedContainer slots only.
+  [[nodiscard]] auto EmitOwnedHandlePtr(uint32_t local_slot_id) -> llvm::Value*;
+
+  // Owned data pointer: loads handle.data from the inline handle.
+  // Returns the arena-internal backing-data base pointer.
+  [[nodiscard]] auto EmitLoadOwnedDataPtr(llvm::Value* handle_ptr)
+      -> llvm::Value*;
+
+  // Transitional dispatch: routes to inline or owned path based on shape.
+  // Returns pointer to value bytes (inline) or backing data (owned).
+  // Existing callers use this; new code should call explicit APIs above.
+  // Will be removed when all callers are migrated.
   [[nodiscard]] auto GetModuleSlotPointer(uint32_t local_slot_id)
       -> llvm::Value*;
+
+  // Centralized LLVM type for OwnedStorageHandle: { ptr, i64 }.
+  [[nodiscard]] auto GetOwnedHandleLlvmType() -> llvm::StructType*;
 
   // Design-global storage: design_ptr + struct GEP via field index.
   [[nodiscard]] auto GetDesignGlobalSlotPointer(uint32_t global_slot_id)
@@ -906,6 +925,7 @@ class Context {
   llvm::Value* dynamic_instance_id_ = nullptr;
   llvm::Value* signal_id_offset_ = nullptr;
   const SpecSlotLayout* spec_slot_layout_ = nullptr;
+  const SpecSlotInfo* spec_slot_info_ = nullptr;
   llvm::Value* unstable_slot_offsets_ptr_ = nullptr;
 
   // Current origin for error reporting

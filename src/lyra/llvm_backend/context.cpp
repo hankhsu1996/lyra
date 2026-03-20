@@ -430,6 +430,10 @@ void Context::SetSpecSlotLayout(const SpecSlotLayout* layout) {
   spec_slot_layout_ = layout;
 }
 
+void Context::SetSpecSlotInfo(const SpecSlotInfo* info) {
+  spec_slot_info_ = info;
+}
+
 void Context::SetUnstableSlotOffsetsPtr(llvm::Value* ptr) {
   unstable_slot_offsets_ptr_ = ptr;
 }

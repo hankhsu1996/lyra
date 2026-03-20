@@ -10,7 +10,6 @@
 
 #include <llvm/IR/Function.h>
 
-#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
@@ -96,6 +95,31 @@ struct SpecSlotLayout {
 // Computed from raw per-instance offsets during spec compilation setup.
 struct SpecLayout {
   SpecSlotLayout slot_layout;
+};
+
+// Per-specialization slot info for owned-container dispatch.
+// All inline offsets are stable (owned slots are fixed-size handles).
+// Used by body codegen to dispatch between inline and owned access paths.
+struct SpecSlotInfo {
+  // Per-slot inline-region relative offset from this_ptr.
+  // For kInlineValue: offset of the slot's value bytes.
+  // For kOwnedContainer: offset of the OwnedStorageHandle.
+  std::vector<uint64_t> inline_offsets;
+  // Per-slot storage shape.
+  std::vector<mir::StorageShape> shapes;
+  // Per-slot representative design-global slot index. Used to resolve
+  // compile-time metadata (e.g., element stride from ArrayStorageSpec).
+  // Valid because storage shape is specialization-invariant: all instances
+  // in the specialization share the same shape per body-local slot.
+  std::vector<uint32_t> representative_design_slots;
+
+  [[nodiscard]] auto SlotCount() const -> uint32_t {
+    return static_cast<uint32_t>(shapes.size());
+  }
+  // Unchecked predicate. Callers must validate id < SlotCount() first.
+  [[nodiscard]] auto IsOwnedContainer(uint32_t id) const -> bool {
+    return shapes[id] == mir::StorageShape::kOwnedContainer;
+  }
 };
 
 // Specialization compilation input: all data needed to compile one

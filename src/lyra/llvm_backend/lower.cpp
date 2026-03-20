@@ -7,6 +7,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -327,6 +328,78 @@ auto BuildCompiledModuleSpecInputs(
   return inputs;
 }
 
+auto BuildSpecSlotInfos(
+    const std::vector<SpecCompilationUnit>& units, const Layout& layout,
+    const std::vector<uint32_t>& module_base_slots,
+    std::span<const mir::SlotDesc> design_slots) -> std::vector<SpecSlotInfo> {
+  std::vector<SpecSlotInfo> result;
+  result.reserve(units.size());
+  for (const auto& unit : units) {
+    if (unit.instances.empty()) {
+      throw common::InternalError(
+          "BuildSpecSlotInfos", "specialization unit has no instances");
+    }
+    SpecSlotInfo info;
+    auto rep_idx = unit.instances[0].module_index;
+    uint32_t rep_base_slot = module_base_slots[rep_idx.value];
+    auto slot_count =
+        static_cast<uint32_t>(layout.GetInstanceRelByteOffsets(rep_idx).size());
+    info.inline_offsets.reserve(slot_count);
+    info.shapes.reserve(slot_count);
+    info.representative_design_slots.reserve(slot_count);
+    uint64_t base_offset = layout.GetInstanceBaseByteOffset(rep_idx);
+    for (uint32_t s = 0; s < slot_count; ++s) {
+      uint32_t design_slot = rep_base_slot + s;
+      uint64_t abs_offset = layout.design.slot_byte_offsets[design_slot];
+      if (abs_offset < base_offset) {
+        throw common::InternalError(
+            "BuildSpecSlotInfos", std::format(
+                                      "slot {} abs_offset {} < base_offset {}",
+                                      design_slot, abs_offset, base_offset));
+      }
+      info.inline_offsets.push_back(abs_offset - base_offset);
+      // Read shape from the canonical per-slot source (SlotDesc), not
+      // from derived layout artifacts like owned_data_offsets.
+      info.shapes.push_back(design_slots[design_slot].storage_shape);
+      info.representative_design_slots.push_back(design_slot);
+    }
+
+    // Verify all instances in this specialization agree on slot count and
+    // storage shape.
+    for (size_t i = 1; i < unit.instances.size(); ++i) {
+      auto inst_slot_count = static_cast<uint32_t>(
+          layout.GetInstanceRelByteOffsets(unit.instances[i].module_index)
+              .size());
+      if (inst_slot_count != slot_count) {
+        throw common::InternalError(
+            "BuildSpecSlotInfos",
+            std::format(
+                "slot count mismatch: representative has {} but instance {} "
+                "has {}",
+                slot_count, unit.instances[i].module_index.value,
+                inst_slot_count));
+      }
+      uint32_t inst_base =
+          module_base_slots[unit.instances[i].module_index.value];
+      for (uint32_t s = 0; s < slot_count; ++s) {
+        auto inst_shape = design_slots[inst_base + s].storage_shape;
+        if (inst_shape != info.shapes[s]) {
+          throw common::InternalError(
+              "BuildSpecSlotInfos",
+              std::format(
+                  "storage shape mismatch at body-local slot {}: "
+                  "representative={} instance={}",
+                  s, static_cast<int>(info.shapes[s]),
+                  static_cast<int>(inst_shape)));
+        }
+      }
+    }
+
+    result.push_back(std::move(info));
+  }
+  return result;
+}
+
 // Canonicalize module-local signal refs in a ProcessTriggerEntry to
 // design-global slot IDs using the instance's base slot offset.
 // Does not validate the resulting slot IDs against slot_count; that
@@ -545,6 +618,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto views =
       BuildSpecCodegenViews(units, *input.design, modidx_to_sched_indices);
   auto spec_layouts = BuildSpecLayouts(units, *layout);
+  auto spec_slot_infos = BuildSpecSlotInfos(
+      units, *layout, module_base_slots, input.design->slots);
   auto spec_inputs = BuildCompiledModuleSpecInputs(
       units, std::move(spec_layouts), std::move(views));
 
@@ -601,7 +676,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
       body_to_process_triggers;
   std::vector<WaitSiteEntry> all_wait_sites;
 
-  for (const auto& spec_input : spec_inputs) {
+  for (size_t si = 0; si < spec_inputs.size(); ++si) {
+    const auto& spec_input = spec_inputs[si];
+    context->SetSpecSlotInfo(&spec_slot_infos[si]);
     auto product =
         CompileModuleSpecSession(*context, *input.design, spec_input);
     if (!product) return std::unexpected(product.error());
@@ -623,6 +700,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
         std::make_move_iterator(product->wait_sites.begin()),
         std::make_move_iterator(product->wait_sites.end()));
   }
+
+  // Clear per-specialization context state after the compilation loop.
+  context->SetSpecSlotInfo(nullptr);
 
   // ArenaScope in CompileModuleSpecSession restores design arena automatically.
 
