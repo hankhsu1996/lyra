@@ -33,7 +33,7 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 - [x] Packed storage view Stage 2: byte-addressable localized immediate write (benchmark pending)
 - [x] Packed storage view Stage 3: localized deferred/NBA write (#585)
 - [x] PSV4: Packed storage view whole-value materialization boundary
-- [ ] CQ1: Packed storage view bulk init lowering quality
+- [x] CQ1: Packed storage view bulk init lowering quality
 - [ ] CQ2: Packed storage view 2-state unknown-plane elision
 - [ ] CQ3: Packed storage view deferred-notification dead code elision
 - [x] Commit-boundary model: visibility/commit boundary definition
@@ -65,12 +65,6 @@ Per-region analysis of which managed slots have been modified since the last syn
 ### CB3: Commit-boundary model delayed-commit register promotion
 
 Keep eligible slot-backed scalars in registers across a region, commit back to slot storage only at required boundaries. This is the downstream optimization that uses the commit-boundary definition and region-local analysis. It is not the first thing to build.
-
-### CQ1: Packed storage view bulk init lowering quality
-
-Whole-value packed zero-initialization emits a single LLVM integer store (e.g. a 65536-bit integer zero) instead of a memset intrinsic. LLVM's backend unrolls this into hundreds of vector store instructions (~256 vmovups for an 8KB array), consuming instruction cache and producing a large code footprint for a single zero-fill. The issue is that the alloca for the canonical buffer is typed as a large integer rather than a byte array, which prevents LLVM from recognizing it as a bulk memory operation.
-
-The fix is to ensure the canonical buffer alloca is typed as a byte array and the zero-fill is emitted as a memset intrinsic that LLVM can lower to an efficient loop or rep-stos sequence. Look at the packed commit layer where canonical buffers are allocated and zero-initialized for aggregate stores.
 
 ### CQ2: Packed storage view 2-state unknown-plane elision
 

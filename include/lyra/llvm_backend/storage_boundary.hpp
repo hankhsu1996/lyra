@@ -93,15 +93,17 @@ auto EmitPackedToCanonicalBits(
     llvm::IRBuilderBase& builder, llvm::Value* value,
     const SlotStorageSpec& spec) -> llvm::Value*;
 
-// Store X-encoded value (value=0, unknown=semantic_mask) to canonical
-// 4-state packed storage. Uses canonical byte-offset addressing only.
-void EmitStoreFourStateXToCanonical(
+// Store X-encoded value (value=0, unknown=semantic_mask) to 4-state packed
+// storage. Routes through the canonical plane write gateway for byte-oriented
+// lowering of large widths. Valid for both canonical and non-canonical
+// destinations (uses canonical-layout byte offsets in both cases).
+void EmitStoreFourStateX(
     llvm::IRBuilderBase& builder, llvm::Value* slot_ptr, uint32_t bit_width);
 
-// Store the unknown-plane mask to canonical 4-state packed storage.
+// Store the unknown-plane mask to 4-state packed storage.
 // Value plane is assumed to already be zero (e.g., after memset).
-// Uses canonical byte-offset addressing only.
-void EmitStoreUnknownMaskToCanonical(
+// Routes through the canonical plane write gateway.
+void EmitStoreUnknownMask(
     llvm::IRBuilderBase& builder, llvm::Value* slot_ptr, uint32_t bit_width);
 
 // Load a 4-state packed value from canonical storage into SSA {iN, iN} form.

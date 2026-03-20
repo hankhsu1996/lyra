@@ -220,7 +220,7 @@ namespace {
 
 // Load a full-width packed plane chunk from canonical storage via explicit
 // i8 GEP. Only valid for canonical storage.
-auto LoadPackedPlaneChunk(
+auto EmitTypedPlaneLoad(
     llvm::IRBuilder<>& builder, llvm::LLVMContext& llvm_ctx,
     llvm::Value* base_ptr, uint64_t byte_offset, uint32_t storage_bits,
     const char* name) -> llvm::Value* {
@@ -231,16 +231,23 @@ auto LoadPackedPlaneChunk(
   return builder.CreateLoad(lane_ty, ptr);
 }
 
-// Store a full-width packed plane chunk to canonical storage via explicit
-// i8 GEP. Only valid for canonical storage.
-void StorePackedPlaneChunk(
-    llvm::IRBuilder<>& builder, llvm::LLVMContext& llvm_ctx,
-    llvm::Value* base_ptr, uint64_t byte_offset, llvm::Value* value,
-    const char* name) {
-  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+// Write a runtime-computed SSA plane value to canonical storage via i8 GEP.
+// Runtime plane SSA only -- rejects constants. Used by StoreFullPlanes for
+// canonical runtime writeback paths such as bit-addressable RMW.
+// Constants must use EmitCanonicalPlaneWrite.
+void EmitRuntimePlaneWriteback(
+    llvm::IRBuilderBase& builder, llvm::Value* dest_ptr, uint64_t byte_offset,
+    llvm::Value* plane_value, const char* name) {
+  if (llvm::isa<llvm::Constant>(plane_value)) {
+    throw common::InternalError(
+        "EmitRuntimePlaneWriteback",
+        "constant operands must use EmitCanonicalPlaneWrite, "
+        "not the runtime writeback path");
+  }
+  auto* i8_ty = llvm::Type::getInt8Ty(builder.getContext());
   auto* ptr =
-      builder.CreateGEP(i8_ty, base_ptr, builder.getInt64(byte_offset), name);
-  builder.CreateStore(value, ptr);
+      builder.CreateGEP(i8_ty, dest_ptr, builder.getInt64(byte_offset), name);
+  builder.CreateStore(plane_value, ptr);
 }
 
 // Full-plane values for bit-addressable operations.
@@ -259,11 +266,11 @@ auto LoadFullPlanes(Context& ctx, const PackedStorageView& storage)
 
   if (storage.is_canonical_storage) {
     FullPlaneValues planes;
-    planes.val = LoadPackedPlaneChunk(
+    planes.val = EmitTypedPlaneLoad(
         builder, ctx.GetLlvmContext(), storage.base_ptr, 0, base_storage_bits,
         "fp.val.ptr");
     if (storage.is_four_state) {
-      planes.unk = LoadPackedPlaneChunk(
+      planes.unk = EmitTypedPlaneLoad(
           builder, ctx.GetLlvmContext(), storage.base_ptr,
           storage.unk_plane_offset_bytes, base_storage_bits, "fp.unk.ptr");
     }
@@ -301,13 +308,12 @@ void StoreFullPlanes(
   auto& builder = ctx.GetBuilder();
 
   if (storage.is_canonical_storage) {
-    StorePackedPlaneChunk(
-        builder, ctx.GetLlvmContext(), storage.base_ptr, 0, val,
-        "fp.val.store");
+    EmitRuntimePlaneWriteback(
+        builder, storage.base_ptr, 0, val, "fp.val.store");
     if (storage.is_four_state && unk != nullptr) {
-      StorePackedPlaneChunk(
-          builder, ctx.GetLlvmContext(), storage.base_ptr,
-          storage.unk_plane_offset_bytes, unk, "fp.unk.store");
+      EmitRuntimePlaneWriteback(
+          builder, storage.base_ptr, storage.unk_plane_offset_bytes, unk,
+          "fp.unk.store");
     }
     return;
   }
@@ -721,11 +727,11 @@ auto CreateEntryBlockAlloca(
   return entry_builder.CreateAlloca(ty, nullptr, name);
 }
 
-// Write a packed integer value into a canonical flat byte buffer at the
-// given byte offset via memcpy from a typed alloca. This avoids implicit
-// alignment assumptions from storing a wide integer through a byte pointer.
-// This is the single write path for all canonical packed buffer construction.
-void WriteCanonicalPlaneToBuffer(
+// Encode a runtime-computed plane value into a temporary byte buffer via
+// typed alloca + memcpy. Runtime plane SSA only -- not the constant/pattern
+// materialization boundary. Used for temporary byte-buffer encoding for
+// runtime helper handoff (e.g., LyraStorePacked).
+void EncodePlaneValueToByteBuffer(
     llvm::IRBuilder<>& builder, llvm::LLVMContext& llvm_ctx,
     llvm::Value* buf_ptr, uint64_t byte_offset, llvm::Value* plane_value) {
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
@@ -741,11 +747,10 @@ void WriteCanonicalPlaneToBuffer(
       dest_ptr, llvm::Align(1), src_alloca, llvm::Align(1), byte_size);
 }
 
-// Read a packed integer value from a canonical flat byte buffer at the
-// given byte offset via memcpy to a typed alloca. Mirrors
-// WriteCanonicalPlaneToBuffer. All temporary allocas use entry-block
-// placement for predictable stack layout.
-auto ReadCanonicalPlaneFromBuffer(
+// Decode a plane value from a temporary byte buffer via memcpy to a typed
+// alloca. Mirrors EncodePlaneValueToByteBuffer. All temporary allocas use
+// entry-block placement for predictable stack layout.
+auto DecodePlaneValueFromByteBuffer(
     llvm::IRBuilder<>& builder, llvm::LLVMContext& llvm_ctx,
     llvm::Value* buf_ptr, uint64_t byte_offset, llvm::Type* plane_type)
     -> llvm::Value* {
@@ -796,7 +801,7 @@ void EmitNarrow2StateNbaCall(
   uint32_t narrow_bytes = access.subview_byte_span;
   auto* buf_ty = llvm::ArrayType::get(i8_ty, narrow_bytes);
   auto* val_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.val.a");
-  WriteCanonicalPlaneToBuffer(builder, llvm_ctx, val_alloca, 0, store_val);
+  EncodePlaneValueToByteBuffer(builder, llvm_ctx, val_alloca, 0, store_val);
 
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::PointerType::get(llvm_ctx, 0));
@@ -834,10 +839,10 @@ void EmitNarrow4StateNbaCall(
 
   auto* buf_ty = llvm::ArrayType::get(i8_ty, narrow_bytes);
   auto* val_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.val.a");
-  WriteCanonicalPlaneToBuffer(builder, llvm_ctx, val_alloca, 0, val_store);
+  EncodePlaneValueToByteBuffer(builder, llvm_ctx, val_alloca, 0, val_store);
 
   auto* unk_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.unk.a");
-  WriteCanonicalPlaneToBuffer(builder, llvm_ctx, unk_alloca, 0, unk_store);
+  EncodePlaneValueToByteBuffer(builder, llvm_ctx, unk_alloca, 0, unk_store);
 
   builder.CreateCall(
       ctx.GetLyraScheduleNbaCanonicalPacked(),
@@ -887,12 +892,12 @@ void EmitFullWidthMaskedNbaCall(
     auto* val_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.val.a");
     auto* mask_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.mask.a");
 
-    WriteCanonicalPlaneToBuffer(builder, llvm_ctx, val_alloca, 0, val_shifted);
-    WriteCanonicalPlaneToBuffer(
+    EncodePlaneValueToByteBuffer(builder, llvm_ctx, val_alloca, 0, val_shifted);
+    EncodePlaneValueToByteBuffer(
         builder, llvm_ctx, val_alloca, plane_bytes, unk_shifted);
-    WriteCanonicalPlaneToBuffer(
+    EncodePlaneValueToByteBuffer(
         builder, llvm_ctx, mask_alloca, 0, mask_shifted);
-    WriteCanonicalPlaneToBuffer(
+    EncodePlaneValueToByteBuffer(
         builder, llvm_ctx, mask_alloca, plane_bytes, mask_shifted);
 
     builder.CreateCall(
@@ -905,8 +910,8 @@ void EmitFullWidthMaskedNbaCall(
     auto* val_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.val.a");
     auto* mask_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.mask.a");
 
-    WriteCanonicalPlaneToBuffer(builder, llvm_ctx, val_alloca, 0, val_shifted);
-    WriteCanonicalPlaneToBuffer(
+    EncodePlaneValueToByteBuffer(builder, llvm_ctx, val_alloca, 0, val_shifted);
+    EncodePlaneValueToByteBuffer(
         builder, llvm_ctx, mask_alloca, 0, mask_shifted);
 
     builder.CreateCall(
@@ -1081,6 +1086,22 @@ auto TotalCanonicalByteSize(const PackedStorageView& storage) -> uint32_t {
                                : storage.storage_plane_byte_size;
 }
 
+// Store flattened canonical bits directly to inline-eligible canonical
+// storage. Only valid when IsInlineStoreEligible(TotalCanonicalByteSize)
+// is true, which guarantees the flattened value fits a single typed store
+// within the inline store policy (<= 16 bytes, power-of-2).
+void EmitInlineCanonicalDirectStore(
+    Context& ctx, const PackedStorageView& storage,
+    llvm::Value* canonical_bits) {
+  uint32_t total_bytes = TotalCanonicalByteSize(storage);
+  if (!IsInlineStoreEligible(total_bytes)) {
+    throw common::InternalError(
+        "EmitInlineCanonicalDirectStore",
+        std::format("total_bytes {} is not inline-eligible", total_bytes));
+  }
+  ctx.GetBuilder().CreateStore(canonical_bits, storage.base_ptr);
+}
+
 // Emit the inline compare+store+notify path for whole-value packed stores.
 // Loads old canonical bits, stores new canonical bits, compares, notifies.
 void EmitInlineWholeValueStore(
@@ -1171,10 +1192,21 @@ void EmitLargeWholeValueStore(
 
   builder.CreateMemSet(temp, builder.getInt8(0), total_bytes, llvm::Align(1));
 
-  WriteCanonicalPlaneToBuffer(builder, llvm_ctx, temp, 0, val);
+  // Skip encoding zero-constant planes -- the buffer is already zeroed.
+  // This optimization recognizes only literal integer zero constants;
+  // other zero representations (e.g., zero-init aggregates) are not matched.
+  bool val_is_zero = llvm::isa<llvm::ConstantInt>(val) &&
+                     llvm::cast<llvm::ConstantInt>(val)->isZero();
+  if (!val_is_zero) {
+    EncodePlaneValueToByteBuffer(builder, llvm_ctx, temp, 0, val);
+  }
   if (storage.is_four_state && unk != nullptr) {
-    WriteCanonicalPlaneToBuffer(
-        builder, llvm_ctx, temp, storage.unk_plane_offset_bytes, unk);
+    bool unk_is_zero = llvm::isa<llvm::ConstantInt>(unk) &&
+                       llvm::cast<llvm::ConstantInt>(unk)->isZero();
+    if (!unk_is_zero) {
+      EncodePlaneValueToByteBuffer(
+          builder, llvm_ctx, temp, storage.unk_plane_offset_bytes, unk);
+    }
   }
 
   if (policy.store_mode == PackedStoreMode::kDirectInit ||
@@ -1196,13 +1228,31 @@ void EmitWholeValueStoreCore(
     llvm::Value* unk, const PackedStorePolicy& policy) {
   auto& builder = ctx.GetBuilder();
 
-  if (policy.store_mode == PackedStoreMode::kDirectInit) {
+  if (!storage.is_canonical_storage) {
+    // Non-canonical (local allocas): typed store, no compare/notify.
     StoreFullPlanes(ctx, storage, val, unk);
     return;
   }
 
-  if (!storage.is_canonical_storage) {
-    StoreFullPlanes(ctx, storage, val, unk);
+  if (policy.store_mode == PackedStoreMode::kDirectInit) {
+    // Canonical direct init: no compare, no notify. Values may be
+    // constants, so this path does not go through StoreFullPlanes
+    // (which rejects constants via EmitRuntimePlaneWriteback).
+    uint32_t total_bytes = TotalCanonicalByteSize(storage);
+    if (IsInlineStoreEligible(total_bytes)) {
+      // Small canonical init: flatten to canonical bits and store directly.
+      // IsInlineStoreEligible guarantees the value fits the typed store.
+      auto* canonical_bits = FlattenToCanonicalBits(
+          builder, ctx.GetLlvmContext(), val, unk,
+          storage.storage_plane_byte_size, storage.is_four_state);
+      EmitInlineCanonicalDirectStore(ctx, storage, canonical_bits);
+    } else {
+      // Large canonical init: memset + byte-buffer encoding + memcpy.
+      // Still direct-init semantics (no compare/notify) -- the large
+      // store helper checks the policy and uses memcpy instead of
+      // LyraStorePacked.
+      EmitLargeWholeValueStore(ctx, storage, val, unk, policy);
+    }
     return;
   }
 
@@ -1299,12 +1349,12 @@ auto StorePackedValueFromCanonicalBytes(
   uint32_t lane_bits = storage.storage_plane_byte_size * 8;
   auto* lane_ty = llvm::IntegerType::get(ctx.GetLlvmContext(), lane_bits);
 
-  auto* val = ReadCanonicalPlaneFromBuffer(
+  auto* val = DecodePlaneValueFromByteBuffer(
       builder, ctx.GetLlvmContext(), src_bytes_ptr, 0, lane_ty);
 
   llvm::Value* unk = nullptr;
   if (storage.is_four_state) {
-    unk = ReadCanonicalPlaneFromBuffer(
+    unk = DecodePlaneValueFromByteBuffer(
         builder, ctx.GetLlvmContext(), src_bytes_ptr,
         storage.unk_plane_offset_bytes, lane_ty);
   }
