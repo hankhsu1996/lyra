@@ -58,16 +58,17 @@ void LyraRunProcessSync(LyraProcessFunc process, void* state);
 
 // Run simulation with multiple processes sharing a single engine.
 // All processes are scheduled at time=0, delta=0.
-// - processes: array of process function pointers
+// - connection_funcs: dense array of connection process function pointers
+//   (sized num_connection_processes from ABI, no null padding)
 // - states: array of state pointers (one per process)
-// - num_processes: number of processes
+// - num_processes: total simulation processes (connection + module)
 // - plusargs: optional array of C strings for $plusargs (nullptr if none)
 // - num_plusargs: number of plusargs (0 if none)
 // - instance_paths: optional array of C strings for %m (nullptr if none)
 // - num_instance_paths: number of instance paths (0 if none)
 // - abi: versioned runtime descriptor with metadata tables and feature flags
 void LyraRunSimulation(
-    LyraProcessFunc* processes, void** states, uint32_t num_processes,
+    LyraProcessFunc* connection_funcs, void** states, uint32_t num_processes,
     const char** plusargs, uint32_t num_plusargs, const char** instance_paths,
     uint32_t num_instance_paths, const LyraRuntimeAbi* abi);
 

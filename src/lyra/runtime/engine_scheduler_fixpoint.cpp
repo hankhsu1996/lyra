@@ -79,7 +79,7 @@ void Engine::EvaluateAllConnections() {
 void Engine::InitCombKernels(
     std::span<const uint32_t> words,
     std::span<const ProcessDescriptorEntry> descriptors,
-    uint32_t num_standalone, void** states) {
+    uint32_t num_connection, void** states) {
   if (words.empty()) return;
 
   // Word table format:
@@ -127,15 +127,15 @@ void Engine::InitCombKernels(
     }
 
     // Comb kernels are always module processes.
-    if (proc_idx < num_standalone) {
+    if (proc_idx < num_connection) {
       throw common::InternalError(
           "Engine::InitCombKernels",
           std::format(
-              "comb kernel proc_idx {} is below standalone boundary {}",
-              proc_idx, num_standalone));
+              "comb kernel proc_idx {} is below connection boundary {}",
+              proc_idx, num_connection));
     }
 
-    uint32_t desc_idx = proc_idx - num_standalone;
+    uint32_t desc_idx = proc_idx - num_connection;
     if (desc_idx >= descriptors.size()) {
       throw common::InternalError(
           "Engine::InitCombKernels",

@@ -659,12 +659,12 @@ struct DescriptorTableResult {
   // desc_idx produces a pointer to the desc_idx-th descriptor entry.
   llvm::Constant* table_ptr;
   uint32_t count;
-  uint32_t num_standalone;
+  uint32_t num_connection;
 };
 
 auto EmitProcessDescriptorTable(
     Context& context, const std::vector<ProcessDescriptorData>& descriptors,
-    uint32_t num_standalone) -> DescriptorTableResult {
+    uint32_t num_connection) -> DescriptorTableResult {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
@@ -677,7 +677,7 @@ auto EmitProcessDescriptorTable(
         .table_ptr = llvm::ConstantPointerNull::get(
             llvm::cast<llvm::PointerType>(ptr_ty)),
         .count = 0,
-        .num_standalone = num_standalone,
+        .num_connection = num_connection,
     };
   }
 
@@ -711,7 +711,7 @@ auto EmitProcessDescriptorTable(
   return {
       .table_ptr = table_ptr,
       .count = count,
-      .num_standalone = num_standalone,
+      .num_connection = num_connection,
   };
 }
 
@@ -895,7 +895,7 @@ auto BuildRuntimeAbi(
   // Descriptor-driven process dispatch
   store_field(25, desc_table.table_ptr);
   store_field(26, llvm::ConstantInt::get(i32_ty, desc_table.count));
-  store_field(27, llvm::ConstantInt::get(i32_ty, desc_table.num_standalone));
+  store_field(27, llvm::ConstantInt::get(i32_ty, desc_table.num_connection));
 
   // Design-state binding (source of truth for persistent header design_ptr)
   store_field(28, design_state);
@@ -1051,6 +1051,16 @@ auto EmitDesignMain(
 
     auto desc_table = EmitProcessDescriptorTable(
         context, session.process_descriptors, num_connection);
+
+    // Codegen-side partition invariant: connection + module == simulation.
+    if (num_connection + desc_table.count != num_simulation) {
+      throw common::InternalError(
+          "EmitDesignMain",
+          std::format(
+              "partition mismatch: {} connection + {} descriptors != {} "
+              "simulation",
+              num_connection, desc_table.count, num_simulation));
+    }
 
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, desc_table, input.feature_flags,

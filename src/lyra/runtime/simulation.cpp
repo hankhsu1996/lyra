@@ -299,9 +299,9 @@ using ProcessDescriptorEntry = lyra::runtime::ProcessDescriptorEntry;
 using SharedBodyFn = lyra::runtime::SharedBodyFn;
 
 struct ProcessDispatchContext {
-  std::span<LyraProcessFunc> standalone_procs;
+  std::span<LyraProcessFunc> connection_procs;
   std::span<void*> states;
-  uint32_t num_standalone;
+  uint32_t num_connection;
 };
 
 void DescriptorProcessDispatch(
@@ -316,12 +316,12 @@ void DescriptorProcessDispatch(
   lyra::runtime::ProcessOutcome outcome{};
   outcome.tag = UINT32_MAX;
 
-  // Partition invariant (established by BuildLayout, validated at init):
-  //   [0, num_standalone) = standalone processes (direct 3-arg call)
-  //   [num_standalone, num_processes) = module processes (frame-header
+  // Dispatch partition contract:
+  //   [0, num_connection) = connection processes (3-arg direct call)
+  //   [num_connection, num_processes) = module processes (frame-header
   //   dispatch)
-  if (proc_idx < dctx->num_standalone) {
-    dctx->standalone_procs[proc_idx](state, resume.block_index, &outcome);
+  if (proc_idx < dctx->num_connection) {
+    dctx->connection_procs[proc_idx](state, resume.block_index, &outcome);
   } else {
     // Module process: 2-arg shared body call.
     // Body pointer and all instance binding are in the frame header,
@@ -417,7 +417,7 @@ void SetupAndRunSimulation(
 void InitSimulationProcessBindings(
     std::span<void*> states, void* design_state_base,
     std::span<const ProcessDescriptorEntry> descriptors,
-    uint32_t num_standalone) {
+    uint32_t num_connection) {
   using StateHeader = lyra::runtime::ProcessFrameHeader;
   using SharedBodyFn = lyra::runtime::SharedBodyFn;
   for (size_t i = 0; i < states.size(); ++i) {
@@ -425,7 +425,7 @@ void InitSimulationProcessBindings(
     header->design_ptr = design_state_base;
   }
   for (uint32_t i = 0; i < descriptors.size(); ++i) {
-    uint32_t proc_idx = num_standalone + i;
+    uint32_t proc_idx = num_connection + i;
     auto* header = static_cast<StateHeader*>(states[proc_idx]);
     const auto& desc = descriptors[i];
     header->body = reinterpret_cast<SharedBodyFn>(desc.shared_body);
@@ -439,12 +439,15 @@ void InitSimulationProcessBindings(
 }  // namespace
 
 extern "C" void LyraRunSimulation(
-    LyraProcessFunc* processes, void** states_raw, uint32_t num_processes,
-    const char** plusargs_raw, uint32_t num_plusargs,
+    LyraProcessFunc* connection_funcs, void** states_raw,
+    uint32_t num_processes, const char** plusargs_raw, uint32_t num_plusargs,
     const char** instance_paths_raw, uint32_t num_instance_paths,
     const LyraRuntimeAbi* abi) {
+  if (num_processes > 0 && states_raw == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraRunSimulation", "states_raw is null");
+  }
   auto states = std::span(states_raw, num_processes);
-  auto procs = std::span(processes, num_processes);
 
   // Convert plusargs to vector<string> for Engine
   std::vector<std::string> plusargs_vec;
@@ -470,41 +473,34 @@ extern "C" void LyraRunSimulation(
   using lyra::runtime::FeatureFlag;
   auto flags = static_cast<FeatureFlag>(feature_flags);
 
-  // Parse v7 descriptor data from ABI and build the dispatch context.
+  // Parse descriptor data from ABI and build the dispatch context.
   //
-  // Process index partition contract (established by BuildLayout):
-  //   post-init indices [0, num_standalone) = standalone (connection) processes
-  //   post-init indices [num_standalone, num_processes) = module processes
-  // DescriptorProcessDispatch depends on this exact partition shape:
-  //   proc_idx < num_standalone -> standalone direct call
-  //   proc_idx >= num_standalone -> descriptor lookup at (proc_idx -
-  //   num_standalone)
-  uint32_t num_standalone = num_processes;
+  // Dispatch partition contract:
+  //   [0, num_connection) = connection processes (3-arg direct call)
+  //   [num_connection, num_processes) = module processes (frame-header
+  //   dispatch)
+  if (abi == nullptr) {
+    throw lyra::common::InternalError("LyraRunSimulation", "abi is null");
+  }
+
+  uint32_t num_connection = abi->num_connection_processes;
   std::span<const ProcessDescriptorEntry> descriptors;
-  if (abi != nullptr && abi->version >= 7) {
-    num_standalone = abi->num_standalone_processes;
-    if (abi->process_descriptors != nullptr &&
-        abi->num_process_descriptors > 0) {
-      descriptors = std::span(
-          static_cast<const ProcessDescriptorEntry*>(abi->process_descriptors),
-          abi->num_process_descriptors);
-    }
-    if (num_standalone + descriptors.size() != num_processes) {
-      throw lyra::common::InternalError(
-          "LyraRunSimulation",
-          std::format(
-              "descriptor partition mismatch: {} standalone + {} descriptors "
-              "!= {} total",
-              num_standalone, descriptors.size(), num_processes));
-    }
+  if (abi->process_descriptors != nullptr && abi->num_process_descriptors > 0) {
+    descriptors = std::span(
+        static_cast<const ProcessDescriptorEntry*>(abi->process_descriptors),
+        abi->num_process_descriptors);
+  }
+  if (num_connection + descriptors.size() != num_processes) {
+    throw lyra::common::InternalError(
+        "LyraRunSimulation",
+        std::format(
+            "descriptor partition mismatch: {} connection + {} descriptors "
+            "!= {} total",
+            num_connection, descriptors.size(), num_processes));
   }
 
   // design_state is the ABI-level source of truth for design-state binding.
   // Runtime owns all persistent simulation-process header initialization.
-  if (abi == nullptr) {
-    throw lyra::common::InternalError(
-        "LyraRunSimulation", "abi is null (v9 required)");
-  }
   void* design_state_base = abi->design_state;
   if (design_state_base == nullptr && !states.empty()) {
     throw lyra::common::InternalError(
@@ -515,13 +511,17 @@ extern "C" void LyraRunSimulation(
   // canonical path. After this, the descriptor table is not needed for
   // dispatch -- all binding lives in the frame headers.
   InitSimulationProcessBindings(
-      states, design_state_base, descriptors, num_standalone);
+      states, design_state_base, descriptors, num_connection);
 
-  auto standalone_procs = std::span(processes, num_standalone);
+  if (num_connection > 0 && connection_funcs == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraRunSimulation", "connection_funcs is null");
+  }
+  auto connection_procs = std::span(connection_funcs, num_connection);
   ProcessDispatchContext dispatch_ctx{
-      .standalone_procs = standalone_procs,
+      .connection_procs = connection_procs,
       .states = states,
-      .num_standalone = num_standalone,
+      .num_connection = num_connection,
   };
   lyra::runtime::Engine engine(
       lyra::runtime::ProcessDispatch{
@@ -578,7 +578,7 @@ extern "C" void LyraRunSimulation(
     if (abi->comb_kernel_words != nullptr && abi->num_comb_kernel_words > 0) {
       engine.InitCombKernels(
           std::span(abi->comb_kernel_words, abi->num_comb_kernel_words),
-          descriptors, num_standalone, states_raw);
+          descriptors, num_connection, states_raw);
     }
 
     // Process trigger metadata and constructor-time trigger groups (G13).

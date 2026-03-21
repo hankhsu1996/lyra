@@ -24,7 +24,10 @@
 // v10: Removed unstable_offsets from ProcessFrameHeader and
 //      ProcessDescriptorEntry. Owned-container slots use inline
 //      OwnedStorageHandle + appendix backing instead.
-inline constexpr uint32_t kRuntimeAbiVersion = 10;
+// v11: Connection-only function array. Null-padded __lyra_module_funcs
+//      removed. Process state construction moved to runtime constructor.
+//      Standalone terminology replaced by connection throughout ABI.
+inline constexpr uint32_t kRuntimeAbiVersion = 11;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -69,11 +72,11 @@ struct LyraRuntimeAbi {
   // (ProcessDescriptorEntry). Codegen produces via GetDescriptorEntryType().
   //
   // num_process_descriptors is the module process count.
-  // num_standalone_processes is the standalone (connection) process count.
-  // Runtime contract: num_standalone + num_descriptors == num_processes.
+  // num_connection_processes is the connection process count.
+  // Runtime contract: num_connection + num_descriptors == num_processes.
   const void* process_descriptors;
   uint32_t num_process_descriptors;
-  uint32_t num_standalone_processes;
+  uint32_t num_connection_processes;
 
   // Source of truth for design-state binding. Runtime uses this to populate
   // design_ptr in all persistent simulation-process headers. Per-header
@@ -87,5 +90,5 @@ struct LyraRuntimeAbi {
 static_assert(sizeof(LyraRuntimeAbi) == 216);
 static_assert(offsetof(LyraRuntimeAbi, version) == 0);
 static_assert(offsetof(LyraRuntimeAbi, process_descriptors) == 192);
-static_assert(offsetof(LyraRuntimeAbi, num_standalone_processes) == 204);
+static_assert(offsetof(LyraRuntimeAbi, num_connection_processes) == 204);
 static_assert(offsetof(LyraRuntimeAbi, design_state) == 208);

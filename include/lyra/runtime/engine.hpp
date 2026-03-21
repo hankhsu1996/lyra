@@ -497,12 +497,12 @@ class Engine {
   // Initialize comb kernels from word table and descriptor table.
   // Resolves shared body pointers from descriptors. Builds trigger map.
   // descriptors: module-process descriptor entries.
-  // num_standalone: standalone process count (partition boundary).
+  // num_connection: connection process count (partition boundary).
   // states: full process state array, indexed by proc_idx from word table.
   void InitCombKernels(
       std::span<const uint32_t> words,
       std::span<const ProcessDescriptorEntry> descriptors,
-      uint32_t num_standalone, void** states);
+      uint32_t num_connection, void** states);
 
   // Mark all comb kernel trigger slots dirty to ensure initial evaluation.
   void SeedCombKernelDirtyMarks();
