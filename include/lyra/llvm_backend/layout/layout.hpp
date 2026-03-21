@@ -284,6 +284,41 @@ struct Layout {
   // Per-instance raw relative byte offsets (body-local slot order).
   // Indexed by module_index, each inner vector has slot_count entries.
   std::vector<std::vector<uint64_t>> instance_rel_byte_offsets;
+
+  // Constructor metadata: shared process-state schemas and per-process
+  // constructor records. Computed from the process layout loop.
+
+  // Per-schema descriptor for codegen emission.
+  // Schema identity is (body_id, proc_within_body) for module processes,
+  // or a unique connection-local index for connection processes.
+  struct ProcessStateSchemaDesc {
+    uint64_t state_size = 0;
+    uint64_t state_align = 0;
+    bool needs_4state_init = false;
+    // Codegen representative: one of the processes sharing this schema.
+    // Used only as a codegen anchor to access frame layout for emission.
+    // Never used to derive schema identity or grouping.
+    size_t representative_process_index = 0;
+    // Schema identity components for naming emission and debug assertions.
+    // Not the source of truth for grouping (grouping is structural).
+    std::optional<mir::ModuleBodyId> body_id;
+    // Within-body ordinal index (position in body_processes list).
+    std::optional<uint32_t> proc_within_body;
+    // For connection schemas: the connection-process semantic index
+    // used for naming. This is the canonical naming component for
+    // connection schemas.
+    std::optional<uint32_t> conn_index;
+  };
+
+  // Per-simulation-process constructor routing record.
+  struct ProcessConstructorRecordDesc {
+    uint32_t schema_index;
+  };
+
+  std::vector<ProcessStateSchemaDesc> state_schemas;
+  // constructor_records.size() == number of simulation processes
+  // (connection + module, post-init)
+  std::vector<ProcessConstructorRecordDesc> constructor_records;
 };
 
 // Type kind for variable inspection (also used in layout)

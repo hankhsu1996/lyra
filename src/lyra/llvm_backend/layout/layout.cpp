@@ -1351,11 +1351,12 @@ auto BuildDesignLayout(
 
 namespace {
 
-// Build FrameLayout from de-duplicated roots
+// Build FrameLayout from de-duplicated roots.
+// frame_name is the semantic type name (e.g., "Body0Frame0", "Conn3Frame").
 auto BuildFrameLayout(
     const std::vector<RootInfo>& roots, const TypeArena& types,
-    llvm::LLVMContext& ctx, size_t process_index, const llvm::DataLayout& dl,
-    bool force_two_state) -> FrameLayout {
+    llvm::LLVMContext& ctx, std::string_view frame_name,
+    const llvm::DataLayout& dl, bool force_two_state) -> FrameLayout {
   FrameLayout layout;
   std::vector<llvm::Type*> field_types;
 
@@ -1367,12 +1368,12 @@ auto BuildFrameLayout(
         GetLlvmTypeForTypeId(ctx, root.type, types, force_two_state));
   }
 
-  std::string name = std::format("ProcessFrame{}", process_index);
   if (field_types.empty()) {
-    layout.llvm_type =
-        llvm::StructType::create(ctx, {llvm::Type::getInt8Ty(ctx)}, name);
+    layout.llvm_type = llvm::StructType::create(
+        ctx, {llvm::Type::getInt8Ty(ctx)}, std::string(frame_name));
   } else {
-    layout.llvm_type = llvm::StructType::create(ctx, field_types, name);
+    layout.llvm_type =
+        llvm::StructType::create(ctx, field_types, std::string(frame_name));
   }
 
   // Collect 4-state patches for scalar patchable fields
@@ -1385,12 +1386,14 @@ auto BuildFrameLayout(
   return layout;
 }
 
-// Build ProcessStateN type: {ProcessStateHeader, ProcessFrameN}
+// Build process state type: {ProcessStateHeader, Frame}
+// state_name is the semantic type name (e.g., "Body0State0", "Conn3State").
 auto BuildProcessStateType(
     llvm::LLVMContext& ctx, llvm::StructType* header_type,
-    llvm::StructType* frame_type, size_t process_index) -> llvm::StructType* {
-  std::string name = std::format("ProcessState{}", process_index);
-  return llvm::StructType::create(ctx, {header_type, frame_type}, name);
+    llvm::StructType* frame_type, std::string_view state_name)
+    -> llvm::StructType* {
+  return llvm::StructType::create(
+      ctx, {header_type, frame_type}, std::string(state_name));
 }
 
 }  // namespace
@@ -1582,9 +1585,46 @@ auto BuildLayout(
 
   layout.processes.reserve(layout.scheduled_processes.size());
 
+  // Find the ordinal index of a process within a body's process list.
+  // Throws InternalError if the process is not found.
+  auto find_proc_within_body = [](const LayoutModulePlan& plan,
+                                  mir::ProcessId proc_id) -> uint32_t {
+    for (uint32_t pi = 0; pi < plan.body_processes.size(); ++pi) {
+      if (plan.body_processes[pi] == proc_id) {
+        return pi;
+      }
+    }
+    throw common::InternalError(
+        "BuildLayout", "process not found in body process list");
+  };
+
+  // Counters for semantic naming per category.
+  uint32_t init_counter = 0;
+  uint32_t conn_counter = 0;
+
   for (size_t i = 0; i < layout.scheduled_processes.size(); ++i) {
-    const auto& sched_arena = resolve_arena(layout.scheduled_processes[i]);
-    const auto& process = sched_arena[layout.scheduled_processes[i].process_id];
+    const auto& sp = layout.scheduled_processes[i];
+    const auto& sched_arena = resolve_arena(sp);
+    const auto& process = sched_arena[sp.process_id];
+
+    // Determine semantic name based on process category.
+    std::string frame_name;
+    std::string state_name;
+    if (i < layout.num_init_processes) {
+      frame_name = std::format("Init{}Frame", init_counter);
+      state_name = std::format("Init{}State", init_counter);
+      ++init_counter;
+    } else if (i < layout.num_module_process_base) {
+      frame_name = std::format("Conn{}Frame", conn_counter);
+      state_name = std::format("Conn{}State", conn_counter);
+      ++conn_counter;
+    } else {
+      uint32_t mi = sp.module_index.value;
+      auto body_id = module_plans[mi].body_id;
+      uint32_t pwb = find_proc_within_body(module_plans[mi], sp.process_id);
+      frame_name = std::format("Body{}Frame{}", body_id.value, pwb);
+      state_name = std::format("Body{}State{}", body_id.value, pwb);
+    }
 
     ProcessLayout proc_layout;
     proc_layout.process_index = i;
@@ -1594,11 +1634,11 @@ auto BuildLayout(
 
     if (proc_layout.has_suspension) {
       proc_layout.frame =
-          BuildFrameLayout(roots, types, ctx, i, dl, force_two_state);
+          BuildFrameLayout(roots, types, ctx, frame_name, dl, force_two_state);
     } else {
       // Suspension-free: empty frame, roots become allocas at codegen time.
       proc_layout.frame =
-          BuildFrameLayout({}, types, ctx, i, dl, force_two_state);
+          BuildFrameLayout({}, types, ctx, frame_name, dl, force_two_state);
       proc_layout.alloca_roots.reserve(roots.size());
       for (const auto& root : roots) {
         proc_layout.alloca_roots.push_back(
@@ -1607,9 +1647,141 @@ auto BuildLayout(
     }
 
     proc_layout.state_type = BuildProcessStateType(
-        ctx, layout.header_type, proc_layout.frame.llvm_type, i);
+        ctx, layout.header_type, proc_layout.frame.llvm_type, state_name);
 
     layout.processes.push_back(std::move(proc_layout));
+  }
+
+  // Build constructor metadata: state schemas and constructor records.
+  // Only covers simulation processes (post-init: connection + module).
+  {
+    size_t num_simulation =
+        layout.scheduled_processes.size() - layout.num_init_processes;
+
+    // Compute constructor-relevant schema properties for a process layout.
+    // All properties that grouped schemas must agree on are computed here.
+    // When adding new schema fields, add them to this helper so the
+    // grouped-schema consistency check covers them automatically.
+    struct SchemaProps {
+      uint64_t state_size;
+      uint64_t state_align;
+      bool needs_4state_init;
+
+      auto operator==(const SchemaProps&) const -> bool = default;
+    };
+    auto compute_schema_props =
+        [&](const ProcessLayout& proc_layout) -> SchemaProps {
+      uint64_t sz = dl.getTypeAllocSize(proc_layout.state_type);
+      uint64_t al = dl.getABITypeAlign(proc_layout.state_type).value();
+      bool needs =
+          !force_two_state && !proc_layout.frame.four_state_patches.IsEmpty();
+      if (!force_two_state && !needs) {
+        for (TypeId type_id : proc_layout.frame.root_types) {
+          if (IsLayoutFourState(type_id, types, force_two_state) &&
+              !IsScalarPatchable(type_id, types, force_two_state)) {
+            needs = true;
+            break;
+          }
+        }
+      }
+      return {.state_size = sz, .state_align = al, .needs_4state_init = needs};
+    };
+
+    // Map from (body_id, proc_within_body) to schema index for module
+    // process deduplication.
+    struct SchemaKey {
+      uint32_t body_id;
+      uint32_t proc_within_body;
+      auto operator==(const SchemaKey&) const -> bool = default;
+    };
+    struct SchemaKeyHash {
+      auto operator()(const SchemaKey& k) const -> size_t {
+        return std::hash<uint64_t>{}(
+            (static_cast<uint64_t>(k.body_id) << 32) | k.proc_within_body);
+      }
+    };
+    std::unordered_map<SchemaKey, uint32_t, SchemaKeyHash> module_schema_map;
+
+    layout.constructor_records.reserve(num_simulation);
+    conn_counter = 0;
+
+    for (size_t i = layout.num_init_processes;
+         i < layout.scheduled_processes.size(); ++i) {
+      const auto& sp = layout.scheduled_processes[i];
+      auto props = compute_schema_props(layout.processes[i]);
+
+      if (i < layout.num_module_process_base) {
+        // Connection process: unique schema per process.
+        auto schema_idx = static_cast<uint32_t>(layout.state_schemas.size());
+        layout.state_schemas.push_back({
+            .state_size = props.state_size,
+            .state_align = props.state_align,
+            .needs_4state_init = props.needs_4state_init,
+            .representative_process_index = i,
+            .body_id = std::nullopt,
+            .proc_within_body = std::nullopt,
+            .conn_index = conn_counter,
+        });
+        layout.constructor_records.push_back({.schema_index = schema_idx});
+        ++conn_counter;
+      } else {
+        // Module process: deduplicate by (body_id, proc_within_body).
+        uint32_t mi = sp.module_index.value;
+        auto body_id = module_plans[mi].body_id;
+        uint32_t pwb = find_proc_within_body(module_plans[mi], sp.process_id);
+
+        SchemaKey key{.body_id = body_id.value, .proc_within_body = pwb};
+        auto it = module_schema_map.find(key);
+        if (it != module_schema_map.end()) {
+          // Existing schema: assert all constructor-relevant properties
+          // and naming/debug anchors match.
+          const auto& existing = layout.state_schemas[it->second];
+          auto existing_props = SchemaProps{
+              .state_size = existing.state_size,
+              .state_align = existing.state_align,
+              .needs_4state_init = existing.needs_4state_init,
+          };
+          if (existing_props != props) {
+            throw common::InternalError(
+                "BuildLayout",
+                "grouped module processes disagree on schema properties");
+          }
+          if (existing.body_id != body_id || existing.proc_within_body != pwb ||
+              existing.conn_index != std::nullopt) {
+            throw common::InternalError(
+                "BuildLayout",
+                "grouped module processes disagree on schema identity");
+          }
+          // Verify representative_process_index is a valid anchor for
+          // the same schema identity.
+          const auto& rep_sp =
+              layout.scheduled_processes[existing.representative_process_index];
+          uint32_t rep_mi = rep_sp.module_index.value;
+          auto rep_body_id = module_plans[rep_mi].body_id;
+          uint32_t rep_pwb =
+              find_proc_within_body(module_plans[rep_mi], rep_sp.process_id);
+          if (rep_body_id != body_id || rep_pwb != pwb) {
+            throw common::InternalError(
+                "BuildLayout",
+                "representative process does not match schema identity");
+          }
+          layout.constructor_records.push_back({.schema_index = it->second});
+        } else {
+          auto schema_idx = static_cast<uint32_t>(layout.state_schemas.size());
+          layout.state_schemas.push_back({
+              .state_size = props.state_size,
+              .state_align = props.state_align,
+              .needs_4state_init = props.needs_4state_init,
+              .representative_process_index = i,
+              .body_id = body_id,
+              .proc_within_body = pwb,
+              .conn_index = std::nullopt,
+          });
+          module_schema_map[key] = schema_idx;
+          layout.constructor_records.push_back({.schema_index = schema_idx});
+        }
+      }
+    }
   }
 
   // Compute instance base byte offsets and body-owned relative byte offsets
