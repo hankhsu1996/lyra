@@ -5,6 +5,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
@@ -59,6 +60,47 @@ auto LowerRhsRaw(
               return PackFourState(builder, struct_type, value, unknown);
             }
             return rv_result->value;
+          },
+      },
+      rhs);
+}
+
+using PackedRValue = lyra::lowering::mir_to_llvm::PackedRValue;
+
+auto LowerRhsToPackedRValue(
+    Context& context, const mir::RightHandSide& rhs, uint32_t semantic_bits,
+    TypeId result_type) -> Result<PackedRValue> {
+  CanonicalSlotAccess canonical(context);
+  return LowerRhsToPackedRValue(
+      context, canonical, rhs, semantic_bits, result_type);
+}
+
+auto LowerRhsToPackedRValue(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::RightHandSide& rhs, uint32_t semantic_bits, TypeId result_type)
+    -> Result<PackedRValue> {
+  return std::visit(
+      common::Overloaded{
+          [&](const mir::Operand& operand) -> Result<PackedRValue> {
+            auto raw = LowerOperandRaw(context, resolver, operand);
+            if (!raw) return std::unexpected(raw.error());
+            return BuildPackedRValueFromRaw(context, *raw, semantic_bits);
+          },
+          [&](const mir::Rvalue& rvalue) -> Result<PackedRValue> {
+            auto rv_result =
+                LowerRvalue(context, resolver, rvalue, result_type);
+            if (!rv_result) return std::unexpected(rv_result.error());
+            // Invariant: rv_result->unknown is either nullptr (provably
+            // 2-state) or a non-null SSA value (4-state). A 4-state
+            // expression MAY legitimately produce ConstantInt(0) for the
+            // unknown plane (all bits known). That is semantically
+            // distinct from nullptr (provably 2-state), and both are
+            // valid. No coercion is performed here.
+            PackedRValue result;
+            result.val = rv_result->value;
+            result.unk = rv_result->unknown;
+            result.semantic_bits = semantic_bits;
+            return result;
           },
       },
       rhs);

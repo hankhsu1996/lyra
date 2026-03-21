@@ -154,36 +154,25 @@ struct FillTargetInfo {
   llvm::Type* storage_type = nullptr;
 };
 
-// Build filled value and commit using CommitPackedValueRaw.
+// Build filled value and commit using CommitPackedValue.
 void CommitFilledValue(
     Context& ctx, const FillTargetInfo& t, llvm::Value* filled_val,
     llvm::Value* filled_unk) {
-  auto& builder = ctx.GetBuilder();
+  PackedRValue rvalue;
+  rvalue.semantic_bits = t.total_bits;
 
-  llvm::Value* final_value = nullptr;
   if (t.is_four_state) {
-    auto* struct_type = llvm::cast<llvm::StructType>(t.storage_type);
-    auto* val_type = struct_type->getElementType(0);
-    auto* unk_type = struct_type->getElementType(1);
-
-    llvm::Value* store_val =
-        builder.CreateZExtOrTrunc(filled_val, val_type, "store.val");
-    llvm::Value* store_unk =
-        builder.CreateZExtOrTrunc(filled_unk, unk_type, "store.unk");
-
-    final_value = llvm::UndefValue::get(struct_type);
-    final_value = builder.CreateInsertValue(final_value, store_val, 0);
-    final_value = builder.CreateInsertValue(final_value, store_unk, 1);
+    rvalue.val = filled_val;
+    rvalue.unk = filled_unk;
   } else {
     // 2-state target: X/Z collapses to 0 (val & ~unk)
+    auto& builder = ctx.GetBuilder();
     llvm::Value* not_unk = builder.CreateNot(filled_unk, "filled.notunk");
-    llvm::Value* known_val =
-        builder.CreateAnd(filled_val, not_unk, "filled.known");
-    final_value =
-        builder.CreateZExtOrTrunc(known_val, t.storage_type, "store.val");
+    rvalue.val = builder.CreateAnd(filled_val, not_unk, "filled.known");
+    // unk stays nullptr -- 2-state target.
   }
 
-  CommitPackedValueRaw(ctx, t.place_id, final_value, t.type_id);
+  CommitPackedValue(ctx, t.place_id, rvalue, t.type_id);
 }
 
 // Bit fill: replicate single bit to all positions using SExt.

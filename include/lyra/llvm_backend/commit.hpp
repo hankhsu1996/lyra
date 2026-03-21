@@ -8,6 +8,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
+#include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -23,12 +24,14 @@ auto CommitValue(
     Context& ctx, mir::PlaceId target, llvm::Value* raw_value, TypeId type_id,
     OwnershipPolicy policy) -> Result<void>;
 
-// Thin zero-semantics adapter for packed/float value stores. Constructs PSV
-// inputs (PackedStorageView, PackedRValue, PackedStorePolicy) and delegates
-// to StorePackedValue. No packed-store semantics (spec resolution, inline
-// store logic, notification logic, compare logic) remain in this function.
-void CommitPackedValueRaw(
-    Context& ctx, mir::PlaceId target, llvm::Value* value, TypeId type_id);
+// Non-lossy packed value commit. Accepts a PackedRValue with preserved
+// 2-state/4-state semantics (unk == nullptr means provably 2-state).
+// For design targets: routes through PSV with store plan.
+// For non-design targets (process locals): direct LLVM store, outside
+// the packed-store policy architecture.
+void CommitPackedValue(
+    Context& ctx, mir::PlaceId target, const PackedRValue& rvalue,
+    TypeId type_id);
 
 // Notify queue/container mutation (handle unchanged, content changed).
 // Invariant: handle at target unchanged, but logical content mutated

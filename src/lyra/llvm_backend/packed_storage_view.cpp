@@ -361,7 +361,6 @@ auto EmitByteAddressableLoad(Context& ctx, const PackedSubviewAccess& access)
   PackedRValue result;
   result.val = val;
   result.semantic_bits = access.semantic_bit_width;
-  result.is_four_state = access.storage.is_four_state;
 
   if (access.storage.is_four_state) {
     auto* unk_off = builder.CreateAdd(
@@ -397,7 +396,6 @@ auto EmitBitAddressableLoad(Context& ctx, const PackedSubviewAccess& access)
 
   PackedRValue result;
   result.semantic_bits = access.semantic_bit_width;
-  result.is_four_state = access.storage.is_four_state;
 
   uint32_t elem_storage_bytes = GetStorageByteSize(access.semantic_bit_width);
   uint32_t elem_storage_bits = elem_storage_bytes * 8;
@@ -1276,7 +1274,6 @@ auto MaterializePackedValue(Context& ctx, const PackedStorageView& storage)
   uint32_t storage_bits = storage.storage_plane_byte_size * 8;
   PackedRValue result;
   result.semantic_bits = storage.total_semantic_bits;
-  result.is_four_state = storage.is_four_state;
   result.val = planes.val;
 
   if (storage_bits > storage.total_semantic_bits && planes.val != nullptr) {
@@ -1397,22 +1394,26 @@ auto NotifyPackedStorageWritten(
   return {};
 }
 
-auto ConvertRawToPackedRValue(
-    Context& ctx, llvm::Value* raw, uint32_t semantic_bits, bool is_four_state)
-    -> PackedRValue {
+auto BuildPackedRValueFromRaw(
+    Context& ctx, llvm::Value* raw, uint32_t semantic_bits) -> PackedRValue {
   auto& builder = ctx.GetBuilder();
   PackedRValue result;
   result.semantic_bits = semantic_bits;
-  result.is_four_state = is_four_state;
 
   if (raw->getType()->isStructTy()) {
+    auto* st = llvm::cast<llvm::StructType>(raw->getType());
+    if (st->getNumElements() != 2 || !st->getElementType(0)->isIntegerTy() ||
+        st->getElementType(0) != st->getElementType(1)) {
+      throw common::InternalError(
+          "BuildPackedRValueFromRaw",
+          "struct input must be canonical {iN, iN} 4-state packed form");
+    }
     result.val = builder.CreateExtractValue(raw, 0, "rhs.val");
     result.unk = builder.CreateExtractValue(raw, 1, "rhs.unk");
   } else {
     result.val = raw;
-    if (is_four_state) {
-      result.unk = llvm::ConstantInt::get(raw->getType(), 0);
-    }
+    // unk stays nullptr -- scalar LLVM type means the source variable is
+    // 2-state. No zero synthesis.
   }
   return result;
 }
@@ -1437,15 +1438,19 @@ auto ConvertPackedRValueToLegacyLlvmValue(
     -> llvm::Value* {
   auto& builder = ctx.GetBuilder();
 
-  if (target_type->isStructTy() && rval.is_four_state) {
+  // Legacy conversion: the TARGET type determines the output shape.
+  // struct -> emit {val, unk} form (zero for unk if RHS is 2-state)
+  // integer -> emit plain value (mask out unknown bits if 4-state)
+  // This is a legacy interop boundary, not a semantic decision point.
+  if (target_type->isStructTy()) {
     auto* result_struct = llvm::cast<llvm::StructType>(target_type);
     auto* result_elem = result_struct->getElementType(0);
     llvm::Value* val =
         builder.CreateZExtOrTrunc(rval.val, result_elem, "psv.to.val");
-    llvm::Value* unk = builder.CreateZExtOrTrunc(
-        rval.unk != nullptr ? rval.unk
-                            : llvm::ConstantInt::get(rval.val->getType(), 0),
-        result_elem, "psv.to.unk");
+    llvm::Value* unk =
+        rval.unk != nullptr
+            ? builder.CreateZExtOrTrunc(rval.unk, result_elem, "psv.to.unk")
+            : llvm::ConstantInt::get(result_elem, 0);
     llvm::Value* result = llvm::UndefValue::get(result_struct);
     result = builder.CreateInsertValue(result, val, 0);
     result = builder.CreateInsertValue(result, unk, 1);
@@ -1454,11 +1459,21 @@ auto ConvertPackedRValueToLegacyLlvmValue(
 
   if (target_type->isIntegerTy()) {
     llvm::Value* val = rval.val;
-    if (rval.is_four_state && rval.unk != nullptr) {
+    if (rval.unk != nullptr) {
       auto* not_unk = builder.CreateNot(rval.unk, "psv.to.notunk");
       val = builder.CreateAnd(val, not_unk, "psv.to.known");
     }
     return builder.CreateZExtOrTrunc(val, target_type, "psv.to.ext");
+  }
+
+  // Float types (real/shortreal): bitcast from integer representation.
+  // PackedRValue carries the bitcasted integer; convert back to float.
+  if (target_type->isDoubleTy() || target_type->isFloatTy()) {
+    auto* int_ty = target_type->isDoubleTy()
+                       ? llvm::Type::getInt64Ty(ctx.GetLlvmContext())
+                       : llvm::Type::getInt32Ty(ctx.GetLlvmContext());
+    auto* int_val = builder.CreateZExtOrTrunc(rval.val, int_ty, "psv.to.int");
+    return builder.CreateBitCast(int_val, target_type, "psv.to.float");
   }
 
   throw common::InternalError(

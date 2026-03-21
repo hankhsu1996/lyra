@@ -12,6 +12,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/mir/place.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -55,5 +56,24 @@ auto LowerRhsRaw(
 auto LowerRhsRaw(
     Context& context, SlotAccessResolver& resolver,
     const mir::RightHandSide& rhs, mir::PlaceId target) -> Result<llvm::Value*>;
+
+// Evaluate RightHandSide to a non-lossy PackedRValue.
+// This is the sole transport boundary for packed-store entry points.
+// unk == nullptr means the RHS is provably 2-state; no downstream code
+// may coerce it to a zero constant.
+//
+// Operand branch: calls LowerOperandRaw, then extracts from LLVM type
+// (struct -> 4-state, scalar -> 2-state). The LLVM type is authoritative
+// because it was determined by the operand's own declared type.
+// Rvalue branch: calls LowerRvalue and copies value/unknown directly.
+auto LowerRhsToPackedRValue(
+    Context& context, const mir::RightHandSide& rhs, uint32_t semantic_bits,
+    TypeId result_type) -> Result<lyra::lowering::mir_to_llvm::PackedRValue>;
+
+// Resolver-aware overload.
+auto LowerRhsToPackedRValue(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::RightHandSide& rhs, uint32_t semantic_bits, TypeId result_type)
+    -> Result<lyra::lowering::mir_to_llvm::PackedRValue>;
 
 }  // namespace lyra::lowering::mir_to_llvm::detail

@@ -8,6 +8,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
+#include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 
@@ -63,7 +64,16 @@ struct OperandSource {
   const mir::Operand* operand;
 };
 
-using WriteSource = std::variant<RawValueSource, OperandSource>;
+// Non-lossy packed RHS carrier for packed-store paths.
+// Bypasses the raw llvm::Value* transport to preserve 2-state/4-state
+// semantics (unk == nullptr means provably 2-state).
+struct PackedRValueSource {
+  PackedRValue rvalue;
+  TypeId type_id;
+};
+
+using WriteSource =
+    std::variant<RawValueSource, OperandSource, PackedRValueSource>;
 
 // Source-aware write dispatcher. Builds a plan and executes it.
 // This is the canonical dispatch boundary. All write paths route here.

@@ -103,10 +103,45 @@ auto EmitPlainAggregateStore(
 auto EmitPackedOrFloatWrite(
     Context& ctx, mir::PlaceId target, const WriteSource& source,
     TypeId type_id) -> Result<void> {
+  // Non-lossy packed path: PackedRValueSource carries preserved
+  // 2-state/4-state semantics directly to CommitPackedValue.
+  if (const auto* packed = std::get_if<PackedRValueSource>(&source)) {
+    CommitPackedValue(ctx, target, packed->rvalue, packed->type_id);
+    return {};
+  }
+
+  // Legacy raw path: convert raw value to PackedRValue at the dispatch
+  // boundary. This is the single conversion point for callers (system TF,
+  // assoc_op, call, etc.) that produce raw llvm::Value* and route through
+  // CommitValue -> DispatchWrite. The raw value's LLVM type is authoritative:
+  // scalar means 2-state, struct {iN,iN} means 4-state.
   auto raw = ResolveRawValue(ctx, source);
   if (!raw) return std::unexpected(raw.error());
 
-  CommitPackedValueRaw(ctx, target, *raw, type_id);
+  const auto& types = ctx.GetTypeArena();
+  const Type& type = types[type_id];
+  auto kind = type.Kind();
+  if (kind == TypeKind::kEnum) {
+    kind = types[type.AsEnum().base_type].Kind();
+  }
+
+  uint32_t semantic_bits = 0;
+  llvm::Value* store_value = *raw;
+
+  if (kind == TypeKind::kReal) {
+    semantic_bits = 64;
+    store_value = ctx.GetBuilder().CreateBitCast(
+        *raw, llvm::Type::getInt64Ty(ctx.GetLlvmContext()), "real.as.i64");
+  } else if (kind == TypeKind::kShortReal) {
+    semantic_bits = 32;
+    store_value = ctx.GetBuilder().CreateBitCast(
+        *raw, llvm::Type::getInt32Ty(ctx.GetLlvmContext()), "shortreal.as.i32");
+  } else {
+    semantic_bits = PackedBitWidth(type, types);
+  }
+
+  auto rvalue = BuildPackedRValueFromRaw(ctx, store_value, semantic_bits);
+  CommitPackedValue(ctx, target, rvalue, type_id);
   return {};
 }
 

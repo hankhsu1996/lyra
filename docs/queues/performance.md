@@ -68,9 +68,11 @@ Keep eligible slot-backed scalars in registers across a region, commit back to s
 
 ### CQ2: Packed storage view 2-state unknown-plane elision
 
-Per-element packed array writes unconditionally store to the unknown (X/Z) plane even when the RHS is provably 2-state (no unknown bits). In the packed-array-write benchmark, every inner-loop iteration writes a constant zero to the unknown plane alongside the value plane write. This doubles memory bandwidth for the hot loop.
+When a provably 2-state RHS (e.g., an integer expression) is written to a 4-state packed storage element, the codegen unconditionally emits a full load-store-compare sequence for the unknown plane even though the new unknown value is constant zero. In the packed-array-write benchmark (logic array, integer RHS), every inner-loop iteration stores 0 to the unknown plane at +4096 bytes offset from the value plane. After initialization clears the unknown plane, every subsequent store writes 0 to memory that is already 0 -- wasted bandwidth touching a separate cache-line region.
 
-The packed storage view byte-addressable store path checks whether the storage is 4-state but does not check whether the specific RHS value has unknown bits. When the RHS unknown component is null (provably 2-state), the unknown-plane load, store, and compare should all be skipped. Look at the byte-addressable store function in the packed storage view module.
+Root cause: the is_four_state flag passed to ConvertRawToPackedRValue comes from the storage, not the RHS expression. When storage is logic (4-state) but the RHS is a scalar integer (2-state), the function synthesizes a zero constant for the unknown component instead of leaving it null. This erases the "provably 2-state" signal before it reaches EmitByteAddressableStore, where the null check on value.unk is effectively dead code.
+
+The fix is a conditional store: when the RHS unknown component is provably zero, replace the unconditional unknown-plane store with a guarded path that loads old_unk, and only stores zero and marks changed if old_unk is non-zero. Skipping the store entirely is unsafe because previous 4-state writes may have left X/Z bits that must be cleared. The same pattern applies to EmitBitAddressableStore.
 
 ### CQ3: Packed storage view deferred-notification dead code elision
 
