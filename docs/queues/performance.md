@@ -68,11 +68,11 @@ Keep eligible slot-backed scalars in registers across a region, commit back to s
 
 ### CQ2: Packed storage view 2-state unknown-plane elision
 
-When a provably 2-state RHS (e.g., an integer expression) is written to a 4-state packed storage element, the codegen unconditionally emits a full load-store-compare sequence for the unknown plane even though the new unknown value is constant zero. In the packed-array-write benchmark (logic array, integer RHS), every inner-loop iteration stores 0 to the unknown plane at +4096 bytes offset from the value plane. After initialization clears the unknown plane, every subsequent store writes 0 to memory that is already 0 -- wasted bandwidth touching a separate cache-line region.
+Per-element packed array writes unconditionally store to the unknown plane even when all RHS operands are intrinsically 2-state. In the packed-array-write benchmark, every inner-loop iteration stores zero to the unknown plane alongside the value plane write, doubling memory bandwidth on the hot path.
 
-Root cause: the is_four_state flag passed to ConvertRawToPackedRValue comes from the storage, not the RHS expression. When storage is logic (4-state) but the RHS is a scalar integer (2-state), the function synthesizes a zero constant for the unknown component instead of leaving it null. This erases the "provably 2-state" signal before it reaches EmitByteAddressableStore, where the null check on value.unk is effectively dead code.
+The store-layer architecture (non-lossy PackedRValue carrier, PackedStorePlan with kConditionalClear, plan-based store executors) is in place. The conditional-clear codegen path is implemented for all store variants. However, the benchmark does not yet trigger it because the expression layer evaluates RHS expressions in 4-state mode when the target element type is logic, producing a runtime zero for the unknown plane (unk != nullptr) rather than an absent unknown (unk == nullptr).
 
-The fix is a conditional store: when the RHS unknown component is provably zero, replace the unconditional unknown-plane store with a guarded path that loads old_unk, and only stores zero and marks changed if old_unk is non-zero. Skipping the store entirely is unsafe because previous 4-state writes may have left X/Z bits that must be cleared. The same pattern applies to EmitBitAddressableStore.
+Closing CQ2 requires expression-level 2-state optimization: when all operands of a packed expression are intrinsically 2-state (int, bit), produce unk == nullptr even when the target is 4-state. Look at the compute driver's is_four_state flag derivation and the packed context setup in the expression lowering layer.
 
 ### CQ3: Packed storage view deferred-notification dead code elision
 

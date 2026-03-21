@@ -36,3 +36,124 @@ cases:
       endmodule
     expect:
       stdout: "data = aabbffdd\n"
+
+  - name: 4state_x_clear_via_int_assign
+    description: >
+      Assign X to logic variable, then assign a 2-state int value.
+      Verifies unknown plane is correctly cleared by int write.
+    sv: |
+      module Test;
+        logic [31:0] data;
+        int result;
+        initial begin
+          data = 'x;
+          data = 32'd42;
+          result = int'(data);
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result = 42\n"
+
+  - name: 4state_packed_array_x_clear
+    description: >
+      Initialize packed array elements to X, then write 2-state values
+      per-element. Verifies all X/Z cleared across elements.
+    sv: |
+      module Test;
+        logic [3:0][31:0] data;
+        int result;
+        initial begin
+          data = 'x;
+          for (int i = 0; i < 4; i++) data[i] = 32'(i * 100 + 7);
+          result = 0;
+          for (int i = 0; i < 4; i++) result = result + int'(data[i]);
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result = 628\n"
+
+  - name: 4state_mixed_x_sequence
+    description: >
+      Assign X, then 2-state, then 4-state with unknown, then 2-state
+      again. Verifies each transition produces correct results.
+    sv: |
+      module Test;
+        logic [31:0] data;
+        int result;
+        initial begin
+          data = 'x;
+          data = 32'd100;
+          result = int'(data);
+          $display("after clear: %0d", result);
+          data = 'x;
+          data = 32'd200;
+          result = int'(data);
+          $display("after second clear: %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: |
+        after clear: 100
+        after second clear: 200
+
+  - name: 4state_nba_x_clear
+    description: >
+      NBA assign from 2-state value to logic variable initialized to X.
+      Verifies X/Z cleared at NBA commit time.
+    sv: |
+      module Test;
+        logic [31:0] data;
+        int result;
+        initial begin
+          data = 'x;
+          data <= 32'd99;
+          #0;
+          result = int'(data);
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result = 99\n"
+
+  - name: 4state_nba_packed_array_x_clear
+    description: >
+      NBA per-element write to packed array initialized to X.
+      Verifies X/Z cleared for each element at NBA commit.
+    sv: |
+      module Test;
+        logic [3:0][31:0] data;
+        int result;
+        initial begin
+          data = 'x;
+          for (int i = 0; i < 4; i++) data[i] <= 32'(i + 10);
+          #0;
+          result = 0;
+          for (int i = 0; i < 4; i++) result = result + int'(data[i]);
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result = 46\n"
+
+  - name: 4state_zero_unknown_stays_4state
+    description: >
+      A 4-state expression with zero-valued unknown (logic assigned a
+      known constant) must remain semantically 4-state. The unknown
+      plane is zero but present. This guards against collapsing
+      "4-state with zero unknown" into "2-state absent unknown."
+    sv: |
+      module Test;
+        logic [31:0] a;
+        logic [31:0] b;
+        int result;
+        initial begin
+          a = 32'd5;
+          b = a;
+          result = int'(b);
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result = 5\n"
