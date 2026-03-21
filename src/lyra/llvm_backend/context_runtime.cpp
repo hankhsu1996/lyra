@@ -249,6 +249,36 @@ auto Context::GetLyraRunSimulation() -> llvm::Function* {
   return lyra_run_simulation_;
 }
 
+auto Context::GetLyraConstructProcessStates() -> llvm::Function* {
+  if (lyra_construct_process_states_ == nullptr) {
+    // void* LyraConstructProcessStates(
+    //     void** states_out, uint32_t num_processes,
+    //     const ProcessStateSchema* state_schemas, uint32_t num_state_schemas,
+    //     const ProcessConstructorRecord* records)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        ptr_ty, {ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty}, false);
+    lyra_construct_process_states_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraConstructProcessStates",
+        llvm_module_.get());
+  }
+  return lyra_construct_process_states_;
+}
+
+auto Context::GetLyraDestroyProcessStates() -> llvm::Function* {
+  if (lyra_destroy_process_states_ == nullptr) {
+    // void LyraDestroyProcessStates(void* packed_buffer)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(void_ty, {ptr_ty}, false);
+    lyra_destroy_process_states_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraDestroyProcessStates",
+        llvm_module_.get());
+  }
+  return lyra_destroy_process_states_;
+}
+
 auto Context::GetLyraRunProcessSync() -> llvm::Function* {
   if (lyra_run_process_sync_ == nullptr) {
     // void LyraRunProcessSync(ptr process, ptr state)

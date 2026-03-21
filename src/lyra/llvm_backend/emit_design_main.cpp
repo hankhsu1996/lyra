@@ -395,218 +395,244 @@ void EmitInitProcesses(
   }
 }
 
-struct ProcessInitDesc {
-  uint64_t offset;
-  uint64_t size;
-  size_t layout_index;
-  bool has_4state_patches;
-  bool has_composite_4state;
-};
-
-struct PackedProcessLayout {
-  std::vector<ProcessInitDesc> descs;
-  uint64_t buffer_size;
-  uint64_t max_align;
-  uint32_t count;
-};
-
-auto ComputePackedProcessLayout(
-    const Context& context, const Layout& layout,
-    const std::vector<llvm::Function*>& process_funcs, size_t num_init,
-    const llvm::DataLayout& dl) -> PackedProcessLayout {
-  auto count = static_cast<uint32_t>(process_funcs.size() - num_init);
-  bool force_two_state = context.IsForceTwoState();
-
-  std::vector<ProcessInitDesc> descs;
-  descs.reserve(count);
-  uint64_t buffer_size = 0;
-  uint64_t max_align = 16;
-
-  for (size_t i = num_init; i < process_funcs.size(); ++i) {
-    const auto& proc_layout = layout.processes[i];
-    auto* state_type = proc_layout.state_type;
-    uint64_t size = dl.getTypeAllocSize(state_type);
-    uint64_t align = dl.getABITypeAlign(state_type).value();
-    max_align = std::max(max_align, align);
-
-    buffer_size = (buffer_size + align - 1) & ~(align - 1);
-
-    bool has_patches =
-        !force_two_state && !proc_layout.frame.four_state_patches.IsEmpty();
-    bool has_composite = false;
-    if (!force_two_state) {
-      const auto& types = context.GetTypeArena();
-      for (TypeId type_id : proc_layout.frame.root_types) {
-        if (context.IsFourState(type_id) &&
-            !IsScalarPatchable(type_id, types, force_two_state)) {
-          has_composite = true;
-          break;
-        }
-      }
-    }
-
-    descs.push_back({
-        .offset = buffer_size,
-        .size = size,
-        .layout_index = i,
-        .has_4state_patches = has_patches,
-        .has_composite_4state = has_composite,
-    });
-    buffer_size += size;
-  }
-
-  return {
-      .descs = std::move(descs),
-      .buffer_size = buffer_size,
-      .max_align = max_align,
-      .count = count,
-  };
+// Canonical LLVM struct type for ProcessStateSchema entries.
+// Must match the runtime ProcessStateSchema layout contract:
+//   {i64 state_size, i64 state_align, ptr frame_init}
+auto GetProcessStateSchemaType(llvm::LLVMContext& ctx) -> llvm::StructType* {
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  return llvm::StructType::get(ctx, {i64_ty, i64_ty, ptr_ty});
 }
 
-auto EmitPackedStateInit(
-    Context& context, llvm::Function* main_func, const Layout& layout,
-    const PackedProcessLayout& packed_layout) -> llvm::Value* {
-  auto& builder = context.GetBuilder();
+// Canonical LLVM struct type for ProcessConstructorRecord entries.
+// Must match the runtime ProcessConstructorRecord layout contract:
+//   {i32 schema_index}
+auto GetProcessConstructorRecordType(llvm::LLVMContext& ctx)
+    -> llvm::StructType* {
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  std::array<llvm::Type*, 1> fields = {i32_ty};
+  return llvm::StructType::get(ctx, fields);
+}
+
+// Emit one per-schema frame-init function for schemas needing 4-state init.
+// Returns a dense vector indexed by schema index (null for schemas not needing
+// init). Emission order matches Layout::state_schemas.
+auto EmitPerSchemaFrameInitFunctions(Context& context, const Layout& layout)
+    -> std::vector<llvm::Function*> {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
   bool force_two_state = context.IsForceTwoState();
-  uint32_t count = packed_layout.count;
 
-  auto* states_array = builder.CreateAlloca(
-      ptr_ty, llvm::ConstantInt::get(i32_ty, count), "states_array");
+  std::vector<llvm::Function*> init_fns(layout.state_schemas.size(), nullptr);
 
-  if (count == 0) return states_array;
+  for (size_t si = 0; si < layout.state_schemas.size(); ++si) {
+    const auto& schema = layout.state_schemas[si];
+    if (!schema.needs_4state_init) continue;
 
-  auto* packed_states = builder.CreateAlloca(
-      i8_ty, builder.getInt64(packed_layout.buffer_size), "packed_states");
-  if (auto* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(packed_states)) {
-    alloca_inst->setAlignment(llvm::Align(packed_layout.max_align));
-  }
-  builder.CreateMemSet(
-      packed_states, builder.getInt8(0), packed_layout.buffer_size,
-      llvm::MaybeAlign(packed_layout.max_align));
+    // Validate schema identity metadata consistency.
+    if (schema.body_id.has_value()) {
+      if (!schema.proc_within_body.has_value() ||
+          schema.conn_index.has_value()) {
+        throw common::InternalError(
+            "EmitPerSchemaFrameInitFunctions",
+            "module schema has inconsistent identity fields");
+      }
+    } else {
+      if (schema.proc_within_body.has_value() ||
+          !schema.conn_index.has_value()) {
+        throw common::InternalError(
+            "EmitPerSchemaFrameInitFunctions",
+            "connection schema has inconsistent identity fields");
+      }
+    }
 
-  // Build offset table as global constant for the init loop.
-  std::vector<llvm::Constant*> offset_constants;
-  offset_constants.reserve(count);
-  for (const auto& desc : packed_layout.descs) {
-    offset_constants.push_back(llvm::ConstantInt::get(i64_ty, desc.offset));
-  }
-  auto* offset_array_type = llvm::ArrayType::get(i64_ty, count);
-  auto* offsets_global = new llvm::GlobalVariable(
-      mod, offset_array_type, true, llvm::GlobalValue::InternalLinkage,
-      llvm::ConstantArray::get(offset_array_type, offset_constants),
-      "__lyra_proc_offsets");
-  offsets_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    if (schema.representative_process_index >= layout.processes.size()) {
+      throw common::InternalError(
+          "EmitPerSchemaFrameInitFunctions",
+          "representative_process_index out of range");
+    }
 
-  // Emit loop: materialize state pointers into states_array.
-  // Simulation-header binding (including design_ptr) is not written here;
-  // runtime owns all persistent simulation-process header initialization.
-  auto* proc_loop_preheader = builder.GetInsertBlock();
-  auto* proc_loop_header =
-      llvm::BasicBlock::Create(ctx, "proc_init_header", main_func);
-  auto* proc_loop_body =
-      llvm::BasicBlock::Create(ctx, "proc_init_body", main_func);
-  auto* proc_loop_exit =
-      llvm::BasicBlock::Create(ctx, "proc_init_exit", main_func);
+    // Generate function name from schema identity.
+    std::string fn_name;
+    if (schema.body_id) {
+      fn_name = std::format(
+          "schema_{}_{}_frame_init", schema.body_id->value,
+          *schema.proc_within_body);
+    } else {
+      fn_name = std::format("conn_{}_frame_init", *schema.conn_index);
+    }
 
-  builder.CreateBr(proc_loop_header);
-  builder.SetInsertPoint(proc_loop_header);
+    auto* fn_type =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), {ptr_ty}, false);
+    auto* fn = llvm::Function::Create(
+        fn_type, llvm::Function::InternalLinkage, fn_name, &mod);
 
-  auto* proc_phi = builder.CreatePHI(i32_ty, 2, "proc_idx");
-  proc_phi->addIncoming(builder.getInt32(0), proc_loop_preheader);
-  auto* proc_cond = builder.CreateICmpULT(proc_phi, builder.getInt32(count));
-  builder.CreateCondBr(proc_cond, proc_loop_body, proc_loop_exit);
+    // Save current builder state.
+    auto* saved_block = context.GetBuilder().GetInsertBlock();
+    auto saved_point = context.GetBuilder().GetInsertPoint();
 
-  builder.SetInsertPoint(proc_loop_body);
+    auto* entry = llvm::BasicBlock::Create(ctx, "entry", fn);
+    context.GetBuilder().SetInsertPoint(entry);
 
-  auto* offset_ptr = builder.CreateGEP(
-      offset_array_type, offsets_global, {builder.getInt32(0), proc_phi});
-  auto* offset_val = builder.CreateLoad(i64_ty, offset_ptr);
-  auto* state_ptr = builder.CreateGEP(i8_ty, packed_states, {offset_val});
-  auto* state_slot = builder.CreateGEP(ptr_ty, states_array, {proc_phi});
-  builder.CreateStore(state_ptr, state_slot);
-
-  auto* proc_next = builder.CreateAdd(proc_phi, builder.getInt32(1));
-  proc_phi->addIncoming(proc_next, proc_loop_body);
-  builder.CreateBr(proc_loop_header);
-
-  builder.SetInsertPoint(proc_loop_exit);
-
-  // Apply 4-state patches for processes that need them (rare).
-  for (uint32_t pi = 0; pi < count; ++pi) {
-    const auto& desc = packed_layout.descs[pi];
-    if (!desc.has_4state_patches && !desc.has_composite_4state) continue;
-
-    const auto& proc_layout = layout.processes[desc.layout_index];
-    auto* state_ptr_4s = builder.CreateGEP(
-        i8_ty, packed_states, {builder.getInt64(desc.offset)});
+    auto* state_ptr = fn->getArg(0);
+    const auto& proc_layout =
+        layout.processes[schema.representative_process_index];
     auto* state_type = proc_layout.state_type;
+    auto* frame_ptr =
+        context.GetBuilder().CreateStructGEP(state_type, state_ptr, 1);
 
-    if (desc.has_4state_patches) {
-      auto* frame_ptr = builder.CreateStructGEP(state_type, state_ptr_4s, 1);
-      std::string prefix = std::format("frame.{}", desc.layout_index);
+    // Apply scalar 4-state patches.
+    if (!proc_layout.frame.four_state_patches.IsEmpty()) {
+      std::string prefix = fn_name;
       EmitApply4StatePatches(
           context, frame_ptr, proc_layout.frame.four_state_patches, prefix);
     }
 
-    if (desc.has_composite_4state) {
-      auto* frame_type = proc_layout.frame.llvm_type;
-      auto* frame_ptr = builder.CreateStructGEP(state_type, state_ptr_4s, 1);
-      const auto& types = context.GetTypeArena();
-      for (uint32_t fi = 0; fi < proc_layout.frame.root_types.size(); ++fi) {
-        TypeId type_id = proc_layout.frame.root_types[fi];
-        if (!context.IsFourState(type_id)) continue;
-        if (IsScalarPatchable(type_id, types, force_two_state)) continue;
-        auto* field_ptr = builder.CreateStructGEP(frame_type, frame_ptr, fi);
-        EmitSVDefaultInitAfterZero(context, field_ptr, type_id);
-      }
+    // Apply composite 4-state initialization.
+    auto* frame_type = proc_layout.frame.llvm_type;
+    const auto& types = context.GetTypeArena();
+    for (uint32_t fi = 0; fi < proc_layout.frame.root_types.size(); ++fi) {
+      TypeId type_id = proc_layout.frame.root_types[fi];
+      if (!context.IsFourState(type_id)) continue;
+      if (IsScalarPatchable(type_id, types, force_two_state)) continue;
+      auto* field_ptr =
+          context.GetBuilder().CreateStructGEP(frame_type, frame_ptr, fi);
+      EmitSVDefaultInitAfterZero(context, field_ptr, type_id);
     }
+
+    context.GetBuilder().CreateRetVoid();
+
+    // Restore builder state.
+    if (saved_block != nullptr) {
+      context.GetBuilder().SetInsertPoint(saved_block, saved_point);
+    }
+
+    init_fns[si] = fn;
   }
 
-  return states_array;
+  return init_fns;
 }
 
-// Emit __lyra_module_funcs: process function pointer array for the
-// LyraRunSimulation ABI. Standalone (connection) entries have valid function
-// pointers; module process entries are null. This array is NOT the canonical
-// dispatch source for module processes -- descriptor-driven dispatch (v7 ABI)
-// handles module processes. The null module entries are temporary
-// compatibility residue for the unchanged LyraRunSimulation signature.
-auto EmitProcessFuncArray(
+// Emit __lyra_state_schemas: global constant array of ProcessStateSchema.
+auto EmitProcessStateSchemas(
+    Context& context, const Layout& layout,
+    const std::vector<llvm::Function*>& init_fns) -> llvm::Constant* {
+  auto& ctx = context.GetLlvmContext();
+  auto& mod = context.GetModule();
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* schema_type = GetProcessStateSchemaType(ctx);
+
+  auto count = static_cast<uint32_t>(layout.state_schemas.size());
+  if (count == 0) {
+    return llvm::ConstantPointerNull::get(
+        llvm::cast<llvm::PointerType>(ptr_ty));
+  }
+
+  std::vector<llvm::Constant*> entries;
+  entries.reserve(count);
+  for (size_t si = 0; si < layout.state_schemas.size(); ++si) {
+    const auto& schema = layout.state_schemas[si];
+    llvm::Constant* init_fn = init_fns[si] != nullptr
+                                  ? static_cast<llvm::Constant*>(init_fns[si])
+                                  : llvm::ConstantPointerNull::get(
+                                        llvm::cast<llvm::PointerType>(ptr_ty));
+    entries.push_back(
+        llvm::ConstantStruct::get(
+            schema_type,
+            {llvm::ConstantInt::get(i64_ty, schema.state_size),
+             llvm::ConstantInt::get(i64_ty, schema.state_align), init_fn}));
+  }
+
+  auto* array_type = llvm::ArrayType::get(schema_type, count);
+  auto* global = new llvm::GlobalVariable(
+      mod, array_type, true, llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantArray::get(array_type, entries), "__lyra_state_schemas");
+  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+  return llvm::ConstantExpr::getInBoundsGetElementPtr(
+      array_type, global,
+      llvm::ArrayRef<llvm::Constant*>{
+          llvm::ConstantInt::get(i32_ty, 0),
+          llvm::ConstantInt::get(i32_ty, 0)});
+}
+
+// Emit __lyra_constructor_records: global constant array of
+// ProcessConstructorRecord structs.
+auto EmitProcessConstructorRecords(Context& context, const Layout& layout)
+    -> llvm::Constant* {
+  auto& ctx = context.GetLlvmContext();
+  auto& mod = context.GetModule();
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* record_type = GetProcessConstructorRecordType(ctx);
+
+  auto count = static_cast<uint32_t>(layout.constructor_records.size());
+  if (count == 0) {
+    return llvm::ConstantPointerNull::get(
+        llvm::cast<llvm::PointerType>(ptr_ty));
+  }
+
+  std::vector<llvm::Constant*> entries;
+  entries.reserve(count);
+  for (const auto& rec : layout.constructor_records) {
+    entries.push_back(
+        llvm::ConstantStruct::get(
+            record_type, {llvm::ConstantInt::get(i32_ty, rec.schema_index)}));
+  }
+
+  auto* array_type = llvm::ArrayType::get(record_type, count);
+  auto* global = new llvm::GlobalVariable(
+      mod, array_type, true, llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantArray::get(array_type, entries),
+      "__lyra_constructor_records");
+  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+  return llvm::ConstantExpr::getInBoundsGetElementPtr(
+      array_type, global,
+      llvm::ArrayRef<llvm::Constant*>{
+          llvm::ConstantInt::get(i32_ty, 0),
+          llvm::ConstantInt::get(i32_ty, 0)});
+}
+
+// Emit __lyra_connection_funcs: dense connection-only function pointer array.
+// No null padding. Connection process i has its function at index i.
+auto EmitConnectionProcessFunctions(
     Context& context, const std::vector<llvm::Function*>& process_funcs,
-    size_t num_init, uint32_t num_regular) -> llvm::Constant* {
+    size_t num_init, uint32_t num_connection) -> llvm::Constant* {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
 
-  auto* null_ptr =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-  std::vector<llvm::Constant*> func_constants;
-  func_constants.reserve(num_regular);
-  for (size_t i = num_init; i < process_funcs.size(); ++i) {
-    // Module process entries are nullptr (structural guard against accidental
-    // dispatch via old path). Standalone entries have valid function pointers.
-    llvm::Constant* entry = process_funcs[i] != nullptr
-                                ? static_cast<llvm::Constant*>(process_funcs[i])
-                                : null_ptr;
-    func_constants.push_back(entry);
+  if (num_connection == 0) {
+    return llvm::ConstantPointerNull::get(
+        llvm::cast<llvm::PointerType>(ptr_ty));
   }
 
-  auto* func_array_type = llvm::ArrayType::get(ptr_ty, num_regular);
-  auto* funcs_global = new llvm::GlobalVariable(
-      mod, func_array_type, true, llvm::GlobalValue::InternalLinkage,
-      llvm::ConstantArray::get(func_array_type, func_constants),
-      "__lyra_module_funcs");
-  funcs_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  std::vector<llvm::Constant*> func_constants;
+  func_constants.reserve(num_connection);
+  for (uint32_t i = 0; i < num_connection; ++i) {
+    auto* fn = process_funcs[num_init + i];
+    if (fn == nullptr) {
+      throw common::InternalError(
+          "EmitConnectionProcessFunctions",
+          "connection process has null function pointer");
+    }
+    func_constants.push_back(static_cast<llvm::Constant*>(fn));
+  }
+
+  auto* array_type = llvm::ArrayType::get(ptr_ty, num_connection);
+  auto* global = new llvm::GlobalVariable(
+      mod, array_type, true, llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantArray::get(array_type, func_constants),
+      "__lyra_connection_funcs");
+  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
   return llvm::ConstantExpr::getInBoundsGetElementPtr(
-      func_array_type, funcs_global,
+      array_type, global,
       llvm::ArrayRef<llvm::Constant*>{
           llvm::ConstantInt::get(i32_ty, 0),
           llvm::ConstantInt::get(i32_ty, 0)});
@@ -959,21 +985,50 @@ auto EmitDesignMain(
     input.hooks->OnBeforeRunSimulation(context, slot_info, design_state);
   }
 
-  auto num_regular_module =
-      static_cast<uint32_t>(process_funcs.size() - num_init);
+  auto num_simulation = static_cast<uint32_t>(process_funcs.size() - num_init);
   auto num_kernelized =
       static_cast<uint32_t>(layout.connection_kernel_entries.size());
 
-  if (num_regular_module > 0 || num_kernelized > 0) {
-    const auto& dl = context.GetModule().getDataLayout();
-    auto packed_layout = ComputePackedProcessLayout(
-        context, layout, process_funcs, num_init, dl);
+  if (num_simulation > 0 || num_kernelized > 0) {
+    auto& builder = context.GetBuilder();
+    auto& ctx = context.GetLlvmContext();
+    auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+    auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+    auto* null_ptr =
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
-    auto* states_array =
-        EmitPackedStateInit(context, main_func, layout, packed_layout);
+    // Default to null for zero-simulation case.
+    llvm::Value* states_array = null_ptr;
+    llvm::Value* packed_buffer = null_ptr;
+    llvm::Constant* connection_funcs = null_ptr;
+    uint32_t num_connection = 0;
 
-    auto* funcs_array = EmitProcessFuncArray(
-        context, process_funcs, num_init, packed_layout.count);
+    if (num_simulation > 0) {
+      // Emit per-schema frame-init functions.
+      auto init_fns = EmitPerSchemaFrameInitFunctions(context, layout);
+
+      // Emit constructor metadata globals.
+      auto* schemas_ptr = EmitProcessStateSchemas(context, layout, init_fns);
+      auto* records_ptr = EmitProcessConstructorRecords(context, layout);
+
+      // Emit connection-only function table.
+      num_connection = static_cast<uint32_t>(
+          layout.num_module_process_base - layout.num_init_processes);
+      connection_funcs = EmitConnectionProcessFunctions(
+          context, process_funcs, num_init, num_connection);
+
+      // Allocate thin states_array on stack and call runtime constructor.
+      states_array = builder.CreateAlloca(
+          ptr_ty, llvm::ConstantInt::get(i32_ty, num_simulation),
+          "states_array");
+      auto num_schemas = static_cast<uint32_t>(layout.state_schemas.size());
+      packed_buffer = builder.CreateCall(
+          context.GetLyraConstructProcessStates(),
+          {states_array, llvm::ConstantInt::get(i32_ty, num_simulation),
+           schemas_ptr, llvm::ConstantInt::get(i32_ty, num_schemas),
+           records_ptr},
+          "packed_buffer");
+    }
 
     auto plusargs = BuildPlusargs(context, main_func, input);
 
@@ -983,13 +1038,9 @@ auto EmitDesignMain(
 
     auto wait_site_meta = EmitWaitSiteMetaTable(context, session.wait_sites);
 
-    auto num_standalone = static_cast<uint32_t>(
-        layout.num_module_process_base - layout.num_init_processes);
     auto num_module = static_cast<uint32_t>(
         layout.scheduled_processes.size() - layout.num_module_process_base);
 
-    // Containment check: descriptor count must exactly match module process
-    // count. The entire dispatch partition depends on this 1:1 mapping.
     if (session.process_descriptors.size() != num_module) {
       throw common::InternalError(
           "EmitDesignMain",
@@ -999,15 +1050,18 @@ auto EmitDesignMain(
     }
 
     auto desc_table = EmitProcessDescriptorTable(
-        context, session.process_descriptors, num_standalone);
+        context, session.process_descriptors, num_connection);
 
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, desc_table, input.feature_flags,
         input.signal_trace_path, design_state);
 
     EmitRunSimulation(
-        context, funcs_array, states_array, packed_layout.count, plusargs,
+        context, connection_funcs, states_array, num_simulation, plusargs,
         meta_globals, abi_alloca);
+
+    // Destroy the packed buffer after simulation completes.
+    builder.CreateCall(context.GetLyraDestroyProcessStates(), {packed_buffer});
   }
 
   EmitMainExit(context, design_state, slot_info, input, exit_block);
