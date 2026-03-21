@@ -346,16 +346,14 @@ Realization may:
 
 ### Instance-Independence of Compiled Artifacts
 
-Changing instance counts, generate expansion, or topology must not materially change the LLVM codegen workload. The expected compile-time scaling property:
+**Target property:** Changing instance counts, generate expansion, or topology should not materially change the LLVM codegen or object emission workload. The intended compile-time scaling property:
 
 - **Specialization compilation** scales with the number of unique specializations (unique `ModuleSpecId` values). Adding more instances of the same specialization does not increase compilation cost.
-- **Realization/construction** scales with total instance count. This is runtime construction work: allocating state, building per-instance metadata, wiring connectivity. This cost is expected and acceptable.
+- **Realization/construction** scales with total instance count. This is runtime construction work: allocating state, building per-instance metadata, wiring connectivity.
 
-The boundary rule: per-instance binding must not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- must be determined by the number of unique specializations, not the number of instances. Instance-specific constants (base byte offset, instance ID, signal ID offset, per-instance slot offset tables) belong in runtime-owned data materialized at construction time.
+The boundary rule: per-instance binding should not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- should be determined by the number of unique specializations, not the number of instances. Instance-specific constants (base byte offset, instance ID, signal ID offset, per-instance slot offset tables) belong in runtime-owned data materialized at construction time.
 
-Process and comb dispatch must carry instance-specific binding via runtime-owned realization data, not per-instance LLVM wrapper functions. Per-instance wrapper generation in LLVM IR is not the target architecture.
-
-Per-instance data (such as unstable slot offset tables for parameterized specializations) must be runtime-owned memory populated at construction time, not per-instance LLVM globals.
+**Current state:** Per-instance code (LLVM functions, construction loops in main) has been eliminated. Shared-body code paths are in place. However, fully realized instance topology is still embedded in compile-time artifacts: constructor records, process descriptors, slot metadata, trigger/comb tables, signal trace data, instance paths, and 4-state patch tables are all emitted as LLVM globals that scale linearly with instance count. Object emission time still scales with topology. The remaining migration to move these artifacts behind constructor-time expansion is tracked as H-series items in the specialization queue.
 
 ### Incrementality
 

@@ -61,7 +61,9 @@ LLVM IR is not where language semantics live.
 | Export SpecLayout, metadata, process info     | Require design-global knowledge                       |
 | Keep heavy LLVM codegen specialization-scoped | Encode per-instance binding in LLVM functions/globals |
 
-The specialization boundary is the key architectural invariant. Violations here break parallelism and incrementality. Per-instance binding must not appear in LLVM function or global identity. Heavy LLVM codegen shape must be determined by the number of unique specializations, not the number of instances.
+The specialization boundary is the key architectural invariant. Violations here break parallelism and incrementality. Per-instance binding should not appear in LLVM function or global identity. Heavy LLVM codegen shape should be determined by the number of unique specializations, not the number of instances.
+
+**Current state:** Per-instance code is eliminated, but fully realized instance topology (metadata, triggers, slot descriptors, trace data) is still embedded in compile-time globals. Object emission is not yet topology-independent. See the H-series items in the specialization queue.
 
 ### Realization -> Runtime
 
