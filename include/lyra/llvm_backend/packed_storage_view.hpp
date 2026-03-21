@@ -140,6 +140,42 @@ struct PackedRValue {
   uint32_t semantic_bits = 0;
 };
 
+// Unknown-plane write policy for packed stores.
+// Produced by BuildPackedStorePlan; consumed by all store emitters.
+// This is the single semantic decision point for unknown-plane behavior.
+// No emitter may independently decide unknown-plane policy.
+enum class UnknownPlaneAction {
+  // Storage is 2-state. No unknown plane exists. Skip entirely.
+  kNone,
+  // Storage is 4-state, RHS is 4-state. Unconditional store + compare.
+  kUnconditionalStore,
+  // Storage is 4-state, RHS is provably 2-state. Conditional clear.
+  // Immediate: load old, branch on non-zero, store zero if needed.
+  // Deferred: materialize zero constant locally and schedule.
+  kConditionalClear,
+};
+
+// Resolved unknown-plane store policy for a single packed store.
+//
+// Contract: BuildPackedStorePlan is the single authority. No emitter
+// may independently decide unknown-plane behavior. Emitters consume
+// this plan mechanically.
+struct PackedStorePlan {
+  UnknownPlaneAction unk_action = UnknownPlaneAction::kNone;
+
+  // Raw unknown-plane SSA value from the RHS. Non-null for
+  // kUnconditionalStore only. Emitters size it to their target width
+  // (subview byte span, full lane, etc.). Null for kNone and
+  // kConditionalClear.
+  llvm::Value* unk_value = nullptr;
+};
+
+// Build the unknown-plane store policy from RHS semantics and storage layout.
+// This is the single decision point for all packed stores.
+auto BuildPackedStorePlan(
+    Context& ctx, const PackedStorageView& storage, const PackedRValue& rhs)
+    -> PackedStorePlan;
+
 // Semantic store mode for packed writes.
 enum class PackedStoreMode {
   // Init path: direct store, no compare, no dirty mark, no engine.
