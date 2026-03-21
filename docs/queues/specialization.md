@@ -8,63 +8,79 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 
 ## Progress
 
-> **Scope of completed items (A through G).** These items completed shared-body migration (A-E, M2, B6, m2) and instance-independent LLVM codegen (G-series). All per-instance LLVM artifacts are eliminated. Codegen emits body-shaped metadata; runtime owns instance-shaped construction. The remaining work is parallel compilation (F1) and caching (F2).
-
-- [x] A -- Identity (module def/spec IDs, behavior fingerprint, specialization map)
-- [x] B1-B4 -- Body ownership (shared MIR bodies, no instance identity in processes)
-- [x] C1-C3 -- Local storage (body-local decls, instance placement, alias resolution eliminated)
-- [x] D1-D4 -- Realization extraction (bindings, metadata, design main, instance const blocks)
-- [x] E1-E2 -- Per-spec codegen (compile session per spec, variant/template-dedup deleted)
-- [x] E3 -- Backend API narrowing (no design input in codegen, layout, realization paths)
-- [x] E4 -- Delete compatibility adapters (representative-instance, observer program model)
-- [x] M2a -- Storage assignment from within-group variance
-- [x] M2b partial -- Declaration-based grouping, param-role deleted
-- [x] M2c partial -- Compile-owned discriminator (type-store fingerprint)
-  - [x] M2c-2a -- Artifact inventory with generate availability paths
-  - [x] M2c-2b -- Definition-owned repertoire descriptor
-  - [x] M2c-3 -- Specialization fingerprint from definition-scoped type store
-- [x] B6 -- HIR ownership split (per-spec-group body, instance record, ownership-shaped inputs)
+- [x] A-E -- Shared-body migration (MIR dedup, specialization grouping, per-body codegen, backend API narrowing)
+- [x] M2 -- Storage assignment and compile-owned discriminator
+- [x] B6 -- HIR ownership split
 - [x] m2 -- Instance paths deferred to runtime
-- [x] G -- Instance-independent LLVM codegen (descriptor-driven realization)
-  - [x] G0 -- Investigation and documentation of instance-shaped LLVM artifacts
-  - [x] G1 -- Migrate process dispatch from per-instance wrappers to descriptor-driven dispatch
-  - [x] G2 -- Migrate comb dispatch off per-instance LLVM wrappers
-    - [x] G2 follow-up: canonical header-access layer
-    - [x] G2 follow-up: runtime-owned simulation-header binding initialization
-  - [x] G3 -- Move unstable-offset realization out of LLVM globals into constructor/runtime-owned data
-  - [x] G4 -- Remove remaining instance-shaped LLVM residue and re-validate scaling
+- [x] G -- Instance-independent LLVM codegen (per-instance code eliminated, shared-body code paths in place)
+- [ ] H1 -- Correct specialization end-state: architecture contract still overstates progress
+- [ ] H2 -- Move constructor/process realization out of compile-time artifacts
+- [ ] H3 -- Move process metadata realization behind constructor-time expansion
+- [ ] H4 -- Move trigger/comb realization behind constructor-time expansion
+- [ ] H5 -- Move slot/trace/path realization behind constructor-time expansion
+- [ ] H6 -- Remove compile-time-expanded design-state initialization topology
+- [ ] H7 -- Remove remaining topology-sized emitted storage realization
+- [ ] H8 -- Re-validate topology-independence with scaling gates
 - [ ] F1 -- Parallel specialization compilation
   - [x] F1-design -- Parallel ownership model
-  - [x] F1-prep Cut 1 -- Per-body HIR ownership
-  - [x] F1-prep Cut 3a -- Per-body AST-to-HIR diagnostics
-  - [x] F1-prep Cut 2 -- Per-body MIR ownership
-  - [x] F1-prep Cut 4 -- Type/constant arena freeze
-    - [x] F1-prep Cut 4a -- TypeArena investigation and design decision
-    - [x] F1-prep Cut 4b -- Phase 0 body-type seeding (closes AST-reachable type gap)
-    - [x] F1-prep Cut 4c -- Builtin semantic type catalog (eliminates fixed synthetic Phase 1 writes)
-    - [x] F1-prep Cut 4d -- TypeArena Freeze() enforcement (verify parameterized residual, add freeze gate)
-    - [x] F1-prep Cut 4e -- ConstantArena ownership split (design-global + body-local arenas)
+  - [x] F1-prep Cuts 1-4 -- Per-body HIR/MIR ownership, type/constant arena freeze
   - [ ] m3 -- Param transmission table: replace raw symbol pointers with group-scoped key
   - [ ] F1-impl -- Per-group isolated compilation with deterministic merge
 - [ ] F2 -- Specialization caching
 - [ ] Documentation gap: pipeline-contract.md and state-layout.md need type ownership clarification
 - [ ] CI policy gates: codegen API check, grouping regression tests, topology-independence test
 
-## G: Instance-independent LLVM codegen (done)
+## H1: Correct specialization end-state
 
-All instance-shaped LLVM construction residue is eliminated. Codegen emits body-shaped metadata and schema-keyed types/functions. Runtime owns all instance-shaped work through the process-state constructor boundary. The shared body ABI is 2-arg `(frame, resume)`. Dispatch uses frame-header-cached binding populated from descriptors at init. ABI v11 with connection-process terminology throughout.
+The current architecture documentation and queue history overstated progress. Shared-body code paths are in place: per-instance LLVM functions and per-instance construction loops in main have been eliminated. But object emission is not yet topology-independent. Fully realized instance topology is still embedded in compile-time artifacts across multiple categories (constructor records, process descriptors, slot metadata, trigger tables, signal trace data, instance paths, 4-state patch tables). These scale linearly with instance count and are emitted as LLVM globals that the optimizer and object emitter must process.
 
-### G4: Remove remaining instance-shaped LLVM residue and re-validate scaling (done)
+In the intended constructor-time realization model, the compiler emits only body-shaped schemas and compact topology recipes. The runtime constructor expands those recipes into the full instance graph at execution time. The current state is an intermediate: per-instance code is gone, but per-instance data is still fully materialized at compile time. Architecture docs must be updated to reflect this gap honestly before further migration work proceeds.
 
-Canonical process-state constructor boundary established. Codegen emits body-shaped metadata (ProcessStateSchema[], ProcessConstructorRecord[]) and per-schema frame-init functions. Runtime constructor (LyraConstructProcessStates) is the sole executor of instance-shaped allocation and initialization. Generated main contains no per-process construction loops, no offset arithmetic, no null-padded function arrays. LLVM type naming uses schema identity (Body{id}Frame/State, Init{i}, Conn{i}). ABI v11 replaces standalone terminology with connection throughout. Scaling validated: body-shaped artifacts constant across instance count; only constructor records and descriptors grow.
+## H2: Move constructor/process realization out of compile-time artifacts
+
+Realized constructor records and process descriptors are still emitted as fully expanded compile-time data -- one entry per simulation process instance. In a design with N instances of the same body, the constructor record table and process descriptor table both contain N identical-schema entries that differ only in per-instance binding facts (base offset, instance ID, signal ID offset).
+
+These should instead be compact body-shaped recipes that the runtime constructor expands. A body-shaped recipe would describe: which schema, how many instances, what the per-instance binding derivation rule is (e.g., base offset stride, instance ID range, signal ID offset stride). The runtime constructor would walk these recipes and produce the per-instance data at execution time.
+
+## H3: Move process metadata realization behind constructor-time expansion
+
+Per-process metadata (scope names for %m, process trigger group membership) is still emitted as fully expanded compile-time tables. Each module process instance gets its own entry in the process metadata word table and string pool, even when all instances share the same body and differ only in their hierarchical path prefix.
+
+This metadata should be derived at constructor time from body-shaped templates and per-instance path prefixes, rather than fully materialized during compilation.
+
+## H4: Move trigger/comb realization behind constructor-time expansion
+
+Comb kernel word tables and process trigger word tables are emitted as fully expanded compile-time globals. Each module-process instance contributes its own trigger entries, even though all instances of the same body have identical trigger structure (same trigger slots relative to their base, same edge sensitivity).
+
+These should be body-shaped trigger templates that the runtime expands per-instance, using the per-instance slot offset to derive absolute trigger slot IDs from body-relative ones.
+
+## H5: Move slot/trace/path realization behind constructor-time expansion
+
+Slot metadata, trace signal metadata, and hierarchical instance paths are fully materialized per-instance at compile time. For N instances of a body with K signals each, the slot metadata table contains N\*K entries, the trace signal metadata contains N\*K name strings, and instance paths contains N path strings.
+
+These should be derived from body-shaped signal templates and the instance topology at constructor time. The compiler would emit per-body signal descriptors (relative offsets, widths, names without path prefix), and the constructor would expand them for each realized instance.
+
+## H6: Remove compile-time-expanded design-state initialization topology
+
+4-state patch tables (byte offsets and masks for X-encoding initialization) are emitted as fully expanded compile-time globals that scale with the total realized slot count. In a design with N instances of the same body, the patch table contains N copies of the same offset pattern, shifted by each instance's base offset.
+
+This should instead use body-shaped patch schemas (offsets relative to the body's slot base) that the runtime applies per-instance using each instance's base offset at construction time.
+
+## H7: Remove remaining topology-sized emitted storage realization
+
+The design-state arena sizing and any remaining emitted storage decisions still depend on the fully realized topology. The arena size in main is a compile-time constant derived from the total slot count across all instances. While this is a single constant (not a per-instance loop), it represents a design decision that could instead be computed by the runtime constructor from body-shaped slot counts and instance counts.
+
+This item covers any remaining emitted storage objects or sizing decisions that still encode the fully realized topology as if constructor expansion had already happened at compile time.
+
+## H8: Re-validate topology-independence with scaling gates
+
+After the H2-H7 migrations, compile time, optimize time, and object emission time should no longer materially scale with instance count. Only body-shaped and schema-shaped artifacts should appear in the emitted object. Instance-count-dependent work should happen exclusively at runtime construction time.
+
+Validation: re-run the generate-expand compile benchmark at 128 / 1024 / 4096 instances and verify that all three compile phases (lower_llvm, optimize_ir, emit_obj) are flat or near-flat across instance count changes.
 
 ## F1: Parallel specialization compilation
 
-See [parallel-compilation.md](../parallel-compilation.md) for the full design.
-
-Core model: Phase 0 (sequential global setup) produces immutable shared reference data. Phase 1 (per-group isolated compilation) produces per-body owned units. Phase 2 (deterministic assembly) collects bodies and builds design-wide artifacts. Body-local IDs stay body-local permanently.
-
-All prep cuts (4a-4e) are complete. ConstantArena is split into design-global + body-local. TypeArena has Freeze() enforcement. G-series (instance-independent codegen) is complete. Next: m3 (param transmission table) and then F1-impl.
+See [parallel-compilation.md](../parallel-compilation.md) for the full design. All prep cuts are complete. Next: m3 (param transmission table) then F1-impl (per-group isolated compilation with deterministic merge).
 
 ## F2: Specialization caching
 
@@ -72,22 +88,15 @@ Not yet designed. Depends on F1 completing the parallel compilation model.
 
 ## Documentation gap: type ownership model
 
-Three docs still blur compile-owned vs constructor-owned type boundaries: pipeline-contract.md ("types are language-level" without ownership distinction), state-layout.md (three phases described without framing as ownership boundaries). The code already implements the correct projection (M2c). The docs need to catch up.
+Three docs still blur compile-owned vs constructor-owned type boundaries: pipeline-contract.md ("types are language-level" without ownership distinction), state-layout.md (three phases described without framing as ownership boundaries). The code already implements the correct projection for types. The docs need to catch up, and the constructor-time realization gap (H-series) makes this more urgent.
 
 ## CI policy gates
 
 Several specialization invariants lack CI enforcement:
 
-- Codegen API has no design input (API signature check)
 - Within-group param variance is transmitted per-instance (regression test)
 - Compile-owned differences produce distinct specializations (regression test)
 - Specialization IR is topology-independent (regression test)
 - No instance paths in specialization artifacts (policy check)
 - Specialization grouping is deterministic (regression test)
 - LLVM artifact count is instance-independent (scaling regression test)
-
-## Open Questions
-
-1. Process body identity is not yet part of the specialization fingerprint. Processes with different code but the same type universe currently share a specialization under the constructor model.
-2. Package compilation: packages have no instances. Separate specialization unit or separate concept?
-3. Container descriptor format for specialization layout.

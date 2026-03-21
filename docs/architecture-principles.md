@@ -61,7 +61,9 @@ This follows from **incrementality** (stable keys) and **lifecycle** (strong inv
 
 HIR, MIR, and LLVM IR are internal to specialization compilation and are specialization-scoped. No instance paths, no design-global slot IDs, no design-global allocation. Instance creation, storage allocation, and hierarchy wiring happen at realization/runtime. The IR never duplicates code for structurally identical instances.
 
-Per-instance binding must not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- must be determined by the number of unique specializations, not the number of instances. Instance-specific constants (base byte offset, instance ID, per-instance slot offsets) belong in runtime-owned data materialized at construction time.
+**Target property:** Per-instance binding should not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- should be determined by the number of unique specializations, not the number of instances. Instance-specific constants (base byte offset, instance ID, per-instance slot offsets) belong in runtime-owned data materialized at construction time.
+
+**Current state:** Per-instance code is eliminated. However, the compiled object still contains fully realized instance topology as compile-time data (per-instance metadata tables, trigger entries, slot descriptors, trace names). Object emission is not yet topology-independent. See the H-series items in the specialization queue for the remaining migration.
 
 This follows from **parallelism** (IR scales with specializations) and **incrementality** (specialization changes do not cascade through instance graphs).
 
