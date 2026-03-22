@@ -26,7 +26,6 @@
 #include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
 #include "lyra/runtime/output_sink.hpp"
-#include "lyra/runtime/process_descriptor.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/signal_dump.hpp"
@@ -295,7 +294,6 @@ extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
 
 namespace {
 
-using ProcessDescriptorEntry = lyra::runtime::ProcessDescriptorEntry;
 using SharedBodyFn = lyra::runtime::SharedBodyFn;
 
 struct ProcessDispatchContext {
@@ -407,35 +405,6 @@ void SetupAndRunSimulation(
   FinalTime() = std::max(FinalTime(), final_time);
 }
 
-// Canonical path for all persistent simulation-process header binding
-// initialization. Runtime is the sole owner of this contract.
-//
-// For every process: writes design_ptr (cached binding derived from
-// design_state_base, which is the ABI-level source of truth).
-// For module processes: also writes body, this_ptr, instance_id,
-// signal_id_offset from descriptor data.
-void InitSimulationProcessBindings(
-    std::span<void*> states, void* design_state_base,
-    std::span<const ProcessDescriptorEntry> descriptors,
-    uint32_t num_connection) {
-  using StateHeader = lyra::runtime::ProcessFrameHeader;
-  using SharedBodyFn = lyra::runtime::SharedBodyFn;
-  for (size_t i = 0; i < states.size(); ++i) {
-    auto* header = static_cast<StateHeader*>(states[i]);
-    header->design_ptr = design_state_base;
-  }
-  for (uint32_t i = 0; i < descriptors.size(); ++i) {
-    uint32_t proc_idx = num_connection + i;
-    auto* header = static_cast<StateHeader*>(states[proc_idx]);
-    const auto& desc = descriptors[i];
-    header->body = reinterpret_cast<SharedBodyFn>(desc.shared_body);
-    header->this_ptr =
-        static_cast<char*>(design_state_base) + desc.base_byte_offset;
-    header->instance_id = desc.instance_id;
-    header->signal_id_offset = desc.signal_id_offset;
-  }
-}
-
 }  // namespace
 
 extern "C" void LyraRunSimulation(
@@ -473,7 +442,8 @@ extern "C" void LyraRunSimulation(
   using lyra::runtime::FeatureFlag;
   auto flags = static_cast<FeatureFlag>(feature_flags);
 
-  // Parse descriptor data from ABI and build the dispatch context.
+  // Dispatch partition from ABI. Process binding is constructor-owned;
+  // this is the only process topology fact read from the ABI after H2.
   //
   // Dispatch partition contract:
   //   [0, num_connection) = connection processes (3-arg direct call)
@@ -484,34 +454,6 @@ extern "C" void LyraRunSimulation(
   }
 
   uint32_t num_connection = abi->num_connection_processes;
-  std::span<const ProcessDescriptorEntry> descriptors;
-  if (abi->process_descriptors != nullptr && abi->num_process_descriptors > 0) {
-    descriptors = std::span(
-        static_cast<const ProcessDescriptorEntry*>(abi->process_descriptors),
-        abi->num_process_descriptors);
-  }
-  if (num_connection + descriptors.size() != num_processes) {
-    throw lyra::common::InternalError(
-        "LyraRunSimulation",
-        std::format(
-            "descriptor partition mismatch: {} connection + {} descriptors "
-            "!= {} total",
-            num_connection, descriptors.size(), num_processes));
-  }
-
-  // design_state is the ABI-level source of truth for design-state binding.
-  // Runtime owns all persistent simulation-process header initialization.
-  void* design_state_base = abi->design_state;
-  if (design_state_base == nullptr && !states.empty()) {
-    throw lyra::common::InternalError(
-        "LyraRunSimulation", "abi->design_state is null");
-  }
-
-  // Initialize all persistent simulation-process headers through one
-  // canonical path. After this, the descriptor table is not needed for
-  // dispatch -- all binding lives in the frame headers.
-  InitSimulationProcessBindings(
-      states, design_state_base, descriptors, num_connection);
 
   if (num_connection > 0 && connection_funcs == nullptr) {
     throw lyra::common::InternalError(
@@ -574,11 +516,11 @@ extern "C" void LyraRunSimulation(
       engine.InitConnectionBatch(conn_descs);
     }
 
-    // Comb kernel word table. Body pointers resolved from descriptor table.
+    // Comb kernel word table. Body pointers resolved from frame headers.
     if (abi->comb_kernel_words != nullptr && abi->num_comb_kernel_words > 0) {
       engine.InitCombKernels(
           std::span(abi->comb_kernel_words, abi->num_comb_kernel_words),
-          descriptors, num_connection, states_raw);
+          num_connection, states_raw);
     }
 
     // Process trigger metadata and constructor-time trigger groups (G13).

@@ -405,15 +405,6 @@ auto GetProcessStateSchemaType(llvm::LLVMContext& ctx) -> llvm::StructType* {
 }
 
 // Canonical LLVM struct type for ProcessConstructorRecord entries.
-// Must match the runtime ProcessConstructorRecord layout contract:
-//   {i32 schema_index}
-auto GetProcessConstructorRecordType(llvm::LLVMContext& ctx)
-    -> llvm::StructType* {
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  std::array<llvm::Type*, 1> fields = {i32_ty};
-  return llvm::StructType::get(ctx, fields);
-}
-
 // Emit one per-schema frame-init function for schemas needing 4-state init.
 // Returns a dense vector indexed by schema index (null for schemas not needing
 // init). Emission order matches Layout::state_schemas.
@@ -559,44 +550,6 @@ auto EmitProcessStateSchemas(
           llvm::ConstantInt::get(i32_ty, 0)});
 }
 
-// Emit __lyra_constructor_records: global constant array of
-// ProcessConstructorRecord structs.
-auto EmitProcessConstructorRecords(Context& context, const Layout& layout)
-    -> llvm::Constant* {
-  auto& ctx = context.GetLlvmContext();
-  auto& mod = context.GetModule();
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto* record_type = GetProcessConstructorRecordType(ctx);
-
-  auto count = static_cast<uint32_t>(layout.constructor_records.size());
-  if (count == 0) {
-    return llvm::ConstantPointerNull::get(
-        llvm::cast<llvm::PointerType>(ptr_ty));
-  }
-
-  std::vector<llvm::Constant*> entries;
-  entries.reserve(count);
-  for (const auto& rec : layout.constructor_records) {
-    entries.push_back(
-        llvm::ConstantStruct::get(
-            record_type, {llvm::ConstantInt::get(i32_ty, rec.schema_index)}));
-  }
-
-  auto* array_type = llvm::ArrayType::get(record_type, count);
-  auto* global = new llvm::GlobalVariable(
-      mod, array_type, true, llvm::GlobalValue::InternalLinkage,
-      llvm::ConstantArray::get(array_type, entries),
-      "__lyra_constructor_records");
-  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-
-  return llvm::ConstantExpr::getInBoundsGetElementPtr(
-      array_type, global,
-      llvm::ArrayRef<llvm::Constant*>{
-          llvm::ConstantInt::get(i32_ty, 0),
-          llvm::ConstantInt::get(i32_ty, 0)});
-}
-
 // Emit __lyra_connection_funcs: dense connection-only function pointer array.
 // No null padding. Connection process i has its function at index i.
 auto EmitConnectionProcessFunctions(
@@ -638,81 +591,211 @@ auto EmitConnectionProcessFunctions(
           llvm::ConstantInt::get(i32_ty, 0)});
 }
 
-// Canonical LLVM struct type for process descriptor entries.
-// Binary ABI contract shared between codegen (EmitProcessDescriptorTable),
-// the trampoline (EmitDescriptorDispatchTrampoline), and the runtime
-// (ProcessDescriptorEntry in simulation.cpp). Layout:
-//   field 0: ptr   shared_body       (2-arg shared body function pointer)
-//   field 1: i64   base_byte_offset  (instance base offset in design state)
-//   field 2: i32   instance_id       (module instance index)
-//   field 3: i32   signal_id_offset  (signal ID offset)
-auto GetDescriptorEntryType(llvm::LLVMContext& ctx) -> llvm::StructType* {
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  return llvm::StructType::get(ctx, {ptr_ty, i64_ty, i32_ty, i32_ty});
-}
-
-struct DescriptorTableResult {
-  // Pointer to the first element of the constant descriptor array.
-  // Type: pointer to GetDescriptorEntryType() struct. GEP with
-  // desc_idx produces a pointer to the desc_idx-th descriptor entry.
-  llvm::Constant* table_ptr;
-  uint32_t count;
-  uint32_t num_connection;
-};
-
-auto EmitProcessDescriptorTable(
-    Context& context, const std::vector<ProcessDescriptorData>& descriptors,
-    uint32_t num_connection) -> DescriptorTableResult {
+// Emit __lyra_slot_byte_offsets: compile-owned layout oracle.
+// Slot-indexed, not instance-indexed. Used by the runtime constructor for
+// byte-offset lookup when binding process frame headers.
+auto EmitSlotByteOffsets(Context& context, const Layout& layout)
+    -> llvm::Constant* {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
-  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
 
-  auto count = static_cast<uint32_t>(descriptors.size());
+  const auto& offsets = layout.design.slot_byte_offsets;
+  auto count = static_cast<uint32_t>(offsets.size());
   if (count == 0) {
-    return {
-        .table_ptr = llvm::ConstantPointerNull::get(
-            llvm::cast<llvm::PointerType>(ptr_ty)),
-        .count = 0,
-        .num_connection = num_connection,
-    };
+    return llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(ctx));
   }
-
-  auto* desc_type = GetDescriptorEntryType(ctx);
 
   std::vector<llvm::Constant*> entries;
   entries.reserve(count);
-  for (const auto& desc : descriptors) {
-    entries.push_back(
-        llvm::ConstantStruct::get(
-            desc_type,
-            {desc.shared_body,
-             llvm::ConstantInt::get(i64_ty, desc.base_byte_offset),
-             llvm::ConstantInt::get(i32_ty, desc.instance_id),
-             llvm::ConstantInt::get(i32_ty, desc.signal_id_offset)}));
+  for (uint64_t offset : offsets) {
+    entries.push_back(llvm::ConstantInt::get(i64_ty, offset));
   }
 
-  auto* array_type = llvm::ArrayType::get(desc_type, count);
+  auto* array_type = llvm::ArrayType::get(i64_ty, count);
   auto* global = new llvm::GlobalVariable(
       mod, array_type, true, llvm::GlobalValue::InternalLinkage,
       llvm::ConstantArray::get(array_type, entries),
-      "__lyra_process_descriptors");
+      "__lyra_slot_byte_offsets");
   global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
-  auto* table_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+  return llvm::ConstantExpr::getInBoundsGetElementPtr(
       array_type, global,
       llvm::ArrayRef<llvm::Constant*>{
           llvm::ConstantInt::get(i32_ty, 0),
           llvm::ConstantInt::get(i32_ty, 0)});
+}
 
-  return {
-      .table_ptr = table_ptr,
-      .count = count,
-      .num_connection = num_connection,
-  };
+// Per-body realization descriptor emission result.
+struct BodyDescEmission {
+  llvm::Constant* header_ptr;
+  llvm::Constant* entries_ptr;
+  uint32_t num_processes;
+};
+
+// Emit per-body realization descriptors: one BodyRealizationDesc header and
+// one BodyProcessEntry array per body. Built from body-shaped sources
+// (layout body_realization_infos + body compiled functions), not from
+// per-instance artifacts.
+auto EmitBodyRealizationDescs(
+    Context& context, const Layout& layout,
+    std::span<const lowering::mir_to_llvm::CodegenSession::BodyCompiledFuncs>
+        body_compiled_funcs) -> std::vector<BodyDescEmission> {
+  auto& ctx = context.GetLlvmContext();
+  auto& mod = context.GetModule();
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+
+  if (body_compiled_funcs.size() != layout.body_realization_infos.size()) {
+    throw common::InternalError(
+        "EmitBodyRealizationDescs",
+        std::format(
+            "body_compiled_funcs count {} != body_realization_infos count {}",
+            body_compiled_funcs.size(), layout.body_realization_infos.size()));
+  }
+
+  // BodyRealizationDesc ABI: {u32 num_processes, u32 slot_count}
+  auto* header_type = llvm::StructType::get(ctx, {i32_ty, i32_ty});
+  // BodyProcessEntry ABI: {ptr shared_body_fn, u32 schema_index, u32 pad}
+  auto* entry_type = llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
+
+  std::vector<BodyDescEmission> result;
+  result.reserve(layout.body_realization_infos.size());
+
+  for (size_t bi = 0; bi < layout.body_realization_infos.size(); ++bi) {
+    const auto& info = layout.body_realization_infos[bi];
+    const auto& funcs = body_compiled_funcs[bi];
+    uint32_t body_id_val = info.body_id.value;
+    uint32_t num_procs =
+        static_cast<uint32_t>(info.process_schema_indices.size());
+
+    if (funcs.body_id != info.body_id) {
+      throw common::InternalError(
+          "EmitBodyRealizationDescs",
+          std::format(
+              "body_id mismatch at index {}: compiled {} vs info {}", bi,
+              funcs.body_id.value, body_id_val));
+    }
+    if (funcs.functions.size() != num_procs) {
+      throw common::InternalError(
+          "EmitBodyRealizationDescs",
+          std::format(
+              "body {} compiled function count {} != process schema count {}",
+              body_id_val, funcs.functions.size(), num_procs));
+    }
+
+    // Emit header global.
+    auto header_name = std::format("__lyra_body_desc_{}", body_id_val);
+    auto* header_val = llvm::ConstantStruct::get(
+        header_type, {llvm::ConstantInt::get(i32_ty, num_procs),
+                      llvm::ConstantInt::get(i32_ty, info.slot_count)});
+    auto* header_global = new llvm::GlobalVariable(
+        mod, header_type, true, llvm::GlobalValue::InternalLinkage, header_val,
+        header_name);
+    header_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+    // Emit entries array global.
+    std::vector<llvm::Constant*> entry_constants;
+    entry_constants.reserve(num_procs);
+    for (uint32_t pi = 0; pi < num_procs; ++pi) {
+      auto* fn_ptr = funcs.functions[pi];
+      if (fn_ptr == nullptr) {
+        throw common::InternalError(
+            "EmitBodyRealizationDescs",
+            std::format(
+                "body {} process {} has null compiled function", body_id_val,
+                pi));
+      }
+      entry_constants.push_back(
+          llvm::ConstantStruct::get(
+              entry_type,
+              {fn_ptr,
+               llvm::ConstantInt::get(i32_ty, info.process_schema_indices[pi]),
+               llvm::ConstantInt::get(i32_ty, 0)}));
+    }
+
+    llvm::Constant* entries_ptr =
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+    if (num_procs > 0) {
+      auto entries_name =
+          std::format("__lyra_body_desc_{}_entries", body_id_val);
+      auto* entries_array_type = llvm::ArrayType::get(entry_type, num_procs);
+      auto* entries_global = new llvm::GlobalVariable(
+          mod, entries_array_type, true, llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantArray::get(entries_array_type, entry_constants),
+          entries_name);
+      entries_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      entries_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+          entries_array_type, entries_global,
+          llvm::ArrayRef<llvm::Constant*>{
+              llvm::ConstantInt::get(i32_ty, 0),
+              llvm::ConstantInt::get(i32_ty, 0)});
+    }
+
+    result.push_back(
+        BodyDescEmission{
+            .header_ptr = header_global,
+            .entries_ptr = entries_ptr,
+            .num_processes = num_procs,
+        });
+  }
+
+  return result;
+}
+
+// Emit __lyra_conn_realization_descs: connection realization descriptor array.
+// One entry per connection process.
+// ConnectionRealizationDesc ABI: {ptr fn_ptr, u32 schema_index, u32 pad}
+auto EmitConnectionRealizationDescs(
+    Context& context, const Layout& layout,
+    std::span<llvm::Function* const> process_funcs, size_t num_init)
+    -> llvm::Constant* {
+  auto& ctx = context.GetLlvmContext();
+  auto& mod = context.GetModule();
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+
+  const auto& conn_infos = layout.connection_realization_infos;
+  auto count = static_cast<uint32_t>(conn_infos.size());
+  if (count == 0) {
+    return llvm::ConstantPointerNull::get(
+        llvm::cast<llvm::PointerType>(ptr_ty));
+  }
+
+  if (num_init + count > process_funcs.size()) {
+    throw common::InternalError(
+        "EmitConnectionRealizationDescs",
+        std::format(
+            "connection range [{}, {}) exceeds process_funcs size {}", num_init,
+            num_init + count, process_funcs.size()));
+  }
+
+  auto* entry_type = llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
+
+  std::vector<llvm::Constant*> entries;
+  entries.reserve(count);
+  for (uint32_t ci = 0; ci < count; ++ci) {
+    auto* fn = process_funcs[num_init + ci];
+    entries.push_back(
+        llvm::ConstantStruct::get(
+            entry_type,
+            {fn, llvm::ConstantInt::get(i32_ty, conn_infos[ci].schema_index),
+             llvm::ConstantInt::get(i32_ty, 0)}));
+  }
+
+  auto* array_type = llvm::ArrayType::get(entry_type, count);
+  auto* global = new llvm::GlobalVariable(
+      mod, array_type, true, llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantArray::get(array_type, entries),
+      "__lyra_conn_realization_descs");
+  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+  return llvm::ConstantExpr::getInBoundsGetElementPtr(
+      array_type, global,
+      llvm::ArrayRef<llvm::Constant*>{
+          llvm::ConstantInt::get(i32_ty, 0),
+          llvm::ConstantInt::get(i32_ty, 0)});
 }
 
 struct PlusargsSetup {
@@ -815,10 +898,9 @@ auto BuildDesignMetadata(
 
 auto BuildRuntimeAbi(
     Context& context, const MetadataGlobals& meta_globals,
-    const WaitSiteMetaResult& wait_site_meta,
-    const DescriptorTableResult& desc_table, uint32_t feature_flags,
-    const std::string& signal_trace_path, llvm::Value* design_state)
-    -> llvm::Value* {
+    const WaitSiteMetaResult& wait_site_meta, uint32_t num_connection,
+    uint32_t feature_flags, const std::string& signal_trace_path,
+    llvm::Value* design_state) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -826,13 +908,12 @@ auto BuildRuntimeAbi(
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
-  // v9: added design_state (field 28).
-  constexpr unsigned kAbiFieldCount = 29;
+  // v12: removed process_descriptors and num_process_descriptors.
+  constexpr unsigned kAbiFieldCount = 27;
   std::array<llvm::Type*, kAbiFieldCount> abi_fields = {
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty,
-      i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty,
+      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
+      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty,
+      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty,
   };
   auto* abi_struct_type = llvm::StructType::get(ctx, abi_fields, false);
 
@@ -868,7 +949,6 @@ auto BuildRuntimeAbi(
   store_field(15, llvm::ConstantInt::get(i32_ty, feature_flags));
   store_field(16, wait_site_meta.words_ptr);
   store_field(17, llvm::ConstantInt::get(i32_ty, wait_site_meta.count));
-  // Fields 18-19: trace signal metadata (was 20-23 in v7)
   store_field(18, meta_globals.trace_signal_meta_words);
   store_field(
       19, llvm::ConstantInt::get(
@@ -886,26 +966,23 @@ auto BuildRuntimeAbi(
         builder.CreateGlobalStringPtr(signal_trace_path, "signal_trace_path"));
   }
 
-  // Process trigger metadata
   store_field(23, meta_globals.process_trigger_words);
   store_field(
       24,
       llvm::ConstantInt::get(i32_ty, meta_globals.process_trigger_word_count));
 
-  // Descriptor-driven process dispatch
-  store_field(25, desc_table.table_ptr);
-  store_field(26, llvm::ConstantInt::get(i32_ty, desc_table.count));
-  store_field(27, llvm::ConstantInt::get(i32_ty, desc_table.num_connection));
+  // Constructor-produced dispatch partition boundary.
+  store_field(25, llvm::ConstantInt::get(i32_ty, num_connection));
 
-  // Design-state binding (source of truth for persistent header design_ptr)
-  store_field(28, design_state);
+  // Design-state binding.
+  store_field(26, design_state);
 
   return abi_alloca;
 }
 
 void EmitRunSimulation(
     Context& context, llvm::Constant* funcs_array, llvm::Value* states_array,
-    uint32_t num_module_processes, const PlusargsSetup& plusargs,
+    llvm::Value* num_processes, const PlusargsSetup& plusargs,
     const MetadataGlobals& meta_globals, llvm::Value* abi_alloca) {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
@@ -913,9 +990,8 @@ void EmitRunSimulation(
 
   builder.CreateCall(
       context.GetLyraRunSimulation(),
-      {funcs_array, states_array,
-       llvm::ConstantInt::get(i32_ty, num_module_processes), plusargs.array,
-       plusargs.count, meta_globals.instance_paths_array,
+      {funcs_array, states_array, num_processes, plusargs.array, plusargs.count,
+       meta_globals.instance_paths_array,
        llvm::ConstantInt::get(i32_ty, meta_globals.instance_path_count),
        abi_alloca});
 }
@@ -955,6 +1031,197 @@ auto BuildEmitDesignMainInput(const lowering::mir_to_llvm::LoweringInput& input)
       .feature_flags = input.feature_flags,
       .signal_trace_path = input.signal_trace_path,
       .iteration_limit = input.iteration_limit,
+  };
+}
+
+// Runtime constructor C ABI function declarations for LLVM IR emission.
+struct ConstructorRuntimeFuncs {
+  llvm::Function* create;
+  llvm::Function* add_connection;
+  llvm::Function* begin_body;
+  llvm::Function* add_instance;
+  llvm::Function* finalize;
+  llvm::Function* result_get_states;
+  llvm::Function* result_get_num_total;
+  llvm::Function* result_get_num_connection;
+  llvm::Function* result_destroy;
+};
+
+auto DeclareConstructorRuntimeFuncs(Context& context)
+    -> ConstructorRuntimeFuncs {
+  auto& ctx = context.GetLlvmContext();
+  auto& mod = context.GetModule();
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+  auto* void_ty = llvm::Type::getVoidTy(ctx);
+
+  auto declare =
+      [&](const char* name, llvm::Type* ret,
+          std::initializer_list<llvm::Type*> args) -> llvm::Function* {
+    auto* ft = llvm::FunctionType::get(ret, args, false);
+    return llvm::Function::Create(
+        ft, llvm::Function::ExternalLinkage, name, &mod);
+  };
+
+  return ConstructorRuntimeFuncs{
+      .create = declare(
+          "LyraConstructorCreate", ptr_ty,
+          {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i64_ty}),
+      .add_connection =
+          declare("LyraConstructorAddConnection", void_ty, {ptr_ty, ptr_ty}),
+      .begin_body = declare(
+          "LyraConstructorBeginBody", void_ty,
+          {ptr_ty, ptr_ty, ptr_ty, i32_ty}),
+      .add_instance = declare("LyraConstructorAddInstance", void_ty, {ptr_ty}),
+      .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
+      .result_get_states =
+          declare("LyraConstructionResultGetStates", ptr_ty, {ptr_ty}),
+      .result_get_num_total =
+          declare("LyraConstructionResultGetNumTotal", i32_ty, {ptr_ty}),
+      .result_get_num_connection =
+          declare("LyraConstructionResultGetNumConnection", i32_ty, {ptr_ty}),
+      .result_destroy =
+          declare("LyraConstructionResultDestroy", void_ty, {ptr_ty}),
+  };
+}
+
+// Emit the constructor function: LLVM IR that calls RuntimeConstructor C API
+// to build process construction order and bindings for the current design
+// topology summary. The emitted program walks instances in ModuleIndex order
+// (instance-major), switching the active body via BeginBody as needed. This
+// preserves the old instance-major process ordering required by H3-H5
+// metadata tables. The compile-owned topology summary (instance_body_group)
+// drives the emitted call sequence.
+struct ConstructorEmissionResult {
+  llvm::Value* states_array;
+  llvm::Value* num_total;
+  // Opaque construction result handle. Owns states + packed buffer.
+  // Must be destroyed via LyraConstructionResultDestroy after simulation.
+  llvm::Value* result_handle;
+  // The destroy function for the result handle.
+  llvm::Function* destroy_fn;
+};
+
+auto EmitConstructorFunction(
+    Context& context, const Layout& layout,
+    const lowering::mir_to_llvm::CodegenSession& session,
+    llvm::Value* design_state, llvm::Constant* schemas_ptr,
+    uint32_t num_schemas, llvm::Constant* slot_byte_offsets_ptr,
+    const std::vector<BodyDescEmission>& body_descs,
+    llvm::Constant* conn_descs_ptr) -> ConstructorEmissionResult {
+  auto& builder = context.GetBuilder();
+  auto& ctx = context.GetLlvmContext();
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+
+  auto rt = DeclareConstructorRuntimeFuncs(context);
+
+  auto num_slots =
+      static_cast<uint32_t>(layout.design.slot_byte_offsets.size());
+  auto arena_size = layout.design.arena_size;
+
+  // Create the runtime constructor object.
+  auto* ctor = builder.CreateCall(
+      rt.create,
+      {schemas_ptr, llvm::ConstantInt::get(i32_ty, num_schemas),
+       slot_byte_offsets_ptr, llvm::ConstantInt::get(i32_ty, num_slots),
+       llvm::ConstantInt::get(i32_ty, layout.num_package_slots), design_state,
+       llvm::ConstantInt::get(i64_ty, arena_size)},
+      "ctor");
+
+  // Add connection processes.
+  const auto& conn_infos = layout.connection_realization_infos;
+  for (uint32_t ci = 0; ci < conn_infos.size(); ++ci) {
+    // GEP into the connection descriptor array.
+    auto* conn_entry_type =
+        llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
+    auto* desc_ptr = builder.CreateConstInBoundsGEP1_32(
+        conn_entry_type, conn_descs_ptr, ci, std::format("conn_desc_{}", ci));
+    builder.CreateCall(rt.add_connection, {ctor, desc_ptr});
+  }
+
+  // Validate topology source-of-truth parallelism before emission.
+  // These structures must be parallel: body_realization_infos,
+  // body_compiled_funcs, and body_descs all indexed by body group.
+  const auto& ibg = session.instance_body_group;
+  auto num_body_groups = static_cast<uint32_t>(body_descs.size());
+
+  if (session.body_compiled_funcs.size() != num_body_groups) {
+    throw common::InternalError(
+        "EmitConstructorFunction",
+        std::format(
+            "body_compiled_funcs size {} != body_descs size {}",
+            session.body_compiled_funcs.size(), num_body_groups));
+  }
+  if (layout.body_realization_infos.size() != num_body_groups) {
+    throw common::InternalError(
+        "EmitConstructorFunction",
+        std::format(
+            "body_realization_infos size {} != body_descs size {}",
+            layout.body_realization_infos.size(), num_body_groups));
+  }
+  for (uint32_t gi = 0; gi < num_body_groups; ++gi) {
+    if (session.body_compiled_funcs[gi].body_id !=
+        layout.body_realization_infos[gi].body_id) {
+      throw common::InternalError(
+          "EmitConstructorFunction",
+          std::format(
+              "body group {} body_id mismatch: compiled={} vs info={}", gi,
+              session.body_compiled_funcs[gi].body_id.value,
+              layout.body_realization_infos[gi].body_id.value));
+    }
+  }
+
+  // Validate instance_body_group entries are in range.
+  for (uint32_t mi = 0; mi < ibg.size(); ++mi) {
+    if (ibg[mi] >= num_body_groups) {
+      throw common::InternalError(
+          "EmitConstructorFunction",
+          std::format(
+              "instance {} body group {} >= num_body_groups {}", mi, ibg[mi],
+              num_body_groups));
+    }
+  }
+
+  // Instance-major constructor program: walk instances in ModuleIndex
+  // order, switching the active body via BeginBody when the body group
+  // changes. The same body may appear multiple times if instances of
+  // different bodies are interleaved in ModuleIndex order. This is the
+  // H2 compatibility shape that preserves old instance-major process
+  // ordering for H3-H5 metadata tables.
+  uint32_t last_body_group = UINT32_MAX;
+  for (uint32_t mi = 0; mi < ibg.size(); ++mi) {
+    uint32_t bg = ibg[mi];
+    if (bg != last_body_group) {
+      const auto& desc = body_descs[bg];
+      builder.CreateCall(
+          rt.begin_body, {ctor, desc.header_ptr, desc.entries_ptr,
+                          llvm::ConstantInt::get(i32_ty, desc.num_processes)});
+      last_body_group = bg;
+    }
+    builder.CreateCall(rt.add_instance, {ctor});
+  }
+
+  // Finalize: returns a single constructor-owned result handle.
+  auto* result = builder.CreateCall(rt.finalize, {ctor}, "ctor_result");
+
+  // Extract states and total count from the opaque result.
+  // num_connection is not extracted here: temporary old-path coexistence
+  // still provides the simulation partition input via the ABI descriptor
+  // fields. Cut 4 will extract num_connection from the constructor result
+  // and remove the old ABI partition path.
+  auto* states_array =
+      builder.CreateCall(rt.result_get_states, {result}, "states");
+  auto* num_total =
+      builder.CreateCall(rt.result_get_num_total, {result}, "num_total");
+
+  return ConstructorEmissionResult{
+      .states_array = states_array,
+      .num_total = num_total,
+      .result_handle = result,
+      .destroy_fn = rt.result_destroy,
   };
 }
 
@@ -999,35 +1266,38 @@ auto EmitDesignMain(
 
     // Default to null for zero-simulation case.
     llvm::Value* states_array = null_ptr;
-    llvm::Value* packed_buffer = null_ptr;
     llvm::Constant* connection_funcs = null_ptr;
-    uint32_t num_connection = 0;
+    llvm::Value* num_total_val = llvm::ConstantInt::get(i32_ty, 0);
+    ConstructorEmissionResult ctor_result{};
+    uint32_t num_connection = static_cast<uint32_t>(
+        layout.num_module_process_base - layout.num_init_processes);
 
     if (num_simulation > 0) {
       // Emit per-schema frame-init functions.
       auto init_fns = EmitPerSchemaFrameInitFunctions(context, layout);
 
-      // Emit constructor metadata globals.
+      // Emit shared globals: state schemas, connection function table.
       auto* schemas_ptr = EmitProcessStateSchemas(context, layout, init_fns);
-      auto* records_ptr = EmitProcessConstructorRecords(context, layout);
-
-      // Emit connection-only function table.
-      num_connection = static_cast<uint32_t>(
-          layout.num_module_process_base - layout.num_init_processes);
+      auto num_schemas = static_cast<uint32_t>(layout.state_schemas.size());
       connection_funcs = EmitConnectionProcessFunctions(
           context, process_funcs, num_init, num_connection);
 
-      // Allocate thin states_array on stack and call runtime constructor.
-      states_array = builder.CreateAlloca(
-          ptr_ty, llvm::ConstantInt::get(i32_ty, num_simulation),
-          "states_array");
-      auto num_schemas = static_cast<uint32_t>(layout.state_schemas.size());
-      packed_buffer = builder.CreateCall(
-          context.GetLyraConstructProcessStates(),
-          {states_array, llvm::ConstantInt::get(i32_ty, num_simulation),
-           schemas_ptr, llvm::ConstantInt::get(i32_ty, num_schemas),
-           records_ptr},
-          "packed_buffer");
+      // Emit constructor-side definition artifacts.
+      auto* slot_offsets_ptr = EmitSlotByteOffsets(context, layout);
+      auto body_descs = EmitBodyRealizationDescs(
+          context, layout, session.body_compiled_funcs);
+      auto* conn_descs_ptr = EmitConnectionRealizationDescs(
+          context, layout, process_funcs, num_init);
+
+      // Emit the constructor function: LLVM IR that calls the runtime
+      // constructor to build process construction order and bindings.
+      // This replaces the old flat constructor-record + descriptor replay.
+      ctor_result = EmitConstructorFunction(
+          context, layout, session, design_state, schemas_ptr, num_schemas,
+          slot_offsets_ptr, body_descs, conn_descs_ptr);
+
+      states_array = ctor_result.states_array;
+      num_total_val = ctor_result.num_total;
     }
 
     auto plusargs = BuildPlusargs(context, main_func, input);
@@ -1038,40 +1308,18 @@ auto EmitDesignMain(
 
     auto wait_site_meta = EmitWaitSiteMetaTable(context, session.wait_sites);
 
-    auto num_module = static_cast<uint32_t>(
-        layout.scheduled_processes.size() - layout.num_module_process_base);
-
-    if (session.process_descriptors.size() != num_module) {
-      throw common::InternalError(
-          "EmitDesignMain",
-          std::format(
-              "descriptor count {} != module process count {}",
-              session.process_descriptors.size(), num_module));
-    }
-
-    auto desc_table = EmitProcessDescriptorTable(
-        context, session.process_descriptors, num_connection);
-
-    // Codegen-side partition invariant: connection + module == simulation.
-    if (num_connection + desc_table.count != num_simulation) {
-      throw common::InternalError(
-          "EmitDesignMain",
-          std::format(
-              "partition mismatch: {} connection + {} descriptors != {} "
-              "simulation",
-              num_connection, desc_table.count, num_simulation));
-    }
-
     auto* abi_alloca = BuildRuntimeAbi(
-        context, meta_globals, wait_site_meta, desc_table, input.feature_flags,
-        input.signal_trace_path, design_state);
+        context, meta_globals, wait_site_meta, num_connection,
+        input.feature_flags, input.signal_trace_path, design_state);
 
     EmitRunSimulation(
-        context, connection_funcs, states_array, num_simulation, plusargs,
+        context, connection_funcs, states_array, num_total_val, plusargs,
         meta_globals, abi_alloca);
 
-    // Destroy the packed buffer after simulation completes.
-    builder.CreateCall(context.GetLyraDestroyProcessStates(), {packed_buffer});
+    // Destroy the constructor-owned result after simulation completes.
+    if (ctor_result.result_handle != nullptr) {
+      builder.CreateCall(ctor_result.destroy_fn, {ctor_result.result_handle});
+    }
   }
 
   EmitMainExit(context, design_state, slot_info, input, exit_block);

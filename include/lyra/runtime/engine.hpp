@@ -25,7 +25,7 @@
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/observer.hpp"
-#include "lyra/runtime/process_descriptor.hpp"
+#include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_trigger_registry.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -494,15 +494,12 @@ class Engine {
   // Evaluate all connections once (used for initial value propagation).
   void EvaluateAllConnections();
 
-  // Initialize comb kernels from word table and descriptor table.
-  // Resolves shared body pointers from descriptors. Builds trigger map.
-  // descriptors: module-process descriptor entries.
+  // Initialize comb kernels from word table. Resolves shared body pointers
+  // from frame headers (constructor-owned binding). Builds trigger map.
   // num_connection: connection process count (partition boundary).
   // states: full process state array, indexed by proc_idx from word table.
   void InitCombKernels(
-      std::span<const uint32_t> words,
-      std::span<const ProcessDescriptorEntry> descriptors,
-      uint32_t num_connection, void** states);
+      std::span<const uint32_t> words, uint32_t num_connection, void** states);
 
   // Mark all comb kernel trigger slots dirty to ensure initial evaluation.
   void SeedCombKernelDirtyMarks();

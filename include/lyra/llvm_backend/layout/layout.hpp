@@ -278,6 +278,12 @@ struct Layout {
   auto GetInstanceRelByteOffsets(ModuleIndex idx) const
       -> const std::vector<uint64_t>&;
 
+  // Number of package-owned slots (before any module instance slots).
+  // This is the initial value of the running slot-base counter that the
+  // runtime constructor uses. Equals the first module instance's
+  // design_state_base_slot, or total slot count if no module instances.
+  uint32_t num_package_slots = 0;
+
   // Pre-computed byte offset of each instance's slot base in DesignState.
   // Parallel to placement.instances.
   std::vector<uint64_t> instance_base_byte_offsets;
@@ -310,15 +316,38 @@ struct Layout {
     std::optional<uint32_t> conn_index;
   };
 
-  // Per-simulation-process constructor routing record.
-  struct ProcessConstructorRecordDesc {
-    uint32_t schema_index;
-  };
-
   std::vector<ProcessStateSchemaDesc> state_schemas;
-  // constructor_records.size() == number of simulation processes
-  // (connection + module, post-init)
-  std::vector<ProcessConstructorRecordDesc> constructor_records;
+
+  // New constructor-side definition artifacts (H2 forward path).
+  // These are the permanent body-shaped descriptors that the runtime
+  // constructor will consume. The flat constructor_records and
+  // ProcessDescriptorData above are temporary old-path coexistence only.
+
+  // Per-body process/schema mapping for the runtime constructor.
+  // One entry per unique body_id, ordered by first-seen body_id during
+  // schema dedup (deterministic from BFS-sorted elaboration order).
+  // Cut 3 will consume this vector in order when generating emitted
+  // constructor loops. Do not reorder.
+  struct BodyRealizationInfo {
+    mir::ModuleBodyId body_id;
+    uint32_t slot_count = 0;
+    // Per-process schema indices, ordered by body-local non-final process
+    // ordinal (proc_within_body). Dense: every ordinal in [0, size) is
+    // present and valid. This ordering matches the body's non-final
+    // process list and the compiled function vector for that body.
+    std::vector<uint32_t> process_schema_indices;
+  };
+  std::vector<BodyRealizationInfo> body_realization_infos;
+
+  // Per-connection schema mapping. Ordered to match connection process
+  // scheduling order. This ordering is the precise body-independent
+  // contract that Cut 2 connection realization descriptor emission
+  // relies on; it matches the first conn_counter entries in
+  // state_schemas (each connection gets a unique schema in order).
+  struct ConnectionRealizationInfo {
+    uint32_t schema_index = 0;
+  };
+  std::vector<ConnectionRealizationInfo> connection_realization_infos;
 };
 
 // Type kind for variable inspection (also used in layout)

@@ -77,9 +77,7 @@ void Engine::EvaluateAllConnections() {
 }
 
 void Engine::InitCombKernels(
-    std::span<const uint32_t> words,
-    std::span<const ProcessDescriptorEntry> descriptors,
-    uint32_t num_connection, void** states) {
+    std::span<const uint32_t> words, uint32_t num_connection, void** states) {
   if (words.empty()) return;
 
   // Word table format:
@@ -135,22 +133,15 @@ void Engine::InitCombKernels(
               proc_idx, num_connection));
     }
 
-    uint32_t desc_idx = proc_idx - num_connection;
-    if (desc_idx >= descriptors.size()) {
-      throw common::InternalError(
-          "Engine::InitCombKernels",
-          std::format(
-              "descriptor index {} exceeds descriptor count {}", desc_idx,
-              descriptors.size()));
-    }
-
     if ((flags & CombKernel::kSelfEdge) != 0) {
       has_any_self_edge_comb_ = true;
     }
 
-    // Resolve body pointer from descriptor table.
-    auto body =
-        reinterpret_cast<SharedBodyFn>(descriptors[desc_idx].shared_body);
+    // Resolve body pointer from the frame header. After H2, process
+    // binding is constructor-owned and the body field is already set.
+    auto* header =
+        static_cast<const ProcessFrameHeader*>(proc_states[proc_idx]);
+    auto body = header->body;
 
     auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
     comb_kernels_.push_back(

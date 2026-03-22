@@ -27,7 +27,10 @@
 // v11: Connection-only function array. Null-padded __lyra_module_funcs
 //      removed. Process state construction moved to runtime constructor.
 //      Standalone terminology replaced by connection throughout ABI.
-inline constexpr uint32_t kRuntimeAbiVersion = 11;
+// v12: Removed process_descriptors and num_process_descriptors. Process
+//      binding is now constructor-owned via RuntimeConstructor. Only
+//      num_connection_processes remains for dispatch partition.
+inline constexpr uint32_t kRuntimeAbiVersion = 12;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -67,15 +70,9 @@ struct LyraRuntimeAbi {
   const uint32_t* process_trigger_words;
   uint32_t num_process_trigger_words;
 
-  // Descriptor-driven module-process dispatch.
-  // Canonical entry layout defined in process_descriptor.hpp
-  // (ProcessDescriptorEntry). Codegen produces via GetDescriptorEntryType().
-  //
-  // num_process_descriptors is the module process count.
-  // num_connection_processes is the connection process count.
-  // Runtime contract: num_connection + num_descriptors == num_processes.
-  const void* process_descriptors;
-  uint32_t num_process_descriptors;
+  // Dispatch partition boundary: processes [0, num_connection) are connection
+  // processes. Constructor-produced; this is the only remaining process
+  // topology fact in the ABI after H2.
   uint32_t num_connection_processes;
 
   // Source of truth for design-state binding. Runtime uses this to populate
@@ -84,11 +81,8 @@ struct LyraRuntimeAbi {
   void* design_state;
 };
 
-// Hard size/offset contract. If the struct layout changes (fields added,
-// removed, or reordered), these assertions fail at compile time rather
-// than manifesting as runtime SIGILL in AOT binaries.
-static_assert(sizeof(LyraRuntimeAbi) == 216);
+// Hard size/offset contract.
+static_assert(sizeof(LyraRuntimeAbi) == 200);
 static_assert(offsetof(LyraRuntimeAbi, version) == 0);
-static_assert(offsetof(LyraRuntimeAbi, process_descriptors) == 192);
-static_assert(offsetof(LyraRuntimeAbi, num_connection_processes) == 204);
-static_assert(offsetof(LyraRuntimeAbi, design_state) == 208);
+static_assert(offsetof(LyraRuntimeAbi, num_connection_processes) == 188);
+static_assert(offsetof(LyraRuntimeAbi, design_state) == 192);
