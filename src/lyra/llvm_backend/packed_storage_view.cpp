@@ -545,6 +545,20 @@ auto EmitByteAddressableStore(
       break;
     }
 
+    case UnknownPlaneLowering::kUnconditionalClearAtOffset: {
+      auto* unk_off = builder.CreateAdd(
+          access.byte_offset,
+          llvm::ConstantInt::get(
+              access.byte_offset->getType(),
+              access.storage.unk_plane_offset_bytes),
+          "psw.unk.off");
+      auto* unk_ptr = builder.CreateGEP(
+          i8_ty, access.storage.base_ptr, unk_off, "psw.unk.ptr");
+      auto* zero = llvm::ConstantInt::get(store_ty, 0);
+      builder.CreateStore(zero, unk_ptr);
+      break;
+    }
+
     default:
       throw common::InternalError(
           "EmitByteAddressableStore",
@@ -758,7 +772,8 @@ auto EmitStoreToPackedSubview(
     Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
     const PackedStorePolicy& policy) -> Result<void> {
   auto recipe_ctx = ClassifySubviewRecipeContext(access.kind);
-  auto plan = BuildPackedStorePlan(access.storage, value, recipe_ctx);
+  auto plan = BuildPackedStorePlan(
+      access.storage, value, recipe_ctx, policy.notification_deferred);
 
   llvm::Value* changed = nullptr;
   if (access.kind == PackedSubviewKind::kByteAddressable) {
@@ -984,7 +999,9 @@ auto EmitDeferredStoreToPackedSubview(
   auto recipe_ctx = (access.kind == PackedSubviewKind::kByteAddressable)
                         ? StoreRecipeContext::kDeferredSubview
                         : StoreRecipeContext::kDeferredFullWidth;
-  auto plan = BuildPackedStorePlan(access.storage, value, recipe_ctx);
+  // Deferred stores are inherently notification-deferred (scheduled for
+  // later application by the runtime). The changed predicate is not used.
+  auto plan = BuildPackedStorePlan(access.storage, value, recipe_ctx, true);
 
   if (access.kind == PackedSubviewKind::kByteAddressable) {
     switch (plan.unk_lowering) {
@@ -1022,7 +1039,8 @@ auto EmitDeferredStoreToPackedSubview(
 
 auto BuildPackedStorePlan(
     const PackedStorageView& storage, const PackedRValue& rhs,
-    StoreRecipeContext recipe_context) -> PackedStorePlan {
+    StoreRecipeContext recipe_context, bool notification_deferred)
+    -> PackedStorePlan {
   if (!storage.is_four_state) {
     return {
         .unk_policy = UnknownPlanePolicy::kNone,
@@ -1032,14 +1050,16 @@ auto BuildPackedStorePlan(
     return {
         .unk_policy = UnknownPlanePolicy::kStoreFromRhs,
         .unk_lowering = SelectUnknownPlaneLowering(
-            UnknownPlanePolicy::kStoreFromRhs, recipe_context),
+            UnknownPlanePolicy::kStoreFromRhs, recipe_context,
+            notification_deferred),
         .unk_value = rhs.unk,
     };
   }
   return {
       .unk_policy = UnknownPlanePolicy::kClearToZero,
       .unk_lowering = SelectUnknownPlaneLowering(
-          UnknownPlanePolicy::kClearToZero, recipe_context),
+          UnknownPlanePolicy::kClearToZero, recipe_context,
+          notification_deferred),
   };
 }
 
@@ -1465,8 +1485,8 @@ auto ClassifyWholeValueRecipeContext(const PackedStorageView& storage)
 }
 
 auto SelectUnknownPlaneLowering(
-    UnknownPlanePolicy policy, StoreRecipeContext context)
-    -> UnknownPlaneLowering {
+    UnknownPlanePolicy policy, StoreRecipeContext context,
+    bool notification_deferred) -> UnknownPlaneLowering {
   if (policy == UnknownPlanePolicy::kNone) {
     return UnknownPlaneLowering::kNone;
   }
@@ -1484,9 +1504,14 @@ auto SelectUnknownPlaneLowering(
         return UnknownPlaneLowering::kMaterializeForRuntime;
     }
   }
+  // kClearToZero: select recipe based on context and notification liveness.
   switch (context) {
     case StoreRecipeContext::kSplitPlaneSubview:
-      return UnknownPlaneLowering::kConditionalClearAtOffset;
+      // When notification is deferred, the changed predicate is dead.
+      // Unconditional clear avoids per-element load+compare+branch overhead.
+      return notification_deferred
+                 ? UnknownPlaneLowering::kUnconditionalClearAtOffset
+                 : UnknownPlaneLowering::kConditionalClearAtOffset;
     case StoreRecipeContext::kBitAddressableRmw:
       return UnknownPlaneLowering::kMaskedClearBitsRmw;
     case StoreRecipeContext::kWholeValueInlineInterleaved:
@@ -1535,7 +1560,8 @@ auto StorePackedValue(
     Context& ctx, const PackedStorageView& storage, const PackedRValue& value,
     const PackedStorePolicy& policy) -> Result<void> {
   auto recipe_ctx = ClassifyWholeValueRecipeContext(storage);
-  auto plan = BuildPackedStorePlan(storage, value, recipe_ctx);
+  auto plan = BuildPackedStorePlan(
+      storage, value, recipe_ctx, policy.notification_deferred);
 
   uint32_t lane_bits = storage.storage_plane_byte_size * 8;
   auto* lane_ty = llvm::IntegerType::get(ctx.GetLlvmContext(), lane_bits);

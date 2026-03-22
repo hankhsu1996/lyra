@@ -47,6 +47,7 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 - [ ] G4b: Per-activation atomic stores (conditional on signal handler)
 - [ ] G16: Runtime work elimination
 - [ ] CQ4: Place-based value materialization overhead
+- [ ] CQ5: Loop-level unknown-plane bulk clear for 2-state overwrite loops
 
 ## Active Gaps
 
@@ -101,6 +102,14 @@ The MIR-to-LLVM lowering materializes every intermediate value through stack-all
 LLVM's mem2reg and instcombine passes fully clean up both patterns -- native code shows tight loops with values in registers and direct branches. There is no runtime cost. However, the excessive IR increases LLVM optimization time and makes unoptimized IR dumps harder to read for debugging.
 
 The root cause is that the lowering always routes through place-backed storage rather than keeping pure SSA values in registers when the value has no storage identity (temporaries, comparison results, loop counters). A value-mode lowering path for expressions that do not need place-backed storage would produce cleaner IR.
+
+### CQ5: Loop-level unknown-plane bulk clear for 2-state overwrite loops
+
+When a loop performs a full 2-state overwrite into contiguous elements of 4-state packed storage, the current lowering emits a per-element unconditional zero store to the unknown plane inside the hot loop. This is correct but suboptimal: the inner loop touches the unknown-plane cache lines on every iteration even though the entire unknown-plane region could be cleared once before the loop.
+
+The target shape is to hoist unknown-plane clearing out of the per-element loop. Before the loop body, emit a bulk clear (memset or equivalent) of the unknown-plane byte range that the loop will overwrite. Inside the loop, use no per-element unknown-plane instructions at all -- the inner loop becomes pure value-plane work.
+
+This requires reasoning at the loop or region level, not at the per-store level. The lowering must prove: (a) the loop writes a contiguous range of elements, (b) all writes in the loop body are provably 2-state, (c) the unknown-plane byte range for that element range can be computed at loop entry. This is a different kind of analysis than the per-store CQ2 domain propagation or the CQ3 deferred-notification elision.
 
 ## Closed Investigations
 

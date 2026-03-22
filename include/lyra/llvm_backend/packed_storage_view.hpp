@@ -164,15 +164,16 @@ enum class StoreRecipeContext {
 // exactly one codegen shape. Selected by the planner from (policy,
 // context), not by any executor.
 enum class UnknownPlaneLowering {
-  kNone,                       // No unknown plane. No-op.
-  kWritePlaneAtOffset,         // Store RHS unk at split-plane offset.
-  kMergePlaneBitsRmw,          // Merge RHS unk bits in full-plane RMW.
-  kFlattenAndStoreWhole,       // Flatten {val, unk} into widened store.
-  kMaterializeForRuntime,      // Pass RHS unk to runtime helper / scheduler.
-  kConditionalClearAtOffset,   // Branch + conditional zero at split offset.
-  kMaskedClearBitsRmw,         // Bitwise AND clear in full-plane RMW.
-  kFlattenZeroAndStoreWhole,   // Flatten {val, 0} into widened store.
-  kMaterializeZeroForRuntime,  // Materialize zero for runtime / scheduler.
+  kNone,                        // No unknown plane. No-op.
+  kWritePlaneAtOffset,          // Store RHS unk at split-plane offset.
+  kMergePlaneBitsRmw,           // Merge RHS unk bits in full-plane RMW.
+  kFlattenAndStoreWhole,        // Flatten {val, unk} into widened store.
+  kMaterializeForRuntime,       // Pass RHS unk to runtime helper / scheduler.
+  kConditionalClearAtOffset,    // Branch + conditional zero at split offset.
+  kUnconditionalClearAtOffset,  // Unconditional zero store at split offset.
+  kMaskedClearBitsRmw,          // Bitwise AND clear in full-plane RMW.
+  kFlattenZeroAndStoreWhole,    // Flatten {val, 0} into widened store.
+  kMaterializeZeroForRuntime,   // Materialize zero for runtime / scheduler.
 };
 
 // Resolved unknown-plane store plan. The planner owns the recipe choice.
@@ -192,16 +193,20 @@ auto ClassifySubviewRecipeContext(PackedSubviewKind kind) -> StoreRecipeContext;
 auto ClassifyWholeValueRecipeContext(const PackedStorageView& storage)
     -> StoreRecipeContext;
 
-// Select lowering recipe from (policy, context). Single authority.
-// InternalError on impossible combinations.
+// Select lowering recipe from (policy, context, notification_deferred).
+// Single authority. InternalError on impossible combinations.
+// notification_deferred: when true, the changed predicate is dead (not
+// consumed by per-store notification). This allows unconditional clear
+// recipes where conditional clear would otherwise be selected.
 auto SelectUnknownPlaneLowering(
-    UnknownPlanePolicy policy, StoreRecipeContext context)
-    -> UnknownPlaneLowering;
+    UnknownPlanePolicy policy, StoreRecipeContext context,
+    bool notification_deferred) -> UnknownPlaneLowering;
 
 // Build the complete store plan. Single decision point.
 auto BuildPackedStorePlan(
     const PackedStorageView& storage, const PackedRValue& rhs,
-    StoreRecipeContext recipe_context) -> PackedStorePlan;
+    StoreRecipeContext recipe_context, bool notification_deferred)
+    -> PackedStorePlan;
 
 // Semantic store mode for packed writes.
 enum class PackedStoreMode {
