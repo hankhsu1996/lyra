@@ -30,7 +30,29 @@ auto LowerRhsRaw(
   return std::visit(
       common::Overloaded{
           [&](const mir::Operand& operand) -> Result<llvm::Value*> {
-            return LowerOperandRaw(context, resolver, operand);
+            auto raw_or_err = LowerOperandRaw(context, resolver, operand);
+            if (!raw_or_err) return std::unexpected(raw_or_err.error());
+            llvm::Value* raw = *raw_or_err;
+            // Raw representation boundary: if target is 4-state but raw
+            // is scalar (kTwoState domain temp), pack with zero unknown
+            // to match target storage shape.
+            const auto& arena = context.GetMirArena();
+            const auto& types = context.GetTypeArena();
+            TypeId target_type = mir::TypeOfPlace(types, arena[target]);
+            if (!raw->getType()->isStructTy() && IsPacked(types[target_type]) &&
+                context.IsPackedFourState(types[target_type])) {
+              auto storage_type_or_err = context.GetPlaceLlvmType(target);
+              if (!storage_type_or_err)
+                return std::unexpected(storage_type_or_err.error());
+              auto* struct_type =
+                  llvm::cast<llvm::StructType>(*storage_type_or_err);
+              auto* elem_type = struct_type->getElementType(0);
+              auto& builder = context.GetBuilder();
+              auto* value = builder.CreateZExtOrTrunc(raw, elem_type);
+              auto* zero = llvm::ConstantInt::get(elem_type, 0);
+              return PackFourState(builder, struct_type, value, zero);
+            }
+            return raw;
           },
           [&](const mir::Rvalue& rvalue) -> Result<llvm::Value*> {
             const auto& arena = context.GetMirArena();
@@ -82,6 +104,22 @@ auto LowerRhsToPackedRValue(
   return std::visit(
       common::Overloaded{
           [&](const mir::Operand& operand) -> Result<PackedRValue> {
+            // Store planning is a semantic boundary: it must consume
+            // TempValue directly for temp operands to preserve the
+            // domain signal (unk == nullptr for kTwoState). Going
+            // through LowerOperandRaw would lose this because
+            // LowerOperandRaw is a domain-based raw adapter (scalar
+            // for kTwoState) while BuildPackedRValueFromRaw infers
+            // from shape. Direct TempValue access is the correct path.
+            if (const auto* temp_id =
+                    std::get_if<mir::TempId>(&operand.payload)) {
+              const auto& tv = context.ReadTempValue(temp_id->value);
+              PackedRValue result;
+              result.val = tv.value;
+              result.unk = tv.unknown;
+              result.semantic_bits = semantic_bits;
+              return result;
+            }
             auto raw = LowerOperandRaw(context, resolver, operand);
             if (!raw) return std::unexpected(raw.error());
             return BuildPackedRValueFromRaw(context, *raw, semantic_bits);

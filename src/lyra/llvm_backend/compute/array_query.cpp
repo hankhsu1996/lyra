@@ -32,7 +32,7 @@ struct DimResult {
 //   high = max(left, right)
 //   size = high - low + 1
 auto ComputeFixedDim(
-    ArrayQuerySysFnKind kind, int32_t left, int32_t right, bool is_four_state,
+    ArrayQuerySysFnKind kind, int32_t left, int32_t right,
     llvm::LLVMContext& llvm_ctx) -> DimResult {
   int32_t increment = (left >= right) ? 1 : -1;
   int32_t low = (increment == -1) ? left : right;
@@ -67,8 +67,7 @@ auto ComputeFixedDim(
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* val =
       llvm::ConstantInt::get(i32_ty, static_cast<uint64_t>(result), true);
-  auto* unk = is_four_state ? llvm::ConstantInt::get(i32_ty, 0) : nullptr;
-  return {.value = val, .unknown = unk};
+  return {.value = val, .unknown = nullptr};
 }
 
 // Compute array query result for a variable-sized dimension (runtime IR).
@@ -76,7 +75,7 @@ auto ComputeFixedDim(
 // MIR hardcodes increment=-1 for variable-sized (interp_rvalue.cpp:1048).
 auto ComputeRuntimeDim(
     llvm::IRBuilder<>& b, ArrayQuerySysFnKind kind, llvm::Value* size_i64,
-    bool is_four_state, llvm::LLVMContext& llvm_ctx) -> DimResult {
+    llvm::LLVMContext& llvm_ctx) -> DimResult {
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* size_i32 = b.CreateTrunc(size_i64, i32_ty, "aq.size.trunc");
   auto* zero = llvm::ConstantInt::get(i32_ty, 0);
@@ -114,8 +113,7 @@ auto ComputeRuntimeDim(
       break;
   }
 
-  auto* unk = is_four_state ? llvm::ConstantInt::get(i32_ty, 0) : nullptr;
-  return {.value = result, .unknown = unk};
+  return {.value = result, .unknown = nullptr};
 }
 
 auto MakeXResult(bool is_four_state, llvm::LLVMContext& llvm_ctx) -> DimResult {
@@ -159,16 +157,10 @@ auto LowerArrayQueryRvalue(
 
   if (info.kind == ArrayQuerySysFnKind::kDimensions) {
     auto* val = llvm::ConstantInt::get(i32_ty, info.total_dims);
-    if (is_four_state) {
-      return RvalueValue::FourState(val, llvm::ConstantInt::get(i32_ty, 0));
-    }
     return RvalueValue::TwoState(val);
   }
   if (info.kind == ArrayQuerySysFnKind::kUnpackedDimensions) {
     auto* val = llvm::ConstantInt::get(i32_ty, info.unpacked_dims);
-    if (is_four_state) {
-      return RvalueValue::FourState(val, llvm::ConstantInt::get(i32_ty, 0));
-    }
     return RvalueValue::TwoState(val);
   }
 
@@ -235,13 +227,12 @@ auto LowerArrayQueryRvalue(
         if (!handle_or_err) return std::unexpected(handle_or_err.error());
         auto* size = builder.CreateCall(
             context.GetLyraDynArraySize(), {*handle_or_err}, "aq.da.size");
-        auto dr = ComputeRuntimeDim(
-            builder, info.kind, size, is_four_state, llvm_ctx);
+        auto dr = ComputeRuntimeDim(builder, info.kind, size, llvm_ctx);
         result_val = dr.value;
         result_unk = dr.unknown;
       } else {
-        auto dr = ComputeFixedDim(
-            info.kind, dim_info.left, dim_info.right, is_four_state, llvm_ctx);
+        auto dr =
+            ComputeFixedDim(info.kind, dim_info.left, dim_info.right, llvm_ctx);
         result_val = dr.value;
         result_unk = dr.unknown;
       }
@@ -263,20 +254,26 @@ auto LowerArrayQueryRvalue(
         if (!handle_or_err) return std::unexpected(handle_or_err.error());
         auto* runtime_size = builder.CreateCall(
             context.GetLyraDynArraySize(), {*handle_or_err}, "aq.da.size");
-        dr = ComputeRuntimeDim(
-            builder, info.kind, runtime_size, is_four_state, llvm_ctx);
+        dr = ComputeRuntimeDim(builder, info.kind, runtime_size, llvm_ctx);
       } else {
-        dr = ComputeFixedDim(
-            info.kind, dim_info.left, dim_info.right, is_four_state, llvm_ctx);
+        dr =
+            ComputeFixedDim(info.kind, dim_info.left, dim_info.right, llvm_ctx);
       }
 
       auto* cmp = builder.CreateICmpEQ(
           dim_value, llvm::ConstantInt::get(i32_ty, d), "aq.dim.eq");
       result_val =
           builder.CreateSelect(cmp, dr.value, result_val, "aq.sel.val");
-      if (is_four_state) {
+      if (result_unk != nullptr) {
+        // Local representation repair: coerce nullptr dr.unknown to zero
+        // for LLVM select type compatibility. This does NOT promote the
+        // result to kFourState semantically.
+        llvm::Value* dr_unk = dr.unknown;
+        if (dr_unk == nullptr) {
+          dr_unk = llvm::ConstantInt::get(i32_ty, 0);
+        }
         result_unk =
-            builder.CreateSelect(cmp, dr.unknown, result_unk, "aq.sel.unk");
+            builder.CreateSelect(cmp, dr_unk, result_unk, "aq.sel.unk");
       }
     }
   }
@@ -293,7 +290,7 @@ auto LowerArrayQueryRvalue(
     phi_val->addIncoming(result_val, known_bb);
     result_val = phi_val;
 
-    if (is_four_state) {
+    if (result_unk != nullptr) {
       auto* phi_unk = builder.CreatePHI(i32_ty, 2, "aq.phi.unk");
       phi_unk->addIncoming(x_result.unknown, x_unknown_bb);
       phi_unk->addIncoming(result_unk, known_bb);
@@ -301,7 +298,7 @@ auto LowerArrayQueryRvalue(
     }
   }
 
-  if (is_four_state) {
+  if (result_unk != nullptr) {
     return RvalueValue::FourState(result_val, result_unk);
   }
   return RvalueValue::TwoState(result_val);

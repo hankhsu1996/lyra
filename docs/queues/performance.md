@@ -34,7 +34,7 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 - [x] Packed storage view Stage 3: localized deferred/NBA write (#585)
 - [x] PSV4: Packed storage view whole-value materialization boundary
 - [x] CQ1: Packed storage view bulk init lowering quality
-- [ ] CQ2: Packed storage view 2-state unknown-plane elision
+- [x] CQ2: Packed storage view 2-state unknown-plane elision
 - [ ] CQ3: Packed storage view deferred-notification dead code elision
 - [x] Commit-boundary model: visibility/commit boundary definition
 - [x] Commit-boundary model: multi-segment activation-local support
@@ -65,14 +65,6 @@ Per-region analysis of which managed slots have been modified since the last syn
 ### CB3: Commit-boundary model delayed-commit register promotion
 
 Keep eligible slot-backed scalars in registers across a region, commit back to slot storage only at required boundaries. This is the downstream optimization that uses the commit-boundary definition and region-local analysis. It is not the first thing to build.
-
-### CQ2: Packed storage view 2-state unknown-plane elision
-
-Per-element packed array writes unconditionally store to the unknown plane even when all RHS operands are intrinsically 2-state. In the packed-array-write benchmark, every inner-loop iteration stores zero to the unknown plane alongside the value plane write, doubling memory bandwidth on the hot path.
-
-The store-layer architecture (non-lossy PackedRValue carrier, PackedStorePlan with kConditionalClear, plan-based store executors) is in place. The conditional-clear codegen path is implemented for all store variants. However, the benchmark does not yet trigger it because the expression layer evaluates RHS expressions in 4-state mode when the target element type is logic, producing a runtime zero for the unknown plane (unk != nullptr) rather than an absent unknown (unk == nullptr).
-
-Closing CQ2 requires expression-level 2-state optimization: when all operands of a packed expression are intrinsically 2-state (int, bit), produce unk == nullptr even when the target is 4-state. Look at the compute driver's is_four_state flag derivation and the packed context setup in the expression lowering layer.
 
 ### CQ3: Packed storage view deferred-notification dead code elision
 

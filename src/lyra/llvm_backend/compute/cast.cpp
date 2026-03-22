@@ -109,7 +109,8 @@ auto LoadFourStateOperand(
             return context.IsFourState(mir::TypeOfPlace(types, place));
           },
           [&](mir::TempId temp_id) -> bool {
-            return context.IsFourState(context.GetTempType(temp_id.value));
+            return context.ReadTempValue(temp_id.value).domain ==
+                   ValueDomain::kFourState;
           },
       },
       operand.payload);
@@ -165,7 +166,6 @@ auto LowerCastRvalue(
     uint32_t bit_width = PackedBitWidth(tgt_type, types);
     llvm::Type* result_type =
         llvm::Type::getIntNTy(context.GetLlvmContext(), bit_width);
-    bool tgt_is_4s = context.IsPackedFourState(tgt_type);
 
     const auto* constant = std::get_if<Constant>(&source_operand.payload);
     if (constant != nullptr) {
@@ -182,10 +182,6 @@ auto LowerCastRvalue(
         }
         llvm::Value* result =
             llvm::ConstantInt::get(context.GetLlvmContext(), packed_val);
-        if (tgt_is_4s) {
-          auto* zero = llvm::ConstantInt::get(result_type, 0);
-          return RvalueValue::FourState(result, zero);
-        }
         return RvalueValue::TwoState(result);
       }
     }
@@ -202,16 +198,21 @@ auto LowerCastRvalue(
 
     llvm::Value* result =
         builder.CreateLoad(result_type, alloca, "str.topacked");
-    if (tgt_is_4s) {
-      auto* zero = llvm::ConstantInt::get(result_type, 0);
-      return RvalueValue::FourState(result, zero);
-    }
     return RvalueValue::TwoState(result);
   }
 
   bool src_is_float = IsRealKind(src_type.Kind());
   bool tgt_is_float = IsRealKind(tgt_type.Kind());
-  bool src_is_4s = IsPacked(src_type) && context.IsPackedFourState(src_type);
+  // Source 4-state-ness: for temp operands, use semantic domain from
+  // TempValue. For other operands, use MIR type.
+  bool src_is_4s = [&]() -> bool {
+    if (const auto* temp_id =
+            std::get_if<mir::TempId>(&source_operand.payload)) {
+      return context.ReadTempValue(temp_id->value).domain ==
+             ValueDomain::kFourState;
+    }
+    return IsPacked(src_type) && context.IsPackedFourState(src_type);
+  }();
   bool tgt_is_4s = IsPacked(tgt_type) && context.IsPackedFourState(tgt_type);
 
   if (src_is_float && tgt_is_float) {
@@ -265,10 +266,6 @@ auto LowerCastRvalue(
       result = builder.CreateFPToUI(source, elem_type, "fptoui");
     }
     result = ApplyWidthMask(context, result, bit_width);
-    if (tgt_is_4s) {
-      auto* zero = llvm::ConstantInt::get(elem_type, 0);
-      return RvalueValue::FourState(result, zero);
-    }
     return RvalueValue::TwoState(result);
   }
 
@@ -297,10 +294,6 @@ auto LowerCastRvalue(
   llvm::Value* source = *source_or_err;
   llvm::Value* result = ExtOrTrunc(builder, source, elem_type, is_signed);
   result = ApplyWidthMask(context, result, bit_width);
-  if (tgt_is_4s) {
-    auto* zero = llvm::ConstantInt::get(elem_type, 0);
-    return RvalueValue::FourState(result, zero);
-  }
   return RvalueValue::TwoState(result);
 }
 
@@ -330,7 +323,6 @@ auto LowerBitCastRvalue(
   llvm::Value* src = *src_or_err;
 
   llvm::Value* result = nullptr;
-  bool tgt_is_4s = IsPacked(tgt_type) && context.IsPackedFourState(tgt_type);
 
   if (src_type.Kind() == TypeKind::kReal && is_packed_integral(tgt_type)) {
     result =
@@ -351,10 +343,6 @@ auto LowerBitCastRvalue(
     llvm_unreachable("invalid bitcast types");
   }
 
-  if (tgt_is_4s) {
-    auto* zero = llvm::ConstantInt::get(result->getType(), 0);
-    return RvalueValue::FourState(result, zero);
-  }
   return RvalueValue::TwoState(result);
 }
 

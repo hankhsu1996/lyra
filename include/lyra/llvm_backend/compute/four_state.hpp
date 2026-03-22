@@ -106,4 +106,9 @@ auto LowerCaseEqualityOp(
     const std::vector<mir::Operand>& operands, llvm::Type* storage_type)
     -> Result<llvm::Value*>;
 
+// Check if all operands in the vector are provably 2-state.
+// Uses IsOperandFourState internally (reads TempValue.domain for temps).
+auto AreAllOperandsTwoState(
+    Context& context, const std::vector<mir::Operand>& operands) -> bool;
+
 }  // namespace lyra::lowering::mir_to_llvm

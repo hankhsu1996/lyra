@@ -272,6 +272,16 @@ auto LowerValueOp(
     }
   }
 
+  // For temp operands, override is_four_state with semantic domain from
+  // TempValue. MIR declared type may be 4-state but the temp may carry a
+  // semantically 2-state value (kTwoState domain, scalar payload).
+  if (op.value.has_value()) {
+    if (const auto* temp_id = std::get_if<mir::TempId>(&op.value->payload)) {
+      is_four_state = context.ReadTempValue(temp_id->value).domain ==
+                      ValueDomain::kFourState;
+    }
+  }
+
   llvm::Value* data_ptr = null_ptr;
   llvm::Value* unknown_ptr = null_ptr;
 

@@ -7,6 +7,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/llvm_backend/compute/temp_value.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/mir/rvalue.hpp"
 
@@ -31,27 +32,23 @@ struct RvalueValue {
     return unknown != nullptr;
   }
 
-  // Pack this RvalueValue into a single llvm::Value* suitable for temp binding.
-  // For 2-state: returns value directly.
-  // For 4-state: returns a {value, unknown} struct.
-  //
-  // This is the canonical representation for ValueTemps. Using this method
-  // ensures consistent packing across all sites that bind temps.
-  [[nodiscard]] auto PackForTemp(llvm::IRBuilder<>& builder) const
-      -> llvm::Value* {
-    if (!IsFourState()) {
-      return value;
+  // Convert this RvalueValue into a TempValue for temp binding.
+  // Domain is derived from whether unknown is nullptr.
+  [[nodiscard]] auto ToTempValue(TypeId declared_type) const -> TempValue {
+    if (IsFourState()) {
+      return {declared_type, ValueDomain::kFourState, value, unknown};
     }
-    // Pack into {value, unknown} struct
-    llvm::Type* val_ty = value->getType();
-    auto* struct_ty =
-        llvm::StructType::get(val_ty->getContext(), {val_ty, val_ty});
-    llvm::Value* packed = llvm::UndefValue::get(struct_ty);
-    packed = builder.CreateInsertValue(packed, value, 0);
-    packed = builder.CreateInsertValue(packed, unknown, 1);
-    return packed;
+    return {declared_type, ValueDomain::kTwoState, value, nullptr};
   }
 };
+
+// The SOLE raw reconstruction helper for temp-backed values. All
+// temp-to-LLVM raw packing MUST go through this function.
+// Pure representation adapter: TempValue -> legacy raw llvm::Value*.
+// For kTwoState: returns tv.value (scalar).
+// For kFourState: packs {tv.value, tv.unknown} into struct.
+auto BuildRawValueFromTempValue(llvm::IRBuilder<>& builder, const TempValue& tv)
+    -> llvm::Value*;
 
 // Evaluate rvalue and return computed LLVM value.
 // Does NOT store to any place - caller must handle storage.
