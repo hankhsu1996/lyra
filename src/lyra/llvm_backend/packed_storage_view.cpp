@@ -483,11 +483,11 @@ auto EmitByteAddressableStore(
       builder.CreateICmpNE(old_val, new_val, "psw.val.changed");
 
   // Unknown plane: consume PackedStorePlan mechanically.
-  switch (plan.unk_action) {
-    case UnknownPlaneAction::kNone:
+  switch (plan.unk_lowering) {
+    case UnknownPlaneLowering::kNone:
       break;
 
-    case UnknownPlaneAction::kUnconditionalStore: {
+    case UnknownPlaneLowering::kWritePlaneAtOffset: {
       auto* unk_off = builder.CreateAdd(
           access.byte_offset,
           llvm::ConstantInt::get(
@@ -514,7 +514,7 @@ auto EmitByteAddressableStore(
       break;
     }
 
-    case UnknownPlaneAction::kConditionalClear: {
+    case UnknownPlaneLowering::kConditionalClearAtOffset: {
       auto* unk_off = builder.CreateAdd(
           access.byte_offset,
           llvm::ConstantInt::get(
@@ -544,6 +544,11 @@ auto EmitByteAddressableStore(
       changed = builder.CreateOr(changed, unk_nonzero, "psw.changed");
       break;
     }
+
+    default:
+      throw common::InternalError(
+          "EmitByteAddressableStore",
+          "invalid unk_lowering for byte-addressable path");
   }
 
   return changed;
@@ -582,11 +587,11 @@ auto EmitBitAddressableStore(
 
   // Unknown plane RMW: consume PackedStorePlan mechanically.
   llvm::Value* unk_result = nullptr;
-  switch (plan.unk_action) {
-    case UnknownPlaneAction::kNone:
+  switch (plan.unk_lowering) {
+    case UnknownPlaneLowering::kNone:
       break;
 
-    case UnknownPlaneAction::kUnconditionalStore: {
+    case UnknownPlaneLowering::kMergePlaneBitsRmw: {
       auto* src_unk =
           builder.CreateZExtOrTrunc(plan.unk_value, lane_ty, "rmw.src.unk");
       auto* unk_shifted = builder.CreateShl(src_unk, shift_amt, "rmw.unk.shl");
@@ -600,19 +605,21 @@ auto EmitBitAddressableStore(
       break;
     }
 
-    case UnknownPlaneAction::kConditionalClear: {
-      // Check if old unknown bits in target range are non-zero.
+    case UnknownPlaneLowering::kMaskedClearBitsRmw: {
       auto* old_unk_bits =
           builder.CreateAnd(old_planes.unk, mask_shifted, "rmw.unk.oldbits");
       auto* unk_nonzero = builder.CreateICmpNE(
           old_unk_bits, llvm::ConstantInt::get(lane_ty, 0), "rmw.unk.dirty");
 
-      // Clear the unknown bits in the target range.
       unk_result = builder.CreateAnd(old_planes.unk, not_mask, "rmw.unk.clear");
 
       changed = builder.CreateOr(changed, unk_nonzero, "rmw.changed");
       break;
     }
+
+    default:
+      throw common::InternalError(
+          "EmitBitAddressableStore", "invalid unk_lowering for RMW path");
   }
 
   StoreFullPlanes(ctx, access.storage, val_result, unk_result);
@@ -750,7 +757,8 @@ void EmitPackedStoreNotification(
 auto EmitStoreToPackedSubview(
     Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
     const PackedStorePolicy& policy) -> Result<void> {
-  auto plan = BuildPackedStorePlan(ctx, access.storage, value);
+  auto recipe_ctx = ClassifySubviewRecipeContext(access.kind);
+  auto plan = BuildPackedStorePlan(ctx, access.storage, value, recipe_ctx);
 
   llvm::Value* changed = nullptr;
   if (access.kind == PackedSubviewKind::kByteAddressable) {
@@ -863,8 +871,8 @@ void EmitNarrow2StateNbaCall(
 
 // Emit a 4-state byte-addressable narrow NBA using the canonical two-plane
 // runtime helper. unk_payload is the resolved unknown-plane value from the
-// plan (plan.unk_value for kUnconditionalStore, materialized zero for
-// kConditionalClear). The function does not independently decide
+// plan (plan.unk_value for kStoreFromRhs recipes, materialized zero for
+// kClearToZero recipes). The function does not independently decide
 // unknown-plane policy.
 void EmitNarrow4StateNbaCall(
     Context& ctx, const PackedSubviewAccess& access,
@@ -903,12 +911,12 @@ void EmitNarrow4StateNbaCall(
 
 // Emit a full-width masked NBA call for a bit-addressable subview.
 // Uses canonical packed storage ABI for byte sizes (not LLVM DataLayout).
-// unk_action and unk_payload are from the PackedStorePlan; the function
+// unk_lowering and unk_payload are from the PackedStorePlan; the function
 // does not independently decide unknown-plane policy.
 void EmitFullWidthMaskedNbaCall(
     Context& ctx, const PackedSubviewAccess& access,
     const PackedNbaPolicy& policy, const PackedRValue& value,
-    UnknownPlaneAction unk_action, llvm::Value* unk_payload) {
+    UnknownPlaneLowering unk_lowering, llvm::Value* unk_payload) {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
@@ -929,7 +937,7 @@ void EmitFullWidthMaskedNbaCall(
 
   uint32_t plane_bytes = access.storage.storage_plane_byte_size;
 
-  if (unk_action != UnknownPlaneAction::kNone) {
+  if (unk_lowering != UnknownPlaneLowering::kNone) {
     uint32_t total_bytes = plane_bytes + plane_bytes;
 
     auto* src_unk =
@@ -973,56 +981,67 @@ void EmitFullWidthMaskedNbaCall(
 auto EmitDeferredStoreToPackedSubview(
     Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
     const PackedNbaPolicy& policy) -> Result<void> {
-  auto plan = BuildPackedStorePlan(ctx, access.storage, value);
+  auto recipe_ctx = (access.kind == PackedSubviewKind::kByteAddressable)
+                        ? StoreRecipeContext::kDeferredSubview
+                        : StoreRecipeContext::kDeferredFullWidth;
+  auto plan = BuildPackedStorePlan(ctx, access.storage, value, recipe_ctx);
 
   if (access.kind == PackedSubviewKind::kByteAddressable) {
-    switch (plan.unk_action) {
-      case UnknownPlaneAction::kNone:
+    switch (plan.unk_lowering) {
+      case UnknownPlaneLowering::kNone:
         EmitNarrow2StateNbaCall(ctx, access, policy, value.val);
         break;
-      case UnknownPlaneAction::kUnconditionalStore:
+      case UnknownPlaneLowering::kMaterializeForRuntime:
         EmitNarrow4StateNbaCall(ctx, access, policy, value.val, plan.unk_value);
         break;
-      case UnknownPlaneAction::kConditionalClear: {
-        // 2-state RHS to 4-state storage: schedule zero unk bytes.
+      case UnknownPlaneLowering::kMaterializeZeroForRuntime: {
         auto* zero = llvm::ConstantInt::get(value.val->getType(), 0);
         EmitNarrow4StateNbaCall(ctx, access, policy, value.val, zero);
         break;
       }
+      default:
+        throw common::InternalError(
+            "EmitDeferredStoreToPackedSubview",
+            "invalid unk_lowering for deferred byte-addr");
     }
   } else {
-    // Bit-addressable deferred: resolve unk payload from plan.
     llvm::Value* unk_payload = nullptr;
-    if (plan.unk_action == UnknownPlaneAction::kUnconditionalStore) {
+    if (plan.unk_lowering == UnknownPlaneLowering::kMaterializeForRuntime) {
       unk_payload = plan.unk_value;
-    } else if (plan.unk_action == UnknownPlaneAction::kConditionalClear) {
+    } else if (
+        plan.unk_lowering == UnknownPlaneLowering::kMaterializeZeroForRuntime) {
       uint32_t lane_bits = access.storage.storage_plane_byte_size * 8;
       auto* lane_ty = llvm::IntegerType::get(ctx.GetLlvmContext(), lane_bits);
       unk_payload = llvm::ConstantInt::get(lane_ty, 0);
     }
     EmitFullWidthMaskedNbaCall(
-        ctx, access, policy, value, plan.unk_action, unk_payload);
+        ctx, access, policy, value, plan.unk_lowering, unk_payload);
   }
   return {};
 }
 
 auto BuildPackedStorePlan(
-    Context& ctx, const PackedStorageView& storage, const PackedRValue& rhs)
-    -> PackedStorePlan {
+    Context& ctx, const PackedStorageView& storage, const PackedRValue& rhs,
+    StoreRecipeContext recipe_context) -> PackedStorePlan {
   (void)ctx;
   if (!storage.is_four_state) {
-    return {.unk_action = UnknownPlaneAction::kNone};
+    return {
+        .unk_policy = UnknownPlanePolicy::kNone,
+        .unk_lowering = UnknownPlaneLowering::kNone};
   }
   if (rhs.unk != nullptr) {
-    // Carry the raw unk SSA value. Emitters size it to their target
-    // width (subview byte span for byte-addressable, full lane for
-    // bit-addressable/whole-value).
     return {
-        .unk_action = UnknownPlaneAction::kUnconditionalStore,
+        .unk_policy = UnknownPlanePolicy::kStoreFromRhs,
+        .unk_lowering = SelectUnknownPlaneLowering(
+            UnknownPlanePolicy::kStoreFromRhs, recipe_context),
         .unk_value = rhs.unk,
     };
   }
-  return {.unk_action = UnknownPlaneAction::kConditionalClear};
+  return {
+      .unk_policy = UnknownPlanePolicy::kClearToZero,
+      .unk_lowering = SelectUnknownPlaneLowering(
+          UnknownPlanePolicy::kClearToZero, recipe_context),
+  };
 }
 
 auto BuildWholeValueStorageView(
@@ -1313,7 +1332,7 @@ void EmitLargeWholeValueStore(
 // storage lane width, plus the resolved unknown-plane action.
 void EmitWholeValueStoreCore(
     Context& ctx, const PackedStorageView& storage, llvm::Value* val,
-    llvm::Value* unk, UnknownPlaneAction unk_action,
+    llvm::Value* unk, UnknownPlaneLowering unk_lowering,
     const PackedStorePolicy& policy) {
   auto& builder = ctx.GetBuilder();
 
@@ -1328,10 +1347,11 @@ void EmitWholeValueStoreCore(
     // constants, so this path does not go through StoreFullPlanes
     // (which rejects constants via EmitRuntimePlaneWriteback).
     //
-    // For kConditionalClear on init path: store zero unk unconditionally
+    // For kClearToZero recipes on init path: store zero unk unconditionally
     // (init has no old value to conditionally check).
     llvm::Value* init_unk = unk;
-    if (unk_action == UnknownPlaneAction::kConditionalClear) {
+    if (unk_lowering == UnknownPlaneLowering::kFlattenZeroAndStoreWhole ||
+        unk_lowering == UnknownPlaneLowering::kMaterializeZeroForRuntime) {
       uint32_t lane_bits = storage.storage_plane_byte_size * 8;
       init_unk = llvm::ConstantInt::get(builder.getIntNTy(lane_bits), 0);
     }
@@ -1347,77 +1367,131 @@ void EmitWholeValueStoreCore(
     return;
   }
 
-  // Notification paths: kConditionalClear needs per-plane handling
-  // for inline-eligible sizes to avoid unconditional unk-plane store.
-  // For large values, the runtime helper compare+store is sufficient
-  // (materializing zero unk and letting LyraStorePacked compare is
-  // correct and the conditional branch savings are negligible at
-  // that size).
+  // Notification paths: recipe-driven unknown-plane lowering.
+  // Compare/notify policy is orthogonal to the unknown-plane recipe.
   uint32_t total_bytes = TotalCanonicalByteSize(storage);
 
-  if (unk_action == UnknownPlaneAction::kConditionalClear &&
-      IsInlineStoreEligible(total_bytes)) {
-    // Inline conditional clear: handle value and unk planes separately
-    // with one combined changed predicate and one notification.
-    uint32_t lane_bytes = storage.storage_plane_byte_size;
-    auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
-    uint32_t lane_bits = lane_bytes * 8;
-    auto* lane_ty = builder.getIntNTy(lane_bits);
-
-    // Value plane: load old, store new, compare.
-    auto* old_val = builder.CreateLoad(lane_ty, storage.base_ptr, "wv.val.old");
-    builder.CreateStore(val, storage.base_ptr);
-    auto* val_changed = builder.CreateICmpNE(old_val, val, "wv.val.changed");
-
-    // Unknown plane: load old, conditionally store zero.
-    auto* unk_ptr = builder.CreateGEP(
-        i8_ty, storage.base_ptr,
-        builder.getInt32(storage.unk_plane_offset_bytes), "wv.unk.ptr");
-    auto* old_unk = builder.CreateLoad(lane_ty, unk_ptr, "wv.unk.old");
-    auto* zero = llvm::ConstantInt::get(lane_ty, 0);
-    auto* unk_nonzero = builder.CreateICmpNE(old_unk, zero, "wv.unk.dirty");
-
-    auto* func = builder.GetInsertBlock()->getParent();
-    auto* clear_bb =
-        llvm::BasicBlock::Create(ctx.GetLlvmContext(), "wv.unk.clear", func);
-    auto* merge_bb =
-        llvm::BasicBlock::Create(ctx.GetLlvmContext(), "wv.unk.done", func);
-
-    builder.CreateCondBr(unk_nonzero, clear_bb, merge_bb);
-
-    builder.SetInsertPoint(clear_bb);
-    builder.CreateStore(zero, unk_ptr);
-    builder.CreateBr(merge_bb);
-
-    builder.SetInsertPoint(merge_bb);
-
-    // One combined changed predicate, one notification.
-    auto* changed = builder.CreateOr(val_changed, unk_nonzero, "wv.changed");
-    auto dirty_range = MakeFullSlotDirtyRange(ctx.GetLlvmContext());
-    EmitPackedStoreNotification(ctx, changed, policy, dirty_range);
-    return;
-  }
-
-  // For kConditionalClear on large values: materialize zero unk and let
-  // the runtime helper compare+store. The runtime handles both planes
-  // atomically with one compare and one notification.
-  llvm::Value* effective_unk = unk;
-  if (unk_action == UnknownPlaneAction::kConditionalClear) {
-    uint32_t lane_bits = storage.storage_plane_byte_size * 8;
-    effective_unk = llvm::ConstantInt::get(builder.getIntNTy(lane_bits), 0);
-  }
-
-  if (IsInlineStoreEligible(total_bytes)) {
+  auto flatten_and_inline_store = [&](llvm::Value* effective_unk) {
     auto* canonical_bits = FlattenToCanonicalBits(
         builder, ctx.GetLlvmContext(), val, effective_unk,
         storage.storage_plane_byte_size, storage.is_four_state);
     EmitInlineWholeValueStore(ctx, storage, canonical_bits, policy);
-  } else {
-    EmitLargeWholeValueStore(ctx, storage, val, effective_unk, policy);
+  };
+
+  switch (unk_lowering) {
+    case UnknownPlaneLowering::kNone:
+      // 2-state storage: store val only.
+      if (IsInlineStoreEligible(total_bytes)) {
+        auto* canonical_bits = FlattenToCanonicalBits(
+            builder, ctx.GetLlvmContext(), val, nullptr,
+            storage.storage_plane_byte_size, storage.is_four_state);
+        EmitInlineWholeValueStore(ctx, storage, canonical_bits, policy);
+      } else {
+        EmitLargeWholeValueStore(ctx, storage, val, nullptr, policy);
+      }
+      break;
+
+    case UnknownPlaneLowering::kFlattenAndStoreWhole:
+      // 4-state RHS: flatten {val, unk} into widened store.
+      if (IsInlineStoreEligible(total_bytes)) {
+        flatten_and_inline_store(unk);
+      } else {
+        EmitLargeWholeValueStore(ctx, storage, val, unk, policy);
+      }
+      break;
+
+    case UnknownPlaneLowering::kFlattenZeroAndStoreWhole: {
+      // 2-state RHS to 4-state inline interleaved: flatten {val, 0}.
+      uint32_t lane_bits = storage.storage_plane_byte_size * 8;
+      auto* zero_unk = llvm::ConstantInt::get(builder.getIntNTy(lane_bits), 0);
+      flatten_and_inline_store(zero_unk);
+      break;
+    }
+
+    case UnknownPlaneLowering::kMaterializeForRuntime:
+      // 4-state RHS, large: pass to runtime helper.
+      EmitLargeWholeValueStore(ctx, storage, val, unk, policy);
+      break;
+
+    case UnknownPlaneLowering::kMaterializeZeroForRuntime: {
+      // 2-state RHS, large: materialize zero + runtime helper.
+      uint32_t lane_bits = storage.storage_plane_byte_size * 8;
+      auto* zero_unk = llvm::ConstantInt::get(builder.getIntNTy(lane_bits), 0);
+      EmitLargeWholeValueStore(ctx, storage, val, zero_unk, policy);
+      break;
+    }
+
+    default:
+      throw common::InternalError(
+          "EmitWholeValueStoreCore",
+          "invalid unk_lowering for whole-value path");
   }
 }
 
 }  // namespace
+
+auto ClassifySubviewRecipeContext(PackedSubviewKind kind)
+    -> StoreRecipeContext {
+  switch (kind) {
+    case PackedSubviewKind::kByteAddressable:
+      return StoreRecipeContext::kSplitPlaneSubview;
+    case PackedSubviewKind::kBitAddressable:
+      return StoreRecipeContext::kBitAddressableRmw;
+  }
+  throw common::InternalError(
+      "ClassifySubviewRecipeContext", "unknown subview kind");
+}
+
+auto ClassifyWholeValueRecipeContext(const PackedStorageView& storage)
+    -> StoreRecipeContext {
+  uint32_t total = TotalCanonicalByteSize(storage);
+  if (IsInlineStoreEligible(total)) {
+    if (storage.is_four_state &&
+        storage.unk_plane_offset_bytes != storage.storage_plane_byte_size) {
+      throw common::InternalError(
+          "ClassifyWholeValueRecipeContext",
+          "inline 4-state storage has non-adjacent planes");
+    }
+    return StoreRecipeContext::kWholeValueInlineInterleaved;
+  }
+  return StoreRecipeContext::kWholeValueRuntimeAssisted;
+}
+
+auto SelectUnknownPlaneLowering(
+    UnknownPlanePolicy policy, StoreRecipeContext context)
+    -> UnknownPlaneLowering {
+  if (policy == UnknownPlanePolicy::kNone) {
+    return UnknownPlaneLowering::kNone;
+  }
+  if (policy == UnknownPlanePolicy::kStoreFromRhs) {
+    switch (context) {
+      case StoreRecipeContext::kSplitPlaneSubview:
+        return UnknownPlaneLowering::kWritePlaneAtOffset;
+      case StoreRecipeContext::kBitAddressableRmw:
+        return UnknownPlaneLowering::kMergePlaneBitsRmw;
+      case StoreRecipeContext::kWholeValueInlineInterleaved:
+        return UnknownPlaneLowering::kFlattenAndStoreWhole;
+      case StoreRecipeContext::kWholeValueRuntimeAssisted:
+      case StoreRecipeContext::kDeferredSubview:
+      case StoreRecipeContext::kDeferredFullWidth:
+        return UnknownPlaneLowering::kMaterializeForRuntime;
+    }
+  }
+  switch (context) {
+    case StoreRecipeContext::kSplitPlaneSubview:
+      return UnknownPlaneLowering::kConditionalClearAtOffset;
+    case StoreRecipeContext::kBitAddressableRmw:
+      return UnknownPlaneLowering::kMaskedClearBitsRmw;
+    case StoreRecipeContext::kWholeValueInlineInterleaved:
+      return UnknownPlaneLowering::kFlattenZeroAndStoreWhole;
+    case StoreRecipeContext::kWholeValueRuntimeAssisted:
+    case StoreRecipeContext::kDeferredSubview:
+    case StoreRecipeContext::kDeferredFullWidth:
+      return UnknownPlaneLowering::kMaterializeZeroForRuntime;
+  }
+  throw common::InternalError(
+      "SelectUnknownPlaneLowering", "unhandled policy/context combination");
+}
 
 auto MaterializePackedValue(Context& ctx, const PackedStorageView& storage)
     -> Result<PackedRValue> {
@@ -1453,7 +1527,8 @@ auto MaterializePackedValue(Context& ctx, const PackedStorageView& storage)
 auto StorePackedValue(
     Context& ctx, const PackedStorageView& storage, const PackedRValue& value,
     const PackedStorePolicy& policy) -> Result<void> {
-  auto plan = BuildPackedStorePlan(ctx, storage, value);
+  auto recipe_ctx = ClassifyWholeValueRecipeContext(storage);
+  auto plan = BuildPackedStorePlan(ctx, storage, value, recipe_ctx);
 
   uint32_t lane_bits = storage.storage_plane_byte_size * 8;
   auto* lane_ty = llvm::IntegerType::get(ctx.GetLlvmContext(), lane_bits);
@@ -1461,16 +1536,14 @@ auto StorePackedValue(
   auto& builder = ctx.GetBuilder();
   auto* val = builder.CreateZExtOrTrunc(value.val, lane_ty, "wv.val");
 
-  // Resolve unk from plan action.
+  // Resolve unk from plan.
   llvm::Value* unk = nullptr;
-  if (plan.unk_action == UnknownPlaneAction::kUnconditionalStore) {
+  if (plan.unk_lowering == UnknownPlaneLowering::kFlattenAndStoreWhole ||
+      plan.unk_lowering == UnknownPlaneLowering::kMaterializeForRuntime) {
     unk = builder.CreateZExtOrTrunc(plan.unk_value, lane_ty, "wv.unk");
   }
-  // kNone: unk stays nullptr (no unknown plane).
-  // kConditionalClear: unk stays nullptr; EmitWholeValueStoreCore
-  // handles the conditional clear internally based on unk_action.
 
-  EmitWholeValueStoreCore(ctx, storage, val, unk, plan.unk_action, policy);
+  EmitWholeValueStoreCore(ctx, storage, val, unk, plan.unk_lowering, policy);
   return {};
 }
 
@@ -1511,11 +1584,12 @@ auto StorePackedValueFromCanonicalBytes(
   }
 
   // Canonical bytes carry the full unk plane; always unconditional store
-  // when 4-state, kNone when 2-state. kConditionalClear does not apply
+  // when 4-state, kNone when 2-state. kClearToZero does not apply
   // here because this path has pre-materialized bytes, not an RHS.
-  auto unk_action = unk != nullptr ? UnknownPlaneAction::kUnconditionalStore
-                                   : UnknownPlaneAction::kNone;
-  EmitWholeValueStoreCore(ctx, storage, val, unk, unk_action, policy);
+  auto unk_lowering = unk != nullptr
+                          ? UnknownPlaneLowering::kFlattenAndStoreWhole
+                          : UnknownPlaneLowering::kNone;
+  EmitWholeValueStoreCore(ctx, storage, val, unk, unk_lowering, policy);
   return {};
 }
 
