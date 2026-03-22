@@ -140,41 +140,68 @@ struct PackedRValue {
   uint32_t semantic_bits = 0;
 };
 
-// Unknown-plane write policy for packed stores.
-// Produced by BuildPackedStorePlan; consumed by all store emitters.
-// This is the single semantic decision point for unknown-plane behavior.
-// No emitter may independently decide unknown-plane policy.
-enum class UnknownPlaneAction {
-  // Storage is 2-state. No unknown plane exists. Skip entirely.
-  kNone,
-  // Storage is 4-state, RHS is 4-state. Unconditional store + compare.
-  kUnconditionalStore,
-  // Storage is 4-state, RHS is provably 2-state. Conditional clear.
-  // Immediate: load old, branch on non-zero, store zero if needed.
-  // Deferred: materialize zero constant locally and schedule.
-  kConditionalClear,
+// Semantic unknown-plane policy. What must happen to the unknown plane.
+// Pure fact about the RHS -- no layout or codegen recipe information.
+enum class UnknownPlanePolicy {
+  kNone,          // 2-state storage. No unknown plane exists.
+  kStoreFromRhs,  // 4-state storage, 4-state RHS. Store RHS unknown.
+  kClearToZero,   // 4-state storage, 2-state RHS. Unknown must become zero.
 };
 
-// Resolved unknown-plane store policy for a single packed store.
-//
-// Contract: BuildPackedStorePlan is the single authority. No emitter
-// may independently decide unknown-plane behavior. Emitters consume
-// this plan mechanically.
-struct PackedStorePlan {
-  UnknownPlaneAction unk_action = UnknownPlaneAction::kNone;
+// Store recipe context. The combination of physical layout and execution
+// mode that determines which lowering recipe is cheapest. Each value names
+// the structural reason the recipe choice differs.
+enum class StoreRecipeContext {
+  kSplitPlaneSubview,            // Byte-addr canonical, planes at large offset
+  kBitAddressableRmw,            // Full-plane RMW, both planes loaded
+  kWholeValueInlineInterleaved,  // Adjacent {val, unk}, single widened store
+  kWholeValueRuntimeAssisted,    // Too large for inline, runtime helper
+  kDeferredSubview,              // NBA/deferred byte-addressable
+  kDeferredFullWidth,            // NBA/deferred full-width masked
+};
 
-  // Raw unknown-plane SSA value from the RHS. Non-null for
-  // kUnconditionalStore only. Emitters size it to their target width
-  // (subview byte span, full lane, etc.). Null for kNone and
-  // kConditionalClear.
+// Concrete codegen recipe for the unknown plane. Each name describes
+// exactly one codegen shape. Selected by the planner from (policy,
+// context), not by any executor.
+enum class UnknownPlaneLowering {
+  kNone,                       // No unknown plane. No-op.
+  kWritePlaneAtOffset,         // Store RHS unk at split-plane offset.
+  kMergePlaneBitsRmw,          // Merge RHS unk bits in full-plane RMW.
+  kFlattenAndStoreWhole,       // Flatten {val, unk} into widened store.
+  kMaterializeForRuntime,      // Pass RHS unk to runtime helper / scheduler.
+  kConditionalClearAtOffset,   // Branch + conditional zero at split offset.
+  kMaskedClearBitsRmw,         // Bitwise AND clear in full-plane RMW.
+  kFlattenZeroAndStoreWhole,   // Flatten {val, 0} into widened store.
+  kMaterializeZeroForRuntime,  // Materialize zero for runtime / scheduler.
+};
+
+// Resolved unknown-plane store plan. The planner owns the recipe choice.
+// Executors follow the selected recipe mechanically.
+struct PackedStorePlan {
+  UnknownPlanePolicy unk_policy = UnknownPlanePolicy::kNone;
+  UnknownPlaneLowering unk_lowering = UnknownPlaneLowering::kNone;
+  // Non-null when policy is kStoreFromRhs.
   llvm::Value* unk_value = nullptr;
 };
 
-// Build the unknown-plane store policy from RHS semantics and storage layout.
-// This is the single decision point for all packed stores.
+// Classify subview store recipe context from subview kind.
+auto ClassifySubviewRecipeContext(PackedSubviewKind kind) -> StoreRecipeContext;
+
+// Classify whole-value store recipe context from storage layout.
+// Asserts structural invariants for inline interleaved classification.
+auto ClassifyWholeValueRecipeContext(const PackedStorageView& storage)
+    -> StoreRecipeContext;
+
+// Select lowering recipe from (policy, context). Single authority.
+// InternalError on impossible combinations.
+auto SelectUnknownPlaneLowering(
+    UnknownPlanePolicy policy, StoreRecipeContext context)
+    -> UnknownPlaneLowering;
+
+// Build the complete store plan. Single decision point.
 auto BuildPackedStorePlan(
-    Context& ctx, const PackedStorageView& storage, const PackedRValue& rhs)
-    -> PackedStorePlan;
+    const PackedStorageView& storage, const PackedRValue& rhs,
+    StoreRecipeContext recipe_context) -> PackedStorePlan;
 
 // Semantic store mode for packed writes.
 enum class PackedStoreMode {
