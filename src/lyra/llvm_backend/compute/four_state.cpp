@@ -62,23 +62,17 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
       operand.payload);
 }
 
+// Returns {value, unknown} at the operand's own loaded width.
+// Handles both kFourState (struct) and kTwoState (scalar) domain uniformly
+// via ExtractFourStateOrZero. Callers are responsible for width adaptation
+// to their result type.
 auto LowerOperandFourState(
-    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
-    llvm::Type* elem_type) -> Result<FourStateValue> {
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand)
+    -> Result<FourStateValue> {
   auto& builder = context.GetBuilder();
-
-  if (IsOperandFourState(context, operand)) {
-    auto loaded_or_err = LowerOperandRaw(context, resolver, operand);
-    if (!loaded_or_err) return std::unexpected(loaded_or_err.error());
-    return ExtractFourState(builder, *loaded_or_err);
-  }
-
-  auto loaded_val_or_err = LowerOperand(context, resolver, operand);
-  if (!loaded_val_or_err) return std::unexpected(loaded_val_or_err.error());
-  auto* val =
-      builder.CreateZExtOrTrunc(*loaded_val_or_err, elem_type, "fs2.val");
-  auto* unk = llvm::ConstantInt::get(elem_type, 0);
-  return FourStateValue{.value = val, .unknown = unk};
+  auto loaded_or_err = LowerOperandRaw(context, resolver, operand);
+  if (!loaded_or_err) return std::unexpected(loaded_or_err.error());
+  return ExtractFourStateOrZero(builder, *loaded_or_err);
 }
 
 }  // namespace
@@ -306,15 +300,31 @@ auto LowerBinaryRvalue4State(
   auto& builder = context.GetBuilder();
   auto* zero = llvm::ConstantInt::get(elem_type, 0);
 
-  auto lhs_or_err =
-      LowerOperandFourState(context, resolver, operands[0], elem_type);
+  auto lhs_or_err = LowerOperandFourState(context, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   auto lhs = *lhs_or_err;
 
-  auto rhs_or_err =
-      LowerOperandFourState(context, resolver, operands[1], elem_type);
+  auto rhs_or_err = LowerOperandFourState(context, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto rhs = *rhs_or_err;
+
+  // Invariant: loaded operand widths must be at least as wide as their
+  // semantic operand widths. Catches width truncation bugs at the point
+  // of use rather than producing silent wrong results.
+  {
+    uint32_t lhs_semantic = GetOperandPackedWidth(context, operands[0]);
+    uint32_t rhs_semantic = GetOperandPackedWidth(context, operands[1]);
+    uint32_t lhs_loaded = lhs.value->getType()->getIntegerBitWidth();
+    uint32_t rhs_loaded = rhs.value->getType()->getIntegerBitWidth();
+    if (lhs_loaded < lhs_semantic || rhs_loaded < rhs_semantic) {
+      throw common::InternalError(
+          "LowerBinaryRvalue4State",
+          std::format(
+              "operand width truncation: lhs loaded {}b < semantic {}b or "
+              "rhs loaded {}b < semantic {}b",
+              lhs_loaded, lhs_semantic, rhs_loaded, rhs_semantic));
+    }
+  }
 
   if (IsCaseEqualityOp(info.op)) {
     uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
@@ -348,11 +358,9 @@ auto LowerBinaryRvalue4State(
     auto* match_type =
         llvm::Type::getIntNTy(context.GetLlvmContext(), operand_width);
 
-    auto lhs_4s =
-        LowerOperandFourState(context, resolver, operands[0], match_type);
+    auto lhs_4s = LowerOperandFourState(context, resolver, operands[0]);
     if (!lhs_4s) return std::unexpected(lhs_4s.error());
-    auto rhs_4s =
-        LowerOperandFourState(context, resolver, operands[1], match_type);
+    auto rhs_4s = LowerOperandFourState(context, resolver, operands[1]);
     if (!rhs_4s) return std::unexpected(rhs_4s.error());
 
     lhs_4s->value =
@@ -515,10 +523,7 @@ auto LowerUnaryRvalue4State(
     Context& context, SlotAccessResolver& resolver,
     const mir::UnaryRvalueInfo& info, const std::vector<mir::Operand>& operands,
     const PackedComputeContext& packed_context) -> Result<ComputeResult> {
-  llvm::Type* carrier_type = packed_context.element_type;
-
-  auto src_or_err =
-      LowerOperandFourState(context, resolver, operands[0], carrier_type);
+  auto src_or_err = LowerOperandFourState(context, resolver, operands[0]);
   if (!src_or_err) return std::unexpected(src_or_err.error());
 
   if (IsReductionOp(info.op) || info.op == mir::UnaryOp::kLogicalNot) {
@@ -545,8 +550,7 @@ auto LowerConcatRvalue4State(
   }
 
   uint32_t first_width = GetOperandPackedWidth(context, operands[0]);
-  auto first_or_err =
-      LowerOperandFourState(context, resolver, operands[0], elem_type);
+  auto first_or_err = LowerOperandFourState(context, resolver, operands[0]);
   if (!first_or_err) return std::unexpected(first_or_err.error());
   auto first = *first_or_err;
 
@@ -560,8 +564,7 @@ auto LowerConcatRvalue4State(
 
   for (size_t i = 1; i < operands.size(); ++i) {
     uint32_t op_width = GetOperandPackedWidth(context, operands[i]);
-    auto op_or_err =
-        LowerOperandFourState(context, resolver, operands[i], elem_type);
+    auto op_or_err = LowerOperandFourState(context, resolver, operands[i]);
     if (!op_or_err) return std::unexpected(op_or_err.error());
     auto op = *op_or_err;
 
@@ -597,8 +600,7 @@ auto LowerReplicateRvalue4State(
   }
 
   uint32_t op_width = GetOperandPackedWidth(context, operands[0]);
-  auto elem_or_err =
-      LowerOperandFourState(context, resolver, operands[0], elem_type);
+  auto elem_or_err = LowerOperandFourState(context, resolver, operands[0]);
   if (!elem_or_err) return std::unexpected(elem_or_err.error());
   auto elem = *elem_or_err;
 
@@ -654,10 +656,20 @@ auto LowerGuardedUse4State(
 
   builder.SetInsertPoint(do_read_bb);
   auto place_operand = mir::Operand::Use(info.place);
-  auto read_fs_or_err =
-      LowerOperandFourState(context, resolver, place_operand, elem_type);
+  auto read_fs_or_err = LowerOperandFourState(context, resolver, place_operand);
   if (!read_fs_or_err) return std::unexpected(read_fs_or_err.error());
   auto read_fs = *read_fs_or_err;
+  // This is the one intentional result-width adaptation site after the
+  // LowerOperandFourState API cleanup. The PHI merge with OOB constants
+  // requires matching types. Do not move this coercion back into
+  // LowerOperandFourState -- operand loading must return operand-native
+  // width; callers adapt.
+  if (read_fs.value->getType() != elem_type) {
+    read_fs.value =
+        builder.CreateZExtOrTrunc(read_fs.value, elem_type, "gu4.val.fit");
+    read_fs.unknown =
+        builder.CreateZExtOrTrunc(read_fs.unknown, elem_type, "gu4.unk.fit");
+  }
   auto* do_read_end_bb = builder.GetInsertBlock();
   builder.CreateBr(merge_bb);
 
@@ -691,13 +703,11 @@ auto LowerCaseMatchOp(
   auto* elem_type =
       llvm::Type::getIntNTy(context.GetLlvmContext(), operand_width);
 
-  auto lhs_or_err =
-      LowerOperandFourState(context, resolver, operands[0], elem_type);
+  auto lhs_or_err = LowerOperandFourState(context, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   auto lhs = *lhs_or_err;
 
-  auto rhs_or_err =
-      LowerOperandFourState(context, resolver, operands[1], elem_type);
+  auto rhs_or_err = LowerOperandFourState(context, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto rhs = *rhs_or_err;
 
@@ -746,13 +756,11 @@ auto LowerCaseEqualityOp(
   uint32_t cmp_width = std::max(lhs_width, rhs_width);
   auto* elem_type = llvm::Type::getIntNTy(context.GetLlvmContext(), cmp_width);
 
-  auto lhs_or_err =
-      LowerOperandFourState(context, resolver, operands[0], elem_type);
+  auto lhs_or_err = LowerOperandFourState(context, resolver, operands[0]);
   if (!lhs_or_err) return std::unexpected(lhs_or_err.error());
   auto lhs = *lhs_or_err;
 
-  auto rhs_or_err =
-      LowerOperandFourState(context, resolver, operands[1], elem_type);
+  auto rhs_or_err = LowerOperandFourState(context, resolver, operands[1]);
   if (!rhs_or_err) return std::unexpected(rhs_or_err.error());
   auto rhs = *rhs_or_err;
 

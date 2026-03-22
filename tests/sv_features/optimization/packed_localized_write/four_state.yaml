@@ -318,3 +318,22 @@ cases:
       endmodule
     expect:
       stdout: "x = x5\n"
+
+  - name: 4state_2s_temp_large_value_comparison
+    description: >
+      Regression for operand width truncation bug. A kTwoState temp
+      carrying a value >= 256 (500000) flows into a 4-state comparison
+      path. Before the fix, LowerOperandFourState truncated the 32-bit
+      operand to 8-bit elem_type (result width), causing 500000 to
+      compare as 500000 % 256 = 32.
+    sv: |
+      module Test;
+        logic [31:0] counter;
+        initial begin
+          counter = 500000;
+          if (counter == 500000) $display("match");
+          else $display("no match: %0d", counter);
+        end
+      endmodule
+    expect:
+      stdout: "match\n"
