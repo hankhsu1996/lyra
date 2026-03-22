@@ -30,9 +30,4 @@ static_assert(offsetof(ProcessDescriptorEntry, base_byte_offset) == 8);
 static_assert(offsetof(ProcessDescriptorEntry, instance_id) == 16);
 static_assert(offsetof(ProcessDescriptorEntry, signal_id_offset) == 20);
 
-// 2-arg shared body function signature (frame, resume).
-// Instance binding lives in the process frame header, not in the call
-// surface. This is the long-term call contract.
-using SharedBodyFn = void (*)(void*, uint32_t);
-
 }  // namespace lyra::runtime

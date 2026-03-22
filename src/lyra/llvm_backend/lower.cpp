@@ -710,7 +710,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // processes goes through the descriptor table, not this array).
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout->scheduled_processes.size());
-  std::vector<ProcessDescriptorData> process_descriptors;
   std::vector<ProcessTriggerEntry> all_process_triggers;
 
   size_t num_init = layout->num_init_processes;
@@ -753,19 +752,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
       continue;
     }
 
-    // Module process: route through explicit sched_idx -> shared_func table
+    // Module process: compute per-instance signal_id_offset for trigger
+    // canonicalization (H4 dependency -- still instance-shaped at this layer).
     Context::ArenaScope arena_scope(*context, &proc_arena);
-    auto func_it = sched_idx_to_shared_func.find(static_cast<uint32_t>(i));
-    if (func_it == sched_idx_to_shared_func.end()) {
-      throw common::InternalError(
-          "CompileDesignProcesses",
-          std::format(
-              "no compiled function routing for scheduled process {}", i));
-    }
-    llvm::Function* shared_func = func_it->second;
-
-    uint64_t base_byte_offset =
-        layout->GetInstanceBaseByteOffset(bp.module_index);
     if (bp.module_index.value >= module_base_slots.size()) {
       throw common::InternalError(
           "CompileDesignProcesses",
@@ -775,18 +764,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
     uint32_t signal_id_offset = module_base_slots[bp.module_index.value];
 
-    // Collect descriptor data instead of generating a per-instance wrapper.
-    // The descriptor carries the same binding that wrappers used to bake in.
-    process_descriptors.push_back(
-        ProcessDescriptorData{
-            .shared_body = shared_func,
-            .base_byte_offset = base_byte_offset,
-            .instance_id = bp.module_index.value,
-            .signal_id_offset = signal_id_offset,
-        });
-    // Null entry as structural guard: any accidental dispatch through the
-    // old procs[] path will crash immediately rather than calling a stale
-    // wrapper.
+    // Null entry as structural guard: module processes dispatch through
+    // frame headers (constructor-owned binding), not through this array.
     process_funcs.push_back(nullptr);
 
     // Collect trigger metadata for this module instance process.
@@ -812,6 +791,73 @@ auto CompileDesignProcesses(const LoweringInput& input)
       input.design->instance_table, input.design->slot_trace_provenance,
       input.design->slot_trace_string_pool);
 
+  // Build forward-path body compiled functions, parallel to
+  // layout->body_realization_infos. The per-instance descriptor collection
+  // above is temporary old-path support; this body-local compiled-function
+  // capture is the forward path for body realization descriptor emission.
+  std::vector<CodegenSession::BodyCompiledFuncs> body_funcs;
+  for (const auto& info : layout->body_realization_infos) {
+    auto it = body_to_compiled_funcs.find(info.body_id.value);
+    if (it == body_to_compiled_funcs.end()) {
+      throw common::InternalError(
+          "CompileDesignProcesses",
+          std::format("no compiled functions for body {}", info.body_id.value));
+    }
+    if (it->second.size() != info.process_schema_indices.size()) {
+      throw common::InternalError(
+          "CompileDesignProcesses",
+          std::format(
+              "body {} compiled function count {} != schema count {}",
+              info.body_id.value, it->second.size(),
+              info.process_schema_indices.size()));
+    }
+    body_funcs.push_back(
+        CodegenSession::BodyCompiledFuncs{
+            .body_id = info.body_id,
+            .functions = std::move(it->second),
+        });
+  }
+
+  // Build per-instance body group index: maps ModuleIndex -> body group.
+  // This is retained compile-owned topology summary for the emitted
+  // constructor function to emit calls in instance-major order.
+  // First, build body_id -> body_group_index mapping.
+  std::unordered_map<uint32_t, uint32_t> body_id_to_group;
+  for (size_t gi = 0; gi < layout->body_realization_infos.size(); ++gi) {
+    body_id_to_group[layout->body_realization_infos[gi].body_id.value] =
+        static_cast<uint32_t>(gi);
+  }
+  // Then walk instances in ModuleIndex order (design element iteration).
+  std::vector<uint32_t> instance_body_group;
+  {
+    uint32_t mi = 0;
+    for (const auto& element : input.design->elements) {
+      const auto* mod = std::get_if<mir::Module>(&element);
+      if (mod == nullptr) continue;
+      auto it = body_id_to_group.find(mod->body_id.value);
+      if (it == body_id_to_group.end()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "instance {} body {} not in body_realization_infos", mi,
+                mod->body_id.value));
+      }
+      instance_body_group.push_back(it->second);
+      ++mi;
+    }
+  }
+
+  // Validate: instance_body_group must cover exactly the module instances
+  // in the layout (same count as placement.instances / module_plans).
+  if (instance_body_group.size() != layout->instance_base_byte_offsets.size()) {
+    throw common::InternalError(
+        "CompileDesignProcesses",
+        std::format(
+            "instance_body_group size {} != instance count {}",
+            instance_body_group.size(),
+            layout->instance_base_byte_offsets.size()));
+  }
+
   return CodegenSession{
       .layout = std::move(layout),
       .context = std::move(context),
@@ -821,7 +867,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .process_triggers = std::move(all_process_triggers),
       .slot_info = std::move(slot_info),
       .num_init_processes = num_init,
-      .process_descriptors = std::move(process_descriptors),
+      .body_compiled_funcs = std::move(body_funcs),
+      .instance_body_group = std::move(instance_body_group),
   };
 }
 

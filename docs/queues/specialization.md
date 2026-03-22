@@ -13,8 +13,8 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] B6 -- HIR ownership split
 - [x] m2 -- Instance paths deferred to runtime
 - [x] G -- Instance-independent LLVM codegen (per-instance code eliminated, shared-body code paths in place)
-- [ ] H1 -- Correct specialization end-state: architecture contract still overstates progress
-- [ ] H2 -- Move constructor/process realization out of compile-time artifacts
+- [x] H1 -- Correct specialization end-state: architecture contract still overstates progress
+- [x] H2 -- Move constructor/process realization out of compile-time artifacts
 - [ ] H3 -- Move process metadata realization behind constructor-time expansion
 - [ ] H4 -- Move trigger/comb realization behind constructor-time expansion
 - [ ] H5 -- Move slot/trace/path realization behind constructor-time expansion
@@ -29,18 +29,6 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [ ] F2 -- Specialization caching
 - [ ] Documentation gap: pipeline-contract.md and state-layout.md need type ownership clarification
 - [ ] CI policy gates: codegen API check, grouping regression tests, topology-independence test
-
-## H1: Correct specialization end-state
-
-The current architecture documentation and queue history overstated progress. Shared-body code paths are in place: per-instance LLVM functions and per-instance construction loops in main have been eliminated. But object emission is not yet topology-independent. Fully realized instance topology is still embedded in compile-time artifacts across multiple categories (constructor records, process descriptors, slot metadata, trigger tables, signal trace data, instance paths, 4-state patch tables). These scale linearly with instance count and are emitted as LLVM globals that the optimizer and object emitter must process.
-
-In the intended constructor-time realization model, the compiler emits only body-shaped schemas and compact topology recipes. The runtime constructor expands those recipes into the full instance graph at execution time. The current state is an intermediate: per-instance code is gone, but per-instance data is still fully materialized at compile time. Architecture docs must be updated to reflect this gap honestly before further migration work proceeds.
-
-## H2: Move constructor/process realization out of compile-time artifacts
-
-Realized constructor records and process descriptors are still emitted as fully expanded compile-time data -- one entry per simulation process instance. In a design with N instances of the same body, the constructor record table and process descriptor table both contain N identical-schema entries that differ only in per-instance binding facts (base offset, instance ID, signal ID offset).
-
-These should instead be compact body-shaped recipes that the runtime constructor expands. A body-shaped recipe would describe: which schema, how many instances, what the per-instance binding derivation rule is (e.g., base offset stride, instance ID range, signal ID offset stride). The runtime constructor would walk these recipes and produce the per-instance data at execution time.
 
 ## H3: Move process metadata realization behind constructor-time expansion
 

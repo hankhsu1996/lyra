@@ -3,11 +3,15 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "lyra/runtime/process_descriptor.hpp"
 #include "lyra/runtime/simulation.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 
 namespace lyra::runtime {
+
+// 2-arg shared body function signature (frame, resume).
+// Instance binding lives in the process frame header, not in the call
+// surface. This is the long-term call contract.
+using SharedBodyFn = void (*)(void*, uint32_t);
 
 // Canonical process frame header layout.
 //

@@ -1655,9 +1655,6 @@ auto BuildLayout(
   // Build constructor metadata: state schemas and constructor records.
   // Only covers simulation processes (post-init: connection + module).
   {
-    size_t num_simulation =
-        layout.scheduled_processes.size() - layout.num_init_processes;
-
     // Compute constructor-relevant schema properties for a process layout.
     // All properties that grouped schemas must agree on are computed here.
     // When adding new schema fields, add them to this helper so the
@@ -1702,7 +1699,6 @@ auto BuildLayout(
     };
     std::unordered_map<SchemaKey, uint32_t, SchemaKeyHash> module_schema_map;
 
-    layout.constructor_records.reserve(num_simulation);
     conn_counter = 0;
 
     for (size_t i = layout.num_init_processes;
@@ -1712,7 +1708,6 @@ auto BuildLayout(
 
       if (i < layout.num_module_process_base) {
         // Connection process: unique schema per process.
-        auto schema_idx = static_cast<uint32_t>(layout.state_schemas.size());
         layout.state_schemas.push_back({
             .state_size = props.state_size,
             .state_align = props.state_align,
@@ -1722,7 +1717,7 @@ auto BuildLayout(
             .proc_within_body = std::nullopt,
             .conn_index = conn_counter,
         });
-        layout.constructor_records.push_back({.schema_index = schema_idx});
+
         ++conn_counter;
       } else {
         // Module process: deduplicate by (body_id, proc_within_body).
@@ -1765,7 +1760,6 @@ auto BuildLayout(
                 "BuildLayout",
                 "representative process does not match schema identity");
           }
-          layout.constructor_records.push_back({.schema_index = it->second});
         } else {
           auto schema_idx = static_cast<uint32_t>(layout.state_schemas.size());
           layout.state_schemas.push_back({
@@ -1778,10 +1772,107 @@ auto BuildLayout(
               .conn_index = std::nullopt,
           });
           module_schema_map[key] = schema_idx;
-          layout.constructor_records.push_back({.schema_index = schema_idx});
         }
       }
     }
+
+    // Build per-body realization descriptors from the schema dedup map.
+    // This is body-shaped data: one entry per unique body, not per instance.
+    // Ordering: by first-seen body_id during schema dedup (deterministic
+    // from BFS-sorted elaboration order). Cut 3 will consume this vector
+    // in order when generating emitted constructor loops.
+    {
+      // Build body_realization_infos from module_plans (covers all bodies,
+      // including those with zero non-final processes).
+      std::unordered_map<uint32_t, size_t> body_id_to_info_index;
+      for (const auto& plan : module_plans) {
+        auto body_id_val = plan.body_id.value;
+        auto [it, inserted] = body_id_to_info_index.try_emplace(
+            body_id_val, layout.body_realization_infos.size());
+        if (inserted) {
+          layout.body_realization_infos.push_back(
+              Layout::BodyRealizationInfo{
+                  .body_id = plan.body_id,
+                  .slot_count = plan.slot_count,
+                  .process_schema_indices = {},
+              });
+        } else {
+          // Validate all plans for the same body agree on slot_count.
+          auto& existing = layout.body_realization_infos[it->second];
+          if (existing.slot_count != plan.slot_count) {
+            throw common::InternalError(
+                "BuildLayout",
+                std::format(
+                    "body {} slot_count disagreement: {} vs {}", body_id_val,
+                    existing.slot_count, plan.slot_count));
+          }
+        }
+      }
+
+      // Fill process schema indices ordered by proc_within_body.
+      // Invariant: proc_within_body exactly matches the body's non-final
+      // process ordering. The resulting vector must be dense and complete
+      // (every ordinal in [0, count) present).
+      for (auto& info : layout.body_realization_infos) {
+        // Determine expected count from schema map entries for this body.
+        uint32_t max_pwb = 0;
+        for (const auto& [key, schema_idx] : module_schema_map) {
+          if (key.body_id == info.body_id.value) {
+            max_pwb = std::max(max_pwb, key.proc_within_body + 1);
+          }
+        }
+        // Track which ordinals are filled to detect gaps.
+        std::vector<bool> filled(max_pwb, false);
+        info.process_schema_indices.resize(max_pwb);
+        for (const auto& [key, schema_idx] : module_schema_map) {
+          if (key.body_id == info.body_id.value) {
+            uint32_t pwb = key.proc_within_body;
+            if (filled[pwb]) {
+              throw common::InternalError(
+                  "BuildLayout", std::format(
+                                     "body {} duplicate proc_within_body {}",
+                                     info.body_id.value, pwb));
+            }
+            filled[pwb] = true;
+            info.process_schema_indices[pwb] = schema_idx;
+          }
+        }
+        for (uint32_t p = 0; p < max_pwb; ++p) {
+          if (!filled[p]) {
+            throw common::InternalError(
+                "BuildLayout",
+                std::format(
+                    "body {} missing proc_within_body ordinal {}",
+                    info.body_id.value, p));
+          }
+        }
+      }
+    }
+
+    // Build per-connection realization descriptors from connection schemas.
+    // Connection schemas are the first conn_counter entries in state_schemas
+    // (each connection gets a unique schema, added in order).
+    for (uint32_t c = 0; c < conn_counter; ++c) {
+      // Connection schemas are at the start of state_schemas, one per
+      // connection process in scheduling order. Verify identity.
+      const auto& schema = layout.state_schemas[c];
+      if (schema.conn_index != c) {
+        throw common::InternalError(
+            "BuildLayout",
+            "connection schema ordering does not match expected conn_index");
+      }
+      layout.connection_realization_infos.push_back(
+          Layout::ConnectionRealizationInfo{.schema_index = c});
+    }
+  }
+
+  // Compute num_package_slots: the first module instance's
+  // design_state_base_slot.
+  if (!module_plans.empty()) {
+    layout.num_package_slots = module_plans[0].design_state_base_slot;
+  } else {
+    layout.num_package_slots =
+        static_cast<uint32_t>(layout.design.slot_byte_offsets.size());
   }
 
   // Compute instance base byte offsets and body-owned relative byte offsets
