@@ -211,8 +211,8 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
       if (op.kind != mir::Operand::Kind::kUseTemp) return std::nullopt;
       auto temp_id = std::get<mir::TempId>(op.payload);
       if (!HasTemp(temp_id.value)) return std::nullopt;
-      auto* val = ReadTemp(temp_id.value);
-      if (const auto* ci = llvm::dyn_cast<llvm::ConstantInt>(val)) {
+      auto* ci = TryGetTempConstantInt(temp_id.value);
+      if (ci != nullptr) {
         return ci->getZExtValue();
       }
       return std::nullopt;

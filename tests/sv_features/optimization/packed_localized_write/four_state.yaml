@@ -36,3 +36,285 @@ cases:
       endmodule
     expect:
       stdout: "data = aabbffdd\n"
+
+  - name: 4state_x_clear_via_int_assign
+    description: >
+      Assign X to logic variable, then assign a 2-state int value.
+      Verifies unknown plane is correctly cleared by int write.
+    sv: |
+      module Test;
+        logic [31:0] data;
+        int result;
+        initial begin
+          data = 'x;
+          data = 32'd42;
+          result = int'(data);
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result = 42\n"
+
+  - name: 4state_packed_array_x_clear
+    description: >
+      Initialize packed array elements to X, then write 2-state values
+      per-element. Verifies all X/Z cleared across elements.
+    sv: |
+      module Test;
+        logic [3:0][31:0] data;
+        int result;
+        initial begin
+          data = 'x;
+          for (int i = 0; i < 4; i++) data[i] = 32'(i * 100 + 7);
+          result = 0;
+          for (int i = 0; i < 4; i++) result = result + int'(data[i]);
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result = 628\n"
+
+  - name: 4state_mixed_x_sequence
+    description: >
+      Assign X, then 2-state, then 4-state with unknown, then 2-state
+      again. Verifies each transition produces correct results.
+    sv: |
+      module Test;
+        logic [31:0] data;
+        int result;
+        initial begin
+          data = 'x;
+          data = 32'd100;
+          result = int'(data);
+          $display("after clear: %0d", result);
+          data = 'x;
+          data = 32'd200;
+          result = int'(data);
+          $display("after second clear: %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: |
+        after clear: 100
+        after second clear: 200
+
+  - name: 4state_nba_x_clear
+    description: >
+      NBA assign from 2-state value to logic variable initialized to X.
+      Verifies X/Z cleared at NBA commit time.
+    sv: |
+      module Test;
+        logic [31:0] data;
+        int result;
+        initial begin
+          data = 'x;
+          data <= 32'd99;
+          #0;
+          result = int'(data);
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result = 99\n"
+
+  - name: 4state_nba_packed_array_x_clear
+    description: >
+      NBA per-element write to packed array initialized to X.
+      Verifies X/Z cleared for each element at NBA commit.
+    sv: |
+      module Test;
+        logic [3:0][31:0] data;
+        int result;
+        initial begin
+          data = 'x;
+          for (int i = 0; i < 4; i++) data[i] <= 32'(i + 10);
+          #0;
+          result = 0;
+          for (int i = 0; i < 4; i++) result = result + int'(data[i]);
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result = 46\n"
+
+  - name: 4state_zero_unknown_stays_4state
+    description: >
+      A 4-state expression with zero-valued unknown (logic assigned a
+      known constant) must remain semantically 4-state. The unknown
+      plane is zero but present. This guards against collapsing
+      "4-state with zero unknown" into "2-state absent unknown."
+    sv: |
+      module Test;
+        logic [31:0] a;
+        logic [31:0] b;
+        int result;
+        initial begin
+          a = 32'd5;
+          b = a;
+          result = int'(b);
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result = 5\n"
+
+  - name: 4state_int_expr_to_logic_cast
+    description: >
+      2-state int expression assigned to logic target via cast.
+      Verifies correct value and no X corruption through temp boundary.
+    sv: |
+      module Test;
+        int a;
+        logic [31:0] x;
+        initial begin
+          a = 42;
+          x = 32'(a + 1);
+          $display("x = %0d", x);
+        end
+      endmodule
+    expect:
+      stdout: "x = 43\n"
+
+  - name: 4state_int_expr_to_logic_array
+    description: >
+      Benchmark shape: 32'(i * 3 + iter) to logic[N:0][31:0] array.
+      Exercises the full pipeline: packed-core compute -> cast chain ->
+      temp boundary -> packed store with conditional unknown clear.
+    sv: |
+      module Test;
+        logic [3:0][31:0] data;
+        int result;
+        initial begin
+          for (int i = 0; i < 4; i++) data[i] = 32'(i * 3 + 10);
+          result = 0;
+          for (int i = 0; i < 4; i++) result = result + int'(data[i]);
+          $display("result = %0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result = 58\n"
+
+  - name: 4state_string_to_packed_logic
+    description: >
+      String-to-packed cast to logic. Verifies the evaluator produces
+      TwoState for string source and the temp boundary preserves it.
+    sv: |
+      module Test;
+        logic [31:0] x;
+        initial begin
+          x = "AB";
+          $display("x = %h", x);
+        end
+      endmodule
+    expect:
+      stdout: "x = 41420000\n"
+
+  - name: 4state_float_to_logic
+    description: >
+      Float-to-int cast to logic. Verifies the evaluator produces
+      TwoState for float source.
+    sv: |
+      module Test;
+        real r;
+        logic [31:0] x;
+        initial begin
+          r = 3.14;
+          x = int'(r);
+          $display("x = %0d", x);
+        end
+      endmodule
+    expect:
+      stdout: "x = 3\n"
+
+  - name: 4state_4s_source_cast_preserves_x
+    description: >
+      4-state source with X cast to 4-state target. Regression: X
+      must be preserved through the cast.
+    sv: |
+      module Test;
+        logic [7:0] a;
+        logic [7:0] b;
+        initial begin
+          a = 8'hx5;
+          b = a;
+          $display("b = %h", b);
+        end
+      endmodule
+    expect:
+      stdout: "b = x5\n"
+
+  - name: 4state_4s_source_cast_strips_x
+    description: >
+      4-state source with X cast to 2-state int target. Regression:
+      X bits stripped (coerced to 0) per SV semantics.
+    sv: |
+      module Test;
+        logic [7:0] a;
+        int b;
+        initial begin
+          a = 8'hx5;
+          b = int'(a);
+          $display("b = %0d", b);
+        end
+      endmodule
+    expect:
+      stdout: "b = 5\n"
+
+  - name: 4state_temp_boundary_preserves_2state
+    description: >
+      Direct regression for the temp-boundary invariant. 2-state int
+      expression cast to logic type temp, consumed through operand path,
+      assigned to logic variable. The DefineTemp has 4-state result type
+      but the evaluator produces TwoState domain.
+    sv: |
+      module Test;
+        int a;
+        logic [31:0] x;
+        initial begin
+          a = 5;
+          x = int'(a) + 1;
+          $display("x = %0d", x);
+        end
+      endmodule
+    expect:
+      stdout: "x = 6\n"
+
+  - name: 4state_phi_split_2state_merge
+    description: >
+      CFG regression for split-PHI boundary. Both predecessors produce
+      semantically 2-state values for a 4-state declared block param.
+      Proves split-PHI representation and edge wiring are correct.
+    sv: |
+      module Test;
+        int a;
+        logic [31:0] x;
+        initial begin
+          a = 7;
+          if (a > 5) x = 32'(a * 2);
+          else x = 32'(a + 10);
+          $display("x = %0d", x);
+        end
+      endmodule
+    expect:
+      stdout: "x = 14\n"
+
+  - name: 4state_phi_split_4state_source
+    description: >
+      CFG regression for a 4-state source through the split-PHI path.
+      One branch carries an X-containing 4-state value, verifying the
+      split PHIs preserve the unknown plane through the merge.
+    sv: |
+      module Test;
+        logic [7:0] a;
+        logic [7:0] x;
+        int sel;
+        initial begin
+          a = 8'hx5;
+          sel = 0;
+          if (sel) x = 8'd99;
+          else x = a;
+          $display("x = %h", x);
+        end
+      endmodule
+    expect:
+      stdout: "x = x5\n"

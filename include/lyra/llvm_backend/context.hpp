@@ -17,6 +17,7 @@
 #include "lyra/common/type_queries.hpp"
 #include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
+#include "lyra/llvm_backend/compute/temp_value.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -728,20 +729,23 @@ class Context {
     return next_wait_site_id_++;
   }
 
-  // SSA temp management (for block params and temps defined by statements)
-  // BindTemp: define an SSA temp value with its MIR type.
-  // Must be called exactly once per temp_id. Binding an already-bound temp_id
-  // is an InternalError.
-  void BindTemp(int temp_id, llvm::Value* v, TypeId type);
-  // ReadTemp: get the LLVM value for an SSA temp.
-  // Reading an unbound temp_id is an InternalError.
-  [[nodiscard]] auto ReadTemp(int temp_id) const -> llvm::Value*;
-  // HasTemp: check if a temp_id is bound.
+  // SSA temp management (TempValue-based explicit semantic contract).
+  // TempValue is defined in compute/temp_value.hpp.
+
+  // Bind an SSA temp value. Must be called exactly once per temp_id.
+  void BindTempValue(int temp_id, const TempValue& tv);
+  // Read a bound SSA temp value.
+  [[nodiscard]] auto ReadTempValue(int temp_id) const -> const TempValue&;
+  // Check if a temp_id is bound.
   [[nodiscard]] auto HasTemp(int temp_id) const -> bool;
-  // GetTempType: get the MIR TypeId for an SSA temp.
-  // Reading an unbound temp_id is an InternalError.
+  // Convenience: returns declared_type from TempValue.
   [[nodiscard]] auto GetTempType(int temp_id) const -> TypeId;
-  // ClearTemps: clear all temp bindings (called at function start)
+  // Safe constant inspection: returns ConstantInt* only for kTwoState temps
+  // with a scalar constant payload. Rejects kFourState unconditionally,
+  // even if both planes are constants and the unknown plane is zero.
+  [[nodiscard]] auto TryGetTempConstantInt(int temp_id) const
+      -> llvm::ConstantInt*;
+  // Clear all temp bindings (called at function start).
   void ClearTemps();
 
  private:
@@ -961,11 +965,9 @@ class Context {
   // monitor_layouts_.
   absl::flat_hash_map<mir::FunctionId, MonitorSetupInfo> monitor_setup_infos_;
 
-  // SSA temp bindings: temp_id -> {llvm::Value*, TypeId}
-  // Temps defined by block params (PHI nodes) or statements.
-  // Both maps are kept in sync; presence in one implies presence in the other.
-  absl::flat_hash_map<int, llvm::Value*> temp_values_;
-  absl::flat_hash_map<int, TypeId> temp_types_;
+  // SSA temp bindings: temp_id -> TempValue (explicit semantic contract).
+  // Temps defined by block params (split PHI nodes) or statements.
+  absl::flat_hash_map<int, TempValue> temp_entries_;
 
   // Iteration limit site origins accumulated during process codegen.
   // Index = back-edge site id, value = origin of the back-edge terminator.

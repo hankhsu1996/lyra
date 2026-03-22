@@ -17,6 +17,8 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/llvm_backend/compute/compute.hpp"
+#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
@@ -209,7 +211,8 @@ auto LowerOperandRaw(
             return context.LoadPlaceValue(place_id);
           },
           [&context](mir::TempId temp_id) -> Result<llvm::Value*> {
-            return context.ReadTemp(temp_id.value);
+            const auto& tv = context.ReadTempValue(temp_id.value);
+            return BuildRawValueFromTempValue(context.GetBuilder(), tv);
           },
       },
       operand.payload);
@@ -230,6 +233,18 @@ auto LowerOperand(
     val = builder.CreateAnd(value_bits, not_unk, "coerce.known");
   }
   return val;
+}
+
+auto BuildRawValueFromTempValue(llvm::IRBuilder<>& builder, const TempValue& tv)
+    -> llvm::Value* {
+  if (tv.domain == ValueDomain::kFourState) {
+    llvm::Type* val_ty = tv.value->getType();
+    auto* struct_ty =
+        llvm::StructType::get(val_ty->getContext(), {val_ty, val_ty});
+    return PackFourState(builder, struct_ty, tv.value, tv.unknown);
+  }
+  // kTwoState: return scalar directly. This is the domain-aware raw shape.
+  return tv.value;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

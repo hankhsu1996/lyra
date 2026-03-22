@@ -55,9 +55,8 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
             return IsPacked(type) && context.IsPackedFourState(type);
           },
           [&](mir::TempId temp_id) -> bool {
-            TypeId type_id = context.GetTempType(temp_id.value);
-            const Type& type = types[type_id];
-            return IsPacked(type) && context.IsPackedFourState(type);
+            return context.ReadTempValue(temp_id.value).domain ==
+                   ValueDomain::kFourState;
           },
       },
       operand.payload);
@@ -83,6 +82,16 @@ auto LowerOperandFourState(
 }
 
 }  // namespace
+
+auto AreAllOperandsTwoState(
+    Context& context, const std::vector<mir::Operand>& operands) -> bool {
+  for (const auto& op : operands) {
+    if (IsOperandFourState(context, op)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 auto LowerConcatRvalue4State(
     Context& context, const mir::ConcatRvalueInfo& info,
@@ -264,8 +273,7 @@ auto LowerRuntimeQuery4State(
       if (raw->getType() != elem_type) {
         val = builder.CreateZExtOrTrunc(raw, elem_type, "time.fit");
       }
-      auto* zero = llvm::ConstantInt::get(elem_type, 0);
-      return ComputeResult::FourState(val, zero);
+      return ComputeResult::TwoState(val);
     }
   }
   llvm_unreachable("unhandled RuntimeQueryKind");

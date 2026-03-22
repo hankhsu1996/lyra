@@ -231,12 +231,9 @@ auto LowerDeferredAssignBitRange(
   auto subview = ResolvePackedSubview(context, *path);
   if (!subview) return std::unexpected(subview.error());
 
-  auto rhs_raw = LowerRhsRaw(context, deferred.rhs, deferred.dest);
-  if (!rhs_raw) return std::unexpected(rhs_raw.error());
-
-  auto rvalue = ConvertRawToPackedRValue(
-      context, *rhs_raw, subview->semantic_bit_width,
-      subview->storage.is_four_state);
+  auto rvalue = detail::LowerRhsToPackedRValue(
+      context, deferred.rhs, subview->semantic_bit_width, subview->result_type);
+  if (!rvalue) return std::unexpected(rvalue.error());
 
   PackedNbaPolicy nba_policy{
       .engine_ptr = context.GetEnginePointer(),
@@ -245,7 +242,7 @@ auto LowerDeferredAssignBitRange(
   };
 
   return EmitDeferredStoreToPackedSubview(
-      context, *subview, rvalue, nba_policy);
+      context, *subview, *rvalue, nba_policy);
 }
 
 // IndexProjection NBA: array element write with OOB guard.

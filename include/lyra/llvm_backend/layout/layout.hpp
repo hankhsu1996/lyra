@@ -361,8 +361,8 @@ auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::StructType*;
 
 // Get the LLVM type for passing a MIR type by value.
-// Used by: function signature construction, call-site coercion, BindTemp
-// invariant.
+// Used by: function signature construction, call-site coercion, BindTempValue
+// validation.
 //
 // Returns:
 //   - ptr for handle types (string, dynamic array, queue)

@@ -361,7 +361,6 @@ auto EmitByteAddressableLoad(Context& ctx, const PackedSubviewAccess& access)
   PackedRValue result;
   result.val = val;
   result.semantic_bits = access.semantic_bit_width;
-  result.is_four_state = access.storage.is_four_state;
 
   if (access.storage.is_four_state) {
     auto* unk_off = builder.CreateAdd(
@@ -397,7 +396,6 @@ auto EmitBitAddressableLoad(Context& ctx, const PackedSubviewAccess& access)
 
   PackedRValue result;
   result.semantic_bits = access.semantic_bit_width;
-  result.is_four_state = access.storage.is_four_state;
 
   uint32_t elem_storage_bytes = GetStorageByteSize(access.semantic_bit_width);
   uint32_t elem_storage_bits = elem_storage_bytes * 8;
@@ -453,8 +451,8 @@ auto EmitBitAddressableLoad(Context& ctx, const PackedSubviewAccess& access)
 // Returns single semantic changed predicate (i1).
 // Invariant: only valid for canonical storage.
 auto EmitByteAddressableStore(
-    Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value)
-    -> llvm::Value* {
+    Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
+    const PackedStorePlan& plan) -> llvm::Value* {
   if (!access.storage.is_canonical_storage) {
     throw common::InternalError(
         "EmitByteAddressableStore",
@@ -484,35 +482,68 @@ auto EmitByteAddressableStore(
   llvm::Value* changed =
       builder.CreateICmpNE(old_val, new_val, "psw.val.changed");
 
-  // Unknown plane (4-state)
-  if (access.storage.is_four_state) {
-    auto* unk_off = builder.CreateAdd(
-        access.byte_offset,
-        llvm::ConstantInt::get(
-            access.byte_offset->getType(),
-            access.storage.unk_plane_offset_bytes),
-        "psw.unk.off");
-    auto* unk_ptr = builder.CreateGEP(
-        i8_ty, access.storage.base_ptr, unk_off, "psw.unk.ptr");
-    auto* old_unk = builder.CreateLoad(store_ty, unk_ptr, "psw.unk.old");
+  // Unknown plane: consume PackedStorePlan mechanically.
+  switch (plan.unk_action) {
+    case UnknownPlaneAction::kNone:
+      break;
 
-    llvm::Value* new_unk = nullptr;
-    if (value.unk != nullptr) {
-      new_unk = builder.CreateZExtOrTrunc(value.unk, store_ty, "psw.unk.new");
-    } else {
-      new_unk = llvm::ConstantInt::get(store_ty, 0);
-    }
-    if (storage_bits > access.semantic_bit_width) {
-      auto mask =
-          llvm::APInt::getLowBitsSet(storage_bits, access.semantic_bit_width);
-      new_unk = builder.CreateAnd(
-          new_unk, llvm::ConstantInt::get(store_ty, mask), "psw.unk.fit");
-    }
-    builder.CreateStore(new_unk, unk_ptr);
+    case UnknownPlaneAction::kUnconditionalStore: {
+      auto* unk_off = builder.CreateAdd(
+          access.byte_offset,
+          llvm::ConstantInt::get(
+              access.byte_offset->getType(),
+              access.storage.unk_plane_offset_bytes),
+          "psw.unk.off");
+      auto* unk_ptr = builder.CreateGEP(
+          i8_ty, access.storage.base_ptr, unk_off, "psw.unk.ptr");
+      auto* old_unk = builder.CreateLoad(store_ty, unk_ptr, "psw.unk.old");
 
-    auto* unk_changed =
-        builder.CreateICmpNE(old_unk, new_unk, "psw.unk.changed");
-    changed = builder.CreateOr(changed, unk_changed, "psw.changed");
+      auto* new_unk =
+          builder.CreateZExtOrTrunc(plan.unk_value, store_ty, "psw.unk.new");
+      if (storage_bits > access.semantic_bit_width) {
+        auto mask =
+            llvm::APInt::getLowBitsSet(storage_bits, access.semantic_bit_width);
+        new_unk = builder.CreateAnd(
+            new_unk, llvm::ConstantInt::get(store_ty, mask), "psw.unk.fit");
+      }
+      builder.CreateStore(new_unk, unk_ptr);
+
+      auto* unk_changed =
+          builder.CreateICmpNE(old_unk, new_unk, "psw.unk.changed");
+      changed = builder.CreateOr(changed, unk_changed, "psw.changed");
+      break;
+    }
+
+    case UnknownPlaneAction::kConditionalClear: {
+      auto* unk_off = builder.CreateAdd(
+          access.byte_offset,
+          llvm::ConstantInt::get(
+              access.byte_offset->getType(),
+              access.storage.unk_plane_offset_bytes),
+          "psw.unk.off");
+      auto* unk_ptr = builder.CreateGEP(
+          i8_ty, access.storage.base_ptr, unk_off, "psw.unk.ptr");
+      auto* old_unk = builder.CreateLoad(store_ty, unk_ptr, "psw.unk.old");
+      auto* zero = llvm::ConstantInt::get(store_ty, 0);
+      auto* unk_nonzero = builder.CreateICmpNE(old_unk, zero, "psw.unk.dirty");
+
+      // Conditional store: only write zero if old unknown was non-zero.
+      auto* func = builder.GetInsertBlock()->getParent();
+      auto* clear_bb =
+          llvm::BasicBlock::Create(ctx.GetLlvmContext(), "psw.unk.clear", func);
+      auto* merge_bb =
+          llvm::BasicBlock::Create(ctx.GetLlvmContext(), "psw.unk.done", func);
+
+      builder.CreateCondBr(unk_nonzero, clear_bb, merge_bb);
+
+      builder.SetInsertPoint(clear_bb);
+      builder.CreateStore(zero, unk_ptr);
+      builder.CreateBr(merge_bb);
+
+      builder.SetInsertPoint(merge_bb);
+      changed = builder.CreateOr(changed, unk_nonzero, "psw.changed");
+      break;
+    }
   }
 
   return changed;
@@ -521,8 +552,8 @@ auto EmitByteAddressableStore(
 // Bit-addressable store: full-width RMW via LoadFullPlanes/StoreFullPlanes.
 // Returns single semantic changed predicate (i1).
 auto EmitBitAddressableStore(
-    Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value)
-    -> llvm::Value* {
+    Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
+    const PackedStorePlan& plan) -> llvm::Value* {
   auto& builder = ctx.GetBuilder();
 
   uint32_t base_storage_bits = access.storage.storage_plane_byte_size * 8;
@@ -549,23 +580,39 @@ auto EmitBitAddressableStore(
   llvm::Value* changed =
       builder.CreateICmpNE(old_planes.val, val_result, "rmw.val.changed");
 
-  // Unknown plane RMW (4-state)
+  // Unknown plane RMW: consume PackedStorePlan mechanically.
   llvm::Value* unk_result = nullptr;
-  if (access.storage.is_four_state && old_planes.unk != nullptr) {
-    llvm::Value* src_unk = nullptr;
-    if (value.unk != nullptr) {
-      src_unk = builder.CreateZExtOrTrunc(value.unk, lane_ty, "rmw.src.unk");
-    } else {
-      src_unk = llvm::ConstantInt::get(lane_ty, 0);
-    }
-    auto* unk_shifted = builder.CreateShl(src_unk, shift_amt, "rmw.unk.shl");
-    auto* unk_cleared =
-        builder.CreateAnd(old_planes.unk, not_mask, "rmw.unk.clear");
-    unk_result = builder.CreateOr(unk_cleared, unk_shifted, "rmw.unk");
+  switch (plan.unk_action) {
+    case UnknownPlaneAction::kNone:
+      break;
 
-    auto* unk_changed =
-        builder.CreateICmpNE(old_planes.unk, unk_result, "rmw.unk.changed");
-    changed = builder.CreateOr(changed, unk_changed, "rmw.changed");
+    case UnknownPlaneAction::kUnconditionalStore: {
+      auto* src_unk =
+          builder.CreateZExtOrTrunc(plan.unk_value, lane_ty, "rmw.src.unk");
+      auto* unk_shifted = builder.CreateShl(src_unk, shift_amt, "rmw.unk.shl");
+      auto* unk_cleared =
+          builder.CreateAnd(old_planes.unk, not_mask, "rmw.unk.clear");
+      unk_result = builder.CreateOr(unk_cleared, unk_shifted, "rmw.unk");
+
+      auto* unk_changed =
+          builder.CreateICmpNE(old_planes.unk, unk_result, "rmw.unk.changed");
+      changed = builder.CreateOr(changed, unk_changed, "rmw.changed");
+      break;
+    }
+
+    case UnknownPlaneAction::kConditionalClear: {
+      // Check if old unknown bits in target range are non-zero.
+      auto* old_unk_bits =
+          builder.CreateAnd(old_planes.unk, mask_shifted, "rmw.unk.oldbits");
+      auto* unk_nonzero = builder.CreateICmpNE(
+          old_unk_bits, llvm::ConstantInt::get(lane_ty, 0), "rmw.unk.dirty");
+
+      // Clear the unknown bits in the target range.
+      unk_result = builder.CreateAnd(old_planes.unk, not_mask, "rmw.unk.clear");
+
+      changed = builder.CreateOr(changed, unk_nonzero, "rmw.changed");
+      break;
+    }
   }
 
   StoreFullPlanes(ctx, access.storage, val_result, unk_result);
@@ -703,11 +750,13 @@ void EmitPackedStoreNotification(
 auto EmitStoreToPackedSubview(
     Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
     const PackedStorePolicy& policy) -> Result<void> {
+  auto plan = BuildPackedStorePlan(ctx, access.storage, value);
+
   llvm::Value* changed = nullptr;
   if (access.kind == PackedSubviewKind::kByteAddressable) {
-    changed = EmitByteAddressableStore(ctx, access, value);
+    changed = EmitByteAddressableStore(ctx, access, value, plan);
   } else {
-    changed = EmitBitAddressableStore(ctx, access, value);
+    changed = EmitBitAddressableStore(ctx, access, value, plan);
   }
 
   auto dirty_range = GetSubviewDirtyRange(ctx, access);
@@ -813,10 +862,14 @@ void EmitNarrow2StateNbaCall(
 }
 
 // Emit a 4-state byte-addressable narrow NBA using the canonical two-plane
-// runtime helper. One semantic record, no plane decomposition leak.
+// runtime helper. unk_payload is the resolved unknown-plane value from the
+// plan (plan.unk_value for kUnconditionalStore, materialized zero for
+// kConditionalClear). The function does not independently decide
+// unknown-plane policy.
 void EmitNarrow4StateNbaCall(
     Context& ctx, const PackedSubviewAccess& access,
-    const PackedNbaPolicy& policy, const PackedRValue& value) {
+    const PackedNbaPolicy& policy, llvm::Value* val_raw,
+    llvm::Value* unk_payload) {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
@@ -825,14 +878,10 @@ void EmitNarrow4StateNbaCall(
   uint32_t narrow_bytes = access.subview_byte_span;
 
   auto* val_store = PrepareNarrowPlaneValue(
-      builder, llvm_ctx, value.val, narrow_bytes, access.semantic_bit_width);
+      builder, llvm_ctx, val_raw, narrow_bytes, access.semantic_bit_width);
 
-  llvm::Value* unk_raw = value.unk;
-  if (unk_raw == nullptr) {
-    unk_raw = llvm::ConstantInt::get(value.val->getType(), 0);
-  }
   auto* unk_store = PrepareNarrowPlaneValue(
-      builder, llvm_ctx, unk_raw, narrow_bytes, access.semantic_bit_width);
+      builder, llvm_ctx, unk_payload, narrow_bytes, access.semantic_bit_width);
 
   auto* write_ptr = builder.CreateGEP(
       i8_ty, access.storage.base_ptr, access.byte_offset, "nba.write.ptr");
@@ -854,9 +903,12 @@ void EmitNarrow4StateNbaCall(
 
 // Emit a full-width masked NBA call for a bit-addressable subview.
 // Uses canonical packed storage ABI for byte sizes (not LLVM DataLayout).
+// unk_action and unk_payload are from the PackedStorePlan; the function
+// does not independently decide unknown-plane policy.
 void EmitFullWidthMaskedNbaCall(
     Context& ctx, const PackedSubviewAccess& access,
-    const PackedNbaPolicy& policy, const PackedRValue& value) {
+    const PackedNbaPolicy& policy, const PackedRValue& value,
+    UnknownPlaneAction unk_action, llvm::Value* unk_payload) {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
@@ -877,15 +929,11 @@ void EmitFullWidthMaskedNbaCall(
 
   uint32_t plane_bytes = access.storage.storage_plane_byte_size;
 
-  if (access.storage.is_four_state) {
+  if (unk_action != UnknownPlaneAction::kNone) {
     uint32_t total_bytes = plane_bytes + plane_bytes;
 
-    llvm::Value* src_unk = nullptr;
-    if (value.unk != nullptr) {
-      src_unk = builder.CreateZExtOrTrunc(value.unk, lane_ty, "nba.src.unk");
-    } else {
-      src_unk = llvm::ConstantInt::get(lane_ty, 0);
-    }
+    auto* src_unk =
+        builder.CreateZExtOrTrunc(unk_payload, lane_ty, "nba.src.unk");
     auto* unk_shifted = builder.CreateShl(src_unk, shift_amt, "nba.unk.shl");
 
     auto* buf_ty = llvm::ArrayType::get(i8_ty, total_bytes);
@@ -925,16 +973,56 @@ void EmitFullWidthMaskedNbaCall(
 auto EmitDeferredStoreToPackedSubview(
     Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
     const PackedNbaPolicy& policy) -> Result<void> {
+  auto plan = BuildPackedStorePlan(ctx, access.storage, value);
+
   if (access.kind == PackedSubviewKind::kByteAddressable) {
-    if (access.storage.is_four_state) {
-      EmitNarrow4StateNbaCall(ctx, access, policy, value);
-    } else {
-      EmitNarrow2StateNbaCall(ctx, access, policy, value.val);
+    switch (plan.unk_action) {
+      case UnknownPlaneAction::kNone:
+        EmitNarrow2StateNbaCall(ctx, access, policy, value.val);
+        break;
+      case UnknownPlaneAction::kUnconditionalStore:
+        EmitNarrow4StateNbaCall(ctx, access, policy, value.val, plan.unk_value);
+        break;
+      case UnknownPlaneAction::kConditionalClear: {
+        // 2-state RHS to 4-state storage: schedule zero unk bytes.
+        auto* zero = llvm::ConstantInt::get(value.val->getType(), 0);
+        EmitNarrow4StateNbaCall(ctx, access, policy, value.val, zero);
+        break;
+      }
     }
   } else {
-    EmitFullWidthMaskedNbaCall(ctx, access, policy, value);
+    // Bit-addressable deferred: resolve unk payload from plan.
+    llvm::Value* unk_payload = nullptr;
+    if (plan.unk_action == UnknownPlaneAction::kUnconditionalStore) {
+      unk_payload = plan.unk_value;
+    } else if (plan.unk_action == UnknownPlaneAction::kConditionalClear) {
+      uint32_t lane_bits = access.storage.storage_plane_byte_size * 8;
+      auto* lane_ty = llvm::IntegerType::get(ctx.GetLlvmContext(), lane_bits);
+      unk_payload = llvm::ConstantInt::get(lane_ty, 0);
+    }
+    EmitFullWidthMaskedNbaCall(
+        ctx, access, policy, value, plan.unk_action, unk_payload);
   }
   return {};
+}
+
+auto BuildPackedStorePlan(
+    Context& ctx, const PackedStorageView& storage, const PackedRValue& rhs)
+    -> PackedStorePlan {
+  (void)ctx;
+  if (!storage.is_four_state) {
+    return {.unk_action = UnknownPlaneAction::kNone};
+  }
+  if (rhs.unk != nullptr) {
+    // Carry the raw unk SSA value. Emitters size it to their target
+    // width (subview byte span for byte-addressable, full lane for
+    // bit-addressable/whole-value).
+    return {
+        .unk_action = UnknownPlaneAction::kUnconditionalStore,
+        .unk_value = rhs.unk,
+    };
+  }
+  return {.unk_action = UnknownPlaneAction::kConditionalClear};
 }
 
 auto BuildWholeValueStorageView(
@@ -1222,10 +1310,11 @@ void EmitLargeWholeValueStore(
 
 // Core whole-value store implementation shared by StorePackedValue and
 // StorePackedValueFromCanonicalBytes. Takes plane values already at
-// storage lane width.
+// storage lane width, plus the resolved unknown-plane action.
 void EmitWholeValueStoreCore(
     Context& ctx, const PackedStorageView& storage, llvm::Value* val,
-    llvm::Value* unk, const PackedStorePolicy& policy) {
+    llvm::Value* unk, UnknownPlaneAction unk_action,
+    const PackedStorePolicy& policy) {
   auto& builder = ctx.GetBuilder();
 
   if (!storage.is_canonical_storage) {
@@ -1238,32 +1327,93 @@ void EmitWholeValueStoreCore(
     // Canonical direct init: no compare, no notify. Values may be
     // constants, so this path does not go through StoreFullPlanes
     // (which rejects constants via EmitRuntimePlaneWriteback).
+    //
+    // For kConditionalClear on init path: store zero unk unconditionally
+    // (init has no old value to conditionally check).
+    llvm::Value* init_unk = unk;
+    if (unk_action == UnknownPlaneAction::kConditionalClear) {
+      uint32_t lane_bits = storage.storage_plane_byte_size * 8;
+      init_unk = llvm::ConstantInt::get(builder.getIntNTy(lane_bits), 0);
+    }
     uint32_t total_bytes = TotalCanonicalByteSize(storage);
     if (IsInlineStoreEligible(total_bytes)) {
-      // Small canonical init: flatten to canonical bits and store directly.
-      // IsInlineStoreEligible guarantees the value fits the typed store.
       auto* canonical_bits = FlattenToCanonicalBits(
-          builder, ctx.GetLlvmContext(), val, unk,
+          builder, ctx.GetLlvmContext(), val, init_unk,
           storage.storage_plane_byte_size, storage.is_four_state);
       EmitInlineCanonicalDirectStore(ctx, storage, canonical_bits);
     } else {
-      // Large canonical init: memset + byte-buffer encoding + memcpy.
-      // Still direct-init semantics (no compare/notify) -- the large
-      // store helper checks the policy and uses memcpy instead of
-      // LyraStorePacked.
-      EmitLargeWholeValueStore(ctx, storage, val, unk, policy);
+      EmitLargeWholeValueStore(ctx, storage, val, init_unk, policy);
     }
     return;
   }
 
+  // Notification paths: kConditionalClear needs per-plane handling
+  // for inline-eligible sizes to avoid unconditional unk-plane store.
+  // For large values, the runtime helper compare+store is sufficient
+  // (materializing zero unk and letting LyraStorePacked compare is
+  // correct and the conditional branch savings are negligible at
+  // that size).
   uint32_t total_bytes = TotalCanonicalByteSize(storage);
+
+  if (unk_action == UnknownPlaneAction::kConditionalClear &&
+      IsInlineStoreEligible(total_bytes)) {
+    // Inline conditional clear: handle value and unk planes separately
+    // with one combined changed predicate and one notification.
+    uint32_t lane_bytes = storage.storage_plane_byte_size;
+    auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
+    uint32_t lane_bits = lane_bytes * 8;
+    auto* lane_ty = builder.getIntNTy(lane_bits);
+
+    // Value plane: load old, store new, compare.
+    auto* old_val = builder.CreateLoad(lane_ty, storage.base_ptr, "wv.val.old");
+    builder.CreateStore(val, storage.base_ptr);
+    auto* val_changed = builder.CreateICmpNE(old_val, val, "wv.val.changed");
+
+    // Unknown plane: load old, conditionally store zero.
+    auto* unk_ptr = builder.CreateGEP(
+        i8_ty, storage.base_ptr,
+        builder.getInt32(storage.unk_plane_offset_bytes), "wv.unk.ptr");
+    auto* old_unk = builder.CreateLoad(lane_ty, unk_ptr, "wv.unk.old");
+    auto* zero = llvm::ConstantInt::get(lane_ty, 0);
+    auto* unk_nonzero = builder.CreateICmpNE(old_unk, zero, "wv.unk.dirty");
+
+    auto* func = builder.GetInsertBlock()->getParent();
+    auto* clear_bb =
+        llvm::BasicBlock::Create(ctx.GetLlvmContext(), "wv.unk.clear", func);
+    auto* merge_bb =
+        llvm::BasicBlock::Create(ctx.GetLlvmContext(), "wv.unk.done", func);
+
+    builder.CreateCondBr(unk_nonzero, clear_bb, merge_bb);
+
+    builder.SetInsertPoint(clear_bb);
+    builder.CreateStore(zero, unk_ptr);
+    builder.CreateBr(merge_bb);
+
+    builder.SetInsertPoint(merge_bb);
+
+    // One combined changed predicate, one notification.
+    auto* changed = builder.CreateOr(val_changed, unk_nonzero, "wv.changed");
+    auto dirty_range = MakeFullSlotDirtyRange(ctx.GetLlvmContext());
+    EmitPackedStoreNotification(ctx, changed, policy, dirty_range);
+    return;
+  }
+
+  // For kConditionalClear on large values: materialize zero unk and let
+  // the runtime helper compare+store. The runtime handles both planes
+  // atomically with one compare and one notification.
+  llvm::Value* effective_unk = unk;
+  if (unk_action == UnknownPlaneAction::kConditionalClear) {
+    uint32_t lane_bits = storage.storage_plane_byte_size * 8;
+    effective_unk = llvm::ConstantInt::get(builder.getIntNTy(lane_bits), 0);
+  }
+
   if (IsInlineStoreEligible(total_bytes)) {
     auto* canonical_bits = FlattenToCanonicalBits(
-        builder, ctx.GetLlvmContext(), val, unk,
+        builder, ctx.GetLlvmContext(), val, effective_unk,
         storage.storage_plane_byte_size, storage.is_four_state);
     EmitInlineWholeValueStore(ctx, storage, canonical_bits, policy);
   } else {
-    EmitLargeWholeValueStore(ctx, storage, val, unk, policy);
+    EmitLargeWholeValueStore(ctx, storage, val, effective_unk, policy);
   }
 }
 
@@ -1276,7 +1426,6 @@ auto MaterializePackedValue(Context& ctx, const PackedStorageView& storage)
   uint32_t storage_bits = storage.storage_plane_byte_size * 8;
   PackedRValue result;
   result.semantic_bits = storage.total_semantic_bits;
-  result.is_four_state = storage.is_four_state;
   result.val = planes.val;
 
   if (storage_bits > storage.total_semantic_bits && planes.val != nullptr) {
@@ -1304,22 +1453,24 @@ auto MaterializePackedValue(Context& ctx, const PackedStorageView& storage)
 auto StorePackedValue(
     Context& ctx, const PackedStorageView& storage, const PackedRValue& value,
     const PackedStorePolicy& policy) -> Result<void> {
+  auto plan = BuildPackedStorePlan(ctx, storage, value);
+
   uint32_t lane_bits = storage.storage_plane_byte_size * 8;
   auto* lane_ty = llvm::IntegerType::get(ctx.GetLlvmContext(), lane_bits);
 
   auto& builder = ctx.GetBuilder();
   auto* val = builder.CreateZExtOrTrunc(value.val, lane_ty, "wv.val");
 
+  // Resolve unk from plan action.
   llvm::Value* unk = nullptr;
-  if (storage.is_four_state) {
-    if (value.unk != nullptr) {
-      unk = builder.CreateZExtOrTrunc(value.unk, lane_ty, "wv.unk");
-    } else {
-      unk = llvm::ConstantInt::get(lane_ty, 0);
-    }
+  if (plan.unk_action == UnknownPlaneAction::kUnconditionalStore) {
+    unk = builder.CreateZExtOrTrunc(plan.unk_value, lane_ty, "wv.unk");
   }
+  // kNone: unk stays nullptr (no unknown plane).
+  // kConditionalClear: unk stays nullptr; EmitWholeValueStoreCore
+  // handles the conditional clear internally based on unk_action.
 
-  EmitWholeValueStoreCore(ctx, storage, val, unk, policy);
+  EmitWholeValueStoreCore(ctx, storage, val, unk, plan.unk_action, policy);
   return {};
 }
 
@@ -1359,7 +1510,12 @@ auto StorePackedValueFromCanonicalBytes(
         storage.unk_plane_offset_bytes, lane_ty);
   }
 
-  EmitWholeValueStoreCore(ctx, storage, val, unk, policy);
+  // Canonical bytes carry the full unk plane; always unconditional store
+  // when 4-state, kNone when 2-state. kConditionalClear does not apply
+  // here because this path has pre-materialized bytes, not an RHS.
+  auto unk_action = unk != nullptr ? UnknownPlaneAction::kUnconditionalStore
+                                   : UnknownPlaneAction::kNone;
+  EmitWholeValueStoreCore(ctx, storage, val, unk, unk_action, policy);
   return {};
 }
 
@@ -1397,22 +1553,26 @@ auto NotifyPackedStorageWritten(
   return {};
 }
 
-auto ConvertRawToPackedRValue(
-    Context& ctx, llvm::Value* raw, uint32_t semantic_bits, bool is_four_state)
-    -> PackedRValue {
+auto BuildPackedRValueFromRaw(
+    Context& ctx, llvm::Value* raw, uint32_t semantic_bits) -> PackedRValue {
   auto& builder = ctx.GetBuilder();
   PackedRValue result;
   result.semantic_bits = semantic_bits;
-  result.is_four_state = is_four_state;
 
   if (raw->getType()->isStructTy()) {
+    auto* st = llvm::cast<llvm::StructType>(raw->getType());
+    if (st->getNumElements() != 2 || !st->getElementType(0)->isIntegerTy() ||
+        st->getElementType(0) != st->getElementType(1)) {
+      throw common::InternalError(
+          "BuildPackedRValueFromRaw",
+          "struct input must be canonical {iN, iN} 4-state packed form");
+    }
     result.val = builder.CreateExtractValue(raw, 0, "rhs.val");
     result.unk = builder.CreateExtractValue(raw, 1, "rhs.unk");
   } else {
     result.val = raw;
-    if (is_four_state) {
-      result.unk = llvm::ConstantInt::get(raw->getType(), 0);
-    }
+    // unk stays nullptr -- scalar LLVM type means the source variable is
+    // 2-state. No zero synthesis.
   }
   return result;
 }
@@ -1437,15 +1597,19 @@ auto ConvertPackedRValueToLegacyLlvmValue(
     -> llvm::Value* {
   auto& builder = ctx.GetBuilder();
 
-  if (target_type->isStructTy() && rval.is_four_state) {
+  // Legacy conversion: the TARGET type determines the output shape.
+  // struct -> emit {val, unk} form (zero for unk if RHS is 2-state)
+  // integer -> emit plain value (mask out unknown bits if 4-state)
+  // This is a legacy interop boundary, not a semantic decision point.
+  if (target_type->isStructTy()) {
     auto* result_struct = llvm::cast<llvm::StructType>(target_type);
     auto* result_elem = result_struct->getElementType(0);
     llvm::Value* val =
         builder.CreateZExtOrTrunc(rval.val, result_elem, "psv.to.val");
-    llvm::Value* unk = builder.CreateZExtOrTrunc(
-        rval.unk != nullptr ? rval.unk
-                            : llvm::ConstantInt::get(rval.val->getType(), 0),
-        result_elem, "psv.to.unk");
+    llvm::Value* unk =
+        rval.unk != nullptr
+            ? builder.CreateZExtOrTrunc(rval.unk, result_elem, "psv.to.unk")
+            : llvm::ConstantInt::get(result_elem, 0);
     llvm::Value* result = llvm::UndefValue::get(result_struct);
     result = builder.CreateInsertValue(result, val, 0);
     result = builder.CreateInsertValue(result, unk, 1);
@@ -1454,11 +1618,21 @@ auto ConvertPackedRValueToLegacyLlvmValue(
 
   if (target_type->isIntegerTy()) {
     llvm::Value* val = rval.val;
-    if (rval.is_four_state && rval.unk != nullptr) {
+    if (rval.unk != nullptr) {
       auto* not_unk = builder.CreateNot(rval.unk, "psv.to.notunk");
       val = builder.CreateAnd(val, not_unk, "psv.to.known");
     }
     return builder.CreateZExtOrTrunc(val, target_type, "psv.to.ext");
+  }
+
+  // Float types (real/shortreal): bitcast from integer representation.
+  // PackedRValue carries the bitcasted integer; convert back to float.
+  if (target_type->isDoubleTy() || target_type->isFloatTy()) {
+    auto* int_ty = target_type->isDoubleTy()
+                       ? llvm::Type::getInt64Ty(ctx.GetLlvmContext())
+                       : llvm::Type::getInt32Ty(ctx.GetLlvmContext());
+    auto* int_val = builder.CreateZExtOrTrunc(rval.val, int_ty, "psv.to.int");
+    return builder.CreateBitCast(int_val, target_type, "psv.to.float");
   }
 
   throw common::InternalError(

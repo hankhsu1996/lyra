@@ -38,6 +38,8 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/activation_local.hpp"
+#include "lyra/llvm_backend/compute/compute.hpp"
+#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -226,8 +228,16 @@ void EmitStoreOkOutcome(
 // Tracks PHI nodes for block params and pending incoming edges.
 // Used to defer PHI wiring until all blocks are lowered.
 struct PhiWiringState {
-  // Map from (block_index, param_index) to the PHI node
-  std::unordered_map<uint64_t, llvm::PHINode*> phis;
+  // For 4-state params, split into two scalar PHIs (known + unknown).
+  // For 2-state params, unknown is nullptr.
+  struct PhiEntry {
+    llvm::PHINode* known = nullptr;
+    // nullptr for 2-state params
+    llvm::PHINode* unknown = nullptr;
+  };
+
+  // Map from (block_index, param_index) to the PHI entry
+  std::unordered_map<uint64_t, PhiEntry> phis;
 
   // Pending edges: (predecessor_block, successor_block_index, arg_values)
   struct PendingEdge {
@@ -243,25 +253,21 @@ struct PhiWiringState {
   }
 
   // Validate that all PHIs have been properly wired.
-  // For each block with params, verify each PHI has incoming values from
-  // all LLVM predecessors. Call this AFTER wiring but BEFORE LLVM verify.
   void ValidatePhiWiring(
       const std::vector<llvm::BasicBlock*>& llvm_blocks,
       std::string_view func_name) const {
-    for (const auto& [key, phi] : phis) {
+    for (const auto& [key, entry] : phis) {
       size_t block_idx = key >> 32;
       size_t param_idx = key & 0xFFFFFFFF;
       llvm::BasicBlock* bb = llvm_blocks[block_idx];
 
-      // Count LLVM predecessors
       size_t pred_count = 0;
       for (auto it = llvm::pred_begin(bb); it != llvm::pred_end(bb); ++it) {
         ++pred_count;
       }
 
-      size_t incoming_count = phi->getNumIncomingValues();
-      if (incoming_count != pred_count) {
-        // Build list of predecessors for error message
+      size_t known_count = entry.known->getNumIncomingValues();
+      if (known_count != pred_count) {
         std::string preds;
         for (auto it = llvm::pred_begin(bb); it != llvm::pred_end(bb); ++it) {
           if (!preds.empty()) preds += ", ";
@@ -269,54 +275,96 @@ struct PhiWiringState {
         }
 
         std::string incoming_preds;
-        for (unsigned i = 0; i < phi->getNumIncomingValues(); ++i) {
+        for (unsigned i = 0; i < entry.known->getNumIncomingValues(); ++i) {
           if (!incoming_preds.empty()) incoming_preds += ", ";
-          incoming_preds += phi->getIncomingBlock(i)->getName().str();
+          incoming_preds += entry.known->getIncomingBlock(i)->getName().str();
         }
 
         throw common::InternalError(
             "PHI wiring",
             std::format(
-                "function '{}' block {} param {}: PHI has {} incoming values "
-                "but block has {} predecessors. LLVM preds: [{}], PHI preds: "
-                "[{}]",
-                func_name, block_idx, param_idx, incoming_count, pred_count,
-                preds, incoming_preds));
+                "function '{}' block {} param {}: known PHI has {} incoming "
+                "values but block has {} predecessors. LLVM preds: [{}], PHI "
+                "preds: [{}]",
+                func_name, block_idx, param_idx, known_count, pred_count, preds,
+                incoming_preds));
+      }
+
+      if (entry.unknown != nullptr) {
+        size_t unk_count = entry.unknown->getNumIncomingValues();
+        if (unk_count != pred_count) {
+          throw common::InternalError(
+              "PHI wiring",
+              std::format(
+                  "function '{}' block {} param {}: unknown PHI has {} "
+                  "incoming values but block has {} predecessors",
+                  func_name, block_idx, param_idx, unk_count, pred_count));
+        }
+        if (unk_count != known_count) {
+          throw common::InternalError(
+              "PHI wiring",
+              std::format(
+                  "function '{}' block {} param {}: known PHI has {} incoming "
+                  "values but unknown PHI has {}",
+                  func_name, block_idx, param_idx, known_count, unk_count));
+        }
       }
     }
   }
 
   // Wire up PHI incoming values from pending edges.
   // Call this after all blocks have been lowered.
+  //
+  // The decision of whether to split-wire or single-wire is based on
+  // entry.unknown != nullptr, NOT on isStructTy() of the incoming value.
+  // isStructTy() is used only for unpacking the already-reconstructed raw
+  // incoming value, never for deciding whether the destination is split.
   void WireIncomingEdges(llvm::IRBuilder<>& builder) {
     for (const auto& edge : pending_edges) {
       for (size_t j = 0; j < edge.args.size(); ++j) {
-        auto* phi = phis[MakeKey(edge.succ_idx, j)];
+        const auto& entry = phis[MakeKey(edge.succ_idx, j)];
         llvm::Value* arg = edge.args[j];
-        if (phi->getType() != arg->getType()) {
-          // Coerce integer width mismatches (storage rounding differences
-          // between place loads, constants, and compute results in 2-state
-          // mode).
-          if (phi->getType()->isIntegerTy() && arg->getType()->isIntegerTy()) {
-            builder.SetInsertPoint(edge.pred->getTerminator());
-            arg = builder.CreateZExtOrTrunc(arg, phi->getType(), "phi.coerce");
+
+        if (entry.unknown == nullptr) {
+          // 2-state param: single PHI, handle integer width mismatch.
+          if (entry.known->getType() != arg->getType()) {
+            if (entry.known->getType()->isIntegerTy() &&
+                arg->getType()->isIntegerTy()) {
+              builder.SetInsertPoint(edge.pred->getTerminator());
+              arg = builder.CreateZExtOrTrunc(
+                  arg, entry.known->getType(), "phi.coerce");
+            } else {
+              throw common::InternalError(
+                  "PHI wiring",
+                  std::format(
+                      "block {} param {}: 2-state PHI type mismatch",
+                      edge.succ_idx, j));
+            }
+          }
+          entry.known->addIncoming(arg, edge.pred);
+        } else {
+          // 4-state param: split PHI pair.
+          auto* plane_type = entry.known->getType();
+          builder.SetInsertPoint(edge.pred->getTerminator());
+
+          if (arg->getType()->isStructTy()) {
+            // Source is 4-state: extract planes from struct.
+            auto fs = ExtractFourState(builder, arg);
+            auto* known_val = builder.CreateZExtOrTrunc(
+                fs.value, plane_type, "phi.val.coerce");
+            auto* unknown_val = builder.CreateZExtOrTrunc(
+                fs.unknown, plane_type, "phi.unk.coerce");
+            entry.known->addIncoming(known_val, edge.pred);
+            entry.unknown->addIncoming(unknown_val, edge.pred);
           } else {
-            std::string phi_type_str;
-            llvm::raw_string_ostream phi_os(phi_type_str);
-            phi->getType()->print(phi_os);
-            std::string arg_type_str;
-            llvm::raw_string_ostream arg_os(arg_type_str);
-            arg->getType()->print(arg_os);
-            throw common::InternalError(
-                "PHI wiring",
-                std::format(
-                    "block {} param {}: PHI type ({}) != incoming value type "
-                    "({}) from pred '{}'",
-                    edge.succ_idx, j, phi_type_str, arg_type_str,
-                    edge.pred->getName().str()));
+            // Source is 2-state scalar: adapt for split PHIs.
+            auto* known_val =
+                builder.CreateZExtOrTrunc(arg, plane_type, "phi.val.coerce");
+            auto* zero = llvm::ConstantInt::get(plane_type, 0);
+            entry.known->addIncoming(known_val, edge.pred);
+            entry.unknown->addIncoming(zero, edge.pred);
           }
         }
-        phi->addIncoming(arg, edge.pred);
       }
     }
   }
@@ -335,17 +383,41 @@ auto SetupBlockParamPhis(
   for (size_t i = 0; i < mir_blocks.size(); ++i) {
     const auto& block = mir_blocks[i];
     if (!block.params.empty()) {
-      // Insert PHIs at the start of the block
       builder.SetInsertPoint(llvm_blocks[i], llvm_blocks[i]->begin());
       for (size_t j = 0; j < block.params.size(); ++j) {
         const auto& param = block.params[j];
-        auto llvm_ty_or_err = GetLlvmTypeForType(context, param.type);
-        if (!llvm_ty_or_err) return std::unexpected(llvm_ty_or_err.error());
-        auto* phi =
-            builder.CreatePHI(*llvm_ty_or_err, 2, std::format("phi{}", j));
-        phi_state.phis[PhiWiringState::MakeKey(i, j)] = phi;
-        // Bind the temp_id to this PHI value with its MIR type
-        context.BindTemp(param.temp_id, phi, param.type);
+
+        if (context.IsFourState(param.type)) {
+          // 4-state: create split PHI pair using canonical plane type.
+          auto* plane_type = GetFourStatePlaneType(context, param.type);
+          auto* known_phi =
+              builder.CreatePHI(plane_type, 2, std::format("phi{}.val", j));
+          auto* unknown_phi =
+              builder.CreatePHI(plane_type, 2, std::format("phi{}.unk", j));
+          phi_state.phis[PhiWiringState::MakeKey(i, j)] = {
+              .known = known_phi, .unknown = unknown_phi};
+          // Bind split TempValue.
+          context.BindTempValue(
+              param.temp_id, TempValue{
+                                 .declared_type = param.type,
+                                 .domain = ValueDomain::kFourState,
+                                 .value = known_phi,
+                                 .unknown = unknown_phi});
+        } else {
+          // 2-state: single scalar PHI.
+          auto llvm_ty_or_err = GetLlvmTypeForType(context, param.type);
+          if (!llvm_ty_or_err) return std::unexpected(llvm_ty_or_err.error());
+          auto* phi =
+              builder.CreatePHI(*llvm_ty_or_err, 2, std::format("phi{}", j));
+          phi_state.phis[PhiWiringState::MakeKey(i, j)] = {
+              .known = phi, .unknown = nullptr};
+          context.BindTempValue(
+              param.temp_id, TempValue{
+                                 .declared_type = param.type,
+                                 .domain = ValueDomain::kTwoState,
+                                 .value = phi,
+                                 .unknown = nullptr});
+        }
       }
     }
   }
@@ -634,8 +706,8 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
     if (op.kind != mir::Operand::Kind::kUseTemp) return std::nullopt;
     auto temp_id = std::get<mir::TempId>(op.payload);
     if (!context.HasTemp(temp_id.value)) return std::nullopt;
-    auto* val = context.ReadTemp(temp_id.value);
-    if (const auto* ci = llvm::dyn_cast<llvm::ConstantInt>(val)) {
+    auto* ci = context.TryGetTempConstantInt(temp_id.value);
+    if (ci != nullptr) {
       return ci->getZExtValue();
     }
     return std::nullopt;

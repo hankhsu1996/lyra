@@ -34,7 +34,7 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 - [x] Packed storage view Stage 3: localized deferred/NBA write (#585)
 - [x] PSV4: Packed storage view whole-value materialization boundary
 - [x] CQ1: Packed storage view bulk init lowering quality
-- [ ] CQ2: Packed storage view 2-state unknown-plane elision
+- [x] CQ2: Packed storage view 2-state unknown-plane elision
 - [ ] CQ3: Packed storage view deferred-notification dead code elision
 - [x] Commit-boundary model: visibility/commit boundary definition
 - [x] Commit-boundary model: multi-segment activation-local support
@@ -65,12 +65,6 @@ Per-region analysis of which managed slots have been modified since the last syn
 ### CB3: Commit-boundary model delayed-commit register promotion
 
 Keep eligible slot-backed scalars in registers across a region, commit back to slot storage only at required boundaries. This is the downstream optimization that uses the commit-boundary definition and region-local analysis. It is not the first thing to build.
-
-### CQ2: Packed storage view 2-state unknown-plane elision
-
-Per-element packed array writes unconditionally store to the unknown (X/Z) plane even when the RHS is provably 2-state (no unknown bits). In the packed-array-write benchmark, every inner-loop iteration writes a constant zero to the unknown plane alongside the value plane write. This doubles memory bandwidth for the hot loop.
-
-The packed storage view byte-addressable store path checks whether the storage is 4-state but does not check whether the specific RHS value has unknown bits. When the RHS unknown component is null (provably 2-state), the unknown-plane load, store, and compare should all be skipped. Look at the byte-addressable store function in the packed storage view module.
 
 ### CQ3: Packed storage view deferred-notification dead code elision
 

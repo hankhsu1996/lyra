@@ -122,15 +122,59 @@ struct PackedSubviewAccess {
 };
 
 // Backend-owned SSA carrier for packed values.
-// Carries the value/unknown SSA values and semantic metadata.
+//
+// Contract:
+//   unk == nullptr means the RHS is provably 2-state. No downstream code
+//   may coerce nullptr to a zero constant. LowerRhsToPackedRValue is the
+//   sole entry point for expression/operand sources;
+//   BuildPackedRValueFromRaw is the sole entry point for local-load
+//   sources.
+//
 // Does not carry storage byte size -- that is determined by the
 // resolved subview or storage descriptor at the point of use.
+// Does not carry storage 4-state status -- that is a property of the
+// storage descriptor (PackedStorageView::is_four_state), not the RHS.
 struct PackedRValue {
   llvm::Value* val = nullptr;
   llvm::Value* unk = nullptr;
   uint32_t semantic_bits = 0;
-  bool is_four_state = false;
 };
+
+// Unknown-plane write policy for packed stores.
+// Produced by BuildPackedStorePlan; consumed by all store emitters.
+// This is the single semantic decision point for unknown-plane behavior.
+// No emitter may independently decide unknown-plane policy.
+enum class UnknownPlaneAction {
+  // Storage is 2-state. No unknown plane exists. Skip entirely.
+  kNone,
+  // Storage is 4-state, RHS is 4-state. Unconditional store + compare.
+  kUnconditionalStore,
+  // Storage is 4-state, RHS is provably 2-state. Conditional clear.
+  // Immediate: load old, branch on non-zero, store zero if needed.
+  // Deferred: materialize zero constant locally and schedule.
+  kConditionalClear,
+};
+
+// Resolved unknown-plane store policy for a single packed store.
+//
+// Contract: BuildPackedStorePlan is the single authority. No emitter
+// may independently decide unknown-plane behavior. Emitters consume
+// this plan mechanically.
+struct PackedStorePlan {
+  UnknownPlaneAction unk_action = UnknownPlaneAction::kNone;
+
+  // Raw unknown-plane SSA value from the RHS. Non-null for
+  // kUnconditionalStore only. Emitters size it to their target width
+  // (subview byte span, full lane, etc.). Null for kNone and
+  // kConditionalClear.
+  llvm::Value* unk_value = nullptr;
+};
+
+// Build the unknown-plane store policy from RHS semantics and storage layout.
+// This is the single decision point for all packed stores.
+auto BuildPackedStorePlan(
+    Context& ctx, const PackedStorageView& storage, const PackedRValue& rhs)
+    -> PackedStorePlan;
 
 // Semantic store mode for packed writes.
 enum class PackedStoreMode {
@@ -291,12 +335,20 @@ auto LoadPackedPlace(
     Context& ctx, mir::PlaceId place_id, llvm::Type* target_type)
     -> Result<llvm::Value*>;
 
-// Convert a legacy llvm::Value* (iN or {iN, iN}) to a PackedRValue.
-// Handles both 2-state (raw integer) and 4-state ({val, unk} struct) inputs.
-// This is operand normalization, not storage logic.
-auto ConvertRawToPackedRValue(
-    Context& ctx, llvm::Value* raw, uint32_t semantic_bits, bool is_four_state)
-    -> PackedRValue;
+// Build PackedRValue from a raw LLVM value whose type shape is the
+// authoritative 2-state/4-state representation.
+//
+// Contract: struct {iN,iN} means 4-state (both fields extracted), scalar iN
+// means 2-state (unk=nullptr). The LLVM type must reflect the SOURCE value's
+// declared type, not a target storage type. This is true for:
+//   - activation-local shadow loads (alloca type = variable declared type)
+//   - operand loads from typed storage
+//   - system function returns (always scalar/2-state)
+// This is NOT true for values packed by LowerRhsRaw (which forces the target's
+// 4-state shape onto a 2-state RHS). Those paths must use
+// LowerRhsToPackedRValue.
+auto BuildPackedRValueFromRaw(
+    Context& ctx, llvm::Value* raw, uint32_t semantic_bits) -> PackedRValue;
 
 // Convert a PackedRValue to legacy LLVM value form ({iN, iN} for 4-state,
 // iN for 2-state). Used at the module boundary where callers still expect

@@ -6,6 +6,7 @@
 #include <llvm/IR/DerivedTypes.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
@@ -69,6 +70,21 @@ auto GetLlvmTypeForType(Context& context, TypeId type_id)
   if (info.is_four_state) {
     return context.GetPlaceLlvmType4State(info.bit_width);
   }
+  return GetLlvmStorageType(context.GetLlvmContext(), info.bit_width);
+}
+
+auto GetFourStatePlaneType(Context& context, TypeId type_id) -> llvm::Type* {
+  if (!context.IsFourState(type_id)) {
+    throw common::InternalError(
+        "GetFourStatePlaneType", std::format("type is not 4-state"));
+  }
+  auto type_info_or_err = GetTypeInfoFromType(context, type_id);
+  if (!type_info_or_err) {
+    throw common::InternalError(
+        "GetFourStatePlaneType",
+        std::format("failed to get type info for TypeId"));
+  }
+  const auto& info = *type_info_or_err;
   return GetLlvmStorageType(context.GetLlvmContext(), info.bit_width);
 }
 

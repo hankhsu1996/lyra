@@ -34,6 +34,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 using detail::LowerRhsRaw;
+using detail::LowerRhsToPackedRValue;
 
 namespace {
 
@@ -78,7 +79,8 @@ auto BuildStorePolicy(Context& ctx, mir::PlaceId target) -> PackedStorePolicy {
 }
 
 // Packed subview write via the packed storage view module.
-auto StoreBitRange(Context& ctx, mir::PlaceId target, llvm::Value* source_raw)
+auto StoreBitRange(
+    Context& ctx, mir::PlaceId target, const PackedRValue& rvalue)
     -> Result<void> {
   auto path = ExtractPackedAccessPath(ctx, target);
   if (!path) return std::unexpected(path.error());
@@ -86,9 +88,6 @@ auto StoreBitRange(Context& ctx, mir::PlaceId target, llvm::Value* source_raw)
   auto subview = ResolvePackedSubview(ctx, *path);
   if (!subview) return std::unexpected(subview.error());
 
-  auto rvalue = ConvertRawToPackedRValue(
-      ctx, source_raw, subview->semantic_bit_width,
-      subview->storage.is_four_state);
   auto policy = BuildStorePolicy(ctx, target);
 
   return EmitStoreToPackedSubview(ctx, *subview, rvalue, policy);
@@ -254,30 +253,24 @@ auto LowerRvalueAssign(
   // Standard path: evaluate rvalue to raw LLVM value(s)
   auto rv_result = LowerRvalue(context, rvalue, result_type);
   if (!rv_result) return std::unexpected(rv_result.error());
-  llvm::Value* value = rv_result->value;
-  llvm::Value* unknown = rv_result->unknown;
 
-  // Rvalue-specific 4-state packing: LowerRvalue produces value+unknown
-  // separately; pack into {val, unk} struct for the commit path.
-  if (IsPacked(type) && context.IsPackedFourState(type)) {
-    auto storage_type_or_err = context.GetPlaceLlvmType(target);
-    if (!storage_type_or_err)
-      return std::unexpected(storage_type_or_err.error());
-    auto* struct_type = llvm::cast<llvm::StructType>(*storage_type_or_err);
-    auto* elem_type = struct_type->getElementType(0);
-    auto& builder = context.GetBuilder();
-    value = builder.CreateZExtOrTrunc(value, elem_type, "rv.val.fit");
-    if (unknown == nullptr) {
-      unknown = llvm::ConstantInt::get(elem_type, 0);
-    } else {
-      unknown = builder.CreateZExtOrTrunc(unknown, elem_type, "rv.unk.fit");
-    }
-    value = PackFourState(builder, struct_type, value, unknown);
+  // Packed types: non-lossy PackedRValue transport via PackedRValueSource.
+  // Preserves unk == nullptr for provably 2-state RHS.
+  if (IsPacked(type)) {
+    uint32_t semantic_bits = PackedBitWidth(type, types);
+    PackedRValue packed;
+    packed.val = rv_result->value;
+    packed.unk = rv_result->unknown;
+    packed.semantic_bits = semantic_bits;
+    return DispatchWrite(
+        context, target,
+        PackedRValueSource{.rvalue = packed, .type_id = result_type},
+        result_type, OwnershipPolicy::kMove);
   }
 
-  // Dispatch through shared write orchestrator
+  // Non-packed types: raw value transport.
   return DispatchWrite(
-      context, target, RawValueSource{value}, result_type,
+      context, target, RawValueSource{rv_result->value}, result_type,
       OwnershipPolicy::kMove);
 }
 
@@ -310,12 +303,11 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
 // path (AssignPlace / LowerRvalueAssign / CommitValue) which handles
 // full type-dispatch semantics (field-by-field structs, union memcpy,
 // string lifecycle, etc.).
+// Managed non-projected writes only. Bit-range projections are handled
+// directly by callers using non-lossy PackedRValue transport.
 auto CommitManagedImmediate(
     Context& context, SlotAccessResolver& resolver, mir::PlaceId dest,
     llvm::Value* value, OwnershipPolicy policy) -> Result<void> {
-  if (context.HasBitRangeProjection(dest)) {
-    return StoreBitRange(context, dest, value);
-  }
   const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
   TypeId type_id = mir::TypeOfPlace(types, arena[dest]);
@@ -325,9 +317,21 @@ auto CommitManagedImmediate(
 auto LowerAssign(
     Context& context, SlotAccessResolver& resolver, const mir::Assign& assign)
     -> Result<void> {
-  // Managed destination: evaluate RHS via resolver-aware path, commit
-  // through the single managed write path.
+  // Managed destination: evaluate RHS via resolver-aware path.
+  // Bit-range projections use non-lossy PackedRValue transport directly.
+  // Non-bit-range managed writes use raw path (stores to local alloca).
   if (resolver.ManagesPlace(assign.dest)) {
+    if (context.HasBitRangeProjection(assign.dest)) {
+      auto path = ExtractPackedAccessPath(context, assign.dest);
+      if (!path) return std::unexpected(path.error());
+      auto subview = ResolvePackedSubview(context, *path);
+      if (!subview) return std::unexpected(subview.error());
+      auto packed = LowerRhsToPackedRValue(
+          context, resolver, assign.rhs, subview->semantic_bit_width,
+          subview->result_type);
+      if (!packed) return std::unexpected(packed.error());
+      return StoreBitRange(context, assign.dest, *packed);
+    }
     auto rhs_raw_or_err =
         LowerRhsRaw(context, resolver, assign.rhs, assign.dest);
     if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
@@ -340,11 +344,17 @@ auto LowerAssign(
   // then commit through canonical write path.
   //
   // Projected writes (bit-range) are canonical-only in v1.
+  // Uses non-lossy PackedRValue transport (not LowerRhsRaw).
   if (context.HasBitRangeProjection(assign.dest)) {
-    auto source_raw_or_err =
-        LowerRhsRaw(context, resolver, assign.rhs, assign.dest);
-    if (!source_raw_or_err) return std::unexpected(source_raw_or_err.error());
-    return StoreBitRange(context, assign.dest, *source_raw_or_err);
+    auto path = ExtractPackedAccessPath(context, assign.dest);
+    if (!path) return std::unexpected(path.error());
+    auto subview = ResolvePackedSubview(context, *path);
+    if (!subview) return std::unexpected(subview.error());
+    auto packed = LowerRhsToPackedRValue(
+        context, resolver, assign.rhs, subview->semantic_bit_width,
+        subview->result_type);
+    if (!packed) return std::unexpected(packed.error());
+    return StoreBitRange(context, assign.dest, *packed);
   }
 
   // Check write plan: field-by-field struct/array and union memcpy
@@ -372,6 +382,30 @@ auto LowerAssign(
         assign.rhs);
   }
 
+  // Packed scalar types: use non-lossy PackedRValue transport via
+  // PackedRValueSource through DispatchWrite.
+  if (plan.op == WriteOp::kCommitPackedOrFloatScalar &&
+      IsPacked(types[type_id])) {
+    uint32_t semantic_bits = PackedBitWidth(types[type_id], types);
+    auto packed = LowerRhsToPackedRValue(
+        context, resolver, assign.rhs, semantic_bits, type_id);
+    if (!packed) return std::unexpected(packed.error());
+    auto policy = std::visit(
+        common::Overloaded{
+            [&](const mir::Operand& op) -> OwnershipPolicy {
+              return DetermineOwnership(context, op);
+            },
+            [](const mir::Rvalue&) -> OwnershipPolicy {
+              return OwnershipPolicy::kMove;
+            },
+        },
+        assign.rhs);
+    return DispatchWrite(
+        context, assign.dest,
+        PackedRValueSource{.rvalue = *packed, .type_id = type_id}, type_id,
+        policy);
+  }
+
   // All other types: evaluate RHS with resolver-aware operand reads,
   // commit as raw value through canonical write path.
   auto rhs_raw_or_err = LowerRhsRaw(context, resolver, assign.rhs, assign.dest);
@@ -397,10 +431,38 @@ auto LowerGuardedAssign(
   auto& builder = context.GetBuilder();
 
   // RHS evaluated BEFORE branch (per SystemVerilog spec).
-  auto rhs_raw_or_err =
-      LowerRhsRaw(context, resolver, guarded.rhs, guarded.dest);
-  if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
-  llvm::Value* rhs_raw = *rhs_raw_or_err;
+  // For packed targets (bit-range or whole-value), use non-lossy
+  // PackedRValue transport. For all other targets, use raw value transport.
+  bool is_bit_range = context.HasBitRangeProjection(guarded.dest);
+  const auto& arena = context.GetMirArena();
+  const auto& types = context.GetTypeArena();
+  TypeId dest_type_id = mir::TypeOfPlace(types, arena[guarded.dest]);
+  bool is_packed_dest = is_bit_range || IsPacked(types[dest_type_id]);
+  std::optional<PackedRValue> packed_rhs;
+  llvm::Value* rhs_raw = nullptr;
+
+  if (is_bit_range) {
+    auto path = ExtractPackedAccessPath(context, guarded.dest);
+    if (!path) return std::unexpected(path.error());
+    auto subview = ResolvePackedSubview(context, *path);
+    if (!subview) return std::unexpected(subview.error());
+    auto packed = LowerRhsToPackedRValue(
+        context, resolver, guarded.rhs, subview->semantic_bit_width,
+        subview->result_type);
+    if (!packed) return std::unexpected(packed.error());
+    packed_rhs = *packed;
+  } else if (is_packed_dest) {
+    uint32_t semantic_bits = PackedBitWidth(types[dest_type_id], types);
+    auto packed = LowerRhsToPackedRValue(
+        context, resolver, guarded.rhs, semantic_bits, dest_type_id);
+    if (!packed) return std::unexpected(packed.error());
+    packed_rhs = *packed;
+  } else {
+    auto rhs_raw_or_err =
+        LowerRhsRaw(context, resolver, guarded.rhs, guarded.dest);
+    if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
+    rhs_raw = *rhs_raw_or_err;
+  }
 
   // Guard check (coerce to i1).
   auto guard_or_err = LowerOperand(context, resolver, guarded.guard);
@@ -422,29 +484,27 @@ auto LowerGuardedAssign(
   // Write path.
   builder.SetInsertPoint(do_write_bb);
 
-  if (resolver.ManagesPlace(guarded.dest)) {
+  if (is_bit_range) {
+    auto result = StoreBitRange(context, guarded.dest, *packed_rhs);
+    if (!result) return result;
+  } else if (is_packed_dest) {
+    // Non-lossy packed path through DispatchWrite.
+    auto result = DispatchWrite(
+        context, guarded.dest,
+        PackedRValueSource{.rvalue = *packed_rhs, .type_id = dest_type_id},
+        dest_type_id, OwnershipPolicy::kClone);
+    if (!result) return result;
+  } else if (resolver.ManagesPlace(guarded.dest)) {
     // Managed destination: single managed write path.
     // INVARIANT: GuardedAssign always uses kClone, never kMove.
     auto result = CommitManagedImmediate(
         context, resolver, guarded.dest, rhs_raw, OwnershipPolicy::kClone);
     if (!result) return result;
-  } else if (context.HasBitRangeProjection(guarded.dest)) {
-    auto result = StoreBitRange(context, guarded.dest, rhs_raw);
-    if (!result) return result;
   } else {
-    // Non-managed: canonical CommitValue(raw).
-    // This uses CommitValue with a pre-evaluated raw value, while
-    // plain assign uses AssignPlace/LowerRvalueAssign with operand
-    // identity. This asymmetry is intentional: guarded assignment
-    // evaluates RHS before the guard branch (SV spec), so only a
-    // raw value is available at the write point. Both paths produce
-    // identical results for v1-eligible types (plain scalars).
+    // Non-managed, non-packed: canonical CommitValue(raw).
     // INVARIANT: GuardedAssign always uses kClone (see above).
-    const auto& arena = context.GetMirArena();
-    const auto& types = context.GetTypeArena();
-    TypeId type_id = mir::TypeOfPlace(types, arena[guarded.dest]);
     auto result = CommitValue(
-        context, guarded.dest, rhs_raw, type_id, OwnershipPolicy::kClone);
+        context, guarded.dest, rhs_raw, dest_type_id, OwnershipPolicy::kClone);
     if (!result) return result;
   }
   builder.CreateBr(skip_bb);

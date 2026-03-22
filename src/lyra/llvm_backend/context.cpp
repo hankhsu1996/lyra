@@ -325,61 +325,60 @@ auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
   return it->second;
 }
 
-void Context::BindTemp(int temp_id, llvm::Value* v, TypeId type) {
-  // Invariant: if MIR type is 4-state, LLVM value must be a {val, unk} struct.
-  // Violating this causes crashes when LoadFourStateOperand assumes struct.
-  //
-  // Note: We check 2-state vs 4-state, NOT exact type match.
-  // Temps may have semantic width (e.g., i1 for bit). ABI width coercion
-  // happens at use sites that require it (function call arguments), not here.
-  // This keeps BindTemp simple and avoids unnecessary zext/trunc churn.
-  //
-  // GetLlvmAbiTypeForValue returns storage types (i8 for 1-bit), but temps
-  // use semantic types (i1 for 1-bit). The key invariant is 2s vs 4s.
-  bool mir_is_4s = IsFourState(type);
-  bool llvm_is_struct = v->getType()->isStructTy();
-  if (mir_is_4s != llvm_is_struct) {
-    throw common::InternalError(
-        "BindTemp",
-        std::format(
-            "temp {} state mismatch: MIR type is {}, LLVM type is {}", temp_id,
-            mir_is_4s ? "4-state" : "2-state",
-            llvm_is_struct ? "struct" : "scalar"));
-  }
-
-  auto [it, inserted] = temp_values_.try_emplace(temp_id, v);
-  if (!inserted) {
-    throw common::InternalError(
-        "BindTemp", std::format("temp {} already bound", temp_id));
-  }
-  temp_types_.emplace(temp_id, type);
-}
-
-auto Context::ReadTemp(int temp_id) const -> llvm::Value* {
-  auto it = temp_values_.find(temp_id);
-  if (it == temp_values_.end()) {
-    throw common::InternalError(
-        "ReadTemp", std::format("temp {} not bound", temp_id));
-  }
-  return it->second;
-}
-
 auto Context::HasTemp(int temp_id) const -> bool {
-  return temp_values_.contains(temp_id);
+  return temp_entries_.contains(temp_id);
 }
 
 auto Context::GetTempType(int temp_id) const -> TypeId {
-  auto it = temp_types_.find(temp_id);
-  if (it == temp_types_.end()) {
+  return ReadTempValue(temp_id).declared_type;
+}
+
+void Context::ClearTemps() {
+  temp_entries_.clear();
+}
+
+void Context::BindTempValue(int temp_id, const TempValue& tv) {
+  // Validate payload convention.
+  if (tv.domain == ValueDomain::kTwoState && tv.unknown != nullptr) {
     throw common::InternalError(
-        "GetTempType", std::format("temp {} not bound", temp_id));
+        "BindTempValue",
+        std::format(
+            "temp {} domain is kTwoState but unknown is non-null", temp_id));
+  }
+  if (tv.domain == ValueDomain::kFourState && tv.unknown == nullptr) {
+    throw common::InternalError(
+        "BindTempValue",
+        std::format(
+            "temp {} domain is kFourState but unknown is nullptr", temp_id));
+  }
+
+  auto [it, inserted] = temp_entries_.try_emplace(temp_id, tv);
+  if (!inserted) {
+    throw common::InternalError(
+        "BindTempValue", std::format("temp {} already bound", temp_id));
+  }
+}
+
+auto Context::ReadTempValue(int temp_id) const -> const TempValue& {
+  auto it = temp_entries_.find(temp_id);
+  if (it == temp_entries_.end()) {
+    throw common::InternalError(
+        "ReadTempValue", std::format("temp {} not bound", temp_id));
   }
   return it->second;
 }
 
-void Context::ClearTemps() {
-  temp_values_.clear();
-  temp_types_.clear();
+auto Context::TryGetTempConstantInt(int temp_id) const -> llvm::ConstantInt* {
+  auto it = temp_entries_.find(temp_id);
+  if (it == temp_entries_.end()) {
+    return nullptr;
+  }
+  const auto& tv = it->second;
+  // Reject kFourState unconditionally, even if unknown is ConstantInt(0).
+  if (tv.domain != ValueDomain::kTwoState) {
+    return nullptr;
+  }
+  return llvm::dyn_cast<llvm::ConstantInt>(tv.value);
 }
 
 void Context::SetCurrentProcess(size_t process_index) {

@@ -133,26 +133,25 @@ void ActivationLocalSlotAccess::SyncSlot(const ManagedSlotStorage& storage) {
   }
 
   uint32_t semantic_bits = 0;
-  bool is_four_state = false;
   llvm::Value* store_val = val;
 
   if (kind == TypeKind::kReal) {
     semantic_bits = 64;
-    is_four_state = false;
     store_val = builder.CreateBitCast(
         val, llvm::Type::getInt64Ty(ctx_.GetLlvmContext()), "sync.as.i64");
   } else if (kind == TypeKind::kShortReal) {
     semantic_bits = 32;
-    is_four_state = false;
     store_val = builder.CreateBitCast(
         val, llvm::Type::getInt32Ty(ctx_.GetLlvmContext()), "sync.as.i32");
   } else {
     semantic_bits = PackedBitWidth(type, types);
-    is_four_state = ctx_.IsPackedFourState(type);
   }
 
-  auto rvalue =
-      ConvertRawToPackedRValue(ctx_, store_val, semantic_bits, is_four_state);
+  // Build PackedRValue from the local alloca's loaded value.
+  // The LLVM type is authoritative: struct {iN,iN} means 4-state,
+  // scalar iN means 2-state. This is the activation-local sync path
+  // where the local alloca type IS the variable's declared type.
+  auto rvalue = BuildPackedRValueFromRaw(ctx_, store_val, semantic_bits);
   auto view =
       BuildWholeValueStorageView(ctx_, canonical_ptr, storage.root_type, true);
   auto policy = BuildStorePolicyFromContext(ctx_, signal_id);

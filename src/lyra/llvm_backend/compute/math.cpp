@@ -86,9 +86,8 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
             return IsPacked(type) && context.IsPackedFourState(type);
           },
           [&](mir::TempId temp_id) -> bool {
-            TypeId type_id = context.GetTempType(temp_id.value);
-            const Type& type = types[type_id];
-            return IsPacked(type) && context.IsPackedFourState(type);
+            return context.ReadTempValue(temp_id.value).domain ==
+                   ValueDomain::kFourState;
           },
       },
       operand.payload);
@@ -104,7 +103,6 @@ auto LowerMathIntegralClog2(
 
   const Type& result_type_ref = types[result_type_id];
   uint32_t target_width = PackedBitWidth(result_type_ref, types);
-  bool target_is_four_state = context.IsPackedFourState(result_type_ref);
 
   auto* result_llvm_type =
       llvm::Type::getIntNTy(context.GetLlvmContext(), target_width);
@@ -149,7 +147,7 @@ auto LowerMathIntegralClog2(
   auto* known_result =
       builder.CreateSelect(is_le_one, zero, raw_result, "clog2.known");
 
-  if (target_is_four_state) {
+  if (operand_is_four_state) {
     auto* result_val =
         builder.CreateSelect(has_unknown, zero, known_result, "clog2.res.val");
     auto* result_unk =

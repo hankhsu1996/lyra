@@ -171,6 +171,23 @@ auto LowerPackedCoreRvalue(
     elem_type = struct_type->getElementType(0);
   }
 
+  // Operand-domain-aware override: when all operands are provably 2-state,
+  // lower through the 2-state path even for 4-state target types. This
+  // produces TwoState results that flow correctly through the temp contract.
+  //
+  // Excluded kinds:
+  //   GuardedUse: reads info.place (not in rvalue.operands), which may be
+  //     genuinely 4-state. AreAllOperandsTwoState only checks operands[0]
+  //     (the validity flag), not the guarded place.
+  //   RuntimeQuery: has no operands, already returns TwoState independently.
+  if (type_info.is_four_state &&
+      !std::holds_alternative<mir::GuardedUseRvalueInfo>(rvalue.info) &&
+      !std::holds_alternative<mir::RuntimeQueryRvalueInfo>(rvalue.info) &&
+      AreAllOperandsTwoState(context, rvalue.operands)) {
+    type_info.is_four_state = false;
+    storage_type = elem_type;
+  }
+
   PackedComputeContext packed_context{
       .storage_type = storage_type,
       .element_type = elem_type,

@@ -38,6 +38,12 @@ auto GetTypeInfoFromType(Context& context, TypeId type_id)
 auto GetLlvmTypeForType(Context& context, TypeId type_id)
     -> Result<llvm::Type*>;
 
+// Get the LLVM scalar element type for the known/unknown planes of a 4-state
+// typed value. This is the canonical helper -- do not derive the plane type
+// ad-hoc by stripping struct element types. Used by split-PHI creation and
+// PHI edge zero synthesis.
+auto GetFourStatePlaneType(Context& context, TypeId type_id) -> llvm::Type*;
+
 // Context for lowering packed (integral) compute operations.
 // Contains all type information needed by both 2-state and 4-state lowering.
 struct PackedComputeContext {
