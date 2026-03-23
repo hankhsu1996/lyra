@@ -38,18 +38,63 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 - [x] CQ3: Packed storage view deferred-notification dead code elision
 - [x] Commit-boundary model: visibility/commit boundary definition
 - [x] Commit-boundary model: multi-segment activation-local support
+- [ ] G16-obs: Relay elimination observation contract
+- [ ] G16a: Specialization-local relay elimination
+- [ ] G16b: Suppress dirty-mark emission for subscriber-free slots
+- [ ] G14: NBA arena (bump-allocator for value/mask bytes)
+- [ ] G4b: Per-activation atomic stores (conditional on signal handler)
 - [ ] CB1: Facts-to-contract model for activation-local statements
 - [ ] CB2: Region-local canonical dependency analysis
 - [ ] CB3: Commit-boundary model delayed-commit register promotion
-- [ ] G14: NBA arena (bump-allocator for value/mask bytes)
+- [ ] G16c: Assign-chain single-consumer comb fusion
 - [ ] G5 remaining: RangeSet linear scan + ClearDelta per-region reset
 - [ ] G15: Signal flush helpers
-- [ ] G4b: Per-activation atomic stores (conditional on signal handler)
-- [ ] G16: Runtime work elimination
 - [ ] CQ4: Place-based value materialization overhead
 - [ ] CQ5: Loop-level unknown-plane bulk clear for 2-state overwrite loops
+- [ ] G16a-cross: Cross-boundary relay collapse (depends on H4-H5)
+- [ ] G16d: Realized-graph dead node pruning (depends on H3-H5)
 
 ## Active Gaps
+
+### G16: Runtime work elimination (volume reduction)
+
+The dominant runtime cost is propagation infrastructure (59% of total Ir on clock-pipeline). Closed investigations (G7g, G7h, G13 Stage 2) proved this cost is not reducible by changing the propagation loop shape -- the worklist is already near-optimal per slot. The win must come from reducing the number of slots, connections, and comb kernels that exist in the runtime graph.
+
+The root cause: the lowering materializes every SV semantic object (port, net, assign target) with full runtime identity -- slot allocation, dirty-tracking subscription, connection evaluation, propagation worklist entry. A large fraction of these are pure relay / forwarding nodes with no computational or observability purpose. Eliminating them reduces work volume across all cost categories (dirty marks, connection memcmp/memcpy, propagation iterations, flush checks) proportionally.
+
+clock-pipeline evidence (500K cycles, `-vvv --stats`): 14 port-binding relay slots identified as provable pass-throughs by the existing forwarding analysis. These 14 relays produce 13.4M connection evaluations (memcmp + memcpy), inflate propagation from 1-2 iterations to 5 max per call, and generate proportional dirty-mark overhead. 58% of NBA entries are elided (value unchanged), with valid_reg relay chains as the dominant source. The structural cause is the `assign data_out = data_reg` pattern repeated across 8 pipeline stages -- each creates an intermediate slot with full runtime identity that is a pure copy.
+
+A relay node is a slot that exists only to forward a value: single-writer identity copy, no process or comb triggers, all consumers are connections. Such slots can be eliminated by redirecting downstream connections to the source.
+
+Long-term direction: compile pure-dataflow regions into single functions evaluated once per propagation call. This subsumes relay elimination, subscriber-free net suppression, and comb fusion. Full cross-boundary scope requires realized graph metadata (H4-H5). Sequencing: relay elimination first, then subscriber-free suppression and comb fusion, then full dataflow compilation.
+
+### G16-obs: Relay elimination observation contract
+
+The forwarding analysis already proves structural legality for all relay candidates (single writer, identity copy, no process/comb triggers, pure forwarding). The remaining blocker is observability: whether a relay slot may be observed by trace/VCD, `$display`/`$monitor`, or hierarchical reference.
+
+Define a contract: relay slots are elimination-eligible by default unless explicitly observed (via trace selection, display operand, or hierarchical reference). Build the escape analysis that identifies which slots are observed. This is a design decision plus an audit of existing observation paths, not a large implementation.
+
+This gates G16a. Without this contract, the transform cannot proceed.
+
+### G16a: Specialization-local relay elimination
+
+Within a single module body, eliminate relay slots from port-binding assigns. The compiler identifies relay candidates from the body's own connection table and trigger tables. The existing forwarding analysis proves structural conditions. After the observation contract (G16-obs) establishes legality, implement the transform: redirect downstream connections to read from the relay's source slot, suppress the relay slot and its assign process.
+
+Scope is strictly specialization-local. No cross-module knowledge, no realization dependency, no H-series prerequisite.
+
+### G16b: Suppress dirty-mark emission for subscriber-free slots
+
+First cut: at codegen time, identify slots with no process subscribers and no comb triggers. For these slots, suppress the dirty-mark call emitted by blocking-assign and NBA-commit paths. The slot still exists in the design state (connections read from it by raw byte offset), but it does not enter the dirty set, does not appear in the flush scan, and does not generate propagation worklist entries.
+
+This is narrower than full slot elimination (which would remove the slot from the arena). Suppressing dirty marks is a codegen-level change with no layout impact. Full slot elimination is a separate, harder follow-up.
+
+### G14: NBA arena
+
+Replace per-entry heap allocation for NBA value/mask bytes with a bump-allocator arena. Estimated 5-8% on nba-heavy/edge-sub-dense, 3-5% on clock-pipeline. Arena is append-only within a region, reset at region boundary.
+
+### G4b: Per-activation atomic stores
+
+Every process activation writes several atomic stores (phase, activation sequence, current process ID) for the signal-handler crash dump path. These are memory-order-release stores on every dispatch and return, adding per-activation overhead even when no signal handler is installed. Conditional on whether a signal handler is registered, these could be skipped entirely or downgraded to plain stores.
 
 ### CB1: Facts-to-contract model for activation-local statements
 
@@ -65,11 +110,11 @@ Per-region analysis of which managed slots have been modified since the last syn
 
 ### CB3: Commit-boundary model delayed-commit register promotion
 
-Keep eligible slot-backed scalars in registers across a region, commit back to slot storage only at required boundaries. This is the downstream optimization that uses the commit-boundary definition and region-local analysis. It is not the first thing to build.
+Keep eligible slot-backed scalars in registers across a region, commit back to slot storage only at required boundaries. This is the downstream optimization that uses the commit-boundary definition and region-local analysis. Downstream of CB1 and CB2.
 
-### G14: NBA arena
+### G16c: Assign-chain single-consumer comb fusion
 
-Replace per-entry heap allocation for NBA value/mask bytes with a bump-allocator arena. Estimated 5-8% on nba-heavy/edge-sub-dense, 3-5% on clock-pipeline. Arena is append-only within a region, reset at region boundary.
+When a comb kernel writes a slot that is read by exactly one downstream comb kernel (no other consumers, no subscribers, no trace), fuse the two into one kernel with the intermediate slot eliminated. First PR restricted to: both kernels are single-block, single-statement, no control flow, no side effects. This covers the `assign a = f(x); assign b = g(a)` chain pattern common in pipeline combinational logic.
 
 ### G5 remaining: RangeSet + ClearDelta
 
@@ -78,16 +123,6 @@ RangeSet linear scan is 10% on fanout-comb (many sub-slot dirty ranges, 0% on cl
 ### G15: Signal flush helpers
 
 Per-slot flush functions are 2-12% depending on fixture. Possible inlining or specialization of the hot flush path.
-
-### G4b: Per-activation atomic stores
-
-Every process activation writes several atomic stores (phase, activation sequence, current process ID) for the signal-handler crash dump path. These are memory-order-release stores on every dispatch and return, adding per-activation overhead even when no signal handler is installed. Conditional on whether a signal handler is registered, these could be skipped entirely or downgraded to plain stores.
-
-### G16: Runtime work elimination
-
-Many runtime slots, connections, and comb kernels exist because the lowering materializes every SV semantic object with full signal/subscriber/dirty-tracking identity. A large fraction is pure dataflow that could be fused or eliminated. This is the strategic direction for multi-x wins beyond per-component optimization.
-
-Categories: subscriber-free internal nets, port-forwarding copy chains, trivial comb fusion into consuming processes, lowering-level dataflow compilation.
 
 ### CQ4: Place-based value materialization overhead
 
@@ -104,6 +139,18 @@ When a loop performs a full 2-state overwrite into contiguous elements of 4-stat
 The target shape is to hoist unknown-plane clearing out of the per-element loop. Before the loop body, emit a bulk clear (memset or equivalent) of the unknown-plane byte range that the loop will overwrite. Inside the loop, use no per-element unknown-plane instructions at all -- the inner loop becomes pure value-plane work.
 
 This requires reasoning at the loop or region level, not at the per-store level. The lowering must prove: (a) the loop writes a contiguous range of elements, (b) all writes in the loop body are provably 2-state, (c) the unknown-plane byte range for that element range can be computed at loop entry. This is a different kind of analysis than the per-store CQ2 domain propagation or the CQ3 deferred-notification elision.
+
+### G16a-cross: Cross-boundary relay collapse (depends on H4-H5)
+
+After H4-H5 move connection and trigger metadata behind constructor-time expansion, the runtime constructor sees the full realized connection graph. It can then collapse relay chains spanning module boundaries (e.g., Top-level `assign d0 = counter` intermediaries where the Top-level slot is a pure relay between a child output and a sibling input).
+
+Requires constructor-owned connection and trigger metadata. Cannot proceed until H4-H5 are complete.
+
+### G16d: Realized-graph dead node pruning (depends on H3-H5)
+
+After the constructor owns the realized process and connection graph, it can identify and eliminate dead runtime nodes: processes whose outputs feed nothing, slots with no downstream consumers, connection chains to unconnected ports. This is the constructor-time analog of dead code elimination.
+
+Requires constructor-owned process graph with realized connectivity (H3-H5). Cannot proceed until those are complete.
 
 ## Closed Investigations
 
