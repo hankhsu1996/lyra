@@ -176,13 +176,18 @@ enum class UnknownPlaneLowering {
   kMaterializeZeroForRuntime,   // Materialize zero for runtime / scheduler.
 };
 
-// Resolved unknown-plane store plan. The planner owns the recipe choice.
+// Resolved store plan. The planner owns the recipe choice.
 // Executors follow the selected recipe mechanically.
 struct PackedStorePlan {
   UnknownPlanePolicy unk_policy = UnknownPlanePolicy::kNone;
   UnknownPlaneLowering unk_lowering = UnknownPlaneLowering::kNone;
   // Non-null when policy is kStoreFromRhs.
   llvm::Value* unk_value = nullptr;
+  // True when notification will consume the changed predicate.
+  // When false, store emitters do not produce the notification-consumed
+  // changed result. Unknown-plane storage mutations (including storage-
+  // oriented tests like conditional clear) are unaffected by this flag.
+  bool needs_changed = false;
 };
 
 // Classify subview store recipe context from subview kind.

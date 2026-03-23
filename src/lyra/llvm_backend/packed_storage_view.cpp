@@ -464,10 +464,9 @@ auto EmitByteAddressableStore(
   uint32_t storage_bits = access.subview_byte_span * 8;
   auto* store_ty = llvm::IntegerType::get(ctx.GetLlvmContext(), storage_bits);
 
-  // Value plane
+  // Value plane: store unconditionally, compare only when needed.
   auto* val_ptr = builder.CreateGEP(
       i8_ty, access.storage.base_ptr, access.byte_offset, "psw.val.ptr");
-  auto* old_val = builder.CreateLoad(store_ty, val_ptr, "psw.val.old");
 
   llvm::Value* new_val =
       builder.CreateZExtOrTrunc(value.val, store_ty, "psw.val.new");
@@ -477,12 +476,19 @@ auto EmitByteAddressableStore(
     new_val = builder.CreateAnd(
         new_val, llvm::ConstantInt::get(store_ty, mask), "psw.val.fit");
   }
-  builder.CreateStore(new_val, val_ptr);
 
-  llvm::Value* changed =
-      builder.CreateICmpNE(old_val, new_val, "psw.val.changed");
+  llvm::Value* changed = nullptr;
+  if (plan.needs_changed) {
+    auto* old_val = builder.CreateLoad(store_ty, val_ptr, "psw.val.old");
+    builder.CreateStore(new_val, val_ptr);
+    changed = builder.CreateICmpNE(old_val, new_val, "psw.val.changed");
+  } else {
+    builder.CreateStore(new_val, val_ptr);
+  }
 
   // Unknown plane: consume PackedStorePlan mechanically.
+  // Storage mutation follows unk_lowering. Change-detection follows
+  // needs_changed. These are orthogonal dimensions.
   switch (plan.unk_lowering) {
     case UnknownPlaneLowering::kNone:
       break;
@@ -496,7 +502,6 @@ auto EmitByteAddressableStore(
           "psw.unk.off");
       auto* unk_ptr = builder.CreateGEP(
           i8_ty, access.storage.base_ptr, unk_off, "psw.unk.ptr");
-      auto* old_unk = builder.CreateLoad(store_ty, unk_ptr, "psw.unk.old");
 
       auto* new_unk =
           builder.CreateZExtOrTrunc(plan.unk_value, store_ty, "psw.unk.new");
@@ -506,11 +511,16 @@ auto EmitByteAddressableStore(
         new_unk = builder.CreateAnd(
             new_unk, llvm::ConstantInt::get(store_ty, mask), "psw.unk.fit");
       }
-      builder.CreateStore(new_unk, unk_ptr);
 
-      auto* unk_changed =
-          builder.CreateICmpNE(old_unk, new_unk, "psw.unk.changed");
-      changed = builder.CreateOr(changed, unk_changed, "psw.changed");
+      if (plan.needs_changed) {
+        auto* old_unk = builder.CreateLoad(store_ty, unk_ptr, "psw.unk.old");
+        builder.CreateStore(new_unk, unk_ptr);
+        auto* unk_changed =
+            builder.CreateICmpNE(old_unk, new_unk, "psw.unk.changed");
+        changed = builder.CreateOr(changed, unk_changed, "psw.changed");
+      } else {
+        builder.CreateStore(new_unk, unk_ptr);
+      }
       break;
     }
 
@@ -527,7 +537,6 @@ auto EmitByteAddressableStore(
       auto* zero = llvm::ConstantInt::get(store_ty, 0);
       auto* unk_nonzero = builder.CreateICmpNE(old_unk, zero, "psw.unk.dirty");
 
-      // Conditional store: only write zero if old unknown was non-zero.
       auto* func = builder.GetInsertBlock()->getParent();
       auto* clear_bb =
           llvm::BasicBlock::Create(ctx.GetLlvmContext(), "psw.unk.clear", func);
@@ -541,7 +550,9 @@ auto EmitByteAddressableStore(
       builder.CreateBr(merge_bb);
 
       builder.SetInsertPoint(merge_bb);
-      changed = builder.CreateOr(changed, unk_nonzero, "psw.changed");
+      if (plan.needs_changed) {
+        changed = builder.CreateOr(changed, unk_nonzero, "psw.changed");
+      }
       break;
     }
 
@@ -596,10 +607,15 @@ auto EmitBitAddressableStore(
       builder.CreateAnd(old_planes.val, not_mask, "rmw.val.clear");
   auto* val_result = builder.CreateOr(val_cleared, val_shifted, "rmw.val");
 
-  llvm::Value* changed =
-      builder.CreateICmpNE(old_planes.val, val_result, "rmw.val.changed");
+  llvm::Value* changed = nullptr;
+  if (plan.needs_changed) {
+    changed =
+        builder.CreateICmpNE(old_planes.val, val_result, "rmw.val.changed");
+  }
 
   // Unknown plane RMW: consume PackedStorePlan mechanically.
+  // Storage mutation follows unk_lowering. Change-detection follows
+  // needs_changed. These are orthogonal dimensions.
   llvm::Value* unk_result = nullptr;
   switch (plan.unk_lowering) {
     case UnknownPlaneLowering::kNone:
@@ -613,21 +629,24 @@ auto EmitBitAddressableStore(
           builder.CreateAnd(old_planes.unk, not_mask, "rmw.unk.clear");
       unk_result = builder.CreateOr(unk_cleared, unk_shifted, "rmw.unk");
 
-      auto* unk_changed =
-          builder.CreateICmpNE(old_planes.unk, unk_result, "rmw.unk.changed");
-      changed = builder.CreateOr(changed, unk_changed, "rmw.changed");
+      if (plan.needs_changed) {
+        auto* unk_changed =
+            builder.CreateICmpNE(old_planes.unk, unk_result, "rmw.unk.changed");
+        changed = builder.CreateOr(changed, unk_changed, "rmw.changed");
+      }
       break;
     }
 
     case UnknownPlaneLowering::kMaskedClearBitsRmw: {
-      auto* old_unk_bits =
-          builder.CreateAnd(old_planes.unk, mask_shifted, "rmw.unk.oldbits");
-      auto* unk_nonzero = builder.CreateICmpNE(
-          old_unk_bits, llvm::ConstantInt::get(lane_ty, 0), "rmw.unk.dirty");
-
       unk_result = builder.CreateAnd(old_planes.unk, not_mask, "rmw.unk.clear");
 
-      changed = builder.CreateOr(changed, unk_nonzero, "rmw.changed");
+      if (plan.needs_changed) {
+        auto* old_unk_bits =
+            builder.CreateAnd(old_planes.unk, mask_shifted, "rmw.unk.oldbits");
+        auto* unk_nonzero = builder.CreateICmpNE(
+            old_unk_bits, llvm::ConstantInt::get(lane_ty, 0), "rmw.unk.dirty");
+        changed = builder.CreateOr(changed, unk_nonzero, "rmw.changed");
+      }
       break;
     }
 
@@ -782,8 +801,10 @@ auto EmitStoreToPackedSubview(
     changed = EmitBitAddressableStore(ctx, access, value, plan);
   }
 
-  auto dirty_range = GetSubviewDirtyRange(ctx, access);
-  EmitPackedStoreNotification(ctx, changed, policy, dirty_range);
+  if (plan.needs_changed) {
+    auto dirty_range = GetSubviewDirtyRange(ctx, access);
+    EmitPackedStoreNotification(ctx, changed, policy, dirty_range);
+  }
   return {};
 }
 
@@ -1037,14 +1058,24 @@ auto EmitDeferredStoreToPackedSubview(
   return {};
 }
 
+namespace {
+
+auto NeedsChangedDetection(bool notification_deferred) -> bool {
+  return !notification_deferred;
+}
+
+}  // namespace
+
 auto BuildPackedStorePlan(
     const PackedStorageView& storage, const PackedRValue& rhs,
     StoreRecipeContext recipe_context, bool notification_deferred)
     -> PackedStorePlan {
+  bool needs_changed = NeedsChangedDetection(notification_deferred);
   if (!storage.is_four_state) {
     return {
         .unk_policy = UnknownPlanePolicy::kNone,
-        .unk_lowering = UnknownPlaneLowering::kNone};
+        .unk_lowering = UnknownPlaneLowering::kNone,
+        .needs_changed = needs_changed};
   }
   if (rhs.unk != nullptr) {
     return {
@@ -1053,6 +1084,7 @@ auto BuildPackedStorePlan(
             UnknownPlanePolicy::kStoreFromRhs, recipe_context,
             notification_deferred),
         .unk_value = rhs.unk,
+        .needs_changed = needs_changed,
     };
   }
   return {
@@ -1060,6 +1092,7 @@ auto BuildPackedStorePlan(
       .unk_lowering = SelectUnknownPlaneLowering(
           UnknownPlanePolicy::kClearToZero, recipe_context,
           notification_deferred),
+      .needs_changed = needs_changed,
   };
 }
 
@@ -1228,20 +1261,26 @@ void EmitInlineCanonicalDirectStore(
   ctx.GetBuilder().CreateStore(canonical_bits, storage.base_ptr);
 }
 
-// Emit the inline compare+store+notify path for whole-value packed stores.
-// Loads old canonical bits, stores new canonical bits, compares, notifies.
+// Emit the inline store path for whole-value packed stores.
+// When needs_changed is true: loads old, stores new, compares, notifies.
+// When needs_changed is false: stores new only.
 void EmitInlineWholeValueStore(
     Context& ctx, const PackedStorageView& storage,
-    llvm::Value* new_canonical_bits, const PackedStorePolicy& policy) {
+    llvm::Value* new_canonical_bits, const PackedStorePolicy& policy,
+    bool needs_changed) {
   auto& builder = ctx.GetBuilder();
-  auto* bits_type = new_canonical_bits->getType();
 
-  auto* old_bits = builder.CreateLoad(bits_type, storage.base_ptr, "wv.old");
-  builder.CreateStore(new_canonical_bits, storage.base_ptr);
-
-  auto* changed = builder.CreateICmpNE(old_bits, new_canonical_bits, "wv.chg");
-  auto dirty_range = MakeFullSlotDirtyRange(ctx.GetLlvmContext());
-  EmitPackedStoreNotification(ctx, changed, policy, dirty_range);
+  if (needs_changed) {
+    auto* bits_type = new_canonical_bits->getType();
+    auto* old_bits = builder.CreateLoad(bits_type, storage.base_ptr, "wv.old");
+    builder.CreateStore(new_canonical_bits, storage.base_ptr);
+    auto* changed =
+        builder.CreateICmpNE(old_bits, new_canonical_bits, "wv.chg");
+    auto dirty_range = MakeFullSlotDirtyRange(ctx.GetLlvmContext());
+    EmitPackedStoreNotification(ctx, changed, policy, dirty_range);
+  } else {
+    builder.CreateStore(new_canonical_bits, storage.base_ptr);
+  }
 }
 
 // Emit a guarded LyraStorePacked runtime call with cross-context engine-null
@@ -1352,7 +1391,7 @@ void EmitLargeWholeValueStore(
 void EmitWholeValueStoreCore(
     Context& ctx, const PackedStorageView& storage, llvm::Value* val,
     llvm::Value* unk, UnknownPlaneLowering unk_lowering,
-    const PackedStorePolicy& policy) {
+    const PackedStorePolicy& policy, bool needs_changed) {
   auto& builder = ctx.GetBuilder();
 
   if (!storage.is_canonical_storage) {
@@ -1402,7 +1441,8 @@ void EmitWholeValueStoreCore(
     auto* canonical_bits = FlattenToCanonicalBits(
         builder, ctx.GetLlvmContext(), val, effective_unk,
         storage.storage_plane_byte_size, storage.is_four_state);
-    EmitInlineWholeValueStore(ctx, storage, canonical_bits, policy);
+    EmitInlineWholeValueStore(
+        ctx, storage, canonical_bits, policy, needs_changed);
   };
 
   switch (unk_lowering) {
@@ -1412,7 +1452,8 @@ void EmitWholeValueStoreCore(
         auto* canonical_bits = FlattenToCanonicalBits(
             builder, ctx.GetLlvmContext(), val, nullptr,
             storage.storage_plane_byte_size, storage.is_four_state);
-        EmitInlineWholeValueStore(ctx, storage, canonical_bits, policy);
+        EmitInlineWholeValueStore(
+            ctx, storage, canonical_bits, policy, needs_changed);
       } else {
         EmitLargeWholeValueStore(ctx, storage, val, nullptr, policy);
       }
@@ -1576,7 +1617,8 @@ auto StorePackedValue(
     unk = builder.CreateZExtOrTrunc(plan.unk_value, lane_ty, "wv.unk");
   }
 
-  EmitWholeValueStoreCore(ctx, storage, val, unk, plan.unk_lowering, policy);
+  EmitWholeValueStoreCore(
+      ctx, storage, val, unk, plan.unk_lowering, policy, plan.needs_changed);
   return {};
 }
 
@@ -1622,7 +1664,9 @@ auto StorePackedValueFromCanonicalBytes(
   auto unk_lowering = unk != nullptr
                           ? UnknownPlaneLowering::kFlattenAndStoreWhole
                           : UnknownPlaneLowering::kNone;
-  EmitWholeValueStoreCore(ctx, storage, val, unk, unk_lowering, policy);
+  EmitWholeValueStoreCore(
+      ctx, storage, val, unk, unk_lowering, policy,
+      NeedsChangedDetection(policy.notification_deferred));
   return {};
 }
 
