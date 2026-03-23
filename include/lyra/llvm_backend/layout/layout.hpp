@@ -21,6 +21,7 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/runtime/body_realization_desc.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -243,6 +244,16 @@ struct ScheduledProcess {
 };
 
 // Full backend layout product.
+// Owning process metadata template.
+// Canonical form on the backend/layout side. Contains descriptor-ready
+// entries and an owned string pool. Emitted directly as LLVM globals
+// without any second lowering step.
+struct OwnedProcessMetaTemplate {
+  std::vector<runtime::ProcessMetaTemplateEntry> entries;
+  // NUL-terminated file path strings, '\0' at [0] as empty sentinel.
+  std::vector<char> pool;
+};
+
 // Includes DesignLayout (design-wide state) plus process layout and
 // body-owned specialization addressing.
 // Downstream consumer of BuildDesignLayout; constructed by BuildLayout.
@@ -318,16 +329,13 @@ struct Layout {
 
   std::vector<ProcessStateSchemaDesc> state_schemas;
 
-  // New constructor-side definition artifacts (H2 forward path).
-  // These are the permanent body-shaped descriptors that the runtime
-  // constructor will consume. The flat constructor_records and
-  // ProcessDescriptorData above are temporary old-path coexistence only.
+  // Constructor-side definition artifacts.
+  // Body-shaped descriptors consumed by the runtime constructor.
 
-  // Per-body process/schema mapping for the runtime constructor.
+  // Per-body process/schema mapping and metadata template.
   // One entry per unique body_id, ordered by first-seen body_id during
   // schema dedup (deterministic from BFS-sorted elaboration order).
-  // Cut 3 will consume this vector in order when generating emitted
-  // constructor loops. Do not reorder.
+  // Do not reorder.
   struct BodyRealizationInfo {
     mir::ModuleBodyId body_id;
     uint32_t slot_count = 0;
@@ -336,18 +344,27 @@ struct Layout {
     // present and valid. This ordering matches the body's non-final
     // process list and the compiled function vector for that body.
     std::vector<uint32_t> process_schema_indices;
+    // Process metadata template in descriptor-ready canonical form.
+    // One entry per proc_within_body, parallel to process_schema_indices.
+    // The post-layout metadata template extraction pass is the sole
+    // producer.
+    OwnedProcessMetaTemplate meta;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
 
   // Per-connection schema mapping. Ordered to match connection process
-  // scheduling order. This ordering is the precise body-independent
-  // contract that Cut 2 connection realization descriptor emission
-  // relies on; it matches the first conn_counter entries in
-  // state_schemas (each connection gets a unique schema in order).
+  // scheduling order.
   struct ConnectionRealizationInfo {
     uint32_t schema_index = 0;
   };
   std::vector<ConnectionRealizationInfo> connection_realization_infos;
+
+  // Connection process metadata template. Descriptor-ready canonical form.
+  // One entry per connection process, in the same canonical ordering as
+  // connection_realization_infos and the EmitConstructorFunction connection
+  // loop. The post-layout metadata template extraction pass is the sole
+  // producer.
+  OwnedProcessMetaTemplate connection_meta;
 };
 
 // Type kind for variable inspection (also used in layout)

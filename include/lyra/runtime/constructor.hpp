@@ -1,7 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <span>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "lyra/runtime/body_realization_desc.hpp"
@@ -10,15 +14,41 @@
 
 namespace lyra::runtime {
 
+// Constructor-produced process metadata artifact.
+// Owned by Constructor during realization, moved into ConstructionResult
+// at Finalize.
+struct RealizedProcessMeta {
+  std::vector<uint32_t> words;
+  std::vector<char> pool;
+};
+
+// Non-owning view of a process metadata template.
+// Transport shape for the constructor API only. References emitted LLVM
+// globals via the C ABI boundary. The owning form
+// (Layout::OwnedProcessMetaTemplate) is the source of truth.
+struct ProcessMetaTemplateView {
+  std::span<const ProcessMetaTemplateEntry> entries;
+  const char* pool = nullptr;
+  uint32_t pool_size = 0;
+};
+
+// Complete body descriptor for one BeginBody call.
+// Packages process entries and metadata template into one coherent unit.
+// This is a constructor-facing transport view assembled from emitted globals
+// at the C ABI boundary. The emitted body descriptor package (the set of
+// LLVM globals for one body) is the first-class compile-time concept;
+// this struct is its runtime-facing projection.
+struct BodyDescriptorPackage {
+  const BodyRealizationDesc* desc = nullptr;
+  std::span<const BodyProcessEntry> entries;
+  ProcessMetaTemplateView meta;
+};
+
 // Result of constructor-time process realization.
 //
 // This is one ownership unit containing all constructor-produced artifacts.
 // main() receives this result, passes the process set to LyraRunSimulation,
 // and destroys the result after simulation completes.
-//
-// H3-H5 may extend this with additional constructor-produced data
-// (metadata tables, trigger tables, etc.). The single-owner model supports
-// this: the result grows, but ownership remains one object.
 struct ConstructionResult {
   // Heap-allocated pointer array: one entry per simulation process.
   // Ordered: connections [0, num_connection), modules [num_connection,
@@ -27,7 +57,6 @@ struct ConstructionResult {
 
   // Packed process state buffer backing all frame allocations.
   // Owned by this result. Freed in destructor.
-  // nullptr is valid (empty construction or moved-from state).
   void* packed_buffer = nullptr;
 
   // Total simulation processes (connection + module).
@@ -35,6 +64,9 @@ struct ConstructionResult {
 
   // Partition boundary: processes [0, num_connection) are connection processes.
   uint32_t num_connection = 0;
+
+  // Constructor-produced process metadata.
+  RealizedProcessMeta process_meta;
 
   ConstructionResult() = default;
   ~ConstructionResult();
@@ -48,28 +80,29 @@ struct ConstructionResult {
 // Runtime-owned construction object for process realization.
 //
 // Owns all constructor-time mutable state: running instance identity,
-// slot-base progression, frame allocation, and frame header binding.
+// slot-base progression, frame allocation, frame header binding, and
+// process metadata realization.
+//
 // Both connection and module processes are realized through this same
 // object, producing one unified construction result.
 //
 // The emitted constructor program drives this object in instance-major
 // order (one AddInstance per module instance, in ModuleIndex order).
-// BeginBody sets the active body for subsequent AddInstance calls.
-// Body switching is expected: the same body may be set multiple times
-// as the program interleaves instances of different bodies. This is
-// the H2 compatibility shape that preserves the old instance-major
-// process ordering required by H3-H5 metadata tables.
+// BeginBody sets the active body descriptor for subsequent AddInstance
+// calls. Body switching is expected: the same body may be set multiple
+// times as the program interleaves instances of different bodies.
 //
 // Usage (instance-major):
 //   Constructor ctor(schemas, slot_byte_offsets, num_package_slots,
-//   design_state); ctor.AddConnection(conn_desc);
-//   // Instance-major: switch bodies as needed
-//   ctor.BeginBody(body_a_desc, body_a_entries);
-//   ctor.AddInstance();   // instance 0 (body A)
-//   ctor.BeginBody(body_b_desc, body_b_entries);
-//   ctor.AddInstance();   // instance 1 (body B)
-//   ctor.BeginBody(body_a_desc, body_a_entries);
-//   ctor.AddInstance();   // instance 2 (body A again)
+//                    design_state, conn_meta);
+//   ctor.AddConnection(conn_desc_0);
+//   ctor.AddConnection(conn_desc_1);
+//   ctor.BeginBody(body_a_package);
+//   ctor.AddInstance("top.u0");
+//   ctor.BeginBody(body_b_package);
+//   ctor.AddInstance("top.u1");
+//   ctor.BeginBody(body_a_package);
+//   ctor.AddInstance("top.u2");
 //   auto result = ctor.Finalize();
 //
 // After Finalize(), the constructor rejects further mutation.
@@ -78,22 +111,23 @@ class Constructor {
   Constructor(
       std::span<const ProcessStateSchema> schemas,
       std::span<const uint64_t> slot_byte_offsets, uint32_t num_package_slots,
-      std::span<std::byte> design_state);
+      std::span<std::byte> design_state, ProcessMetaTemplateView conn_meta);
 
   // Add a connection process. Must be called before any BeginBody/AddInstance.
+  // Fails immediately if connection template is exhausted.
   void AddConnection(const ConnectionRealizationDesc& desc);
 
-  // Set the active body for subsequent AddInstance calls. May be called
-  // multiple times with the same or different bodies as the emitted
-  // constructor program walks instances in instance-major order.
-  void BeginBody(
-      const BodyRealizationDesc& desc,
-      std::span<const BodyProcessEntry> entries);
+  // Set the active body descriptor for subsequent AddInstance calls.
+  // May be called multiple times with the same or different bodies.
+  // Validates package coherence: entries.size() must equal
+  // meta.entries.size().
+  void BeginBody(const BodyDescriptorPackage& package);
 
-  // Add one instance of the current body. The constructor derives
-  // instance_id, signal_id_offset, and base_byte_offset from running
-  // counters -- no per-instance data is needed from the caller.
-  void AddInstance();
+  // Add one instance of the current body. instance_path is the
+  // hierarchical path for this instance (constructor-owned architecture:
+  // the constructor is the canonical consumer of per-instance paths).
+  // Fails immediately if no active body.
+  void AddInstance(const char* instance_path);
 
   // Finalize construction and return the unified result.
   // After this call, further mutation is rejected.
@@ -103,17 +137,22 @@ class Constructor {
   void CheckNotFinalized(const char* caller) const;
 
   // Constructor-private runtime staging for a single process.
-  // This is transient internal state, not an artifact model.
-  // Binding values are fully resolved at staging time so Finalize
-  // only copies them to frame headers without casts or arithmetic.
   struct StagedProcess {
     uint32_t schema_index;
-    // Module-process binding (null/zero for connections).
     SharedBodyFn body;
     void* this_ptr;
     uint32_t instance_id;
     uint32_t signal_id_offset;
     bool is_module;
+  };
+
+  // Currently active body descriptor view.
+  // All fields set atomically by BeginBody, consumed by AddInstance.
+  struct ActiveBodyDescriptor {
+    uint32_t slot_count = 0;
+    std::span<const BodyProcessEntry> entries;
+    ProcessMetaTemplateView meta;
+    bool active = false;
   };
 
   std::span<const ProcessStateSchema> schemas_;
@@ -123,15 +162,36 @@ class Constructor {
   uint32_t next_instance_id_ = 0;
   uint32_t next_slot_base_ = 0;
 
-  // Current body state, copied by value from BeginBody arguments.
-  bool has_body_ = false;
-  uint32_t current_slot_count_ = 0;
-  std::span<const BodyProcessEntry> current_entries_;
+  // Connection metadata template (immutable after construction).
+  ProcessMetaTemplateView conn_meta_;
+  uint32_t conn_meta_index_ = 0;
+
+  // Active body descriptor (set atomically by BeginBody).
+  ActiveBodyDescriptor body_;
 
   std::vector<StagedProcess> staged_;
   uint32_t num_connection_ = 0;
   bool connections_finalized_ = false;
   bool finalized_ = false;
+
+  // Realized metadata output.
+  RealizedProcessMeta realized_meta_;
+
+  // Stable string storage for intern map keys.
+  // std::deque never invalidates existing entries on push_back,
+  // so string_view keys into this container remain valid for the
+  // lifetime of the constructor.
+  std::deque<std::string> interned_strings_;
+  std::unordered_map<std::string_view, uint32_t> string_intern_;
+
+  // Intern a file string from a validated template view into the
+  // realized pool. All call sites pass views validated at boundary
+  // setup (BeginBody or constructor creation). Returns 0 for empty.
+  auto InternString(std::span<const char> pool, uint32_t pool_off) -> uint32_t;
+
+  // Append a string to the realized pool (NUL-terminated).
+  // Returns the pool offset. No dedup.
+  auto AppendString(std::string_view s) -> uint32_t;
 };
 
 }  // namespace lyra::runtime
@@ -139,38 +199,40 @@ class Constructor {
 // C ABI surface for the emitted constructor function.
 // These are called from LLVM IR generated by EmitDesignMain.
 //
-// The constructor produces a single runtime-owned ConstructionResult.
-// Emitted code receives an opaque handle and extracts states/counts
-// via accessor functions. The result owns both the states pointer
-// array and the packed frame buffer as one ownership unit.
+// The C ABI decomposes C++ types into raw pointers for the LLVM IR
+// boundary. The C++ Constructor API (above) is the real shape.
 extern "C" {
 
 auto LyraConstructorCreate(
     const lyra::runtime::ProcessStateSchema* schemas, uint32_t num_schemas,
     const uint64_t* slot_byte_offsets, uint32_t num_slots,
-    uint32_t num_package_slots, void* design_state, uint64_t design_state_size)
-    -> void*;
+    uint32_t num_package_slots, void* design_state, uint64_t design_state_size,
+    const lyra::runtime::ProcessMetaTemplateEntry* conn_meta_entries,
+    uint32_t num_conn_meta, const char* conn_meta_pool,
+    uint32_t conn_meta_pool_size) -> void*;
 
 void LyraConstructorAddConnection(
     void* ctor, const lyra::runtime::ConnectionRealizationDesc* desc);
 
 void LyraConstructorBeginBody(
     void* ctor, const lyra::runtime::BodyRealizationDesc* desc,
-    const lyra::runtime::BodyProcessEntry* entries, uint32_t num_entries);
+    const lyra::runtime::BodyProcessEntry* entries, uint32_t num_entries,
+    const lyra::runtime::ProcessMetaTemplateEntry* meta_entries,
+    uint32_t num_meta, const char* meta_pool, uint32_t meta_pool_size);
 
-void LyraConstructorAddInstance(void* ctor);
+void LyraConstructorAddInstance(void* ctor, const char* instance_path);
 
-// Finalize construction and return an opaque ConstructionResult handle.
-// The result owns all constructor-produced artifacts as one ownership unit.
-// Caller must eventually call LyraConstructionResultDestroy.
 auto LyraConstructorFinalize(void* ctor) -> void*;
 
-// Accessors for the opaque ConstructionResult handle.
 auto LyraConstructionResultGetStates(void* result) -> void**;
 auto LyraConstructionResultGetNumTotal(void* result) -> uint32_t;
 auto LyraConstructionResultGetNumConnection(void* result) -> uint32_t;
 
-// Destroy the construction result and all owned allocations.
+auto LyraConstructionResultGetProcessMetaWords(void* result) -> const uint32_t*;
+auto LyraConstructionResultGetProcessMetaWordCount(void* result) -> uint32_t;
+auto LyraConstructionResultGetProcessMetaPool(void* result) -> const char*;
+auto LyraConstructionResultGetProcessMetaPoolSize(void* result) -> uint32_t;
+
 void LyraConstructionResultDestroy(void* result);
 
 }  // extern "C"

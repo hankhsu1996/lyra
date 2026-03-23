@@ -32,7 +32,9 @@ cc_library(
     hdrs = glob(["include/lyra/metadata/**/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
-    deps = [":common"],
+    deps = [
+        ":common",
+    ],
 )
 
 cc_library(

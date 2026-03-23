@@ -1795,6 +1795,7 @@ auto BuildLayout(
                   .body_id = plan.body_id,
                   .slot_count = plan.slot_count,
                   .process_schema_indices = {},
+                  .meta = {},
               });
         } else {
           // Validate all plans for the same body agree on slot_count.

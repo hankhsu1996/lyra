@@ -24,12 +24,11 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
+#include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
-#include "lyra/runtime/process_meta.hpp"
-#include "lyra/runtime/process_meta_abi.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
@@ -67,50 +66,6 @@ auto ClassifySlotStorageKind(const SlotStorageSpec& spec)
           },
       },
       spec.data);
-}
-
-auto MapProcessKind(mir::ProcessKind kind) -> runtime::ProcessKind {
-  switch (kind) {
-    case mir::ProcessKind::kOnce:
-      return runtime::ProcessKind::kInitial;
-    case mir::ProcessKind::kFinal:
-      return runtime::ProcessKind::kFinal;
-    case mir::ProcessKind::kLooping:
-      return runtime::ProcessKind::kAlways;
-  }
-  return runtime::ProcessKind::kAlways;
-}
-
-struct ResolvedLoc {
-  std::string file;
-  uint32_t line = 0;
-  uint32_t col = 0;
-};
-
-auto ResolveProcessOrigin(
-    common::OriginId origin, const lowering::DiagnosticContext* diag_ctx,
-    const SourceManager* source_manager) -> ResolvedLoc {
-  if (diag_ctx == nullptr || source_manager == nullptr || !origin.IsValid()) {
-    return {};
-  }
-
-  auto span = diag_ctx->ResolveToSpan(origin);
-  if (!span || !span->file_id) {
-    return {};
-  }
-
-  const FileInfo* file = source_manager->GetFile(span->file_id);
-  if (file == nullptr) {
-    return {};
-  }
-
-  auto [line, col] =
-      source_manager->OffsetToLineCol(span->file_id, span->begin);
-  if (line == 0) {
-    return {};
-  }
-
-  return {.file = file->path, .line = line, .col = col};
 }
 
 auto EmitWordArrayGlobal(
@@ -337,76 +292,6 @@ auto ExtractSlotMetaInputs(
   return entries;
 }
 
-auto PrepareScheduledProcessInputs(
-    const std::vector<std::string>& instance_paths, const mir::Design& design,
-    const mir::Arena& design_arena, const lowering::DiagnosticContext* diag_ctx,
-    const SourceManager* source_manager,
-    const std::vector<ScheduledProcess>& scheduled_processes, size_t num_init)
-    -> std::vector<metadata::ScheduledProcessInput> {
-  if (scheduled_processes.size() < num_init) {
-    throw common::InternalError(
-        "PrepareScheduledProcessInputs",
-        "scheduled_processes.size() < num_init");
-  }
-
-  // Build module_index -> body_id mapping from design elements.
-  // module_index corresponds to the i-th Module element (skipping Packages).
-  std::vector<mir::ModuleBodyId> module_body_ids;
-  for (const auto& elem : design.elements) {
-    if (const auto* mod = std::get_if<mir::Module>(&elem)) {
-      module_body_ids.push_back(mod->body_id);
-    }
-  }
-
-  std::vector<metadata::ScheduledProcessInput> entries;
-  auto num_module = scheduled_processes.size() - num_init;
-  entries.reserve(num_module);
-
-  for (size_t i = num_init; i < scheduled_processes.size(); ++i) {
-    const auto& bp = scheduled_processes[i];
-    // Resolve from the correct arena: body arena for module-bound,
-    // design arena for standalone.
-    const mir::Arena& proc_arena =
-        (bp.module_index && bp.module_index.value < module_body_ids.size())
-            ? design.module_bodies
-                  .at(module_body_ids[bp.module_index.value].value)
-                  .arena
-            : design_arena;
-    const auto& proc = proc_arena[bp.process_id];
-
-    std::string inst_path;
-    if (bp.module_index) {
-      if (bp.module_index.value >= instance_paths.size()) {
-        throw common::InternalError(
-            "PrepareScheduledProcessInputs",
-            std::format(
-                "module_index {} out of range (instance_paths size {})",
-                bp.module_index.value, instance_paths.size()));
-      }
-      inst_path = instance_paths[bp.module_index.value];
-    }
-
-    auto kind = MapProcessKind(proc.kind);
-    auto loc = ResolveProcessOrigin(proc.origin, diag_ctx, source_manager);
-
-    auto scheduled_index = static_cast<uint32_t>(i - num_init);
-
-    entries.push_back({
-        .scheduled_process_index = scheduled_index,
-        .module_index = bp.module_index
-                            ? bp.module_index.value
-                            : static_cast<uint32_t>(ModuleIndex::kNone),
-        .kind_packed = static_cast<uint32_t>(kind),
-        .instance_path = std::move(inst_path),
-        .file = std::move(loc.file),
-        .line = loc.line,
-        .col = loc.col,
-    });
-  }
-
-  return entries;
-}
-
 auto PrepareBackEdgeSiteInputs(
     const Context& context, const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager)
@@ -606,13 +491,6 @@ auto EmitDesignMetadataGlobals(
         "EmitDesignMetadataGlobals",
         "slot_meta_words size not divisible by kStride");
   }
-  if (!metadata.process_meta.words.empty() &&
-      metadata.process_meta.words.size() % runtime::process_meta_abi::kStride !=
-          0) {
-    throw common::InternalError(
-        "EmitDesignMetadataGlobals",
-        "process_meta words size not divisible by kStride");
-  }
   if (!metadata.back_edge_site_meta.words.empty() &&
       metadata.back_edge_site_meta.words.size() %
               runtime::back_edge_site_abi::kStride !=
@@ -627,16 +505,6 @@ auto EmitDesignMetadataGlobals(
       mod, ctx, metadata.slot_meta_words, "__lyra_slot_meta_table");
   result.slot_meta_count = static_cast<uint32_t>(
       metadata.slot_meta_words.size() / runtime::slot_meta_abi::kStride);
-
-  // Process meta
-  result.process_meta_words = EmitWordArrayGlobal(
-      mod, ctx, metadata.process_meta.words, "__lyra_process_meta_table");
-  result.process_meta_count = static_cast<uint32_t>(
-      metadata.process_meta.words.size() / runtime::process_meta_abi::kStride);
-  result.process_meta_pool = EmitPoolGlobal(
-      mod, ctx, metadata.process_meta.pool, "__lyra_process_meta_pool");
-  result.process_meta_pool_size =
-      static_cast<uint32_t>(metadata.process_meta.pool.size());
 
   // Back-edge site meta
   result.back_edge_site_meta_words = EmitWordArrayGlobal(

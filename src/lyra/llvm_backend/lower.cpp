@@ -32,6 +32,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
+#include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
@@ -856,6 +857,113 @@ auto CompileDesignProcesses(const LoweringInput& input)
             "instance_body_group size {} != instance count {}",
             instance_body_group.size(),
             layout->instance_base_byte_offsets.size()));
+  }
+
+  // Post-layout metadata template extraction pass.
+  // Sole producer of BodyRealizationInfo.meta and Layout::connection_meta.
+  // Populates descriptor-ready canonical metadata templates from MIR.
+  {
+    // Build module_index -> body_id mapping (same as in lower loop above).
+    std::vector<mir::ModuleBodyId> module_body_ids;
+    for (const auto& elem : input.design->elements) {
+      if (const auto* mod = std::get_if<mir::Module>(&elem)) {
+        module_body_ids.push_back(mod->body_id);
+      }
+    }
+
+    // Body metadata templates.
+    for (auto& info : layout->body_realization_infos) {
+      const auto& body = input.design->module_bodies.at(info.body_id.value);
+      info.meta.pool.push_back('\0');
+
+      auto add_pool_string = [&](const std::string& s) -> uint32_t {
+        if (s.empty()) return 0;
+        auto off = static_cast<uint32_t>(info.meta.pool.size());
+        info.meta.pool.insert(info.meta.pool.end(), s.begin(), s.end());
+        info.meta.pool.push_back('\0');
+        return off;
+      };
+
+      uint32_t num_entries =
+          static_cast<uint32_t>(info.process_schema_indices.size());
+      info.meta.entries.resize(num_entries);
+
+      for (uint32_t pwb = 0; pwb < num_entries; ++pwb) {
+        if (pwb >= body.processes.size()) {
+          throw common::InternalError(
+              "CompileDesignProcesses",
+              std::format(
+                  "body {} proc_within_body {} >= body process count {}",
+                  info.body_id.value, pwb, body.processes.size()));
+        }
+        const auto& proc = body.arena[body.processes[pwb]];
+        if (proc.kind == mir::ProcessKind::kFinal) {
+          throw common::InternalError(
+              "CompileDesignProcesses",
+              std::format(
+                  "body {} proc_within_body {} is kFinal "
+                  "(metadata template only covers non-final processes)",
+                  info.body_id.value, pwb));
+        }
+        auto kind = MapProcessKind(proc.kind);
+        auto loc = ResolveProcessOrigin(
+            proc.origin, input.diag_ctx, input.source_manager);
+
+        uint32_t file_off = add_pool_string(loc.file);
+        info.meta.entries[pwb] = runtime::ProcessMetaTemplateEntry{
+            .kind_packed = static_cast<uint32_t>(kind),
+            .file_pool_off = file_off,
+            .line = loc.line,
+            .col = loc.col,
+        };
+      }
+    }
+
+    // Connection metadata template.
+    layout->connection_meta.pool.push_back('\0');
+    auto add_conn_pool_string = [&](const std::string& s) -> uint32_t {
+      if (s.empty()) return 0;
+      auto off = static_cast<uint32_t>(layout->connection_meta.pool.size());
+      layout->connection_meta.pool.insert(
+          layout->connection_meta.pool.end(), s.begin(), s.end());
+      layout->connection_meta.pool.push_back('\0');
+      return off;
+    };
+
+    for (size_t ci = layout->num_init_processes;
+         ci < layout->num_module_process_base; ++ci) {
+      const auto& sp = layout->scheduled_processes[ci];
+      const mir::Arena& proc_arena =
+          (sp.module_index && sp.module_index.value < module_body_ids.size())
+              ? input.design->module_bodies
+                    .at(module_body_ids[sp.module_index.value].value)
+                    .arena
+              : *input.mir_arena;
+      const auto& proc = proc_arena[sp.process_id];
+      auto kind = MapProcessKind(proc.kind);
+      auto loc = ResolveProcessOrigin(
+          proc.origin, input.diag_ctx, input.source_manager);
+
+      uint32_t file_off = add_conn_pool_string(loc.file);
+      layout->connection_meta.entries.push_back(
+          runtime::ProcessMetaTemplateEntry{
+              .kind_packed = static_cast<uint32_t>(kind),
+              .file_pool_off = file_off,
+              .line = loc.line,
+              .col = loc.col,
+          });
+    }
+
+    if (layout->connection_meta.entries.size() !=
+        layout->connection_realization_infos.size()) {
+      throw common::InternalError(
+          "CompileDesignProcesses",
+          std::format(
+              "connection_meta entries {} != "
+              "connection_realization_infos {}",
+              layout->connection_meta.entries.size(),
+              layout->connection_realization_infos.size()));
+    }
   }
 
   return CodegenSession{
