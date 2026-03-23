@@ -35,7 +35,7 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 - [x] PSV4: Packed storage view whole-value materialization boundary
 - [x] CQ1: Packed storage view bulk init lowering quality
 - [x] CQ2: Packed storage view 2-state unknown-plane elision
-- [ ] CQ3: Packed storage view deferred-notification dead code elision
+- [x] CQ3: Packed storage view deferred-notification dead code elision
 - [x] Commit-boundary model: visibility/commit boundary definition
 - [x] Commit-boundary model: multi-segment activation-local support
 - [ ] CB1: Facts-to-contract model for activation-local statements
@@ -66,12 +66,6 @@ Per-region analysis of which managed slots have been modified since the last syn
 ### CB3: Commit-boundary model delayed-commit register promotion
 
 Keep eligible slot-backed scalars in registers across a region, commit back to slot storage only at required boundaries. This is the downstream optimization that uses the commit-boundary definition and region-local analysis. It is not the first thing to build.
-
-### CQ3: Packed storage view deferred-notification dead code elision
-
-Per-element packed array writes compute a change-detection predicate (load old value, compare with new value) even when dirty notification is deferred to a loop-exit edge. The predicate is never used -- the deferred notification path returns early without consuming it. LLVM's dead code elimination removes the compare instructions from native code, so there is no runtime cost, but the unnecessary IR instructions increase IR size and optimization time.
-
-The fix is to skip change-detection computation when the notification policy is deferred. The notification deferral flag is available at the store call site but is not checked before emitting the compare sequence. Look at the byte-addressable store function and the notification dispatch in the packed storage view module.
 
 ### G14: NBA arena
 
