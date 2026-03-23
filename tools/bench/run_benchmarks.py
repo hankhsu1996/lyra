@@ -857,7 +857,7 @@ def main() -> None:
         help="Benchmark tier (default: nightly)")
     parser.add_argument(
         "--ci", action="store_true",
-        help="CI mode: always exit 0, print FAIL rows")
+        help="CI mode: print results to GitHub step summary")
     args = parser.parse_args()
 
     lyra = str(REPO_ROOT / "bazel-bin" / "lyra")
@@ -930,7 +930,7 @@ def main() -> None:
         write_json(all_results, args.json, tier_name, profile)
         print(f"JSON written to {args.json}", file=sys.stderr)
 
-    if has_failure and not args.ci:
+    if has_failure:
         sys.exit(1)
 
 

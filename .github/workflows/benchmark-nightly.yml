@@ -57,7 +57,6 @@ jobs:
           bazel build -c opt //:lyra $RBE_FLAGS
 
       - name: Run benchmarks
-        continue-on-error: true
         run: python3 tools/bench/run_benchmarks.py --tier=nightly --ci --json bench.json | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark results

@@ -83,5 +83,4 @@ jobs:
           bazel build -c opt //:lyra $RBE_FLAGS
 
       - name: Run benchmarks
-        continue-on-error: true
         run: python3 tools/bench/run_benchmarks.py --tier=pr --ci | tee -a "$GITHUB_STEP_SUMMARY"
