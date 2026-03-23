@@ -30,7 +30,12 @@
 // v12: Removed process_descriptors and num_process_descriptors. Process
 //      binding is now constructor-owned via RuntimeConstructor. Only
 //      num_connection_processes remains for dispatch partition.
-inline constexpr uint32_t kRuntimeAbiVersion = 12;
+// v13: Process metadata production moved to constructor-time realization.
+//      process_meta_words/pool ABI fields now populated from
+//      ConstructionResult instead of compile-time LLVM globals.
+//      Constructor API extended: BeginBody takes metadata template,
+//      AddInstance takes instance_path.
+inline constexpr uint32_t kRuntimeAbiVersion = 13;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -71,8 +76,8 @@ struct LyraRuntimeAbi {
   uint32_t num_process_trigger_words;
 
   // Dispatch partition boundary: processes [0, num_connection) are connection
-  // processes. Constructor-produced; this is the only remaining process
-  // topology fact in the ABI after H2.
+  // processes. Currently from compile-time layout; will migrate to
+  // constructor result when remaining dispatch ownership moves.
   uint32_t num_connection_processes;
 
   // Source of truth for design-state binding. Runtime uses this to populate

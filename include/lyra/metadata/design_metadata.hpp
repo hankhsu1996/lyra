@@ -51,20 +51,6 @@ struct ConnectionDescriptorEntry {
   ConnectionKernelOrigin origin = ConnectionKernelOrigin::kPortBinding;
 };
 
-// Input facts for a scheduled module process.
-// scheduled_process_index is the canonical 0-based index into the process meta
-// table, assigned at extraction time. All cross-table references use this
-// index.
-struct ScheduledProcessInput {
-  uint32_t scheduled_process_index = 0;
-  uint32_t module_index = 0;
-  uint32_t kind_packed = 0;
-  std::string instance_path;
-  std::string file;
-  uint32_t line = 0;
-  uint32_t col = 0;
-};
-
 // Runtime-facing trigger observation for a comb kernel input slot.
 // byte_size == 0 means full-slot (no sub-slot narrowing).
 struct CombTriggerInput {
@@ -115,7 +101,6 @@ struct ProcessTriggerInput {
 // All vectors preserve their input order; link serializes in that order.
 struct DesignMetadataInputs {
   std::vector<SlotMetaInput> slot_meta;
-  std::vector<ScheduledProcessInput> scheduled_processes;
   std::vector<BackEdgeSiteInput> back_edge_sites;
   std::vector<ConnectionDescriptorEntry> connection_descriptors;
   std::vector<CombKernelInput> comb_kernels;
@@ -128,7 +113,6 @@ struct DesignMetadataInputs {
 // All tables are runtime-shaped; no further packing needed by the emitter.
 struct DesignMetadata {
   std::vector<uint32_t> slot_meta_words;
-  MetaWordTable process_meta;
   MetaWordTable back_edge_site_meta;
   std::vector<ConnectionDescriptorEntry> connection_descriptors;
   std::vector<uint32_t> comb_kernel_words;

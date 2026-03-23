@@ -6,7 +6,6 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
-#include "lyra/runtime/process_meta_abi.hpp"
 #include "lyra/runtime/process_trigger_abi.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/trace_signal_meta_abi.hpp"
@@ -35,41 +34,6 @@ auto BuildSlotMetaWords(const std::vector<metadata::SlotMetaInput>& slots)
   }
 
   return words;
-}
-
-auto BuildProcessMeta(
-    const std::vector<metadata::ScheduledProcessInput>& processes)
-    -> metadata::MetaWordTable {
-  if (processes.empty()) {
-    return {};
-  }
-
-  std::vector<char> pool;
-  pool.push_back('\0');
-
-  auto add_string = [&](const std::string& s) -> uint32_t {
-    if (s.empty()) return 0;
-    auto off = static_cast<uint32_t>(pool.size());
-    pool.insert(pool.end(), s.begin(), s.end());
-    pool.push_back('\0');
-    return off;
-  };
-
-  std::vector<uint32_t> words;
-  words.reserve(processes.size() * runtime::process_meta_abi::kStride);
-
-  for (const auto& proc : processes) {
-    uint32_t inst_off = add_string(proc.instance_path);
-    uint32_t file_off = add_string(proc.file);
-
-    words.push_back(inst_off);
-    words.push_back(proc.kind_packed);
-    words.push_back(file_off);
-    words.push_back(proc.line);
-    words.push_back(proc.col);
-  }
-
-  return {.words = std::move(words), .pool = std::move(pool)};
 }
 
 auto BuildBackEdgeSiteMeta(
@@ -161,14 +125,6 @@ auto BuildTraceSignalMeta(
 
 auto BuildDesignMetadata(const metadata::DesignMetadataInputs& input)
     -> metadata::DesignMetadata {
-  // Verify scheduled_process_index values are dense and monotonic.
-  for (uint32_t i = 0; i < input.scheduled_processes.size(); ++i) {
-    if (input.scheduled_processes[i].scheduled_process_index != i) {
-      throw common::InternalError(
-          "BuildDesignMetadata", "scheduled_process_index not dense/monotonic");
-    }
-  }
-
   // Verify back_edge_site_index values are dense and monotonic.
   for (uint32_t i = 0; i < input.back_edge_sites.size(); ++i) {
     if (input.back_edge_sites[i].back_edge_site_index != i) {
@@ -183,15 +139,6 @@ auto BuildDesignMetadata(const metadata::DesignMetadataInputs& input)
       slot_meta_words.size() % runtime::slot_meta_abi::kStride != 0) {
     throw common::InternalError(
         "BuildDesignMetadata", "slot_meta_words size not divisible by kStride");
-  }
-
-  auto process_meta = BuildProcessMeta(input.scheduled_processes);
-
-  if (!process_meta.words.empty() &&
-      process_meta.words.size() % runtime::process_meta_abi::kStride != 0) {
-    throw common::InternalError(
-        "BuildDesignMetadata",
-        "process_meta words size not divisible by kStride");
   }
 
   auto back_edge_site_meta = BuildBackEdgeSiteMeta(input.back_edge_sites);
@@ -247,7 +194,6 @@ auto BuildDesignMetadata(const metadata::DesignMetadataInputs& input)
 
   return metadata::DesignMetadata{
       .slot_meta_words = std::move(slot_meta_words),
-      .process_meta = std::move(process_meta),
       .back_edge_site_meta = std::move(back_edge_site_meta),
       .connection_descriptors = input.connection_descriptors,
       .comb_kernel_words = BuildCombKernelWords(input.comb_kernels),

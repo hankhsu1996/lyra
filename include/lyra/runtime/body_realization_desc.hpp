@@ -28,9 +28,9 @@ static_assert(std::is_standard_layout_v<BodyProcessEntry>);
 // runtime constructor uses to realize instances of this body.
 //
 // This is the permanent seed object for constructor-time realization.
-// H2 populates the process/schema subset. H3-H5 will extend this
-// descriptor with additional constructor-side inputs (process metadata
-// templates, trigger/comb templates, slot/trace/path templates).
+// Currently populated: process/schema subset and process metadata
+// templates (ProcessMetaTemplateEntry). Future extensions: trigger/comb
+// templates and slot/trace/path templates.
 //
 // Separation principle: this descriptor holds body-local
 // definition/repertoire only. Instance count, instance ordering, and
@@ -70,5 +70,33 @@ static_assert(offsetof(ConnectionRealizationDesc, fn_ptr) == 0);
 static_assert(offsetof(ConnectionRealizationDesc, schema_index) == 8);
 static_assert(std::is_trivially_copyable_v<ConnectionRealizationDesc>);
 static_assert(std::is_standard_layout_v<ConnectionRealizationDesc>);
+
+// Per-process metadata template entry.
+//
+// Unified type for both body-local and connection process metadata.
+// One entry per body-local process (indexed by proc_within_body) or per
+// connection process. Each entry carries the body-shaped metadata fields
+// that are identical across all instances of the same body.
+//
+// The constructor combines template entries with per-instance paths to
+// produce the final realized process metadata table.
+struct ProcessMetaTemplateEntry {
+  // runtime::ProcessKind packed into low 8 bits.
+  uint32_t kind_packed = 0;
+  // Offset into this template's string pool for the source file path.
+  uint32_t file_pool_off = 0;
+  // 1-based source line number (0 = unknown).
+  uint32_t line = 0;
+  // 1-based source column number (0 = unknown).
+  uint32_t col = 0;
+};
+
+static_assert(sizeof(ProcessMetaTemplateEntry) == 16);
+static_assert(offsetof(ProcessMetaTemplateEntry, kind_packed) == 0);
+static_assert(offsetof(ProcessMetaTemplateEntry, file_pool_off) == 4);
+static_assert(offsetof(ProcessMetaTemplateEntry, line) == 8);
+static_assert(offsetof(ProcessMetaTemplateEntry, col) == 12);
+static_assert(std::is_trivially_copyable_v<ProcessMetaTemplateEntry>);
+static_assert(std::is_standard_layout_v<ProcessMetaTemplateEntry>);
 
 }  // namespace lyra::runtime

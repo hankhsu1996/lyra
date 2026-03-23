@@ -32,16 +32,6 @@ auto ExtractSlotMetaInputs(
     const std::vector<SlotInfo>& slots, const DesignLayout& design_layout)
     -> std::vector<metadata::SlotMetaInput>;
 
-// Extract scheduled process inputs into plain link structs.
-// Resolves each process from its owning arena: design arena for
-// standalone processes, body arena for module-bound processes.
-auto PrepareScheduledProcessInputs(
-    const std::vector<std::string>& instance_paths, const mir::Design& design,
-    const mir::Arena& design_arena, const lowering::DiagnosticContext* diag_ctx,
-    const SourceManager* source_manager,
-    const std::vector<struct ScheduledProcess>& scheduled_processes,
-    size_t num_init) -> std::vector<metadata::ScheduledProcessInput>;
-
 // Extract back-edge site inputs from accumulated codegen origins.
 auto PrepareBackEdgeSiteInputs(
     const Context& context, const lowering::DiagnosticContext* diag_ctx,
@@ -131,10 +121,6 @@ void LogPortBindingForwardingCandidates(
 struct MetadataGlobals {
   llvm::Constant* slot_meta_words = nullptr;
   uint32_t slot_meta_count = 0;
-  llvm::Constant* process_meta_words = nullptr;
-  uint32_t process_meta_count = 0;
-  llvm::Constant* process_meta_pool = nullptr;
-  uint32_t process_meta_pool_size = 0;
   llvm::Constant* back_edge_site_meta_words = nullptr;
   uint32_t back_edge_site_meta_count = 0;
   llvm::Constant* back_edge_site_meta_pool = nullptr;
