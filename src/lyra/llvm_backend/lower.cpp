@@ -1,5 +1,6 @@
 #include "lyra/llvm_backend/lower.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -328,19 +329,34 @@ auto BuildSpecSlotInfos(
   return result;
 }
 
-// Canonicalize module-local signal refs in a ProcessTriggerEntry to
-// design-global slot IDs using the instance's base slot offset.
-// Does not validate the resulting slot IDs against slot_count; that
-// validation happens later in BuildProcessTriggerInputs.
-void CanonicalizeProcessTriggerSignals(
-    ProcessTriggerEntry& entry, uint32_t signal_id_offset) {
-  for (auto& fact : entry.triggers) {
-    if (fact.signal.scope == mir::SignalRef::Scope::kModuleLocal) {
-      fact.signal = {
-          .scope = mir::SignalRef::Scope::kDesignGlobal,
-          .id = signal_id_offset + fact.signal.id};
-    }
+// Per-slot observation accumulator for comb template extraction.
+struct CombSlotAccum {
+  uint32_t byte_offset = 0;
+  uint32_t byte_size = 0;
+  bool is_full_slot = false;
+  bool is_design_global = false;
+  // Final design-global slot id for canonical sort ordering.
+  uint32_t final_global_id = 0;
+};
+
+// Comb template entry comparator matching the canonical observable order.
+// Sort by final design-global slot_id (absolute after per-instance
+// relocation). For the body-shaped template, we sort by an equivalent
+// final_global_id (base_slot + body_relative_id for module-local,
+// design-global id directly for kDesignGlobal). This is valid because
+// per-body entry order is invariant under constant base-slot translation.
+// Total order: primary=final_global_id, secondary=scope, tertiary=id.
+auto CompareCombSlotsByFinalObservableOrder(
+    const std::pair<ScopedSignalKey, CombSlotAccum>& a,
+    const std::pair<ScopedSignalKey, CombSlotAccum>& b) -> bool {
+  if (a.second.final_global_id != b.second.final_global_id) {
+    return a.second.final_global_id < b.second.final_global_id;
   }
+  if (a.first.scope != b.first.scope) {
+    return static_cast<uint8_t>(a.first.scope) <
+           static_cast<uint8_t>(b.first.scope);
+  }
+  return a.first.id < b.first.id;
 }
 
 }  // namespace
@@ -638,69 +654,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   // ArenaScope in CompileModuleSpecSession restores design arena automatically.
 
-  // Build explicit sched_index -> shared compiled function routing table.
-  // This maps each scheduled module process to its body-owned compiled
-  // function, using the pre-computed per-instance scheduled-process indices.
-  // sched_idx_to_body_process maps scheduled-process index to
-  // (body_id, body_process_ordinal) for direct indexing into
-  // body-parallel arrays (compiled_funcs, process_triggers).
-  struct BodyProcessRef {
-    uint32_t body_id;
-    uint32_t ordinal;
-  };
-  std::unordered_map<uint32_t, llvm::Function*> sched_idx_to_shared_func;
-  std::unordered_map<uint32_t, BodyProcessRef> sched_idx_to_body_process;
-  for (const auto& unit : units) {
-    auto funcs_it = body_to_compiled_funcs.find(unit.body_id.value);
-    if (funcs_it == body_to_compiled_funcs.end()) {
-      throw common::InternalError(
-          "CompileDesignProcesses",
-          std::format("no compiled functions for body {}", unit.body_id.value));
-    }
-    const auto& compiled_funcs = funcs_it->second;
-
-    for (const auto& inst : unit.instances) {
-      auto sched_it = modidx_to_sched_indices.find(inst.module_index.value);
-      if (sched_it == modidx_to_sched_indices.end()) {
-        if (!compiled_funcs.empty()) {
-          throw common::InternalError(
-              "CompileDesignProcesses",
-              std::format(
-                  "body {} has {} compiled functions but instance {} has "
-                  "no scheduled processes",
-                  unit.body_id.value, compiled_funcs.size(),
-                  inst.module_index.value));
-        }
-        continue;
-      }
-      const auto& sched_indices = sched_it->second;
-      if (sched_indices.size() != compiled_funcs.size()) {
-        throw common::InternalError(
-            "CompileDesignProcesses",
-            std::format(
-                "body {} has {} compiled functions but instance {} has {} "
-                "scheduled processes",
-                unit.body_id.value, compiled_funcs.size(),
-                inst.module_index.value, sched_indices.size()));
-      }
-      for (size_t k = 0; k < sched_indices.size(); ++k) {
-        auto [it, inserted] = sched_idx_to_shared_func.try_emplace(
-            sched_indices[k], compiled_funcs[k]);
-        if (!inserted) {
-          throw common::InternalError(
-              "CompileDesignProcesses",
-              std::format(
-                  "duplicate routing for scheduled process index {}",
-                  sched_indices[k]));
-        }
-        sched_idx_to_body_process.try_emplace(
-            sched_indices[k], BodyProcessRef{
-                                  .body_id = unit.body_id.value,
-                                  .ordinal = static_cast<uint32_t>(k)});
-      }
-    }
-  }
-
   // Phase 5: Descriptor data collection and standalone entrypoints.
   // Module processes get descriptor data instead of per-instance wrappers.
   // Standalone (init/connection) processes keep direct function pointers.
@@ -711,7 +664,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // processes goes through the descriptor table, not this array).
   std::vector<llvm::Function*> process_funcs;
   process_funcs.reserve(layout->scheduled_processes.size());
-  std::vector<ProcessTriggerEntry> all_process_triggers;
+
+  // Connection ordinal counter for Phase 5. Tracks the connection
+  // realization record being populated during the connection codegen loop.
+  uint32_t conn_ordinal = 0;
 
   size_t num_init = layout->num_init_processes;
   for (size_t i = 0; i < layout->scheduled_processes.size(); ++i) {
@@ -745,46 +701,65 @@ auto CompileDesignProcesses(const LoweringInput& input)
           all_wait_sites.end(),
           std::make_move_iterator(func_result->wait_sites.begin()),
           std::make_move_iterator(func_result->wait_sites.end()));
-      if (i >= num_init && func_result->process_trigger) {
-        auto& entry = *func_result->process_trigger;
-        entry.scheduled_process_index = static_cast<uint32_t>(i - num_init);
-        all_process_triggers.push_back(std::move(entry));
+      // Capture connection process trigger facts onto the connection
+      // realization record. Phase 5 iterates connection processes in the
+      // same order as connection_realization_infos (both follow
+      // scheduled_processes[num_init..num_module_process_base)).
+      // Template extraction happens in the post-layout pass below.
+      if (i >= num_init && i < layout->num_module_process_base) {
+        if (conn_ordinal >= layout->connection_realization_infos.size()) {
+          throw common::InternalError(
+              "CompileDesignProcesses",
+              std::format(
+                  "connection ordinal {} >= "
+                  "connection_realization_infos size {}",
+                  conn_ordinal, layout->connection_realization_infos.size()));
+        }
+        auto& conn_info = layout->connection_realization_infos[conn_ordinal];
+        // Verify exact process identity: the scheduled process at this
+        // loop position must match the connection realization record.
+        if (bp.process_id != conn_info.process_id) {
+          throw common::InternalError(
+              "CompileDesignProcesses",
+              std::format(
+                  "connection ordinal {} process_id mismatch: "
+                  "scheduled {} != realization {}",
+                  conn_ordinal, bp.process_id.value,
+                  conn_info.process_id.value));
+        }
+        if (func_result->process_trigger) {
+          const auto& pt = *func_result->process_trigger;
+          Layout::ConnectionTriggerResult result;
+          result.shape = pt.shape;
+          result.triggers.reserve(pt.triggers.size());
+          for (const auto& fact : pt.triggers) {
+            // Connection trigger signals must be design-global.
+            if (fact.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
+              throw common::InternalError(
+                  "CompileDesignProcesses",
+                  std::format(
+                      "connection ordinal {} trigger signal is not "
+                      "design-global (scope={}, id={})",
+                      conn_ordinal, static_cast<int>(fact.signal.scope),
+                      fact.signal.id));
+            }
+            result.triggers.push_back(
+                Layout::ConnectionTriggerFact{
+                    .signal = fact.signal,
+                    .edge = fact.edge,
+                    .has_observed_place = fact.has_observed_place,
+                });
+          }
+          conn_info.trigger = std::move(result);
+        }
+        ++conn_ordinal;
       }
       continue;
     }
 
-    // Module process: compute per-instance signal_id_offset for trigger
-    // canonicalization (H4 dependency -- still instance-shaped at this layer).
-    Context::ArenaScope arena_scope(*context, &proc_arena);
-    if (bp.module_index.value >= module_base_slots.size()) {
-      throw common::InternalError(
-          "CompileDesignProcesses",
-          std::format(
-              "module_index {} out of range for module_base_slots (size={})",
-              bp.module_index.value, module_base_slots.size()));
-    }
-    uint32_t signal_id_offset = module_base_slots[bp.module_index.value];
-
     // Null entry as structural guard: module processes dispatch through
     // frame headers (constructor-owned binding), not through this array.
     process_funcs.push_back(nullptr);
-
-    // Collect trigger metadata for this module instance process.
-    // Use the explicit body-process ordinal (from the routing table)
-    // to directly index the body's parallel process_triggers array.
-    auto body_ref_it = sched_idx_to_body_process.find(static_cast<uint32_t>(i));
-    if (body_ref_it != sched_idx_to_body_process.end()) {
-      const auto& ref = body_ref_it->second;
-      auto triggers_it = body_to_process_triggers.find(ref.body_id);
-      if (triggers_it != body_to_process_triggers.end() &&
-          ref.ordinal < triggers_it->second.size() &&
-          triggers_it->second[ref.ordinal].has_value()) {
-        auto entry = *triggers_it->second[ref.ordinal];
-        entry.scheduled_process_index = static_cast<uint32_t>(i - num_init);
-        CanonicalizeProcessTriggerSignals(entry, signal_id_offset);
-        all_process_triggers.push_back(std::move(entry));
-      }
-    }
   }
 
   auto realization = ExtractRealizationData(
@@ -793,9 +768,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       input.design->slot_trace_string_pool);
 
   // Build forward-path body compiled functions, parallel to
-  // layout->body_realization_infos. The per-instance descriptor collection
-  // above is temporary old-path support; this body-local compiled-function
-  // capture is the forward path for body realization descriptor emission.
+  // layout->body_realization_infos.
   std::vector<CodegenSession::BodyCompiledFuncs> body_funcs;
   for (const auto& info : layout->body_realization_infos) {
     auto it = body_to_compiled_funcs.find(info.body_id.value);
@@ -859,9 +832,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
             layout->instance_base_byte_offsets.size()));
   }
 
-  // Post-layout metadata template extraction pass.
-  // Sole producer of BodyRealizationInfo.meta and Layout::connection_meta.
-  // Populates descriptor-ready canonical metadata templates from MIR.
+  // Post-layout template extraction pass.
+  // Sole producer of BodyRealizationInfo.meta/triggers/comb and
+  // connection_templates.meta/triggers.
+  // Populates descriptor-ready canonical templates from MIR.
   {
     // Build module_index -> body_id mapping (same as in lower loop above).
     std::vector<mir::ModuleBodyId> module_body_ids;
@@ -884,7 +858,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
         return off;
       };
 
-      uint32_t num_entries =
+      auto num_entries =
           static_cast<uint32_t>(info.process_schema_indices.size());
       info.meta.entries.resize(num_entries);
 
@@ -920,13 +894,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
 
     // Connection metadata template.
-    layout->connection_meta.pool.push_back('\0');
+    layout->connection_templates.meta.pool.push_back('\0');
     auto add_conn_pool_string = [&](const std::string& s) -> uint32_t {
       if (s.empty()) return 0;
-      auto off = static_cast<uint32_t>(layout->connection_meta.pool.size());
-      layout->connection_meta.pool.insert(
-          layout->connection_meta.pool.end(), s.begin(), s.end());
-      layout->connection_meta.pool.push_back('\0');
+      auto off =
+          static_cast<uint32_t>(layout->connection_templates.meta.pool.size());
+      layout->connection_templates.meta.pool.insert(
+          layout->connection_templates.meta.pool.end(), s.begin(), s.end());
+      layout->connection_templates.meta.pool.push_back('\0');
       return off;
     };
 
@@ -945,7 +920,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
           proc.origin, input.diag_ctx, input.source_manager);
 
       uint32_t file_off = add_conn_pool_string(loc.file);
-      layout->connection_meta.entries.push_back(
+      layout->connection_templates.meta.entries.push_back(
           runtime::ProcessMetaTemplateEntry{
               .kind_packed = static_cast<uint32_t>(kind),
               .file_pool_off = file_off,
@@ -954,15 +929,280 @@ auto CompileDesignProcesses(const LoweringInput& input)
           });
     }
 
-    if (layout->connection_meta.entries.size() !=
+    if (layout->connection_templates.meta.entries.size() !=
         layout->connection_realization_infos.size()) {
       throw common::InternalError(
           "CompileDesignProcesses",
           std::format(
-              "connection_meta entries {} != "
+              "connection_templates.meta entries {} != "
               "connection_realization_infos {}",
-              layout->connection_meta.entries.size(),
+              layout->connection_templates.meta.entries.size(),
               layout->connection_realization_infos.size()));
+    }
+
+    // Body trigger templates.
+    // Source: body_to_process_triggers (body-shaped, body-relative signals).
+    for (auto& info : layout->body_realization_infos) {
+      auto triggers_it = body_to_process_triggers.find(info.body_id.value);
+      auto num_procs =
+          static_cast<uint32_t>(info.process_schema_indices.size());
+      info.triggers.proc_ranges.resize(num_procs);
+      info.triggers.proc_shapes.resize(
+          num_procs, static_cast<uint8_t>(runtime::WaitShapeKind::kStatic));
+      info.triggers.proc_groupable.resize(
+          num_procs, runtime::kProcNotGroupable);
+
+      if (triggers_it == body_to_process_triggers.end()) continue;
+      const auto& body_triggers = triggers_it->second;
+
+      for (uint32_t pwb = 0; pwb < num_procs; ++pwb) {
+        if (pwb >= body_triggers.size() || !body_triggers[pwb].has_value()) {
+          info.triggers.proc_ranges[pwb] = {.start = 0, .count = 0};
+          continue;
+        }
+        const auto& entry = *body_triggers[pwb];
+
+        auto range_start = static_cast<uint32_t>(info.triggers.entries.size());
+        for (const auto& fact : entry.triggers) {
+          uint32_t flags = 0;
+          if (fact.has_observed_place) {
+            flags |= runtime::kTriggerTemplateFlagHasObservedPlace;
+          }
+          if (fact.signal.scope == mir::SignalRef::Scope::kDesignGlobal) {
+            flags |= runtime::kTriggerTemplateFlagDesignGlobal;
+          } else if (fact.signal.id >= info.slot_count) {
+            throw common::InternalError(
+                "CompileDesignProcesses",
+                std::format(
+                    "body {} proc {} trigger slot_id {} >= slot_count {}",
+                    info.body_id.value, pwb, fact.signal.id, info.slot_count));
+          }
+          info.triggers.entries.push_back(
+              runtime::TriggerTemplateEntry{
+                  .slot_id = fact.signal.id,
+                  .edge = static_cast<uint32_t>(fact.edge),
+                  .flags = flags,
+              });
+        }
+        auto range_count =
+            static_cast<uint32_t>(info.triggers.entries.size() - range_start);
+        info.triggers.proc_ranges[pwb] = {
+            .start = range_start, .count = range_count};
+        info.triggers.proc_shapes[pwb] = static_cast<uint8_t>(entry.shape);
+
+        auto proc_entries =
+            std::span(info.triggers.entries).subspan(range_start, range_count);
+        info.triggers.proc_groupable[pwb] =
+            IsBodyGroupable(proc_entries, entry.shape)
+                ? runtime::kProcGroupable
+                : runtime::kProcNotGroupable;
+      }
+    }
+
+    // Connection trigger template extraction.
+    // Source: ConnectionRealizationInfo::trigger, populated during Phase 5
+    // connection codegen. Built in one linear pass over connection
+    // realization records.
+    {
+      auto num_conn =
+          static_cast<uint32_t>(layout->connection_realization_infos.size());
+
+      if (conn_ordinal != num_conn) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "connection ordinal {} != num_conn {}", conn_ordinal,
+                num_conn));
+      }
+
+      auto& conn_trig = layout->connection_templates.triggers;
+      conn_trig.proc_ranges.resize(num_conn);
+      conn_trig.proc_shapes.resize(
+          num_conn, static_cast<uint8_t>(runtime::WaitShapeKind::kStatic));
+      conn_trig.proc_groupable.resize(num_conn, runtime::kProcNotGroupable);
+
+      for (uint32_t ci = 0; ci < num_conn; ++ci) {
+        const auto& conn_info = layout->connection_realization_infos[ci];
+        if (!conn_info.trigger) {
+          conn_trig.proc_ranges[ci] = {.start = 0, .count = 0};
+          continue;
+        }
+        const auto& result = *conn_info.trigger;
+
+        auto range_start = static_cast<uint32_t>(conn_trig.entries.size());
+        for (const auto& fact : result.triggers) {
+          uint32_t flags = runtime::kTriggerTemplateFlagDesignGlobal;
+          if (fact.has_observed_place) {
+            flags |= runtime::kTriggerTemplateFlagHasObservedPlace;
+          }
+          conn_trig.entries.push_back(
+              runtime::TriggerTemplateEntry{
+                  .slot_id = fact.signal.id,
+                  .edge = static_cast<uint32_t>(fact.edge),
+                  .flags = flags,
+              });
+        }
+        auto range_count =
+            static_cast<uint32_t>(conn_trig.entries.size() - range_start);
+        conn_trig.proc_ranges[ci] = {
+            .start = range_start, .count = range_count};
+        conn_trig.proc_shapes[ci] = static_cast<uint8_t>(result.shape);
+
+        auto proc_entries =
+            std::span(conn_trig.entries).subspan(range_start, range_count);
+        conn_trig.proc_groupable[ci] =
+            IsBodyGroupable(proc_entries, result.shape)
+                ? runtime::kProcGroupable
+                : runtime::kProcNotGroupable;
+      }
+    }
+
+    // Body comb templates.
+    // Source: AnalyzeCombKernel (body-relative analysis).
+    // Observation resolution for module-local signals uses base_slot +
+    // body-relative id. Design-global signals resolve directly with
+    // their already-absolute id. Module-local observation resolution
+    // requires a valid base_slot; failure to find one is an error.
+
+    // Precompute body_id -> any representative base_slot mapping.
+    // Used for observation resolution and canonical sort ordering.
+    std::unordered_map<uint32_t, uint32_t> body_base_slots;
+    for (const auto& plan : module_plans) {
+      body_base_slots.try_emplace(
+          plan.body_id.value, plan.design_state_base_slot);
+    }
+
+    for (auto& info : layout->body_realization_infos) {
+      const auto& body = input.design->module_bodies.at(info.body_id.value);
+
+      auto base_it = body_base_slots.find(info.body_id.value);
+      uint32_t base_slot =
+          (base_it != body_base_slots.end()) ? base_it->second : 0;
+      bool found_base = (base_it != body_base_slots.end());
+
+      auto num_procs =
+          static_cast<uint32_t>(info.process_schema_indices.size());
+      for (uint32_t pwb = 0; pwb < num_procs; ++pwb) {
+        if (pwb >= body.processes.size()) continue;
+        const auto& proc = body.arena[body.processes[pwb]];
+        auto result = AnalyzeCombKernel(proc, body.arena);
+        if (!result) continue;
+
+        auto trigger_start = static_cast<uint32_t>(info.comb.entries.size());
+
+        // Per-slot observation merging, keyed by scoped signal identity
+        // to avoid merging unrelated observations that share a numeric id
+        // across different scopes.
+        std::unordered_map<ScopedSignalKey, CombSlotAccum, ScopedSignalKeyHash>
+            per_slot;
+
+        for (const auto& fact : result->triggers) {
+          bool is_global =
+              fact.signal.scope == mir::SignalRef::Scope::kDesignGlobal;
+
+          // Compute final design-global slot id for sort ordering.
+          uint32_t final_global_id = 0;
+          if (is_global) {
+            final_global_id = fact.signal.id;
+          } else {
+            if (!found_base) {
+              throw common::InternalError(
+                  "CompileDesignProcesses",
+                  std::format(
+                      "body {} proc {} comb kernel has module-local "
+                      "trigger but no instance base_slot found",
+                      info.body_id.value, pwb));
+            }
+            final_global_id = base_slot + fact.signal.id;
+          }
+
+          std::optional<ResolvedObservation> obs;
+          if (fact.observed_place) {
+            if (is_global) {
+              obs = ResolveObservation(
+                  body.arena, layout->design, mir::SlotId{fact.signal.id},
+                  *fact.observed_place);
+            } else {
+              // found_base is guaranteed true here (checked above).
+              obs = ResolveObservation(
+                  body.arena, layout->design, mir::SlotId{final_global_id},
+                  *fact.observed_place);
+            }
+          }
+
+          ScopedSignalKey key = {
+              .scope = fact.signal.scope, .id = fact.signal.id};
+          auto [it, inserted] = per_slot.try_emplace(key);
+          auto& accum = it->second;
+          if (inserted) {
+            accum.is_design_global = is_global;
+            accum.final_global_id = final_global_id;
+          } else {
+            // Scope consistency: the same scoped key must always have
+            // the same design-global classification.
+            if (accum.is_design_global != is_global) {
+              throw common::InternalError(
+                  "CompileDesignProcesses",
+                  std::format(
+                      "body {} proc {} comb slot ({},{}) scope mismatch",
+                      info.body_id.value, pwb, static_cast<int>(key.scope),
+                      key.id));
+            }
+            if (accum.final_global_id != final_global_id) {
+              throw common::InternalError(
+                  "CompileDesignProcesses",
+                  std::format(
+                      "body {} proc {} comb slot ({},{}) "
+                      "final_global_id mismatch ({} vs {})",
+                      info.body_id.value, pwb, static_cast<int>(key.scope),
+                      key.id, accum.final_global_id, final_global_id));
+            }
+          }
+          if (accum.is_full_slot) continue;
+          if (!obs) {
+            accum.is_full_slot = true;
+            accum.byte_offset = 0;
+            accum.byte_size = 0;
+          } else if (accum.byte_size == 0 && !accum.is_full_slot) {
+            accum.byte_offset = obs->byte_offset;
+            accum.byte_size = obs->byte_size;
+          } else {
+            uint32_t existing_end = accum.byte_offset + accum.byte_size;
+            uint32_t new_end = obs->byte_offset + obs->byte_size;
+            accum.byte_offset = std::min(accum.byte_offset, obs->byte_offset);
+            accum.byte_size =
+                std::max(existing_end, new_end) - accum.byte_offset;
+          }
+        }
+
+        std::vector<std::pair<ScopedSignalKey, CombSlotAccum>> sorted_slots(
+            per_slot.begin(), per_slot.end());
+        std::ranges::sort(sorted_slots, CompareCombSlotsByFinalObservableOrder);
+
+        for (const auto& [key, accum] : sorted_slots) {
+          uint32_t flags = 0;
+          if (accum.is_design_global) {
+            flags |= runtime::kCombTemplateFlagDesignGlobal;
+          }
+          info.comb.entries.push_back(
+              runtime::CombTemplateEntry{
+                  .slot_id = key.id,
+                  .byte_offset = accum.is_full_slot ? 0 : accum.byte_offset,
+                  .byte_size = accum.is_full_slot ? 0 : accum.byte_size,
+                  .flags = flags,
+              });
+        }
+
+        auto trigger_count =
+            static_cast<uint32_t>(info.comb.entries.size() - trigger_start);
+        info.comb.kernels.push_back(
+            runtime::CombKernelDesc{
+                .proc_within_body = pwb,
+                .trigger_start = trigger_start,
+                .trigger_count = trigger_count,
+                .has_self_edge = static_cast<uint8_t>(result->has_self_edge),
+            });
+      }
     }
   }
 
@@ -972,7 +1212,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .realization = std::move(realization),
       .process_funcs = std::move(process_funcs),
       .wait_sites = std::move(all_wait_sites),
-      .process_triggers = std::move(all_process_triggers),
       .slot_info = std::move(slot_info),
       .num_init_processes = num_init,
       .body_compiled_funcs = std::move(body_funcs),

@@ -35,7 +35,13 @@
 //      ConstructionResult instead of compile-time LLVM globals.
 //      Constructor API extended: BeginBody takes metadata template,
 //      AddInstance takes instance_path.
-inline constexpr uint32_t kRuntimeAbiVersion = 13;
+// v14: Trigger/comb metadata production moved to constructor-time
+//      realization. process_trigger_words and comb_kernel_words ABI
+//      fields now populated from ConstructionResult instead of
+//      compile-time LLVM globals. Constructor API extended:
+//      Create takes connection trigger template, BeginBody takes
+//      trigger/comb templates.
+inline constexpr uint32_t kRuntimeAbiVersion = 14;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion

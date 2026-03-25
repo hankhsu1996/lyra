@@ -634,13 +634,34 @@ struct MetaTemplateEmission {
   uint32_t pool_size;
 };
 
+// Emitted trigger template arrays: entries, per-process
+// ranges/shapes/groupable.
+struct TriggerTemplateEmission {
+  llvm::Constant* entries_ptr;
+  uint32_t num_entries;
+  llvm::Constant* ranges_ptr;
+  uint32_t num_ranges;
+  llvm::Constant* shapes_ptr;
+  llvm::Constant* groupable_ptr;
+};
+
+// Emitted comb template arrays: entries and kernel descriptors.
+struct CombTemplateEmission {
+  llvm::Constant* entries_ptr;
+  uint32_t num_entries;
+  llvm::Constant* kernels_ptr;
+  uint32_t num_kernels;
+};
+
 // Emitted body descriptor package: descriptor header, process entries,
-// and metadata template. One per body.
+// and metadata/trigger/comb templates. One per body.
 struct BodyDescriptorPackageEmission {
   llvm::Constant* header_ptr;
   llvm::Constant* entries_ptr;
   uint32_t num_processes;
   MetaTemplateEmission meta;
+  TriggerTemplateEmission triggers;
+  CombTemplateEmission comb;
 };
 
 // Validate an owned metadata template before emission: pool sentinel,
@@ -679,6 +700,74 @@ void ValidateOwnedMetaTemplate(
           caller,
           std::format(
               "entry {} file string at offset {} not NUL-terminated", i, off));
+    }
+  }
+}
+
+// Validate an owned trigger template before emission.
+// Either all containers are empty, or they satisfy domain shape invariants.
+void ValidateOwnedTriggerTemplate(
+    const OwnedTriggerTemplate& tmpl, const char* caller) {
+  bool has_entries = !tmpl.entries.empty();
+  bool has_ranges = !tmpl.proc_ranges.empty();
+  bool has_shapes = !tmpl.proc_shapes.empty();
+  bool has_groupable = !tmpl.proc_groupable.empty();
+  if (!has_ranges && (has_entries || has_shapes || has_groupable)) {
+    throw common::InternalError(
+        caller, "trigger template partially populated: ranges empty");
+  }
+  if (has_ranges && (!has_shapes || !has_groupable)) {
+    throw common::InternalError(
+        caller,
+        "trigger template partially populated: ranges non-empty "
+        "but shapes or groupable empty");
+  }
+  if (!has_ranges) return;
+  if (tmpl.proc_shapes.size() != tmpl.proc_ranges.size()) {
+    throw common::InternalError(
+        caller, std::format(
+                    "trigger shapes size {} != ranges size {}",
+                    tmpl.proc_shapes.size(), tmpl.proc_ranges.size()));
+  }
+  if (tmpl.proc_groupable.size() != tmpl.proc_ranges.size()) {
+    throw common::InternalError(
+        caller, std::format(
+                    "trigger groupable size {} != ranges size {}",
+                    tmpl.proc_groupable.size(), tmpl.proc_ranges.size()));
+  }
+  for (uint32_t i = 0; i < tmpl.proc_ranges.size(); ++i) {
+    const auto& r = tmpl.proc_ranges[i];
+    if (r.start > tmpl.entries.size() ||
+        r.count > tmpl.entries.size() - r.start) {
+      throw common::InternalError(
+          caller, std::format(
+                      "trigger range[{}] ({},{}) exceeds entries size {}", i,
+                      r.start, r.count, tmpl.entries.size()));
+    }
+  }
+}
+
+// Validate an owned comb template before emission.
+void ValidateOwnedCombTemplate(
+    const OwnedCombTemplate& tmpl, const char* caller) {
+  bool has_entries = !tmpl.entries.empty();
+  bool has_kernels = !tmpl.kernels.empty();
+  if (has_entries && !has_kernels) {
+    throw common::InternalError(
+        caller, "comb template has entries without kernels");
+  }
+  if (has_kernels && !has_entries) {
+    throw common::InternalError(
+        caller, "comb template has kernels without entries");
+  }
+  for (uint32_t i = 0; i < tmpl.kernels.size(); ++i) {
+    const auto& k = tmpl.kernels[i];
+    if (k.trigger_start > tmpl.entries.size() ||
+        k.trigger_count > tmpl.entries.size() - k.trigger_start) {
+      throw common::InternalError(
+          caller, std::format(
+                      "comb kernel[{}] ({},{}) exceeds entries size {}", i,
+                      k.trigger_start, k.trigger_count, tmpl.entries.size()));
     }
   }
 }
@@ -849,6 +938,199 @@ auto EmitBodyRealizationDescs(
           llvm::ArrayRef<llvm::Constant*>{zero, zero});
     }
 
+    // Validate and emit trigger/comb template globals.
+    auto trig_caller =
+        std::format("EmitBodyRealizationDescs body {} triggers", body_id_val);
+    ValidateOwnedTriggerTemplate(info.triggers, trig_caller.c_str());
+    auto comb_caller =
+        std::format("EmitBodyRealizationDescs body {} comb", body_id_val);
+    ValidateOwnedCombTemplate(info.comb, comb_caller.c_str());
+
+    auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+    auto* null_ptr_val =
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+    TriggerTemplateEmission trig_emission{
+        .entries_ptr = null_ptr_val,
+        .num_entries = 0,
+        .ranges_ptr = null_ptr_val,
+        .num_ranges = 0,
+        .shapes_ptr = null_ptr_val,
+        .groupable_ptr = null_ptr_val,
+    };
+    const auto& trig = info.triggers;
+    auto num_trig_entries = static_cast<uint32_t>(trig.entries.size());
+    auto num_trig_ranges = static_cast<uint32_t>(trig.proc_ranges.size());
+    if (num_trig_ranges > 0) {
+      // TriggerTemplateEntry = {u32, u32, u32}
+      auto* trig_entry_type =
+          llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty});
+      std::vector<llvm::Constant*> trig_constants;
+      trig_constants.reserve(num_trig_entries);
+      for (const auto& te : trig.entries) {
+        trig_constants.push_back(
+            llvm::ConstantStruct::get(
+                trig_entry_type, {llvm::ConstantInt::get(i32_ty, te.slot_id),
+                                  llvm::ConstantInt::get(i32_ty, te.edge),
+                                  llvm::ConstantInt::get(i32_ty, te.flags)}));
+      }
+      if (num_trig_entries > 0) {
+        auto trig_name =
+            std::format("__lyra_body_desc_{}_trigger_entries", body_id_val);
+        auto* trig_array_type =
+            llvm::ArrayType::get(trig_entry_type, num_trig_entries);
+        auto* trig_global = new llvm::GlobalVariable(
+            mod, trig_array_type, true, llvm::GlobalValue::InternalLinkage,
+            llvm::ConstantArray::get(trig_array_type, trig_constants),
+            trig_name);
+        trig_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        auto* zero_c = llvm::ConstantInt::get(i32_ty, 0);
+        trig_emission.entries_ptr =
+            llvm::ConstantExpr::getInBoundsGetElementPtr(
+                trig_array_type, trig_global,
+                llvm::ArrayRef<llvm::Constant*>{zero_c, zero_c});
+      }
+      trig_emission.num_entries = num_trig_entries;
+
+      // TriggerRange = {u32, u32}
+      auto* range_type = llvm::StructType::get(ctx, {i32_ty, i32_ty});
+      std::vector<llvm::Constant*> range_constants;
+      range_constants.reserve(num_trig_ranges);
+      for (const auto& r : trig.proc_ranges) {
+        range_constants.push_back(
+            llvm::ConstantStruct::get(
+                range_type, {llvm::ConstantInt::get(i32_ty, r.start),
+                             llvm::ConstantInt::get(i32_ty, r.count)}));
+      }
+      auto ranges_name =
+          std::format("__lyra_body_desc_{}_trigger_ranges", body_id_val);
+      auto* ranges_array_type =
+          llvm::ArrayType::get(range_type, num_trig_ranges);
+      auto* ranges_global = new llvm::GlobalVariable(
+          mod, ranges_array_type, true, llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantArray::get(ranges_array_type, range_constants),
+          ranges_name);
+      ranges_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      auto* zero_c = llvm::ConstantInt::get(i32_ty, 0);
+      trig_emission.ranges_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+          ranges_array_type, ranges_global,
+          llvm::ArrayRef<llvm::Constant*>{zero_c, zero_c});
+      trig_emission.num_ranges = num_trig_ranges;
+
+      // Shapes: u8 array
+      std::vector<llvm::Constant*> shape_constants;
+      shape_constants.reserve(num_trig_ranges);
+      for (auto s : trig.proc_shapes) {
+        shape_constants.push_back(
+            llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(s)));
+      }
+      auto shapes_name =
+          std::format("__lyra_body_desc_{}_trigger_shapes", body_id_val);
+      auto* shapes_array_type = llvm::ArrayType::get(i8_ty, num_trig_ranges);
+      auto* shapes_global = new llvm::GlobalVariable(
+          mod, shapes_array_type, true, llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantArray::get(shapes_array_type, shape_constants),
+          shapes_name);
+      shapes_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      trig_emission.shapes_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+          shapes_array_type, shapes_global,
+          llvm::ArrayRef<llvm::Constant*>{zero_c, zero_c});
+
+      // Groupable: u8 array
+      std::vector<llvm::Constant*> groupable_constants;
+      groupable_constants.reserve(num_trig_ranges);
+      for (auto g : trig.proc_groupable) {
+        groupable_constants.push_back(llvm::ConstantInt::get(i8_ty, g));
+      }
+      auto groupable_name =
+          std::format("__lyra_body_desc_{}_trigger_groupable", body_id_val);
+      auto* groupable_array_type = llvm::ArrayType::get(i8_ty, num_trig_ranges);
+      auto* groupable_global = new llvm::GlobalVariable(
+          mod, groupable_array_type, true, llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantArray::get(groupable_array_type, groupable_constants),
+          groupable_name);
+      groupable_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      trig_emission.groupable_ptr =
+          llvm::ConstantExpr::getInBoundsGetElementPtr(
+              groupable_array_type, groupable_global,
+              llvm::ArrayRef<llvm::Constant*>{zero_c, zero_c});
+    }
+
+    // Emit comb template globals.
+    CombTemplateEmission comb_emission{
+        .entries_ptr = null_ptr_val,
+        .num_entries = 0,
+        .kernels_ptr = null_ptr_val,
+        .num_kernels = 0,
+    };
+    const auto& comb = info.comb;
+    auto num_comb_entries = static_cast<uint32_t>(comb.entries.size());
+    auto num_comb_kernels = static_cast<uint32_t>(comb.kernels.size());
+    if (num_comb_kernels > 0) {
+      // CombTemplateEntry = {u32, u32, u32, u32}
+      auto* comb_entry_type =
+          llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty});
+      std::vector<llvm::Constant*> comb_entry_constants;
+      comb_entry_constants.reserve(num_comb_entries);
+      for (const auto& ce : comb.entries) {
+        comb_entry_constants.push_back(
+            llvm::ConstantStruct::get(
+                comb_entry_type,
+                {llvm::ConstantInt::get(i32_ty, ce.slot_id),
+                 llvm::ConstantInt::get(i32_ty, ce.byte_offset),
+                 llvm::ConstantInt::get(i32_ty, ce.byte_size),
+                 llvm::ConstantInt::get(i32_ty, ce.flags)}));
+      }
+      if (num_comb_entries > 0) {
+        auto comb_name =
+            std::format("__lyra_body_desc_{}_comb_entries", body_id_val);
+        auto* comb_array_type =
+            llvm::ArrayType::get(comb_entry_type, num_comb_entries);
+        auto* comb_global = new llvm::GlobalVariable(
+            mod, comb_array_type, true, llvm::GlobalValue::InternalLinkage,
+            llvm::ConstantArray::get(comb_array_type, comb_entry_constants),
+            comb_name);
+        comb_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        auto* zero_c = llvm::ConstantInt::get(i32_ty, 0);
+        comb_emission.entries_ptr =
+            llvm::ConstantExpr::getInBoundsGetElementPtr(
+                comb_array_type, comb_global,
+                llvm::ArrayRef<llvm::Constant*>{zero_c, zero_c});
+      }
+      comb_emission.num_entries = num_comb_entries;
+
+      // CombKernelDesc = {u32, u32, u32, u8, u8, u8, u8}
+      auto* kernel_type = llvm::StructType::get(
+          ctx, {i32_ty, i32_ty, i32_ty, i8_ty, i8_ty, i8_ty, i8_ty});
+      std::vector<llvm::Constant*> kernel_constants;
+      kernel_constants.reserve(num_comb_kernels);
+      for (const auto& k : comb.kernels) {
+        kernel_constants.push_back(
+            llvm::ConstantStruct::get(
+                kernel_type,
+                {llvm::ConstantInt::get(i32_ty, k.proc_within_body),
+                 llvm::ConstantInt::get(i32_ty, k.trigger_start),
+                 llvm::ConstantInt::get(i32_ty, k.trigger_count),
+                 llvm::ConstantInt::get(i8_ty, k.has_self_edge),
+                 llvm::ConstantInt::get(i8_ty, k.pad0),
+                 llvm::ConstantInt::get(i8_ty, k.pad1),
+                 llvm::ConstantInt::get(i8_ty, k.pad2)}));
+      }
+      auto kernels_name =
+          std::format("__lyra_body_desc_{}_comb_kernels", body_id_val);
+      auto* kernels_array_type =
+          llvm::ArrayType::get(kernel_type, num_comb_kernels);
+      auto* kernels_global = new llvm::GlobalVariable(
+          mod, kernels_array_type, true, llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantArray::get(kernels_array_type, kernel_constants),
+          kernels_name);
+      kernels_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      auto* zero_c = llvm::ConstantInt::get(i32_ty, 0);
+      comb_emission.kernels_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+          kernels_array_type, kernels_global,
+          llvm::ArrayRef<llvm::Constant*>{zero_c, zero_c});
+      comb_emission.num_kernels = num_comb_kernels;
+    }
+
     result.push_back(
         BodyDescriptorPackageEmission{
             .header_ptr = header_global,
@@ -861,6 +1143,8 @@ auto EmitBodyRealizationDescs(
                     .pool_ptr = meta_pool_ptr,
                     .pool_size = meta_pool_size,
                 },
+            .triggers = trig_emission,
+            .comb = comb_emission,
         });
   }
 
@@ -935,7 +1219,7 @@ auto EmitConnectionMetaTemplate(Context& context, const Layout& layout)
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
-  const auto& conn_meta = layout.connection_meta;
+  const auto& conn_meta = layout.connection_templates.meta;
   auto num_entries = static_cast<uint32_t>(conn_meta.entries.size());
   auto pool_size = static_cast<uint32_t>(conn_meta.pool.size());
 
@@ -999,6 +1283,114 @@ auto EmitConnectionMetaTemplate(Context& context, const Layout& layout)
       .pool_size = pool_size};
 }
 
+auto EmitConnectionTriggerTemplate(Context& context, const Layout& layout)
+    -> TriggerTemplateEmission {
+  auto& ctx = context.GetLlvmContext();
+  auto& mod = context.GetModule();
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* null_ptr =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
+  const auto& trig = layout.connection_templates.triggers;
+  ValidateOwnedTriggerTemplate(trig, "EmitConnectionTriggerTemplate");
+  auto num_entries = static_cast<uint32_t>(trig.entries.size());
+  auto num_ranges = static_cast<uint32_t>(trig.proc_ranges.size());
+
+  TriggerTemplateEmission result{
+      .entries_ptr = null_ptr,
+      .num_entries = 0,
+      .ranges_ptr = null_ptr,
+      .num_ranges = 0,
+      .shapes_ptr = null_ptr,
+      .groupable_ptr = null_ptr,
+  };
+
+  if (num_ranges == 0) return result;
+
+  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+
+  // TriggerTemplateEntry = {u32, u32, u32}
+  auto* entry_type = llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty});
+  if (num_entries > 0) {
+    std::vector<llvm::Constant*> entry_constants;
+    entry_constants.reserve(num_entries);
+    for (const auto& te : trig.entries) {
+      entry_constants.push_back(
+          llvm::ConstantStruct::get(
+              entry_type, {llvm::ConstantInt::get(i32_ty, te.slot_id),
+                           llvm::ConstantInt::get(i32_ty, te.edge),
+                           llvm::ConstantInt::get(i32_ty, te.flags)}));
+    }
+    auto* array_type = llvm::ArrayType::get(entry_type, num_entries);
+    auto* global = new llvm::GlobalVariable(
+        mod, array_type, true, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantArray::get(array_type, entry_constants),
+        "__lyra_conn_trigger_entries");
+    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    result.entries_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        array_type, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+  }
+  result.num_entries = num_entries;
+
+  // TriggerRange = {u32, u32}
+  auto* range_type = llvm::StructType::get(ctx, {i32_ty, i32_ty});
+  std::vector<llvm::Constant*> range_constants;
+  range_constants.reserve(num_ranges);
+  for (const auto& r : trig.proc_ranges) {
+    range_constants.push_back(
+        llvm::ConstantStruct::get(
+            range_type, {llvm::ConstantInt::get(i32_ty, r.start),
+                         llvm::ConstantInt::get(i32_ty, r.count)}));
+  }
+  auto* ranges_array_type = llvm::ArrayType::get(range_type, num_ranges);
+  auto* ranges_global = new llvm::GlobalVariable(
+      mod, ranges_array_type, true, llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantArray::get(ranges_array_type, range_constants),
+      "__lyra_conn_trigger_ranges");
+  ranges_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  result.ranges_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+      ranges_array_type, ranges_global,
+      llvm::ArrayRef<llvm::Constant*>{zero, zero});
+  result.num_ranges = num_ranges;
+
+  // Shapes: u8 array
+  std::vector<llvm::Constant*> shape_constants;
+  shape_constants.reserve(num_ranges);
+  for (auto s : trig.proc_shapes) {
+    shape_constants.push_back(
+        llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(s)));
+  }
+  auto* shapes_array_type = llvm::ArrayType::get(i8_ty, num_ranges);
+  auto* shapes_global = new llvm::GlobalVariable(
+      mod, shapes_array_type, true, llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantArray::get(shapes_array_type, shape_constants),
+      "__lyra_conn_trigger_shapes");
+  shapes_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  result.shapes_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+      shapes_array_type, shapes_global,
+      llvm::ArrayRef<llvm::Constant*>{zero, zero});
+
+  // Groupable: u8 array
+  std::vector<llvm::Constant*> groupable_constants;
+  groupable_constants.reserve(num_ranges);
+  for (auto g : trig.proc_groupable) {
+    groupable_constants.push_back(llvm::ConstantInt::get(i8_ty, g));
+  }
+  auto* groupable_array_type = llvm::ArrayType::get(i8_ty, num_ranges);
+  auto* groupable_global = new llvm::GlobalVariable(
+      mod, groupable_array_type, true, llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantArray::get(groupable_array_type, groupable_constants),
+      "__lyra_conn_trigger_groupable");
+  groupable_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  result.groupable_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+      groupable_array_type, groupable_global,
+      llvm::ArrayRef<llvm::Constant*>{zero, zero});
+
+  return result;
+}
+
 struct PlusargsSetup {
   llvm::Value* array;
   llvm::Value* count;
@@ -1055,20 +1447,15 @@ auto BuildPlusargs(
 // later migration step.
 auto BuildDesignMetadata(
     Context& context, const RealizationData& realization, const Layout& layout,
-    const std::vector<SlotInfo>& slot_info,
-    const std::vector<ProcessTriggerEntry>& process_triggers,
-    const EmitDesignMainInput& input, size_t num_init) -> MetadataGlobals {
+    const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input)
+    -> MetadataGlobals {
   auto& builder = context.GetBuilder();
   const auto& type_arena = context.GetTypeArena();
 
   auto slot_meta_inputs = ExtractSlotMetaInputs(slot_info, layout.design);
   auto conn_desc_entries = ExtractConnectionDescriptorEntries(layout);
-  auto comb_inputs = PrepareCombKernelInputs(layout, num_init);
   auto back_edge_site_inputs =
       PrepareBackEdgeSiteInputs(context, input.diag_ctx, input.source_manager);
-  auto slot_count = static_cast<uint32_t>(slot_meta_inputs.size());
-  auto process_trigger_inputs =
-      BuildProcessTriggerInputs(process_triggers, slot_count);
 
   auto trace_signal_inputs = PrepareTraceSignalMetaInputs(
       realization.slot_trace_provenance, realization.slot_trace_string_pool,
@@ -1079,16 +1466,14 @@ auto BuildDesignMetadata(
   // TODO(hankhsu): Gate behind verbose/debug flag when one is available
   // in the emit_design_main input. Currently always runs (cheap) but
   // logging is conditional on candidates existing.
-  auto forwarding_candidates = FindPortBindingForwardingCandidates(
-      conn_desc_entries, process_trigger_inputs, comb_inputs, slot_count);
+  auto forwarding_candidates =
+      FindPortBindingForwardingCandidates(conn_desc_entries, layout);
   LogPortBindingForwardingCandidates(forwarding_candidates);
 
   metadata::DesignMetadataInputs metadata_inputs{
       .slot_meta = std::move(slot_meta_inputs),
       .back_edge_sites = std::move(back_edge_site_inputs),
       .connection_descriptors = std::move(conn_desc_entries),
-      .comb_kernels = std::move(comb_inputs),
-      .process_triggers = std::move(process_trigger_inputs),
       .instance_paths = realization.instance_paths,
       .trace_signal_meta = std::move(trace_signal_inputs),
   };
@@ -1107,20 +1492,29 @@ struct ConstructorProcessMeta {
   llvm::Value* pool_size = nullptr;
 };
 
+// Trigger/comb metadata values extracted from the constructor result.
+struct ConstructorTriggerCombMeta {
+  llvm::Value* trigger_words = nullptr;
+  llvm::Value* trigger_word_count = nullptr;
+  llvm::Value* comb_words = nullptr;
+  llvm::Value* comb_word_count = nullptr;
+};
+
 struct ConstructorEmissionResult {
   llvm::Value* states_array = nullptr;
   llvm::Value* num_total = nullptr;
   llvm::Value* result_handle = nullptr;
   llvm::Function* destroy_fn = nullptr;
   ConstructorProcessMeta process_meta;
+  ConstructorTriggerCombMeta trigger_comb;
 };
 
 auto BuildRuntimeAbi(
     Context& context, const MetadataGlobals& meta_globals,
     const WaitSiteMetaResult& wait_site_meta, uint32_t num_connection,
     uint32_t feature_flags, const std::string& signal_trace_path,
-    llvm::Value* design_state, const ConstructorProcessMeta& process_meta)
-    -> llvm::Value* {
+    llvm::Value* design_state, const ConstructorProcessMeta& process_meta,
+    const ConstructorTriggerCombMeta& trigger_comb) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -1128,7 +1522,7 @@ auto BuildRuntimeAbi(
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
-  // v13: process metadata from constructor result.
+  // v14: trigger/comb metadata from constructor result.
   constexpr unsigned kAbiFieldCount = 27;
   std::array<llvm::Type*, kAbiFieldCount> abi_fields = {
       i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
@@ -1162,9 +1556,9 @@ auto BuildRuntimeAbi(
               i32_ty, meta_globals.back_edge_site_meta_pool_size));
   store_field(11, meta_globals.conn_desc_table);
   store_field(12, llvm::ConstantInt::get(i32_ty, meta_globals.conn_desc_count));
-  store_field(13, meta_globals.comb_kernel_words);
-  store_field(
-      14, llvm::ConstantInt::get(i32_ty, meta_globals.comb_kernel_word_count));
+  // Comb kernel metadata: constructor-produced.
+  store_field(13, trigger_comb.comb_words);
+  store_field(14, trigger_comb.comb_word_count);
   store_field(15, llvm::ConstantInt::get(i32_ty, feature_flags));
   store_field(16, wait_site_meta.words_ptr);
   store_field(17, llvm::ConstantInt::get(i32_ty, wait_site_meta.count));
@@ -1185,10 +1579,9 @@ auto BuildRuntimeAbi(
         builder.CreateGlobalStringPtr(signal_trace_path, "signal_trace_path"));
   }
 
-  store_field(23, meta_globals.process_trigger_words);
-  store_field(
-      24,
-      llvm::ConstantInt::get(i32_ty, meta_globals.process_trigger_word_count));
+  // Process trigger metadata: constructor-produced.
+  store_field(23, trigger_comb.trigger_words);
+  store_field(24, trigger_comb.trigger_word_count);
 
   // Dispatch partition boundary (connection/module process split).
   // Currently computed from compile-time layout topology; will move
@@ -1273,6 +1666,10 @@ struct ConstructorRuntimeFuncs {
   llvm::Function* result_get_meta_word_count;
   llvm::Function* result_get_meta_pool;
   llvm::Function* result_get_meta_pool_size;
+  llvm::Function* result_get_trigger_words;
+  llvm::Function* result_get_trigger_word_count;
+  llvm::Function* result_get_comb_words;
+  llvm::Function* result_get_comb_word_count;
   llvm::Function* result_destroy;
 };
 
@@ -1297,12 +1694,15 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
       .create = declare(
           "LyraConstructorCreate", ptr_ty,
           {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i64_ty, ptr_ty,
-           i32_ty, ptr_ty, i32_ty}),
+           i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+           ptr_ty}),
       .add_connection =
           declare("LyraConstructorAddConnection", void_ty, {ptr_ty, ptr_ty}),
       .begin_body = declare(
           "LyraConstructorBeginBody", void_ty,
-          {ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
+          {ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
+           ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty,
+           ptr_ty, i32_ty}),
       .add_instance =
           declare("LyraConstructorAddInstance", void_ty, {ptr_ty, ptr_ty}),
       .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
@@ -1318,6 +1718,14 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           declare("LyraConstructionResultGetProcessMetaPool", ptr_ty, {ptr_ty}),
       .result_get_meta_pool_size = declare(
           "LyraConstructionResultGetProcessMetaPoolSize", i32_ty, {ptr_ty}),
+      .result_get_trigger_words =
+          declare("LyraConstructionResultGetTriggerWords", ptr_ty, {ptr_ty}),
+      .result_get_trigger_word_count = declare(
+          "LyraConstructionResultGetTriggerWordCount", i32_ty, {ptr_ty}),
+      .result_get_comb_words =
+          declare("LyraConstructionResultGetCombWords", ptr_ty, {ptr_ty}),
+      .result_get_comb_word_count =
+          declare("LyraConstructionResultGetCombWordCount", i32_ty, {ptr_ty}),
       .result_destroy =
           declare("LyraConstructionResultDestroy", void_ty, {ptr_ty}),
   };
@@ -1335,7 +1743,16 @@ void EmitBeginBodyCall(
       {ctor, pkg.header_ptr, pkg.entries_ptr,
        llvm::ConstantInt::get(i32_ty, pkg.num_processes), pkg.meta.entries_ptr,
        llvm::ConstantInt::get(i32_ty, pkg.meta.num_entries), pkg.meta.pool_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.meta.pool_size)});
+       llvm::ConstantInt::get(i32_ty, pkg.meta.pool_size),
+       pkg.triggers.entries_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg.triggers.num_entries),
+       pkg.triggers.ranges_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg.triggers.num_ranges),
+       pkg.triggers.shapes_ptr, pkg.triggers.groupable_ptr,
+       pkg.comb.entries_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg.comb.num_entries),
+       pkg.comb.kernels_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg.comb.num_kernels)});
 }
 
 // Emit the constructor function: LLVM IR that calls RuntimeConstructor C API
@@ -1353,6 +1770,7 @@ auto EmitConstructorFunction(
     uint32_t num_schemas, llvm::Constant* slot_byte_offsets_ptr,
     const std::vector<BodyDescriptorPackageEmission>& body_descs,
     llvm::Constant* conn_descs_ptr, const MetaTemplateEmission& conn_meta,
+    const TriggerTemplateEmission& conn_triggers,
     const std::vector<std::string>& instance_paths)
     -> ConstructorEmissionResult {
   auto& builder = context.GetBuilder();
@@ -1375,7 +1793,12 @@ auto EmitConstructorFunction(
        llvm::ConstantInt::get(i32_ty, layout.num_package_slots), design_state,
        llvm::ConstantInt::get(i64_ty, arena_size), conn_meta.entries_ptr,
        llvm::ConstantInt::get(i32_ty, conn_meta.num_entries),
-       conn_meta.pool_ptr, llvm::ConstantInt::get(i32_ty, conn_meta.pool_size)},
+       conn_meta.pool_ptr, llvm::ConstantInt::get(i32_ty, conn_meta.pool_size),
+       conn_triggers.entries_ptr,
+       llvm::ConstantInt::get(i32_ty, conn_triggers.num_entries),
+       conn_triggers.ranges_ptr,
+       llvm::ConstantInt::get(i32_ty, conn_triggers.num_ranges),
+       conn_triggers.shapes_ptr, conn_triggers.groupable_ptr},
       "ctor");
 
   // Add connection processes.
@@ -1478,6 +1901,16 @@ auto EmitConstructorFunction(
   auto* meta_pool_sz = builder.CreateCall(
       rt.result_get_meta_pool_size, {result}, "meta_pool_size");
 
+  // Extract constructor-produced trigger/comb metadata.
+  auto* trigger_words = builder.CreateCall(
+      rt.result_get_trigger_words, {result}, "trigger_words");
+  auto* trigger_word_count = builder.CreateCall(
+      rt.result_get_trigger_word_count, {result}, "trigger_word_count");
+  auto* comb_words =
+      builder.CreateCall(rt.result_get_comb_words, {result}, "comb_words");
+  auto* comb_word_count = builder.CreateCall(
+      rt.result_get_comb_word_count, {result}, "comb_word_count");
+
   return ConstructorEmissionResult{
       .states_array = states_array,
       .num_total = num_total,
@@ -1489,6 +1922,13 @@ auto EmitConstructorFunction(
               .word_count = meta_word_count,
               .pool = meta_pool,
               .pool_size = meta_pool_sz,
+          },
+      .trigger_comb =
+          ConstructorTriggerCombMeta{
+              .trigger_words = trigger_words,
+              .trigger_word_count = trigger_word_count,
+              .comb_words = comb_words,
+              .comb_word_count = comb_word_count,
           },
   };
 }
@@ -1537,7 +1977,7 @@ auto EmitDesignMain(
     llvm::Constant* connection_funcs = null_ptr;
     llvm::Value* num_total_val = llvm::ConstantInt::get(i32_ty, 0);
     ConstructorEmissionResult ctor_result{};
-    uint32_t num_connection = static_cast<uint32_t>(
+    auto num_connection = static_cast<uint32_t>(
         layout.num_module_process_base - layout.num_init_processes);
 
     if (num_simulation > 0) {
@@ -1557,13 +1997,15 @@ auto EmitDesignMain(
       auto* conn_descs_ptr = EmitConnectionRealizationDescs(
           context, layout, process_funcs, num_init);
       auto conn_meta_emission = EmitConnectionMetaTemplate(context, layout);
+      auto conn_trigger_emission =
+          EmitConnectionTriggerTemplate(context, layout);
 
       // Emit the constructor function: LLVM IR that calls the runtime
       // constructor to build process construction order and bindings.
       ctor_result = EmitConstructorFunction(
           context, layout, session, design_state, schemas_ptr, num_schemas,
           slot_offsets_ptr, body_descs, conn_descs_ptr, conn_meta_emission,
-          realization.instance_paths);
+          conn_trigger_emission, realization.instance_paths);
 
       states_array = ctor_result.states_array;
       num_total_val = ctor_result.num_total;
@@ -1571,13 +2013,12 @@ auto EmitDesignMain(
 
     auto plusargs = BuildPlusargs(context, main_func, input);
 
-    auto meta_globals = BuildDesignMetadata(
-        context, realization, layout, slot_info, session.process_triggers,
-        input, num_init);
+    auto meta_globals =
+        BuildDesignMetadata(context, realization, layout, slot_info, input);
 
     auto wait_site_meta = EmitWaitSiteMetaTable(context, session.wait_sites);
 
-    // Fallback: zero process metadata for the no-constructor topology case
+    // Fallback: zero metadata for the no-constructor topology case
     // (num_simulation == 0 but num_kernelized > 0). When the constructor is
     // active, constructor-produced metadata replaces this.
     ConstructorProcessMeta process_meta_for_abi{
@@ -1586,14 +2027,21 @@ auto EmitDesignMain(
         .pool = null_ptr,
         .pool_size = llvm::ConstantInt::get(i32_ty, 0),
     };
+    ConstructorTriggerCombMeta trigger_comb_for_abi{
+        .trigger_words = null_ptr,
+        .trigger_word_count = llvm::ConstantInt::get(i32_ty, 0),
+        .comb_words = null_ptr,
+        .comb_word_count = llvm::ConstantInt::get(i32_ty, 0),
+    };
     if (ctor_result.result_handle != nullptr) {
       process_meta_for_abi = ctor_result.process_meta;
+      trigger_comb_for_abi = ctor_result.trigger_comb;
     }
 
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,
-        process_meta_for_abi);
+        process_meta_for_abi, trigger_comb_for_abi);
 
     EmitRunSimulation(
         context, connection_funcs, states_array, num_total_val, plusargs,

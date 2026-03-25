@@ -917,41 +917,6 @@ struct PendingConnectionKernelEntry {
   std::optional<mir::PlaceId> trigger_observed_place;
 };
 
-struct PendingCombTrigger {
-  mir::SlotId slot;
-  std::optional<mir::PlaceId> observed_place;
-};
-
-struct PendingCombKernelEntry {
-  std::vector<PendingCombTrigger> triggers;
-  bool has_self_edge = false;
-};
-
-auto ResolveObservation(
-    const mir::Arena& arena, const DesignLayout& design_layout,
-    mir::SlotId design_global_slot, mir::PlaceId place_id)
-    -> std::optional<ResolvedObservation> {
-  auto slot_it = design_layout.slot_to_index.find(design_global_slot);
-  if (slot_it == design_layout.slot_to_index.end()) {
-    throw common::InternalError(
-        "ResolveObservation", std::format(
-                                  "design-global slot {} not found in layout",
-                                  design_global_slot.value));
-  }
-  const auto& spec = design_layout.slot_storage_specs[slot_it->second];
-  const auto& place = arena[place_id];
-  auto range =
-      ResolveByteRange(spec, design_layout.storage_spec_arena, place, nullptr);
-  if (range.kind != RangeKind::kPrecise) {
-    return std::nullopt;
-  }
-  return ResolvedObservation{
-      .byte_offset = range.byte_offset,
-      .byte_size = range.byte_size,
-      .bit_index = range.bit_index,
-  };
-}
-
 auto TryKernelizeConnection(
     const mir::Process& process, const mir::Arena& arena)
     -> std::optional<PendingConnectionKernelEntry> {
@@ -1074,103 +1039,6 @@ auto IsTerminatorPureCF(const mir::Terminator& term) -> bool {
       term.data);
 }
 
-// Centralized helper: resolve a SignalRef to design-global slot ID.
-auto ResolveSignalToGlobalSlot(const mir::SignalRef& signal, uint32_t slot_base)
-    -> uint32_t {
-  return (signal.scope == mir::SignalRef::Scope::kModuleLocal)
-             ? slot_base + signal.id
-             : signal.id;
-}
-
-// Check if a process can be batched as a comb kernel.
-// Criteria: kLooping, all statements pure, all terminators are pure CF or Wait,
-// exactly one Wait terminator with kAnyChange triggers and no late-bound.
-auto TryKernelizeComb(
-    const mir::Process& process, const mir::Arena& arena, uint32_t slot_base)
-    -> std::optional<PendingCombKernelEntry> {
-  if (process.kind != mir::ProcessKind::kLooping) return std::nullopt;
-
-  const mir::Wait* wait_term = nullptr;
-
-  // Collect write destination slot IDs for self-edge detection.
-  std::unordered_set<uint32_t> write_slots;
-
-  for (const auto& block : process.blocks) {
-    // Check all statements are pure
-    for (const auto& stmt : block.statements) {
-      if (!IsStatementPure(stmt)) return std::nullopt;
-
-      // Check Assign RHS for side-effecting Rvalues, and collect write slots.
-      if (const auto* assign = std::get_if<mir::Assign>(&stmt.data)) {
-        if (const auto* rv = std::get_if<mir::Rvalue>(&assign->rhs)) {
-          if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
-        }
-        const auto& root = arena[assign->dest].root;
-        if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
-          write_slots.insert(slot_base + static_cast<uint32_t>(root.id));
-        } else if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-          write_slots.insert(static_cast<uint32_t>(root.id));
-        }
-      }
-      if (const auto* ga = std::get_if<mir::GuardedAssign>(&stmt.data)) {
-        if (const auto* rv = std::get_if<mir::Rvalue>(&ga->rhs)) {
-          if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
-        }
-        const auto& root = arena[ga->dest].root;
-        if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
-          write_slots.insert(slot_base + static_cast<uint32_t>(root.id));
-        } else if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-          write_slots.insert(static_cast<uint32_t>(root.id));
-        }
-      }
-    }
-
-    // Check terminator
-    if (!IsTerminatorPureCF(block.terminator)) return std::nullopt;
-
-    // Track the Wait terminator
-    if (const auto* w = std::get_if<mir::Wait>(&block.terminator.data)) {
-      if (wait_term != nullptr) return std::nullopt;  // Multiple Waits
-      wait_term = w;
-    }
-  }
-
-  // Must have exactly one Wait terminator
-  if (wait_term == nullptr) return std::nullopt;
-
-  // All triggers must be kAnyChange with no late-bound
-  std::vector<PendingCombTrigger> triggers;
-  triggers.reserve(wait_term->triggers.size());
-  for (const auto& trigger : wait_term->triggers) {
-    if (trigger.edge != common::EdgeKind::kAnyChange) return std::nullopt;
-    if (trigger.late_bound.has_value()) return std::nullopt;
-    triggers.push_back({
-        .slot =
-            mir::SlotId{ResolveSignalToGlobalSlot(trigger.signal, slot_base)},
-        .observed_place = trigger.observed_place,
-    });
-  }
-
-  if (triggers.empty()) return std::nullopt;
-
-  // Self-edge detection: slot-granular overlap between write set and trigger
-  // set. Conservative -- sub-slot disjointness (e.g. a[3] write vs a[5]
-  // trigger) is not considered, matching the runtime's slot-granular snapshot
-  // mechanism.
-  bool has_self_edge = false;
-  for (const auto& trigger : triggers) {
-    if (write_slots.contains(trigger.slot.value)) {
-      has_self_edge = true;
-      break;
-    }
-  }
-
-  return PendingCombKernelEntry{
-      .triggers = std::move(triggers),
-      .has_self_edge = has_self_edge,
-  };
-}
-
 // Build SuspendRecord as opaque blob - suspend helpers own the layout.
 auto BuildSuspendRecordType(llvm::LLVMContext& ctx) -> llvm::StructType* {
   static_assert(
@@ -1203,6 +1071,115 @@ auto BuildHeaderType(llvm::LLVMContext& ctx, llvm::StructType* suspend_type)
 }
 
 }  // namespace
+
+auto ResolveObservation(
+    const mir::Arena& arena, const DesignLayout& design_layout,
+    mir::SlotId design_global_slot, mir::PlaceId place_id)
+    -> std::optional<ResolvedObservation> {
+  auto slot_it = design_layout.slot_to_index.find(design_global_slot);
+  if (slot_it == design_layout.slot_to_index.end()) {
+    throw common::InternalError(
+        "ResolveObservation", std::format(
+                                  "design-global slot {} not found in layout",
+                                  design_global_slot.value));
+  }
+  const auto& spec = design_layout.slot_storage_specs[slot_it->second];
+  const auto& place = arena[place_id];
+  auto range =
+      ResolveByteRange(spec, design_layout.storage_spec_arena, place, nullptr);
+  if (range.kind != RangeKind::kPrecise) {
+    return std::nullopt;
+  }
+  return ResolvedObservation{
+      .byte_offset = range.byte_offset,
+      .byte_size = range.byte_size,
+      .bit_index = range.bit_index,
+  };
+}
+
+auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
+    -> std::optional<CombAnalysisResult> {
+  if (process.kind != mir::ProcessKind::kLooping) return std::nullopt;
+
+  const mir::Wait* wait_term = nullptr;
+
+  // Track write slots with scope to avoid false self-edge matches
+  // between module-local and design-global slots with the same numeric id.
+  std::unordered_set<ScopedSignalKey, ScopedSignalKeyHash> write_slots;
+
+  for (const auto& block : process.blocks) {
+    for (const auto& stmt : block.statements) {
+      if (!IsStatementPure(stmt)) return std::nullopt;
+
+      if (const auto* assign = std::get_if<mir::Assign>(&stmt.data)) {
+        if (const auto* rv = std::get_if<mir::Rvalue>(&assign->rhs)) {
+          if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
+        }
+        const auto& root = arena[assign->dest].root;
+        if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
+          write_slots.insert(
+              {.scope = mir::SignalRef::Scope::kModuleLocal,
+               .id = static_cast<uint32_t>(root.id)});
+        } else if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+          write_slots.insert(
+              {.scope = mir::SignalRef::Scope::kDesignGlobal,
+               .id = static_cast<uint32_t>(root.id)});
+        }
+      }
+      if (const auto* ga = std::get_if<mir::GuardedAssign>(&stmt.data)) {
+        if (const auto* rv = std::get_if<mir::Rvalue>(&ga->rhs)) {
+          if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
+        }
+        const auto& root = arena[ga->dest].root;
+        if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
+          write_slots.insert(
+              {.scope = mir::SignalRef::Scope::kModuleLocal,
+               .id = static_cast<uint32_t>(root.id)});
+        } else if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
+          write_slots.insert(
+              {.scope = mir::SignalRef::Scope::kDesignGlobal,
+               .id = static_cast<uint32_t>(root.id)});
+        }
+      }
+    }
+
+    if (!IsTerminatorPureCF(block.terminator)) return std::nullopt;
+
+    if (const auto* w = std::get_if<mir::Wait>(&block.terminator.data)) {
+      if (wait_term != nullptr) return std::nullopt;
+      wait_term = w;
+    }
+  }
+
+  if (wait_term == nullptr) return std::nullopt;
+
+  std::vector<CombAnalysisResult::TriggerFact> triggers;
+  triggers.reserve(wait_term->triggers.size());
+  for (const auto& trigger : wait_term->triggers) {
+    if (trigger.edge != common::EdgeKind::kAnyChange) return std::nullopt;
+    if (trigger.late_bound.has_value()) return std::nullopt;
+    triggers.push_back({
+        .signal = trigger.signal,
+        .observed_place = trigger.observed_place,
+    });
+  }
+
+  if (triggers.empty()) return std::nullopt;
+
+  // Self-edge detection uses scoped identity to avoid false matches.
+  bool has_self_edge = false;
+  for (const auto& t : triggers) {
+    if (write_slots.contains({.scope = t.signal.scope, .id = t.signal.id})) {
+      has_self_edge = true;
+      break;
+    }
+  }
+
+  return CombAnalysisResult{
+      .triggers = std::move(triggers),
+      .has_self_edge = has_self_edge,
+  };
+}
 
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
@@ -1325,19 +1302,19 @@ auto BuildDesignLayout(
 
     switch (lane_byte_size) {
       case 1:
-        layout.four_state_patches.patches_8.push_back(
-            {patch_offset, static_cast<uint8_t>(mask)});
+        layout.four_state_patches.patches_8.emplace_back(
+            patch_offset, static_cast<uint8_t>(mask));
         break;
       case 2:
-        layout.four_state_patches.patches_16.push_back(
-            {patch_offset, static_cast<uint16_t>(mask)});
+        layout.four_state_patches.patches_16.emplace_back(
+            patch_offset, static_cast<uint16_t>(mask));
         break;
       case 4:
-        layout.four_state_patches.patches_32.push_back(
-            {patch_offset, static_cast<uint32_t>(mask)});
+        layout.four_state_patches.patches_32.emplace_back(
+            patch_offset, static_cast<uint32_t>(mask));
         break;
       case 8:
-        layout.four_state_patches.patches_64.push_back({patch_offset, mask});
+        layout.four_state_patches.patches_64.emplace_back(patch_offset, mask);
         break;
       default:
         throw common::InternalError(
@@ -1534,40 +1511,14 @@ auto BuildLayout(
   }
 
   // Phase 3: Collect module processes (run through scheduler)
-  // Also detect pure combinational processes for comb kernel batching.
   layout.num_module_process_base = layout.scheduled_processes.size();
-  // module_process_counter is 0-based within the module-process slice
-  // of scheduled_processes. Comb kernels receive this as their canonical
-  // scheduled_process_index.
-  uint32_t module_process_counter = 0;
   for (uint32_t mi = 0; mi < module_plans.size(); ++mi) {
     const auto& plan = module_plans[mi];
     const auto& body_arena = design.module_bodies.at(plan.body_id.value).arena;
     for (mir::ProcessId proc_id : plan.body_processes) {
       const auto& process = body_arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
-
-      auto pending =
-          TryKernelizeComb(process, body_arena, plan.design_state_base_slot);
-      if (pending) {
-        std::vector<CombTrigger> resolved_triggers;
-        resolved_triggers.reserve(pending->triggers.size());
-        for (const auto& pt : pending->triggers) {
-          std::optional<ResolvedObservation> obs;
-          if (pt.observed_place) {
-            obs = ResolveObservation(
-                body_arena, layout.design, pt.slot, *pt.observed_place);
-          }
-          resolved_triggers.push_back({.slot = pt.slot, .observation = obs});
-        }
-        layout.comb_kernel_entries.push_back({
-            .scheduled_process_index = module_process_counter,
-            .triggers = std::move(resolved_triggers),
-            .has_self_edge = pending->has_self_edge,
-        });
-      }
       layout.scheduled_processes.push_back({proc_id, ModuleIndex{mi}});
-      ++module_process_counter;
     }
   }
 
@@ -1796,6 +1747,8 @@ auto BuildLayout(
                   .slot_count = plan.slot_count,
                   .process_schema_indices = {},
                   .meta = {},
+                  .triggers = {},
+                  .comb = {},
               });
         } else {
           // Validate all plans for the same body agree on slot_count.
@@ -1862,8 +1815,14 @@ auto BuildLayout(
             "BuildLayout",
             "connection schema ordering does not match expected conn_index");
       }
+      auto conn_sched_idx = layout.num_init_processes + c;
       layout.connection_realization_infos.push_back(
-          Layout::ConnectionRealizationInfo{.schema_index = c});
+          Layout::ConnectionRealizationInfo{
+              .schema_index = c,
+              .process_id =
+                  layout.scheduled_processes[conn_sched_idx].process_id,
+              .trigger = std::nullopt,
+          });
     }
   }
 

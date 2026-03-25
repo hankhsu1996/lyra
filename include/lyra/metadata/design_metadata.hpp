@@ -4,8 +4,6 @@
 #include <string>
 #include <vector>
 
-#include "lyra/common/edge_kind.hpp"
-
 namespace lyra::metadata {
 
 struct MetaWordTable {
@@ -51,23 +49,6 @@ struct ConnectionDescriptorEntry {
   ConnectionKernelOrigin origin = ConnectionKernelOrigin::kPortBinding;
 };
 
-// Runtime-facing trigger observation for a comb kernel input slot.
-// byte_size == 0 means full-slot (no sub-slot narrowing).
-struct CombTriggerInput {
-  uint32_t slot_id = 0;
-  uint32_t byte_offset = 0;
-  uint32_t byte_size = 0;
-};
-
-// Input facts for a combinational kernel.
-// scheduled_process_index is the canonical index into the process meta table
-// (0-based, counting from the first module process after init processes).
-struct CombKernelInput {
-  uint32_t scheduled_process_index = 0;
-  std::vector<CombTriggerInput> triggers;
-  bool has_self_edge = false;
-};
-
 // Input facts for a back-edge site.
 // back_edge_site_index is the canonical 0-based row index, assigned at
 // extraction time. Serialized in this order.
@@ -86,25 +67,12 @@ struct TraceSignalMetaInput {
   uint32_t trace_kind = 0;
 };
 
-// Constructor-visible process trigger descriptor for G13 trigger groups.
-// One row per trigger fact (a process with N triggers produces N rows).
-// scheduled_process_index repeats across rows from the same process.
-// Signal IDs are design-global (resolved during lowering).
-struct ProcessTriggerInput {
-  uint32_t scheduled_process_index = 0;
-  uint32_t slot_id = 0;
-  common::EdgeKind edge = common::EdgeKind::kAnyChange;
-  bool is_groupable = false;
-};
-
 // Semantic inputs for design metadata construction.
 // All vectors preserve their input order; link serializes in that order.
 struct DesignMetadataInputs {
   std::vector<SlotMetaInput> slot_meta;
   std::vector<BackEdgeSiteInput> back_edge_sites;
   std::vector<ConnectionDescriptorEntry> connection_descriptors;
-  std::vector<CombKernelInput> comb_kernels;
-  std::vector<ProcessTriggerInput> process_triggers;
   std::vector<std::string> instance_paths;
   std::vector<TraceSignalMetaInput> trace_signal_meta;
 };
@@ -115,8 +83,6 @@ struct DesignMetadata {
   std::vector<uint32_t> slot_meta_words;
   MetaWordTable back_edge_site_meta;
   std::vector<ConnectionDescriptorEntry> connection_descriptors;
-  std::vector<uint32_t> comb_kernel_words;
-  std::vector<uint32_t> process_trigger_words;
   std::vector<std::string> instance_paths;
   MetaWordTable trace_signal_meta;
 };

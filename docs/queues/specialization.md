@@ -15,7 +15,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] G -- Instance-independent LLVM codegen (per-instance code eliminated, shared-body code paths in place)
 - [x] H1 -- Correct specialization end-state: architecture contract still overstates progress
 - [x] H2 -- Move constructor/process realization out of compile-time artifacts
-- [ ] H3 -- Move process metadata realization behind constructor-time expansion
+- [x] H3 -- Move process metadata realization behind constructor-time expansion
 - [ ] H4 -- Move trigger/comb realization behind constructor-time expansion
 - [ ] H5 -- Move slot/trace/path realization behind constructor-time expansion
 - [ ] H6 -- Remove compile-time-expanded design-state initialization topology
@@ -29,12 +29,6 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [ ] F2 -- Specialization caching
 - [ ] Documentation gap: pipeline-contract.md and state-layout.md need type ownership clarification
 - [ ] CI policy gates: codegen API check, grouping regression tests, topology-independence test
-
-## H3: Move process metadata realization behind constructor-time expansion
-
-Per-process metadata (scope names for %m, process trigger group membership) is still emitted as fully expanded compile-time tables. Each module process instance gets its own entry in the process metadata word table and string pool, even when all instances share the same body and differ only in their hierarchical path prefix.
-
-This metadata should be derived at constructor time from body-shaped templates and per-instance path prefixes, rather than fully materialized during compilation.
 
 ## H4: Move trigger/comb realization behind constructor-time expansion
 
