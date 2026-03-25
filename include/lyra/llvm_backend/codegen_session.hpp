@@ -12,6 +12,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
@@ -199,6 +200,7 @@ auto ExtractRealizationData(
     std::span<const char> slot_trace_string_pool) -> RealizationData;
 
 // Backend phase: extract LLVM ownership from a completed session.
-auto FinalizeModule(CodegenSession session) -> LoweringResult;
+auto FinalizeModule(CodegenSession session, LoweringReport report)
+    -> LoweringResult;
 
 }  // namespace lyra::lowering::mir_to_llvm

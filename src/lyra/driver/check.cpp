@@ -2,30 +2,34 @@
 
 #include <optional>
 
+#include "compilation_output.hpp"
+#include "driver_output_options.hpp"
 #include "frontend.hpp"
-#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
 auto Check(const CompilationInput& input) -> int {
-  VerboseLogger vlog(input.verbose);
+  CompilationOutput output(BuildCheckDriverOutputOptions(input));
 
   std::optional<ParseResult> parse_result;
   {
-    PhaseTimer timer(vlog, "parse");
+    PhaseTimer timer(output, Phase::kParse);
     parse_result = ParseFiles(input);
   }
   if (!parse_result) {
+    output.Flush();
     return 1;
   }
 
   {
-    PhaseTimer timer(vlog, "elaborate");
+    PhaseTimer timer(output, Phase::kElaborate);
     if (!Elaborate(*parse_result, input)) {
+      output.Flush();
       return 1;
     }
   }
 
+  output.Flush();
   return 0;
 }
 

@@ -7,46 +7,33 @@
 #include <utility>
 #include <vector>
 
-#include <fmt/core.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/TimeProfiler.h>
 
+#include "compilation_output.hpp"
+#include "driver_output_options.hpp"
 #include "frontend.hpp"
 #include "llvm_stats.hpp"
-#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/llvm_backend/execution.hpp"
-#include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/runtime/artifact_names.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "pipeline.hpp"
-#include "print.hpp"
 #include "process_stats.hpp"
 #include "runtime_path.hpp"
 #include "stats_report.hpp"
-#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
 namespace {
 
-void PrintMirStats(
-    const lowering::hir_to_mir::LoweringStats& stats, FILE* sink = stderr) {
-  fmt::print(
-      sink,
-      "[lyra][stats][mir] place_temps={} value_temps={} "
-      "materialize_to_place={} mir_stmts={}\n",
-      stats.place_temps, stats.value_temps, stats.materialize_to_place,
-      stats.mir_stmts);
-  std::fflush(sink);
-}
-
 // RAII guard for LLVM time-trace profiling.
 class TimeTraceGuard {
  public:
-  explicit TimeTraceGuard(bool enabled) : enabled_(enabled) {
+  TimeTraceGuard(bool enabled, CompilationOutput& output)
+      : enabled_(enabled), output_(output) {
     if (!enabled_) return;
     llvm::timeTraceProfilerInitialize(500, "lyra");
     filename_ =
@@ -56,13 +43,13 @@ class TimeTraceGuard {
   ~TimeTraceGuard() {
     if (!enabled_) return;
     if (auto err = llvm::timeTraceProfilerWrite(filename_, "lyra")) {
-      fmt::print(
-          stderr, "[lyra] warning: failed to write time-trace: {}\n",
-          llvm::toString(std::move(err)));
+      output_.PrintWarning(
+          std::format(
+              "failed to write time-trace: {}",
+              llvm::toString(std::move(err))));
     } else {
-      fmt::print(stderr, "[lyra] time-trace written to {}\n", filename_);
+      output_.PrintWarning(std::format("time-trace written to {}", filename_));
     }
-    std::fflush(stderr);
     llvm::timeTraceProfilerCleanup();
   }
 
@@ -73,22 +60,24 @@ class TimeTraceGuard {
 
  private:
   bool enabled_;
+  CompilationOutput& output_;
   std::string filename_;
 };
 
 }  // namespace
 
 auto RunJit(const CompilationInput& input) -> int {
-  VerboseLogger vlog(input.verbose);
+  bool emit_stats = input.stats_top_n >= 0;
+  CompilationOutput output(BuildJitDriverOutputOptions(input, emit_stats));
 
-  auto result = CompileToMir(input, vlog);
+  auto result = CompileToMir(input, output);
   if (!result) {
-    result.error().Print();
+    result.error().Render(output);
+    output.Flush();
     return 1;
   }
   auto compilation = std::move(*result);
 
-  // Create diagnostic context for LLVM backend error reporting
   lowering::OriginMapLookup origin_lookup(
       &compilation.mir.design_origins, &compilation.mir.body_origins,
       &compilation.hir.design, compilation.hir.hir_arena.get());
@@ -131,15 +120,19 @@ auto RunJit(const CompilationInput& input) -> int {
       .signal_trace_path = input.trace_signals_output.value_or(""),
       .iteration_limit = input.iteration_limit,
       .force_two_state = input.two_state,
+      .collect_forwarding_analysis =
+          output.IsEnabled(OutputCategory::kAnalysis),
   };
 
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
   {
-    PhaseTimer timer(vlog, "lower_llvm");
+    PhaseTimer timer(output, Phase::kLowerLlvm);
     llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
   }
   if (!llvm_result) {
-    PrintDiagnostic(llvm_result.error(), *compilation.hir.source_manager);
+    output.PrintDiagnostic(
+        llvm_result.error(), *compilation.hir.source_manager);
+    output.Flush();
     return 1;
   }
 
@@ -151,99 +144,71 @@ auto RunJit(const CompilationInput& input) -> int {
       msg += std::format("\n         - {}", path);
     }
     msg += "\n       hint: set LYRA_RUNTIME_PATH environment variable";
-    PrintError(msg);
+    output.PrintError(msg);
+    output.Flush();
     return 1;
   }
 
-  // Collect LLVM stats BEFORE JIT (module is consumed during compilation)
-  bool emit_stats = input.stats_top_n >= 0;
   bool collect_stats = emit_stats || input.stats_out_path.has_value();
   LlvmStats llvm_stats;
   if (collect_stats) {
     llvm_stats = CollectLlvmStats(*llvm_result->module);
   }
 
-  // Print pre-JIT stats now so they survive if JIT times out.
   if (emit_stats) {
-    PrintMirStats(compilation.mir.stats);
-    vlog.PrintPhaseSummary();
-    PrintLlvmStats(llvm_stats, input.stats_top_n);
-    PrintProcessStats(
+    output.PrintMirStats(compilation.mir.stats);
+    output.PrintPhaseSummary();
+    output.PrintLlvmStats(llvm_stats, input.stats_top_n);
+    auto ps = CollectProcessStats(
         compilation.mir.design, *compilation.mir.design_arena,
         compilation.mir.design_origins, compilation.hir.design,
         *compilation.hir.hir_arena, *compilation.hir.source_manager,
         llvm_stats);
+    output.PrintProcessStats(ps);
   }
 
-  // Phase 1: JIT compilation
-  TimeTraceGuard time_trace_guard(input.time_trace);
+  if (output.IsEnabled(OutputCategory::kAnalysis)) {
+    output.PrintForwardingAnalysisReport(
+        llvm_result->report.forwarding_analysis);
+  }
+
+  TimeTraceGuard time_trace_guard(input.time_trace, output);
   std::expected<lowering::mir_to_llvm::JitSession, std::string> session;
   {
-    PhaseTimer timer(vlog, "jit_compile");
+    PhaseTimer timer(output, Phase::kJitCompile);
+    lowering::mir_to_llvm::LinkProgressReporter progress_reporter;
+    if (output.IsEnabled(OutputCategory::kLinkProgress)) {
+      progress_reporter =
+          [&output](
+              const lowering::mir_to_llvm::LinkProgressSnapshot& snapshot) {
+            output.PrintLinkProgress(snapshot);
+          };
+    }
     lowering::mir_to_llvm::JitCompileOptions jit_opts{
         .opt_level = input.opt_level,
         .enable_profiling = emit_stats,
-        .emit_progress = emit_stats,
+        .progress_reporter = std::move(progress_reporter),
     };
     session =
         lowering::mir_to_llvm::CompileJit(*llvm_result, runtime_path, jit_opts);
   }
   if (!session) {
-    PrintError(std::format("JIT compilation failed: {}", session.error()));
+    output.PrintError(
+        std::format("JIT compilation failed: {}", session.error()));
+    output.Flush();
     return 1;
   }
 
-  // Print JIT/ORC stats after compilation.
   if (emit_stats) {
-    const auto& jt = session->Timings();
-    if (jt.complete) {
-      fmt::print(
-          stderr,
-          "[lyra][stats][jit] create_jit={:.3f}s load_runtime={:.3f}s "
-          "optimize_ir={:.3f}s add_ir={:.3f}s lookup_main={:.3f}s "
-          "codegen={:.3f}s linking={:.3f}s",
-          jt.create_jit, jt.load_runtime, jt.optimize_ir, jt.add_ir,
-          jt.lookup_main, jt.codegen, jt.linking);
-      if (jt.has_link_detail) {
-        fmt::print(
-            stderr,
-            " link_graph={:.3f}s link_alloc={:.3f}s"
-            " link_fixup={:.3f}s link_finalize={:.3f}s",
-            jt.link_graph, jt.link_alloc, jt.link_fixup, jt.link_finalize);
-        if (jt.finalize_perm > 0.0 || jt.finalize_overhead > 0.0) {
-          fmt::print(
-              stderr, " finalize_perm={:.3f}s finalize_overhead={:.3f}s",
-              jt.finalize_perm, jt.finalize_overhead);
-        }
-      }
-      fmt::print(stderr, "\n");
-      std::fflush(stderr);
-    }
-    const auto& orc = session->OrcStats();
-    fmt::print(
-        stderr, "[lyra][stats][orc] linker={} objects={} obj_bytes={}",
-        orc.linker_backend, orc.object_count, orc.total_object_bytes);
-    if (orc.relocation_count > 0) {
-      fmt::print(
-          stderr, " relocs={} syms={} sections={} blocks={}",
-          orc.relocation_count, orc.symbol_count, orc.section_count,
-          orc.block_count);
-    }
-    if (orc.finalize_segments > 0) {
-      fmt::print(
-          stderr, " finalize_segments={} finalize_bytes={}",
-          orc.finalize_segments, orc.finalize_bytes);
-    }
-    fmt::print(stderr, "\n");
-    std::fflush(stderr);
+    output.PrintJitTimings(session->Timings());
+    output.PrintOrcStats(session->OrcStats());
   }
 
-  // Write structured JSON stats
   if (input.stats_out_path) {
     StatsReport report{
         .backend = StatsBackend::kJit,
         .git_sha = ResolveGitSha(),
-        .vlog = &vlog,
+        .phases = output.GetPhaseSummaryData(),
         .llvm = llvm_stats,
         .mir = compilation.mir.stats,
         .jit = session->Timings(),
@@ -251,11 +216,13 @@ auto RunJit(const CompilationInput& input) -> int {
     WriteStatsJson(report, *input.stats_out_path);
   }
 
-  // Phase 2: simulation
+  int exit_code = 0;
   {
-    PhaseTimer timer(vlog, "sim", true);
-    return session->Run();
+    PhaseTimer timer(output, Phase::kSim, HeartbeatPolicy::kEnabled);
+    exit_code = session->Run();
   }
+  output.Flush();
+  return exit_code;
 }
 
 }  // namespace lyra::driver

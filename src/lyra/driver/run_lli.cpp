@@ -14,18 +14,17 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "compilation_output.hpp"
+#include "driver_output_options.hpp"
 #include "frontend.hpp"
 #include "llvm_stats.hpp"
-#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/runtime/artifact_names.hpp"
 #include "pipeline.hpp"
-#include "print.hpp"
 #include "process_stats.hpp"
 #include "runtime_path.hpp"
-#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
@@ -99,11 +98,13 @@ auto SpawnLli(const std::string& runtime_path, const std::string& ir_path)
 }  // namespace
 
 auto RunLli(const CompilationInput& input) -> int {
-  VerboseLogger vlog(input.verbose);
+  bool emit_stats = input.stats_top_n >= 0;
+  CompilationOutput output(BuildLliDriverOutputOptions(input, emit_stats));
 
-  auto result = CompileToMir(input, vlog);
+  auto result = CompileToMir(input, output);
   if (!result) {
-    result.error().Print();
+    result.error().Render(output);
+    output.Flush();
     return 1;
   }
   auto compilation = std::move(*result);
@@ -126,33 +127,46 @@ auto RunLli(const CompilationInput& input) -> int {
       .signal_trace_path = input.trace_signals_output.value_or(""),
       .iteration_limit = input.iteration_limit,
       .force_two_state = input.two_state,
+      .collect_forwarding_analysis =
+          output.IsEnabled(OutputCategory::kAnalysis),
       .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
   };
 
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
   {
-    PhaseTimer timer(vlog, "lower_llvm");
+    PhaseTimer timer(output, Phase::kLowerLlvm);
     llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
   }
   if (!llvm_result) {
-    PrintDiagnostic(llvm_result.error(), *compilation.hir.source_manager);
+    output.PrintDiagnostic(
+        llvm_result.error(), *compilation.hir.source_manager);
+    output.Flush();
     return 1;
   }
 
-  if (input.stats_top_n >= 0) {
+  if (emit_stats) {
+    output.PrintMirStats(compilation.mir.stats);
+    output.PrintPhaseSummary();
     LlvmStats llvm_stats_data = CollectLlvmStats(*llvm_result->module);
-    PrintLlvmStats(llvm_stats_data, input.stats_top_n);
-    PrintProcessStats(
+    output.PrintLlvmStats(llvm_stats_data, input.stats_top_n);
+    auto ps = CollectProcessStats(
         compilation.mir.design, *compilation.mir.design_arena,
         compilation.mir.design_origins, compilation.hir.design,
         *compilation.hir.hir_arena, *compilation.hir.source_manager,
         llvm_stats_data);
+    output.PrintProcessStats(ps);
+  }
+
+  if (output.IsEnabled(OutputCategory::kAnalysis)) {
+    output.PrintForwardingAnalysisReport(
+        llvm_result->report.forwarding_analysis);
   }
 
   std::string ir_path = CreateTempFile(".ll");
   if (ir_path.empty()) {
-    PrintError(
+    output.PrintError(
         std::format("failed to create temp file: {}", std::strerror(errno)));
+    output.Flush();
     return 1;
   }
   TempFileGuard temp_guard(ir_path);
@@ -160,7 +174,8 @@ auto RunLli(const CompilationInput& input) -> int {
   {
     std::ofstream out(ir_path);
     if (!out) {
-      PrintError(std::format("failed to write to {}", ir_path));
+      output.PrintError(std::format("failed to write to {}", ir_path));
+      output.Flush();
       return 1;
     }
     out << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
@@ -174,24 +189,27 @@ auto RunLli(const CompilationInput& input) -> int {
       msg += std::format("\n         - {}", path);
     }
     msg += "\n       hint: set LYRA_RUNTIME_PATH environment variable";
-    PrintError(msg);
+    output.PrintError(msg);
+    output.Flush();
     return 1;
   }
 
   int exit_code = 0;
   {
-    PhaseTimer timer(vlog, "lli", true);
+    PhaseTimer timer(output, Phase::kSim, HeartbeatPolicy::kEnabled);
     exit_code = SpawnLli(runtime_path.string(), ir_path);
   }
   if (exit_code == -1) {
-    PrintError(
+    output.PrintError(
         std::format(
             "failed to execute lli: {}\n"
             "       hint: ensure 'lli' is installed and in PATH",
             std::strerror(errno)));
+    output.Flush();
     return 1;
   }
 
+  output.Flush();
   return exit_code;
 }
 

@@ -4,6 +4,8 @@
 #include <iostream>
 #include <optional>
 
+#include "compilation_output.hpp"
+#include "driver_output_options.hpp"
 #include "frontend.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
@@ -14,26 +16,26 @@
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/dumper.hpp"
-#include "print.hpp"
-#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
 auto DumpHir(const CompilationInput& input) -> int {
-  VerboseLogger vlog(input.verbose);
+  CompilationOutput output(BuildDumpDriverOutputOptions(input));
 
   std::optional<ParseResult> parse_result;
   {
-    PhaseTimer timer(vlog, "parse");
+    PhaseTimer timer(output, Phase::kParse);
     parse_result = ParseFiles(input);
   }
   if (!parse_result) {
+    output.Flush();
     return 1;
   }
 
   {
-    PhaseTimer timer(vlog, "elaborate");
+    PhaseTimer timer(output, Phase::kElaborate);
     if (!Elaborate(*parse_result, input)) {
+      output.Flush();
       return 1;
     }
   }
@@ -41,13 +43,14 @@ auto DumpHir(const CompilationInput& input) -> int {
   DiagnosticSink sink;
   lowering::ast_to_hir::LoweringResult result;
   {
-    PhaseTimer timer(vlog, "lower_hir");
+    PhaseTimer timer(output, Phase::kLowerHir);
     result =
         lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
   }
 
   if (sink.HasErrors()) {
-    PrintDiagnostics(sink, result.source_manager.get());
+    output.PrintDiagnostics(sink, result.source_manager.get());
+    output.Flush();
     return 1;
   }
 
@@ -56,24 +59,27 @@ auto DumpHir(const CompilationInput& input) -> int {
       result.constant_arena.get(), result.symbol_table.get(), &std::cout);
   dumper.Dump(result.design);
 
+  output.Flush();
   return 0;
 }
 
 auto DumpMir(const CompilationInput& input) -> int {
-  VerboseLogger vlog(input.verbose);
+  CompilationOutput output(BuildDumpDriverOutputOptions(input));
 
   std::optional<ParseResult> parse_result;
   {
-    PhaseTimer timer(vlog, "parse");
+    PhaseTimer timer(output, Phase::kParse);
     parse_result = ParseFiles(input);
   }
   if (!parse_result) {
+    output.Flush();
     return 1;
   }
 
   {
-    PhaseTimer timer(vlog, "elaborate");
+    PhaseTimer timer(output, Phase::kElaborate);
     if (!Elaborate(*parse_result, input)) {
+      output.Flush();
       return 1;
     }
   }
@@ -81,13 +87,14 @@ auto DumpMir(const CompilationInput& input) -> int {
   DiagnosticSink sink;
   lowering::ast_to_hir::LoweringResult hir_result;
   {
-    PhaseTimer timer(vlog, "lower_hir");
+    PhaseTimer timer(output, Phase::kLowerHir);
     hir_result =
         lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
   }
 
   if (sink.HasErrors()) {
-    PrintDiagnostics(sink, hir_result.source_manager.get());
+    output.PrintDiagnostics(sink, hir_result.source_manager.get());
+    output.Flush();
     return 1;
   }
 
@@ -105,11 +112,12 @@ auto DumpMir(const CompilationInput& input) -> int {
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
-    PhaseTimer timer(vlog, "lower_mir");
+    PhaseTimer timer(output, Phase::kLowerMir);
     mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   }
   if (!mir_result) {
-    PrintDiagnostic(mir_result.error(), *hir_result.source_manager);
+    output.PrintDiagnostic(mir_result.error(), *hir_result.source_manager);
+    output.Flush();
     return 1;
   }
 
@@ -117,24 +125,27 @@ auto DumpMir(const CompilationInput& input) -> int {
       mir_result->design_arena.get(), hir_result.type_arena.get(), &std::cout);
   dumper.Dump(mir_result->design);
 
+  output.Flush();
   return 0;
 }
 
 auto DumpLlvm(const CompilationInput& input) -> int {
-  VerboseLogger vlog(input.verbose);
+  CompilationOutput output(BuildDumpDriverOutputOptions(input));
 
   std::optional<ParseResult> parse_result;
   {
-    PhaseTimer timer(vlog, "parse");
+    PhaseTimer timer(output, Phase::kParse);
     parse_result = ParseFiles(input);
   }
   if (!parse_result) {
+    output.Flush();
     return 1;
   }
 
   {
-    PhaseTimer timer(vlog, "elaborate");
+    PhaseTimer timer(output, Phase::kElaborate);
     if (!Elaborate(*parse_result, input)) {
+      output.Flush();
       return 1;
     }
   }
@@ -142,13 +153,14 @@ auto DumpLlvm(const CompilationInput& input) -> int {
   DiagnosticSink sink;
   lowering::ast_to_hir::LoweringResult hir_result;
   {
-    PhaseTimer timer(vlog, "lower_hir");
+    PhaseTimer timer(output, Phase::kLowerHir);
     hir_result =
         lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
   }
 
   if (sink.HasErrors()) {
-    PrintDiagnostics(sink, hir_result.source_manager.get());
+    output.PrintDiagnostics(sink, hir_result.source_manager.get());
+    output.Flush();
     return 1;
   }
 
@@ -166,15 +178,15 @@ auto DumpLlvm(const CompilationInput& input) -> int {
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
-    PhaseTimer timer(vlog, "lower_mir");
+    PhaseTimer timer(output, Phase::kLowerMir);
     mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   }
   if (!mir_result) {
-    PrintDiagnostic(mir_result.error(), *hir_result.source_manager);
+    output.PrintDiagnostic(mir_result.error(), *hir_result.source_manager);
+    output.Flush();
     return 1;
   }
 
-  // Create diagnostic context for LLVM backend error reporting
   lowering::OriginMapLookup origin_lookup(
       &mir_result->design_origins, &mir_result->body_origins,
       &hir_result.design, hir_result.hir_arena.get());
@@ -192,19 +204,23 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .signal_trace_path = {},
       .iteration_limit = 0,
       .force_two_state = input.two_state,
+      .collect_forwarding_analysis =
+          output.IsEnabled(OutputCategory::kAnalysis),
   };
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
   {
-    PhaseTimer timer(vlog, "lower_llvm");
+    PhaseTimer timer(output, Phase::kLowerLlvm);
     llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
   }
   if (!llvm_result) {
-    PrintDiagnostic(llvm_result.error(), *hir_result.source_manager);
+    output.PrintDiagnostic(llvm_result.error(), *hir_result.source_manager);
+    output.Flush();
     return 1;
   }
 
   std::cout << lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
 
+  output.Flush();
   return 0;
 }
 

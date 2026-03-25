@@ -6,11 +6,8 @@
 #include <format>
 #include <fstream>
 #include <string>
-#include <string_view>
 
 #include <llvm/Config/llvm-config.h>
-
-#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
@@ -51,19 +48,17 @@ void WriteStatsJson(
   out << "  \"git\": \"" << report.git_sha << "\",\n";
   out << "  \"llvm_version\": \"" << LLVM_VERSION_STRING << "\",\n";
 
-  // Phases -- iterate kPhaseOrder, only include recorded phases
   out << "  \"phases\": {";
   bool first = true;
-  for (std::string_view phase : VerboseLogger::kPhaseOrder) {
-    auto d = report.vlog->PhaseDuration(phase);
-    if (!d) continue;
+  for (const auto& [phase, name] : kOrderedPhases) {
+    auto idx = static_cast<size_t>(phase);
+    if (!report.phases.recorded[idx]) continue;
     if (!first) out << ",";
     first = false;
-    out << "\n    \"" << phase << "\": " << dur(*d);
+    out << "\n    \"" << name << "\": " << dur(report.phases.durations[idx]);
   }
   out << "\n  },\n";
 
-  // LLVM stats
   out << "  \"llvm\": {\n";
   out << "    \"functions\": " << report.llvm.defined_functions << ",\n";
   out << "    \"globals\": " << report.llvm.global_count << ",\n";
@@ -71,7 +66,6 @@ void WriteStatsJson(
   out << "    \"instructions\": " << report.llvm.total_insts << "\n";
   out << "  },\n";
 
-  // MIR stats
   out << "  \"mir\": {\n";
   out << "    \"place_temps\": " << report.mir.place_temps << ",\n";
   out << "    \"value_temps\": " << report.mir.value_temps << ",\n";
@@ -80,7 +74,6 @@ void WriteStatsJson(
   out << "    \"mir_stmts\": " << report.mir.mir_stmts << "\n";
   out << "  }";
 
-  // JIT timings (only for JIT backend)
   if (report.jit) {
     const auto& jt = *report.jit;
     out << ",\n  \"jit\": {\n";

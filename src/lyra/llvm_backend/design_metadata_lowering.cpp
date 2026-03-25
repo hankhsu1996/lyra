@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <format>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
@@ -570,9 +569,9 @@ auto FindPortBindingForwardingCandidates(
     const auto& downstream = connections[downstream_ci];
 
     PortBindingForwardingCandidate candidate;
-    candidate.intermediate_slot_id = slot_id;
-    candidate.upstream_connection_index = upstream_ci;
-    candidate.downstream_connection_index = downstream_ci;
+    candidate.intermediate_slot_id = mir::SlotId{slot_id};
+    candidate.upstream_connection_index = ConnectionIndex{upstream_ci};
+    candidate.downstream_connection_index = ConnectionIndex{downstream_ci};
     candidate.single_writer = true;
     candidate.single_downstream = true;
 
@@ -611,51 +610,6 @@ auto FindPortBindingForwardingCandidates(
   }
 
   return candidates;
-}
-
-void LogPortBindingForwardingCandidates(
-    std::span<const PortBindingForwardingCandidate> candidates) {
-  if (candidates.empty()) return;
-
-  uint32_t provable_pass_count = 0;
-  for (const auto& c : candidates) {
-    if (c.single_writer && c.single_downstream && c.both_port_binding &&
-        c.no_process_trigger && c.no_comb_trigger &&
-        c.upstream_full_copy_shape && c.downstream_matching_read_shape) {
-      ++provable_pass_count;
-    }
-  }
-
-  std::cerr << std::format(
-      "[lyra][forwarding_analysis] total={} provable_pass={}"
-      " (trace_ref unresolved on all; not transform-safe yet)\n",
-      candidates.size(), provable_pass_count);
-
-  for (const auto& c : candidates) {
-    int provable_pass =
-        (c.single_writer && c.single_downstream && c.both_port_binding &&
-         c.no_process_trigger && c.no_comb_trigger &&
-         c.upstream_full_copy_shape && c.downstream_matching_read_shape)
-            ? 1
-            : 0;
-    std::cerr << std::format(
-        "[lyra][forwarding_analysis] slot={}"
-        " up={} down={}"
-        " provable_pass={}"
-        " writer={} down_ok={} port={}"
-        " no_proc={} no_comb={}"
-        " up_copy={} down_read={}"
-        " trace=unresolved\n",
-        c.intermediate_slot_id, c.upstream_connection_index,
-        c.downstream_connection_index, provable_pass,
-        static_cast<int>(c.single_writer),
-        static_cast<int>(c.single_downstream),
-        static_cast<int>(c.both_port_binding),
-        static_cast<int>(c.no_process_trigger),
-        static_cast<int>(c.no_comb_trigger),
-        static_cast<int>(c.upstream_full_copy_shape),
-        static_cast<int>(c.downstream_matching_read_shape));
-  }
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

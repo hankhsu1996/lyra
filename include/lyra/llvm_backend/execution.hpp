@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -9,6 +11,34 @@
 #include "lyra/llvm_backend/lower.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
+
+enum class LinkProgressPhase : uint8_t {
+  kCodegen,
+  kLinkGraph,
+  kLinkAlloc,
+  kLinkFixup,
+  kFinalize,
+};
+
+struct LinkProgressSnapshot {
+  double elapsed_seconds = 0.0;
+  LinkProgressPhase phase = LinkProgressPhase::kCodegen;
+  int object_count = 0;
+  int64_t total_object_bytes = 0;
+  int relocation_count = 0;
+  int symbol_count = 0;
+  int section_count = 0;
+  int block_count = 0;
+  double codegen_seconds = 0.0;
+  double link_graph_seconds = 0.0;
+  double link_alloc_seconds = 0.0;
+  double link_fixup_seconds = 0.0;
+};
+
+// Structured link-progress reporting contract. The driver boundary
+// provides an implementation; this is the only allowed progress
+// reporting path from the execution layer.
+using LinkProgressReporter = std::function<void(const LinkProgressSnapshot&)>;
 
 // Sub-phase timings from JIT compilation (seconds).
 struct JitCompileTimings {
@@ -46,16 +76,16 @@ struct JitOrcStats {
 // Options for JIT compilation.
 //
 // Profiling instrumentation (ProfilingPlugin + ObjectTransformLayer) is
-// installed when either enable_profiling or emit_progress is true.
-// emit_progress requires profiling because progress tracking uses the
-// profiling infrastructure to observe link events.
+// installed when either enable_profiling or progress_reporter is set.
+// progress_reporter requires profiling because progress tracking uses
+// the profiling infrastructure to observe link events.
 struct JitCompileOptions {
   OptLevel opt_level = OptLevel::kO2;
   // Collect per-object compile/link timing via ProfilingPlugin.
   bool enable_profiling = false;
-  // Print per-object link progress to stderr during long compiles.
-  // Implicitly enables profiling instrumentation.
-  bool emit_progress = false;
+  // Structured link-progress reporting. When non-null, enables progress
+  // tracking and invokes the reporter periodically during JIT linking.
+  LinkProgressReporter progress_reporter;
 };
 
 // Holds compiled JIT state. Must stay alive during simulation

@@ -11,6 +11,7 @@
 
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/metadata/design_metadata.hpp"
 #include "lyra/mir/design.hpp"
@@ -55,36 +56,6 @@ auto PrepareTraceSignalMetaInputs(
     const DesignLayout& design_layout)
     -> std::vector<metadata::TraceSignalMetaInput>;
 
-// Port-binding forwarding candidate. Analysis-only result; does NOT
-// authorize transformation. Each field records the result of one
-// candidate check for reviewability. Unresolved checks are marked
-// explicitly.
-struct PortBindingForwardingCandidate {
-  uint32_t intermediate_slot_id = 0;
-  uint32_t upstream_connection_index = 0;
-  uint32_t downstream_connection_index = 0;
-
-  // Provably checked conditions.
-  bool single_writer = false;
-  bool single_downstream = false;
-  bool both_port_binding = false;
-  bool no_process_trigger = false;
-  bool no_comb_trigger = false;
-
-  // Shape checks -- necessary but not sufficient for full proof.
-  // upstream_full_copy_shape: upstream uses full-slot trigger and copies
-  // nonzero bytes. Does NOT prove the copy covers the entire slot extent.
-  // downstream_matching_read_shape: downstream reads from the same byte
-  // region that upstream writes. Does NOT prove semantic value equivalence.
-  bool upstream_full_copy_shape = false;
-  bool downstream_matching_read_shape = false;
-
-  // Unresolved: active trace/display/strobe references cannot be
-  // determined from compile-time metadata alone.
-  // NOT checked in the candidate filter.
-  bool trace_ref_unresolved = true;
-};
-
 // Find port-binding forwarding candidates. Analysis only -- does not
 // modify the connection graph or prove transform safety. Emits all
 // candidates that pass the current provable checks. Unresolved checks
@@ -92,10 +63,6 @@ struct PortBindingForwardingCandidate {
 auto FindPortBindingForwardingCandidates(
     std::span<const metadata::ConnectionDescriptorEntry> connections,
     const Layout& layout) -> std::vector<PortBindingForwardingCandidate>;
-
-// Log forwarding candidate analysis results to stderr.
-void LogPortBindingForwardingCandidates(
-    std::span<const PortBindingForwardingCandidate> candidates);
 
 // Result of emitting DesignMetadata as LLVM globals.
 struct MetadataGlobals {

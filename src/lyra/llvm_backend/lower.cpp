@@ -1261,11 +1261,13 @@ auto CompileDesignProcesses(const LoweringInput& input)
   };
 }
 
-auto FinalizeModule(CodegenSession session) -> LoweringResult {
+auto FinalizeModule(CodegenSession session, LoweringReport report)
+    -> LoweringResult {
   auto [result_ctx, result_mod] = session.context->TakeOwnership();
   return LoweringResult{
       .context = std::move(result_ctx),
       .module = std::move(result_mod),
+      .report = std::move(report),
   };
 }
 
