@@ -665,8 +665,16 @@ struct CombTemplateEmission {
   uint32_t num_kernels;
 };
 
+// Emitted observable descriptor template: entries array and string pool.
+struct ObservableDescriptorEmission {
+  llvm::Constant* entries_ptr;
+  uint32_t num_entries;
+  llvm::Constant* pool_ptr;
+  uint32_t pool_size;
+};
+
 // Emitted body descriptor package: descriptor header, process entries,
-// and metadata/trigger/comb templates. One per body.
+// and metadata/trigger/comb/observable templates. One per body.
 struct BodyDescriptorPackageEmission {
   llvm::Constant* header_ptr;
   llvm::Constant* entries_ptr;
@@ -674,6 +682,7 @@ struct BodyDescriptorPackageEmission {
   MetaTemplateEmission meta;
   TriggerTemplateEmission triggers;
   CombTemplateEmission comb;
+  ObservableDescriptorEmission observable;
 };
 
 // Validate an owned metadata template before emission: pool sentinel,
@@ -788,6 +797,82 @@ void ValidateOwnedCombTemplate(
 // one BodyProcessEntry array, and one metadata template per body. Built
 // from body-shaped sources (layout body_realization_infos + body compiled
 // functions), not from per-instance artifacts.
+auto EmitObservableDescriptorTemplate(
+    llvm::LLVMContext& ctx, llvm::Module& mod,
+    const OwnedObservableDescriptorTemplate& tmpl,
+    const std::string& name_prefix) -> ObservableDescriptorEmission {
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* null_ptr =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
+  ObservableDescriptorEmission result{};
+  result.entries_ptr = null_ptr;
+  result.num_entries = 0;
+  result.pool_ptr = null_ptr;
+  result.pool_size = 0;
+
+  auto num_entries = static_cast<uint32_t>(tmpl.entries.size());
+  if (num_entries > 0) {
+    auto* entry_type = llvm::ArrayType::get(i32_ty, 12);
+    std::vector<llvm::Constant*> entry_constants;
+    entry_constants.reserve(num_entries);
+    for (const auto& e : tmpl.entries) {
+      std::array<llvm::Constant*, 12> fields = {
+          llvm::ConstantInt::get(i32_ty, e.storage_byte_offset),
+          llvm::ConstantInt::get(i32_ty, e.total_bytes),
+          llvm::ConstantInt::get(i32_ty, e.storage_kind),
+          llvm::ConstantInt::get(i32_ty, e.value_lane_offset),
+          llvm::ConstantInt::get(i32_ty, e.value_lane_bytes),
+          llvm::ConstantInt::get(i32_ty, e.unk_lane_offset),
+          llvm::ConstantInt::get(i32_ty, e.unk_lane_bytes),
+          llvm::ConstantInt::get(i32_ty, e.bit_width),
+          llvm::ConstantInt::get(i32_ty, e.local_name_pool_off),
+          llvm::ConstantInt::get(i32_ty, e.trace_kind),
+          llvm::ConstantInt::get(i32_ty, e.storage_owner_ref),
+          llvm::ConstantInt::get(i32_ty, e.flags),
+      };
+      entry_constants.push_back(llvm::ConstantArray::get(entry_type, fields));
+    }
+    auto entries_name = name_prefix + "_obs_entries";
+    auto* entries_array_type = llvm::ArrayType::get(entry_type, num_entries);
+    auto* entries_global = new llvm::GlobalVariable(
+        mod, entries_array_type, true, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantArray::get(entries_array_type, entry_constants),
+        entries_name);
+    entries_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+    result.entries_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        entries_array_type, entries_global,
+        llvm::ArrayRef<llvm::Constant*>{zero, zero});
+    result.num_entries = num_entries;
+  }
+
+  auto pool_size = static_cast<uint32_t>(tmpl.pool.size());
+  if (pool_size > 0) {
+    auto pool_name = name_prefix + "_obs_pool";
+    std::vector<llvm::Constant*> pool_bytes;
+    pool_bytes.reserve(pool_size);
+    for (char c : tmpl.pool) {
+      pool_bytes.push_back(
+          llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(c)));
+    }
+    auto* pool_array_type = llvm::ArrayType::get(i8_ty, pool_size);
+    auto* pool_global = new llvm::GlobalVariable(
+        mod, pool_array_type, true, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantArray::get(pool_array_type, pool_bytes), pool_name);
+    pool_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+    result.pool_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        pool_array_type, pool_global,
+        llvm::ArrayRef<llvm::Constant*>{zero, zero});
+    result.pool_size = pool_size;
+  }
+
+  return result;
+}
+
 auto EmitBodyRealizationDescs(
     Context& context, const Layout& layout,
     std::span<const lowering::mir_to_llvm::CodegenSession::BodyCompiledFuncs>
@@ -1143,6 +1228,10 @@ auto EmitBodyRealizationDescs(
       comb_emission.num_kernels = num_comb_kernels;
     }
 
+    auto obs_emission = EmitObservableDescriptorTemplate(
+        ctx, mod, info.observable_descriptors,
+        std::format("__lyra_body_desc_{}", body_id_val));
+
     result.push_back(
         BodyDescriptorPackageEmission{
             .header_ptr = header_global,
@@ -1157,6 +1246,7 @@ auto EmitBodyRealizationDescs(
                 },
             .triggers = trig_emission,
             .comb = comb_emission,
+            .observable = obs_emission,
         });
   }
 
@@ -1460,21 +1550,13 @@ struct DesignMetadataOutputs {
 };
 
 auto BuildDesignMetadataOutputs(
-    Context& context, const RealizationData& realization, const Layout& layout,
-    const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input)
+    Context& context, const Layout& layout, const EmitDesignMainInput& input)
     -> DesignMetadataOutputs {
   auto& builder = context.GetBuilder();
-  const auto& type_arena = context.GetTypeArena();
 
-  auto slot_meta_inputs = ExtractSlotMetaInputs(slot_info, layout.design);
   auto conn_desc_entries = ExtractConnectionDescriptorEntries(layout);
   auto back_edge_site_inputs =
       PrepareBackEdgeSiteInputs(context, input.diag_ctx, input.source_manager);
-
-  auto trace_signal_inputs = PrepareTraceSignalMetaInputs(
-      realization.slot_trace_provenance, realization.slot_trace_string_pool,
-      realization.slot_types, realization.slot_kinds,
-      realization.instance_paths, type_arena, layout.design);
 
   // Port-binding forwarding candidate analysis (analysis only, no transform).
   ForwardingAnalysisReport forwarding_report;
@@ -1484,11 +1566,8 @@ auto BuildDesignMetadataOutputs(
   }
 
   metadata::DesignMetadataInputs metadata_inputs{
-      .slot_meta = std::move(slot_meta_inputs),
       .back_edge_sites = std::move(back_edge_site_inputs),
       .connection_descriptors = std::move(conn_desc_entries),
-      .instance_paths = realization.instance_paths,
-      .trace_signal_meta = std::move(trace_signal_inputs),
   };
   auto metadata = realization::BuildDesignMetadata(metadata_inputs);
 
@@ -1516,6 +1595,18 @@ struct ConstructorTriggerCombMeta {
   llvm::Value* comb_word_count = nullptr;
 };
 
+// Slot/trace metadata values extracted from constructor result.
+struct ConstructorSlotTraceMeta {
+  llvm::Value* slot_meta_words = nullptr;
+  llvm::Value* slot_meta_count = nullptr;
+  llvm::Value* trace_meta_words = nullptr;
+  llvm::Value* trace_meta_word_count = nullptr;
+  llvm::Value* trace_meta_pool = nullptr;
+  llvm::Value* trace_meta_pool_size = nullptr;
+  llvm::Value* instance_paths = nullptr;
+  llvm::Value* instance_path_count = nullptr;
+};
+
 struct ConstructorEmissionResult {
   llvm::Value* states_array = nullptr;
   llvm::Value* num_total = nullptr;
@@ -1523,6 +1614,7 @@ struct ConstructorEmissionResult {
   llvm::Function* destroy_fn = nullptr;
   ConstructorProcessMeta process_meta;
   ConstructorTriggerCombMeta trigger_comb;
+  ConstructorSlotTraceMeta slot_trace;
 };
 
 auto BuildRuntimeAbi(
@@ -1530,7 +1622,8 @@ auto BuildRuntimeAbi(
     const WaitSiteMetaResult& wait_site_meta, uint32_t num_connection,
     uint32_t feature_flags, const std::string& signal_trace_path,
     llvm::Value* design_state, const ConstructorProcessMeta& process_meta,
-    const ConstructorTriggerCombMeta& trigger_comb) -> llvm::Value* {
+    const ConstructorTriggerCombMeta& trigger_comb,
+    const ConstructorSlotTraceMeta& slot_trace) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -1555,8 +1648,8 @@ auto BuildRuntimeAbi(
   };
 
   store_field(0, llvm::ConstantInt::get(i32_ty, kRuntimeAbiVersion));
-  store_field(1, meta_globals.slot_meta_words);
-  store_field(2, llvm::ConstantInt::get(i32_ty, meta_globals.slot_meta_count));
+  store_field(1, slot_trace.slot_meta_words);
+  store_field(2, slot_trace.slot_meta_count);
   // Process metadata: constructor-produced word table + string pool.
   store_field(3, process_meta.words);
   store_field(4, process_meta.word_count);
@@ -1578,14 +1671,10 @@ auto BuildRuntimeAbi(
   store_field(15, llvm::ConstantInt::get(i32_ty, feature_flags));
   store_field(16, wait_site_meta.words_ptr);
   store_field(17, llvm::ConstantInt::get(i32_ty, wait_site_meta.count));
-  store_field(18, meta_globals.trace_signal_meta_words);
-  store_field(
-      19, llvm::ConstantInt::get(
-              i32_ty, meta_globals.trace_signal_meta_word_count));
-  store_field(20, meta_globals.trace_signal_meta_pool);
-  store_field(
-      21,
-      llvm::ConstantInt::get(i32_ty, meta_globals.trace_signal_meta_pool_size));
+  store_field(18, slot_trace.trace_meta_words);
+  store_field(19, slot_trace.trace_meta_word_count);
+  store_field(20, slot_trace.trace_meta_pool);
+  store_field(21, slot_trace.trace_meta_pool_size);
 
   if (signal_trace_path.empty()) {
     store_field(22, null_ptr);
@@ -1614,21 +1703,14 @@ auto BuildRuntimeAbi(
 void EmitRunSimulation(
     Context& context, llvm::Constant* funcs_array, llvm::Value* states_array,
     llvm::Value* num_processes, const PlusargsSetup& plusargs,
-    const MetadataGlobals& meta_globals, llvm::Value* abi_alloca) {
+    const ConstructorSlotTraceMeta& slot_trace, llvm::Value* abi_alloca) {
   auto& builder = context.GetBuilder();
-  auto& ctx = context.GetLlvmContext();
-  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
 
-  // instance_paths_array is a legacy compile-time per-instance global
-  // used by %m and trace signal metadata. Ownership moves to the
-  // constructor in a later migration step; until then this is the
-  // only remaining compile-time instance path consumer.
+  // Instance paths now come from constructor result, not compile-time globals.
   builder.CreateCall(
       context.GetLyraRunSimulation(),
       {funcs_array, states_array, num_processes, plusargs.array, plusargs.count,
-       meta_globals.instance_paths_array,
-       llvm::ConstantInt::get(i32_ty, meta_globals.instance_path_count),
-       abi_alloca});
+       slot_trace.instance_paths, slot_trace.instance_path_count, abi_alloca});
 }
 
 void EmitMainExit(
@@ -1687,6 +1769,14 @@ struct ConstructorRuntimeFuncs {
   llvm::Function* result_get_trigger_word_count;
   llvm::Function* result_get_comb_words;
   llvm::Function* result_get_comb_word_count;
+  llvm::Function* result_get_slot_meta_words;
+  llvm::Function* result_get_slot_meta_count;
+  llvm::Function* result_get_trace_meta_words;
+  llvm::Function* result_get_trace_meta_word_count;
+  llvm::Function* result_get_trace_meta_pool;
+  llvm::Function* result_get_trace_meta_pool_size;
+  llvm::Function* result_get_instance_paths;
+  llvm::Function* result_get_instance_path_count;
   llvm::Function* result_destroy;
 };
 
@@ -1710,16 +1800,16 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
   return ConstructorRuntimeFuncs{
       .create = declare(
           "LyraConstructorCreate", ptr_ty,
-          {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i64_ty, ptr_ty,
-           i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-           ptr_ty}),
+          {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i64_ty,
+           ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+           i32_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
       .add_connection =
           declare("LyraConstructorAddConnection", void_ty, {ptr_ty, ptr_ty}),
       .begin_body = declare(
           "LyraConstructorBeginBody", void_ty,
           {ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
            ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty,
-           ptr_ty, i32_ty}),
+           ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
       .add_instance =
           declare("LyraConstructorAddInstance", void_ty, {ptr_ty, ptr_ty}),
       .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
@@ -1743,6 +1833,23 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           declare("LyraConstructionResultGetCombWords", ptr_ty, {ptr_ty}),
       .result_get_comb_word_count =
           declare("LyraConstructionResultGetCombWordCount", i32_ty, {ptr_ty}),
+      .result_get_slot_meta_words =
+          declare("LyraConstructionResultGetSlotMetaWords", ptr_ty, {ptr_ty}),
+      .result_get_slot_meta_count =
+          declare("LyraConstructionResultGetSlotMetaCount", i32_ty, {ptr_ty}),
+      .result_get_trace_meta_words = declare(
+          "LyraConstructionResultGetTraceSignalMetaWords", ptr_ty, {ptr_ty}),
+      .result_get_trace_meta_word_count = declare(
+          "LyraConstructionResultGetTraceSignalMetaWordCount", i32_ty,
+          {ptr_ty}),
+      .result_get_trace_meta_pool = declare(
+          "LyraConstructionResultGetTraceSignalMetaPool", ptr_ty, {ptr_ty}),
+      .result_get_trace_meta_pool_size = declare(
+          "LyraConstructionResultGetTraceSignalMetaPoolSize", i32_ty, {ptr_ty}),
+      .result_get_instance_paths =
+          declare("LyraConstructionResultGetInstancePaths", ptr_ty, {ptr_ty}),
+      .result_get_instance_path_count = declare(
+          "LyraConstructionResultGetInstancePathCount", i32_ty, {ptr_ty}),
       .result_destroy =
           declare("LyraConstructionResultDestroy", void_ty, {ptr_ty}),
   };
@@ -1757,19 +1864,28 @@ void EmitBeginBodyCall(
     llvm::Type* i32_ty) {
   builder.CreateCall(
       rt.begin_body,
-      {ctor, pkg.header_ptr, pkg.entries_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.num_processes), pkg.meta.entries_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.meta.num_entries), pkg.meta.pool_ptr,
+      {ctor,
+       pkg.header_ptr,
+       pkg.entries_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg.num_processes),
+       pkg.meta.entries_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg.meta.num_entries),
+       pkg.meta.pool_ptr,
        llvm::ConstantInt::get(i32_ty, pkg.meta.pool_size),
        pkg.triggers.entries_ptr,
        llvm::ConstantInt::get(i32_ty, pkg.triggers.num_entries),
        pkg.triggers.ranges_ptr,
        llvm::ConstantInt::get(i32_ty, pkg.triggers.num_ranges),
-       pkg.triggers.shapes_ptr, pkg.triggers.groupable_ptr,
+       pkg.triggers.shapes_ptr,
+       pkg.triggers.groupable_ptr,
        pkg.comb.entries_ptr,
        llvm::ConstantInt::get(i32_ty, pkg.comb.num_entries),
        pkg.comb.kernels_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.comb.num_kernels)});
+       llvm::ConstantInt::get(i32_ty, pkg.comb.num_kernels),
+       pkg.observable.entries_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg.observable.num_entries),
+       pkg.observable.pool_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg.observable.pool_size)});
 }
 
 // Emit the constructor function: LLVM IR that calls RuntimeConstructor C API
@@ -1788,6 +1904,7 @@ auto EmitConstructorFunction(
     const std::vector<BodyDescriptorPackageEmission>& body_descs,
     llvm::Constant* conn_descs_ptr, const MetaTemplateEmission& conn_meta,
     const TriggerTemplateEmission& conn_triggers,
+    const ObservableDescriptorEmission& pkg_observable,
     const std::vector<std::string>& instance_paths)
     -> ConstructorEmissionResult {
   auto& builder = context.GetBuilder();
@@ -1805,17 +1922,27 @@ auto EmitConstructorFunction(
   // Create the runtime constructor object.
   auto* ctor = builder.CreateCall(
       rt.create,
-      {schemas_ptr, llvm::ConstantInt::get(i32_ty, num_schemas),
-       slot_byte_offsets_ptr, llvm::ConstantInt::get(i32_ty, num_slots),
-       llvm::ConstantInt::get(i32_ty, layout.num_package_slots), design_state,
-       llvm::ConstantInt::get(i64_ty, arena_size), conn_meta.entries_ptr,
+      {schemas_ptr,
+       llvm::ConstantInt::get(i32_ty, num_schemas),
+       slot_byte_offsets_ptr,
+       llvm::ConstantInt::get(i32_ty, num_slots),
+       llvm::ConstantInt::get(i32_ty, layout.num_package_slots),
+       design_state,
+       llvm::ConstantInt::get(i64_ty, arena_size),
+       conn_meta.entries_ptr,
        llvm::ConstantInt::get(i32_ty, conn_meta.num_entries),
-       conn_meta.pool_ptr, llvm::ConstantInt::get(i32_ty, conn_meta.pool_size),
+       conn_meta.pool_ptr,
+       llvm::ConstantInt::get(i32_ty, conn_meta.pool_size),
        conn_triggers.entries_ptr,
        llvm::ConstantInt::get(i32_ty, conn_triggers.num_entries),
        conn_triggers.ranges_ptr,
        llvm::ConstantInt::get(i32_ty, conn_triggers.num_ranges),
-       conn_triggers.shapes_ptr, conn_triggers.groupable_ptr},
+       conn_triggers.shapes_ptr,
+       conn_triggers.groupable_ptr,
+       pkg_observable.entries_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg_observable.num_entries),
+       pkg_observable.pool_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg_observable.pool_size)},
       "ctor");
 
   // Add connection processes.
@@ -1928,6 +2055,24 @@ auto EmitConstructorFunction(
   auto* comb_word_count = builder.CreateCall(
       rt.result_get_comb_word_count, {result}, "comb_word_count");
 
+  // Extract constructor-produced slot/trace metadata and instance paths.
+  auto* slot_meta_words = builder.CreateCall(
+      rt.result_get_slot_meta_words, {result}, "slot_meta_words");
+  auto* slot_meta_count = builder.CreateCall(
+      rt.result_get_slot_meta_count, {result}, "slot_meta_count");
+  auto* trace_meta_words = builder.CreateCall(
+      rt.result_get_trace_meta_words, {result}, "trace_meta_words");
+  auto* trace_meta_word_count = builder.CreateCall(
+      rt.result_get_trace_meta_word_count, {result}, "trace_meta_word_count");
+  auto* trace_meta_pool = builder.CreateCall(
+      rt.result_get_trace_meta_pool, {result}, "trace_meta_pool");
+  auto* trace_meta_pool_size = builder.CreateCall(
+      rt.result_get_trace_meta_pool_size, {result}, "trace_meta_pool_sz");
+  auto* inst_paths = builder.CreateCall(
+      rt.result_get_instance_paths, {result}, "instance_paths");
+  auto* inst_path_count = builder.CreateCall(
+      rt.result_get_instance_path_count, {result}, "instance_path_count");
+
   return ConstructorEmissionResult{
       .states_array = states_array,
       .num_total = num_total,
@@ -1946,6 +2091,17 @@ auto EmitConstructorFunction(
               .trigger_word_count = trigger_word_count,
               .comb_words = comb_words,
               .comb_word_count = comb_word_count,
+          },
+      .slot_trace =
+          ConstructorSlotTraceMeta{
+              .slot_meta_words = slot_meta_words,
+              .slot_meta_count = slot_meta_count,
+              .trace_meta_words = trace_meta_words,
+              .trace_meta_word_count = trace_meta_word_count,
+              .trace_meta_pool = trace_meta_pool,
+              .trace_meta_pool_size = trace_meta_pool_size,
+              .instance_paths = inst_paths,
+              .instance_path_count = inst_path_count,
           },
   };
 }
@@ -2018,12 +2174,17 @@ auto EmitDesignMain(
       auto conn_trigger_emission =
           EmitConnectionTriggerTemplate(context, layout);
 
+      // Emit package/global observable descriptor globals.
+      auto pkg_obs_emission = EmitObservableDescriptorTemplate(
+          ctx, context.GetModule(), layout.package_observable_descriptors,
+          "__lyra_pkg");
+
       // Emit the constructor function: LLVM IR that calls the runtime
       // constructor to build process construction order and bindings.
       ctor_result = EmitConstructorFunction(
           context, layout, session, design_state, schemas_ptr, num_schemas,
           slot_offsets_ptr, body_descs, conn_descs_ptr, conn_meta_emission,
-          conn_trigger_emission, realization.instance_paths);
+          conn_trigger_emission, pkg_obs_emission, realization.instance_paths);
 
       states_array = ctor_result.states_array;
       num_total_val = ctor_result.num_total;
@@ -2031,8 +2192,7 @@ auto EmitDesignMain(
 
     auto plusargs = BuildPlusargs(context, main_func, input);
 
-    auto metadata_outputs = BuildDesignMetadataOutputs(
-        context, realization, layout, slot_info, input);
+    auto metadata_outputs = BuildDesignMetadataOutputs(context, layout, input);
     forwarding_report = std::move(metadata_outputs.forwarding_analysis);
     auto& meta_globals = metadata_outputs.globals;
 
@@ -2053,19 +2213,30 @@ auto EmitDesignMain(
         .comb_words = null_ptr,
         .comb_word_count = llvm::ConstantInt::get(i32_ty, 0),
     };
+    ConstructorSlotTraceMeta slot_trace_for_abi{
+        .slot_meta_words = null_ptr,
+        .slot_meta_count = llvm::ConstantInt::get(i32_ty, 0),
+        .trace_meta_words = null_ptr,
+        .trace_meta_word_count = llvm::ConstantInt::get(i32_ty, 0),
+        .trace_meta_pool = null_ptr,
+        .trace_meta_pool_size = llvm::ConstantInt::get(i32_ty, 0),
+        .instance_paths = null_ptr,
+        .instance_path_count = llvm::ConstantInt::get(i32_ty, 0),
+    };
     if (ctor_result.result_handle != nullptr) {
       process_meta_for_abi = ctor_result.process_meta;
       trigger_comb_for_abi = ctor_result.trigger_comb;
+      slot_trace_for_abi = ctor_result.slot_trace;
     }
 
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,
-        process_meta_for_abi, trigger_comb_for_abi);
+        process_meta_for_abi, trigger_comb_for_abi, slot_trace_for_abi);
 
     EmitRunSimulation(
         context, connection_funcs, states_array, num_total_val, plusargs,
-        meta_globals, abi_alloca);
+        slot_trace_for_abi, abi_alloca);
 
     // Destroy the constructor-owned result after simulation completes.
     if (ctor_result.result_handle != nullptr) {

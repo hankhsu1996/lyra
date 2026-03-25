@@ -289,6 +289,22 @@ struct OwnedCombTemplate {
   std::vector<runtime::CombKernelDesc> kernels;
 };
 
+// Owning observable descriptor template.
+//
+// One canonical compile-time source of truth for observability-facing
+// slot/signal facts. Used for both body-owned and package/global
+// descriptor collections. The constructor expands body templates
+// per-instance and copies package templates directly to produce realized
+// slot metadata and trace signal metadata tables.
+struct OwnedObservableDescriptorTemplate {
+  std::vector<runtime::ObservableDescriptorEntry> entries;
+  // NUL-terminated names used by observable descriptors:
+  // - body-owned templates store local signal names
+  // - package/global templates store package-qualified names
+  // pool[0] == '\0' is the empty sentinel.
+  std::vector<char> pool;
+};
+
 // Scoped signal identity key. Used for scope-aware slot identity
 // in comb kernel analysis and template extraction to avoid conflating
 // module-local and design-global slots with the same numeric id.
@@ -420,6 +436,9 @@ struct Layout {
     // Comb kernel metadata template. Flat entries + per-kernel descriptors.
     // The post-layout template extraction pass is the sole producer.
     OwnedCombTemplate comb;
+    // Observable descriptor template. Flat entries + local-name pool.
+    // The post-layout descriptor extraction pass is the sole producer.
+    OwnedObservableDescriptorTemplate observable_descriptors;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
 
@@ -477,6 +496,11 @@ struct Layout {
     OwnedTriggerTemplate triggers;
   };
   ConnectionTemplates connection_templates;
+
+  // Design-wide package/global observable descriptor template.
+  // All entries are absolute (non-relocating). Realized in the constructor
+  // prelude before any body-instance expansion.
+  OwnedObservableDescriptorTemplate package_observable_descriptors;
 };
 
 // Type kind for variable inspection (also used in layout)

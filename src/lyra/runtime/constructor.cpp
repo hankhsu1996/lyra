@@ -27,7 +27,11 @@ ConstructionResult::ConstructionResult(ConstructionResult&& other) noexcept
       num_connection(std::exchange(other.num_connection, 0)),
       process_meta(std::move(other.process_meta)),
       trigger_meta(std::move(other.trigger_meta)),
-      comb_meta(std::move(other.comb_meta)) {
+      comb_meta(std::move(other.comb_meta)),
+      slot_meta(std::move(other.slot_meta)),
+      trace_signal_meta(std::move(other.trace_signal_meta)),
+      instance_paths(std::move(other.instance_paths)),
+      instance_path_ptrs(std::move(other.instance_path_ptrs)) {
 }
 
 auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
@@ -41,6 +45,10 @@ auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
     process_meta = std::move(other.process_meta);
     trigger_meta = std::move(other.trigger_meta);
     comb_meta = std::move(other.comb_meta);
+    slot_meta = std::move(other.slot_meta);
+    trace_signal_meta = std::move(other.trace_signal_meta);
+    instance_paths = std::move(other.instance_paths);
+    instance_path_ptrs = std::move(other.instance_path_ptrs);
   }
   return *this;
 }
@@ -119,6 +127,67 @@ void RealizedCombMeta::Finalize() {
   }
 }
 
+void RealizedSlotMeta::Init() {
+  words.clear();
+  slot_count = 0;
+}
+
+void RealizedSlotMeta::AppendSlot(
+    uint32_t byte_offset, uint32_t total_bytes, uint32_t storage_kind,
+    uint32_t value_off, uint32_t value_bytes, uint32_t unk_off,
+    uint32_t unk_bytes, uint32_t storage_owner_slot_id) {
+  words.push_back(byte_offset);
+  words.push_back(total_bytes);
+  words.push_back(storage_kind);
+  words.push_back(value_off);
+  words.push_back(value_bytes);
+  words.push_back(unk_off);
+  words.push_back(unk_bytes);
+  words.push_back(storage_owner_slot_id);
+  ++slot_count;
+}
+
+void RealizedSlotMeta::Finalize() {
+}
+
+void RealizedTraceSignalMeta::Init() {
+  words.clear();
+  pool.clear();
+  pool.push_back('\0');
+  signal_count = 0;
+}
+
+auto RealizedTraceSignalMeta::AppendName(std::string_view name) -> uint32_t {
+  if (name.empty()) return 0;
+  auto off = static_cast<uint32_t>(pool.size());
+  pool.insert(pool.end(), name.begin(), name.end());
+  pool.push_back('\0');
+  return off;
+}
+
+auto RealizedTraceSignalMeta::AppendHierarchicalName(
+    std::string_view prefix, std::string_view local_name) -> uint32_t {
+  auto off = static_cast<uint32_t>(pool.size());
+  pool.insert(pool.end(), prefix.begin(), prefix.end());
+  pool.push_back('.');
+  pool.insert(pool.end(), local_name.begin(), local_name.end());
+  pool.push_back('\0');
+  return off;
+}
+
+void RealizedTraceSignalMeta::AppendSignal(
+    uint32_t name_pool_off, uint32_t bit_width, uint32_t trace_kind,
+    uint32_t storage_owner_slot_id) {
+  words.push_back(name_pool_off);
+  words.push_back(bit_width);
+  words.push_back(trace_kind);
+  words.push_back(storage_owner_slot_id);
+  ++signal_count;
+}
+
+void RealizedTraceSignalMeta::Finalize() {
+}
+
 namespace {
 
 // Validate a raw uint8_t shape byte is a valid WaitShapeKind.
@@ -177,17 +246,39 @@ Constructor::Constructor(
     std::span<const ProcessStateSchema> schemas,
     std::span<const uint64_t> slot_byte_offsets, uint32_t num_package_slots,
     std::span<std::byte> design_state, ProcessMetaTemplateView conn_meta,
-    TriggerTemplateView conn_triggers)
+    TriggerTemplateView conn_triggers,
+    ObservableDescriptorTemplateView pkg_observable)
     : schemas_(schemas),
       slot_byte_offsets_(slot_byte_offsets),
       design_state_(design_state),
       next_slot_base_(num_package_slots),
       conn_meta_(conn_meta),
-      conn_triggers_(conn_triggers) {
+      conn_triggers_(conn_triggers),
+      pkg_observable_(pkg_observable) {
   ValidateMetaTemplate(conn_meta_, "Constructor");
   realized_meta_.pool.push_back('\0');
   realized_triggers_.Init();
   realized_comb_.Init();
+  realized_slot_meta_.Init();
+  realized_trace_meta_.Init();
+
+  // Package/global observable descriptor prelude.
+  // Realized before any body-instance expansion. All entries are absolute.
+  for (const auto& entry : pkg_observable_.entries) {
+    realized_slot_meta_.AppendSlot(
+        entry.storage_byte_offset, entry.total_bytes, entry.storage_kind,
+        entry.value_lane_offset, entry.value_lane_bytes, entry.unk_lane_offset,
+        entry.unk_lane_bytes, entry.storage_owner_ref);
+
+    std::string_view name;
+    if (entry.local_name_pool_off > 0 &&
+        entry.local_name_pool_off < pkg_observable_.pool_size) {
+      name = &pkg_observable_.pool[entry.local_name_pool_off];
+    }
+    uint32_t name_off = realized_trace_meta_.AppendName(name);
+    realized_trace_meta_.AppendSignal(
+        name_off, entry.bit_width, entry.trace_kind, entry.storage_owner_ref);
+  }
 
   // Validate connection trigger template if non-empty.
   if (!conn_triggers_.proc_ranges.empty()) {
@@ -458,6 +549,7 @@ void Constructor::BeginBody(const BodyDescriptorPackage& package) {
       .meta = package.meta,
       .triggers = package.triggers,
       .comb = package.comb,
+      .observable_descriptors = package.observable_descriptors,
       .active = true,
   };
 }
@@ -610,6 +702,41 @@ void Constructor::AddInstance(const char* instance_path) {
     }
   }
 
+  // Observable descriptor realization for this instance.
+  if (!body_.observable_descriptors.entries.empty()) {
+    uint64_t instance_byte_base =
+        (body_.slot_count > 0) ? slot_byte_offsets_[next_slot_base_] : 0;
+
+    for (const auto& entry : body_.observable_descriptors.entries) {
+      auto realized_offset =
+          static_cast<uint32_t>(instance_byte_base + entry.storage_byte_offset);
+
+      uint32_t realized_owner =
+          (entry.flags & kObservableFlagOwnerAbsolute) != 0
+              ? entry.storage_owner_ref
+              : entry.storage_owner_ref + signal_id_offset;
+
+      realized_slot_meta_.AppendSlot(
+          realized_offset, entry.total_bytes, entry.storage_kind,
+          entry.value_lane_offset, entry.value_lane_bytes,
+          entry.unk_lane_offset, entry.unk_lane_bytes, realized_owner);
+
+      std::string_view local_name;
+      if (entry.local_name_pool_off > 0 &&
+          entry.local_name_pool_off < body_.observable_descriptors.pool_size) {
+        local_name =
+            &body_.observable_descriptors.pool[entry.local_name_pool_off];
+      }
+      uint32_t name_off = realized_trace_meta_.AppendHierarchicalName(
+          instance_path, local_name);
+      realized_trace_meta_.AppendSignal(
+          name_off, entry.bit_width, entry.trace_kind, realized_owner);
+    }
+  }
+
+  // Collect instance path for runtime naming ownership.
+  instance_paths_.emplace_back(instance_path);
+
   uint32_t new_slot_base = next_slot_base_ + body_.slot_count;
   if (new_slot_base < next_slot_base_) {
     throw common::InternalError(
@@ -647,6 +774,18 @@ auto Constructor::AppendString(std::string_view s) -> uint32_t {
   return off;
 }
 
+namespace {
+
+void PopulateInstancePathPtrs(ConstructionResult& result) {
+  result.instance_path_ptrs.clear();
+  result.instance_path_ptrs.reserve(result.instance_paths.size());
+  for (const auto& p : result.instance_paths) {
+    result.instance_path_ptrs.push_back(p.c_str());
+  }
+}
+
+}  // namespace
+
 auto Constructor::Finalize() -> ConstructionResult {
   CheckNotFinalized("Constructor::Finalize");
   finalized_ = true;
@@ -673,9 +812,11 @@ auto Constructor::Finalize() -> ConstructionResult {
             process_meta_abi::kStride));
   }
 
-  // Finalize trigger/comb realized builders.
+  // Finalize trigger/comb/slot/trace realized builders.
   realized_triggers_.Finalize();
   realized_comb_.Finalize();
+  realized_slot_meta_.Finalize();
+  realized_trace_meta_.Finalize();
 
   // Verify connection trigger template consumption.
   if (!conn_triggers_.proc_ranges.empty() &&
@@ -764,6 +905,10 @@ auto Constructor::Finalize() -> ConstructionResult {
     result.process_meta = std::move(realized_meta_);
     result.trigger_meta = std::move(realized_triggers_);
     result.comb_meta = std::move(realized_comb_);
+    result.slot_meta = std::move(realized_slot_meta_);
+    result.trace_signal_meta = std::move(realized_trace_meta_);
+    result.instance_paths = std::move(instance_paths_);
+    PopulateInstancePathPtrs(result);
     return result;
   }
 
@@ -798,6 +943,10 @@ auto Constructor::Finalize() -> ConstructionResult {
   result.process_meta = std::move(realized_meta_);
   result.trigger_meta = std::move(realized_triggers_);
   result.comb_meta = std::move(realized_comb_);
+  result.slot_meta = std::move(realized_slot_meta_);
+  result.trace_signal_meta = std::move(realized_trace_meta_);
+  result.instance_paths = std::move(instance_paths_);
+  PopulateInstancePathPtrs(result);
   return result;
 }
 
@@ -865,6 +1014,56 @@ void ValidateMetaAbiInputs(
   }
 }
 
+void ValidateObservableDescriptorTemplate(
+    std::span<const lyra::runtime::ObservableDescriptorEntry> entries,
+    const char* pool, uint32_t pool_size, bool require_package_global,
+    const char* caller) {
+  if (entries.empty()) return;
+  if (pool == nullptr) {
+    throw lyra::common::InternalError(
+        caller,
+        "non-empty observable descriptor entries with null pool pointer");
+  }
+  if (pool_size == 0) {
+    throw lyra::common::InternalError(
+        caller, "observable descriptor pool must contain the empty sentinel");
+  }
+  if (pool[0] != '\0') {
+    throw lyra::common::InternalError(
+        caller, "observable descriptor pool[0] must be the empty sentinel");
+  }
+
+  for (size_t i = 0; i < entries.size(); ++i) {
+    const auto& e = entries[i];
+    if (e.local_name_pool_off >= pool_size) {
+      throw lyra::common::InternalError(
+          caller, std::format(
+                      "observable descriptor {} name offset {} out of bounds "
+                      "for pool size {}",
+                      i, e.local_name_pool_off, pool_size));
+    }
+
+    bool is_pkg = (e.flags & lyra::runtime::kObservableFlagPackageGlobal) != 0;
+    bool owner_abs =
+        (e.flags & lyra::runtime::kObservableFlagOwnerAbsolute) != 0;
+
+    if (require_package_global) {
+      if (!is_pkg || !owner_abs) {
+        throw lyra::common::InternalError(
+            caller, std::format(
+                        "package observable descriptor {} must be "
+                        "package-global and absolute",
+                        i));
+      }
+    } else if (is_pkg) {
+      throw lyra::common::InternalError(
+          caller,
+          std::format(
+              "body observable descriptor {} must not be package-global", i));
+    }
+  }
+}
+
 }  // namespace
 
 auto LyraConstructorCreate(
@@ -878,10 +1077,16 @@ auto LyraConstructorCreate(
     uint32_t num_conn_trigger_entries,
     const lyra::runtime::TriggerRange* conn_trigger_ranges,
     uint32_t num_conn_trigger_ranges, const uint8_t* conn_trigger_shapes,
-    const uint8_t* conn_trigger_groupable) -> void* {
+    const uint8_t* conn_trigger_groupable,
+    const lyra::runtime::ObservableDescriptorEntry* pkg_obs_entries,
+    uint32_t num_pkg_obs, const char* pkg_obs_pool, uint32_t pkg_obs_pool_size)
+    -> void* {
   ValidateMetaAbiInputs(
       conn_meta_entries, num_conn_meta, conn_meta_pool, conn_meta_pool_size,
       "LyraConstructorCreate");
+  ValidateObservableDescriptorTemplate(
+      std::span(pkg_obs_entries, num_pkg_obs), pkg_obs_pool, pkg_obs_pool_size,
+      true, "LyraConstructorCreate");
   lyra::runtime::ProcessMetaTemplateView conn_meta{
       .entries = std::span(conn_meta_entries, num_conn_meta),
       .pool = conn_meta_pool,
@@ -894,11 +1099,16 @@ auto LyraConstructorCreate(
       .proc_groupable =
           std::span(conn_trigger_groupable, num_conn_trigger_ranges),
   };
+  lyra::runtime::ObservableDescriptorTemplateView pkg_obs{
+      .entries = std::span(pkg_obs_entries, num_pkg_obs),
+      .pool = pkg_obs_pool,
+      .pool_size = pkg_obs_pool_size,
+  };
   auto ctor = std::make_unique<lyra::runtime::Constructor>(
       std::span(schemas, num_schemas), std::span(slot_byte_offsets, num_slots),
       num_package_slots,
       std::span(static_cast<std::byte*>(design_state), design_state_size),
-      conn_meta, conn_triggers);
+      conn_meta, conn_triggers, pkg_obs);
   return ctor.release();
 }
 
@@ -922,11 +1132,16 @@ void LyraConstructorBeginBody(
     const lyra::runtime::CombTemplateEntry* comb_entries,
     uint32_t num_comb_entries,
     const lyra::runtime::CombKernelDesc* comb_kernels,
-    uint32_t num_comb_kernels) {
+    uint32_t num_comb_kernels,
+    const lyra::runtime::ObservableDescriptorEntry* obs_entries,
+    uint32_t num_obs, const char* obs_pool, uint32_t obs_pool_size) {
   ValidateHandle(ctor, "LyraConstructorBeginBody");
   ValidateHandle(desc, "LyraConstructorBeginBody");
   ValidateMetaAbiInputs(
       meta_entries, num_meta, meta_pool, meta_pool_size,
+      "LyraConstructorBeginBody");
+  ValidateObservableDescriptorTemplate(
+      std::span(obs_entries, num_obs), obs_pool, obs_pool_size, false,
       "LyraConstructorBeginBody");
   lyra::runtime::BodyDescriptorPackage package{
       .desc = desc,
@@ -949,6 +1164,12 @@ void LyraConstructorBeginBody(
           lyra::runtime::CombTemplateView{
               .entries = std::span(comb_entries, num_comb_entries),
               .kernels = std::span(comb_kernels, num_comb_kernels),
+          },
+      .observable_descriptors =
+          lyra::runtime::ObservableDescriptorTemplateView{
+              .entries = std::span(obs_entries, num_obs),
+              .pool = obs_pool,
+              .pool_size = obs_pool_size,
           },
   };
   static_cast<lyra::runtime::Constructor*>(ctor)->BeginBody(package);
@@ -1046,6 +1267,71 @@ auto LyraConstructionResultGetCombWordCount(void* result_raw) -> uint32_t {
       static_cast<lyra::runtime::ConstructionResult*>(result_raw)->comb_meta;
   if (meta.IsEmpty()) return 0;
   return static_cast<uint32_t>(meta.words.size());
+}
+
+auto LyraConstructionResultGetSlotMetaWords(void* result_raw)
+    -> const uint32_t* {
+  ValidateHandle(result_raw, "LyraConstructionResultGetSlotMetaWords");
+  auto& meta =
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)->slot_meta;
+  if (meta.slot_count == 0) return nullptr;
+  return meta.words.data();
+}
+
+auto LyraConstructionResultGetSlotMetaCount(void* result_raw) -> uint32_t {
+  ValidateHandle(result_raw, "LyraConstructionResultGetSlotMetaCount");
+  return static_cast<lyra::runtime::ConstructionResult*>(result_raw)
+      ->slot_meta.slot_count;
+}
+
+auto LyraConstructionResultGetTraceSignalMetaWords(void* result_raw)
+    -> const uint32_t* {
+  ValidateHandle(result_raw, "LyraConstructionResultGetTraceSignalMetaWords");
+  auto& meta = static_cast<lyra::runtime::ConstructionResult*>(result_raw)
+                   ->trace_signal_meta;
+  if (meta.signal_count == 0) return nullptr;
+  return meta.words.data();
+}
+
+auto LyraConstructionResultGetTraceSignalMetaWordCount(void* result_raw)
+    -> uint32_t {
+  ValidateHandle(
+      result_raw, "LyraConstructionResultGetTraceSignalMetaWordCount");
+  return static_cast<uint32_t>(
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)
+          ->trace_signal_meta.words.size());
+}
+
+auto LyraConstructionResultGetTraceSignalMetaPool(void* result_raw) -> const
+    char* {
+  ValidateHandle(result_raw, "LyraConstructionResultGetTraceSignalMetaPool");
+  auto& meta = static_cast<lyra::runtime::ConstructionResult*>(result_raw)
+                   ->trace_signal_meta;
+  if (meta.pool.empty()) return nullptr;
+  return meta.pool.data();
+}
+
+auto LyraConstructionResultGetTraceSignalMetaPoolSize(void* result_raw)
+    -> uint32_t {
+  ValidateHandle(
+      result_raw, "LyraConstructionResultGetTraceSignalMetaPoolSize");
+  return static_cast<uint32_t>(
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)
+          ->trace_signal_meta.pool.size());
+}
+
+auto LyraConstructionResultGetInstancePaths(void* result_raw) -> const char** {
+  ValidateHandle(result_raw, "LyraConstructionResultGetInstancePaths");
+  auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
+  if (result.instance_path_ptrs.empty()) return nullptr;
+  return result.instance_path_ptrs.data();
+}
+
+auto LyraConstructionResultGetInstancePathCount(void* result_raw) -> uint32_t {
+  ValidateHandle(result_raw, "LyraConstructionResultGetInstancePathCount");
+  return static_cast<uint32_t>(
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)
+          ->instance_paths.size());
 }
 
 void LyraConstructionResultDestroy(void* result_raw) {

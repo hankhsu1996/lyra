@@ -11,18 +11,6 @@ struct MetaWordTable {
   std::vector<char> pool;
 };
 
-// Input facts extracted from LLVM layout for each design slot.
-struct SlotMetaInput {
-  uint32_t byte_offset = 0;
-  uint32_t total_bytes = 0;
-  uint32_t storage_kind = 0;
-  uint32_t value_offset = 0;
-  uint32_t value_bytes = 0;
-  uint32_t unk_offset = 0;
-  uint32_t unk_bytes = 0;
-  uint32_t storage_owner_slot_id = 0;
-};
-
 // Semantic origin of a kernelized connection.
 // kPortBinding: created from a port-binding connection process.
 // kContinuousAssign: created from a module-internal continuous assign.
@@ -60,33 +48,18 @@ struct BackEdgeSiteInput {
   uint32_t col = 0;
 };
 
-// Final trace-signal metadata input for one design slot.
-// Assembled at metadata lowering time from compile-owned provenance.
-struct TraceSignalMetaInput {
-  std::string hierarchical_name;
-  uint32_t bit_width = 0;
-  uint32_t trace_kind = 0;
-  uint32_t storage_owner_slot_id = 0;
-};
-
 // Semantic inputs for design metadata construction.
 // All vectors preserve their input order; link serializes in that order.
 struct DesignMetadataInputs {
-  std::vector<SlotMetaInput> slot_meta;
   std::vector<BackEdgeSiteInput> back_edge_sites;
   std::vector<ConnectionDescriptorEntry> connection_descriptors;
-  std::vector<std::string> instance_paths;
-  std::vector<TraceSignalMetaInput> trace_signal_meta;
 };
 
 // Fully serialized runtime metadata artifact.
 // All tables are runtime-shaped; no further packing needed by the emitter.
 struct DesignMetadata {
-  std::vector<uint32_t> slot_meta_words;
   MetaWordTable back_edge_site_meta;
   std::vector<ConnectionDescriptorEntry> connection_descriptors;
-  std::vector<std::string> instance_paths;
-  MetaWordTable trace_signal_meta;
 };
 
 }  // namespace lyra::metadata

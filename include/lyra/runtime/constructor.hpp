@@ -51,6 +51,15 @@ struct CombTemplateView {
   std::span<const CombKernelDesc> kernels;
 };
 
+// Non-owning view of an observable descriptor template.
+// Transport shape for the C ABI boundary. Both body and package/global
+// descriptor templates are projected through this same view type.
+struct ObservableDescriptorTemplateView {
+  std::span<const ObservableDescriptorEntry> entries;
+  const char* pool = nullptr;
+  uint32_t pool_size = 0;
+};
+
 // Complete body descriptor for one BeginBody call.
 // Packages process entries and metadata template into one coherent unit.
 // This is a constructor-facing transport view assembled from emitted globals
@@ -63,6 +72,7 @@ struct BodyDescriptorPackage {
   ProcessMetaTemplateView meta;
   TriggerTemplateView triggers;
   CombTemplateView comb;
+  ObservableDescriptorTemplateView observable_descriptors;
 };
 
 // Constructor-produced trigger metadata artifact.
@@ -100,6 +110,39 @@ struct RealizedCombMeta {
   }
 };
 
+// Constructor-produced slot metadata artifact.
+// Builder that produces realized slot-meta word tables in the current
+// slot_meta_abi format.
+struct RealizedSlotMeta {
+  std::vector<uint32_t> words;
+  uint32_t slot_count = 0;
+
+  void Init();
+  void AppendSlot(
+      uint32_t byte_offset, uint32_t total_bytes, uint32_t storage_kind,
+      uint32_t value_off, uint32_t value_bytes, uint32_t unk_off,
+      uint32_t unk_bytes, uint32_t storage_owner_slot_id);
+  void Finalize();
+};
+
+// Constructor-produced trace signal metadata artifact.
+// Builder that produces realized trace-meta word tables and string pool
+// in the current trace_signal_meta_abi format.
+struct RealizedTraceSignalMeta {
+  std::vector<uint32_t> words;
+  std::vector<char> pool;
+  uint32_t signal_count = 0;
+
+  void Init();
+  auto AppendName(std::string_view name) -> uint32_t;
+  auto AppendHierarchicalName(
+      std::string_view prefix, std::string_view local_name) -> uint32_t;
+  void AppendSignal(
+      uint32_t name_pool_off, uint32_t bit_width, uint32_t trace_kind,
+      uint32_t storage_owner_slot_id);
+  void Finalize();
+};
+
 // Result of constructor-time process realization.
 //
 // This is one ownership unit containing all constructor-produced artifacts.
@@ -129,6 +172,18 @@ struct ConstructionResult {
 
   // Constructor-produced comb kernel metadata.
   RealizedCombMeta comb_meta;
+
+  // Constructor-produced slot metadata.
+  RealizedSlotMeta slot_meta;
+
+  // Constructor-produced trace signal metadata.
+  RealizedTraceSignalMeta trace_signal_meta;
+
+  // Constructor-owned instance paths for runtime naming (%m).
+  std::vector<std::string> instance_paths;
+  // Stable C-string pointer view into instance_paths.
+  // Populated during Finalize, valid for the lifetime of this result.
+  std::vector<const char*> instance_path_ptrs;
 
   ConstructionResult() = default;
   ~ConstructionResult();
@@ -174,7 +229,8 @@ class Constructor {
       std::span<const ProcessStateSchema> schemas,
       std::span<const uint64_t> slot_byte_offsets, uint32_t num_package_slots,
       std::span<std::byte> design_state, ProcessMetaTemplateView conn_meta,
-      TriggerTemplateView conn_triggers);
+      TriggerTemplateView conn_triggers,
+      ObservableDescriptorTemplateView pkg_observable);
 
   // Add a connection process. Must be called before any BeginBody/AddInstance.
   // Fails immediately if connection template is exhausted.
@@ -217,6 +273,7 @@ class Constructor {
     ProcessMetaTemplateView meta;
     TriggerTemplateView triggers;
     CombTemplateView comb;
+    ObservableDescriptorTemplateView observable_descriptors;
     bool active = false;
   };
 
@@ -248,6 +305,17 @@ class Constructor {
   // Realized trigger/comb output.
   RealizedTriggerMeta realized_triggers_;
   RealizedCombMeta realized_comb_;
+
+  // Realized slot/trace metadata output.
+  RealizedSlotMeta realized_slot_meta_;
+  RealizedTraceSignalMeta realized_trace_meta_;
+
+  // Constructor-owned instance paths.
+  std::vector<std::string> instance_paths_;
+
+  // Package/global observable descriptor template (immutable after
+  // construction).
+  ObservableDescriptorTemplateView pkg_observable_;
 
   // Process-index verification infrastructure.
   struct InstanceLedgerEntry {
@@ -310,7 +378,10 @@ auto LyraConstructorCreate(
     uint32_t num_conn_trigger_entries,
     const lyra::runtime::TriggerRange* conn_trigger_ranges,
     uint32_t num_conn_trigger_ranges, const uint8_t* conn_trigger_shapes,
-    const uint8_t* conn_trigger_groupable) -> void*;
+    const uint8_t* conn_trigger_groupable,
+    const lyra::runtime::ObservableDescriptorEntry* pkg_obs_entries,
+    uint32_t num_pkg_obs, const char* pkg_obs_pool, uint32_t pkg_obs_pool_size)
+    -> void*;
 
 void LyraConstructorAddConnection(
     void* ctor, const lyra::runtime::ConnectionRealizationDesc* desc);
@@ -328,7 +399,9 @@ void LyraConstructorBeginBody(
     const lyra::runtime::CombTemplateEntry* comb_entries,
     uint32_t num_comb_entries,
     const lyra::runtime::CombKernelDesc* comb_kernels,
-    uint32_t num_comb_kernels);
+    uint32_t num_comb_kernels,
+    const lyra::runtime::ObservableDescriptorEntry* obs_entries,
+    uint32_t num_obs, const char* obs_pool, uint32_t obs_pool_size);
 
 void LyraConstructorAddInstance(void* ctor, const char* instance_path);
 
@@ -347,6 +420,19 @@ auto LyraConstructionResultGetTriggerWords(void* result) -> const uint32_t*;
 auto LyraConstructionResultGetTriggerWordCount(void* result) -> uint32_t;
 auto LyraConstructionResultGetCombWords(void* result) -> const uint32_t*;
 auto LyraConstructionResultGetCombWordCount(void* result) -> uint32_t;
+
+auto LyraConstructionResultGetSlotMetaWords(void* result) -> const uint32_t*;
+auto LyraConstructionResultGetSlotMetaCount(void* result) -> uint32_t;
+
+auto LyraConstructionResultGetTraceSignalMetaWords(void* result)
+    -> const uint32_t*;
+auto LyraConstructionResultGetTraceSignalMetaWordCount(void* result)
+    -> uint32_t;
+auto LyraConstructionResultGetTraceSignalMetaPool(void* result) -> const char*;
+auto LyraConstructionResultGetTraceSignalMetaPoolSize(void* result) -> uint32_t;
+
+auto LyraConstructionResultGetInstancePaths(void* result) -> const char**;
+auto LyraConstructionResultGetInstancePathCount(void* result) -> uint32_t;
 
 void LyraConstructionResultDestroy(void* result);
 
