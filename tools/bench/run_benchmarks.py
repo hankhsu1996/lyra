@@ -620,6 +620,19 @@ def fmt_int(val: int) -> str:
     return f"{val:,}"
 
 
+def fmt_ratio(lyra_s: float, ver_s: float) -> str:
+    """Format a Lyra-vs-Verilator ratio as a human-readable string."""
+    if lyra_s <= 0.0 or ver_s <= 0.0:
+        return "-"
+    ratio = lyra_s / ver_s
+    if ratio <= 1.0 / 1.2:
+        factor = ver_s / lyra_s
+        return f"{factor:.1f}x faster"
+    if ratio >= 1.2:
+        return f"{ratio:.1f}x slower"
+    return "~1x"
+
+
 def group_fixture_backends(
     results: list[BenchResult],
 ) -> dict[str, dict[str, BenchResult]]:
@@ -637,10 +650,12 @@ def print_runtime_table(
     """Print a runtime sim_s table for a group of fixtures."""
     print(
         "| Fixture | Lyra 4s (ms) "
-        "| Lyra 2s (ms) | Verilator (ms) |")
+        "| Lyra 2s (ms) | Verilator (ms) "
+        "| vs Verilator |")
     print(
         "|---------|-------------:"
-        "|-------------:|---------------:|")
+        "|-------------:|---------------:"
+        "|:-------------|")
 
     for name in fixture_names:
         backends = by_fixture.get(name, {})
@@ -658,7 +673,14 @@ def print_runtime_table(
             fmt_time(ver.sim_s) if ver and not ver.error
             else "FAIL" if ver else "-")
 
-        print(f"| {name} | {aot_sim} | {aot_2s_sim} | {ver_sim} |")
+        lyra_2s_s = (
+            aot_2s.sim_s if aot_2s and not aot_2s.error else 0.0)
+        ver_s = ver.sim_s if ver and not ver.error else 0.0
+        ratio = fmt_ratio(lyra_2s_s, ver_s)
+
+        print(
+            f"| {name} | {aot_sim} | {aot_2s_sim} "
+            f"| {ver_sim} | {ratio} |")
 
 
 def print_compile_table(
@@ -669,11 +691,13 @@ def print_compile_table(
     print(
         "| Fixture | AOT (ms) "
         "| JIT (ms) | Verilator (ms) "
+        "| vs Verilator "
         "| LLVM insts | Binary (KB) |")
     print(
         "|---------|--------:"
         "|--------:|---------------:"
-        "|-----------:|------------:|")
+        "|:-------------|"
+        "-----------:|------------:|")
 
     for name in fixture_names:
         backends = by_fixture.get(name, {})
@@ -690,6 +714,11 @@ def print_compile_table(
         ver_c = (
             fmt_time(ver.compile_s) if ver and not ver.error
             else "FAIL" if ver else "-")
+
+        aot_s = aot.compile_s if aot and not aot.error else 0.0
+        ver_s = ver.compile_s if ver and not ver.error else 0.0
+        ratio = fmt_ratio(aot_s, ver_s)
+
         llvm = (
             fmt_int(aot.llvm_insts) if aot and not aot.error
             else "-")
@@ -699,7 +728,7 @@ def print_compile_table(
 
         print(
             f"| {name} | {aot_c} | {jit_c} | {ver_c} "
-            f"| {llvm} | {binary} |")
+            f"| {ratio} | {llvm} | {binary} |")
 
 
 def build_grouped_fixtures(
