@@ -31,7 +31,7 @@ cc_test(
     ],
     data = [
         "suites.yaml",
-    ] + glob(["sv_features/**/*.yaml"]),
+    ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
     shard_count = 4,
     deps = [
         ":test_framework",
@@ -46,7 +46,7 @@ cc_test(
     args = ["--suite=jit_two_state"],
     data = [
         "suites.yaml",
-    ] + glob(["sv_features/**/*.yaml"]),
+    ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
     shard_count = 4,
     deps = [
         ":test_framework",
@@ -62,7 +62,7 @@ cc_test(
     data = [
         "suites.yaml",
         "//:liblyra_runtime.so",
-    ] + glob(["sv_features/**/*.yaml"]),
+    ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
     shard_count = 4,
     deps = [
         ":test_framework",
@@ -78,7 +78,7 @@ cc_test(
     data = [
         "suites.yaml",
         "//:liblyra_runtime.so",
-    ] + glob(["sv_features/**/*.yaml"]),
+    ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
     deps = [
         ":test_framework",
         "@googletest//:gtest",
@@ -139,7 +139,7 @@ cc_test(
     data = [
         "suites.yaml",
         "//:liblyra_runtime.so",
-    ] + glob(["sv_features/**/*.yaml"]),
+    ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
     deps = [
         ":test_framework",
         "@googletest//:gtest",

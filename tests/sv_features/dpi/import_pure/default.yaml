@@ -1,0 +1,131 @@
+feature: dpi_import_pure
+description: DPI-C pure import function declaration acceptance and rejection
+
+cases:
+  - name: reject_dpi_context_function
+    sv: |
+      module Test;
+        import "DPI-C" context function int ctx_fn(int x);
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C context import functions not yet supported"
+
+  - name: reject_dpi_non_pure
+    sv: |
+      module Test;
+        import "DPI-C" function int non_pure_fn(int x);
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C non-pure import functions not yet supported"
+
+  - name: reject_dpi_output_param
+    sv: |
+      module Test;
+        import "DPI-C" function void out_fn(output int x);
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "not yet supported"
+
+  - name: reject_dpi_inout_param
+    sv: |
+      module Test;
+        import "DPI-C" function void inout_fn(inout int x);
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "not yet supported"
+
+  - name: reject_dpi_logic_return
+    sv: |
+      module Test;
+        import "DPI-C" pure function logic logic_fn();
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C return type"
+          - "not yet supported"
+
+  - name: reject_dpi_integer_return
+    sv: |
+      module Test;
+        import "DPI-C" pure function integer int_fn();
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C return type"
+          - "not yet supported"
+
+  - name: reject_dpi_string_return
+    sv: |
+      module Test;
+        import "DPI-C" pure function string str_fn();
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C return type"
+          - "not yet supported"
+
+  - name: reject_dpi_realtime_return
+    sv: |
+      module Test;
+        import "DPI-C" pure function realtime rt_fn();
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C return type"
+          - "not yet supported"
+
+  - name: reject_dpi_import_task
+    sv: |
+      module Test;
+        import "DPI-C" task dpi_task();
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C import tasks not yet supported"
+
+  - name: reject_dpi_logic_arg
+    sv: |
+      module Test;
+        import "DPI-C" pure function int logic_arg_fn(logic x);
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C argument type"
+          - "not yet supported"
+
+  - name: reject_dpi_package_task
+    sv: |
+      package dpi_pkg;
+        import "DPI-C" task pkg_task();
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C import tasks not yet supported"

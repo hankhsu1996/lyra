@@ -39,6 +39,7 @@ auto LowerPackage(
   std::vector<SymbolId> variables;
   std::vector<std::pair<SymbolId, const slang::ast::Expression*>> var_init_refs;
   std::vector<const slang::ast::SubroutineSymbol*> function_refs;
+  std::vector<hir::DpiImportDecl> dpi_imports;
 
   // Phase 1: Register variables and function symbols
   namespace sk = slang::ast;
@@ -58,22 +59,33 @@ auto LowerPackage(
       }
       case sk::SymbolKind::Subroutine: {
         const auto& sub = member.as<slang::ast::SubroutineSymbol>();
-        if (sub.subroutineKind == slang::ast::SubroutineKind::Task) {
-          ctx->ErrorFmt(
-              span, "package task '{}' not yet supported", member.name);
-          break;
-        }
-        const auto& ret_type = sub.getReturnType();
-        SourceSpan func_span = ctx->SpanOf(GetSourceRange(sub));
 
-        // Let LowerType determine if the return type is supported.
-        // If unsupported, LowerType emits an error and returns invalid.
-        TypeId return_type = LowerType(ret_type, func_span, ctx);
-        if (!return_type) {
-          break;
+        // Try DPI import normalization first.
+        auto dpi_result = TryLowerDpiImport(sub, registrar, ctx);
+        switch (dpi_result.kind) {
+          case DpiLoweringKind::kAccepted:
+            dpi_imports.push_back(std::move(dpi_result.decl).value());
+            break;
+          case DpiLoweringKind::kRejected:
+            break;
+          case DpiLoweringKind::kNotDpi: {
+            if (sub.subroutineKind == slang::ast::SubroutineKind::Task) {
+              ctx->ErrorFmt(
+                  span, "package task '{}' not yet supported", member.name);
+              break;
+            }
+            const auto& ret_type = sub.getReturnType();
+            SourceSpan func_span = ctx->SpanOf(GetSourceRange(sub));
+
+            TypeId return_type = LowerType(ret_type, func_span, ctx);
+            if (!return_type) {
+              break;
+            }
+            registrar.Register(sub, SymbolKind::kFunction, return_type);
+            function_refs.push_back(&sub);
+            break;
+          }
         }
-        registrar.Register(sub, SymbolKind::kFunction, return_type);
-        function_refs.push_back(&sub);
         break;
       }
       case sk::SymbolKind::Parameter:
@@ -158,6 +170,7 @@ auto LowerPackage(
       .span = span,
       .variables = std::move(variables),
       .functions = std::move(functions),
+      .dpi_imports = std::move(dpi_imports),
       .init_process = init_process,
   };
 }

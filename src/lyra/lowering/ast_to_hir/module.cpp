@@ -60,6 +60,7 @@ auto LowerModuleBody(
   std::vector<hir::ProcessId> processes;
   std::vector<hir::FunctionId> functions;
   std::vector<hir::TaskId> tasks;
+  std::vector<hir::DpiImportDecl> dpi_imports;
 
   {
     // Module scope for behavioral lowering (expression/process/function
@@ -128,8 +129,18 @@ auto LowerModuleBody(
       processes.push_back(proc);
     }
 
-    // Lower function bodies
+    // Lower function bodies (DPI imports are normalized, not body-lowered)
     for (const auto* sub : input.functions) {
+      auto dpi_result = TryLowerDpiImport(*sub, registrar, &body_ctx);
+      switch (dpi_result.kind) {
+        case DpiLoweringKind::kAccepted:
+          dpi_imports.push_back(std::move(dpi_result.decl).value());
+          continue;
+        case DpiLoweringKind::kRejected:
+          continue;
+        case DpiLoweringKind::kNotDpi:
+          break;
+      }
       if (!registrar.Lookup(*sub)) {
         continue;
       }
@@ -139,8 +150,12 @@ auto LowerModuleBody(
       }
     }
 
-    // Lower tasks
+    // Lower tasks (DPI import tasks are rejected here)
     for (const auto* sub : input.tasks) {
+      auto dpi_result = TryLowerDpiImport(*sub, registrar, &body_ctx);
+      if (dpi_result.kind != DpiLoweringKind::kNotDpi) {
+        continue;  // DPI task: accepted (unlikely) or rejected with diagnostic
+      }
       hir::TaskId id = LowerTask(*sub, lowerer);
       if (id) {
         tasks.push_back(id);
@@ -211,6 +226,7 @@ auto LowerModuleBody(
               .processes = std::move(processes),
               .functions = std::move(functions),
               .tasks = std::move(tasks),
+              .dpi_imports = std::move(dpi_imports),
               .arena = std::move(body_arena),
               .constant_arena = std::move(body_constant_arena),
           },

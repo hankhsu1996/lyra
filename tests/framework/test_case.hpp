@@ -52,6 +52,7 @@ struct TestCase {
   bool dump_specialization_map = false;  // Dump specialization grouping
   bool dump_repertoire = false;          // Dump generate repertoire observation
   bool dump_repertoire_desc = false;     // Dump repertoire descriptor
+  std::vector<std::string> dpi_sources;  // Companion C source paths (DPI)
   [[nodiscard]] auto IsMultiFile() const -> bool {
     return !files.empty();
   }

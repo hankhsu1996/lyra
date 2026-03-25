@@ -1,0 +1,127 @@
+feature: dpi_import_pure_integration
+description: End-to-end DPI-C pure import function calls (JIT + companion C)
+
+cases:
+  - name: dpi_add_ints
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int add_ints(int a, int b);
+        int result;
+        initial begin
+          result = add_ints(17, 25);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: dpi_mul_longs
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function longint mul_longs(longint a, longint b);
+        longint result;
+        initial begin
+          result = mul_longs(6, 7);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: dpi_negate
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int negate(int x);
+        int result;
+        initial begin
+          result = negate(-42);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: dpi_mul_reals
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function real mul_reals(real a, real b);
+        real r;
+        int result;
+        initial begin
+          r = mul_reals(6.0, 7.0);
+          result = int'(r);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: dpi_add_floats
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function shortreal add_floats(shortreal a, shortreal b);
+        shortreal sr;
+        int result;
+        initial begin
+          sr = add_floats(shortreal'(20.0), shortreal'(22.0));
+          result = int'(sr);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: dpi_bit_return
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function bit is_positive(int x);
+        int result;
+        initial begin
+          result = int'(is_positive(42));
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dpi_bit_return_false
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function bit is_positive(int x);
+        int result;
+        initial begin
+          result = int'(is_positive(-1));
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: dpi_c_identifier_override
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure add_ints = function int my_adder(int a, int b);
+        int result;
+        initial begin
+          result = my_adder(20, 22);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42

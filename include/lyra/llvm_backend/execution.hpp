@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "lyra/common/opt_level.hpp"
 #include "lyra/llvm_backend/lower.hpp"
@@ -86,6 +87,8 @@ struct JitCompileOptions {
   // Structured link-progress reporting. When non-null, enables progress
   // tracking and invokes the reporter periodically during JIT linking.
   LinkProgressReporter progress_reporter;
+  // DPI shared library paths to load into the JIT symbol resolver.
+  std::vector<std::filesystem::path> dpi_libs;
 };
 
 // Holds compiled JIT state. Must stay alive during simulation

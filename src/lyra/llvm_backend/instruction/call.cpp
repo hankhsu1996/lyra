@@ -18,6 +18,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
@@ -280,6 +281,9 @@ auto LowerCall(Context& context, const mir::Call& call) -> Result<void> {
           },
           [&](SystemTfOpcode opcode) -> Result<void> {
             return LowerSystemTfCall(context, call, opcode);
+          },
+          [&](const mir::DpiImportRef& ref) -> Result<void> {
+            return dpi::LowerDpiImportCall(context, call, ref);
           },
       },
       call.callee);

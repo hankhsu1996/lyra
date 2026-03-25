@@ -66,7 +66,8 @@ auto LowerModule(
       .slots = &decls.slots,
       .body_slots = &result.slots,
       .design_arena = &design_arena,
-      .design_functions = &decls.functions};
+      .design_functions = &decls.functions,
+      .dpi_imports = &decls.dpi_imports};
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 

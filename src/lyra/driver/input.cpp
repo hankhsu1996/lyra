@@ -208,6 +208,10 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
   cmd.add_argument("--stats-out")
       .metavar("PATH")
       .help("Write structured JSON stats to PATH");
+  cmd.add_argument("--dpi-lib")
+      .append()
+      .metavar("PATH")
+      .help("DPI shared library path (repeatable)");
 }
 
 auto BuildInput(
@@ -369,6 +373,13 @@ auto BuildInput(
   // Stats JSON output (CLI only)
   if (auto path = cmd.present<std::string>("--stats-out")) {
     input.stats_out_path = *path;
+  }
+
+  // DPI shared libraries (CLI only, repeatable)
+  if (auto libs = cmd.present<std::vector<std::string>>("--dpi-lib")) {
+    for (auto& lib : *libs) {
+      input.dpi_libs.emplace_back(std::move(lib));
+    }
   }
 
   return input;
