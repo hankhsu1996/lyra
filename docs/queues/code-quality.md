@@ -6,10 +6,4 @@ Working queue for cross-cutting code quality, infrastructure, and refactoring co
 
 ## Progress
 
-- [ ] Unify compilation-side output under one driver-owned boundary
-
-## Unify compilation-side output under one driver-owned boundary
-
-The compilation side has no single output boundary. Human-facing output is split across phase/progress logging, per-subsystem stats printers, diagnostic/error printing, backend-side analysis logging, and execution-side progress printing. Lower layers own output policy decisions that belong to the driver. The forwarding-analysis logging in the LLVM backend is one symptom; the broader problem is that there is no canonical compilation output boundary for all human-facing text.
-
-The gap: establish one driver-owned boundary that owns output policy, rendering, and sink emission. All lower layers return structured data or emit structured progress events and never print directly. Diagnostics are part of the same boundary, not a parallel system. The completed shape must also enforce this boundary mechanically: direct human-facing output is forbidden outside the designated driver-owned boundary files.
+- [x] Unify compilation-side output under one driver-owned boundary
