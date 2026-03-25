@@ -168,12 +168,12 @@ auto Context::ResolveDesignSlotIndex(mir::SlotId slot_id) const -> uint32_t {
 }
 
 auto Context::GetDesignSlotByteOffset(mir::SlotId slot_id) const -> uint64_t {
-  return layout_.design.slot_byte_offsets[ResolveDesignSlotIndex(slot_id)];
+  return layout_.design.GetStorageByteOffset(slot_id);
 }
 
 auto Context::GetDesignSlotStorageSpec(mir::SlotId slot_id) const
     -> const SlotStorageSpec& {
-  return layout_.design.slot_storage_specs[ResolveDesignSlotIndex(slot_id)];
+  return layout_.design.GetStorageSpec(slot_id);
 }
 
 auto Context::GetDesignStorageSpecArena() const -> const StorageSpecArena& {

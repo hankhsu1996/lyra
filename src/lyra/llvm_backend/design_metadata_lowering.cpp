@@ -254,15 +254,8 @@ auto ExtractSlotMetaInputs(
   entries.reserve(slots.size());
 
   for (const auto& slot : slots) {
-    auto it = design_layout.slot_to_index.find(slot.slot_id);
-    if (it == design_layout.slot_to_index.end()) {
-      throw common::InternalError(
-          "ExtractSlotMetaInputs",
-          std::format("slot_id {} not in design layout", slot.slot_id.value));
-    }
-    uint32_t idx = it->second;
-    uint64_t byte_offset = design_layout.slot_byte_offsets[idx];
-    const auto& spec = design_layout.slot_storage_specs[idx];
+    uint64_t byte_offset = design_layout.GetStorageByteOffset(slot.slot_id);
+    const auto& spec = design_layout.GetStorageSpec(slot.slot_id);
 
     auto kind = ClassifySlotStorageKind(spec);
 
@@ -317,22 +310,13 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
   const auto& design = layout.design;
 
   for (const auto& entry : kernel_entries) {
-    auto src_it = design.slot_to_index.find(entry.src_slot);
-    auto dst_it = design.slot_to_index.find(entry.dst_slot);
-    if (src_it == design.slot_to_index.end() ||
-        dst_it == design.slot_to_index.end()) {
-      throw common::InternalError(
-          "ExtractConnectionDescriptorEntries",
-          "kernelized connection slot not in design layout");
-    }
-
     auto src_offset = NarrowToU32(
-        design.slot_byte_offsets[src_it->second],
+        design.GetStorageByteOffset(entry.src_slot),
         "ExtractConnectionDescriptorEntries src");
     auto dst_offset = NarrowToU32(
-        design.slot_byte_offsets[dst_it->second],
+        design.GetStorageByteOffset(entry.dst_slot),
         "ExtractConnectionDescriptorEntries dst");
-    auto byte_size = design.slot_storage_specs[dst_it->second].TotalByteSize();
+    auto byte_size = design.GetStorageSpec(entry.dst_slot).TotalByteSize();
 
     uint32_t trigger_byte_offset = 0;
     uint32_t trigger_byte_size = 0;

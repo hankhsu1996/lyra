@@ -52,6 +52,7 @@ auto FourStateTotalByteSize(uint32_t bit_width) -> uint32_t;
 // to avoid invalidation when the arena grows.
 struct StorageSpecId {
   uint32_t value;
+  auto operator==(const StorageSpecId&) const -> bool = default;
 };
 
 // Every storage spec variant carries these resolved layout facts.
@@ -59,6 +60,7 @@ struct StorageSpecId {
 struct StorageLayoutFacts {
   uint32_t total_byte_size;
   uint32_t alignment;
+  auto operator==(const StorageLayoutFacts&) const -> bool = default;
 };
 
 // Storage for packed bitvectors (scalars and packed aggregates).
@@ -68,6 +70,7 @@ struct PackedStorageSpec {
   StorageLayoutFacts layout;
   uint32_t bit_width;
   bool is_four_state;
+  auto operator==(const PackedStorageSpec&) const -> bool = default;
 
   [[nodiscard]] auto LaneByteSize() const -> uint32_t {
     return GetStorageByteSize(bit_width);
@@ -80,6 +83,7 @@ struct PackedStorageSpec {
 // Storage for IEEE 754 floating-point values.
 struct FloatStorageSpec {
   StorageLayoutFacts layout;
+  auto operator==(const FloatStorageSpec&) const -> bool = default;
 };
 
 // Storage for fixed-size unpacked arrays.
@@ -89,12 +93,14 @@ struct ArrayStorageSpec {
   uint32_t element_count;
   uint32_t element_stride;
   StorageSpecId element_spec_id;
+  auto operator==(const ArrayStorageSpec&) const -> bool = default;
 };
 
 // One field within an unpacked struct's canonical storage.
 struct StructFieldSpec {
   uint32_t byte_offset;
   StorageSpecId field_spec_id;
+  auto operator==(const StructFieldSpec&) const -> bool = default;
 };
 
 // Storage for unpacked structs.
@@ -105,6 +111,7 @@ struct StructFieldSpec {
 struct StructStorageSpec {
   StorageLayoutFacts layout;
   std::vector<StructFieldSpec> fields;
+  auto operator==(const StructStorageSpec&) const -> bool = default;
 };
 
 // Storage for unpacked unions.
@@ -122,6 +129,7 @@ struct UnionStorageSpec {
   // True if any union member contains 4-state packed content.
   // Computed during ResolveStorageSpec from member specs.
   bool has_four_state_content;
+  auto operator==(const UnionStorageSpec&) const -> bool = default;
 };
 
 // Distinguishes handle sub-kinds for metadata classification.
@@ -138,6 +146,7 @@ enum class HandleKind : uint8_t {
 struct HandleStorageSpec {
   StorageLayoutFacts layout;
   HandleKind kind;
+  auto operator==(const HandleStorageSpec&) const -> bool = default;
 };
 
 // The fully resolved canonical storage specification.
@@ -147,6 +156,7 @@ using SlotStorageData = std::variant<
 
 struct SlotStorageSpec {
   SlotStorageData data;
+  auto operator==(const SlotStorageSpec&) const -> bool = default;
 
   [[nodiscard]] auto TotalByteSize() const -> uint32_t;
   [[nodiscard]] auto Alignment() const -> uint32_t;

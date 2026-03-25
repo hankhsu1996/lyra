@@ -20,6 +20,8 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
+#include "lyra/llvm_backend/connection_kernel_collection.hpp"
+#include "lyra/llvm_backend/forwarding_map.hpp"
 #include "lyra/llvm_backend/layout/layout_four_state.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
@@ -1183,7 +1185,8 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
 
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
-    const llvm::DataLayout& dl, bool force_two_state) -> DesignLayout {
+    const llvm::DataLayout& dl, bool force_two_state,
+    const ForwardingMap& forwarding) -> DesignLayout {
   DesignLayout layout;
 
   auto storage_mode =
@@ -1196,7 +1199,8 @@ auto BuildDesignLayout(
       .pointer_alignment = pointer_align,
   };
 
-  // Resolve canonical storage spec for each slot.
+  // Resolve canonical storage spec for each slot and build owner mapping.
+  layout.storage_owner_slot_id.reserve(slots.size());
   for (size_t i = 0; i < slots.size(); ++i) {
     const auto& slot = slots[i];
     layout.slots.push_back(slot.slot_id);
@@ -1204,20 +1208,25 @@ auto BuildDesignLayout(
     layout.slot_storage_specs.push_back(ResolveStorageSpec(
         slot.type_id, types, storage_mode, target_abi,
         layout.storage_spec_arena));
+    layout.storage_owner_slot_id.push_back(
+        forwarding.Resolve(slot.slot_id).value);
   }
 
   // Initialize owned data offset vector (nullopt for all slots initially).
   layout.owned_data_offsets.resize(slots.size(), std::nullopt);
 
-  // Compute inline-region byte offsets.
-  // For kInlineValue: slot_byte_offsets[i] is the offset of the slot's
-  //   value bytes, and slot_storage_specs[i] describes those bytes.
-  // For kOwnedContainer: slot_byte_offsets[i] is the offset of the
-  //   OwnedStorageHandle (fixed size), and slot_storage_specs[i]
-  //   describes the backing data in the appendix (not the handle).
+  // Two-pass inline-region byte offset computation.
+  // Pass 1: allocate storage for storage-owner slots only.
+  // Pass 2: assign forwarded alias slots the canonical source's byte offset.
+  layout.slot_byte_offsets.resize(slots.size(), 0);
+
   uint64_t offset = 0;
   uint64_t max_align = 1;
+
+  // Pass 1: storage owners get independent byte offsets.
   for (size_t i = 0; i < slots.size(); ++i) {
+    if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
+
     uint64_t slot_size = 0;
     uint64_t slot_align = 0;
     if (slots[i].storage_shape == mir::StorageShape::kOwnedContainer) {
@@ -1230,14 +1239,66 @@ auto BuildDesignLayout(
     }
     max_align = std::max(max_align, slot_align);
     offset = AlignUp(offset, slot_align);
-    layout.slot_byte_offsets.push_back(offset);
+    layout.slot_byte_offsets[i] = offset;
     offset += slot_size;
   }
+
+  // Pass 2: forwarded alias slots share canonical source's byte offset
+  // and storage spec for storage access only.
+  for (size_t i = 0; i < slots.size(); ++i) {
+    if (!forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
+
+    mir::SlotId canonical = forwarding.Resolve(slots[i].slot_id);
+    auto canonical_it = layout.slot_to_index.find(canonical);
+    if (canonical_it == layout.slot_to_index.end()) {
+      throw common::InternalError(
+          "BuildDesignLayout",
+          std::format(
+              "forwarded alias slot {} has canonical {} not in layout",
+              slots[i].slot_id.value, canonical.value));
+    }
+    auto owner_row = canonical_it->second;
+    layout.slot_byte_offsets[i] = layout.slot_byte_offsets[owner_row];
+    layout.slot_storage_specs[i] = layout.slot_storage_specs[owner_row];
+
+    // Full alias-owner validation.
+    auto owner_slot_id = mir::SlotId{layout.storage_owner_slot_id[i]};
+    if (owner_slot_id != canonical) {
+      throw common::InternalError(
+          "BuildDesignLayout",
+          std::format(
+              "alias slot {} recorded owner {} but canonical owner is {}",
+              slots[i].slot_id.value, owner_slot_id.value, canonical.value));
+    }
+    if (layout.storage_owner_slot_id[owner_row] != canonical.value) {
+      throw common::InternalError(
+          "BuildDesignLayout", std::format(
+                                   "alias slot {} owner {} is not self-owning",
+                                   slots[i].slot_id.value, canonical.value));
+    }
+    if (layout.slot_byte_offsets[i] != layout.slot_byte_offsets[owner_row]) {
+      throw common::InternalError(
+          "BuildDesignLayout",
+          std::format(
+              "alias slot {} offset {} != owner {} offset {}",
+              slots[i].slot_id.value, layout.slot_byte_offsets[i],
+              canonical.value, layout.slot_byte_offsets[owner_row]));
+    }
+    if (layout.slot_storage_specs[i] != layout.slot_storage_specs[owner_row]) {
+      throw common::InternalError(
+          "BuildDesignLayout",
+          std::format(
+              "alias slot {} storage spec != owner {} storage spec",
+              slots[i].slot_id.value, canonical.value));
+    }
+  }
+
   layout.inline_region_size = std::max(uint64_t{1}, AlignUp(offset, max_align));
 
   // Compute appendix offsets for owned container backing data.
   uint64_t appendix_offset = layout.inline_region_size;
   for (size_t i = 0; i < slots.size(); ++i) {
+    if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
     if (slots[i].storage_shape != mir::StorageShape::kOwnedContainer) {
       continue;
     }
@@ -1260,6 +1321,7 @@ auto BuildDesignLayout(
   // Verify invariants: kInlineValue slots must have nullopt owned offset,
   // kOwnedContainer slots must have engaged owned offset.
   for (size_t i = 0; i < slots.size(); ++i) {
+    if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
     bool is_owned =
         slots[i].storage_shape == mir::StorageShape::kOwnedContainer;
     if (is_owned && !layout.owned_data_offsets[i].has_value()) {
@@ -1279,9 +1341,9 @@ auto BuildDesignLayout(
       std::max(uint64_t{1}, AlignUp(appendix_offset, max_align));
 
   // Collect 4-state patches using canonical byte offsets.
-  // IsPatchTableEligible encodes the full eligibility rule: packed type,
-  // 4-state, and lane size fits patch table (1/2/4/8 bytes).
+  // Forwarded alias slots do not get independent patches.
   for (size_t i = 0; i < slots.size(); ++i) {
+    if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
     if (!IsPatchTableEligible(layout.slot_storage_specs[i])) {
       continue;
     }
@@ -1323,7 +1385,82 @@ auto BuildDesignLayout(
     }
   }
 
+  // Structural invariant: owned containers must be storage owners.
+  for (size_t i = 0; i < slots.size(); ++i) {
+    if (slots[i].storage_shape == mir::StorageShape::kOwnedContainer &&
+        layout.storage_owner_slot_id[i] != slots[i].slot_id.value) {
+      throw common::InternalError(
+          "BuildDesignLayout",
+          std::format(
+              "owned-container slot {} is a forwarded alias",
+              slots[i].slot_id.value));
+    }
+  }
+
   return layout;
+}
+
+// DesignLayout method implementations.
+
+auto DesignLayout::ContainsSlot(mir::SlotId slot_id) const -> bool {
+  return slot_to_index.contains(slot_id);
+}
+
+auto DesignLayout::IsStorageOwner(mir::SlotId slot_id) const -> bool {
+  auto it = slot_to_index.find(slot_id);
+  if (it == slot_to_index.end()) {
+    throw common::InternalError(
+        "DesignLayout::IsStorageOwner",
+        std::format("slot {} not in layout", slot_id.value));
+  }
+  return storage_owner_slot_id[it->second] == slot_id.value;
+}
+
+auto DesignLayout::GetStorageOwnerSlotId(mir::SlotId slot_id) const
+    -> mir::SlotId {
+  auto it = slot_to_index.find(slot_id);
+  if (it == slot_to_index.end()) {
+    throw common::InternalError(
+        "DesignLayout::GetStorageOwnerSlotId",
+        std::format("slot {} not in layout", slot_id.value));
+  }
+  return mir::SlotId{storage_owner_slot_id[it->second]};
+}
+
+auto DesignLayout::ResolveStorageOwnerIndex(mir::SlotId slot_id) const
+    -> uint32_t {
+  auto it = slot_to_index.find(slot_id);
+  if (it == slot_to_index.end()) {
+    throw common::InternalError(
+        "DesignLayout::ResolveStorageOwnerIndex",
+        std::format("slot {} not in layout", slot_id.value));
+  }
+  auto owner_slot_id = mir::SlotId{storage_owner_slot_id[it->second]};
+  auto owner_it = slot_to_index.find(owner_slot_id);
+  if (owner_it == slot_to_index.end()) {
+    throw common::InternalError(
+        "DesignLayout::ResolveStorageOwnerIndex",
+        std::format(
+            "owner slot {} for slot {} not in layout", owner_slot_id.value,
+            slot_id.value));
+  }
+  if (storage_owner_slot_id[owner_it->second] != owner_slot_id.value) {
+    throw common::InternalError(
+        "DesignLayout::ResolveStorageOwnerIndex",
+        std::format(
+            "owner slot {} for slot {} is not self-owning", owner_slot_id.value,
+            slot_id.value));
+  }
+  return owner_it->second;
+}
+
+auto DesignLayout::GetStorageByteOffset(mir::SlotId slot_id) const -> uint64_t {
+  return slot_byte_offsets[ResolveStorageOwnerIndex(slot_id)];
+}
+
+auto DesignLayout::GetStorageSpec(mir::SlotId slot_id) const
+    -> const SlotStorageSpec& {
+  return slot_storage_specs[ResolveStorageOwnerIndex(slot_id)];
 }
 
 namespace {
@@ -1465,7 +1602,8 @@ auto Layout::GetInstanceRelByteOffsets(ModuleIndex idx) const
 
 auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
-    std::span<const mir::ProcessId> connection_processes,
+    std::vector<ConnectionKernelEntry> precollected_connection_kernels,
+    std::vector<mir::ProcessId> non_kernelized_connection_processes,
     std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
     const mir::Arena& design_arena, const TypeArena& types,
     DesignLayout design_layout, llvm::LLVMContext& ctx,
@@ -1485,29 +1623,11 @@ auto BuildLayout(
   }
   layout.num_init_processes = layout.scheduled_processes.size();
 
-  // Phase 2: Collect connection processes (scheduled, always_comb semantics)
-  // Kernelizable ones are separated out.
-  for (mir::ProcessId proc_id : connection_processes) {
-    const auto& process = design_arena[proc_id];
-    auto pending = TryKernelizeConnection(process, design_arena);
-    if (pending) {
-      std::optional<ResolvedObservation> obs;
-      if (pending->trigger_observed_place) {
-        obs = ResolveObservation(
-            design_arena, layout.design, pending->trigger_slot,
-            *pending->trigger_observed_place);
-      }
-      layout.connection_kernel_entries.push_back({
-          .process_id = proc_id,
-          .src_slot = pending->src_slot,
-          .dst_slot = pending->dst_slot,
-          .trigger_slot = pending->trigger_slot,
-          .trigger_edge = pending->trigger_edge,
-          .trigger_observation = obs,
-      });
-    } else {
-      layout.scheduled_processes.push_back({proc_id, ModuleIndex{}});
-    }
+  // Connection kernels are pipeline-owned pre-layout data.
+  // BuildLayout consumes them; it does not collect or canonicalize them.
+  layout.connection_kernel_entries = std::move(precollected_connection_kernels);
+  for (mir::ProcessId proc_id : non_kernelized_connection_processes) {
+    layout.scheduled_processes.push_back({proc_id, ModuleIndex{}});
   }
 
   // Phase 3: Collect module processes (run through scheduler)

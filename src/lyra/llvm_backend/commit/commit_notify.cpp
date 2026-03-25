@@ -15,7 +15,7 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
   // Init contract: no engine, no notification needed.
   if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) return;
 
-  auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
+  auto signal_id_opt = commit::Access::GetMutationTargetSignalId(ctx, target);
 
   // Conditional: no-op if not design slot
   if (!signal_id_opt.has_value()) {
@@ -41,11 +41,11 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
 
 auto GetDesignSignalId(Context& ctx, mir::PlaceId target)
     -> std::optional<SignalIdExpr> {
-  return commit::Access::GetCanonicalRootSignalId(ctx, target);
+  return commit::Access::GetMutationTargetSignalId(ctx, target);
 }
 
 auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> SignalIdExpr {
-  auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
+  auto signal_id_opt = commit::Access::GetMutationTargetSignalId(ctx, target);
   if (!signal_id_opt.has_value()) {
     throw common::InternalError(
         "GetSignalIdForNba", "NBA target must resolve to a design slot");
@@ -57,7 +57,7 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
   // Init contract: no engine, no notification needed.
   if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) return;
 
-  auto signal_id_opt = commit::Access::GetCanonicalRootSignalId(ctx, target);
+  auto signal_id_opt = commit::Access::GetMutationTargetSignalId(ctx, target);
   if (!signal_id_opt.has_value()) {
     return;  // No-op for non-design slots
   }

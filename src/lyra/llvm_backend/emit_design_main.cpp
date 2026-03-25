@@ -122,9 +122,18 @@ void EmitConstructOwnedHandles(
       continue;
     }
 
-    uint64_t handle_offset = design_layout.slot_byte_offsets[i];
+    if (!design_layout.IsStorageOwner(slots[i].slot_id)) {
+      throw common::InternalError(
+          "EmitConstructOwnedHandles",
+          std::format(
+              "owned-container slot {} is not a storage owner",
+              slots[i].slot_id.value));
+    }
+    uint64_t handle_offset =
+        design_layout.GetStorageByteOffset(slots[i].slot_id);
     uint64_t data_offset = *design_layout.owned_data_offsets[i];
-    uint64_t backing_size = design_layout.slot_storage_specs[i].TotalByteSize();
+    uint64_t backing_size =
+        design_layout.GetStorageSpec(slots[i].slot_id).TotalByteSize();
 
     auto* handle_ptr = builder.CreateGEP(
         i8_ty, design_state, builder.getInt64(handle_offset),
@@ -600,16 +609,19 @@ auto EmitSlotByteOffsets(Context& context, const Layout& layout)
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
 
-  const auto& offsets = layout.design.slot_byte_offsets;
-  auto count = static_cast<uint32_t>(offsets.size());
+  auto count = static_cast<uint32_t>(layout.design.slots.size());
   if (count == 0) {
     return llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(ctx));
   }
 
+  // Emit owner-resolved byte offsets for all slots (including aliases,
+  // which share the canonical owner's offset).
   std::vector<llvm::Constant*> entries;
   entries.reserve(count);
-  for (uint64_t offset : offsets) {
-    entries.push_back(llvm::ConstantInt::get(i64_ty, offset));
+  for (const auto& slot_id : layout.design.slots) {
+    entries.push_back(
+        llvm::ConstantInt::get(
+            i64_ty, layout.design.GetStorageByteOffset(slot_id)));
   }
 
   auto* array_type = llvm::ArrayType::get(i64_ty, count);
