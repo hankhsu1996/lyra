@@ -41,7 +41,15 @@
 //      compile-time LLVM globals. Constructor API extended:
 //      Create takes connection trigger template, BeginBody takes
 //      trigger/comb templates.
-inline constexpr uint32_t kRuntimeAbiVersion = 14;
+// v15: Slot/trace metadata and instance-path ownership moved to
+//      constructor-time realization. slot_meta_words, trace_signal_meta,
+//      and instance paths now populated from ConstructionResult.
+//      Constructor API extended: Create takes package observable
+//      descriptor template, BeginBody takes body observable descriptor
+//      template. Legacy static __lyra_slot_meta_table,
+//      __lyra_trace_signal_meta_table, and __lyra_instance_paths globals
+//      removed.
+inline constexpr uint32_t kRuntimeAbiVersion = 15;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion

@@ -14,11 +14,10 @@
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_manager.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/observable_descriptor_utils.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
@@ -31,36 +30,6 @@
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
-
-// Derive slot storage kind entirely from resolved storage spec.
-auto ClassifySlotStorageKind(const SlotStorageSpec& spec)
-    -> runtime::SlotStorageKind {
-  return std::visit(
-      common::Overloaded{
-          [](const PackedStorageSpec& s) {
-            return s.is_four_state ? runtime::SlotStorageKind::kPacked4
-                                   : runtime::SlotStorageKind::kPacked2;
-          },
-          [](const FloatStorageSpec&) {
-            return runtime::SlotStorageKind::kPacked2;
-          },
-          [](const ArrayStorageSpec&) {
-            return runtime::SlotStorageKind::kAggregate;
-          },
-          [](const StructStorageSpec&) {
-            return runtime::SlotStorageKind::kAggregate;
-          },
-          [](const UnionStorageSpec&) {
-            return runtime::SlotStorageKind::kAggregate;
-          },
-          [](const HandleStorageSpec& s) {
-            return s.kind == HandleKind::kString
-                       ? runtime::SlotStorageKind::kString
-                       : runtime::SlotStorageKind::kHandle;
-          },
-      },
-      spec.data);
-}
 
 auto EmitWordArrayGlobal(
     llvm::Module& mod, llvm::LLVMContext& ctx,
@@ -131,158 +100,7 @@ auto GetConnectionDescriptorLlvmType(llvm::LLVMContext& ctx)
       "ConnectionDescriptor");
 }
 
-// Read a NUL-terminated string from a char pool at the given offset.
-// Throws InternalError on invalid offset (compile-side invariant).
-//
-// Pool contract: every stored string is NUL-terminated, and every valid
-// offset points to the first byte of such a string. The pool writer
-// (StringPoolIntern) maintains this by appending '\0' after each string.
-// Offset 0 is the empty-string sentinel (pool[0] == '\0').
-auto ReadPoolString(const std::vector<char>& pool, uint32_t offset)
-    -> std::string_view {
-  if (offset >= pool.size()) {
-    throw common::InternalError(
-        "ReadPoolString",
-        std::format(
-            "offset {} out of range (pool size {})", offset, pool.size()));
-  }
-  return {&pool[offset]};
-}
-
-// Map SlotKind to runtime TraceSignalKind. This is the sole conversion point
-// between MIR storage semantics and trace-facing signal kinds.
-auto MapSlotKindToTraceKind(mir::SlotKind kind) -> runtime::TraceSignalKind {
-  switch (kind) {
-    case mir::SlotKind::kVariable:
-      return runtime::TraceSignalKind::kVariable;
-    case mir::SlotKind::kNet:
-      return runtime::TraceSignalKind::kNet;
-    case mir::SlotKind::kParamConst:
-      return runtime::TraceSignalKind::kParam;
-  }
-  throw common::InternalError(
-      "MapSlotKindToTraceKind",
-      std::format("unknown SlotKind {}", static_cast<int>(kind)));
-}
-
-// Compute trace bit width from a type. Returns the packed bit width for
-// integral/packed types, 0 for non-bit-vector types.
-auto ComputeTraceBitWidth(TypeId type_id, const TypeArena& types) -> uint32_t {
-  const Type& type = types[type_id];
-  if (IsPacked(type)) {
-    return PackedBitWidth(type, types);
-  }
-  return 0;
-}
-
 }  // namespace
-
-auto PrepareTraceSignalMetaInputs(
-    const std::vector<mir::SlotTraceProvenance>& provenance,
-    const std::vector<char>& trace_string_pool,
-    const std::vector<TypeId>& slot_types,
-    const std::vector<mir::SlotKind>& slot_kinds,
-    const std::vector<std::string>& instance_paths, const TypeArena& types,
-    const DesignLayout& design_layout)
-    -> std::vector<metadata::TraceSignalMetaInput> {
-  if (provenance.empty()) return {};
-
-  if (provenance.size() != slot_types.size()) {
-    throw common::InternalError(
-        "PrepareTraceSignalMetaInputs",
-        std::format(
-            "provenance.size() ({}) != slot_types.size() ({})",
-            provenance.size(), slot_types.size()));
-  }
-  if (provenance.size() != slot_kinds.size()) {
-    throw common::InternalError(
-        "PrepareTraceSignalMetaInputs",
-        std::format(
-            "provenance.size() ({}) != slot_kinds.size() ({})",
-            provenance.size(), slot_kinds.size()));
-  }
-  if (trace_string_pool.empty() || trace_string_pool[0] != '\0') {
-    throw common::InternalError(
-        "PrepareTraceSignalMetaInputs",
-        "trace_string_pool must be non-empty and start with '\\0'");
-  }
-
-  std::vector<metadata::TraceSignalMetaInput> entries;
-  entries.reserve(provenance.size());
-
-  for (uint32_t slot_id = 0; slot_id < provenance.size(); ++slot_id) {
-    const auto& prov = provenance[slot_id];
-    auto local_name =
-        ReadPoolString(trace_string_pool, prov.local_name_str_off);
-
-    std::string hierarchical_name;
-    switch (prov.scope_kind) {
-      case mir::SlotScopeKind::kPackage: {
-        auto pkg_name = ReadPoolString(trace_string_pool, prov.scope_ref);
-        hierarchical_name = std::format("{}.{}", pkg_name, local_name);
-        break;
-      }
-      case mir::SlotScopeKind::kInstance: {
-        if (prov.scope_ref >= instance_paths.size()) {
-          throw common::InternalError(
-              "PrepareTraceSignalMetaInputs",
-              std::format(
-                  "slot {} instance scope_ref {} out of range "
-                  "(instance_paths size {})",
-                  slot_id, prov.scope_ref, instance_paths.size()));
-        }
-        const auto& inst_path = instance_paths[prov.scope_ref];
-        hierarchical_name = std::format("{}.{}", inst_path, local_name);
-        break;
-      }
-    }
-
-    entries.push_back(
-        {.hierarchical_name = std::move(hierarchical_name),
-         .bit_width = ComputeTraceBitWidth(slot_types[slot_id], types),
-         .trace_kind =
-             static_cast<uint32_t>(MapSlotKindToTraceKind(slot_kinds[slot_id])),
-         .storage_owner_slot_id =
-             design_layout.GetStorageOwnerSlotId(mir::SlotId{slot_id}).value});
-  }
-
-  return entries;
-}
-
-auto ExtractSlotMetaInputs(
-    const std::vector<SlotInfo>& slots, const DesignLayout& design_layout)
-    -> std::vector<metadata::SlotMetaInput> {
-  std::vector<metadata::SlotMetaInput> entries;
-  entries.reserve(slots.size());
-
-  for (const auto& slot : slots) {
-    uint64_t byte_offset = design_layout.GetStorageByteOffset(slot.slot_id);
-    const auto& spec = design_layout.GetStorageSpec(slot.slot_id);
-
-    auto kind = ClassifySlotStorageKind(spec);
-
-    metadata::SlotMetaInput entry{
-        .byte_offset = NarrowToU32(byte_offset, "ExtractSlotMetaInputs"),
-        .total_bytes = spec.TotalByteSize(),
-        .storage_kind = static_cast<uint32_t>(kind),
-        .storage_owner_slot_id =
-            design_layout.GetStorageOwnerSlotId(slot.slot_id).value,
-    };
-
-    if (kind == runtime::SlotStorageKind::kPacked4) {
-      const auto& packed = std::get<PackedStorageSpec>(spec.data);
-      uint32_t lane_bytes = packed.LaneByteSize();
-      entry.value_offset = 0;
-      entry.value_bytes = lane_bytes;
-      entry.unk_offset = packed.UnknownLaneOffset();
-      entry.unk_bytes = lane_bytes;
-    }
-
-    entries.push_back(entry);
-  }
-
-  return entries;
-}
 
 auto PrepareBackEdgeSiteInputs(
     const Context& context, const lowering::DiagnosticContext* diag_ctx,
@@ -360,13 +178,6 @@ auto EmitDesignMetadataGlobals(
 
   MetadataGlobals result;
 
-  // Verify serialized table shapes before deriving counts.
-  if (!metadata.slot_meta_words.empty() &&
-      metadata.slot_meta_words.size() % runtime::slot_meta_abi::kStride != 0) {
-    throw common::InternalError(
-        "EmitDesignMetadataGlobals",
-        "slot_meta_words size not divisible by kStride");
-  }
   if (!metadata.back_edge_site_meta.words.empty() &&
       metadata.back_edge_site_meta.words.size() %
               runtime::back_edge_site_abi::kStride !=
@@ -375,12 +186,6 @@ auto EmitDesignMetadataGlobals(
         "EmitDesignMetadataGlobals",
         "back_edge_site_meta words size not divisible by kStride");
   }
-
-  // Slot meta: already serialized as word array by link
-  result.slot_meta_words = EmitWordArrayGlobal(
-      mod, ctx, metadata.slot_meta_words, "__lyra_slot_meta_table");
-  result.slot_meta_count = static_cast<uint32_t>(
-      metadata.slot_meta_words.size() / runtime::slot_meta_abi::kStride);
 
   // Back-edge site meta
   result.back_edge_site_meta_words = EmitWordArrayGlobal(
@@ -438,52 +243,6 @@ auto EmitDesignMetadataGlobals(
             llvm::ConstantInt::get(i32_ty, 0)});
   } else {
     result.conn_desc_table = null_ptr;
-  }
-
-  // Trace signal meta
-  if (!metadata.trace_signal_meta.words.empty() &&
-      metadata.trace_signal_meta.words.size() %
-              runtime::trace_signal_meta_abi::kStride !=
-          0) {
-    throw common::InternalError(
-        "EmitDesignMetadataGlobals",
-        "trace_signal_meta words size not divisible by kStride");
-  }
-  result.trace_signal_meta_words = EmitWordArrayGlobal(
-      mod, ctx, metadata.trace_signal_meta.words,
-      "__lyra_trace_signal_meta_table");
-  result.trace_signal_meta_word_count =
-      static_cast<uint32_t>(metadata.trace_signal_meta.words.size());
-  result.trace_signal_meta_pool = EmitPoolGlobal(
-      mod, ctx, metadata.trace_signal_meta.pool,
-      "__lyra_trace_signal_meta_pool");
-  result.trace_signal_meta_pool_size =
-      static_cast<uint32_t>(metadata.trace_signal_meta.pool.size());
-
-  // Instance paths
-  auto num_paths = static_cast<uint32_t>(metadata.instance_paths.size());
-  result.instance_path_count = num_paths;
-  if (num_paths > 0) {
-    std::vector<llvm::Constant*> path_constants;
-    path_constants.reserve(num_paths);
-    for (uint32_t i = 0; i < num_paths; ++i) {
-      auto* path_str = builder.CreateGlobalStringPtr(
-          metadata.instance_paths[i], std::format("inst_path_{}", i));
-      path_constants.push_back(llvm::cast<llvm::Constant>(path_str));
-    }
-    auto* path_array_type = llvm::ArrayType::get(ptr_ty, num_paths);
-    auto* paths_global = new llvm::GlobalVariable(
-        mod, path_array_type, true, llvm::GlobalValue::InternalLinkage,
-        llvm::ConstantArray::get(path_array_type, path_constants),
-        "__lyra_instance_paths");
-    paths_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-    result.instance_paths_array = llvm::ConstantExpr::getInBoundsGetElementPtr(
-        path_array_type, paths_global,
-        llvm::ArrayRef<llvm::Constant*>{
-            llvm::ConstantInt::get(i32_ty, 0),
-            llvm::ConstantInt::get(i32_ty, 0)});
-  } else {
-    result.instance_paths_array = null_ptr;
   }
 
   return result;

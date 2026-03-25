@@ -35,6 +35,7 @@
 #include "lyra/llvm_backend/forwarding_analysis.hpp"
 #include "lyra/llvm_backend/forwarding_map.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/observable_descriptor_utils.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/mir/effect.hpp"
@@ -1243,6 +1244,195 @@ auto CompileDesignProcesses(const LoweringInput& input)
                 .trigger_start = trigger_start,
                 .trigger_count = trigger_count,
                 .has_self_edge = static_cast<uint8_t>(result->has_self_edge),
+            });
+      }
+    }
+
+    // Body observable descriptor templates.
+    // Source: design layout (byte offsets, storage specs, ownership),
+    // slot trace provenance (local names), type arena (bit widths).
+    // Uses the same body_base_slots map already computed for comb templates.
+    auto read_trace_pool = [&](uint32_t offset) -> std::string_view {
+      const auto& pool = realization.slot_trace_string_pool;
+      if (offset >= pool.size()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "trace pool offset {} out of range (pool size {})", offset,
+                pool.size()));
+      }
+      return {&pool[offset]};
+    };
+
+    auto append_to_pool = [](OwnedObservableDescriptorTemplate& tmpl,
+                             std::string_view name) -> uint32_t {
+      if (name.empty()) return 0;
+      auto off = static_cast<uint32_t>(tmpl.pool.size());
+      tmpl.pool.insert(tmpl.pool.end(), name.begin(), name.end());
+      tmpl.pool.push_back('\0');
+      return off;
+    };
+
+    auto narrow_u64_to_u32 = [](uint64_t value,
+                                std::string_view what) -> uint32_t {
+      if (value > std::numeric_limits<uint32_t>::max()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format("{} {} exceeds uint32_t transport limit", what, value));
+      }
+      return static_cast<uint32_t>(value);
+    };
+
+    for (auto& info : layout->body_realization_infos) {
+      auto base_it = body_base_slots.find(info.body_id.value);
+      if (base_it == body_base_slots.end()) {
+        if (info.slot_count == 0) {
+          info.observable_descriptors.pool.assign(1, '\0');
+          continue;
+        }
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "missing representative base slot for body {} with {} slots",
+                info.body_id.value, info.slot_count));
+      }
+      uint32_t base_slot = base_it->second;
+
+      auto& tmpl = info.observable_descriptors;
+      tmpl.pool.push_back('\0');
+      tmpl.entries.reserve(info.slot_count);
+
+      for (uint32_t i = 0; i < info.slot_count; ++i) {
+        uint32_t gsi = base_slot + i;
+        if (gsi >= layout->design.slots.size()) {
+          throw common::InternalError(
+              "CompileDesignProcesses",
+              std::format(
+                  "body {} slot {} (gsi {}) out of range (design slots {})",
+                  info.body_id.value, i, gsi, layout->design.slots.size()));
+        }
+
+        uint64_t body_base_offset = layout->design.slot_byte_offsets[base_slot];
+        uint64_t body_local_offset =
+            layout->design.slot_byte_offsets[gsi] - body_base_offset;
+
+        const auto& spec = layout->design.slot_storage_specs[gsi];
+        auto storage_kind = ClassifySlotStorageKind(spec);
+
+        uint32_t value_lane_offset = 0;
+        uint32_t value_lane_bytes = 0;
+        uint32_t unk_lane_offset = 0;
+        uint32_t unk_lane_bytes = 0;
+        if (storage_kind == runtime::SlotStorageKind::kPacked4) {
+          const auto& packed = std::get<PackedStorageSpec>(spec.data);
+          uint32_t lane_bytes = packed.LaneByteSize();
+          value_lane_offset = 0;
+          value_lane_bytes = lane_bytes;
+          unk_lane_offset = packed.UnknownLaneOffset();
+          unk_lane_bytes = lane_bytes;
+        }
+
+        uint32_t bit_width = ComputeTraceBitWidth(
+            realization.slot_types[gsi], *input.type_arena);
+        uint32_t trace_kind = static_cast<uint32_t>(
+            MapSlotKindToTraceKind(realization.slot_kinds[gsi]));
+
+        auto local_name = read_trace_pool(
+            realization.slot_trace_provenance[gsi].local_name_str_off);
+        uint32_t name_off = append_to_pool(tmpl, local_name);
+
+        uint32_t global_owner = layout->design.storage_owner_slot_id[gsi];
+        uint32_t owner_ref = 0;
+        uint32_t flags = 0;
+        bool owner_in_body = global_owner >= base_slot &&
+                             global_owner < base_slot + info.slot_count;
+        if (owner_in_body) {
+          owner_ref = global_owner - base_slot;
+        } else {
+          owner_ref = global_owner;
+          flags |= runtime::kObservableFlagOwnerAbsolute;
+        }
+
+        tmpl.entries.push_back(
+            runtime::ObservableDescriptorEntry{
+                .storage_byte_offset = narrow_u64_to_u32(
+                    body_local_offset, "body-local byte offset"),
+                .total_bytes = spec.TotalByteSize(),
+                .storage_kind = static_cast<uint32_t>(storage_kind),
+                .value_lane_offset = value_lane_offset,
+                .value_lane_bytes = value_lane_bytes,
+                .unk_lane_offset = unk_lane_offset,
+                .unk_lane_bytes = unk_lane_bytes,
+                .bit_width = bit_width,
+                .local_name_pool_off = name_off,
+                .trace_kind = trace_kind,
+                .storage_owner_ref = owner_ref,
+                .flags = flags,
+            });
+      }
+    }
+
+    // Package/global observable descriptor template.
+    {
+      auto& pkg = layout->package_observable_descriptors;
+      pkg.pool.push_back('\0');
+      uint32_t num_pkg = layout->num_package_slots;
+      pkg.entries.reserve(num_pkg);
+
+      for (uint32_t gsi = 0; gsi < num_pkg; ++gsi) {
+        if (gsi >= layout->design.slots.size()) break;
+
+        const auto& spec = layout->design.slot_storage_specs[gsi];
+        auto storage_kind = ClassifySlotStorageKind(spec);
+
+        uint32_t value_lane_offset = 0;
+        uint32_t value_lane_bytes = 0;
+        uint32_t unk_lane_offset = 0;
+        uint32_t unk_lane_bytes = 0;
+        if (storage_kind == runtime::SlotStorageKind::kPacked4) {
+          const auto& packed = std::get<PackedStorageSpec>(spec.data);
+          uint32_t lane_bytes = packed.LaneByteSize();
+          value_lane_offset = 0;
+          value_lane_bytes = lane_bytes;
+          unk_lane_offset = packed.UnknownLaneOffset();
+          unk_lane_bytes = lane_bytes;
+        }
+
+        uint32_t bit_width = ComputeTraceBitWidth(
+            realization.slot_types[gsi], *input.type_arena);
+        uint32_t trace_kind = static_cast<uint32_t>(
+            MapSlotKindToTraceKind(realization.slot_kinds[gsi]));
+
+        const auto& prov = realization.slot_trace_provenance[gsi];
+        auto local_name = read_trace_pool(prov.local_name_str_off);
+        std::string qualified_name;
+        if (prov.scope_kind == mir::SlotScopeKind::kPackage) {
+          auto pkg_name = read_trace_pool(prov.scope_ref);
+          qualified_name = std::format("{}.{}", pkg_name, local_name);
+        } else {
+          qualified_name = std::string(local_name);
+        }
+        uint32_t name_off = append_to_pool(pkg, qualified_name);
+
+        uint32_t global_owner = layout->design.storage_owner_slot_id[gsi];
+
+        pkg.entries.push_back(
+            runtime::ObservableDescriptorEntry{
+                .storage_byte_offset = narrow_u64_to_u32(
+                    layout->design.slot_byte_offsets[gsi],
+                    "package/global byte offset"),
+                .total_bytes = spec.TotalByteSize(),
+                .storage_kind = static_cast<uint32_t>(storage_kind),
+                .value_lane_offset = value_lane_offset,
+                .value_lane_bytes = value_lane_bytes,
+                .unk_lane_offset = unk_lane_offset,
+                .unk_lane_bytes = unk_lane_bytes,
+                .bit_width = bit_width,
+                .local_name_pool_off = name_off,
+                .trace_kind = trace_kind,
+                .storage_owner_ref = global_owner,
+                .flags = runtime::kObservableFlagOwnerAbsolute |
+                         runtime::kObservableFlagPackageGlobal,
             });
       }
     }

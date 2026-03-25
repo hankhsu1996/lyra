@@ -193,4 +193,77 @@ static_assert(offsetof(ProcessMetaTemplateEntry, col) == 12);
 static_assert(std::is_trivially_copyable_v<ProcessMetaTemplateEntry>);
 static_assert(std::is_standard_layout_v<ProcessMetaTemplateEntry>);
 
+// Per-slot observable descriptor template entry.
+//
+// Canonical compile-time source of truth for observability-facing slot/signal
+// facts. One entry per observable slot in a body or package/global collection.
+//
+// The constructor combines descriptor entries with per-instance slot-base and
+// byte-base relocation to produce realized slot metadata and trace signal
+// metadata tables. Both realized builders consume different facets of the
+// same descriptor entry.
+//
+// Owner-domain semantics:
+//   - Body-owned entries: local_byte_offset is body-relative, owner_id is
+//     body-local (relocatable) unless kObservableFlagOwnerAbsolute is set.
+//   - Package/global entries: local_byte_offset is absolute, owner_id is
+//     absolute, both flags set.
+//   - Cross-body forwarded aliases: local_byte_offset is body-relative,
+//     owner_id is absolute design-global (kObservableFlagOwnerAbsolute set).
+struct ObservableDescriptorEntry {
+  // Byte offset of the observable storage represented by this entry.
+  // Body-relative for body-owned entries.
+  // Absolute for package/global entries (kObservableFlagPackageGlobal set).
+  uint32_t storage_byte_offset = 0;
+  // Total byte size of the slot's storage.
+  uint32_t total_bytes = 0;
+  // runtime::SlotStorageKind packed as u32.
+  uint32_t storage_kind = 0;
+  // For kPacked4: value plane offset within the slot (0 otherwise).
+  uint32_t value_lane_offset = 0;
+  // For kPacked4: value plane byte size (0 otherwise).
+  uint32_t value_lane_bytes = 0;
+  // For kPacked4: unknown plane offset within the slot (0 otherwise).
+  uint32_t unk_lane_offset = 0;
+  // For kPacked4: unknown plane byte size (0 otherwise).
+  uint32_t unk_lane_bytes = 0;
+  // Semantic bit width for trace metadata.
+  uint32_t bit_width = 0;
+  // Offset into the owning template's string pool for the local display name.
+  // Body-owned: local signal name without instance prefix.
+  // Package/global: package-qualified name.
+  uint32_t local_name_pool_off = 0;
+  // runtime::TraceSignalKind packed as u32.
+  uint32_t trace_kind = 0;
+  // Storage owner reference.
+  // Body-local owner index unless kObservableFlagOwnerAbsolute is set;
+  // otherwise absolute design-global owner slot id.
+  uint32_t storage_owner_ref = 0;
+  // Owner-domain and scope policy flags.
+  uint32_t flags = 0;
+};
+
+static_assert(sizeof(ObservableDescriptorEntry) == 48);
+static_assert(offsetof(ObservableDescriptorEntry, storage_byte_offset) == 0);
+static_assert(offsetof(ObservableDescriptorEntry, total_bytes) == 4);
+static_assert(offsetof(ObservableDescriptorEntry, storage_kind) == 8);
+static_assert(offsetof(ObservableDescriptorEntry, value_lane_offset) == 12);
+static_assert(offsetof(ObservableDescriptorEntry, value_lane_bytes) == 16);
+static_assert(offsetof(ObservableDescriptorEntry, unk_lane_offset) == 20);
+static_assert(offsetof(ObservableDescriptorEntry, unk_lane_bytes) == 24);
+static_assert(offsetof(ObservableDescriptorEntry, bit_width) == 28);
+static_assert(offsetof(ObservableDescriptorEntry, local_name_pool_off) == 32);
+static_assert(offsetof(ObservableDescriptorEntry, trace_kind) == 36);
+static_assert(offsetof(ObservableDescriptorEntry, storage_owner_ref) == 40);
+static_assert(offsetof(ObservableDescriptorEntry, flags) == 44);
+static_assert(std::is_trivially_copyable_v<ObservableDescriptorEntry>);
+static_assert(std::is_standard_layout_v<ObservableDescriptorEntry>);
+
+// owner_id is absolute design-global. Constructor does not apply
+// slot-base relocation for this entry's owner_id.
+inline constexpr uint32_t kObservableFlagOwnerAbsolute = 1U << 0;
+// Entry is package/global-scoped. local_byte_offset is absolute.
+// Constructor does not apply byte-base relocation.
+inline constexpr uint32_t kObservableFlagPackageGlobal = 1U << 1;
+
 }  // namespace lyra::runtime

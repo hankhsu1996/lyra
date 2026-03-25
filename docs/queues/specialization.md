@@ -16,8 +16,8 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] H1 -- Correct specialization end-state: architecture contract still overstates progress
 - [x] H2 -- Move constructor/process realization out of compile-time artifacts
 - [x] H3 -- Move process metadata realization behind constructor-time expansion
-- [ ] H4 -- Move trigger/comb realization behind constructor-time expansion
-- [ ] H5 -- Move slot/trace/path realization behind constructor-time expansion
+- [x] H4 -- Move trigger/comb realization behind constructor-time expansion
+- [x] H5 -- Move slot/trace/path realization behind constructor-time expansion
 - [ ] H6 -- Remove compile-time-expanded design-state initialization topology
 - [ ] H7 -- Remove remaining topology-sized emitted storage realization
 - [ ] H8 -- Re-validate topology-independence with scaling gates
@@ -29,18 +29,6 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [ ] F2 -- Specialization caching
 - [ ] Documentation gap: pipeline-contract.md and state-layout.md need type ownership clarification
 - [ ] CI policy gates: codegen API check, grouping regression tests, topology-independence test
-
-## H4: Move trigger/comb realization behind constructor-time expansion
-
-Comb kernel word tables and process trigger word tables are emitted as fully expanded compile-time globals. Each module-process instance contributes its own trigger entries, even though all instances of the same body have identical trigger structure (same trigger slots relative to their base, same edge sensitivity).
-
-These should be body-shaped trigger templates that the runtime expands per-instance, using the per-instance slot offset to derive absolute trigger slot IDs from body-relative ones.
-
-## H5: Move slot/trace/path realization behind constructor-time expansion
-
-Slot metadata, trace signal metadata, and hierarchical instance paths are fully materialized per-instance at compile time. For N instances of a body with K signals each, the slot metadata table contains N\*K entries, the trace signal metadata contains N\*K name strings, and instance paths contains N path strings.
-
-These should be derived from body-shaped signal templates and the instance topology at constructor time. The compiler would emit per-body signal descriptors (relative offsets, widths, names without path prefix), and the constructor would expand them for each realized instance.
 
 ## H6: Remove compile-time-expanded design-state initialization topology
 
