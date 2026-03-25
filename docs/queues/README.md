@@ -59,3 +59,4 @@ Bad: `migration`, `debug-gaps`, `runtime-performance-gaps`, `specialization-refa
 | `performance.md`    | Runtime simulation performance             |
 | `observability.md`  | Debugging, tracing, and inspection tooling |
 | `infrastructure.md` | Correctness, code quality, and tooling     |
+| `dpi.md`            | DPI-C foreign function interface           |
