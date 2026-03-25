@@ -620,6 +620,13 @@ def fmt_int(val: int) -> str:
     return f"{val:,}"
 
 
+def _fmt_factor(factor: float) -> str:
+    """Format a ratio factor: one decimal below 10, integer at 10+."""
+    if factor >= 10.0:
+        return f"{round(factor)}x"
+    return f"{factor:.1f}x"
+
+
 def fmt_ratio(lyra_s: float, ver_s: float) -> str:
     """Format a Lyra-vs-Verilator ratio as a human-readable string."""
     if lyra_s <= 0.0 or ver_s <= 0.0:
@@ -627,9 +634,9 @@ def fmt_ratio(lyra_s: float, ver_s: float) -> str:
     ratio = lyra_s / ver_s
     if ratio <= 1.0 / 1.2:
         factor = ver_s / lyra_s
-        return f"{factor:.1f}x faster"
+        return f"{_fmt_factor(factor)} faster"
     if ratio >= 1.2:
-        return f"{ratio:.1f}x slower"
+        return f"{_fmt_factor(ratio)} slower"
     return "~1x"
 
 
