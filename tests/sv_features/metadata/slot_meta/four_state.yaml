@@ -18,7 +18,7 @@ cases:
     expect:
       stdout:
         contains:
-          - "__LYRA_SLOT_META__: version=2"
+          - "__LYRA_SLOT_META__: version=3"
           - "kind=packed4"
           - "value_off="
           - "unk_off="

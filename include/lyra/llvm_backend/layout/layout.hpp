@@ -13,11 +13,10 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 
-#include "lyra/common/edge_kind.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/kernel_types.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
-#include "lyra/metadata/design_metadata.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
@@ -46,11 +45,7 @@ struct FourStatePatchTable {
   }
 };
 
-struct SlotIdHash {
-  auto operator()(mir::SlotId id) const noexcept -> size_t {
-    return std::hash<uint32_t>{}(id.value);
-  }
-};
+// SlotIdHash is defined in kernel_types.hpp (included above).
 
 struct PlaceIdHash {
   auto operator()(mir::PlaceId id) const noexcept -> size_t {
@@ -121,6 +116,39 @@ struct DesignLayout {
 
   // Size of the inline region alone (before appendix).
   uint64_t inline_region_size = 0;
+
+  // Canonical storage ownership. Parallel to slots.
+  // For storage owners: equals the slot's own id.
+  // For forwarded aliases: equals the canonical storage owner's slot id.
+  // Always an actual slot id; no sentinels.
+  std::vector<uint32_t> storage_owner_slot_id;
+
+  // Check if a slot is in this layout.
+  [[nodiscard]] auto ContainsSlot(mir::SlotId slot_id) const -> bool;
+
+  // Check if a slot is a storage owner (not a forwarded alias).
+  // Throws InternalError if slot_id is not in the layout.
+  [[nodiscard]] auto IsStorageOwner(mir::SlotId slot_id) const -> bool;
+
+  // Get the canonical storage owner slot id for any slot.
+  // Throws InternalError if slot_id is not in the layout.
+  [[nodiscard]] auto GetStorageOwnerSlotId(mir::SlotId slot_id) const
+      -> mir::SlotId;
+
+  // Resolve to the storage owner's layout row index.
+  // Throws InternalError if slot_id or its owner is not in the layout.
+  [[nodiscard]] auto ResolveStorageOwnerIndex(mir::SlotId slot_id) const
+      -> uint32_t;
+
+  // Get the byte offset of the canonical storage for this slot.
+  // Resolves through storage ownership: aliases return the owner's offset.
+  [[nodiscard]] auto GetStorageByteOffset(mir::SlotId slot_id) const
+      -> uint64_t;
+
+  // Get the storage spec of the canonical storage for this slot.
+  // Resolves through storage ownership: aliases return the owner's spec.
+  [[nodiscard]] auto GetStorageSpec(mir::SlotId slot_id) const
+      -> const SlotStorageSpec&;
 };
 
 // Process frame layout - one per process
@@ -187,29 +215,8 @@ struct ModuleIndex {
 // Pre-resolved trigger observation for sub-slot narrowing in metadata lowering.
 // Computed during layout while the owning MIR arena is still known, so no
 // arena-local PlaceId survives into cross-boundary metadata.
-struct ResolvedObservation {
-  uint32_t byte_offset = 0;
-  uint32_t byte_size = 0;
-  uint8_t bit_index = 0;
-};
-
-// Entry for a connection process that has been kernelized.
-// Instead of generating a per-process LLVM function, these are batched
-// into a connection descriptor table evaluated inline by the engine.
-//
-// Today, all kernelized connections come from port bindings (Phase 2
-// of BuildLayout). Module-internal continuous assigns are lowered as
-// always_comb processes and kernelized as CombKernels, not connections.
-struct ConnectionKernelEntry {
-  mir::ProcessId process_id;
-  mir::SlotId src_slot;
-  mir::SlotId dst_slot;
-  mir::SlotId trigger_slot;
-  common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
-  std::optional<ResolvedObservation> trigger_observation;
-  metadata::ConnectionKernelOrigin origin =
-      metadata::ConnectionKernelOrigin::kPortBinding;
-};
+// ConnectionKernelEntry, ResolvedObservation, and SlotIdHash are defined
+// in kernel_types.hpp (included above).
 
 // Scheduled process record: pairs a ProcessId with optional module instance.
 // Module-owned processes have a valid module_index; design-level processes
@@ -543,12 +550,17 @@ auto BuildSlotInfo(
 auto IsScalarPatchable(
     TypeId type_id, const TypeArena& types, bool force_two_state) -> bool;
 
+class ForwardingMap;
+
 // Build the design-wide DesignState layout from precomputed slot metadata.
-// Computes canonical byte offsets and storage specs for all slots.
+// Forwarding map controls storage ownership: alias slots share the canonical
+// source's byte offset. Pass an empty ForwardingMap for the pre-forwarding
+// layout (used by connection collection for observation resolution).
 // DataLayout is needed only for TargetStorageAbi (pointer size/alignment).
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
-    const llvm::DataLayout& dl, bool force_two_state) -> DesignLayout;
+    const llvm::DataLayout& dl, bool force_two_state,
+    const ForwardingMap& forwarding) -> DesignLayout;
 
 // Per-module-instance layout-planning entry.
 // Borrowed view into MIR data; valid only for the synchronous BuildLayout call.
@@ -562,12 +574,15 @@ struct LayoutModulePlan {
 
 // Build complete backend layout from narrow planning inputs.
 // Pure analysis pass that creates LLVM types but does NOT emit IR.
-// Consumes a prebuilt DesignLayout (design-wide state contract).
+// Consumes a prebuilt DesignLayout and pre-collected connection kernels.
+// BuildLayout does not collect or canonicalize connection kernels;
+// that is a pipeline-stage responsibility upstream of layout.
 // TypeArena and force_two_state are needed for frame layout (process-local
 // variable type derivation), not for design slot planning.
 auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
-    std::span<const mir::ProcessId> connection_processes,
+    std::vector<ConnectionKernelEntry> precollected_connection_kernels,
+    std::vector<mir::ProcessId> non_kernelized_connection_processes,
     std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
     const mir::Arena& design_arena, const TypeArena& types,
     DesignLayout design_layout, llvm::LLVMContext& ctx,

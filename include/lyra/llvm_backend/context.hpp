@@ -475,10 +475,18 @@ class Context {
       -> llvm::Value*;
 
   // Emit runtime signal ID for a signal ref (scope-based, not flag-based).
+  // This is the visible-identity emitter. Use for subscription/trigger
+  // registration where the original slot identity must be preserved.
   // kModuleLocal + kSpecializationLocal: Dynamic(signal_id_offset_ + sig.id)
   // kModuleLocal + kDesignGlobal: InternalError (architecture violation).
   // kDesignGlobal: Const(sig.id) -- always constant.
   [[nodiscard]] auto EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr;
+
+  // Emit runtime signal ID resolved to the storage owner.
+  // Use ONLY for dirty-mark / mutation-target formation paths.
+  // Do NOT use for subscription/trigger registration (use EmitSignalId).
+  [[nodiscard]] auto EmitMutationTargetSignalId(const mir::SignalRef& sig)
+      -> SignalIdExpr;
 
   // Resolution: MIR storage root -> design-global slot ID.
   // kDesignGlobal roots: identity (root.id is already design-global).
@@ -760,10 +768,11 @@ class Context {
   [[nodiscard]] auto GetWriteTarget(mir::PlaceId place_id)
       -> Result<WriteTarget>;
 
-  // Get the canonical root signal_id for notification.
-  // Resolves aliases, then returns the resolved root's slot ID.
-  // Returns nullopt if the resolved root is not a design slot.
-  [[nodiscard]] auto GetCanonicalRootSignalId(mir::PlaceId place_id)
+  // Get the mutation-target signal_id for a place's root.
+  // Resolves forwarded aliases to the storage owner for dirty-mark identity.
+  // Returns nullopt if the root has no notifiable mutation-target signal
+  // identity (e.g., local/temp roots that are not design storage).
+  [[nodiscard]] auto GetMutationTargetSignalId(mir::PlaceId place_id)
       -> std::optional<SignalIdExpr>;
 
   // Internal helper: compute pointer from an already-resolved place.

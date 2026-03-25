@@ -30,7 +30,10 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
+#include "lyra/llvm_backend/connection_kernel_collection.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/forwarding_analysis.hpp"
+#include "lyra/llvm_backend/forwarding_map.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
@@ -278,19 +281,18 @@ auto BuildSpecSlotInfos(
     info.representative_design_slots.reserve(slot_count);
     uint64_t base_offset = layout.GetInstanceBaseByteOffset(rep_idx);
     for (uint32_t s = 0; s < slot_count; ++s) {
-      uint32_t design_slot = rep_base_slot + s;
-      uint64_t abs_offset = layout.design.slot_byte_offsets[design_slot];
+      uint32_t design_slot_row = rep_base_slot + s;
+      auto slot_id = layout.design.slots[design_slot_row];
+      uint64_t abs_offset = layout.design.GetStorageByteOffset(slot_id);
       if (abs_offset < base_offset) {
         throw common::InternalError(
             "BuildSpecSlotInfos", std::format(
                                       "slot {} abs_offset {} < base_offset {}",
-                                      design_slot, abs_offset, base_offset));
+                                      slot_id.value, abs_offset, base_offset));
       }
       info.inline_offsets.push_back(abs_offset - base_offset);
-      // Read shape from the canonical per-slot source (SlotDesc), not
-      // from derived layout artifacts like owned_data_offsets.
-      info.shapes.push_back(design_slots[design_slot].storage_shape);
-      info.representative_design_slots.push_back(design_slot);
+      info.shapes.push_back(design_slots[design_slot_row].storage_shape);
+      info.representative_design_slots.push_back(slot_id.value);
     }
 
     // Verify all instances in this specialization agree on slot count and
@@ -511,8 +513,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto slot_info =
       BuildSlotInfo(input.design->slots, *input.type_arena, force_two_state);
 
-  auto design_layout = BuildDesignLayout(
-      slot_info, *input.type_arena, module->getDataLayout(), force_two_state);
+  // Pre-forwarding layout: used by connection collection for observation
+  // resolution (needs slot specs, not byte offsets).
+  ForwardingMap empty_forwarding;
+  auto pre_forwarding_layout = BuildDesignLayout(
+      slot_info, *input.type_arena, module->getDataLayout(), force_two_state,
+      empty_forwarding);
 
   // Extract narrow layout-planning inputs from design.
   // module_plans and module_base_slots are produced once and consumed by
@@ -552,9 +558,45 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
   }
 
+  // Connection-kernel collection uses pre-forwarding layout for trigger
+  // observation resolution. Only slot_storage_specs, storage_spec_arena,
+  // and slot_to_index are consumed.
+  // No later phase may re-collect connection kernels.
+  auto connection_collection = CollectConnectionKernels(
+      input.design->connection_processes, *input.mir_arena,
+      SlotSpecView{
+          .slot_to_index = pre_forwarding_layout.slot_to_index,
+          .slot_storage_specs = pre_forwarding_layout.slot_storage_specs,
+          .storage_spec_arena = pre_forwarding_layout.storage_spec_arena,
+      });
+
+  // Non-connection trigger slot summary for forwarding exclusion.
+  auto trigger_summary =
+      CollectTriggerSlotSummary(module_plans, *input.design, *input.mir_arena);
+
+  // Canonical forwarding analysis. No later phase may add new candidates.
+  auto num_design_slots = static_cast<uint32_t>(input.design->slots.size());
+  auto forwarding_map = BuildForwardingMap(
+      connection_collection.kernel_entries, trigger_summary, num_design_slots);
+
+  // Rebuild connections through canonical forwarding resolution.
+  auto canonicalized_connections = RebuildCanonicalConnections(
+      std::move(connection_collection.kernel_entries), forwarding_map);
+
+  // Structural verification: canonicalized connections must not contain
+  // any forwarded alias slot in any slot-bearing field.
+  VerifyCanonicalizedConnectionObservations(
+      forwarding_map, canonicalized_connections);
+
+  // Build final layout with forwarding-aware storage ownership.
+  auto design_layout = BuildDesignLayout(
+      slot_info, *input.type_arena, module->getDataLayout(), force_two_state,
+      forwarding_map);
+
   auto layout = std::make_unique<Layout>(BuildLayout(
-      input.design->init_processes, input.design->connection_processes,
-      module_plans, *input.design, *input.mir_arena, *input.type_arena,
+      input.design->init_processes, std::move(canonicalized_connections),
+      std::move(connection_collection.non_kernelized_processes), module_plans,
+      *input.design, *input.mir_arena, *input.type_arena,
       std::move(design_layout), *llvm_ctx, module->getDataLayout(),
       force_two_state));
 

@@ -51,7 +51,8 @@ auto PrepareTraceSignalMetaInputs(
     const std::vector<char>& trace_string_pool,
     const std::vector<TypeId>& slot_types,
     const std::vector<mir::SlotKind>& slot_kinds,
-    const std::vector<std::string>& instance_paths, const TypeArena& types)
+    const std::vector<std::string>& instance_paths, const TypeArena& types,
+    const DesignLayout& design_layout)
     -> std::vector<metadata::TraceSignalMetaInput>;
 
 // Port-binding forwarding candidate. Analysis-only result; does NOT

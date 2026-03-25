@@ -206,7 +206,8 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
                      : mir::SignalRef::Scope::kDesignGlobal,
         .id = static_cast<uint32_t>(resolved.root.id),
     };
-    signal_id = EmitSignalId(sig);
+    // Mutation-target: resolve to storage owner for dirty-mark identity.
+    signal_id = EmitMutationTargetSignalId(sig);
     auto resolver = [this](const mir::Operand& op) -> std::optional<uint64_t> {
       if (op.kind != mir::Operand::Kind::kUseTemp) return std::nullopt;
       auto temp_id = std::get<mir::TempId>(op.payload);
@@ -235,16 +236,16 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
   };
 }
 
-auto Context::GetCanonicalRootSignalId(mir::PlaceId place_id)
+auto Context::GetMutationTargetSignalId(mir::PlaceId place_id)
     -> std::optional<SignalIdExpr> {
   const mir::Place& resolved = (*arena_)[place_id];
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
-    return EmitSignalId(
+    return EmitMutationTargetSignalId(
         {.scope = mir::SignalRef::Scope::kModuleLocal,
          .id = static_cast<uint32_t>(resolved.root.id)});
   }
   if (resolved.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-    return EmitSignalId(
+    return EmitMutationTargetSignalId(
         {.scope = mir::SignalRef::Scope::kDesignGlobal,
          .id = static_cast<uint32_t>(resolved.root.id)});
   }
@@ -305,6 +306,43 @@ auto Context::EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr {
             sig.id));
   }
   return SignalIdExpr::Const(sig.id);
+}
+
+namespace {
+
+// Resolve a signal ref to the storage owner for mutation-target use.
+// File-local: only callable through EmitMutationTargetSignalId.
+//
+// kDesignGlobal: resolve alias to canonical owner via DesignLayout.
+// kModuleLocal: currently identity because module-local forwarding is not
+//   implemented in this cut. Any future module-local aliasing
+//   must update this helper to resolve the owner.
+auto MakeMutationTargetSignalRef(
+    const mir::SignalRef& sig, const DesignLayout& design) -> mir::SignalRef {
+  switch (sig.scope) {
+    case mir::SignalRef::Scope::kDesignGlobal: {
+      auto slot_id = mir::SlotId{sig.id};
+      if (!design.ContainsSlot(slot_id)) {
+        throw common::InternalError(
+            "MakeMutationTargetSignalRef",
+            std::format("design-global signal {} not in layout", sig.id));
+      }
+      auto owner = design.GetStorageOwnerSlotId(slot_id);
+      return {.scope = mir::SignalRef::Scope::kDesignGlobal, .id = owner.value};
+    }
+    case mir::SignalRef::Scope::kModuleLocal:
+      return sig;
+    default:
+      throw common::InternalError(
+          "MakeMutationTargetSignalRef", "unknown signal scope");
+  }
+}
+
+}  // namespace
+
+auto Context::EmitMutationTargetSignalId(const mir::SignalRef& sig)
+    -> SignalIdExpr {
+  return EmitSignalId(MakeMutationTargetSignalRef(sig, layout_.design));
 }
 
 auto Context::GetOwnedHandleLlvmType() -> llvm::StructType* {

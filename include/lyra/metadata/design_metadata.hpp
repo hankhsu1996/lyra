@@ -20,6 +20,7 @@ struct SlotMetaInput {
   uint32_t value_bytes = 0;
   uint32_t unk_offset = 0;
   uint32_t unk_bytes = 0;
+  uint32_t storage_owner_slot_id = 0;
 };
 
 // Semantic origin of a kernelized connection.
@@ -65,6 +66,7 @@ struct TraceSignalMetaInput {
   std::string hierarchical_name;
   uint32_t bit_width = 0;
   uint32_t trace_kind = 0;
+  uint32_t storage_owner_slot_id = 0;
 };
 
 // Semantic inputs for design metadata construction.

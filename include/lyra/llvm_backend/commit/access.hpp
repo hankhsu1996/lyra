@@ -41,15 +41,16 @@ class Access {
   [[nodiscard]] static auto GetWriteTarget(Context& ctx, mir::PlaceId target)
       -> Result<WriteTarget>;
 
-  // Get the canonical root signal_id for a place (after alias resolution).
-  // Returns nullopt if the resolved root is not a design slot.
-  [[nodiscard]] static auto GetCanonicalRootSignalId(
+  // Get the mutation-target signal_id for a place's root.
+  // Resolves forwarded aliases to the storage owner for dirty-mark identity.
+  // Returns nullopt if the root has no notifiable mutation-target signal
+  // identity (e.g., local/temp roots that are not design storage).
+  [[nodiscard]] static auto GetMutationTargetSignalId(
       Context& ctx, mir::PlaceId target) -> std::optional<SignalIdExpr>;
 
-  // Check if a place targets a design slot (has signal_id after alias
-  // resolution).
-  [[nodiscard]] static auto IsDesignSlot(Context& ctx, mir::PlaceId target)
-      -> bool;
+  // Check if a place has a notifiable mutation-target signal identity.
+  [[nodiscard]] static auto IsNotifiableMutationTarget(
+      Context& ctx, mir::PlaceId target) -> bool;
 };
 
 }  // namespace commit

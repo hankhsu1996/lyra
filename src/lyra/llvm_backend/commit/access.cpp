@@ -14,13 +14,14 @@ auto Access::GetWriteTarget(Context& ctx, mir::PlaceId target)
   return ctx.GetWriteTarget(target);
 }
 
-auto Access::GetCanonicalRootSignalId(Context& ctx, mir::PlaceId target)
+auto Access::GetMutationTargetSignalId(Context& ctx, mir::PlaceId target)
     -> std::optional<SignalIdExpr> {
-  return ctx.GetCanonicalRootSignalId(target);
+  return ctx.GetMutationTargetSignalId(target);
 }
 
-auto Access::IsDesignSlot(Context& ctx, mir::PlaceId target) -> bool {
-  return ctx.GetCanonicalRootSignalId(target).has_value();
+auto Access::IsNotifiableMutationTarget(Context& ctx, mir::PlaceId target)
+    -> bool {
+  return ctx.GetMutationTargetSignalId(target).has_value();
 }
 
 }  // namespace lyra::lowering::mir_to_llvm::commit

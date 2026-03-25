@@ -10,6 +10,7 @@
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/trace_selection.hpp"
+#include "lyra/runtime/trace_signal_meta.hpp"
 #include "lyra/runtime/update_set.hpp"
 #include "lyra/trace/trace_event.hpp"
 #include "lyra/trace/trace_manager.hpp"
@@ -104,20 +105,77 @@ auto SnapshotSlotValue(
       std::format("unknown SlotStorageKind: {}", static_cast<int>(meta.kind)));
 }
 
+// Snapshot a slot's storage as a TraceValue.
+// owner_slot_id is used only for diagnostic messages; the actual storage
+// bytes are read from slot_base using meta.
+auto SnapshotOwnerStorage(
+    uint32_t owner_slot_id, const SlotMeta& meta, const uint8_t* slot_base)
+    -> trace::TraceValue {
+  return SnapshotSlotValue(owner_slot_id, meta, slot_base);
+}
+
 }  // namespace
 
 void FlushDirtySlotsToTrace(
-    trace::TraceManager& trace, const SlotMetaRegistry& registry,
+    trace::TraceManager& trace, const SlotMetaRegistry& slot_registry,
+    const TraceSignalMetaRegistry& trace_registry,
     const void* design_state_base, const UpdateSet& updates,
     const TraceSelectionRegistry& selection) {
+  bool has_ownership = slot_registry.IsPopulated();
+
+  // Both registries must be populated together or neither.
+  if (has_ownership != trace_registry.IsPopulated()) {
+    throw common::InternalError(
+        "FlushDirtySlotsToTrace",
+        "slot_registry and trace_registry populated state mismatch");
+  }
+
   std::span<const uint8_t> design_state(
-      static_cast<const uint8_t*>(design_state_base), registry.MaxExtent());
-  for (uint32_t slot_id : updates.DirtySlots()) {
-    if (!selection.IsSelected(slot_id)) continue;
-    const auto& meta = registry.Get(slot_id);
+      static_cast<const uint8_t*>(design_state_base),
+      slot_registry.MaxExtent());
+
+  if (!has_ownership) {
+    // Legacy path: no ownership metadata. Direct dirty-slot trace flush.
+    for (uint32_t slot_id : updates.DirtySlots()) {
+      if (!selection.IsSelected(slot_id)) continue;
+      const auto& meta = slot_registry.Get(slot_id);
+      const auto* slot_base =
+          design_state.subspan(meta.base_off, meta.total_bytes).data();
+      trace.EmitValueChange(
+          slot_id, SnapshotOwnerStorage(slot_id, meta, slot_base));
+    }
+    return;
+  }
+
+  // Owner-aware path: dirty flush with alias fanout.
+  for (uint32_t owner_slot_id : updates.DirtySlots()) {
+    // Backstop: forwarded alias slots must never appear in the dirty set.
+    auto owner = slot_registry.GetStorageOwnerSlotId(owner_slot_id);
+    if (owner != owner_slot_id) {
+      throw common::InternalError(
+          "FlushDirtySlotsToTrace",
+          std::format(
+              "forwarded alias slot {} appeared in dirty set (owner {})",
+              owner_slot_id, owner));
+    }
+
+    // Snapshot owner storage once.
+    const auto& meta = slot_registry.Get(owner_slot_id);
     const auto* slot_base =
         design_state.subspan(meta.base_off, meta.total_bytes).data();
-    trace.EmitValueChange(slot_id, SnapshotSlotValue(slot_id, meta, slot_base));
+    auto snapshot = SnapshotOwnerStorage(owner_slot_id, meta, slot_base);
+
+    // Emit for the owner if selected.
+    if (selection.IsSelected(owner_slot_id)) {
+      trace.EmitValueChange(owner_slot_id, snapshot);
+    }
+
+    // Emit for all aliases sharing this owner, using the same snapshot.
+    for (uint32_t alias : trace_registry.GetAliasGroup(owner_slot_id)) {
+      if (alias == owner_slot_id) continue;
+      if (!selection.IsSelected(alias)) continue;
+      trace.EmitValueChange(alias, snapshot);
+    }
   }
 }
 
