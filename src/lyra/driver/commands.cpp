@@ -8,7 +8,7 @@
 #include <string>
 
 #include "argparse/argparse.hpp"
-#include "lyra/common/diagnostic/print.hpp"
+#include "compilation_output.hpp"
 
 namespace lyra::driver {
 namespace {
@@ -18,6 +18,8 @@ namespace fs = std::filesystem;
 }  // namespace
 
 auto InitCommand(const argparse::ArgumentParser& cmd) -> int {
+  CompilationOutput output(DriverOutputOptions{});
+
   std::optional<std::string> name;
   if (auto n = cmd.present<std::string>("name")) {
     name = *n;
@@ -37,8 +39,9 @@ auto InitCommand(const argparse::ArgumentParser& cmd) -> int {
     create_directory = true;
 
     if (fs::exists(project_dir)) {
-      PrintError(
+      output.PrintError(
           std::format("directory '{}' already exists", project_dir.string()));
+      output.Flush();
       return 1;
     }
   } else {
@@ -46,7 +49,8 @@ auto InitCommand(const argparse::ArgumentParser& cmd) -> int {
     project_name = project_dir.filename().string();
 
     if (fs::exists(project_dir / "lyra.toml") && !force) {
-      PrintError("lyra.toml already exists (use --force to overwrite)");
+      output.PrintError("lyra.toml already exists (use --force to overwrite)");
+      output.Flush();
       return 1;
     }
   }
@@ -76,6 +80,7 @@ auto InitCommand(const argparse::ArgumentParser& cmd) -> int {
       project_name, project_name);
 
   std::cout << std::format("Created project '{}'\n", project_name);
+  output.Flush();
   return 0;
 }
 

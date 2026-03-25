@@ -5,9 +5,10 @@
 #include <utility>
 #include <vector>
 
+#include "compilation_output.hpp"
+#include "driver_output_options.hpp"
 #include "frontend.hpp"
 #include "llvm_stats.hpp"
-#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/llvm_backend/emit.hpp"
 #include "lyra/llvm_backend/ir_optimize.hpp"
 #include "lyra/llvm_backend/lower.hpp"
@@ -17,20 +18,19 @@
 #include "lyra/runtime/artifact_names.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "pipeline.hpp"
-#include "print.hpp"
 #include "runtime_path.hpp"
 #include "stats_report.hpp"
-#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
 auto Compile(const CompilationInput& input, const CompileOptions& options)
     -> std::expected<std::filesystem::path, int> {
-  VerboseLogger vlog(input.verbose);
+  CompilationOutput output(BuildCompileDriverOutputOptions(input));
 
-  auto result = CompileToMir(input, vlog);
+  auto result = CompileToMir(input, output);
   if (!result) {
-    result.error().Print();
+    result.error().Render(output);
+    output.Flush();
     return std::unexpected(1);
   }
   auto compilation = std::move(*result);
@@ -77,60 +77,66 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
       .signal_trace_path = input.trace_signals_output.value_or(""),
       .iteration_limit = input.iteration_limit,
       .force_two_state = input.two_state,
+      .collect_forwarding_analysis =
+          output.IsEnabled(OutputCategory::kAnalysis),
       .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
   };
 
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
   {
-    PhaseTimer timer(vlog, "lower_llvm");
+    PhaseTimer timer(output, Phase::kLowerLlvm);
     llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);
   }
   if (!llvm_result) {
-    PrintDiagnostic(llvm_result.error(), *compilation.hir.source_manager);
+    output.PrintDiagnostic(
+        llvm_result.error(), *compilation.hir.source_manager);
+    output.Flush();
     return std::unexpected(1);
   }
 
-  // Collect raw lowered IR stats before optimization.
+  if (output.IsEnabled(OutputCategory::kAnalysis)) {
+    output.PrintForwardingAnalysisReport(
+        llvm_result->report.forwarding_analysis);
+  }
+
   LlvmStats llvm_stats;
   if (input.stats_out_path) {
     llvm_stats = CollectLlvmStats(*llvm_result->module);
   }
 
-  // Shared pre-codegen IR optimization stage.
   {
-    PhaseTimer timer(vlog, "optimize_ir");
+    PhaseTimer timer(output, Phase::kOptimizeIr);
     lowering::mir_to_llvm::OptimizeModule(
         *llvm_result->module, input.opt_level);
   }
 
-  // Create target machine for object emission
   auto target_machine =
       lowering::mir_to_llvm::CreateHostTargetMachine(input.opt_level);
 
-  // Emit object file to temp location
   auto obj_path = options.output_dir / (options.name + ".o");
   {
-    PhaseTimer timer(vlog, "emit_obj");
+    PhaseTimer timer(output, Phase::kEmitObj);
     std::error_code ec;
     std::filesystem::create_directories(options.output_dir, ec);
     if (ec) {
-      PrintError(
+      output.PrintError(
           std::format(
               "cannot create output directory '{}': {}",
               options.output_dir.string(), ec.message()));
+      output.Flush();
       return std::unexpected(1);
     }
 
     auto emit_result = lowering::mir_to_llvm::EmitObjectFile(
         *llvm_result->module, *target_machine, obj_path);
     if (!emit_result) {
-      PrintError(
+      output.PrintError(
           std::format("object emission failed: {}", emit_result.error()));
+      output.Flush();
       return std::unexpected(1);
     }
   }
 
-  // Find static runtime library
   std::vector<std::string> tried_paths;
   auto runtime_path = FindRuntimeLibrary(runtime::kStaticLibName, tried_paths);
   if (runtime_path.empty()) {
@@ -139,27 +145,27 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
       msg += std::format("\n         - {}", path);
     }
     msg += "\n       hint: set LYRA_RUNTIME_PATH environment variable";
-    PrintError(msg);
+    output.PrintError(msg);
+    output.Flush();
     return std::unexpected(1);
   }
 
-  // Detect toolchain and link
   auto toolchain = lowering::mir_to_llvm::DetectToolchain();
   if (!toolchain) {
-    PrintError(
+    output.PrintError(
         std::format("toolchain detection failed: {}", toolchain.error()));
+    output.Flush();
     return std::unexpected(1);
   }
 
   std::expected<std::filesystem::path, lowering::mir_to_llvm::LinkError>
       link_result;
   {
-    PhaseTimer timer(vlog, "link");
+    PhaseTimer timer(output, Phase::kLink);
     link_result = lowering::mir_to_llvm::LinkExecutable(
         *toolchain, obj_path, runtime_path, options.output_dir, options.name);
   }
 
-  // Clean up object file
   std::filesystem::remove(obj_path);
 
   if (!link_result) {
@@ -168,16 +174,16 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
     if (!err.stderr.empty()) {
       msg += std::format("\n{}", err.stderr);
     }
-    PrintError(msg);
+    output.PrintError(msg);
+    output.Flush();
     return std::unexpected(1);
   }
 
-  // Write structured JSON stats
   if (input.stats_out_path) {
     StatsReport report{
         .backend = StatsBackend::kAot,
         .git_sha = ResolveGitSha(),
-        .vlog = &vlog,
+        .phases = output.GetPhaseSummaryData(),
         .llvm = llvm_stats,
         .mir = compilation.mir.stats,
         .jit = std::nullopt,
@@ -185,6 +191,7 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
     WriteStatsJson(report, *input.stats_out_path);
   }
 
+  output.Flush();
   return *link_result;
 }
 

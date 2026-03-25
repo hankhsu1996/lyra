@@ -224,88 +224,67 @@ class ProfilingPlugin : public llvm::orc::ObjectLinkingLayer::Plugin {
   LinkProgress* progress_;
 };
 
-// Prints JIT link progress to stderr every 5 seconds until stopped.
-// Uses short sleep intervals so join() returns promptly after stop is set.
-void PrintLinkProgress(LinkProgress& progress) {
-  using namespace std::chrono_literals;
-  constexpr int kIntervalMs = 5000;
-  constexpr int kPollMs = 100;
-  int ms_since_print = 0;
-  while (!progress.stop.load(std::memory_order_relaxed)) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(kPollMs));
-    if (progress.stop.load(std::memory_order_relaxed)) break;
-    ms_since_print += kPollMs;
-    if (ms_since_print < kIntervalMs) continue;
-    ms_since_print = 0;
+auto SnapshotLinkProgress(LinkProgress& progress) -> LinkProgressSnapshot {
+  auto now = Clock::now();
+  double elapsed =
+      std::chrono::duration<double>(now - progress.lookup_start).count();
 
-    std::lock_guard lock(progress.mutex);
-    auto now = Clock::now();
-    double elapsed =
-        std::chrono::duration<double>(now - progress.lookup_start).count();
-
-    // Determine current phase from timestamps.
-    const char* phase = "codegen";
-    if (progress.codegen_end != Clock::time_point{}) {
-      phase = "link_graph";
-      if (progress.graph_ready != Clock::time_point{}) {
-        phase = "link_alloc";
-        if (progress.alloc_done != Clock::time_point{}) {
-          phase = "link_fixup";
-          if (progress.fixup_done != Clock::time_point{}) {
-            phase = "link_finalize";
-          }
+  auto phase = LinkProgressPhase::kCodegen;
+  if (progress.codegen_end != Clock::time_point{}) {
+    phase = LinkProgressPhase::kLinkGraph;
+    if (progress.graph_ready != Clock::time_point{}) {
+      phase = LinkProgressPhase::kLinkAlloc;
+      if (progress.alloc_done != Clock::time_point{}) {
+        phase = LinkProgressPhase::kLinkFixup;
+        if (progress.fixup_done != Clock::time_point{}) {
+          phase = LinkProgressPhase::kFinalize;
         }
       }
     }
+  }
 
-    auto msg =
-        std::format("[lyra][jit][progress] {:.1f}s phase={}", elapsed, phase);
+  auto dur = [&](Clock::time_point from, Clock::time_point to) -> double {
+    if (from == Clock::time_point{} || to == Clock::time_point{}) return 0.0;
+    return std::chrono::duration<double>(to - from).count();
+  };
 
-    if (progress.object_count > 0) {
-      msg += std::format(
-          " objects={} obj_bytes={}", progress.object_count,
-          progress.total_object_bytes);
-    }
+  return LinkProgressSnapshot{
+      .elapsed_seconds = elapsed,
+      .phase = phase,
+      .object_count = progress.object_count,
+      .total_object_bytes = progress.total_object_bytes,
+      .relocation_count = progress.relocation_count,
+      .symbol_count = progress.symbol_count,
+      .section_count = progress.section_count,
+      .block_count = progress.block_count,
+      .codegen_seconds = dur(progress.lookup_start, progress.codegen_end),
+      .link_graph_seconds = dur(progress.codegen_end, progress.graph_ready),
+      .link_alloc_seconds = dur(progress.graph_ready, progress.alloc_done),
+      .link_fixup_seconds = dur(progress.alloc_done, progress.fixup_done),
+  };
+}
 
-    if (progress.relocation_count > 0) {
-      msg += std::format(
-          " relocs={} syms={} sections={} blocks={}", progress.relocation_count,
-          progress.symbol_count, progress.section_count, progress.block_count);
-    }
+// Emits structured JIT link-progress snapshots every 5 seconds until stopped.
+// Uses short sleep intervals so join() returns promptly after stop is set.
+void RunLinkWatchdog(
+    LinkProgress& progress, const LinkProgressReporter& reporter) {
+  constexpr int kIntervalMs = 5000;
+  constexpr int kPollMs = 100;
+  int ms_since_report = 0;
+  while (!progress.stop.load(std::memory_order_relaxed)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(kPollMs));
+    if (progress.stop.load(std::memory_order_relaxed)) break;
 
-    // Completed sub-phase timings.
-    if (progress.codegen_end != Clock::time_point{}) {
-      msg += std::format(
-          " codegen={:.3f}s", std::chrono::duration<double>(
-                                  progress.codegen_end - progress.lookup_start)
-                                  .count());
-    }
-    if (progress.graph_ready != Clock::time_point{} &&
-        progress.codegen_end != Clock::time_point{}) {
-      msg += std::format(
-          " link_graph={:.3f}s",
-          std::chrono::duration<double>(
-              progress.graph_ready - progress.codegen_end)
-              .count());
-    }
-    if (progress.alloc_done != Clock::time_point{} &&
-        progress.graph_ready != Clock::time_point{}) {
-      msg += std::format(
-          " link_alloc={:.3f}s", std::chrono::duration<double>(
-                                     progress.alloc_done - progress.graph_ready)
-                                     .count());
-    }
-    if (progress.fixup_done != Clock::time_point{} &&
-        progress.alloc_done != Clock::time_point{}) {
-      msg += std::format(
-          " link_fixup={:.3f}s", std::chrono::duration<double>(
-                                     progress.fixup_done - progress.alloc_done)
-                                     .count());
-    }
+    ms_since_report += kPollMs;
+    if (ms_since_report < kIntervalMs) continue;
+    ms_since_report = 0;
 
-    msg += "\n";
-    fputs(msg.c_str(), stderr);
-    fflush(stderr);
+    LinkProgressSnapshot snapshot;
+    {
+      std::lock_guard lock(progress.mutex);
+      snapshot = SnapshotLinkProgress(progress);
+    }
+    reporter(snapshot);
   }
 }
 
@@ -332,7 +311,7 @@ auto CompileJitImpl(
     const std::optional<std::filesystem::path>& runtime_path,
     const JitCompileOptions& options)
     -> std::expected<CompileResult, std::string> {
-  bool profiling = options.enable_profiling || options.emit_progress;
+  bool profiling = options.enable_profiling || options.progress_reporter;
   JitCompileTimings timings;
 
   // Sub-phase 1: create_jit
@@ -449,8 +428,10 @@ auto CompileJitImpl(
   }
 
   std::optional<std::thread> watchdog;
-  if (options.emit_progress && progress) {
-    watchdog.emplace([&progress] { PrintLinkProgress(*progress); });
+  if (options.progress_reporter && progress) {
+    watchdog.emplace([&progress, &options] {
+      RunLinkWatchdog(*progress, options.progress_reporter);
+    });
   }
 
   auto main_sym = (*jit)->lookup("main");

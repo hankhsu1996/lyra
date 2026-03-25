@@ -1452,15 +1452,17 @@ auto BuildPlusargs(
   return {.array = null_array, .count = count};
 }
 
-// Build compile-time design metadata globals.
-// Process metadata is NOT built here -- it is constructor-produced.
-// realization.instance_paths is still used here for trace signal metadata
-// and %m runtime paths; that ownership moves to the constructor in a
-// later migration step.
-auto BuildDesignMetadata(
+// Metadata-building outputs: emitted metadata globals plus structured
+// lowering-time analysis reports surfaced to the driver boundary.
+struct DesignMetadataOutputs {
+  MetadataGlobals globals;
+  ForwardingAnalysisReport forwarding_analysis;
+};
+
+auto BuildDesignMetadataOutputs(
     Context& context, const RealizationData& realization, const Layout& layout,
     const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input)
-    -> MetadataGlobals {
+    -> DesignMetadataOutputs {
   auto& builder = context.GetBuilder();
   const auto& type_arena = context.GetTypeArena();
 
@@ -1475,12 +1477,11 @@ auto BuildDesignMetadata(
       realization.instance_paths, type_arena, layout.design);
 
   // Port-binding forwarding candidate analysis (analysis only, no transform).
-  // TODO(hankhsu): Gate behind verbose/debug flag when one is available
-  // in the emit_design_main input. Currently always runs (cheap) but
-  // logging is conditional on candidates existing.
-  auto forwarding_candidates =
-      FindPortBindingForwardingCandidates(conn_desc_entries, layout);
-  LogPortBindingForwardingCandidates(forwarding_candidates);
+  ForwardingAnalysisReport forwarding_report;
+  if (input.collect_forwarding_analysis) {
+    forwarding_report = ForwardingAnalysisReport(
+        FindPortBindingForwardingCandidates(conn_desc_entries, layout));
+  }
 
   metadata::DesignMetadataInputs metadata_inputs{
       .slot_meta = std::move(slot_meta_inputs),
@@ -1491,7 +1492,10 @@ auto BuildDesignMetadata(
   };
   auto metadata = realization::BuildDesignMetadata(metadata_inputs);
 
-  return EmitDesignMetadataGlobals(context, metadata, builder);
+  return DesignMetadataOutputs{
+      .globals = EmitDesignMetadataGlobals(context, metadata, builder),
+      .forwarding_analysis = std::move(forwarding_report),
+  };
 }
 
 // Process metadata values extracted from the constructor result.
@@ -1662,6 +1666,7 @@ auto BuildEmitDesignMainInput(const lowering::mir_to_llvm::LoweringInput& input)
       .feature_flags = input.feature_flags,
       .signal_trace_path = input.signal_trace_path,
       .iteration_limit = input.iteration_limit,
+      .collect_forwarding_analysis = input.collect_forwarding_analysis,
   };
 }
 
@@ -1947,7 +1952,8 @@ auto EmitConstructorFunction(
 
 auto EmitDesignMain(
     lowering::mir_to_llvm::CodegenSession& session,
-    const EmitDesignMainInput& input) -> Result<void> {
+    const EmitDesignMainInput& input) -> Result<LoweringReport> {
+  ForwardingAnalysisReport forwarding_report;
   auto& context = *session.context;
   const auto& layout = *session.layout;
   const auto& slot_info = session.slot_info;
@@ -2025,8 +2031,10 @@ auto EmitDesignMain(
 
     auto plusargs = BuildPlusargs(context, main_func, input);
 
-    auto meta_globals =
-        BuildDesignMetadata(context, realization, layout, slot_info, input);
+    auto metadata_outputs = BuildDesignMetadataOutputs(
+        context, realization, layout, slot_info, input);
+    forwarding_report = std::move(metadata_outputs.forwarding_analysis);
+    auto& meta_globals = metadata_outputs.globals;
 
     auto wait_site_meta = EmitWaitSiteMetaTable(context, session.wait_sites);
 
@@ -2067,7 +2075,9 @@ auto EmitDesignMain(
 
   EmitMainExit(context, design_state, slot_info, input, exit_block);
 
-  return {};
+  return LoweringReport{
+      .forwarding_analysis = std::move(forwarding_report),
+  };
 }
 
 auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
@@ -2078,7 +2088,7 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult> {
       EmitDesignMain(*session_result, BuildEmitDesignMainInput(input));
   if (!emit_result) return std::unexpected(emit_result.error());
 
-  return FinalizeModule(std::move(*session_result));
+  return FinalizeModule(std::move(*session_result), std::move(*emit_result));
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

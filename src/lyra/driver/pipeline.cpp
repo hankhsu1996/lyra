@@ -4,21 +4,21 @@
 #include <optional>
 #include <utility>
 
+#include "compilation_output.hpp"
 #include "frontend.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/realization/assemble_bindings.hpp"
-#include "verbose_logger.hpp"
 
 namespace lyra::driver {
 
-auto CompileToMir(const CompilationInput& input, VerboseLogger& vlog)
+auto CompileToMir(const CompilationInput& input, CompilationOutput& output)
     -> std::expected<CompilationResult, CompilationError> {
   std::optional<ParseResult> parse_result;
   {
-    PhaseTimer timer(vlog, "parse");
+    PhaseTimer timer(output, Phase::kParse);
     parse_result = ParseFiles(input);
   }
   if (!parse_result) {
@@ -27,7 +27,7 @@ auto CompileToMir(const CompilationInput& input, VerboseLogger& vlog)
   }
 
   {
-    PhaseTimer timer(vlog, "elaborate");
+    PhaseTimer timer(output, Phase::kElaborate);
     if (!Elaborate(*parse_result, input)) {
       return std::unexpected(
           CompilationError::Simple("failed to elaborate design"));
@@ -37,7 +37,7 @@ auto CompileToMir(const CompilationInput& input, VerboseLogger& vlog)
   DiagnosticSink sink;
   lowering::ast_to_hir::LoweringResult hir_result;
   {
-    PhaseTimer timer(vlog, "lower_hir");
+    PhaseTimer timer(output, Phase::kLowerHir);
     hir_result =
         lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
   }
@@ -63,7 +63,7 @@ auto CompileToMir(const CompilationInput& input, VerboseLogger& vlog)
 
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
-    PhaseTimer timer(vlog, "lower_mir");
+    PhaseTimer timer(output, Phase::kLowerMir);
     mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   }
 

@@ -11,9 +11,10 @@
 #include <unistd.h>
 #include <vector>
 
+#include "compilation_output.hpp"
 #include "compile.hpp"
+#include "driver_output_options.hpp"
 #include "frontend.hpp"
-#include "lyra/common/diagnostic/print.hpp"
 
 namespace lyra::driver {
 
@@ -28,9 +29,10 @@ auto GetTempDir() -> fs::path {
 }  // namespace
 
 auto RunAot(const CompilationInput& input) -> int {
+  CompilationOutput output(BuildCompileDriverOutputOptions(input));
+
   auto temp_dir = GetTempDir();
 
-  // Determine executable name from top module
   std::string exe_name = input.top.empty() ? "simulation" : input.top;
 
   CompileOptions options{
@@ -46,7 +48,6 @@ auto RunAot(const CompilationInput& input) -> int {
 
   auto exe_path = *compile_result;
 
-  // Build argv: exe_path + plusargs
   std::vector<std::string> args;
   args.push_back(exe_path.string());
   for (const auto& plusarg : input.plusargs) {
@@ -60,36 +61,35 @@ auto RunAot(const CompilationInput& input) -> int {
   }
   argv.push_back(nullptr);
 
-  // Set fs_base_dir so the AOT binary resolves file I/O relative to the
-  // original project directory, not the temp output directory.
-  // Internal contract: LYRA_FS_BASE_DIR is set by `lyra run` only.
   setenv("LYRA_FS_BASE_DIR", input.fs_base_dir.string().c_str(), 1);
 
   pid_t pid = 0;
   int spawn_result = posix_spawnp(
       &pid, exe_path.c_str(), nullptr, nullptr, argv.data(), environ);
 
-  // Clean up: don't leak internal env var into parent process
   unsetenv("LYRA_FS_BASE_DIR");
 
   if (spawn_result != 0) {
-    PrintError(
+    output.PrintError(
         std::format(
             "failed to execute '{}': {}", exe_path.string(),
             std::strerror(spawn_result)));
+    output.Flush();
     fs::remove_all(temp_dir);
     return 1;
   }
 
   int status = 0;
   if (waitpid(pid, &status, 0) == -1) {
-    PrintError(std::format("waitpid failed: {}", std::strerror(errno)));
+    output.PrintError(std::format("waitpid failed: {}", std::strerror(errno)));
+    output.Flush();
     fs::remove_all(temp_dir);
     return 1;
   }
 
   fs::remove_all(temp_dir);
 
+  output.Flush();
   if (WIFEXITED(status)) {
     return WEXITSTATUS(status);
   }

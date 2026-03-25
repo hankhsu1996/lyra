@@ -3,14 +3,13 @@
 #include <algorithm>
 #include <cstdint>
 #include <format>
-#include <numeric>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <variant>
 #include <vector>
 
-#include <fmt/core.h>
-
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/hir/routine.hpp"
@@ -28,38 +27,6 @@ namespace lyra::driver {
 
 namespace {
 
-auto HirProcessKindName(hir::ProcessKind kind) -> const char* {
-  switch (kind) {
-    case hir::ProcessKind::kInitial:
-      return "initial";
-    case hir::ProcessKind::kAlways:
-      return "always";
-    case hir::ProcessKind::kAlwaysComb:
-      return "always_comb";
-    case hir::ProcessKind::kAlwaysFf:
-      return "always_ff";
-    case hir::ProcessKind::kAlwaysLatch:
-      return "always_latch";
-    case hir::ProcessKind::kFinal:
-      return "final";
-  }
-  return "unknown";
-}
-
-auto MirProcessKindName(mir::ProcessKind kind) -> const char* {
-  switch (kind) {
-    case mir::ProcessKind::kOnce:
-      return "once";
-    case mir::ProcessKind::kLooping:
-      return "looping";
-    case mir::ProcessKind::kFinal:
-      return "final";
-  }
-  return "unknown";
-}
-
-// Resolve a MIR process origin to its HIR ProcessKind.
-// Uses ResolveHirArena for body-aware arena selection.
 auto ResolveHirKind(
     const mir::Process& process, const lowering::OriginMap& origin_map,
     const hir::Design& hir_design, const hir::Arena& global_hir_arena)
@@ -80,7 +47,6 @@ auto ResolveHirKind(
   return arena[*proc_id].kind;
 }
 
-// Resolve source location for a MIR process.
 auto ResolveSourceLocation(
     const mir::Process& process, const lowering::OriginMap& origin_map,
     const hir::Design& hir_design, const hir::Arena& global_hir_arena,
@@ -104,30 +70,46 @@ auto ResolveSourceLocation(
       entry->hir_source);
 }
 
-struct ProcessEntry {
-  uint32_t layout_index;  // Index in layout ordering (= process_N suffix)
-  mir::ProcessId mir_id;
-  mir::ProcessKind mir_kind;
-  std::optional<hir::ProcessKind> hir_kind;
-  std::string source_location;
-  uint64_t llvm_insts = 0;
-  uint64_t llvm_bbs = 0;
-  uint32_t mir_stmts = 0;
-  uint32_t mir_blocks = 0;
-};
+auto ClassifyProcessKind(
+    const mir::Process& process, std::optional<hir::ProcessKind> hir_kind,
+    bool is_connection) -> ProcessStatsKind {
+  if (is_connection) {
+    return ProcessStatsKind::kConnection;
+  }
+  if (hir_kind) {
+    switch (*hir_kind) {
+      case hir::ProcessKind::kInitial:
+        return ProcessStatsKind::kInitial;
+      case hir::ProcessKind::kAlways:
+        return ProcessStatsKind::kAlways;
+      case hir::ProcessKind::kAlwaysComb:
+        return ProcessStatsKind::kAlwaysComb;
+      case hir::ProcessKind::kAlwaysFf:
+        return ProcessStatsKind::kAlwaysFf;
+      case hir::ProcessKind::kAlwaysLatch:
+        return ProcessStatsKind::kAlwaysLatch;
+      case hir::ProcessKind::kFinal:
+        return ProcessStatsKind::kFinal;
+    }
+  }
+  switch (process.kind) {
+    case mir::ProcessKind::kOnce:
+      return ProcessStatsKind::kMirOnce;
+    case mir::ProcessKind::kLooping:
+      return ProcessStatsKind::kMirLooping;
+    case mir::ProcessKind::kFinal:
+      return ProcessStatsKind::kMirFinal;
+  }
+  throw common::InternalError("ClassifyProcessKind", "invalid process kind");
+}
 
 }  // namespace
 
-void PrintProcessStats(
+auto CollectProcessStats(
     const mir::Design& design, const mir::Arena& design_arena,
     const lowering::OriginMap& design_origins, const hir::Design& hir_design,
     const hir::Arena& global_hir_arena, const SourceManager& source_manager,
-    const LlvmStats& llvm_stats, FILE* sink) {
-  // Reconstruct process ordering (same as BuildLayout):
-  // 1. init_processes
-  // 2. non-kernelized connection_processes
-  // 3. module processes (non-final)
-  // Kernelized connections share a runtime kernel and have no LLVM function.
+    const LlvmStats& llvm_stats) -> ProcessStatsData {
   struct ProcessRef {
     mir::ProcessId id;
     const mir::Arena* arena;
@@ -139,10 +121,6 @@ void PrintProcessStats(
   }
   size_t num_init = process_refs.size();
 
-  // Count kernelized vs non-kernelized connections.
-  // A connection is kernelizable if it has 1 block, 1 Assign stmt with
-  // design-slot source/dest (no projections), and a Wait with 1 non-late-bound
-  // trigger.
   size_t num_kernelized = 0;
   for (mir::ProcessId pid : design.connection_processes) {
     const auto& process = design_arena[pid];
@@ -194,26 +172,20 @@ void PrintProcessStats(
   size_t num_module =
       process_refs.size() - num_init - (num_connection - num_kernelized);
 
-  // Build LLVM stats lookup: function name -> stats
   std::unordered_map<std::string, const LlvmFunctionStats*> llvm_lookup;
   for (const auto& fs : llvm_stats.func_stats) {
     llvm_lookup[fs.name] = &fs;
   }
 
-  // Build process entries with all metadata
-  std::vector<ProcessEntry> entries;
-  entries.reserve(process_refs.size());
+  ProcessStatsData result;
+  result.num_init = num_init;
+  result.num_connection = num_connection;
+  result.num_kernelized = num_kernelized;
+  result.num_module = num_module;
+  result.total_llvm_insts = llvm_stats.total_insts;
+  result.entries.reserve(process_refs.size());
 
-  // Kind counters (HIR-level for detailed breakdown)
-  uint32_t count_initial = 0;
-  uint32_t count_always = 0;
-  uint32_t count_always_comb = 0;
-  uint32_t count_always_ff = 0;
-  uint32_t count_always_latch = 0;
-  uint32_t count_final = 0;
-  uint32_t count_connection = 0;  // Synthetic (no HIR origin)
-
-  uint64_t total_proc_insts = 0;
+  size_t num_non_kernelized_conn = num_connection - num_kernelized;
 
   for (size_t i = 0; i < process_refs.size(); ++i) {
     const auto& process = (*process_refs[i].arena)[process_refs[i].id];
@@ -223,13 +195,11 @@ void PrintProcessStats(
     auto source_loc = ResolveSourceLocation(
         process, design_origins, hir_design, global_hir_arena, source_manager);
 
-    // Count MIR statements
     uint32_t mir_stmts = 0;
     for (const auto& block : process.blocks) {
       mir_stmts += static_cast<uint32_t>(block.statements.size());
     }
 
-    // Look up LLVM function stats
     std::string func_name = std::format("process_{}", i);
     uint64_t llvm_insts = 0;
     uint64_t llvm_bbs = 0;
@@ -239,176 +209,92 @@ void PrintProcessStats(
       llvm_bbs = it->second->basic_blocks;
     }
 
-    total_proc_insts += llvm_insts;
+    result.total_proc_insts += llvm_insts;
 
-    // Count by kind
-    size_t num_non_kernelized_conn = num_connection - num_kernelized;
-    if (i >= num_init && i < num_init + num_non_kernelized_conn) {
-      ++count_connection;
-    } else if (hir_kind) {
-      switch (*hir_kind) {
-        case hir::ProcessKind::kInitial:
-          ++count_initial;
-          break;
-        case hir::ProcessKind::kAlways:
-          ++count_always;
-          break;
-        case hir::ProcessKind::kAlwaysComb:
-          ++count_always_comb;
-          break;
-        case hir::ProcessKind::kAlwaysFf:
-          ++count_always_ff;
-          break;
-        case hir::ProcessKind::kAlwaysLatch:
-          ++count_always_latch;
-          break;
-        case hir::ProcessKind::kFinal:
-          ++count_final;
-          break;
-      }
+    bool is_connection =
+        i >= num_init && i < num_init + num_non_kernelized_conn;
+    auto kind = ClassifyProcessKind(process, hir_kind, is_connection);
+
+    switch (kind) {
+      case ProcessStatsKind::kInitial:
+        ++result.count_initial;
+        break;
+      case ProcessStatsKind::kAlways:
+        ++result.count_always;
+        break;
+      case ProcessStatsKind::kAlwaysComb:
+        ++result.count_always_comb;
+        break;
+      case ProcessStatsKind::kAlwaysFf:
+        ++result.count_always_ff;
+        break;
+      case ProcessStatsKind::kAlwaysLatch:
+        ++result.count_always_latch;
+        break;
+      case ProcessStatsKind::kFinal:
+        ++result.count_final;
+        break;
+      case ProcessStatsKind::kConnection:
+        ++result.count_connection;
+        break;
+      default:
+        break;
     }
 
-    entries.push_back(
-        ProcessEntry{
+    result.entries.push_back(
+        ProcessStatsEntry{
             .layout_index = static_cast<uint32_t>(i),
-            .mir_id = process_refs[i].id,
-            .mir_kind = process.kind,
-            .hir_kind = hir_kind,
+            .kind = kind,
+            .storage_class = ProcessStatsStorageClass::kNonSharedBody,
             .source_location = std::move(source_loc),
             .llvm_insts = llvm_insts,
             .llvm_bbs = llvm_bbs,
             .mir_stmts = mir_stmts,
-            .mir_blocks = static_cast<uint32_t>(process.blocks.size()),
         });
   }
 
-  // Print summary
-  fmt::print(
-      sink,
-      "[lyra][stats][proc] total={} init={} connection={} "
-      "kernelized={} module={}\n",
-      process_refs.size() + num_kernelized, num_init, num_connection,
-      num_kernelized, num_module);
+  result.count_connection += static_cast<uint32_t>(num_kernelized);
 
-  // Include kernelized connections in the connection count
-  count_connection += static_cast<uint32_t>(num_kernelized);
-
-  // Print kind breakdown
-  fmt::print(
-      sink,
-      "[lyra][stats][proc] always_ff={} always_comb={} always={} "
-      "always_latch={} initial={} final={} connection={}\n",
-      count_always_ff, count_always_comb, count_always, count_always_latch,
-      count_initial, count_final, count_connection);
-
-  // Print process LLVM IR share
-  if (llvm_stats.total_insts > 0) {
-    double proc_percent = 100.0 * static_cast<double>(total_proc_insts) /
-                          static_cast<double>(llvm_stats.total_insts);
-    fmt::print(
-        sink,
-        "[lyra][stats][proc] proc_insts={} total_insts={} "
-        "proc_share={:.1f}%\n",
-        total_proc_insts, llvm_stats.total_insts, proc_percent);
+  // Template summary and storage class classification.
+  for (const auto& fs : llvm_stats.func_stats) {
+    if (fs.name.starts_with("proc_template_")) {
+      ++result.template_groups;
+      result.shared_ir_insts += fs.instructions;
+    }
+  }
+  for (size_t idx = 0; idx < result.entries.size(); ++idx) {
+    auto& e = result.entries[idx];
+    if (e.llvm_insts > 0 && e.llvm_insts <= 10) {
+      e.storage_class = ProcessStatsStorageClass::kWrapper;
+      ++result.wrapper_count;
+    } else if (e.llvm_insts > 10 && idx >= result.num_init) {
+      e.storage_class = ProcessStatsStorageClass::kNonSharedBody;
+      ++result.nonshared_count;
+    }
   }
 
-  // Sort by LLVM instruction count for top-N display
-  std::vector<size_t> sorted_indices(entries.size());
-  std::iota(sorted_indices.begin(), sorted_indices.end(), 0);
-  std::sort(
-      sorted_indices.begin(), sorted_indices.end(), [&](size_t a, size_t b) {
-        return entries[a].llvm_insts > entries[b].llvm_insts;
-      });
-
-  // Print top 10 largest processes
-  int top_n = std::min(10, static_cast<int>(entries.size()));
-  for (int rank = 0; rank < top_n; ++rank) {
-    const auto& e = entries[sorted_indices[rank]];
-    std::string kind_str;
-    size_t num_non_kern_conn = num_connection - num_kernelized;
-    if (e.layout_index >= num_init &&
-        e.layout_index < num_init + num_non_kern_conn) {
-      kind_str = "connection";
-    } else if (e.hir_kind) {
-      kind_str = HirProcessKindName(*e.hir_kind);
-    } else {
-      kind_str = MirProcessKindName(e.mir_kind);
-    }
-
-    double percent = (llvm_stats.total_insts > 0)
-                         ? 100.0 * static_cast<double>(e.llvm_insts) /
-                               static_cast<double>(llvm_stats.total_insts)
-                         : 0.0;
-
-    fmt::print(
-        sink,
-        "[lyra][stats][proc][top] {}) process_{} kind={} "
-        "llvm_insts={} llvm_bbs={} mir_stmts={} percent={:.1f}%",
-        rank + 1, e.layout_index, kind_str, e.llvm_insts, e.llvm_bbs,
-        e.mir_stmts, percent);
-
-    if (!e.source_location.empty()) {
-      fmt::print(sink, " src={}", e.source_location);
-    }
-    fmt::print(sink, "\n");
-  }
-
-  // Template summary: detect template functions by name prefix.
-  // Each template function = one template group. Wrappers = templated process
-  // instances (thin forwarders to template functions).
-  {
-    uint32_t num_template_groups = 0;
-    uint64_t shared_ir_insts = 0;
-    uint32_t num_wrappers = 0;
-    uint32_t num_nonshared = 0;
-    for (const auto& fs : llvm_stats.func_stats) {
-      if (fs.name.starts_with("proc_template_")) {
-        ++num_template_groups;
-        shared_ir_insts += fs.instructions;
-      }
-    }
-    // Count wrapper and non-shared module processes.
-    // Wrappers have <=10 LLVM instructions (thin forwarders).
-    // Non-shared bodies have >10 instructions and are module processes
-    // (not init processes).
-    for (size_t idx = 0; idx < entries.size(); ++idx) {
-      const auto& e = entries[idx];
-      if (e.llvm_insts > 0 && e.llvm_insts <= 10) {
-        ++num_wrappers;
-      } else if (e.llvm_insts > 10 && idx >= num_init) {
-        ++num_nonshared;
-      }
-    }
-    fmt::print(
-        sink,
-        "[lyra][stats][proc] template: groups={} shared_ir_insts={} "
-        "wrappers={} nonshared={}\n",
-        num_template_groups, shared_ir_insts, num_wrappers, num_nonshared);
-  }
-
-  // Size distribution: median, p90, p99
-  if (!entries.empty()) {
+  // Size distribution.
+  if (!result.entries.empty()) {
     std::vector<uint64_t> sizes;
-    sizes.reserve(entries.size());
-    for (const auto& e : entries) {
+    sizes.reserve(result.entries.size());
+    for (const auto& e : result.entries) {
       sizes.push_back(e.llvm_insts);
     }
     std::sort(sizes.begin(), sizes.end());
 
     auto percentile = [&](double p) -> uint64_t {
-      size_t idx = static_cast<size_t>(
+      auto idx = static_cast<size_t>(
           p / 100.0 * static_cast<double>(sizes.size() - 1));
       return sizes[idx];
     };
 
-    fmt::print(
-        sink,
-        "[lyra][stats][proc] median_insts={} p90_insts={} p99_insts={} "
-        "max_insts={}\n",
-        percentile(50), percentile(90), percentile(99), sizes.back());
+    result.median_insts = percentile(50);
+    result.p90_insts = percentile(90);
+    result.p99_insts = percentile(99);
+    result.max_insts = sizes.back();
   }
 
-  std::fflush(sink);
+  return result;
 }
 
 }  // namespace lyra::driver

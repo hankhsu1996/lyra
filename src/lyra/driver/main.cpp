@@ -15,21 +15,18 @@
 
 #include "check.hpp"
 #include "commands.hpp"
+#include "compilation_output.hpp"
 #include "compile.hpp"
 #include "dump.hpp"
 #include "input.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "print.hpp"
 #include "run_aot.hpp"
 #include "run_jit.hpp"
 #include "run_lli.hpp"
+
 namespace {
 
-// Find the first "--" separator in argv.
-// Returns index of "--" or argv.size() if not found.
-// argv[0..result) = main args, argv[result+1..end) = plusargs
 auto FindPlusargsSeparator(std::span<char*> argv) -> size_t {
   for (size_t i = 1; i < argv.size(); ++i) {
     if (std::strcmp(argv[i], "--") == 0) {
@@ -42,14 +39,11 @@ auto FindPlusargsSeparator(std::span<char*> argv) -> size_t {
 }  // namespace
 
 auto main(int argc, char* argv[]) -> int {
-  // Split on first "--": everything before goes to argparse, after is plusargs
   std::span<char*> all_args(argv, static_cast<size_t>(argc));
   size_t sep_idx = FindPlusargsSeparator(all_args);
 
-  // Main args: all_args[0..sep_idx)
   auto args = lyra::driver::PreprocessArgs(all_args.subspan(0, sep_idx));
 
-  // Plusargs: all_args[sep_idx+1..end) - collect verbatim
   std::vector<std::string> plusargs;
   for (size_t i = sep_idx + 1; i < all_args.size(); ++i) {
     plusargs.emplace_back(all_args[i]);
@@ -109,41 +103,45 @@ auto main(int argc, char* argv[]) -> int {
   try {
     program.parse_args(args);
   } catch (const std::exception& err) {
-    lyra::PrintError(err.what());
+    lyra::driver::CompilationOutput output(lyra::driver::DriverOutputOptions{});
+    output.PrintError(err.what());
+    output.Flush();
+    // Argparse library requires direct stream write for help text.
     std::cerr << program;
     return 1;
   }
 
-  // Handle -C before dispatching subcommands
+  // Pre-command output boundary for early validation errors.
+  lyra::driver::CompilationOutput output(lyra::driver::DriverOutputOptions{});
+
   if (auto dir = program.present("-C")) {
     std::error_code ec;
     std::filesystem::current_path(*dir, ec);
     if (ec) {
-      lyra::PrintError(
+      output.PrintError(
           std::format("cannot change to '{}': {}", *dir, ec.message()));
+      output.Flush();
       return 1;
     }
   }
 
-  // Helper: prepare input for compilation commands
   auto prepare = [&](const argparse::ArgumentParser& cmd) {
     bool no_project = cmd.get<bool>("--no-project");
     auto input = lyra::driver::PrepareInput(cmd, no_project);
     if (!input) {
-      lyra::driver::PrintDiagnostic(input.error());
+      output.PrintDiagnostic(input.error());
+      output.Flush();
     }
     return input;
   };
 
-  // Safety net: catch any unexpected exceptions from subcommand execution.
-  // - InternalError: compiler bug, should not happen in normal operation
-  // - Other exceptions: truly unexpected failures from third-party/stdlib code
   try {
     if (program.is_subcommand_used("run")) {
       auto backend =
           lyra::driver::ParseBackend(run_cmd.get<std::string>("--backend"));
       if (!backend) {
-        lyra::driver::PrintDiagnostic(backend.error());
+        output.PrintDiagnostic(backend.error());
+        output.Flush();
         return 1;
       }
       auto input = prepare(run_cmd);
@@ -193,7 +191,8 @@ auto main(int argc, char* argv[]) -> int {
       auto format =
           lyra::driver::ParseDumpFormat(dump_cmd.get<std::string>("format"));
       if (!format) {
-        lyra::driver::PrintDiagnostic(format.error());
+        output.PrintDiagnostic(format.error());
+        output.Flush();
         return 1;
       }
       auto input = prepare(dump_cmd);
@@ -213,16 +212,19 @@ auto main(int argc, char* argv[]) -> int {
       return lyra::driver::InitCommand(init_cmd);
     }
   } catch (const lyra::common::InternalError& e) {
-    std::cerr << "lyra: internal compiler error: " << e.what() << "\n";
+    output.PrintError(e.what());
+    output.Flush();
     return 1;
   } catch (const std::exception& e) {
-    lyra::driver::PrintDiagnostic(
+    output.PrintDiagnostic(
         lyra::Diagnostic::HostError(
             std::format("unexpected error: {}", e.what())));
+    output.Flush();
     return 1;
   } catch (...) {
-    lyra::driver::PrintDiagnostic(
+    output.PrintDiagnostic(
         lyra::Diagnostic::HostError("unexpected unknown error"));
+    output.Flush();
     return 1;
   }
 

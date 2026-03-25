@@ -12,6 +12,7 @@
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
@@ -95,12 +96,14 @@ struct LoweringInput {
   std::string signal_trace_path;
   uint32_t iteration_limit = 0;  // 0 = default (1B)
   bool force_two_state = false;  // Force 2-state LLVM representation
+  bool collect_forwarding_analysis = false;
   MainAbi main_abi = MainAbi::kEmbeddedPlusargs;
 };
 
 struct LoweringResult {
   std::unique_ptr<llvm::LLVMContext> context;
   std::unique_ptr<llvm::Module> module;
+  LoweringReport report;
 };
 
 auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult>;
