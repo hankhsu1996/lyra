@@ -140,11 +140,53 @@ auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
       std::format("symbol {} not found in place mapping", sym.value));
 }
 
+namespace {
+
+auto BuildDpiSignature(const DpiImportInfo& dpi) -> mir::DpiSignature {
+  mir::DpiSignature sig{
+      .return_type = dpi.return_dpi_type,
+      .return_kind = dpi.return_dpi_type == DpiAbiTypeClass::kVoid
+                         ? mir::DpiReturnKind::kVoid
+                         : mir::DpiReturnKind::kDirectValue,
+  };
+  sig.param_types.reserve(dpi.params.size());
+  for (const auto& p : dpi.params) {
+    sig.param_types.push_back(p.dpi_type);
+  }
+  return sig;
+}
+
+}  // namespace
+
 auto Context::ResolveCallTarget(SymbolId sym) const -> mir::Callee {
-  // During body lowering: check design-global functions first.
-  // Safe because SymbolIds are globally unique (monotonic from SymbolTable).
-  // Package functions (design_functions) and body-local functions
-  // (symbol_to_mir_function) have disjoint SymbolId sets by construction.
+  if (dpi_imports != nullptr) {
+    const auto* dpi = dpi_imports->Find(sym);
+    if (dpi != nullptr) {
+      // Invariant: DPI import symbols must not collide with function maps.
+      if (design_functions != nullptr && design_functions->contains(sym)) {
+        throw common::InternalError(
+            "ResolveCallTarget", std::format(
+                                     "symbol {} found in both DPI imports and "
+                                     "design functions",
+                                     sym.value));
+      }
+      if (symbol_to_mir_function != nullptr &&
+          symbol_to_mir_function->contains(sym)) {
+        throw common::InternalError(
+            "ResolveCallTarget", std::format(
+                                     "symbol {} found in both DPI imports and "
+                                     "body-local functions",
+                                     sym.value));
+      }
+      return mir::DpiImportRef{
+          .symbol = sym,
+          .c_name = dpi->c_name,
+          .signature = BuildDpiSignature(*dpi),
+      };
+    }
+  }
+
+  // During body lowering: check design-global functions.
   if (design_functions != nullptr) {
     auto design_it = design_functions->find(sym);
     if (design_it != design_functions->end()) {
@@ -171,6 +213,14 @@ auto Context::ResolveCallSignature(const mir::Callee& callee) const
             throw common::InternalError(
                 "ResolveCallSignature",
                 "cannot resolve signature for SystemTfOpcode");
+          },
+          // DPI call lowering bypasses ResolveCallSignature entirely.
+          // This branch should be unreachable from correct call sites.
+          [](const mir::DpiImportRef&) -> const mir::FunctionSignature& {
+            throw common::InternalError(
+                "ResolveCallSignature",
+                "DpiImportRef does not have a FunctionSignature; "
+                "callers must use DpiSignature");
           },
       },
       callee);

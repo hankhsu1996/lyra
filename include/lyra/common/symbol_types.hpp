@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -27,6 +29,12 @@ struct SymbolId {
 };
 
 constexpr SymbolId kInvalidSymbolId{UINT32_MAX};
+
+struct SymbolIdHash {
+  auto operator()(SymbolId id) const noexcept -> size_t {
+    return std::hash<uint32_t>{}(id.value);
+  }
+};
 
 enum class SymbolKind {
   kInstance,

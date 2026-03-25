@@ -341,15 +341,17 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
           } else if constexpr (std::is_same_v<T, Call>) {
             // Format callee (user function or system TF)
             std::string callee_str = std::visit(
-                [](const auto& c) -> std::string {
-                  using C = std::decay_t<decltype(c)>;
-                  if constexpr (std::is_same_v<C, FunctionId>) {
-                    return std::format("@fn{}", c.value);
-                  } else if constexpr (std::is_same_v<C, DesignFunctionRef>) {
-                    return std::format("@design_fn(sym={})", c.symbol.value);
-                  } else {
-                    return ToString(c);
-                  }
+                common::Overloaded{
+                    [](FunctionId c) -> std::string {
+                      return std::format("@fn{}", c.value);
+                    },
+                    [](const DesignFunctionRef& c) -> std::string {
+                      return std::format("@design_fn(sym={})", c.symbol.value);
+                    },
+                    [](SystemTfOpcode c) -> std::string { return ToString(c); },
+                    [](const DpiImportRef& c) -> std::string {
+                      return std::format("@dpi_import(\"{}\")", c.c_name);
+                    },
                 },
                 i.callee);
 

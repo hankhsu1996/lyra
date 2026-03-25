@@ -23,7 +23,8 @@ void RunTestCase(
   // file I/O (multi-file sources or file content assertions).
   std::optional<ScopedTempDirectory> workdir_guard;
   std::filesystem::path work_directory;
-  if (test_case.IsMultiFile() || !test_case.expected_files.empty()) {
+  if (test_case.IsMultiFile() || !test_case.expected_files.empty() ||
+      !test_case.dpi_sources.empty()) {
     work_directory = MakeUniqueTempPath(test_case.name);
     std::filesystem::create_directories(work_directory);
     workdir_guard.emplace(work_directory);

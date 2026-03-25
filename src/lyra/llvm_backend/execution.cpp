@@ -361,6 +361,20 @@ auto CompileJitImpl(
     dylib.addGenerator(std::move(*gen));
   }
 
+  // Load DPI shared libraries into the JIT symbol resolver.
+  for (size_t i = 0; i < options.dpi_libs.size(); ++i) {
+    auto dpi_path = options.dpi_libs[i].string();
+    auto dpi_gen = llvm::orc::DynamicLibrarySearchGenerator::Load(
+        dpi_path.c_str(), (*jit)->getDataLayout().getGlobalPrefix());
+    if (!dpi_gen) {
+      return std::unexpected(
+          std::format(
+              "failed to load DPI library #{} '{}': {}", i, dpi_path,
+              llvm::toString(dpi_gen.takeError())));
+    }
+    dylib.addGenerator(std::move(*dpi_gen));
+  }
+
   // Validate module DataLayout matches JIT target.
   // DataLayout MUST be set before lowering (in LowerMirToLlvm) - never mutate
   // it here. Post-lowering mutation would invalidate DL-dependent constants

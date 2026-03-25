@@ -8,7 +8,11 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 
 ## Progress
 
-- [ ] D1 -- Pure import functions (2-state scalars, real, string)
+- [ ] D1 -- Pure import functions (2-state scalars, real, string) -- in progress
+  - [x] D1a -- Scalar-only pure import, JIT, `--dpi-lib` CLI, semantic + integration tests
+  - [ ] D1b -- Add `string`
+  - [ ] D1c -- Add AOT link plumbing
+  - [ ] D1d -- Add `lyra.toml` `[dpi]` config
 - [ ] D2 -- General import functions (output/inout args, chandle, packed types)
 - [ ] D3a -- 4-state scalar/vector marshaling
 - [ ] D3b -- Wide packed multiword transport (> 64-bit vectors)

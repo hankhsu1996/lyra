@@ -172,6 +172,22 @@ auto RunJit(const CompilationInput& input) -> int {
         llvm_result->report.forwarding_analysis);
   }
 
+  // Validate DPI library paths before JIT setup.
+  for (const auto& dpi_lib : input.dpi_libs) {
+    if (!std::filesystem::exists(dpi_lib)) {
+      output.PrintError(
+          std::format("DPI library not found: '{}'", dpi_lib.string()));
+      output.Flush();
+      return 1;
+    }
+    if (!std::filesystem::is_regular_file(dpi_lib)) {
+      output.PrintError(
+          std::format("DPI library is not a file: '{}'", dpi_lib.string()));
+      output.Flush();
+      return 1;
+    }
+  }
+
   TimeTraceGuard time_trace_guard(input.time_trace, output);
   std::expected<lowering::mir_to_llvm::JitSession, std::string> session;
   {
@@ -188,6 +204,7 @@ auto RunJit(const CompilationInput& input) -> int {
         .opt_level = input.opt_level,
         .enable_profiling = emit_stats,
         .progress_reporter = std::move(progress_reporter),
+        .dpi_libs = input.dpi_libs,
     };
     session =
         lowering::mir_to_llvm::CompileJit(*llvm_result, runtime_path, jit_opts);

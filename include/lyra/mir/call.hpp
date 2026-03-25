@@ -2,8 +2,11 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <variant>
+#include <vector>
 
+#include "lyra/common/dpi_types.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
@@ -20,11 +23,37 @@ struct DesignFunctionRef {
   SymbolId symbol;
 };
 
-// Callee discriminator: body-local function, design-global function, or
-// system TF. FunctionId is always arena-local (body or design arena).
-// DesignFunctionRef is an explicit cross-domain reference resolved by
-// symbol identity.
-using Callee = std::variant<FunctionId, DesignFunctionRef, SystemTfOpcode>;
+// DPI return convention at the MIR level.
+enum class DpiReturnKind : uint8_t {
+  kVoid,
+  kDirectValue,
+};
+
+// Frozen DPI-C import signature. All type decisions are keyed on
+// DpiAbiTypeClass, not on raw TypeId properties.
+// Separate from FunctionSignature; never participates in Lyra-internal call
+// ABI.
+struct DpiSignature {
+  DpiAbiTypeClass return_type = DpiAbiTypeClass::kInvalid;
+  DpiReturnKind return_kind = DpiReturnKind::kVoid;
+  std::vector<DpiAbiTypeClass> param_types;
+};
+
+// Explicit reference to a DPI-C imported function.
+// Carries only foreign-boundary data. No DesignState*, Engine*, or
+// Lyra-internal frame data. No fake MIR body.
+struct DpiImportRef {
+  SymbolId symbol;     // SV declaration identity (for diagnostics/debug)
+  std::string c_name;  // External C symbol name
+  DpiSignature signature;
+};
+
+// Callee discriminator: body-local function, design-global function,
+// system TF, or DPI-C import. FunctionId is always arena-local (body or
+// design arena). DesignFunctionRef is an explicit cross-domain reference
+// resolved by symbol identity. DpiImportRef is an external foreign call.
+using Callee =
+    std::variant<FunctionId, DesignFunctionRef, SystemTfOpcode, DpiImportRef>;
 
 // Argument passing mode for writeback parameters only.
 enum class PassMode : uint8_t {

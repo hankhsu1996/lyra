@@ -2,10 +2,14 @@
 
 #include <format>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/AllTypes.h>
+#include <slang/syntax/AllSyntax.h>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/scope_types.hpp"
@@ -13,6 +17,7 @@
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/hir/dpi.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/hir/statement.hpp"
@@ -65,7 +70,220 @@ auto ConvertParameterDirection(slang::ast::ArgumentDirection dir)
   throw common::InternalError("routine lowering", "unknown argument direction");
 }
 
+// Classify a slang type as a D1 DPI ABI type class.
+// Returns nullopt for unsupported types (4-state, packed vectors, etc.).
+auto ClassifyDpiAbiType(const slang::ast::Type& type)
+    -> std::optional<hir::DpiAbiTypeClass> {
+  const auto& canonical = type.getCanonicalType();
+
+  if (canonical.isVoid()) {
+    return hir::DpiAbiTypeClass::kVoid;
+  }
+
+  if (canonical.isFloating()) {
+    const auto& ft = canonical.as<slang::ast::FloatingType>();
+    switch (ft.floatKind) {
+      case slang::ast::FloatingType::Real:
+        return hir::DpiAbiTypeClass::kReal;
+      case slang::ast::FloatingType::RealTime:
+        return std::nullopt;
+      case slang::ast::FloatingType::ShortReal:
+        return hir::DpiAbiTypeClass::kShortReal;
+    }
+  }
+
+  // Only accept predefined integer scalar types (not packed arrays/structs).
+  if (canonical.kind == slang::ast::SymbolKind::PredefinedIntegerType) {
+    const auto& pit = canonical.as<slang::ast::PredefinedIntegerType>();
+    if (pit.isFourState) {
+      return std::nullopt;  // integer, time are 4-state
+    }
+    switch (pit.integerKind) {
+      case slang::ast::PredefinedIntegerType::Byte:
+        return hir::DpiAbiTypeClass::kByte;
+      case slang::ast::PredefinedIntegerType::ShortInt:
+        return hir::DpiAbiTypeClass::kShortInt;
+      case slang::ast::PredefinedIntegerType::Int:
+        return hir::DpiAbiTypeClass::kInt;
+      case slang::ast::PredefinedIntegerType::LongInt:
+        return hir::DpiAbiTypeClass::kLongInt;
+      default:
+        return std::nullopt;
+    }
+  }
+
+  // Accept scalar 'bit' (2-state, 1-bit).
+  if (canonical.kind == slang::ast::SymbolKind::ScalarType) {
+    const auto& st = canonical.as<slang::ast::ScalarType>();
+    if (st.scalarKind == slang::ast::ScalarType::Bit) {
+      return hir::DpiAbiTypeClass::kBit;
+    }
+    return std::nullopt;  // logic, reg are 4-state
+  }
+
+  return std::nullopt;
+}
+
 }  // namespace
+
+auto TryLowerDpiImport(
+    const slang::ast::SubroutineSymbol& sub, SymbolRegistrar& registrar,
+    Context* ctx) -> DpiLoweringResult {
+  if (!sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
+    return DpiLoweringResult::NotDpi();
+  }
+
+  SourceSpan span = ctx->SpanOf(GetSourceRange(sub));
+
+  // Reject DPI tasks.
+  if (sub.subroutineKind == slang::ast::SubroutineKind::Task) {
+    ctx->sink->Unsupported(
+        span, "DPI-C import tasks not yet supported",
+        UnsupportedCategory::kFeature);
+    return DpiLoweringResult::Rejected();
+  }
+
+  // Reject context imports.
+  if (sub.flags.has(slang::ast::MethodFlags::DPIContext)) {
+    ctx->sink->Unsupported(
+        span, "DPI-C context import functions not yet supported",
+        UnsupportedCategory::kFeature);
+    return DpiLoweringResult::Rejected();
+  }
+
+  // Reject non-pure imports.
+  if (!sub.flags.has(slang::ast::MethodFlags::Pure)) {
+    ctx->sink->Unsupported(
+        span, "DPI-C non-pure import functions not yet supported",
+        UnsupportedCategory::kFeature);
+    return DpiLoweringResult::Rejected();
+  }
+
+  // Classify return type.
+  const auto& ret_type = sub.getReturnType();
+  auto return_class = ClassifyDpiAbiType(ret_type);
+  if (!return_class) {
+    ctx->sink->Unsupported(
+        span,
+        std::format(
+            "DPI-C return type '{}' not yet supported", ret_type.toString()),
+        UnsupportedCategory::kType);
+    return DpiLoweringResult::Rejected();
+  }
+
+  TypeId return_type_id = LowerType(ret_type, span, ctx);
+  if (!return_type_id) {
+    return DpiLoweringResult::Rejected();
+  }
+
+  // Phase 1: Validate and classify all parameters without registering symbols.
+  // Registration happens only after the full declaration is validated.
+  struct PendingParam {
+    const slang::ast::FormalArgumentSymbol* arg;
+    SourceSpan span;
+    TypeId type_id;
+    hir::DpiAbiTypeClass dpi_type;
+  };
+  std::vector<PendingParam> pending_params;
+  bool has_error = false;
+
+  for (const slang::ast::FormalArgumentSymbol* arg : sub.getArguments()) {
+    SourceSpan arg_span = ctx->SpanOf(GetSourceRange(*arg));
+
+    if (arg->direction != slang::ast::ArgumentDirection::In) {
+      const char* dir_name = "ref";
+      if (arg->direction == slang::ast::ArgumentDirection::Out) {
+        dir_name = "output";
+      } else if (arg->direction == slang::ast::ArgumentDirection::InOut) {
+        dir_name = "inout";
+      }
+      ctx->sink->Unsupported(
+          arg_span,
+          std::format("DPI-C {} parameters not yet supported", dir_name),
+          UnsupportedCategory::kFeature);
+      has_error = true;
+      continue;
+    }
+
+    auto arg_class = ClassifyDpiAbiType(arg->getType());
+    if (!arg_class || !hir::IsValidDpiParamType(*arg_class)) {
+      ctx->sink->Unsupported(
+          arg_span,
+          std::format(
+              "DPI-C argument type '{}' not yet supported",
+              arg->getType().toString()),
+          UnsupportedCategory::kType);
+      has_error = true;
+      continue;
+    }
+
+    TypeId arg_type_id = LowerType(arg->getType(), arg_span, ctx);
+    if (!arg_type_id) {
+      has_error = true;
+      continue;
+    }
+
+    pending_params.push_back({
+        .arg = arg,
+        .span = arg_span,
+        .type_id = arg_type_id,
+        .dpi_type = *arg_class,
+    });
+  }
+
+  if (has_error) {
+    return DpiLoweringResult::Rejected();
+  }
+
+  // Phase 2: Declaration is fully validated. Register symbols and build decl.
+
+  // Resolve C function name. Slang does not expose the DPI c_identifier on
+  // SubroutineSymbol at the AST level -- only in the syntax tree. This is the
+  // only place in the pipeline that touches syntax for DPI; all downstream
+  // layers use the resolved c_name from this struct.
+  std::string sv_name(sub.name);
+  std::string c_name = sv_name;
+  const auto* syntax = sub.getSyntax();
+  if (syntax != nullptr &&
+      syntax->kind == slang::syntax::SyntaxKind::DPIImport) {
+    const auto& dpi_syntax = syntax->as<slang::syntax::DPIImportSyntax>();
+    auto c_id = dpi_syntax.c_identifier.valueText();
+    if (!c_id.empty()) {
+      c_name = std::string(c_id);
+    }
+  }
+
+  // TODO(DPI): introduce a dedicated symbol/declaration kind once design-level
+  // DPI registry and call resolution are added; D1 Step 2 reuses kFunction
+  // only to keep name binding alive until then.
+  SymbolId symbol =
+      registrar.Register(sub, SymbolKind::kFunction, return_type_id);
+
+  std::vector<hir::DpiParam> params;
+  params.reserve(pending_params.size());
+  for (const auto& pp : pending_params) {
+    SymbolId arg_sym = registrar.Register(
+        *pp.arg, SymbolKind::kParameter, pp.type_id,
+        StorageClass::kLocalStorage);
+    params.push_back({
+        .symbol = arg_sym,
+        .span = pp.span,
+        .type_id = pp.type_id,
+        .dpi_type = pp.dpi_type,
+    });
+  }
+
+  return DpiLoweringResult::Accepted(
+      hir::DpiImportDecl{
+          .symbol = symbol,
+          .span = span,
+          .sv_name = std::move(sv_name),
+          .c_name = std::move(c_name),
+          .return_type_id = return_type_id,
+          .return_dpi_type = *return_class,
+          .params = std::move(params),
+      });
+}
 
 auto LowerProcess(
     const slang::ast::ProceduralBlockSymbol& proc, ScopeLowerer& lowerer)
@@ -121,15 +339,6 @@ auto LowerFunction(
     if (sym.unsupported_reason.has_value()) {
       return hir::kInvalidFunctionId;
     }
-  }
-
-  // Check for DPI-C imports (not supported)
-  if (func.flags.has(slang::ast::MethodFlags::DPIImport) ||
-      func.flags.has(slang::ast::MethodFlags::DPIContext)) {
-    ctx->sink->Error(
-        span,
-        std::format("DPI-C import function '{}' not supported", func.name));
-    return hir::kInvalidFunctionId;
   }
 
   // Lower return type (all types now supported)
@@ -213,14 +422,6 @@ auto LowerTask(const slang::ast::SubroutineSymbol& task, ScopeLowerer& lowerer)
   auto* ctx = &lowerer.Ctx();
 
   SourceSpan span = ctx->SpanOf(GetSourceRange(task));
-
-  // Check for DPI-C imports (not supported)
-  if (task.flags.has(slang::ast::MethodFlags::DPIImport) ||
-      task.flags.has(slang::ast::MethodFlags::DPIContext)) {
-    ctx->sink->Error(
-        span, std::format("DPI-C import task '{}' not supported", task.name));
-    return hir::kInvalidTaskId;
-  }
 
   // Check for unsupported parameter directions (ref not yet supported)
   for (const slang::ast::FormalArgumentSymbol* arg : task.getArguments()) {

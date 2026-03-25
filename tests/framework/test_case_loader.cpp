@@ -319,7 +319,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
         {"name", "description", "sv", "files", "plusargs", "param_overrides",
          "pedantic", "trace_summary", "signal_trace", "dump_slot_meta",
          "dump_specialization_map", "dump_repertoire", "dump_repertoire_desc",
-         "expect"},
+         "dpi_sources", "expect"},
         case_context, path);
 
     // Single-file format: sv: |
@@ -393,6 +393,15 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     // Dump repertoire descriptor (test-only)
     if (node["dump_repertoire_desc"]) {
       test_case.dump_repertoire_desc = node["dump_repertoire_desc"].as<bool>();
+    }
+
+    // DPI companion C source paths (relative to YAML file directory)
+    if (node["dpi_sources"]) {
+      auto yaml_dir = std::filesystem::path(path).parent_path();
+      for (const auto& src_node : node["dpi_sources"]) {
+        auto src_path = yaml_dir / src_node.as<std::string>();
+        test_case.dpi_sources.push_back(src_path.string());
+      }
     }
 
     // Parse unified expect: block

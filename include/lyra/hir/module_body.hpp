@@ -4,6 +4,7 @@
 
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/hir/dpi.hpp"
 #include "lyra/hir/fwd.hpp"
 
 namespace lyra::hir {
@@ -29,6 +30,9 @@ struct ModuleBody {
   std::vector<ProcessId> processes;
   std::vector<FunctionId> functions;
   std::vector<TaskId> tasks;
+  // DPI-C import declarations owned by this body.
+  // Downstream design-level resolution is built from this owned collection.
+  std::vector<DpiImportDecl> dpi_imports;
 
   // Body-local HIR node storage.
   Arena arena;

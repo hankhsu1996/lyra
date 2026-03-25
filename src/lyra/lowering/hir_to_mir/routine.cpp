@@ -126,6 +126,7 @@ auto LowerFunctionBody(
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = decl_view.functions,
       .design_functions = decl_view.design_functions,
+      .dpi_imports = decl_view.dpi_imports,
       .return_slot = std::nullopt,
       .return_type = function.return_type,
       .design_slots = decl_view.slots,

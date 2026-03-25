@@ -8,6 +8,7 @@
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/lowering/hir_to_mir/dpi_registry.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/design.hpp"
@@ -25,12 +26,6 @@ struct BuiltinTypes {
 };
 
 auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes;
-
-struct SymbolIdHash {
-  auto operator()(SymbolId id) const noexcept -> size_t {
-    return std::hash<uint32_t>{}(id.value);
-  }
-};
 
 using PlaceMap = std::unordered_map<SymbolId, mir::PlaceId, SymbolIdHash>;
 
@@ -100,6 +95,9 @@ struct DesignDeclarations {
   // Compile-owned slot trace provenance (parallel to slots).
   std::vector<mir::SlotTraceProvenance> slot_trace_provenance;
   std::vector<char> slot_trace_string_pool;
+
+  // Design-visible DPI imports from all packages and module bodies.
+  DesignDpiImports dpi_imports;
 };
 
 // Read-only view into declaration artifacts for lower-level helpers
@@ -117,6 +115,9 @@ struct DeclView {
   // Design-global function map for DesignFunctionRef resolution.
   // Null for design-level lowering.
   const SymbolToMirFunctionMap* design_functions = nullptr;
+  // Design-level DPI import declarations visible to this lowering scope.
+  // Null when no design-level declaration view is available.
+  const DesignDpiImports* dpi_imports = nullptr;
 };
 
 // Result of AllocLocal - provides both the PlaceId and the local slot index.
@@ -183,6 +184,10 @@ struct Context {
   // DesignFunctionRef for package functions. When null (design-level
   // lowering), all functions are resolved as arena-local FunctionIds.
   const SymbolToMirFunctionMap* design_functions = nullptr;
+
+  // Design-level DPI import declarations visible to this lowering scope.
+  // Null when no design-level declaration view is available.
+  const DesignDpiImports* dpi_imports = nullptr;
 
   // Optional sink for dynamically generated functions (e.g., observer
   // programs). If set, LowerStrobeEffect will push program FunctionIds here.

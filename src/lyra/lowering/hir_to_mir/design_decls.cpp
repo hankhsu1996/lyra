@@ -1,18 +1,23 @@
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <variant>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/hir/design.hpp"
+#include "lyra/hir/dpi.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
+#include "lyra/hir/module_body.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
+#include "lyra/lowering/hir_to_mir/dpi_registry.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/routine.hpp"
 #include "lyra/mir/arena.hpp"
@@ -127,6 +132,29 @@ class StringPoolIntern {
   std::unordered_map<std::string, uint32_t> index_;
 };
 
+void RegisterDpiImport(
+    const hir::DpiImportDecl& dpi, DesignDpiImports& registry) {
+  std::vector<DpiParamInfo> params;
+  params.reserve(dpi.params.size());
+  for (const auto& p : dpi.params) {
+    params.push_back({.dpi_type = p.dpi_type, .type_id = p.type_id});
+  }
+  DpiImportInfo info{
+      .symbol = dpi.symbol,
+      .span = dpi.span,
+      .sv_name = dpi.sv_name,
+      .c_name = dpi.c_name,
+      .return_dpi_type = dpi.return_dpi_type,
+      .return_type_id = dpi.return_type_id,
+      .params = std::move(params),
+  };
+  if (!registry.Insert(std::move(info))) {
+    throw common::InternalError(
+        "CollectDesignDeclarations",
+        std::format("duplicate DPI import symbol {}", dpi.symbol.value));
+  }
+}
+
 }  // namespace
 
 auto CollectDesignDeclarations(
@@ -179,6 +207,11 @@ auto CollectDesignDeclarations(
         mir::FunctionId mir_func_id =
             mir_arena.ReserveFunction(std::move(sig), hir_func.symbol);
         decls.functions[hir_func.symbol] = mir_func_id;
+      }
+
+      // Register package DPI imports in the design-level registry.
+      for (const auto& dpi : pkg->dpi_imports) {
+        RegisterDpiImport(dpi, decls.dpi_imports);
       }
     }
   }
@@ -294,6 +327,13 @@ auto CollectDesignDeclarations(
   if (input.instance_table != nullptr) {
     for (uint32_t i = 0; i < input.instance_table->entries.size(); ++i) {
       decls.instance_indices[input.instance_table->entries[i].instance_sym] = i;
+    }
+  }
+
+  // Collect module-body DPI imports into the design-level registry.
+  for (const auto& body : design.module_bodies) {
+    for (const auto& dpi : body.dpi_imports) {
+      RegisterDpiImport(dpi, decls.dpi_imports);
     }
   }
 

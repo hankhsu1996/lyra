@@ -17,6 +17,7 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/dpi_types.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -66,6 +67,18 @@ namespace {
 auto LowerExpressionImpl(
     hir::ExpressionId expr_id, MirBuilder& builder,
     PlaceMaterializationCache& cache) -> Result<mir::Operand>;
+
+// When a sub-expression creates new blocks, previously lowered operands in
+// in_args must be rethreaded to the current block. Used by both DPI and
+// normal call lowering.
+void RethreadArgsIfBlockChanged(
+    MirBuilder& builder, BlockIndex before, std::vector<mir::Operand>& args) {
+  if (builder.CurrentBlock() != before) {
+    for (auto& op : args) {
+      op = builder.ThreadValueToCurrentBlock(op);
+    }
+  }
+}
 
 // Fix up UseTemp operands that became invalid after a block change.
 // When a sub-expression (e.g., ternary) creates new blocks, previously
@@ -1381,10 +1394,40 @@ auto LowerCall(
     -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
-  // Resolve callee: body-local FunctionId or design-global DesignFunctionRef
+  // Resolve callee: body-local, design-global, or DPI import
   mir::Callee callee = ctx.ResolveCallTarget(data.callee);
 
-  // Get signature for argument validation from the correct arena.
+  // DPI imports: D1 carries input-only params in DpiSignature.
+  // All args are lowered as values, no writebacks. Future non-input
+  // support (D2+) must go through a different lowering path.
+  if (const auto* dpi = std::get_if<mir::DpiImportRef>(&callee)) {
+    if (data.arguments.size() != dpi->signature.param_types.size()) {
+      throw common::InternalError(
+          "LowerCall", "DPI argument count mismatch with frozen signature");
+    }
+    if (!IsValidDpiReturnType(dpi->signature.return_type)) {
+      throw common::InternalError(
+          "LowerCall", "invalid DPI return type in frozen signature");
+    }
+    for (DpiAbiTypeClass t : dpi->signature.param_types) {
+      if (!IsValidDpiParamType(t)) {
+        throw common::InternalError(
+            "LowerCall", "invalid DPI parameter type in frozen signature");
+      }
+    }
+    std::vector<mir::Operand> in_args;
+    for (size_t i = 0; i < data.arguments.size(); ++i) {
+      BlockIndex before = builder.CurrentBlock();
+      Result<mir::Operand> arg_result =
+          LowerExpressionImpl(data.arguments[i], builder, cache);
+      if (!arg_result) return std::unexpected(arg_result.error());
+      RethreadArgsIfBlockChanged(builder, before, in_args);
+      in_args.push_back(*arg_result);
+    }
+    return builder.EmitCall(callee, std::move(in_args), expr.type);
+  }
+
+  // Non-DPI: get signature for argument validation from the correct arena.
   const mir::FunctionSignature& sig = ctx.ResolveCallSignature(callee);
   if (data.arguments.size() != sig.params.size()) {
     throw common::InternalError(
@@ -1405,30 +1448,21 @@ auto LowerCall(
         Result<mir::Operand> arg_result =
             LowerExpressionImpl(arg_id, builder, cache);
         if (!arg_result) return std::unexpected(arg_result.error());
-        if (builder.CurrentBlock() != before) {
-          for (auto& op : in_args) {
-            op = builder.ThreadValueToCurrentBlock(op);
-          }
-        }
+        RethreadArgsIfBlockChanged(builder, before, in_args);
         in_args.push_back(*arg_result);
         break;
       }
       case mir::PassingKind::kOut:
       case mir::PassingKind::kInOut: {
-        // Output/inout parameter: lower as lvalue to get destination PlaceId.
-        // Callee receives a pointer to the destination; for inout, callee reads
-        // the initial value from that pointer. We do NOT add to in_args here.
-        // Note: LowerLvalue has separate cache scope
         Result<LvalueResult> lv_result = LowerLvalue(arg_id, builder);
         if (!lv_result) return std::unexpected(lv_result.error());
 
-        // Create writeback entry - pass destination directly (no staging temp)
         mir::PassMode mode = (param.kind == mir::PassingKind::kOut)
                                  ? mir::PassMode::kOut
                                  : mir::PassMode::kInOut;
         writebacks.push_back({
-            .tmp = lv_result->place,   // Use dest as tmp (direct passing)
-            .dest = lv_result->place,  // Final destination
+            .tmp = lv_result->place,
+            .dest = lv_result->place,
             .type = param.type,
             .mode = mode,
             .arg_index = static_cast<int32_t>(i),
@@ -1438,7 +1472,6 @@ auto LowerCall(
     }
   }
 
-  // Emit Call instruction with writebacks
   return builder.EmitCallWithWritebacks(
       callee, std::move(in_args), std::move(writebacks), expr.type);
 }
