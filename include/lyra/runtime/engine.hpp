@@ -383,6 +383,10 @@ class Engine {
   // detects a slot not yet dirty in the current delta. Performs all first-
   // dirty bookkeeping (dedup tracking, activation dirty count, stats).
   // Precondition: the inline guard already confirmed delta_seen[slot] == 0.
+  // Precondition: slot_id must be a canonical storage owner.
+  // Alias canonicalization is compile-time (EmitMutationTargetSignalId)
+  // and descriptor-time (RebuildCanonicalConnections). Runtime dirty
+  // paths assume canonical slot ids. Trace flush is the backstop.
   void MarkSlotDirtyFirst(uint32_t slot_id) {
     if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
     update_set_.MarkSlotDirty(slot_id);
@@ -392,8 +396,6 @@ class Engine {
   }
 
   // Mark slot dirty for scheduler wakeup and deferred trace snapshot.
-  // Note: SignalId == slot_id in the current runtime. This equivalence is by
-  // design - both identify the same design slot. Callers may pass either type.
   void MarkSlotDirty(uint32_t slot_id) {
     if (detailed_stats_enabled_) {
       ++stats_.detailed.dirty_mark_calls;
@@ -549,6 +551,14 @@ class Engine {
               slot_meta_registry_.Size()));
     }
     trace_signal_meta_ = std::move(registry);
+
+    // Rebuild alias groups with cross-registry validation when slot
+    // metadata is available. This validates total_bytes compatibility
+    // between alias and owner at the alias-group boundary.
+    const SlotMetaRegistry* slot_reg =
+        slot_meta_registry_.IsPopulated() ? &slot_meta_registry_ : nullptr;
+    trace_signal_meta_.BuildAliasGroups(slot_reg);
+
     trace_manager_.SetSignalMeta(&trace_signal_meta_);
     trace_selection_.Init(signal_count);
   }

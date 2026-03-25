@@ -40,6 +40,9 @@ struct SlotMeta {
   uint32_t total_bytes = 0;
   SlotStorageKind kind = SlotStorageKind::kPacked2;
   PackedPlanes planes;
+  // Canonical storage owner slot id. Self for storage owners.
+  // For forwarded aliases, points to the canonical owner.
+  uint32_t storage_owner_slot_id = 0;
 };
 
 // Dense registry of slot metadata, indexed by slot_id.
@@ -59,6 +62,13 @@ class SlotMetaRegistry {
       ThrowOutOfRange(slot_id);
     }
     return slots_[slot_id];
+  }
+
+  // Resolve to canonical storage owner slot id.
+  // For storage owners, returns the input slot_id.
+  // For forwarded aliases, returns the canonical owner.
+  [[nodiscard]] auto GetStorageOwnerSlotId(uint32_t slot_id) const -> uint32_t {
+    return Get(slot_id).storage_owner_slot_id;
   }
 
   [[nodiscard]] auto Size() const -> uint32_t {

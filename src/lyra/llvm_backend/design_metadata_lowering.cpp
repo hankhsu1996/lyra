@@ -183,7 +183,8 @@ auto PrepareTraceSignalMetaInputs(
     const std::vector<char>& trace_string_pool,
     const std::vector<TypeId>& slot_types,
     const std::vector<mir::SlotKind>& slot_kinds,
-    const std::vector<std::string>& instance_paths, const TypeArena& types)
+    const std::vector<std::string>& instance_paths, const TypeArena& types,
+    const DesignLayout& design_layout)
     -> std::vector<metadata::TraceSignalMetaInput> {
   if (provenance.empty()) return {};
 
@@ -240,8 +241,10 @@ auto PrepareTraceSignalMetaInputs(
     entries.push_back(
         {.hierarchical_name = std::move(hierarchical_name),
          .bit_width = ComputeTraceBitWidth(slot_types[slot_id], types),
-         .trace_kind = static_cast<uint32_t>(
-             MapSlotKindToTraceKind(slot_kinds[slot_id]))});
+         .trace_kind =
+             static_cast<uint32_t>(MapSlotKindToTraceKind(slot_kinds[slot_id])),
+         .storage_owner_slot_id =
+             design_layout.GetStorageOwnerSlotId(mir::SlotId{slot_id}).value});
   }
 
   return entries;
@@ -263,6 +266,8 @@ auto ExtractSlotMetaInputs(
         .byte_offset = NarrowToU32(byte_offset, "ExtractSlotMetaInputs"),
         .total_bytes = spec.TotalByteSize(),
         .storage_kind = static_cast<uint32_t>(kind),
+        .storage_owner_slot_id =
+            design_layout.GetStorageOwnerSlotId(slot.slot_id).value,
     };
 
     if (kind == runtime::SlotStorageKind::kPacked4) {

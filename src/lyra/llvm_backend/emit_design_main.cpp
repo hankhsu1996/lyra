@@ -1472,7 +1472,7 @@ auto BuildDesignMetadata(
   auto trace_signal_inputs = PrepareTraceSignalMetaInputs(
       realization.slot_trace_provenance, realization.slot_trace_string_pool,
       realization.slot_types, realization.slot_kinds,
-      realization.instance_paths, type_arena);
+      realization.instance_paths, type_arena, layout.design);
 
   // Port-binding forwarding candidate analysis (analysis only, no transform).
   // TODO(hankhsu): Gate behind verbose/debug flag when one is available

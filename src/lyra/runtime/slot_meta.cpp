@@ -57,6 +57,15 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
     uint32_t value_bytes = row[slot_meta_abi::kFieldValueBytes];
     uint32_t unk_off = row[slot_meta_abi::kFieldUnkOff];
     uint32_t unk_bytes = row[slot_meta_abi::kFieldUnkBytes];
+    uint32_t storage_owner = row[slot_meta_abi::kFieldStorageOwnerSlotId];
+
+    if (storage_owner >= count) {
+      throw common::InternalError(
+          "SlotMetaRegistry",
+          std::format(
+              "slot {} storage_owner_slot_id {} out of range (count {})", i,
+              storage_owner, count));
+    }
 
     if (total_bytes == 0) {
       throw common::InternalError(
@@ -104,7 +113,20 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
                     .unk_off = unk_off,
                     .unk_bytes = unk_bytes,
                 },
+            .storage_owner_slot_id = storage_owner,
         });
+  }
+
+  // Verify owner graph and detect forwarded aliases.
+  for (uint32_t i = 0; i < slots_.size(); ++i) {
+    auto owner = slots_[i].storage_owner_slot_id;
+    if (slots_[owner].storage_owner_slot_id != owner) {
+      throw common::InternalError(
+          "SlotMetaRegistry",
+          std::format(
+              "slot {} owner {} is not self-owning (points to {})", i, owner,
+              slots_[owner].storage_owner_slot_id));
+    }
   }
 }
 

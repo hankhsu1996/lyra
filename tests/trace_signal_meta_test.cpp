@@ -28,12 +28,15 @@ struct PoolBuilder {
 };
 
 // Helper: append one entry to a word table.
+// storage_owner_slot_id defaults to self (entry index derived from word count).
 void PushEntry(
     std::vector<uint32_t>& words, uint32_t name_off, uint32_t bit_width,
     TraceSignalKind kind) {
+  auto slot_id = static_cast<uint32_t>(words.size() / abi::kStride);
   words.push_back(name_off);
   words.push_back(bit_width);
   words.push_back(static_cast<uint32_t>(kind));
+  words.push_back(slot_id);
 }
 
 TEST(TraceSignalMetaRegistryTest, DefaultConstructedIsEmpty) {

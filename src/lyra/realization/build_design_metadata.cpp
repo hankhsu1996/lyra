@@ -30,6 +30,7 @@ auto BuildSlotMetaWords(const std::vector<metadata::SlotMetaInput>& slots)
     words.push_back(slot.value_bytes);
     words.push_back(slot.unk_offset);
     words.push_back(slot.unk_bytes);
+    words.push_back(slot.storage_owner_slot_id);
   }
 
   return words;
@@ -90,6 +91,7 @@ auto BuildTraceSignalMeta(
     words.push_back(name_off);
     words.push_back(sig.bit_width);
     words.push_back(sig.trace_kind);
+    words.push_back(sig.storage_owner_slot_id);
   }
 
   return {.words = std::move(words), .pool = std::move(pool)};
