@@ -1,13 +1,17 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 
+#include "lyra/common/edge_kind.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/routine.hpp"
+#include "lyra/runtime/body_realization_desc.hpp"
 #include "lyra/runtime/process_meta.hpp"
+#include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -53,6 +57,25 @@ inline auto ResolveProcessOrigin(
   }
 
   return {.file = file->path, .line = line, .col = col};
+}
+
+// Body-shaped stage-1 groupability classification.
+// A process is groupable when it has static wait shape, all triggers have
+// a uniform edge kind, and no trigger has sub-slot observation.
+// Operates on template-level data: TriggerTemplateEntry flags carry
+// kTriggerTemplateFlagHasObservedPlace for the observation check.
+inline auto IsBodyGroupable(
+    std::span<const runtime::TriggerTemplateEntry> entries,
+    runtime::WaitShapeKind shape) -> bool {
+  if (entries.empty()) return false;
+  if (shape != runtime::WaitShapeKind::kStatic) return false;
+
+  uint32_t uniform_edge = entries[0].edge;
+  for (const auto& e : entries) {
+    if (e.flags & runtime::kTriggerTemplateFlagHasObservedPlace) return false;
+    if (e.edge != uniform_edge) return false;
+  }
+  return true;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

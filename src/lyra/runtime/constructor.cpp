@@ -12,6 +12,7 @@
 #include "lyra/runtime/frame_allocator.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
+#include "lyra/runtime/process_trigger_abi.hpp"
 
 namespace lyra::runtime {
 
@@ -24,7 +25,9 @@ ConstructionResult::ConstructionResult(ConstructionResult&& other) noexcept
       packed_buffer(std::exchange(other.packed_buffer, nullptr)),
       num_total(std::exchange(other.num_total, 0)),
       num_connection(std::exchange(other.num_connection, 0)),
-      process_meta(std::move(other.process_meta)) {
+      process_meta(std::move(other.process_meta)),
+      trigger_meta(std::move(other.trigger_meta)),
+      comb_meta(std::move(other.comb_meta)) {
 }
 
 auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
@@ -36,11 +39,97 @@ auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
     num_total = std::exchange(other.num_total, 0);
     num_connection = std::exchange(other.num_connection, 0);
     process_meta = std::move(other.process_meta);
+    trigger_meta = std::move(other.trigger_meta);
+    comb_meta = std::move(other.comb_meta);
   }
   return *this;
 }
 
+void RealizedTriggerMeta::Init() {
+  words.clear();
+  words.push_back(0);
+  entry_count = 0;
+}
+
+void RealizedTriggerMeta::AppendEntry(
+    uint32_t proc_idx, uint32_t slot_id, uint32_t edge, uint32_t flags) {
+  if (words.empty()) {
+    throw common::InternalError(
+        "RealizedTriggerMeta::AppendEntry", "Init() not called");
+  }
+  words.push_back(proc_idx);
+  words.push_back(slot_id);
+  words.push_back(edge);
+  words.push_back(flags);
+  ++entry_count;
+}
+
+void RealizedTriggerMeta::Finalize() {
+  if (!words.empty()) {
+    words[0] = entry_count;
+  }
+}
+
+void RealizedCombMeta::Init() {
+  words.clear();
+  words.push_back(0);
+  kernel_count = 0;
+}
+
+auto RealizedCombMeta::BeginKernel(uint32_t proc_idx, uint32_t flags)
+    -> uint32_t {
+  if (words.empty()) {
+    throw common::InternalError(
+        "RealizedCombMeta::BeginKernel", "Init() not called");
+  }
+  words.push_back(proc_idx);
+  words.push_back(flags);
+  auto trigger_count_pos = static_cast<uint32_t>(words.size());
+  words.push_back(0);
+  ++kernel_count;
+  return trigger_count_pos;
+}
+
+void RealizedCombMeta::AppendTrigger(
+    uint32_t slot_id, uint32_t byte_off, uint32_t byte_size) {
+  if (words.empty()) {
+    throw common::InternalError(
+        "RealizedCombMeta::AppendTrigger", "Init() not called");
+  }
+  words.push_back(slot_id);
+  words.push_back(byte_off);
+  words.push_back(byte_size);
+}
+
+void RealizedCombMeta::EndKernel(
+    uint32_t trigger_count_pos, uint32_t trigger_count) {
+  if (trigger_count_pos >= words.size()) {
+    throw common::InternalError(
+        "RealizedCombMeta::EndKernel",
+        std::format(
+            "trigger_count_pos {} >= words.size() {}", trigger_count_pos,
+            words.size()));
+  }
+  words[trigger_count_pos] = trigger_count;
+}
+
+void RealizedCombMeta::Finalize() {
+  if (!words.empty()) {
+    words[0] = kernel_count;
+  }
+}
+
 namespace {
+
+// Validate a raw uint8_t shape byte is a valid WaitShapeKind.
+void ValidateShapeByte(uint8_t raw, uint32_t index, const char* caller) {
+  if (raw > static_cast<uint8_t>(WaitShapeKind::kDynamic)) {
+    throw common::InternalError(
+        caller,
+        std::format(
+            "proc_shapes[{}] = {} is not a valid WaitShapeKind", index, raw));
+  }
+}
 
 // Validate a process metadata template view: pool sentinel, and that
 // every entry's file_pool_off is within pool bounds and points to a
@@ -87,14 +176,61 @@ void ValidateMetaTemplate(
 Constructor::Constructor(
     std::span<const ProcessStateSchema> schemas,
     std::span<const uint64_t> slot_byte_offsets, uint32_t num_package_slots,
-    std::span<std::byte> design_state, ProcessMetaTemplateView conn_meta)
+    std::span<std::byte> design_state, ProcessMetaTemplateView conn_meta,
+    TriggerTemplateView conn_triggers)
     : schemas_(schemas),
       slot_byte_offsets_(slot_byte_offsets),
       design_state_(design_state),
       next_slot_base_(num_package_slots),
-      conn_meta_(conn_meta) {
+      conn_meta_(conn_meta),
+      conn_triggers_(conn_triggers) {
   ValidateMetaTemplate(conn_meta_, "Constructor");
   realized_meta_.pool.push_back('\0');
+  realized_triggers_.Init();
+  realized_comb_.Init();
+
+  // Validate connection trigger template if non-empty.
+  if (!conn_triggers_.proc_ranges.empty()) {
+    if (conn_triggers_.proc_shapes.size() !=
+        conn_triggers_.proc_ranges.size()) {
+      throw common::InternalError(
+          "Constructor",
+          std::format(
+              "conn_triggers proc_shapes size {} != proc_ranges size {}",
+              conn_triggers_.proc_shapes.size(),
+              conn_triggers_.proc_ranges.size()));
+    }
+    if (conn_triggers_.proc_groupable.size() !=
+        conn_triggers_.proc_ranges.size()) {
+      throw common::InternalError(
+          "Constructor",
+          std::format(
+              "conn_triggers proc_groupable size {} != proc_ranges size {}",
+              conn_triggers_.proc_groupable.size(),
+              conn_triggers_.proc_ranges.size()));
+    }
+    for (uint32_t i = 0; i < conn_triggers_.proc_ranges.size(); ++i) {
+      const auto& r = conn_triggers_.proc_ranges[i];
+      if (r.start > conn_triggers_.entries.size() ||
+          r.count > conn_triggers_.entries.size() - r.start) {
+        throw common::InternalError(
+            "Constructor",
+            std::format(
+                "conn_triggers proc_ranges[{}] ({},{}) exceeds entries "
+                "size {}",
+                i, r.start, r.count, conn_triggers_.entries.size()));
+      }
+      if (conn_triggers_.proc_groupable[i] > kProcGroupable) {
+        throw common::InternalError(
+            "Constructor", std::format(
+                               "conn_triggers proc_groupable[{}] = {} "
+                               "(expected kProcNotGroupable or kProcGroupable)",
+                               i, conn_triggers_.proc_groupable[i]));
+      }
+      ValidateShapeByte(
+          conn_triggers_.proc_shapes[i], i, "Constructor conn_triggers");
+    }
+  }
 }
 
 void Constructor::CheckNotFinalized(const char* caller) const {
@@ -141,6 +277,36 @@ void Constructor::AddConnection(const ConnectionRealizationDesc& desc) {
   realized_meta_.words.push_back(meta.line);
   realized_meta_.words.push_back(meta.col);
 
+  // Trigger realization for this connection process.
+  // Connection trigger ordinal = num_connection_ (before increment).
+  if (!conn_triggers_.proc_ranges.empty()) {
+    uint32_t ordinal = num_connection_;
+    if (ordinal >= conn_triggers_.proc_ranges.size()) {
+      throw common::InternalError(
+          "Constructor::AddConnection",
+          std::format(
+              "connection trigger template exhausted "
+              "(ordinal {} >= count {})",
+              ordinal, conn_triggers_.proc_ranges.size()));
+    }
+    auto proc_idx = static_cast<uint32_t>(staged_.size() - 1);
+    const auto& range = conn_triggers_.proc_ranges[ordinal];
+    uint32_t flags = (conn_triggers_.proc_groupable[ordinal] != 0)
+                         ? process_trigger_abi::kFlagGroupable
+                         : 0;
+    for (uint32_t t = 0; t < range.count; ++t) {
+      const auto& te = conn_triggers_.entries[range.start + t];
+      realized_triggers_.AppendEntry(proc_idx, te.slot_id, te.edge, flags);
+      trigger_provenance_.push_back(
+          TriggerProvenanceRecord{
+              .domain = TemplateDomain::kConnection,
+              .owner_ordinal = ordinal,
+              .local_ordinal = ordinal,
+              .realized_proc_idx = proc_idx,
+          });
+    }
+  }
+
   ++conn_meta_index_;
   ++num_connection_;
 }
@@ -167,6 +333,118 @@ void Constructor::BeginBody(const BodyDescriptorPackage& package) {
             package.entries.size(), package.meta.entries.size()));
   }
   ValidateMetaTemplate(package.meta, "Constructor::BeginBody");
+
+  // Validate trigger template view.
+  // All-empty spans are the intended no-op bring-up state: all four
+  // spans (entries, proc_ranges, proc_shapes, proc_groupable) must be
+  // empty together. Partial population is rejected explicitly.
+  const auto& trig = package.triggers;
+  bool trig_has_ranges = !trig.proc_ranges.empty();
+  bool trig_has_entries = !trig.entries.empty();
+  bool trig_has_shapes = !trig.proc_shapes.empty();
+  bool trig_has_groupable = !trig.proc_groupable.empty();
+  if (!trig_has_ranges &&
+      (trig_has_entries || trig_has_shapes || trig_has_groupable)) {
+    throw common::InternalError(
+        "Constructor::BeginBody",
+        "trigger view partially populated: proc_ranges empty but other "
+        "spans non-empty");
+  }
+  if (trig_has_ranges && (!trig_has_shapes || !trig_has_groupable)) {
+    throw common::InternalError(
+        "Constructor::BeginBody",
+        "trigger view partially populated: proc_ranges non-empty but "
+        "proc_shapes or proc_groupable empty");
+  }
+  if (trig_has_ranges) {
+    if (trig.proc_ranges.size() != package.desc->num_processes) {
+      throw common::InternalError(
+          "Constructor::BeginBody",
+          std::format(
+              "trigger proc_ranges size {} != num_processes {}",
+              trig.proc_ranges.size(), package.desc->num_processes));
+    }
+    if (trig.proc_shapes.size() != trig.proc_ranges.size()) {
+      throw common::InternalError(
+          "Constructor::BeginBody",
+          std::format(
+              "trigger proc_shapes size {} != proc_ranges size {}",
+              trig.proc_shapes.size(), trig.proc_ranges.size()));
+    }
+    if (trig.proc_groupable.size() != trig.proc_ranges.size()) {
+      throw common::InternalError(
+          "Constructor::BeginBody",
+          std::format(
+              "trigger proc_groupable size {} != proc_ranges size {}",
+              trig.proc_groupable.size(), trig.proc_ranges.size()));
+    }
+    for (uint32_t i = 0; i < trig.proc_ranges.size(); ++i) {
+      const auto& r = trig.proc_ranges[i];
+      if (r.start > trig.entries.size() ||
+          r.count > trig.entries.size() - r.start) {
+        throw common::InternalError(
+            "Constructor::BeginBody",
+            std::format(
+                "trigger proc_ranges[{}] ({},{}) exceeds entries size {}", i,
+                r.start, r.count, trig.entries.size()));
+      }
+    }
+    for (uint32_t i = 0; i < trig.proc_groupable.size(); ++i) {
+      if (trig.proc_groupable[i] > kProcGroupable) {
+        throw common::InternalError(
+            "Constructor::BeginBody",
+            std::format(
+                "trigger proc_groupable[{}] = {} "
+                "(expected kProcNotGroupable or kProcGroupable)",
+                i, trig.proc_groupable[i]));
+      }
+      ValidateShapeByte(
+          trig.proc_shapes[i], i, "Constructor::BeginBody triggers");
+    }
+  }
+
+  // Validate comb template view.
+  // All-empty spans are the intended no-op bring-up state: both entries
+  // and kernels must be empty together. Partial population is rejected.
+  // Zero-trigger kernels (trigger_count == 0) are not a valid template
+  // shape; every kernel must reference at least one trigger entry.
+  const auto& comb = package.comb;
+  bool comb_has_kernels = !comb.kernels.empty();
+  bool comb_has_entries = !comb.entries.empty();
+  if (comb_has_entries && !comb_has_kernels) {
+    throw common::InternalError(
+        "Constructor::BeginBody", "comb entries present without kernels");
+  }
+  if (comb_has_kernels && !comb_has_entries) {
+    throw common::InternalError(
+        "Constructor::BeginBody", "comb kernels present without entries");
+  }
+  if (comb_has_kernels) {
+    for (uint32_t i = 0; i < comb.kernels.size(); ++i) {
+      const auto& k = comb.kernels[i];
+      if (k.proc_within_body >= package.desc->num_processes) {
+        throw common::InternalError(
+            "Constructor::BeginBody",
+            std::format(
+                "comb kernel[{}] proc_within_body {} >= num_processes {}", i,
+                k.proc_within_body, package.desc->num_processes));
+      }
+      if (k.trigger_start > comb.entries.size() ||
+          k.trigger_count > comb.entries.size() - k.trigger_start) {
+        throw common::InternalError(
+            "Constructor::BeginBody",
+            std::format(
+                "comb kernel[{}] ({},{}) exceeds entries size {}", i,
+                k.trigger_start, k.trigger_count, comb.entries.size()));
+      }
+      if (k.trigger_count == 0) {
+        throw common::InternalError(
+            "Constructor::BeginBody",
+            std::format("comb kernel[{}] has zero triggers", i));
+      }
+    }
+  }
+
   for (const auto& entry : package.entries) {
     if (entry.schema_index >= schemas_.size()) {
       throw common::InternalError(
@@ -178,6 +456,8 @@ void Constructor::BeginBody(const BodyDescriptorPackage& package) {
       .slot_count = package.desc->slot_count,
       .entries = package.entries,
       .meta = package.meta,
+      .triggers = package.triggers,
+      .comb = package.comb,
       .active = true,
   };
 }
@@ -210,6 +490,9 @@ void Constructor::AddInstance(const char* instance_path) {
     this_ptr = design_state_.subspan(base_byte_offset).data();
   }
 
+  // Capture module_proc_base before staging body processes.
+  auto module_proc_base = static_cast<uint32_t>(staged_.size());
+
   for (const auto& entry : body_.entries) {
     SharedBodyFn body_fn{};
     std::memcpy(&body_fn, &entry.shared_body_fn, sizeof(body_fn));
@@ -225,6 +508,16 @@ void Constructor::AddInstance(const char* instance_path) {
         });
   }
 
+  uint32_t instance_ord = next_module_instance_ordinal_;
+  ++next_module_instance_ordinal_;
+  auto num_body_procs = static_cast<uint32_t>(body_.entries.size());
+  instance_ledger_.push_back(
+      InstanceLedgerEntry{
+          .owner_ordinal = instance_ord,
+          .module_proc_base = module_proc_base,
+          .num_processes = num_body_procs,
+      });
+
   // Append metadata entries for all body processes of this instance.
   uint32_t inst_path_off = AppendString(instance_path);
   for (const auto& meta : body_.meta.entries) {
@@ -235,6 +528,86 @@ void Constructor::AddInstance(const char* instance_path) {
     realized_meta_.words.push_back(file_off);
     realized_meta_.words.push_back(meta.line);
     realized_meta_.words.push_back(meta.col);
+  }
+
+  // Trigger realization for all body processes of this instance.
+  if (!body_.triggers.proc_ranges.empty()) {
+    if (body_.triggers.proc_ranges.size() != num_body_procs) {
+      throw common::InternalError(
+          "Constructor::AddInstance",
+          std::format(
+              "trigger proc_ranges size {} != body process count {}",
+              body_.triggers.proc_ranges.size(), num_body_procs));
+    }
+    if (body_.triggers.proc_groupable.size() != num_body_procs) {
+      throw common::InternalError(
+          "Constructor::AddInstance",
+          std::format(
+              "trigger proc_groupable size {} != body process count {}",
+              body_.triggers.proc_groupable.size(), num_body_procs));
+    }
+    if (body_.triggers.proc_shapes.size() != num_body_procs) {
+      throw common::InternalError(
+          "Constructor::AddInstance",
+          std::format(
+              "trigger proc_shapes size {} != body process count {}",
+              body_.triggers.proc_shapes.size(), num_body_procs));
+    }
+    for (uint32_t pwb = 0; pwb < num_body_procs; ++pwb) {
+      uint32_t proc_idx = module_proc_base + pwb;
+      const auto& range = body_.triggers.proc_ranges[pwb];
+      uint32_t flags = (body_.triggers.proc_groupable[pwb] != 0)
+                           ? process_trigger_abi::kFlagGroupable
+                           : 0;
+      for (uint32_t t = 0; t < range.count; ++t) {
+        const auto& te = body_.triggers.entries[range.start + t];
+        // Relocate body-relative slot IDs, pass design-global through.
+        uint32_t slot_id = (te.flags & kTriggerTemplateFlagDesignGlobal)
+                               ? te.slot_id
+                               : te.slot_id + signal_id_offset;
+        realized_triggers_.AppendEntry(proc_idx, slot_id, te.edge, flags);
+        trigger_provenance_.push_back(
+            TriggerProvenanceRecord{
+                .domain = TemplateDomain::kModule,
+                .owner_ordinal = instance_ord,
+                .local_ordinal = pwb,
+                .realized_proc_idx = proc_idx,
+            });
+      }
+    }
+  }
+
+  // Comb realization for comb kernels of this instance.
+  if (!body_.comb.kernels.empty()) {
+    for (const auto& kernel : body_.comb.kernels) {
+      if (kernel.proc_within_body >= num_body_procs) {
+        throw common::InternalError(
+            "Constructor::AddInstance",
+            std::format(
+                "comb kernel proc_within_body {} >= body process count {}",
+                kernel.proc_within_body, num_body_procs));
+      }
+      uint32_t proc_idx = module_proc_base + kernel.proc_within_body;
+      uint32_t comb_flags = (kernel.has_self_edge != 0) ? 1U : 0U;
+      uint32_t kernel_start_pos =
+          realized_comb_.BeginKernel(proc_idx, comb_flags);
+      uint32_t trigger_count = 0;
+      for (uint32_t t = 0; t < kernel.trigger_count; ++t) {
+        const auto& ce = body_.comb.entries[kernel.trigger_start + t];
+        uint32_t slot_id = (ce.flags & kCombTemplateFlagDesignGlobal)
+                               ? ce.slot_id
+                               : ce.slot_id + signal_id_offset;
+        realized_comb_.AppendTrigger(slot_id, ce.byte_offset, ce.byte_size);
+        ++trigger_count;
+      }
+      realized_comb_.EndKernel(kernel_start_pos, trigger_count);
+      comb_provenance_.push_back(
+          CombProvenanceRecord{
+              .owner_ordinal = instance_ord,
+              .proc_within_body = kernel.proc_within_body,
+              .realized_proc_idx = proc_idx,
+          });
+    }
   }
 
   uint32_t new_slot_base = next_slot_base_ + body_.slot_count;
@@ -300,9 +673,97 @@ auto Constructor::Finalize() -> ConstructionResult {
             process_meta_abi::kStride));
   }
 
+  // Finalize trigger/comb realized builders.
+  realized_triggers_.Finalize();
+  realized_comb_.Finalize();
+
+  // Verify connection trigger template consumption.
+  if (!conn_triggers_.proc_ranges.empty() &&
+      num_connection_ != conn_triggers_.proc_ranges.size()) {
+    throw common::InternalError(
+        "Constructor::Finalize",
+        std::format(
+            "connection triggers not fully consumed ({} of {})",
+            num_connection_, conn_triggers_.proc_ranges.size()));
+  }
+
+  // Process-index identity verification.
+  // Instance ledger ordinals are dense and match vector position:
+  // instance_ledger_[ordinal].owner_ordinal == ordinal.
+  for (uint32_t li = 0; li < instance_ledger_.size(); ++li) {
+    if (instance_ledger_[li].owner_ordinal != li) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "instance ledger ordinal mismatch: entry {} has "
+              "owner_ordinal {}",
+              li, instance_ledger_[li].owner_ordinal));
+    }
+  }
+
+  // Connection triggers: realized_proc_idx must equal the connection
+  // ordinal (connections are staged first, so i-th connection has
+  // staged_ position i).
+  // Module triggers: look up by dense ordinal in instance ledger.
+  for (const auto& rec : trigger_provenance_) {
+    if (rec.domain == TemplateDomain::kConnection) {
+      if (rec.realized_proc_idx != rec.owner_ordinal) {
+        throw common::InternalError(
+            "Constructor::Finalize",
+            std::format(
+                "connection trigger proc_idx mismatch: "
+                "realized {} != owner_ordinal {}",
+                rec.realized_proc_idx, rec.owner_ordinal));
+      }
+    } else {
+      if (rec.owner_ordinal >= instance_ledger_.size()) {
+        throw common::InternalError(
+            "Constructor::Finalize",
+            std::format(
+                "module trigger owner_ordinal {} >= ledger size {}",
+                rec.owner_ordinal, instance_ledger_.size()));
+      }
+      const auto& le = instance_ledger_[rec.owner_ordinal];
+      uint32_t expected = le.module_proc_base + rec.local_ordinal;
+      if (rec.realized_proc_idx != expected) {
+        throw common::InternalError(
+            "Constructor::Finalize",
+            std::format(
+                "module trigger proc_idx mismatch: "
+                "realized {} != expected {} "
+                "(base {} + ordinal {})",
+                rec.realized_proc_idx, expected, le.module_proc_base,
+                rec.local_ordinal));
+      }
+    }
+  }
+  for (const auto& rec : comb_provenance_) {
+    if (rec.owner_ordinal >= instance_ledger_.size()) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "comb owner_ordinal {} >= ledger size {}", rec.owner_ordinal,
+              instance_ledger_.size()));
+    }
+    const auto& le = instance_ledger_[rec.owner_ordinal];
+    uint32_t expected = le.module_proc_base + rec.proc_within_body;
+    if (rec.realized_proc_idx != expected) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "comb proc_idx mismatch: "
+              "realized {} != expected {} "
+              "(base {} + pwb {})",
+              rec.realized_proc_idx, expected, le.module_proc_base,
+              rec.proc_within_body));
+    }
+  }
+
   if (num_total == 0) {
     ConstructionResult result;
     result.process_meta = std::move(realized_meta_);
+    result.trigger_meta = std::move(realized_triggers_);
+    result.comb_meta = std::move(realized_comb_);
     return result;
   }
 
@@ -335,6 +796,8 @@ auto Constructor::Finalize() -> ConstructionResult {
   result.num_total = num_total;
   result.num_connection = num_connection_;
   result.process_meta = std::move(realized_meta_);
+  result.trigger_meta = std::move(realized_triggers_);
+  result.comb_meta = std::move(realized_comb_);
   return result;
 }
 
@@ -410,7 +873,12 @@ auto LyraConstructorCreate(
     uint32_t num_package_slots, void* design_state, uint64_t design_state_size,
     const lyra::runtime::ProcessMetaTemplateEntry* conn_meta_entries,
     uint32_t num_conn_meta, const char* conn_meta_pool,
-    uint32_t conn_meta_pool_size) -> void* {
+    uint32_t conn_meta_pool_size,
+    const lyra::runtime::TriggerTemplateEntry* conn_trigger_entries,
+    uint32_t num_conn_trigger_entries,
+    const lyra::runtime::TriggerRange* conn_trigger_ranges,
+    uint32_t num_conn_trigger_ranges, const uint8_t* conn_trigger_shapes,
+    const uint8_t* conn_trigger_groupable) -> void* {
   ValidateMetaAbiInputs(
       conn_meta_entries, num_conn_meta, conn_meta_pool, conn_meta_pool_size,
       "LyraConstructorCreate");
@@ -419,11 +887,18 @@ auto LyraConstructorCreate(
       .pool = conn_meta_pool,
       .pool_size = conn_meta_pool_size,
   };
+  lyra::runtime::TriggerTemplateView conn_triggers{
+      .entries = std::span(conn_trigger_entries, num_conn_trigger_entries),
+      .proc_ranges = std::span(conn_trigger_ranges, num_conn_trigger_ranges),
+      .proc_shapes = std::span(conn_trigger_shapes, num_conn_trigger_ranges),
+      .proc_groupable =
+          std::span(conn_trigger_groupable, num_conn_trigger_ranges),
+  };
   auto ctor = std::make_unique<lyra::runtime::Constructor>(
       std::span(schemas, num_schemas), std::span(slot_byte_offsets, num_slots),
       num_package_slots,
       std::span(static_cast<std::byte*>(design_state), design_state_size),
-      conn_meta);
+      conn_meta, conn_triggers);
   return ctor.release();
 }
 
@@ -438,7 +913,16 @@ void LyraConstructorBeginBody(
     void* ctor, const lyra::runtime::BodyRealizationDesc* desc,
     const lyra::runtime::BodyProcessEntry* entries, uint32_t num_entries,
     const lyra::runtime::ProcessMetaTemplateEntry* meta_entries,
-    uint32_t num_meta, const char* meta_pool, uint32_t meta_pool_size) {
+    uint32_t num_meta, const char* meta_pool, uint32_t meta_pool_size,
+    const lyra::runtime::TriggerTemplateEntry* trigger_entries,
+    uint32_t num_trigger_entries,
+    const lyra::runtime::TriggerRange* trigger_ranges,
+    uint32_t num_trigger_ranges, const uint8_t* trigger_shapes,
+    const uint8_t* trigger_groupable,
+    const lyra::runtime::CombTemplateEntry* comb_entries,
+    uint32_t num_comb_entries,
+    const lyra::runtime::CombKernelDesc* comb_kernels,
+    uint32_t num_comb_kernels) {
   ValidateHandle(ctor, "LyraConstructorBeginBody");
   ValidateHandle(desc, "LyraConstructorBeginBody");
   ValidateMetaAbiInputs(
@@ -452,6 +936,19 @@ void LyraConstructorBeginBody(
               .entries = std::span(meta_entries, num_meta),
               .pool = meta_pool,
               .pool_size = meta_pool_size,
+          },
+      .triggers =
+          lyra::runtime::TriggerTemplateView{
+              .entries = std::span(trigger_entries, num_trigger_entries),
+              .proc_ranges = std::span(trigger_ranges, num_trigger_ranges),
+              .proc_shapes = std::span(trigger_shapes, num_trigger_ranges),
+              .proc_groupable =
+                  std::span(trigger_groupable, num_trigger_ranges),
+          },
+      .comb =
+          lyra::runtime::CombTemplateView{
+              .entries = std::span(comb_entries, num_comb_entries),
+              .kernels = std::span(comb_kernels, num_comb_kernels),
           },
   };
   static_cast<lyra::runtime::Constructor*>(ctor)->BeginBody(package);
@@ -516,6 +1013,39 @@ auto LyraConstructionResultGetProcessMetaPoolSize(void* result_raw)
   return static_cast<uint32_t>(
       static_cast<lyra::runtime::ConstructionResult*>(result_raw)
           ->process_meta.pool.size());
+}
+
+auto LyraConstructionResultGetTriggerWords(void* result_raw)
+    -> const uint32_t* {
+  ValidateHandle(result_raw, "LyraConstructionResultGetTriggerWords");
+  auto& meta =
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)->trigger_meta;
+  if (meta.IsEmpty()) return nullptr;
+  return meta.words.data();
+}
+
+auto LyraConstructionResultGetTriggerWordCount(void* result_raw) -> uint32_t {
+  ValidateHandle(result_raw, "LyraConstructionResultGetTriggerWordCount");
+  auto& meta =
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)->trigger_meta;
+  if (meta.IsEmpty()) return 0;
+  return static_cast<uint32_t>(meta.words.size());
+}
+
+auto LyraConstructionResultGetCombWords(void* result_raw) -> const uint32_t* {
+  ValidateHandle(result_raw, "LyraConstructionResultGetCombWords");
+  auto& meta =
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)->comb_meta;
+  if (meta.IsEmpty()) return nullptr;
+  return meta.words.data();
+}
+
+auto LyraConstructionResultGetCombWordCount(void* result_raw) -> uint32_t {
+  ValidateHandle(result_raw, "LyraConstructionResultGetCombWordCount");
+  auto& meta =
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)->comb_meta;
+  if (meta.IsEmpty()) return 0;
+  return static_cast<uint32_t>(meta.words.size());
 }
 
 void LyraConstructionResultDestroy(void* result_raw) {

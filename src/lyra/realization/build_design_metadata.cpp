@@ -6,7 +6,6 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
-#include "lyra/runtime/process_trigger_abi.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/trace_signal_meta_abi.hpp"
 
@@ -65,31 +64,6 @@ auto BuildBackEdgeSiteMeta(
   }
 
   return {.words = std::move(words), .pool = std::move(pool)};
-}
-
-auto BuildCombKernelWords(const std::vector<metadata::CombKernelInput>& kernels)
-    -> std::vector<uint32_t> {
-  if (kernels.empty()) {
-    return {};
-  }
-
-  std::vector<uint32_t> words;
-  words.push_back(static_cast<uint32_t>(kernels.size()));
-
-  for (const auto& ck : kernels) {
-    words.push_back(ck.scheduled_process_index);
-    // Flags bitmask: bit 0 = kSelfEdge (write set overlaps trigger set).
-    uint32_t flags = ck.has_self_edge ? 1U : 0U;
-    words.push_back(flags);
-    words.push_back(static_cast<uint32_t>(ck.triggers.size()));
-    for (const auto& trigger : ck.triggers) {
-      words.push_back(trigger.slot_id);
-      words.push_back(trigger.byte_offset);
-      words.push_back(trigger.byte_size);
-    }
-  }
-
-  return words;
 }
 
 auto BuildTraceSignalMeta(
@@ -162,42 +136,10 @@ auto BuildDesignMetadata(const metadata::DesignMetadataInputs& input)
         "trace_signal_meta words size not divisible by kStride");
   }
 
-  // Serialize process trigger metadata.
-  // Row layout defined by process_trigger_abi constants.
-  // Format: [num_entries, per-row fields in ABI-defined order...]
-  std::vector<uint32_t> process_trigger_words;
-  if (!input.process_triggers.empty()) {
-    process_trigger_words.reserve(
-        1 + (input.process_triggers.size() *
-             runtime::process_trigger_abi::kStride));
-    process_trigger_words.push_back(
-        static_cast<uint32_t>(input.process_triggers.size()));
-    for (const auto& pt : input.process_triggers) {
-      auto base = process_trigger_words.size();
-      process_trigger_words.resize(
-          base + runtime::process_trigger_abi::kStride);
-      process_trigger_words
-          [base + runtime::process_trigger_abi::kFieldProcessIndex] =
-              pt.scheduled_process_index;
-      process_trigger_words[base + runtime::process_trigger_abi::kFieldSlotId] =
-          pt.slot_id;
-      process_trigger_words
-          [base + runtime::process_trigger_abi::kFieldEdgeKind] =
-              static_cast<uint32_t>(pt.edge);
-      uint32_t flags = 0;
-      if (pt.is_groupable)
-        flags |= runtime::process_trigger_abi::kFlagGroupable;
-      process_trigger_words[base + runtime::process_trigger_abi::kFieldFlags] =
-          flags;
-    }
-  }
-
   return metadata::DesignMetadata{
       .slot_meta_words = std::move(slot_meta_words),
       .back_edge_site_meta = std::move(back_edge_site_meta),
       .connection_descriptors = input.connection_descriptors,
-      .comb_kernel_words = BuildCombKernelWords(input.comb_kernels),
-      .process_trigger_words = std::move(process_trigger_words),
       .instance_paths = input.instance_paths,
       .trace_signal_meta = std::move(trace_signal_meta),
   };

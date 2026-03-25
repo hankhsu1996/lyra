@@ -11,7 +11,6 @@
 
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/llvm_backend/process.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/metadata/design_metadata.hpp"
 #include "lyra/mir/design.hpp"
@@ -43,24 +42,6 @@ auto PrepareBackEdgeSiteInputs(
 // needed.
 auto ExtractConnectionDescriptorEntries(const Layout& layout)
     -> std::vector<metadata::ConnectionDescriptorEntry>;
-
-// Prepare comb kernel inputs from layout data.
-// Trigger observation data is pre-resolved in the layout; no arena access
-// needed. Canonicalizes to one trigger per (kernel, slot).
-auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
-    -> std::vector<metadata::CombKernelInput>;
-
-// Build constructor-visible process trigger inputs from canonical entries.
-// Validates the design-global signal invariant, classifies Stage-1
-// groupability (static shape, uniform edge, full-slot), and flattens
-// to one ProcessTriggerInput row per trigger fact.
-//
-// Precondition: all signal refs in entries must be design-global.
-// Module-local signals must have been canonicalized by the caller
-// (lower.cpp per-instance trigger collection).
-auto BuildProcessTriggerInputs(
-    const std::vector<ProcessTriggerEntry>& entries, uint32_t slot_count)
-    -> std::vector<metadata::ProcessTriggerInput>;
 
 // Build final trace-signal metadata inputs from compile-owned provenance.
 // Assembles hierarchical names, computes bit widths, maps trace kinds.
@@ -109,9 +90,7 @@ struct PortBindingForwardingCandidate {
 // (like active trace references) are flagged but do not exclude.
 auto FindPortBindingForwardingCandidates(
     std::span<const metadata::ConnectionDescriptorEntry> connections,
-    std::span<const metadata::ProcessTriggerInput> process_triggers,
-    std::span<const metadata::CombKernelInput> comb_inputs, uint32_t num_slots)
-    -> std::vector<PortBindingForwardingCandidate>;
+    const Layout& layout) -> std::vector<PortBindingForwardingCandidate>;
 
 // Log forwarding candidate analysis results to stderr.
 void LogPortBindingForwardingCandidates(
@@ -127,10 +106,6 @@ struct MetadataGlobals {
   uint32_t back_edge_site_meta_pool_size = 0;
   llvm::Value* conn_desc_table = nullptr;
   uint32_t conn_desc_count = 0;
-  llvm::Value* comb_kernel_words = nullptr;
-  uint32_t comb_kernel_word_count = 0;
-  llvm::Value* process_trigger_words = nullptr;
-  uint32_t process_trigger_word_count = 0;
   llvm::Value* instance_paths_array = nullptr;
   uint32_t instance_path_count = 0;
   llvm::Constant* trace_signal_meta_words = nullptr;

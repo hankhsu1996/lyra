@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -22,6 +23,8 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/runtime/body_realization_desc.hpp"
+#include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -208,32 +211,6 @@ struct ConnectionKernelEntry {
       metadata::ConnectionKernelOrigin::kPortBinding;
 };
 
-// Trigger observation for a comb kernel input slot.
-// Stores pre-resolved byte-range data, not arena-local PlaceId.
-struct CombTrigger {
-  mir::SlotId slot;
-  // nullopt => observe full slot.
-  std::optional<ResolvedObservation> observation;
-};
-
-// Entry for a pure combinational process that can be evaluated inline.
-// Unlike connections (memcpy), comb kernels run compiled code but skip
-// the full scheduler overhead (subscriptions, queuing, SuspendRecord).
-//
-// Process identity is the canonical scheduled-process row, assigned once
-// during BuildLayout. Later phases consume this directly -- they must not
-// reconstruct identity from arena-local IDs.
-struct CombKernelEntry {
-  // 0-based index into the module-process portion of scheduled_processes,
-  // i.e. scheduled_processes[num_init + scheduled_process_index].
-  // Assigned once during BuildLayout.
-  uint32_t scheduled_process_index = 0;
-  std::vector<CombTrigger> triggers;
-  // True if the kernel's write slot set overlaps its trigger slot set.
-  // Conservative: slot-granular, so sub-slot disjointness is not considered.
-  bool has_self_edge = false;
-};
-
 // Scheduled process record: pairs a ProcessId with optional module instance.
 // Module-owned processes have a valid module_index; design-level processes
 // (init, connection) have ModuleIndex::kNone -- they are not bound to any
@@ -252,6 +229,89 @@ struct OwnedProcessMetaTemplate {
   std::vector<runtime::ProcessMetaTemplateEntry> entries;
   // NUL-terminated file path strings, '\0' at [0] as empty sentinel.
   std::vector<char> pool;
+};
+
+// Owning trigger metadata template.
+//
+// Used for both module-body and connection process trigger templates.
+//
+// Slot-id contract: each entry's slot_id is either body-relative
+// (kTriggerTemplateFlagDesignGlobal clear) or design-global
+// (kTriggerTemplateFlagDesignGlobal set). Body templates may contain
+// both kinds (module-local slots are body-relative, design-global
+// slots from hierarchical accesses are already absolute). Connection
+// templates are always design-global. The constructor applies
+// slot-base relocation only for entries without the design-global flag.
+//
+// Indexing contract: entries are keyed by explicit local process ordinal
+// within the owning template domain (proc_within_body for body templates,
+// connection scheduling order for connection templates).
+//
+// Ordering contract: entries within each proc_ranges slice are in MIR
+// Wait trigger declaration order. Constructor realization preserves
+// this order exactly in realized word tables.
+struct OwnedTriggerTemplate {
+  std::vector<runtime::TriggerTemplateEntry> entries;
+  // Per local-process-ordinal: (start, count) into entries.
+  std::vector<runtime::TriggerRange> proc_ranges;
+  // Per local-process-ordinal: trigger shape kind (WaitShapeKind as u8).
+  // uint8_t transport type avoids reinterpret_cast at the C ABI boundary.
+  std::vector<uint8_t> proc_shapes;
+  // Per local-process-ordinal: pre-computed stage-1 groupability.
+  // uint8_t (not bool) for contiguous storage compatible with span.
+  std::vector<uint8_t> proc_groupable;
+};
+
+// Owning comb kernel metadata template.
+//
+// Slot-id contract: each entry's slot_id is either body-relative
+// (kCombTemplateFlagDesignGlobal clear) or design-global
+// (kCombTemplateFlagDesignGlobal set). Body comb templates may contain
+// both kinds. The constructor applies slot-base relocation only for
+// entries without the design-global flag.
+//
+// Ordering contract: kernels are ordered by proc_within_body. Within
+// each kernel, trigger entries are in canonical order: per-slot
+// observation merging followed by sort by final design-global slot_id.
+// The final global id is computed
+// from any representative instance's base_slot for module-local signals;
+// this is valid because the per-body entry order is invariant under a
+// constant base-slot translation across all instances of the same body.
+struct OwnedCombTemplate {
+  std::vector<runtime::CombTemplateEntry> entries;
+  std::vector<runtime::CombKernelDesc> kernels;
+};
+
+// Scoped signal identity key. Used for scope-aware slot identity
+// in comb kernel analysis and template extraction to avoid conflating
+// module-local and design-global slots with the same numeric id.
+struct ScopedSignalKey {
+  mir::SignalRef::Scope scope = mir::SignalRef::Scope::kModuleLocal;
+  uint32_t id = 0;
+  auto operator==(const ScopedSignalKey&) const -> bool = default;
+};
+
+struct ScopedSignalKeyHash {
+  auto operator()(const ScopedSignalKey& k) const noexcept -> size_t {
+    auto scope_val =
+        static_cast<std::underlying_type_t<mir::SignalRef::Scope>>(k.scope);
+    return std::hash<uint64_t>{}(
+        (static_cast<uint64_t>(scope_val) << 32) | k.id);
+  }
+};
+
+// Body-relative comb kernel analysis result.
+//
+// Returned by AnalyzeCombKernel. OwnedCombTemplate construction is
+// the sole consumer. No other code path may re-derive kernel facts
+// from MIR after this result is produced.
+struct CombAnalysisResult {
+  struct TriggerFact {
+    mir::SignalRef signal = {};
+    std::optional<mir::PlaceId> observed_place;
+  };
+  std::vector<TriggerFact> triggers;
+  bool has_self_edge = false;
 };
 
 // Includes DesignLayout (design-wide state) plus process layout and
@@ -274,8 +334,6 @@ struct Layout {
   size_t num_module_process_base = 0;
   // Connection processes evaluated as batch memcpy
   std::vector<ConnectionKernelEntry> connection_kernel_entries;
-  // Pure combinational processes evaluated inline via compiled function
-  std::vector<CombKernelEntry> comb_kernel_entries;
   // ProcessStateHeader type: {SuspendRecord, DesignState*}
   llvm::StructType* header_type = nullptr;
   // SuspendRecord type (opaque blob matching C++ struct size)
@@ -349,22 +407,69 @@ struct Layout {
     // The post-layout metadata template extraction pass is the sole
     // producer.
     OwnedProcessMetaTemplate meta;
+    // Trigger metadata template. Flat entries + per-process range table.
+    // The post-layout template extraction pass is the sole producer.
+    OwnedTriggerTemplate triggers;
+    // Comb kernel metadata template. Flat entries + per-kernel descriptors.
+    // The post-layout template extraction pass is the sole producer.
+    OwnedCombTemplate comb;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
 
-  // Per-connection schema mapping. Ordered to match connection process
-  // scheduling order.
+  // Per-connection codegen trigger fact. Intentionally reduced payload
+  // from ProcessTriggerFact (process.hpp): only the fields needed for
+  // trigger template extraction. Stored on the connection realization
+  // record without requiring process.hpp include.
+  //
+  // Connection trigger signals are always design-global by construction:
+  // connection processes are design-level (not module-scoped), so all
+  // signal refs are kDesignGlobal. Template extraction sets
+  // kTriggerTemplateFlagDesignGlobal on every entry unconditionally.
+  struct ConnectionTriggerFact {
+    mir::SignalRef signal = {};
+    common::EdgeKind edge = common::EdgeKind::kAnyChange;
+    bool has_observed_place = false;
+  };
+  struct ConnectionTriggerResult {
+    std::vector<ConnectionTriggerFact> triggers;
+    runtime::WaitShapeKind shape = runtime::WaitShapeKind::kStatic;
+  };
+
+  // Per-connection schema mapping and trigger codegen result.
+  // Ordered to match connection process scheduling order.
   struct ConnectionRealizationInfo {
     uint32_t schema_index = 0;
+    // Stable process identity for Phase 5 connection-ordinal verification.
+    // Set during BuildLayout from the scheduled_processes entry.
+    mir::ProcessId process_id = {};
+    // Trigger codegen result, populated during Phase 5.
+    // Consumed by the post-layout trigger template extraction pass.
+    std::optional<ConnectionTriggerResult> trigger;
   };
   std::vector<ConnectionRealizationInfo> connection_realization_infos;
 
-  // Connection process metadata template. Descriptor-ready canonical form.
-  // One entry per connection process, in the same canonical ordering as
-  // connection_realization_infos and the EmitConstructorFunction connection
-  // loop. The post-layout metadata template extraction pass is the sole
-  // producer.
-  OwnedProcessMetaTemplate connection_meta;
+  // Connection-process template package. Groups all connection-scoped
+  // owning template data. Parallel to BodyRealizationInfo for body
+  // templates.
+  //
+  // All fields are indexed by connection process scheduling order:
+  // the canonical ordering produced by BuildLayout Phase 2 (the
+  // connection scheduling loop), which also produces
+  // connection_realization_infos.
+  //
+  // Identity contract:
+  // - meta.entries[i] describes the i-th connection process
+  // - triggers.proc_ranges[i] describes the i-th connection's triggers
+  // - The i-th AddConnection() call at constructor time consumes both
+  struct ConnectionTemplates {
+    // Process metadata template. The post-layout metadata template
+    // extraction pass is the sole producer.
+    OwnedProcessMetaTemplate meta;
+    // Trigger metadata template. The post-layout template extraction
+    // pass is the sole producer.
+    OwnedTriggerTemplate triggers;
+  };
+  ConnectionTemplates connection_templates;
 };
 
 // Type kind for variable inspection (also used in layout)
@@ -510,5 +615,21 @@ using IndexResolver =
 auto ResolveByteRange(
     const SlotStorageSpec& root_spec, const StorageSpecArena& arena,
     const mir::Place& place, const IndexResolver& resolve_index) -> ByteRange;
+
+// Body-relative comb kernel analysis.
+// Returns nullopt if the process does not qualify as a comb kernel.
+// Result is body-relative: signal refs stay kModuleLocal, self-edge
+// detection uses body-relative slot overlap. OwnedCombTemplate
+// construction is the sole consumer of this result.
+auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
+    -> std::optional<CombAnalysisResult>;
+
+// Resolve a trigger observation to a byte range within a design slot.
+// Returns nullopt if the projection cannot be precisely resolved
+// (degraded to full-slot observation).
+auto ResolveObservation(
+    const mir::Arena& arena, const DesignLayout& design_layout,
+    mir::SlotId design_global_slot, mir::PlaceId place_id)
+    -> std::optional<ResolvedObservation>;
 
 }  // namespace lyra::lowering::mir_to_llvm

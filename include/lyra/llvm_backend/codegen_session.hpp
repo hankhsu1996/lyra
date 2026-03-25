@@ -153,12 +153,6 @@ struct CodegenSession {
   RealizationData realization;
   std::vector<llvm::Function*> process_funcs;
   std::vector<WaitSiteEntry> wait_sites;
-  // Canonical process-trigger entries for non-init scheduled processes
-  // that have at least one Wait terminator. Each entry's
-  // scheduled_process_index is the post-init runtime-facing index.
-  // Not every non-init process has an entry (init and trigger-free
-  // processes are absent).
-  std::vector<ProcessTriggerEntry> process_triggers;
   std::vector<SlotInfo> slot_info;
   size_t num_init_processes = 0;
   // Per-body compiled process functions for body

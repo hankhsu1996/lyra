@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/runtime/body_realization_desc.hpp"
+#include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_schema.hpp"
 
@@ -32,6 +33,24 @@ struct ProcessMetaTemplateView {
   uint32_t pool_size = 0;
 };
 
+// Non-owning view of a trigger metadata template.
+// Transport shape for the C ABI boundary. Both body and connection
+// trigger templates are projected through this same view type.
+// Constructor consumes triggers by explicit local process ordinal
+// via proc_ranges[ordinal].
+struct TriggerTemplateView {
+  std::span<const TriggerTemplateEntry> entries;
+  std::span<const TriggerRange> proc_ranges;
+  std::span<const uint8_t> proc_shapes;
+  std::span<const uint8_t> proc_groupable;
+};
+
+// Non-owning view of a comb kernel metadata template.
+struct CombTemplateView {
+  std::span<const CombTemplateEntry> entries;
+  std::span<const CombKernelDesc> kernels;
+};
+
 // Complete body descriptor for one BeginBody call.
 // Packages process entries and metadata template into one coherent unit.
 // This is a constructor-facing transport view assembled from emitted globals
@@ -42,6 +61,43 @@ struct BodyDescriptorPackage {
   const BodyRealizationDesc* desc = nullptr;
   std::span<const BodyProcessEntry> entries;
   ProcessMetaTemplateView meta;
+  TriggerTemplateView triggers;
+  CombTemplateView comb;
+};
+
+// Constructor-produced trigger metadata artifact.
+// Builder/owner that encapsulates header-patch bookkeeping.
+struct RealizedTriggerMeta {
+  std::vector<uint32_t> words;
+  uint32_t entry_count = 0;
+
+  void Init();
+  void AppendEntry(
+      uint32_t proc_idx, uint32_t slot_id, uint32_t edge, uint32_t flags);
+  void Finalize();
+
+  // Header-only word table (entry_count == 0) is semantically empty.
+  [[nodiscard]] auto IsEmpty() const -> bool {
+    return entry_count == 0;
+  }
+};
+
+// Constructor-produced comb kernel metadata artifact.
+// Builder/owner that encapsulates header-patch bookkeeping.
+struct RealizedCombMeta {
+  std::vector<uint32_t> words;
+  uint32_t kernel_count = 0;
+
+  void Init();
+  auto BeginKernel(uint32_t proc_idx, uint32_t flags) -> uint32_t;
+  void AppendTrigger(uint32_t slot_id, uint32_t byte_off, uint32_t byte_size);
+  void EndKernel(uint32_t trigger_count_pos, uint32_t trigger_count);
+  void Finalize();
+
+  // Header-only word table (kernel_count == 0) is semantically empty.
+  [[nodiscard]] auto IsEmpty() const -> bool {
+    return kernel_count == 0;
+  }
 };
 
 // Result of constructor-time process realization.
@@ -67,6 +123,12 @@ struct ConstructionResult {
 
   // Constructor-produced process metadata.
   RealizedProcessMeta process_meta;
+
+  // Constructor-produced trigger metadata.
+  RealizedTriggerMeta trigger_meta;
+
+  // Constructor-produced comb kernel metadata.
+  RealizedCombMeta comb_meta;
 
   ConstructionResult() = default;
   ~ConstructionResult();
@@ -111,7 +173,8 @@ class Constructor {
   Constructor(
       std::span<const ProcessStateSchema> schemas,
       std::span<const uint64_t> slot_byte_offsets, uint32_t num_package_slots,
-      std::span<std::byte> design_state, ProcessMetaTemplateView conn_meta);
+      std::span<std::byte> design_state, ProcessMetaTemplateView conn_meta,
+      TriggerTemplateView conn_triggers);
 
   // Add a connection process. Must be called before any BeginBody/AddInstance.
   // Fails immediately if connection template is exhausted.
@@ -152,6 +215,8 @@ class Constructor {
     uint32_t slot_count = 0;
     std::span<const BodyProcessEntry> entries;
     ProcessMetaTemplateView meta;
+    TriggerTemplateView triggers;
+    CombTemplateView comb;
     bool active = false;
   };
 
@@ -166,6 +231,9 @@ class Constructor {
   ProcessMetaTemplateView conn_meta_;
   uint32_t conn_meta_index_ = 0;
 
+  // Connection trigger template (immutable after construction).
+  TriggerTemplateView conn_triggers_;
+
   // Active body descriptor (set atomically by BeginBody).
   ActiveBodyDescriptor body_;
 
@@ -176,6 +244,34 @@ class Constructor {
 
   // Realized metadata output.
   RealizedProcessMeta realized_meta_;
+
+  // Realized trigger/comb output.
+  RealizedTriggerMeta realized_triggers_;
+  RealizedCombMeta realized_comb_;
+
+  // Process-index verification infrastructure.
+  struct InstanceLedgerEntry {
+    uint32_t owner_ordinal;
+    uint32_t module_proc_base;
+    uint32_t num_processes;
+  };
+  std::vector<InstanceLedgerEntry> instance_ledger_;
+  uint32_t next_module_instance_ordinal_ = 0;
+
+  enum class TemplateDomain : uint8_t { kConnection, kModule };
+  struct TriggerProvenanceRecord {
+    TemplateDomain domain;
+    uint32_t owner_ordinal;
+    uint32_t local_ordinal;
+    uint32_t realized_proc_idx;
+  };
+  struct CombProvenanceRecord {
+    uint32_t owner_ordinal;
+    uint32_t proc_within_body;
+    uint32_t realized_proc_idx;
+  };
+  std::vector<TriggerProvenanceRecord> trigger_provenance_;
+  std::vector<CombProvenanceRecord> comb_provenance_;
 
   // Stable string storage for intern map keys.
   // std::deque never invalidates existing entries on push_back,
@@ -209,7 +305,12 @@ auto LyraConstructorCreate(
     uint32_t num_package_slots, void* design_state, uint64_t design_state_size,
     const lyra::runtime::ProcessMetaTemplateEntry* conn_meta_entries,
     uint32_t num_conn_meta, const char* conn_meta_pool,
-    uint32_t conn_meta_pool_size) -> void*;
+    uint32_t conn_meta_pool_size,
+    const lyra::runtime::TriggerTemplateEntry* conn_trigger_entries,
+    uint32_t num_conn_trigger_entries,
+    const lyra::runtime::TriggerRange* conn_trigger_ranges,
+    uint32_t num_conn_trigger_ranges, const uint8_t* conn_trigger_shapes,
+    const uint8_t* conn_trigger_groupable) -> void*;
 
 void LyraConstructorAddConnection(
     void* ctor, const lyra::runtime::ConnectionRealizationDesc* desc);
@@ -218,7 +319,16 @@ void LyraConstructorBeginBody(
     void* ctor, const lyra::runtime::BodyRealizationDesc* desc,
     const lyra::runtime::BodyProcessEntry* entries, uint32_t num_entries,
     const lyra::runtime::ProcessMetaTemplateEntry* meta_entries,
-    uint32_t num_meta, const char* meta_pool, uint32_t meta_pool_size);
+    uint32_t num_meta, const char* meta_pool, uint32_t meta_pool_size,
+    const lyra::runtime::TriggerTemplateEntry* trigger_entries,
+    uint32_t num_trigger_entries,
+    const lyra::runtime::TriggerRange* trigger_ranges,
+    uint32_t num_trigger_ranges, const uint8_t* trigger_shapes,
+    const uint8_t* trigger_groupable,
+    const lyra::runtime::CombTemplateEntry* comb_entries,
+    uint32_t num_comb_entries,
+    const lyra::runtime::CombKernelDesc* comb_kernels,
+    uint32_t num_comb_kernels);
 
 void LyraConstructorAddInstance(void* ctor, const char* instance_path);
 
@@ -232,6 +342,11 @@ auto LyraConstructionResultGetProcessMetaWords(void* result) -> const uint32_t*;
 auto LyraConstructionResultGetProcessMetaWordCount(void* result) -> uint32_t;
 auto LyraConstructionResultGetProcessMetaPool(void* result) -> const char*;
 auto LyraConstructionResultGetProcessMetaPoolSize(void* result) -> uint32_t;
+
+auto LyraConstructionResultGetTriggerWords(void* result) -> const uint32_t*;
+auto LyraConstructionResultGetTriggerWordCount(void* result) -> uint32_t;
+auto LyraConstructionResultGetCombWords(void* result) -> const uint32_t*;
+auto LyraConstructionResultGetCombWordCount(void* result) -> uint32_t;
 
 void LyraConstructionResultDestroy(void* result);
 

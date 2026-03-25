@@ -1,12 +1,10 @@
 #include "lyra/llvm_backend/design_metadata_lowering.hpp"
 
-#include <algorithm>
 #include <cstdint>
-#include <cstdio>
 #include <format>
+#include <iostream>
 #include <span>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include <llvm/IR/Constants.h>
@@ -17,18 +15,15 @@
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/origin_id.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
-#include "lyra/llvm_backend/process.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/mir/arena.hpp"
-#include "lyra/mir/design.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
+#include "lyra/runtime/body_realization_desc.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
@@ -365,113 +360,6 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
   return entries;
 }
 
-auto PrepareCombKernelInputs(const Layout& layout, size_t num_init)
-    -> std::vector<metadata::CombKernelInput> {
-  const auto& comb_entries = layout.comb_kernel_entries;
-  if (comb_entries.empty()) {
-    return {};
-  }
-
-  if (layout.scheduled_processes.size() < num_init) {
-    throw common::InternalError(
-        "PrepareCombKernelInputs", "scheduled_processes.size() < num_init");
-  }
-  if (layout.num_module_process_base < num_init) {
-    throw common::InternalError(
-        "PrepareCombKernelInputs", "num_module_process_base < num_init");
-  }
-  if (layout.num_module_process_base > layout.scheduled_processes.size()) {
-    throw common::InternalError(
-        "PrepareCombKernelInputs",
-        "num_module_process_base exceeds scheduled_processes.size()");
-  }
-
-  auto num_module_processes =
-      layout.scheduled_processes.size() - layout.num_module_process_base;
-  // Post-init offset of the module-process slice, used to convert
-  // module-relative scheduled_process_index to absolute post-init index.
-  auto module_post_init_offset =
-      static_cast<uint32_t>(layout.num_module_process_base - num_init);
-
-  std::vector<metadata::CombKernelInput> inputs;
-  inputs.reserve(comb_entries.size());
-
-  for (const auto& ck : comb_entries) {
-    if (ck.scheduled_process_index >= num_module_processes) {
-      throw common::InternalError(
-          "PrepareCombKernelInputs",
-          std::format(
-              "scheduled_process_index {} exceeds module process "
-              "count {}",
-              ck.scheduled_process_index, num_module_processes));
-    }
-
-    // Group pre-resolved observations by slot_id and merge into one trigger
-    // per (kernel, slot).
-    struct SlotAccum {
-      uint32_t byte_offset = 0;
-      uint32_t byte_size = 0;
-      bool is_full_slot = false;
-    };
-    std::unordered_map<uint32_t, SlotAccum> per_slot;
-
-    for (const auto& trigger : ck.triggers) {
-      uint32_t slot_id = trigger.slot.value;
-      auto& accum = per_slot[slot_id];
-
-      if (accum.is_full_slot) continue;
-
-      if (!trigger.observation) {
-        accum.is_full_slot = true;
-        accum.byte_offset = 0;
-        accum.byte_size = 0;
-        continue;
-      }
-
-      if (accum.byte_size == 0 && !accum.is_full_slot) {
-        accum.byte_offset = trigger.observation->byte_offset;
-        accum.byte_size = trigger.observation->byte_size;
-      } else {
-        // Merge: bounding range [min_offset, max_end)
-        uint32_t existing_end = accum.byte_offset + accum.byte_size;
-        uint32_t new_end =
-            trigger.observation->byte_offset + trigger.observation->byte_size;
-        accum.byte_offset =
-            std::min(accum.byte_offset, trigger.observation->byte_offset);
-        accum.byte_size = std::max(existing_end, new_end) - accum.byte_offset;
-      }
-    }
-
-    std::vector<metadata::CombTriggerInput> merged_triggers;
-    merged_triggers.reserve(per_slot.size());
-    for (const auto& [slot_id, accum] : per_slot) {
-      if (accum.is_full_slot) {
-        merged_triggers.push_back({.slot_id = slot_id});
-      } else {
-        merged_triggers.push_back({
-            .slot_id = slot_id,
-            .byte_offset = accum.byte_offset,
-            .byte_size = accum.byte_size,
-        });
-      }
-    }
-
-    // Deterministic output: sort by slot_id (unordered_map iteration is
-    // random).
-    std::ranges::sort(
-        merged_triggers, {}, &metadata::CombTriggerInput::slot_id);
-
-    inputs.push_back({
-        .scheduled_process_index =
-            module_post_init_offset + ck.scheduled_process_index,
-        .triggers = std::move(merged_triggers),
-        .has_self_edge = ck.has_self_edge,
-    });
-  }
-
-  return inputs;
-}
-
 auto EmitDesignMetadataGlobals(
     Context& context, const metadata::DesignMetadata& metadata,
     llvm::IRBuilder<>& builder) -> MetadataGlobals {
@@ -564,18 +452,6 @@ auto EmitDesignMetadataGlobals(
     result.conn_desc_table = null_ptr;
   }
 
-  // Comb kernel words
-  result.comb_kernel_words = EmitWordArrayGlobal(
-      mod, ctx, metadata.comb_kernel_words, "__lyra_comb_kernel_words");
-  result.comb_kernel_word_count =
-      static_cast<uint32_t>(metadata.comb_kernel_words.size());
-
-  // Process trigger words
-  result.process_trigger_words = EmitWordArrayGlobal(
-      mod, ctx, metadata.process_trigger_words, "__lyra_process_trigger_words");
-  result.process_trigger_word_count =
-      static_cast<uint32_t>(metadata.process_trigger_words.size());
-
   // Trace signal meta
   if (!metadata.trace_signal_meta.words.empty() &&
       metadata.trace_signal_meta.words.size() %
@@ -625,79 +501,11 @@ auto EmitDesignMetadataGlobals(
   return result;
 }
 
-// Stage-1 groupability policy: a process is groupable when its trigger
-// entry has static wait shape, all triggers are full-slot observations
-// with a uniform edge kind, and all slot IDs are valid.
-//
-// Precondition: all signals are already design-global (enforced by the
-// caller's invariant check). This classifier handles only Stage-1 policy.
-auto IsStage1Groupable(const ProcessTriggerEntry& entry, uint32_t slot_count)
-    -> bool {
-  if (entry.triggers.empty()) return false;
-  if (entry.shape != runtime::WaitShapeKind::kStatic) return false;
-
-  common::EdgeKind uniform_edge = entry.triggers[0].edge;
-  for (const auto& fact : entry.triggers) {
-    if (fact.signal.id >= slot_count) {
-      throw common::InternalError(
-          "IsStage1Groupable",
-          std::format(
-              "design-global slot_id {} exceeds slot count {}", fact.signal.id,
-              slot_count));
-    }
-    if (fact.has_observed_place) return false;
-    if (fact.edge != uniform_edge) return false;
-  }
-
-  return true;
-}
-
-auto BuildProcessTriggerInputs(
-    const std::vector<ProcessTriggerEntry>& entries, uint32_t slot_count)
-    -> std::vector<metadata::ProcessTriggerInput> {
-  size_t total_facts = 0;
-  for (const auto& e : entries) total_facts += e.triggers.size();
-
-  std::vector<metadata::ProcessTriggerInput> inputs;
-  inputs.reserve(total_facts);
-
-  for (const auto& entry : entries) {
-    if (entry.triggers.empty()) continue;
-
-    // Validate invariant: all signals must be design-global.
-    // Module-local signals must have been canonicalized in lower.cpp.
-    for (const auto& fact : entry.triggers) {
-      if (fact.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
-        throw common::InternalError(
-            "BuildProcessTriggerInputs",
-            std::format(
-                "non-design-global signal (scope={}, id={}) in process "
-                "trigger entry for scheduled_process_index {}",
-                static_cast<int>(fact.signal.scope), fact.signal.id,
-                entry.scheduled_process_index));
-      }
-    }
-
-    bool groupable = IsStage1Groupable(entry, slot_count);
-
-    for (const auto& fact : entry.triggers) {
-      inputs.push_back({
-          .scheduled_process_index = entry.scheduled_process_index,
-          .slot_id = fact.signal.id,
-          .edge = fact.edge,
-          .is_groupable = groupable,
-      });
-    }
-  }
-
-  return inputs;
-}
-
 auto FindPortBindingForwardingCandidates(
     std::span<const metadata::ConnectionDescriptorEntry> connections,
-    std::span<const metadata::ProcessTriggerInput> process_triggers,
-    std::span<const metadata::CombKernelInput> comb_inputs, uint32_t num_slots)
-    -> std::vector<PortBindingForwardingCandidate> {
+    const Layout& layout) -> std::vector<PortBindingForwardingCandidate> {
+  auto num_slots = static_cast<uint32_t>(layout.design.slots.size());
+
   // Dense per-slot connection usage counts and indices.
   std::vector<uint32_t> slot_write_count(num_slots, 0);
   std::vector<uint32_t> slot_trigger_count(num_slots, 0);
@@ -725,16 +533,35 @@ auto FindPortBindingForwardingCandidates(
     slot_trigger_conn[conn.trigger_slot_id] = ci;
   }
 
-  // Build exclusion sets from process triggers and comb triggers.
+  // Build exclusion sets from body-shaped trigger/comb templates and
+  // connection templates. For body-relative entries (design-global flag
+  // not set), we cannot resolve to absolute slot IDs without per-instance
+  // base slot data. This is sound: missing exclusions only produce extra
+  // candidates, and this analysis is logging-only (not transform-authorizing).
   std::vector<bool> is_process_trigger(num_slots, false);
-  for (const auto& pt : process_triggers) {
-    if (pt.slot_id < num_slots) is_process_trigger[pt.slot_id] = true;
+  std::vector<bool> is_comb_trigger(num_slots, false);
+
+  for (const auto& body_info : layout.body_realization_infos) {
+    for (const auto& entry : body_info.triggers.entries) {
+      if ((entry.flags & runtime::kTriggerTemplateFlagDesignGlobal) != 0) {
+        if (entry.slot_id < num_slots) {
+          is_process_trigger[entry.slot_id] = true;
+        }
+      }
+    }
+    for (const auto& entry : body_info.comb.entries) {
+      if ((entry.flags & runtime::kCombTemplateFlagDesignGlobal) != 0) {
+        if (entry.slot_id < num_slots) {
+          is_comb_trigger[entry.slot_id] = true;
+        }
+      }
+    }
   }
 
-  std::vector<bool> is_comb_trigger(num_slots, false);
-  for (const auto& ck : comb_inputs) {
-    for (const auto& trigger : ck.triggers) {
-      if (trigger.slot_id < num_slots) is_comb_trigger[trigger.slot_id] = true;
+  // Connection trigger templates are always design-global.
+  for (const auto& entry : layout.connection_templates.triggers.entries) {
+    if (entry.slot_id < num_slots) {
+      is_process_trigger[entry.slot_id] = true;
     }
   }
 
@@ -810,9 +637,8 @@ void LogPortBindingForwardingCandidates(
     }
   }
 
-  fprintf(
-      stderr,
-      "[lyra][forwarding_analysis] total=%zu provable_pass=%u"
+  std::cerr << std::format(
+      "[lyra][forwarding_analysis] total={} provable_pass={}"
       " (trace_ref unresolved on all; not transform-safe yet)\n",
       candidates.size(), provable_pass_count);
 
@@ -823,14 +649,13 @@ void LogPortBindingForwardingCandidates(
          c.upstream_full_copy_shape && c.downstream_matching_read_shape)
             ? 1
             : 0;
-    fprintf(
-        stderr,
-        "[lyra][forwarding_analysis] slot=%u"
-        " up=%u down=%u"
-        " provable_pass=%d"
-        " writer=%d down_ok=%d port=%d"
-        " no_proc=%d no_comb=%d"
-        " up_copy=%d down_read=%d"
+    std::cerr << std::format(
+        "[lyra][forwarding_analysis] slot={}"
+        " up={} down={}"
+        " provable_pass={}"
+        " writer={} down_ok={} port={}"
+        " no_proc={} no_comb={}"
+        " up_copy={} down_read={}"
         " trace=unresolved\n",
         c.intermediate_slot_id, c.upstream_connection_index,
         c.downstream_connection_index, provable_pass,
