@@ -34,6 +34,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/forwarding_analysis.hpp"
 #include "lyra/llvm_backend/forwarding_map.hpp"
+#include "lyra/llvm_backend/init_descriptor_utils.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/observable_descriptor_utils.hpp"
 #include "lyra/llvm_backend/process.hpp"
@@ -470,29 +471,6 @@ auto ExtractRealizationData(
             "placement instances/const_blocks size mismatch: {} vs {}",
             placement.instances.size(), placement.const_blocks.size()));
   }
-  realization.param_inits.reserve(placement.const_blocks.size());
-  for (size_t i = 0; i < placement.const_blocks.size(); ++i) {
-    const auto& inst = placement.instances[i];
-    const auto& const_block = placement.const_blocks[i];
-    auto& resolved = realization.param_inits.emplace_back();
-    resolved.reserve(const_block.slot_inits.size());
-    for (const auto& init : const_block.slot_inits) {
-      uint32_t abs_slot = inst.design_state_base_slot + init.body_local_slot;
-      if (abs_slot >= slots.size()) {
-        throw common::InternalError(
-            "ExtractRealizationData",
-            std::format(
-                "param init abs_slot {} out of range (slots.size() = {})",
-                abs_slot, slots.size()));
-      }
-      resolved.push_back(
-          ResolvedParamInit{
-              .slot_id = abs_slot,
-              .type_id = slots[abs_slot].type,
-              .value = init.value,
-          });
-    }
-  }
 
   realization.slot_types.reserve(slots.size());
   realization.slot_kinds.reserve(slots.size());
@@ -532,7 +510,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   ForwardingMap empty_forwarding;
   auto pre_forwarding_layout = BuildDesignLayout(
       slot_info, *input.type_arena, module->getDataLayout(), force_two_state,
-      empty_forwarding);
+      empty_forwarding, 0, {});
 
   // Extract narrow layout-planning inputs from design.
   // module_plans and module_base_slots are produced once and consumed by
@@ -602,10 +580,28 @@ auto CompileDesignProcesses(const LoweringInput& input)
   VerifyCanonicalizedConnectionObservations(
       forwarding_map, canonicalized_connections);
 
+  // Build instance slot ranges for body-local appendix layout.
+  uint32_t num_package_slots_for_layout = 0;
+  std::vector<InstanceSlotRange> instance_ranges;
+  instance_ranges.reserve(module_plans.size());
+  if (!module_plans.empty()) {
+    num_package_slots_for_layout = module_plans[0].design_state_base_slot;
+  } else {
+    num_package_slots_for_layout =
+        static_cast<uint32_t>(input.design->slots.size());
+  }
+  for (const auto& plan : module_plans) {
+    instance_ranges.push_back(
+        InstanceSlotRange{
+            .base_slot = plan.design_state_base_slot,
+            .slot_count = plan.slot_count,
+        });
+  }
+
   // Build final layout with forwarding-aware storage ownership.
   auto design_layout = BuildDesignLayout(
       slot_info, *input.type_arena, module->getDataLayout(), force_two_state,
-      forwarding_map);
+      forwarding_map, num_package_slots_for_layout, instance_ranges);
 
   auto layout = std::make_unique<Layout>(BuildLayout(
       input.design->init_processes, std::move(canonicalized_connections),
@@ -1410,6 +1406,219 @@ auto CompileDesignProcesses(const LoweringInput& input)
                 .storage_owner_ref = owner_ref,
                 .flags = flags,
             });
+      }
+    }
+
+    // Body init descriptor extraction.
+    // Walks each body's slot range to build 4-state patches, owned-handle
+    // entries, and param slot templates. All offsets are body-relative.
+    // Compile-time param slot template entry. Keyed by body_local_slot
+    // to establish explicit ordering contract with per-instance payloads.
+    struct ParamSlotTemplateEntry {
+      uint32_t body_local_slot;
+      runtime::ParamInitSlotEntry slot;
+    };
+
+    // Per-body param slot templates, keyed by body_id for payload lookup.
+    std::unordered_map<uint32_t, std::vector<ParamSlotTemplateEntry>>
+        body_param_templates;
+
+    for (auto& info : layout->body_realization_infos) {
+      if (info.slot_count == 0) continue;
+      auto base_it = body_base_slots.find(info.body_id.value);
+      if (base_it == body_base_slots.end()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "missing base slot for body {} in init descriptor extraction",
+                info.body_id.value));
+      }
+      uint32_t base_slot = base_it->second;
+      uint64_t body_base_offset = layout->design.slot_byte_offsets[base_slot];
+
+      std::vector<ParamSlotTemplateEntry> param_entries;
+
+      for (uint32_t i = 0; i < info.slot_count; ++i) {
+        uint32_t gsi = base_slot + i;
+        mir::SlotId slot_id = layout->design.slots[gsi];
+
+        if (layout->design.storage_owner_slot_id[gsi] != slot_id.value) {
+          continue;
+        }
+
+        uint64_t body_local_offset =
+            layout->design.slot_byte_offsets[gsi] - body_base_offset;
+        const auto& spec = layout->design.slot_storage_specs[gsi];
+
+        if (realization.slot_kinds[gsi] == mir::SlotKind::kParamConst) {
+          param_entries.push_back(
+              ParamSlotTemplateEntry{
+                  .body_local_slot = i,
+                  .slot =
+                      runtime::ParamInitSlotEntry{
+                          .rel_byte_offset = NarrowToU32(
+                              body_local_offset, "body init param rel offset"),
+                          .byte_size = spec.TotalByteSize(),
+                      },
+              });
+        }
+
+        bool is_owned = layout->design.owned_data_offsets[gsi].has_value();
+        if (is_owned) {
+          uint64_t backing_rel =
+              *layout->design.owned_data_offsets[gsi] - body_base_offset;
+
+          info.init.owned_handles.push_back(
+              runtime::InitHandleEntry{
+                  .handle_rel_byte_offset = NarrowToU32(
+                      body_local_offset, "body init handle rel offset"),
+                  .backing_rel_byte_offset =
+                      NarrowToU32(backing_rel, "body init backing rel offset"),
+                  .backing_byte_size = spec.TotalByteSize(),
+              });
+
+          const auto& spec_arena = layout->design.storage_spec_arena;
+          if (HasFourStateContent(spec, spec_arena)) {
+            FlattenFourStatePatches(
+                spec, spec_arena, backing_rel, info.init.four_state_patches);
+          }
+        } else {
+          const auto& spec_arena = layout->design.storage_spec_arena;
+          if (HasFourStateContent(spec, spec_arena)) {
+            FlattenFourStatePatches(
+                spec, spec_arena, body_local_offset,
+                info.init.four_state_patches);
+          }
+        }
+      }
+
+      std::sort(
+          param_entries.begin(), param_entries.end(),
+          [](const auto& a, const auto& b) {
+            return a.body_local_slot < b.body_local_slot;
+          });
+      info.init.param_slots.reserve(param_entries.size());
+      for (const auto& pe : param_entries) {
+        info.init.param_slots.push_back(pe.slot);
+      }
+      body_param_templates[info.body_id.value] = std::move(param_entries);
+    }
+
+    // Per-instance param payload lowering.
+    // Pre-lower each instance's const_block to canonical storage bytes
+    // in body-template order (sorted by body_local_slot).
+    {
+      const auto& placement = input.design->placement;
+      realization.param_payloads.resize(placement.const_blocks.size());
+      for (size_t inst_idx = 0; inst_idx < placement.const_blocks.size();
+           ++inst_idx) {
+        const auto& inst = placement.instances[inst_idx];
+        const auto& const_block = placement.const_blocks[inst_idx];
+        auto& payload = realization.param_payloads[inst_idx];
+
+        if (const_block.slot_inits.empty()) continue;
+        uint32_t bg = instance_body_group[inst_idx];
+        uint32_t body_id_val = layout->body_realization_infos[bg].body_id.value;
+        auto tmpl_it = body_param_templates.find(body_id_val);
+        if (tmpl_it == body_param_templates.end()) {
+          throw common::InternalError(
+              "CompileDesignProcesses",
+              std::format(
+                  "instance {} has param inits but no body param template",
+                  inst_idx));
+        }
+        const auto& tmpl = tmpl_it->second;
+
+        // Build a map from body_local_slot to const_block entry.
+        // Reject duplicates: a duplicated slot init is malformed data.
+        std::unordered_map<uint32_t, size_t> init_by_slot;
+        for (size_t k = 0; k < const_block.slot_inits.size(); ++k) {
+          uint32_t slot = const_block.slot_inits[k].body_local_slot;
+          auto [it, inserted] = init_by_slot.emplace(slot, k);
+          if (!inserted) {
+            throw common::InternalError(
+                "CompileDesignProcesses",
+                std::format(
+                    "instance {} const block has duplicate param init "
+                    "for body_local_slot {}",
+                    inst_idx, slot));
+          }
+        }
+
+        // Reject stray const_block entries not in the body template.
+        std::unordered_set<uint32_t> template_slots;
+        template_slots.reserve(tmpl.size());
+        for (const auto& te : tmpl) {
+          template_slots.insert(te.body_local_slot);
+        }
+        for (const auto& [slot, _] : init_by_slot) {
+          if (!template_slots.contains(slot)) {
+            throw common::InternalError(
+                "CompileDesignProcesses",
+                std::format(
+                    "instance {} const block has param init for "
+                    "body_local_slot {} but body template does not "
+                    "contain that slot",
+                    inst_idx, slot));
+          }
+        }
+
+        // Emit payload bytes in template order.
+        for (const auto& te : tmpl) {
+          auto it = init_by_slot.find(te.body_local_slot);
+          if (it == init_by_slot.end()) {
+            // Param slot exists in body but this instance has no init
+            // for it. Emit zero bytes (default value after memset).
+            payload.resize(payload.size() + te.slot.byte_size, 0);
+            continue;
+          }
+          const auto& init = const_block.slot_inits[it->second];
+          uint32_t abs_slot =
+              inst.design_state_base_slot + init.body_local_slot;
+          const auto& spec = layout->design.slot_storage_specs[abs_slot];
+          LowerIntegralConstantToCanonicalBytes(init.value, spec, payload);
+        }
+      }
+    }
+
+    // Package/global init descriptor extraction.
+    {
+      auto& pkg_init = layout->package_init_descriptor;
+      uint32_t num_pkg = layout->num_package_slots;
+      const auto& spec_arena = layout->design.storage_spec_arena;
+
+      for (uint32_t gsi = 0; gsi < num_pkg; ++gsi) {
+        if (gsi >= layout->design.slots.size()) break;
+        mir::SlotId slot_id = layout->design.slots[gsi];
+
+        if (layout->design.storage_owner_slot_id[gsi] != slot_id.value) {
+          continue;
+        }
+
+        const auto& spec = layout->design.slot_storage_specs[gsi];
+        uint64_t abs_offset = layout->design.slot_byte_offsets[gsi];
+
+        bool is_owned = layout->design.owned_data_offsets[gsi].has_value();
+        if (is_owned) {
+          uint64_t backing_abs = *layout->design.owned_data_offsets[gsi];
+          pkg_init.owned_handles.push_back(
+              runtime::InitHandleEntry{
+                  .handle_rel_byte_offset =
+                      NarrowToU32(abs_offset, "pkg init handle offset"),
+                  .backing_rel_byte_offset =
+                      NarrowToU32(backing_abs, "pkg init backing offset"),
+                  .backing_byte_size = spec.TotalByteSize(),
+              });
+          if (HasFourStateContent(spec, spec_arena)) {
+            FlattenFourStatePatches(
+                spec, spec_arena, backing_abs, pkg_init.four_state_patches);
+          }
+        } else {
+          if (HasFourStateContent(spec, spec_arena)) {
+            FlattenFourStatePatches(
+                spec, spec_arena, abs_offset, pkg_init.four_state_patches);
+          }
+        }
       }
     }
 

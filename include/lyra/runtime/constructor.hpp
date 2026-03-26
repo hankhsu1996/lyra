@@ -60,6 +60,21 @@ struct ObservableDescriptorTemplateView {
   uint32_t pool_size = 0;
 };
 
+// Non-owning view of init patch entries for the C ABI boundary.
+struct InitPatchView {
+  std::span<const InitPatchEntry> entries;
+};
+
+// Non-owning view of init handle entries for the C ABI boundary.
+struct InitHandleView {
+  std::span<const InitHandleEntry> entries;
+};
+
+// Non-owning view of param init slot template entries for the C ABI boundary.
+struct ParamInitView {
+  std::span<const ParamInitSlotEntry> slots;
+};
+
 // Complete body descriptor for one BeginBody call.
 // Packages process entries and metadata template into one coherent unit.
 // This is a constructor-facing transport view assembled from emitted globals
@@ -73,6 +88,9 @@ struct BodyDescriptorPackage {
   TriggerTemplateView triggers;
   CombTemplateView comb;
   ObservableDescriptorTemplateView observable_descriptors;
+  InitPatchView init_patches;
+  InitHandleView init_handles;
+  ParamInitView init_params;
 };
 
 // Constructor-produced trigger metadata artifact.
@@ -230,7 +248,8 @@ class Constructor {
       std::span<const uint64_t> slot_byte_offsets, uint32_t num_package_slots,
       std::span<std::byte> design_state, ProcessMetaTemplateView conn_meta,
       TriggerTemplateView conn_triggers,
-      ObservableDescriptorTemplateView pkg_observable);
+      ObservableDescriptorTemplateView pkg_observable,
+      InitPatchView pkg_init_patches, InitHandleView pkg_init_handles);
 
   // Add a connection process. Must be called before any BeginBody/AddInstance.
   // Fails immediately if connection template is exhausted.
@@ -245,8 +264,12 @@ class Constructor {
   // Add one instance of the current body. instance_path is the
   // hierarchical path for this instance (constructor-owned architecture:
   // the constructor is the canonical consumer of per-instance paths).
+  // param_data/param_data_size carry pre-lowered canonical storage bytes
+  // for this instance's parameter initialization. nullptr/0 if no params.
   // Fails immediately if no active body.
-  void AddInstance(const char* instance_path);
+  void AddInstance(
+      const char* instance_path, const void* param_data,
+      uint32_t param_data_size);
 
   // Finalize construction and return the unified result.
   // After this call, further mutation is rejected.
@@ -274,6 +297,9 @@ class Constructor {
     TriggerTemplateView triggers;
     CombTemplateView comb;
     ObservableDescriptorTemplateView observable_descriptors;
+    InitPatchView init_patches;
+    InitHandleView init_handles;
+    ParamInitView init_params;
     bool active = false;
   };
 
@@ -316,6 +342,10 @@ class Constructor {
   // Package/global observable descriptor template (immutable after
   // construction).
   ObservableDescriptorTemplateView pkg_observable_;
+
+  // Package/global init descriptor views (immutable after construction).
+  InitPatchView pkg_init_patches_;
+  InitHandleView pkg_init_handles_;
 
   // Process-index verification infrastructure.
   struct InstanceLedgerEntry {
@@ -380,8 +410,11 @@ auto LyraConstructorCreate(
     uint32_t num_conn_trigger_ranges, const uint8_t* conn_trigger_shapes,
     const uint8_t* conn_trigger_groupable,
     const lyra::runtime::ObservableDescriptorEntry* pkg_obs_entries,
-    uint32_t num_pkg_obs, const char* pkg_obs_pool, uint32_t pkg_obs_pool_size)
-    -> void*;
+    uint32_t num_pkg_obs, const char* pkg_obs_pool, uint32_t pkg_obs_pool_size,
+    const lyra::runtime::InitPatchEntry* pkg_init_patches,
+    uint32_t num_pkg_init_patches,
+    const lyra::runtime::InitHandleEntry* pkg_init_handles,
+    uint32_t num_pkg_init_handles) -> void*;
 
 void LyraConstructorAddConnection(
     void* ctor, const lyra::runtime::ConnectionRealizationDesc* desc);
@@ -401,9 +434,17 @@ void LyraConstructorBeginBody(
     const lyra::runtime::CombKernelDesc* comb_kernels,
     uint32_t num_comb_kernels,
     const lyra::runtime::ObservableDescriptorEntry* obs_entries,
-    uint32_t num_obs, const char* obs_pool, uint32_t obs_pool_size);
+    uint32_t num_obs, const char* obs_pool, uint32_t obs_pool_size,
+    const lyra::runtime::InitPatchEntry* init_patches,
+    uint32_t num_init_patches,
+    const lyra::runtime::InitHandleEntry* init_handles,
+    uint32_t num_init_handles,
+    const lyra::runtime::ParamInitSlotEntry* init_param_slots,
+    uint32_t num_init_param_slots);
 
-void LyraConstructorAddInstance(void* ctor, const char* instance_path);
+void LyraConstructorAddInstance(
+    void* ctor, const char* instance_path, const void* param_data,
+    uint32_t param_data_size);
 
 auto LyraConstructorFinalize(void* ctor) -> void*;
 

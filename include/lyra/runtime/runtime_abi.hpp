@@ -49,7 +49,16 @@
 //      template. Legacy static __lyra_slot_meta_table,
 //      __lyra_trace_signal_meta_table, and __lyra_instance_paths globals
 //      removed.
-inline constexpr uint32_t kRuntimeAbiVersion = 15;
+// v16: Design-state initialization moved to constructor-time realization.
+//      4-state X-encoding, owned-container handle construction, owned
+//      backing init, and parameter stores are now constructor-owned via
+//      body/package init descriptors. Emitted design main only performs
+//      arena zeroing. Arena layout restructured: each instance's appendix
+//      is contiguous with its inline region for body-relative addressing.
+//      Constructor API extended: Create takes package init descriptors,
+//      BeginBody takes body init descriptors, AddInstance takes
+//      per-instance param payload.
+inline constexpr uint32_t kRuntimeAbiVersion = 16;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion

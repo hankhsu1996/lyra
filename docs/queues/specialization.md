@@ -18,7 +18,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] H3 -- Move process metadata realization behind constructor-time expansion
 - [x] H4 -- Move trigger/comb realization behind constructor-time expansion
 - [x] H5 -- Move slot/trace/path realization behind constructor-time expansion
-- [ ] H6 -- Remove compile-time-expanded design-state initialization topology
+- [x] H6 -- Remove compile-time-expanded design-state initialization topology
 - [ ] H7 -- Remove remaining topology-sized emitted storage realization
 - [ ] H8 -- Re-validate topology-independence with scaling gates
 - [ ] F1 -- Parallel specialization compilation
@@ -29,12 +29,6 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [ ] F2 -- Specialization caching
 - [ ] Documentation gap: pipeline-contract.md and state-layout.md need type ownership clarification
 - [ ] CI policy gates: codegen API check, grouping regression tests, topology-independence test
-
-## H6: Remove compile-time-expanded design-state initialization topology
-
-4-state patch tables (byte offsets and masks for X-encoding initialization) are emitted as fully expanded compile-time globals that scale with the total realized slot count. In a design with N instances of the same body, the patch table contains N copies of the same offset pattern, shifted by each instance's base offset.
-
-This should instead use body-shaped patch schemas (offsets relative to the body's slot base) that the runtime applies per-instance using each instance's base offset at construction time.
 
 ## H7: Remove remaining topology-sized emitted storage realization
 

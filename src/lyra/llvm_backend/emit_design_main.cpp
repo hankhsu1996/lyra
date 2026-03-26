@@ -20,16 +20,13 @@
 #include <llvm/Support/Alignment.h>
 #include <llvm/Support/Casting.h>
 
-#include "lyra/common/constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
-#include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/design_metadata_lowering.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
-#include "lyra/llvm_backend/storage_boundary.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
 #include "lyra/mir/design.hpp"
@@ -105,119 +102,6 @@ auto EmitWaitSiteMetaTable(
   return {.words_ptr = words_gep, .count = word_count};
 }
 
-void EmitConstructOwnedHandles(
-    Context& context, llvm::Value* design_state,
-    const std::vector<SlotInfo>& slots,
-    const lowering::mir_to_llvm::DesignLayout& design_layout) {
-  auto& builder = context.GetBuilder();
-  auto& ctx = context.GetLlvmContext();
-  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
-  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-
-  auto* handle_ty =
-      llvm::StructType::get(ctx, {llvm::PointerType::getUnqual(ctx), i64_ty});
-
-  for (size_t i = 0; i < slots.size(); ++i) {
-    if (slots[i].storage_shape != mir::StorageShape::kOwnedContainer) {
-      continue;
-    }
-
-    if (!design_layout.IsStorageOwner(slots[i].slot_id)) {
-      throw common::InternalError(
-          "EmitConstructOwnedHandles",
-          std::format(
-              "owned-container slot {} is not a storage owner",
-              slots[i].slot_id.value));
-    }
-    uint64_t handle_offset =
-        design_layout.GetStorageByteOffset(slots[i].slot_id);
-    uint64_t data_offset = *design_layout.owned_data_offsets[i];
-    uint64_t backing_size =
-        design_layout.GetStorageSpec(slots[i].slot_id).TotalByteSize();
-
-    auto* handle_ptr = builder.CreateGEP(
-        i8_ty, design_state, builder.getInt64(handle_offset),
-        "owned_handle_ptr");
-    auto* data_ptr = builder.CreateGEP(
-        i8_ty, design_state, builder.getInt64(data_offset), "owned_data_ptr");
-
-    // Store handle.data
-    auto* data_field = builder.CreateStructGEP(handle_ty, handle_ptr, 0);
-    builder.CreateStore(data_ptr, data_field);
-
-    // Store handle.byte_size
-    auto* size_field = builder.CreateStructGEP(handle_ty, handle_ptr, 1);
-    builder.CreateStore(
-        llvm::ConstantInt::get(i64_ty, backing_size), size_field);
-  }
-}
-
-void EmitInitializeOwnedBackingStorage(
-    Context& context, llvm::Value* design_state,
-    const std::vector<SlotInfo>& slots,
-    const lowering::mir_to_llvm::DesignLayout& design_layout) {
-  if (context.IsForceTwoState()) return;
-
-  auto& builder = context.GetBuilder();
-  auto* i8_ty = llvm::Type::getInt8Ty(context.GetLlvmContext());
-  const auto& spec_arena = context.GetDesignStorageSpecArena();
-
-  for (size_t i = 0; i < slots.size(); ++i) {
-    if (slots[i].storage_shape != mir::StorageShape::kOwnedContainer) {
-      continue;
-    }
-    const auto& backing_spec = design_layout.slot_storage_specs[i];
-    if (!HasFourStateContent(backing_spec, spec_arena)) continue;
-
-    uint64_t data_offset = *design_layout.owned_data_offsets[i];
-    auto* data_ptr = builder.CreateGEP(
-        i8_ty, design_state, builder.getInt64(data_offset),
-        "owned_backing_init_ptr");
-    EmitSVDefaultInitAfterZero(context, data_ptr, slots[i].type_id);
-  }
-}
-
-void InitializeDesignState(
-    Context& context, llvm::Value* design_state,
-    const std::vector<SlotInfo>& slots,
-    const lowering::mir_to_llvm::DesignLayout& design_layout) {
-  auto& builder = context.GetBuilder();
-  auto& ctx = context.GetLlvmContext();
-  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
-  auto* arena_ty = llvm::ArrayType::get(i8_ty, context.GetDesignArenaSize());
-
-  // Step 1: Zero entire arena (inline + appendix).
-  EmitMemsetZero(context, design_state, arena_ty);
-
-  if (!context.IsForceTwoState()) {
-    // Step 2: Apply 4-state patches for inline scalar slots.
-    EmitApply4StatePatches(
-        context, design_state, design_layout.four_state_patches, "design");
-
-    // Step 3: Recursive 4-state init for inline non-patchable slots.
-    // Skips kOwnedContainer slots (their backing data is initialized in step
-    // 5).
-    const auto& arena = context.GetDesignStorageSpecArena();
-    for (const auto& slot : slots) {
-      if (slot.storage_shape == mir::StorageShape::kOwnedContainer) continue;
-      const auto& spec = context.GetDesignSlotStorageSpec(slot.slot_id);
-      if (!HasFourStateContent(spec, arena)) continue;
-      if (IsPatchTableEligible(spec)) continue;
-      uint64_t offset = context.GetDesignSlotByteOffset(slot.slot_id);
-      auto* slot_ptr = builder.CreateGEP(
-          i8_ty, design_state, builder.getInt64(offset), "slot_init_ptr");
-      EmitSVDefaultInitAfterZero(context, slot_ptr, slot.type_id);
-    }
-  }
-
-  // Step 4: Construct owned storage handles.
-  EmitConstructOwnedHandles(context, design_state, slots, design_layout);
-
-  // Step 5: Initialize owned backing storage (4-state X-encoding).
-  EmitInitializeOwnedBackingStorage(
-      context, design_state, slots, design_layout);
-}
-
 void InitializeProcessState(
     Context& context, llvm::Value* process_state, llvm::Value* design_state,
     const ProcessLayout& proc_layout, size_t process_index) {
@@ -275,42 +159,6 @@ void ReleaseStringSlots(
   }
 }
 
-void EmitParamInitStores(
-    Context& context, llvm::Value* design_state,
-    const RealizationData& realization) {
-  if (realization.param_inits.empty()) return;
-
-  auto& builder = context.GetBuilder();
-  auto* i8_ty = llvm::Type::getInt8Ty(context.GetLlvmContext());
-
-  for (const auto& entries : realization.param_inits) {
-    for (const auto& entry : entries) {
-      auto slot_id = mir::SlotId{entry.slot_id};
-      uint64_t offset = context.GetDesignSlotByteOffset(slot_id);
-
-      auto* slot_ptr = builder.CreateGEP(
-          i8_ty, design_state, builder.getInt64(offset), "param_ptr");
-
-      Constant constant{.type = entry.type_id, .value = entry.value};
-      auto value_result = LowerConstant(context, constant);
-      if (!value_result) {
-        throw common::InternalError(
-            "EmitParamInitStores", "failed to materialize param constant");
-      }
-      const auto& spec = context.GetDesignSlotStorageSpec(slot_id);
-      const auto& arena = context.GetDesignStorageSpecArena();
-
-      // Lower packed values from semantic width to storage lane width
-      // before passing to the storage boundary.
-      llvm::Value* lowered = *value_result;
-      if (const auto* packed = std::get_if<PackedStorageSpec>(&spec.data)) {
-        lowered = LowerToStorageLaneWidth(builder, lowered, *packed);
-      }
-      EmitStoreToCanonicalStorage(builder, slot_ptr, lowered, spec, arena);
-    }
-  }
-}
-
 struct MainFunctionSetup {
   llvm::Function* main_func;
   llvm::BasicBlock* exit_block;
@@ -352,12 +200,11 @@ auto CreateMainFunction(
   };
 }
 
-void EmitDesignStateInit(
-    Context& context, llvm::Value* design_state,
-    const std::vector<SlotInfo>& slot_info, const Layout& layout,
-    const RealizationData& realization) {
-  InitializeDesignState(context, design_state, slot_info, layout.design);
-  EmitParamInitStores(context, design_state, realization);
+void EmitDesignStateZero(Context& context, llvm::Value* design_state) {
+  auto& ctx = context.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  auto* arena_ty = llvm::ArrayType::get(i8_ty, context.GetDesignArenaSize());
+  EmitMemsetZero(context, design_state, arena_ty);
 }
 
 void EmitRuntimeInit(
@@ -675,6 +522,15 @@ struct ObservableDescriptorEmission {
 
 // Emitted body descriptor package: descriptor header, process entries,
 // and metadata/trigger/comb/observable templates. One per body.
+struct InitDescriptorEmission {
+  llvm::Constant* patches_ptr;
+  uint32_t num_patches;
+  llvm::Constant* handles_ptr;
+  uint32_t num_handles;
+  llvm::Constant* param_slots_ptr;
+  uint32_t num_param_slots;
+};
+
 struct BodyDescriptorPackageEmission {
   llvm::Constant* header_ptr;
   llvm::Constant* entries_ptr;
@@ -683,6 +539,7 @@ struct BodyDescriptorPackageEmission {
   TriggerTemplateEmission triggers;
   CombTemplateEmission comb;
   ObservableDescriptorEmission observable;
+  InitDescriptorEmission init;
 };
 
 // Validate an owned metadata template before emission: pool sentinel,
@@ -871,6 +728,126 @@ auto EmitObservableDescriptorTemplate(
   }
 
   return result;
+}
+
+auto EmitInitDescriptor(
+    llvm::LLVMContext& ctx, llvm::Module& mod,
+    std::span<const runtime::InitPatchEntry> patches,
+    std::span<const runtime::InitHandleEntry> handles,
+    std::span<const runtime::ParamInitSlotEntry> param_slots,
+    const std::string& name_prefix) -> InitDescriptorEmission {
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* null_ptr =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
+  InitDescriptorEmission result{};
+  result.patches_ptr = null_ptr;
+  result.num_patches = 0;
+  result.handles_ptr = null_ptr;
+  result.num_handles = 0;
+  result.param_slots_ptr = null_ptr;
+  result.num_param_slots = 0;
+
+  // Emit patches: {i32 rel_byte_offset, i32 byte_width, i64 mask}
+  if (!patches.empty()) {
+    auto* entry_ty = llvm::StructType::get(ctx, {i32_ty, i32_ty, i64_ty});
+    std::vector<llvm::Constant*> constants;
+    constants.reserve(patches.size());
+    for (const auto& p : patches) {
+      constants.push_back(
+          llvm::ConstantStruct::get(
+              entry_ty, {llvm::ConstantInt::get(i32_ty, p.rel_byte_offset),
+                         llvm::ConstantInt::get(i32_ty, p.byte_width),
+                         llvm::ConstantInt::get(i64_ty, p.mask)}));
+    }
+    auto num = static_cast<uint32_t>(patches.size());
+    auto* arr_ty = llvm::ArrayType::get(entry_ty, num);
+    auto* global = new llvm::GlobalVariable(
+        mod, arr_ty, true, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantArray::get(arr_ty, constants),
+        name_prefix + "_init_patches");
+    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+    result.patches_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        arr_ty, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+    result.num_patches = num;
+  }
+
+  // Emit handles: {i32 handle_rel, i32 backing_rel, i64 backing_size}
+  if (!handles.empty()) {
+    auto* entry_ty = llvm::StructType::get(ctx, {i32_ty, i32_ty, i64_ty});
+    std::vector<llvm::Constant*> constants;
+    constants.reserve(handles.size());
+    for (const auto& h : handles) {
+      constants.push_back(
+          llvm::ConstantStruct::get(
+              entry_ty,
+              {llvm::ConstantInt::get(i32_ty, h.handle_rel_byte_offset),
+               llvm::ConstantInt::get(i32_ty, h.backing_rel_byte_offset),
+               llvm::ConstantInt::get(i64_ty, h.backing_byte_size)}));
+    }
+    auto num = static_cast<uint32_t>(handles.size());
+    auto* arr_ty = llvm::ArrayType::get(entry_ty, num);
+    auto* global = new llvm::GlobalVariable(
+        mod, arr_ty, true, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantArray::get(arr_ty, constants),
+        name_prefix + "_init_handles");
+    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+    result.handles_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        arr_ty, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+    result.num_handles = num;
+  }
+
+  // Emit param slots: {i32 rel_byte_offset, i32 byte_size}
+  if (!param_slots.empty()) {
+    auto* entry_ty = llvm::StructType::get(ctx, {i32_ty, i32_ty});
+    std::vector<llvm::Constant*> constants;
+    constants.reserve(param_slots.size());
+    for (const auto& s : param_slots) {
+      constants.push_back(
+          llvm::ConstantStruct::get(
+              entry_ty, {llvm::ConstantInt::get(i32_ty, s.rel_byte_offset),
+                         llvm::ConstantInt::get(i32_ty, s.byte_size)}));
+    }
+    auto num = static_cast<uint32_t>(param_slots.size());
+    auto* arr_ty = llvm::ArrayType::get(entry_ty, num);
+    auto* global = new llvm::GlobalVariable(
+        mod, arr_ty, true, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantArray::get(arr_ty, constants),
+        name_prefix + "_init_param_slots");
+    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+    result.param_slots_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        arr_ty, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+    result.num_param_slots = num;
+  }
+
+  return result;
+}
+
+auto EmitParamPayloadGlobal(
+    llvm::LLVMContext& ctx, llvm::Module& mod,
+    const std::vector<uint8_t>& payload, const std::string& name)
+    -> llvm::Constant* {
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  if (payload.empty()) {
+    return llvm::ConstantPointerNull::get(
+        llvm::cast<llvm::PointerType>(ptr_ty));
+  }
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  auto data = llvm::ArrayRef<uint8_t>(payload);
+  auto* init = llvm::ConstantDataArray::get(ctx, data);
+  auto* global = new llvm::GlobalVariable(
+      mod, init->getType(), true, llvm::GlobalValue::InternalLinkage, init,
+      name);
+  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+  return llvm::ConstantExpr::getInBoundsGetElementPtr(
+      init->getType(), global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
 }
 
 auto EmitBodyRealizationDescs(
@@ -1232,6 +1209,10 @@ auto EmitBodyRealizationDescs(
         ctx, mod, info.observable_descriptors,
         std::format("__lyra_body_desc_{}", body_id_val));
 
+    auto init_emission = EmitInitDescriptor(
+        ctx, mod, info.init.four_state_patches, info.init.owned_handles,
+        info.init.param_slots, std::format("__lyra_body_desc_{}", body_id_val));
+
     result.push_back(
         BodyDescriptorPackageEmission{
             .header_ptr = header_global,
@@ -1247,6 +1228,7 @@ auto EmitBodyRealizationDescs(
             .triggers = trig_emission,
             .comb = comb_emission,
             .observable = obs_emission,
+            .init = init_emission,
         });
   }
 
@@ -1802,16 +1784,19 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           "LyraConstructorCreate", ptr_ty,
           {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i64_ty,
            ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-           i32_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
+           i32_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
+           ptr_ty, i32_ty, ptr_ty, i32_ty}),
       .add_connection =
           declare("LyraConstructorAddConnection", void_ty, {ptr_ty, ptr_ty}),
       .begin_body = declare(
           "LyraConstructorBeginBody", void_ty,
-          {ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-           ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty,
-           ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
-      .add_instance =
-          declare("LyraConstructorAddInstance", void_ty, {ptr_ty, ptr_ty}),
+          {ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+           i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty,
+           ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+           i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
+      .add_instance = declare(
+          "LyraConstructorAddInstance", void_ty,
+          {ptr_ty, ptr_ty, ptr_ty, i32_ty}),
       .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
       .result_get_states =
           declare("LyraConstructionResultGetStates", ptr_ty, {ptr_ty}),
@@ -1885,7 +1870,13 @@ void EmitBeginBodyCall(
        pkg.observable.entries_ptr,
        llvm::ConstantInt::get(i32_ty, pkg.observable.num_entries),
        pkg.observable.pool_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.observable.pool_size)});
+       llvm::ConstantInt::get(i32_ty, pkg.observable.pool_size),
+       pkg.init.patches_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg.init.num_patches),
+       pkg.init.handles_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg.init.num_handles),
+       pkg.init.param_slots_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg.init.num_param_slots)});
 }
 
 // Emit the constructor function: LLVM IR that calls RuntimeConstructor C API
@@ -1905,7 +1896,10 @@ auto EmitConstructorFunction(
     llvm::Constant* conn_descs_ptr, const MetaTemplateEmission& conn_meta,
     const TriggerTemplateEmission& conn_triggers,
     const ObservableDescriptorEmission& pkg_observable,
-    const std::vector<std::string>& instance_paths)
+    const InitDescriptorEmission& pkg_init,
+    const std::vector<std::string>& instance_paths,
+    const std::vector<llvm::Constant*>& param_payload_ptrs,
+    const std::vector<uint32_t>& param_payload_sizes)
     -> ConstructorEmissionResult {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
@@ -1942,7 +1936,11 @@ auto EmitConstructorFunction(
        pkg_observable.entries_ptr,
        llvm::ConstantInt::get(i32_ty, pkg_observable.num_entries),
        pkg_observable.pool_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg_observable.pool_size)},
+       llvm::ConstantInt::get(i32_ty, pkg_observable.pool_size),
+       pkg_init.patches_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg_init.num_patches),
+       pkg_init.handles_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg_init.num_handles)},
       "ctor");
 
   // Add connection processes.
@@ -2020,10 +2018,13 @@ auto EmitConstructorFunction(
       EmitBeginBodyCall(builder, rt, ctor, body_descs[bg], i32_ty);
       last_body_group = bg;
     }
-    // Pass instance path string literal to AddInstance.
+    // Pass instance path string literal and param payload to AddInstance.
     auto* path_str = builder.CreateGlobalStringPtr(
         instance_paths[mi], std::format("inst_path_{}", mi));
-    builder.CreateCall(rt.add_instance, {ctor, path_str});
+    builder.CreateCall(
+        rt.add_instance,
+        {ctor, path_str, param_payload_ptrs[mi],
+         llvm::ConstantInt::get(i32_ty, param_payload_sizes[mi])});
   }
 
   // Finalize: returns a single constructor-owned result handle.
@@ -2120,19 +2121,7 @@ auto EmitDesignMain(
   auto [main_func, exit_block, design_state] =
       CreateMainFunction(context, input.main_abi);
 
-  EmitDesignStateInit(context, design_state, slot_info, layout, realization);
-
-  EmitRuntimeInit(context, main_func, input);
-
-  if (input.hooks != nullptr) {
-    input.hooks->OnAfterInitializeDesignState(context, slot_info, design_state);
-  }
-
-  EmitInitProcesses(context, design_state, layout, process_funcs, num_init);
-
-  if (input.hooks != nullptr) {
-    input.hooks->OnBeforeRunSimulation(context, slot_info, design_state);
-  }
+  EmitDesignStateZero(context, design_state);
 
   auto num_simulation = static_cast<uint32_t>(process_funcs.size() - num_init);
   auto num_kernelized =
@@ -2179,15 +2168,50 @@ auto EmitDesignMain(
           ctx, context.GetModule(), layout.package_observable_descriptors,
           "__lyra_pkg");
 
+      // Emit package/global init descriptor globals.
+      auto pkg_init_emission = EmitInitDescriptor(
+          ctx, context.GetModule(),
+          layout.package_init_descriptor.four_state_patches,
+          layout.package_init_descriptor.owned_handles, {}, "__lyra_pkg");
+
+      // Emit per-instance param payload globals.
+      std::vector<llvm::Constant*> param_payload_ptrs;
+      std::vector<uint32_t> param_payload_sizes;
+      param_payload_ptrs.reserve(realization.instance_paths.size());
+      param_payload_sizes.reserve(realization.instance_paths.size());
+      for (uint32_t mi = 0; mi < realization.instance_paths.size(); ++mi) {
+        const auto& payload = realization.param_payloads[mi];
+        param_payload_ptrs.push_back(EmitParamPayloadGlobal(
+            ctx, context.GetModule(), payload,
+            std::format("__lyra_param_payload_{}", mi)));
+        param_payload_sizes.push_back(static_cast<uint32_t>(payload.size()));
+      }
+
       // Emit the constructor function: LLVM IR that calls the runtime
       // constructor to build process construction order and bindings.
       ctor_result = EmitConstructorFunction(
           context, layout, session, design_state, schemas_ptr, num_schemas,
           slot_offsets_ptr, body_descs, conn_descs_ptr, conn_meta_emission,
-          conn_trigger_emission, pkg_obs_emission, realization.instance_paths);
+          conn_trigger_emission, pkg_obs_emission, pkg_init_emission,
+          realization.instance_paths, param_payload_ptrs, param_payload_sizes);
 
       states_array = ctor_result.states_array;
       num_total_val = ctor_result.num_total;
+    }
+
+    // Runtime init and init processes run AFTER constructor (which owns
+    // design-state init) but BEFORE simulation.
+    EmitRuntimeInit(context, main_func, input);
+
+    if (input.hooks != nullptr) {
+      input.hooks->OnAfterInitializeDesignState(
+          context, slot_info, design_state);
+    }
+
+    EmitInitProcesses(context, design_state, layout, process_funcs, num_init);
+
+    if (input.hooks != nullptr) {
+      input.hooks->OnBeforeRunSimulation(context, slot_info, design_state);
     }
 
     auto plusargs = BuildPlusargs(context, main_func, input);
@@ -2241,6 +2265,21 @@ auto EmitDesignMain(
     // Destroy the constructor-owned result after simulation completes.
     if (ctor_result.result_handle != nullptr) {
       builder.CreateCall(ctor_result.destroy_fn, {ctor_result.result_handle});
+    }
+  } else {
+    // No simulation processes or kernelized connections. Still need
+    // runtime init and init process execution.
+    EmitRuntimeInit(context, main_func, input);
+
+    if (input.hooks != nullptr) {
+      input.hooks->OnAfterInitializeDesignState(
+          context, slot_info, design_state);
+    }
+
+    EmitInitProcesses(context, design_state, layout, process_funcs, num_init);
+
+    if (input.hooks != nullptr) {
+      input.hooks->OnBeforeRunSimulation(context, slot_info, design_state);
     }
   }
 

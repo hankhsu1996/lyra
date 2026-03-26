@@ -10,6 +10,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/frame_allocator.hpp"
+#include "lyra/runtime/owned_storage_handle.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
 #include "lyra/runtime/process_trigger_abi.hpp"
@@ -240,6 +241,119 @@ void ValidateMetaTemplate(
   }
 }
 
+void ValidateByteBase(
+    uint64_t byte_base, size_t design_state_size, const char* caller) {
+  if (byte_base > design_state_size) {
+    throw lyra::common::InternalError(
+        caller, std::format(
+                    "byte_base {} exceeds design_state size {}", byte_base,
+                    design_state_size));
+  }
+}
+
+void ApplyInitPatches(
+    std::span<std::byte> design_state, uint64_t byte_base,
+    std::span<const InitPatchEntry> patches) {
+  ValidateByteBase(byte_base, design_state.size(), "ApplyInitPatches");
+  auto* base = reinterpret_cast<uint8_t*>(design_state.data()) + byte_base;
+  for (const auto& p : patches) {
+    uint64_t end =
+        byte_base + static_cast<uint64_t>(p.rel_byte_offset) + p.byte_width;
+    if (end > design_state.size()) {
+      throw lyra::common::InternalError(
+          "ApplyInitPatches",
+          std::format(
+              "patch range [{}..{}) exceeds design_state size {}",
+              byte_base + static_cast<uint64_t>(p.rel_byte_offset), end,
+              design_state.size()));
+    }
+    std::memcpy(base + p.rel_byte_offset, &p.mask, p.byte_width);
+  }
+}
+
+static_assert(std::is_standard_layout_v<lyra::runtime::OwnedStorageHandle>);
+static_assert(
+    sizeof(lyra::runtime::OwnedStorageHandle) ==
+    sizeof(void*) + sizeof(uint64_t));
+
+void ConstructInitHandles(
+    std::span<std::byte> design_state, uint64_t byte_base,
+    std::span<const InitHandleEntry> handles) {
+  ValidateByteBase(byte_base, design_state.size(), "ConstructInitHandles");
+  for (const auto& h : handles) {
+    uint64_t handle_end = byte_base + h.handle_rel_byte_offset +
+                          sizeof(lyra::runtime::OwnedStorageHandle);
+    if (handle_end > design_state.size()) {
+      throw lyra::common::InternalError(
+          "ConstructInitHandles",
+          std::format(
+              "handle write range [{}..{}) exceeds design_state size {}",
+              byte_base + h.handle_rel_byte_offset, handle_end,
+              design_state.size()));
+    }
+    uint64_t backing_end =
+        byte_base + h.backing_rel_byte_offset + h.backing_byte_size;
+    if (backing_end > design_state.size()) {
+      throw lyra::common::InternalError(
+          "ConstructInitHandles",
+          std::format(
+              "backing range [{}..{}) exceeds design_state size {}",
+              byte_base + h.backing_rel_byte_offset, backing_end,
+              design_state.size()));
+    }
+
+    auto* handle_addr =
+        design_state.data() + byte_base + h.handle_rel_byte_offset;
+    auto* backing_addr =
+        design_state.data() + byte_base + h.backing_rel_byte_offset;
+
+    lyra::runtime::OwnedStorageHandle handle{
+        .data = backing_addr,
+        .byte_size = h.backing_byte_size,
+    };
+    std::memcpy(handle_addr, &handle, sizeof(handle));
+  }
+}
+
+void ApplyParamInit(
+    std::span<std::byte> design_state, uint64_t byte_base,
+    std::span<const ParamInitSlotEntry> slots, const void* value_data,
+    uint32_t value_total_bytes) {
+  if (slots.empty()) return;
+  ValidateByteBase(byte_base, design_state.size(), "ApplyParamInit");
+  auto* base = reinterpret_cast<uint8_t*>(design_state.data()) + byte_base;
+  const auto* src = static_cast<const uint8_t*>(value_data);
+  uint32_t src_offset = 0;
+  for (const auto& slot : slots) {
+    if (src_offset + slot.byte_size > value_total_bytes) {
+      throw lyra::common::InternalError(
+          "ApplyParamInit",
+          std::format(
+              "param payload overrun: offset {} + size {} > total {}",
+              src_offset, slot.byte_size, value_total_bytes));
+    }
+    uint64_t dst_end = byte_base + static_cast<uint64_t>(slot.rel_byte_offset) +
+                       slot.byte_size;
+    if (dst_end > design_state.size()) {
+      throw lyra::common::InternalError(
+          "ApplyParamInit",
+          std::format(
+              "param dest range [{}..{}) exceeds design_state size {}",
+              byte_base + static_cast<uint64_t>(slot.rel_byte_offset), dst_end,
+              design_state.size()));
+    }
+    std::memcpy(base + slot.rel_byte_offset, src + src_offset, slot.byte_size);
+    src_offset += slot.byte_size;
+  }
+  if (src_offset != value_total_bytes) {
+    throw lyra::common::InternalError(
+        "ApplyParamInit",
+        std::format(
+            "param payload size mismatch: consumed {} bytes but payload has {}",
+            src_offset, value_total_bytes));
+  }
+}
+
 }  // namespace
 
 Constructor::Constructor(
@@ -247,14 +361,17 @@ Constructor::Constructor(
     std::span<const uint64_t> slot_byte_offsets, uint32_t num_package_slots,
     std::span<std::byte> design_state, ProcessMetaTemplateView conn_meta,
     TriggerTemplateView conn_triggers,
-    ObservableDescriptorTemplateView pkg_observable)
+    ObservableDescriptorTemplateView pkg_observable,
+    InitPatchView pkg_init_patches, InitHandleView pkg_init_handles)
     : schemas_(schemas),
       slot_byte_offsets_(slot_byte_offsets),
       design_state_(design_state),
       next_slot_base_(num_package_slots),
       conn_meta_(conn_meta),
       conn_triggers_(conn_triggers),
-      pkg_observable_(pkg_observable) {
+      pkg_observable_(pkg_observable),
+      pkg_init_patches_(pkg_init_patches),
+      pkg_init_handles_(pkg_init_handles) {
   ValidateMetaTemplate(conn_meta_, "Constructor");
   realized_meta_.pool.push_back('\0');
   realized_triggers_.Init();
@@ -279,6 +396,11 @@ Constructor::Constructor(
     realized_trace_meta_.AppendSignal(
         name_off, entry.bit_width, entry.trace_kind, entry.storage_owner_ref);
   }
+
+  // Package/global init prelude.
+  // Applied once with arena-relative (absolute) offsets, byte_base = 0.
+  ApplyInitPatches(design_state_, 0, pkg_init_patches_.entries);
+  ConstructInitHandles(design_state_, 0, pkg_init_handles_.entries);
 
   // Validate connection trigger template if non-empty.
   if (!conn_triggers_.proc_ranges.empty()) {
@@ -550,11 +672,16 @@ void Constructor::BeginBody(const BodyDescriptorPackage& package) {
       .triggers = package.triggers,
       .comb = package.comb,
       .observable_descriptors = package.observable_descriptors,
+      .init_patches = package.init_patches,
+      .init_handles = package.init_handles,
+      .init_params = package.init_params,
       .active = true,
   };
 }
 
-void Constructor::AddInstance(const char* instance_path) {
+void Constructor::AddInstance(
+    const char* instance_path, const void* param_data,
+    uint32_t param_data_size) {
   CheckNotFinalized("Constructor::AddInstance");
   if (instance_path == nullptr) {
     throw common::InternalError(
@@ -564,11 +691,17 @@ void Constructor::AddInstance(const char* instance_path) {
     throw common::InternalError(
         "Constructor::AddInstance", "no active body (call BeginBody first)");
   }
+  if ((param_data == nullptr) != (param_data_size == 0)) {
+    throw common::InternalError(
+        "Constructor::AddInstance",
+        "param_data and param_data_size must be both empty or both present");
+  }
   connections_finalized_ = true;
 
   uint32_t instance_id = next_instance_id_;
   uint32_t signal_id_offset = next_slot_base_;
 
+  uint64_t base_byte_offset = 0;
   void* this_ptr = design_state_.data();
   if (body_.slot_count > 0) {
     if (next_slot_base_ >= slot_byte_offsets_.size()) {
@@ -578,9 +711,29 @@ void Constructor::AddInstance(const char* instance_path) {
               "slot base {} exceeds layout oracle size {}", next_slot_base_,
               slot_byte_offsets_.size()));
     }
-    uint64_t base_byte_offset = slot_byte_offsets_[next_slot_base_];
+    base_byte_offset = slot_byte_offsets_[next_slot_base_];
     this_ptr = design_state_.subspan(base_byte_offset).data();
   }
+
+  // Invariant: zero-slot bodies must not carry instance-state init.
+  if (body_.slot_count == 0) {
+    if (!body_.init_patches.entries.empty() ||
+        !body_.init_handles.entries.empty() ||
+        !body_.init_params.slots.empty() || param_data_size != 0) {
+      throw common::InternalError(
+          "Constructor::AddInstance",
+          "zero-slot body must not carry instance-state init descriptors "
+          "or param payload");
+    }
+  }
+
+  // H6: Apply body-shaped initialization to this instance's state.
+  ApplyInitPatches(design_state_, base_byte_offset, body_.init_patches.entries);
+  ConstructInitHandles(
+      design_state_, base_byte_offset, body_.init_handles.entries);
+  ApplyParamInit(
+      design_state_, base_byte_offset, body_.init_params.slots, param_data,
+      param_data_size);
 
   // Capture module_proc_base before staging non-final body processes.
   auto module_proc_base = static_cast<uint32_t>(staged_.size());
@@ -963,6 +1116,15 @@ void ValidateHandle(const void* handle, const char* caller) {
   }
 }
 
+void ValidateAbiArray(
+    const void* ptr, uint32_t count, const char* what, const char* caller) {
+  if (count == 0) return;
+  if (ptr == nullptr) {
+    throw lyra::common::InternalError(
+        caller, std::format("{} pointer is null with non-zero count", what));
+  }
+}
+
 // Validate meta template ABI inputs at the C boundary: pointer/count
 // coherence, pool sentinel, and all entry file_pool_off offsets in range
 // with NUL termination. This catches malformed emitted templates before
@@ -1080,14 +1242,23 @@ auto LyraConstructorCreate(
     uint32_t num_conn_trigger_ranges, const uint8_t* conn_trigger_shapes,
     const uint8_t* conn_trigger_groupable,
     const lyra::runtime::ObservableDescriptorEntry* pkg_obs_entries,
-    uint32_t num_pkg_obs, const char* pkg_obs_pool, uint32_t pkg_obs_pool_size)
-    -> void* {
+    uint32_t num_pkg_obs, const char* pkg_obs_pool, uint32_t pkg_obs_pool_size,
+    const lyra::runtime::InitPatchEntry* pkg_init_patches,
+    uint32_t num_pkg_init_patches,
+    const lyra::runtime::InitHandleEntry* pkg_init_handles,
+    uint32_t num_pkg_init_handles) -> void* {
   ValidateMetaAbiInputs(
       conn_meta_entries, num_conn_meta, conn_meta_pool, conn_meta_pool_size,
       "LyraConstructorCreate");
   ValidateObservableDescriptorTemplate(
       std::span(pkg_obs_entries, num_pkg_obs), pkg_obs_pool, pkg_obs_pool_size,
       true, "LyraConstructorCreate");
+  ValidateAbiArray(
+      pkg_init_patches, num_pkg_init_patches, "pkg_init_patches",
+      "LyraConstructorCreate");
+  ValidateAbiArray(
+      pkg_init_handles, num_pkg_init_handles, "pkg_init_handles",
+      "LyraConstructorCreate");
   lyra::runtime::ProcessMetaTemplateView conn_meta{
       .entries = std::span(conn_meta_entries, num_conn_meta),
       .pool = conn_meta_pool,
@@ -1105,11 +1276,17 @@ auto LyraConstructorCreate(
       .pool = pkg_obs_pool,
       .pool_size = pkg_obs_pool_size,
   };
+  lyra::runtime::InitPatchView pkg_patches{
+      .entries = std::span(pkg_init_patches, num_pkg_init_patches),
+  };
+  lyra::runtime::InitHandleView pkg_handles{
+      .entries = std::span(pkg_init_handles, num_pkg_init_handles),
+  };
   auto ctor = std::make_unique<lyra::runtime::Constructor>(
       std::span(schemas, num_schemas), std::span(slot_byte_offsets, num_slots),
       num_package_slots,
       std::span(static_cast<std::byte*>(design_state), design_state_size),
-      conn_meta, conn_triggers, pkg_obs);
+      conn_meta, conn_triggers, pkg_obs, pkg_patches, pkg_handles);
   return ctor.release();
 }
 
@@ -1135,7 +1312,13 @@ void LyraConstructorBeginBody(
     const lyra::runtime::CombKernelDesc* comb_kernels,
     uint32_t num_comb_kernels,
     const lyra::runtime::ObservableDescriptorEntry* obs_entries,
-    uint32_t num_obs, const char* obs_pool, uint32_t obs_pool_size) {
+    uint32_t num_obs, const char* obs_pool, uint32_t obs_pool_size,
+    const lyra::runtime::InitPatchEntry* init_patches,
+    uint32_t num_init_patches,
+    const lyra::runtime::InitHandleEntry* init_handles,
+    uint32_t num_init_handles,
+    const lyra::runtime::ParamInitSlotEntry* init_param_slots,
+    uint32_t num_init_param_slots) {
   ValidateHandle(ctor, "LyraConstructorBeginBody");
   ValidateHandle(desc, "LyraConstructorBeginBody");
   ValidateMetaAbiInputs(
@@ -1143,6 +1326,15 @@ void LyraConstructorBeginBody(
       "LyraConstructorBeginBody");
   ValidateObservableDescriptorTemplate(
       std::span(obs_entries, num_obs), obs_pool, obs_pool_size, false,
+      "LyraConstructorBeginBody");
+  ValidateAbiArray(
+      init_patches, num_init_patches, "init_patches",
+      "LyraConstructorBeginBody");
+  ValidateAbiArray(
+      init_handles, num_init_handles, "init_handles",
+      "LyraConstructorBeginBody");
+  ValidateAbiArray(
+      init_param_slots, num_init_param_slots, "init_param_slots",
       "LyraConstructorBeginBody");
   lyra::runtime::BodyDescriptorPackage package{
       .desc = desc,
@@ -1172,13 +1364,30 @@ void LyraConstructorBeginBody(
               .pool = obs_pool,
               .pool_size = obs_pool_size,
           },
+      .init_patches =
+          lyra::runtime::InitPatchView{
+              .entries = std::span(init_patches, num_init_patches),
+          },
+      .init_handles =
+          lyra::runtime::InitHandleView{
+              .entries = std::span(init_handles, num_init_handles),
+          },
+      .init_params =
+          lyra::runtime::ParamInitView{
+              .slots = std::span(init_param_slots, num_init_param_slots),
+          },
   };
   static_cast<lyra::runtime::Constructor*>(ctor)->BeginBody(package);
 }
 
-void LyraConstructorAddInstance(void* ctor, const char* instance_path) {
+void LyraConstructorAddInstance(
+    void* ctor, const char* instance_path, const void* param_data,
+    uint32_t param_data_size) {
   ValidateHandle(ctor, "LyraConstructorAddInstance");
-  static_cast<lyra::runtime::Constructor*>(ctor)->AddInstance(instance_path);
+  ValidateAbiArray(
+      param_data, param_data_size, "param_data", "LyraConstructorAddInstance");
+  static_cast<lyra::runtime::Constructor*>(ctor)->AddInstance(
+      instance_path, param_data, param_data_size);
 }
 
 auto LyraConstructorFinalize(void* ctor_raw) -> void* {

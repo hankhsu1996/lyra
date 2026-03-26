@@ -1188,7 +1188,8 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
     const llvm::DataLayout& dl, bool force_two_state,
-    const ForwardingMap& forwarding) -> DesignLayout {
+    const ForwardingMap& forwarding, uint32_t num_package_slots,
+    std::span<const InstanceSlotRange> instance_ranges) -> DesignLayout {
   DesignLayout layout;
 
   auto storage_mode =
@@ -1217,39 +1218,104 @@ auto BuildDesignLayout(
   // Initialize owned data offset vector (nullopt for all slots initially).
   layout.owned_data_offsets.resize(slots.size(), std::nullopt);
 
-  // Two-pass inline-region byte offset computation.
-  // Pass 1: allocate storage for storage-owner slots only.
-  // Pass 2: assign forwarded alias slots the canonical source's byte offset.
+  // Byte offset assignment: inline slots + owned-container appendix.
+  //
+  // When instance_ranges is provided (final layout), each instance's
+  // appendix backing is placed contiguously after its inline slots so
+  // that owned-container offsets are body-relative and repeatable.
+  // Layout order: [pkg inline + pkg appendix][inst0 inline + inst0 appendix]...
+  //
+  // When instance_ranges is empty (pre-forwarding layout), all slots
+  // are laid out sequentially with appendix at the end.
   layout.slot_byte_offsets.resize(slots.size(), 0);
 
-  uint64_t offset = 0;
   uint64_t max_align = 1;
 
-  // Pass 1: storage owners get independent byte offsets.
-  for (size_t i = 0; i < slots.size(); ++i) {
-    if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
+  // Helper: assign inline byte offsets for a contiguous slot range,
+  // then assign appendix offsets for owned containers in that range.
+  // Returns the running offset after the group (aligned to max_align).
+  auto assign_group_offsets = [&](uint32_t begin, uint32_t end,
+                                  uint64_t group_start) -> uint64_t {
+    uint64_t offset = group_start;
 
-    uint64_t slot_size = 0;
-    uint64_t slot_align = 0;
-    if (slots[i].storage_shape == mir::StorageShape::kOwnedContainer) {
-      slot_size = runtime::kOwnedStorageHandleByteSize;
-      slot_align = runtime::kOwnedStorageHandleAlignment;
-    } else {
-      const auto& spec = layout.slot_storage_specs[i];
-      slot_size = spec.TotalByteSize();
-      slot_align = spec.Alignment();
+    // Inline pass: storage owners only.
+    for (uint32_t i = begin; i < end; ++i) {
+      if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
+      uint64_t slot_size = 0;
+      uint64_t slot_align = 0;
+      if (slots[i].storage_shape == mir::StorageShape::kOwnedContainer) {
+        slot_size = runtime::kOwnedStorageHandleByteSize;
+        slot_align = runtime::kOwnedStorageHandleAlignment;
+      } else {
+        const auto& spec = layout.slot_storage_specs[i];
+        slot_size = spec.TotalByteSize();
+        slot_align = spec.Alignment();
+      }
+      max_align = std::max(max_align, slot_align);
+      offset = AlignUp(offset, slot_align);
+      layout.slot_byte_offsets[i] = offset;
+      offset += slot_size;
     }
-    max_align = std::max(max_align, slot_align);
-    offset = AlignUp(offset, slot_align);
-    layout.slot_byte_offsets[i] = offset;
-    offset += slot_size;
+
+    // NOTE: forwarded alias resolution is deferred to after all groups
+    // are processed, because aliases can reference owners in other groups.
+
+    // Appendix pass: owned-container backing data.
+    offset = AlignUp(offset, max_align);
+    for (uint32_t i = begin; i < end; ++i) {
+      if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
+      if (slots[i].storage_shape != mir::StorageShape::kOwnedContainer) {
+        continue;
+      }
+      const auto& spec = layout.slot_storage_specs[i];
+      if (spec.Alignment() == 0 || spec.TotalByteSize() == 0) {
+        throw common::InternalError(
+            "BuildDesignLayout",
+            std::format(
+                "owned-container slot {} has invalid backing spec "
+                "(alignment={}, size={})",
+                i, spec.Alignment(), spec.TotalByteSize()));
+      }
+      uint64_t backing_align = spec.Alignment();
+      max_align = std::max(max_align, backing_align);
+      offset = AlignUp(offset, backing_align);
+      layout.owned_data_offsets[i] = offset;
+      offset += spec.TotalByteSize();
+    }
+
+    return AlignUp(offset, max_align);
+  };
+
+  if (instance_ranges.empty()) {
+    // Pre-forwarding layout: all slots in one group, appendix at end.
+    auto total = static_cast<uint32_t>(slots.size());
+    uint64_t end_offset = assign_group_offsets(0, total, 0);
+    layout.inline_region_size = end_offset;
+    layout.arena_size = std::max(uint64_t{1}, end_offset);
+  } else {
+    uint64_t running = 0;
+
+    // Package group.
+    if (num_package_slots > 0) {
+      running = assign_group_offsets(0, num_package_slots, running);
+    }
+
+    // Per-instance groups.
+    for (const auto& range : instance_ranges) {
+      if (range.slot_count == 0) continue;
+      running = assign_group_offsets(
+          range.base_slot, range.base_slot + range.slot_count, running);
+    }
+
+    layout.inline_region_size = running;
+    layout.arena_size = std::max(uint64_t{1}, running);
   }
 
-  // Pass 2: forwarded alias slots share canonical source's byte offset
-  // and storage spec for storage access only.
+  // Global alias resolution pass: forwarded aliases share canonical source's
+  // byte offset and storage spec. Done after all groups so cross-instance
+  // aliases resolve correctly.
   for (size_t i = 0; i < slots.size(); ++i) {
     if (!forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
-
     mir::SlotId canonical = forwarding.Resolve(slots[i].slot_id);
     auto canonical_it = layout.slot_to_index.find(canonical);
     if (canonical_it == layout.slot_to_index.end()) {
@@ -1262,8 +1328,13 @@ auto BuildDesignLayout(
     auto owner_row = canonical_it->second;
     layout.slot_byte_offsets[i] = layout.slot_byte_offsets[owner_row];
     layout.slot_storage_specs[i] = layout.slot_storage_specs[owner_row];
+  }
 
-    // Full alias-owner validation.
+  // Validate forwarded alias consistency.
+  for (size_t i = 0; i < slots.size(); ++i) {
+    if (!forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
+    mir::SlotId canonical = forwarding.Resolve(slots[i].slot_id);
+    auto owner_row = layout.slot_to_index.at(canonical);
     auto owner_slot_id = mir::SlotId{layout.storage_owner_slot_id[i]};
     if (owner_slot_id != canonical) {
       throw common::InternalError(
@@ -1295,31 +1366,6 @@ auto BuildDesignLayout(
     }
   }
 
-  layout.inline_region_size = std::max(uint64_t{1}, AlignUp(offset, max_align));
-
-  // Compute appendix offsets for owned container backing data.
-  uint64_t appendix_offset = layout.inline_region_size;
-  for (size_t i = 0; i < slots.size(); ++i) {
-    if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
-    if (slots[i].storage_shape != mir::StorageShape::kOwnedContainer) {
-      continue;
-    }
-    const auto& spec = layout.slot_storage_specs[i];
-    if (spec.Alignment() == 0 || spec.TotalByteSize() == 0) {
-      throw common::InternalError(
-          "BuildDesignLayout",
-          std::format(
-              "owned-container slot {} has invalid backing spec "
-              "(alignment={}, size={})",
-              i, spec.Alignment(), spec.TotalByteSize()));
-    }
-    uint64_t backing_align = spec.Alignment();
-    max_align = std::max(max_align, backing_align);
-    appendix_offset = AlignUp(appendix_offset, backing_align);
-    layout.owned_data_offsets[i] = appendix_offset;
-    appendix_offset += spec.TotalByteSize();
-  }
-
   // Verify invariants: kInlineValue slots must have nullopt owned offset,
   // kOwnedContainer slots must have engaged owned offset.
   for (size_t i = 0; i < slots.size(); ++i) {
@@ -1338,54 +1384,10 @@ auto BuildDesignLayout(
     }
   }
 
-  // Total arena size covers both inline and appendix regions.
-  layout.arena_size =
-      std::max(uint64_t{1}, AlignUp(appendix_offset, max_align));
-
-  // Collect 4-state patches using canonical byte offsets.
-  // Forwarded alias slots do not get independent patches.
-  for (size_t i = 0; i < slots.size(); ++i) {
-    if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
-    if (!IsPatchTableEligible(layout.slot_storage_specs[i])) {
-      continue;
-    }
-    const auto& spec = layout.slot_storage_specs[i];
-    const auto& packed = std::get<PackedStorageSpec>(spec.data);
-
-    uint64_t slot_offset = layout.slot_byte_offsets[i];
-    uint32_t lane_byte_size = packed.LaneByteSize();
-    uint32_t semantic_width = packed.bit_width;
-
-    auto patch_offset = NarrowToU32(
-        slot_offset + packed.UnknownLaneOffset(), "BuildDesignLayout");
-
-    uint32_t mask_width = lane_byte_size * 8;
-    uint64_t mask = semantic_width >= mask_width
-                        ? ~uint64_t{0}
-                        : (uint64_t{1} << semantic_width) - 1;
-
-    switch (lane_byte_size) {
-      case 1:
-        layout.four_state_patches.patches_8.emplace_back(
-            patch_offset, static_cast<uint8_t>(mask));
-        break;
-      case 2:
-        layout.four_state_patches.patches_16.emplace_back(
-            patch_offset, static_cast<uint16_t>(mask));
-        break;
-      case 4:
-        layout.four_state_patches.patches_32.emplace_back(
-            patch_offset, static_cast<uint32_t>(mask));
-        break;
-      case 8:
-        layout.four_state_patches.patches_64.emplace_back(patch_offset, mask);
-        break;
-      default:
-        throw common::InternalError(
-            "BuildDesignLayout",
-            "IsPatchTableEligible passed but lane size is not 1/2/4/8");
-    }
-  }
+  // Design-level 4-state patches are no longer collected here.
+  // H6 moved design-state 4-state initialization to constructor-owned
+  // body/package init descriptors built in lower.cpp.
+  // Frame-level patches are still collected in BuildFrameLayout.
 
   // Structural invariant: owned containers must be storage owners.
   for (size_t i = 0; i < slots.size(); ++i) {
@@ -1879,6 +1881,8 @@ auto BuildLayout(
                   .meta = {},
                   .triggers = {},
                   .comb = {},
+                  .observable_descriptors = {},
+                  .init = {},
               });
         } else {
           // Validate all plans for the same body agree on slot_count.

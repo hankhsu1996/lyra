@@ -104,12 +104,6 @@ struct DesignLayout {
   // Arena for child storage specs (array elements, struct fields).
   StorageSpecArena storage_spec_arena;
 
-  // Patches for 4-state X-encoding (byte offsets in inline region).
-  // Structurally restricted to inline scalar packed slots only:
-  // IsPatchTableEligible requires PackedStorageSpec, which excludes
-  // owned-container slots (their specs are ArrayStorageSpec).
-  FourStatePatchTable four_state_patches;
-
   // Appendix-region byte offset for each kOwnedContainer slot's
   // backing data. Empty (nullopt) for kInlineValue slots.
   std::vector<std::optional<uint64_t>> owned_data_offsets;
@@ -305,6 +299,23 @@ struct OwnedObservableDescriptorTemplate {
   std::vector<char> pool;
 };
 
+// Body-shaped design-state initialization descriptor.
+// Contains all compile-time-computed init metadata for one body.
+// The constructor applies these per-instance using instance_byte_base.
+struct BodyInitDescriptor {
+  std::vector<runtime::InitPatchEntry> four_state_patches;
+  std::vector<runtime::InitHandleEntry> owned_handles;
+  std::vector<runtime::ParamInitSlotEntry> param_slots;
+};
+
+// Package/global design-state initialization descriptor.
+// Contains init metadata for package/global slots.
+// Applied once in constructor prelude with arena-relative offsets.
+struct PackageInitDescriptor {
+  std::vector<runtime::InitPatchEntry> four_state_patches;
+  std::vector<runtime::InitHandleEntry> owned_handles;
+};
+
 // Scoped signal identity key. Used for scope-aware slot identity
 // in comb kernel analysis and template extraction to avoid conflating
 // module-local and design-global slots with the same numeric id.
@@ -440,6 +451,10 @@ struct Layout {
     // Observable descriptor template. Flat entries + local-name pool.
     // The post-layout descriptor extraction pass is the sole producer.
     OwnedObservableDescriptorTemplate observable_descriptors;
+    // Design-state initialization descriptor.
+    // Body-shaped init metadata consumed by the constructor to initialize
+    // per-instance design state. All offsets are body-relative.
+    BodyInitDescriptor init;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
 
@@ -502,6 +517,10 @@ struct Layout {
   // All entries are absolute (non-relocating). Realized in the constructor
   // prelude before any body-instance expansion.
   OwnedObservableDescriptorTemplate package_observable_descriptors;
+
+  // Design-wide package/global initialization descriptor.
+  // Arena-relative offsets. Applied once in constructor prelude.
+  PackageInitDescriptor package_init_descriptor;
 };
 
 // Type kind for variable inspection (also used in layout)
@@ -582,10 +601,18 @@ class ForwardingMap;
 // source's byte offset. Pass an empty ForwardingMap for the pre-forwarding
 // layout (used by connection collection for observation resolution).
 // DataLayout is needed only for TargetStorageAbi (pointer size/alignment).
+// Per-instance slot range for layout construction. Describes one
+// instance's contiguous slot range within the design slot table.
+struct InstanceSlotRange {
+  uint32_t base_slot;
+  uint32_t slot_count;
+};
+
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
     const llvm::DataLayout& dl, bool force_two_state,
-    const ForwardingMap& forwarding) -> DesignLayout;
+    const ForwardingMap& forwarding, uint32_t num_package_slots,
+    std::span<const InstanceSlotRange> instance_ranges) -> DesignLayout;
 
 // Per-module-instance layout-planning entry.
 // Borrowed view into MIR data; valid only for the synchronous BuildLayout call.
