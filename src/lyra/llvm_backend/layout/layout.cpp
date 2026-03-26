@@ -14,6 +14,7 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Type.h>
 
+#include "absl/container/flat_hash_map.h"
 #include "lyra/common/constant.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -23,6 +24,7 @@
 #include "lyra/llvm_backend/connection_kernel_collection.hpp"
 #include "lyra/llvm_backend/forwarding_map.hpp"
 #include "lyra/llvm_backend/layout/layout_four_state.hpp"
+#include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
@@ -1656,18 +1658,15 @@ auto BuildLayout(
 
   layout.processes.reserve(layout.scheduled_processes.size());
 
-  // Find the ordinal index of a process within a body's process list.
-  // Throws InternalError if the process is not found.
-  auto find_proc_within_body = [](const LayoutModulePlan& plan,
-                                  mir::ProcessId proc_id) -> uint32_t {
-    for (uint32_t pi = 0; pi < plan.body_processes.size(); ++pi) {
-      if (plan.body_processes[pi] == proc_id) {
-        return pi;
-      }
-    }
-    throw common::InternalError(
-        "BuildLayout", "process not found in body process list");
-  };
+  // Build canonical non-final ordinal maps per body. These are the single
+  // source of truth for mapping ProcessId <-> dense non-final ordinal.
+  absl::flat_hash_map<mir::ModuleBodyId, BodyProcessOrdinalMap>
+      body_ordinal_maps;
+  for (const auto& plan : module_plans) {
+    if (body_ordinal_maps.contains(plan.body_id)) continue;
+    const auto& body = design.module_bodies.at(plan.body_id.value);
+    body_ordinal_maps.emplace(plan.body_id, BuildBodyProcessOrdinalMap(body));
+  }
 
   // Counters for semantic naming per category.
   uint32_t init_counter = 0;
@@ -1692,9 +1691,13 @@ auto BuildLayout(
     } else {
       uint32_t mi = sp.module_index.value;
       auto body_id = module_plans[mi].body_id;
-      uint32_t pwb = find_proc_within_body(module_plans[mi], sp.process_id);
-      frame_name = std::format("Body{}Frame{}", body_id.value, pwb);
-      state_name = std::format("Body{}State{}", body_id.value, pwb);
+      const auto& ordinal_map = body_ordinal_maps.at(body_id);
+      uint32_t nonfinal_proc_ordinal =
+          GetNonFinalOrdinal(ordinal_map, sp.process_id);
+      frame_name =
+          std::format("Body{}Frame{}", body_id.value, nonfinal_proc_ordinal);
+      state_name =
+          std::format("Body{}State{}", body_id.value, nonfinal_proc_ordinal);
     }
 
     ProcessLayout proc_layout;
@@ -1755,11 +1758,11 @@ auto BuildLayout(
       return {.state_size = sz, .state_align = al, .needs_4state_init = needs};
     };
 
-    // Map from (body_id, proc_within_body) to schema index for module
-    // process deduplication.
+    // Map from (body_id, dense non-final ordinal) to schema index for
+    // module process deduplication.
     struct SchemaKey {
       uint32_t body_id;
-      uint32_t proc_within_body;
+      uint32_t proc_within_body;  // Dense non-final body-local ordinal.
       auto operator==(const SchemaKey&) const -> bool = default;
     };
     struct SchemaKeyHash {
@@ -1791,12 +1794,16 @@ auto BuildLayout(
 
         ++conn_counter;
       } else {
-        // Module process: deduplicate by (body_id, proc_within_body).
+        // Module process: deduplicate by (body_id, nonfinal_proc_ordinal).
         uint32_t mi = sp.module_index.value;
         auto body_id = module_plans[mi].body_id;
-        uint32_t pwb = find_proc_within_body(module_plans[mi], sp.process_id);
+        const auto& ordinal_map = body_ordinal_maps.at(body_id);
+        uint32_t nonfinal_proc_ordinal =
+            GetNonFinalOrdinal(ordinal_map, sp.process_id);
 
-        SchemaKey key{.body_id = body_id.value, .proc_within_body = pwb};
+        SchemaKey key{
+            .body_id = body_id.value,
+            .proc_within_body = nonfinal_proc_ordinal};
         auto it = module_schema_map.find(key);
         if (it != module_schema_map.end()) {
           // Existing schema: assert all constructor-relevant properties
@@ -1812,7 +1819,8 @@ auto BuildLayout(
                 "BuildLayout",
                 "grouped module processes disagree on schema properties");
           }
-          if (existing.body_id != body_id || existing.proc_within_body != pwb ||
+          if (existing.body_id != body_id ||
+              existing.proc_within_body != nonfinal_proc_ordinal ||
               existing.conn_index != std::nullopt) {
             throw common::InternalError(
                 "BuildLayout",
@@ -1824,9 +1832,11 @@ auto BuildLayout(
               layout.scheduled_processes[existing.representative_process_index];
           uint32_t rep_mi = rep_sp.module_index.value;
           auto rep_body_id = module_plans[rep_mi].body_id;
-          uint32_t rep_pwb =
-              find_proc_within_body(module_plans[rep_mi], rep_sp.process_id);
-          if (rep_body_id != body_id || rep_pwb != pwb) {
+          const auto& rep_ordinal_map = body_ordinal_maps.at(rep_body_id);
+          uint32_t rep_nonfinal_proc_ordinal =
+              GetNonFinalOrdinal(rep_ordinal_map, rep_sp.process_id);
+          if (rep_body_id != body_id ||
+              rep_nonfinal_proc_ordinal != nonfinal_proc_ordinal) {
             throw common::InternalError(
                 "BuildLayout",
                 "representative process does not match schema identity");
@@ -1839,7 +1849,7 @@ auto BuildLayout(
               .needs_4state_init = props.needs_4state_init,
               .representative_process_index = i,
               .body_id = body_id,
-              .proc_within_body = pwb,
+              .proc_within_body = nonfinal_proc_ordinal,
               .conn_index = std::nullopt,
           });
           module_schema_map[key] = schema_idx;
@@ -1883,42 +1893,33 @@ auto BuildLayout(
         }
       }
 
-      // Fill process schema indices ordered by proc_within_body.
-      // Invariant: proc_within_body exactly matches the body's non-final
-      // process ordering. The resulting vector must be dense and complete
-      // (every ordinal in [0, count) present).
+      // Fill process schema indices ordered by dense non-final ordinal.
+      // Invariant: every ordinal in [0, nonfinal_count) is present
+      // exactly once and matches the canonical BodyProcessOrdinalMap.
       for (auto& info : layout.body_realization_infos) {
-        // Determine expected count from schema map entries for this body.
-        uint32_t max_pwb = 0;
-        for (const auto& [key, schema_idx] : module_schema_map) {
-          if (key.body_id == info.body_id.value) {
-            max_pwb = std::max(max_pwb, key.proc_within_body + 1);
-          }
-        }
-        // Track which ordinals are filled to detect gaps.
-        std::vector<bool> filled(max_pwb, false);
-        info.process_schema_indices.resize(max_pwb);
-        for (const auto& [key, schema_idx] : module_schema_map) {
-          if (key.body_id == info.body_id.value) {
-            uint32_t pwb = key.proc_within_body;
-            if (filled[pwb]) {
-              throw common::InternalError(
-                  "BuildLayout", std::format(
-                                     "body {} duplicate proc_within_body {}",
-                                     info.body_id.value, pwb));
-            }
-            filled[pwb] = true;
-            info.process_schema_indices[pwb] = schema_idx;
-          }
-        }
-        for (uint32_t p = 0; p < max_pwb; ++p) {
-          if (!filled[p]) {
+        const auto& ordinal_map = body_ordinal_maps.at(info.body_id);
+        auto nonfinal_count =
+            static_cast<uint32_t>(ordinal_map.nonfinal_processes.size());
+
+        // process_schema_indices is indexed by dense non-final body-local
+        // ordinal. Drive population from the canonical ordinal domain
+        // directly rather than reconstructing density from emitted schema
+        // keys.
+        info.process_schema_indices.resize(nonfinal_count);
+        for (uint32_t nonfinal_proc_ordinal = 0;
+             nonfinal_proc_ordinal < nonfinal_count; ++nonfinal_proc_ordinal) {
+          SchemaKey key{
+              .body_id = info.body_id.value,
+              .proc_within_body = nonfinal_proc_ordinal,
+          };
+          auto it = module_schema_map.find(key);
+          if (it == module_schema_map.end()) {
             throw common::InternalError(
-                "BuildLayout",
-                std::format(
-                    "body {} missing proc_within_body ordinal {}",
-                    info.body_id.value, p));
+                "BuildLayout", std::format(
+                                   "body {} missing nonfinal_proc_ordinal {}",
+                                   info.body_id.value, nonfinal_proc_ordinal));
           }
+          info.process_schema_indices[nonfinal_proc_ordinal] = it->second;
         }
       }
     }

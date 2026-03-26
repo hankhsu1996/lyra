@@ -400,7 +400,7 @@ struct Layout {
     // Schema identity components for naming emission and debug assertions.
     // Not the source of truth for grouping (grouping is structural).
     std::optional<mir::ModuleBodyId> body_id;
-    // Within-body ordinal index (position in body_processes list).
+    // Dense non-final body-local process ordinal.
     std::optional<uint32_t> proc_within_body;
     // For connection schemas: the connection-process semantic index
     // used for naming. This is the canonical naming component for
@@ -420,13 +420,14 @@ struct Layout {
   struct BodyRealizationInfo {
     mir::ModuleBodyId body_id;
     uint32_t slot_count = 0;
-    // Per-process schema indices, ordered by body-local non-final process
-    // ordinal (proc_within_body). Dense: every ordinal in [0, size) is
-    // present and valid. This ordering matches the body's non-final
-    // process list and the compiled function vector for that body.
+    // Per-process schema indices, indexed by dense non-final body-local
+    // process ordinal. Every ordinal in [0, size) is present and valid.
+    // This ordering matches the body's non-final process list and the
+    // compiled function vector for that body.
     std::vector<uint32_t> process_schema_indices;
     // Process metadata template in descriptor-ready canonical form.
-    // One entry per proc_within_body, parallel to process_schema_indices.
+    // One entry per non-final process ordinal, parallel to
+    // process_schema_indices.
     // The post-layout metadata template extraction pass is the sole
     // producer.
     OwnedProcessMetaTemplate meta;

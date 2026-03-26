@@ -44,10 +44,10 @@ struct SpecCompilationUnit {
 // Does not carry instance identity -- dynamic instance identity flows through
 // wrapper/runtime inputs, not through static codegen state.
 struct SpecProcessView {
-  uint32_t local_nonfinal_proc_index;  // Position among body's non-final procs
-  uint32_t layout_process_index;       // Matching entry in layout.processes
+  uint32_t nonfinal_proc_ordinal;  // Dense non-final body-local process ordinal
+  uint32_t layout_process_index;   // Matching entry in layout.processes
   mir::ProcessId process_id;
-  std::string func_name;  // body_{body_id}_proc_{local_nonfinal_proc_index}
+  std::string func_name;  // body_{body_id}_proc_{nonfinal_proc_ordinal}
 };
 
 // Narrow backend view for compiling one specialization body.

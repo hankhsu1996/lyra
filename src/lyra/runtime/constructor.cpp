@@ -582,7 +582,7 @@ void Constructor::AddInstance(const char* instance_path) {
     this_ptr = design_state_.subspan(base_byte_offset).data();
   }
 
-  // Capture module_proc_base before staging body processes.
+  // Capture module_proc_base before staging non-final body processes.
   auto module_proc_base = static_cast<uint32_t>(staged_.size());
 
   for (const auto& entry : body_.entries) {
@@ -602,15 +602,15 @@ void Constructor::AddInstance(const char* instance_path) {
 
   uint32_t instance_ord = next_module_instance_ordinal_;
   ++next_module_instance_ordinal_;
-  auto num_body_procs = static_cast<uint32_t>(body_.entries.size());
+  auto num_nonfinal_body_procs = static_cast<uint32_t>(body_.entries.size());
   instance_ledger_.push_back(
       InstanceLedgerEntry{
           .owner_ordinal = instance_ord,
           .module_proc_base = module_proc_base,
-          .num_processes = num_body_procs,
+          .num_processes = num_nonfinal_body_procs,
       });
 
-  // Append metadata entries for all body processes of this instance.
+  // Append metadata entries for all non-final body processes of this instance.
   uint32_t inst_path_off = AppendString(instance_path);
   for (const auto& meta : body_.meta.entries) {
     auto body_pool = std::span(body_.meta.pool, body_.meta.pool_size);
@@ -622,30 +622,31 @@ void Constructor::AddInstance(const char* instance_path) {
     realized_meta_.words.push_back(meta.col);
   }
 
-  // Trigger realization for all body processes of this instance.
+  // Trigger realization for all non-final body processes of this instance.
+  // proc_within_body is a dense non-final body-local ordinal.
   if (!body_.triggers.proc_ranges.empty()) {
-    if (body_.triggers.proc_ranges.size() != num_body_procs) {
+    if (body_.triggers.proc_ranges.size() != num_nonfinal_body_procs) {
       throw common::InternalError(
           "Constructor::AddInstance",
           std::format(
               "trigger proc_ranges size {} != body process count {}",
-              body_.triggers.proc_ranges.size(), num_body_procs));
+              body_.triggers.proc_ranges.size(), num_nonfinal_body_procs));
     }
-    if (body_.triggers.proc_groupable.size() != num_body_procs) {
+    if (body_.triggers.proc_groupable.size() != num_nonfinal_body_procs) {
       throw common::InternalError(
           "Constructor::AddInstance",
           std::format(
               "trigger proc_groupable size {} != body process count {}",
-              body_.triggers.proc_groupable.size(), num_body_procs));
+              body_.triggers.proc_groupable.size(), num_nonfinal_body_procs));
     }
-    if (body_.triggers.proc_shapes.size() != num_body_procs) {
+    if (body_.triggers.proc_shapes.size() != num_nonfinal_body_procs) {
       throw common::InternalError(
           "Constructor::AddInstance",
           std::format(
               "trigger proc_shapes size {} != body process count {}",
-              body_.triggers.proc_shapes.size(), num_body_procs));
+              body_.triggers.proc_shapes.size(), num_nonfinal_body_procs));
     }
-    for (uint32_t pwb = 0; pwb < num_body_procs; ++pwb) {
+    for (uint32_t pwb = 0; pwb < num_nonfinal_body_procs; ++pwb) {
       uint32_t proc_idx = module_proc_base + pwb;
       const auto& range = body_.triggers.proc_ranges[pwb];
       uint32_t flags = (body_.triggers.proc_groupable[pwb] != 0)
@@ -672,12 +673,12 @@ void Constructor::AddInstance(const char* instance_path) {
   // Comb realization for comb kernels of this instance.
   if (!body_.comb.kernels.empty()) {
     for (const auto& kernel : body_.comb.kernels) {
-      if (kernel.proc_within_body >= num_body_procs) {
+      if (kernel.proc_within_body >= num_nonfinal_body_procs) {
         throw common::InternalError(
             "Constructor::AddInstance",
             std::format(
                 "comb kernel proc_within_body {} >= body process count {}",
-                kernel.proc_within_body, num_body_procs));
+                kernel.proc_within_body, num_nonfinal_body_procs));
       }
       uint32_t proc_idx = module_proc_base + kernel.proc_within_body;
       uint32_t comb_flags = (kernel.has_self_edge != 0) ? 1U : 0U;
