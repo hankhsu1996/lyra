@@ -1,0 +1,79 @@
+feature: final_block_ordering
+description: >
+  Regression test for body-process ordinal computation when a final block
+  appears between non-final processes in source order. The layout/codegen
+  pipeline must produce dense non-final ordinals that skip finals.
+
+cases:
+  - name: final_between_non_final_processes
+    description: >
+      A module with a final block between two initial blocks. The final
+      block must not create a gap in the dense non-final process ordinal
+      space used by layout, codegen, and runtime descriptors.
+    sv: |
+      module M;
+        int a;
+        int b;
+
+        initial begin
+          a = 10;
+          $display("%m a=%0d", a);
+        end
+
+        final begin
+          a = a;
+        end
+
+        initial begin
+          b = 20;
+          $display("%m b=%0d", b);
+        end
+      endmodule
+
+      module Top;
+        M m1();
+        M m2();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "Top.m1 a=10"
+          - "Top.m1 b=20"
+          - "Top.m2 a=10"
+          - "Top.m2 b=20"
+
+  - name: final_before_always_comb
+    description: >
+      A module with a final block before an always_comb process.
+      Exercises the comb kernel analysis path with non-dense raw
+      process indices.
+    sv: |
+      module M;
+        int x;
+        int y;
+
+        initial begin
+          x = 5;
+        end
+
+        final begin
+          x = x;
+        end
+
+        always_comb begin
+          y = x + 1;
+        end
+
+        initial begin
+          #1;
+          $display("y=%0d", y);
+        end
+      endmodule
+
+      module Top;
+        M m();
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "y=6"
