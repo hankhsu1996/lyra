@@ -2,9 +2,9 @@
 
 namespace lyra::driver {
 
-struct CompilationInput;
+struct ValidatedCompilationInput;
 
 // Run simulation using out-of-process lli (LLVM interpreter).
-auto RunLli(const CompilationInput& input) -> int;
+auto RunLli(const ValidatedCompilationInput& input) -> int;
 
 }  // namespace lyra::driver

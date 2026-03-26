@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -25,6 +26,7 @@
 #include "pipeline.hpp"
 #include "process_stats.hpp"
 #include "runtime_path.hpp"
+#include "validated_input.hpp"
 
 namespace lyra::driver {
 
@@ -64,14 +66,25 @@ auto CreateTempFile(const std::string& suffix) -> std::string {
   return {buf.data()};
 }
 
-auto SpawnLli(const std::string& runtime_path, const std::string& ir_path)
-    -> int {
-  std::string dlopen_arg = std::format("--dlopen={}", runtime_path);
+auto SpawnLli(
+    const std::string& runtime_path, const std::string& ir_path,
+    std::span<const std::filesystem::path> dpi_link_inputs) -> int {
+  // Runtime is loaded via --dlopen so lli can resolve Lyra* symbols.
+  std::vector<std::string> dlopen_args;
+  dlopen_args.push_back(std::format("--dlopen={}", runtime_path));
+
+  // LLI materialization: each validated DPI link input is passed through
+  // --dlopen so the interpreter can resolve foreign symbols at execution time.
+  for (const auto& input : dpi_link_inputs) {
+    dlopen_args.push_back(std::format("--dlopen={}", input.string()));
+  }
 
   std::vector<char*> argv;
   std::string lli_cmd = "lli";
   argv.push_back(lli_cmd.data());
-  argv.push_back(dlopen_arg.data());
+  for (auto& arg : dlopen_args) {
+    argv.push_back(arg.data());
+  }
   std::string ir_path_copy = ir_path;
   argv.push_back(ir_path_copy.data());
   argv.push_back(nullptr);
@@ -97,11 +110,12 @@ auto SpawnLli(const std::string& runtime_path, const std::string& ir_path)
 
 }  // namespace
 
-auto RunLli(const CompilationInput& input) -> int {
-  bool emit_stats = input.stats_top_n >= 0;
-  CompilationOutput output(BuildLliDriverOutputOptions(input, emit_stats));
+auto RunLli(const ValidatedCompilationInput& input) -> int {
+  bool emit_stats = input.input.stats_top_n >= 0;
+  CompilationOutput output(
+      BuildLliDriverOutputOptions(input.input, emit_stats));
 
-  auto result = CompileToMir(input, output);
+  auto result = CompileToMir(input.input, output);
   if (!result) {
     result.error().Render(output);
     output.Flush();
@@ -121,12 +135,12 @@ auto RunLli(const CompilationInput& input) -> int {
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),
-      .fs_base_dir = input.fs_base_dir.string(),
-      .plusargs = input.plusargs,
+      .fs_base_dir = input.input.fs_base_dir.string(),
+      .plusargs = input.input.plusargs,
       .feature_flags = 0,
-      .signal_trace_path = input.trace_signals_output.value_or(""),
-      .iteration_limit = input.iteration_limit,
-      .force_two_state = input.two_state,
+      .signal_trace_path = input.input.trace_signals_output.value_or(""),
+      .iteration_limit = input.input.iteration_limit,
+      .force_two_state = input.input.two_state,
       .collect_forwarding_analysis =
           output.IsEnabled(OutputCategory::kAnalysis),
       .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
@@ -148,7 +162,7 @@ auto RunLli(const CompilationInput& input) -> int {
     output.PrintMirStats(compilation.mir.stats);
     output.PrintPhaseSummary();
     LlvmStats llvm_stats_data = CollectLlvmStats(*llvm_result->module);
-    output.PrintLlvmStats(llvm_stats_data, input.stats_top_n);
+    output.PrintLlvmStats(llvm_stats_data, input.input.stats_top_n);
     auto ps = CollectProcessStats(
         compilation.mir.design, *compilation.mir.design_arena,
         compilation.mir.design_origins, compilation.hir.design,
@@ -197,7 +211,8 @@ auto RunLli(const CompilationInput& input) -> int {
   int exit_code = 0;
   {
     PhaseTimer timer(output, Phase::kSim, HeartbeatPolicy::kEnabled);
-    exit_code = SpawnLli(runtime_path.string(), ir_path);
+    exit_code =
+        SpawnLli(runtime_path.string(), ir_path, input.input.dpi_link_inputs);
   }
   if (exit_code == -1) {
     output.PrintError(

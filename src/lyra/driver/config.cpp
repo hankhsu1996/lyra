@@ -154,6 +154,21 @@ auto LoadConfig(const fs::path& config_path) -> lyra::Result<ProjectConfig> {
     }
   }
 
+  // [dpi] section (optional)
+  if (auto dpi = tbl["dpi"]) {
+    if (auto* arr = dpi["link_inputs"].as_array()) {
+      for (const auto& elem : *arr) {
+        if (auto str = elem.value<std::string>()) {
+          fs::path p = *str;
+          if (p.is_relative()) {
+            p = config.root_dir / p;
+          }
+          config.dpi.link_inputs.push_back(std::move(p));
+        }
+      }
+    }
+  }
+
   return config;
 }
 

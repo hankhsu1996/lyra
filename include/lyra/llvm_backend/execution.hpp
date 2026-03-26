@@ -87,8 +87,9 @@ struct JitCompileOptions {
   // Structured link-progress reporting. When non-null, enables progress
   // tracking and invokes the reporter periodically during JIT linking.
   LinkProgressReporter progress_reporter;
-  // DPI shared library paths to load into the JIT symbol resolver.
-  std::vector<std::filesystem::path> dpi_libs;
+  // DPI link input paths to load into the JIT symbol resolver.
+  // These must be validated (absolute, existing) before reaching here.
+  std::vector<std::filesystem::path> dpi_link_inputs;
 };
 
 // Holds compiled JIT state. Must stay alive during simulation

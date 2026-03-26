@@ -24,6 +24,7 @@
 #include "process_stats.hpp"
 #include "runtime_path.hpp"
 #include "stats_report.hpp"
+#include "validated_input.hpp"
 
 namespace lyra::driver {
 
@@ -66,11 +67,12 @@ class TimeTraceGuard {
 
 }  // namespace
 
-auto RunJit(const CompilationInput& input) -> int {
-  bool emit_stats = input.stats_top_n >= 0;
-  CompilationOutput output(BuildJitDriverOutputOptions(input, emit_stats));
+auto RunJit(const ValidatedCompilationInput& input) -> int {
+  bool emit_stats = input.input.stats_top_n >= 0;
+  CompilationOutput output(
+      BuildJitDriverOutputOptions(input.input, emit_stats));
 
-  auto result = CompileToMir(input, output);
+  auto result = CompileToMir(input.input, output);
   if (!result) {
     result.error().Render(output);
     output.Flush();
@@ -84,27 +86,27 @@ auto RunJit(const CompilationInput& input) -> int {
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   uint32_t feature_flags = 0;
-  if (input.enable_trace_summary) {
+  if (input.input.enable_trace_summary) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
     feature_flags |=
         runtime::ToUint32(runtime::FeatureFlag::kEnableTraceSummary);
   }
-  if (input.trace_signals_output.has_value()) {
+  if (input.input.trace_signals_output.has_value()) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
     feature_flags |=
         runtime::ToUint32(runtime::FeatureFlag::kEnableSignalTrace);
   }
-  if (input.enable_system) {
+  if (input.input.enable_system) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableSystem);
   }
-  if (input.trace_activations) {
+  if (input.input.trace_activations) {
     feature_flags |=
         runtime::ToUint32(runtime::FeatureFlag::kEnableActivationTrace);
   }
-  if (input.verbose >= 2) {
+  if (input.input.verbose >= 2) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDumpRuntimeStats);
   }
-  if (input.verbose >= 3) {
+  if (input.input.verbose >= 3) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDetailedStats);
   }
 
@@ -114,12 +116,12 @@ auto RunJit(const CompilationInput& input) -> int {
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),
-      .fs_base_dir = input.fs_base_dir.string(),
-      .plusargs = input.plusargs,
+      .fs_base_dir = input.input.fs_base_dir.string(),
+      .plusargs = input.input.plusargs,
       .feature_flags = feature_flags,
-      .signal_trace_path = input.trace_signals_output.value_or(""),
-      .iteration_limit = input.iteration_limit,
-      .force_two_state = input.two_state,
+      .signal_trace_path = input.input.trace_signals_output.value_or(""),
+      .iteration_limit = input.input.iteration_limit,
+      .force_two_state = input.input.two_state,
       .collect_forwarding_analysis =
           output.IsEnabled(OutputCategory::kAnalysis),
   };
@@ -149,7 +151,7 @@ auto RunJit(const CompilationInput& input) -> int {
     return 1;
   }
 
-  bool collect_stats = emit_stats || input.stats_out_path.has_value();
+  bool collect_stats = emit_stats || input.input.stats_out_path.has_value();
   LlvmStats llvm_stats;
   if (collect_stats) {
     llvm_stats = CollectLlvmStats(*llvm_result->module);
@@ -158,7 +160,7 @@ auto RunJit(const CompilationInput& input) -> int {
   if (emit_stats) {
     output.PrintMirStats(compilation.mir.stats);
     output.PrintPhaseSummary();
-    output.PrintLlvmStats(llvm_stats, input.stats_top_n);
+    output.PrintLlvmStats(llvm_stats, input.input.stats_top_n);
     auto ps = CollectProcessStats(
         compilation.mir.design, *compilation.mir.design_arena,
         compilation.mir.design_origins, compilation.hir.design,
@@ -172,23 +174,7 @@ auto RunJit(const CompilationInput& input) -> int {
         llvm_result->report.forwarding_analysis);
   }
 
-  // Validate DPI library paths before JIT setup.
-  for (const auto& dpi_lib : input.dpi_libs) {
-    if (!std::filesystem::exists(dpi_lib)) {
-      output.PrintError(
-          std::format("DPI library not found: '{}'", dpi_lib.string()));
-      output.Flush();
-      return 1;
-    }
-    if (!std::filesystem::is_regular_file(dpi_lib)) {
-      output.PrintError(
-          std::format("DPI library is not a file: '{}'", dpi_lib.string()));
-      output.Flush();
-      return 1;
-    }
-  }
-
-  TimeTraceGuard time_trace_guard(input.time_trace, output);
+  TimeTraceGuard time_trace_guard(input.input.time_trace, output);
   std::expected<lowering::mir_to_llvm::JitSession, std::string> session;
   {
     PhaseTimer timer(output, Phase::kJitCompile);
@@ -201,10 +187,10 @@ auto RunJit(const CompilationInput& input) -> int {
           };
     }
     lowering::mir_to_llvm::JitCompileOptions jit_opts{
-        .opt_level = input.opt_level,
+        .opt_level = input.input.opt_level,
         .enable_profiling = emit_stats,
         .progress_reporter = std::move(progress_reporter),
-        .dpi_libs = input.dpi_libs,
+        .dpi_link_inputs = input.input.dpi_link_inputs,
     };
     session =
         lowering::mir_to_llvm::CompileJit(*llvm_result, runtime_path, jit_opts);
@@ -221,7 +207,7 @@ auto RunJit(const CompilationInput& input) -> int {
     output.PrintOrcStats(session->OrcStats());
   }
 
-  if (input.stats_out_path) {
+  if (input.input.stats_out_path) {
     StatsReport report{
         .backend = StatsBackend::kJit,
         .git_sha = ResolveGitSha(),
@@ -230,7 +216,7 @@ auto RunJit(const CompilationInput& input) -> int {
         .mir = compilation.mir.stats,
         .jit = session->Timings(),
     };
-    WriteStatsJson(report, *input.stats_out_path);
+    WriteStatsJson(report, *input.input.stats_out_path);
   }
 
   int exit_code = 0;

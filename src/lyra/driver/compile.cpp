@@ -11,6 +11,7 @@
 #include "llvm_stats.hpp"
 #include "lyra/llvm_backend/emit.hpp"
 #include "lyra/llvm_backend/ir_optimize.hpp"
+#include "lyra/llvm_backend/link_request.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/llvm_backend/toolchain.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -20,14 +21,16 @@
 #include "pipeline.hpp"
 #include "runtime_path.hpp"
 #include "stats_report.hpp"
+#include "validated_input.hpp"
 
 namespace lyra::driver {
 
-auto Compile(const CompilationInput& input, const CompileOptions& options)
+auto Compile(
+    const ValidatedCompilationInput& input, const CompileOptions& options)
     -> std::expected<std::filesystem::path, int> {
-  CompilationOutput output(BuildCompileDriverOutputOptions(input));
+  CompilationOutput output(BuildCompileDriverOutputOptions(input.input));
 
-  auto result = CompileToMir(input, output);
+  auto result = CompileToMir(input.input, output);
   if (!result) {
     result.error().Render(output);
     output.Flush();
@@ -41,27 +44,27 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   uint32_t feature_flags = 0;
-  if (input.enable_trace_summary) {
+  if (input.input.enable_trace_summary) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
     feature_flags |=
         runtime::ToUint32(runtime::FeatureFlag::kEnableTraceSummary);
   }
-  if (input.trace_signals_output.has_value()) {
+  if (input.input.trace_signals_output.has_value()) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableTrace);
     feature_flags |=
         runtime::ToUint32(runtime::FeatureFlag::kEnableSignalTrace);
   }
-  if (input.enable_system) {
+  if (input.input.enable_system) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kEnableSystem);
   }
-  if (input.trace_activations) {
+  if (input.input.trace_activations) {
     feature_flags |=
         runtime::ToUint32(runtime::FeatureFlag::kEnableActivationTrace);
   }
-  if (input.verbose >= 2) {
+  if (input.input.verbose >= 2) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDumpRuntimeStats);
   }
-  if (input.verbose >= 3) {
+  if (input.input.verbose >= 3) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDetailedStats);
   }
   lowering::mir_to_llvm::LoweringInput llvm_input{
@@ -71,12 +74,12 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),
       .hooks = nullptr,
-      .fs_base_dir = input.fs_base_dir.string(),
+      .fs_base_dir = input.input.fs_base_dir.string(),
       .plusargs = {},
       .feature_flags = feature_flags,
-      .signal_trace_path = input.trace_signals_output.value_or(""),
-      .iteration_limit = input.iteration_limit,
-      .force_two_state = input.two_state,
+      .signal_trace_path = input.input.trace_signals_output.value_or(""),
+      .iteration_limit = input.input.iteration_limit,
+      .force_two_state = input.input.two_state,
       .collect_forwarding_analysis =
           output.IsEnabled(OutputCategory::kAnalysis),
       .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
@@ -100,18 +103,18 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
   }
 
   LlvmStats llvm_stats;
-  if (input.stats_out_path) {
+  if (input.input.stats_out_path) {
     llvm_stats = CollectLlvmStats(*llvm_result->module);
   }
 
   {
     PhaseTimer timer(output, Phase::kOptimizeIr);
     lowering::mir_to_llvm::OptimizeModule(
-        *llvm_result->module, input.opt_level);
+        *llvm_result->module, input.input.opt_level);
   }
 
   auto target_machine =
-      lowering::mir_to_llvm::CreateHostTargetMachine(input.opt_level);
+      lowering::mir_to_llvm::CreateHostTargetMachine(input.input.opt_level);
 
   auto obj_path = options.output_dir / (options.name + ".o");
   {
@@ -158,12 +161,25 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
     return std::unexpected(1);
   }
 
+  lowering::mir_to_llvm::LinkRequest link_request{
+      .output_path = options.output_dir / options.name,
+      .object_inputs = {obj_path},
+      .runtime_link_inputs =
+          {
+              lowering::mir_to_llvm::RuntimePathLinkInput{
+                  .path = runtime_path,
+              },
+          },
+      .external_link_inputs = input.input.dpi_link_inputs,
+      .system_libs = {"-lstdc++", "-lm", "-lpthread"},
+  };
+
   std::expected<std::filesystem::path, lowering::mir_to_llvm::LinkError>
       link_result;
   {
     PhaseTimer timer(output, Phase::kLink);
-    link_result = lowering::mir_to_llvm::LinkExecutable(
-        *toolchain, obj_path, runtime_path, options.output_dir, options.name);
+    link_result =
+        lowering::mir_to_llvm::LinkExecutable(*toolchain, link_request);
   }
 
   std::filesystem::remove(obj_path);
@@ -179,7 +195,7 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
     return std::unexpected(1);
   }
 
-  if (input.stats_out_path) {
+  if (input.input.stats_out_path) {
     StatsReport report{
         .backend = StatsBackend::kAot,
         .git_sha = ResolveGitSha(),
@@ -188,7 +204,7 @@ auto Compile(const CompilationInput& input, const CompileOptions& options)
         .mir = compilation.mir.stats,
         .jit = std::nullopt,
     };
-    WriteStatsJson(report, *input.stats_out_path);
+    WriteStatsJson(report, *input.input.stats_out_path);
   }
 
   output.Flush();

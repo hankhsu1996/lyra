@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <string>
 
+#include "lyra/llvm_backend/link_request.hpp"
+
 namespace lyra::lowering::mir_to_llvm {
 
 // Toolchain configuration for linking AOT executables.
@@ -24,13 +26,10 @@ struct LinkError {
 auto DetectToolchain(bool allow_ambient_search = true)
     -> std::expected<Toolchain, std::string>;
 
-// Link an object file with a runtime archive into an executable at
-// output_dir/<name>. Runtime symbols referenced by the design object are
-// pulled from the archive by normal archive linking.
-auto LinkExecutable(
-    const Toolchain& toolchain, const std::filesystem::path& object_path,
-    const std::filesystem::path& runtime_lib_path,
-    const std::filesystem::path& output_dir, const std::string& name)
+// Link object files with native inputs into an executable.
+// The output path is request.output_path; its parent directory is created
+// if it does not exist.
+auto LinkExecutable(const Toolchain& toolchain, const LinkRequest& request)
     -> std::expected<std::filesystem::path, LinkError>;
 
 }  // namespace lyra::lowering::mir_to_llvm

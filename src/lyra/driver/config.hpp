@@ -9,6 +9,10 @@
 
 namespace lyra::driver {
 
+struct DpiConfig {
+  std::vector<std::filesystem::path> link_inputs;
+};
+
 struct ProjectConfig {
   std::string name;
   std::string top;
@@ -18,6 +22,7 @@ struct ProjectConfig {
   std::vector<std::string> warnings;
   std::string out_dir = "out";
   bool pedantic = false;  // Strict LRM compliance mode
+  DpiConfig dpi;
 
   // Directory where lyra.toml was found
   std::filesystem::path root_dir;

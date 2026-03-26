@@ -50,7 +50,8 @@ struct TestLinkResult {
 
 auto LinkTestExecutable(
     const std::filesystem::path& object_path,
-    const std::filesystem::path& output_dir, const std::string& name)
+    const std::filesystem::path& output_dir, const std::string& name,
+    std::span<const std::filesystem::path> external_link_inputs = {})
     -> std::expected<TestLinkResult, std::string>;
 
 // Result of LLVM IR preparation (owns all lowering artifacts).

@@ -96,13 +96,15 @@ Two concerns, kept separate:
 
 Lyra orchestrates linkage but does not compile user code.
 
-**AOT mode.** The link command is extended to include user-specified object files and libraries. Users compile their DPI C/C++ code separately and provide the resulting artifacts.
+**AOT mode.** User-provided DPI link inputs (shared libraries or object files) are included as external link inputs in the link command via `LinkRequest`. Users compile their DPI C/C++ code separately and provide the resulting artifacts.
 
-**JIT mode.** User shared libraries are loaded into the JIT symbol resolver before code generation. Unresolved DPI symbols are found in the loaded libraries.
+**JIT mode.** Each validated DPI link input is dynamically loaded into the ORC JIT symbol resolver. Unresolved DPI symbols are found in the loaded inputs.
+
+**LLI mode.** Each validated DPI link input is passed to the `lli` interpreter via `--dlopen` so foreign symbols are available at execution time.
 
 **Header generation.** Lyra emits a C header file containing prototypes for all DPI import and export functions, analogous to Verilator's `__Dpi.h`. This header uses standard DPI-C types and enables users to compile their DPI code against the correct signatures. Header generation is part of D4 scope.
 
-**Library specification.** Users specify DPI libraries via CLI flags or lyra.toml configuration. The driver passes these through to the linker (AOT) or dynamic loader (JIT).
+**Link input specification.** Users specify DPI link inputs via the `--dpi-link` CLI flag (repeatable) or the `[dpi].link_inputs` array in `lyra.toml`. Config and CLI sources are merged additively. All inputs are validated (existence, regular file, absolute path) before reaching any backend.
 
 ## Export Runtime Contract
 

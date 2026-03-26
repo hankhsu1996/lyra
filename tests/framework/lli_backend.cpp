@@ -10,6 +10,7 @@
 
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/runtime/artifact_names.hpp"
+#include "tests/framework/dpi_test_support.hpp"
 #include "tests/framework/llvm_common.hpp"
 #include "tests/framework/output_protocol.hpp"
 #include "tests/framework/runner_common.hpp"
@@ -56,18 +57,32 @@ auto RunLliBackend(
   result.timings.backend =
       std::chrono::duration<double>(Clock::now() - t_backend).count();
 
+  // Compile DPI companion C sources into shared objects.
+  std::vector<std::filesystem::path> dpi_link_inputs;
+  if (!test_case.dpi_sources.empty()) {
+    auto dpi = CompileDpiSources(test_case.dpi_sources, work_directory);
+    if (!dpi.Ok()) {
+      result.error_message = dpi.error;
+      return result;
+    }
+    dpi_link_inputs = std::move(dpi.link_inputs);
+  }
+
   auto runtime_path = FindRuntimeLibrary(runtime::kSharedLibName);
   if (!runtime_path) {
     result.error_message = "Runtime library not found";
     return result;
   }
 
-  // Execute via lli subprocess
+  // Execute via lli subprocess with --dlopen for runtime and DPI inputs.
   auto t_exec = Clock::now();
   std::vector<std::string> lli_args = {
       std::format("--dlopen={}", runtime_path->string()),
-      ir_path.string(),
   };
+  for (const auto& dpi : dpi_link_inputs) {
+    lli_args.push_back(std::format("--dlopen={}", dpi.string()));
+  }
+  lli_args.push_back(ir_path.string());
   auto sub = RunSubprocess("lli", lli_args);
   result.timings.execute =
       std::chrono::duration<double>(Clock::now() - t_exec).count();
