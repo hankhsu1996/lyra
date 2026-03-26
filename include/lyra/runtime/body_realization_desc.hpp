@@ -266,4 +266,71 @@ inline constexpr uint32_t kObservableFlagOwnerAbsolute = 1U << 0;
 // Constructor does not apply byte-base relocation.
 inline constexpr uint32_t kObservableFlagPackageGlobal = 1U << 1;
 
+// H6: Design-state initialization descriptor entries.
+//
+// These three entry types form the complete compile-time description of
+// per-instance design-state initialization. The constructor applies them
+// using instance_byte_base + rel_byte_offset. All 4-state initialization
+// (scalar patches, aggregate leaves, owned-backing content) is normalized
+// into flat InitPatchEntry writes at compile time. No runtime type
+// recursion or semantic lowering is needed.
+
+// Unified 4-state byte-write patch entry.
+//
+// Represents one write into the unknown-lane bytes of canonical 4-state
+// storage. Covers all former patch-table scalars, flattened aggregate
+// leaves, and owned-backing 4-state initialization.
+//
+// rel_byte_offset is body-relative for body descriptors, arena-relative
+// for package descriptors.
+struct InitPatchEntry {
+  uint32_t rel_byte_offset = 0;
+  uint32_t byte_width = 0;
+  uint64_t mask = 0;
+};
+
+static_assert(sizeof(InitPatchEntry) == 16);
+static_assert(offsetof(InitPatchEntry, rel_byte_offset) == 0);
+static_assert(offsetof(InitPatchEntry, byte_width) == 4);
+static_assert(offsetof(InitPatchEntry, mask) == 8);
+static_assert(std::is_trivially_copyable_v<InitPatchEntry>);
+static_assert(std::is_standard_layout_v<InitPatchEntry>);
+
+// Owned-container handle construction descriptor.
+//
+// Describes one OwnedStorageHandle that the constructor writes into
+// design state. The handle's data pointer is set to the backing address,
+// and byte_size to the backing total size.
+//
+// rel_byte_offset fields are body-relative for body descriptors,
+// arena-relative for package descriptors.
+struct InitHandleEntry {
+  uint32_t handle_rel_byte_offset = 0;
+  uint32_t backing_rel_byte_offset = 0;
+  uint64_t backing_byte_size = 0;
+};
+
+static_assert(sizeof(InitHandleEntry) == 16);
+static_assert(offsetof(InitHandleEntry, handle_rel_byte_offset) == 0);
+static_assert(offsetof(InitHandleEntry, backing_rel_byte_offset) == 4);
+static_assert(offsetof(InitHandleEntry, backing_byte_size) == 8);
+static_assert(std::is_trivially_copyable_v<InitHandleEntry>);
+static_assert(std::is_standard_layout_v<InitHandleEntry>);
+
+// Parameter initialization destination template entry.
+//
+// Body-shaped metadata describing where pre-lowered parameter bytes are
+// written. The actual values are per-instance opaque byte payloads,
+// ordered to match the ParamInitSlotEntry sequence.
+struct ParamInitSlotEntry {
+  uint32_t rel_byte_offset = 0;
+  uint32_t byte_size = 0;
+};
+
+static_assert(sizeof(ParamInitSlotEntry) == 8);
+static_assert(offsetof(ParamInitSlotEntry, rel_byte_offset) == 0);
+static_assert(offsetof(ParamInitSlotEntry, byte_size) == 4);
+static_assert(std::is_trivially_copyable_v<ParamInitSlotEntry>);
+static_assert(std::is_standard_layout_v<ParamInitSlotEntry>);
+
 }  // namespace lyra::runtime

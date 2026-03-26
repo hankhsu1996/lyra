@@ -109,23 +109,15 @@ struct CompiledModuleSpec {
   std::vector<std::optional<ProcessTriggerEntry>> process_triggers;
 };
 
-// Parameter initialization entry with pre-resolved type information.
-// type_id is intentionally duplicated from the design slot table so that
-// realization code does not need a backpointer to mir::Design.
-struct ResolvedParamInit {
-  uint32_t slot_id = 0;
-  TypeId type_id;
-  IntegralConstant value;
-};
-
 // Design-derived inputs for the realization/assembly phase, extracted during
 // CompileDesignProcesses. This is a partial bundle -- only the fields that
 // assembly and metadata lowering currently consume. Not the full realization
 // model. Indexed forms are explicit so each helper can take narrow views.
 struct RealizationData {
-  // Indexed by instance table index / instance-slot-range index, matching the
-  // existing realization-side per-instance ordering contract.
-  std::vector<std::vector<ResolvedParamInit>> param_inits;
+  // Per-instance pre-lowered parameter value payloads.
+  // Indexed by instance table index. Each entry contains canonical storage
+  // bytes for all param slots in body-template order.
+  std::vector<std::vector<uint8_t>> param_payloads;
 
   // Indexed by slot_id.value.
   std::vector<TypeId> slot_types;
