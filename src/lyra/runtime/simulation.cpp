@@ -668,6 +668,13 @@ extern "C" auto LyraGetFirstDirtySeenPtr(void* engine_ptr) -> uint8_t* {
   return engine->GetFirstDirtySeenPtr();
 }
 
+extern "C" auto LyraIsTraceObserved(void* engine_ptr, uint32_t owner_slot)
+    -> bool {
+  if (engine_ptr == nullptr) return false;
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  return engine->GetTraceSelection().IsSelected(owner_slot);
+}
+
 extern "C" void LyraMarkDirtyFirst(void* engine_ptr, uint32_t slot_id) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   engine->MarkSlotDirtyFirst(slot_id);

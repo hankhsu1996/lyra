@@ -25,30 +25,44 @@ void StoreContainerToWriteTarget(
   auto& builder = ctx.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx.GetLlvmContext());
 
-  if (wt.canonical_signal_id.has_value() &&
-      ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit) {
-    if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
-      throw common::InternalError(
-          "StoreContainerToWriteTarget",
-          "deferred notification not supported for container store path");
-    }
-    // Notify contract: load old, atomic store+notify, release old.
-    // LyraStoreDynArray handles null engine defensively (for kNotifyGuarded).
+  bool is_design_notify =
+      wt.canonical_signal_id.has_value() &&
+      ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit;
+
+  auto emit_notifying_store = [&]() {
     auto* old_handle = builder.CreateLoad(ptr_ty, wt.ptr, "ctr.old");
     builder.CreateCall(
         ctx.GetLyraStoreDynArray(), {ctx.GetEnginePointer(), wt.ptr, new_handle,
                                      wt.canonical_signal_id->Emit(builder)});
-
     const auto& types = ctx.GetTypeArena();
     if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
       builder.CreateCall(ctx.GetLyraAssocRelease(), {old_handle});
     } else {
       builder.CreateCall(ctx.GetLyraDynArrayRelease(), {old_handle});
     }
-  } else {
-    // Non-design: destroy old, store new
+  };
+
+  auto emit_plain_store = [&]() {
     Destroy(ctx, wt.ptr, type_id);
     builder.CreateStore(new_handle, wt.ptr);
+  };
+
+  if (is_design_notify) {
+    if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
+      throw common::InternalError(
+          "StoreContainerToWriteTarget",
+          "deferred notification not supported for container store path");
+    }
+    if (wt.requires_static_dirty_propagation ||
+        !wt.mutation_signal.has_value()) {
+      emit_notifying_store();
+    } else {
+      ctx.EmitTraceBranch(
+          *wt.mutation_signal, "ctr.notify", "ctr.plain", emit_notifying_store,
+          emit_plain_store);
+    }
+  } else {
+    emit_plain_store();
   }
 }
 

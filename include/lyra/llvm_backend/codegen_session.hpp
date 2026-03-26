@@ -61,6 +61,16 @@ struct SpecCodegenView {
 // All inline offsets are stable (owned slots are fixed-size handles).
 // Used by body codegen to dispatch between inline and owned access paths.
 struct SpecSlotInfo {
+  // Body identity for this specialization. Used by
+  // Context::GetCurrentBodyRealizationInfo to resolve body-relative
+  // metadata (behavioral trigger contract, etc.) from Layout.
+  mir::ModuleBodyId body_id;
+  // Stable index into Layout::body_realization_infos for this body.
+  // Set during BuildSpecSlotInfos. Used by GetCurrentBodyRealizationInfo
+  // for O(1) lookup without pointer-stability assumptions.
+  static constexpr uint32_t kInvalidBodyInfoIndex = UINT32_MAX;
+  uint32_t body_realization_info_index = kInvalidBodyInfoIndex;
+
   // Per-slot inline-region relative offset from this_ptr.
   // For kInlineValue: offset of the slot's value bytes.
   // For kOwnedContainer: offset of the OwnedStorageHandle.

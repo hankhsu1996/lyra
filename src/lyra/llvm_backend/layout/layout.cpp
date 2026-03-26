@@ -1630,8 +1630,54 @@ auto BuildLayout(
   // Connection kernels are pipeline-owned pre-layout data.
   // BuildLayout consumes them; it does not collect or canonicalize them.
   layout.connection_kernel_entries = std::move(precollected_connection_kernels);
+
+  // Build connection dirty-propagation contract from canonical trigger slots.
+  // trigger_slot values are already canonical storage-owner identity
+  // (post-forwarding, verified by RebuildCanonicalConnections post-condition).
+  layout.slot_has_connection_trigger.assign(layout.design.slots.size(), false);
+  for (const auto& entry : layout.connection_kernel_entries) {
+    auto trigger = entry.trigger_slot.value;
+    if (trigger >= layout.slot_has_connection_trigger.size()) {
+      throw common::InternalError(
+          "BuildLayout",
+          std::format(
+              "connection trigger slot {} out of range (design has "
+              "{} slots)",
+              trigger, layout.slot_has_connection_trigger.size()));
+    }
+    layout.slot_has_connection_trigger[trigger] = true;
+  }
+
+  // Non-kernelized connection processes: extract trigger slots from their
+  // Wait terminators and add to the connection trigger bitmap. These
+  // processes failed TryKernelizeConnection (e.g., port expression
+  // connections) and are not in connection_kernel_entries.
   for (mir::ProcessId proc_id : non_kernelized_connection_processes) {
     layout.scheduled_processes.push_back({proc_id, ModuleIndex{}});
+    const auto& process = design_arena[proc_id];
+    for (const auto& block : process.blocks) {
+      const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+      if (wait == nullptr) continue;
+      for (const auto& trigger : wait->triggers) {
+        if (trigger.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
+          throw common::InternalError(
+              "BuildLayout", std::format(
+                                 "non-kernelized connection process {} has "
+                                 "trigger with non-design-global scope (id={})",
+                                 proc_id.value, trigger.signal.id));
+        }
+        auto slot = static_cast<uint32_t>(trigger.signal.id);
+        if (slot >= layout.slot_has_connection_trigger.size()) {
+          throw common::InternalError(
+              "BuildLayout",
+              std::format(
+                  "non-kernelized connection trigger slot {} out of "
+                  "range (design has {} slots)",
+                  slot, layout.slot_has_connection_trigger.size()));
+        }
+        layout.slot_has_connection_trigger[slot] = true;
+      }
+    }
   }
 
   // Phase 3: Collect module processes (run through scheduler)

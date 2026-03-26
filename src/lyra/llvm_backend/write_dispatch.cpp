@@ -187,11 +187,11 @@ auto EmitUnionMemcpyWrite(
   }
   const auto& wt = *wt_or_err;
 
-  bool needs_notify = wt.canonical_signal_id.has_value() &&
-                      ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit;
+  bool is_design_notify =
+      wt.canonical_signal_id.has_value() &&
+      ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit;
 
-  if (needs_notify) {
-    // Snapshot old bytes before memcpy for post-hoc change detection.
+  auto emit_notify_path = [&]() {
     auto* i8_ty = llvm::Type::getInt8Ty(ctx.GetLlvmContext());
     auto* func = builder.GetInsertBlock()->getParent();
     llvm::IRBuilder<> entry_builder(
@@ -203,24 +203,36 @@ auto EmitUnionMemcpyWrite(
         snapshot, llvm::Align(1), *target_ptr, llvm::Align(info->align),
         info->size);
 
-    // Perform the union memcpy.
     builder.CreateMemCpy(
         *target_ptr, llvm::Align(info->align), *source_ptr,
         llvm::Align(info->align), info->size);
 
-    // Post-hoc compare+notify through PSV.
     auto view = BuildRawBytesStorageView(*target_ptr, info->size);
-    auto policy = BuildStorePolicyFromContext(ctx, wt.canonical_signal_id);
+    auto policy = BuildStorePolicyFromContext(
+        ctx, wt.canonical_signal_id,
+        wt.mutation_signal ? &*wt.mutation_signal : nullptr);
     auto result = NotifyPackedStorageWritten(ctx, view, snapshot, policy);
     if (!result) {
       throw common::InternalError(
           "EmitUnionMemcpyWrite", "NotifyPackedStorageWritten failed");
     }
-  } else {
-    // No notification needed: just memcpy.
+  };
+
+  auto emit_plain_memcpy = [&]() {
     builder.CreateMemCpy(
         *target_ptr, llvm::Align(info->align), *source_ptr,
         llvm::Align(info->align), info->size);
+  };
+
+  if (is_design_notify && (wt.requires_static_dirty_propagation ||
+                           !wt.mutation_signal.has_value())) {
+    emit_notify_path();
+  } else if (is_design_notify && wt.mutation_signal.has_value()) {
+    ctx.EmitTraceBranch(
+        *wt.mutation_signal, "union.notify", "union.plain", emit_notify_path,
+        emit_plain_memcpy);
+  } else {
+    emit_plain_memcpy();
   }
 
   return {};

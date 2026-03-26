@@ -155,7 +155,7 @@ void ActivationLocalSlotAccess::SyncSlot(const ManagedSlotStorage& storage) {
   auto rvalue = BuildPackedRValueFromRaw(ctx_, store_val, semantic_bits);
   auto view =
       BuildWholeValueStorageView(ctx_, canonical_ptr, storage.root_type, true);
-  auto policy = BuildStorePolicyFromContext(ctx_, signal_id);
+  auto policy = BuildStorePolicyFromContext(ctx_, signal_id, &storage.slot);
 
   auto result = StorePackedValue(ctx_, view, rvalue, policy);
   if (!result) {

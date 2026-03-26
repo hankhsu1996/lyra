@@ -15,6 +15,10 @@ namespace llvm {
 class Type;
 }  // namespace llvm
 
+namespace lyra::mir {
+struct SignalRef;
+}  // namespace lyra::mir
+
 namespace lyra::lowering::mir_to_llvm {
 
 class Context;
@@ -238,6 +242,16 @@ struct PackedStorePolicy {
   // EmitSchedulePackedSubviewWrite; not branched on outside the module.
   bool notification_deferred = false;
 
+  // Static dirty-propagation contract result. Does NOT cover runtime
+  // observers (trace, rebind). Emission sites must also check runtime
+  // observer state before suppressing. Conservative default: true.
+  bool requires_static_dirty_propagation = true;
+
+  // Canonical storage-owner slot for trace observation query.
+  // Set when mutation_signal was provided to BuildStorePolicyFromContext.
+  // Used by packed-store emission sites for the LyraIsTraceObserved call.
+  std::optional<uint32_t> mutation_owner_slot;
+
   std::optional<SignalIdExpr> signal_id;
   llvm::Value* engine_ptr = nullptr;
   llvm::Value* first_dirty_seen = nullptr;
@@ -323,8 +337,14 @@ auto BuildRawBytesStorageView(llvm::Value* base_ptr, uint32_t byte_size)
 // Build PackedStorePolicy from current Context execution contract.
 // Single conversion point: DesignStoreMode -> PackedStoreMode, extracts
 // engine_ptr, first_dirty_seen, notification policy from Context.
+// signal_id is the runtime notification identity (emitted into IR).
+// mutation_signal is the canonical semantic identity used to decide
+// whether static dirty propagation is required.
+// When mutation_signal is non-null, sets requires_static_dirty_propagation
+// from the static contract query. Conservative default (true) when null.
 auto BuildStorePolicyFromContext(
-    Context& ctx, std::optional<SignalIdExpr> signal_id) -> PackedStorePolicy;
+    Context& ctx, std::optional<SignalIdExpr> signal_id,
+    const mir::SignalRef* mutation_signal = nullptr) -> PackedStorePolicy;
 
 // Plane pointers for runtime-helper interop.
 // Returns val_ptr and unk_ptr (null for 2-state) derived from the storage

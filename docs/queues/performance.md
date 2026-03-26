@@ -38,9 +38,9 @@ Achieve simulation throughput within 10x of Verilator for clocked designs. Prese
 - [x] CQ3: Packed storage view deferred-notification dead code elision
 - [x] Commit-boundary model: visibility/commit boundary definition
 - [x] Commit-boundary model: multi-segment activation-local support
-- [ ] G16-obs: Relay elimination observation contract
-- [ ] G16a: Specialization-local relay elimination
-- [ ] G16b: Suppress dirty-mark emission for subscriber-free slots
+- [x] G16-obs: Relay elimination observation contract (#611)
+- [x] G16a: Specialization-local relay elimination (#611)
+- [x] G16b: Suppress dirty-mark emission for subscriber-free slots
 - [ ] G14: NBA arena (bump-allocator for value/mask bytes)
 - [ ] G4b: Per-activation atomic stores (conditional on signal handler)
 - [ ] CB1: Facts-to-contract model for activation-local statements
@@ -67,26 +67,6 @@ clock-pipeline evidence (500K cycles, `-vvv --stats`): 14 port-binding relay slo
 A relay node is a slot that exists only to forward a value: single-writer identity copy, no process or comb triggers, all consumers are connections. Such slots can be eliminated by redirecting downstream connections to the source.
 
 Long-term direction: compile pure-dataflow regions into single functions evaluated once per propagation call. This subsumes relay elimination, subscriber-free net suppression, and comb fusion. Full cross-boundary scope requires realized graph metadata (H4-H5). Sequencing: relay elimination first, then subscriber-free suppression and comb fusion, then full dataflow compilation.
-
-### G16-obs: Relay elimination observation contract
-
-The forwarding analysis already proves structural legality for all relay candidates (single writer, identity copy, no process/comb triggers, pure forwarding). The remaining blocker is observability: whether a relay slot may be observed by trace/VCD, `$display`/`$monitor`, or hierarchical reference.
-
-Define a contract: relay slots are elimination-eligible by default unless explicitly observed (via trace selection, display operand, or hierarchical reference). Build the escape analysis that identifies which slots are observed. This is a design decision plus an audit of existing observation paths, not a large implementation.
-
-This gates G16a. Without this contract, the transform cannot proceed.
-
-### G16a: Specialization-local relay elimination
-
-Within a single module body, eliminate relay slots from port-binding assigns. The compiler identifies relay candidates from the body's own connection table and trigger tables. The existing forwarding analysis proves structural conditions. After the observation contract (G16-obs) establishes legality, implement the transform: redirect downstream connections to read from the relay's source slot, suppress the relay slot and its assign process.
-
-Scope is strictly specialization-local. No cross-module knowledge, no realization dependency, no H-series prerequisite.
-
-### G16b: Suppress dirty-mark emission for subscriber-free slots
-
-First cut: at codegen time, identify slots with no process subscribers and no comb triggers. For these slots, suppress the dirty-mark call emitted by blocking-assign and NBA-commit paths. The slot still exists in the design state (connections read from it by raw byte offset), but it does not enter the dirty set, does not appear in the flush scan, and does not generate propagation worklist entries.
-
-This is narrower than full slot elimination (which would remove the slot from the arena). Suppressing dirty marks is a codegen-level change with no layout impact. Full slot elimination is a separate, harder follow-up.
 
 ### G14: NBA arena
 

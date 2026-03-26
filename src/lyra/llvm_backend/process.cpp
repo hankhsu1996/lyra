@@ -159,12 +159,23 @@ void EmitLoopExitDeferredMarks(
   auto& builder = context.GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
   for (const auto& root : roots) {
-    // Mutation-target: resolve to storage owner for dirty-mark identity.
+    bool static_hit = context.RequiresStaticDirtyPropagation(root);
     auto signal_id = context.EmitMutationTargetSignalId(root);
-    builder.CreateCall(
-        context.GetLyraMarkDirty(),
-        {context.GetEnginePointer(), signal_id.Emit(builder),
-         llvm::ConstantInt::get(i32_ty, 0), llvm::ConstantInt::get(i32_ty, 0)});
+
+    auto emit_mark = [&]() {
+      builder.CreateCall(
+          context.GetLyraMarkDirty(),
+          {context.GetEnginePointer(), signal_id.Emit(builder),
+           llvm::ConstantInt::get(i32_ty, 0),
+           llvm::ConstantInt::get(i32_ty, 0)});
+    };
+
+    if (static_hit) {
+      emit_mark();
+    } else {
+      context.EmitTraceBranch(
+          root, "deferred.mark", "deferred.skip", emit_mark, []() {});
+    }
   }
 }
 
