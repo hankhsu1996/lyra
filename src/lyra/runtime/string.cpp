@@ -41,15 +41,24 @@ extern "C" auto LyraStringFromLiteral(const char* data, int64_t len)
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   auto* str = new LyraStringData();
 
-  // Allocate and copy the data (memcpy preserves embedded NULs)
+  // Allocate and copy the data (memcpy preserves embedded NULs).
+  // Allocate len+1 and null-terminate so the buffer is always a valid C string.
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  str->data = new char[static_cast<size_t>(len)];
+  str->data = new char[static_cast<size_t>(len) + 1];
   std::memcpy(str->data, data, static_cast<size_t>(len));
+  str->data[len] = '\0';
 
   str->len = static_cast<uint64_t>(len);
   str->refcount = 1;
 
   return str;
+}
+
+extern "C" auto LyraStringFromCStr(const char* ptr) -> LyraStringHandle {
+  if (ptr == nullptr) {
+    return LyraStringFromLiteral("", 0);
+  }
+  return LyraStringFromLiteral(ptr, static_cast<int64_t>(std::strlen(ptr)));
 }
 
 extern "C" auto LyraStringCmp(LyraStringHandle a, LyraStringHandle b)
@@ -98,7 +107,6 @@ extern "C" auto LyraStringConcat(const LyraStringHandle* elems, int64_t count)
 
   std::span<const LyraStringHandle> handles(elems, static_cast<size_t>(count));
 
-  // Build concatenated string
   std::string buffer;
   for (LyraStringHandle handle : handles) {
     auto* elem = static_cast<LyraStringData*>(handle);
@@ -107,16 +115,8 @@ extern "C" auto LyraStringConcat(const LyraStringHandle* elems, int64_t count)
     }
   }
 
-  // Allocate result and copy from buffer
-  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  auto* result = new LyraStringData();
-  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  result->data = new char[buffer.size()];
-  std::memcpy(result->data, buffer.data(), buffer.size());
-  result->len = buffer.size();
-  result->refcount = 1;
-
-  return result;
+  return LyraStringFromLiteral(
+      buffer.data(), static_cast<int64_t>(buffer.size()));
 }
 
 extern "C" void LyraStringRelease(LyraStringHandle handle) {
@@ -209,6 +209,16 @@ extern "C" void LyraStringGetView(
   const auto* str = static_cast<const LyraStringData*>(handle);
   *out_ptr = str->data;
   *out_len = str->len;
+}
+
+// Invariant-enforcing accessor: returns the internal null-terminated buffer.
+// Null handle is a caller bug, not a valid input.
+extern "C" auto LyraStringGetCStr(LyraStringHandle handle) -> const char* {
+  if (handle == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraStringGetCStr", "null string handle");
+  }
+  return static_cast<const LyraStringData*>(handle)->data;
 }
 
 extern "C" void LyraPrintString(

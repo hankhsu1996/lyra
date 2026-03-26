@@ -10,7 +10,7 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 
 - [ ] D1 -- Pure import functions (2-state scalars, real, string) -- in progress
   - [x] D1a -- Scalar-only pure import, JIT, `--dpi-lib` CLI, semantic + integration tests
-  - [ ] D1b -- Add `string`
+  - [x] D1b -- Add `string`
   - [ ] D1c -- Add AOT link plumbing
   - [ ] D1d -- Add `lyra.toml` `[dpi]` config
 - [ ] D2 -- General import functions (output/inout args, chandle, packed types)

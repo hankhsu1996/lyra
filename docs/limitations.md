@@ -139,7 +139,7 @@ Not yet supported:
 - Class methods (classes not supported)
 - Interface functions
 - Constant functions (elaboration-time evaluation)
-- DPI import/export (partial: `import "DPI-C" pure function` with 2-state scalar/real/shortreal, JIT only; no string, 4-state, export, context, tasks, AOT)
+- DPI import/export (partial: `import "DPI-C" pure function` with 2-state scalar/real/shortreal/string, JIT only; no 4-state, export, context, tasks, AOT)
 - `real`, `shortreal` return types (user-defined functions; supported for DPI imports)
 - Struct/union return types
 

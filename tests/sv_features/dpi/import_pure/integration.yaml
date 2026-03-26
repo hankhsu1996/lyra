@@ -125,3 +125,84 @@ cases:
     expect:
       variables:
         result: 42
+
+  - name: dpi_string_input
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int string_length(string s);
+        int result;
+        initial begin
+          result = string_length("hello");
+        end
+      endmodule
+    expect:
+      variables:
+        result: 5
+
+  - name: dpi_string_return
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function string greeting();
+        string s;
+        int result;
+        initial begin
+          s = greeting();
+          result = (s == "hello") ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dpi_string_roundtrip
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function string echo_string(string s);
+        string s;
+        int result;
+        initial begin
+          s = echo_string("world");
+          result = (s == "world") ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dpi_string_empty
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int string_length(string s);
+        int result;
+        initial begin
+          result = string_length("");
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: dpi_string_c_identifier
+    dpi_sources:
+      - dpi_helpers/scalar_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure greeting = function string greet();
+        string s;
+        int result;
+        initial begin
+          s = greet();
+          result = (s == "hello") ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
