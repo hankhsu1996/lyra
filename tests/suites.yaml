@@ -39,6 +39,7 @@ suites:
       - control_flow/
       - datatypes/
       - directives/
+      - dpi/
       - functions/
       - generate/
       - hierarchy/
@@ -97,6 +98,7 @@ suites:
       - control_flow/
       - datatypes/
       - directives/
+      - dpi/
       - functions/
       - generate/
       - hierarchy/
@@ -124,6 +126,7 @@ suites:
       - control_flow/
       - datatypes/
       - directives/
+      - dpi/
       - functions/
       - generate/
       - hierarchy/

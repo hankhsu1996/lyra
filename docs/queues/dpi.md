@@ -8,25 +8,17 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 
 ## Progress
 
-- [ ] D1 -- Pure import functions (2-state scalars, real, string) -- in progress
-  - [x] D1a -- Scalar-only pure import, JIT, `--dpi-lib` CLI, semantic + integration tests
+- [x] D1 -- Pure import functions (2-state scalars, real, string)
+  - [x] D1a -- Scalar-only pure import, JIT, `--dpi-link` CLI, semantic + integration tests
   - [x] D1b -- Add `string`
-  - [ ] D1c -- Add AOT link plumbing
-  - [ ] D1d -- Add `lyra.toml` `[dpi]` config
+  - [x] D1c -- AOT/LLI link plumbing, `LinkRequest`, unified test linking
+  - [x] D1d -- `lyra.toml` `[dpi].link_inputs`, validated input phase
 - [ ] D2 -- General import functions (output/inout args, chandle, packed types)
 - [ ] D3a -- 4-state scalar/vector marshaling
 - [ ] D3b -- Wide packed multiword transport (> 64-bit vectors)
 - [ ] D4 -- DPI export (C-callable wrappers, header generation)
 - [ ] D5a -- Context functions (simulator scope access)
 - [ ] D5b -- DPI tasks (time-consuming foreign calls)
-
-## D1: Pure import functions
-
-First end-to-end vertical slice. Covers `import "DPI-C" pure function` with input-only arguments of simple 2-state types (int, shortint, longint, byte, bit, real, shortreal, string) and void or scalar return.
-
-Requires work at every layer: HIR declaration, MIR foreign-call representation, LLVM ABI lowering and symbol materialization, driver link/load extension, and dual-language testing infrastructure. See [dpi-design.md](../dpi-design.md) for the architectural contracts each layer must satisfy.
-
-This phase excludes output/inout arguments, 4-state types, chandle, open arrays, export, context, and tasks.
 
 ## D2: General import functions
 

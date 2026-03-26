@@ -35,6 +35,7 @@
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/link_request.hpp"
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/llvm_backend/toolchain.hpp"
 #include "lyra/lowering/ast_to_hir/generate_repertoire.hpp"
@@ -517,55 +518,51 @@ auto PrepareLlvmModule(
 
 auto LinkTestExecutable(
     const std::filesystem::path& object_path,
-    const std::filesystem::path& output_dir, const std::string& name)
+    const std::filesystem::path& output_dir, const std::string& name,
+    std::span<const std::filesystem::path> external_link_inputs)
     -> std::expected<TestLinkResult, std::string> {
-  // Find shared runtime library
   auto runtime_path = FindRuntimeLibrary(runtime::kSharedLibName);
   if (!runtime_path) {
     return std::unexpected("shared runtime library not found");
   }
 
-  // Detect toolchain
   auto toolchain = lowering::mir_to_llvm::DetectToolchain();
   if (!toolchain) {
     return std::unexpected(
         std::format("toolchain detection failed: {}", toolchain.error()));
   }
 
-  std::error_code ec;
-  std::filesystem::create_directories(output_dir, ec);
-  if (ec) {
-    return std::unexpected(
-        std::format(
-            "cannot create '{}': {}", output_dir.string(), ec.message()));
-  }
-
-  auto exe_path = output_dir / name;
   auto runtime_dir = runtime_path->parent_path();
 
-  // Link against the shared library directly. No rpath needed -- the test
-  // harness sets LD_LIBRARY_PATH when executing the binary.
-  std::vector<std::string> link_args = {
-      "-o",
-      exe_path.string(),
-      object_path.string(),
-      std::format("-L{}", runtime_dir.string()),
-      std::format("-l:{}", runtime::kSharedLibName),
-      "-lstdc++",
-      "-lm",
-      "-lpthread",
+  // Uses the shared runtime library for test speed (no rpath -- the test
+  // harness sets LD_LIBRARY_PATH when executing the binary).
+  lowering::mir_to_llvm::LinkRequest request{
+      .output_path = output_dir / name,
+      .object_inputs = {object_path},
+      .runtime_link_inputs =
+          {
+              lowering::mir_to_llvm::RuntimeSearchLinkInput{
+                  .search_dir = runtime_dir,
+                  .library_name = std::string(runtime::kSharedLibName),
+              },
+          },
+      .external_link_inputs =
+          {external_link_inputs.begin(), external_link_inputs.end()},
+      .system_libs = {"-lstdc++", "-lm", "-lpthread"},
   };
 
-  auto sub = RunSubprocess(toolchain->cc_path, link_args);
-  if (sub.exit_code != 0) {
-    return std::unexpected(
-        std::format(
-            "linker failed (exit code {}): {}", sub.exit_code,
-            sub.stderr_text));
+  auto link_result = lowering::mir_to_llvm::LinkExecutable(*toolchain, request);
+  if (!link_result) {
+    const auto& err = link_result.error();
+    std::string msg = std::format("linker failed: {}", err.message);
+    if (!err.stderr.empty()) {
+      msg += std::format("\n{}", err.stderr);
+    }
+    return std::unexpected(msg);
   }
 
   return TestLinkResult{
-      .exe_path = exe_path,
+      .exe_path = *link_result,
       .runtime_dir = runtime_dir,
   };
 }

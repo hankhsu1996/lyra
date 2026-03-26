@@ -1,5 +1,6 @@
 #include "tests/framework/aot_backend.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -11,6 +12,7 @@
 #include "lyra/common/opt_level.hpp"
 #include "lyra/llvm_backend/emit.hpp"
 #include "lyra/llvm_backend/lower.hpp"
+#include "tests/framework/dpi_test_support.hpp"
 #include "tests/framework/llvm_common.hpp"
 #include "tests/framework/output_protocol.hpp"
 #include "tests/framework/runner_common.hpp"
@@ -44,6 +46,17 @@ auto RunAotBackend(
   std::filesystem::create_directories(aot_dir);
   ScopedTempDirectory aot_guard(aot_dir);
 
+  // Compile DPI companion C sources into shared objects.
+  std::vector<std::filesystem::path> dpi_link_inputs;
+  if (!test_case.dpi_sources.empty()) {
+    auto dpi = CompileDpiSources(test_case.dpi_sources, work_directory);
+    if (!dpi.Ok()) {
+      result.error_message = dpi.error;
+      return result;
+    }
+    dpi_link_inputs = std::move(dpi.link_inputs);
+  }
+
   // Emit object file + link (both counted as "backend")
   auto t_backend = Clock::now();
   auto target_machine =
@@ -57,10 +70,8 @@ auto RunAotBackend(
     return result;
   }
 
-  // Link test executable against the shared runtime (fast dynamic link).
-  // Uses the shared library for test speed; production `lyra compile` uses
-  // the static archive for self-contained output.
-  auto link_result = LinkTestExecutable(obj_path, aot_dir, "test");
+  auto link_result =
+      LinkTestExecutable(obj_path, aot_dir, "test", dpi_link_inputs);
   if (!link_result) {
     result.error_message =
         std::format("Linking failed: {}", link_result.error());
@@ -73,13 +84,28 @@ auto RunAotBackend(
   // shared runtime directory. The binary is ephemeral -- no rpath or bundle
   // needed.
   auto t_exec = Clock::now();
-  std::vector<std::string> no_args;
-  std::string ld_path = link_result->runtime_dir.string();
+  // Build deduplicated LD_LIBRARY_PATH: runtime dir + DPI link input dirs.
+  std::vector<std::filesystem::path> lib_dirs;
+  lib_dirs.push_back(link_result->runtime_dir);
+  for (const auto& dpi_input : dpi_link_inputs) {
+    auto dir = dpi_input.parent_path();
+    if (std::find(lib_dirs.begin(), lib_dirs.end(), dir) == lib_dirs.end()) {
+      lib_dirs.push_back(std::move(dir));
+    }
+  }
+
+  std::string ld_path;
+  for (size_t i = 0; i < lib_dirs.size(); ++i) {
+    if (i != 0) ld_path += ':';
+    ld_path += lib_dirs[i].string();
+  }
   const char* existing = std::getenv("LD_LIBRARY_PATH");
   if (existing != nullptr && existing[0] != '\0') {
     ld_path += ':';
     ld_path += existing;
   }
+
+  std::vector<std::string> no_args;
   EnvOverrides env = {{"LD_LIBRARY_PATH", ld_path}};
   auto sub = RunSubprocess(link_result->exe_path, no_args, env);
   result.timings.execute =

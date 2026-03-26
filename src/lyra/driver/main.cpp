@@ -24,6 +24,7 @@
 #include "run_aot.hpp"
 #include "run_jit.hpp"
 #include "run_lli.hpp"
+#include "validated_input.hpp"
 
 namespace {
 
@@ -149,13 +150,20 @@ auto main(int argc, char* argv[]) -> int {
 
       input->plusargs = std::move(plusargs);
 
+      auto validated = lyra::driver::ValidateCompilationInput(*input);
+      if (!validated) {
+        output.PrintDiagnostic(validated.error());
+        output.Flush();
+        return 1;
+      }
+
       switch (*backend) {
         case lyra::driver::Backend::kAot:
-          return lyra::driver::RunAot(*input);
+          return lyra::driver::RunAot(*validated);
         case lyra::driver::Backend::kJit:
-          return lyra::driver::RunJit(*input);
+          return lyra::driver::RunJit(*validated);
         case lyra::driver::Backend::kLli:
-          return lyra::driver::RunLli(*input);
+          return lyra::driver::RunLli(*validated);
       }
     }
 
@@ -163,11 +171,19 @@ auto main(int argc, char* argv[]) -> int {
       auto input = prepare(compile_cmd);
       if (!input) return 1;
 
+      auto validated = lyra::driver::ValidateCompilationInput(*input);
+      if (!validated) {
+        output.PrintDiagnostic(validated.error());
+        output.Flush();
+        return 1;
+      }
+
       std::string exe_name;
       if (auto name = compile_cmd.present<std::string>("--name")) {
         exe_name = *name;
       } else {
-        exe_name = input->top.empty() ? "simulation" : input->top;
+        exe_name =
+            validated->input.top.empty() ? "simulation" : validated->input.top;
       }
 
       lyra::driver::CompileOptions compile_options{
@@ -175,7 +191,7 @@ auto main(int argc, char* argv[]) -> int {
               std::filesystem::path(compile_cmd.get<std::string>("-o")),
           .name = exe_name,
       };
-      auto compile_result = lyra::driver::Compile(*input, compile_options);
+      auto compile_result = lyra::driver::Compile(*validated, compile_options);
       if (!compile_result) return compile_result.error();
       fmt::print(stderr, "compiled: {}\n", compile_result->string());
       return 0;

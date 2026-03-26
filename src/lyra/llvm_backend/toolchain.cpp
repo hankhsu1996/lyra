@@ -121,35 +121,55 @@ auto DetectToolchain(bool allow_ambient_search)
   };
 }
 
-auto LinkExecutable(
-    const Toolchain& toolchain, const std::filesystem::path& object_path,
-    const std::filesystem::path& runtime_lib_path,
-    const std::filesystem::path& output_dir, const std::string& name)
+auto LinkExecutable(const Toolchain& toolchain, const LinkRequest& request)
     -> std::expected<std::filesystem::path, LinkError> {
-  std::error_code ec;
-  fs::create_directories(output_dir, ec);
-  if (ec) {
-    return std::unexpected(
-        LinkError{
-            .stage = "link",
-            .message = std::format(
-                "cannot create '{}': {}", output_dir.string(), ec.message()),
-            .stderr = {},
-        });
+  auto output_dir = request.output_path.parent_path();
+  if (!output_dir.empty()) {
+    std::error_code ec;
+    fs::create_directories(output_dir, ec);
+    if (ec) {
+      return std::unexpected(
+          LinkError{
+              .stage = "link",
+              .message = std::format(
+                  "cannot create '{}': {}", output_dir.string(), ec.message()),
+              .stderr = {},
+          });
+    }
   }
 
-  auto exe_path = output_dir / name;
-
+  // Link argument ordering is intentional: objects first (define symbols),
+  // then runtime archives (pull referenced symbols), then external inputs
+  // (DPI link inputs etc.), then system libs last. This order matters for
+  // static archives where the linker resolves symbols left to right.
   std::vector<std::string> link_args = {
       toolchain.cc_path.string(),
       "-o",
-      exe_path.string(),
-      object_path.string(),
-      runtime_lib_path.string(),
-      "-lstdc++",
-      "-lm",
-      "-lpthread",
+      request.output_path.string(),
   };
+
+  for (const auto& obj : request.object_inputs) {
+    link_args.push_back(obj.string());
+  }
+  for (const auto& rt : request.runtime_link_inputs) {
+    std::visit(
+        [&link_args](const auto& input) {
+          using T = std::decay_t<decltype(input)>;
+          if constexpr (std::is_same_v<T, RuntimePathLinkInput>) {
+            link_args.push_back(input.path.string());
+          } else if constexpr (std::is_same_v<T, RuntimeSearchLinkInput>) {
+            link_args.push_back(std::format("-L{}", input.search_dir.string()));
+            link_args.push_back(std::format("-l:{}", input.library_name));
+          }
+        },
+        rt);
+  }
+  for (const auto& ext : request.external_link_inputs) {
+    link_args.push_back(ext.string());
+  }
+  for (const auto& sys : request.system_libs) {
+    link_args.push_back(sys);
+  }
 
   auto result = RunCommand(link_args);
   if (result.exit_code != 0) {
@@ -162,7 +182,7 @@ auto LinkExecutable(
         });
   }
 
-  return exe_path;
+  return request.output_path;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

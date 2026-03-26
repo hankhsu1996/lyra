@@ -36,7 +36,7 @@ struct CompilationInput {
   bool two_state = false;          // Force 2-state LLVM representation
   uint32_t iteration_limit = kDefaultIterationLimit;    // 0 = unlimited
   std::optional<std::filesystem::path> stats_out_path;  // JSON stats output
-  std::vector<std::filesystem::path> dpi_libs;  // DPI shared library paths
+  std::vector<std::filesystem::path> dpi_link_inputs;   // DPI link input paths
 };
 
 struct ParseResult {

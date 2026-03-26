@@ -15,6 +15,7 @@
 #include "compile.hpp"
 #include "driver_output_options.hpp"
 #include "frontend.hpp"
+#include "validated_input.hpp"
 
 namespace lyra::driver {
 
@@ -28,12 +29,13 @@ auto GetTempDir() -> fs::path {
 
 }  // namespace
 
-auto RunAot(const CompilationInput& input) -> int {
-  CompilationOutput output(BuildCompileDriverOutputOptions(input));
+auto RunAot(const ValidatedCompilationInput& input) -> int {
+  CompilationOutput output(BuildCompileDriverOutputOptions(input.input));
 
   auto temp_dir = GetTempDir();
 
-  std::string exe_name = input.top.empty() ? "simulation" : input.top;
+  std::string exe_name =
+      input.input.top.empty() ? "simulation" : input.input.top;
 
   CompileOptions options{
       .output_dir = temp_dir,
@@ -50,7 +52,7 @@ auto RunAot(const CompilationInput& input) -> int {
 
   std::vector<std::string> args;
   args.push_back(exe_path.string());
-  for (const auto& plusarg : input.plusargs) {
+  for (const auto& plusarg : input.input.plusargs) {
     args.push_back(plusarg);
   }
 
@@ -61,7 +63,7 @@ auto RunAot(const CompilationInput& input) -> int {
   }
   argv.push_back(nullptr);
 
-  setenv("LYRA_FS_BASE_DIR", input.fs_base_dir.string().c_str(), 1);
+  setenv("LYRA_FS_BASE_DIR", input.input.fs_base_dir.string().c_str(), 1);
 
   pid_t pid = 0;
   int spawn_result = posix_spawnp(
