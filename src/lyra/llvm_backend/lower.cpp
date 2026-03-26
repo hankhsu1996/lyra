@@ -814,6 +814,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
         InstanceSlotRange{
             .base_slot = plan.design_state_base_slot,
             .slot_count = plan.slot_count,
+            .body_id = plan.body_id,
         });
   }
 
@@ -822,12 +823,25 @@ auto CompileDesignProcesses(const LoweringInput& input)
       slot_info, *input.type_arena, module->getDataLayout(), force_two_state,
       forwarding_map, num_package_slots_for_layout, instance_ranges);
 
+  // Build body-owned storage layouts from body-local MIR inputs.
+  // Iterates the body inventory directly. No design-global forwarding,
+  // no instance placements, no design_state_base_slot.
+  std::unordered_map<uint32_t, BodyStorageLayout> body_storage_layouts;
+  for (uint32_t bi = 0; bi < input.design->module_bodies.size(); ++bi) {
+    const auto& body = input.design->module_bodies[bi];
+    if (body.slots.empty()) continue;
+    body_storage_layouts.emplace(
+        bi,
+        BuildBodyStorageLayout(
+            body, *input.type_arena, module->getDataLayout(), force_two_state));
+  }
+
   auto layout = std::make_unique<Layout>(BuildLayout(
       input.design->init_processes, std::move(canonicalized_connections),
       std::move(connection_collection.non_kernelized_processes), module_plans,
       *input.design, *input.mir_arena, *input.type_arena,
-      std::move(design_layout), *llvm_ctx, module->getDataLayout(),
-      force_two_state));
+      std::move(design_layout), body_storage_layouts, *llvm_ctx,
+      module->getDataLayout(), force_two_state));
 
   // Populate body-relative behavioral dirty-trigger contracts on
   // BodyRealizationInfo. Must complete before Phase 4 codegen reads them

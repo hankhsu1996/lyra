@@ -292,6 +292,10 @@ class Constructor {
   // All fields set atomically by BeginBody, consumed by AddInstance.
   struct ActiveBodyDescriptor {
     uint32_t slot_count = 0;
+    // Body-local state size from BodyRealizationDesc. Body-local
+    // sizing metadata, not realized instance placement. Realized byte
+    // placement comes from slot_byte_offsets_ (forwarding-aware).
+    uint64_t total_state_size_bytes = 0;
     std::span<const BodyProcessEntry> entries;
     ProcessMetaTemplateView meta;
     TriggerTemplateView triggers;
