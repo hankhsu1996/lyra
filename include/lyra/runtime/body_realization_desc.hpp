@@ -46,11 +46,21 @@ struct BodyRealizationDesc {
   // Body's slot count, used by the constructor to advance the
   // running slot-base counter per instance.
   uint32_t slot_count = 0;
+  // Body-local state region sizes in bytes. Produced from body-local
+  // storage spec computation. Body-local sizing metadata, not realized
+  // instance placement facts. Realized placement is forwarding-aware
+  // and may differ when alias collapsing reduces per-instance regions.
+  uint64_t inline_state_size_bytes = 0;
+  uint64_t appendix_state_size_bytes = 0;
+  uint64_t total_state_size_bytes = 0;
 };
 
-static_assert(sizeof(BodyRealizationDesc) == 8);
+static_assert(sizeof(BodyRealizationDesc) == 32);
 static_assert(offsetof(BodyRealizationDesc, num_processes) == 0);
 static_assert(offsetof(BodyRealizationDesc, slot_count) == 4);
+static_assert(offsetof(BodyRealizationDesc, inline_state_size_bytes) == 8);
+static_assert(offsetof(BodyRealizationDesc, appendix_state_size_bytes) == 16);
+static_assert(offsetof(BodyRealizationDesc, total_state_size_bytes) == 24);
 static_assert(std::is_trivially_copyable_v<BodyRealizationDesc>);
 static_assert(std::is_standard_layout_v<BodyRealizationDesc>);
 

@@ -857,6 +857,7 @@ auto EmitBodyRealizationDescs(
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
 
   if (body_compiled_funcs.size() != layout.body_realization_infos.size()) {
@@ -867,8 +868,12 @@ auto EmitBodyRealizationDescs(
             body_compiled_funcs.size(), layout.body_realization_infos.size()));
   }
 
-  // BodyRealizationDesc ABI: {u32 num_processes, u32 slot_count}
-  auto* header_type = llvm::StructType::get(ctx, {i32_ty, i32_ty});
+  // BodyRealizationDesc ABI:
+  //   {u32 num_processes, u32 slot_count,
+  //    u64 inline_state_size_bytes, u64 appendix_state_size_bytes,
+  //    u64 total_state_size_bytes}
+  auto* header_type =
+      llvm::StructType::get(ctx, {i32_ty, i32_ty, i64_ty, i64_ty, i64_ty});
   // BodyProcessEntry ABI: {ptr shared_body_fn, u32 schema_index, u32 pad}
   auto* entry_type = llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
 
@@ -900,8 +905,12 @@ auto EmitBodyRealizationDescs(
     // Emit header global.
     auto header_name = std::format("__lyra_body_desc_{}", body_id_val);
     auto* header_val = llvm::ConstantStruct::get(
-        header_type, {llvm::ConstantInt::get(i32_ty, num_procs),
-                      llvm::ConstantInt::get(i32_ty, info.slot_count)});
+        header_type,
+        {llvm::ConstantInt::get(i32_ty, num_procs),
+         llvm::ConstantInt::get(i32_ty, info.slot_count),
+         llvm::ConstantInt::get(i64_ty, info.inline_state_size_bytes),
+         llvm::ConstantInt::get(i64_ty, info.appendix_state_size_bytes),
+         llvm::ConstantInt::get(i64_ty, info.total_state_size_bytes)});
     auto* header_global = new llvm::GlobalVariable(
         mod, header_type, true, llvm::GlobalValue::InternalLinkage, header_val,
         header_name);

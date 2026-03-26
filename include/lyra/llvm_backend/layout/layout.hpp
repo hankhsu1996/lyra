@@ -462,6 +462,14 @@ struct Layout {
     // Instance-independent: all instances of this body share the
     // same behavioral trigger set.
     std::vector<bool> slot_has_behavioral_trigger;
+    // Body-local state region sizes in bytes. Produced from body-local
+    // storage spec computation. These are body-local sizing metadata,
+    // not realized instance placement facts. Realized placement is
+    // forwarding-aware and may differ when alias collapsing reduces
+    // per-instance regions.
+    uint64_t inline_state_size_bytes = 0;
+    uint64_t appendix_state_size_bytes = 0;
+    uint64_t total_state_size_bytes = 0;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
 
@@ -627,6 +635,15 @@ class ForwardingMap;
 struct InstanceSlotRange {
   uint32_t base_slot;
   uint32_t slot_count;
+  mir::ModuleBodyId body_id;
+};
+
+// Body-local state region sizes produced from body-local storage spec
+// computation. Computed independently of realized instance topology.
+struct BodyStateSizeInfo {
+  uint64_t inline_bytes = 0;
+  uint64_t appendix_bytes = 0;
+  uint64_t total_bytes = 0;
 };
 
 auto BuildDesignLayout(
@@ -634,6 +651,34 @@ auto BuildDesignLayout(
     const llvm::DataLayout& dl, bool force_two_state,
     const ForwardingMap& forwarding, uint32_t num_package_slots,
     std::span<const InstanceSlotRange> instance_ranges) -> DesignLayout;
+
+// Body-owned storage layout: slot specs resolved from body-local MIR
+// inputs. No design-global slot arrays, no instance placements, no
+// design_state_base_slot.
+//
+// Body-local storage ownership is identity: every body-local slot is a
+// storage owner. Forwarding/aliasing is a design-global connection
+// concept (built from ConnectionKernelEntry in BuildForwardingMap) that
+// creates cross-instance aliases. No body-local alias concept exists
+// in MIR.
+struct BodyStorageLayout {
+  std::vector<SlotStorageSpec> slot_specs;
+  StorageSpecArena spec_arena;
+};
+
+// Build body-owned storage layout from body-local inputs.
+auto BuildBodyStorageLayout(
+    const mir::ModuleBody& body, const TypeArena& types,
+    const llvm::DataLayout& dl, bool force_two_state) -> BodyStorageLayout;
+
+// Compute body-local state region sizes from body-owned storage layout.
+// Respects storage ownership: only slots where
+// storage_owner_local_ids[i] == i contribute to body size.
+// Does not reference realized instances, design-global topology,
+// or connection/forwarding state.
+auto ComputeBodyStateSize(
+    std::span<const mir::SlotDesc> slot_descs, const BodyStorageLayout& storage)
+    -> BodyStateSizeInfo;
 
 // Per-module-instance layout-planning entry.
 // Borrowed view into MIR data; valid only for the synchronous BuildLayout call.
@@ -658,8 +703,10 @@ auto BuildLayout(
     std::vector<mir::ProcessId> non_kernelized_connection_processes,
     std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
     const mir::Arena& design_arena, const TypeArena& types,
-    DesignLayout design_layout, llvm::LLVMContext& ctx,
-    const llvm::DataLayout& dl, bool force_two_state) -> Layout;
+    DesignLayout design_layout,
+    const std::unordered_map<uint32_t, BodyStorageLayout>& body_storage_layouts,
+    llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
+    -> Layout;
 
 // Discriminant for byte range resolution results.
 // kPrecise: exact byte range known (FieldProjection + const IndexProjection).

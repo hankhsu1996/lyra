@@ -19,7 +19,8 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] H4 -- Move trigger/comb realization behind constructor-time expansion
 - [x] H5 -- Move slot/trace/path realization behind constructor-time expansion
 - [x] H6 -- Remove compile-time-expanded design-state initialization topology
-- [ ] H7 -- Remove remaining topology-sized emitted storage realization
+- [ ] H7a -- Remove per-instance emitted constructor IR/globals
+- [ ] H7b -- Redesign realized byte-placement so slot-offset oracle can be removed
 - [ ] H8 -- Re-validate topology-independence with scaling gates
 - [ ] F1 -- Parallel specialization compilation
   - [x] F1-design -- Parallel ownership model
@@ -30,11 +31,15 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [ ] Documentation gap: pipeline-contract.md and state-layout.md need type ownership clarification
 - [ ] CI policy gates: codegen API check, grouping regression tests, topology-independence test
 
-## H7: Remove remaining topology-sized emitted storage realization
+## H7a: Remove per-instance emitted constructor IR/globals
 
-The design-state arena sizing and any remaining emitted storage decisions still depend on the fully realized topology. The arena size in main is a compile-time constant derived from the total slot count across all instances. While this is a single constant (not a per-instance loop), it represents a design decision that could instead be computed by the runtime constructor from body-shaped slot counts and instance counts.
+Body-local state sizing metadata is now carried on BodyRealizationDesc (inline/appendix/total bytes). The emitted constructor still drives instance materialization through per-instance IR: one LyraConstructorAddInstance call per instance, one path string global per instance, one param payload global per instance, and topology-sized string cleanup IR in emitted main.
 
-This item covers any remaining emitted storage objects or sizing decisions that still encode the fully realized topology as if constructor expansion had already happened at compile time.
+This item replaces those per-instance emitted artifacts with compact construction data (pooled paths, pooled payloads, structural construction program) while preserving the current forwarding-aware realized-placement contract. The slot-byte-offset oracle remains as the realized placement source of truth for this scope.
+
+## H7b: Redesign realized byte-placement so slot-offset oracle can be removed
+
+Body-local sizing and realized design layout are different contracts when forwarding exists. Forwarding is design-global and can collapse per-instance storage; body-local sizing cannot see that. Removing the slot-byte-offset oracle requires redesigning the end-to-end realized-placement, forwarding, and observable-descriptor relocation contract so that constructor byte placement can be driven from body-shaped facts alone.
 
 ## H8: Re-validate topology-independence with scaling gates
 

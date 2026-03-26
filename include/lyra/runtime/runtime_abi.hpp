@@ -58,7 +58,12 @@
 //      Constructor API extended: Create takes package init descriptors,
 //      BeginBody takes body init descriptors, AddInstance takes
 //      per-instance param payload.
-inline constexpr uint32_t kRuntimeAbiVersion = 16;
+// v17: Body descriptor carries direct body-sized state facts
+//      (inline_state_size_bytes, appendix_state_size_bytes,
+//      total_state_size_bytes). Runtime constructor derives instance
+//      byte placement from body-sized arithmetic instead of
+//      design-global slot byte offset oracle.
+inline constexpr uint32_t kRuntimeAbiVersion = 17;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion

@@ -667,6 +667,7 @@ void Constructor::BeginBody(const BodyDescriptorPackage& package) {
 
   body_ = ActiveBodyDescriptor{
       .slot_count = package.desc->slot_count,
+      .total_state_size_bytes = package.desc->total_state_size_bytes,
       .entries = package.entries,
       .meta = package.meta,
       .triggers = package.triggers,
@@ -858,8 +859,7 @@ void Constructor::AddInstance(
 
   // Observable descriptor realization for this instance.
   if (!body_.observable_descriptors.entries.empty()) {
-    uint64_t instance_byte_base =
-        (body_.slot_count > 0) ? slot_byte_offsets_[next_slot_base_] : 0;
+    uint64_t instance_byte_base = base_byte_offset;
 
     for (const auto& entry : body_.observable_descriptors.entries) {
       auto realized_offset =
