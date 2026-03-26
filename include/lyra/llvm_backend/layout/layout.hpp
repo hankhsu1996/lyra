@@ -17,6 +17,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/kernel_types.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
+#include "lyra/llvm_backend/layout/storage_types.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
@@ -74,6 +75,8 @@ struct PlaceRootKeyHash {
 // Design-wide state layout artifact.
 // DesignState is a Lyra-owned byte arena with two regions:
 //   [inline region] [appendix region]
+struct InstanceSlotRange;
+
 // Inline region: all slots at fixed offsets. kOwnedContainer slots store
 // an OwnedStorageHandle here (fixed 16 bytes), not the backing data.
 // Appendix region: backing data for kOwnedContainer slots.
@@ -117,6 +120,15 @@ struct DesignLayout {
   // Always an actual slot id; no sentinels.
   std::vector<uint32_t> storage_owner_slot_id;
 
+  // Semantic storage binding per slot. Parallel to slots.
+  // For storage owners: OwnedLocalStorage with arena-absolute offset.
+  // For forwarded aliases: ForwardedStorageAlias with canonical owner.
+  // This is the semantic source of truth for slot-vs-storage.
+  // slot_byte_offsets is retained as a derived compatibility table for
+  // runtime per-slot-index lookup (EmitSlotByteOffsets oracle), not as the
+  // semantic storage model.
+  std::vector<SlotStorageBinding> slot_storage_bindings;
+
   // Check if a slot is in this layout.
   [[nodiscard]] auto ContainsSlot(mir::SlotId slot_id) const -> bool;
 
@@ -143,6 +155,35 @@ struct DesignLayout {
   // Resolves through storage ownership: aliases return the owner's spec.
   [[nodiscard]] auto GetStorageSpec(mir::SlotId slot_id) const
       -> const SlotStorageSpec&;
+
+  // Get the storage binding for a slot by layout row index.
+  [[nodiscard]] auto GetSlotStorageBinding(uint32_t slot_row) const
+      -> const SlotStorageBinding&;
+
+  // Get the instance-relative offset for an owned-local slot.
+  // Returns nullopt for forwarded aliases.
+  // slot_row must lie within the instance's slot range.
+  // Throws InternalError on range violation.
+  [[nodiscard]] auto TryGetOwnedInstanceOffset(
+      uint32_t slot_row, const InstanceStorageBase& instance_base,
+      const InstanceSlotRange& instance_range) const
+      -> std::optional<InstanceByteOffset>;
+
+  // Get the layout row index for a slot. Throws InternalError if not found.
+  [[nodiscard]] auto GetSlotRow(mir::SlotId slot_id) const -> uint32_t;
+
+  // Get the body-relative offset for an owned-local slot.
+  // Returns nullopt for forwarded aliases.
+  [[nodiscard]] auto TryGetOwnedBodyOffset(
+      uint32_t slot_row, ArenaByteOffset body_base) const
+      -> std::optional<BodyByteOffset>;
+
+  // Get the arena-absolute offset of the first owned-local slot in a
+  // contiguous slot range. Returns nullopt if the range contains no
+  // owned-local slots (all forwarded aliases or empty range).
+  [[nodiscard]] auto GetOwnedStorageBaseForRange(
+      uint32_t base_slot, uint32_t slot_count) const
+      -> std::optional<ArenaByteOffset>;
 };
 
 // Process frame layout - one per process
@@ -181,8 +222,8 @@ struct ProcessLayout {
   std::vector<AllocaRootInfo> alloca_roots;
 };
 
-// Index into module-instance parallel arrays (instance_base_byte_offsets,
-// placement.instances, etc.).
+// Index into module-instance parallel arrays (instance_storage_bases,
+// instance_slot_counts, placement.instances, etc.).
 struct ModuleIndex {
   uint32_t value = UINT32_MAX;
   static constexpr uint32_t kNone = UINT32_MAX;
@@ -373,13 +414,17 @@ struct Layout {
   // SuspendRecord type (opaque blob matching C++ struct size)
   llvm::StructType* suspend_record_type = nullptr;
 
-  // Canonical offset accessor: byte offset of instance's slot base.
-  auto GetInstanceBaseByteOffset(ModuleIndex idx) const -> uint64_t;
-  // Per-instance raw relative byte offsets (body-local slot order).
-  // Indexed by module_index, each inner vector has slot_count entries.
-  // Used by spec compilation to compute slot stability classification.
-  auto GetInstanceRelByteOffsets(ModuleIndex idx) const
-      -> const std::vector<uint64_t>&;
+  // Explicit per-instance storage base.
+  // Computed from the first owned-local slot in each instance's slot range.
+  // Never derived from a forwarded alias.
+  auto GetInstanceStorageBase(ModuleIndex idx) const
+      -> const InstanceStorageBase&;
+
+  // Total number of body-local slots for a given instance.
+  // This is the body's full slot count including both owned-local and
+  // forwarded alias positions. It is NOT the count of owned-local slots
+  // only. Used for body-local slot iteration bounds.
+  auto GetInstanceSlotCount(ModuleIndex idx) const -> uint32_t;
 
   // Number of package-owned slots (before any module instance slots).
   // This is the initial value of the running slot-base counter that the
@@ -387,12 +432,13 @@ struct Layout {
   // design_state_base_slot, or total slot count if no module instances.
   uint32_t num_package_slots = 0;
 
-  // Pre-computed byte offset of each instance's slot base in DesignState.
-  // Parallel to placement.instances.
-  std::vector<uint64_t> instance_base_byte_offsets;
-  // Per-instance raw relative byte offsets (body-local slot order).
-  // Indexed by module_index, each inner vector has slot_count entries.
-  std::vector<std::vector<uint64_t>> instance_rel_byte_offsets;
+  // Per-instance storage base. Parallel to placement.instances.
+  std::vector<InstanceStorageBase> instance_storage_bases;
+
+  // Per-instance total body-local slot count. Parallel to
+  // placement.instances. Includes both owned-local and forwarded alias
+  // slot positions. This is NOT the count of owned-local slots only.
+  std::vector<uint32_t> instance_slot_counts;
 
   // Constructor metadata: shared process-state schemas and per-process
   // constructor records. Computed from the process layout loop.

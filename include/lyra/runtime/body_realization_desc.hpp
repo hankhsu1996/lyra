@@ -275,6 +275,10 @@ inline constexpr uint32_t kObservableFlagOwnerAbsolute = 1U << 0;
 // Entry is package/global-scoped. local_byte_offset is absolute.
 // Constructor does not apply byte-base relocation.
 inline constexpr uint32_t kObservableFlagPackageGlobal = 1U << 1;
+// storage_byte_offset is already arena-absolute (not body-relative).
+// Used for forwarded alias slots whose canonical storage lives in a
+// different instance. Constructor does not add instance_byte_base.
+inline constexpr uint32_t kObservableFlagStorageAbsolute = 1U << 2;
 
 // H6: Design-state initialization descriptor entries.
 //

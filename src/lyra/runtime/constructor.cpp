@@ -681,8 +681,8 @@ void Constructor::BeginBody(const BodyDescriptorPackage& package) {
 }
 
 void Constructor::AddInstance(
-    const char* instance_path, const void* param_data,
-    uint32_t param_data_size) {
+    const char* instance_path, const void* param_data, uint32_t param_data_size,
+    uint64_t instance_storage_base_byte_offset, bool has_local_storage) {
   CheckNotFinalized("Constructor::AddInstance");
   if (instance_path == nullptr) {
     throw common::InternalError(
@@ -702,18 +702,10 @@ void Constructor::AddInstance(
   uint32_t instance_id = next_instance_id_;
   uint32_t signal_id_offset = next_slot_base_;
 
-  uint64_t base_byte_offset = 0;
+  uint64_t instance_storage_base = instance_storage_base_byte_offset;
   void* this_ptr = design_state_.data();
-  if (body_.slot_count > 0) {
-    if (next_slot_base_ >= slot_byte_offsets_.size()) {
-      throw common::InternalError(
-          "Constructor::AddInstance",
-          std::format(
-              "slot base {} exceeds layout oracle size {}", next_slot_base_,
-              slot_byte_offsets_.size()));
-    }
-    base_byte_offset = slot_byte_offsets_[next_slot_base_];
-    this_ptr = design_state_.subspan(base_byte_offset).data();
+  if (has_local_storage) {
+    this_ptr = design_state_.subspan(instance_storage_base).data();
   }
 
   // Invariant: zero-slot bodies must not carry instance-state init.
@@ -729,11 +721,12 @@ void Constructor::AddInstance(
   }
 
   // H6: Apply body-shaped initialization to this instance's state.
-  ApplyInitPatches(design_state_, base_byte_offset, body_.init_patches.entries);
+  ApplyInitPatches(
+      design_state_, instance_storage_base, body_.init_patches.entries);
   ConstructInitHandles(
-      design_state_, base_byte_offset, body_.init_handles.entries);
+      design_state_, instance_storage_base, body_.init_handles.entries);
   ApplyParamInit(
-      design_state_, base_byte_offset, body_.init_params.slots, param_data,
+      design_state_, instance_storage_base, body_.init_params.slots, param_data,
       param_data_size);
 
   // Capture module_proc_base before staging non-final body processes.
@@ -858,12 +851,26 @@ void Constructor::AddInstance(
   }
 
   // Observable descriptor realization for this instance.
+  // Uses the explicit instance storage base for body-relative relocation.
   if (!body_.observable_descriptors.entries.empty()) {
-    uint64_t instance_byte_base = base_byte_offset;
+    if (!has_local_storage) {
+      for (const auto& entry : body_.observable_descriptors.entries) {
+        if ((entry.flags & kObservableFlagStorageAbsolute) == 0) {
+          throw common::InternalError(
+              "Constructor::AddInstance",
+              "body-relative observable entry in instance with no "
+              "local storage");
+        }
+      }
+    }
+    uint64_t instance_byte_base = instance_storage_base;
 
     for (const auto& entry : body_.observable_descriptors.entries) {
-      auto realized_offset =
-          static_cast<uint32_t>(instance_byte_base + entry.storage_byte_offset);
+      uint32_t realized_offset =
+          (entry.flags & kObservableFlagStorageAbsolute) != 0
+              ? entry.storage_byte_offset
+              : static_cast<uint32_t>(
+                    instance_byte_base + entry.storage_byte_offset);
 
       uint32_t realized_owner =
           (entry.flags & kObservableFlagOwnerAbsolute) != 0
@@ -1382,12 +1389,14 @@ void LyraConstructorBeginBody(
 
 void LyraConstructorAddInstance(
     void* ctor, const char* instance_path, const void* param_data,
-    uint32_t param_data_size) {
+    uint32_t param_data_size, uint64_t instance_storage_base_byte_offset,
+    uint32_t has_local_storage) {
   ValidateHandle(ctor, "LyraConstructorAddInstance");
   ValidateAbiArray(
       param_data, param_data_size, "param_data", "LyraConstructorAddInstance");
   static_cast<lyra::runtime::Constructor*>(ctor)->AddInstance(
-      instance_path, param_data, param_data_size);
+      instance_path, param_data, param_data_size,
+      instance_storage_base_byte_offset, has_local_storage != 0);
 }
 
 auto LyraConstructorFinalize(void* ctor_raw) -> void* {

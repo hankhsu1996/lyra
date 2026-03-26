@@ -36,6 +36,7 @@
 #include "lyra/llvm_backend/forwarding_map.hpp"
 #include "lyra/llvm_backend/init_descriptor_utils.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
+#include "lyra/llvm_backend/layout/observable_storage_ref.hpp"
 #include "lyra/llvm_backend/observable_descriptor_utils.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
@@ -508,33 +509,40 @@ auto BuildSpecSlotInfos(
     }
     auto rep_idx = unit.instances[0].module_index;
     uint32_t rep_base_slot = module_base_slots[rep_idx.value];
-    auto slot_count =
-        static_cast<uint32_t>(layout.GetInstanceRelByteOffsets(rep_idx).size());
+    auto slot_count = layout.GetInstanceSlotCount(rep_idx);
     info.inline_offsets.reserve(slot_count);
     info.shapes.reserve(slot_count);
+    info.access_kinds.reserve(slot_count);
     info.representative_design_slots.reserve(slot_count);
-    uint64_t base_offset = layout.GetInstanceBaseByteOffset(rep_idx);
+    const auto& base_info = layout.GetInstanceStorageBase(rep_idx);
+    InstanceSlotRange rep_range{rep_base_slot, slot_count};
     for (uint32_t s = 0; s < slot_count; ++s) {
       uint32_t design_slot_row = rep_base_slot + s;
       auto slot_id = layout.design.slots[design_slot_row];
-      uint64_t abs_offset = layout.design.GetStorageByteOffset(slot_id);
-      if (abs_offset < base_offset) {
-        throw common::InternalError(
-            "BuildSpecSlotInfos", std::format(
-                                      "slot {} abs_offset {} < base_offset {}",
-                                      slot_id.value, abs_offset, base_offset));
+      auto rel = layout.design.TryGetOwnedInstanceOffset(
+          design_slot_row, base_info, rep_range);
+      info.inline_offsets.push_back(rel);
+      auto shape = design_slots[design_slot_row].storage_shape;
+      info.shapes.push_back(shape);
+      bool is_owned = rel.has_value();
+      bool is_container = shape == mir::StorageShape::kOwnedContainer;
+      if (is_owned) {
+        info.access_kinds.push_back(
+            is_container ? SpecSlotAccessKind::kOwnedContainer
+                         : SpecSlotAccessKind::kOwnedInline);
+      } else {
+        info.access_kinds.push_back(
+            is_container ? SpecSlotAccessKind::kForwardedContainer
+                         : SpecSlotAccessKind::kForwardedInline);
       }
-      info.inline_offsets.push_back(abs_offset - base_offset);
-      info.shapes.push_back(design_slots[design_slot_row].storage_shape);
       info.representative_design_slots.push_back(slot_id.value);
     }
 
     // Verify all instances in this specialization agree on slot count and
     // storage shape.
     for (size_t i = 1; i < unit.instances.size(); ++i) {
-      auto inst_slot_count = static_cast<uint32_t>(
-          layout.GetInstanceRelByteOffsets(unit.instances[i].module_index)
-              .size());
+      auto inst_slot_count =
+          layout.GetInstanceSlotCount(unit.instances[i].module_index);
       if (inst_slot_count != slot_count) {
         throw common::InternalError(
             "BuildSpecSlotInfos",
@@ -546,6 +554,10 @@ auto BuildSpecSlotInfos(
       }
       uint32_t inst_base =
           module_base_slots[unit.instances[i].module_index.value];
+      const auto& inst_base_info =
+          layout.GetInstanceStorageBase(unit.instances[i].module_index);
+      InstanceSlotRange inst_range{
+          .base_slot = inst_base, .slot_count = slot_count};
       for (uint32_t s = 0; s < slot_count; ++s) {
         auto inst_shape = design_slots[inst_base + s].storage_shape;
         if (inst_shape != info.shapes[s]) {
@@ -556,6 +568,26 @@ auto BuildSpecSlotInfos(
                   "representative={} instance={}",
                   s, static_cast<int>(info.shapes[s]),
                   static_cast<int>(inst_shape)));
+        }
+        auto inst_offset = layout.design.TryGetOwnedInstanceOffset(
+            inst_base + s, inst_base_info, inst_range);
+        bool inst_owned = inst_offset.has_value();
+        bool inst_container = inst_shape == mir::StorageShape::kOwnedContainer;
+        SpecSlotAccessKind inst_access =
+            inst_owned
+                ? (inst_container ? SpecSlotAccessKind::kOwnedContainer
+                                  : SpecSlotAccessKind::kOwnedInline)
+                : (inst_container ? SpecSlotAccessKind::kForwardedContainer
+                                  : SpecSlotAccessKind::kForwardedInline);
+        if (inst_access != info.access_kinds[s]) {
+          throw common::InternalError(
+              "BuildSpecSlotInfos",
+              std::format(
+                  "access kind mismatch at body-local slot {}: "
+                  "representative={} instance {}={}",
+                  s, static_cast<int>(info.access_kinds[s]),
+                  unit.instances[i].module_index.value,
+                  static_cast<int>(inst_access)));
         }
       }
     }
@@ -1119,13 +1151,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   // Validate: instance_body_group must cover exactly the module instances
   // in the layout (same count as placement.instances / module_plans).
-  if (instance_body_group.size() != layout->instance_base_byte_offsets.size()) {
+  if (instance_body_group.size() != layout->instance_storage_bases.size()) {
     throw common::InternalError(
         "CompileDesignProcesses",
         std::format(
             "instance_body_group size {} != instance count {}",
-            instance_body_group.size(),
-            layout->instance_base_byte_offsets.size()));
+            instance_body_group.size(), layout->instance_storage_bases.size()));
   }
 
   // Post-layout template extraction pass.
@@ -1583,6 +1614,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
       tmpl.pool.push_back('\0');
       tmpl.entries.reserve(info.slot_count);
 
+      if (info.slot_count == 0) continue;
+
+      auto owned_base = layout->design.GetOwnedStorageBaseForRange(
+          base_slot, info.slot_count);
+
       for (uint32_t i = 0; i < info.slot_count; ++i) {
         uint32_t gsi = base_slot + i;
         if (gsi >= layout->design.slots.size()) {
@@ -1593,9 +1629,18 @@ auto CompileDesignProcesses(const LoweringInput& input)
                   info.body_id.value, i, gsi, layout->design.slots.size()));
         }
 
-        uint64_t body_base_offset = layout->design.slot_byte_offsets[base_slot];
-        uint64_t body_local_offset =
-            layout->design.slot_byte_offsets[gsi] - body_base_offset;
+        auto storage_ref = [&]() -> ObservableStorageRef {
+          if (owned_base.has_value()) {
+            auto body_offset =
+                layout->design.TryGetOwnedBodyOffset(gsi, *owned_base);
+            if (body_offset.has_value()) {
+              return ObservableBodyRelativeStorageRef{*body_offset};
+            }
+          }
+          auto owner_abs =
+              layout->design.GetStorageByteOffset(layout->design.slots[gsi]);
+          return ObservableOwnerAbsoluteStorageRef{ArenaByteOffset{owner_abs}};
+        }();
 
         const auto& spec = layout->design.slot_storage_specs[gsi];
         auto storage_kind = ClassifySlotStorageKind(spec);
@@ -1634,10 +1679,24 @@ auto CompileDesignProcesses(const LoweringInput& input)
           flags |= runtime::kObservableFlagOwnerAbsolute;
         }
 
+        // Pack ObservableStorageRef into the runtime ABI format.
+        uint32_t storage_offset = std::visit(
+            common::Overloaded{
+                [&](const ObservableBodyRelativeStorageRef& ref) -> uint32_t {
+                  return narrow_u64_to_u32(
+                      ref.offset.value, "body-local byte offset");
+                },
+                [&](const ObservableOwnerAbsoluteStorageRef& ref) -> uint32_t {
+                  flags |= runtime::kObservableFlagStorageAbsolute;
+                  return narrow_u64_to_u32(
+                      ref.offset.value, "owner-absolute byte offset");
+                },
+            },
+            storage_ref);
+
         tmpl.entries.push_back(
             runtime::ObservableDescriptorEntry{
-                .storage_byte_offset = narrow_u64_to_u32(
-                    body_local_offset, "body-local byte offset"),
+                .storage_byte_offset = storage_offset,
                 .total_bytes = spec.TotalByteSize(),
                 .storage_kind = static_cast<uint32_t>(storage_kind),
                 .value_lane_offset = value_lane_offset,
@@ -1678,20 +1737,22 @@ auto CompileDesignProcesses(const LoweringInput& input)
                 info.body_id.value));
       }
       uint32_t base_slot = base_it->second;
-      uint64_t body_base_offset = layout->design.slot_byte_offsets[base_slot];
+      auto init_owned_base = layout->design.GetOwnedStorageBaseForRange(
+          base_slot, info.slot_count);
+      if (!init_owned_base.has_value()) continue;
 
       std::vector<ParamSlotTemplateEntry> param_entries;
 
       for (uint32_t i = 0; i < info.slot_count; ++i) {
         uint32_t gsi = base_slot + i;
-        mir::SlotId slot_id = layout->design.slots[gsi];
 
-        if (layout->design.storage_owner_slot_id[gsi] != slot_id.value) {
+        if (!std::holds_alternative<OwnedLocalStorage>(
+                layout->design.GetSlotStorageBinding(gsi))) {
           continue;
         }
 
         uint64_t body_local_offset =
-            layout->design.slot_byte_offsets[gsi] - body_base_offset;
+            layout->design.slot_byte_offsets[gsi] - init_owned_base->value;
         const auto& spec = layout->design.slot_storage_specs[gsi];
 
         if (realization.slot_kinds[gsi] == mir::SlotKind::kParamConst) {
@@ -1710,7 +1771,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
         bool is_owned = layout->design.owned_data_offsets[gsi].has_value();
         if (is_owned) {
           uint64_t backing_rel =
-              *layout->design.owned_data_offsets[gsi] - body_base_offset;
+              *layout->design.owned_data_offsets[gsi] - init_owned_base->value;
 
           info.init.owned_handles.push_back(
               runtime::InitHandleEntry{

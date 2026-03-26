@@ -24,6 +24,7 @@
 #include "lyra/llvm_backend/connection_kernel_collection.hpp"
 #include "lyra/llvm_backend/forwarding_map.hpp"
 #include "lyra/llvm_backend/layout/layout_four_state.hpp"
+#include "lyra/llvm_backend/layout/storage_types.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
@@ -1401,6 +1402,21 @@ auto BuildDesignLayout(
     }
   }
 
+  // Build the semantic storage binding table.
+  layout.slot_storage_bindings.reserve(slots.size());
+  for (size_t i = 0; i < slots.size(); ++i) {
+    mir::SlotId slot_id = slots[i].slot_id;
+    if (layout.storage_owner_slot_id[i] == slot_id.value) {
+      layout.slot_storage_bindings.push_back(
+          OwnedLocalStorage{ArenaByteOffset{layout.slot_byte_offsets[i]}});
+    } else {
+      mir::SlotId owner{layout.storage_owner_slot_id[i]};
+      layout.slot_storage_bindings.push_back(
+          ForwardedStorageAlias{
+              StorageOwnerSlotId::FromVerified(owner, layout)});
+    }
+  }
+
   return layout;
 }
 
@@ -1487,6 +1503,17 @@ auto DesignLayout::IsStorageOwner(mir::SlotId slot_id) const -> bool {
   return storage_owner_slot_id[it->second] == slot_id.value;
 }
 
+auto StorageOwnerSlotId::FromVerified(
+    mir::SlotId slot, const DesignLayout& layout) -> StorageOwnerSlotId {
+  if (!layout.IsStorageOwner(slot)) {
+    throw common::InternalError(
+        "StorageOwnerSlotId::FromVerified",
+        std::format(
+            "slot {} is a forwarded alias, not a storage owner", slot.value));
+  }
+  return StorageOwnerSlotId(slot);
+}
+
 auto DesignLayout::GetStorageOwnerSlotId(mir::SlotId slot_id) const
     -> mir::SlotId {
   auto it = slot_to_index.find(slot_id);
@@ -1532,6 +1559,75 @@ auto DesignLayout::GetStorageByteOffset(mir::SlotId slot_id) const -> uint64_t {
 auto DesignLayout::GetStorageSpec(mir::SlotId slot_id) const
     -> const SlotStorageSpec& {
   return slot_storage_specs[ResolveStorageOwnerIndex(slot_id)];
+}
+
+auto DesignLayout::GetSlotStorageBinding(uint32_t slot_row) const
+    -> const SlotStorageBinding& {
+  if (slot_row >= slot_storage_bindings.size()) {
+    throw common::InternalError(
+        "DesignLayout::GetSlotStorageBinding",
+        std::format(
+            "slot_row {} out of range (size={})", slot_row,
+            slot_storage_bindings.size()));
+  }
+  return slot_storage_bindings[slot_row];
+}
+
+auto DesignLayout::TryGetOwnedInstanceOffset(
+    uint32_t slot_row, const InstanceStorageBase& instance_base,
+    const InstanceSlotRange& range) const -> std::optional<InstanceByteOffset> {
+  if (slot_row < range.base_slot ||
+      slot_row >= range.base_slot + range.slot_count) {
+    throw common::InternalError(
+        "DesignLayout::TryGetOwnedInstanceOffset",
+        std::format(
+            "slot_row {} outside instance range [{}, {})", slot_row,
+            range.base_slot, range.base_slot + range.slot_count));
+  }
+  const auto& binding = GetSlotStorageBinding(slot_row);
+  const auto* owned = std::get_if<OwnedLocalStorage>(&binding);
+  if (owned == nullptr) return std::nullopt;
+  if (!instance_base.abs_byte_offset.has_value()) {
+    throw common::InternalError(
+        "DesignLayout::TryGetOwnedInstanceOffset",
+        std::format(
+            "owned-local slot_row {} requires instance storage base, "
+            "but the instance base is missing",
+            slot_row));
+  }
+  return ToInstanceOffset(
+      owned->abs_byte_offset, *instance_base.abs_byte_offset);
+}
+
+auto DesignLayout::GetSlotRow(mir::SlotId slot_id) const -> uint32_t {
+  auto it = slot_to_index.find(slot_id);
+  if (it == slot_to_index.end()) {
+    throw common::InternalError(
+        "DesignLayout::GetSlotRow",
+        std::format("slot {} not in layout", slot_id.value));
+  }
+  return it->second;
+}
+
+auto DesignLayout::TryGetOwnedBodyOffset(
+    uint32_t slot_row, ArenaByteOffset body_base) const
+    -> std::optional<BodyByteOffset> {
+  const auto& binding = GetSlotStorageBinding(slot_row);
+  const auto* owned = std::get_if<OwnedLocalStorage>(&binding);
+  if (owned == nullptr) return std::nullopt;
+  return ToBodyOffset(owned->abs_byte_offset, body_base);
+}
+
+auto DesignLayout::GetOwnedStorageBaseForRange(
+    uint32_t base_slot, uint32_t slot_count) const
+    -> std::optional<ArenaByteOffset> {
+  for (uint32_t i = 0; i < slot_count; ++i) {
+    const auto& binding = GetSlotStorageBinding(base_slot + i);
+    if (const auto* owned = std::get_if<OwnedLocalStorage>(&binding)) {
+      return owned->abs_byte_offset;
+    }
+  }
+  return std::nullopt;
 }
 
 namespace {
@@ -1655,20 +1751,26 @@ auto BuildSlotInfo(
   return slots;
 }
 
-auto Layout::GetInstanceBaseByteOffset(ModuleIndex idx) const -> uint64_t {
-  return instance_base_byte_offsets[idx.value];
-}
-
-auto Layout::GetInstanceRelByteOffsets(ModuleIndex idx) const
-    -> const std::vector<uint64_t>& {
-  if (idx.value >= instance_rel_byte_offsets.size()) {
+auto Layout::GetInstanceStorageBase(ModuleIndex idx) const
+    -> const InstanceStorageBase& {
+  if (idx.value >= instance_storage_bases.size()) {
     throw common::InternalError(
-        "GetInstanceRelByteOffsets",
+        "GetInstanceStorageBase",
         std::format(
             "module_index {} out of range (size={})", idx.value,
-            instance_rel_byte_offsets.size()));
+            instance_storage_bases.size()));
   }
-  return instance_rel_byte_offsets[idx.value];
+  return instance_storage_bases[idx.value];
+}
+
+auto Layout::GetInstanceSlotCount(ModuleIndex idx) const -> uint32_t {
+  if (idx.value >= instance_slot_counts.size()) {
+    throw common::InternalError(
+        "GetInstanceSlotCount", std::format(
+                                    "module_index {} out of range (size={})",
+                                    idx.value, instance_slot_counts.size()));
+  }
+  return instance_slot_counts[idx.value];
 }
 
 auto BuildLayout(
@@ -2092,44 +2194,30 @@ auto BuildLayout(
         static_cast<uint32_t>(layout.design.slot_byte_offsets.size());
   }
 
-  // Compute instance base byte offsets and body-owned relative byte offsets
-  // from canonical slot_byte_offsets.
-  if (!module_plans.empty()) {
-    const auto& offsets = layout.design.slot_byte_offsets;
+  // Compute per-instance storage bases and slot counts.
+  // The storage base is the first owned-local slot's arena-absolute byte
+  // offset. Forwarded aliases are skipped. Instances with no owned-local
+  // slots have nullopt (no local storage region).
+  {
     size_t num_instances = module_plans.size();
-    layout.instance_base_byte_offsets.resize(num_instances);
+    layout.instance_storage_bases.resize(num_instances);
+    layout.instance_slot_counts.resize(num_instances);
 
     for (size_t mi = 0; mi < num_instances; ++mi) {
       const auto& plan = module_plans[mi];
-      if (plan.slot_count > 0) {
-        if (plan.design_state_base_slot + plan.slot_count > offsets.size()) {
-          throw common::InternalError(
-              "BuildLayout",
-              std::format(
-                  "slot range [{}, {}) exceeds design slot count {}",
-                  plan.design_state_base_slot,
-                  plan.design_state_base_slot + plan.slot_count,
-                  offsets.size()));
-        }
-        layout.instance_base_byte_offsets[mi] =
-            offsets[plan.design_state_base_slot];
-      }
-    }
+      layout.instance_slot_counts[mi] = plan.slot_count;
 
-    // Compute per-instance raw relative byte offsets.
-    // Consumed by spec compilation to classify slots as stable/unstable.
-    layout.instance_rel_byte_offsets.resize(num_instances);
-
-    for (size_t mi = 0; mi < num_instances; ++mi) {
-      const auto& plan = module_plans[mi];
-      std::vector<uint64_t> rel_offsets(plan.slot_count);
-      if (plan.slot_count > 0) {
-        uint64_t base = offsets[plan.design_state_base_slot];
-        for (uint32_t i = 0; i < plan.slot_count; ++i) {
-          rel_offsets[i] = offsets[plan.design_state_base_slot + i] - base;
+      InstanceStorageBase base;
+      for (uint32_t i = 0; i < plan.slot_count; ++i) {
+        uint32_t row = plan.design_state_base_slot + i;
+        const auto& binding = layout.design.slot_storage_bindings[row];
+        if (std::holds_alternative<OwnedLocalStorage>(binding)) {
+          base.abs_byte_offset =
+              std::get<OwnedLocalStorage>(binding).abs_byte_offset;
+          break;
         }
       }
-      layout.instance_rel_byte_offsets[mi] = std::move(rel_offsets);
+      layout.instance_storage_bases[mi] = base;
     }
   }
 
