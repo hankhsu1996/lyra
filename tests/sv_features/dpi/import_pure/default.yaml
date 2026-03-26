@@ -70,17 +70,33 @@ cases:
           - "DPI-C return type"
           - "not yet supported"
 
-  - name: reject_dpi_string_return
+  - name: accept_dpi_string_return
     sv: |
       module Test;
         import "DPI-C" pure function string str_fn();
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "DPI-C return type"
-          - "not yet supported"
+
+  - name: accept_dpi_string_param
+    sv: |
+      module Test;
+        import "DPI-C" pure function int str_param_fn(string s);
+        initial begin end
+      endmodule
+
+  - name: accept_dpi_string_param_and_return
+    sv: |
+      module Test;
+        import "DPI-C" pure function string echo(string s);
+        initial begin end
+      endmodule
+
+  - name: accept_dpi_string_c_identifier
+    sv: |
+      module Test;
+        import "DPI-C" pure c_greet = function string greeting();
+        initial begin end
+      endmodule
 
   - name: reject_dpi_realtime_return
     sv: |

@@ -23,6 +23,7 @@ enum class DpiAbiTypeClass {
   kLongInt,
   kReal,
   kShortReal,
+  kString,
   kVoid,
 };
 

@@ -92,6 +92,10 @@ auto ClassifyDpiAbiType(const slang::ast::Type& type)
     }
   }
 
+  if (canonical.isString()) {
+    return hir::DpiAbiTypeClass::kString;
+  }
+
   // Only accept predefined integer scalar types (not packed arrays/structs).
   if (canonical.kind == slang::ast::SymbolKind::PredefinedIntegerType) {
     const auto& pit = canonical.as<slang::ast::PredefinedIntegerType>();

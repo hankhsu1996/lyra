@@ -137,6 +137,18 @@ auto Context::GetLyraStringFromLiteral() -> llvm::Function* {
   return lyra_string_from_literal_;
 }
 
+auto Context::GetLyraStringFromCStr() -> llvm::Function* {
+  if (lyra_string_from_cstr_ == nullptr) {
+    // ptr LyraStringFromCStr(const char* ptr)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    lyra_string_from_cstr_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringFromCStr",
+        llvm_module_.get());
+  }
+  return lyra_string_from_cstr_;
+}
+
 auto Context::GetLyraStringCmp() -> llvm::Function* {
   if (lyra_string_cmp_ == nullptr) {
     // int32_t LyraStringCmp(ptr a, ptr b)
@@ -213,6 +225,18 @@ auto Context::GetLyraStringGetView() -> llvm::Function* {
         llvm_module_.get());
   }
   return lyra_string_get_view_;
+}
+
+auto Context::GetLyraStringGetCStr() -> llvm::Function* {
+  if (lyra_string_get_cstr_ == nullptr) {
+    // const char* LyraStringGetCStr(ptr handle)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    lyra_string_get_cstr_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraStringGetCStr",
+        llvm_module_.get());
+  }
+  return lyra_string_get_cstr_;
 }
 
 auto Context::GetLyraPackedFromString() -> llvm::Function* {

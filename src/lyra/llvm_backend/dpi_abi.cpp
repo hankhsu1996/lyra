@@ -127,6 +127,8 @@ auto GetLlvmDpiType(llvm::LLVMContext& ctx, DpiAbiTypeClass t) -> llvm::Type* {
       return llvm::Type::getDoubleTy(ctx);
     case DpiAbiTypeClass::kShortReal:
       return llvm::Type::getFloatTy(ctx);
+    case DpiAbiTypeClass::kString:
+      return llvm::PointerType::getUnqual(ctx);
     case DpiAbiTypeClass::kVoid:
       return llvm::Type::getVoidTy(ctx);
     case DpiAbiTypeClass::kInvalid:
@@ -200,13 +202,46 @@ auto LowerDpiImportCall(
   auto& builder = context.GetBuilder();
 
   // Marshal arguments: lower from internal representation, coerce to C ABI.
+  // String arguments are borrowed views (handle -> const char*) via
+  // LyraStringGetCStr. Scalar arguments use bitwise coercion.
   std::vector<llvm::Value*> args;
   args.reserve(call.in_args.size());
   for (size_t i = 0; i < call.in_args.size(); ++i) {
     auto val = LowerOperand(context, call.in_args[i]);
     if (!val) return std::unexpected(val.error());
-    args.push_back(
-        CoerceToDpiAbiType(context, *val, ref.signature.param_types[i]));
+    if (ref.signature.param_types[i] == DpiAbiTypeClass::kString) {
+      // Null handle is a valid internal representation for empty string.
+      // LyraStringGetCStr requires non-null, so normalize null to "" here.
+      llvm::Value* str_handle = *val;
+      auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+      auto* is_null = builder.CreateICmpEQ(
+          str_handle, llvm::ConstantPointerNull::get(ptr_ty), "dpi.str.null");
+
+      auto* cur_bb = builder.GetInsertBlock();
+      auto* parent_fn = cur_bb->getParent();
+      auto* nonnull_bb = llvm::BasicBlock::Create(
+          context.GetLlvmContext(), "dpi.str.nonnull", parent_fn);
+      auto* join_bb = llvm::BasicBlock::Create(
+          context.GetLlvmContext(), "dpi.str.join", parent_fn);
+
+      builder.CreateCondBr(is_null, join_bb, nonnull_bb);
+
+      builder.SetInsertPoint(nonnull_bb);
+      auto* handle_cstr = builder.CreateCall(
+          context.GetLyraStringGetCStr(), {str_handle}, "dpi.str.cstr");
+      builder.CreateBr(join_bb);
+
+      builder.SetInsertPoint(join_bb);
+      auto* empty_cstr = builder.CreateGlobalStringPtr("", "dpi.str.empty");
+      auto* phi = builder.CreatePHI(ptr_ty, 2, "dpi.str.arg");
+      phi->addIncoming(empty_cstr, cur_bb);
+      phi->addIncoming(handle_cstr, nonnull_bb);
+
+      args.push_back(phi);
+    } else {
+      args.push_back(
+          CoerceToDpiAbiType(context, *val, ref.signature.param_types[i]));
+    }
   }
 
   auto* call_inst = builder.CreateCall(fn, args);
@@ -217,15 +252,23 @@ auto LowerDpiImportCall(
     return {};
   }
 
-  // Coerce C ABI return value back to internal representation, then store.
+  // Marshal return value back to internal representation.
+  // String returns are owned copies (const char* -> new LyraStringHandle) via
+  // LyraStringFromCStr. Scalar returns use bitwise coercion.
   auto tmp_ptr = context.GetPlacePointer(call.ret->tmp);
   if (!tmp_ptr) return std::unexpected(tmp_ptr.error());
   auto tmp_type = context.GetPlaceLlvmType(call.ret->tmp);
   if (!tmp_type) return std::unexpected(tmp_type.error());
 
-  llvm::Value* internal_result = CoerceFromDpiAbiType(
-      context, call_inst, ref.signature.return_type, *tmp_type);
-  builder.CreateStore(internal_result, *tmp_ptr);
+  if (ref.signature.return_type == DpiAbiTypeClass::kString) {
+    llvm::Value* handle = builder.CreateCall(
+        context.GetLyraStringFromCStr(), {call_inst}, "dpi.str.ret");
+    builder.CreateStore(handle, *tmp_ptr);
+  } else {
+    llvm::Value* internal_result = CoerceFromDpiAbiType(
+        context, call_inst, ref.signature.return_type, *tmp_type);
+    builder.CreateStore(internal_result, *tmp_ptr);
+  }
 
   if (call.ret->dest.has_value()) {
     llvm::Value* ret_val = builder.CreateLoad(*tmp_type, *tmp_ptr);

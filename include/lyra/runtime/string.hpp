@@ -12,6 +12,10 @@ extern "C" {
 // Creates a string from a literal. Returns owned handle (+1 refcount).
 auto LyraStringFromLiteral(const char* data, int64_t len) -> LyraStringHandle;
 
+// Creates a string from a null-terminated C string. Returns owned handle
+// (+1 refcount). Null pointer becomes empty string.
+auto LyraStringFromCStr(const char* ptr) -> LyraStringHandle;
+
 // Returns <0 if a < b, 0 if equal, >0 if a > b (memcmp semantics)
 auto LyraStringCmp(LyraStringHandle a, LyraStringHandle b) -> int32_t;
 
@@ -53,6 +57,12 @@ void LyraPrintString(
 // *out_len=0.
 void LyraStringGetView(
     const void* handle, const char** out_ptr, uint64_t* out_len);
+
+// Get the internal null-terminated C string buffer for a valid runtime string.
+// Borrowed view only -- no allocation, no retain/release.
+// The returned pointer is valid while the handle is alive.
+// Passing a null handle is an internal error.
+auto LyraStringGetCStr(LyraStringHandle handle) -> const char*;
 
 // Opaque buffer handle for string formatting (C ABI)
 struct LyraStringFormatBuffer;
