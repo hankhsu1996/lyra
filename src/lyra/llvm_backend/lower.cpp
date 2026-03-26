@@ -45,6 +45,7 @@
 #include "lyra/mir/placement.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/statement.hpp"
+#include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -121,6 +122,206 @@ void RegisterMonitorInfo(
       };
       context.RegisterMonitorSetupInfo(
           monitor->setup_program, std::move(setup_info));
+    }
+  }
+}
+
+// Named transfer type for body-relative behavioral dirty-trigger bitmaps.
+// Each bitmap is indexed by body-local slot id [0, slot_count).
+// Keyed by raw body_id.value (not strong-ID) for lookup during
+// BodyRealizationInfo population.
+struct BodyBehavioralTriggerBitmaps {
+  std::unordered_map<uint32_t, std::vector<bool>> by_body_id_value;
+};
+
+// Build the body-relative behavioral dirty-trigger contract from MIR.
+//
+// A body-local slot is marked true iff any behavioral wait dependency in
+// the body's artifact repertoire references it. This covers:
+//   - process waits (always_ff, always_comb, initial @(...) triggers)
+//   - comb triggers (always_comb processes have Wait terminators)
+//   - late-bound dependency slots (index variables for dynamic edge triggers
+//     that rebind watchers subscribe on at runtime)
+//
+// These are the same processes stored in ModuleBody::processes and
+// referenced by LayoutModulePlan::body_processes. The only exclusion is
+// kFinal processes, which run at simulation end and never produce Wait
+// terminators. All behavioral wait producers in MIR are represented as
+// non-final processes with Wait terminators; there is no other behavioral
+// trigger source in the current architecture.
+//
+// Only kModuleLocal triggers contribute to this bitmap. kDesignGlobal
+// triggers in body processes are handled by the separate design-global
+// behavioral contract (BuildDesignGlobalBehavioralTriggerBitmap).
+auto BuildBodyBehavioralDirtyTriggerBitmaps(
+    std::span<const LayoutModulePlan> module_plans, const mir::Design& design)
+    -> BodyBehavioralTriggerBitmaps {
+  BodyBehavioralTriggerBitmaps result;
+
+  for (const auto& plan : module_plans) {
+    auto body_id_val = plan.body_id.value;
+    if (result.by_body_id_value.contains(body_id_val)) continue;
+
+    std::vector<bool> bitmap(plan.slot_count, false);
+    const auto& body = design.module_bodies.at(body_id_val);
+
+    for (const auto& proc_id : plan.body_processes) {
+      const auto& process = body.arena[proc_id];
+      if (process.kind == mir::ProcessKind::kFinal) continue;
+
+      // Helper: mark a module-local slot in the bitmap with bounds check.
+      auto mark_local = [&](uint32_t local_slot, const char* source) {
+        if (local_slot >= plan.slot_count) {
+          throw common::InternalError(
+              "BuildBodyBehavioralDirtyTriggerBitmaps",
+              std::format(
+                  "{} slot {} out of range for body {} "
+                  "(slot_count={})",
+                  source, local_slot, body_id_val, plan.slot_count));
+        }
+        bitmap[local_slot] = true;
+      };
+
+      for (const auto& block : process.blocks) {
+        const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+        if (wait == nullptr) continue;
+        for (const auto& trigger : wait->triggers) {
+          // Mark the trigger signal itself.
+          if (trigger.signal.scope == mir::SignalRef::Scope::kModuleLocal) {
+            mark_local(
+                static_cast<uint32_t>(trigger.signal.id),
+                "module-local trigger");
+          }
+          // Mark late-bound dependency slots. These are the index
+          // variables that rebind watchers subscribe on at runtime.
+          // They are part of the compiled behavioral dependency
+          // repertoire of the wait site.
+          if (trigger.late_bound.has_value()) {
+            for (const auto& dep : trigger.late_bound->dep_slots) {
+              if (dep.scope == mir::ScopedSlotRef::Scope::kModuleLocal) {
+                mark_local(static_cast<uint32_t>(dep.id), "late-bound dep");
+              }
+            }
+          }
+        }
+      }
+    }
+
+    result.by_body_id_value[body_id_val] = std::move(bitmap);
+  }
+
+  return result;
+}
+
+// Transfer body-relative behavioral trigger bitmaps into their
+// architectural owner (BodyRealizationInfo on Layout).
+// Build the design-global behavioral dirty-trigger contract from MIR.
+//
+// Currently covers two explicit sources of design-global behavioral waits:
+//   - init processes (design-level, data in design_arena)
+//   - body processes that wait on kDesignGlobal signals
+//
+// Init processes are design-scoped and must use only kDesignGlobal signals.
+// Any kModuleLocal trigger in an init process is an invariant violation.
+//
+// Body processes may have mixed-scope waits. Only their kDesignGlobal
+// triggers contribute here; kModuleLocal triggers are owned by the
+// body-relative behavioral contract.
+//
+// This is NOT a fallback for body-local triggers.
+// Result is keyed by canonical storage-owner slot identity.
+//
+// Completeness note: this helper currently covers init processes and
+// body processes with kDesignGlobal waits. Connection processes
+// (kernelized and non-kernelized) are connection-owned, not
+// behavioral-owned; their triggers belong in slot_has_connection_trigger.
+// If other design-global behavioral process owners are added, they
+// must be included here explicitly.
+auto BuildDesignGlobalBehavioralTriggerBitmap(
+    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
+    const mir::Arena& design_arena, const DesignLayout& design_layout)
+    -> std::vector<bool> {
+  auto num_slots = design_layout.slots.size();
+  std::vector<bool> bitmap(num_slots, false);
+
+  // Helper: mark a single design-global trigger slot in the bitmap.
+  auto mark_global_slot = [&](mir::SlotId trigger_slot) {
+    auto owner = design_layout.GetStorageOwnerSlotId(trigger_slot);
+    if (owner.value >= num_slots) {
+      throw common::InternalError(
+          "BuildDesignGlobalBehavioralTriggerBitmap",
+          std::format(
+              "design-global trigger slot {} (owner {}) out of "
+              "range ({} slots)",
+              trigger_slot.value, owner.value, num_slots));
+    }
+    bitmap[owner.value] = true;
+  };
+
+  // Init processes: design-level, data lives in design_arena.
+  // Init processes must use kDesignGlobal signals exclusively.
+  for (const auto& proc_id : design.init_processes) {
+    const auto& process = design_arena[proc_id];
+    for (const auto& block : process.blocks) {
+      const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+      if (wait == nullptr) continue;
+      for (const auto& trigger : wait->triggers) {
+        if (trigger.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
+          throw common::InternalError(
+              "BuildDesignGlobalBehavioralTriggerBitmap",
+              std::format(
+                  "init process {} has trigger with "
+                  "non-design-global scope (id={})",
+                  proc_id.value, trigger.signal.id));
+        }
+        mark_global_slot(mir::SlotId{static_cast<uint32_t>(trigger.signal.id)});
+      }
+    }
+  }
+
+  // Body processes: data lives in per-body arenas.
+  // Only kDesignGlobal triggers contribute; kModuleLocal triggers are
+  // owned by the body-relative behavioral contract.
+  for (const auto& plan : module_plans) {
+    const auto& body = design.module_bodies.at(plan.body_id.value);
+    for (const auto& proc_id : plan.body_processes) {
+      const auto& process = body.arena[proc_id];
+      if (process.kind == mir::ProcessKind::kFinal) continue;
+      for (const auto& block : process.blocks) {
+        const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
+        if (wait == nullptr) continue;
+        for (const auto& trigger : wait->triggers) {
+          if (trigger.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
+            continue;
+          }
+          mark_global_slot(
+              mir::SlotId{static_cast<uint32_t>(trigger.signal.id)});
+        }
+      }
+    }
+  }
+
+  return bitmap;
+}
+
+void PopulateBodyBehavioralTriggerContracts(
+    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
+    Layout& layout) {
+  auto bitmaps = BuildBodyBehavioralDirtyTriggerBitmaps(module_plans, design);
+  for (auto& info : layout.body_realization_infos) {
+    auto it = bitmaps.by_body_id_value.find(info.body_id.value);
+    if (it != bitmaps.by_body_id_value.end()) {
+      if (it->second.size() != info.slot_count) {
+        throw common::InternalError(
+            "PopulateBodyBehavioralTriggerContracts",
+            std::format(
+                "behavioral trigger bitmap size mismatch for body "
+                "{}: got {}, expected {}",
+                info.body_id.value, it->second.size(), info.slot_count));
+      }
+      info.slot_has_behavioral_trigger = std::move(it->second);
+    } else {
+      info.slot_has_behavioral_trigger.assign(info.slot_count, false);
     }
   }
 }
@@ -279,6 +480,13 @@ auto BuildSpecSlotInfos(
     const std::vector<SpecCompilationUnit>& units, const Layout& layout,
     const std::vector<uint32_t>& module_base_slots,
     std::span<const mir::SlotDesc> design_slots) -> std::vector<SpecSlotInfo> {
+  // Build body-id-to-index table once for O(1) lookup per unit.
+  std::unordered_map<uint32_t, uint32_t> body_info_index_by_body_id_value;
+  for (uint32_t i = 0; i < layout.body_realization_infos.size(); ++i) {
+    body_info_index_by_body_id_value[layout.body_realization_infos[i]
+                                         .body_id.value] = i;
+  }
+
   std::vector<SpecSlotInfo> result;
   result.reserve(units.size());
   for (const auto& unit : units) {
@@ -287,6 +495,17 @@ auto BuildSpecSlotInfos(
           "BuildSpecSlotInfos", "specialization unit has no instances");
     }
     SpecSlotInfo info;
+    info.body_id = unit.body_id;
+    {
+      auto it = body_info_index_by_body_id_value.find(unit.body_id.value);
+      if (it == body_info_index_by_body_id_value.end()) {
+        throw common::InternalError(
+            "BuildSpecSlotInfos",
+            std::format(
+                "no BodyRealizationInfo for body {}", unit.body_id.value));
+      }
+      info.body_realization_info_index = it->second;
+    }
     auto rep_idx = unit.instances[0].module_index;
     uint32_t rep_base_slot = module_base_slots[rep_idx.value];
     auto slot_count =
@@ -609,6 +828,17 @@ auto CompileDesignProcesses(const LoweringInput& input)
       *input.design, *input.mir_arena, *input.type_arena,
       std::move(design_layout), *llvm_ctx, module->getDataLayout(),
       force_two_state));
+
+  // Populate body-relative behavioral dirty-trigger contracts on
+  // BodyRealizationInfo. Must complete before Phase 4 codegen reads them
+  // via Context::RequiresDirtyPropagation.
+  PopulateBodyBehavioralTriggerContracts(module_plans, *input.design, *layout);
+
+  // Populate design-global behavioral dirty-trigger contract.
+  // Covers init processes and body processes with kDesignGlobal waits.
+  layout->slot_has_design_behavioral_trigger =
+      BuildDesignGlobalBehavioralTriggerBitmap(
+          module_plans, *input.design, *input.mir_arena, layout->design);
 
   auto context = std::make_unique<Context>(
       *input.mir_arena, *input.type_arena, *layout, std::move(llvm_ctx),

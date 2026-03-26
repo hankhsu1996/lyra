@@ -455,6 +455,13 @@ struct Layout {
     // Body-shaped init metadata consumed by the constructor to initialize
     // per-instance design state. All offsets are body-relative.
     BodyInitDescriptor init;
+    // Specialization-owned body-local behavioral dirty-propagation
+    // contract. True iff any behavioral wait trigger in the body's
+    // artifact repertoire (process waits, comb triggers) references
+    // that slot. Indexed by body-local slot id [0, slot_count).
+    // Instance-independent: all instances of this body share the
+    // same behavioral trigger set.
+    std::vector<bool> slot_has_behavioral_trigger;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
 
@@ -521,6 +528,20 @@ struct Layout {
   // Design-wide package/global initialization descriptor.
   // Arena-relative offsets. Applied once in constructor prelude.
   PackageInitDescriptor package_init_descriptor;
+
+  // Realization-owned connection dirty-propagation contract.
+  // True iff any canonicalized connection kernel entry triggers on
+  // that slot. Keyed by canonical storage-owner slot identity.
+  // Indexed by design-global slot_id [0, design.slots.size()).
+  std::vector<bool> slot_has_connection_trigger;
+
+  // Design-global behavioral dirty-propagation contract.
+  // True iff any true design-global behavioral wait trigger
+  // (init process, design-scoped process) references that slot.
+  // NOT a fallback for body-local behavioral triggers.
+  // Keyed by canonical storage-owner slot identity.
+  // Indexed by design-global slot_id [0, design.slots.size()).
+  std::vector<bool> slot_has_design_behavioral_trigger;
 };
 
 // Type kind for variable inspection (also used in layout)

@@ -693,6 +693,16 @@ void EmitPackedStoreNotification(
   if (!policy.signal_id.has_value()) return;
   if (policy.notification_deferred) return;
 
+  // When static contract allows suppression, compute a runtime trace
+  // guard that will be ANDed into the should_mark condition below.
+  // If static contract requires propagation, trace_guard is nullptr
+  // (meaning unconditional propagation).
+  llvm::Value* trace_guard = nullptr;
+  if (!policy.requires_static_dirty_propagation &&
+      policy.mutation_owner_slot.has_value()) {
+    trace_guard = ctx.EmitIsTraceObservedOwnerSlot(*policy.mutation_owner_slot);
+  }
+
   // Constant-fold: if changed is a known false constant, skip entirely.
   if (const auto* ci = llvm::dyn_cast<llvm::ConstantInt>(changed)) {
     if (ci->isZero()) return;
@@ -715,6 +725,14 @@ void EmitPackedStoreNotification(
         llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(llvm_ctx)),
         "engine.nonnull");
     should_mark = builder.CreateAnd(changed, engine_not_null, "should_mark");
+  }
+
+  // When static contract allows suppression, AND the runtime trace
+  // guard into the mark condition. Only emit dirty mark if the value
+  // changed AND trace is observing this slot.
+  if (trace_guard != nullptr) {
+    should_mark =
+        builder.CreateAnd(should_mark, trace_guard, "should_mark.traced");
   }
 
   auto* fn = builder.GetInsertBlock()->getParent();
@@ -1156,7 +1174,8 @@ auto BuildRawBytesStorageView(llvm::Value* base_ptr, uint32_t byte_size)
 }
 
 auto BuildStorePolicyFromContext(
-    Context& ctx, std::optional<SignalIdExpr> signal_id) -> PackedStorePolicy {
+    Context& ctx, std::optional<SignalIdExpr> signal_id,
+    const mir::SignalRef* mutation_signal) -> PackedStorePolicy {
   PackedStorePolicy policy;
 
   switch (ctx.GetDesignStoreMode()) {
@@ -1173,6 +1192,11 @@ auto BuildStorePolicyFromContext(
 
   policy.notification_deferred =
       ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred;
+  if (mutation_signal != nullptr) {
+    policy.requires_static_dirty_propagation =
+        ctx.RequiresStaticDirtyPropagation(*mutation_signal);
+    policy.mutation_owner_slot = ctx.GetCanonicalOwnerSlot(*mutation_signal);
+  }
   policy.signal_id = std::move(signal_id);
   policy.engine_ptr = ctx.GetEnginePointer();
   policy.first_dirty_seen = ctx.GetFirstDirtySeenPtr();
@@ -1307,6 +1331,30 @@ void EmitGuardedLyraStorePacked(
 
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
+
+  // When static contract allows suppression, check trace at runtime.
+  // If not trace-observed, do plain memcpy without compare+notify.
+  // trace_done_bb is set when we need a merge point after the notify path.
+  llvm::BasicBlock* trace_done_bb = nullptr;
+  if (!policy.requires_static_dirty_propagation &&
+      policy.mutation_owner_slot.has_value()) {
+    auto* trace_observed =
+        ctx.EmitIsTraceObservedOwnerSlot(*policy.mutation_owner_slot);
+    auto* fn = builder.GetInsertBlock()->getParent();
+    auto* notify_bb = llvm::BasicBlock::Create(llvm_ctx, "rt.traced", fn);
+    auto* plain_bb = llvm::BasicBlock::Create(llvm_ctx, "rt.plain", fn);
+    trace_done_bb = llvm::BasicBlock::Create(llvm_ctx, "rt.tdone", fn);
+    builder.CreateCondBr(trace_observed, notify_bb, plain_bb);
+
+    builder.SetInsertPoint(plain_bb);
+    builder.CreateMemCpy(
+        dst_ptr, llvm::Align(1), src_ptr, llvm::Align(1), byte_size);
+    builder.CreateBr(trace_done_bb);
+
+    // Continue emitting the notify path into notify_bb.
+    builder.SetInsertPoint(notify_bb);
+  }
+
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
   auto emit_call = [&]() {
@@ -1335,6 +1383,13 @@ void EmitGuardedLyraStorePacked(
     builder.SetInsertPoint(done_bb);
   } else {
     emit_call();
+  }
+
+  // If trace branch was emitted, merge the notify path back to
+  // the trace done block.
+  if (trace_done_bb != nullptr) {
+    builder.CreateBr(trace_done_bb);
+    builder.SetInsertPoint(trace_done_bb);
   }
 }
 

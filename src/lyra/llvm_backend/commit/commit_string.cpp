@@ -61,21 +61,33 @@ void StoreStringToWriteTarget(
   // Safe for aliasing: if new == old, store completes before release.
   auto* old_val = builder.CreateLoad(ptr_ty, wt.ptr, "str.old");
 
-  if (wt.canonical_signal_id.has_value() &&
-      ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit) {
+  bool is_design_notify =
+      wt.canonical_signal_id.has_value() &&
+      ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit;
+
+  auto emit_notifying_store = [&]() {
     if (ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred) {
       throw common::InternalError(
           "StoreStringToWriteTarget",
           "deferred notification not supported for string store path");
     }
-    // Notify contract: store+notify via runtime helper.
-    // LyraStoreString handles null engine defensively (for kNotifyGuarded).
     builder.CreateCall(
         ctx.GetLyraStoreString(), {ctx.GetEnginePointer(), wt.ptr, new_val,
                                    wt.canonical_signal_id->Emit(builder)});
+  };
+
+  auto emit_plain_store = [&]() { builder.CreateStore(new_val, wt.ptr); };
+
+  if (is_design_notify && wt.requires_static_dirty_propagation) {
+    emit_notifying_store();
+  } else if (is_design_notify && !wt.mutation_signal.has_value()) {
+    emit_notifying_store();
+  } else if (is_design_notify) {
+    ctx.EmitTraceBranch(
+        *wt.mutation_signal, "str.notify", "str.plain", emit_notifying_store,
+        emit_plain_store);
   } else {
-    // Non-design or init contract: plain store, no notification.
-    builder.CreateStore(new_val, wt.ptr);
+    emit_plain_store();
   }
 
   builder.CreateCall(ctx.GetLyraStringRelease(), {old_val});

@@ -519,6 +519,20 @@ auto Context::GetLyraMarkDirtyFirst() -> llvm::Function* {
   return lyra_mark_dirty_first_;
 }
 
+auto Context::GetLyraIsTraceObserved() -> llvm::Function* {
+  if (lyra_is_trace_observed_ == nullptr) {
+    // bool LyraIsTraceObserved(ptr engine, i32 owner_slot)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(i1_ty, {ptr_ty, i32_ty}, false);
+    lyra_is_trace_observed_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraIsTraceObserved",
+        llvm_module_.get());
+  }
+  return lyra_is_trace_observed_;
+}
+
 auto Context::GetLyraStoreString() -> llvm::Function* {
   if (lyra_store_string_ == nullptr) {
     // void LyraStoreString(ptr engine, ptr slot, ptr new_str, i32 signal_id)

@@ -24,9 +24,9 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
+#include "lyra/mir/terminator.hpp"
 
 namespace lyra::mir {
-struct SignalRef;
 struct ScopedSlotRef;
 }  // namespace lyra::mir
 
@@ -269,6 +269,7 @@ class Context {
   [[nodiscard]] auto GetLyraMarkDirty() -> llvm::Function*;
   [[nodiscard]] auto GetLyraGetFirstDirtySeenPtr() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMarkDirtyFirst() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraIsTraceObserved() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNba() -> llvm::Function*;
   [[nodiscard]] auto GetLyraScheduleNbaCanonicalPacked() -> llvm::Function*;
@@ -433,6 +434,12 @@ class Context {
     return spec_slot_info_;
   }
 
+  // Resolve the current body's BodyRealizationInfo from Layout.
+  // Requires spec_slot_info_ to be set (module-body codegen context).
+  // Throws InternalError if spec_slot_info_ is null or body_info is null.
+  [[nodiscard]] auto GetCurrentBodyRealizationInfo() const
+      -> const Layout::BodyRealizationInfo&;
+
   // Explicit access APIs for module-local slot pointer formation.
   // Callers must choose the correct API based on the slot's storage shape.
 
@@ -489,6 +496,75 @@ class Context {
   // Do NOT use for subscription/trigger registration (use EmitSignalId).
   [[nodiscard]] auto EmitMutationTargetSignalId(const mir::SignalRef& sig)
       -> SignalIdExpr;
+
+  // Resolve the canonical mutation-target SignalRef for a place's root.
+  // Returns the pre-emission SignalRef (scope + id) without emitting IR.
+  // Returns nullopt if the root has no mutation-target signal identity
+  // (e.g., local/temp roots that are not design storage).
+  [[nodiscard]] auto ResolveMutationSignalRef(mir::PlaceId place_id) const
+      -> std::optional<mir::SignalRef>;
+
+  // Static dirty-propagation contract query. Returns true iff behavioral,
+  // connection, or design-global behavioral contracts require propagation.
+  // Does NOT cover runtime observers (trace, rebind).
+  // kModuleLocal requires spec_slot_info_ (module-body codegen context).
+  // kDesignGlobal does not require body context.
+  [[nodiscard]] auto RequiresStaticDirtyPropagation(
+      const mir::SignalRef& sig) const -> bool;
+
+  // Resolve the canonical storage-owner slot for a signal, as a host-
+  // side uint32_t. Hard-fails on out-of-range or malformed canonicalization.
+  // Used for compile-time trace-query owner-slot materialization and for
+  // populating PackedStorePolicy::mutation_owner_slot.
+  [[nodiscard]] auto GetCanonicalOwnerSlot(const mir::SignalRef& sig) const
+      -> uint32_t;
+
+  // Emit IR that queries whether the canonical storage-owner slot for
+  // the given signal has trace observation at runtime. Returns an i1
+  // LLVM value (true if trace-observed, false if safe to suppress).
+  // Emits a call to the LyraIsTraceObserved runtime ABI function.
+  // Null engine returns false (safe for guarded paths).
+  [[nodiscard]] auto EmitIsTraceObserved(const mir::SignalRef& sig)
+      -> llvm::Value*;
+
+  // Emit IR trace query by pre-resolved canonical owner slot.
+  // Used by packed-store paths where the owner slot was already
+  // resolved at policy construction time.
+  [[nodiscard]] auto EmitIsTraceObservedOwnerSlot(uint32_t owner_slot)
+      -> llvm::Value*;
+
+  // Emit a trace-observation branch: if trace-observed, execute the
+  // yes_emitter; otherwise execute the no_emitter. Both paths merge
+  // at a shared done block. Builder is left at the done block.
+  // yes_name/no_name are used for BasicBlock naming.
+  template <typename YesEmitter, typename NoEmitter>
+  void EmitTraceBranch(
+      const mir::SignalRef& sig, llvm::StringRef yes_name,
+      llvm::StringRef no_name, YesEmitter yes_emitter, NoEmitter no_emitter) {
+    auto* trace_observed = EmitIsTraceObserved(sig);
+    auto& builder = GetBuilder();
+    auto& llvm_ctx = GetLlvmContext();
+    auto* fn = builder.GetInsertBlock()->getParent();
+    auto* yes_bb = llvm::BasicBlock::Create(llvm_ctx, yes_name, fn);
+    auto* no_bb = llvm::BasicBlock::Create(llvm_ctx, no_name, fn);
+    auto done_name = (yes_name + ".done").str();
+    auto* done_bb = llvm::BasicBlock::Create(llvm_ctx, done_name, fn);
+    builder.CreateCondBr(trace_observed, yes_bb, no_bb);
+
+    builder.SetInsertPoint(yes_bb);
+    yes_emitter();
+    if (builder.GetInsertBlock()->getTerminator() == nullptr) {
+      builder.CreateBr(done_bb);
+    }
+
+    builder.SetInsertPoint(no_bb);
+    no_emitter();
+    if (builder.GetInsertBlock()->getTerminator() == nullptr) {
+      builder.CreateBr(done_bb);
+    }
+
+    builder.SetInsertPoint(done_bb);
+  }
 
   // Resolution: MIR storage root -> design-global slot ID.
   // kDesignGlobal roots: identity (root.id is already design-global).
@@ -833,6 +909,7 @@ class Context {
   llvm::Function* lyra_mark_dirty_ = nullptr;
   llvm::Function* lyra_get_first_dirty_seen_ptr_ = nullptr;
   llvm::Function* lyra_mark_dirty_first_ = nullptr;
+  llvm::Function* lyra_is_trace_observed_ = nullptr;
   llvm::Function* lyra_store_string_ = nullptr;
   llvm::Function* lyra_schedule_nba_ = nullptr;
   llvm::Function* lyra_schedule_nba_canonical_packed_ = nullptr;
