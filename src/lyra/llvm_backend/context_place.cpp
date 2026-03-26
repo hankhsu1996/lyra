@@ -327,39 +327,43 @@ auto Context::EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr {
 
 namespace {
 
-// Resolve a signal ref to the storage owner for mutation-target use.
-// File-local: only callable through EmitMutationTargetSignalId.
-//
-// kDesignGlobal: resolve alias to canonical owner via DesignLayout.
-// kModuleLocal: currently identity because module-local forwarding is not
-//   implemented in this cut. Any future module-local aliasing
-//   must update this helper to resolve the owner.
-auto MakeMutationTargetSignalRef(
+// Resolve a design-global signal ref to its canonical storage owner.
+auto ResolveDesignGlobalOwner(
     const mir::SignalRef& sig, const DesignLayout& design) -> mir::SignalRef {
-  switch (sig.scope) {
-    case mir::SignalRef::Scope::kDesignGlobal: {
-      auto slot_id = mir::SlotId{sig.id};
-      if (!design.ContainsSlot(slot_id)) {
-        throw common::InternalError(
-            "MakeMutationTargetSignalRef",
-            std::format("design-global signal {} not in layout", sig.id));
-      }
-      auto owner = design.GetStorageOwnerSlotId(slot_id);
-      return {.scope = mir::SignalRef::Scope::kDesignGlobal, .id = owner.value};
-    }
-    case mir::SignalRef::Scope::kModuleLocal:
-      return sig;
-    default:
-      throw common::InternalError(
-          "MakeMutationTargetSignalRef", "unknown signal scope");
+  auto slot_id = mir::SlotId{sig.id};
+  if (!design.ContainsSlot(slot_id)) {
+    throw common::InternalError(
+        "ResolveDesignGlobalOwner",
+        std::format("design-global signal {} not in layout", sig.id));
   }
+  auto owner = design.GetStorageOwnerSlotId(slot_id);
+  return {.scope = mir::SignalRef::Scope::kDesignGlobal, .id = owner.value};
 }
 
 }  // namespace
 
 auto Context::EmitMutationTargetSignalId(const mir::SignalRef& sig)
     -> SignalIdExpr {
-  return EmitSignalId(MakeMutationTargetSignalRef(sig, layout_.design));
+  if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
+    return EmitSignalId(ResolveDesignGlobalOwner(sig, layout_.design));
+  }
+  if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
+    // For module-local signals, check if this slot is a forwarded alias.
+    // If so, resolve to the canonical owner via design-global addressing.
+    if (spec_slot_info_ != nullptr && sig.id < spec_slot_info_->SlotCount()) {
+      auto access = spec_slot_info_->access_kinds[sig.id];
+      if (access == SpecSlotAccessKind::kForwardedInline ||
+          access == SpecSlotAccessKind::kForwardedContainer) {
+        auto global_slot = spec_slot_info_->representative_design_slots[sig.id];
+        return EmitSignalId(ResolveDesignGlobalOwner(
+            {.scope = mir::SignalRef::Scope::kDesignGlobal, .id = global_slot},
+            layout_.design));
+      }
+    }
+    return EmitSignalId(sig);
+  }
+  throw common::InternalError(
+      "EmitMutationTargetSignalId", "unknown signal scope");
 }
 
 auto Context::GetOwnedHandleLlvmType() -> llvm::StructType* {
@@ -390,10 +394,18 @@ auto Context::EmitInlineSlotPtr(uint32_t local_slot_id) -> llvm::Value* {
             "slot {} is kOwnedContainer, use EmitOwnedHandlePtr instead",
             local_slot_id));
   }
+  const auto& offset = spec_slot_info_->inline_offsets[local_slot_id];
+  if (!offset.has_value()) {
+    throw common::InternalError(
+        "EmitInlineSlotPtr",
+        std::format(
+            "local slot {} has no owned-local storage (forwarded "
+            "alias must use design-global addressing)",
+            local_slot_id));
+  }
   auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
-  uint64_t rel_offset = spec_slot_info_->inline_offsets[local_slot_id];
   return builder_.CreateGEP(
-      i8_ty, this_ptr_, builder_.getInt64(rel_offset), "inline_slot_ptr");
+      i8_ty, this_ptr_, builder_.getInt64(offset->value), "inline_slot_ptr");
 }
 
 auto Context::EmitOwnedHandlePtr(uint32_t local_slot_id) -> llvm::Value* {
@@ -418,10 +430,18 @@ auto Context::EmitOwnedHandlePtr(uint32_t local_slot_id) -> llvm::Value* {
             "slot {} is kInlineValue, use EmitInlineSlotPtr instead",
             local_slot_id));
   }
+  const auto& offset = spec_slot_info_->inline_offsets[local_slot_id];
+  if (!offset.has_value()) {
+    throw common::InternalError(
+        "EmitOwnedHandlePtr",
+        std::format(
+            "local slot {} has no owned-local storage (forwarded "
+            "alias must use design-global addressing)",
+            local_slot_id));
+  }
   auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
-  uint64_t rel_offset = spec_slot_info_->inline_offsets[local_slot_id];
   return builder_.CreateGEP(
-      i8_ty, this_ptr_, builder_.getInt64(rel_offset), "owned_handle_ptr");
+      i8_ty, this_ptr_, builder_.getInt64(offset->value), "owned_handle_ptr");
 }
 
 auto Context::EmitLoadOwnedDataPtr(llvm::Value* handle_ptr) -> llvm::Value* {
@@ -437,8 +457,6 @@ auto Context::EmitLoadOwnedDataPtr(llvm::Value* handle_ptr) -> llvm::Value* {
 }
 
 auto Context::GetModuleSlotPointer(uint32_t local_slot_id) -> llvm::Value* {
-  // Transitional dispatch. Routes to explicit owned or inline path.
-  // Will be removed when all callers are migrated.
   if (spec_slot_info_ == nullptr) {
     throw common::InternalError(
         "GetModuleSlotPointer", "spec_slot_info not set");
@@ -450,11 +468,26 @@ auto Context::GetModuleSlotPointer(uint32_t local_slot_id) -> llvm::Value* {
             "local_slot_id {} out of range (count={})", local_slot_id,
             spec_slot_info_->SlotCount()));
   }
-  if (spec_slot_info_->IsOwnedContainer(local_slot_id)) {
-    auto* handle_ptr = EmitOwnedHandlePtr(local_slot_id);
-    return EmitLoadOwnedDataPtr(handle_ptr);
+
+  auto access = spec_slot_info_->access_kinds[local_slot_id];
+  switch (access) {
+    case SpecSlotAccessKind::kForwardedInline: {
+      auto gid = spec_slot_info_->representative_design_slots[local_slot_id];
+      return GetDesignGlobalSlotPointer(gid);
+    }
+    case SpecSlotAccessKind::kForwardedContainer: {
+      auto gid = spec_slot_info_->representative_design_slots[local_slot_id];
+      return EmitLoadOwnedDataPtr(GetDesignGlobalSlotPointer(gid));
+    }
+    case SpecSlotAccessKind::kOwnedContainer: {
+      auto* handle_ptr = EmitOwnedHandlePtr(local_slot_id);
+      return EmitLoadOwnedDataPtr(handle_ptr);
+    }
+    case SpecSlotAccessKind::kOwnedInline:
+      return EmitInlineSlotPtr(local_slot_id);
   }
-  return EmitInlineSlotPtr(local_slot_id);
+  throw common::InternalError(
+      "GetModuleSlotPointer", "unreachable: unknown SpecSlotAccessKind");
 }
 
 auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)

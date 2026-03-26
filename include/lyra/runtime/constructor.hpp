@@ -266,10 +266,17 @@ class Constructor {
   // the constructor is the canonical consumer of per-instance paths).
   // param_data/param_data_size carry pre-lowered canonical storage bytes
   // for this instance's parameter initialization. nullptr/0 if no params.
+  // instance_storage_base_byte_offset: arena-absolute byte offset of the
+  // instance's first owned-local slot. Only meaningful when
+  // has_local_storage is true.
+  // has_local_storage: whether this instance has any owned-local storage
+  // (false when all slots are forwarded aliases or the instance has zero
+  // slots).
   // Fails immediately if no active body.
   void AddInstance(
       const char* instance_path, const void* param_data,
-      uint32_t param_data_size);
+      uint32_t param_data_size, uint64_t instance_storage_base_byte_offset,
+      bool has_local_storage);
 
   // Finalize construction and return the unified result.
   // After this call, further mutation is rejected.
@@ -448,7 +455,8 @@ void LyraConstructorBeginBody(
 
 void LyraConstructorAddInstance(
     void* ctor, const char* instance_path, const void* param_data,
-    uint32_t param_data_size);
+    uint32_t param_data_size, uint64_t instance_storage_base_byte_offset,
+    uint32_t has_local_storage);
 
 auto LyraConstructorFinalize(void* ctor) -> void*;
 

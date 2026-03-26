@@ -60,6 +60,17 @@ struct SpecCodegenView {
 // Per-specialization slot info for owned-container dispatch.
 // All inline offsets are stable (owned slots are fixed-size handles).
 // Used by body codegen to dispatch between inline and owned access paths.
+// Specialization-wide per-body-local-slot access classification.
+// Computed once during BuildSpecSlotInfos and validated across all instances
+// in the specialization. Forwarding decisions are per design-global slot ID,
+// so all instances of a specialization have identical access kinds.
+enum class SpecSlotAccessKind : uint8_t {
+  kOwnedInline,
+  kOwnedContainer,
+  kForwardedInline,
+  kForwardedContainer,
+};
+
 struct SpecSlotInfo {
   // Body identity for this specialization. Used by
   // Context::GetCurrentBodyRealizationInfo to resolve body-relative
@@ -71,16 +82,21 @@ struct SpecSlotInfo {
   static constexpr uint32_t kInvalidBodyInfoIndex = UINT32_MAX;
   uint32_t body_realization_info_index = kInvalidBodyInfoIndex;
 
-  // Per-slot inline-region relative offset from this_ptr.
-  // For kInlineValue: offset of the slot's value bytes.
-  // For kOwnedContainer: offset of the OwnedStorageHandle.
-  std::vector<uint64_t> inline_offsets;
+  // Per-slot instance-relative offset for owned-local storage.
+  // nullopt for forwarded aliases (which have no local storage and must
+  // be accessed through design-global addressing instead).
+  // For kInlineValue owners: offset of the slot's value bytes from this_ptr.
+  // For kOwnedContainer owners: offset of the OwnedStorageHandle from this_ptr.
+  std::vector<std::optional<lowering::mir_to_llvm::InstanceByteOffset>>
+      inline_offsets;
   // Per-slot storage shape.
   std::vector<mir::StorageShape> shapes;
+  // Per-slot access classification. Precomputed from representative
+  // instance storage bindings and validated across all instances.
+  std::vector<SpecSlotAccessKind> access_kinds;
   // Per-slot representative design-global slot index. Used to resolve
-  // compile-time metadata (e.g., element stride from ArrayStorageSpec).
-  // Valid because storage shape is specialization-invariant: all instances
-  // in the specialization share the same shape per body-local slot.
+  // compile-time metadata (e.g., element stride from ArrayStorageSpec)
+  // and design-global addressing for forwarded aliases.
   std::vector<uint32_t> representative_design_slots;
 
   [[nodiscard]] auto SlotCount() const -> uint32_t {

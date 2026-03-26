@@ -1805,7 +1805,7 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
            i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
       .add_instance = declare(
           "LyraConstructorAddInstance", void_ty,
-          {ptr_ty, ptr_ty, ptr_ty, i32_ty}),
+          {ptr_ty, ptr_ty, ptr_ty, i32_ty, i64_ty, i32_ty}),
       .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
       .result_get_states =
           declare("LyraConstructionResultGetStates", ptr_ty, {ptr_ty}),
@@ -2027,13 +2027,19 @@ auto EmitConstructorFunction(
       EmitBeginBodyCall(builder, rt, ctor, body_descs[bg], i32_ty);
       last_body_group = bg;
     }
-    // Pass instance path string literal and param payload to AddInstance.
+    // Pass instance path, param payload, and explicit storage base.
     auto* path_str = builder.CreateGlobalStringPtr(
         instance_paths[mi], std::format("inst_path_{}", mi));
+    const auto& base = layout.instance_storage_bases[mi];
+    uint64_t base_val =
+        base.abs_byte_offset.has_value() ? base.abs_byte_offset->value : 0;
+    uint32_t has_storage = base.abs_byte_offset.has_value() ? 1 : 0;
     builder.CreateCall(
         rt.add_instance,
         {ctor, path_str, param_payload_ptrs[mi],
-         llvm::ConstantInt::get(i32_ty, param_payload_sizes[mi])});
+         llvm::ConstantInt::get(i32_ty, param_payload_sizes[mi]),
+         llvm::ConstantInt::get(i64_ty, base_val),
+         llvm::ConstantInt::get(i32_ty, has_storage)});
   }
 
   // Finalize: returns a single constructor-owned result handle.
