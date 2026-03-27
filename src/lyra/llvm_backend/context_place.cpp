@@ -549,9 +549,9 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   if (type.Kind() == TypeKind::kIntegral) {
     uint32_t bit_width = type.AsIntegral().bit_width;
     if (IsPackedFourState(type)) {
-      return GetFourStateStructType(*llvm_context_, bit_width);
+      return GetBackingFourStateType(*llvm_context_, bit_width);
     }
-    return GetLlvmStorageType(*llvm_context_, bit_width);
+    return GetBackingLlvmType(*llvm_context_, bit_width);
   }
   if (type.Kind() == TypeKind::kReal) {
     return llvm::Type::getDoubleTy(*llvm_context_);
@@ -568,9 +568,9 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
     if (IsPackedFourState(type)) {
-      return GetFourStateStructType(*llvm_context_, width);
+      return GetBackingFourStateType(*llvm_context_, width);
     }
-    return GetLlvmStorageType(*llvm_context_, width);
+    return GetBackingLlvmType(*llvm_context_, width);
   }
 
   if (type.Kind() == TypeKind::kUnpackedArray ||
@@ -587,7 +587,7 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
 }
 
 auto Context::GetPlaceLlvmType4State(uint32_t bit_width) -> llvm::StructType* {
-  return GetFourStateStructType(*llvm_context_, bit_width);
+  return GetBackingFourStateType(*llvm_context_, bit_width);
 }
 
 auto Context::HasBitRangeProjection(mir::PlaceId place_id) const -> bool {

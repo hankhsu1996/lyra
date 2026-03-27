@@ -71,10 +71,10 @@ auto BuildLlvmTypeForTypeIdNoUnion(
   if (IsPacked(type)) {
     auto bit_width = PackedBitWidth(type, types);
     if (IsIntrinsicallyPackedFourState(type, types)) {
-      auto* plane_type = GetLlvmStorageType(ctx, bit_width);
+      auto* plane_type = GetBackingLlvmType(ctx, bit_width);
       return llvm::StructType::get(ctx, {plane_type, plane_type});
     }
-    return GetLlvmStorageType(ctx, bit_width);
+    return GetBackingLlvmType(ctx, bit_width);
   }
   throw common::InternalError(
       "BuildLlvmTypeForTypeIdNoUnion",

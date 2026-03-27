@@ -74,11 +74,11 @@ auto BuildLlvmTypeForTypeId(Context& context, TypeId type_id)
     auto bit_width = PackedBitWidth(type, types);
     if (context.IsPackedFourState(type)) {
       auto* plane_type =
-          GetLlvmStorageType(context.GetLlvmContext(), bit_width);
+          GetBackingLlvmType(context.GetLlvmContext(), bit_width);
       return llvm::StructType::get(
           context.GetLlvmContext(), {plane_type, plane_type});
     }
-    return GetLlvmStorageType(context.GetLlvmContext(), bit_width);
+    return GetBackingLlvmType(context.GetLlvmContext(), bit_width);
   }
   throw common::InternalError(
       "BuildLlvmTypeForTypeId",
@@ -98,7 +98,7 @@ auto GetMemberAlignment(
     case TypeKind::kIntegral: {
       uint32_t bit_width = type.AsIntegral().bit_width;
       llvm::Type* llvm_type =
-          GetLlvmStorageType(context.GetLlvmContext(), bit_width);
+          GetBackingLlvmType(context.GetLlvmContext(), bit_width);
       return dl.getABITypeAlign(llvm_type).value();
     }
     case TypeKind::kReal:
@@ -114,7 +114,7 @@ auto GetMemberAlignment(
     case TypeKind::kEnum: {
       uint32_t bit_width = PackedBitWidth(type, types);
       llvm::Type* llvm_type =
-          GetLlvmStorageType(context.GetLlvmContext(), bit_width);
+          GetBackingLlvmType(context.GetLlvmContext(), bit_width);
       return dl.getABITypeAlign(llvm_type).value();
     }
     case TypeKind::kUnpackedStruct: {
@@ -158,7 +158,7 @@ auto GetMemberAllocSize(
     case TypeKind::kIntegral: {
       uint32_t bit_width = type.AsIntegral().bit_width;
       llvm::Type* llvm_type =
-          GetLlvmStorageType(context.GetLlvmContext(), bit_width);
+          GetBackingLlvmType(context.GetLlvmContext(), bit_width);
       return static_cast<uint32_t>(dl.getTypeAllocSize(llvm_type));
     }
     case TypeKind::kReal:
@@ -172,7 +172,7 @@ auto GetMemberAllocSize(
     case TypeKind::kEnum: {
       uint32_t bit_width = PackedBitWidth(type, types);
       llvm::Type* llvm_type =
-          GetLlvmStorageType(context.GetLlvmContext(), bit_width);
+          GetBackingLlvmType(context.GetLlvmContext(), bit_width);
       return static_cast<uint32_t>(dl.getTypeAllocSize(llvm_type));
     }
     case TypeKind::kUnpackedStruct: {

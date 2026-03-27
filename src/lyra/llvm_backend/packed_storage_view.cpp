@@ -18,50 +18,33 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
+#include "lyra/llvm_backend/storage_boundary.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto LaneBits::FromRaw(uint32_t bits) -> LaneBits {
-  if (bits == 0) {
-    throw common::InternalError("LaneBits::FromRaw", "lane bits must be > 0");
+auto PackedStorageView::RequireLocalBackingType() const -> llvm::Type* {
+  if (backing_.is_canonical || backing_.local_llvm_type == nullptr) {
+    throw common::InternalError(
+        "PackedStorageView::RequireLocalBackingType",
+        "local backing type requested for canonical or unset backing");
   }
-  return LaneBits(bits);
+  return backing_.local_llvm_type;
 }
 
-auto LaneValue::FromNormalized(llvm::Value* raw, LaneBits lane_bits)
-    -> LaneValue {
-  if (raw == nullptr) {
-    throw common::InternalError(
-        "LaneValue::FromNormalized", "raw value must be non-null");
-  }
-  auto* int_ty = llvm::dyn_cast<llvm::IntegerType>(raw->getType());
-  if (int_ty == nullptr || int_ty->getBitWidth() != lane_bits.Raw()) {
-    throw common::InternalError(
-        "LaneValue::FromNormalized",
-        std::format(
-            "LLVM type width does not match LaneBits: expected i{}, got {}",
-            lane_bits.Raw(),
-            raw->getType()->isIntegerTy()
-                ? std::format(
-                      "i{}", llvm::cast<llvm::IntegerType>(raw->getType())
-                                 ->getBitWidth())
-                : "non-integer"));
-  }
-  return LaneValue(raw, lane_bits);
+void PackedStorageView::SetCanonicalBacking() {
+  backing_ = BackingInfo{.is_canonical = true, .local_llvm_type = nullptr};
 }
 
-auto LanePlaneValues::Make(LaneValue val, std::optional<LaneValue> unk)
-    -> LanePlaneValues {
-  if (unk.has_value() && unk->Bits() != val.Bits()) {
+void PackedStorageView::SetLocalBacking(llvm::Type* local_llvm_type) {
+  if (local_llvm_type == nullptr) {
     throw common::InternalError(
-        "LanePlaneValues::Make",
-        std::format(
-            "val and unk lane bits must match: val={}, unk={}",
-            val.Bits().Raw(), unk->Bits().Raw()));
+        "PackedStorageView::SetLocalBacking",
+        "non-canonical backing requires local backing type");
   }
-  return LanePlaneValues(val, std::move(unk));
+  backing_ =
+      BackingInfo{.is_canonical = false, .local_llvm_type = local_llvm_type};
 }
 
 // BitRangeProjection byte-alignment proof.
@@ -114,23 +97,20 @@ auto ResolvePackedStorageRoot(Context& ctx, mir::PlaceId place_id)
   bool is_canonical = place.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
                       place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal;
 
-  PackedStorageView view{
-      .base_ptr = *ptr_result,
-      .total_semantic_bits = total_bits,
-      .storage_plane_byte_size = storage_plane_byte_size,
-      .unk_plane_offset_bytes =
-          is_four_state ? FourStateUnknownLaneOffset(total_bits) : 0,
-      .is_four_state = is_four_state,
-      .is_canonical_storage = is_canonical,
-  };
+  PackedStorageView view;
+  view.base_ptr = *ptr_result;
+  view.total_semantic_bits = total_bits;
+  view.storage_plane_byte_size = storage_plane_byte_size;
+  view.unk_plane_offset_bytes =
+      is_four_state ? FourStateUnknownLaneOffset(total_bits) : 0;
+  view.is_four_state = is_four_state;
 
   if (!is_canonical) {
-    // Resolve the LLVM storage type for the packed storage root directly
-    // from the base TypeId. This is the type of the local alloca that
-    // backs this packed object, not a projected/derived type.
     auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, base_type_id);
     if (!llvm_type_result) return std::unexpected(llvm_type_result.error());
-    view.local_llvm_type = *llvm_type_result;
+    view.SetLocalBacking(*llvm_type_result);
+  } else {
+    view.SetCanonicalBacking();
   }
 
   return view;
@@ -239,7 +219,7 @@ auto ResolvePackedSubview(Context& ctx, const PackedAccessPath& path)
   //    values. Currently proven only by BitRangeProjection-specific
   //    analysis (IsBitRangeStepProvablyByteAligned). Future packed struct
   //    field and part-select steps will need their own proofs.
-  if (path.storage.is_canonical_storage && final_width % 8 == 0 &&
+  if (path.storage.IsCanonicalBacking() && final_width % 8 == 0 &&
       all_steps_byte_aligned) {
     access.kind = PackedSubviewKind::kByteAddressable;
     access.byte_offset =
@@ -291,35 +271,6 @@ void EmitRuntimePlaneWriteback(
   builder.CreateStore(plane_value, ptr);
 }
 
-// Compute canonical lane bits from semantic bit width.
-auto GetCanonicalLaneBits(SemanticBits bits) -> LaneBits {
-  return LaneBits::FromRaw(GetStorageByteSize(bits.Raw()) * 8);
-}
-
-// LLVM integer type for canonical lane width.
-auto GetLaneIntType(llvm::LLVMContext& ctx, LaneBits bits)
-    -> llvm::IntegerType* {
-  return llvm::IntegerType::get(ctx, bits.Raw());
-}
-
-// Normalize a raw LLVM value to canonical lane width via ZExtOrTrunc.
-// This is the sole entry point from backing/semantic domain into lane domain.
-auto NormalizeToLaneWidth(
-    llvm::IRBuilder<>& builder, llvm::Value* raw, LaneBits target)
-    -> LaneValue {
-  auto* lane_ty = GetLaneIntType(builder.getContext(), target);
-  auto* normalized = builder.CreateZExtOrTrunc(raw, lane_ty, "lane.norm");
-  return LaneValue::FromNormalized(normalized, target);
-}
-
-// Convert a lane-domain value back to backing representation width.
-// This is the sole exit from lane domain into backing domain.
-auto ConvertLaneToBackingWidth(
-    llvm::IRBuilder<>& builder, LaneValue val, llvm::Type* backing_ty)
-    -> llvm::Value* {
-  return builder.CreateZExtOrTrunc(val.Raw(), backing_ty, "lane.back");
-}
-
 // Load plane values from packed storage, normalized to canonical lane width.
 // Canonical: byte-addressed GEP (already at lane width).
 // Non-canonical: LLVM typed load + normalize from backing width to lane width.
@@ -330,7 +281,7 @@ auto LoadLanePlanes(Context& ctx, const PackedStorageView& storage)
   auto lane_bits =
       GetCanonicalLaneBits(SemanticBits::FromRaw(storage.total_semantic_bits));
 
-  if (storage.is_canonical_storage) {
+  if (storage.IsCanonicalBacking()) {
     auto val = LaneValue::FromNormalized(
         EmitTypedPlaneLoad(
             builder, ctx.GetLlvmContext(), storage.base_ptr, 0, lane_bits.Raw(),
@@ -348,10 +299,11 @@ auto LoadLanePlanes(Context& ctx, const PackedStorageView& storage)
   }
 
   // Non-canonical: LLVM typed load, then normalize to lane width.
-  auto* loaded =
-      builder.CreateLoad(storage.local_llvm_type, storage.base_ptr, "fp.local");
+  auto* loaded = builder.CreateLoad(
+      storage.RequireLocalBackingType(), storage.base_ptr, "fp.local");
   if (storage.is_four_state) {
-    auto* st = llvm::dyn_cast<llvm::StructType>(storage.local_llvm_type);
+    auto* st =
+        llvm::dyn_cast<llvm::StructType>(storage.RequireLocalBackingType());
     if (st == nullptr || st->getNumElements() != 2 ||
         st->getElementType(0) != st->getElementType(1) ||
         !st->getElementType(0)->isIntegerTy()) {
@@ -405,7 +357,7 @@ void StoreLanePlanes(
             planes.Unk()->Bits().Raw(), expected_lane_bits.Raw()));
   }
 
-  if (storage.is_canonical_storage) {
+  if (storage.IsCanonicalBacking()) {
     EmitRuntimePlaneWriteback(
         builder, storage.base_ptr, 0, planes.Val().Raw(), "fp.val.store");
     if (storage.is_four_state) {
@@ -418,7 +370,8 @@ void StoreLanePlanes(
 
   // Non-canonical: convert lane-width values back to backing element width.
   if (storage.is_four_state) {
-    auto* st = llvm::dyn_cast<llvm::StructType>(storage.local_llvm_type);
+    auto* st =
+        llvm::dyn_cast<llvm::StructType>(storage.RequireLocalBackingType());
     if (st == nullptr || st->getNumElements() != 2 ||
         st->getElementType(0) != st->getElementType(1) ||
         !st->getElementType(0)->isIntegerTy()) {
@@ -431,7 +384,8 @@ void StoreLanePlanes(
     auto* store_val = ConvertLaneToBackingWidth(builder, planes.Val(), elem_ty);
     auto* store_unk =
         ConvertLaneToBackingWidth(builder, *planes.Unk(), elem_ty);
-    llvm::Value* packed = llvm::UndefValue::get(storage.local_llvm_type);
+    llvm::Value* packed =
+        llvm::UndefValue::get(storage.RequireLocalBackingType());
     packed = builder.CreateInsertValue(packed, store_val, 0);
     packed = builder.CreateInsertValue(packed, store_unk, 1);
     builder.CreateStore(packed, storage.base_ptr);
@@ -439,8 +393,8 @@ void StoreLanePlanes(
   }
 
   // Non-canonical 2-state: scalar store.
-  auto* store_val =
-      ConvertLaneToBackingWidth(builder, planes.Val(), storage.local_llvm_type);
+  auto* store_val = ConvertLaneToBackingWidth(
+      builder, planes.Val(), storage.RequireLocalBackingType());
   builder.CreateStore(store_val, storage.base_ptr);
 }
 
@@ -558,7 +512,7 @@ auto EmitBitAddressableLoad(Context& ctx, const PackedSubviewAccess& access)
 auto EmitByteAddressableStore(
     Context& ctx, const PackedSubviewAccess& access, const PackedRValue& value,
     const PackedStorePlan& plan) -> llvm::Value* {
-  if (!access.storage.is_canonical_storage) {
+  if (!access.storage.IsCanonicalBacking()) {
     throw common::InternalError(
         "EmitByteAddressableStore",
         "byte-addressable store requires canonical storage");
@@ -1249,15 +1203,13 @@ auto BuildWholeValueStorageView(
   }
   uint32_t storage_plane_byte_size = GetStorageByteSize(total_bits);
 
-  PackedStorageView view{
-      .base_ptr = base_ptr,
-      .total_semantic_bits = total_bits,
-      .storage_plane_byte_size = storage_plane_byte_size,
-      .unk_plane_offset_bytes =
-          is_four_state ? FourStateUnknownLaneOffset(total_bits) : 0,
-      .is_four_state = is_four_state,
-      .is_canonical_storage = is_canonical,
-  };
+  PackedStorageView view;
+  view.base_ptr = base_ptr;
+  view.total_semantic_bits = total_bits;
+  view.storage_plane_byte_size = storage_plane_byte_size;
+  view.unk_plane_offset_bytes =
+      is_four_state ? FourStateUnknownLaneOffset(total_bits) : 0;
+  view.is_four_state = is_four_state;
 
   if (!is_canonical) {
     auto llvm_type_result = BuildLlvmTypeForTypeId(ctx, type_id);
@@ -1266,7 +1218,9 @@ auto BuildWholeValueStorageView(
           "BuildWholeValueStorageView",
           "failed to resolve LLVM type for non-canonical storage");
     }
-    view.local_llvm_type = *llvm_type_result;
+    view.SetLocalBacking(*llvm_type_result);
+  } else {
+    view.SetCanonicalBacking();
   }
 
   return view;
@@ -1274,14 +1228,14 @@ auto BuildWholeValueStorageView(
 
 auto BuildRawBytesStorageView(llvm::Value* base_ptr, uint32_t byte_size)
     -> PackedStorageView {
-  return PackedStorageView{
-      .base_ptr = base_ptr,
-      .total_semantic_bits = byte_size * 8,
-      .storage_plane_byte_size = byte_size,
-      .unk_plane_offset_bytes = 0,
-      .is_four_state = false,
-      .is_canonical_storage = true,
-  };
+  PackedStorageView view;
+  view.base_ptr = base_ptr;
+  view.total_semantic_bits = byte_size * 8;
+  view.storage_plane_byte_size = byte_size;
+  view.unk_plane_offset_bytes = 0;
+  view.is_four_state = false;
+  view.SetCanonicalBacking();
+  return view;
 }
 
 auto BuildStorePolicyFromContext(
@@ -1502,11 +1456,30 @@ void EmitGuardedLyraStorePacked(
   }
 }
 
+// Raw plane values for byte-buffer encoding. Structured unwrap from typed
+// LanePlaneValues at the byte-serialization boundary.
+struct RawPlaneEncodingInputs {
+  llvm::Value* val = nullptr;
+  llvm::Value* unk = nullptr;
+  bool has_unk = false;
+};
+
+auto GetRawPlaneEncodingInputs(const LanePlaneValues& planes)
+    -> RawPlaneEncodingInputs {
+  return RawPlaneEncodingInputs{
+      .val = planes.Val().Raw(),
+      .unk = planes.Unk().has_value() ? planes.Unk()->Raw() : nullptr,
+      .has_unk = planes.Unk().has_value(),
+  };
+}
+
 // Emit the large-value runtime-helper path for whole-value packed stores.
 // Materializes canonical bytes into an alloca buffer and calls LyraStorePacked.
+// Takes typed lane-domain planes; unwraps to raw values at the narrow
+// byte-serialization boundary via GetRawPlaneEncodingInputs.
 void EmitLargeWholeValueStore(
-    Context& ctx, const PackedStorageView& storage, llvm::Value* val,
-    llvm::Value* unk, const PackedStorePolicy& policy) {
+    Context& ctx, const PackedStorageView& storage,
+    const LanePlaneValues& planes, const PackedStorePolicy& policy) {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
 
@@ -1521,20 +1494,20 @@ void EmitLargeWholeValueStore(
 
   builder.CreateMemSet(temp, builder.getInt8(0), total_bytes, llvm::Align(1));
 
+  auto inputs = GetRawPlaneEncodingInputs(planes);
+
   // Skip encoding zero-constant planes -- the buffer is already zeroed.
-  // This optimization recognizes only literal integer zero constants;
-  // other zero representations (e.g., zero-init aggregates) are not matched.
-  bool val_is_zero = llvm::isa<llvm::ConstantInt>(val) &&
-                     llvm::cast<llvm::ConstantInt>(val)->isZero();
+  bool val_is_zero = llvm::isa<llvm::ConstantInt>(inputs.val) &&
+                     llvm::cast<llvm::ConstantInt>(inputs.val)->isZero();
   if (!val_is_zero) {
-    EncodePlaneValueToByteBuffer(builder, llvm_ctx, temp, 0, val);
+    EncodePlaneValueToByteBuffer(builder, llvm_ctx, temp, 0, inputs.val);
   }
-  if (storage.is_four_state && unk != nullptr) {
-    bool unk_is_zero = llvm::isa<llvm::ConstantInt>(unk) &&
-                       llvm::cast<llvm::ConstantInt>(unk)->isZero();
+  if (inputs.has_unk) {
+    bool unk_is_zero = llvm::isa<llvm::ConstantInt>(inputs.unk) &&
+                       llvm::cast<llvm::ConstantInt>(inputs.unk)->isZero();
     if (!unk_is_zero) {
       EncodePlaneValueToByteBuffer(
-          builder, llvm_ctx, temp, storage.unk_plane_offset_bytes, unk);
+          builder, llvm_ctx, temp, storage.unk_plane_offset_bytes, inputs.unk);
     }
   }
 
@@ -1568,7 +1541,7 @@ void EmitWholeValueStoreCore(
             val.Bits().Raw(), expected_lane_bits.Raw()));
   }
 
-  if (!storage.is_canonical_storage) {
+  if (!storage.IsCanonicalBacking()) {
     // Non-canonical (local allocas): typed store, no compare/notify.
     StoreLanePlanes(ctx, storage, LanePlaneValues::Make(val, unk));
     return;
@@ -1606,8 +1579,7 @@ void EmitWholeValueStoreCore(
       EmitInlineCanonicalDirectStore(ctx, storage, canonical_bits);
     } else {
       EmitLargeWholeValueStore(
-          ctx, storage, val.Raw(), unk.has_value() ? unk->Raw() : nullptr,
-          policy);
+          ctx, storage, LanePlaneValues::Make(val, unk), policy);
     }
     return;
   }
@@ -1615,51 +1587,39 @@ void EmitWholeValueStoreCore(
   // Notification paths: recipe-driven unknown-plane lowering.
   uint32_t total_bytes = TotalCanonicalByteSize(storage);
 
-  auto flatten_and_inline_store = [&](const LanePlaneValues& planes) {
-    auto* canonical_bits =
-        FlattenToCanonicalBits(builder, ctx.GetLlvmContext(), planes);
-    EmitInlineWholeValueStore(
-        ctx, storage, canonical_bits, policy, needs_changed);
+  auto store_planes = [&](const LanePlaneValues& planes) {
+    if (IsInlineStoreEligible(total_bytes)) {
+      auto* canonical_bits =
+          FlattenToCanonicalBits(builder, ctx.GetLlvmContext(), planes);
+      EmitInlineWholeValueStore(
+          ctx, storage, canonical_bits, policy, needs_changed);
+    } else {
+      EmitLargeWholeValueStore(ctx, storage, planes, policy);
+    }
   };
 
   switch (unk_lowering) {
     case UnknownPlaneLowering::kNone:
-      // 2-state storage: store val only.
-      if (IsInlineStoreEligible(total_bytes)) {
-        flatten_and_inline_store(LanePlaneValues::Make(val, std::nullopt));
-      } else {
-        EmitLargeWholeValueStore(ctx, storage, val.Raw(), nullptr, policy);
-      }
+      store_planes(LanePlaneValues::Make(val, std::nullopt));
       break;
 
     case UnknownPlaneLowering::kFlattenAndStoreWhole:
-      // 4-state RHS: flatten {val, unk} into widened store.
-      if (IsInlineStoreEligible(total_bytes)) {
-        flatten_and_inline_store(LanePlaneValues::Make(val, unk));
-      } else {
-        EmitLargeWholeValueStore(
-            ctx, storage, val.Raw(), unk.has_value() ? unk->Raw() : nullptr,
-            policy);
-      }
+      store_planes(LanePlaneValues::Make(val, unk));
       break;
 
-    case UnknownPlaneLowering::kFlattenZeroAndStoreWhole: {
-      flatten_and_inline_store(LanePlaneValues::Make(val, make_zero_unk()));
+    case UnknownPlaneLowering::kFlattenZeroAndStoreWhole:
+      store_planes(LanePlaneValues::Make(val, make_zero_unk()));
       break;
-    }
 
     case UnknownPlaneLowering::kMaterializeForRuntime:
-      // 4-state RHS, large: pass to runtime helper.
       EmitLargeWholeValueStore(
-          ctx, storage, val.Raw(), unk.has_value() ? unk->Raw() : nullptr,
-          policy);
+          ctx, storage, LanePlaneValues::Make(val, unk), policy);
       break;
 
-    case UnknownPlaneLowering::kMaterializeZeroForRuntime: {
+    case UnknownPlaneLowering::kMaterializeZeroForRuntime:
       EmitLargeWholeValueStore(
-          ctx, storage, val.Raw(), make_zero_unk().Raw(), policy);
+          ctx, storage, LanePlaneValues::Make(val, make_zero_unk()), policy);
       break;
-    }
 
     default:
       throw common::InternalError(
@@ -1809,7 +1769,7 @@ auto StorePackedValueFromCanonicalBytes(
     return {};
   }
 
-  if (!storage.is_canonical_storage) {
+  if (!storage.IsCanonicalBacking()) {
     builder.CreateMemCpy(
         storage.base_ptr, llvm::MaybeAlign(), src_bytes_ptr, llvm::MaybeAlign(),
         total_bytes);
@@ -1859,7 +1819,7 @@ auto NotifyPackedStorageWritten(
     return {};
   }
 
-  if (!storage.is_canonical_storage || !policy.signal_id.has_value()) {
+  if (!storage.IsCanonicalBacking() || !policy.signal_id.has_value()) {
     return {};
   }
 

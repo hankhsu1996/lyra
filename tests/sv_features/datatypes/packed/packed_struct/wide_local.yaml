@@ -174,3 +174,87 @@ cases:
       variables:
         result_high: "0xdeadbeef"
         result_low: "0xcafebabe"
+
+  - name: local_65bit_2state_struct_field_write
+    description: >
+      65-bit 2-state packed struct (bit, not logic) as local variable.
+      Exercises the non-canonical 2-state backing path.
+    sv: |
+      module Test;
+        typedef struct packed {
+          bit [31:0] high;
+          bit [31:0] low;
+          bit flag;
+        } wide65_2s_t;
+
+        int result_high, result_low, result_flag;
+        initial begin
+          wide65_2s_t w;
+          w.high = 32'hDEAD;
+          w.low = 32'hBEEF;
+          w.flag = 1'b1;
+          result_high = w.high;
+          result_low = w.low;
+          result_flag = w.flag;
+        end
+      endmodule
+    expect:
+      variables:
+        result_high: "0xdead"
+        result_low: "0xbeef"
+        result_flag: 1
+
+  - name: local_66bit_whole_value_write
+    description: >
+      66-bit packed struct initialized via whole-value assignment then
+      field reads. Exercises the whole-value store path through
+      StorePackedValue -> NormalizeToLaneWidth on non-canonical storage.
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [56:0] data;
+          logic [6:0] syndrome;
+          logic [1:0] err;
+        } secded_t;
+
+        int result_data, result_syndrome, result_err;
+        initial begin
+          secded_t s;
+          s = 66'((57'd99 << 9) | (7'd7 << 2) | 2'd2);
+          result_data = s.data;
+          result_syndrome = s.syndrome;
+          result_err = s.err;
+        end
+      endmodule
+    expect:
+      variables:
+        result_data: 99
+        result_syndrome: 7
+        result_err: 2
+
+  - name: local_65bit_2state_whole_value_write
+    description: >
+      65-bit 2-state packed struct initialized via whole-value assignment.
+      Exercises the whole-value non-canonical 2-state path with absent unk.
+    sv: |
+      module Test;
+        typedef struct packed {
+          bit [31:0] high;
+          bit [31:0] low;
+          bit flag;
+        } wide65_2s_t;
+
+        int result_high, result_low, result_flag;
+        initial begin
+          wide65_2s_t w;
+          w = 65'((32'hDEAD << 33) | (32'hBEEF << 1) | 1'b1);
+          result_high = w.high;
+          result_low = w.low;
+          result_flag = w.flag;
+        end
+      endmodule
+    expect:
+      variables:
+        result_high: "0xdead"
+        result_low: "0xbeef"
+        result_flag: 1

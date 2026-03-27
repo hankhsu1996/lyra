@@ -307,4 +307,38 @@ auto EmitLoadFourStateFromCanonical(
   return result;
 }
 
+auto GetCanonicalLaneBits(SemanticBits bits) -> LaneBits {
+  return LaneBits::FromRaw(GetStorageByteSize(bits.Raw()) * 8);
+}
+
+auto GetBackingBits(SemanticBits bits) -> BackingBits {
+  // Backing-domain rounding matches GetBackingLlvmType:
+  // power-of-2 up to 64 bits, exact semantic width above 64 bits.
+  uint32_t w = bits.Raw();
+  if (w <= 8) return BackingBits::FromRaw(8);
+  if (w <= 16) return BackingBits::FromRaw(16);
+  if (w <= 32) return BackingBits::FromRaw(32);
+  if (w <= 64) return BackingBits::FromRaw(64);
+  return BackingBits::FromRaw(w);
+}
+
+auto GetLaneIntType(llvm::LLVMContext& ctx, LaneBits bits)
+    -> llvm::IntegerType* {
+  return llvm::IntegerType::get(ctx, bits.Raw());
+}
+
+auto NormalizeToLaneWidth(
+    llvm::IRBuilder<>& builder, llvm::Value* raw, LaneBits target)
+    -> LaneValue {
+  auto* lane_ty = GetLaneIntType(builder.getContext(), target);
+  auto* normalized = builder.CreateZExtOrTrunc(raw, lane_ty, "lane.norm");
+  return LaneValue::FromNormalized(normalized, target);
+}
+
+auto ConvertLaneToBackingWidth(
+    llvm::IRBuilder<>& builder, LaneValue val, llvm::Type* backing_ty)
+    -> llvm::Value* {
+  return builder.CreateZExtOrTrunc(val.Raw(), backing_ty, "lane.back");
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

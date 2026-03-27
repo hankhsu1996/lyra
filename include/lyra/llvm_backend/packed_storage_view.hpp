@@ -9,6 +9,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
+#include "lyra/llvm_backend/packed_width_types.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace llvm {
@@ -42,104 +43,23 @@ struct PackedStorageView {
   uint32_t unk_plane_offset_bytes = 0;
   bool is_four_state = false;
 
-  // True for design slots (kModuleSlot, kDesignGlobal) where storage follows
-  // the canonical byte-addressed packed ABI. False for process-local allocas
-  // (kLocal, kTemp) where LLVM struct alignment may diverge from canonical.
-  bool is_canonical_storage = false;
-
-  // Non-null only when !is_canonical_storage. The LLVM type of the base
-  // alloca, needed for typed load/store on the bit-addressable fallback path.
-  llvm::Type* local_llvm_type = nullptr;
-};
-
-// Semantic bit width of a packed type. Logical width before any storage
-// rounding. Not an LLVM type width -- just a count of meaningful bits.
-class SemanticBits {
- public:
-  static auto FromRaw(uint32_t bits) -> SemanticBits {
-    return SemanticBits(bits);
+  // Backing-domain accessors. Only used by load/store boundary functions
+  // (LoadLanePlanes, StoreLanePlanes) and classification helpers.
+  // Lane-domain algebra should not call these.
+  [[nodiscard]] auto IsCanonicalBacking() const -> bool {
+    return backing_.is_canonical;
   }
 
-  [[nodiscard]] auto Raw() const -> uint32_t {
-    return bits_;
-  }
+  [[nodiscard]] auto RequireLocalBackingType() const -> llvm::Type*;
 
-  friend auto operator==(SemanticBits lhs, SemanticBits rhs) -> bool = default;
+  void SetCanonicalBacking();
+  void SetLocalBacking(llvm::Type* local_llvm_type);
 
  private:
-  explicit SemanticBits(uint32_t bits) : bits_(bits) {
-  }
-  uint32_t bits_ = 0;
-};
-
-// Canonical storage lane width in bits. Derived from GetStorageByteSize.
-// This is the width at which all packed-storage algebra (mask, shift, RMW)
-// operates. Always >= SemanticBits and always a multiple of 8 for widths > 64.
-// Construction validates non-zero.
-class LaneBits {
- public:
-  static auto FromRaw(uint32_t bits) -> LaneBits;
-
-  [[nodiscard]] auto Raw() const -> uint32_t {
-    return bits_;
-  }
-
-  friend auto operator==(LaneBits lhs, LaneBits rhs) -> bool = default;
-
- private:
-  explicit LaneBits(uint32_t bits) : bits_(bits) {
-  }
-  uint32_t bits_ = 0;
-};
-
-// LLVM integer value known to be at canonical lane width.
-// Construction goes through FromNormalized only, which validates that the
-// LLVM type width matches the declared LaneBits. Do not construct directly.
-class LaneValue {
- public:
-  static auto FromNormalized(llvm::Value* raw, LaneBits lane_bits) -> LaneValue;
-
-  [[nodiscard]] auto Raw() const -> llvm::Value* {
-    return raw_;
-  }
-  [[nodiscard]] auto Bits() const -> LaneBits {
-    return lane_bits_;
-  }
-
- private:
-  LaneValue(llvm::Value* raw, LaneBits lane_bits)
-      : raw_(raw), lane_bits_(lane_bits) {
-  }
-
-  llvm::Value* raw_;
-  LaneBits lane_bits_;
-};
-
-// Two-plane storage form at canonical lane width.
-// val is always present. unk is present only for 4-state storage.
-// When unk is present, both planes carry identical LaneBits.
-// Used as the return type of LoadLanePlanes and the input type of
-// StoreLanePlanes -- the single boundary between backing representation
-// and lane-domain code.
-class LanePlaneValues {
- public:
-  static auto Make(LaneValue val, std::optional<LaneValue> unk)
-      -> LanePlaneValues;
-
-  [[nodiscard]] auto Val() const -> const LaneValue& {
-    return val_;
-  }
-  [[nodiscard]] auto Unk() const -> const std::optional<LaneValue>& {
-    return unk_;
-  }
-
- private:
-  LanePlaneValues(LaneValue val, std::optional<LaneValue> unk)
-      : val_(val), unk_(std::move(unk)) {
-  }
-
-  LaneValue val_;
-  std::optional<LaneValue> unk_;
+  struct BackingInfo {
+    bool is_canonical = false;
+    llvm::Type* local_llvm_type = nullptr;
+  } backing_;
 };
 
 // A single step in a packed projection path.
@@ -215,7 +135,12 @@ struct PackedSubviewAccess {
   TypeId result_type;
 };
 
-// Backend-owned SSA carrier for packed values.
+// Backend-owned SSA carrier for packed values in the backing domain.
+//
+// Values in .val and .unk are at backing width (GetBackingLlvmType),
+// not canonical lane width (GetCanonicalLaneBits). Normalization to
+// lane width happens at the PSV store boundary (StorePackedValue ->
+// NormalizeToLaneWidth).
 //
 // Contract:
 //   unk == nullptr means the RHS is provably 2-state. No downstream code

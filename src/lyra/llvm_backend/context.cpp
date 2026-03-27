@@ -124,7 +124,7 @@ auto Context::GetOrCreateEnumValuesGlobal(TypeId enum_type)
   const auto& enum_info = type.AsEnum();
   uint32_t bit_width = PackedBitWidth(type, types_);
   uint32_t storage_bits =
-      GetLlvmStorageType(*llvm_context_, bit_width)->getIntegerBitWidth();
+      GetBackingLlvmType(*llvm_context_, bit_width)->getIntegerBitWidth();
   auto* elem_type = llvm::Type::getIntNTy(*llvm_context_, storage_bits);
 
   std::vector<llvm::Constant*> values;
@@ -244,9 +244,9 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
   if (type.Kind() == TypeKind::kIntegral) {
     uint32_t bit_width = type.AsIntegral().bit_width;
     if (IsPackedFourState(type)) {
-      llvm_type = GetFourStateStructType(*llvm_context_, bit_width);
+      llvm_type = GetBackingFourStateType(*llvm_context_, bit_width);
     } else {
-      llvm_type = GetLlvmStorageType(*llvm_context_, bit_width);
+      llvm_type = GetBackingLlvmType(*llvm_context_, bit_width);
     }
   } else if (type.Kind() == TypeKind::kReal) {
     llvm_type = llvm::Type::getDoubleTy(*llvm_context_);
@@ -261,9 +261,9 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
   } else if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);
     if (IsPackedFourState(type)) {
-      llvm_type = GetFourStateStructType(*llvm_context_, width);
+      llvm_type = GetBackingFourStateType(*llvm_context_, width);
     } else {
-      llvm_type = GetLlvmStorageType(*llvm_context_, width);
+      llvm_type = GetBackingLlvmType(*llvm_context_, width);
     }
   } else if (
       type.Kind() == TypeKind::kUnpackedStruct ||

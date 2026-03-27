@@ -629,12 +629,18 @@ auto GetLlvmTypeForTypeId(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types,
     bool force_two_state) -> llvm::Type*;
 
-// Get the LLVM storage type for an integral type, rounding up to power-of-2.
-auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
+// Backing-domain LLVM integer type for local allocas and SSA temporaries.
+// For widths <= 64: power-of-2 rounded (i8, i16, i32, i64).
+// For widths > 64: exact semantic width (NOT byte-rounded).
+// This is NOT the canonical storage lane width. For lane-domain operations,
+// use GetCanonicalLaneBits / GetLaneIntType from storage_boundary.hpp.
+auto GetBackingLlvmType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::Type*;
 
-// Get the LLVM struct type for a 4-state value: {iN_storage, iN_storage}
-auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
+// Backing-domain LLVM struct type for 4-state values: {iN, iN}.
+// Uses GetBackingLlvmType for the element type. For widths > 64,
+// this returns {iW, iW} at exact width, not {iR, iR} at lane width.
+auto GetBackingFourStateType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::StructType*;
 
 // Get the LLVM type for passing a MIR type by value.

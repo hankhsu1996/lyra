@@ -147,9 +147,10 @@ auto LowerConstant(Context& context, const Constant& constant)
                   struct_type, {val_const, unk_const});
             }
 
-            // 2-state constant: use storage-width integer (power-of-2
-            // rounded) to match slot layout and PHI types.
-            auto* storage_type = GetLlvmStorageType(llvm_ctx, bit_width);
+            // 2-state constant: backing-domain width (power-of-2 up to 64,
+            // exact semantic width above 64) to match alloca/PHI types.
+            // Lane normalization happens at the PSV store boundary.
+            auto* storage_type = GetBackingLlvmType(llvm_ctx, bit_width);
             uint32_t storage_width = storage_type->getIntegerBitWidth();
             return llvm::ConstantInt::get(
                 storage_type, value_ap.zextOrTrunc(storage_width));
