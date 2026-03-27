@@ -1,0 +1,112 @@
+feature: hierarchy_port_forwarding
+description: Tests port forwarding (pass-through ports) across hierarchy levels
+
+# Port forwarding occurs when a module's input port is only used to connect
+# to a child module's input port (pass-through). The forwarding analysis
+# can eliminate the intermediate relay slot by aliasing it to the upstream
+# source. This tests that forwarded alias slots coexist correctly with
+# non-forwarded slots within the same module instance.
+
+cases:
+  - name: pass_through_with_local_state
+    description: Module with pass-through port AND independent local state
+    sv: |
+      module Inner(input int x);
+        int y;
+        always_comb y = x + 1;
+      endmodule
+
+      module Outer(output int result, input int a);
+        int local1;
+        int local2;
+        int local3;
+        Inner inner(.x(a));
+        always_comb begin
+          local1 = 100;
+          local2 = 200;
+          local3 = 300;
+          result = local1 + local2 + local3;
+        end
+      endmodule
+
+      module Top;
+        int w;
+        assign w = 42;
+        int r;
+        Outer outer(.result(r), .a(w));
+        initial begin
+          #1;
+          $display("y=%0d r=%0d", outer.inner.y, r);
+        end
+      endmodule
+    expect:
+      stdout: "y=43 r=600\n"
+
+  - name: pass_through_chain_with_local_state
+    description: Two-level pass-through where intermediate modules have own state
+    sv: |
+      module Leaf(input int x);
+        int result;
+        always_comb result = x * 2;
+      endmodule
+
+      module Mid(input int data, output int out);
+        int local_counter;
+        Leaf leaf(.x(data));
+        always_comb begin
+          local_counter = 999;
+          out = leaf.result;
+        end
+      endmodule
+
+      module Wrapper(input int val, output int out);
+        int tag;
+        Mid mid(.data(val), .out(out));
+        always_comb tag = 1;
+      endmodule
+
+      module Top;
+        int src;
+        assign src = 21;
+        int dst;
+        Wrapper wrap(.val(src), .out(dst));
+        initial begin
+          #1;
+          $display("dst=%0d", dst);
+        end
+      endmodule
+    expect:
+      stdout: "dst=42\n"
+
+  - name: sibling_pass_through_with_local_state
+    description: Sibling modules connected via parent wire with pass-through ports
+    sv: |
+      module Source(output int data);
+        assign data = 10;
+      endmodule
+
+      module PassThrough(input int x, output int y);
+        int local_state;
+        always_comb begin
+          local_state = 55;
+          y = x;
+        end
+      endmodule
+
+      module Sink(input int val);
+        int captured;
+        always_comb captured = val;
+      endmodule
+
+      module Top;
+        int wire1, wire2;
+        Source src(.data(wire1));
+        PassThrough pt(.x(wire1), .y(wire2));
+        Sink sink(.val(wire2));
+        initial begin
+          #1;
+          $display("wire2=%0d captured=%0d", wire2, sink.captured);
+        end
+      endmodule
+    expect:
+      stdout: "wire2=10 captured=10\n"
