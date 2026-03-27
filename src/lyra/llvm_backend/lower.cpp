@@ -52,6 +52,82 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
+struct ObservableDescriptorOwnerRefFields {
+  uint32_t storage_owner_ref = 0;
+  uint32_t flags = 0;
+};
+
+auto BuildBodyObservableDescriptorOwnerRefFields(
+    ObservableOwnerSlotId owner, uint32_t base_slot, uint32_t slot_count)
+    -> ObservableDescriptorOwnerRefFields {
+  const uint32_t raw_owner = owner.Raw();
+  const bool owner_is_in_body =
+      raw_owner >= base_slot && raw_owner < base_slot + slot_count;
+  if (owner_is_in_body) {
+    return {.storage_owner_ref = raw_owner - base_slot, .flags = 0};
+  }
+  return {
+      .storage_owner_ref = raw_owner,
+      .flags = runtime::kObservableFlagOwnerAbsolute};
+}
+
+auto BuildPackageObservableDescriptorOwnerRefFields(ObservableOwnerSlotId owner)
+    -> ObservableDescriptorOwnerRefFields {
+  return {
+      .storage_owner_ref = owner.Raw(),
+      .flags = runtime::kObservableFlagOwnerAbsolute |
+               runtime::kObservableFlagPackageGlobal};
+}
+
+struct ObservableDescriptorShapeFields {
+  uint32_t total_bytes = 0;
+  uint32_t storage_kind = 0;
+  uint32_t value_lane_offset = 0;
+  uint32_t value_lane_bytes = 0;
+  uint32_t unk_lane_offset = 0;
+  uint32_t unk_lane_bytes = 0;
+  uint32_t bit_width = 0;
+  uint32_t trace_kind = 0;
+};
+
+auto BuildObservableDescriptorShapeFields(const CanonicalObservableShape& shape)
+    -> ObservableDescriptorShapeFields {
+  ObservableDescriptorShapeFields out{
+      .total_bytes = shape.storage.total_bytes,
+      .storage_kind = static_cast<uint32_t>(shape.storage.storage_kind),
+      .bit_width = shape.trace.bit_width,
+      .trace_kind = static_cast<uint32_t>(shape.trace.trace_kind),
+  };
+  if (const auto& lanes = shape.storage.packed4_lanes; lanes.has_value()) {
+    out.value_lane_offset = lanes->value_lane_byte_offset;
+    out.value_lane_bytes = lanes->value_lane_byte_size;
+    out.unk_lane_offset = lanes->unk_lane_byte_offset;
+    out.unk_lane_bytes = lanes->unk_lane_byte_size;
+  }
+  return out;
+}
+
+auto MakeObservableDescriptorEntry(
+    uint32_t storage_byte_offset, uint32_t local_name_pool_off,
+    const ObservableDescriptorOwnerRefFields& refs,
+    const ObservableDescriptorShapeFields& sf)
+    -> runtime::ObservableDescriptorEntry {
+  return runtime::ObservableDescriptorEntry{
+      .storage_byte_offset = storage_byte_offset,
+      .total_bytes = sf.total_bytes,
+      .storage_kind = sf.storage_kind,
+      .value_lane_offset = sf.value_lane_offset,
+      .value_lane_bytes = sf.value_lane_bytes,
+      .unk_lane_offset = sf.unk_lane_offset,
+      .unk_lane_bytes = sf.unk_lane_bytes,
+      .bit_width = sf.bit_width,
+      .local_name_pool_off = local_name_pool_off,
+      .trace_kind = sf.trace_kind,
+      .storage_owner_ref = refs.storage_owner_ref,
+      .flags = refs.flags,
+  };
+}
+
 // Compile-time param slot template entry. Keyed by body_local_slot
 // to establish explicit ordering contract with per-instance payloads.
 struct ParamSlotTemplateEntry {
@@ -1820,6 +1896,17 @@ auto CompileDesignProcesses(const LoweringInput& input)
                   info.body_id.value, i, gsi, layout->design.slots.size()));
         }
 
+        const ObservableOwnerSlotId owner = ObservableOwnerSlotId::Create(
+            layout->design.storage_owner_slot_id[gsi]);
+        const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
+            owner, layout->design, realization, *input.type_arena);
+        const ObservableDescriptorShapeFields sf =
+            BuildObservableDescriptorShapeFields(shape);
+
+        auto local_name = read_trace_pool(
+            realization.slot_trace_provenance[gsi].local_name_str_off);
+        uint32_t name_off = append_to_pool(tmpl, local_name);
+
         auto storage_ref = [&]() -> ObservableStorageRef {
           if (owned_base.has_value()) {
             auto body_offset =
@@ -1833,44 +1920,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
           return ObservableOwnerAbsoluteStorageRef{ArenaByteOffset{owner_abs}};
         }();
 
-        const auto& spec = layout->design.slot_storage_specs[gsi];
-        auto storage_kind = ClassifySlotStorageKind(spec);
+        ObservableDescriptorOwnerRefFields refs =
+            BuildBodyObservableDescriptorOwnerRefFields(
+                owner, base_slot, info.slot_count);
 
-        uint32_t value_lane_offset = 0;
-        uint32_t value_lane_bytes = 0;
-        uint32_t unk_lane_offset = 0;
-        uint32_t unk_lane_bytes = 0;
-        if (storage_kind == runtime::SlotStorageKind::kPacked4) {
-          const auto& packed = std::get<PackedStorageSpec>(spec.data);
-          uint32_t lane_bytes = packed.LaneByteSize();
-          value_lane_offset = 0;
-          value_lane_bytes = lane_bytes;
-          unk_lane_offset = packed.UnknownLaneOffset();
-          unk_lane_bytes = lane_bytes;
-        }
-
-        uint32_t bit_width = ComputeTraceBitWidth(
-            realization.slot_types[gsi], *input.type_arena);
-        uint32_t trace_kind = static_cast<uint32_t>(
-            MapSlotKindToTraceKind(realization.slot_kinds[gsi]));
-
-        auto local_name = read_trace_pool(
-            realization.slot_trace_provenance[gsi].local_name_str_off);
-        uint32_t name_off = append_to_pool(tmpl, local_name);
-
-        uint32_t global_owner = layout->design.storage_owner_slot_id[gsi];
-        uint32_t owner_ref = 0;
-        uint32_t flags = 0;
-        bool owner_in_body = global_owner >= base_slot &&
-                             global_owner < base_slot + info.slot_count;
-        if (owner_in_body) {
-          owner_ref = global_owner - base_slot;
-        } else {
-          owner_ref = global_owner;
-          flags |= runtime::kObservableFlagOwnerAbsolute;
-        }
-
-        // Pack ObservableStorageRef into the runtime ABI format.
         uint32_t storage_offset = std::visit(
             common::Overloaded{
                 [&](const ObservableBodyRelativeStorageRef& ref) -> uint32_t {
@@ -1878,7 +1931,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
                       ref.offset.value, "body-local byte offset");
                 },
                 [&](const ObservableOwnerAbsoluteStorageRef& ref) -> uint32_t {
-                  flags |= runtime::kObservableFlagStorageAbsolute;
+                  refs.flags |= runtime::kObservableFlagStorageAbsolute;
                   return narrow_u64_to_u32(
                       ref.offset.value, "owner-absolute byte offset");
                 },
@@ -1886,20 +1939,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
             storage_ref);
 
         tmpl.entries.push_back(
-            runtime::ObservableDescriptorEntry{
-                .storage_byte_offset = storage_offset,
-                .total_bytes = spec.TotalByteSize(),
-                .storage_kind = static_cast<uint32_t>(storage_kind),
-                .value_lane_offset = value_lane_offset,
-                .value_lane_bytes = value_lane_bytes,
-                .unk_lane_offset = unk_lane_offset,
-                .unk_lane_bytes = unk_lane_bytes,
-                .bit_width = bit_width,
-                .local_name_pool_off = name_off,
-                .trace_kind = trace_kind,
-                .storage_owner_ref = owner_ref,
-                .flags = flags,
-            });
+            MakeObservableDescriptorEntry(storage_offset, name_off, refs, sf));
       }
     }
 
@@ -2133,26 +2173,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
       for (uint32_t gsi = 0; gsi < num_pkg; ++gsi) {
         if (gsi >= layout->design.slots.size()) break;
 
-        const auto& spec = layout->design.slot_storage_specs[gsi];
-        auto storage_kind = ClassifySlotStorageKind(spec);
-
-        uint32_t value_lane_offset = 0;
-        uint32_t value_lane_bytes = 0;
-        uint32_t unk_lane_offset = 0;
-        uint32_t unk_lane_bytes = 0;
-        if (storage_kind == runtime::SlotStorageKind::kPacked4) {
-          const auto& packed = std::get<PackedStorageSpec>(spec.data);
-          uint32_t lane_bytes = packed.LaneByteSize();
-          value_lane_offset = 0;
-          value_lane_bytes = lane_bytes;
-          unk_lane_offset = packed.UnknownLaneOffset();
-          unk_lane_bytes = lane_bytes;
-        }
-
-        uint32_t bit_width = ComputeTraceBitWidth(
-            realization.slot_types[gsi], *input.type_arena);
-        uint32_t trace_kind = static_cast<uint32_t>(
-            MapSlotKindToTraceKind(realization.slot_kinds[gsi]));
+        const ObservableOwnerSlotId owner = ObservableOwnerSlotId::Create(
+            layout->design.storage_owner_slot_id[gsi]);
+        const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
+            owner, layout->design, realization, *input.type_arena);
+        const ObservableDescriptorShapeFields sf =
+            BuildObservableDescriptorShapeFields(shape);
 
         const auto& prov = realization.slot_trace_provenance[gsi];
         auto local_name = read_trace_pool(prov.local_name_str_off);
@@ -2165,26 +2191,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
         }
         uint32_t name_off = append_to_pool(pkg, qualified_name);
 
-        uint32_t global_owner = layout->design.storage_owner_slot_id[gsi];
+        uint32_t storage_offset = narrow_u64_to_u32(
+            layout->design.slot_byte_offsets[gsi],
+            "package/global byte offset");
+        const ObservableDescriptorOwnerRefFields refs =
+            BuildPackageObservableDescriptorOwnerRefFields(owner);
 
         pkg.entries.push_back(
-            runtime::ObservableDescriptorEntry{
-                .storage_byte_offset = narrow_u64_to_u32(
-                    layout->design.slot_byte_offsets[gsi],
-                    "package/global byte offset"),
-                .total_bytes = spec.TotalByteSize(),
-                .storage_kind = static_cast<uint32_t>(storage_kind),
-                .value_lane_offset = value_lane_offset,
-                .value_lane_bytes = value_lane_bytes,
-                .unk_lane_offset = unk_lane_offset,
-                .unk_lane_bytes = unk_lane_bytes,
-                .bit_width = bit_width,
-                .local_name_pool_off = name_off,
-                .trace_kind = trace_kind,
-                .storage_owner_ref = global_owner,
-                .flags = runtime::kObservableFlagOwnerAbsolute |
-                         runtime::kObservableFlagPackageGlobal,
-            });
+            MakeObservableDescriptorEntry(storage_offset, name_off, refs, sf));
       }
     }
   }

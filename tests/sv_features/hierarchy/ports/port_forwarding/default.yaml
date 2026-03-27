@@ -110,3 +110,27 @@ cases:
       endmodule
     expect:
       stdout: "wire2=10 captured=10\n"
+
+  - name: net_port_forwarded_to_variable
+    description: Wire (net) pass-through port forwarded to logic (variable) owner
+    sv: |
+      module Leaf(input wire a);
+        logic y;
+        always_comb y = a;
+      endmodule
+
+      module Mid(input wire b);
+        Leaf leaf(.a(b));
+      endmodule
+
+      module Top;
+        logic v;
+        assign v = 1;
+        Mid mid(.b(v));
+        initial begin
+          #1;
+          $display("y=%0d", mid.leaf.y);
+        end
+      endmodule
+    expect:
+      stdout: "y=1\n"

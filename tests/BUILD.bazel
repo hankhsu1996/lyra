@@ -114,6 +114,15 @@ cc_test(
 )
 
 cc_test(
+    name = "canonical_observable_shape_test",
+    srcs = ["canonical_observable_shape_test.cpp"],
+    deps = [
+        "//:llvm_backend",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "resolve_byte_range_test",
     srcs = ["resolve_byte_range_test.cpp"],
     deps = [
