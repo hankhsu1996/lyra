@@ -62,6 +62,10 @@ Range filtering is a performance optimization. Snapshot comparison is the correc
 
 Process enqueue order is an implementation detail. The runtime de-duplicates per process, but does not define fairness/stable ordering guarantees across different signals.
 
+## Forwarded Aliases and Dirty Tracking
+
+Forwarded alias slots (see [state-layout.md](state-layout.md#storage-ownership)) do not participate in dirty tracking. They have no independent storage -- mutations go through the canonical owner's storage, and the owner's slot ID appears in the dirty set. The runtime validates this invariant: if a forwarded alias slot ID ever appears in the dirty set, it is an `InternalError`. Subscriptions are registered against the canonical owner, not the alias. This is transparent to wakeup logic.
+
 ## Byte Range Contract
 
 A byte range is a half-open interval `[offset, offset + size)` within a slot.
