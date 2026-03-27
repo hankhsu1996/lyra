@@ -69,13 +69,45 @@ auto LowerExpressionImpl(
     PlaceMaterializationCache& cache) -> Result<mir::Operand>;
 
 // When a sub-expression creates new blocks, previously lowered operands in
-// in_args must be rethreaded to the current block. Used by both DPI and
-// normal call lowering.
+// in_args must be rethreaded to the current block. Used by normal call
+// lowering.
 void RethreadArgsIfBlockChanged(
     MirBuilder& builder, BlockIndex before, std::vector<mir::Operand>& args) {
   if (builder.CurrentBlock() != before) {
     for (auto& op : args) {
       op = builder.ThreadValueToCurrentBlock(op);
+    }
+  }
+}
+
+// Build the copy-in operand for an inout DPI argument from its lvalue place.
+// For inout, we need to read the current value before the call and pass it
+// as the copy-in. The write-back destination is the same place.
+// This is a semantic read step, not a raw pointer alias.
+auto BuildDpiInoutCopyIn(mir::PlaceId place, MirBuilder& builder)
+    -> mir::Operand {
+  const auto& p = builder.GetArena()[place];
+  if (!mir::IsReadableRoot(p.root.kind)) {
+    throw common::InternalError(
+        "BuildDpiInoutCopyIn",
+        std::format(
+            "DPI inout copy-in requires a readable place root, got {}",
+            static_cast<int>(p.root.kind)));
+  }
+  return mir::Operand::Use(place);
+}
+
+// Rethread input_value operands in existing DPI arg bindings after a block
+// change. Same purpose as RethreadArgsIfBlockChanged but for DpiArgBinding.
+void RethreadDpiBindingsIfBlockChanged(
+    MirBuilder& builder, BlockIndex before,
+    std::vector<mir::DpiArgBinding>& bindings) {
+  if (builder.CurrentBlock() != before) {
+    for (auto& binding : bindings) {
+      if (binding.input_value) {
+        binding.input_value =
+            builder.ThreadValueToCurrentBlock(*binding.input_value);
+      }
     }
   }
 }
@@ -1388,44 +1420,72 @@ auto LowerStructLiteral(
   return mir::Operand::Use(builder.EmitPlaceTemp(expr.type, std::move(rvalue)));
 }
 
+auto LowerDpiCall(
+    const hir::CallExpressionData& data, const hir::Expression& expr,
+    mir::DpiImportRef ref, MirBuilder& builder,
+    PlaceMaterializationCache& cache) -> Result<mir::Operand> {
+  const auto& sig = ref.signature;
+  if (data.arguments.size() != sig.params.size()) {
+    throw common::InternalError(
+        "LowerDpiCall", "DPI argument count mismatch with frozen signature");
+  }
+
+  std::vector<mir::DpiArgBinding> bindings;
+  bindings.reserve(data.arguments.size());
+
+  for (size_t i = 0; i < data.arguments.size(); ++i) {
+    const auto& param = sig.params[i];
+    hir::ExpressionId arg_id = data.arguments[i];
+    mir::DpiArgBinding binding;
+
+    BlockIndex before = builder.CurrentBlock();
+
+    switch (param.direction) {
+      case ParameterDirection::kInput: {
+        Result<mir::Operand> val = LowerExpressionImpl(arg_id, builder, cache);
+        if (!val) return std::unexpected(val.error());
+        RethreadDpiBindingsIfBlockChanged(builder, before, bindings);
+        binding.input_value = *val;
+        break;
+      }
+      case ParameterDirection::kOutput: {
+        Result<LvalueResult> lv = LowerLvalue(arg_id, builder);
+        if (!lv) return std::unexpected(lv.error());
+        binding.writeback_dest = lv->place;
+        break;
+      }
+      case ParameterDirection::kInOut: {
+        Result<LvalueResult> lv = LowerLvalue(arg_id, builder);
+        if (!lv) return std::unexpected(lv.error());
+        RethreadDpiBindingsIfBlockChanged(builder, before, bindings);
+        binding.input_value = BuildDpiInoutCopyIn(lv->place, builder);
+        binding.writeback_dest = lv->place;
+        break;
+      }
+      case ParameterDirection::kRef:
+        throw common::InternalError(
+            "LowerDpiCall", "ref direction should have been rejected upstream");
+    }
+    bindings.push_back(std::move(binding));
+  }
+
+  return builder.EmitDpiCall(std::move(ref), std::move(bindings), expr.type);
+}
+
 auto LowerCall(
     const hir::CallExpressionData& data, const hir::Expression& expr,
     MirBuilder& builder, PlaceMaterializationCache& cache)
     -> Result<mir::Operand> {
   Context& ctx = builder.GetContext();
 
-  // Resolve callee: body-local, design-global, or DPI import
-  mir::Callee callee = ctx.ResolveCallTarget(data.callee);
-
-  // DPI imports: D1 carries input-only params in DpiSignature.
-  // All args are lowered as values, no writebacks. Future non-input
-  // support (D2+) must go through a different lowering path.
-  if (const auto* dpi = std::get_if<mir::DpiImportRef>(&callee)) {
-    if (data.arguments.size() != dpi->signature.param_types.size()) {
-      throw common::InternalError(
-          "LowerCall", "DPI argument count mismatch with frozen signature");
-    }
-    if (!IsValidDpiReturnType(dpi->signature.return_type)) {
-      throw common::InternalError(
-          "LowerCall", "invalid DPI return type in frozen signature");
-    }
-    for (DpiAbiTypeClass t : dpi->signature.param_types) {
-      if (!IsValidDpiParamType(t)) {
-        throw common::InternalError(
-            "LowerCall", "invalid DPI parameter type in frozen signature");
-      }
-    }
-    std::vector<mir::Operand> in_args;
-    for (size_t i = 0; i < data.arguments.size(); ++i) {
-      BlockIndex before = builder.CurrentBlock();
-      Result<mir::Operand> arg_result =
-          LowerExpressionImpl(data.arguments[i], builder, cache);
-      if (!arg_result) return std::unexpected(arg_result.error());
-      RethreadArgsIfBlockChanged(builder, before, in_args);
-      in_args.push_back(*arg_result);
-    }
-    return builder.EmitCall(callee, std::move(in_args), expr.type);
+  // Check DPI first -- separate call family.
+  auto dpi_ref = ctx.ResolveDpiImport(data.callee);
+  if (dpi_ref) {
+    return LowerDpiCall(data, expr, std::move(*dpi_ref), builder, cache);
   }
+
+  // Non-DPI: resolve to Callee (user function, design function, system TF).
+  mir::Callee callee = ctx.ResolveCallTarget(data.callee);
 
   // Non-DPI: get signature for argument validation from the correct arena.
   const mir::FunctionSignature& sig = ctx.ResolveCallSignature(callee);

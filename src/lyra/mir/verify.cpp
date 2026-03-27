@@ -659,6 +659,27 @@ void VerifyStatementOwnership(
               verify_place(wb.dest, std::format("Call.writebacks[{}].dest", i));
             }
           },
+          [&](const DpiCall& dpi_call) {
+            for (size_t i = 0; i < dpi_call.args.size(); ++i) {
+              const auto& binding = dpi_call.args[i];
+              if (binding.input_value) {
+                verify_operand_place(
+                    *binding.input_value,
+                    std::format("DpiCall.args[{}].input_value", i));
+              }
+              if (binding.writeback_dest) {
+                verify_place(
+                    *binding.writeback_dest,
+                    std::format("DpiCall.args[{}].writeback_dest", i));
+              }
+            }
+            if (dpi_call.ret) {
+              verify_place(dpi_call.ret->tmp, "DpiCall.ret.tmp");
+              if (dpi_call.ret->dest) {
+                verify_place(*dpi_call.ret->dest, "DpiCall.ret.dest");
+              }
+            }
+          },
           [&](const BuiltinCall& bcall) {
             if (bcall.dest) {
               verify_place(*bcall.dest, "BuiltinCall.dest");
@@ -752,6 +773,16 @@ void VerifyIntraBlockDefOrder(
                 VerifyOperandDefBeforeUse(
                     call.in_args[i], available_temps, block_idx, stmt_idx, ctx,
                     routine_kind);
+              }
+            },
+            [&](const DpiCall& dpi_call) {
+              for (size_t i = 0; i < dpi_call.args.size(); ++i) {
+                if (dpi_call.args[i].input_value) {
+                  std::string ctx = std::format("dpi_args[{}]", i);
+                  VerifyOperandDefBeforeUse(
+                      *dpi_call.args[i].input_value, available_temps, block_idx,
+                      stmt_idx, ctx, routine_kind);
+                }
               }
             },
             [&](const BuiltinCall& bcall) {

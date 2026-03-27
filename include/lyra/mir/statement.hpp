@@ -101,9 +101,22 @@ struct DefineTemp {
   RightHandSide rhs;  // Computation that produces the value
 };
 
+// DpiCall: foreign-boundary invocation for DPI-C imported functions.
+//
+// Separate call family from Call. DPI has its own boundary semantics:
+// per-argument direction, ABI carrier passing mode, staged C-ABI temps for
+// output/inout, and post-call writeback through the design-state commit path.
+//
+// Return handling reuses CallReturn (same staging discipline as Call).
+struct DpiCall {
+  DpiImportRef callee;
+  std::vector<DpiArgBinding> args;
+  std::optional<CallReturn> ret;
+};
+
 // Statement data variant.
 using StatementData = std::variant<
-    Assign, GuardedAssign, Effect, DeferredAssign, Call, BuiltinCall,
+    Assign, GuardedAssign, Effect, DeferredAssign, Call, DpiCall, BuiltinCall,
     DefineTemp, AssocOp>;
 
 // A statement that does not affect control flow.

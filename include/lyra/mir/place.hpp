@@ -23,6 +23,35 @@ struct PlaceRoot {
   TypeId type;  // type of the value stored at this root
 };
 
+// True for place roots that represent process-local storage (need prologue
+// allocas). False for external storage (module slots, design globals).
+// Shared predicate used by both PlaceCollector and layout place collection.
+[[nodiscard]] inline auto IsProcessLocalRoot(PlaceRoot::Kind kind) -> bool {
+  switch (kind) {
+    case PlaceRoot::Kind::kLocal:
+    case PlaceRoot::Kind::kTemp:
+      return true;
+    case PlaceRoot::Kind::kModuleSlot:
+    case PlaceRoot::Kind::kDesignGlobal:
+      return false;
+  }
+  return false;
+}
+
+// True for place roots that hold a readable value (variables, slots).
+// False for compiler-generated write-only staging temps.
+[[nodiscard]] inline auto IsReadableRoot(PlaceRoot::Kind kind) -> bool {
+  switch (kind) {
+    case PlaceRoot::Kind::kLocal:
+    case PlaceRoot::Kind::kModuleSlot:
+    case PlaceRoot::Kind::kDesignGlobal:
+      return true;
+    case PlaceRoot::Kind::kTemp:
+      return false;
+  }
+  return false;
+}
+
 // Projection kinds - each has its own info struct
 
 struct FieldProjection {

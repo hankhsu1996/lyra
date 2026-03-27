@@ -1,13 +1,12 @@
 #pragma once
 
-// D1-only normalized import declarations for pure DPI-C function imports.
-// Broader DPI surfaces (string/task/context/export/etc.) should extend the
-// model deliberately rather than being implied by these initial records.
+// Normalized import declarations for DPI-C function imports.
 
 #include <string>
 #include <vector>
 
 #include "lyra/common/dpi_types.hpp"
+#include "lyra/common/parameter_direction.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
@@ -27,6 +26,7 @@ struct DpiParam {
   SourceSpan span;
   TypeId type_id;  // Original Lyra semantic type
   DpiAbiTypeClass dpi_type = DpiAbiTypeClass::kInvalid;
+  ParameterDirection direction = ParameterDirection::kInput;
 };
 
 // Normalized DPI-C import declaration.
@@ -37,8 +37,6 @@ struct DpiParam {
 //
 // Not stored in hir::Arena (DPI imports have no HIR statement body).
 // Owned by ModuleBody::dpi_imports and Package::dpi_imports.
-// Intended to participate in cross-body resolution once the design-level
-// DPI import registry is added (Step 3).
 struct DpiImportDecl {
   SymbolId symbol;  // SV declaration symbol, not the foreign C identity
   SourceSpan span;

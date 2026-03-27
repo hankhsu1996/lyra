@@ -137,15 +137,19 @@ void RegisterDpiImport(
   std::vector<DpiParamInfo> params;
   params.reserve(dpi.params.size());
   for (const auto& p : dpi.params) {
-    params.push_back({.dpi_type = p.dpi_type, .type_id = p.type_id});
+    params.push_back({
+        .type_id = p.type_id,
+        .abi_type = p.dpi_type,
+        .direction = p.direction,
+    });
   }
   DpiImportInfo info{
       .symbol = dpi.symbol,
       .span = dpi.span,
       .sv_name = dpi.sv_name,
       .c_name = dpi.c_name,
-      .return_dpi_type = dpi.return_dpi_type,
       .return_type_id = dpi.return_type_id,
+      .return_abi_type = dpi.return_dpi_type,
       .params = std::move(params),
   };
   if (!registry.Insert(std::move(info))) {

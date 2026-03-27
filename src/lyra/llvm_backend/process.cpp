@@ -2108,12 +2108,8 @@ struct PlaceCollector {
 
   void CollectFromPlace(mir::PlaceId place_id, const mir::Arena& arena) {
     const auto& place = arena[place_id];
-
-    // Only collect Local and Temp roots (Design roots go in design state)
-    if (place.root.kind == mir::PlaceRoot::Kind::kLocal ||
-        place.root.kind == mir::PlaceRoot::Kind::kTemp) {
+    if (mir::IsProcessLocalRoot(place.root.kind)) {
       PlaceRootKey key{.kind = place.root.kind, .id = place.root.id};
-      // try_emplace: only insert if key not present
       roots.try_emplace(key, place.root);
     }
   }
@@ -2281,6 +2277,18 @@ struct PlaceCollector {
                     CollectFromPlace(*wb.tmp, arena);
                   }
                   // DO NOT: CollectFromPlace(wb.dest, arena);
+                }
+              } else if constexpr (std::is_same_v<T, mir::DpiCall>) {
+                for (const auto& binding : data.args) {
+                  if (binding.input_value) {
+                    CollectFromOperand(*binding.input_value, arena);
+                  }
+                  if (binding.writeback_dest) {
+                    CollectFromPlace(*binding.writeback_dest, arena);
+                  }
+                }
+                if (data.ret) {
+                  CollectFromPlace(data.ret->tmp, arena);
                 }
               } else if constexpr (std::is_same_v<T, mir::BuiltinCall>) {
                 if (data.dest) {

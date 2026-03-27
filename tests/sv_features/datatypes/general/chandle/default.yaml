@@ -1,0 +1,48 @@
+feature: chandle_type
+description: >
+  chandle type support in DPI context. Non-DPI chandle variable usage
+  (null literal, comparison) is not yet supported in the expression pipeline.
+  The storage/layout/default-init switches for kChandle are defensive
+  infrastructure added in D2 Cut 1 but not yet reachable from user SV.
+
+cases:
+  - name: chandle_dpi_input_param
+    sv: |
+      module Test;
+        import "DPI-C" function void ch_in(chandle h);
+        initial begin end
+      endmodule
+
+  - name: chandle_dpi_output_param
+    sv: |
+      module Test;
+        import "DPI-C" function void ch_out(output chandle h);
+        initial begin end
+      endmodule
+
+  - name: chandle_dpi_inout_param
+    sv: |
+      module Test;
+        import "DPI-C" function void ch_inout(inout chandle h);
+        initial begin end
+      endmodule
+
+  - name: chandle_dpi_return
+    sv: |
+      module Test;
+        import "DPI-C" function chandle ch_ret();
+        initial begin end
+      endmodule
+
+  - name: chandle_variable_not_yet_supported
+    sv: |
+      module Test;
+        chandle h;
+        initial begin
+          h = null;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "conversion requires integral or floating types"

@@ -67,6 +67,10 @@ auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
       return mir::ReturnPolicy::kDirect;
+
+    // Direct return: chandle is an opaque pointer (fits in a register)
+    case TypeKind::kChandle:
+      return mir::ReturnPolicy::kDirect;
   }
   return mir::ReturnPolicy::kDirect;
 }
@@ -85,16 +89,16 @@ auto BuildFunctionSignature(
     const Symbol& sym = symbol_table[param.symbol];
     mir::PassingKind kind = mir::PassingKind::kValue;
     switch (param.direction) {
-      case hir::ParameterDirection::kInput:
+      case ParameterDirection::kInput:
         kind = mir::PassingKind::kValue;
         break;
-      case hir::ParameterDirection::kOutput:
+      case ParameterDirection::kOutput:
         kind = mir::PassingKind::kOut;
         break;
-      case hir::ParameterDirection::kInOut:
+      case ParameterDirection::kInOut:
         kind = mir::PassingKind::kInOut;
         break;
-      case hir::ParameterDirection::kRef:
+      case ParameterDirection::kRef:
         // Should have been rejected at HIR lowering
         throw common::InternalError(
             "BuildFunctionSignature", "ref parameters not supported");

@@ -10,6 +10,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/context_scope.hpp"
+#include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/instruction/assoc_op.hpp"
 #include "lyra/llvm_backend/instruction/builtin_call.hpp"
 #include "lyra/llvm_backend/instruction/call.hpp"
@@ -53,6 +54,9 @@ auto LowerStatement(
           },
           [&](const mir::Call& call) -> Result<void> {
             return LowerCall(context, resolver, call);
+          },
+          [&](const mir::DpiCall& dpi_call) -> Result<void> {
+            return dpi::LowerDpiImportCall(context, dpi_call);
           },
           [&](const mir::BuiltinCall& call) -> Result<void> {
             return LowerBuiltinCall(context, resolver, call);

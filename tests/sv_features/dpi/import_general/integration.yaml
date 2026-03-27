@@ -1,0 +1,377 @@
+feature: dpi_import_general_integration
+description: End-to-end DPI-C general import function calls (output/inout)
+
+cases:
+  # -- output int --
+  - name: dpi_output_int
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void set_int(output int x);
+        int result;
+        initial begin
+          set_int(result);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  # -- inout int --
+  - name: dpi_inout_int
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void double_int(inout int x);
+        int result;
+        initial begin
+          result = 21;
+          double_int(result);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  # -- output string --
+  - name: dpi_output_string
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void get_greeting(output string s);
+        import "DPI-C" pure function int string_length(string s);
+        string result_str;
+        int result;
+        initial begin
+          get_greeting(result_str);
+          result = string_length(result_str);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 12
+
+  # -- inout string --
+  - name: dpi_inout_string
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void append_suffix(inout string s);
+        import "DPI-C" pure function int string_length(string s);
+        string result_str;
+        int result;
+        initial begin
+          result_str = "base";
+          append_suffix(result_str);
+          result = string_length(result_str);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 13
+
+  # -- output null string --
+  - name: dpi_output_null_string
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void get_null_string(output string s);
+        import "DPI-C" pure function int string_length(string s);
+        string result_str;
+        int result;
+        initial begin
+          get_null_string(result_str);
+          result = string_length(result_str);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  # -- inout string nullified --
+  - name: dpi_inout_nullify_string
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void nullify_string(inout string s);
+        import "DPI-C" pure function int string_length(string s);
+        string result_str;
+        int result;
+        initial begin
+          result_str = "notempty";
+          nullify_string(result_str);
+          result = string_length(result_str);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  # -- output bit[7:0] --
+  - name: dpi_output_byte
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void set_byte(output bit [7:0] v);
+        int result;
+        initial begin
+          bit [7:0] tmp;
+          set_byte(tmp);
+          result = int'(tmp);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 171
+
+  # -- inout bit[7:0] --
+  - name: dpi_inout_byte
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void double_byte(inout bit [7:0] v);
+        int result;
+        initial begin
+          bit [7:0] tmp;
+          tmp = 8'd21;
+          double_byte(tmp);
+          result = int'(tmp);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  # -- output bit[31:0] --
+  - name: dpi_output_word
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void set_word(output bit [31:0] v);
+        int result;
+        initial begin
+          bit [31:0] tmp;
+          set_word(tmp);
+          result = int'(tmp);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 12345
+
+  # -- inout bit[31:0] --
+  - name: dpi_inout_word
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void double_word(inout bit [31:0] v);
+        int result;
+        initial begin
+          bit [31:0] tmp;
+          tmp = 32'd500;
+          double_word(tmp);
+          result = int'(tmp);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1000
+
+  # -- output bit[63:0] --
+  - name: dpi_output_dword
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void set_dword(output bit [63:0] v);
+        longint result;
+        initial begin
+          bit [63:0] tmp;
+          set_dword(tmp);
+          result = longint'(tmp);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 123456789
+
+  # -- inout bit[63:0] --
+  - name: dpi_inout_dword
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void double_dword(inout bit [63:0] v);
+        longint result;
+        initial begin
+          bit [63:0] tmp;
+          tmp = 64'd500;
+          double_dword(tmp);
+          result = longint'(tmp);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1000
+
+  # -- packed struct output --
+  - name: dpi_output_packed_struct
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        typedef struct packed { bit [15:0] a; bit [15:0] b; } pair_t;
+        import "DPI-C" function void set_packed32(output pair_t v);
+        int result;
+        initial begin
+          pair_t p;
+          set_packed32(p);
+          result = int'(p.a) + int'(p.b);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 10
+
+  # -- packed struct inout --
+  - name: dpi_inout_packed_struct
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        typedef struct packed { bit [15:0] a; bit [15:0] b; } pair_t;
+        import "DPI-C" function void inc_packed32(inout pair_t v);
+        int result;
+        initial begin
+          pair_t p;
+          p = 32'h00030007;
+          inc_packed32(p);
+          result = int'(p);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 196616
+
+  # -- packed union output --
+  - name: dpi_output_packed_union
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        typedef union packed { bit [31:0] x; bit [31:0] y; } punion_t;
+        import "DPI-C" function void set_punion32(output punion_t v);
+        int result;
+        initial begin
+          punion_t u;
+          set_punion32(u);
+          result = int'(u);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 57005
+
+  # -- packed union inout --
+  - name: dpi_inout_packed_union
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        typedef union packed { bit [31:0] x; bit [31:0] y; } punion_t;
+        import "DPI-C" function void inc_punion32(inout punion_t v);
+        int result;
+        initial begin
+          punion_t u;
+          u = 32'd100;
+          inc_punion32(u);
+          result = int'(u);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 101
+
+  # -- 1-bit (kBit carrier) output --
+  - name: dpi_output_bit
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void set_bit(output bit v);
+        int result;
+        initial begin
+          bit b;
+          set_bit(b);
+          result = int'(b);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- 1-bit (kBit carrier) inout --
+  - name: dpi_inout_bit
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void flip_bit(inout bit v);
+        int result;
+        initial begin
+          bit b;
+          b = 1'b1;
+          flip_bit(b);
+          result = int'(b);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  # -- 64-bit high-bit preservation --
+  - name: dpi_output_dword_high_bit
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void set_high_bit64(output bit [63:0] v);
+        longint result;
+        initial begin
+          bit [63:0] tmp;
+          set_high_bit64(tmp);
+          result = longint'(tmp);
+        end
+      endmodule
+    expect:
+      variables:
+        result: -2401053092306725256
+
+  # -- 64-bit inout high-bit preservation --
+  - name: dpi_inout_dword_high_bit
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void mirror_dword(inout bit [63:0] v);
+        longint result;
+        initial begin
+          bit [63:0] tmp;
+          tmp = 64'hDEADBEEF12345678;
+          mirror_dword(tmp);
+          result = longint'(tmp);
+        end
+      endmodule
+    expect:
+      variables:
+        result: -2401053092306725256
