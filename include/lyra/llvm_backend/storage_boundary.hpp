@@ -4,6 +4,7 @@
 #include <llvm/IR/Value.h>
 
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
+#include "lyra/llvm_backend/packed_width_types.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -114,5 +115,32 @@ void EmitStoreUnknownMask(
 auto EmitLoadFourStateFromCanonical(
     llvm::IRBuilderBase& builder, llvm::LLVMContext& llvm_ctx,
     llvm::Value* slot_ptr, uint32_t bit_width) -> llvm::Value*;
+
+// Width-domain crossing helpers.
+//
+// These are the canonical entry/exit points between semantic, lane, and
+// backing width domains. All packed-storage code that crosses domains
+// should use these helpers rather than deriving widths locally.
+
+// Compute canonical lane width from semantic bit width.
+auto GetCanonicalLaneBits(SemanticBits bits) -> LaneBits;
+
+// Compute backing-domain width from semantic bit width.
+auto GetBackingBits(SemanticBits bits) -> BackingBits;
+
+// LLVM integer type at canonical lane width.
+auto GetLaneIntType(llvm::LLVMContext& ctx, LaneBits bits)
+    -> llvm::IntegerType*;
+
+// Normalize a raw LLVM value to canonical lane width via ZExtOrTrunc.
+// Sole entry point from backing/semantic domain into lane domain.
+auto NormalizeToLaneWidth(
+    llvm::IRBuilder<>& builder, llvm::Value* raw, LaneBits target) -> LaneValue;
+
+// Convert a lane-domain value back to backing representation width.
+// Sole exit from lane domain into backing domain.
+auto ConvertLaneToBackingWidth(
+    llvm::IRBuilder<>& builder, LaneValue val, llvm::Type* backing_ty)
+    -> llvm::Value*;
 
 }  // namespace lyra::lowering::mir_to_llvm

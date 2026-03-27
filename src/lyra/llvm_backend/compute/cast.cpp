@@ -257,7 +257,7 @@ auto LowerCastRvalue(
     llvm::Value* source = *source_or_err;
     uint32_t bit_width = GetTargetBitWidth(types, destination_type);
     llvm::Type* elem_type =
-        GetLlvmStorageType(context.GetLlvmContext(), bit_width);
+        GetBackingLlvmType(context.GetLlvmContext(), bit_width);
     bool is_signed = IsSignedIntegral(types, destination_type);
     llvm::Value* result = nullptr;
     if (is_signed) {
@@ -272,7 +272,7 @@ auto LowerCastRvalue(
   // Int -> Int
   uint32_t bit_width = GetTargetBitWidth(types, destination_type);
   llvm::Type* elem_type =
-      GetLlvmStorageType(context.GetLlvmContext(), bit_width);
+      GetBackingLlvmType(context.GetLlvmContext(), bit_width);
   bool is_signed = IsSignedIntegral(types, info.source_type);
   uint32_t source_bits = GetSemanticBitWidth(types, info.source_type);
 

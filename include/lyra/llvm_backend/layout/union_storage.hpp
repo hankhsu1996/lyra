@@ -22,7 +22,7 @@ struct UnionStorageInfo {
 };
 
 // Get LLVM storage type for an integral, rounding up to power-of-2.
-auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
+auto GetBackingLlvmType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::Type*;
 
 // Build LLVM type for a TypeId (Context-aware version).

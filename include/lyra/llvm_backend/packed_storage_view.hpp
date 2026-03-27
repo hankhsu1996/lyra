@@ -9,6 +9,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
+#include "lyra/llvm_backend/packed_width_types.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace llvm {
@@ -42,14 +43,23 @@ struct PackedStorageView {
   uint32_t unk_plane_offset_bytes = 0;
   bool is_four_state = false;
 
-  // True for design slots (kModuleSlot, kDesignGlobal) where storage follows
-  // the canonical byte-addressed packed ABI. False for process-local allocas
-  // (kLocal, kTemp) where LLVM struct alignment may diverge from canonical.
-  bool is_canonical_storage = false;
+  // Backing-domain accessors. Only used by load/store boundary functions
+  // (LoadLanePlanes, StoreLanePlanes) and classification helpers.
+  // Lane-domain algebra should not call these.
+  [[nodiscard]] auto IsCanonicalBacking() const -> bool {
+    return backing_.is_canonical;
+  }
 
-  // Non-null only when !is_canonical_storage. The LLVM type of the base
-  // alloca, needed for typed load/store on the bit-addressable fallback path.
-  llvm::Type* local_llvm_type = nullptr;
+  [[nodiscard]] auto RequireLocalBackingType() const -> llvm::Type*;
+
+  void SetCanonicalBacking();
+  void SetLocalBacking(llvm::Type* local_llvm_type);
+
+ private:
+  struct BackingInfo {
+    bool is_canonical = false;
+    llvm::Type* local_llvm_type = nullptr;
+  } backing_;
 };
 
 // A single step in a packed projection path.
@@ -125,7 +135,12 @@ struct PackedSubviewAccess {
   TypeId result_type;
 };
 
-// Backend-owned SSA carrier for packed values.
+// Backend-owned SSA carrier for packed values in the backing domain.
+//
+// Values in .val and .unk are at backing width (GetBackingLlvmType),
+// not canonical lane width (GetCanonicalLaneBits). Normalization to
+// lane width happens at the PSV store boundary (StorePackedValue ->
+// NormalizeToLaneWidth).
 //
 // Contract:
 //   unk == nullptr means the RHS is provably 2-state. No downstream code

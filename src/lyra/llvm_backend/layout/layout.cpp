@@ -45,7 +45,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 // Get the LLVM storage type for an integral type, rounding up to power-of-2.
-auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
+auto GetBackingLlvmType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::Type* {
   if (bit_width <= 8) {
     return llvm::Type::getInt8Ty(ctx);
@@ -63,9 +63,9 @@ auto GetLlvmStorageType(llvm::LLVMContext& ctx, uint32_t bit_width)
 }
 
 // Get the LLVM struct type for a 4-state value: {iN_storage, iN_storage}
-auto GetFourStateStructType(llvm::LLVMContext& ctx, uint32_t bit_width)
+auto GetBackingFourStateType(llvm::LLVMContext& ctx, uint32_t bit_width)
     -> llvm::StructType* {
-  auto* elem = GetLlvmStorageType(ctx, bit_width);
+  auto* elem = GetBackingLlvmType(ctx, bit_width);
   return llvm::StructType::get(ctx, {elem, elem});
 }
 
@@ -94,9 +94,9 @@ auto GetLlvmAbiTypeForValue(
   if (IsPacked(type)) {
     uint32_t width = PackedBitWidth(type, types);
     if (IsLayoutPackedFourState(type, types, force_two_state)) {
-      return GetFourStateStructType(ctx, width);
+      return GetBackingFourStateType(ctx, width);
     }
-    return GetLlvmStorageType(ctx, width);
+    return GetBackingLlvmType(ctx, width);
   }
 
   // Aggregates (unpacked array/struct/union) - not passable by value
@@ -330,9 +330,9 @@ auto GetLlvmTypeForTypeId(
     case TypeKind::kIntegral: {
       uint32_t bit_width = type.AsIntegral().bit_width;
       if (IsLayoutPackedFourState(type, types, force_two_state)) {
-        return GetFourStateStructType(ctx, bit_width);
+        return GetBackingFourStateType(ctx, bit_width);
       }
-      return GetLlvmStorageType(ctx, bit_width);
+      return GetBackingLlvmType(ctx, bit_width);
     }
 
     case TypeKind::kReal:
@@ -346,9 +346,9 @@ auto GetLlvmTypeForTypeId(
     case TypeKind::kEnum: {
       auto width = PackedBitWidth(type, types);
       if (IsLayoutPackedFourState(type, types, force_two_state)) {
-        return GetFourStateStructType(ctx, width);
+        return GetBackingFourStateType(ctx, width);
       }
-      return GetLlvmStorageType(ctx, width);
+      return GetBackingLlvmType(ctx, width);
     }
 
     case TypeKind::kUnpackedArray: {

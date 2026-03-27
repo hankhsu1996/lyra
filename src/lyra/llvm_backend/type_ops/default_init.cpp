@@ -71,13 +71,15 @@ void EmitSVDefaultInitImpl(
         // 2-state: store zero (skip if already zeroed).
         if (!already_zeroed) {
           if (is_canonical) {
+            // Lane domain: canonical storage uses byte-rounded plane writes.
             EmitCanonicalPlaneWrite(
                 builder, ptr, 0,
                 {.kind = PlaneConstantKind::kZero,
                  .semantic_bit_width = bit_width,
                  .storage_byte_size = GetStorageByteSize(bit_width)});
           } else {
-            auto* llvm_type = GetLlvmStorageType(llvm_ctx, bit_width);
+            // Backing domain: local alloca uses exact LLVM type width.
+            auto* llvm_type = GetBackingLlvmType(llvm_ctx, bit_width);
             builder.CreateStore(llvm::Constant::getNullValue(llvm_type), ptr);
           }
         }
@@ -137,13 +139,15 @@ void EmitSVDefaultInitImpl(
         // 2-state packed: store zero (skip if already zeroed).
         if (!already_zeroed) {
           if (is_canonical) {
+            // Lane domain: canonical storage uses byte-rounded plane writes.
             EmitCanonicalPlaneWrite(
                 builder, ptr, 0,
                 {.kind = PlaneConstantKind::kZero,
                  .semantic_bit_width = width,
                  .storage_byte_size = GetStorageByteSize(width)});
           } else {
-            auto* llvm_type = GetLlvmStorageType(llvm_ctx, width);
+            // Backing domain: local alloca uses exact LLVM type width.
+            auto* llvm_type = GetBackingLlvmType(llvm_ctx, width);
             builder.CreateStore(llvm::Constant::getNullValue(llvm_type), ptr);
           }
         }
