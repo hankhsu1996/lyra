@@ -52,6 +52,203 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
+// Compile-time param slot template entry. Keyed by body_local_slot
+// to establish explicit ordering contract with per-instance payloads.
+struct ParamSlotTemplateEntry {
+  uint32_t body_local_slot;
+  runtime::ParamInitSlotEntry slot;
+};
+
+// Sorted param slot template for one body. Entries are sorted by
+// body_local_slot at construction time so per-instance payload emission
+// is a pure linear merge with no per-instance normalization.
+struct ParamSlotTemplate {
+  std::vector<ParamSlotTemplateEntry> entries;
+};
+
+using BodyParamTemplateMap =
+    std::unordered_map<mir::ModuleBodyId, ParamSlotTemplate>;
+
+// Sorted reference to one const-block init entry. Built once per instance,
+// used for a single merge walk against the sorted template.
+struct SortedParamInitRef {
+  uint32_t body_local_slot;
+  const mir::ConstSlotInit* init;
+};
+
+// Sort and validate one instance's const-block param inits. Returns a
+// sorted, duplicate-free reference list for merge-walk against the body
+// template. Throws on duplicate body_local_slot entries.
+auto ValidateAndSortParamInits(
+    const mir::InstanceConstBlock& const_block, size_t inst_idx)
+    -> std::vector<SortedParamInitRef> {
+  std::vector<SortedParamInitRef> refs;
+  refs.reserve(const_block.slot_inits.size());
+  for (const auto& si : const_block.slot_inits) {
+    refs.push_back(
+        SortedParamInitRef{
+            .body_local_slot = si.body_local_slot,
+            .init = &si,
+        });
+  }
+  std::sort(refs.begin(), refs.end(), [](const auto& a, const auto& b) {
+    return a.body_local_slot < b.body_local_slot;
+  });
+  for (size_t k = 1; k < refs.size(); ++k) {
+    if (refs[k].body_local_slot == refs[k - 1].body_local_slot) {
+      throw common::InternalError(
+          "BuildParamPayloads",
+          std::format(
+              "instance {} const block has duplicate param init "
+              "for body_local_slot {}",
+              inst_idx, refs[k].body_local_slot));
+    }
+  }
+  return refs;
+}
+
+// Check that no sorted init entry precedes the current template slot.
+// Throws if a stray init slot exists below body_local_slot_limit.
+void CheckNoStrayInitBefore(
+    size_t inst_idx, std::span<const SortedParamInitRef> sorted_inits,
+    size_t init_idx, uint32_t body_local_slot_limit) {
+  if (init_idx < sorted_inits.size() &&
+      sorted_inits[init_idx].body_local_slot < body_local_slot_limit) {
+    throw common::InternalError(
+        "BuildParamPayloads",
+        std::format(
+            "instance {} const block has param init for "
+            "body_local_slot {} but body template does not "
+            "contain that slot",
+            inst_idx, sorted_inits[init_idx].body_local_slot));
+  }
+}
+
+// Pre-lower each instance's const_block to canonical storage bytes
+// in body-template order (sorted by body_local_slot).
+// Takes narrow scalar inputs: only the per-instance data it reads.
+auto BuildParamPayloads(
+    std::span<const uint32_t> instance_body_group,
+    std::span<const uint32_t> design_base_slots,
+    std::span<const mir::InstanceConstBlock> const_blocks, const Layout& layout,
+    const BodyParamTemplateMap& body_param_templates)
+    -> std::vector<std::vector<uint8_t>> {
+  if (instance_body_group.size() != const_blocks.size()) {
+    throw common::InternalError(
+        "BuildParamPayloads",
+        std::format(
+            "instance_body_group size {} != const_blocks size {}",
+            instance_body_group.size(), const_blocks.size()));
+  }
+  if (design_base_slots.size() != const_blocks.size()) {
+    throw common::InternalError(
+        "BuildParamPayloads",
+        std::format(
+            "design_base_slots size {} != const_blocks size {}",
+            design_base_slots.size(), const_blocks.size()));
+  }
+
+  std::vector<std::vector<uint8_t>> payloads;
+  payloads.resize(const_blocks.size());
+  for (size_t inst_idx = 0; inst_idx < const_blocks.size(); ++inst_idx) {
+    const auto& const_block = const_blocks[inst_idx];
+    auto& payload = payloads[inst_idx];
+
+    if (const_block.slot_inits.empty()) continue;
+    uint32_t bg = instance_body_group[inst_idx];
+    if (bg >= layout.body_realization_infos.size()) {
+      throw common::InternalError(
+          "BuildParamPayloads",
+          std::format(
+              "instance {} body_group {} >= body_realization_infos size {}",
+              inst_idx, bg, layout.body_realization_infos.size()));
+    }
+    auto body_id = layout.body_realization_infos[bg].body_id;
+    auto tmpl_it = body_param_templates.find(body_id);
+    if (tmpl_it == body_param_templates.end()) {
+      throw common::InternalError(
+          "BuildParamPayloads",
+          std::format(
+              "instance {} has param inits but no body param template",
+              inst_idx));
+    }
+    const auto& tmpl = tmpl_it->second.entries;
+
+    auto sorted_inits = ValidateAndSortParamInits(const_block, inst_idx);
+    uint32_t design_base_slot = design_base_slots[inst_idx];
+
+    // Merge-walk: emit payload bytes in template order, validating
+    // that every init slot appears in the template.
+    size_t init_idx = 0;
+    for (const auto& te : tmpl) {
+      CheckNoStrayInitBefore(
+          inst_idx, sorted_inits, init_idx, te.body_local_slot);
+      if (init_idx < sorted_inits.size() &&
+          sorted_inits[init_idx].body_local_slot == te.body_local_slot) {
+        const auto& init = *sorted_inits[init_idx].init;
+        uint32_t abs_slot = design_base_slot + init.body_local_slot;
+        const auto& spec = layout.design.slot_storage_specs[abs_slot];
+        LowerIntegralConstantToCanonicalBytes(init.value, spec, payload);
+        ++init_idx;
+      } else {
+        payload.resize(payload.size() + te.slot.byte_size, 0);
+      }
+    }
+    if (init_idx != sorted_inits.size()) {
+      throw common::InternalError(
+          "BuildParamPayloads",
+          std::format(
+              "instance {} const block has param init for "
+              "body_local_slot {} but body template does not "
+              "contain that slot",
+              inst_idx, sorted_inits[init_idx].body_local_slot));
+    }
+  }
+  return payloads;
+}
+
+// Build the pure-data construction program from parallel topology arrays.
+// Pools path strings and param payloads; entries are in strict ModuleIndex
+// order. The runtime relies on this order for instance_id and
+// signal_id_offset allocation.
+auto BuildConstructionProgram(
+    std::span<const uint32_t> instance_body_group, const Layout& layout,
+    const mir::InstanceTable& instance_table,
+    std::span<const std::vector<uint8_t>> param_payloads)
+    -> ConstructionProgramData {
+  auto instance_count = static_cast<uint32_t>(instance_body_group.size());
+  ConstructionProgramData prog;
+  prog.entries.reserve(instance_count);
+
+  for (uint32_t mi = 0; mi < instance_count; ++mi) {
+    runtime::ConstructionProgramEntry entry{};
+
+    entry.body_group = instance_body_group[mi];
+
+    const auto& base = layout.instance_storage_bases[mi];
+    entry.has_storage = base.abs_byte_offset.has_value() ? 1U : 0U;
+    entry.storage_base_byte_offset =
+        base.abs_byte_offset.has_value() ? base.abs_byte_offset->value : 0;
+
+    const auto& path = instance_table.entries[mi].full_path;
+    entry.path_offset = static_cast<uint32_t>(prog.path_pool.size());
+    prog.path_pool.insert(prog.path_pool.end(), path.begin(), path.end());
+    prog.path_pool.push_back(0);
+
+    const auto& payload = param_payloads[mi];
+    if (!payload.empty()) {
+      entry.param_offset = static_cast<uint32_t>(prog.param_pool.size());
+      entry.param_size = static_cast<uint32_t>(payload.size());
+      prog.param_pool.insert(
+          prog.param_pool.end(), payload.begin(), payload.end());
+    }
+
+    prog.entries.push_back(entry);
+  }
+
+  return prog;
+}
+
 // Truly file-local LLVM initialization helpers.
 
 void InitializeLlvmTargets() {
@@ -710,7 +907,6 @@ auto CompileModuleSpecSession(
 
 auto ExtractRealizationData(
     const mir::PlacementMap& placement, std::span<const mir::SlotDesc> slots,
-    const mir::InstanceTable& instance_table,
     std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
     std::span<const char> slot_trace_string_pool) -> RealizationData {
   RealizationData realization;
@@ -728,11 +924,6 @@ auto ExtractRealizationData(
   for (const auto& slot : slots) {
     realization.slot_types.push_back(slot.type);
     realization.slot_kinds.push_back(slot.kind);
-  }
-
-  realization.instance_paths.reserve(instance_table.entries.size());
-  for (const auto& entry : instance_table.entries) {
-    realization.instance_paths.push_back(entry.full_path);
   }
 
   realization.slot_trace_provenance.assign(
@@ -1092,7 +1283,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   auto realization = ExtractRealizationData(
       input.design->placement, input.design->slots,
-      input.design->instance_table, input.design->slot_trace_provenance,
+      input.design->slot_trace_provenance,
       input.design->slot_trace_string_pool);
 
   // Build forward-path body compiled functions, parallel to
@@ -1715,16 +1906,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
     // Body init descriptor extraction.
     // Walks each body's slot range to build 4-state patches, owned-handle
     // entries, and param slot templates. All offsets are body-relative.
-    // Compile-time param slot template entry. Keyed by body_local_slot
-    // to establish explicit ordering contract with per-instance payloads.
-    struct ParamSlotTemplateEntry {
-      uint32_t body_local_slot;
-      runtime::ParamInitSlotEntry slot;
-    };
 
     // Per-body param slot templates, keyed by body_id for payload lookup.
-    std::unordered_map<uint32_t, std::vector<ParamSlotTemplateEntry>>
-        body_param_templates;
+    BodyParamTemplateMap body_param_templates;
 
     for (auto& info : layout->body_realization_infos) {
       if (info.slot_count == 0) continue;
@@ -1806,83 +1990,95 @@ auto CompileDesignProcesses(const LoweringInput& input)
       for (const auto& pe : param_entries) {
         info.init.param_slots.push_back(pe.slot);
       }
-      body_param_templates[info.body_id.value] = std::move(param_entries);
+      body_param_templates[info.body_id] =
+          ParamSlotTemplate{.entries = std::move(param_entries)};
     }
 
-    // Per-instance param payload lowering.
-    // Pre-lower each instance's const_block to canonical storage bytes
-    // in body-template order (sorted by body_local_slot).
-    {
-      const auto& placement = input.design->placement;
-      realization.param_payloads.resize(placement.const_blocks.size());
-      for (size_t inst_idx = 0; inst_idx < placement.const_blocks.size();
-           ++inst_idx) {
-        const auto& inst = placement.instances[inst_idx];
-        const auto& const_block = placement.const_blocks[inst_idx];
-        auto& payload = realization.param_payloads[inst_idx];
+    std::vector<uint32_t> design_base_slots;
+    design_base_slots.reserve(input.design->placement.instances.size());
+    for (const auto& inst : input.design->placement.instances) {
+      design_base_slots.push_back(inst.design_state_base_slot);
+    }
 
-        if (const_block.slot_inits.empty()) continue;
-        uint32_t bg = instance_body_group[inst_idx];
-        uint32_t body_id_val = layout->body_realization_infos[bg].body_id.value;
-        auto tmpl_it = body_param_templates.find(body_id_val);
-        if (tmpl_it == body_param_templates.end()) {
+    auto param_payloads = BuildParamPayloads(
+        instance_body_group, design_base_slots,
+        input.design->placement.const_blocks, *layout, body_param_templates);
+
+    // Validate parallel structure invariants before building the
+    // construction program. These checks catch topology mismatches at
+    // compile time rather than letting them survive to runtime.
+    {
+      auto instance_count = instance_body_group.size();
+      if (instance_count != input.design->instance_table.entries.size()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "instance_body_group size {} != instance_table size {}",
+                instance_count, input.design->instance_table.entries.size()));
+      }
+      if (instance_count != layout->instance_storage_bases.size()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "instance_body_group size {} != instance_storage_bases size {}",
+                instance_count, layout->instance_storage_bases.size()));
+      }
+      if (instance_count != param_payloads.size()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "instance_body_group size {} != param_payloads size {}",
+                instance_count, param_payloads.size()));
+      }
+      auto num_body_groups = body_funcs.size();
+      if (num_body_groups != layout->body_realization_infos.size()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "body_funcs size {} != body_realization_infos size {}",
+                num_body_groups, layout->body_realization_infos.size()));
+      }
+      for (size_t gi = 0; gi < num_body_groups; ++gi) {
+        if (body_funcs[gi].body_id !=
+            layout->body_realization_infos[gi].body_id) {
           throw common::InternalError(
               "CompileDesignProcesses",
               std::format(
-                  "instance {} has param inits but no body param template",
-                  inst_idx));
+                  "body group {} body_id mismatch: funcs={} vs info={}", gi,
+                  body_funcs[gi].body_id.value,
+                  layout->body_realization_infos[gi].body_id.value));
         }
-        const auto& tmpl = tmpl_it->second;
+      }
+      for (size_t mi = 0; mi < instance_count; ++mi) {
+        if (instance_body_group[mi] >= num_body_groups) {
+          throw common::InternalError(
+              "CompileDesignProcesses",
+              std::format(
+                  "instance {} body_group {} >= num_body_groups {}", mi,
+                  instance_body_group[mi], num_body_groups));
+        }
+      }
+    }
 
-        // Build a map from body_local_slot to const_block entry.
-        // Reject duplicates: a duplicated slot init is malformed data.
-        std::unordered_map<uint32_t, size_t> init_by_slot;
-        for (size_t k = 0; k < const_block.slot_inits.size(); ++k) {
-          uint32_t slot = const_block.slot_inits[k].body_local_slot;
-          auto [it, inserted] = init_by_slot.emplace(slot, k);
-          if (!inserted) {
-            throw common::InternalError(
-                "CompileDesignProcesses",
-                std::format(
-                    "instance {} const block has duplicate param init "
-                    "for body_local_slot {}",
-                    inst_idx, slot));
-          }
-        }
+    // Build pure-data construction program from the same sources that
+    // currently drive per-instance constructor emission. Entries are in
+    // strict ModuleIndex order. The runtime relies on this order for
+    // instance_id and signal_id_offset allocation.
+    realization.construction_program = BuildConstructionProgram(
+        instance_body_group, *layout, input.design->instance_table,
+        param_payloads);
 
-        // Reject stray const_block entries not in the body template.
-        std::unordered_set<uint32_t> template_slots;
-        template_slots.reserve(tmpl.size());
-        for (const auto& te : tmpl) {
-          template_slots.insert(te.body_local_slot);
-        }
-        for (const auto& [slot, _] : init_by_slot) {
-          if (!template_slots.contains(slot)) {
-            throw common::InternalError(
-                "CompileDesignProcesses",
-                std::format(
-                    "instance {} const block has param init for "
-                    "body_local_slot {} but body template does not "
-                    "contain that slot",
-                    inst_idx, slot));
-          }
-        }
-
-        // Emit payload bytes in template order.
-        for (const auto& te : tmpl) {
-          auto it = init_by_slot.find(te.body_local_slot);
-          if (it == init_by_slot.end()) {
-            // Param slot exists in body but this instance has no init
-            // for it. Emit zero bytes (default value after memset).
-            payload.resize(payload.size() + te.slot.byte_size, 0);
-            continue;
-          }
-          const auto& init = const_block.slot_inits[it->second];
-          uint32_t abs_slot =
-              inst.design_state_base_slot + init.body_local_slot;
-          const auto& spec = layout->design.slot_storage_specs[abs_slot];
-          LowerIntegralConstantToCanonicalBytes(init.value, spec, payload);
-        }
+    // Validate: construction program entries match lowering domain.
+    for (size_t i = 0; i < realization.construction_program.entries.size();
+         ++i) {
+      const auto& e = realization.construction_program.entries[i];
+      if (e.body_group >= layout->body_realization_infos.size()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "construction entry {} body_group {} >= "
+                "body_realization_infos size {}",
+                i, e.body_group, layout->body_realization_infos.size()));
       }
     }
 
@@ -2002,7 +2198,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .slot_info = std::move(slot_info),
       .num_init_processes = num_init,
       .body_compiled_funcs = std::move(body_funcs),
-      .instance_body_group = std::move(instance_body_group),
   };
 }
 

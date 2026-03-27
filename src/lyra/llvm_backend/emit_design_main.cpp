@@ -828,17 +828,16 @@ auto EmitInitDescriptor(
   return result;
 }
 
-auto EmitParamPayloadGlobal(
-    llvm::LLVMContext& ctx, llvm::Module& mod,
-    const std::vector<uint8_t>& payload, const std::string& name)
-    -> llvm::Constant* {
+// Emit a byte pool as a single [N x i8] constant global.
+// Returns pointer to first element, or null if empty.
+auto EmitBytePoolGlobal(
+    llvm::LLVMContext& ctx, llvm::Module& mod, llvm::ArrayRef<uint8_t> data,
+    const std::string& name) -> llvm::Constant* {
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-  if (payload.empty()) {
+  if (data.empty()) {
     return llvm::ConstantPointerNull::get(
         llvm::cast<llvm::PointerType>(ptr_ty));
   }
-  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
-  auto data = llvm::ArrayRef<uint8_t>(payload);
   auto* init = llvm::ConstantDataArray::get(ctx, data);
   auto* global = new llvm::GlobalVariable(
       mod, init->getType(), true, llvm::GlobalValue::InternalLinkage, init,
@@ -848,6 +847,158 @@ auto EmitParamPayloadGlobal(
   auto* zero = llvm::ConstantInt::get(i32_ty, 0);
   return llvm::ConstantExpr::getInBoundsGetElementPtr(
       init->getType(), global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+}
+
+// Canonical LLVM struct type for runtime::ConstructionProgramEntry.
+// Layout: {i64, i32, i32, i32, i32, i32} -- must match the C++ struct
+// field order in construction_program_abi.hpp.
+auto GetConstructionProgramEntryType(llvm::LLVMContext& ctx)
+    -> llvm::StructType* {
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+  return llvm::StructType::get(
+      ctx, {i64_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty});
+}
+
+// Encode one ConstructionProgramEntry as an LLVM constant.
+auto EncodeConstructionProgramEntry(
+    llvm::StructType* ty, llvm::LLVMContext& ctx,
+    const runtime::ConstructionProgramEntry& e) -> llvm::Constant* {
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+  return llvm::ConstantStruct::get(
+      ty, {llvm::ConstantInt::get(i64_ty, e.storage_base_byte_offset),
+           llvm::ConstantInt::get(i32_ty, e.body_group),
+           llvm::ConstantInt::get(i32_ty, e.has_storage),
+           llvm::ConstantInt::get(i32_ty, e.path_offset),
+           llvm::ConstantInt::get(i32_ty, e.param_offset),
+           llvm::ConstantInt::get(i32_ty, e.param_size)});
+}
+
+// Canonical LLVM struct type for runtime::BodyDescriptorRef.
+// Must match the C++ struct field order in construction_program_abi.hpp.
+auto GetBodyDescriptorRefType(llvm::LLVMContext& ctx) -> llvm::StructType* {
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  return llvm::StructType::get(
+      ctx,
+      {// desc, entries, num_entries
+       ptr_ty, ptr_ty, i32_ty,
+       // meta: entries, num, pool, pool_size
+       ptr_ty, i32_ty, ptr_ty, i32_ty,
+       // triggers: entries, num, ranges, num_ranges, shapes, groupable
+       ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty,
+       // comb: entries, num, kernels, num_kernels
+       ptr_ty, i32_ty, ptr_ty, i32_ty,
+       // observable: entries, num, pool, pool_size
+       ptr_ty, i32_ty, ptr_ty, i32_ty,
+       // init: patches, num, handles, num, param_slots, num
+       ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty});
+}
+
+// Encode one BodyDescriptorPackageEmission as a BodyDescriptorRef constant.
+auto EncodeBodyDescriptorRef(
+    llvm::StructType* ty, llvm::LLVMContext& ctx,
+    const BodyDescriptorPackageEmission& pkg) -> llvm::Constant* {
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  return llvm::ConstantStruct::get(
+      ty, {pkg.header_ptr,
+           pkg.entries_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.num_processes),
+           pkg.meta.entries_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.meta.num_entries),
+           pkg.meta.pool_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.meta.pool_size),
+           pkg.triggers.entries_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.triggers.num_entries),
+           pkg.triggers.ranges_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.triggers.num_ranges),
+           pkg.triggers.shapes_ptr,
+           pkg.triggers.groupable_ptr,
+           pkg.comb.entries_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.comb.num_entries),
+           pkg.comb.kernels_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.comb.num_kernels),
+           pkg.observable.entries_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.observable.num_entries),
+           pkg.observable.pool_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.observable.pool_size),
+           pkg.init.patches_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.init.num_patches),
+           pkg.init.handles_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.init.num_handles),
+           pkg.init.param_slots_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.init.num_param_slots)});
+}
+
+// Emit the construction program entry table as a single constant global.
+// Returns pointer to first element, or null if empty.
+auto EmitConstructionProgramGlobal(
+    llvm::LLVMContext& ctx, llvm::Module& mod,
+    std::span<const runtime::ConstructionProgramEntry> entries)
+    -> llvm::Constant* {
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+
+  auto count = static_cast<uint32_t>(entries.size());
+  if (count == 0) {
+    return llvm::ConstantPointerNull::get(
+        llvm::cast<llvm::PointerType>(ptr_ty));
+  }
+
+  auto* entry_type = GetConstructionProgramEntryType(ctx);
+
+  std::vector<llvm::Constant*> constants;
+  constants.reserve(count);
+  for (const auto& e : entries) {
+    constants.push_back(EncodeConstructionProgramEntry(entry_type, ctx, e));
+  }
+
+  auto* array_type = llvm::ArrayType::get(entry_type, count);
+  auto* global = new llvm::GlobalVariable(
+      mod, array_type, true, llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantArray::get(array_type, constants),
+      "__lyra_construction_program");
+  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+  return llvm::ConstantExpr::getInBoundsGetElementPtr(
+      array_type, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+}
+
+// Emit the body descriptor ref table: one BodyDescriptorRef per body group.
+// Each entry packages all already-emitted body-shaped globals into one POD
+// struct that the runtime can use to reconstruct a BodyDescriptorPackage.
+auto EmitBodyDescriptorRefTable(
+    llvm::LLVMContext& ctx, llvm::Module& mod,
+    const std::vector<BodyDescriptorPackageEmission>& body_pkgs)
+    -> llvm::Constant* {
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+
+  auto count = static_cast<uint32_t>(body_pkgs.size());
+  if (count == 0) {
+    return llvm::ConstantPointerNull::get(
+        llvm::cast<llvm::PointerType>(ptr_ty));
+  }
+
+  auto* ref_type = GetBodyDescriptorRefType(ctx);
+
+  std::vector<llvm::Constant*> refs;
+  refs.reserve(count);
+  for (const auto& pkg : body_pkgs) {
+    refs.push_back(EncodeBodyDescriptorRef(ref_type, ctx, pkg));
+  }
+
+  auto* array_type = llvm::ArrayType::get(ref_type, count);
+  auto* global = new llvm::GlobalVariable(
+      mod, array_type, true, llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantArray::get(array_type, refs), "__lyra_body_desc_refs");
+  global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+  auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+  return llvm::ConstantExpr::getInBoundsGetElementPtr(
+      array_type, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
 }
 
 auto EmitBodyRealizationDescs(
@@ -1747,8 +1898,7 @@ auto BuildEmitDesignMainInput(const lowering::mir_to_llvm::LoweringInput& input)
 struct ConstructorRuntimeFuncs {
   llvm::Function* create;
   llvm::Function* add_connection;
-  llvm::Function* begin_body;
-  llvm::Function* add_instance;
+  llvm::Function* run_program;
   llvm::Function* finalize;
   llvm::Function* result_get_states;
   llvm::Function* result_get_num_total;
@@ -1797,15 +1947,10 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
            ptr_ty, i32_ty, ptr_ty, i32_ty}),
       .add_connection =
           declare("LyraConstructorAddConnection", void_ty, {ptr_ty, ptr_ty}),
-      .begin_body = declare(
-          "LyraConstructorBeginBody", void_ty,
-          {ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-           i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty,
-           ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-           i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
-      .add_instance = declare(
-          "LyraConstructorAddInstance", void_ty,
-          {ptr_ty, ptr_ty, ptr_ty, i32_ty, i64_ty, i32_ty}),
+      .run_program = declare(
+          "LyraConstructorRunProgram", void_ty,
+          {ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+           i32_ty}),
       .finalize = declare("LyraConstructorFinalize", ptr_ty, {ptr_ty}),
       .result_get_states =
           declare("LyraConstructionResultGetStates", ptr_ty, {ptr_ty}),
@@ -1849,66 +1994,21 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
   };
 }
 
-// Emit one LyraConstructorBeginBody call from a BodyDescriptorPackageEmission.
-// Centralizes the decomposition of the package into C ABI arguments so the
-// orchestration loop does not manually unpack fields.
-void EmitBeginBodyCall(
-    llvm::IRBuilder<>& builder, const ConstructorRuntimeFuncs& rt,
-    llvm::Value* ctor, const BodyDescriptorPackageEmission& pkg,
-    llvm::Type* i32_ty) {
-  builder.CreateCall(
-      rt.begin_body,
-      {ctor,
-       pkg.header_ptr,
-       pkg.entries_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.num_processes),
-       pkg.meta.entries_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.meta.num_entries),
-       pkg.meta.pool_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.meta.pool_size),
-       pkg.triggers.entries_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.triggers.num_entries),
-       pkg.triggers.ranges_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.triggers.num_ranges),
-       pkg.triggers.shapes_ptr,
-       pkg.triggers.groupable_ptr,
-       pkg.comb.entries_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.comb.num_entries),
-       pkg.comb.kernels_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.comb.num_kernels),
-       pkg.observable.entries_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.observable.num_entries),
-       pkg.observable.pool_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.observable.pool_size),
-       pkg.init.patches_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.init.num_patches),
-       pkg.init.handles_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.init.num_handles),
-       pkg.init.param_slots_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg.init.num_param_slots)});
-}
-
-// Emit the constructor function: LLVM IR that calls RuntimeConstructor C API
-// to build process construction order and bindings for the current design
-// topology summary. The emitted program walks instances in ModuleIndex order
-// (instance-major), switching the active body via BeginBody as needed. This
-// preserves instance-major process ordering for metadata table alignment.
-// The compile-owned topology summary (instance_body_group) drives the
-// emitted call sequence.
+// Emit the constructor function: creates the runtime constructor, adds
+// connections, then replays the construction program via a single
+// LyraConstructorRunProgram call. The runtime replays BeginBody/AddInstance
+// in strict ModuleIndex order from the compact construction program.
 
 auto EmitConstructorFunction(
-    Context& context, const Layout& layout,
-    const lowering::mir_to_llvm::CodegenSession& session,
-    llvm::Value* design_state, llvm::Constant* schemas_ptr,
-    uint32_t num_schemas, llvm::Constant* slot_byte_offsets_ptr,
+    Context& context, const Layout& layout, llvm::Value* design_state,
+    llvm::Constant* schemas_ptr, uint32_t num_schemas,
+    llvm::Constant* slot_byte_offsets_ptr,
     const std::vector<BodyDescriptorPackageEmission>& body_descs,
     llvm::Constant* conn_descs_ptr, const MetaTemplateEmission& conn_meta,
     const TriggerTemplateEmission& conn_triggers,
     const ObservableDescriptorEmission& pkg_observable,
     const InitDescriptorEmission& pkg_init,
-    const std::vector<std::string>& instance_paths,
-    const std::vector<llvm::Constant*>& param_payload_ptrs,
-    const std::vector<uint32_t>& param_payload_sizes)
+    const lowering::mir_to_llvm::ConstructionProgramData& prog)
     -> ConstructorEmissionResult {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
@@ -1955,7 +2055,6 @@ auto EmitConstructorFunction(
   // Add connection processes.
   const auto& conn_infos = layout.connection_realization_infos;
   for (uint32_t ci = 0; ci < conn_infos.size(); ++ci) {
-    // GEP into the connection descriptor array.
     auto* conn_entry_type =
         llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
     auto* desc_ptr = builder.CreateConstInBoundsGEP1_32(
@@ -1963,84 +2062,52 @@ auto EmitConstructorFunction(
     builder.CreateCall(rt.add_connection, {ctor, desc_ptr});
   }
 
-  // Validate topology source-of-truth parallelism before emission.
-  // These structures must be parallel: body_realization_infos,
-  // body_compiled_funcs, and body_descs all indexed by body group.
-  const auto& ibg = session.instance_body_group;
-  auto num_body_groups = static_cast<uint32_t>(body_descs.size());
-
-  if (session.body_compiled_funcs.size() != num_body_groups) {
+  // Validate: body_descs must match the body-group domain of the
+  // construction program entries. This is the emission-side counterpart
+  // of the lowering-side topology checks in CompileDesignProcesses.
+  if (body_descs.size() != layout.body_realization_infos.size()) {
     throw common::InternalError(
         "EmitConstructorFunction",
         std::format(
-            "body_compiled_funcs size {} != body_descs size {}",
-            session.body_compiled_funcs.size(), num_body_groups));
+            "body_descs size {} != body_realization_infos size {}",
+            body_descs.size(), layout.body_realization_infos.size()));
   }
-  if (layout.body_realization_infos.size() != num_body_groups) {
-    throw common::InternalError(
-        "EmitConstructorFunction",
-        std::format(
-            "body_realization_infos size {} != body_descs size {}",
-            layout.body_realization_infos.size(), num_body_groups));
-  }
-  for (uint32_t gi = 0; gi < num_body_groups; ++gi) {
-    if (session.body_compiled_funcs[gi].body_id !=
-        layout.body_realization_infos[gi].body_id) {
+  auto body_desc_count = static_cast<uint32_t>(body_descs.size());
+  for (const auto& e : prog.entries) {
+    if (e.body_group >= body_desc_count) {
       throw common::InternalError(
           "EmitConstructorFunction",
           std::format(
-              "body group {} body_id mismatch: compiled={} vs info={}", gi,
-              session.body_compiled_funcs[gi].body_id.value,
-              layout.body_realization_infos[gi].body_id.value));
+              "construction entry body_group {} >= body_desc_count {}",
+              e.body_group, body_desc_count));
     }
   }
 
-  // Validate instance_paths count matches instance count.
-  if (instance_paths.size() != ibg.size()) {
-    throw common::InternalError(
-        "EmitConstructorFunction",
-        std::format(
-            "instance_paths size {} != instance_body_group size {}",
-            instance_paths.size(), ibg.size()));
-  }
+  // Emit pooled construction program globals.
+  auto* body_ref_table_ptr =
+      EmitBodyDescriptorRefTable(ctx, context.GetModule(), body_descs);
 
-  // Validate instance_body_group entries are in range.
-  for (uint32_t mi = 0; mi < ibg.size(); ++mi) {
-    if (ibg[mi] >= num_body_groups) {
-      throw common::InternalError(
-          "EmitConstructorFunction",
-          std::format(
-              "instance {} body group {} >= num_body_groups {}", mi, ibg[mi],
-              num_body_groups));
-    }
-  }
+  auto* path_pool_ptr = EmitBytePoolGlobal(
+      ctx, context.GetModule(), llvm::ArrayRef<uint8_t>(prog.path_pool),
+      "__lyra_path_pool");
+  auto* param_pool_ptr = EmitBytePoolGlobal(
+      ctx, context.GetModule(), llvm::ArrayRef<uint8_t>(prog.param_pool),
+      "__lyra_param_pool");
+  auto* program_ptr =
+      EmitConstructionProgramGlobal(ctx, context.GetModule(), prog.entries);
+  auto entry_count = static_cast<uint32_t>(prog.entries.size());
 
-  // Instance-major constructor program: walk instances in ModuleIndex
-  // order, switching the active body via BeginBody when the body group
-  // changes. The same body may appear multiple times if instances of
-  // different bodies are interleaved in ModuleIndex order. This is the
-  // Instance-major ordering preserves metadata table alignment.
-  uint32_t last_body_group = UINT32_MAX;
-  for (uint32_t mi = 0; mi < ibg.size(); ++mi) {
-    uint32_t bg = ibg[mi];
-    if (bg != last_body_group) {
-      EmitBeginBodyCall(builder, rt, ctor, body_descs[bg], i32_ty);
-      last_body_group = bg;
-    }
-    // Pass instance path, param payload, and explicit storage base.
-    auto* path_str = builder.CreateGlobalStringPtr(
-        instance_paths[mi], std::format("inst_path_{}", mi));
-    const auto& base = layout.instance_storage_bases[mi];
-    uint64_t base_val =
-        base.abs_byte_offset.has_value() ? base.abs_byte_offset->value : 0;
-    uint32_t has_storage = base.abs_byte_offset.has_value() ? 1 : 0;
-    builder.CreateCall(
-        rt.add_instance,
-        {ctor, path_str, param_payload_ptrs[mi],
-         llvm::ConstantInt::get(i32_ty, param_payload_sizes[mi]),
-         llvm::ConstantInt::get(i64_ty, base_val),
-         llvm::ConstantInt::get(i32_ty, has_storage)});
-  }
+  // Replay the construction program: the runtime iterates entries in
+  // ModuleIndex order, calling BeginBody/AddInstance as needed.
+  auto path_pool_size = static_cast<uint32_t>(prog.path_pool.size());
+  auto param_pool_size = static_cast<uint32_t>(prog.param_pool.size());
+  builder.CreateCall(
+      rt.run_program,
+      {ctor, body_ref_table_ptr,
+       llvm::ConstantInt::get(i32_ty, body_desc_count), path_pool_ptr,
+       llvm::ConstantInt::get(i32_ty, path_pool_size), param_pool_ptr,
+       llvm::ConstantInt::get(i32_ty, param_pool_size), program_ptr,
+       llvm::ConstantInt::get(i32_ty, entry_count)});
 
   // Finalize: returns a single constructor-owned result handle.
   auto* result = builder.CreateCall(rt.finalize, {ctor}, "ctor_result");
@@ -2189,26 +2256,14 @@ auto EmitDesignMain(
           layout.package_init_descriptor.four_state_patches,
           layout.package_init_descriptor.owned_handles, {}, "__lyra_pkg");
 
-      // Emit per-instance param payload globals.
-      std::vector<llvm::Constant*> param_payload_ptrs;
-      std::vector<uint32_t> param_payload_sizes;
-      param_payload_ptrs.reserve(realization.instance_paths.size());
-      param_payload_sizes.reserve(realization.instance_paths.size());
-      for (uint32_t mi = 0; mi < realization.instance_paths.size(); ++mi) {
-        const auto& payload = realization.param_payloads[mi];
-        param_payload_ptrs.push_back(EmitParamPayloadGlobal(
-            ctx, context.GetModule(), payload,
-            std::format("__lyra_param_payload_{}", mi)));
-        param_payload_sizes.push_back(static_cast<uint32_t>(payload.size()));
-      }
-
-      // Emit the constructor function: LLVM IR that calls the runtime
-      // constructor to build process construction order and bindings.
+      // Emit the constructor function: creates the constructor, adds
+      // connections, and replays the construction program via a single
+      // LyraConstructorRunProgram call with pooled path/param globals.
       ctor_result = EmitConstructorFunction(
-          context, layout, session, design_state, schemas_ptr, num_schemas,
+          context, layout, design_state, schemas_ptr, num_schemas,
           slot_offsets_ptr, body_descs, conn_descs_ptr, conn_meta_emission,
           conn_trigger_emission, pkg_obs_emission, pkg_init_emission,
-          realization.instance_paths, param_payload_ptrs, param_payload_sizes);
+          realization.construction_program);
 
       states_array = ctor_result.states_array;
       num_total_val = ctor_result.num_total;

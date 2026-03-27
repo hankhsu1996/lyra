@@ -119,3 +119,11 @@ struct std::hash<lyra::mir::SlotId> {
     return std::hash<uint32_t>{}(s.value);
   }
 };
+
+// std::hash specialization for ModuleBodyId (enables std::unordered_set/map)
+template <>
+struct std::hash<lyra::mir::ModuleBodyId> {
+  auto operator()(lyra::mir::ModuleBodyId id) const noexcept -> size_t {
+    return std::hash<uint32_t>{}(id.value);
+  }
+};
