@@ -1,29 +1,37 @@
 # State Layout
 
-Design state memory layout. Defines the arena-based model that decouples state layout from compile-time LLVM struct types.
+Byte-level storage layout for simulation state. Decouples state layout from compile-time LLVM struct types.
 
-For the compilation model, see [compilation-model.md](compilation-model.md). For architectural motivation, see [architecture-principles.md](architecture-principles.md).
+For the natural model, see [natural-model.md](natural-model.md). For the compilation model, see [compilation-model.md](compilation-model.md). For architectural motivation, see [architecture-principles.md](architecture-principles.md).
 
-## Motivation
+## Target Model
 
-Lyra's compilation model separates elaboration-time properties (container sizes, instance topology) from execution-time properties (packed widths, compiled code shape). This requires a state model where:
+The target follows from the natural model: an instance is an object that owns its state. Member access is object pointer + local offset. Each instance has its own storage region. Design-global coordination (scheduler, event queues) exists as an outer layer, not as the defining representation of instance state.
+
+## Current Implementation
+
+The current implementation uses a single contiguous byte arena for the entire design. All instance state is carved from this one allocation. Instance boundaries are logical (slot ranges into the flat array), not physical (separate allocations). Runtime metadata (SlotMeta, trace coordinates, dirty tracking) uses arena-absolute byte offsets and design-global slot IDs as primary coordinates. This is a transitional implementation, not the target model.
+
+The remaining migration is tracked in the [specialization queue](queues/specialization.md).
+
+## Byte-Level Layout (Orthogonal to Object-Local vs Design-Global)
+
+This doc describes byte-level layout: how individual members are sized, aligned, and addressed within a storage region using byte offsets. This is orthogonal to the object-local vs design-global question. Per-instance objects use the same byte-level layout internally -- the layout rules apply regardless of whether the storage region is carved from a design-global arena or allocated per-instance.
+
+The byte-level model exists because a monolithic compile-time LLVM struct couples layout to compilation. Changing an unpacked array size forces recompilation. Byte-level layout removes this coupling.
+
+Requirements:
 
 - Packed fields use efficient static offsets (compile-time constants)
 - Unpacked containers use elaboration-resolved sizes and offsets
 - Layout is computed once after elaboration, before simulation begins
 - No dynamic allocation occurs during simulation
 
-A monolithic compile-time LLVM struct couples layout to compilation. Changing an unpacked array size forces recompilation. The arena model removes this coupling.
+## Instance Storage
 
-## Arena Layout
+**Target:** each module instance occupies its own storage region, addressed via `this_base`. Within that region, fields are accessed by offset.
 
-Design state is a contiguous byte arena allocated once after elaboration:
-
-```
-DesignState = byte arena + layout metadata
-```
-
-Each module instance occupies a region within the arena, addressed via `this_base`. Within that region, fields are accessed by offset.
+**Current state:** shared-body codegen already accesses owned-local slots via `this_base + instance_relative_offset`. However, forwarded slots bypass `this_base` and use `design_ptr + arena_absolute_offset` instead. The `this_base` pointer itself currently points into the single design-global arena, not into a per-instance allocation.
 
 ### Offset Categories
 
@@ -61,11 +69,11 @@ The extra metadata load for containers is negligible: unpacked array access alre
 
 ## Allocation Lifecycle
 
-1. **Compilation**: SpecLayout records static offsets for packed fields and container descriptors for unpacked regions. No design-global layout knowledge.
+1. **Compilation**: SpecLayout records static offsets for packed fields and container descriptors for unpacked regions. No design-global layout knowledge. These are body-shaped facts that describe the type, not any particular instance.
 
-2. **Realization**: Resolves container sizes from elaborated parameters. Computes final layout per instance. Allocates the arena.
+2. **Construction**: Resolves container sizes from elaborated parameters. Computes final layout per instance. Allocates storage.
 
-3. **Simulation**: Arena is immutable in structure. No allocations, no resizing. Only field values change.
+3. **Simulation**: Storage is immutable in structure. No allocations, no resizing. Only field values change.
 
 ## Storage Ownership
 
@@ -100,26 +108,25 @@ Body processes can reference forwarded alias slots (e.g., a clocked process that
 
 ## Relationship to Specialization
 
-The arena model refines how SpecLayout works, not what it means:
+The byte-level layout model refines how SpecLayout works, not what it means:
 
 - `ModuleSpecId` remains the compilation unit
 - `this_base + offset` remains the addressing model
 - Static offsets for packed fields remain compile-time constants
 - Container offsets become elaboration-resolved metadata instead of compile-time constants
 
-Two instances with the same `ModuleSpecId` but different unpacked array sizes share compiled code. They have different layout metadata but identical process functions.
+Two instances with the same `ModuleSpecId` but different unpacked array sizes share compiled code. They have different layout metadata but identical process functions. This is the natural model: same type, different objects.
 
 ## Concept Mapping
 
-| Concept                   | Role                                  | Changed?                              |
-| ------------------------- | ------------------------------------- | ------------------------------------- |
-| `ModuleSpecId`            | Compilation unit identity             | No                                    |
-| `SpecLayout`              | Per-specialization field layout       | Refined: adds container descriptors   |
-| `this_base`               | Instance state base pointer           | No                                    |
-| `DesignState`             | Design-wide state memory              | Refined: arena instead of LLVM struct |
-| Realization               | Computes instance placements          | Extended: resolves container sizes    |
-| Packed field access       | `this_base + constant`                | No                                    |
-| Unpacked container access | `this_base + metadata_offset + index` | New: metadata indirection             |
+| Concept                   | Role                                   |
+| ------------------------- | -------------------------------------- |
+| `ModuleSpecId`            | Type identity (compilation unit)       |
+| `SpecLayout`              | Type-level field layout (body-shaped)  |
+| `this_base`               | Object pointer (instance state base)   |
+| Instance storage          | Object-owned storage region            |
+| Packed field access       | `this_base + constant` (member access) |
+| Unpacked container access | `this_base + metadata_offset + index`  |
 
 ## Canonical Storage Contract
 
@@ -142,9 +149,9 @@ This contract is defined by `SlotStorageSpec`, resolved once per slot at layout 
 
 ### Key Invariant
 
-No typed LLVM object is ever stored directly to arena bytes. All stores go through `EmitStoreToCanonicalStorage` (which decomposes aggregates recursively) or `EmitPackedToCanonicalBits` (which flattens scalars to canonical integer form). This ensures the arena layout matches the canonical contract, not LLVM's internal padding/alignment choices.
+No typed LLVM object is ever stored directly to storage bytes. All stores go through `EmitStoreToCanonicalStorage` (which decomposes aggregates recursively) or `EmitPackedToCanonicalBits` (which flattens scalars to canonical integer form). This ensures the byte-level layout matches the canonical contract, not LLVM's internal padding/alignment choices.
 
 ## Non-Goals
 
 - Packed types remain specialization boundaries. Packed width affects arithmetic instructions and must produce different compiled code.
-- Dynamic arrays, queues, and associative arrays remain heap-allocated handle objects. The arena model applies to fixed-size unpacked containers only.
+- Dynamic arrays, queues, and associative arrays remain heap-allocated handle objects. The byte-level layout applies to fixed-size unpacked containers only.

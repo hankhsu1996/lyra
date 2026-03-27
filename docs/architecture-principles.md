@@ -6,6 +6,20 @@ For product-level priorities, see [philosophy.md](philosophy.md). For coding pat
 
 ## North Stars
 
+### The Natural Model
+
+A module is a type. An instance is an object of that type. Signals are its members. Processes are its behavior. This is not an analogy -- it is the foundational mental model for Lyra's entire architecture. See [natural-model.md](natural-model.md) for the canonical definition, ownership phases, and regression checks.
+
+Everything follows from this:
+
+- **Instance state is object-local.** An instance owns its state. Member access is naturally object pointer + local offset.
+- **Design-global systems are outer-layer orchestration.** Scheduler, time, event queues, cross-instance wiring are coordination concerns, not the core representation of what an instance is.
+- **Connectivity does not redefine object shape.** Wiring is linkage or reference, not something that changes what state an instance owns or how it is laid out.
+- **Body/specialization facts stay body-shaped.** Compiled behavior and layout for a specialization are stable properties of that specialization. Design topology must not leak back and redefine instance representation.
+- **Processes are behavior attached to instances.** They run against their instance's state. Suspension is resumable behavior state, not a separate global concern.
+
+This principle is the first filter for every design decision. If a proposed change makes instances less like objects or makes state less object-local, it moves away from the target.
+
 ### Parallelism
 
 Compilation scales with the number of specializations (unique structural parameter configurations), not instances. A design with 1000 instances of the same module compiles code once, not 1000 times.
@@ -44,9 +58,9 @@ These are consequences of the north stars, not goals in themselves.
 
 ### Compile per Specialization, Realize per Design, Run per Instance
 
-`ModuleSpecId = (ModuleDefId, BehaviorFingerprint)` is the compile-time unit. Code is generated once per specialization. During design realization, instances are bound to compiled specializations and connectivity tables are built. At runtime, each instance owns its own state and the shared specialization code operates on it via `this_base` + relative offset.
+`ModuleSpecId = (ModuleDefId, BehaviorFingerprint)` is the compile-time unit. Code is generated once per specialization -- this is compiling the class, not instantiating objects. During design realization, instances are constructed from compiled specializations and connectivity is wired. At runtime, each instance owns its own state and the shared specialization code operates on it via `this_base` + relative offset -- this is methods running on objects.
 
-This follows from **parallelism** (compile units are specializations) and **performance** (O(1) storage access).
+This follows from **the natural model** (specialization = type, instance = object), **parallelism** (compile units are specializations), and **performance** (O(1) storage access).
 
 ### IDs as Incrementality and Correctness Tools
 
@@ -63,9 +77,9 @@ HIR, MIR, and LLVM IR are internal to specialization compilation and are special
 
 **Target property:** Per-instance binding should not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- should be determined by the number of unique specializations, not the number of instances. Instance-specific constants (base byte offset, instance ID, per-instance slot offsets) belong in runtime-owned data materialized at construction time.
 
-**Current state:** Per-instance code is eliminated. However, the compiled object still contains fully realized instance topology as compile-time data (per-instance metadata tables, trigger entries, slot descriptors, trace names). Object emission is not yet topology-independent. See the H-series items in the specialization queue for the remaining migration.
+**Current state:** Per-instance code is eliminated. The compiled object still contains per-instance emitted IR (path strings, param payloads, constructor calls) and a design-global slot byte offset oracle. Beyond artifact topology, the runtime state model still uses a single design-global arena with arena-absolute offsets rather than per-instance object-local storage. See the [specialization queue](queues/specialization.md) for the remaining migration toward the natural model.
 
-This follows from **parallelism** (IR scales with specializations) and **incrementality** (specialization changes do not cascade through instance graphs).
+This follows from **the natural model** (instances are objects, not coordinates into a global arena), **parallelism** (IR scales with specializations), and **incrementality** (specialization changes do not cascade through instance graphs).
 
 ### Specialization-Local Optimizations Only
 
@@ -89,11 +103,17 @@ This follows from **parallelism** (fewer specializations = better parallelism) a
 
 For any design change, ask in order:
 
-1. **Does it preserve parallel compilation units?** -- Can specializations still be compiled independently?
-2. **Does it keep invalidation small and dependencies explicit?** -- Does changing X force recompilation of unrelated Y?
-3. **Does it keep the scaling law right?** -- Does cost grow with specializations or with instances?
-4. **Are ownership and invariants enforced by structure?** -- Or does correctness depend on "be careful"?
-5. **Is it specialization-local?** -- Does it require cross-module or design-global knowledge?
+1. **Does it keep instances as objects?** Specifically:
+   - Does it introduce a new design-global coordinate as the primary identity for instance-local state?
+   - Does it allow connectivity topology to change an instance's storage shape or layout?
+   - Does it bypass object-local access and reintroduce direct design-global addressing for instance members?
+   - Does it dissolve instance identity into flat design-global metadata?
+   - Does it make compiled body code depend on design topology?
+2. **Does it preserve parallel compilation units?** -- Can specializations still be compiled independently?
+3. **Does it keep invalidation small and dependencies explicit?** -- Does changing X force recompilation of unrelated Y?
+4. **Does it keep the scaling law right?** -- Does cost grow with specializations or with instances?
+5. **Are ownership and invariants enforced by structure?** -- Or does correctness depend on "be careful"?
+6. **Is it specialization-local?** -- Does it require cross-module or design-global knowledge?
 
 If a proposed change fails any of these questions, reconsider the design before proceeding.
 
