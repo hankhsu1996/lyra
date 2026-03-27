@@ -569,6 +569,8 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
             } else if constexpr (std::is_same_v<T, StringConstant>) {
               return std::format(
                   "const(\"{}\": {})", val.value, FormatType(constant.type));
+            } else if constexpr (std::is_same_v<T, NullConstant>) {
+              return std::format("const(null: {})", FormatType(constant.type));
             } else {
               return std::format(
                   "const(<aggregate>: {})", FormatType(constant.type));

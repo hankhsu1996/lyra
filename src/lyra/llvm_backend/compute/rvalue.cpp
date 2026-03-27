@@ -21,14 +21,23 @@ auto GetTypeInfoFromType(Context& context, TypeId type_id)
   const auto& types = context.GetTypeArena();
   const Type& type = types[type_id];
 
-  // Managed handle types: string, dynamic array, queue, associative array
-  // These are all represented as opaque pointers at the LLVM level.
+  // Managed handle types: string, dynamic array, queue, associative array.
+  // Opaque pointers at the LLVM level with managed (refcounted) semantics.
   if (type.Kind() == TypeKind::kString ||
       type.Kind() == TypeKind::kDynamicArray ||
       type.Kind() == TypeKind::kQueue ||
       type.Kind() == TypeKind::kAssociativeArray) {
     return PlaceTypeInfo{
-        .kind = PlaceKind::kString,  // Reuse kString for all managed handles
+        .kind = PlaceKind::kManagedHandle,
+        .bit_width = 0,
+        .is_four_state = false,
+    };
+  }
+
+  // Pointer-like scalar: chandle. Opaque pointer, not managed.
+  if (type.Kind() == TypeKind::kChandle) {
+    return PlaceTypeInfo{
+        .kind = PlaceKind::kPointerScalar,
         .bit_width = 0,
         .is_four_state = false,
     };
@@ -62,7 +71,8 @@ auto GetLlvmTypeForType(Context& context, TypeId type_id)
   if (!type_info_or_err) return std::unexpected(type_info_or_err.error());
   const auto& info = *type_info_or_err;
 
-  if (info.kind == PlaceKind::kString) {
+  if (info.kind == PlaceKind::kManagedHandle ||
+      info.kind == PlaceKind::kPointerScalar) {
     return llvm::PointerType::getUnqual(context.GetLlvmContext());
   }
 

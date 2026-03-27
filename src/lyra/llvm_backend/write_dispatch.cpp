@@ -86,6 +86,19 @@ auto EmitManagedScalarWrite(
       "EmitManagedScalarWrite", "unreachable after ManagedKind switch");
 }
 
+auto EmitPointerScalarWrite(
+    Context& ctx, mir::PlaceId target, const WriteSource& source)
+    -> Result<void> {
+  auto raw = ResolveRawValue(ctx, source);
+  if (!raw) return std::unexpected(raw.error());
+
+  auto wt = commit::Access::GetWriteTarget(ctx, target);
+  if (!wt) return std::unexpected(wt.error());
+
+  ctx.GetBuilder().CreateStore(*raw, wt->ptr);
+  return {};
+}
+
 auto EmitPlainAggregateStore(
     Context& ctx, mir::PlaceId target, const WriteSource& source)
     -> Result<void> {
@@ -246,6 +259,9 @@ auto ExecuteWritePlan(
   switch (plan.op) {
     case WriteOp::kCommitManagedScalar:
       return EmitManagedScalarWrite(ctx, target, source, plan.type_id, policy);
+
+    case WriteOp::kCommitPointerScalar:
+      return EmitPointerScalarWrite(ctx, target, source);
 
     case WriteOp::kStorePlainAggregate:
       return EmitPlainAggregateStore(ctx, target, source);

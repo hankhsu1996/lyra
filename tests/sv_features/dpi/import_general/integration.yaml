@@ -375,3 +375,79 @@ cases:
     expect:
       variables:
         result: -2401053092306725256
+
+  # -- chandle output --
+  - name: dpi_output_chandle
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void get_handle(output chandle h);
+        import "DPI-C" pure function int check_handle(chandle h);
+        int result;
+        initial begin
+          chandle h;
+          get_handle(h);
+          result = check_handle(h);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- chandle inout --
+  - name: dpi_inout_chandle
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void roundtrip_handle(inout chandle h);
+        import "DPI-C" pure function int check_handle(chandle h);
+        int result;
+        initial begin
+          chandle h;
+          h = null;
+          roundtrip_handle(h);
+          result = check_handle(h);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- chandle null roundtrip --
+  - name: dpi_chandle_null_check
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int check_handle(chandle h);
+        int result;
+        initial begin
+          chandle h;
+          h = null;
+          result = check_handle(h);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  # -- chandle return --
+  - name: dpi_return_chandle
+    dpi_sources:
+      - dpi_helpers/general_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function chandle get_handle_ret();
+        import "DPI-C" pure function int check_handle(chandle h);
+        int result;
+        initial begin
+          chandle h;
+          h = get_handle_ret();
+          result = check_handle(h);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

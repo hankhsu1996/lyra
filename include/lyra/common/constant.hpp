@@ -75,9 +75,18 @@ struct ArrayConstant {
   }
 };
 
+struct NullConstant {
+  auto operator==(const NullConstant& /*other*/) const -> bool = default;
+
+  template <typename H>
+  friend auto AbslHashValue(H h, const NullConstant& /*c*/) -> H {
+    return H::combine(std::move(h), 0);
+  }
+};
+
 using ConstantValue = std::variant<
     IntegralConstant, StringConstant, RealConstant, StructConstant,
-    ArrayConstant>;
+    ArrayConstant, NullConstant>;
 
 struct Constant {
   TypeId type;

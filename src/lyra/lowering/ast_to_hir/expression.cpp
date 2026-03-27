@@ -504,6 +504,16 @@ auto LowerExpression(
               .data = hir::ConstantExpressionData{.constant = constant}});
     }
 
+    case ExpressionKind::NullLiteral: {
+      // Bare null literals require contextual typing (Conversion for
+      // assignment, or explicit handling in comparison operators). Generic
+      // literal lowering must not invent a target type.
+      ctx->ErrorFmt(
+          ctx->SpanOf(expr.sourceRange),
+          "bare null literal requires contextual typing");
+      return hir::kInvalidExpressionId;
+    }
+
     case ExpressionKind::RealLiteral: {
       const auto& literal = expr.as<slang::ast::RealLiteral>();
       SourceSpan span = ctx->SpanOf(expr.sourceRange);
@@ -671,11 +681,44 @@ auto LowerExpression(
             span, "unsupported binary operator '{}'", toString(binary.op));
         return hir::kInvalidExpressionId;
       }
-      hir::ExpressionId lhs = LowerExpression(binary.left(), view);
+
+      // Contextual null handling for equality/inequality with chandle.
+      // Slang emits BinaryOp(chandle, NullLiteral) without a Conversion
+      // wrapper, so NullLiteral must be materialized here with the type
+      // derived from its chandle counterpart. Restricted to == and != only.
+      using BO = slang::ast::BinaryOperator;
+      const bool allow_contextual_null =
+          binary.op == BO::Equality || binary.op == BO::Inequality;
+
+      auto lower_operand =
+          [&](const slang::ast::Expression& operand,
+              const slang::ast::Expression& other) -> hir::ExpressionId {
+        if (allow_contextual_null &&
+            operand.kind == ExpressionKind::NullLiteral &&
+            other.type != nullptr &&
+            other.type->getCanonicalType().isCHandle()) {
+          SourceSpan op_span = ctx->SpanOf(operand.sourceRange);
+          TypeId type = LowerType(other.type->getCanonicalType(), op_span, ctx);
+          if (!type) {
+            return hir::kInvalidExpressionId;
+          }
+          ConstId constant =
+              ctx->active_constant_arena->Intern(type, NullConstant{});
+          return ctx->hir_arena->AddExpression(
+              hir::Expression{
+                  .kind = hir::ExpressionKind::kConstant,
+                  .type = type,
+                  .span = op_span,
+                  .data = hir::ConstantExpressionData{.constant = constant}});
+        }
+        return LowerExpression(operand, view);
+      };
+
+      hir::ExpressionId lhs = lower_operand(binary.left(), binary.right());
       if (!lhs) {
         return hir::kInvalidExpressionId;
       }
-      hir::ExpressionId rhs = LowerExpression(binary.right(), view);
+      hir::ExpressionId rhs = lower_operand(binary.right(), binary.left());
       if (!rhs) {
         return hir::kInvalidExpressionId;
       }

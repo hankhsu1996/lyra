@@ -14,6 +14,11 @@ auto ClassifyWriteShape(TypeId type_id, const TypeArena& types) -> WriteShape {
     return WriteShape::kManagedScalar;
   }
 
+  // 2. Pointer-like scalar (chandle)
+  if (type.Kind() == TypeKind::kChandle) {
+    return WriteShape::kPointerScalar;
+  }
+
   // 2. Unpacked union
   if (type.Kind() == TypeKind::kUnpackedUnion) {
     return WriteShape::kUnionMemcpy;
@@ -42,6 +47,9 @@ auto BuildWritePlan(TypeId type_id, const TypeArena& types) -> WritePlan {
   switch (shape) {
     case WriteShape::kManagedScalar:
       op = WriteOp::kCommitManagedScalar;
+      break;
+    case WriteShape::kPointerScalar:
+      op = WriteOp::kCommitPointerScalar;
       break;
     case WriteShape::kPlainUnpackedAggregate:
       op = WriteOp::kStorePlainAggregate;

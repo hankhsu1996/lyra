@@ -562,7 +562,8 @@ auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
   if (type.Kind() == TypeKind::kString ||
       type.Kind() == TypeKind::kDynamicArray ||
       type.Kind() == TypeKind::kQueue ||
-      type.Kind() == TypeKind::kAssociativeArray) {
+      type.Kind() == TypeKind::kAssociativeArray ||
+      type.Kind() == TypeKind::kChandle) {
     return llvm::PointerType::getUnqual(*llvm_context_);
   }
   if (IsPacked(type)) {

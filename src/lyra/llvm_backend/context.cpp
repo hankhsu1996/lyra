@@ -256,7 +256,8 @@ auto Context::GetOrCreatePlaceStorage(const mir::PlaceRoot& root)
       type.Kind() == TypeKind::kString ||
       type.Kind() == TypeKind::kDynamicArray ||
       type.Kind() == TypeKind::kQueue ||
-      type.Kind() == TypeKind::kAssociativeArray) {
+      type.Kind() == TypeKind::kAssociativeArray ||
+      type.Kind() == TypeKind::kChandle) {
     llvm_type = llvm::PointerType::getUnqual(*llvm_context_);
   } else if (IsPacked(type)) {
     auto width = PackedBitWidth(type, types_);

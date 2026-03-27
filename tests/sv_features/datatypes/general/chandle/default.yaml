@@ -1,9 +1,7 @@
 feature: chandle_type
 description: >
-  chandle type support in DPI context. Non-DPI chandle variable usage
-  (null literal, comparison) is not yet supported in the expression pipeline.
-  The storage/layout/default-init switches for kChandle are defensive
-  infrastructure added in D2 Cut 1 but not yet reachable from user SV.
+  chandle type support: declaration, null assignment, variable-to-variable
+  assignment, equality/inequality with null, and DPI parameter declarations.
 
 cases:
   - name: chandle_dpi_input_param
@@ -34,15 +32,50 @@ cases:
         initial begin end
       endmodule
 
-  - name: chandle_variable_not_yet_supported
+  - name: chandle_null_assign
     sv: |
       module Test;
         chandle h;
         initial begin
           h = null;
+          if (h == null)
+            $display("PASS chandle_null_assign");
         end
       endmodule
     expect:
-      error:
+      stdout:
         contains:
-          - "conversion requires integral or floating types"
+          - "PASS chandle_null_assign"
+
+  - name: chandle_variable_copy
+    sv: |
+      module Test;
+        chandle a, b;
+        initial begin
+          b = null;
+          a = b;
+          if (a == null)
+            $display("PASS chandle_variable_copy");
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "PASS chandle_variable_copy"
+
+  - name: chandle_not_equal_null
+    sv: |
+      module Test;
+        chandle h;
+        initial begin
+          h = null;
+          if (h != null)
+            $display("FAIL");
+          else
+            $display("PASS chandle_not_equal_null");
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "PASS chandle_not_equal_null"

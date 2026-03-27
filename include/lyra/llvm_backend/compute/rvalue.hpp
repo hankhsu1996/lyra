@@ -13,7 +13,8 @@ namespace lyra::lowering::mir_to_llvm {
 
 enum class PlaceKind {
   kIntegral,
-  kString,
+  kManagedHandle,
+  kPointerScalar,
 };
 
 struct PlaceTypeInfo {
@@ -23,18 +24,15 @@ struct PlaceTypeInfo {
 };
 
 // Get type info from PlaceId (validates and extracts TypeId internally).
-// Returns error for non-packed, non-string types.
 auto ValidateAndGetTypeInfo(Context& context, mir::PlaceId place_id)
     -> Result<PlaceTypeInfo>;
 
 // Get type info directly from TypeId.
-// Returns error for non-packed, non-string types.
 auto GetTypeInfoFromType(Context& context, TypeId type_id)
     -> Result<PlaceTypeInfo>;
 
-// Get LLVM type for a packed or string type.
-// For packed types: returns iN (2-state) or {iN, iN} struct (4-state).
-// For string types: returns ptr type.
+// Get LLVM type for a packed, managed handle, or pointer scalar type.
+// Packed: iN (2-state) or {iN, iN} (4-state). Managed/pointer: ptr.
 auto GetLlvmTypeForType(Context& context, TypeId type_id)
     -> Result<llvm::Type*>;
 

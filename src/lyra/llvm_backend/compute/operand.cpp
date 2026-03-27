@@ -187,6 +187,20 @@ auto LowerConstant(Context& context, const Constant& constant)
                     "array constants not yet supported",
                     UnsupportedCategory::kType));
           },
+          [&](const NullConstant& /*n*/) -> Result<llvm::Value*> {
+            const Type& ty = context.GetTypeArena()[constant.type];
+            if (ty.Kind() != TypeKind::kChandle) {
+              return std::unexpected(
+                  context.GetDiagnosticContext().MakeUnsupported(
+                      context.GetCurrentOrigin(),
+                      std::format(
+                          "null constant for non-chandle type: {}",
+                          ToString(ty)),
+                      UnsupportedCategory::kType));
+            }
+            return llvm::ConstantPointerNull::get(
+                llvm::PointerType::getUnqual(llvm_ctx));
+          },
       },
       constant.value);
 }
