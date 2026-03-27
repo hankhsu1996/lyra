@@ -37,14 +37,16 @@ ModuleSpecId = (ModuleDefId, BehaviorFingerprint)
 
 A specialization produces a self-contained, cacheable artifact: `CompiledModuleSpec`.
 
-### C++ Analogy
+### The Natural Correspondence
 
-| SystemVerilog         | C++ Equivalent                                       |
+These are not analogies -- they describe what these concepts are. See [natural-model.md](natural-model.md) for the canonical definition.
+
+| SystemVerilog         | What it is                                           |
 | --------------------- | ---------------------------------------------------- |
-| Module definition     | Class template definition                            |
-| Module specialization | Template specialization with concrete type arguments |
-| Instance              | Object with a `this` pointer                         |
-| Compile               | Compile a translation unit into `.o`                 |
+| Module definition     | Type definition                                      |
+| Module specialization | Compiled type (distinct compiled artifact per shape) |
+| Instance              | Object that owns its state                           |
+| Compile               | Compile a type into reusable code                    |
 | Design Realization    | Construct the object graph + wire references         |
 
 ## Specialization Boundary Rule
@@ -353,7 +355,7 @@ Realization may:
 
 The boundary rule: per-instance binding should not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- should be determined by the number of unique specializations, not the number of instances. Instance-specific constants (base byte offset, instance ID, signal ID offset, per-instance slot offset tables) belong in runtime-owned data materialized at construction time.
 
-**Current state:** Per-instance code (LLVM functions, construction loops in main) has been eliminated. Shared-body code paths are in place. However, fully realized instance topology is still embedded in compile-time artifacts: constructor records, process descriptors, slot metadata, trigger/comb tables, signal trace data, instance paths, and 4-state patch tables are all emitted as LLVM globals that scale linearly with instance count. Object emission time still scales with topology. The remaining migration to move these artifacts behind constructor-time expansion is tracked as H-series items in the specialization queue.
+**Current state:** Per-instance code is eliminated. Shared-body code paths are in place. Body descriptor packages carry body-shaped templates with body-relative offsets. However, the compiled object still contains per-instance emitted IR (path strings, param payloads, constructor calls) and a design-global slot byte offset oracle. The runtime state model still uses a single design-global arena rather than per-instance object-local storage. See the [specialization queue](queues/specialization.md) for the remaining migration.
 
 ### Incrementality
 
@@ -399,7 +401,7 @@ These invariants must be enforced automatically:
 | ------------------- | ------------------------------------------------------------------------------ |
 | Module Definition   | Source-level `module M; ... endmodule`                                         |
 | Specialization      | `(ModuleDefId, BehaviorFingerprint)` -- compiled artifact library              |
-| Instance            | Runtime object with `this_base`                                                |
+| Instance            | Object that owns its state, accessed via `this_base`                           |
 | BehaviorFingerprint | Hash of compile-owned inputs that affect the compiled artifact                 |
 | SpecLayout          | Specialization-scoped mapping from slot to offset                              |
 | Design Realization  | Materializing the executable runtime image from specializations + design graph |
@@ -409,4 +411,4 @@ These invariants must be enforced automatically:
 | Compile-owned       | Type/behavior facts requiring specialization (packed widths, code shape)       |
 | Constructor-owned   | Type facts resolved at realization (unpacked dimensions, container sizing)     |
 | Container           | Unpacked array with elaboration-resolved size and layout metadata              |
-| Arena               | Contiguous byte memory for design state, allocated after elaboration           |
+| Instance storage    | Per-instance byte-level storage region, allocated at construction              |

@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Document                           | Purpose                                             |
 | ---------------------------------- | --------------------------------------------------- |
 | `docs/philosophy.md`               | North star, priorities, tradeoffs                   |
-| `docs/architecture-principles.md`  | Architectural north stars, structural rules         |
+| `docs/natural-model.md`            | Canonical definition of the natural model           |
+| `docs/architecture-principles.md`  | Natural model, architectural north stars, rules     |
 | `docs/compilation-model.md`        | Specialization-based compilation data model         |
 | `docs/design-principles.md`        | Implementation guidelines, coding patterns          |
 | `docs/architecture.md`             | Component relationships, data flow                  |
@@ -21,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/parameterized-modules.md`    | Module parameters, specialization, param classes    |
 | `docs/module-hierarchy.md`         | Module hierarchy, port connections, realization     |
 | `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands         |
-| `docs/state-layout.md`             | Arena state layout, container semantics             |
+| `docs/state-layout.md`             | Byte-level state layout, container semantics        |
 | `docs/limitations.md`              | Unsupported SystemVerilog features                  |
 | `docs/string-types.md`             | String type handling, slang interaction             |
 | `docs/error-handling.md`           | Error types, when to use each                       |

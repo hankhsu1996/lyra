@@ -47,19 +47,22 @@ HIR and MIR are internal to specialization compilation. They contain no instance
 
 ### Design Realization
 
-Materializes the executable runtime image from compiled specializations + elaborated design topology:
+**Target:** constructs the runtime object graph from compiled specializations + elaborated design topology:
 
-- Instance-to-specialization mapping
-- Design state allocation (per-instance segments from SpecLayout)
-- Connectivity tables (port wiring, connection descriptors)
+- Instance construction (per-instance storage from body-shaped SpecLayout)
+- Connectivity wiring (port bindings, connection descriptors)
 - Per-instance constant blocks (value-only parameters)
 - Debug tables (instance paths for `%m`)
+
+**Current state:** realization produces a design-global arena with per-instance slot ranges, not per-instance objects. Constructor output dissolves instance identity into flat process frames and design-global metadata tables. Per-instance emitted IR (path strings, param payloads) still exists in the compiled object. See the [specialization queue](queues/specialization.md) for the remaining migration.
 
 Realization does not recompile specialization code. See [compilation-model.md](compilation-model.md).
 
 ### Execution
 
-Event-driven simulation engine consuming realized design tables. See [runtime.md](runtime.md).
+**Target:** event-driven simulation engine. Processes run as behavior on instance objects with object-local state access. See [runtime.md](runtime.md).
+
+**Current state:** shared-body processes already access owned-local slots via `this_base + offset`, which is close to the target. However, forwarded slots use design-global addressing, signal identity requires design-global renumbering, dirty tracking uses design-global slot IDs, and every process has access to the full design arena via `design_ptr`.
 
 ## Project Structure
 
