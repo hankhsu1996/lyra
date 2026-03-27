@@ -16,6 +16,7 @@
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/runtime/construction_program_abi.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -135,26 +136,33 @@ struct CompiledModuleSpec {
   std::vector<std::optional<ProcessTriggerEntry>> process_triggers;
 };
 
+// Pure-data construction program: pooled paths, pooled param payloads, and
+// a per-instance entry table in strict ModuleIndex order. Built by lowering,
+// serialized to LLVM globals by emission, replayed by the runtime constructor.
+struct ConstructionProgramData {
+  std::vector<uint8_t> path_pool;
+  std::vector<uint8_t> param_pool;
+  std::vector<runtime::ConstructionProgramEntry> entries;
+};
+
 // Design-derived inputs for the realization/assembly phase, extracted during
 // CompileDesignProcesses. This is a partial bundle -- only the fields that
 // assembly and metadata lowering currently consume. Not the full realization
 // model. Indexed forms are explicit so each helper can take narrow views.
 struct RealizationData {
-  // Per-instance pre-lowered parameter value payloads.
-  // Indexed by instance table index. Each entry contains canonical storage
-  // bytes for all param slots in body-template order.
-  std::vector<std::vector<uint8_t>> param_payloads;
-
   // Indexed by slot_id.value.
   std::vector<TypeId> slot_types;
   std::vector<mir::SlotKind> slot_kinds;
 
-  // Indexed by instance table entry index.
-  std::vector<std::string> instance_paths;
-
   // Compact slot trace provenance from mir::Design (parallel to slot_types).
   std::vector<mir::SlotTraceProvenance> slot_trace_provenance;
   std::vector<char> slot_trace_string_pool;
+
+  // Pure-data construction program. Built by lowering, serialized to LLVM
+  // globals by emission, replayed by the runtime constructor. Entries are in
+  // strict ModuleIndex order. Runtime relies on this order for instance_id
+  // and signal_id_offset allocation.
+  ConstructionProgramData construction_program;
 };
 
 // Backend-owned intermediate state between behavioral codegen and assembly.
@@ -184,14 +192,6 @@ struct CodegenSession {
     std::vector<llvm::Function*> functions;
   };
   std::vector<BodyCompiledFuncs> body_compiled_funcs;
-  // Compile-owned topology summary: per-instance body group index.
-  // Indexed by ModuleIndex (instance order). Each entry is the index
-  // into body_compiled_funcs / layout->body_realization_infos for that
-  // instance. This is retained compile-owned topology summary, not a
-  // constructor-side artifact. Used by the emitted constructor function
-  // to emit calls in instance-major order (matching old process ordering).
-  // Not the long-term end-state (H6/H7 concern).
-  std::vector<uint32_t> instance_body_group;
 };
 
 // Backend phase: compile all design processes into LLVM IR.
@@ -213,7 +213,6 @@ auto CompileModuleSpecSession(
 // (its return type) is defined in this header.
 auto ExtractRealizationData(
     const mir::PlacementMap& placement, std::span<const mir::SlotDesc> slots,
-    const mir::InstanceTable& instance_table,
     std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
     std::span<const char> slot_trace_string_pool) -> RealizationData;
 

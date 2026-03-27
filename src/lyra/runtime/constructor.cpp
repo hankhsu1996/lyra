@@ -1234,6 +1234,58 @@ void ValidateObservableDescriptorTemplate(
   }
 }
 
+// Reconstruct a BodyDescriptorPackage view from a flat POD
+// BodyDescriptorRef. File-local ABI bridge helper: centralizes span
+// construction so LyraConstructorRunProgram does not inline field wiring.
+auto MakeBodyDescriptorPackageView(const lyra::runtime::BodyDescriptorRef& ref)
+    -> lyra::runtime::BodyDescriptorPackage {
+  return lyra::runtime::BodyDescriptorPackage{
+      .desc = ref.desc,
+      .entries = std::span(ref.entries, ref.num_entries),
+      .meta =
+          lyra::runtime::ProcessMetaTemplateView{
+              .entries = std::span(ref.meta_entries, ref.num_meta_entries),
+              .pool = ref.meta_pool,
+              .pool_size = ref.meta_pool_size,
+          },
+      .triggers =
+          lyra::runtime::TriggerTemplateView{
+              .entries =
+                  std::span(ref.trigger_entries, ref.num_trigger_entries),
+              .proc_ranges =
+                  std::span(ref.trigger_ranges, ref.num_trigger_ranges),
+              .proc_shapes =
+                  std::span(ref.trigger_shapes, ref.num_trigger_ranges),
+              .proc_groupable =
+                  std::span(ref.trigger_groupable, ref.num_trigger_ranges),
+          },
+      .comb =
+          lyra::runtime::CombTemplateView{
+              .entries = std::span(ref.comb_entries, ref.num_comb_entries),
+              .kernels = std::span(ref.comb_kernels, ref.num_comb_kernels),
+          },
+      .observable_descriptors =
+          lyra::runtime::ObservableDescriptorTemplateView{
+              .entries = std::span(ref.obs_entries, ref.num_obs_entries),
+              .pool = ref.obs_pool,
+              .pool_size = ref.obs_pool_size,
+          },
+      .init_patches =
+          lyra::runtime::InitPatchView{
+              .entries = std::span(ref.init_patches, ref.num_init_patches),
+          },
+      .init_handles =
+          lyra::runtime::InitHandleView{
+              .entries = std::span(ref.init_handles, ref.num_init_handles),
+          },
+      .init_params =
+          lyra::runtime::ParamInitView{
+              .slots =
+                  std::span(ref.init_param_slots, ref.num_init_param_slots),
+          },
+  };
+}
+
 }  // namespace
 
 auto LyraConstructorCreate(
@@ -1397,6 +1449,77 @@ void LyraConstructorAddInstance(
   static_cast<lyra::runtime::Constructor*>(ctor)->AddInstance(
       instance_path, param_data, param_data_size,
       instance_storage_base_byte_offset, has_local_storage != 0);
+}
+
+void LyraConstructorRunProgram(
+    void* ctor_raw, const lyra::runtime::BodyDescriptorRef* body_descs,
+    uint32_t body_desc_count, const char* path_pool, uint32_t path_pool_size,
+    const uint8_t* param_pool, uint32_t param_pool_size,
+    const lyra::runtime::ConstructionProgramEntry* entries,
+    uint32_t entry_count) {
+  ValidateHandle(ctor_raw, "LyraConstructorRunProgram");
+  auto& ctor = *static_cast<lyra::runtime::Constructor*>(ctor_raw);
+
+  if (entry_count != 0 && path_pool == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraConstructorRunProgram",
+        "non-empty construction program requires non-null path_pool");
+  }
+
+  uint32_t last_body_group = UINT32_MAX;
+
+  for (uint32_t i = 0; i < entry_count; ++i) {
+    const auto& e = entries[i];
+
+    if (e.body_group >= body_desc_count) {
+      throw lyra::common::InternalError(
+          "LyraConstructorRunProgram",
+          std::format(
+              "entry {} body_group {} >= body_desc_count {}", i, e.body_group,
+              body_desc_count));
+    }
+
+    if (e.body_group != last_body_group) {
+      ctor.BeginBody(MakeBodyDescriptorPackageView(body_descs[e.body_group]));
+      last_body_group = e.body_group;
+    }
+
+    if (e.path_offset >= path_pool_size) {
+      throw lyra::common::InternalError(
+          "LyraConstructorRunProgram",
+          std::format(
+              "entry {} path_offset {} >= path_pool_size {}", i, e.path_offset,
+              path_pool_size));
+    }
+    const char* instance_path = path_pool + e.path_offset;
+
+    const void* param_data = nullptr;
+    uint32_t param_size = e.param_size;
+    if (param_size != 0) {
+      if (param_pool == nullptr) {
+        throw lyra::common::InternalError(
+            "LyraConstructorRunProgram",
+            std::format(
+                "entry {} has param_size {} but param_pool is null", i,
+                param_size));
+      }
+      if (e.param_offset > param_pool_size ||
+          param_size > param_pool_size - e.param_offset) {
+        throw lyra::common::InternalError(
+            "LyraConstructorRunProgram",
+            std::format(
+                "entry {} param range [{}, {}) exceeds param_pool_size {}", i,
+                e.param_offset,
+                static_cast<uint64_t>(e.param_offset) + param_size,
+                param_pool_size));
+      }
+      param_data = param_pool + e.param_offset;
+    }
+
+    ctor.AddInstance(
+        instance_path, param_data, param_size, e.storage_base_byte_offset,
+        e.has_storage != 0);
+  }
 }
 
 auto LyraConstructorFinalize(void* ctor_raw) -> void* {

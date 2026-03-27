@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/runtime/body_realization_desc.hpp"
+#include "lyra/runtime/construction_program_abi.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_schema.hpp"
@@ -457,6 +458,13 @@ void LyraConstructorAddInstance(
     void* ctor, const char* instance_path, const void* param_data,
     uint32_t param_data_size, uint64_t instance_storage_base_byte_offset,
     uint32_t has_local_storage);
+
+void LyraConstructorRunProgram(
+    void* ctor, const lyra::runtime::BodyDescriptorRef* body_descs,
+    uint32_t body_desc_count, const char* path_pool, uint32_t path_pool_size,
+    const uint8_t* param_pool, uint32_t param_pool_size,
+    const lyra::runtime::ConstructionProgramEntry* entries,
+    uint32_t entry_count);
 
 auto LyraConstructorFinalize(void* ctor) -> void*;
 
