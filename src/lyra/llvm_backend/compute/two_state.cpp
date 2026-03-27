@@ -211,6 +211,34 @@ auto LowerBinaryRvalue2State(
   llvm::Value* lhs = *lhs_or_err;
   llvm::Value* rhs = *rhs_or_err;
 
+  // Pointer-scalar equality/inequality (chandle == null, etc.).
+  // Guarded by semantic type (kPointerScalar), not raw LLVM pointer type,
+  // to avoid giving pointer-identity semantics to managed handles.
+  // Must be handled before the packed comparison path which assumes integer
+  // operands and calls GetOperandPackedWidth / ZExtOrTrunc.
+  {
+    auto lhs_type_id = GetOperandTypeId(context, operands[0]);
+    auto rhs_type_id = GetOperandTypeId(context, operands[1]);
+    auto lhs_info = GetTypeInfoFromType(context, lhs_type_id);
+    auto rhs_info = GetTypeInfoFromType(context, rhs_type_id);
+    if (lhs_info && rhs_info && lhs_info->kind == PlaceKind::kPointerScalar &&
+        rhs_info->kind == PlaceKind::kPointerScalar) {
+      llvm::Value* cmp = nullptr;
+      if (info.op == mir::BinaryOp::kEqual) {
+        cmp = builder.CreateICmpEQ(lhs, rhs, "ptr.eq");
+      } else if (info.op == mir::BinaryOp::kNotEqual) {
+        cmp = builder.CreateICmpNE(lhs, rhs, "ptr.ne");
+      } else {
+        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+            context.GetCurrentOrigin(),
+            "only == and != are supported for chandle",
+            UnsupportedCategory::kFeature));
+      }
+      auto* result = builder.CreateZExt(cmp, storage_type, "ptr.cmp.ext");
+      return ComputeResult::TwoState(result);
+    }
+  }
+
   if (IsComparisonOp(info.op)) {
     uint32_t lhs_width = GetOperandPackedWidth(context, operands[0]);
     uint32_t rhs_width = GetOperandPackedWidth(context, operands[1]);

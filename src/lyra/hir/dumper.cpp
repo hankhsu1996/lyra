@@ -87,6 +87,9 @@ auto Dumper::ConstantString(ConstId id) const -> std::string {
   if (const auto* str = std::get_if<StringConstant>(&c.value)) {
     return std::format("\"{}\"", str->value);
   }
+  if (std::holds_alternative<NullConstant>(c.value)) {
+    return "null";
+  }
   return "<constant>";
 }
 

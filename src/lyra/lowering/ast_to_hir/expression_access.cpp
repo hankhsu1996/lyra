@@ -113,6 +113,29 @@ auto LowerConversionExpression(
             .data = hir::CastExpressionData{.operand = operand}});
   }
 
+  // Handle null -> chandle conversion.
+  // Slang wraps NullLiteral in Conversion(type=chandle). Produce a
+  // chandle-typed null constant directly.
+  if (conv.operand().kind == ExpressionKind::NullLiteral &&
+      tgt_type.isCHandle()) {
+    TypeId type = LowerType(tgt_type, span, ctx);
+    if (!type) {
+      return hir::kInvalidExpressionId;
+    }
+    ConstId constant = ctx->active_constant_arena->Intern(type, NullConstant{});
+    return ctx->hir_arena->AddExpression(
+        hir::Expression{
+            .kind = hir::ExpressionKind::kConstant,
+            .type = type,
+            .span = span,
+            .data = hir::ConstantExpressionData{.constant = constant}});
+  }
+
+  // Handle chandle -> chandle identity conversion.
+  if (src_type.isCHandle() && tgt_type.isCHandle()) {
+    return LowerExpression(conv.operand(), view);
+  }
+
   // Validate source and target types for conversions
   // Support: integral<->integral, integral<->float, float<->float
   // (float = real, shortreal, realtime)

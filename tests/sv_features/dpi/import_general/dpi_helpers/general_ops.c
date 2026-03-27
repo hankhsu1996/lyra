@@ -30,6 +30,7 @@ void nullify_string(const char** val) { *val = 0; }
 // -- chandle --
 static int sentinel = 99;
 void get_handle(void** out) { *out = &sentinel; }
+void* get_handle_ret(void) { return &sentinel; }
 int check_handle(void* h) { return (h == &sentinel) ? 1 : 0; }
 void roundtrip_handle(void** h) {
   // Just verify we can read and write through the pointer.

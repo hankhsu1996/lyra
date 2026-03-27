@@ -21,6 +21,7 @@ class Context;
 // from ad hoc TypeKind / IsPacked / NeedsFieldByField branching.
 enum class WriteShape {
   kManagedScalar,                // string / dyn array / queue / assoc array
+  kPointerScalar,                // chandle (opaque pointer, not managed)
   kPlainUnpackedAggregate,       // unpacked struct/array, bytewise-storable
   kFieldByFieldAggregate,        // unpacked struct/array with managed fields
   kUnsupportedManagedAggregate,  // aggregate with container members (deferred)
@@ -33,6 +34,7 @@ enum class WriteShape {
 // the executor never branches on TypeKind.
 enum class WriteOp {
   kCommitManagedScalar,
+  kCommitPointerScalar,
   kStorePlainAggregate,
   kCommitPackedOrFloatScalar,
   kCommitFieldByFieldStruct,
