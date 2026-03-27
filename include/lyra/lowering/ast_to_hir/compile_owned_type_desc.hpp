@@ -30,6 +30,7 @@ enum class TypeDescKind : uint8_t {
   kDynamicArray,
   kQueue,
   kAssociativeArray,
+  kChandle,
 };
 
 struct TypeDescId {

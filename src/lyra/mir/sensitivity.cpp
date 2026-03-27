@@ -276,6 +276,15 @@ void TransferStatement(
             }
             // Conservative: calls may have side effects, do not extend must-def
           },
+          [&](const DpiCall& dpi_call) {
+            for (const auto& binding : dpi_call.args) {
+              if (binding.input_value) {
+                CollectReadsFromOperand(
+                    *binding.input_value, arena, must_def, obs);
+              }
+            }
+            // Conservative: DPI calls may have side effects
+          },
           [&](const BuiltinCall& bcall) {
             for (const auto& arg : bcall.args) {
               CollectReadsFromOperand(arg, arena, must_def, obs);

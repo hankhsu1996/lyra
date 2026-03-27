@@ -35,8 +35,7 @@ auto GetOrDeclareDpiImport(
 // Lower a complete DPI import call: marshal and coerce arguments to C ABI
 // types, emit call with C calling convention, coerce return value back to
 // internal representation, and handle return staging.
-auto LowerDpiImportCall(
-    Context& context, const mir::Call& call, const mir::DpiImportRef& ref)
+auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
     -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm::dpi

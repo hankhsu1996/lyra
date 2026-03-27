@@ -232,6 +232,15 @@ auto ResolveImpl(
                    .alignment = target.pointer_alignment},
               .kind = HandleKind::kContainer}};
 
+    case TypeKind::kChandle:
+      return {
+          .data = PackedStorageSpec{
+              .layout =
+                  {.total_byte_size = target.pointer_byte_size,
+                   .alignment = target.pointer_alignment},
+              .bit_width = target.pointer_byte_size * 8,
+              .is_four_state = false}};
+
     case TypeKind::kVoid:
       throw common::InternalError(
           "ResolveStorageSpec", "void type cannot have storage");

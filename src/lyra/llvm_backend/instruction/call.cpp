@@ -282,9 +282,6 @@ auto LowerCall(Context& context, const mir::Call& call) -> Result<void> {
           [&](SystemTfOpcode opcode) -> Result<void> {
             return LowerSystemTfCall(context, call, opcode);
           },
-          [&](const mir::DpiImportRef& ref) -> Result<void> {
-            return dpi::LowerDpiImportCall(context, call, ref);
-          },
       },
       call.callee);
 }

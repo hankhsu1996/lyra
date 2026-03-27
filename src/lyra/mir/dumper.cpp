@@ -349,9 +349,6 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
                       return std::format("@design_fn(sym={})", c.symbol.value);
                     },
                     [](SystemTfOpcode c) -> std::string { return ToString(c); },
-                    [](const DpiImportRef& c) -> std::string {
-                      return std::format("@dpi_import(\"{}\")", c.c_name);
-                    },
                 },
                 i.callee);
 
@@ -398,6 +395,35 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
               *out_ << " writebacks=[" << writebacks << "]";
             }
             *out_ << "\n";
+          } else if constexpr (std::is_same_v<T, DpiCall>) {
+            std::string callee_str =
+                std::format("@dpi_import(\"{}\")", i.callee.c_name);
+            std::string args;
+            for (size_t idx = 0; idx < i.args.size(); ++idx) {
+              if (idx > 0) args += ", ";
+              const auto& binding = i.args[idx];
+              if (binding.input_value && binding.writeback_dest) {
+                args += std::format(
+                    "inout({}, {})", FormatOperand(*binding.input_value),
+                    FormatPlace(*binding.writeback_dest));
+              } else if (binding.input_value) {
+                args += FormatOperand(*binding.input_value);
+              } else if (binding.writeback_dest) {
+                args += std::format(
+                    "out({})", FormatPlace(*binding.writeback_dest));
+              }
+            }
+            std::string output;
+            if (i.ret) {
+              output = FormatPlace(i.ret->tmp);
+              if (i.ret->dest) {
+                output += std::format(" -> {}", FormatPlace(*i.ret->dest));
+              }
+            }
+            if (!output.empty()) {
+              *out_ << output << " = ";
+            }
+            *out_ << "dpi_call " << callee_str << "(" << args << ")\n";
           } else if constexpr (std::is_same_v<T, BuiltinCall>) {
             std::string args;
             for (size_t idx = 0; idx < i.args.size(); ++idx) {

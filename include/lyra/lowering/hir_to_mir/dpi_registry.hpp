@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "lyra/common/dpi_types.hpp"
+#include "lyra/common/parameter_direction.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
@@ -18,20 +19,21 @@ namespace lyra::lowering::hir_to_mir {
 
 // Frozen parameter info for a design-level DPI import.
 struct DpiParamInfo {
-  DpiAbiTypeClass dpi_type = DpiAbiTypeClass::kInvalid;
   TypeId type_id;
+  DpiAbiTypeClass abi_type = DpiAbiTypeClass::kInvalid;
+  ParameterDirection direction = ParameterDirection::kInput;
 };
 
 // Design-level DPI import info, frozen after collection.
-// Contains only the data downstream layers need for call resolution
-// and LLVM lowering. Does not carry body-local or scope data.
+// Contains the full foreign-boundary metadata needed for MIR signature
+// construction and LLVM lowering. Nothing D2-critical should be dropped here.
 struct DpiImportInfo {
   SymbolId symbol;
   SourceSpan span;
   std::string sv_name;
   std::string c_name;
-  DpiAbiTypeClass return_dpi_type = DpiAbiTypeClass::kInvalid;
   TypeId return_type_id;
+  DpiAbiTypeClass return_abi_type = DpiAbiTypeClass::kInvalid;
   std::vector<DpiParamInfo> params;
 };
 

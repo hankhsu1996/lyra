@@ -56,22 +56,22 @@ auto ConvertProcessKind(slang::ast::ProceduralBlockKind kind)
 }
 
 auto ConvertParameterDirection(slang::ast::ArgumentDirection dir)
-    -> hir::ParameterDirection {
+    -> ParameterDirection {
   switch (dir) {
     case slang::ast::ArgumentDirection::In:
-      return hir::ParameterDirection::kInput;
+      return ParameterDirection::kInput;
     case slang::ast::ArgumentDirection::Out:
-      return hir::ParameterDirection::kOutput;
+      return ParameterDirection::kOutput;
     case slang::ast::ArgumentDirection::InOut:
-      return hir::ParameterDirection::kInOut;
+      return ParameterDirection::kInOut;
     case slang::ast::ArgumentDirection::Ref:
-      return hir::ParameterDirection::kRef;
+      return ParameterDirection::kRef;
   }
   throw common::InternalError("routine lowering", "unknown argument direction");
 }
 
-// Classify a slang type as a D1 DPI ABI type class.
-// Returns nullopt for unsupported types (4-state, packed vectors, etc.).
+// Classify a slang type as a DPI ABI type class for direct-scalar transport.
+// Returns nullopt for unsupported types (4-state, wide packed, unpacked, etc.).
 auto ClassifyDpiAbiType(const slang::ast::Type& type)
     -> std::optional<hir::DpiAbiTypeClass> {
   const auto& canonical = type.getCanonicalType();
@@ -96,11 +96,16 @@ auto ClassifyDpiAbiType(const slang::ast::Type& type)
     return hir::DpiAbiTypeClass::kString;
   }
 
-  // Only accept predefined integer scalar types (not packed arrays/structs).
+  if (canonical.isCHandle()) {
+    return hir::DpiAbiTypeClass::kChandle;
+  }
+
+  // Predefined 2-state integer types: byte, shortint, int, longint.
+  // These have fixed widths and map to their own ABI carrier classes.
   if (canonical.kind == slang::ast::SymbolKind::PredefinedIntegerType) {
     const auto& pit = canonical.as<slang::ast::PredefinedIntegerType>();
     if (pit.isFourState) {
-      return std::nullopt;  // integer, time are 4-state
+      return std::nullopt;
     }
     switch (pit.integerKind) {
       case slang::ast::PredefinedIntegerType::Byte:
@@ -116,13 +121,34 @@ auto ClassifyDpiAbiType(const slang::ast::Type& type)
     }
   }
 
-  // Accept scalar 'bit' (2-state, 1-bit).
+  // Scalar 'bit' (2-state, 1-bit).
   if (canonical.kind == slang::ast::SymbolKind::ScalarType) {
     const auto& st = canonical.as<slang::ast::ScalarType>();
     if (st.scalarKind == slang::ast::ScalarType::Bit) {
       return hir::DpiAbiTypeClass::kBit;
     }
-    return std::nullopt;  // logic, reg are 4-state
+    return std::nullopt;
+  }
+
+  // Packed 2-state direct-scalar transport: packed arrays, packed structs,
+  // packed unions. Relies on three slang properties:
+  //   isIntegral()  -- true for all packed types (scalars, arrays, structs)
+  //   isFourState() -- recursive over struct/union fields
+  //   getBitWidth()  -- total packed width for all integral forms
+  // Accepted only when fully 2-state and total width <= 64.
+  // Tested for packed vectors, packed structs, and packed unions explicitly.
+  // IEEE 1800-2023 carrier ladder: 1 -> kBit, 2-32 -> kInt, 33-64 -> kLongInt.
+  if (canonical.isIntegral() && !canonical.isFourState()) {
+    auto width = canonical.getBitWidth();
+    if (width >= 1 && width <= 64) {
+      if (width == 1) {
+        return hir::DpiAbiTypeClass::kBit;
+      }
+      if (width <= 32) {
+        return hir::DpiAbiTypeClass::kInt;
+      }
+      return hir::DpiAbiTypeClass::kLongInt;
+    }
   }
 
   return std::nullopt;
@@ -155,14 +181,6 @@ auto TryLowerDpiImport(
     return DpiLoweringResult::Rejected();
   }
 
-  // Reject non-pure imports.
-  if (!sub.flags.has(slang::ast::MethodFlags::Pure)) {
-    ctx->sink->Unsupported(
-        span, "DPI-C non-pure import functions not yet supported",
-        UnsupportedCategory::kFeature);
-    return DpiLoweringResult::Rejected();
-  }
-
   // Classify return type.
   const auto& ret_type = sub.getReturnType();
   auto return_class = ClassifyDpiAbiType(ret_type);
@@ -187,6 +205,7 @@ auto TryLowerDpiImport(
     SourceSpan span;
     TypeId type_id;
     hir::DpiAbiTypeClass dpi_type;
+    ParameterDirection direction;
   };
   std::vector<PendingParam> pending_params;
   bool has_error = false;
@@ -194,19 +213,12 @@ auto TryLowerDpiImport(
   for (const slang::ast::FormalArgumentSymbol* arg : sub.getArguments()) {
     SourceSpan arg_span = ctx->SpanOf(GetSourceRange(*arg));
 
-    if (arg->direction != slang::ast::ArgumentDirection::In) {
-      const char* dir_name = "ref";
-      if (arg->direction == slang::ast::ArgumentDirection::Out) {
-        dir_name = "output";
-      } else if (arg->direction == slang::ast::ArgumentDirection::InOut) {
-        dir_name = "inout";
-      }
-      ctx->sink->Unsupported(
-          arg_span,
-          std::format("DPI-C {} parameters not yet supported", dir_name),
-          UnsupportedCategory::kFeature);
-      has_error = true;
-      continue;
+    // Internal consistency: slang rejects ref on DPI subroutines upstream,
+    // so this should never be reached. Guard against future slang changes.
+    if (arg->direction == slang::ast::ArgumentDirection::Ref) {
+      throw common::InternalError(
+          "TryLowerDpiImport",
+          "ref direction on DPI parameter should have been rejected by slang");
     }
 
     auto arg_class = ClassifyDpiAbiType(arg->getType());
@@ -232,6 +244,7 @@ auto TryLowerDpiImport(
         .span = arg_span,
         .type_id = arg_type_id,
         .dpi_type = *arg_class,
+        .direction = ConvertParameterDirection(arg->direction),
     });
   }
 
@@ -274,6 +287,7 @@ auto TryLowerDpiImport(
         .span = pp.span,
         .type_id = pp.type_id,
         .dpi_type = pp.dpi_type,
+        .direction = pp.direction,
     });
   }
 
@@ -387,7 +401,7 @@ auto LowerFunction(
       }
       SymbolId arg_sym = registrar.Register(
           *arg, SymbolKind::kParameter, arg_type, StorageClass::kLocalStorage);
-      hir::ParameterDirection dir = ConvertParameterDirection(arg->direction);
+      ParameterDirection dir = ConvertParameterDirection(arg->direction);
       parameters.push_back({.symbol = arg_sym, .direction = dir});
     }
 
@@ -449,7 +463,7 @@ auto LowerTask(const slang::ast::SubroutineSymbol& task, ScopeLowerer& lowerer)
       }
       SymbolId arg_sym = registrar.Register(
           *arg, SymbolKind::kParameter, arg_type, StorageClass::kLocalStorage);
-      hir::ParameterDirection dir = ConvertParameterDirection(arg->direction);
+      ParameterDirection dir = ConvertParameterDirection(arg->direction);
       parameters.push_back({.symbol = arg_sym, .direction = dir});
     }
 

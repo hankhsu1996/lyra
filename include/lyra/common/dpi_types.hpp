@@ -1,7 +1,6 @@
 #pragma once
 
 // Common DPI ABI type classification shared across HIR, MIR, and LLVM layers.
-// D1-only. Broader DPI surfaces should extend deliberately.
 
 namespace lyra {
 
@@ -24,6 +23,7 @@ enum class DpiAbiTypeClass {
   kReal,
   kShortReal,
   kString,
+  kChandle,
   kVoid,
 };
 

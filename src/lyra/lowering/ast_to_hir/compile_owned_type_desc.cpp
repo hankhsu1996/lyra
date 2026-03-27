@@ -21,6 +21,7 @@ auto PayloadMatchesKind(TypeDescKind kind, const TypeDescPayload& payload)
     case TypeDescKind::kReal:
     case TypeDescKind::kShortReal:
     case TypeDescKind::kString:
+    case TypeDescKind::kChandle:
       return std::holds_alternative<std::monostate>(payload);
     case TypeDescKind::kIntegral:
       return std::holds_alternative<IntegralDesc>(payload);
@@ -168,6 +169,10 @@ auto LowerTypeToStore(
     return InternEntry(store, TypeDescKind::kString, std::monostate{});
   }
 
+  if (canonical.isCHandle()) {
+    return InternEntry(store, TypeDescKind::kChandle, std::monostate{});
+  }
+
   if (canonical.isFloating()) {
     const auto& ft = canonical.as<slang::ast::FloatingType>();
     switch (ft.floatKind) {
@@ -268,6 +273,8 @@ auto DumpTypeDescEntry(const CompileOwnedTypeStore& store, TypeDescId id)
       return "shortreal";
     case TypeDescKind::kString:
       return "string";
+    case TypeDescKind::kChandle:
+      return "chandle";
 
     case TypeDescKind::kIntegral: {
       const auto& desc = std::get<IntegralDesc>(entry.payload);

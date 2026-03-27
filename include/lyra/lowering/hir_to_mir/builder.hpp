@@ -104,6 +104,12 @@ class MirBuilder {
       std::vector<mir::CallWriteback> writebacks, TypeId return_type)
       -> mir::Operand;
 
+  // Emit a DpiCall instruction for DPI-C import invocation.
+  // DPI calls use their own call family with per-argument bindings.
+  auto EmitDpiCall(
+      mir::DpiImportRef callee, std::vector<mir::DpiArgBinding> args,
+      TypeId return_type) -> mir::Operand;
+
   // Emit a BuiltinCall instruction for container-mutating builtins.
   // For pop methods that return a value, returns Use of result place.
   // For void methods (push/delete/insert), returns Poison operand.

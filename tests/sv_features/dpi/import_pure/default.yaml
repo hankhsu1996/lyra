@@ -13,37 +13,93 @@ cases:
         contains:
           - "DPI-C context import functions not yet supported"
 
-  - name: reject_dpi_non_pure
+  - name: accept_dpi_non_pure
     sv: |
       module Test;
         import "DPI-C" function int non_pure_fn(int x);
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "DPI-C non-pure import functions not yet supported"
 
-  - name: reject_dpi_output_param
+  - name: accept_dpi_output_param
     sv: |
       module Test;
         import "DPI-C" function void out_fn(output int x);
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "not yet supported"
 
-  - name: reject_dpi_inout_param
+  - name: accept_dpi_inout_param
     sv: |
       module Test;
         import "DPI-C" function void inout_fn(inout int x);
         initial begin end
       endmodule
+
+  - name: accept_dpi_chandle_param
+    sv: |
+      module Test;
+        import "DPI-C" function void ch_fn(chandle h);
+        initial begin end
+      endmodule
+
+  - name: accept_dpi_chandle_return
+    sv: |
+      module Test;
+        import "DPI-C" function chandle ch_ret();
+        initial begin end
+      endmodule
+
+  - name: accept_dpi_packed_vector
+    sv: |
+      module Test;
+        import "DPI-C" function void packed_fn(input bit [31:0] v);
+        initial begin end
+      endmodule
+
+  - name: accept_dpi_packed_vector_64
+    sv: |
+      module Test;
+        import "DPI-C" function void packed64_fn(input bit [63:0] v);
+        initial begin end
+      endmodule
+
+  - name: accept_dpi_packed_struct
+    sv: |
+      module Test;
+        typedef struct packed { bit [15:0] a; bit [15:0] b; } packed32_t;
+        import "DPI-C" function void ps_fn(input packed32_t v);
+        initial begin end
+      endmodule
+
+  - name: accept_dpi_packed_union
+    sv: |
+      module Test;
+        typedef union packed { bit [31:0] a; bit [31:0] b; } punion_t;
+        import "DPI-C" function void pu_fn(input punion_t v);
+        initial begin end
+      endmodule
+
+  - name: reject_dpi_packed_wide
+    sv: |
+      module Test;
+        import "DPI-C" function void wide_fn(input bit [127:0] v);
+        initial begin end
+      endmodule
     expect:
       error:
         contains:
+          - "DPI-C argument type"
+          - "not yet supported"
+
+  - name: reject_dpi_packed_4state
+    sv: |
+      module Test;
+        import "DPI-C" pure function int logic_vec_fn(input logic [7:0] v);
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C argument type"
           - "not yet supported"
 
   - name: reject_dpi_logic_return

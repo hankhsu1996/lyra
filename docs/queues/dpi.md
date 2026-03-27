@@ -14,19 +14,28 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
   - [x] D1c -- AOT/LLI link plumbing, `LinkRequest`, unified test linking
   - [x] D1d -- `lyra.toml` `[dpi].link_inputs`, validated input phase
 - [ ] D2 -- General import functions (output/inout args, chandle, packed types)
+  - [x] D2a -- Output/inout args, non-pure imports, packed 2-state direct-scalar <=64
+  - [x] D2b -- DPI-own MIR call family (`DpiCall`), per-param descriptors, 3-phase LLVM lowering
+  - [ ] D2c -- `chandle` variable LLVM support (load/store/null literal)
 - [ ] D3a -- 4-state scalar/vector marshaling
 - [ ] D3b -- Wide packed multiword transport (> 64-bit vectors)
 - [ ] D4 -- DPI export (C-callable wrappers, header generation)
 - [ ] D5a -- Context functions (simulator scope access)
 - [ ] D5b -- DPI tasks (time-consuming foreign calls)
 
-## D2: General import functions
+## D2c: chandle variable support
 
-Extends D1 to non-pure import functions with output and inout argument directions, chandle type support, and packed types whose DPI ABI class is direct scalar (no multiword or 4-state marshaling required).
+Cross-layer feature: make chandle work as a plain variable, not just a DPI declaration type. The type infrastructure (`TypeKind::kChandle`, storage spec, default init, `TypeDescKind::kChandle`, DPI ABI classification) is in place from D2a/D2b. The gap is expression-level operations and LLVM write/rvalue dispatch.
 
-The core new capabilities: bidirectional argument passing across the foreign boundary where the pointee storage uses C ABI layout, and chandle as a new type kind representing an opaque foreign pointer.
+Concrete gaps (verified from code, not assumption):
 
-This phase excludes 4-state types, wide packed vectors, open arrays, export, context, and tasks.
+1. No `NullConstant` in `ConstantValue` variant (`constant.hpp`). Null literals have no compile-time representation.
+2. `NullLiteral` expression kind unhandled in AST-to-HIR dispatch (`expression.cpp`).
+3. Null-to-chandle and chandle identity conversions rejected by `LowerConversionExpression` (`expression_access.cpp:116`).
+4. `GetTypeInfoFromType` (`rvalue.cpp:19-48`) rejects kChandle: not managed, not packed. Blocks all rvalue computation including equality/inequality.
+5. `ClassifyWriteShape` (`write_plan.cpp:35`) falls through to packed-scalar, then `PackedBitWidth` throws on kChandle. Blocks assignment and CommitValue.
+
+Do not route chandle through packed-scalar fallback. Give it an explicit pointer-scalar path in rvalue classification, write-shape dispatch, and commit.
 
 ## D3a: 4-state scalar/vector marshaling
 
@@ -49,6 +58,8 @@ Enables external C/C++ code to call SV functions during simulation via `export "
 Structurally different from import: the generated code is the callee, not the caller. Lyra must produce a callable entry point with a stable C name that external code can link against, and that entry point must bridge into Lyra's internal execution model without the caller knowing about simulator internals.
 
 This phase excludes context functions and DPI tasks.
+
+Ibex dependency: the ibex simple_system uses `SYNTHESIS` define to suppress DPI export declarations in `prim_util_memload.svh` (`simutil_memload`, `simutil_set_mem`, `simutil_get_mem`) and in `ibex_simple_system.sv` (`mhpmcounter_num`, `mhpmcounter_get`). Memory loading works via pure SV `$readmemh` instead. Removing the `SYNTHESIS` workaround requires D4.
 
 ## D5a: Context functions
 

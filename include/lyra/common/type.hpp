@@ -72,6 +72,7 @@ enum class TypeKind {
   kQueue,
   kAssociativeArray,
   kEnum,
+  kChandle,
 };
 
 inline auto ToString(TypeKind kind) -> std::string {
@@ -104,6 +105,8 @@ inline auto ToString(TypeKind kind) -> std::string {
       return "associative_array";
     case TypeKind::kEnum:
       return "enum";
+    case TypeKind::kChandle:
+      return "chandle";
   }
   return "unknown";
 }
@@ -579,6 +582,8 @@ inline auto ToString(const Type& type) -> std::string {
           "enum<base_type#{}, {} members>", info.base_type.value,
           info.members.size());
     }
+    case TypeKind::kChandle:
+      return "chandle";
   }
   return "unknown";
 }

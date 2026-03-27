@@ -7,10 +7,12 @@
 #include <vector>
 
 #include "lyra/common/dpi_types.hpp"
+#include "lyra/common/parameter_direction.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/operand.hpp"
 
 namespace lyra::mir {
 
@@ -23,20 +25,40 @@ struct DesignFunctionRef {
   SymbolId symbol;
 };
 
+// DPI ABI passing convention at the foreign boundary.
+enum class DpiPassingMode : uint8_t {
+  kByValue,    // Input: T
+  kByPointer,  // Output/inout: T*
+};
+
 // DPI return convention at the MIR level.
 enum class DpiReturnKind : uint8_t {
   kVoid,
   kDirectValue,
 };
 
-// Frozen DPI-C import signature. All type decisions are keyed on
-// DpiAbiTypeClass, not on raw TypeId properties.
+// Per-parameter descriptor for a DPI-C import signature.
+// Carries the full foreign-boundary contract for one parameter.
+struct DpiParamDesc {
+  TypeId sv_type;
+  DpiAbiTypeClass abi_type = DpiAbiTypeClass::kInvalid;
+  ParameterDirection direction = ParameterDirection::kInput;
+  DpiPassingMode passing = DpiPassingMode::kByValue;
+};
+
+// Return descriptor for a DPI-C import signature.
+struct DpiReturnDesc {
+  TypeId sv_type;
+  DpiAbiTypeClass abi_type = DpiAbiTypeClass::kInvalid;
+  DpiReturnKind kind = DpiReturnKind::kVoid;
+};
+
+// Frozen DPI-C import signature with per-parameter descriptors.
 // Separate from FunctionSignature; never participates in Lyra-internal call
 // ABI.
 struct DpiSignature {
-  DpiAbiTypeClass return_type = DpiAbiTypeClass::kInvalid;
-  DpiReturnKind return_kind = DpiReturnKind::kVoid;
-  std::vector<DpiAbiTypeClass> param_types;
+  DpiReturnDesc result;
+  std::vector<DpiParamDesc> params;
 };
 
 // Explicit reference to a DPI-C imported function.
@@ -48,12 +70,18 @@ struct DpiImportRef {
   DpiSignature signature;
 };
 
-// Callee discriminator: body-local function, design-global function,
-// system TF, or DPI-C import. FunctionId is always arena-local (body or
-// design arena). DesignFunctionRef is an explicit cross-domain reference
-// resolved by symbol identity. DpiImportRef is an external foreign call.
-using Callee =
-    std::variant<FunctionId, DesignFunctionRef, SystemTfOpcode, DpiImportRef>;
+// Per-argument binding at a DPI call site.
+// Input: input_value present, writeback_dest absent.
+// Output: input_value absent, writeback_dest present.
+// Inout: both present (copy-in value + writeback destination).
+struct DpiArgBinding {
+  std::optional<Operand> input_value;
+  std::optional<PlaceId> writeback_dest;
+};
+
+// Callee discriminator for non-DPI calls: body-local function,
+// design-global function, or system TF. DPI calls use DpiCall instead.
+using Callee = std::variant<FunctionId, DesignFunctionRef, SystemTfOpcode>;
 
 // Argument passing mode for writeback parameters only.
 enum class PassMode : uint8_t {

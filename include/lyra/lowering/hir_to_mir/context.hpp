@@ -238,10 +238,13 @@ struct Context {
   // are pre-allocated, so missing = compiler bug).
   [[nodiscard]] auto ResolveCallee(SymbolId sym) const -> mir::FunctionId;
 
+  // Try to resolve a symbol as a DPI import. Returns nullopt if not a DPI
+  // import. Used by call lowering to separate DPI from non-DPI call paths.
+  [[nodiscard]] auto ResolveDpiImport(SymbolId sym) const
+      -> std::optional<mir::DpiImportRef>;
+
   // Resolve a function symbol to a domain-aware callee reference.
-  // During body lowering: returns DesignFunctionRef for package functions,
-  // FunctionId for body-local functions.
-  // During design-level lowering: returns FunctionId for all functions.
+  // Does not handle DPI imports (use ResolveDpiImport first).
   [[nodiscard]] auto ResolveCallTarget(SymbolId sym) const -> mir::Callee;
 
   // Resolve a callee to its function signature from the correct arena.

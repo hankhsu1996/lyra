@@ -287,6 +287,43 @@ void CollectStatementAccesses(
               }
             }
           },
+          [&](const DpiCall& dc) {
+            for (const auto& binding : dc.args) {
+              if (binding.input_value) {
+                CollectOperandReads(
+                    *binding.input_value, arena, block_index, stmt_index,
+                    accesses);
+              }
+              if (binding.writeback_dest) {
+                const auto& place = arena[*binding.writeback_dest];
+                auto info = ExtractModuleSlotInfo(place);
+                if (info) {
+                  accesses.push_back(
+                      SlotAccessRecord{
+                          .slot = info->slot,
+                          .shape = AccessShape::kExternalWriteTarget,
+                          .root_type = info->root_type,
+                          .block_index = block_index,
+                          .statement_index = stmt_index,
+                      });
+                }
+              }
+            }
+            if (dc.ret && dc.ret->dest) {
+              const auto& place = arena[*dc.ret->dest];
+              auto info = ExtractModuleSlotInfo(place);
+              if (info) {
+                accesses.push_back(
+                    SlotAccessRecord{
+                        .slot = info->slot,
+                        .shape = AccessShape::kExternalWriteTarget,
+                        .root_type = info->root_type,
+                        .block_index = block_index,
+                        .statement_index = stmt_index,
+                    });
+              }
+            }
+          },
           [&](const BuiltinCall& bc) {
             for (const auto& arg : bc.args) {
               CollectOperandReads(
@@ -474,6 +511,19 @@ void AnalyzeStatementSemantics(
           },
           // Call: callee reads/writes canonical via design_ptr.
           [&](const Call&) {
+            facts.push_back(
+                StatementSemanticFact{
+                    .block_index = block_index,
+                    .statement_index = stmt_index,
+                    .reads_canonical_state = true,
+                    .writes_canonical_state = true,
+                    .write_footprint = CanonicalWriteFootprint::kAll,
+                    .write_targets = {},
+                    .conservative_unknown = false,
+                });
+          },
+          // DpiCall: foreign call may read/write canonical state.
+          [&](const DpiCall&) {
             facts.push_back(
                 StatementSemanticFact{
                     .block_index = block_index,

@@ -32,6 +32,7 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/place_collect.hpp"
 #include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
@@ -372,6 +373,9 @@ auto GetLlvmTypeForTypeId(
       return BuildUnpackedUnionType(ctx, type_id, types);
 
     case TypeKind::kAssociativeArray:
+      return llvm::PointerType::getUnqual(ctx);
+
+    case TypeKind::kChandle:
       return llvm::PointerType::getUnqual(ctx);
 
     case TypeKind::kVoid:
@@ -745,8 +749,9 @@ void CollectPlacesFromEffectOp(
       effect);
 }
 
-// Collect all PlaceIds referenced in a process
-auto CollectProcessPlaces(const mir::Process& process)
+// Collect all PlaceIds referenced in a process.
+// arena is needed for root-aware filtering of writeback destinations.
+auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
     -> std::unordered_set<mir::PlaceId, PlaceIdHash> {
   std::unordered_set<mir::PlaceId, PlaceIdHash> places;
 
@@ -784,6 +789,20 @@ auto CollectProcessPlaces(const mir::Process& process)
                 // Collect input args
                 for (const auto& arg : call.in_args) {
                   CollectPlaceFromOperand(arg, places);
+                }
+              },
+              [&](const mir::DpiCall& dc) {
+                if (dc.ret) {
+                  places.insert(dc.ret->tmp);
+                }
+                for (const auto& binding : dc.args) {
+                  if (binding.input_value) {
+                    CollectPlaceFromOperand(*binding.input_value, places);
+                  }
+                  if (binding.writeback_dest) {
+                    mir::CollectIfProcessLocal(
+                        *binding.writeback_dest, arena, places);
+                  }
                 }
               },
               [&](const mir::BuiltinCall& bcall) {
@@ -863,7 +882,7 @@ struct RootInfo {
 auto CollectProcessRoots(
     const mir::Process& process, const mir::Arena& arena,
     const TypeArena& types) -> std::vector<RootInfo> {
-  auto all_places = CollectProcessPlaces(process);
+  auto all_places = CollectProcessPlaces(process, arena);
 
   std::unordered_map<PlaceRootKey, TypeId, PlaceRootKeyHash> seen;
   for (mir::PlaceId place_id : all_places) {
@@ -1021,6 +1040,7 @@ auto IsStatementPure(const mir::Statement& stmt) -> bool {
           [](const mir::Effect&) { return false; },
           [](const mir::DeferredAssign&) { return false; },
           [](const mir::Call&) { return false; },
+          [](const mir::DpiCall&) { return false; },
           [](const mir::BuiltinCall&) { return false; },
           [](const mir::AssocOp&) { return false; },
       },

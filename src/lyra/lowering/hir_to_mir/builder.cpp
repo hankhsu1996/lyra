@@ -428,6 +428,40 @@ auto MirBuilder::EmitCallWithWritebacks(
   return is_void ? mir::Operand::Poison() : mir::Operand::Use(ret_tmp);
 }
 
+auto MirBuilder::EmitDpiCall(
+    mir::DpiImportRef callee, std::vector<mir::DpiArgBinding> args,
+    TypeId return_type) -> mir::Operand {
+  for (const auto& arg : args) {
+    if (arg.writeback_dest) {
+      CheckWriteableSlot(*arg.writeback_dest, *arena_, *ctx_);
+    }
+  }
+
+  const auto& types = *ctx_->type_arena;
+  bool is_void = types[return_type].Kind() == TypeKind::kVoid;
+
+  std::optional<mir::CallReturn> ret;
+  mir::PlaceId ret_tmp;
+
+  if (!is_void) {
+    ret_tmp = ctx_->AllocTemp(return_type);
+    ret = mir::CallReturn{
+        .tmp = ret_tmp,
+        .dest = std::nullopt,
+        .type = return_type,
+    };
+  }
+
+  EmitInst(
+      mir::DpiCall{
+          .callee = std::move(callee),
+          .args = std::move(args),
+          .ret = ret,
+      });
+
+  return is_void ? mir::Operand::Poison() : mir::Operand::Use(ret_tmp);
+}
+
 auto MirBuilder::EmitBuiltinCall(
     mir::BuiltinMethod method, mir::PlaceId receiver,
     std::vector<mir::Operand> args, TypeId return_type) -> mir::Operand {

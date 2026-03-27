@@ -107,6 +107,7 @@ void EmitSVDefaultInitImpl(
       return;
     }
 
+    case TypeKind::kChandle:
     case TypeKind::kString:
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
