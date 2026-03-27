@@ -115,9 +115,11 @@ void TraceSignalMetaRegistry::BuildAliasGroups(
                 "alias group member {} points to {} but group owner is {}",
                 member, metas_[member].storage_owner_slot_id, owner));
       }
-      // Alias must have the same trace-visible storage shape as owner.
-      // Snapshot bytes are reused across the alias group, so any field
-      // that affects snapshot format or trace rendering must match.
+      // Safety-net validation: alias-group-invariant trace/storage shape
+      // must already have been canonicalized before runtime metadata
+      // construction. Snapshot bytes are reused across the alias group,
+      // so any field that affects snapshot format or trace rendering
+      // must match.
       if (member != owner) {
         const auto& alias_meta = metas_[member];
         const auto& owner_meta = metas_[owner];
