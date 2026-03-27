@@ -1,0 +1,176 @@
+feature: packed_struct_wide_local
+description: >
+  Sub-field reads and writes on local packed struct variables wider than
+  64 bits. Exercises the bit-addressable load/store path on non-canonical
+  (alloca) storage, including non-byte-aligned widths (65, 66, 71) and
+  byte-aligned boundary cases (72, 128).
+
+cases:
+  - name: local_66bit_struct_field_write
+    description: >
+      66-bit packed struct (57+7+2) as local variable with sub-field writes.
+      Reproduces ibex secded_64_57_t pattern.
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [56:0] data;
+          logic [6:0] syndrome;
+          logic [1:0] err;
+        } secded_t;
+
+        int result_data, result_syndrome, result_err;
+        initial begin
+          secded_t dec;
+          dec.data = 57'd42;
+          dec.syndrome = 7'd3;
+          dec.err = 2'd1;
+          result_data = dec.data;
+          result_syndrome = dec.syndrome;
+          result_err = dec.err;
+        end
+      endmodule
+    expect:
+      variables:
+        result_data: 42
+        result_syndrome: 3
+        result_err: 1
+
+  - name: local_65bit_struct_field_write
+    description: >
+      65-bit packed struct (32+32+1) as local variable. Smallest width
+      above 64 that triggers non-byte-aligned storage mismatch.
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [31:0] high;
+          logic [31:0] low;
+          logic flag;
+        } wide65_t;
+
+        int result_high, result_low, result_flag;
+        initial begin
+          wide65_t w;
+          w.high = 32'hDEAD;
+          w.low = 32'hBEEF;
+          w.flag = 1'b1;
+          result_high = w.high;
+          result_low = w.low;
+          result_flag = w.flag;
+        end
+      endmodule
+    expect:
+      variables:
+        result_high: "0xdead"
+        result_low: "0xbeef"
+        result_flag: 1
+
+  - name: local_71bit_struct_field_write
+    description: >
+      71-bit packed struct (32+32+7). Upper boundary before byte alignment
+      at 72 bits.
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [31:0] a;
+          logic [31:0] b;
+          logic [6:0] c;
+        } wide71_t;
+
+        int result_a, result_b, result_c;
+        initial begin
+          wide71_t w;
+          w.a = 32'h1234;
+          w.b = 32'h5678;
+          w.c = 7'd99;
+          result_a = w.a;
+          result_b = w.b;
+          result_c = w.c;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: "0x1234"
+        result_b: "0x5678"
+        result_c: 99
+
+  - name: local_66bit_struct_field_read_only
+    description: >
+      66-bit packed struct initialized as whole value, then individual
+      fields read. Exercises EmitBitAddressableLoad on non-canonical
+      storage without sub-field writes.
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [56:0] data;
+          logic [6:0] syndrome;
+          logic [1:0] err;
+        } secded_t;
+
+        int result_data, result_syndrome, result_err;
+        initial begin
+          secded_t dec;
+          dec = 66'((57'd42 << 9) | (7'd3 << 2) | 2'd1);
+          result_data = dec.data;
+          result_syndrome = dec.syndrome;
+          result_err = dec.err;
+        end
+      endmodule
+    expect:
+      variables:
+        result_data: 42
+        result_syndrome: 3
+        result_err: 1
+
+  - name: local_72bit_struct_field_write
+    description: >
+      72-bit packed struct (32+32+8) as local variable. Byte-aligned
+      boundary case -- should work and confirms no regression.
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [31:0] a;
+          logic [31:0] b;
+          logic [7:0] c;
+        } wide72_t;
+
+        int result_a, result_b, result_c;
+        initial begin
+          wide72_t w;
+          w.a = 32'hCAFE;
+          w.b = 32'hBABE;
+          w.c = 8'hFF;
+          result_a = w.a;
+          result_b = w.b;
+          result_c = w.c;
+        end
+      endmodule
+    expect:
+      variables:
+        result_a: "0xcafe"
+        result_b: "0xbabe"
+        result_c: "0xff"
+
+  - name: local_128bit_struct_field_write
+    description: >
+      128-bit packed struct (64+64) as local variable. Wide but
+      byte-aligned -- confirms no regression for large types.
+    sv: |
+      module Test;
+        typedef struct packed {
+          logic [63:0] high;
+          logic [63:0] low;
+        } wide128_t;
+
+        int result_high, result_low;
+        initial begin
+          wide128_t w;
+          w.high = 64'hDEADBEEF;
+          w.low = 64'hCAFEBABE;
+          result_high = w.high;
+          result_low = w.low;
+        end
+      endmodule
+    expect:
+      variables:
+        result_high: "0xdeadbeef"
+        result_low: "0xcafebabe"
