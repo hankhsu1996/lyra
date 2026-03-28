@@ -197,6 +197,10 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .default_value(false)
       .implicit_value(true)
       .help("Write LLVM time-trace profile to lyra-jit-<PID>.time-trace.json");
+  cmd.add_argument("--dump-suspended")
+      .default_value(false)
+      .implicit_value(true)
+      .help("Dump suspended process state at simulation end");
   cmd.add_argument("--two-state")
       .default_value(false)
       .implicit_value(true)
@@ -358,6 +362,9 @@ auto BuildInput(
 
   // Activation trace (CLI only)
   input.trace_activations = cmd.get<bool>("--trace-activations");
+
+  // Dump suspended processes at simulation end (CLI only)
+  input.dump_suspended = cmd.get<bool>("--dump-suspended");
 
   // LLVM time-trace profiling (CLI only)
   input.time_trace = cmd.get<bool>("--llvm-time-trace");

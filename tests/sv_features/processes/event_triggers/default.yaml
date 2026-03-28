@@ -77,3 +77,7 @@ cases:
     expect:
       variables:
         count: 55
+
+  # TODO(hankhsu): Add cross_process_opposite_polarity test when edge
+  # subscription bug is fixed. Repro and root cause documented in
+  # tests/sv_features/known_bugs/cross_process_edge_polarity.yaml

@@ -32,6 +32,7 @@ struct CompilationInput {
   // Text signal trace: nullopt=disabled, ""=stdout, path=file
   std::optional<std::string> trace_signals_output;
   bool trace_activations = false;  // Enable activation trace
+  bool dump_suspended = false;     // Dump suspended processes at simulation end
   bool time_trace = false;         // LLVM time-trace profiling
   bool two_state = false;          // Force 2-state LLVM representation
   uint32_t iteration_limit = kDefaultIterationLimit;    // 0 = unlimited
