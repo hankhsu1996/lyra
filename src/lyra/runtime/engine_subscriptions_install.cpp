@@ -19,7 +19,39 @@
 #include "lyra/runtime/update_set.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
+// Subscription lifecycle: install, removal, refresh, and post-activation
+// reconciliation.
+//
+// Responsibilities:
+//   1. Subscription install: Subscribe, SubscribeContainerElement,
+//      FindOrCreateEdgeGroup, InstallTriggers, InstallWaitSite,
+//      SubscribeRebind
+//   2. Subscription removal: Remove{Edge,Change,RebindWatcher,Container}Sub,
+//      ClearInstalledSubscriptions (swap-and-pop with SubRef backpatch)
+//   3. Post-activation reconciliation: ReconcilePostActivation,
+//      RefreshInstalledSnapshots (routes by SuspendTag, refreshes cold
+//      snapshots for persistent waits)
+//
+// Cross-file dependency: RemoveEdgeSubFromBucket is also called from
+// engine_subscriptions_flush.cpp (RebindSubscription group migration).
+//
+// Ownership boundary: group.last_bit is flush-owned (FlushSlotEdgeGroups).
+// This file must NOT write group.last_bit except during group creation
+// (FindOrCreateEdgeGroup, empty-group init only).
+
 namespace lyra::runtime {
+
+namespace {
+
+// Backpatch a moved subscription's SubRef after swap-and-pop removal.
+// Called when vec[index] was overwritten by vec[last] during swap.
+void BackpatchMovedSubRef(
+    std::vector<ProcessState>& process_states, uint32_t process_id,
+    uint32_t process_sub_idx, uint32_t new_index) {
+  process_states[process_id].sub_refs[process_sub_idx].index = new_index;
+}
+
+}  // namespace
 
 auto Engine::GetEdgeGroup(uint32_t slot_id, uint32_t group) -> EdgeWatchGroup& {
   return signal_subs_[slot_id].edge_groups[group];
@@ -80,14 +112,14 @@ void Engine::RemoveEdgeSubFromBucket(
     uint32_t slot_id, uint32_t group, EdgeBucket bucket, uint32_t index) {
   auto& vec = EdgeSubVec(slot_id, group, bucket);
 
-  // Swap-and-pop with full grouped-location invariant restoration.
   uint32_t last = static_cast<uint32_t>(vec.size()) - 1;
   if (index != last) {
     vec[index] = vec[last];
     auto& moved = vec[index];
+    BackpatchMovedSubRef(
+        process_states_, moved.process_id, moved.process_sub_idx, index);
     auto& moved_ref =
         process_states_[moved.process_id].sub_refs[moved.process_sub_idx];
-    moved_ref.index = index;
     moved_ref.edge_group = group;
     moved_ref.edge_bucket = bucket;
     if (moved.cold_idx != UINT32_MAX) {
@@ -122,61 +154,57 @@ void Engine::RemoveEdgeSub(const SubRef& ref) {
 
 void Engine::RemoveChangeSub(uint32_t slot_id, uint32_t index) {
   auto& vec = signal_subs_[slot_id].change_subs;
-  auto& sub = vec[index];
 
-  if (sub.cold_idx != UINT32_MAX) {
-    FreeChangeCold(sub.cold_idx);
+  if (vec[index].cold_idx != UINT32_MAX) {
+    FreeChangeCold(vec[index].cold_idx);
   }
 
   uint32_t last = static_cast<uint32_t>(vec.size()) - 1;
   if (index != last) {
     vec[index] = vec[last];
-    auto& moved = vec[index];
-    auto& moved_proc = process_states_[moved.process_id];
-    moved_proc.sub_refs[moved.process_sub_idx].index = index;
+    BackpatchMovedSubRef(
+        process_states_, vec[index].process_id, vec[index].process_sub_idx,
+        index);
   }
   vec.pop_back();
 }
 
 void Engine::RemoveRebindWatcherSub(uint32_t slot_id, uint32_t index) {
   auto& vec = signal_subs_[slot_id].rebind_subs;
-  auto& sub = vec[index];
 
-  if (sub.cold_idx != UINT32_MAX) {
-    FreeWatcherCold(sub.cold_idx);
+  if (vec[index].cold_idx != UINT32_MAX) {
+    FreeWatcherCold(vec[index].cold_idx);
   }
 
   uint32_t last = static_cast<uint32_t>(vec.size()) - 1;
   if (index != last) {
     vec[index] = vec[last];
-    auto& moved = vec[index];
-    auto& moved_proc = process_states_[moved.process_id];
-    moved_proc.sub_refs[moved.process_sub_idx].index = index;
+    BackpatchMovedSubRef(
+        process_states_, vec[index].process_id, vec[index].process_sub_idx,
+        index);
   }
   vec.pop_back();
 }
 
 void Engine::RemoveContainerSub(uint32_t slot_id, uint32_t index) {
   auto& vec = signal_subs_[slot_id].container_subs;
-  auto& sub = vec[index];
 
-  if (sub.cold_idx != UINT32_MAX) {
-    auto& cold = container_cold_pool_[sub.cold_idx];
+  if (vec[index].cold_idx != UINT32_MAX) {
+    auto& cold = container_cold_pool_[vec[index].cold_idx];
     if (cold.edge_target_id != UINT32_MAX) {
       FreeEdgeTarget(cold.edge_target_id);
     }
-    FreeContainerCold(sub.cold_idx);
+    FreeContainerCold(vec[index].cold_idx);
   }
 
   uint32_t last = static_cast<uint32_t>(vec.size()) - 1;
   if (index != last) {
     vec[index] = vec[last];
-    auto& moved = vec[index];
-    auto& moved_proc = process_states_[moved.process_id];
-    moved_proc.sub_refs[moved.process_sub_idx].index = index;
-    // Update edge_target_table_ if moved element is a rebind target.
-    if (moved.cold_idx != UINT32_MAX) {
-      auto& moved_cold = container_cold_pool_[moved.cold_idx];
+    BackpatchMovedSubRef(
+        process_states_, vec[index].process_id, vec[index].process_sub_idx,
+        index);
+    if (vec[index].cold_idx != UINT32_MAX) {
+      auto& moved_cold = container_cold_pool_[vec[index].cold_idx];
       if (moved_cold.edge_target_id != UINT32_MAX) {
         edge_target_table_[moved_cold.edge_target_id].index = index;
       }
