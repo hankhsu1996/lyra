@@ -78,6 +78,40 @@ cases:
       variables:
         count: 55
 
-  # TODO(hankhsu): Add cross_process_opposite_polarity test when edge
-  # subscription bug is fixed. Repro and root cause documented in
-  # tests/sv_features/known_bugs/cross_process_edge_polarity.yaml
+  - name: cross_process_opposite_polarity
+    description: >
+      Posedge wait on signal must fire even when another process has negedge
+      subscription on the same signal via always_ff async reset.
+    sv: |
+      module Test;
+        bit clk = 0;
+        logic rst_n;
+        int result = 0;
+
+        initial begin
+          clk = 0;
+          forever #10 clk = ~clk;
+        end
+
+        initial begin
+          rst_n = 0;
+          repeat(5) @(posedge clk);
+          rst_n = 1;
+        end
+
+        logic [31:0] q;
+        always_ff @(posedge clk or negedge rst_n) begin
+          if (!rst_n) q <= 0;
+          else q <= q + 1;
+        end
+
+        initial begin
+          @(posedge rst_n);
+          repeat(3) @(posedge clk);
+          result = q;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 3

@@ -282,11 +282,15 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
 
     switch (ref.kind) {
       case SubKind::kEdge: {
-        auto& group = GetEdgeGroup(ref.slot_id, ref.edge_group);
-        uint8_t current_byte = design_state[meta.base_off + group.byte_offset];
-        group.last_bit = (current_byte >> group.bit_index) & 1;
+        // Refresh cold snapshot only. Do NOT update group.last_bit here.
+        // group.last_bit is owned by FlushSlotEdgeGroups, which updates it
+        // after dispatching subscribers. Updating it here would consume the
+        // transition before subscribers are woken.
         auto& sub = ResolveEdgeSub(ref);
         if (sub.cold_idx != UINT32_MAX) {
+          auto& group = GetEdgeGroup(ref.slot_id, ref.edge_group);
+          uint8_t current_byte =
+              design_state[meta.base_off + group.byte_offset];
           auto& cold = edge_cold_pool_[sub.cold_idx];
           cold.edge_last_byte = current_byte;
           cold.has_edge_last_byte = true;
