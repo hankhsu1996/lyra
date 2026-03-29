@@ -23,6 +23,7 @@
 #include <slang/util/Bag.h>
 #include <slang/util/LanguageVersion.h>
 
+#include "lyra/frontend/parse_unit.hpp"
 #include "tests/framework/test_case.hpp"
 
 namespace lyra::test {
@@ -198,18 +199,26 @@ inline auto ParseTestCase(
   if (test_case.IsMultiFile()) {
     auto file_paths = WriteTempFiles(test_case.files, work_directory);
 
+    // Separate SV sources from auxiliary data files
+    std::vector<std::string> sv_paths;
     for (const auto& path : file_paths) {
       auto extension = std::filesystem::path(path).extension();
       if (extension == ".sv" || extension == ".v") {
-        auto tree_result = slang::syntax::SyntaxTree::fromFile(
-            path, *result.source_manager, parse_options);
-        if (!tree_result) {
-          result.error_message = "Failed to parse: " + path;
-          return result;
-        }
-        result.compilation->addSyntaxTree(tree_result.value());
+        sv_paths.push_back(path);
       }
-      // Non-SV files (hex, mem, txt) are auxiliary data files, not parsed
+    }
+
+    auto cu_mode = test_case.single_unit
+                       ? frontend::CompilationUnitMode::kSingleUnit
+                       : frontend::CompilationUnitMode::kPerFile;
+    auto plan = frontend::BuildParsePlan(sv_paths, cu_mode);
+    for (const auto& unit : plan.units) {
+      if (!frontend::ExecuteParseUnit(
+              unit, *result.source_manager, *result.compilation,
+              parse_options)) {
+        result.error_message = "Failed to parse source files";
+        return result;
+      }
     }
   } else {
     auto tree = slang::syntax::SyntaxTree::fromText(

@@ -152,6 +152,12 @@ auto LoadConfig(const fs::path& config_path) -> lyra::Result<ProjectConfig> {
     if (auto p = compilation["pedantic"].value<bool>()) {
       config.pedantic = *p;
     }
+    if (auto v = compilation["disable_assertions"].value<bool>()) {
+      config.disable_assertions = *v;
+    }
+    if (auto v = compilation["single_unit"].value<bool>()) {
+      config.single_unit = *v;
+    }
   }
 
   // [dpi] section (optional)

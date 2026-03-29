@@ -107,6 +107,18 @@ auto ParseCommandFile(const fs::path& path, bool relative_to_file)
 
 }  // namespace
 
+auto ResolveCompilationUnitMode(
+    std::optional<bool> cli_single_unit, bool config_single_unit)
+    -> CompilationUnitMode {
+  if (cli_single_unit.has_value() && *cli_single_unit) {
+    return CompilationUnitMode::kSingleUnit;
+  }
+  if (!cli_single_unit.has_value() && config_single_unit) {
+    return CompilationUnitMode::kSingleUnit;
+  }
+  return CompilationUnitMode::kPerFile;
+}
+
 auto PreprocessArgs(std::span<char*> argv) -> std::vector<std::string> {
   std::vector<std::string> result;
   for (char* raw_arg : argv) {
@@ -217,9 +229,11 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .metavar("PATH")
       .help("DPI link input path (repeatable)");
   cmd.add_argument("--disable-assertions")
-      .default_value(false)
       .implicit_value(true)
       .help("Skip unsupported assertion constructs during lowering");
+  cmd.add_argument("--single-unit")
+      .implicit_value(true)
+      .help("Treat all input files as a single compilation unit");
 }
 
 auto BuildInput(
@@ -386,8 +400,17 @@ auto BuildInput(
     input.stats_out_path = *path;
   }
 
-  // Disable assertions (CLI only)
-  input.disable_assertions = cmd.get<bool>("--disable-assertions");
+  // Disable assertions: CLI overrides config, else fall back to config
+  if (auto v = cmd.present<bool>("--disable-assertions")) {
+    input.disable_assertions = *v;
+  } else if (config) {
+    input.disable_assertions = config->disable_assertions;
+  }
+
+  // Compilation-unit mode: CLI overrides config, else fall back to config.
+  // Bool surfaces are converted to the typed enum at this single site.
+  input.compilation_unit_mode = ResolveCompilationUnitMode(
+      cmd.present<bool>("--single-unit"), config ? config->single_unit : false);
 
   // DPI link inputs: config base + CLI appended
   if (config) {

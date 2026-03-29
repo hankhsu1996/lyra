@@ -154,6 +154,18 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "frontend",
+    srcs = glob(["src/lyra/frontend/*.cpp"]),
+    hdrs = glob(["include/lyra/frontend/*.hpp"]),
+    visibility = ["//tests:__subpackages__"],
+    deps = [
+        ":common",
+        "@fmt",
+        "@slang",
+    ],
+)
+
 cc_binary(
     name = "lyra",
     srcs = glob([
@@ -166,6 +178,7 @@ cc_binary(
     ],
     linkopts = ["-Wl,--export-dynamic"],  # Export symbols for ORC JIT
     deps = [
+        ":frontend",
         ":hir",
         ":llvm_backend",
         ":lowering",
