@@ -197,7 +197,7 @@ auto MaterializeStringWriteback(Context& context, llvm::Value* c_str_ptr)
 }
 
 // ---------------------------------------------------------------------------
-// DPI svLogicVecVal layout helpers (D3a)
+// DPI packed-vector layout helpers
 // ---------------------------------------------------------------------------
 
 auto GetDpiLogicWordCount(uint32_t sv_width) -> uint32_t {
@@ -209,14 +209,37 @@ auto GetDpiLogicVecWordType(llvm::LLVMContext& ctx) -> llvm::StructType* {
   return llvm::StructType::get(ctx, {i32, i32});
 }
 
-auto GetDpiLogicVecArrayType(llvm::LLVMContext& ctx, uint32_t word_count)
+auto GetDpiLogicVecStorageType(llvm::LLVMContext& ctx, uint32_t word_count)
     -> llvm::ArrayType* {
   return llvm::ArrayType::get(GetDpiLogicVecWordType(ctx), word_count);
+}
+
+auto GetDpiBitVecStorageType(llvm::LLVMContext& ctx, uint32_t word_count)
+    -> llvm::ArrayType* {
+  return llvm::ArrayType::get(llvm::Type::getInt32Ty(ctx), word_count);
 }
 
 auto GetSemanticWidth(TypeId sv_type, const TypeArena& types) -> uint32_t {
   const auto& type = types[sv_type];
   return PackedBitWidth(type, types);
+}
+
+auto LowBitsMask(
+    llvm::IRBuilder<>& b, llvm::Type* backing_ty, uint32_t semantic_width)
+    -> llvm::Value* {
+  auto* int_ty = llvm::dyn_cast<llvm::IntegerType>(backing_ty);
+  if (int_ty == nullptr) {
+    throw common::InternalError("LowBitsMask", "expected integer backing type");
+  }
+  if (int_ty->getBitWidth() < semantic_width) {
+    throw common::InternalError(
+        "LowBitsMask", std::format(
+                           "backing width {} is smaller than semantic width {}",
+                           int_ty->getBitWidth(), semantic_width));
+  }
+  llvm::APInt bits =
+      llvm::APInt::getLowBitsSet(int_ty->getBitWidth(), semantic_width);
+  return llvm::ConstantInt::get(backing_ty, bits);
 }
 
 // ---------------------------------------------------------------------------
@@ -332,25 +355,38 @@ auto InsertWord32(
   return b.CreateOr(accum, shifted, "dpi.iw32.or");
 }
 
+// Validate that an array type has the expected svLogicVecVal shape.
+void ValidateLogicVecStorageShape(
+    llvm::ArrayType* arr_ty, llvm::StructType* word_ty, llvm::LLVMContext& ctx,
+    const char* caller) {
+  auto* i32 = llvm::Type::getInt32Ty(ctx);
+  if (word_ty == nullptr || word_ty->getNumElements() != 2 ||
+      word_ty->getElementType(0) != i32 || word_ty->getElementType(1) != i32) {
+    throw common::InternalError(
+        caller, "expected {i32, i32} word type for svLogicVecVal transport");
+  }
+  if (arr_ty->getElementType() != word_ty) {
+    throw common::InternalError(
+        caller, "array element type does not match word type");
+  }
+}
+
 // Encode Lyra 4-state (val, unk) into svLogicVecVal array [N x {i32, i32}].
 // Conversion: aval = val ^ unk, bval = unk (per 32-bit word).
-auto BuildDpiLogicVecNarrow(
-    llvm::IRBuilder<>& b, const DpiFourStateValue& fsv, uint32_t word_count,
-    llvm::ArrayType* arr_ty, llvm::StructType* word_ty) -> llvm::Value* {
-  if (word_count > 2) {
-    throw common::InternalError(
-        "BuildDpiLogicVecNarrow",
-        "D3a supports at most 2 svLogicVecVal words (<=64-bit)");
-  }
+auto BuildDpiLogicVecStorage(
+    llvm::IRBuilder<>& b, const DpiFourStateValue& fsv, llvm::ArrayType* arr_ty,
+    llvm::StructType* word_ty) -> llvm::Value* {
+  ValidateLogicVecStorageShape(
+      arr_ty, word_ty, b.getContext(), "BuildDpiLogicVecStorage");
+  uint32_t word_count = arr_ty->getNumElements();
   llvm::Value* arr = llvm::UndefValue::get(arr_ty);
   for (uint32_t i = 0; i < word_count; ++i) {
     llvm::Value* val_w = ExtractWord32(b, fsv.val, i);
     llvm::Value* unk_w = ExtractWord32(b, fsv.unk, i);
     llvm::Value* aval = b.CreateXor(val_w, unk_w, "dpi.vec.aval");
-    llvm::Value* bval = unk_w;
     llvm::Value* word = llvm::UndefValue::get(word_ty);
     word = b.CreateInsertValue(word, aval, {0});
-    word = b.CreateInsertValue(word, bval, {1});
+    word = b.CreateInsertValue(word, unk_w, {1});
     arr = b.CreateInsertValue(arr, word, {i});
   }
   return arr;
@@ -358,14 +394,34 @@ auto BuildDpiLogicVecNarrow(
 
 // Decode svLogicVecVal array back to Lyra 4-state {iN, iN} struct.
 // Conversion: val = aval ^ bval, unk = bval (per 32-bit word).
-auto DecodeDpiLogicVecNarrow(
-    llvm::IRBuilder<>& b, llvm::Value* storage, uint32_t word_count,
-    uint32_t semantic_width, llvm::Type* backing_ty) -> llvm::Value* {
-  if (word_count > 2) {
+auto DecodeDpiLogicVecStorage(
+    llvm::IRBuilder<>& b, llvm::Value* storage, uint32_t semantic_width,
+    llvm::Type* backing_ty) -> llvm::Value* {
+  auto* arr_ty = llvm::dyn_cast<llvm::ArrayType>(storage->getType());
+  if (arr_ty == nullptr) {
     throw common::InternalError(
-        "DecodeDpiLogicVecNarrow",
-        "D3a supports at most 2 svLogicVecVal words (<=64-bit)");
+        "DecodeDpiLogicVecStorage",
+        "expected array storage for svLogicVecVal transport");
   }
+  auto* word_ty = llvm::dyn_cast<llvm::StructType>(arr_ty->getElementType());
+  ValidateLogicVecStorageShape(
+      arr_ty, word_ty, b.getContext(), "DecodeDpiLogicVecStorage");
+
+  auto* backing_int_ty = llvm::dyn_cast<llvm::IntegerType>(backing_ty);
+  if (backing_int_ty == nullptr) {
+    throw common::InternalError(
+        "DecodeDpiLogicVecStorage",
+        "expected integer backing type for svLogicVecVal transport");
+  }
+  if (backing_int_ty->getBitWidth() < semantic_width) {
+    throw common::InternalError(
+        "DecodeDpiLogicVecStorage",
+        std::format(
+            "integer backing width {} is smaller than semantic width {}",
+            backing_int_ty->getBitWidth(), semantic_width));
+  }
+
+  uint32_t word_count = arr_ty->getNumElements();
   llvm::Value* full_aval = llvm::ConstantInt::get(backing_ty, 0);
   llvm::Value* full_bval = llvm::ConstantInt::get(backing_ty, 0);
 
@@ -377,12 +433,7 @@ auto DecodeDpiLogicVecNarrow(
     full_bval = InsertWord32(b, full_bval, bval_w, i);
   }
 
-  // Semantic mask: clear unused high bits.
-  uint32_t backing_bits = backing_ty->getIntegerBitWidth();
-  llvm::APInt mask_ap =
-      llvm::APInt::getLowBitsSet(backing_bits, semantic_width);
-  llvm::Value* mask = llvm::ConstantInt::get(backing_ty, mask_ap);
-
+  llvm::Value* mask = LowBitsMask(b, backing_ty, semantic_width);
   llvm::Value* lyra_val =
       b.CreateAnd(b.CreateXor(full_aval, full_bval), mask, "dpi.dec.val");
   llvm::Value* lyra_unk = b.CreateAnd(full_bval, mask, "dpi.dec.unk");
@@ -390,6 +441,88 @@ auto DecodeDpiLogicVecNarrow(
   auto* struct_ty =
       llvm::StructType::get(b.getContext(), {backing_ty, backing_ty});
   return PackFourState(b, struct_ty, lyra_val, lyra_unk);
+}
+
+// Encode a Lyra 2-state integer into svBitVecVal array [N x i32].
+auto BuildDpiBitVecStorage(
+    llvm::IRBuilder<>& b, llvm::Value* two_state_val, uint32_t semantic_width,
+    llvm::ArrayType* arr_ty) -> llvm::Value* {
+  if (arr_ty->getElementType() != llvm::Type::getInt32Ty(b.getContext())) {
+    throw common::InternalError(
+        "BuildDpiBitVecStorage",
+        "expected [N x i32] storage for svBitVecVal transport");
+  }
+  auto* val_int_ty =
+      llvm::dyn_cast<llvm::IntegerType>(two_state_val->getType());
+  if (val_int_ty == nullptr) {
+    throw common::InternalError(
+        "BuildDpiBitVecStorage",
+        "expected integer LLVM value for svBitVecVal transport");
+  }
+  if (val_int_ty->getBitWidth() < semantic_width) {
+    throw common::InternalError(
+        "BuildDpiBitVecStorage",
+        std::format(
+            "integer backing width {} is smaller than semantic width {}",
+            val_int_ty->getBitWidth(), semantic_width));
+  }
+
+  if (val_int_ty->getBitWidth() > semantic_width) {
+    llvm::Value* mask =
+        LowBitsMask(b, two_state_val->getType(), semantic_width);
+    two_state_val = b.CreateAnd(two_state_val, mask, "dpi.bv.mask");
+  }
+
+  uint32_t word_count = arr_ty->getNumElements();
+  llvm::Value* arr = llvm::UndefValue::get(arr_ty);
+  for (uint32_t i = 0; i < word_count; ++i) {
+    llvm::Value* word = ExtractWord32(b, two_state_val, i);
+    arr = b.CreateInsertValue(arr, word, {i});
+  }
+  return arr;
+}
+
+// Decode svBitVecVal array [N x i32] back to a Lyra 2-state integer.
+auto DecodeDpiBitVecStorage(
+    llvm::IRBuilder<>& b, llvm::Value* raw_arr, uint32_t semantic_width,
+    llvm::Type* backing_ty) -> llvm::Value* {
+  auto* backing_int_ty = llvm::dyn_cast<llvm::IntegerType>(backing_ty);
+  if (backing_int_ty == nullptr) {
+    throw common::InternalError(
+        "DecodeDpiBitVecStorage",
+        "expected integer backing type for svBitVecVal transport");
+  }
+  if (backing_int_ty->getBitWidth() < semantic_width) {
+    throw common::InternalError(
+        "DecodeDpiBitVecStorage",
+        std::format(
+            "integer backing width {} is smaller than semantic width {}",
+            backing_int_ty->getBitWidth(), semantic_width));
+  }
+
+  auto* arr_ty = llvm::dyn_cast<llvm::ArrayType>(raw_arr->getType());
+  if (arr_ty == nullptr) {
+    throw common::InternalError(
+        "DecodeDpiBitVecStorage",
+        "expected array storage for svBitVecVal transport");
+  }
+  if (arr_ty->getElementType() != llvm::Type::getInt32Ty(b.getContext())) {
+    throw common::InternalError(
+        "DecodeDpiBitVecStorage",
+        "expected [N x i32] storage for svBitVecVal transport");
+  }
+
+  uint32_t word_count = arr_ty->getNumElements();
+  llvm::Value* accum = llvm::ConstantInt::get(backing_ty, 0);
+  for (uint32_t i = 0; i < word_count; ++i) {
+    llvm::Value* word = b.CreateExtractValue(raw_arr, {i});
+    accum = InsertWord32(b, accum, word, i);
+  }
+  if (backing_int_ty->getBitWidth() > semantic_width) {
+    llvm::Value* mask = LowBitsMask(b, backing_ty, semantic_width);
+    accum = b.CreateAnd(accum, mask, "dpi.bv.dec.mask");
+  }
+  return accum;
 }
 
 // ---------------------------------------------------------------------------
@@ -425,11 +558,11 @@ struct DpiArgLoweringState {
 
 // Marshal a scalar input value to its DPI C ABI representation.
 // Handles string, kLogicScalar, and 2-state scalar types.
-// Rejects kLogicVecNarrow and kVoid -- those are not scalar paths.
+// Rejects packed-vector, kVoid, and kInvalid -- those are not scalar paths.
 auto MarshalDpiScalarInput(
     Context& context, const mir::Operand& operand,
     const mir::DpiParamDesc& param) -> Result<llvm::Value*> {
-  if (param.abi_type == DpiAbiTypeClass::kLogicVecNarrow ||
+  if (IsPackedVecDpiType(param.abi_type) ||
       param.abi_type == DpiAbiTypeClass::kVoid ||
       param.abi_type == DpiAbiTypeClass::kInvalid) {
     throw common::InternalError(
@@ -456,16 +589,16 @@ auto MarshalDpiScalarInput(
   return CoerceToDpiAbiType(context, *val, param.abi_type);
 }
 
-// Marshal a kLogicVecNarrow input to its svLogicVecVal storage value.
-// Only accepts kLogicVecNarrow.
+// Marshal a 4-state packed vector input to svLogicVecVal storage.
+// Accepts kLogicVecNarrow and kLogicVecWide.
 auto MarshalDpiLogicVecInput(
     Context& context, const mir::Operand& operand,
     const mir::DpiParamDesc& param) -> Result<llvm::Value*> {
-  if (param.abi_type != DpiAbiTypeClass::kLogicVecNarrow) {
+  if (!IsFourStateVecDpiType(param.abi_type)) {
     throw common::InternalError(
         "MarshalDpiLogicVecInput",
         std::format(
-            "expected kLogicVecNarrow, got ABI class {}",
+            "expected 4-state vector ABI class, got {}",
             static_cast<int>(param.abi_type)));
   }
   auto fsv = LowerDpiFourStateOperand(context, operand, param.sv_type);
@@ -473,14 +606,34 @@ auto MarshalDpiLogicVecInput(
   auto& b = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   uint32_t wc = GetDpiLogicWordCount(fsv->semantic_width);
-  auto* arr_ty = GetDpiLogicVecArrayType(llvm_ctx, wc);
+  auto* arr_ty = GetDpiLogicVecStorageType(llvm_ctx, wc);
   auto* word_ty = GetDpiLogicVecWordType(llvm_ctx);
-  return BuildDpiLogicVecNarrow(b, *fsv, wc, arr_ty, word_ty);
+  return BuildDpiLogicVecStorage(b, *fsv, arr_ty, word_ty);
+}
+
+// Marshal a 2-state wide packed vector input to svBitVecVal storage.
+// Only accepts kBitVecWide.
+auto MarshalDpiBitVecInput(
+    Context& context, const mir::Operand& operand,
+    const mir::DpiParamDesc& param) -> Result<llvm::Value*> {
+  if (param.abi_type != DpiAbiTypeClass::kBitVecWide) {
+    throw common::InternalError(
+        "MarshalDpiBitVecInput", std::format(
+                                     "expected kBitVecWide, got ABI class {}",
+                                     static_cast<int>(param.abi_type)));
+  }
+  auto val = LowerOperand(context, operand);
+  if (!val) return std::unexpected(val.error());
+  auto& b = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  uint32_t width = GetSemanticWidth(param.sv_type, context.GetTypeArena());
+  uint32_t wc = GetDpiLogicWordCount(width);
+  auto* arr_ty = GetDpiBitVecStorageType(llvm_ctx, wc);
+  return BuildDpiBitVecStorage(b, *val, width, arr_ty);
 }
 
 // Populate a by-pointer staged temp with the marshaled input value.
-// Only valid for by-pointer arguments (output, inout, or kLogicVecNarrow
-// input).
+// Only valid for by-pointer arguments (output, inout, or packed-vector input).
 auto InitializeDpiByPointerArgStorage(
     Context& context, const mir::Operand& operand,
     const mir::DpiParamDesc& param, llvm::AllocaInst* alloca) -> Result<void> {
@@ -488,16 +641,21 @@ auto InitializeDpiByPointerArgStorage(
     throw common::InternalError(
         "InitializeDpiByPointerArgStorage", "called for by-value parameter");
   }
-  auto& builder = context.GetBuilder();
-  if (param.abi_type == DpiAbiTypeClass::kLogicVecNarrow) {
-    auto storage = MarshalDpiLogicVecInput(context, operand, param);
-    if (!storage) return std::unexpected(storage.error());
-    builder.CreateStore(*storage, alloca);
+  llvm::Value* storage = nullptr;
+  if (IsFourStateVecDpiType(param.abi_type)) {
+    auto s = MarshalDpiLogicVecInput(context, operand, param);
+    if (!s) return std::unexpected(s.error());
+    storage = *s;
+  } else if (param.abi_type == DpiAbiTypeClass::kBitVecWide) {
+    auto s = MarshalDpiBitVecInput(context, operand, param);
+    if (!s) return std::unexpected(s.error());
+    storage = *s;
   } else {
-    auto marshaled = MarshalDpiScalarInput(context, operand, param);
-    if (!marshaled) return std::unexpected(marshaled.error());
-    builder.CreateStore(*marshaled, alloca);
+    auto s = MarshalDpiScalarInput(context, operand, param);
+    if (!s) return std::unexpected(s.error());
+    storage = *s;
   }
+  context.GetBuilder().CreateStore(storage, alloca);
   return {};
 }
 
@@ -560,7 +718,7 @@ auto CommitDpiOutputWritebacks(
     const auto& binding = call.args[i];
     const auto& param = *arg_states[i].desc;
 
-    // Input-only by-pointer (kLogicVecNarrow input): no writeback.
+    // Input-only by-pointer (packed-vector input): no writeback.
     if (param.direction == ParameterDirection::kInput) {
       continue;
     }
@@ -576,39 +734,29 @@ auto CommitDpiOutputWritebacks(
     llvm::Value* raw =
         builder.CreateLoad(storage_ty, arg_states[i].staged_tmp, "dpi.wb.raw");
 
+    llvm::Value* decoded = nullptr;
     if (param.abi_type == DpiAbiTypeClass::kLogicScalar) {
       uint32_t width = GetSemanticWidth(param.sv_type, types);
-      auto* packed = BuildLyraLogicScalarValue(builder, llvm_ctx, raw, width);
-      auto result = CommitValue(
-          context, *binding.writeback_dest, packed, param.sv_type,
-          OwnershipPolicy::kMove);
-      if (!result) return std::unexpected(result.error());
-    } else if (param.abi_type == DpiAbiTypeClass::kLogicVecNarrow) {
+      decoded = BuildLyraLogicScalarValue(builder, llvm_ctx, raw, width);
+    } else if (IsFourStateVecDpiType(param.abi_type)) {
       uint32_t width = GetSemanticWidth(param.sv_type, types);
-      uint32_t wc = GetDpiLogicWordCount(width);
       auto* backing_ty = GetBackingLlvmType(llvm_ctx, width);
-      auto* decoded =
-          DecodeDpiLogicVecNarrow(builder, raw, wc, width, backing_ty);
-      auto result = CommitValue(
-          context, *binding.writeback_dest, decoded, param.sv_type,
-          OwnershipPolicy::kMove);
-      if (!result) return std::unexpected(result.error());
+      decoded = DecodeDpiLogicVecStorage(builder, raw, width, backing_ty);
+    } else if (param.abi_type == DpiAbiTypeClass::kBitVecWide) {
+      uint32_t width = GetSemanticWidth(param.sv_type, types);
+      auto* backing_ty = GetBackingLlvmType(llvm_ctx, width);
+      decoded = DecodeDpiBitVecStorage(builder, raw, width, backing_ty);
     } else if (param.abi_type == DpiAbiTypeClass::kString) {
-      llvm::Value* handle = MaterializeStringWriteback(context, raw);
-      auto result = CommitValue(
-          context, *binding.writeback_dest, handle, param.sv_type,
-          OwnershipPolicy::kMove);
-      if (!result) return std::unexpected(result.error());
+      decoded = MaterializeStringWriteback(context, raw);
     } else {
       auto dest_type = context.GetPlaceLlvmType(*binding.writeback_dest);
       if (!dest_type) return std::unexpected(dest_type.error());
-      llvm::Value* internal_val =
-          CoerceFromDpiAbiType(context, raw, param.abi_type, *dest_type);
-      auto result = CommitValue(
-          context, *binding.writeback_dest, internal_val, param.sv_type,
-          OwnershipPolicy::kMove);
-      if (!result) return std::unexpected(result.error());
+      decoded = CoerceFromDpiAbiType(context, raw, param.abi_type, *dest_type);
     }
+    auto result = CommitValue(
+        context, *binding.writeback_dest, decoded, param.sv_type,
+        OwnershipPolicy::kMove);
+    if (!result) return std::unexpected(result.error());
   }
   return {};
 }
@@ -690,10 +838,11 @@ auto GetLlvmScalarDpiType(llvm::LLVMContext& ctx, DpiAbiTypeClass t)
     case DpiAbiTypeClass::kLogicScalar:
       return llvm::Type::getInt8Ty(ctx);
     case DpiAbiTypeClass::kLogicVecNarrow:
+    case DpiAbiTypeClass::kLogicVecWide:
+    case DpiAbiTypeClass::kBitVecWide:
       throw common::InternalError(
           "GetLlvmScalarDpiType",
-          "kLogicVecNarrow is not a scalar type; "
-          "use GetLlvmDpiStorageType");
+          "packed-vector ABI class is not a scalar direct type");
     case DpiAbiTypeClass::kInvalid:
       break;
   }
@@ -704,15 +853,14 @@ auto GetLlvmScalarDpiType(llvm::LLVMContext& ctx, DpiAbiTypeClass t)
 auto GetLlvmDpiStorageType(
     llvm::LLVMContext& ctx, DpiAbiTypeClass abi_type, TypeId sv_type,
     const TypeArena& types) -> llvm::Type* {
-  if (abi_type == DpiAbiTypeClass::kLogicVecNarrow) {
+  if (abi_type == DpiAbiTypeClass::kLogicVecNarrow ||
+      abi_type == DpiAbiTypeClass::kLogicVecWide) {
     uint32_t width = GetSemanticWidth(sv_type, types);
-    uint32_t wc = GetDpiLogicWordCount(width);
-    if (wc > 2) {
-      throw common::InternalError(
-          "GetLlvmDpiStorageType",
-          "kLogicVecNarrow exceeds D3a narrow transport bound (<=64-bit)");
-    }
-    return GetDpiLogicVecArrayType(ctx, wc);
+    return GetDpiLogicVecStorageType(ctx, GetDpiLogicWordCount(width));
+  }
+  if (abi_type == DpiAbiTypeClass::kBitVecWide) {
+    uint32_t width = GetSemanticWidth(sv_type, types);
+    return GetDpiBitVecStorageType(ctx, GetDpiLogicWordCount(width));
   }
   return GetLlvmScalarDpiType(ctx, abi_type);
 }

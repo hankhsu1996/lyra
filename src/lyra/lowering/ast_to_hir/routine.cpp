@@ -72,38 +72,38 @@ auto ConvertParameterDirection(slang::ast::ArgumentDirection dir)
 
 auto MakeUnsupportedDpiArgDiagnostic(const slang::ast::Type& type)
     -> std::string {
-  const auto& canonical = type.getCanonicalType();
-  if (canonical.isIntegral() && canonical.getBitWidth() > 64) {
-    return std::format(
-        "DPI-C argument type '{}' requires wide packed transport "
-        "(> 64-bit), not yet supported",
-        type.toString());
-  }
   return std::format(
       "DPI-C argument type '{}' not yet supported", type.toString());
 }
 
 auto MakeUnclassifiableDpiReturnDiagnostic(const slang::ast::Type& type)
     -> std::string {
-  const auto& canonical = type.getCanonicalType();
-  if (canonical.isIntegral() && canonical.getBitWidth() > 64) {
-    if (canonical.isFourState()) {
-      return std::format(
-          "DPI-C return type '{}' requires wide 4-state packed transport "
-          "(> 64-bit), not yet supported",
-          type.toString());
-    }
-    return std::format(
-        "DPI-C return type '{}' requires wide packed transport "
-        "(> 64-bit), not yet supported",
-        type.toString());
-  }
   return std::format(
       "DPI-C return type '{}' not yet supported", type.toString());
 }
 
+auto MakeUnsupportedIndirectDpiReturnDiagnostic(
+    const slang::ast::Type& type, hir::DpiAbiTypeClass abi_type)
+    -> std::string {
+  switch (abi_type) {
+    case hir::DpiAbiTypeClass::kLogicVecNarrow:
+    case hir::DpiAbiTypeClass::kLogicVecWide:
+    case hir::DpiAbiTypeClass::kBitVecWide:
+      return std::format(
+          "DPI-C return type '{}' requires indirect return modeling, "
+          "not yet supported",
+          type.toString());
+    default:
+      throw common::InternalError(
+          "MakeUnsupportedIndirectDpiReturnDiagnostic",
+          std::format(
+              "expected indirect-return ABI class, got {}",
+              static_cast<int>(abi_type)));
+  }
+}
+
 // Classify a slang type as a DPI ABI type class.
-// Returns nullopt for unsupported types (wide packed, unpacked, etc.).
+// Returns nullopt for unsupported types (unpacked, realtime, etc.).
 auto ClassifyDpiAbiType(const slang::ast::Type& type)
     -> std::optional<hir::DpiAbiTypeClass> {
   const auto& canonical = type.getCanonicalType();
@@ -176,28 +176,14 @@ auto ClassifyDpiAbiType(const slang::ast::Type& type)
   if (canonical.isIntegral()) {
     auto width = canonical.getBitWidth();
     if (!canonical.isFourState()) {
-      // 2-state carrier ladder (D1/D2).
-      // IEEE 1800-2023: 1 -> kBit, 2-32 -> kInt, 33-64 -> kLongInt.
-      if (width >= 1 && width <= 64) {
-        if (width == 1) {
-          return hir::DpiAbiTypeClass::kBit;
-        }
-        if (width <= 32) {
-          return hir::DpiAbiTypeClass::kInt;
-        }
-        return hir::DpiAbiTypeClass::kLongInt;
-      }
-      // width > 64: D3b (wide packed transport), not yet supported.
-    } else {
-      // 4-state packed (D3a for narrow, D3b for wide).
-      if (width == 1) {
-        return hir::DpiAbiTypeClass::kLogicScalar;
-      }
-      if (width >= 2 && width <= 64) {
-        return hir::DpiAbiTypeClass::kLogicVecNarrow;
-      }
-      // width > 64: D3b (wide packed transport), not yet supported.
+      if (width == 1) return hir::DpiAbiTypeClass::kBit;
+      if (width <= 32) return hir::DpiAbiTypeClass::kInt;
+      if (width <= 64) return hir::DpiAbiTypeClass::kLongInt;
+      return hir::DpiAbiTypeClass::kBitVecWide;
     }
+    if (width == 1) return hir::DpiAbiTypeClass::kLogicScalar;
+    if (width <= 64) return hir::DpiAbiTypeClass::kLogicVecNarrow;
+    return hir::DpiAbiTypeClass::kLogicVecWide;
   }
 
   return std::nullopt;
@@ -242,10 +228,7 @@ auto TryLowerDpiImport(
   if (!hir::IsValidDpiReturnType(*return_class)) {
     ctx->sink->Unsupported(
         span,
-        std::format(
-            "DPI-C packed 4-state vector return type '{}' requires indirect "
-            "return modeling, not yet supported",
-            ret_type.toString()),
+        MakeUnsupportedIndirectDpiReturnDiagnostic(ret_type, *return_class),
         UnsupportedCategory::kType);
     return DpiLoweringResult::Rejected();
   }

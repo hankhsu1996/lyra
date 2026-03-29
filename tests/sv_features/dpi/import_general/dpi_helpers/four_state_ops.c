@@ -144,3 +144,58 @@ int read_logic41_word0_aval(const svLogicVecVal* v) {
 int read_logic41_word1_aval(const svLogicVecVal* v) {
   return (int)v[1].aval;
 }
+
+/* logic [127:0] -- 4 words */
+
+void write_logic128_pattern(svLogicVecVal* out) {
+  out[0].aval = 0x11111111; out[0].bval = 0x00000000;
+  out[1].aval = 0x22222222; out[1].bval = 0x00000000;
+  out[2].aval = 0x33333333; out[2].bval = 0x00000000;
+  out[3].aval = 0x44444444; out[3].bval = 0x00000000;
+}
+
+int read_logic128_word0_aval(const svLogicVecVal* v) {
+  return (int)v[0].aval;
+}
+
+int read_logic128_word3_aval(const svLogicVecVal* v) {
+  return (int)v[3].aval;
+}
+
+void roundtrip_logic128(svLogicVecVal* inout) {
+  inout[0].aval += 1;
+  inout[3].aval += 1;
+}
+
+/* logic [65:0] -- 3 words, partial high word (2 semantic bits in word 2) */
+
+void write_logic66_pattern(svLogicVecVal* out) {
+  out[0].aval = 0xAAAAAAAA; out[0].bval = 0x00000000;
+  out[1].aval = 0xBBBBBBBB; out[1].bval = 0x00000000;
+  out[2].aval = 0x00000003; out[2].bval = 0x00000000;
+}
+
+int read_logic66_word0_aval(const svLogicVecVal* v) {
+  return (int)v[0].aval;
+}
+
+int read_logic66_word2_aval(const svLogicVecVal* v) {
+  return (int)v[2].aval;
+}
+
+void write_logic66_with_garbage(svLogicVecVal* out) {
+  out[0].aval = 0xAAAAAAAA; out[0].bval = 0x00000000;
+  out[1].aval = 0xBBBBBBBB; out[1].bval = 0x00000000;
+  /* word 2: only 2 semantic bits. Garbage in high bits. */
+  out[2].aval = 0xFFFFFFFF; out[2].bval = 0xFFFFFF00;
+}
+
+/* logic [127:0] -- X/Z in high word */
+
+void write_logic128_xz_high(svLogicVecVal* out) {
+  out[0].aval = 0x12345678; out[0].bval = 0x00000000;
+  out[1].aval = 0x00000000; out[1].bval = 0x00000000;
+  out[2].aval = 0x00000000; out[2].bval = 0x00000000;
+  /* word 3: aval=0xFF, bval=0xFF -> all X in low 8 bits */
+  out[3].aval = 0x000000FF; out[3].bval = 0x000000FF;
+}

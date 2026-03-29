@@ -18,22 +18,10 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
   - [x] D2b -- DPI-own MIR call family (`DpiCall`), per-param descriptors, 3-phase LLVM lowering
   - [x] D2c -- `chandle` variable LLVM support (load/store/null literal)
 - [x] D3a -- 4-state scalar/vector marshaling (narrow <=64-bit, input/output/inout, scalar return)
-- [ ] D3b -- Wide packed multiword transport (> 64-bit vectors)
+- [x] D3b -- Wide packed multiword transport (> 64-bit vectors, parameters only)
 - [ ] D4 -- DPI export (C-callable wrappers, header generation)
 - [ ] D5a -- Context functions (simulator scope access)
 - [ ] D5b -- DPI tasks (time-consuming foreign calls)
-
-## D3b: Wide packed multiword transport
-
-Extends D3a to packed values wider than 64 bits. The D3a marshaling helpers (word extraction, svLogicVecVal encode/decode, semantic masking) are loop-based and accept arbitrary word counts, but are guarded to <=2 words at call sites. D3b removes those guards and adds:
-
-- Semantic validation: accept 2-state and 4-state packed types > 64 bits
-- Variable-size buffer allocation for svBitVecVal / svLogicVecVal arrays
-- Input passing mode change: wide 2-state input also requires by-pointer (svBitVecVal\*)
-- Indirect return modeling: DpiReturnKind::kIndirect, caller-allocated output pointer for vector returns
-- LLVM function declaration changes for indirect return (sret-style or output-param convention)
-
-This phase excludes open arrays, export, context, and tasks.
 
 ## D4: DPI export
 

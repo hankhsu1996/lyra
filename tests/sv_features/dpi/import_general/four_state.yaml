@@ -461,3 +461,157 @@ cases:
       variables:
         r0: 1
         r1: 1
+
+  # -- logic [127:0] (4-word, D3b wide) --
+
+  - name: dpi_logic128_output
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_logic128_pattern(
+            output logic [127:0] v);
+        logic [127:0] val;
+        int r0;
+        int r3;
+        initial begin
+          write_logic128_pattern(val);
+          r0 = (val[31:0] === 32'h11111111) ? 1 : 0;
+          r3 = (val[127:96] === 32'h44444444) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r3: 1
+
+  - name: dpi_logic128_input
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int read_logic128_word0_aval(
+            input logic [127:0] v);
+        import "DPI-C" pure function int read_logic128_word3_aval(
+            input logic [127:0] v);
+        int r0;
+        int r3;
+        initial begin
+          logic [127:0] val;
+          val = 128'h44444444_33333333_22222222_11111111;
+          r0 = read_logic128_word0_aval(val);
+          r3 = read_logic128_word3_aval(val);
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 286331153
+        r3: 1145324612
+
+  - name: dpi_logic128_inout
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void roundtrip_logic128(
+            inout logic [127:0] v);
+        logic [127:0] val;
+        int r0;
+        int r3;
+        initial begin
+          val = 128'h44444444_33333333_22222222_11111111;
+          roundtrip_logic128(val);
+          r0 = (val[31:0] === 32'h11111112) ? 1 : 0;
+          r3 = (val[127:96] === 32'h44444445) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r3: 1
+
+  - name: dpi_logic66_output
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_logic66_pattern(
+            output logic [65:0] v);
+        logic [65:0] val;
+        int r0;
+        int r2;
+        initial begin
+          write_logic66_pattern(val);
+          r0 = (val[31:0] === 32'hAAAAAAAA) ? 1 : 0;
+          r2 = (val[65:64] === 2'b11) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r2: 1
+
+  - name: dpi_logic66_input
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int read_logic66_word0_aval(
+            input logic [65:0] v);
+        import "DPI-C" pure function int read_logic66_word2_aval(
+            input logic [65:0] v);
+        int r0;
+        int r2;
+        initial begin
+          logic [65:0] val;
+          val = 66'h3_BBBBBBBB_AAAAAAAA;
+          r0 = read_logic66_word0_aval(val);
+          r2 = read_logic66_word2_aval(val);
+        end
+      endmodule
+    expect:
+      variables:
+        r0: -1431655766
+        r2: 3
+
+  - name: dpi_logic66_high_bit_mask
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_logic66_with_garbage(
+            output logic [65:0] v);
+        logic [65:0] val;
+        int r0;
+        int r2;
+        initial begin
+          write_logic66_with_garbage(val);
+          r0 = (val[31:0] === 32'hAAAAAAAA) ? 1 : 0;
+          r2 = (val[65:64] === 2'b11) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r2: 1
+
+  - name: dpi_logic128_xz_high_word
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_logic128_xz_high(
+            output logic [127:0] v);
+        logic [127:0] val;
+        int r_low;
+        int r_high_x;
+        initial begin
+          write_logic128_xz_high(val);
+          r_low = (val[31:0] === 32'h12345678) ? 1 : 0;
+          r_high_x = (val[103:96] === 8'hxx) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r_low: 1
+        r_high_x: 1

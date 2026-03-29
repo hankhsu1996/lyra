@@ -101,7 +101,7 @@ cases:
     expect:
       error:
         contains:
-          - "DPI-C packed 4-state vector return type"
+          - "DPI-C return type"
           - "indirect return modeling"
 
   - name: accept_dpi_packed_4state
@@ -146,29 +146,48 @@ cases:
         initial begin end
       endmodule
 
-  - name: reject_dpi_logic_vec_wide
+  - name: accept_dpi_logic_vec_wide_input
     sv: |
       module Test;
-        import "DPI-C" function void wide_fn(input logic [64:0] v);
+        import "DPI-C" function void wide_fn(input logic [127:0] v);
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "DPI-C argument type"
-          - "wide packed transport"
 
-  - name: reject_dpi_packed_wide
+  - name: accept_dpi_logic_vec_wide_output
+    sv: |
+      module Test;
+        import "DPI-C" function void wide_fn(output logic [127:0] v);
+        initial begin end
+      endmodule
+
+  - name: accept_dpi_logic_vec_wide_inout
+    sv: |
+      module Test;
+        import "DPI-C" function void wide_fn(inout logic [127:0] v);
+        initial begin end
+      endmodule
+
+  - name: accept_dpi_bit_vec_wide_input
     sv: |
       module Test;
         import "DPI-C" function void wide_fn(input bit [127:0] v);
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "DPI-C argument type"
-          - "wide packed transport"
+
+  - name: accept_dpi_bit_vec_wide_output
+    sv: |
+      module Test;
+        import "DPI-C" function void wide_fn(output bit [127:0] v);
+        initial begin end
+      endmodule
+
+  - name: accept_dpi_bit_vec_wide_inout
+    sv: |
+      module Test;
+        import "DPI-C" function void wide_fn(inout bit [127:0] v);
+        initial begin end
+      endmodule
+
 
   # The frontend rejects packed vector DPI return types at parse time before
   # Lyra DPI lowering sees them. Lyra's own kLogicVecNarrow return rejection

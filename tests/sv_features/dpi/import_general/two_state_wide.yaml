@@ -1,0 +1,138 @@
+feature: dpi_import_general_two_state_wide
+description: DPI-C 2-state wide packed vector transport (D3b)
+
+cases:
+  # -- bit [127:0] (4-word) --
+
+  - name: dpi_bit128_output
+    dpi_sources:
+      - dpi_helpers/two_state_wide_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_bit128_pattern(
+            output bit [127:0] v);
+        bit [127:0] val;
+        int r0;
+        int r3;
+        initial begin
+          write_bit128_pattern(val);
+          r0 = (val[31:0] == 32'h11111111) ? 1 : 0;
+          r3 = (val[127:96] == 32'h44444444) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r3: 1
+
+  - name: dpi_bit128_input
+    dpi_sources:
+      - dpi_helpers/two_state_wide_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int read_bit128_word0(
+            input bit [127:0] v);
+        import "DPI-C" pure function int read_bit128_word3(
+            input bit [127:0] v);
+        int r0;
+        int r3;
+        initial begin
+          bit [127:0] val;
+          val = 128'h44444444_33333333_22222222_11111111;
+          r0 = read_bit128_word0(val);
+          r3 = read_bit128_word3(val);
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 286331153
+        r3: 1145324612
+
+  - name: dpi_bit128_inout
+    dpi_sources:
+      - dpi_helpers/two_state_wide_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void roundtrip_bit128(
+            inout bit [127:0] v);
+        bit [127:0] val;
+        int r0;
+        int r3;
+        initial begin
+          val = 128'h44444444_33333333_22222222_11111111;
+          roundtrip_bit128(val);
+          r0 = (val[31:0] == 32'h11111112) ? 1 : 0;
+          r3 = (val[127:96] == 32'h44444445) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r3: 1
+
+  # -- bit [65:0] (3-word, partial high word) --
+
+  - name: dpi_bit66_output
+    dpi_sources:
+      - dpi_helpers/two_state_wide_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_bit66_pattern(
+            output bit [65:0] v);
+        bit [65:0] val;
+        int r0;
+        int r2;
+        initial begin
+          write_bit66_pattern(val);
+          r0 = (val[31:0] == 32'hAAAAAAAA) ? 1 : 0;
+          r2 = (val[65:64] == 2'b11) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r2: 1
+
+  - name: dpi_bit66_input
+    dpi_sources:
+      - dpi_helpers/two_state_wide_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int read_bit66_word0(
+            input bit [65:0] v);
+        import "DPI-C" pure function int read_bit66_word2(
+            input bit [65:0] v);
+        int r0;
+        int r2;
+        initial begin
+          bit [65:0] val;
+          val = 66'h3_BBBBBBBB_AAAAAAAA;
+          r0 = read_bit66_word0(val);
+          r2 = read_bit66_word2(val);
+        end
+      endmodule
+    expect:
+      variables:
+        r0: -1431655766
+        r2: 3
+
+  - name: dpi_bit66_high_bit_mask
+    dpi_sources:
+      - dpi_helpers/two_state_wide_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_bit66_with_garbage(
+            output bit [65:0] v);
+        bit [65:0] val;
+        int r0;
+        int r2;
+        initial begin
+          write_bit66_with_garbage(val);
+          r0 = (val[31:0] == 32'hAAAAAAAA) ? 1 : 0;
+          r2 = (val[65:64] == 2'b11) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r2: 1
