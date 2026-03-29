@@ -1,0 +1,135 @@
+feature: compilation units
+description: Tests for single-unit vs per-file compilation unit modes
+
+cases:
+  - name: cross_file_macro_single_unit
+    description: Macro defined in file A is visible in file B under single-unit mode
+    single_unit: true
+    files:
+      - name: defines.sv
+        content: |
+          `define MY_VALUE 42
+      - name: test.sv
+        content: |
+          module Test;
+            int x;
+            initial begin
+              x = `MY_VALUE;
+              $finish;
+            end
+          endmodule
+    expect:
+      variables:
+        x: 42
+
+  - name: cross_file_macro_per_file_error
+    description: Macro from file A is not visible in file B under per-file mode
+    files:
+      - name: defines.sv
+        content: |
+          `define MY_VALUE 42
+      - name: test.sv
+        content: |
+          module Test;
+            int x;
+            initial begin
+              x = `MY_VALUE;
+              $finish;
+            end
+          endmodule
+    expect:
+      error:
+        contains: ["MY_VALUE"]
+
+  - name: file_order_forward_single_unit
+    description: Macro defined in first file used in second file succeeds
+    single_unit: true
+    files:
+      - name: a_first.sv
+        content: |
+          `define FORWARD_VAL 99
+      - name: b_second.sv
+        content: |
+          module Test;
+            int x;
+            initial begin
+              x = `FORWARD_VAL;
+              $finish;
+            end
+          endmodule
+    expect:
+      variables:
+        x: 99
+
+  - name: file_order_reverse_single_unit_error
+    description: Macro used before defined fails even in single-unit mode
+    single_unit: true
+    files:
+      - name: a_uses.sv
+        content: |
+          module Test;
+            int x;
+            initial begin
+              x = `LATE_MACRO;
+              $finish;
+            end
+          endmodule
+      - name: b_defines.sv
+        content: |
+          `define LATE_MACRO 77
+    expect:
+      error:
+        contains: ["LATE_MACRO"]
+
+  - name: ifdef_guarded_signal_single_unit
+    description: ifdef-guarded declaration visible via hierarchical ref in single-unit
+    single_unit: true
+    files:
+      - name: defs.sv
+        content: |
+          `define ENABLE_SVA
+      - name: inner.sv
+        content: |
+          module Inner;
+            `ifdef ENABLE_SVA
+            logic sva_signal;
+            assign sva_signal = 1'b1;
+            `endif
+          endmodule
+      - name: outer.sv
+        content: |
+          module Test;
+            Inner inner_i();
+            int result;
+            initial begin
+              #1;
+              result = inner_i.sva_signal;
+              $finish;
+            end
+          endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: multi_define_chain_single_unit
+    description: Chained defines across three files in single-unit mode
+    single_unit: true
+    files:
+      - name: base.sv
+        content: |
+          `define BASE_W 8
+      - name: derived.sv
+        content: |
+          `define DERIVED_W (`BASE_W * 2)
+      - name: test.sv
+        content: |
+          module Test;
+            int x;
+            initial begin
+              x = `DERIVED_W;
+              $finish;
+            end
+          endmodule
+    expect:
+      variables:
+        x: 16

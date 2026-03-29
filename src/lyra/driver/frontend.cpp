@@ -9,9 +9,10 @@
 #include <slang/diagnostics/DiagnosticEngine.h>
 #include <slang/diagnostics/TextDiagnosticClient.h>
 #include <slang/parsing/Preprocessor.h>
-#include <slang/syntax/SyntaxTree.h>
 #include <slang/util/Bag.h>
 #include <slang/util/LanguageVersion.h>
+
+#include "lyra/frontend/parse_unit.hpp"
 
 namespace lyra::driver {
 
@@ -49,25 +50,19 @@ auto ParseFiles(const CompilationInput& input) -> std::optional<ParseResult> {
   }
   comp_options.paramOverrides = input.param_overrides;
 
-  // Enable relaxed enum conversions by default (unless --pedantic)
   if (!input.pedantic) {
     comp_options.flags |= slang::ast::CompilationFlags::RelaxEnumConversions;
   }
 
   auto compilation = std::make_unique<slang::ast::Compilation>(comp_options);
 
-  for (const auto& path : input.files) {
-    auto result =
-        slang::syntax::SyntaxTree::fromFile(path, *source_manager, options);
-    if (!result) {
-      fmt::print(
-          stderr, "{}: {}: {}\n", fmt::styled("lyra", kToolStyle),
-          fmt::styled("error", fmt::fg(fmt::terminal_color::bright_red)),
-          fmt::styled(
-              fmt::format("cannot read '{}'", path), fmt::emphasis::bold));
+  auto plan =
+      frontend::BuildParsePlan(input.files, input.compilation_unit_mode);
+  for (const auto& unit : plan.units) {
+    if (!frontend::ExecuteParseUnit(
+            unit, *source_manager, *compilation, options)) {
       return std::nullopt;
     }
-    compilation->addSyntaxTree(result.value());
   }
 
   return ParseResult{
@@ -85,7 +80,6 @@ auto Elaborate(ParseResult& result, const CompilationInput& input) -> bool {
     diag_engine.addClient(diag_client);
 
     auto warnings = input.warnings;
-    // Warnings that produce invalid AST nodes must be errors
     warnings.emplace_back("error=finish-num");
     diag_engine.setWarningOptions(warnings);
 
