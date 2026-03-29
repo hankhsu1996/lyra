@@ -38,6 +38,7 @@ struct CompilationInput {
   uint32_t iteration_limit = kDefaultIterationLimit;    // 0 = unlimited
   std::optional<std::filesystem::path> stats_out_path;  // JSON stats output
   std::vector<std::filesystem::path> dpi_link_inputs;   // DPI link input paths
+  bool disable_assertions = false;
 };
 
 struct ParseResult {

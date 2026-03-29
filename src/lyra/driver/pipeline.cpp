@@ -38,8 +38,11 @@ auto CompileToMir(const CompilationInput& input, CompilationOutput& output)
   lowering::ast_to_hir::LoweringResult hir_result;
   {
     PhaseTimer timer(output, Phase::kLowerHir);
-    hir_result =
-        lowering::ast_to_hir::LowerAstToHir(*parse_result->compilation, sink);
+    lowering::ast_to_hir::HirLoweringOptions hir_options{
+        .disable_assertions = input.disable_assertions,
+    };
+    hir_result = lowering::ast_to_hir::LowerAstToHir(
+        *parse_result->compilation, sink, hir_options);
   }
 
   if (sink.HasErrors()) {

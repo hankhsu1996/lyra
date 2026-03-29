@@ -15,6 +15,7 @@
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/lowering/ast_to_hir/options.hpp"
 #include "lyra/lowering/ast_to_hir/source_mapper.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -115,6 +116,16 @@ class BuiltinTypeCatalog {
 // active_constant_arena, and sink to point to body-local storage.
 // All other fields (type_arena, symbol_table, etc.) remain shared.
 struct Context {
+  const HirLoweringOptions* options = nullptr;
+
+  [[nodiscard]] auto Options() const -> const HirLoweringOptions& {
+    if (options == nullptr) {
+      throw common::InternalError(
+          "AST to HIR lowering", "Context missing HirLoweringOptions");
+    }
+    return *options;
+  }
+
   DiagnosticSink* sink = nullptr;
   hir::Arena* hir_arena = nullptr;
   TypeArena* type_arena = nullptr;

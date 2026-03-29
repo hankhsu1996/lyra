@@ -1,0 +1,129 @@
+feature: disable assertions
+description: Tests for --disable-assertions lowering option
+
+cases:
+  - name: immediate_assertion_error
+    description: Immediate assertion without flag produces compile error
+    sv: |
+      module Test;
+        int x = 5;
+        initial begin
+          assert (x > 0);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains: ["assertion statements are unsupported"]
+
+  - name: concurrent_assertion_error
+    description: Concurrent assertion without flag produces compile error
+    sv: |
+      module Test;
+        bit clk = 0;
+        int x = 5;
+        initial forever #10 clk = ~clk;
+        always_ff @(posedge clk) begin
+          assert property (x > 0);
+        end
+        initial begin
+          #100;
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains: ["assertion statements are unsupported"]
+
+  - name: immediate_assertion_skipped
+    description: Immediate assertion skipped with --disable-assertions
+    disable_assertions: true
+    sv: |
+      module Test;
+        int x = 0;
+        initial begin
+          x = 42;
+          assert (x > 0);
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 42
+
+  - name: concurrent_assertion_skipped
+    description: Concurrent assertion in procedural block skipped
+    disable_assertions: true
+    sv: |
+      module Test;
+        bit clk = 0;
+        int count = 0;
+        initial forever #10 clk = ~clk;
+        always_ff @(posedge clk) begin
+          count <= count + 1;
+          assert property (count >= 0);
+        end
+        initial begin
+          repeat(3) @(posedge clk);
+          #1;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 3
+
+  - name: module_scope_assertion_skipped
+    description: Module-scope assertion (isFromAssertion process) skipped
+    disable_assertions: true
+    sv: |
+      module Test;
+        bit clk = 0;
+        int count = 0;
+        initial forever #10 clk = ~clk;
+        always_ff @(posedge clk)
+          count <= count + 1;
+        assert property (@(posedge clk) count >= 0);
+        initial begin
+          repeat(3) @(posedge clk);
+          #1;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 3
+
+  - name: mixed_assertions_skipped
+    description: Both immediate and module-scope assertions skipped together
+    disable_assertions: true
+    sv: |
+      module Test;
+        bit clk = 0;
+        logic rst_n = 0;
+        int count = 0;
+        initial forever #10 clk = ~clk;
+        initial begin
+          rst_n = 0;
+          repeat(2) @(posedge clk);
+          @(posedge clk);
+          rst_n = 1;
+        end
+        always_ff @(posedge clk or negedge rst_n) begin
+          if (!rst_n)
+            count <= 0;
+          else begin
+            count <= count + 1;
+            assert (count >= 0);
+          end
+        end
+        assert property (@(posedge clk) disable iff (!rst_n) count >= 0);
+        initial begin
+          repeat(6) @(posedge clk);
+          #1;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 3
