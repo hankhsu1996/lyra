@@ -70,8 +70,40 @@ auto ConvertParameterDirection(slang::ast::ArgumentDirection dir)
   throw common::InternalError("routine lowering", "unknown argument direction");
 }
 
-// Classify a slang type as a DPI ABI type class for direct-scalar transport.
-// Returns nullopt for unsupported types (4-state, wide packed, unpacked, etc.).
+auto MakeUnsupportedDpiArgDiagnostic(const slang::ast::Type& type)
+    -> std::string {
+  const auto& canonical = type.getCanonicalType();
+  if (canonical.isIntegral() && canonical.getBitWidth() > 64) {
+    return std::format(
+        "DPI-C argument type '{}' requires wide packed transport "
+        "(> 64-bit), not yet supported",
+        type.toString());
+  }
+  return std::format(
+      "DPI-C argument type '{}' not yet supported", type.toString());
+}
+
+auto MakeUnclassifiableDpiReturnDiagnostic(const slang::ast::Type& type)
+    -> std::string {
+  const auto& canonical = type.getCanonicalType();
+  if (canonical.isIntegral() && canonical.getBitWidth() > 64) {
+    if (canonical.isFourState()) {
+      return std::format(
+          "DPI-C return type '{}' requires wide 4-state packed transport "
+          "(> 64-bit), not yet supported",
+          type.toString());
+    }
+    return std::format(
+        "DPI-C return type '{}' requires wide packed transport "
+        "(> 64-bit), not yet supported",
+        type.toString());
+  }
+  return std::format(
+      "DPI-C return type '{}' not yet supported", type.toString());
+}
+
+// Classify a slang type as a DPI ABI type class.
+// Returns nullopt for unsupported types (wide packed, unpacked, etc.).
 auto ClassifyDpiAbiType(const slang::ast::Type& type)
     -> std::optional<hir::DpiAbiTypeClass> {
   const auto& canonical = type.getCanonicalType();
@@ -100,54 +132,71 @@ auto ClassifyDpiAbiType(const slang::ast::Type& type)
     return hir::DpiAbiTypeClass::kChandle;
   }
 
-  // Predefined 2-state integer types: byte, shortint, int, longint.
-  // These have fixed widths and map to their own ABI carrier classes.
+  // Predefined integer types: byte, shortint, int, longint (2-state);
+  // integer (4-state, 32-bit), time (4-state, 64-bit).
   if (canonical.kind == slang::ast::SymbolKind::PredefinedIntegerType) {
     const auto& pit = canonical.as<slang::ast::PredefinedIntegerType>();
-    if (pit.isFourState) {
-      return std::nullopt;
+    if (!pit.isFourState) {
+      switch (pit.integerKind) {
+        case slang::ast::PredefinedIntegerType::Byte:
+          return hir::DpiAbiTypeClass::kByte;
+        case slang::ast::PredefinedIntegerType::ShortInt:
+          return hir::DpiAbiTypeClass::kShortInt;
+        case slang::ast::PredefinedIntegerType::Int:
+          return hir::DpiAbiTypeClass::kInt;
+        case slang::ast::PredefinedIntegerType::LongInt:
+          return hir::DpiAbiTypeClass::kLongInt;
+        default:
+          return std::nullopt;
+      }
     }
-    switch (pit.integerKind) {
-      case slang::ast::PredefinedIntegerType::Byte:
-        return hir::DpiAbiTypeClass::kByte;
-      case slang::ast::PredefinedIntegerType::ShortInt:
-        return hir::DpiAbiTypeClass::kShortInt;
-      case slang::ast::PredefinedIntegerType::Int:
-        return hir::DpiAbiTypeClass::kInt;
-      case slang::ast::PredefinedIntegerType::LongInt:
-        return hir::DpiAbiTypeClass::kLongInt;
-      default:
-        return std::nullopt;
+    // 4-state predefined: integer (32-bit) -> kLogicVecNarrow.
+    // time (64-bit) is uncommon in DPI; reject for now.
+    if (pit.integerKind == slang::ast::PredefinedIntegerType::Integer) {
+      return hir::DpiAbiTypeClass::kLogicVecNarrow;
     }
+    return std::nullopt;
   }
 
-  // Scalar 'bit' (2-state, 1-bit).
+  // Scalar types: bit (2-state), logic/reg (4-state).
   if (canonical.kind == slang::ast::SymbolKind::ScalarType) {
     const auto& st = canonical.as<slang::ast::ScalarType>();
     if (st.scalarKind == slang::ast::ScalarType::Bit) {
       return hir::DpiAbiTypeClass::kBit;
     }
+    if (st.scalarKind == slang::ast::ScalarType::Logic ||
+        st.scalarKind == slang::ast::ScalarType::Reg) {
+      return hir::DpiAbiTypeClass::kLogicScalar;
+    }
     return std::nullopt;
   }
 
-  // Packed 2-state direct-scalar transport: packed arrays, packed structs,
-  // packed unions. Relies on three slang properties:
-  //   isIntegral()  -- true for all packed types (scalars, arrays, structs)
-  //   isFourState() -- recursive over struct/union fields
-  //   getBitWidth()  -- total packed width for all integral forms
-  // Accepted only when fully 2-state and total width <= 64.
-  // Tested for packed vectors, packed structs, and packed unions explicitly.
-  // IEEE 1800-2023 carrier ladder: 1 -> kBit, 2-32 -> kInt, 33-64 -> kLongInt.
-  if (canonical.isIntegral() && !canonical.isFourState()) {
+  // Packed integral types: arrays, structs, unions.
+  // Split by 2-state vs 4-state, then by width.
+  if (canonical.isIntegral()) {
     auto width = canonical.getBitWidth();
-    if (width >= 1 && width <= 64) {
+    if (!canonical.isFourState()) {
+      // 2-state carrier ladder (D1/D2).
+      // IEEE 1800-2023: 1 -> kBit, 2-32 -> kInt, 33-64 -> kLongInt.
+      if (width >= 1 && width <= 64) {
+        if (width == 1) {
+          return hir::DpiAbiTypeClass::kBit;
+        }
+        if (width <= 32) {
+          return hir::DpiAbiTypeClass::kInt;
+        }
+        return hir::DpiAbiTypeClass::kLongInt;
+      }
+      // width > 64: D3b (wide packed transport), not yet supported.
+    } else {
+      // 4-state packed (D3a for narrow, D3b for wide).
       if (width == 1) {
-        return hir::DpiAbiTypeClass::kBit;
+        return hir::DpiAbiTypeClass::kLogicScalar;
       }
-      if (width <= 32) {
-        return hir::DpiAbiTypeClass::kInt;
+      if (width >= 2 && width <= 64) {
+        return hir::DpiAbiTypeClass::kLogicVecNarrow;
       }
-      return hir::DpiAbiTypeClass::kLongInt;
+      // width > 64: D3b (wide packed transport), not yet supported.
     }
   }
 
@@ -186,9 +235,17 @@ auto TryLowerDpiImport(
   auto return_class = ClassifyDpiAbiType(ret_type);
   if (!return_class) {
     ctx->sink->Unsupported(
+        span, MakeUnclassifiableDpiReturnDiagnostic(ret_type),
+        UnsupportedCategory::kType);
+    return DpiLoweringResult::Rejected();
+  }
+  if (!hir::IsValidDpiReturnType(*return_class)) {
+    ctx->sink->Unsupported(
         span,
         std::format(
-            "DPI-C return type '{}' not yet supported", ret_type.toString()),
+            "DPI-C packed 4-state vector return type '{}' requires indirect "
+            "return modeling, not yet supported",
+            ret_type.toString()),
         UnsupportedCategory::kType);
     return DpiLoweringResult::Rejected();
   }
@@ -224,10 +281,7 @@ auto TryLowerDpiImport(
     auto arg_class = ClassifyDpiAbiType(arg->getType());
     if (!arg_class || !hir::IsValidDpiParamType(*arg_class)) {
       ctx->sink->Unsupported(
-          arg_span,
-          std::format(
-              "DPI-C argument type '{}' not yet supported",
-              arg->getType().toString()),
+          arg_span, MakeUnsupportedDpiArgDiagnostic(arg->getType()),
           UnsupportedCategory::kType);
       has_error = true;
       continue;
