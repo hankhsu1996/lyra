@@ -27,6 +27,8 @@ enum class FeatureFlag : uint32_t {
   kEnableTraceSummary = 1 << 8,
   // Enable text signal trace output (--trace-signals)
   kEnableSignalTrace = 1 << 9,
+  // Dump suspended process state at simulation end (--dump-suspended)
+  kDumpSuspended = 1 << 10,
 };
 
 constexpr auto operator|(FeatureFlag a, FeatureFlag b) -> FeatureFlag {

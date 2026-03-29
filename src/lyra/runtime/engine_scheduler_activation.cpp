@@ -281,6 +281,7 @@ void Engine::ExecuteTimeSlot() {
               "{} processes still pending",
               current_time_, next_delta_queue_.size()));
       finished_ = true;
+      end_reason_ = SimulationEndReason::kDeltaCycleLimit;
       break;
     }
 
@@ -296,6 +297,8 @@ void Engine::ExecuteTimeSlot() {
 }
 
 auto Engine::Run(SimTime max_time) -> SimTime {
+  // end_reason_ defaults to kEmptyQueues; set to kMaxTimeReached or kFinish
+  // at the point where the reason becomes known.
   while (!finished_ && current_time_ <= max_time) {
     ExecuteTimeSlot();
 
@@ -314,6 +317,7 @@ auto Engine::Run(SimTime max_time) -> SimTime {
     current_time_ = it->first;
 
     if (current_time_ > max_time) {
+      end_reason_ = SimulationEndReason::kMaxTimeReached;
       break;
     }
 

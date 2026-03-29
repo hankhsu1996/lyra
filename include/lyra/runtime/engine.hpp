@@ -28,6 +28,7 @@
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_trigger_registry.hpp"
+#include "lyra/runtime/scheduler_snapshot.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_selection.hpp"
@@ -286,7 +287,10 @@ class Engine {
 
   // Stop the simulation ($finish semantics).
   void Finish() {
-    finished_ = true;
+    if (!finished_) {
+      finished_ = true;
+      end_reason_ = SimulationEndReason::kFinish;
+    }
   }
 
   // Runtime counters accumulated during simulation.
@@ -296,6 +300,15 @@ class Engine {
 
   // Print runtime stats (propagation + scheduler) to sink.
   void DumpRuntimeStats(FILE* sink) const;
+
+  // Structured scheduler introspection.
+  [[nodiscard]] auto TakeSchedulerSnapshot() const -> SchedulerSnapshot;
+  static void RenderSchedulerSnapshot(
+      FILE* sink, const SchedulerSnapshot& snapshot);
+
+  [[nodiscard]] auto EndReason() const -> SimulationEndReason {
+    return end_reason_;
+  }
 
   // Get current simulation time.
   [[nodiscard]] auto CurrentTime() const -> SimTime {
@@ -682,6 +695,20 @@ class Engine {
   void RemoveRebindWatcherSub(uint32_t slot_id, uint32_t index);
   void RemoveContainerSub(uint32_t slot_id, uint32_t index);
 
+  // Focused subscribe helpers (called from Subscribe after validation).
+  auto SubscribeChange(
+      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      uint32_t byte_offset, uint32_t byte_size, bool initially_active,
+      ProcessState& proc_state, const SlotMeta& meta,
+      std::span<const uint8_t> design_state, SlotSubscriptions& slot)
+      -> uint32_t;
+  auto SubscribeEdge(
+      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
+      uint8_t bit_index, bool initially_active, ProcessState& proc_state,
+      const SlotMeta& meta, std::span<const uint8_t> design_state,
+      SlotSubscriptions& slot) -> uint32_t;
+
   // Persistent wait-site installation
   void InstallWaitSite(
       ProcessHandle handle, SuspendRecord* suspend,
@@ -794,6 +821,7 @@ class Engine {
   std::vector<ProcessState> process_states_;
   SimTime current_time_ = 0;
   bool finished_ = false;
+  SimulationEndReason end_reason_ = SimulationEndReason::kEmptyQueues;
   int8_t global_precision_power_ = -9;   // Set once at simulation init
   common::TimeFormatState time_format_;  // Mutable via $timeformat
 

@@ -67,6 +67,9 @@ auto Compile(
   if (input.input.verbose >= 3) {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDetailedStats);
   }
+  if (input.input.dump_suspended) {
+    feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDumpSuspended);
+  }
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &compilation.mir.design,
       .mir_arena = compilation.mir.design_arena.get(),

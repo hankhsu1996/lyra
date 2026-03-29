@@ -599,6 +599,21 @@ extern "C" void LyraRunSimulation(
   if (HasFlag(flags, FeatureFlag::kDumpRuntimeStats)) {
     engine.DumpRuntimeStats(stderr);
   }
+
+  // Centralized scheduler snapshot dump. Two policies, one render path:
+  // 1. Auto-on-abnormal: dump when simulation ended for any reason other
+  //    than $finish (delta-cycle limit, empty queues, max time, trap).
+  // 2. Force-on-flag: --dump-suspended dumps regardless of end reason.
+  {
+    const auto reason = engine.EndReason();
+    const bool abnormal =
+        (reason != lyra::runtime::SimulationEndReason::kFinish);
+    const bool forced = HasFlag(flags, FeatureFlag::kDumpSuspended);
+    if (abnormal || forced) {
+      auto snapshot = engine.TakeSchedulerSnapshot();
+      lyra::runtime::Engine::RenderSchedulerSnapshot(stderr, snapshot);
+    }
+  }
 }
 
 extern "C" auto LyraPlusargsTest(void* engine_ptr, LyraStringHandle query)
