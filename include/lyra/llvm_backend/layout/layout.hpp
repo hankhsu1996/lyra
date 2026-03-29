@@ -413,6 +413,10 @@ struct Layout {
   llvm::StructType* header_type = nullptr;
   // SuspendRecord type (opaque blob matching C++ struct size)
   llvm::StructType* suspend_record_type = nullptr;
+  // RuntimeInstanceStorage type for codegen GEP access
+  llvm::StructType* runtime_instance_storage_type = nullptr;
+  // RuntimeInstance type for codegen GEP access
+  llvm::StructType* runtime_instance_type = nullptr;
 
   // Explicit per-instance storage base.
   // Computed from the first owned-local slot in each instance's slot range.
@@ -434,6 +438,16 @@ struct Layout {
 
   // Per-instance storage base. Parallel to placement.instances.
   std::vector<InstanceStorageBase> instance_storage_bases;
+
+  // Per-instance realized storage sizes. Parallel to placement.instances.
+  // These are the concrete inline and appendix region sizes for each
+  // instance's owned storage, computed from the design-level layout.
+  // Instance-owned storage must be allocated to these sizes.
+  struct InstanceStorageSizes {
+    uint64_t inline_bytes = 0;
+    uint64_t appendix_bytes = 0;
+  };
+  std::vector<InstanceStorageSizes> instance_storage_sizes;
 
   // Per-instance total body-local slot count. Parallel to
   // placement.instances. Includes both owned-local and forwarded alias

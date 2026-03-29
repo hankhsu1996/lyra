@@ -1,11 +1,14 @@
 #pragma once
 
+#include <span>
+
 namespace lyra::trace {
 class TraceManager;
 }
 
 namespace lyra::runtime {
 
+struct RuntimeInstance;
 class SlotMetaRegistry;
 class TraceSelectionRegistry;
 class TraceSignalMetaRegistry;
@@ -27,7 +30,8 @@ class UpdateSet;
 void FlushDirtySlotsToTrace(
     trace::TraceManager& trace, const SlotMetaRegistry& slot_registry,
     const TraceSignalMetaRegistry& trace_registry,
-    const void* design_state_base, const UpdateSet& updates,
+    const void* design_state_base,
+    std::span<const RuntimeInstance* const> instances, const UpdateSet& updates,
     const TraceSelectionRegistry& selection);
 
 }  // namespace lyra::runtime

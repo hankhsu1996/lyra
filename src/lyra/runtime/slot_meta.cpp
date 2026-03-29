@@ -8,6 +8,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/output_sink.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
 
 namespace lyra::runtime {
@@ -32,6 +33,58 @@ auto KindName(SlotStorageKind kind) -> std::string_view {
 
 }  // namespace
 
+auto ResolveInstanceStorageOffset(
+    const RuntimeInstance& instance, uint32_t rel_off, uint32_t access_size,
+    const char* caller) -> uint8_t* {
+  const uint64_t inline_size = instance.storage.inline_size;
+  const uint64_t appendix_size = instance.storage.appendix_size;
+  const uint64_t total_size = inline_size + appendix_size;
+  const uint64_t end = static_cast<uint64_t>(rel_off) + access_size;
+
+  if (end > total_size) {
+    throw common::InternalError(
+        caller, std::format(
+                    "instance storage range [{}..{}) exceeds total size {}",
+                    rel_off, end, total_size));
+  }
+
+  if (rel_off < inline_size) {
+    return reinterpret_cast<uint8_t*>(instance.storage.inline_base) + rel_off;
+  }
+
+  return reinterpret_cast<uint8_t*>(instance.storage.appendix_base) +
+         (rel_off - inline_size);
+}
+
+auto ResolveSlotBase(
+    const SlotMeta& meta, const void* design_state_base,
+    std::span<const RuntimeInstance* const> instances) -> const uint8_t* {
+  if (meta.domain == SlotStorageDomain::kDesignGlobal) {
+    return static_cast<const uint8_t*>(design_state_base) +
+           meta.design_base_off;
+  }
+  const auto* instance = instances[meta.owner_instance_id];
+  if (instance == nullptr) {
+    throw common::InternalError("ResolveSlotBase", "null RuntimeInstance");
+  }
+  return ResolveInstanceStorageOffset(
+      *instance, meta.instance_rel_off, meta.total_bytes, "ResolveSlotBase");
+}
+
+auto ResolveSlotBaseMut(
+    const SlotMeta& meta, void* design_state_base,
+    std::span<const RuntimeInstance* const> instances) -> uint8_t* {
+  if (meta.domain == SlotStorageDomain::kDesignGlobal) {
+    return static_cast<uint8_t*>(design_state_base) + meta.design_base_off;
+  }
+  const auto* instance = instances[meta.owner_instance_id];
+  if (instance == nullptr) {
+    throw common::InternalError("ResolveSlotBaseMut", "null RuntimeInstance");
+  }
+  return ResolveInstanceStorageOffset(
+      *instance, meta.instance_rel_off, meta.total_bytes, "ResolveSlotBaseMut");
+}
+
 SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
   slots_.reserve(count);
 
@@ -43,6 +96,18 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
         static_cast<size_t>(i) * slot_meta_abi::kStride,
         slot_meta_abi::kStride);
 
+    uint32_t raw_domain = row[slot_meta_abi::kFieldDomain];
+    if (raw_domain > 1) {
+      throw common::InternalError(
+          "SlotMetaRegistry",
+          std::format("unknown domain {} for slot {}", raw_domain, i));
+    }
+    auto domain = static_cast<SlotStorageDomain>(raw_domain);
+
+    uint32_t design_base_off = row[slot_meta_abi::kFieldDesignBaseOff];
+    uint32_t owner_instance_id = row[slot_meta_abi::kFieldOwnerInstanceId];
+    uint32_t instance_rel_off = row[slot_meta_abi::kFieldInstanceRelOff];
+
     uint32_t raw_kind = row[slot_meta_abi::kFieldKind];
     if (raw_kind > 4) {
       throw common::InternalError(
@@ -51,7 +116,6 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
     }
 
     auto kind = static_cast<SlotStorageKind>(raw_kind);
-    uint32_t base_off = row[slot_meta_abi::kFieldBaseOff];
     uint32_t total_bytes = row[slot_meta_abi::kFieldTotalBytes];
     uint32_t value_off = row[slot_meta_abi::kFieldValueOff];
     uint32_t value_bytes = row[slot_meta_abi::kFieldValueBytes];
@@ -99,11 +163,17 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
       }
     }
 
-    max_extent_ = std::max(max_extent_, base_off + total_bytes);
+    // Only design-global slots contribute to the design_state extent.
+    if (domain == SlotStorageDomain::kDesignGlobal) {
+      max_extent_ = std::max(max_extent_, design_base_off + total_bytes);
+    }
 
     slots_.push_back(
         SlotMeta{
-            .base_off = base_off,
+            .domain = domain,
+            .design_base_off = design_base_off,
+            .owner_instance_id = owner_instance_id,
+            .instance_rel_off = instance_rel_off,
             .total_bytes = total_bytes,
             .kind = kind,
             .planes =
@@ -144,9 +214,19 @@ void SlotMetaRegistry::DumpSummary() const {
 
   for (uint32_t i = 0; i < slots_.size(); ++i) {
     const auto& slot = slots_[i];
-    std::string line = std::format(
-        "__LYRA_SLOT_META__: slot={} kind={} base_off={} total_bytes={}", i,
-        KindName(slot.kind), slot.base_off, slot.total_bytes);
+    std::string line;
+    if (slot.domain == SlotStorageDomain::kDesignGlobal) {
+      line = std::format(
+          "__LYRA_SLOT_META__: slot={} domain=global kind={} "
+          "design_base_off={} total_bytes={}",
+          i, KindName(slot.kind), slot.design_base_off, slot.total_bytes);
+    } else {
+      line = std::format(
+          "__LYRA_SLOT_META__: slot={} domain=instance kind={} "
+          "owner_instance_id={} instance_rel_off={} total_bytes={}",
+          i, KindName(slot.kind), slot.owner_instance_id, slot.instance_rel_off,
+          slot.total_bytes);
+    }
 
     if (slot.kind == SlotStorageKind::kPacked4) {
       line += std::format(

@@ -118,6 +118,7 @@ struct ExecutionContractState {
   llvm::Value* frame_ptr = nullptr;
   llvm::Value* engine_ptr = nullptr;
   llvm::Value* first_dirty_seen_ptr = nullptr;
+  llvm::Value* instance_ptr = nullptr;
   llvm::Value* this_ptr = nullptr;
   llvm::Value* dynamic_instance_id = nullptr;
   llvm::Value* signal_id_offset = nullptr;
@@ -266,6 +267,7 @@ class Context {
   [[nodiscard]] auto GetLyraAllocTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFreeTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStorePacked() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraResolveSlotPtr() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMarkDirty() -> llvm::Function*;
   [[nodiscard]] auto GetLyraGetFirstDirtySeenPtr() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMarkDirtyFirst() -> llvm::Function*;
@@ -372,6 +374,8 @@ class Context {
 
   // Type accessors from layout
   [[nodiscard]] auto GetHeaderType() const -> llvm::StructType*;
+  [[nodiscard]] auto GetRuntimeInstanceType() const -> llvm::StructType*;
+  [[nodiscard]] auto GetRuntimeInstanceStorageType() const -> llvm::StructType*;
   [[nodiscard]] auto GetDesignArenaSize() const -> uint64_t;
   [[nodiscard]] auto GetDesignSlotByteOffset(mir::SlotId slot_id) const
       -> uint64_t;
@@ -423,6 +427,8 @@ class Context {
 
   // Module behavioral shared-body state.
   // Set by GenerateSharedProcessFunction, cleared on exit.
+  void SetInstancePointer(llvm::Value* ptr);
+  [[nodiscard]] auto GetInstancePointer() const -> llvm::Value*;
   void SetThisPointer(llvm::Value* ptr);
   [[nodiscard]] auto GetThisPointer() const -> llvm::Value*;
   void SetDynamicInstanceId(llvm::Value* id);
@@ -593,7 +599,8 @@ class Context {
   void EmitProcessStateSetup(llvm::Value* state_arg);
 
   // Load realized instance binding from the frame header for shared bodies.
-  // Loads this_ptr, unstable_offsets, instance_id, signal_id_offset.
+  // Loads instance pointer, then derives storage base, instance_id, and
+  // signal_id_offset from the RuntimeInstance object.
   // Called after EmitProcessStateSetup by shared body generation only.
   void EmitSharedBodyBindingSetup(llvm::Value* state_arg);
 
@@ -602,9 +609,10 @@ class Context {
   // pass raw field indices or choose LLVM result types for header fields.
   auto EmitLoadEnginePtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadDesignPtr(llvm::Value* state_arg) -> llvm::Value*;
-  auto EmitLoadThisPtr(llvm::Value* state_arg) -> llvm::Value*;
-  auto EmitLoadInstanceId(llvm::Value* state_arg) -> llvm::Value*;
-  auto EmitLoadSignalIdOffset(llvm::Value* state_arg) -> llvm::Value*;
+  auto EmitLoadInstancePtr(llvm::Value* state_arg) -> llvm::Value*;
+  auto EmitLoadInstanceInlineBase(llvm::Value* instance_ptr) -> llvm::Value*;
+  auto EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value*;
+  auto EmitLoadSignalIdOffset(llvm::Value* instance_ptr) -> llvm::Value*;
   void EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value);
   auto EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value*;
 
@@ -906,6 +914,7 @@ class Context {
   llvm::Function* lyra_alloc_triggers_ = nullptr;
   llvm::Function* lyra_free_triggers_ = nullptr;
   llvm::Function* lyra_store_packed_ = nullptr;
+  llvm::Function* lyra_resolve_slot_ptr_ = nullptr;
   llvm::Function* lyra_mark_dirty_ = nullptr;
   llvm::Function* lyra_get_first_dirty_seen_ptr_ = nullptr;
   llvm::Function* lyra_mark_dirty_first_ = nullptr;
@@ -1015,6 +1024,7 @@ class Context {
 
   // Per-function shared-body state. Saved/restored by ExecutionContractScope.
   SlotAddressingMode slot_addressing_ = SlotAddressingMode::kDesignGlobal;
+  llvm::Value* instance_ptr_ = nullptr;
   llvm::Value* this_ptr_ = nullptr;
   llvm::Value* dynamic_instance_id_ = nullptr;
   llvm::Value* signal_id_offset_ = nullptr;

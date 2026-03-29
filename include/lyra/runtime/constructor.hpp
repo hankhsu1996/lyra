@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -13,6 +14,7 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_schema.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 
 namespace lyra::runtime {
 
@@ -137,10 +139,15 @@ struct RealizedSlotMeta {
   uint32_t slot_count = 0;
 
   void Init();
-  void AppendSlot(
-      uint32_t byte_offset, uint32_t total_bytes, uint32_t storage_kind,
+  void AppendDesignGlobalSlot(
+      uint32_t design_base_off, uint32_t total_bytes, uint32_t storage_kind,
       uint32_t value_off, uint32_t value_bytes, uint32_t unk_off,
       uint32_t unk_bytes, uint32_t storage_owner_slot_id);
+  void AppendInstanceOwnedSlot(
+      uint32_t owner_instance_id, uint32_t instance_rel_off,
+      uint32_t total_bytes, uint32_t storage_kind, uint32_t value_off,
+      uint32_t value_bytes, uint32_t unk_off, uint32_t unk_bytes,
+      uint32_t storage_owner_slot_id);
   void Finalize();
 };
 
@@ -183,6 +190,11 @@ struct ConstructionResult {
   // Partition boundary: processes [0, num_connection) are connection processes.
   uint32_t num_connection = 0;
 
+  // Constructor-produced runtime instance objects.
+  // One per module instance, ordered by instance_id.
+  // Lifetime: owned by this result, outlives simulation.
+  std::vector<std::unique_ptr<RuntimeInstance>> instances;
+
   // Constructor-produced process metadata.
   RealizedProcessMeta process_meta;
 
@@ -203,6 +215,10 @@ struct ConstructionResult {
   // Stable C-string pointer view into instance_paths.
   // Populated during Finalize, valid for the lifetime of this result.
   std::vector<const char*> instance_path_ptrs;
+
+  // Stable raw pointer view into instances for the runtime ABI.
+  // Populated during Finalize, valid for the lifetime of this result.
+  std::vector<const RuntimeInstance*> instance_ptrs;
 
   ConstructionResult() = default;
   ~ConstructionResult();
@@ -267,17 +283,11 @@ class Constructor {
   // the constructor is the canonical consumer of per-instance paths).
   // param_data/param_data_size carry pre-lowered canonical storage bytes
   // for this instance's parameter initialization. nullptr/0 if no params.
-  // instance_storage_base_byte_offset: arena-absolute byte offset of the
-  // instance's first owned-local slot. Only meaningful when
-  // has_local_storage is true.
-  // has_local_storage: whether this instance has any owned-local storage
-  // (false when all slots are forwarded aliases or the instance has zero
-  // slots).
   // Fails immediately if no active body.
   void AddInstance(
       const char* instance_path, const void* param_data,
-      uint32_t param_data_size, uint64_t instance_storage_base_byte_offset,
-      bool has_local_storage);
+      uint32_t param_data_size, uint64_t realized_inline_size,
+      uint64_t realized_appendix_size);
 
   // Finalize construction and return the unified result.
   // After this call, further mutation is rejected.
@@ -288,21 +298,23 @@ class Constructor {
 
   // Constructor-private runtime staging for a single process.
   struct StagedProcess {
-    uint32_t schema_index;
-    SharedBodyFn body;
-    void* this_ptr;
-    uint32_t instance_id;
-    uint32_t signal_id_offset;
-    bool is_module;
+    uint32_t schema_index = 0;
+    SharedBodyFn body = nullptr;
+    // Index into staged_instances_ for module processes, UINT32_MAX for
+    // connection processes.
+    uint32_t instance_index = UINT32_MAX;
+    bool is_module = false;
   };
 
   // Currently active body descriptor view.
   // All fields set atomically by BeginBody, consumed by AddInstance.
   struct ActiveBodyDescriptor {
     uint32_t slot_count = 0;
-    // Body-local state size from BodyRealizationDesc. Body-local
+    // Body-local state sizes from BodyRealizationDesc. Body-local
     // sizing metadata, not realized instance placement. Realized byte
     // placement comes from slot_byte_offsets_ (forwarding-aware).
+    uint64_t inline_state_size_bytes = 0;
+    uint64_t appendix_state_size_bytes = 0;
     uint64_t total_state_size_bytes = 0;
     std::span<const BodyProcessEntry> entries;
     ProcessMetaTemplateView meta;
@@ -333,6 +345,9 @@ class Constructor {
   ActiveBodyDescriptor body_;
 
   std::vector<StagedProcess> staged_;
+  // Constructor-owned RuntimeInstance objects created during AddInstance.
+  // Moved into ConstructionResult at Finalize.
+  std::vector<std::unique_ptr<RuntimeInstance>> staged_instances_;
   uint32_t num_connection_ = 0;
   bool connections_finalized_ = false;
   bool finalized_ = false;
@@ -360,12 +375,6 @@ class Constructor {
   InitHandleView pkg_init_handles_;
 
   // Process-index verification infrastructure.
-  struct InstanceLedgerEntry {
-    uint32_t owner_ordinal;
-    uint32_t module_proc_base;
-    uint32_t num_processes;
-  };
-  std::vector<InstanceLedgerEntry> instance_ledger_;
   uint32_t next_module_instance_ordinal_ = 0;
 
   enum class TemplateDomain : uint8_t { kConnection, kModule };
@@ -456,8 +465,8 @@ void LyraConstructorBeginBody(
 
 void LyraConstructorAddInstance(
     void* ctor, const char* instance_path, const void* param_data,
-    uint32_t param_data_size, uint64_t instance_storage_base_byte_offset,
-    uint32_t has_local_storage);
+    uint32_t param_data_size, uint64_t realized_inline_size,
+    uint64_t realized_appendix_size);
 
 void LyraConstructorRunProgram(
     void* ctor, const lyra::runtime::BodyDescriptorRef* body_descs,
@@ -494,6 +503,10 @@ auto LyraConstructionResultGetTraceSignalMetaPoolSize(void* result) -> uint32_t;
 
 auto LyraConstructionResultGetInstancePaths(void* result) -> const char**;
 auto LyraConstructionResultGetInstancePathCount(void* result) -> uint32_t;
+
+auto LyraConstructionResultGetInstances(void* result)
+    -> const lyra::runtime::RuntimeInstance* const*;
+auto LyraConstructionResultGetInstanceCount(void* result) -> uint32_t;
 
 void LyraConstructionResultDestroy(void* result);
 

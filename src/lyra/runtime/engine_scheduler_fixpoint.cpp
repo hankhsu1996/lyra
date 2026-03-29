@@ -8,6 +8,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/slot_meta.hpp"
 
 namespace lyra::runtime {
 
@@ -29,10 +30,9 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
     }
     sorted.push_back(
         {d.trigger_slot_id, BatchedConnection{
-                                .src_byte_offset = d.src_byte_offset,
-                                .dst_byte_offset = d.dst_byte_offset,
-                                .byte_size = d.byte_size,
-                                .dst_slot_id = d.dst_slot_id}});
+                                .src_slot_id = d.src_slot_id,
+                                .dst_slot_id = d.dst_slot_id,
+                                .byte_size = d.byte_size}});
   }
   std::ranges::sort(sorted, {}, &IndexedConn::trigger_slot_id);
 
@@ -62,13 +62,10 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
 }
 
 void Engine::EvaluateAllConnections() {
-  if (all_connections_.empty() || design_state_base_ == nullptr) return;
-  auto design_state = std::span(
-      static_cast<uint8_t*>(design_state_base_),
-      slot_meta_registry_.MaxExtent());
+  if (all_connections_.empty()) return;
   for (const auto& conn : all_connections_) {
-    auto* src = &design_state[conn.src_byte_offset];
-    auto* dst = &design_state[conn.dst_byte_offset];
+    const auto* src = ResolveSlotBytes(conn.src_slot_id);
+    auto* dst = ResolveSlotBytesMut(conn.dst_slot_id);
     if (std::memcmp(dst, src, conn.byte_size) != 0) {
       std::memcpy(dst, src, conn.byte_size);
       MarkSlotDirty(conn.dst_slot_id);
@@ -324,8 +321,8 @@ void Engine::FlushAndPropagateConnections() {
         for (uint32_t ci = start; ci < start + count; ++ci) {
           if (detailed) ++stats_.detailed.conn_considered;
           const auto& conn = all_connections_[ci];
-          auto* src = &design_state[conn.src_byte_offset];
-          auto* dst = &design_state[conn.dst_byte_offset];
+          const auto* src = ResolveSlotBytes(conn.src_slot_id);
+          auto* dst = ResolveSlotBytesMut(conn.dst_slot_id);
           if (detailed) ++stats_.detailed.conn_memcmp_executed;
           if (std::memcmp(dst, src, conn.byte_size) != 0) {
             if (detailed) ++stats_.detailed.conn_memcpy_executed;
@@ -362,13 +359,13 @@ void Engine::FlushAndPropagateConnections() {
           const auto& meta = slot_meta_registry_.Get(slot_id);
           auto buf_off = static_cast<uint32_t>(fp_work_.snapshot_buf.size());
           fp_work_.snapshot_buf.resize(buf_off + meta.total_bytes);
+          const auto* slot_base =
+              ResolveSlotBase(meta, design_state_base_, instances_);
           std::memcpy(
-              &fp_work_.snapshot_buf[buf_off], &design_state[meta.base_off],
-              meta.total_bytes);
+              &fp_work_.snapshot_buf[buf_off], slot_base, meta.total_bytes);
           fp_work_.snapshot_index[slot_id] =
               static_cast<uint32_t>(fp_work_.snapshots.size());
-          fp_work_.snapshots.push_back(
-              {buf_off, meta.base_off, meta.total_bytes});
+          fp_work_.snapshots.push_back({buf_off, slot_id, meta.total_bytes});
           fp_work_.snapshotted_slots.push_back(slot_id);
         }
       }
@@ -418,9 +415,11 @@ void Engine::FlushAndPropagateConnections() {
         if (has_any_self_edge_comb_ &&
             fp_work_.snapshot_index[s] != UINT32_MAX) {
           const auto& snap = fp_work_.snapshots[fp_work_.snapshot_index[s]];
+          const auto& snap_meta = slot_meta_registry_.Get(snap.slot_id);
+          const auto* snap_base =
+              ResolveSlotBase(snap_meta, design_state_base_, instances_);
           if (std::memcmp(
-                  &design_state[snap.base_off],
-                  &fp_work_.snapshot_buf[snap.buf_off],
+                  snap_base, &fp_work_.snapshot_buf[snap.buf_off],
                   snap.total_bytes) == 0) {
             continue;
           }

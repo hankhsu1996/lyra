@@ -26,7 +26,7 @@ namespace {
 // Args:
 //   slot_id: slot identifier (for error messages)
 //   meta: slot metadata from registry
-//   slot_base: pointer to slot data (design_state_base + meta.base_off)
+//   slot_base: pointer to slot data (resolved via ResolveSlotBase)
 //
 // Returns: TraceValue representing the current value of the slot.
 auto SnapshotSlotValue(
@@ -119,7 +119,8 @@ auto SnapshotOwnerStorage(
 void FlushDirtySlotsToTrace(
     trace::TraceManager& trace, const SlotMetaRegistry& slot_registry,
     const TraceSignalMetaRegistry& trace_registry,
-    const void* design_state_base, const UpdateSet& updates,
+    const void* design_state_base,
+    std::span<const RuntimeInstance* const> instances, const UpdateSet& updates,
     const TraceSelectionRegistry& selection) {
   bool has_ownership = slot_registry.IsPopulated();
 
@@ -130,17 +131,13 @@ void FlushDirtySlotsToTrace(
         "slot_registry and trace_registry populated state mismatch");
   }
 
-  std::span<const uint8_t> design_state(
-      static_cast<const uint8_t*>(design_state_base),
-      slot_registry.MaxExtent());
-
   if (!has_ownership) {
     // Legacy path: no ownership metadata. Direct dirty-slot trace flush.
     for (uint32_t slot_id : updates.DirtySlots()) {
       if (!selection.IsSelected(slot_id)) continue;
       const auto& meta = slot_registry.Get(slot_id);
       const auto* slot_base =
-          design_state.subspan(meta.base_off, meta.total_bytes).data();
+          ResolveSlotBase(meta, design_state_base, instances);
       trace.EmitValueChange(
           slot_id, SnapshotOwnerStorage(slot_id, meta, slot_base));
     }
@@ -161,8 +158,7 @@ void FlushDirtySlotsToTrace(
 
     // Snapshot owner storage once.
     const auto& meta = slot_registry.Get(owner_slot_id);
-    const auto* slot_base =
-        design_state.subspan(meta.base_off, meta.total_bytes).data();
+    const auto* slot_base = ResolveSlotBase(meta, design_state_base, instances);
     auto snapshot = SnapshotOwnerStorage(owner_slot_id, meta, slot_base);
 
     // Emit for the owner if selected.

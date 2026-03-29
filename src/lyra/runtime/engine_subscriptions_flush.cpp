@@ -90,7 +90,8 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
 
   bool should_deactivate = false;
   int64_t index_val = EvaluateIndexPlan(
-      design_state_base_, slot_meta_registry_, plan_span, &should_deactivate);
+      design_state_base_, instances_, slot_meta_registry_, plan_span,
+      &should_deactivate);
 
   // Helper lambdas for active/inactive flag setting.
   auto set_inactive = [&]() {
@@ -121,11 +122,10 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
         signal_subs_[target_handle.slot_id].container_subs[target_handle.index];
     auto& ccold = container_cold_pool_[csub.cold_idx];
 
-    auto ds = std::span(
-        static_cast<const uint8_t*>(design_state_base_),
-        ccold.container_base_off + sizeof(void*));
+    const auto& cmeta = slot_meta_registry_.Get(ccold.container_slot_id);
+    const auto* cbase = ResolveSlotBase(cmeta, design_state_base_, instances_);
     void* handle_ptr = nullptr;
-    std::memcpy(&handle_ptr, &ds[ccold.container_base_off], sizeof(void*));
+    std::memcpy(&handle_ptr, cbase, sizeof(void*));
 
     if (handle_ptr == nullptr) {
       set_inactive();
@@ -169,9 +169,7 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
 
   // Read current byte for cold snapshot and last_bit initialization.
   const auto& meta = slot_meta_registry_.Get(target_handle.slot_id);
-  auto ds = std::span(
-      static_cast<const uint8_t*>(design_state_base_),
-      meta.base_off + new_byte_offset + 1);
+  const auto* slot_base = ResolveSlotBase(meta, design_state_base_, instances_);
 
   // Resolve old group to get the sub and its cold state.
   auto& old_group =
@@ -183,7 +181,7 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
 
   // Update cold snapshot for same-byte rebind detection.
   auto& ecold = edge_cold_pool_[esub.cold_idx];
-  uint8_t current_byte = ds[meta.base_off + new_byte_offset];
+  uint8_t current_byte = slot_base[new_byte_offset];
 
   // Check if the new observation point is in the same group.
   bool same_group =
@@ -248,10 +246,11 @@ void Engine::FlushContainerSub(
     std::span<const uint8_t> design_state) {
   auto& cold = container_cold_pool_[sub.cold_idx];
 
-  // Chase handle from DesignState.
+  // Chase handle from slot storage.
+  const auto& cmeta = slot_meta_registry_.Get(cold.container_slot_id);
+  const auto* cbase = ResolveSlotBase(cmeta, design_state_base_, instances_);
   void* handle_ptr = nullptr;
-  std::memcpy(
-      &handle_ptr, &design_state[cold.container_base_off], sizeof(void*));
+  std::memcpy(&handle_ptr, cbase, sizeof(void*));
 
   if (handle_ptr == nullptr) {
     sub.flags &= ~kSubActive;
@@ -308,9 +307,10 @@ void Engine::FlushSlotRebindSubs(
     std::span<const uint8_t> design_state) {
   if (subs.empty()) return;
 
+  const auto* slot_base = ResolveSlotBase(meta, design_state_base_, instances_);
   for (auto& sub : subs) {
     auto& wcold = watcher_cold_pool_[sub.cold_idx];
-    const auto* current = &design_state[meta.base_off + sub.byte_offset];
+    const auto* current = &slot_base[sub.byte_offset];
     auto* snapshot = wcold.snapshot.data();
     if (std::memcmp(current, snapshot, sub.byte_size) != 0) {
       std::memcpy(snapshot, current, sub.byte_size);
@@ -342,13 +342,14 @@ void Engine::FlushSlotEdgeGroups(
     std::span<const uint8_t> design_state) {
   const bool detailed = detailed_stats_enabled_;
 
+  const auto* slot_base = ResolveSlotBase(meta, design_state_base_, instances_);
   for (auto& group : groups) {
     if (mode == RangeFilterMode::kPartial &&
         !dirty_ranges.Overlaps(group.byte_offset, 1)) {
       continue;
     }
 
-    uint8_t current_byte = design_state[meta.base_off + group.byte_offset];
+    uint8_t current_byte = slot_base[group.byte_offset];
     uint8_t current_bit = (current_byte >> group.bit_index) & 1;
 
     // Cold byte snapshot must be refreshed whenever the observed byte is
@@ -383,6 +384,7 @@ void Engine::FlushSlotChangeSubs(
   if (subs.empty()) return;
   const bool detailed = detailed_stats_enabled_;
 
+  const auto* slot_base = ResolveSlotBase(meta, design_state_base_, instances_);
   for (auto& sub : subs) {
     if ((sub.flags & kSubActive) == 0) continue;
     if (mode == RangeFilterMode::kPartial &&
@@ -390,7 +392,7 @@ void Engine::FlushSlotChangeSubs(
       continue;
 
     if (detailed) ++stats_.detailed.change_sub_checks;
-    const auto* current = &design_state[meta.base_off + sub.byte_offset];
+    const auto* current = &slot_base[sub.byte_offset];
     uint8_t* snapshot = nullptr;
     if (sub.byte_size <= ChangeSub::kInlineSnapshotCap) {
       snapshot = sub.snapshot_inline.data();

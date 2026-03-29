@@ -133,20 +133,24 @@ auto MakeSignalMeta() -> TraceSignalMetaRegistry {
 }
 
 // Build a minimal SlotMetaRegistry from (base_off, total_bytes) pairs.
-// Stride=8: [base_off, total_bytes, kind, val_off, val_bytes, unk_off,
-//            unk_bytes, storage_owner_slot_id]
+// Stride=11: [domain, design_base_off, owner_instance_id, instance_rel_off,
+//             total_bytes, kind, val_off, val_bytes, unk_off, unk_bytes,
+//             storage_owner_slot_id]
 auto MakeSlotMeta(std::vector<std::pair<uint32_t, uint32_t>> slots)
     -> SlotMetaRegistry {
   std::vector<uint32_t> words;
   for (uint32_t i = 0; i < slots.size(); ++i) {
     const auto& [base_off, total_bytes] = slots[i];
-    words.push_back(base_off);
+    words.push_back(0);         // domain = kDesignGlobal
+    words.push_back(base_off);  // design_base_off
+    words.push_back(0);         // owner_instance_id
+    words.push_back(0);         // instance_rel_off
     words.push_back(total_bytes);
-    words.push_back(0);
-    words.push_back(0);
-    words.push_back(0);
-    words.push_back(0);
-    words.push_back(0);
+    words.push_back(0);  // kind = kPacked2
+    words.push_back(0);  // val_off
+    words.push_back(0);  // val_bytes
+    words.push_back(0);  // unk_off
+    words.push_back(0);  // unk_bytes
     words.push_back(i);  // storage_owner_slot_id = self
   }
   return SlotMetaRegistry(words.data(), static_cast<uint32_t>(slots.size()));
@@ -181,7 +185,7 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
 
   // All selected: both slots should emit.
   FlushDirtySlotsToTrace(
-      tm, slot_meta, signal_meta, design_state.data(), updates, selection);
+      tm, slot_meta, signal_meta, design_state.data(), {}, updates, selection);
 
   uint32_t value_changes = 0;
   for (const auto& event : sink_ptr->events) {
@@ -199,7 +203,7 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
   selection.SetSelected(0, false);
 
   FlushDirtySlotsToTrace(
-      tm, slot_meta, signal_meta, design_state.data(), updates, selection);
+      tm, slot_meta, signal_meta, design_state.data(), {}, updates, selection);
 
   value_changes = 0;
   std::vector<uint32_t> emitted_slots;
@@ -221,7 +225,7 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
   selection.SelectNone();
 
   FlushDirtySlotsToTrace(
-      tm, slot_meta, signal_meta, design_state.data(), updates, selection);
+      tm, slot_meta, signal_meta, design_state.data(), {}, updates, selection);
 
   value_changes = 0;
   for (const auto& event : sink_ptr->events) {

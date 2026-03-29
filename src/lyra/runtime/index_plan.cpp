@@ -12,8 +12,10 @@
 namespace lyra::runtime {
 
 auto EvaluateIndexPlan(
-    const void* design_state_base, const SlotMetaRegistry& registry,
-    std::span<const IndexPlanOp> plan, bool* should_deactivate) -> int64_t {
+    const void* design_state_base,
+    std::span<const RuntimeInstance* const> instances,
+    const SlotMetaRegistry& registry, std::span<const IndexPlanOp> plan,
+    bool* should_deactivate) -> int64_t {
   if (plan.empty()) {
     throw common::InternalError("EvaluateIndexPlan", "empty plan");
   }
@@ -27,12 +29,6 @@ auto EvaluateIndexPlan(
   std::array<int64_t, kMaxPlanStackDepth> stack{};
   uint32_t sp = 0;
 
-  auto ds = std::span(
-      static_cast<const uint8_t*>(design_state_base),
-      // Upper bound: we only access via meta.base_off + byte_offset + byte_size
-      // which is always within design state. Use a large sentinel.
-      std::numeric_limits<size_t>::max());
-
   for (const auto& op : plan) {
     switch (op.kind) {
       case IndexPlanOp::Kind::kReadSlot: {
@@ -40,10 +36,11 @@ auto EvaluateIndexPlan(
           throw common::InternalError("EvaluateIndexPlan", "stack overflow");
         }
         const auto& meta = registry.Get(op.slot_id);
+        const auto* slot_base =
+            ResolveSlotBase(meta, design_state_base, instances);
         // Check for X/Z bits.
         if (meta.kind == SlotStorageKind::kPacked4) {
-          auto unk =
-              ds.subspan(meta.base_off + meta.planes.unk_off + op.byte_offset);
+          const auto* unk = slot_base + meta.planes.unk_off + op.byte_offset;
           for (uint8_t i = 0; i < op.byte_size; ++i) {
             if (unk[i] != 0) {
               *should_deactivate = true;
@@ -52,9 +49,8 @@ auto EvaluateIndexPlan(
           }
         }
         // Read value.
-        auto base = ds.subspan(meta.base_off);
         uint64_t v = 0;
-        std::memcpy(&v, &base[op.byte_offset], op.byte_size);
+        std::memcpy(&v, &slot_base[op.byte_offset], op.byte_size);
         // Mask to bit_width.
         if (op.bit_width > 0 && op.bit_width < 64) {
           v &= (uint64_t{1} << op.bit_width) - 1;

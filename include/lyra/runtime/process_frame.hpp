@@ -8,6 +8,8 @@
 
 namespace lyra::runtime {
 
+struct RuntimeInstance;
+
 // 2-arg shared body function signature (frame, resume).
 // Instance binding lives in the process frame header, not in the call
 // surface. This is the long-term call contract.
@@ -31,16 +33,16 @@ using SharedBodyFn = void (*)(void*, uint32_t);
 //     design_ptr: cached binding derived from ABI design_state (source of
 //       truth). Written by runtime before simulation dispatch.
 //     engine_ptr: written by runtime before simulation dispatch.
-//     body, this_ptr, instance_id, signal_id_offset:
-//       written by runtime from descriptor data.
+//     body: written by runtime from constructor data.
+//     instance: RuntimeInstance* execution anchor, written by runtime from
+//       constructor data. Null for connection/init processes.
 //     outcome: live per-call state, written by shared body on every call.
 //
 // After init, no field is written by codegen. The descriptor table is
 // consumed only at init time to populate these fields. All dispatch
 // paths (process and comb) read from the header, not from descriptors.
 //
-// For standalone (connection/init) processes, module-process binding
-// fields (body, this_ptr, instance_id, signal_id_offset) are null/zero.
+// For standalone (connection/init) processes, the instance field is null.
 // Standalone processes use the 3-arg LyraProcessFunc path and do not
 // dispatch through shared bodies.
 struct ProcessFrameHeader {
@@ -48,9 +50,7 @@ struct ProcessFrameHeader {
   SharedBodyFn body = nullptr;
   void* engine_ptr = nullptr;
   void* design_ptr = nullptr;
-  void* this_ptr = nullptr;
-  uint32_t instance_id = 0;
-  uint32_t signal_id_offset = 0;
+  RuntimeInstance* instance = nullptr;
   ProcessOutcome outcome = {};
 };
 
@@ -62,11 +62,9 @@ enum class ProcessFrameHeaderField : unsigned {
   kBody = 1,
   kEnginePtr = 2,
   kDesignPtr = 3,
-  kThisPtr = 4,
-  kInstanceId = 5,
-  kSignalIdOffset = 6,
-  kOutcome = 7,
-  kFieldCount = 8,
+  kInstance = 4,
+  kOutcome = 5,
+  kFieldCount = 6,
 };
 
 // Hard binary contract assertions. If the struct layout changes, these
@@ -80,16 +78,10 @@ static_assert(
     offsetof(ProcessFrameHeader, design_ptr) ==
     offsetof(ProcessFrameHeader, engine_ptr) + sizeof(void*));
 static_assert(
-    offsetof(ProcessFrameHeader, this_ptr) ==
+    offsetof(ProcessFrameHeader, instance) ==
     offsetof(ProcessFrameHeader, design_ptr) + sizeof(void*));
 static_assert(
-    offsetof(ProcessFrameHeader, instance_id) ==
-    offsetof(ProcessFrameHeader, this_ptr) + sizeof(void*));
-static_assert(
-    offsetof(ProcessFrameHeader, signal_id_offset) ==
-    offsetof(ProcessFrameHeader, instance_id) + sizeof(uint32_t));
-static_assert(
     offsetof(ProcessFrameHeader, outcome) ==
-    offsetof(ProcessFrameHeader, signal_id_offset) + sizeof(uint32_t));
+    offsetof(ProcessFrameHeader, instance) + sizeof(RuntimeInstance*));
 
 }  // namespace lyra::runtime

@@ -299,14 +299,12 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
     return;
   }
 
-  std::span design_state(
-      static_cast<const uint8_t*>(design_state_base_),
-      slot_meta_registry_.MaxExtent());
-
   for (const auto& ref : proc_state.sub_refs) {
     if (!update_set_.IsDeltaDirty(ref.slot_id)) continue;
 
     const auto& meta = slot_meta_registry_.Get(ref.slot_id);
+    const auto* slot_base =
+        ResolveSlotBase(meta, design_state_base_, instances_);
 
     switch (ref.kind) {
       case SubKind::kEdge: {
@@ -317,8 +315,7 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
         auto& sub = ResolveEdgeSub(ref);
         if (sub.cold_idx != UINT32_MAX) {
           auto& group = GetEdgeGroup(ref.slot_id, ref.edge_group);
-          uint8_t current_byte =
-              design_state[meta.base_off + group.byte_offset];
+          uint8_t current_byte = slot_base[group.byte_offset];
           auto& cold = edge_cold_pool_[sub.cold_idx];
           cold.edge_last_byte = current_byte;
           cold.has_edge_last_byte = true;
@@ -327,7 +324,7 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
       }
       case SubKind::kChange: {
         auto& sub = signal_subs_[ref.slot_id].change_subs[ref.index];
-        const auto* current = &design_state[meta.base_off + sub.byte_offset];
+        const auto* current = &slot_base[sub.byte_offset];
         if (sub.byte_size <= ChangeSub::kInlineSnapshotCap) {
           std::memcpy(sub.snapshot_inline.data(), current, sub.byte_size);
         } else if (sub.cold_idx != UINT32_MAX) {
@@ -735,7 +732,8 @@ auto Engine::SubscribeChange(
   // Baseline capture: always snapshot regardless of initially_active.
   // When a rebind later activates an inactive sub, the baseline prevents
   // a false trigger on the first flush.
-  const auto* src = &design_state[meta.base_off + byte_offset];
+  const auto* slot_base = ResolveSlotBase(meta, design_state_base_, instances_);
+  const auto* src = &slot_base[byte_offset];
   if (byte_size <= ChangeSub::kInlineSnapshotCap) {
     std::memcpy(sub.snapshot_inline.data(), src, byte_size);
   } else {
@@ -771,7 +769,9 @@ auto Engine::SubscribeEdge(
   auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
 
   uint8_t initial_last_bit =
-      (design_state[meta.base_off + byte_offset] >> bit_index) & 1;
+      (ResolveSlotBase(meta, design_state_base_, instances_)[byte_offset] >>
+       bit_index) &
+      1;
   uint8_t group_idx =
       FindOrCreateEdgeGroup(signal, byte_offset, bit_index, initial_last_bit);
 
@@ -864,21 +864,21 @@ auto Engine::Subscribe(
         "Engine::Subscribe", "observation range exceeds slot size");
   }
 
-  std::span design_state(
-      static_cast<const uint8_t*>(design_state_base_),
-      slot_meta_registry_.MaxExtent());
-
   auto& slot = signal_subs_[signal];
+
+  // design_state span passed to helpers for signature compatibility.
+  // Helpers resolve slot addresses through ResolveSlotBase internally.
+  std::span<const uint8_t> ds;
 
   if (edge == common::EdgeKind::kAnyChange) {
     return SubscribeChange(
         handle, resume, signal, byte_offset, byte_size, initially_active,
-        proc_state, meta, design_state, slot);
+        proc_state, meta, ds, slot);
   }
 
   return SubscribeEdge(
       handle, resume, signal, edge, byte_offset, byte_size, bit_index,
-      initially_active, proc_state, meta, design_state, slot);
+      initially_active, proc_state, meta, ds, slot);
 }
 
 auto Engine::SubscribeContainerElement(
@@ -922,7 +922,7 @@ auto Engine::SubscribeContainerElement(
   // Always allocate cold entry for container subs.
   uint32_t cold_idx = AllocContainerCold();
   auto& cold = container_cold_pool_[cold_idx];
-  cold.container_base_off = meta.base_off;
+  cold.container_slot_id = signal;
   cold.container_elem_stride = elem_stride;
   cold.container_sv_index = sv_index;
 
@@ -936,12 +936,11 @@ auto Engine::SubscribeContainerElement(
   sub.last_bit = 0;
   sub.flags = 0;
 
-  // Chase handle from DesignState.
-  auto ds = std::span(
-      static_cast<const uint8_t*>(design_state_base_),
-      meta.base_off + sizeof(void*));
+  // Chase handle from slot storage.
+  const auto* container_base =
+      ResolveSlotBase(meta, design_state_base_, instances_);
   void* handle_ptr = nullptr;
-  std::memcpy(&handle_ptr, &ds[meta.base_off], sizeof(void*));
+  std::memcpy(&handle_ptr, container_base, sizeof(void*));
 
   if (!initially_active) {
     // Descriptor says inactive -- skip runtime validation entirely.
@@ -1072,10 +1071,9 @@ void Engine::SubscribeRebind(
       // Seed byte snapshot for same-byte rebinding detection.
       auto& new_cold = edge_cold_pool_[esub.cold_idx];
       const auto& tmeta = slot_meta_registry_.Get(target_slot);
-      std::span ds(
-          static_cast<const uint8_t*>(design_state_base_),
-          tmeta.base_off + group.byte_offset + 1);
-      new_cold.edge_last_byte = ds[tmeta.base_off + group.byte_offset];
+      const auto* tbase =
+          ResolveSlotBase(tmeta, design_state_base_, instances_);
+      new_cold.edge_last_byte = tbase[group.byte_offset];
       new_cold.has_edge_last_byte = true;
     }
     auto& ecold = edge_cold_pool_[esub.cold_idx];
@@ -1122,10 +1120,7 @@ void Engine::SubscribeRebind(
     wcold.edge_target_id = edge_target_id;
 
     // Capture initial snapshot of dep slot.
-    std::span design_state(
-        static_cast<const uint8_t*>(design_state_base_),
-        slot_meta_registry_.MaxExtent());
-    const auto* src = &design_state[meta.base_off];
+    const auto* src = ResolveSlotBase(meta, design_state_base_, instances_);
     wcold.snapshot.resize(meta.total_bytes);
     std::memcpy(wcold.snapshot.data(), src, meta.total_bytes);
 

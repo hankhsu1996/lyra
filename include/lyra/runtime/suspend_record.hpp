@@ -117,10 +117,9 @@ static_assert(
 // Stored in the process frame; the single runtime kernel reads these fields
 // instead of emitting per-process LLVM IR.
 struct ConnectionDescriptor {
-  uint32_t src_byte_offset = 0;   // Source slot offset from design_ptr
-  uint32_t dst_byte_offset = 0;   // Dest slot offset from design_ptr
+  uint32_t src_slot_id = 0;       // Source slot ID for address resolution
+  uint32_t dst_slot_id = 0;       // Dest slot ID for address resolution
   uint32_t byte_size = 0;         // Copy size
-  uint32_t dst_slot_id = 0;       // For LyraStorePacked notification
   uint32_t trigger_slot_id = 0;   // WaitTriggerRecord.signal_id
   uint8_t trigger_edge = 0;       // WaitTriggerRecord.edge
   uint8_t trigger_bit_index = 0;  // WaitTriggerRecord.bit_index
@@ -130,7 +129,7 @@ struct ConnectionDescriptor {
 };
 
 static_assert(
-    sizeof(ConnectionDescriptor) == 32, "ConnectionDescriptor size mismatch");
+    sizeof(ConnectionDescriptor) == 28, "ConnectionDescriptor size mismatch");
 static_assert(
     alignof(ConnectionDescriptor) == 4,
     "ConnectionDescriptor alignment mismatch");

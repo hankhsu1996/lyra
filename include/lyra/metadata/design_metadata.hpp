@@ -25,10 +25,9 @@ enum class ConnectionKernelOrigin : uint8_t {
 
 // Runtime-shaped connection descriptor with compile-time provenance.
 struct ConnectionDescriptorEntry {
-  uint32_t src_byte_offset = 0;
-  uint32_t dst_byte_offset = 0;
-  uint32_t byte_size = 0;
+  uint32_t src_slot_id = 0;
   uint32_t dst_slot_id = 0;
+  uint32_t byte_size = 0;
   uint32_t trigger_slot_id = 0;
   uint8_t trigger_edge = 0;
   uint8_t trigger_bit_index = 0;

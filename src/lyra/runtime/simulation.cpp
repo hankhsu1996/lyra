@@ -28,6 +28,7 @@
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/signal_dump.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/slot_meta_abi.hpp"
@@ -485,6 +486,16 @@ extern "C" void LyraRunSimulation(
       engine.InitSlotMeta(
           lyra::runtime::SlotMetaRegistry(
               abi->slot_meta_words, abi->slot_meta_word_count));
+    }
+
+    // Instance pointer list for slot storage resolution.
+    if (abi->instance_ptrs != nullptr && abi->num_instances > 0) {
+      engine.SetInstances(std::span(abi->instance_ptrs, abi->num_instances));
+    }
+
+    // Validate that instance-owned slot meta entries reference valid instances.
+    if (abi->slot_meta_words != nullptr && abi->slot_meta_word_count > 0) {
+      engine.ValidateInstanceOwnedSlotMeta();
     }
 
     // Process metadata
@@ -983,4 +994,49 @@ extern "C" void LyraApply4StatePatches64(
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
     std::memcpy(base_bytes + offsets[i], &masks[i], sizeof(uint64_t));
   }
+}
+
+extern "C" auto LyraResolveSlotPtr(void* engine_ptr, uint32_t slot_id)
+    -> void* {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  return engine->ResolveSlotBytesMut(slot_id);
+}
+
+extern "C" auto LyraResolveSlotAddress(
+    const LyraRuntimeAbi* abi, uint32_t slot_id) -> void* {
+  if (abi == nullptr) {
+    throw lyra::common::InternalError("LyraResolveSlotAddress", "abi is null");
+  }
+  if (abi->slot_meta_words == nullptr || abi->slot_meta_word_count == 0) {
+    throw lyra::common::InternalError(
+        "LyraResolveSlotAddress", "no slot metadata");
+  }
+  lyra::runtime::SlotMetaRegistry registry(
+      abi->slot_meta_words, abi->slot_meta_word_count);
+  const auto& meta = registry.Get(slot_id);
+
+  if (meta.domain == lyra::runtime::SlotStorageDomain::kDesignGlobal) {
+    return static_cast<uint8_t*>(abi->design_state) + meta.design_base_off;
+  }
+
+  if (abi->instance_ptrs == nullptr ||
+      meta.owner_instance_id >= abi->num_instances) {
+    throw lyra::common::InternalError(
+        "LyraResolveSlotAddress",
+        std::format(
+            "slot {} owner_instance_id {} out of range for {} instances",
+            slot_id, meta.owner_instance_id, abi->num_instances));
+  }
+
+  const auto* inst = abi->instance_ptrs[meta.owner_instance_id];
+  if (inst == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraResolveSlotAddress",
+        std::format(
+            "slot {} owner_instance_id {} resolved to null instance", slot_id,
+            meta.owner_instance_id));
+  }
+
+  return lyra::runtime::ResolveInstanceStorageOffset(
+      *inst, meta.instance_rel_off, meta.total_bytes, "LyraResolveSlotAddress");
 }
