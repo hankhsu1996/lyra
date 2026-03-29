@@ -695,6 +695,20 @@ class Engine {
   void RemoveRebindWatcherSub(uint32_t slot_id, uint32_t index);
   void RemoveContainerSub(uint32_t slot_id, uint32_t index);
 
+  // Focused subscribe helpers (called from Subscribe after validation).
+  auto SubscribeChange(
+      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      uint32_t byte_offset, uint32_t byte_size, bool initially_active,
+      ProcessState& proc_state, const SlotMeta& meta,
+      std::span<const uint8_t> design_state, SlotSubscriptions& slot)
+      -> uint32_t;
+  auto SubscribeEdge(
+      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
+      uint8_t bit_index, bool initially_active, ProcessState& proc_state,
+      const SlotMeta& meta, std::span<const uint8_t> design_state,
+      SlotSubscriptions& slot) -> uint32_t;
+
   // Persistent wait-site installation
   void InstallWaitSite(
       ProcessHandle handle, SuspendRecord* suspend,

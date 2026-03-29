@@ -713,6 +713,97 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
   }
 }
 
+auto Engine::SubscribeChange(
+    ProcessHandle handle, ResumePoint resume, SignalId signal,
+    uint32_t byte_offset, uint32_t byte_size, bool initially_active,
+    ProcessState& proc_state, const SlotMeta& meta,
+    std::span<const uint8_t> design_state, SlotSubscriptions& slot)
+    -> uint32_t {
+  auto sub_idx = static_cast<uint32_t>(slot.change_subs.size());
+  auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
+
+  ChangeSub sub{};
+  sub.process_id = handle.process_id;
+  sub.instance_id = handle.instance_id;
+  sub.resume_block = resume.block_index;
+  sub.byte_offset = byte_offset;
+  sub.byte_size = byte_size;
+  sub.process_sub_idx = proc_sub_idx;
+  sub.cold_idx = UINT32_MAX;
+  sub.flags = initially_active ? kSubActive : 0;
+
+  // Baseline capture: always snapshot regardless of initially_active.
+  // When a rebind later activates an inactive sub, the baseline prevents
+  // a false trigger on the first flush.
+  const auto* src = &design_state[meta.base_off + byte_offset];
+  if (byte_size <= ChangeSub::kInlineSnapshotCap) {
+    std::memcpy(sub.snapshot_inline.data(), src, byte_size);
+  } else {
+    sub.cold_idx = AllocChangeCold();
+    auto& cold = change_cold_pool_[sub.cold_idx];
+    cold.snapshot.resize(byte_size);
+    std::memcpy(cold.snapshot.data(), src, byte_size);
+  }
+
+  slot.change_subs.push_back(sub);
+  proc_state.sub_refs.push_back(
+      SubRef{.slot_id = signal, .index = sub_idx, .kind = SubKind::kChange});
+  ++proc_state.subscription_count;
+  ++live_subscription_count_;
+  return sub_idx;
+}
+
+auto Engine::SubscribeEdge(
+    ProcessHandle handle, ResumePoint resume, SignalId signal,
+    common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
+    uint8_t bit_index, bool initially_active, ProcessState& proc_state,
+    const SlotMeta& meta, std::span<const uint8_t> design_state,
+    SlotSubscriptions& slot) -> uint32_t {
+  if (byte_size != 1) {
+    throw common::InternalError(
+        "Engine::SubscribeEdge", "edge subscriptions require byte_size=1");
+  }
+  if (bit_index > 7) {
+    throw common::InternalError(
+        "Engine::SubscribeEdge", "bit_index must be in [0,7]");
+  }
+
+  auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
+
+  uint8_t initial_last_bit =
+      (design_state[meta.base_off + byte_offset] >> bit_index) & 1;
+  uint8_t group_idx =
+      FindOrCreateEdgeGroup(signal, byte_offset, bit_index, initial_last_bit);
+
+  EdgeBucket bucket = (edge == common::EdgeKind::kPosedge)
+                          ? EdgeBucket::kPosedge
+                          : EdgeBucket::kNegedge;
+  auto& group = slot.edge_groups[group_idx];
+  auto& target_vec = (bucket == EdgeBucket::kPosedge) ? group.posedge_subs
+                                                      : group.negedge_subs;
+  auto sub_idx = static_cast<uint32_t>(target_vec.size());
+
+  EdgeSub sub{};
+  sub.process_id = handle.process_id;
+  sub.instance_id = handle.instance_id;
+  sub.resume_block = resume.block_index;
+  sub.flags = initially_active ? kSubActive : 0;
+  sub.process_sub_idx = proc_sub_idx;
+  sub.cold_idx = UINT32_MAX;
+
+  target_vec.push_back(sub);
+  proc_state.sub_refs.push_back(
+      SubRef{
+          .slot_id = signal,
+          .index = sub_idx,
+          .kind = SubKind::kEdge,
+          .edge_bucket = bucket,
+          .edge_group = group_idx});
+  ++proc_state.subscription_count;
+  ++live_subscription_count_;
+  return sub_idx;
+}
+
 auto Engine::Subscribe(
     ProcessHandle handle, ResumePoint resume, SignalId signal,
     common::EdgeKind edge, bool initially_active) -> uint32_t {
@@ -780,89 +871,14 @@ auto Engine::Subscribe(
   auto& slot = signal_subs_[signal];
 
   if (edge == common::EdgeKind::kAnyChange) {
-    // kAnyChange -> ChangeSub
-    // Baseline capture policy: always capture snapshot regardless of
-    // initially_active. When a rebind later activates an inactive sub,
-    // the baseline prevents a false trigger on the first flush.
-    auto sub_idx = static_cast<uint32_t>(slot.change_subs.size());
-    auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
-
-    ChangeSub sub{};
-    sub.process_id = handle.process_id;
-    sub.instance_id = handle.instance_id;
-    sub.resume_block = resume.block_index;
-    sub.byte_offset = byte_offset;
-    sub.byte_size = byte_size;
-    sub.process_sub_idx = proc_sub_idx;
-    sub.cold_idx = UINT32_MAX;
-    sub.flags = initially_active ? kSubActive : 0;
-
-    const auto* src = &design_state[meta.base_off + byte_offset];
-    if (byte_size <= ChangeSub::kInlineSnapshotCap) {
-      std::memcpy(sub.snapshot_inline.data(), src, byte_size);
-    } else {
-      // Large snapshot -> need cold entry.
-      sub.cold_idx = AllocChangeCold();
-      auto& cold = change_cold_pool_[sub.cold_idx];
-      cold.snapshot.resize(byte_size);
-      std::memcpy(cold.snapshot.data(), src, byte_size);
-    }
-
-    slot.change_subs.push_back(sub);
-    proc_state.sub_refs.push_back(
-        SubRef{.slot_id = signal, .index = sub_idx, .kind = SubKind::kChange});
-    ++proc_state.subscription_count;
-    ++live_subscription_count_;
-    return sub_idx;
+    return SubscribeChange(
+        handle, resume, signal, byte_offset, byte_size, initially_active,
+        proc_state, meta, design_state, slot);
   }
 
-  // kPosedge/kNegedge -> EdgeSub
-  // Baseline capture policy: always capture last_bit regardless of
-  // initially_active. When a rebind later activates an inactive sub,
-  // the baseline prevents a false trigger on the first flush.
-  if (byte_size != 1) {
-    throw common::InternalError(
-        "Engine::Subscribe", "edge subscriptions require byte_size=1");
-  }
-  if (bit_index > 7) {
-    throw common::InternalError(
-        "Engine::Subscribe", "bit_index must be in [0,7]");
-  }
-
-  auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
-
-  // Find or create the observation-point group for (byte_offset, bit_index).
-  uint8_t initial_last_bit =
-      (design_state[meta.base_off + byte_offset] >> bit_index) & 1;
-  uint8_t group_idx =
-      FindOrCreateEdgeGroup(signal, byte_offset, bit_index, initial_last_bit);
-
-  // Determine polarity bucket.
-  EdgeBucket bucket = (edge == common::EdgeKind::kPosedge)
-                          ? EdgeBucket::kPosedge
-                          : EdgeBucket::kNegedge;
-  auto& target_vec = EdgeSubVec(signal, group_idx, bucket);
-  auto sub_idx = static_cast<uint32_t>(target_vec.size());
-
-  EdgeSub sub{};
-  sub.process_id = handle.process_id;
-  sub.instance_id = handle.instance_id;
-  sub.resume_block = resume.block_index;
-  sub.flags = initially_active ? kSubActive : 0;
-  sub.process_sub_idx = proc_sub_idx;
-  sub.cold_idx = UINT32_MAX;
-
-  target_vec.push_back(sub);
-  proc_state.sub_refs.push_back(
-      SubRef{
-          .slot_id = signal,
-          .index = sub_idx,
-          .kind = SubKind::kEdge,
-          .edge_bucket = bucket,
-          .edge_group = group_idx});
-  ++proc_state.subscription_count;
-  ++live_subscription_count_;
-  return sub_idx;
+  return SubscribeEdge(
+      handle, resume, signal, edge, byte_offset, byte_size, bit_index,
+      initially_active, proc_state, meta, design_state, slot);
 }
 
 auto Engine::SubscribeContainerElement(
