@@ -319,7 +319,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
         {"name", "description", "sv", "files", "plusargs", "param_overrides",
          "pedantic", "trace_summary", "signal_trace", "dump_slot_meta",
          "dump_specialization_map", "dump_repertoire", "dump_repertoire_desc",
-         "dpi_sources", "expect"},
+         "disable_assertions", "dpi_sources", "expect"},
         case_context, path);
 
     // Single-file format: sv: |
@@ -393,6 +393,11 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     // Dump repertoire descriptor (test-only)
     if (node["dump_repertoire_desc"]) {
       test_case.dump_repertoire_desc = node["dump_repertoire_desc"].as<bool>();
+    }
+
+    // Disable assertions
+    if (node["disable_assertions"]) {
+      test_case.disable_assertions = node["disable_assertions"].as<bool>();
     }
 
     // DPI companion C source paths (relative to YAML file directory)

@@ -2028,6 +2028,20 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       return hir::kInvalidStatementId;
     }
 
+    case StatementKind::ImmediateAssertion:
+    case StatementKind::ConcurrentAssertion: {
+      if (ctx->Options().disable_assertions) {
+        return std::nullopt;
+      }
+      ctx->sink->Error(
+          ctx->SpanOf(stmt.sourceRange),
+          std::format(
+              "assertion statements are unsupported; "
+              "pass --disable-assertions to skip (kind '{}')",
+              toString(stmt.kind)));
+      return hir::kInvalidStatementId;
+    }
+
     default:
       ctx->sink->Error(
           ctx->SpanOf(stmt.sourceRange),

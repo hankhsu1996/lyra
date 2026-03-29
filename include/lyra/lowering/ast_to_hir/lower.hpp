@@ -13,6 +13,7 @@
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
+#include "lyra/lowering/ast_to_hir/options.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/ast_to_hir/source_mapper.hpp"
 #include "lyra/mir/instance.hpp"
@@ -41,7 +42,8 @@ struct LoweringResult {
       -9;  // Finest timeprecision across all modules
 };
 
-auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
-    -> LoweringResult;
+auto LowerAstToHir(
+    slang::ast::Compilation& compilation, DiagnosticSink& sink,
+    const HirLoweringOptions& options) -> LoweringResult;
 
 }  // namespace lyra::lowering::ast_to_hir

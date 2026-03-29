@@ -23,8 +23,9 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
-    -> LoweringResult {
+auto LowerAstToHir(
+    slang::ast::Compilation& compilation, DiagnosticSink& sink,
+    const HirLoweringOptions& options) -> LoweringResult {
   if (compilation.getSourceManager() == nullptr) {
     throw common::InternalError(
         "AST to HIR lowering", "compilation has no source manager");
@@ -42,6 +43,7 @@ auto LowerAstToHir(slang::ast::Compilation& compilation, DiagnosticSink& sink)
       *compilation.getSourceManager(), *source_manager, *source_mapper);
 
   Context ctx;
+  ctx.options = &options;
   ctx.sink = &sink;
   ctx.hir_arena = hir_arena.get();
   ctx.type_arena = type_arena.get();

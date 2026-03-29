@@ -216,6 +216,10 @@ void AddCompilationFlags(argparse::ArgumentParser& cmd) {
       .append()
       .metavar("PATH")
       .help("DPI link input path (repeatable)");
+  cmd.add_argument("--disable-assertions")
+      .default_value(false)
+      .implicit_value(true)
+      .help("Skip unsupported assertion constructs during lowering");
 }
 
 auto BuildInput(
@@ -381,6 +385,9 @@ auto BuildInput(
   if (auto path = cmd.present<std::string>("--stats-out")) {
     input.stats_out_path = *path;
   }
+
+  // Disable assertions (CLI only)
+  input.disable_assertions = cmd.get<bool>("--disable-assertions");
 
   // DPI link inputs: config base + CLI appended
   if (config) {

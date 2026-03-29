@@ -323,8 +323,11 @@ auto PrepareLlvmModule(
   // Lower AST to HIR
   auto t_hir = Clock::now();
   DiagnosticSink sink;
-  auto hir_result =
-      lowering::ast_to_hir::LowerAstToHir(*parse_result.compilation, sink);
+  lowering::ast_to_hir::HirLoweringOptions hir_options{
+      .disable_assertions = test_case.disable_assertions,
+  };
+  auto hir_result = lowering::ast_to_hir::LowerAstToHir(
+      *parse_result.compilation, sink, hir_options);
 
   if (sink.HasErrors()) {
     std::ostringstream error_stream;

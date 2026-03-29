@@ -69,6 +69,9 @@ auto LowerModuleBody(
 
     // Lower processes
     for (const auto* proc : input.processes) {
+      if (body_ctx.Options().disable_assertions && proc->isFromAssertion) {
+        continue;
+      }
       hir::ProcessId id = LowerProcess(*proc, lowerer);
       if (id) {
         processes.push_back(id);
