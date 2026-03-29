@@ -11,15 +11,18 @@
 namespace lyra::mir {
 
 // Canonical passing-mode derivation from direction and ABI type.
-// kLogicVecNarrow input is by-pointer (const svLogicVecVal* per IEEE 1800).
+// Packed vector input is by-pointer (const svLogicVecVal*/svBitVecVal*).
 // All other inputs are by-value. All output/inout are by-pointer.
 // Used by both signature construction and contract verification.
 [[nodiscard]] inline auto GetDpiPassingMode(
     ParameterDirection dir, DpiAbiTypeClass abi_type) -> DpiPassingMode {
-  if (dir == ParameterDirection::kInput && !IsFourStateVecDpiType(abi_type)) {
-    return DpiPassingMode::kByValue;
+  if (dir != ParameterDirection::kInput) {
+    return DpiPassingMode::kByPointer;
   }
-  return DpiPassingMode::kByPointer;
+  if (IsPackedVecDpiType(abi_type)) {
+    return DpiPassingMode::kByPointer;
+  }
+  return DpiPassingMode::kByValue;
 }
 
 // Validate the structural contract of a frozen DPI signature:

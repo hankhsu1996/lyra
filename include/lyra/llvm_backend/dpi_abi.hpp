@@ -24,14 +24,16 @@ class Context;
 namespace lyra::lowering::mir_to_llvm::dpi {
 
 // Map a scalar DPI ABI type class to the LLVM type used at the C ABI boundary.
-// Only handles D1/D2 scalar classes plus kLogicScalar (svLogic = i8).
-// Throws for kLogicVecNarrow -- use GetLlvmDpiStorageType instead.
+// Handles scalar/direct classes only. Throws for packed-vector ABI classes --
+// use GetLlvmDpiStorageType instead.
 auto GetLlvmScalarDpiType(llvm::LLVMContext& ctx, DpiAbiTypeClass t)
     -> llvm::Type*;
 
-// Get the LLVM in-memory storage type for a DPI ABI class, accounting for
-// 4-state vector types that use svLogicVecVal arrays. Used for staged-temp
-// allocation (params) and will extend to return storage (D3b).
+// Get the LLVM in-memory storage type for a DPI ABI class.
+// Packed-vector classes return multiword array types:
+//   4-state vectors -> [N x {i32, i32}]  (svLogicVecVal)
+//   2-state wide    -> [N x i32]          (svBitVecVal)
+// Scalar/direct classes delegate to GetLlvmScalarDpiType.
 auto GetLlvmDpiStorageType(
     llvm::LLVMContext& ctx, DpiAbiTypeClass abi_type, TypeId sv_type,
     const TypeArena& types) -> llvm::Type*;
