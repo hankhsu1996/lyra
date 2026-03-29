@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace lyra::runtime {
@@ -34,9 +35,28 @@ struct PackedPlanes {
   uint32_t unk_bytes = 0;
 };
 
-// Metadata for a single design slot's byte layout within DesignState.
+// Storage domain for a design slot.
+enum class SlotStorageDomain : uint8_t {
+  // Package/global slot: bytes live in the design-global arena at
+  // design_base_off.
+  kDesignGlobal = 0,
+  // Owned module-local slot: bytes live in the owning RuntimeInstance's
+  // heap-allocated inline storage at instance_rel_off.
+  kInstanceOwned = 1,
+};
+
+// Metadata for a single design slot's storage location and byte layout.
 struct SlotMeta {
-  uint32_t base_off = 0;
+  SlotStorageDomain domain = SlotStorageDomain::kDesignGlobal;
+
+  // For kDesignGlobal: arena-absolute byte offset within design_state.
+  uint32_t design_base_off = 0;
+  // For kInstanceOwned: instance_id of the owning RuntimeInstance.
+  uint32_t owner_instance_id = 0;
+  // For kInstanceOwned: body-relative byte offset within the instance's
+  // inline storage.
+  uint32_t instance_rel_off = 0;
+
   uint32_t total_bytes = 0;
   SlotStorageKind kind = SlotStorageKind::kPacked2;
   PackedPlanes planes;
@@ -44,6 +64,27 @@ struct SlotMeta {
   // For forwarded aliases, points to the canonical owner.
   uint32_t storage_owner_slot_id = 0;
 };
+
+struct RuntimeInstance;
+
+// Resolve a body-relative byte offset against instance's two-region storage.
+// Offsets in [0, inline_size) map to inline_base.
+// Offsets in [inline_size, inline_size + appendix_size) map to appendix_base.
+// Throws InternalError if the access range exceeds total storage.
+[[nodiscard]] auto ResolveInstanceStorageOffset(
+    const RuntimeInstance& instance, uint32_t rel_off, uint32_t access_size,
+    const char* caller) -> uint8_t*;
+
+// Resolve the byte address of a slot's storage given its metadata.
+// For kDesignGlobal: returns design_state_base + design_base_off.
+// For kInstanceOwned: dispatches through ResolveInstanceStorageOffset.
+[[nodiscard]] auto ResolveSlotBase(
+    const SlotMeta& meta, const void* design_state_base,
+    std::span<const RuntimeInstance* const> instances) -> const uint8_t*;
+
+[[nodiscard]] auto ResolveSlotBaseMut(
+    const SlotMeta& meta, void* design_state_base,
+    std::span<const RuntimeInstance* const> instances) -> uint8_t*;
 
 // Dense registry of slot metadata, indexed by slot_id.
 // One-time initialized from the ABI word table passed to LyraRunSimulation.

@@ -14,13 +14,13 @@ namespace {
 
 void ValidateSlotRootPointer(
     const void* ptr, uint32_t slot_id, const SlotMetaRegistry& registry,
-    const void* design_state_base, const char* caller) {
+    const void* design_state_base,
+    std::span<const RuntimeInstance* const> instances, const char* caller) {
   if (!registry.IsPopulated() || design_state_base == nullptr) {
     return;
   }
-  auto state = std::span(
-      static_cast<const uint8_t*>(design_state_base), registry.MaxExtent());
-  const auto* expected = &state[registry.Get(slot_id).base_off];
+  const auto& meta = registry.Get(slot_id);
+  const auto* expected = ResolveSlotBase(meta, design_state_base, instances);
   if (static_cast<const uint8_t*>(ptr) != expected) {
     // Stopgap for direct-array-root owned-container rollout: the runtime
     // registry does not yet expose owned-container root identity, so we
@@ -57,7 +57,7 @@ void Engine::ScheduleNba(
 
   ValidateSlotRootPointer(
       notify_base_ptr, notify_slot_id, slot_meta_registry_, design_state_base_,
-      "Engine::ScheduleNba");
+      instances_, "Engine::ScheduleNba");
 
   NbaEntry entry;
   entry.write_ptr = write_ptr;
@@ -95,7 +95,7 @@ void Engine::ScheduleNbaCanonicalPacked(
 
   ValidateSlotRootPointer(
       notify_base_ptr, notify_slot_id, slot_meta_registry_, design_state_base_,
-      "Engine::ScheduleNbaCanonicalPacked");
+      instances_, "Engine::ScheduleNbaCanonicalPacked");
 
   NbaEntry entry;
   entry.write_ptr = write_ptr;

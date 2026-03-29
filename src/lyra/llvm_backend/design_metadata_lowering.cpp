@@ -96,8 +96,7 @@ auto GetConnectionDescriptorLlvmType(llvm::LLVMContext& ctx)
   auto* i16 = llvm::Type::getInt16Ty(ctx);
   auto* i32 = llvm::Type::getInt32Ty(ctx);
   return llvm::StructType::create(
-      ctx, {i32, i32, i32, i32, i32, i8, i8, i16, i32, i32},
-      "ConnectionDescriptor");
+      ctx, {i32, i32, i32, i32, i8, i8, i16, i32, i32}, "ConnectionDescriptor");
 }
 
 }  // namespace
@@ -132,12 +131,6 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
   const auto& design = layout.design;
 
   for (const auto& entry : kernel_entries) {
-    auto src_offset = NarrowToU32(
-        design.GetStorageByteOffset(entry.src_slot),
-        "ExtractConnectionDescriptorEntries src");
-    auto dst_offset = NarrowToU32(
-        design.GetStorageByteOffset(entry.dst_slot),
-        "ExtractConnectionDescriptorEntries dst");
     auto byte_size = design.GetStorageSpec(entry.dst_slot).TotalByteSize();
 
     uint32_t trigger_byte_offset = 0;
@@ -150,10 +143,9 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
     }
 
     entries.push_back({
-        .src_byte_offset = src_offset,
-        .dst_byte_offset = dst_offset,
-        .byte_size = byte_size,
+        .src_slot_id = entry.src_slot.value,
         .dst_slot_id = entry.dst_slot.value,
+        .byte_size = byte_size,
         .trigger_slot_id = entry.trigger_slot.value,
         .trigger_edge = static_cast<uint8_t>(entry.trigger_edge),
         .trigger_bit_index = trigger_bit_index,
@@ -217,10 +209,9 @@ auto EmitDesignMetadataGlobals(
       desc_constants.push_back(
           llvm::ConstantStruct::get(
               conn_desc_llvm_type,
-              {llvm::ConstantInt::get(i32_llvm, desc.src_byte_offset),
-               llvm::ConstantInt::get(i32_llvm, desc.dst_byte_offset),
-               llvm::ConstantInt::get(i32_llvm, desc.byte_size),
+              {llvm::ConstantInt::get(i32_llvm, desc.src_slot_id),
                llvm::ConstantInt::get(i32_llvm, desc.dst_slot_id),
+               llvm::ConstantInt::get(i32_llvm, desc.byte_size),
                llvm::ConstantInt::get(i32_llvm, desc.trigger_slot_id),
                llvm::ConstantInt::get(i8_llvm, desc.trigger_edge),
                llvm::ConstantInt::get(i8_llvm, desc.trigger_bit_index),
@@ -357,7 +348,7 @@ auto FindPortBindingForwardingCandidates(
     // full-slot trigger observation. This checks shape compatibility
     // but does NOT prove semantic equivalence of the forwarded value.
     candidate.downstream_matching_read_shape =
-        downstream.src_byte_offset == upstream.dst_byte_offset &&
+        downstream.src_slot_id == upstream.dst_slot_id &&
         downstream.byte_size == upstream.byte_size &&
         downstream.trigger_byte_size == 0 &&
         downstream.trigger_byte_offset == 0;

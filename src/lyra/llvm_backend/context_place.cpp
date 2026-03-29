@@ -492,6 +492,16 @@ auto Context::GetModuleSlotPointer(uint32_t local_slot_id) -> llvm::Value* {
 
 auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)
     -> llvm::Value* {
+  // When engine is available (simulation context), resolve through the
+  // runtime slot resolver. This handles both design-global and
+  // instance-owned slots correctly via SlotMeta domain dispatch.
+  if (engine_ptr_ != nullptr) {
+    return builder_.CreateCall(
+        GetLyraResolveSlotPtr(),
+        {engine_ptr_, builder_.getInt32(global_slot_id)}, "resolved_slot_ptr");
+  }
+  // Init context (no engine): fall back to design_ptr + arena offset.
+  // Only valid for package/global slots during initialization.
   if (design_ptr_ == nullptr) {
     throw common::InternalError(
         "GetDesignGlobalSlotPointer", "design pointer not set");

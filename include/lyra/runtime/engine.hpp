@@ -374,6 +374,24 @@ class Engine {
     design_state_base_ = base;
   }
 
+  // Set the instance list for slot storage resolution.
+  // The span must remain valid for the lifetime of the engine.
+  void SetInstances(std::span<const RuntimeInstance* const> instances) {
+    instances_ = instances;
+  }
+
+  // Validate that all kInstanceOwned slot-meta entries reference valid
+  // instances. Must be called after both slot meta and instance list are
+  // installed. Throws InternalError on any mismatch.
+  void ValidateInstanceOwnedSlotMeta() const;
+
+  // Resolve the storage byte address for a slot.
+  // For kDesignGlobal slots: returns design_state_base_ + design_base_off.
+  // For kInstanceOwned slots: returns instance->storage.inline_base +
+  // instance_rel_off.
+  [[nodiscard]] auto ResolveSlotBytes(uint32_t slot_id) const -> const uint8_t*;
+  [[nodiscard]] auto ResolveSlotBytesMut(uint32_t slot_id) -> uint8_t*;
+
   // Route a MutationEvent to the UpdateSet (design slots only; heap NYI).
   void OnMutation(const common::MutationEvent& event);
 
@@ -912,16 +930,16 @@ class Engine {
   // update_set_: tracks dirty slots (per-delta for scheduler, per-time-slot
   // for trace).
   void* design_state_base_ = nullptr;
+  std::span<const RuntimeInstance* const> instances_;
   UpdateSet update_set_;
 
   // Connection batch: fast-path for kernelized connection processes.
   // Instead of scheduling connection processes through the full engine,
   // connections are evaluated inline during signal propagation.
   struct BatchedConnection {
-    uint32_t src_byte_offset;
-    uint32_t dst_byte_offset;
-    uint32_t byte_size;
+    uint32_t src_slot_id;
     uint32_t dst_slot_id;
+    uint32_t byte_size;
   };
   // All batched connections (for initial evaluation).
   std::vector<BatchedConnection> all_connections_;
@@ -1031,7 +1049,7 @@ class Engine {
   // Pre-comb snapshot descriptor for self-trigger suppression.
   struct CombSnapshot {
     uint32_t buf_off;
-    uint32_t base_off;
+    uint32_t slot_id;
     uint32_t total_bytes;
   };
 

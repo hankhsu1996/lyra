@@ -9,14 +9,13 @@ namespace lyra::runtime {
 
 // Construction program entry: one per module instance, in strict ModuleIndex
 // order. The runtime replays BeginBody/AddInstance calls from this table.
-// Field order chosen to avoid padding (uint64_t first, then uint32_t fields).
 struct ConstructionProgramEntry {
-  uint64_t storage_base_byte_offset;
   uint32_t body_group;
-  uint32_t has_storage;
   uint32_t path_offset;
   uint32_t param_offset;
   uint32_t param_size;
+  uint64_t realized_inline_size;
+  uint64_t realized_appendix_size;
 };
 
 // Flat POD reference to one body descriptor package. Mirrors the data

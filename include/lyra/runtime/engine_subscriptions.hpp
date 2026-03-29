@@ -112,7 +112,7 @@ struct WatcherCold {
 // by ContainerSub.cold_idx. Always allocated (holds container runtime state
 // and optional rebind target metadata).
 struct ContainerCold {
-  uint32_t container_base_off = UINT32_MAX;
+  uint32_t container_slot_id = UINT32_MAX;
   uint32_t container_elem_stride = 0;
   int64_t container_sv_index = 0;
   uint64_t container_epoch = 0;

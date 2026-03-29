@@ -40,6 +40,7 @@
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/owned_storage_handle.hpp"
 #include "lyra/runtime/process_frame.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -1086,13 +1087,44 @@ auto BuildHeaderType(llvm::LLVMContext& ctx, llvm::StructType* suspend_type)
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* outcome_ty =
       llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty});
-  // { suspend, body, engine_ptr, design_ptr, this_ptr,
-  //   instance_id, signal_id_offset, outcome }
+  // { suspend, body, engine_ptr, design_ptr, instance, outcome }
   using F = lyra::runtime::ProcessFrameHeaderField;
   constexpr auto kFieldCount = static_cast<size_t>(F::kFieldCount);
   std::array<llvm::Type*, kFieldCount> fields = {
-      suspend_type, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, outcome_ty};
+      suspend_type, ptr_ty, ptr_ty, ptr_ty, ptr_ty, outcome_ty};
   return llvm::StructType::create(ctx, fields, "ProcessStateHeader");
+}
+
+// Build RuntimeInstanceStorage LLVM struct type.
+// Field order must match RuntimeInstanceStorage and
+// RuntimeInstanceStorageField in runtime_instance.hpp.
+auto BuildRuntimeInstanceStorageType(llvm::LLVMContext& ctx)
+    -> llvm::StructType* {
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+  // { inline_base, inline_size, appendix_base, appendix_size }
+  using F = lyra::runtime::RuntimeInstanceStorageField;
+  constexpr auto kFieldCount = static_cast<size_t>(F::kFieldCount);
+  std::array<llvm::Type*, kFieldCount> fields = {
+      ptr_ty, i64_ty, ptr_ty, i64_ty};
+  return llvm::StructType::create(ctx, fields, "RuntimeInstanceStorage");
+}
+
+// Build RuntimeInstance LLVM struct type.
+// Field order must match RuntimeInstance and
+// RuntimeInstanceField in runtime_instance.hpp.
+auto BuildRuntimeInstanceType(
+    llvm::LLVMContext& ctx, llvm::StructType* storage_type)
+    -> llvm::StructType* {
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  // { instance_id, body, storage, path_c_str, owner_ordinal,
+  //   module_proc_base, num_module_processes, signal_id_offset }
+  using F = lyra::runtime::RuntimeInstanceField;
+  constexpr auto kFieldCount = static_cast<size_t>(F::kFieldCount);
+  std::array<llvm::Type*, kFieldCount> fields = {
+      i32_ty, ptr_ty, storage_type, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty};
+  return llvm::StructType::create(ctx, fields, "RuntimeInstance");
 }
 
 }  // namespace
@@ -1808,6 +1840,9 @@ auto BuildLayout(
   // Build runtime types
   layout.suspend_record_type = BuildSuspendRecordType(ctx);
   layout.header_type = BuildHeaderType(ctx, layout.suspend_record_type);
+  layout.runtime_instance_storage_type = BuildRuntimeInstanceStorageType(ctx);
+  layout.runtime_instance_type =
+      BuildRuntimeInstanceType(ctx, layout.runtime_instance_storage_type);
 
   // Use prebuilt design layout
   layout.design = std::move(design_layout);
@@ -2222,6 +2257,7 @@ auto BuildLayout(
     size_t num_instances = module_plans.size();
     layout.instance_storage_bases.resize(num_instances);
     layout.instance_slot_counts.resize(num_instances);
+    layout.instance_storage_sizes.resize(num_instances);
 
     for (size_t mi = 0; mi < num_instances; ++mi) {
       const auto& plan = module_plans[mi];
@@ -2238,6 +2274,47 @@ auto BuildLayout(
         }
       }
       layout.instance_storage_bases[mi] = base;
+
+      // Compute per-instance realized inline and appendix sizes from the
+      // design layout. These are the correct per-instance sizes accounting
+      // for concrete parameterized types.
+      if (base.abs_byte_offset.has_value()) {
+        uint64_t inst_base = base.abs_byte_offset->value;
+        uint64_t inline_end = inst_base;
+        uint64_t total_end = inst_base;
+
+        // Find the end of inline region: last owned inline slot + its size.
+        // Find the end of appendix region: last owned backing + its size.
+        for (uint32_t i = 0; i < plan.slot_count; ++i) {
+          uint32_t row = plan.design_state_base_slot + i;
+          if (!std::holds_alternative<OwnedLocalStorage>(
+                  layout.design.slot_storage_bindings[row])) {
+            continue;
+          }
+          uint64_t slot_off = layout.design.slot_byte_offsets[row];
+          bool has_backing = layout.design.owned_data_offsets[row].has_value();
+          uint64_t slot_size =
+              has_backing
+                  ? runtime::kOwnedStorageHandleByteSize
+                  : layout.design.slot_storage_specs[row].TotalByteSize();
+          uint64_t slot_end = slot_off + slot_size;
+          if (slot_end > inline_end) inline_end = slot_end;
+
+          // Check for owned backing data (container appendix).
+          if (layout.design.owned_data_offsets[row].has_value()) {
+            uint64_t backing_off = *layout.design.owned_data_offsets[row];
+            uint64_t backing_size =
+                layout.design.slot_storage_specs[row].TotalByteSize();
+            uint64_t backing_end = backing_off + backing_size;
+            if (backing_end > total_end) total_end = backing_end;
+          }
+        }
+
+        uint64_t inline_bytes = inline_end - inst_base;
+        uint64_t appendix_bytes =
+            (total_end > inline_end) ? (total_end - inline_end) : 0;
+        layout.instance_storage_sizes[mi] = {inline_bytes, appendix_bytes};
+      }
     }
   }
 

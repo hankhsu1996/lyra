@@ -35,6 +35,7 @@
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/runtime/process_frame.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -152,6 +153,14 @@ auto Context::GetOrCreateEnumValuesGlobal(TypeId enum_type)
 
 auto Context::GetHeaderType() const -> llvm::StructType* {
   return layout_.header_type;
+}
+
+auto Context::GetRuntimeInstanceType() const -> llvm::StructType* {
+  return layout_.runtime_instance_type;
+}
+
+auto Context::GetRuntimeInstanceStorageType() const -> llvm::StructType* {
+  return layout_.runtime_instance_storage_type;
 }
 
 auto Context::GetDesignArenaSize() const -> uint64_t {
@@ -402,6 +411,14 @@ auto Context::GetSlotAddressingMode() const -> SlotAddressingMode {
   return slot_addressing_;
 }
 
+void Context::SetInstancePointer(llvm::Value* ptr) {
+  instance_ptr_ = ptr;
+}
+
+auto Context::GetInstancePointer() const -> llvm::Value* {
+  return instance_ptr_;
+}
+
 void Context::SetThisPointer(llvm::Value* ptr) {
   this_ptr_ = ptr;
 }
@@ -460,25 +477,45 @@ auto Context::EmitLoadDesignPtr(llvm::Value* state_arg) -> llvm::Value* {
       llvm::PointerType::getUnqual(*llvm_context_), ptr, "design_ptr");
 }
 
-auto Context::EmitLoadThisPtr(llvm::Value* state_arg) -> llvm::Value* {
-  using F = lyra::runtime::ProcessFrameHeaderField;
-  auto* ptr = EmitHeaderFieldGep(*this, state_arg, F::kThisPtr, "this_ptr_ptr");
-  return builder_.CreateLoad(
-      llvm::PointerType::getUnqual(*llvm_context_), ptr, "this_ptr");
-}
-
-auto Context::EmitLoadInstanceId(llvm::Value* state_arg) -> llvm::Value* {
+auto Context::EmitLoadInstancePtr(llvm::Value* state_arg) -> llvm::Value* {
   using F = lyra::runtime::ProcessFrameHeaderField;
   auto* ptr =
-      EmitHeaderFieldGep(*this, state_arg, F::kInstanceId, "instance_id_ptr");
+      EmitHeaderFieldGep(*this, state_arg, F::kInstance, "instance_ptr_ptr");
   return builder_.CreateLoad(
-      llvm::Type::getInt32Ty(*llvm_context_), ptr, "instance_id");
+      llvm::PointerType::getUnqual(*llvm_context_), ptr, "instance_ptr");
 }
 
-auto Context::EmitLoadSignalIdOffset(llvm::Value* state_arg) -> llvm::Value* {
-  using F = lyra::runtime::ProcessFrameHeaderField;
-  auto* ptr = EmitHeaderFieldGep(
-      *this, state_arg, F::kSignalIdOffset, "signal_id_offset_ptr");
+auto Context::EmitLoadInstanceInlineBase(llvm::Value* instance_ptr)
+    -> llvm::Value* {
+  using IF = lyra::runtime::RuntimeInstanceField;
+  using SF = lyra::runtime::RuntimeInstanceStorageField;
+  auto* storage_ptr = builder_.CreateStructGEP(
+      GetRuntimeInstanceType(), instance_ptr,
+      static_cast<unsigned>(IF::kStorage), "storage_ptr");
+  auto* inline_base_ptr = builder_.CreateStructGEP(
+      GetRuntimeInstanceStorageType(), storage_ptr,
+      static_cast<unsigned>(SF::kInlineBase), "inline_base_ptr");
+  return builder_.CreateLoad(
+      llvm::PointerType::getUnqual(*llvm_context_), inline_base_ptr,
+      "inline_base");
+}
+
+auto Context::EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value* {
+  using IF = lyra::runtime::RuntimeInstanceField;
+  auto* id_ptr = builder_.CreateStructGEP(
+      GetRuntimeInstanceType(), instance_ptr,
+      static_cast<unsigned>(IF::kInstanceId), "instance_id_ptr");
+  return builder_.CreateLoad(
+      llvm::Type::getInt32Ty(*llvm_context_), id_ptr, "instance_id");
+}
+
+auto Context::EmitLoadSignalIdOffset(llvm::Value* instance_ptr)
+    -> llvm::Value* {
+  // Transitional compat field for R1. Targeted for removal in R4/R5.
+  using IF = lyra::runtime::RuntimeInstanceField;
+  auto* ptr = builder_.CreateStructGEP(
+      GetRuntimeInstanceType(), instance_ptr,
+      static_cast<unsigned>(IF::kSignalIdOffset), "signal_id_offset_ptr");
   return builder_.CreateLoad(
       llvm::Type::getInt32Ty(*llvm_context_), ptr, "signal_id_offset");
 }
@@ -506,9 +543,11 @@ void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
 }
 
 void Context::EmitSharedBodyBindingSetup(llvm::Value* state_arg) {
-  SetThisPointer(EmitLoadThisPtr(state_arg));
-  SetDynamicInstanceId(EmitLoadInstanceId(state_arg));
-  SetSignalIdOffset(EmitLoadSignalIdOffset(state_arg));
+  auto* inst = EmitLoadInstancePtr(state_arg);
+  SetInstancePointer(inst);
+  SetThisPointer(EmitLoadInstanceInlineBase(inst));
+  SetDynamicInstanceId(EmitLoadInstanceId(inst));
+  SetSignalIdOffset(EmitLoadSignalIdOffset(inst));
 }
 
 void Context::SetStatePointer(llvm::Value* state_ptr) {
@@ -587,6 +626,7 @@ auto Context::SaveExecutionContractState() -> ExecutionContractState {
       .frame_ptr = frame_ptr_,
       .engine_ptr = engine_ptr_,
       .first_dirty_seen_ptr = first_dirty_seen_ptr_,
+      .instance_ptr = instance_ptr_,
       .this_ptr = this_ptr_,
       .dynamic_instance_id = dynamic_instance_id_,
       .signal_id_offset = signal_id_offset_,
@@ -603,6 +643,7 @@ void Context::RestoreExecutionContractState(
   frame_ptr_ = state.frame_ptr;
   engine_ptr_ = state.engine_ptr;
   first_dirty_seen_ptr_ = state.first_dirty_seen_ptr;
+  instance_ptr_ = state.instance_ptr;
   this_ptr_ = state.this_ptr;
   dynamic_instance_id_ = state.dynamic_instance_id;
   signal_id_offset_ = state.signal_id_offset;

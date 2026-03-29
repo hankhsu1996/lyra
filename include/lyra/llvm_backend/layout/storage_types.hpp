@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <format>
-#include <limits>
 #include <optional>
 #include <variant>
 
@@ -112,19 +111,6 @@ struct InstanceStorageBase {
         std::format("abs {} < body_base {}", abs.value, body_base.value));
   }
   return BodyByteOffset{abs.value - body_base.value};
-}
-
-// Convert an instance-relative offset back to an arena-absolute offset.
-// Precondition: no overflow.
-[[nodiscard]] inline auto ToArenaOffset(
-    ArenaByteOffset instance_base, InstanceByteOffset rel) -> ArenaByteOffset {
-  if (rel.value > std::numeric_limits<uint64_t>::max() - instance_base.value) {
-    throw common::InternalError(
-        "ToArenaOffset", std::format(
-                             "overflow: instance_base {} + rel {}",
-                             instance_base.value, rel.value));
-  }
-  return ArenaByteOffset{instance_base.value + rel.value};
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -251,9 +251,14 @@ struct ObservableDescriptorEntry {
   uint32_t storage_owner_ref = 0;
   // Owner-domain and scope policy flags.
   uint32_t flags = 0;
+  // Storage domain for slot-meta realization.
+  // 0 = kDesignGlobal (package/global or forwarded-absolute).
+  // 1 = kInstanceOwned (owned module-local, body-relative offset).
+  // Set at descriptor emission time from the storage ref variant.
+  uint32_t storage_domain = 0;
 };
 
-static_assert(sizeof(ObservableDescriptorEntry) == 48);
+static_assert(sizeof(ObservableDescriptorEntry) == 52);
 static_assert(offsetof(ObservableDescriptorEntry, storage_byte_offset) == 0);
 static_assert(offsetof(ObservableDescriptorEntry, total_bytes) == 4);
 static_assert(offsetof(ObservableDescriptorEntry, storage_kind) == 8);
@@ -266,6 +271,7 @@ static_assert(offsetof(ObservableDescriptorEntry, local_name_pool_off) == 32);
 static_assert(offsetof(ObservableDescriptorEntry, trace_kind) == 36);
 static_assert(offsetof(ObservableDescriptorEntry, storage_owner_ref) == 40);
 static_assert(offsetof(ObservableDescriptorEntry, flags) == 44);
+static_assert(offsetof(ObservableDescriptorEntry, storage_domain) == 48);
 static_assert(std::is_trivially_copyable_v<ObservableDescriptorEntry>);
 static_assert(std::is_standard_layout_v<ObservableDescriptorEntry>);
 

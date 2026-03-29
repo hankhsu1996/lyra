@@ -47,6 +47,7 @@
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
+#include "lyra/runtime/owned_storage_handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -110,7 +111,7 @@ auto BuildObservableDescriptorShapeFields(const CanonicalObservableShape& shape)
 auto MakeObservableDescriptorEntry(
     uint32_t storage_byte_offset, uint32_t local_name_pool_off,
     const ObservableDescriptorOwnerRefFields& refs,
-    const ObservableDescriptorShapeFields& sf)
+    const ObservableDescriptorShapeFields& sf, uint32_t storage_domain)
     -> runtime::ObservableDescriptorEntry {
   return runtime::ObservableDescriptorEntry{
       .storage_byte_offset = storage_byte_offset,
@@ -125,6 +126,7 @@ auto MakeObservableDescriptorEntry(
       .trace_kind = sf.trace_kind,
       .storage_owner_ref = refs.storage_owner_ref,
       .flags = refs.flags,
+      .storage_domain = storage_domain,
   };
 }
 
@@ -301,11 +303,6 @@ auto BuildConstructionProgram(
 
     entry.body_group = instance_body_group[mi];
 
-    const auto& base = layout.instance_storage_bases[mi];
-    entry.has_storage = base.abs_byte_offset.has_value() ? 1U : 0U;
-    entry.storage_base_byte_offset =
-        base.abs_byte_offset.has_value() ? base.abs_byte_offset->value : 0;
-
     const auto& path = instance_table.entries[mi].full_path;
     entry.path_offset = static_cast<uint32_t>(prog.path_pool.size());
     prog.path_pool.insert(prog.path_pool.end(), path.begin(), path.end());
@@ -318,6 +315,10 @@ auto BuildConstructionProgram(
       prog.param_pool.insert(
           prog.param_pool.end(), payload.begin(), payload.end());
     }
+
+    const auto& sizes = layout.instance_storage_sizes[mi];
+    entry.realized_inline_size = sizes.inline_bytes;
+    entry.realized_appendix_size = sizes.appendix_bytes;
 
     prog.entries.push_back(entry);
   }
@@ -1924,22 +1925,25 @@ auto CompileDesignProcesses(const LoweringInput& input)
             BuildBodyObservableDescriptorOwnerRefFields(
                 owner, base_slot, info.slot_count);
 
+        uint32_t domain = 0;
         uint32_t storage_offset = std::visit(
             common::Overloaded{
                 [&](const ObservableBodyRelativeStorageRef& ref) -> uint32_t {
+                  domain = 1;
                   return narrow_u64_to_u32(
                       ref.offset.value, "body-local byte offset");
                 },
                 [&](const ObservableOwnerAbsoluteStorageRef& ref) -> uint32_t {
                   refs.flags |= runtime::kObservableFlagStorageAbsolute;
+                  domain = 0;
                   return narrow_u64_to_u32(
                       ref.offset.value, "owner-absolute byte offset");
                 },
             },
             storage_ref);
 
-        tmpl.entries.push_back(
-            MakeObservableDescriptorEntry(storage_offset, name_off, refs, sf));
+        tmpl.entries.push_back(MakeObservableDescriptorEntry(
+            storage_offset, name_off, refs, sf, domain));
       }
     }
 
@@ -1975,7 +1979,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
           continue;
         }
 
-        uint64_t body_local_offset =
+        uint64_t inst_rel_offset =
             layout->design.slot_byte_offsets[gsi] - init_owned_base->value;
         const auto& spec = layout->design.slot_storage_specs[gsi];
 
@@ -1986,7 +1990,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
                   .slot =
                       runtime::ParamInitSlotEntry{
                           .rel_byte_offset = NarrowToU32(
-                              body_local_offset, "body init param rel offset"),
+                              inst_rel_offset, "init param rel offset"),
                           .byte_size = spec.TotalByteSize(),
                       },
               });
@@ -1999,10 +2003,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
           info.init.owned_handles.push_back(
               runtime::InitHandleEntry{
-                  .handle_rel_byte_offset = NarrowToU32(
-                      body_local_offset, "body init handle rel offset"),
+                  .handle_rel_byte_offset =
+                      NarrowToU32(inst_rel_offset, "init handle rel offset"),
                   .backing_rel_byte_offset =
-                      NarrowToU32(backing_rel, "body init backing rel offset"),
+                      NarrowToU32(backing_rel, "init backing rel offset"),
                   .backing_byte_size = spec.TotalByteSize(),
               });
 
@@ -2015,7 +2019,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
           const auto& spec_arena = layout->design.storage_spec_arena;
           if (HasFourStateContent(spec, spec_arena)) {
             FlattenFourStatePatches(
-                spec, spec_arena, body_local_offset,
+                spec, spec_arena, inst_rel_offset,
                 info.init.four_state_patches);
           }
         }
@@ -2197,8 +2201,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
         const ObservableDescriptorOwnerRefFields refs =
             BuildPackageObservableDescriptorOwnerRefFields(owner);
 
-        pkg.entries.push_back(
-            MakeObservableDescriptorEntry(storage_offset, name_off, refs, sf));
+        pkg.entries.push_back(MakeObservableDescriptorEntry(
+            storage_offset, name_off, refs, sf, 0));
       }
     }
   }
@@ -2227,29 +2231,22 @@ auto FinalizeModule(CodegenSession session, LoweringReport report)
 
 void EmitVariableInspection(
     Context& context, const std::vector<VariableInfo>& variables,
-    const std::vector<SlotInfo>& slots, llvm::Value* design_state) {
+    const std::vector<SlotInfo>& slots, llvm::Value* design_state,
+    llvm::Value* abi_ptr) {
   if (variables.empty()) {
     return;
   }
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
+  auto& mod = context.GetModule();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
 
-  for (const auto& var : variables) {
-    if (var.slot_id >= slots.size()) {
-      continue;
-    }
-
-    auto slot_id = mir::SlotId{static_cast<uint32_t>(var.slot_id)};
-    uint64_t offset = context.GetDesignSlotByteOffset(slot_id);
-    auto* slot_ptr = builder.CreateGEP(
-        i8_ty, design_state, builder.getInt64(offset), "var_ptr");
-
+  auto emit_register = [&](llvm::Value* slot_ptr, const VariableInfo& var) {
     const auto& type_info = slots[var.slot_id].type_info;
-
     auto* name_ptr = builder.CreateGlobalStringPtr(var.name);
     auto* kind_val =
         llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(type_info.kind));
@@ -2261,9 +2258,52 @@ void EmitVariableInspection(
     builder.CreateCall(
         context.GetLyraRegisterVar(),
         {name_ptr, slot_ptr, kind_val, width_val, signed_val, four_state_val});
-  }
+  };
 
+  auto* fn = builder.GetInsertBlock()->getParent();
+  auto* null_ptr_val =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+  auto* has_abi = builder.CreateICmpNE(abi_ptr, null_ptr_val, "has_abi");
+
+  auto* with_abi_bb =
+      llvm::BasicBlock::Create(llvm_ctx, "inspect.with_abi", fn);
+  auto* direct_bb = llvm::BasicBlock::Create(llvm_ctx, "inspect.direct", fn);
+  auto* done_bb = llvm::BasicBlock::Create(llvm_ctx, "inspect.done", fn);
+
+  builder.CreateCondBr(has_abi, with_abi_bb, direct_bb);
+
+  auto* resolve_fn =
+      mod.getOrInsertFunction(
+             "LyraResolveSlotAddress",
+             llvm::FunctionType::get(ptr_ty, {ptr_ty, i32_ty}, false))
+          .getCallee();
+
+  builder.SetInsertPoint(with_abi_bb);
+  for (const auto& var : variables) {
+    if (var.slot_id >= slots.size()) continue;
+    auto* slot_id_val =
+        llvm::ConstantInt::get(i32_ty, static_cast<uint32_t>(var.slot_id));
+    auto* slot_ptr = builder.CreateCall(
+        llvm::cast<llvm::Function>(resolve_fn), {abi_ptr, slot_id_val},
+        "var_ptr");
+    emit_register(slot_ptr, var);
+  }
   builder.CreateCall(context.GetLyraSnapshotVars());
+  builder.CreateBr(done_bb);
+
+  builder.SetInsertPoint(direct_bb);
+  for (const auto& var : variables) {
+    if (var.slot_id >= slots.size()) continue;
+    auto slot_id = mir::SlotId{static_cast<uint32_t>(var.slot_id)};
+    uint64_t offset = context.GetDesignSlotByteOffset(slot_id);
+    auto* slot_ptr = builder.CreateGEP(
+        i8_ty, design_state, builder.getInt64(offset), "var_ptr");
+    emit_register(slot_ptr, var);
+  }
+  builder.CreateCall(context.GetLyraSnapshotVars());
+  builder.CreateBr(done_bb);
+
+  builder.SetInsertPoint(done_bb);
 }
 
 void EmitTimeReport(Context& context) {

@@ -138,25 +138,74 @@ void InitializeProcessState(
 
 void ReleaseStringSlots(
     Context& context, const std::vector<SlotInfo>& slots,
-    llvm::Value* design_state) {
+    llvm::Value* design_state, llvm::Value* abi_ptr) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
+  auto& mod = context.GetModule();
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
+  bool has_strings = false;
+  for (const auto& slot : slots) {
+    if (slot.type_info.kind == lowering::mir_to_llvm::VarTypeKind::kString) {
+      has_strings = true;
+      break;
+    }
+  }
+  if (!has_strings) return;
+
+  auto* resolve_fn =
+      mod.getOrInsertFunction(
+             "LyraResolveSlotAddress",
+             llvm::FunctionType::get(ptr_ty, {ptr_ty, i32_ty}, false))
+          .getCallee();
+
+  auto* fn = builder.GetInsertBlock()->getParent();
+  auto* null_ptr_val =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+  auto* has_abi = builder.CreateICmpNE(abi_ptr, null_ptr_val, "has_abi_rel");
+
+  auto* with_abi_bb =
+      llvm::BasicBlock::Create(llvm_ctx, "str_release.with_abi", fn);
+  auto* direct_bb =
+      llvm::BasicBlock::Create(llvm_ctx, "str_release.direct", fn);
+  auto* done_bb = llvm::BasicBlock::Create(llvm_ctx, "str_release.done", fn);
+
+  builder.CreateCondBr(has_abi, with_abi_bb, direct_bb);
+
+  auto emit_release = [&](llvm::Value* slot_ptr) {
+    auto* val = builder.CreateLoad(ptr_ty, slot_ptr);
+    builder.CreateCall(context.GetLyraStringRelease(), {val});
+  };
+
+  builder.SetInsertPoint(with_abi_bb);
   for (const auto& slot : slots) {
     if (slot.type_info.kind != lowering::mir_to_llvm::VarTypeKind::kString) {
       continue;
     }
+    auto* slot_id_val = llvm::ConstantInt::get(
+        i32_ty, static_cast<uint32_t>(slot.slot_id.value));
+    auto* slot_ptr = builder.CreateCall(
+        llvm::cast<llvm::Function>(resolve_fn), {abi_ptr, slot_id_val},
+        "str_release_ptr");
+    emit_release(slot_ptr);
+  }
+  builder.CreateBr(done_bb);
 
-    // Handle slots (string, dynarray, queue) store a canonical pointer-width
-    // value. Direct typed pointer load is correct for handle storage.
+  builder.SetInsertPoint(direct_bb);
+  for (const auto& slot : slots) {
+    if (slot.type_info.kind != lowering::mir_to_llvm::VarTypeKind::kString) {
+      continue;
+    }
     uint64_t offset = context.GetDesignSlotByteOffset(slot.slot_id);
     auto* slot_ptr = builder.CreateGEP(
         i8_ty, design_state, builder.getInt64(offset), "str_release_ptr");
-    auto* val = builder.CreateLoad(ptr_ty, slot_ptr);
-    builder.CreateCall(context.GetLyraStringRelease(), {val});
+    emit_release(slot_ptr);
   }
+  builder.CreateBr(done_bb);
+
+  builder.SetInsertPoint(done_bb);
 }
 
 struct MainFunctionSetup {
@@ -672,11 +721,11 @@ auto EmitObservableDescriptorTemplate(
 
   auto num_entries = static_cast<uint32_t>(tmpl.entries.size());
   if (num_entries > 0) {
-    auto* entry_type = llvm::ArrayType::get(i32_ty, 12);
+    auto* entry_type = llvm::ArrayType::get(i32_ty, 13);
     std::vector<llvm::Constant*> entry_constants;
     entry_constants.reserve(num_entries);
     for (const auto& e : tmpl.entries) {
-      std::array<llvm::Constant*, 12> fields = {
+      std::array<llvm::Constant*, 13> fields = {
           llvm::ConstantInt::get(i32_ty, e.storage_byte_offset),
           llvm::ConstantInt::get(i32_ty, e.total_bytes),
           llvm::ConstantInt::get(i32_ty, e.storage_kind),
@@ -689,6 +738,7 @@ auto EmitObservableDescriptorTemplate(
           llvm::ConstantInt::get(i32_ty, e.trace_kind),
           llvm::ConstantInt::get(i32_ty, e.storage_owner_ref),
           llvm::ConstantInt::get(i32_ty, e.flags),
+          llvm::ConstantInt::get(i32_ty, e.storage_domain),
       };
       entry_constants.push_back(llvm::ConstantArray::get(entry_type, fields));
     }
@@ -850,14 +900,14 @@ auto EmitBytePoolGlobal(
 }
 
 // Canonical LLVM struct type for runtime::ConstructionProgramEntry.
-// Layout: {i64, i32, i32, i32, i32, i32} -- must match the C++ struct
+// Layout: {i32, i32, i32, i32, i64, i64} -- must match the C++ struct
 // field order in construction_program_abi.hpp.
 auto GetConstructionProgramEntryType(llvm::LLVMContext& ctx)
     -> llvm::StructType* {
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   return llvm::StructType::get(
-      ctx, {i64_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty});
+      ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i64_ty, i64_ty});
 }
 
 // Encode one ConstructionProgramEntry as an LLVM constant.
@@ -867,12 +917,12 @@ auto EncodeConstructionProgramEntry(
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* i64_ty = llvm::Type::getInt64Ty(ctx);
   return llvm::ConstantStruct::get(
-      ty, {llvm::ConstantInt::get(i64_ty, e.storage_base_byte_offset),
-           llvm::ConstantInt::get(i32_ty, e.body_group),
-           llvm::ConstantInt::get(i32_ty, e.has_storage),
+      ty, {llvm::ConstantInt::get(i32_ty, e.body_group),
            llvm::ConstantInt::get(i32_ty, e.path_offset),
            llvm::ConstantInt::get(i32_ty, e.param_offset),
-           llvm::ConstantInt::get(i32_ty, e.param_size)});
+           llvm::ConstantInt::get(i32_ty, e.param_size),
+           llvm::ConstantInt::get(i64_ty, e.realized_inline_size),
+           llvm::ConstantInt::get(i64_ty, e.realized_appendix_size)});
 }
 
 // Canonical LLVM struct type for runtime::BodyDescriptorRef.
@@ -1747,6 +1797,8 @@ struct ConstructorSlotTraceMeta {
   llvm::Value* trace_meta_pool_size = nullptr;
   llvm::Value* instance_paths = nullptr;
   llvm::Value* instance_path_count = nullptr;
+  llvm::Value* instance_ptrs = nullptr;
+  llvm::Value* instance_count = nullptr;
 };
 
 struct ConstructorEmissionResult {
@@ -1774,11 +1826,12 @@ auto BuildRuntimeAbi(
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
   // v14: trigger/comb metadata from constructor result.
-  constexpr unsigned kAbiFieldCount = 27;
+  constexpr unsigned kAbiFieldCount = 29;
   std::array<llvm::Type*, kAbiFieldCount> abi_fields = {
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty,
+      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
+      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty,
+      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty,
+      i32_ty, i32_ty, ptr_ty, ptr_ty, i32_ty,
   };
   auto* abi_struct_type = llvm::StructType::get(ctx, abi_fields, false);
 
@@ -1839,6 +1892,10 @@ auto BuildRuntimeAbi(
   // Design-state binding.
   store_field(26, design_state);
 
+  // Instance pointer array for slot storage resolution.
+  store_field(27, slot_trace.instance_ptrs);
+  store_field(28, slot_trace.instance_count);
+
   return abi_alloca;
 }
 
@@ -1858,17 +1915,23 @@ void EmitRunSimulation(
 void EmitMainExit(
     Context& context, llvm::Value* design_state,
     const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input,
-    llvm::BasicBlock* exit_block) {
+    llvm::BasicBlock* exit_block, llvm::Value* abi_alloca,
+    const ConstructorEmissionResult& ctor_result) {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
 
   builder.CreateBr(exit_block);
   builder.SetInsertPoint(exit_block);
 
-  ReleaseStringSlots(context, slot_info, design_state);
+  ReleaseStringSlots(context, slot_info, design_state, abi_alloca);
 
   if (input.hooks != nullptr) {
-    input.hooks->OnAfterRunSimulation(context, slot_info, design_state);
+    input.hooks->OnAfterRunSimulation(
+        context, slot_info, design_state, abi_alloca);
+  }
+
+  if (ctor_result.result_handle != nullptr) {
+    builder.CreateCall(ctor_result.destroy_fn, {ctor_result.result_handle});
   }
 
   builder.CreateRet(llvm::ConstantInt::get(ctx, llvm::APInt(32, 0)));
@@ -1918,6 +1981,8 @@ struct ConstructorRuntimeFuncs {
   llvm::Function* result_get_trace_meta_pool_size;
   llvm::Function* result_get_instance_paths;
   llvm::Function* result_get_instance_path_count;
+  llvm::Function* result_get_instances;
+  llvm::Function* result_get_instance_count;
   llvm::Function* result_destroy;
 };
 
@@ -1989,6 +2054,10 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           declare("LyraConstructionResultGetInstancePaths", ptr_ty, {ptr_ty}),
       .result_get_instance_path_count = declare(
           "LyraConstructionResultGetInstancePathCount", i32_ty, {ptr_ty}),
+      .result_get_instances =
+          declare("LyraConstructionResultGetInstances", ptr_ty, {ptr_ty}),
+      .result_get_instance_count =
+          declare("LyraConstructionResultGetInstanceCount", i32_ty, {ptr_ty}),
       .result_destroy =
           declare("LyraConstructionResultDestroy", void_ty, {ptr_ty}),
   };
@@ -2155,6 +2224,10 @@ auto EmitConstructorFunction(
       rt.result_get_instance_paths, {result}, "instance_paths");
   auto* inst_path_count = builder.CreateCall(
       rt.result_get_instance_path_count, {result}, "instance_path_count");
+  auto* inst_ptrs =
+      builder.CreateCall(rt.result_get_instances, {result}, "instance_ptrs");
+  auto* inst_count = builder.CreateCall(
+      rt.result_get_instance_count, {result}, "instance_count");
 
   return ConstructorEmissionResult{
       .states_array = states_array,
@@ -2185,6 +2258,8 @@ auto EmitConstructorFunction(
               .trace_meta_pool_size = trace_meta_pool_size,
               .instance_paths = inst_paths,
               .instance_path_count = inst_path_count,
+              .instance_ptrs = inst_ptrs,
+              .instance_count = inst_count,
           },
   };
 }
@@ -2209,6 +2284,11 @@ auto EmitDesignMain(
   auto num_kernelized =
       static_cast<uint32_t>(layout.connection_kernel_entries.size());
 
+  auto* null_abi_ptr = llvm::ConstantPointerNull::get(
+      llvm::PointerType::getUnqual(context.GetLlvmContext()));
+  llvm::Value* abi_for_exit = null_abi_ptr;
+  ConstructorEmissionResult ctor_result{};
+
   if (num_simulation > 0 || num_kernelized > 0) {
     auto& builder = context.GetBuilder();
     auto& ctx = context.GetLlvmContext();
@@ -2221,7 +2301,6 @@ auto EmitDesignMain(
     llvm::Value* states_array = null_ptr;
     llvm::Constant* connection_funcs = null_ptr;
     llvm::Value* num_total_val = llvm::ConstantInt::get(i32_ty, 0);
-    ConstructorEmissionResult ctor_result{};
     auto num_connection = static_cast<uint32_t>(
         layout.num_module_process_base - layout.num_init_processes);
 
@@ -2327,15 +2406,12 @@ auto EmitDesignMain(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,
         process_meta_for_abi, trigger_comb_for_abi, slot_trace_for_abi);
+    abi_for_exit = abi_alloca;
 
     EmitRunSimulation(
         context, connection_funcs, states_array, num_total_val, plusargs,
         slot_trace_for_abi, abi_alloca);
 
-    // Destroy the constructor-owned result after simulation completes.
-    if (ctor_result.result_handle != nullptr) {
-      builder.CreateCall(ctor_result.destroy_fn, {ctor_result.result_handle});
-    }
   } else {
     // No simulation processes or kernelized connections. Still need
     // runtime init and init process execution.
@@ -2353,7 +2429,9 @@ auto EmitDesignMain(
     }
   }
 
-  EmitMainExit(context, design_state, slot_info, input, exit_block);
+  EmitMainExit(
+      context, design_state, slot_info, input, exit_block, abi_for_exit,
+      ctor_result);
 
   return LoweringReport{
       .forwarding_analysis = std::move(forwarding_report),

@@ -14,6 +14,7 @@
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
 #include "lyra/runtime/process_trigger_abi.hpp"
+#include "lyra/runtime/slot_meta.hpp"
 
 namespace lyra::runtime {
 
@@ -26,13 +27,15 @@ ConstructionResult::ConstructionResult(ConstructionResult&& other) noexcept
       packed_buffer(std::exchange(other.packed_buffer, nullptr)),
       num_total(std::exchange(other.num_total, 0)),
       num_connection(std::exchange(other.num_connection, 0)),
+      instances(std::move(other.instances)),
       process_meta(std::move(other.process_meta)),
       trigger_meta(std::move(other.trigger_meta)),
       comb_meta(std::move(other.comb_meta)),
       slot_meta(std::move(other.slot_meta)),
       trace_signal_meta(std::move(other.trace_signal_meta)),
       instance_paths(std::move(other.instance_paths)),
-      instance_path_ptrs(std::move(other.instance_path_ptrs)) {
+      instance_path_ptrs(std::move(other.instance_path_ptrs)),
+      instance_ptrs(std::move(other.instance_ptrs)) {
 }
 
 auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
@@ -43,6 +46,7 @@ auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
     packed_buffer = std::exchange(other.packed_buffer, nullptr);
     num_total = std::exchange(other.num_total, 0);
     num_connection = std::exchange(other.num_connection, 0);
+    instances = std::move(other.instances);
     process_meta = std::move(other.process_meta);
     trigger_meta = std::move(other.trigger_meta);
     comb_meta = std::move(other.comb_meta);
@@ -50,6 +54,7 @@ auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
     trace_signal_meta = std::move(other.trace_signal_meta);
     instance_paths = std::move(other.instance_paths);
     instance_path_ptrs = std::move(other.instance_path_ptrs);
+    instance_ptrs = std::move(other.instance_ptrs);
   }
   return *this;
 }
@@ -133,11 +138,32 @@ void RealizedSlotMeta::Init() {
   slot_count = 0;
 }
 
-void RealizedSlotMeta::AppendSlot(
-    uint32_t byte_offset, uint32_t total_bytes, uint32_t storage_kind,
+void RealizedSlotMeta::AppendDesignGlobalSlot(
+    uint32_t design_base_off, uint32_t total_bytes, uint32_t storage_kind,
     uint32_t value_off, uint32_t value_bytes, uint32_t unk_off,
     uint32_t unk_bytes, uint32_t storage_owner_slot_id) {
-  words.push_back(byte_offset);
+  words.push_back(0);
+  words.push_back(design_base_off);
+  words.push_back(0);
+  words.push_back(0);
+  words.push_back(total_bytes);
+  words.push_back(storage_kind);
+  words.push_back(value_off);
+  words.push_back(value_bytes);
+  words.push_back(unk_off);
+  words.push_back(unk_bytes);
+  words.push_back(storage_owner_slot_id);
+  ++slot_count;
+}
+
+void RealizedSlotMeta::AppendInstanceOwnedSlot(
+    uint32_t owner_instance_id, uint32_t instance_rel_off, uint32_t total_bytes,
+    uint32_t storage_kind, uint32_t value_off, uint32_t value_bytes,
+    uint32_t unk_off, uint32_t unk_bytes, uint32_t storage_owner_slot_id) {
+  words.push_back(1);
+  words.push_back(0);
+  words.push_back(owner_instance_id);
+  words.push_back(instance_rel_off);
   words.push_back(total_bytes);
   words.push_back(storage_kind);
   words.push_back(value_off);
@@ -251,6 +277,9 @@ void ValidateByteBase(
   }
 }
 
+// Package/global init helpers.
+// These write to the design-global arena for package-scoped state.
+// Module-local instance init uses the instance-owned helpers below.
 void ApplyInitPatches(
     std::span<std::byte> design_state, uint64_t byte_base,
     std::span<const InitPatchEntry> patches) {
@@ -315,39 +344,83 @@ void ConstructInitHandles(
   }
 }
 
-void ApplyParamInit(
-    std::span<std::byte> design_state, uint64_t byte_base,
-    std::span<const ParamInitSlotEntry> slots, const void* value_data,
-    uint32_t value_total_bytes) {
+// Instance-owned init helpers.
+// These write to the RuntimeInstance's heap-owned storage regions.
+// Inline writes target instance.storage.inline_base.
+// Backing writes use ResolveInstanceStorageOffset to dispatch across
+// the two-region (inline + appendix) storage model.
+
+void ApplyInitPatchesToInstance(
+    RuntimeInstance& instance, std::span<const InitPatchEntry> patches) {
+  for (const auto& p : patches) {
+    auto* dst = ResolveInstanceStorageOffset(
+        instance, p.rel_byte_offset, p.byte_width,
+        "ApplyInitPatchesToInstance");
+    std::memcpy(dst, &p.mask, p.byte_width);
+  }
+}
+
+void ConstructInitHandlesForInstance(
+    RuntimeInstance& instance, std::span<const InitHandleEntry> handles) {
+  auto* base = instance.storage.inline_base;
+  uint64_t inline_size = instance.storage.inline_size;
+  uint64_t total_size = inline_size + instance.storage.appendix_size;
+  for (const auto& h : handles) {
+    uint64_t handle_end =
+        h.handle_rel_byte_offset + sizeof(lyra::runtime::OwnedStorageHandle);
+    if (handle_end > inline_size) {
+      throw lyra::common::InternalError(
+          "ConstructInitHandlesForInstance",
+          std::format(
+              "handle write range [{}..{}) exceeds instance inline size {}",
+              h.handle_rel_byte_offset, handle_end, inline_size));
+    }
+    uint64_t backing_end = h.backing_rel_byte_offset + h.backing_byte_size;
+    if (backing_end > total_size) {
+      throw lyra::common::InternalError(
+          "ConstructInitHandlesForInstance",
+          std::format(
+              "backing range [{}..{}) exceeds instance total size {}",
+              h.backing_rel_byte_offset, backing_end, total_size));
+    }
+
+    auto* handle_addr = base + h.handle_rel_byte_offset;
+    auto* backing_addr = ResolveInstanceStorageOffset(
+        instance, h.backing_rel_byte_offset,
+        static_cast<uint32_t>(h.backing_byte_size),
+        "ConstructInitHandlesForInstance");
+
+    lyra::runtime::OwnedStorageHandle handle{
+        .data = backing_addr,
+        .byte_size = h.backing_byte_size,
+    };
+    std::memcpy(handle_addr, &handle, sizeof(handle));
+  }
+}
+
+void ApplyParamInitToInstance(
+    RuntimeInstance& instance, std::span<const ParamInitSlotEntry> slots,
+    const void* value_data, uint32_t value_total_bytes) {
   if (slots.empty()) return;
-  ValidateByteBase(byte_base, design_state.size(), "ApplyParamInit");
-  auto* base = reinterpret_cast<uint8_t*>(design_state.data()) + byte_base;
   const auto* src = static_cast<const uint8_t*>(value_data);
   uint32_t src_offset = 0;
   for (const auto& slot : slots) {
     if (src_offset + slot.byte_size > value_total_bytes) {
       throw lyra::common::InternalError(
-          "ApplyParamInit",
+          "ApplyParamInitToInstance",
           std::format(
               "param payload overrun: offset {} + size {} > total {}",
               src_offset, slot.byte_size, value_total_bytes));
     }
-    uint64_t dst_end = byte_base + static_cast<uint64_t>(slot.rel_byte_offset) +
-                       slot.byte_size;
-    if (dst_end > design_state.size()) {
-      throw lyra::common::InternalError(
-          "ApplyParamInit",
-          std::format(
-              "param dest range [{}..{}) exceeds design_state size {}",
-              byte_base + static_cast<uint64_t>(slot.rel_byte_offset), dst_end,
-              design_state.size()));
-    }
-    std::memcpy(base + slot.rel_byte_offset, src + src_offset, slot.byte_size);
+    auto* dst = ResolveInstanceStorageOffset(
+        instance, slot.rel_byte_offset, slot.byte_size,
+        "ApplyParamInitToInstance");
+    std::memcpy(dst, src + src_offset, slot.byte_size);
     src_offset += slot.byte_size;
   }
   if (src_offset != value_total_bytes) {
     throw lyra::common::InternalError(
-        "ApplyParamInit",
+        "ApplyParamInitToInstance",
         std::format(
             "param payload size mismatch: consumed {} bytes but payload has {}",
             src_offset, value_total_bytes));
@@ -382,7 +455,7 @@ Constructor::Constructor(
   // Package/global observable descriptor prelude.
   // Realized before any body-instance expansion. All entries are absolute.
   for (const auto& entry : pkg_observable_.entries) {
-    realized_slot_meta_.AppendSlot(
+    realized_slot_meta_.AppendDesignGlobalSlot(
         entry.storage_byte_offset, entry.total_bytes, entry.storage_kind,
         entry.value_lane_offset, entry.value_lane_bytes, entry.unk_lane_offset,
         entry.unk_lane_bytes, entry.storage_owner_ref);
@@ -475,9 +548,7 @@ void Constructor::AddConnection(const ConnectionRealizationDesc& desc) {
       StagedProcess{
           .schema_index = desc.schema_index,
           .body = nullptr,
-          .this_ptr = nullptr,
-          .instance_id = 0,
-          .signal_id_offset = 0,
+          .instance_index = UINT32_MAX,
           .is_module = false,
       });
 
@@ -667,6 +738,8 @@ void Constructor::BeginBody(const BodyDescriptorPackage& package) {
 
   body_ = ActiveBodyDescriptor{
       .slot_count = package.desc->slot_count,
+      .inline_state_size_bytes = package.desc->inline_state_size_bytes,
+      .appendix_state_size_bytes = package.desc->appendix_state_size_bytes,
       .total_state_size_bytes = package.desc->total_state_size_bytes,
       .entries = package.entries,
       .meta = package.meta,
@@ -682,7 +755,7 @@ void Constructor::BeginBody(const BodyDescriptorPackage& package) {
 
 void Constructor::AddInstance(
     const char* instance_path, const void* param_data, uint32_t param_data_size,
-    uint64_t instance_storage_base_byte_offset, bool has_local_storage) {
+    uint64_t realized_inline_size, uint64_t realized_appendix_size) {
   CheckNotFinalized("Constructor::AddInstance");
   if (instance_path == nullptr) {
     throw common::InternalError(
@@ -702,11 +775,20 @@ void Constructor::AddInstance(
   uint32_t instance_id = next_instance_id_;
   uint32_t signal_id_offset = next_slot_base_;
 
-  uint64_t instance_storage_base = instance_storage_base_byte_offset;
-  void* this_ptr = design_state_.data();
-  if (has_local_storage) {
-    this_ptr = design_state_.subspan(instance_storage_base).data();
-  }
+  uint32_t instance_ord = next_module_instance_ordinal_;
+  auto instance = std::make_unique<RuntimeInstance>();
+  instance->instance_id = instance_id;
+  instance->owner_ordinal = instance_ord;
+  instance->signal_id_offset = signal_id_offset;
+  // path_c_str is patched in Finalize to point into stable instance_paths.
+  instance->path_c_str = nullptr;
+
+  instance->storage.inline_base =
+      AllocateOwnedInlineStorage(realized_inline_size);
+  instance->storage.inline_size = realized_inline_size;
+  instance->storage.appendix_base =
+      AllocateOwnedAppendixStorage(realized_appendix_size);
+  instance->storage.appendix_size = realized_appendix_size;
 
   // Invariant: zero-slot bodies must not carry instance-state init.
   if (body_.slot_count == 0) {
@@ -720,17 +802,17 @@ void Constructor::AddInstance(
     }
   }
 
-  // H6: Apply body-shaped initialization to this instance's state.
-  ApplyInitPatches(
-      design_state_, instance_storage_base, body_.init_patches.entries);
-  ConstructInitHandles(
-      design_state_, instance_storage_base, body_.init_handles.entries);
-  ApplyParamInit(
-      design_state_, instance_storage_base, body_.init_params.slots, param_data,
-      param_data_size);
+  // Apply body-shaped initialization to instance-owned storage.
+  ApplyInitPatchesToInstance(*instance, body_.init_patches.entries);
+  ConstructInitHandlesForInstance(*instance, body_.init_handles.entries);
+  ApplyParamInitToInstance(
+      *instance, body_.init_params.slots, param_data, param_data_size);
 
   // Capture module_proc_base before staging non-final body processes.
   auto module_proc_base = static_cast<uint32_t>(staged_.size());
+
+  auto instance_index = static_cast<uint32_t>(staged_instances_.size());
+  staged_instances_.push_back(std::move(instance));
 
   for (const auto& entry : body_.entries) {
     SharedBodyFn body_fn{};
@@ -740,22 +822,19 @@ void Constructor::AddInstance(
         StagedProcess{
             .schema_index = entry.schema_index,
             .body = body_fn,
-            .this_ptr = this_ptr,
-            .instance_id = instance_id,
-            .signal_id_offset = signal_id_offset,
+            .instance_index = instance_index,
             .is_module = true,
         });
   }
 
-  uint32_t instance_ord = next_module_instance_ordinal_;
   ++next_module_instance_ordinal_;
-  auto num_nonfinal_body_procs = static_cast<uint32_t>(body_.entries.size());
-  instance_ledger_.push_back(
-      InstanceLedgerEntry{
-          .owner_ordinal = instance_ord,
-          .module_proc_base = module_proc_base,
-          .num_processes = num_nonfinal_body_procs,
-      });
+  auto num_module_processes =
+      static_cast<uint32_t>(staged_.size()) - module_proc_base;
+
+  // Complete the instance's process binding fields now that staging is done.
+  staged_instances_[instance_index]->module_proc_base = module_proc_base;
+  staged_instances_[instance_index]->num_module_processes =
+      num_module_processes;
 
   // Append metadata entries for all non-final body processes of this instance.
   uint32_t inst_path_off = AppendString(instance_path);
@@ -772,28 +851,28 @@ void Constructor::AddInstance(
   // Trigger realization for all non-final body processes of this instance.
   // proc_within_body is a dense non-final body-local ordinal.
   if (!body_.triggers.proc_ranges.empty()) {
-    if (body_.triggers.proc_ranges.size() != num_nonfinal_body_procs) {
+    if (body_.triggers.proc_ranges.size() != num_module_processes) {
       throw common::InternalError(
           "Constructor::AddInstance",
           std::format(
               "trigger proc_ranges size {} != body process count {}",
-              body_.triggers.proc_ranges.size(), num_nonfinal_body_procs));
+              body_.triggers.proc_ranges.size(), num_module_processes));
     }
-    if (body_.triggers.proc_groupable.size() != num_nonfinal_body_procs) {
+    if (body_.triggers.proc_groupable.size() != num_module_processes) {
       throw common::InternalError(
           "Constructor::AddInstance",
           std::format(
               "trigger proc_groupable size {} != body process count {}",
-              body_.triggers.proc_groupable.size(), num_nonfinal_body_procs));
+              body_.triggers.proc_groupable.size(), num_module_processes));
     }
-    if (body_.triggers.proc_shapes.size() != num_nonfinal_body_procs) {
+    if (body_.triggers.proc_shapes.size() != num_module_processes) {
       throw common::InternalError(
           "Constructor::AddInstance",
           std::format(
               "trigger proc_shapes size {} != body process count {}",
-              body_.triggers.proc_shapes.size(), num_nonfinal_body_procs));
+              body_.triggers.proc_shapes.size(), num_module_processes));
     }
-    for (uint32_t pwb = 0; pwb < num_nonfinal_body_procs; ++pwb) {
+    for (uint32_t pwb = 0; pwb < num_module_processes; ++pwb) {
       uint32_t proc_idx = module_proc_base + pwb;
       const auto& range = body_.triggers.proc_ranges[pwb];
       uint32_t flags = (body_.triggers.proc_groupable[pwb] != 0)
@@ -820,12 +899,12 @@ void Constructor::AddInstance(
   // Comb realization for comb kernels of this instance.
   if (!body_.comb.kernels.empty()) {
     for (const auto& kernel : body_.comb.kernels) {
-      if (kernel.proc_within_body >= num_nonfinal_body_procs) {
+      if (kernel.proc_within_body >= num_module_processes) {
         throw common::InternalError(
             "Constructor::AddInstance",
             std::format(
                 "comb kernel proc_within_body {} >= body process count {}",
-                kernel.proc_within_body, num_nonfinal_body_procs));
+                kernel.proc_within_body, num_module_processes));
       }
       uint32_t proc_idx = module_proc_base + kernel.proc_within_body;
       uint32_t comb_flags = (kernel.has_self_edge != 0) ? 1U : 0U;
@@ -851,9 +930,11 @@ void Constructor::AddInstance(
   }
 
   // Observable descriptor realization for this instance.
-  // Uses the explicit instance storage base for body-relative relocation.
+  // Absolute entries (package/global) keep their offset as-is.
+  // Body-relative entries are tagged with instance identity in Step 6.
   if (!body_.observable_descriptors.entries.empty()) {
-    if (!has_local_storage) {
+    bool has_storage = realized_inline_size > 0;
+    if (!has_storage) {
       for (const auto& entry : body_.observable_descriptors.entries) {
         if ((entry.flags & kObservableFlagStorageAbsolute) == 0) {
           throw common::InternalError(
@@ -863,24 +944,26 @@ void Constructor::AddInstance(
         }
       }
     }
-    uint64_t instance_byte_base = instance_storage_base;
 
     for (const auto& entry : body_.observable_descriptors.entries) {
-      uint32_t realized_offset =
-          (entry.flags & kObservableFlagStorageAbsolute) != 0
-              ? entry.storage_byte_offset
-              : static_cast<uint32_t>(
-                    instance_byte_base + entry.storage_byte_offset);
-
       uint32_t realized_owner =
           (entry.flags & kObservableFlagOwnerAbsolute) != 0
               ? entry.storage_owner_ref
               : entry.storage_owner_ref + signal_id_offset;
 
-      realized_slot_meta_.AppendSlot(
-          realized_offset, entry.total_bytes, entry.storage_kind,
-          entry.value_lane_offset, entry.value_lane_bytes,
-          entry.unk_lane_offset, entry.unk_lane_bytes, realized_owner);
+      if (entry.storage_domain == 0) {
+        // Design-global: offset is already absolute.
+        realized_slot_meta_.AppendDesignGlobalSlot(
+            entry.storage_byte_offset, entry.total_bytes, entry.storage_kind,
+            entry.value_lane_offset, entry.value_lane_bytes,
+            entry.unk_lane_offset, entry.unk_lane_bytes, realized_owner);
+      } else {
+        // Instance-owned module-local: body-relative offset.
+        realized_slot_meta_.AppendInstanceOwnedSlot(
+            instance_id, entry.storage_byte_offset, entry.total_bytes,
+            entry.storage_kind, entry.value_lane_offset, entry.value_lane_bytes,
+            entry.unk_lane_offset, entry.unk_lane_bytes, realized_owner);
+      }
 
       std::string_view local_name;
       if (entry.local_name_pool_off > 0 &&
@@ -990,23 +1073,23 @@ auto Constructor::Finalize() -> ConstructionResult {
   }
 
   // Process-index identity verification.
-  // Instance ledger ordinals are dense and match vector position:
-  // instance_ledger_[ordinal].owner_ordinal == ordinal.
-  for (uint32_t li = 0; li < instance_ledger_.size(); ++li) {
-    if (instance_ledger_[li].owner_ordinal != li) {
+  // Instance ordinals are dense and match staged_instances_ position:
+  // staged_instances_[ordinal]->owner_ordinal == ordinal.
+  for (uint32_t li = 0; li < staged_instances_.size(); ++li) {
+    if (staged_instances_[li]->owner_ordinal != li) {
       throw common::InternalError(
           "Constructor::Finalize",
           std::format(
-              "instance ledger ordinal mismatch: entry {} has "
+              "instance ordinal mismatch: entry {} has "
               "owner_ordinal {}",
-              li, instance_ledger_[li].owner_ordinal));
+              li, staged_instances_[li]->owner_ordinal));
     }
   }
 
   // Connection triggers: realized_proc_idx must equal the connection
   // ordinal (connections are staged first, so i-th connection has
   // staged_ position i).
-  // Module triggers: look up by dense ordinal in instance ledger.
+  // Module triggers: look up by dense ordinal in staged_instances_.
   for (const auto& rec : trigger_provenance_) {
     if (rec.domain == TemplateDomain::kConnection) {
       if (rec.realized_proc_idx != rec.owner_ordinal) {
@@ -1018,15 +1101,15 @@ auto Constructor::Finalize() -> ConstructionResult {
                 rec.realized_proc_idx, rec.owner_ordinal));
       }
     } else {
-      if (rec.owner_ordinal >= instance_ledger_.size()) {
+      if (rec.owner_ordinal >= staged_instances_.size()) {
         throw common::InternalError(
             "Constructor::Finalize",
             std::format(
-                "module trigger owner_ordinal {} >= ledger size {}",
-                rec.owner_ordinal, instance_ledger_.size()));
+                "module trigger owner_ordinal {} >= instance count {}",
+                rec.owner_ordinal, staged_instances_.size()));
       }
-      const auto& le = instance_ledger_[rec.owner_ordinal];
-      uint32_t expected = le.module_proc_base + rec.local_ordinal;
+      const auto& inst = *staged_instances_[rec.owner_ordinal];
+      uint32_t expected = inst.module_proc_base + rec.local_ordinal;
       if (rec.realized_proc_idx != expected) {
         throw common::InternalError(
             "Constructor::Finalize",
@@ -1034,21 +1117,21 @@ auto Constructor::Finalize() -> ConstructionResult {
                 "module trigger proc_idx mismatch: "
                 "realized {} != expected {} "
                 "(base {} + ordinal {})",
-                rec.realized_proc_idx, expected, le.module_proc_base,
+                rec.realized_proc_idx, expected, inst.module_proc_base,
                 rec.local_ordinal));
       }
     }
   }
   for (const auto& rec : comb_provenance_) {
-    if (rec.owner_ordinal >= instance_ledger_.size()) {
+    if (rec.owner_ordinal >= staged_instances_.size()) {
       throw common::InternalError(
           "Constructor::Finalize",
           std::format(
-              "comb owner_ordinal {} >= ledger size {}", rec.owner_ordinal,
-              instance_ledger_.size()));
+              "comb owner_ordinal {} >= instance count {}", rec.owner_ordinal,
+              staged_instances_.size()));
     }
-    const auto& le = instance_ledger_[rec.owner_ordinal];
-    uint32_t expected = le.module_proc_base + rec.proc_within_body;
+    const auto& inst = *staged_instances_[rec.owner_ordinal];
+    uint32_t expected = inst.module_proc_base + rec.proc_within_body;
     if (rec.realized_proc_idx != expected) {
       throw common::InternalError(
           "Constructor::Finalize",
@@ -1056,7 +1139,7 @@ auto Constructor::Finalize() -> ConstructionResult {
               "comb proc_idx mismatch: "
               "realized {} != expected {} "
               "(base {} + pwb {})",
-              rec.realized_proc_idx, expected, le.module_proc_base,
+              rec.realized_proc_idx, expected, inst.module_proc_base,
               rec.proc_within_body));
     }
   }
@@ -1090,9 +1173,7 @@ auto Constructor::Finalize() -> ConstructionResult {
     const auto& proc = staged_[i];
     if (proc.is_module) {
       header->body = proc.body;
-      header->this_ptr = proc.this_ptr;
-      header->instance_id = proc.instance_id;
-      header->signal_id_offset = proc.signal_id_offset;
+      header->instance = staged_instances_[proc.instance_index].get();
     }
   }
 
@@ -1101,13 +1182,30 @@ auto Constructor::Finalize() -> ConstructionResult {
   result.packed_buffer = packed_buffer;
   result.num_total = num_total;
   result.num_connection = num_connection_;
+  result.instances = std::move(staged_instances_);
   result.process_meta = std::move(realized_meta_);
   result.trigger_meta = std::move(realized_triggers_);
   result.comb_meta = std::move(realized_comb_);
   result.slot_meta = std::move(realized_slot_meta_);
   result.trace_signal_meta = std::move(realized_trace_meta_);
   result.instance_paths = std::move(instance_paths_);
+
+  // Patch path_c_str on each instance to point into the stable
+  // result.instance_paths storage. Instance i corresponds to
+  // instance_paths[i] by construction (AddInstance appends both
+  // in the same order).
+  for (uint32_t i = 0; i < result.instances.size(); ++i) {
+    result.instances[i]->path_c_str = result.instance_paths[i].c_str();
+  }
+
   PopulateInstancePathPtrs(result);
+
+  // Build stable raw pointer view for the runtime ABI.
+  result.instance_ptrs.reserve(result.instances.size());
+  for (const auto& inst : result.instances) {
+    result.instance_ptrs.push_back(inst.get());
+  }
+
   return result;
 }
 
@@ -1441,14 +1539,14 @@ void LyraConstructorBeginBody(
 
 void LyraConstructorAddInstance(
     void* ctor, const char* instance_path, const void* param_data,
-    uint32_t param_data_size, uint64_t instance_storage_base_byte_offset,
-    uint32_t has_local_storage) {
+    uint32_t param_data_size, uint64_t realized_inline_size,
+    uint64_t realized_appendix_size) {
   ValidateHandle(ctor, "LyraConstructorAddInstance");
   ValidateAbiArray(
       param_data, param_data_size, "param_data", "LyraConstructorAddInstance");
   static_cast<lyra::runtime::Constructor*>(ctor)->AddInstance(
-      instance_path, param_data, param_data_size,
-      instance_storage_base_byte_offset, has_local_storage != 0);
+      instance_path, param_data, param_data_size, realized_inline_size,
+      realized_appendix_size);
 }
 
 void LyraConstructorRunProgram(
@@ -1517,8 +1615,8 @@ void LyraConstructorRunProgram(
     }
 
     ctor.AddInstance(
-        instance_path, param_data, param_size, e.storage_base_byte_offset,
-        e.has_storage != 0);
+        instance_path, param_data, param_size, e.realized_inline_size,
+        e.realized_appendix_size);
   }
 }
 
@@ -1674,6 +1772,21 @@ auto LyraConstructionResultGetInstancePathCount(void* result_raw) -> uint32_t {
   return static_cast<uint32_t>(
       static_cast<lyra::runtime::ConstructionResult*>(result_raw)
           ->instance_paths.size());
+}
+
+auto LyraConstructionResultGetInstances(void* result_raw)
+    -> const lyra::runtime::RuntimeInstance* const* {
+  ValidateHandle(result_raw, "LyraConstructionResultGetInstances");
+  auto& result = *static_cast<lyra::runtime::ConstructionResult*>(result_raw);
+  if (result.instance_ptrs.empty()) return nullptr;
+  return result.instance_ptrs.data();
+}
+
+auto LyraConstructionResultGetInstanceCount(void* result_raw) -> uint32_t {
+  ValidateHandle(result_raw, "LyraConstructionResultGetInstanceCount");
+  return static_cast<uint32_t>(
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)
+          ->instance_ptrs.size());
 }
 
 void LyraConstructionResultDestroy(void* result_raw) {

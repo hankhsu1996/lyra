@@ -3,6 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace lyra::runtime {
+struct RuntimeInstance;
+}  // namespace lyra::runtime
+
 // Versioned runtime descriptor passed from codegen to LyraRunSimulation.
 // Consolidates metadata tables and flags into a single extensible struct,
 // avoiding parameter explosion as new metadata is added.
@@ -63,7 +67,7 @@
 //      total_state_size_bytes). Runtime constructor derives instance
 //      byte placement from body-sized arithmetic instead of
 //      design-global slot byte offset oracle.
-inline constexpr uint32_t kRuntimeAbiVersion = 17;
+inline constexpr uint32_t kRuntimeAbiVersion = 18;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -108,14 +112,22 @@ struct LyraRuntimeAbi {
   // constructor result when remaining dispatch ownership moves.
   uint32_t num_connection_processes;
 
-  // Source of truth for design-state binding. Runtime uses this to populate
-  // design_ptr in all persistent simulation-process headers. Per-header
-  // design_ptr is runtime-populated cached binding derived from this field.
+  // Design-global service root. No longer the owner of module-local state;
+  // module-local owned state lives in RuntimeInstance heap storage.
+  // Retained for: package/global slot access, forwarded-slot compatibility,
+  // and coordination subsystem design-global paths.
   void* design_state;
+
+  // Instance pointer array for slot storage resolution.
+  // Indexed by instance_id. Populated from ConstructionResult::instance_ptrs.
+  const lyra::runtime::RuntimeInstance* const* instance_ptrs;
+  uint32_t num_instances;
 };
 
 // Hard size/offset contract.
-static_assert(sizeof(LyraRuntimeAbi) == 200);
+static_assert(sizeof(LyraRuntimeAbi) == 216);
 static_assert(offsetof(LyraRuntimeAbi, version) == 0);
 static_assert(offsetof(LyraRuntimeAbi, num_connection_processes) == 188);
 static_assert(offsetof(LyraRuntimeAbi, design_state) == 192);
+static_assert(offsetof(LyraRuntimeAbi, instance_ptrs) == 200);
+static_assert(offsetof(LyraRuntimeAbi, num_instances) == 208);

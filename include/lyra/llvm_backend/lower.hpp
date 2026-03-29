@@ -64,9 +64,10 @@ class SimulationHooks {
 
   // Called after simulation completes (before main returns).
   // Use for: final variable inspection, timing reports, test assertions.
+  // abi_ptr is the LyraRuntimeAbi* for slot address resolution.
   virtual void OnAfterRunSimulation(
       Context& /*context*/, const std::vector<SlotInfo>& /*slots*/,
-      llvm::Value* /*design_state*/) {
+      llvm::Value* /*design_state*/, llvm::Value* /*abi_ptr*/) {
   }
 };
 
@@ -117,7 +118,8 @@ auto DumpLlvmIr(const LoweringResult& result) -> std::string;
 // Registers each variable with the runtime and emits a snapshot call.
 void EmitVariableInspection(
     Context& context, const std::vector<VariableInfo>& variables,
-    const std::vector<SlotInfo>& slots, llvm::Value* design_state);
+    const std::vector<SlotInfo>& slots, llvm::Value* design_state,
+    llvm::Value* abi_ptr);
 
 // Emit time report call for test harness.
 void EmitTimeReport(Context& context);

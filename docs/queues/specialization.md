@@ -14,8 +14,8 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] m2 -- Instance paths deferred to runtime
 - [x] G -- Instance-independent LLVM codegen (per-instance code eliminated, shared-body code paths in place)
 - [x] H1-H6 -- Constructor-time realization migration (process/trigger/comb/slot/trace/path/init realization moved behind constructor)
-- [ ] C1 -- Remove per-instance emitted constructor IR/globals
-- [ ] R1 -- Runtime instance/object model: instances as objects that own state
+- [x] C1 -- Remove per-instance emitted constructor IR/globals
+- [x] R1 -- Runtime instance/object model: instances as objects that own state
 - [ ] R2 -- Forwarding as connectivity, not storage redefinition
 - [ ] R3 -- Observability and relocation on object-local coordinates
 - [ ] R4 -- Process execution context: object-local signal identity
@@ -55,15 +55,9 @@ This item replaces those per-instance emitted artifacts with compact constructio
 
 Separate migration boundary: constructor-time artifact cleanup in the current model, not runtime object-model redesign.
 
-## R1: Runtime instance/object model
+## R1: Runtime instance/object model (completed)
 
-**Current implementation:** there is no runtime object representing an instance. Instance identity is dissolved into process frame headers (this_ptr, instance_id, signal_id_offset), design-global metadata tables (SlotMetaRegistry, TraceSignalMetaRegistry), and a single design-wide arena. The arena is allocated as one alloca for the entire design; instance boundaries are purely logical (slot ranges into the flat array).
-
-**Target:** instances are objects that own their state. Per-instance storage is allocated per-instance, not carved from a design-global arena.
-
-**Why separate:** this is the foundational representation change and the architectural anchor for the entire R-series. All other R-series items build on what an "instance" is at runtime. R1 defines the contract; the others conform to it.
-
-Where to look: emit_design_main (design state allocation), constructor (AddInstance / Finalize / ConstructionResult), process_frame (ProcessFrameHeader), storage_types (InstanceStorageBase).
+RuntimeInstance is the authoritative owner of module-local storage. Per-instance storage is heap-allocated from per-instance realized sizes. Slot meta uses domain-aware addressing (kDesignGlobal vs kInstanceOwned). All coordination surfaces (trace, subscriptions, connections) resolve slot storage through the instance object model. The design-global arena remains only for package/global state and forwarding compatibility dead space (physical arena shrink deferred to after R2 resolves forwarding off compile-time arena offsets).
 
 ## R2: Forwarding as connectivity, not storage redefinition
 
