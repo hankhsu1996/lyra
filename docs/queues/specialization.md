@@ -15,12 +15,11 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] G -- Instance-independent LLVM codegen (per-instance code eliminated, shared-body code paths in place)
 - [x] H1-H6 -- Constructor-time realization migration (process/trigger/comb/slot/trace/path/init realization moved behind constructor)
 - [x] C1 -- Remove per-instance emitted constructor IR/globals
-- [x] R1 -- Runtime instance/object model: instances as objects that own state
+- [x] R1 -- Runtime instance/object model: two-domain storage, domain-aware slot resolution, process-instance binding
 - [ ] R2 -- Forwarding as connectivity, not storage redefinition
-- [ ] R3 -- Observability and relocation on object-local coordinates
-- [ ] R4 -- Process execution context: object-local signal identity
-- [ ] R5 -- Design-global coordination API: dirty/subscription on object-scoped identity
-- [ ] R6 -- Constructor-to-runtime handoff preserves instance structure
+- [ ] R3 -- Object-local signal identity and coordination API
+- [ ] R4 -- Constructor-to-runtime handoff preserves per-instance structure
+- [ ] R5 -- Observability/trace/snapshot on object-local coordinates
 - [ ] T1 -- Topology-independence validation (scaling gates)
 - [ ] F1 -- Parallel specialization compilation
   - [x] F1-design -- Parallel ownership model
@@ -37,14 +36,13 @@ C1 is prerequisite-free and can land independently. It is a constructor-time art
 
 F1 (parallel compilation) is independent of the R-series and can proceed in parallel.
 
-The R-series items have a partial order:
+The R-series is a strict sequence: R2 -> R3 -> R4 -> R5.
 
-- **R1 (instance object model)** is the architectural anchor. It defines the runtime object/state ownership contract that all other R-series items must conform to.
-- **R2 (forwarding)** re-expresses forwarding under the contract established by R1. R1 and R2 are closely coupled and likely need joint design, but R1 is the authority -- forwarding serves the object model, not the other way around.
-- **R4 (signal identity)** depends on R1. Object-local signal identity requires instances to exist as addressable objects.
-- **R3 (observability)** depends on R1, R2, and R4. Observable descriptor relocation changes when instance objects, forwarding representation, and signal identity change. Forwarded aliases are currently the dirtiest part of the observability pipeline, so R2's resolution directly shapes R3.
-- **R5 (coordination API)** depends on R4. The engine's dirty/subscription API contract follows from how signal identity works.
-- **R6 (construction handoff)** depends on R1. The constructor produces whatever runtime objects R1 defines.
+- **R1 (instance object model, completed)** is the architectural anchor. It established the two-domain storage model, domain-aware slot resolution, and process-instance binding. All subsequent R-series items operate within this contract.
+- **R2 (forwarding)** eliminates the last place where connectivity redefines object storage shape. Self-contained: changes layout, codegen, and constructor forwarding paths without touching signal identity or coordination APIs.
+- **R3 (signal identity + coordination API)** removes the design-global signal namespace. signal_id_offset is the sole bridge between body-local and design-global coordinates; removing it immediately breaks every dirty/subscription caller, so signal identity and coordination API are one seam, not two.
+- **R4 (constructor handoff)** restructures the constructor-to-runtime boundary to preserve per-instance metadata. Depends on R3 because the flat arrays (RealizedSlotMeta, RealizedTriggerMeta, RealizedCombMeta) are indexed by the design-global coordinates that R3 eliminates.
+- **R5 (observability)** moves trace/snapshot to object-local coordinates. Last because its target coordinate system -- (instance, local_signal) -- does not exist until R3 defines object-local signal identity, and the trace alias fanout for forwarded signals is cleanest after R2 resolves forwarding.
 - **T1 (validation)** runs after C1 and whichever R-series items have landed.
 
 ## C1: Remove per-instance emitted constructor IR/globals
@@ -57,57 +55,61 @@ Separate migration boundary: constructor-time artifact cleanup in the current mo
 
 ## R1: Runtime instance/object model (completed)
 
-RuntimeInstance is the authoritative owner of module-local storage. Per-instance storage is heap-allocated from per-instance realized sizes. Slot meta uses domain-aware addressing (kDesignGlobal vs kInstanceOwned). All coordination surfaces (trace, subscriptions, connections) resolve slot storage through the instance object model. The design-global arena remains only for package/global state and forwarding compatibility dead space (physical arena shrink deferred to after R2 resolves forwarding off compile-time arena offsets).
+Scope was larger than the original name suggested. R1 established:
+
+- **Two-domain storage model.** SlotMeta carries a domain enum (kDesignGlobal vs kInstanceOwned) with domain-specific addressing. Slot meta ABI bumped to v4.
+- **Per-instance heap-allocated storage.** Each RuntimeInstance owns inline + appendix regions, sized per-instance from realized sizes (supports parameterized variation).
+- **Domain-aware slot resolution.** All coordination surfaces (dirty tracking, subscriptions, trace, connections, comb fixpoint) resolve slot storage through domain-routing in ResolveSlotBytes, dispatching to either the design arena or the owning instance's heap storage.
+- **Process-instance binding.** ProcessFrameHeader holds a RuntimeInstance pointer. RuntimeInstance carries module_proc_base and num_module_processes.
+- **Observable descriptor domain classification.** Codegen emits body-relative vs owner-absolute storage refs per slot; constructor consumes these to produce domain-tagged SlotMeta.
+- **RuntimeInstance as LLVM struct type.** Codegen emits RuntimeInstance and RuntimeInstanceStorage with hard static_assert binary-contract enforcement.
+- **Explicit transitional seam.** signal_id_offset is documented as not part of the object's semantic identity, targeted for removal in R3.
+
+The design-global arena remains only for package/global state and forwarding compatibility dead space (physical arena shrink deferred to after R2 resolves forwarding off compile-time arena offsets).
 
 ## R2: Forwarding as connectivity, not storage redefinition
 
-**Current implementation:** when the forwarding analysis determines a slot is a "forwardable connection relay," the layout pass assigns no storage for that slot in the owning instance (inline_offsets is nullopt in SpecSlotInfo). The codegen classifies it as kForwardedInline or kForwardedContainer in SpecSlotAccessKind and routes access through design_ptr + arena-absolute offset of the canonical owner instead of this_ptr + instance-relative offset. Observable descriptors for these slots carry kObservableFlagStorageAbsolute to signal cross-instance arithmetic at constructor time. The slot_storage_bindings entry is ForwardedStorageAlias rather than OwnedLocalStorage.
+**Current state:** when forwarding analysis determines a slot is a "forwardable connection relay," three things happen that make connectivity redefine object storage shape:
 
-**Target:** connectivity is linkage/routing/reference. Every body-local slot owns storage in its instance. When one instance's port is connected to another instance's signal, that relationship is modeled as a reference or routing descriptor between instances, not as the absence of local storage in one instance.
+1. The layout pass assigns no storage for the slot in its owning instance -- it is skipped in both inline and appendix allocation passes.
+2. Codegen classifies it as kForwardedInline or kForwardedContainer and routes access through design_ptr + arena-absolute offset of the canonical owner, not this_ptr + instance-relative offset.
+3. Observable descriptors carry kObservableFlagStorageAbsolute, and the slot_storage_bindings entry is ForwardedStorageAlias rather than OwnedLocalStorage.
 
-**Why separate:** forwarding is the primary place where connectivity currently redefines object shape. R2 re-expresses forwarding under the object model established by R1. R1 and R2 are closely coupled and likely need joint design, but the architectural authority is R1 -- the object model defines what forwarding must conform to, not the reverse.
+**Target:** every body-local slot owns storage in its instance. Connectivity between instances is modeled as a reference or routing descriptor, not as the absence of local storage. The design-state arena no longer contains forwarding dead space.
 
-Where to look: forwarding_analysis, forwarding_map, SpecSlotAccessKind in codegen_session, GetModuleSlotPointer in context_place, observable_storage_ref, slot_storage_bindings in layout.
+**Why standalone:** forwarding is the only remaining mechanism where connectivity redefines object shape. The change is concentrated in layout, codegen, constructor forwarding paths, and observable descriptor emission. It does not require changes to signal identity or coordination APIs.
 
-## R3: Observability and relocation on object-local coordinates
+Where to look: forwarding_analysis, forwarding_map, SpecSlotAccessKind, GetModuleSlotPointer, observable_storage_ref, slot_storage_bindings in layout.
 
-**Current implementation:** observable descriptors are built per-body with body-relative offsets (this is good). The constructor relocates them to arena-absolute SlotMeta base_off. Forwarded aliases use kObservableFlagStorageAbsolute for cross-instance arithmetic. Trace and snapshot systems index by design-global slot_id with arena-absolute byte offsets.
+## R3: Object-local signal identity and coordination API
+
+Merges the former R4 (signal identity) and R5 (coordination API) because they share a single seam: signal_id_offset is the sole bridge between body-local and design-global coordinates, and removing it immediately breaks every dirty/subscription/trace caller. No stable intermediate state exists where signal identity is object-local but the coordination API still requires design-global slot_ids.
+
+**Current state:** signal identity requires design-global renumbering. signal_id_offset + local_id produces a design-global slot_id at runtime. Every dirty mark, subscription install, and trace event uses this design-global coordinate. The public engine API (MarkSlotDirty, MarkDirtyRange) requires design-global slot_ids. UpdateSet vectors, SlotSubscriptions, conn_trigger_map\_, comb_trigger_map\_ are all sized and indexed by design-global slot count. design_ptr in every process frame header gives every process access to the entire design's state.
+
+**Target:** signal identity is object-local -- a signal is member N of this instance, not design-global slot M. The public runtime contract (the API boundary between codegen/constructor and engine) accepts object-scoped coordinates (instance + local signal). The engine may keep flat arrays internally for performance, but the public interface must not force callers to reason in design-global coordinates. signal_id_offset is removed from RuntimeInstance.
+
+Where to look: ProcessFrameHeader (signal_id_offset, design_ptr), EmitSignalId, EmitMutationTargetSignalId, LyraMarkDirty, engine (MarkSlotDirty, MarkDirtyRange), update_set, engine_subscriptions.
+
+## R4: Constructor-to-runtime handoff preserves per-instance structure
+
+**Current state:** the constructor produces flat per-design arrays for all metadata categories: RealizedSlotMeta (indexed by global slot_id), RealizedTriggerMeta (global process_id + global slot_id), RealizedCombMeta (global process_id), RealizedTraceSignalMeta (global trace signal index), process metadata (global process_id). Instance identity is dissolved in the handoff -- ConstructionResult contains RuntimeInstance objects but all metadata is flattened.
+
+**Target:** the constructor-to-runtime handoff preserves per-instance metadata bundles. The runtime receives instance-structured data, not only flattened per-design metadata. Per-instance process lists, trigger metadata, and slot metadata are grouped by instance.
+
+**Depends on R3:** the flat arrays are indexed by design-global coordinates that R3 eliminates. Until the new object-scoped coordinate system exists, per-instance metadata bundles cannot be cleanly defined.
+
+Where to look: ConstructionResult in constructor, RealizedSlotMeta/TriggerMeta/CombMeta/TraceSignalMeta, SetupAndRunSimulation in simulation, Engine initialization.
+
+## R5: Observability/trace/snapshot on object-local coordinates
+
+**Current state:** observable descriptors are built per-body with body-relative offsets (this is correct). The constructor relocates them to design-global SlotMeta entries. Trace and snapshot systems index by design-global slot_id. Forwarded alias trace fanout uses storage_owner_slot_id alias groups keyed by global slot_id. TraceSignalMetaRegistry is a flat dense vector.
 
 **Target:** observability works in object-local coordinates. SlotMeta describes a member within an instance, not a byte offset into a design-global arena. Trace coordinates are (instance, local_signal), not flat design-global slot_id.
 
-**Why separate:** observability is already partially body-shaped (the descriptor templates). The remaining work is changing the realized output coordinates and the trace/snapshot consumers. Depends on R1 (instance objects define what coordinates exist), R2 (forwarded aliases are currently the dirtiest part of the observability pipeline -- the cross-instance absolute-offset flags exist specifically because of forwarding), and R4 (signal identity defines what trace coordinates look like).
+**Why last:** the target coordinate system -- (instance, local_signal) -- does not exist until R3 defines object-local signal identity. Forwarded alias trace fanout is cleanest after R2 resolves forwarding. The observable descriptor templates are already body-shaped; the remaining work is the realized output coordinates and trace/snapshot consumers.
 
 Where to look: observable_storage_ref, observable_descriptor_utils, constructor observable realization, slot_meta, trace_manager, trace_flush.
-
-## R4: Process execution context: object-local signal identity
-
-**Current implementation:** signal identity requires design-global renumbering: signal_id_offset + local_id produces a design-global slot_id at runtime. Every dirty mark, subscription, and trace event uses this design-global coordinate. design_ptr is available in every process frame header, giving every process access to the entire design's state.
-
-**Target:** signal identity is object-local. A signal is member N of this instance, not design-global slot M. Processes should not need (or have) access to the full design's storage.
-
-**Why separate:** signal identity is the coordinate system that all runtime consumers (dirty tracking, subscriptions, tracing) depend on. Changing it is a distinct contract change from changing instance storage (R1) or observability output (R3).
-
-Where to look: ProcessFrameHeader (signal_id_offset, design_ptr), EmitSignalId, EmitMutationTargetSignalId, LyraMarkDirty.
-
-## R5: Design-global coordination API
-
-**Current implementation:** dirty tracking, subscriptions, and comb fixpoint all use design-global slot_ids as coordinates. UpdateSet vectors are sized to design-global slot count. SlotSubscriptions are indexed by design-global slot_id. This is the outer orchestration layer, but its current public API contract requires every caller to produce design-global slot_ids, leaking design-global identity into every subsystem it touches.
-
-**Target:** the public runtime contract -- the API boundary between codegen/constructor and engine -- accepts object-scoped coordinates (instance + local signal) rather than requiring design-global slot_ids. This is a contract change, not just an internal refactor. The engine may keep flat arrays internally for performance, but the public interface must not force callers to reason in design-global coordinates.
-
-**Why separate:** this is the public runtime contract change, distinct from the instance model (R1) and signal identity (R4). Depends on R4 because the API shape follows from how signal identity works.
-
-Where to look: engine (MarkSlotDirty, MarkDirtyRange), update_set, engine_subscriptions, LyraMarkDirty in simulation.
-
-## R6: Constructor-to-runtime handoff preserves instance structure
-
-**Current implementation:** ConstructionResult contains per-process frames and design-global metadata (realized slot_meta, trigger_meta, comb_meta, trace_signal_meta). Instance identity is dissolved -- no per-instance object or metadata bundle exists in the output. The runtime receives this flat data and indexes it by design-global coordinates.
-
-**Target:** the constructor-to-runtime handoff preserves instance structure. Construction produces instance objects (or per-instance metadata bundles) that the runtime can address per-instance. The runtime should no longer receive only flattened per-design metadata as the primary representation.
-
-**Why separate:** this is the constructor-to-runtime boundary contract. It depends on R1 (what runtime instance objects look like) but is a distinct implementation boundary -- the handoff shape is what makes or breaks instance identity preservation at runtime.
-
-Where to look: ConstructionResult in constructor, SetupAndRunSimulation in simulation, Engine initialization.
 
 ## T1: Topology-independence validation
 
