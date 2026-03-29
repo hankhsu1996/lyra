@@ -13,41 +13,25 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
   - [x] D1b -- Add `string`
   - [x] D1c -- AOT/LLI link plumbing, `LinkRequest`, unified test linking
   - [x] D1d -- `lyra.toml` `[dpi].link_inputs`, validated input phase
-- [ ] D2 -- General import functions (output/inout args, chandle, packed types)
+- [x] D2 -- General import functions (output/inout args, chandle, packed types)
   - [x] D2a -- Output/inout args, non-pure imports, packed 2-state direct-scalar <=64
   - [x] D2b -- DPI-own MIR call family (`DpiCall`), per-param descriptors, 3-phase LLVM lowering
-  - [ ] D2c -- `chandle` variable LLVM support (load/store/null literal)
-- [ ] D3a -- 4-state scalar/vector marshaling
+  - [x] D2c -- `chandle` variable LLVM support (load/store/null literal)
+- [x] D3a -- 4-state scalar/vector marshaling (narrow <=64-bit, input/output/inout, scalar return)
 - [ ] D3b -- Wide packed multiword transport (> 64-bit vectors)
 - [ ] D4 -- DPI export (C-callable wrappers, header generation)
 - [ ] D5a -- Context functions (simulator scope access)
 - [ ] D5b -- DPI tasks (time-consuming foreign calls)
 
-## D2c: chandle variable support
-
-Cross-layer feature: make chandle work as a plain variable, not just a DPI declaration type. The type infrastructure (`TypeKind::kChandle`, storage spec, default init, `TypeDescKind::kChandle`, DPI ABI classification) is in place from D2a/D2b. The gap is expression-level operations and LLVM write/rvalue dispatch.
-
-Concrete gaps (verified from code, not assumption):
-
-1. No `NullConstant` in `ConstantValue` variant (`constant.hpp`). Null literals have no compile-time representation.
-2. `NullLiteral` expression kind unhandled in AST-to-HIR dispatch (`expression.cpp`).
-3. Null-to-chandle and chandle identity conversions rejected by `LowerConversionExpression` (`expression_access.cpp:116`).
-4. `GetTypeInfoFromType` (`rvalue.cpp:19-48`) rejects kChandle: not managed, not packed. Blocks all rvalue computation including equality/inequality.
-5. `ClassifyWriteShape` (`write_plan.cpp:35`) falls through to packed-scalar, then `PackedBitWidth` throws on kChandle. Blocks assignment and CommitValue.
-
-Do not route chandle through packed-scalar fallback. Give it an explicit pointer-scalar path in rvalue classification, write-shape dispatch, and commit.
-
-## D3a: 4-state scalar/vector marshaling
-
-Adds 4-state value passing across the DPI boundary. Lyra's internal 4-state representation differs from the DPI-C standard representation, so a dedicated conversion layer is needed at call boundaries.
-
-Covers logic, integer (4-state), and 4-state packed types that do not require multiword transport.
-
-This phase excludes wide packed vectors, open arrays, export, context, and tasks.
-
 ## D3b: Wide packed multiword transport
 
-Extends D3a to packed values wider than 64 bits. The marshaling primitives from D3a are reused, but the transport changes to indirect passing with caller-managed storage.
+Extends D3a to packed values wider than 64 bits. The D3a marshaling helpers (word extraction, svLogicVecVal encode/decode, semantic masking) are loop-based and accept arbitrary word counts, but are guarded to <=2 words at call sites. D3b removes those guards and adds:
+
+- Semantic validation: accept 2-state and 4-state packed types > 64 bits
+- Variable-size buffer allocation for svBitVecVal / svLogicVecVal arrays
+- Input passing mode change: wide 2-state input also requires by-pointer (svBitVecVal\*)
+- Indirect return modeling: DpiReturnKind::kIndirect, caller-allocated output pointer for vector returns
+- LLVM function declaration changes for indirect return (sret-style or output-param convention)
 
 This phase excludes open arrays, export, context, and tasks.
 

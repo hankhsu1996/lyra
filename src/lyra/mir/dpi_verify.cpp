@@ -39,14 +39,15 @@ void ValidateDpiSignatureContract(const DpiSignature& sig, const char* caller) {
           caller,
           std::format("param {}: ref direction in frozen DPI signature", i));
     }
-    bool is_input = p.direction == ParameterDirection::kInput;
-    bool is_by_value = p.passing == DpiPassingMode::kByValue;
-    if (is_input != is_by_value) {
+    auto expected_passing = GetDpiPassingMode(p.direction, p.abi_type);
+    if (p.passing != expected_passing) {
       throw common::InternalError(
           caller,
           std::format(
-              "param {}: direction/passing mismatch (input={}, by_value={})", i,
-              is_input, is_by_value));
+              "param {}: passing mode {} does not match expected {} for "
+              "direction/abi_type",
+              i, static_cast<int>(p.passing),
+              static_cast<int>(expected_passing)));
     }
   }
 }

@@ -143,10 +143,6 @@ auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
 
 namespace {
 
-auto IsInputDirection(ParameterDirection dir) -> bool {
-  return dir == ParameterDirection::kInput;
-}
-
 auto BuildDpiSignature(const DpiImportInfo& dpi) -> mir::DpiSignature {
   mir::DpiSignature sig;
   sig.result = {
@@ -162,9 +158,7 @@ auto BuildDpiSignature(const DpiImportInfo& dpi) -> mir::DpiSignature {
         .sv_type = p.type_id,
         .abi_type = p.abi_type,
         .direction = p.direction,
-        .passing = IsInputDirection(p.direction)
-                       ? mir::DpiPassingMode::kByValue
-                       : mir::DpiPassingMode::kByPointer,
+        .passing = mir::GetDpiPassingMode(p.direction, p.abi_type),
     });
   }
   mir::ValidateDpiSignatureContract(sig, "BuildDpiSignature");

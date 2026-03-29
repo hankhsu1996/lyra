@@ -1,0 +1,463 @@
+feature: dpi_import_general_four_state
+description: DPI-C 4-state scalar/vector marshaling (D3a)
+
+cases:
+  # -- scalar logic input --
+
+  - name: dpi_logic_scalar_input_zero
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int echo_logic_as_int(logic x);
+        int result;
+        initial begin
+          result = echo_logic_as_int(1'b0);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 0
+
+  - name: dpi_logic_scalar_input_one
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int echo_logic_as_int(logic x);
+        int result;
+        initial begin
+          result = echo_logic_as_int(1'b1);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- scalar logic output --
+
+  - name: dpi_logic_scalar_output_x
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void set_logic_x(output logic x);
+        logic val;
+        int result;
+        initial begin
+          set_logic_x(val);
+          result = (val === 1'bx) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dpi_logic_scalar_output_one
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void set_logic_one(output logic x);
+        logic val;
+        int result;
+        initial begin
+          set_logic_one(val);
+          result = (val === 1'b1) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- scalar logic inout --
+
+  - name: dpi_logic_scalar_inout
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void flip_logic(inout logic x);
+        logic val;
+        int result;
+        initial begin
+          val = 1'b0;
+          flip_logic(val);
+          result = (val === 1'b1) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- scalar logic return --
+
+  - name: dpi_logic_scalar_return_one
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function logic return_logic_one();
+        logic val;
+        int result;
+        initial begin
+          val = return_logic_one();
+          result = (val === 1'b1) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dpi_logic_scalar_return_z
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function logic return_logic_z();
+        logic val;
+        int result;
+        initial begin
+          val = return_logic_z();
+          result = (val === 1'bz) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- logic [7:0] input --
+
+  - name: dpi_logic8_input
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int read_logic8_aval(input logic [7:0] v);
+        int result;
+        initial begin
+          result = read_logic8_aval(8'hA5);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 165
+
+  # -- logic [7:0] output --
+
+  - name: dpi_logic8_output
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_logic8_pattern(output logic [7:0] v);
+        logic [7:0] val;
+        int result;
+        initial begin
+          write_logic8_pattern(val);
+          result = (val[7:4] === 4'b1010) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- logic [7:0] inout --
+
+  - name: dpi_logic8_inout
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void roundtrip_logic8(inout logic [7:0] v);
+        logic [7:0] val;
+        int result;
+        initial begin
+          val = 8'hA5;
+          roundtrip_logic8(val);
+          result = read_logic8_aval_check(val);
+        end
+
+        function int read_logic8_aval_check(logic [7:0] v);
+          return (v === 8'h5A) ? 1 : 0;
+        endfunction
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- logic [31:0] --
+
+  - name: dpi_logic32_input
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int read_logic32_aval(input logic [31:0] v);
+        int result;
+        initial begin
+          result = read_logic32_aval(32'h0000002A);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: dpi_logic32_output
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_logic32_pattern(output logic [31:0] v);
+        logic [31:0] val;
+        int result;
+        initial begin
+          write_logic32_pattern(val);
+          result = (val === 32'hDEADBEEF) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dpi_logic32_inout
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void roundtrip_logic32(inout logic [31:0] v);
+        logic [31:0] val;
+        int result;
+        initial begin
+          val = 32'h00000041;
+          roundtrip_logic32(val);
+          result = (val === 32'h00000042) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- logic [63:0] (2-word) --
+
+  - name: dpi_logic64_output
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_logic64_pattern(
+            output logic [63:0] v);
+        logic [63:0] val;
+        int r0;
+        int r1;
+        initial begin
+          write_logic64_pattern(val);
+          r0 = (val[31:0] === 32'h12345678) ? 1 : 0;
+          r1 = (val[63:32] === 32'hABCDEF01) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r1: 1
+
+  - name: dpi_logic64_input
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int read_logic64_word0_aval(
+            input logic [63:0] v);
+        import "DPI-C" pure function int read_logic64_word1_aval(
+            input logic [63:0] v);
+        int r0;
+        int r1;
+        initial begin
+          logic [63:0] val;
+          val = 64'hABCDEF0112345678;
+          r0 = read_logic64_word0_aval(val);
+          r1 = read_logic64_word1_aval(val);
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 305419896
+        r1: -1412567295
+
+  - name: dpi_logic64_inout
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void roundtrip_logic64(inout logic [63:0] v);
+        logic [63:0] val;
+        int r0;
+        int r1;
+        initial begin
+          val = 64'hABCDEF0112345678;
+          roundtrip_logic64(val);
+          r0 = (val[31:0] === 32'h12345679) ? 1 : 0;
+          r1 = (val[63:32] === 32'hABCDEF02) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r1: 1
+
+  # -- masking test: C sets garbage in unused bits --
+
+  - name: dpi_logic8_high_bit_mask
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_logic8_with_garbage(
+            output logic [7:0] v);
+        logic [7:0] val;
+        int result;
+        initial begin
+          write_logic8_with_garbage(val);
+          result = (val === 8'h42) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- scalar 4-value round-trip: 0, 1, X, Z --
+
+  - name: dpi_logic_scalar_roundtrip_0
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function logic echo_logic(logic x);
+        logic val;
+        int result;
+        initial begin
+          val = echo_logic(1'b0);
+          result = (val === 1'b0) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dpi_logic_scalar_roundtrip_1
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function logic echo_logic(logic x);
+        logic val;
+        int result;
+        initial begin
+          val = echo_logic(1'b1);
+          result = (val === 1'b1) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dpi_logic_scalar_roundtrip_x
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function logic echo_logic(logic x);
+        logic val;
+        int result;
+        initial begin
+          val = echo_logic(1'bx);
+          result = (val === 1'bx) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: dpi_logic_scalar_roundtrip_z
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function logic echo_logic(logic x);
+        logic val;
+        int result;
+        initial begin
+          val = echo_logic(1'bz);
+          result = (val === 1'bz) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- logic [40:0] -- 2-word path with partial high-word masking --
+
+  - name: dpi_logic41_output
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_logic41_pattern(
+            output logic [40:0] v);
+        logic [40:0] val;
+        int r0;
+        int r1;
+        initial begin
+          write_logic41_pattern(val);
+          r0 = (val[31:0] === 32'hAAAAAAAA) ? 1 : 0;
+          r1 = (val[40:32] === 9'h1FF) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r1: 1
+
+  - name: dpi_logic41_input
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int read_logic41_word0_aval(
+            input logic [40:0] v);
+        import "DPI-C" pure function int read_logic41_word1_aval(
+            input logic [40:0] v);
+        int r0;
+        int r1;
+        initial begin
+          logic [40:0] val;
+          val = 41'h1FFFFFFFFFF;
+          r0 = read_logic41_word0_aval(val);
+          r1 = read_logic41_word1_aval(val);
+        end
+      endmodule
+    expect:
+      variables:
+        r0: -1
+        r1: 511
+
+  - name: dpi_logic41_high_bit_mask
+    dpi_sources:
+      - dpi_helpers/four_state_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function void write_logic41_with_garbage(
+            output logic [40:0] v);
+        logic [40:0] val;
+        int r0;
+        int r1;
+        initial begin
+          write_logic41_with_garbage(val);
+          r0 = (val[31:0] === 32'hAAAAAAAA) ? 1 : 0;
+          r1 = (val[40:32] === 9'h1FF) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r0: 1
+        r1: 1

@@ -25,6 +25,10 @@ enum class DpiAbiTypeClass {
   kString,
   kChandle,
   kVoid,
+
+  // D3a: 4-state types
+  kLogicScalar,     // 1-bit 4-state (svLogic = uint8_t)
+  kLogicVecNarrow,  // 2..64-bit 4-state packed (svLogicVecVal[1..2])
 };
 
 // True if the type class has been normalized (not the sentinel).
@@ -39,9 +43,21 @@ enum class DpiAbiTypeClass {
 }
 
 // True if the ABI type class is valid for a DPI return type.
-// D1 allows all normalized values including kVoid on returns.
+// kLogicVecNarrow return requires indirect return modeling (D3b scope).
 [[nodiscard]] inline auto IsValidDpiReturnType(DpiAbiTypeClass t) -> bool {
-  return IsNormalizedDpiType(t);
+  return IsNormalizedDpiType(t) && t != DpiAbiTypeClass::kLogicVecNarrow;
+}
+
+// True if the ABI type class is a 4-state DPI type (D3a).
+[[nodiscard]] inline auto IsFourStateDpiType(DpiAbiTypeClass t) -> bool {
+  return t == DpiAbiTypeClass::kLogicScalar ||
+         t == DpiAbiTypeClass::kLogicVecNarrow;
+}
+
+// True if the ABI type class is a 4-state vector requiring by-pointer passing
+// even for input direction (const svLogicVecVal* per IEEE 1800-2023).
+[[nodiscard]] inline auto IsFourStateVecDpiType(DpiAbiTypeClass t) -> bool {
+  return t == DpiAbiTypeClass::kLogicVecNarrow;
 }
 
 }  // namespace lyra
