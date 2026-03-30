@@ -111,6 +111,42 @@ cases:
       variables:
         result: 1
 
+  - name: lyra_compiler_identity_macro
+    description: __lyra__ is predefined and expands to 1
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          `ifdef __lyra__
+            x = `__lyra__;
+          `else
+            x = 0;
+          `endif
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 1
+
+  - name: lyra_identity_macro_coexists_with_user_defines
+    description: User defines injected via config append after __lyra__ built-in
+    defines: ["USER_VAL=42"]
+    sv: |
+      module Test;
+        int builtin;
+        int user;
+        initial begin
+          builtin = `__lyra__;
+          user = `USER_VAL;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        builtin: 1
+        user: 42
+
   - name: multi_define_chain_single_unit
     description: Chained defines across three files in single-unit mode
     single_unit: true
