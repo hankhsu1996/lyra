@@ -316,10 +316,11 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
 
     ValidateKeys(
         node,
-        {"name", "description", "sv", "files", "plusargs", "param_overrides",
-         "pedantic", "trace_summary", "signal_trace", "dump_slot_meta",
-         "dump_specialization_map", "dump_repertoire", "dump_repertoire_desc",
-         "disable_assertions", "single_unit", "dpi_sources", "expect"},
+        {"name", "description", "sv", "files", "defines", "plusargs",
+         "param_overrides", "pedantic", "trace_summary", "signal_trace",
+         "dump_slot_meta", "dump_specialization_map", "dump_repertoire",
+         "dump_repertoire_desc", "disable_assertions", "single_unit",
+         "dpi_sources", "expect"},
         case_context, path);
 
     // Single-file format: sv: |
@@ -339,6 +340,14 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
         source_file.name = file_node["name"].as<std::string>();
         source_file.content = file_node["content"].as<std::string>();
         test_case.files.push_back(std::move(source_file));
+      }
+    }
+
+    // Defines: defines: ["MACRO=1", "FLAG"]
+    if (node["defines"]) {
+      ValidateIsSequence(node["defines"], "defines", case_context, path);
+      for (const auto& arg : node["defines"]) {
+        test_case.defines.push_back(arg.as<std::string>());
       }
     }
 

@@ -23,6 +23,7 @@
 #include <slang/util/Bag.h>
 #include <slang/util/LanguageVersion.h>
 
+#include "lyra/frontend/compiler_env.hpp"
 #include "lyra/frontend/parse_unit.hpp"
 #include "tests/framework/test_case.hpp"
 
@@ -174,7 +175,7 @@ inline auto ParseTestCase(
   // Configure lexer/preprocessor/parser to use 2023 language features
   slang::parsing::LexerOptions lexer_options;
   lexer_options.languageVersion = slang::LanguageVersion::v1800_2023;
-  slang::parsing::PreprocessorOptions pp_options;
+  auto pp_options = frontend::BuildLyraPreprocessorOptions(test_case.defines);
   pp_options.languageVersion = slang::LanguageVersion::v1800_2023;
   slang::parsing::ParserOptions parser_options;
   parser_options.languageVersion = slang::LanguageVersion::v1800_2023;

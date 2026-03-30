@@ -54,6 +54,7 @@ struct TestCase {
   bool dump_repertoire_desc = false;     // Dump repertoire descriptor
   bool disable_assertions = false;
   bool single_unit = false;
+  std::vector<std::string> defines;
   std::vector<std::string> dpi_sources;  // Companion C source paths (DPI)
   [[nodiscard]] auto IsMultiFile() const -> bool {
     return !files.empty();

@@ -8,10 +8,10 @@
 #include <fmt/core.h>
 #include <slang/diagnostics/DiagnosticEngine.h>
 #include <slang/diagnostics/TextDiagnosticClient.h>
-#include <slang/parsing/Preprocessor.h>
 #include <slang/util/Bag.h>
 #include <slang/util/LanguageVersion.h>
 
+#include "lyra/frontend/compiler_env.hpp"
 #include "lyra/frontend/parse_unit.hpp"
 
 namespace lyra::driver {
@@ -37,11 +37,7 @@ auto ParseFiles(const CompilationInput& input) -> std::optional<ParseResult> {
   }
 
   slang::Bag options;
-  if (!input.defines.empty()) {
-    slang::parsing::PreprocessorOptions pp_options;
-    pp_options.predefines = input.defines;
-    options.set(pp_options);
-  }
+  options.set(frontend::BuildLyraPreprocessorOptions(input.defines));
 
   slang::ast::CompilationOptions comp_options;
   comp_options.languageVersion = slang::LanguageVersion::v1800_2023;
