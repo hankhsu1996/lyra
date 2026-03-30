@@ -187,15 +187,15 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
         });
   }
 
-  // Verify owner graph and detect forwarded aliases.
+  // R2 invariant: every slot is self-owning.
   for (uint32_t i = 0; i < slots_.size(); ++i) {
     auto owner = slots_[i].storage_owner_slot_id;
-    if (slots_[owner].storage_owner_slot_id != owner) {
+    if (owner != i) {
       throw common::InternalError(
-          "SlotMetaRegistry",
+          "SlotMetaRegistry::SlotMetaRegistry",
           std::format(
-              "slot {} owner {} is not self-owning (points to {})", i, owner,
-              slots_[owner].storage_owner_slot_id));
+              "slot {} storage_owner_slot_id {} is not self (R2 violated)", i,
+              owner));
     }
   }
 }

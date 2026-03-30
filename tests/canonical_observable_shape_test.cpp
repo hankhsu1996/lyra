@@ -50,7 +50,7 @@ TEST(CanonicalObservableShapeTest, NonForwardedSlot) {
 
   DesignLayout layout;
   layout.slot_storage_specs = {MakeLogicSpec()};
-  layout.storage_owner_slot_id = {0};
+
 
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
       ObservableOwnerSlotId::Create(0), layout, realization, arena);
@@ -76,7 +76,7 @@ TEST(CanonicalObservableShapeTest, VariableOwnerWinsOverAliasLocalNetMetadata) {
 
   DesignLayout layout;
   layout.slot_storage_specs = {MakeLogicSpec(), MakeLogicSpec()};
-  layout.storage_owner_slot_id = {0, 0};
+
 
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
       ObservableOwnerSlotId::Create(0), layout, realization, arena);
@@ -95,7 +95,7 @@ TEST(CanonicalObservableShapeTest, SameTypeForwarding) {
 
   DesignLayout layout;
   layout.slot_storage_specs = {MakeIntSpec(), MakeIntSpec()};
-  layout.storage_owner_slot_id = {0, 0};
+
 
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
       ObservableOwnerSlotId::Create(0), layout, realization, arena);
@@ -121,7 +121,7 @@ TEST(
   // Helper should read row 0.
   DesignLayout layout;
   layout.slot_storage_specs = {MakeIntSpec(), MakeLogicSpec()};
-  layout.storage_owner_slot_id = {0, 0};
+
 
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
       ObservableOwnerSlotId::Create(0), layout, realization, arena);
@@ -141,7 +141,7 @@ TEST(CanonicalObservableShapeTest, OwnerOutOfRangeThrows) {
 
   DesignLayout layout;
   layout.slot_storage_specs = {MakeLogicSpec()};
-  layout.storage_owner_slot_id = {0};
+
 
   EXPECT_THROW(
       ComputeCanonicalObservableShape(
@@ -159,7 +159,7 @@ TEST(CanonicalObservableShapeTest, NonCanonicalOwnerThrows) {
 
   DesignLayout layout;
   layout.slot_storage_specs = {MakeLogicSpec(), MakeLogicSpec()};
-  layout.storage_owner_slot_id = {0, 0};
+
 
   EXPECT_THROW(
       ComputeCanonicalObservableShape(
@@ -177,7 +177,7 @@ TEST(CanonicalObservableShapeTest, Packed4ShapeCarriesLaneFields) {
 
   DesignLayout layout;
   layout.slot_storage_specs = {MakeLogicSpec()};
-  layout.storage_owner_slot_id = {0};
+
 
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
       ObservableOwnerSlotId::Create(0), layout, realization, arena);
@@ -200,7 +200,7 @@ TEST(CanonicalObservableShapeTest, NonPacked4ShapeHasNoLanes) {
 
   DesignLayout layout;
   layout.slot_storage_specs = {MakeIntSpec()};
-  layout.storage_owner_slot_id = {0};
+
 
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
       ObservableOwnerSlotId::Create(0), layout, realization, arena);
@@ -219,7 +219,7 @@ TEST(CanonicalObservableShapeTest, NetOwnerProducesNetTraceKind) {
 
   DesignLayout layout;
   layout.slot_storage_specs = {MakeLogicSpec()};
-  layout.storage_owner_slot_id = {0};
+
 
   CanonicalObservableShape shape = ComputeCanonicalObservableShape(
       ObservableOwnerSlotId::Create(0), layout, realization, arena);

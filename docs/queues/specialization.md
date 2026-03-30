@@ -16,7 +16,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] H1-H6 -- Constructor-time realization migration (process/trigger/comb/slot/trace/path/init realization moved behind constructor)
 - [x] C1 -- Remove per-instance emitted constructor IR/globals
 - [x] R1 -- Runtime instance/object model: two-domain storage, domain-aware slot resolution, process-instance binding
-- [ ] R2 -- Forwarding as connectivity, not storage redefinition
+- [x] R2 -- Forwarding as connectivity, not storage redefinition
 - [ ] R3 -- Object-local signal identity and coordination API
 - [ ] R4 -- Constructor-to-runtime handoff preserves per-instance structure
 - [ ] R5 -- Observability/trace/snapshot on object-local coordinates
@@ -65,21 +65,17 @@ Scope was larger than the original name suggested. R1 established:
 - **RuntimeInstance as LLVM struct type.** Codegen emits RuntimeInstance and RuntimeInstanceStorage with hard static_assert binary-contract enforcement.
 - **Explicit transitional seam.** signal_id_offset is documented as not part of the object's semantic identity, targeted for removal in R3.
 
-The design-global arena remains only for package/global state and forwarding compatibility dead space (physical arena shrink deferred to after R2 resolves forwarding off compile-time arena offsets).
+The design-global arena remains only for package/global state.
 
-## R2: Forwarding as connectivity, not storage redefinition
+## R2: Forwarding as connectivity, not storage redefinition (completed)
 
-**Current state:** when forwarding analysis determines a slot is a "forwardable connection relay," three things happen that make connectivity redefine object storage shape:
+Forwarding no longer redefines object storage shape. Every body-local slot owns local storage in its instance. Forwarding survives only as connection-analysis routing metadata (relay-candidate classification) for future direct-routing optimization.
 
-1. The layout pass assigns no storage for the slot in its owning instance -- it is skipped in both inline and appendix allocation passes.
-2. Codegen classifies it as kForwardedInline or kForwardedContainer and routes access through design_ptr + arena-absolute offset of the canonical owner, not this_ptr + instance-relative offset.
-3. Observable descriptors carry kObservableFlagStorageAbsolute, and the slot_storage_bindings entry is ForwardedStorageAlias rather than OwnedLocalStorage.
-
-**Target:** every body-local slot owns storage in its instance. Connectivity between instances is modeled as a reference or routing descriptor, not as the absence of local storage. The design-state arena no longer contains forwarding dead space.
-
-**Why standalone:** forwarding is the only remaining mechanism where connectivity redefines object shape. The change is concentrated in layout, codegen, constructor forwarding paths, and observable descriptor emission. It does not require changes to signal identity or coordination APIs.
-
-Where to look: forwarding_analysis, forwarding_map, SpecSlotAccessKind, GetModuleSlotPointer, observable_storage_ref, slot_storage_bindings in layout.
+- **Storage plane.** ForwardedStorageAlias, StorageOwnerSlotId, and the SlotStorageBinding variant deleted. Layout allocates every body-local slot unconditionally. storage_owner_slot_id removed from DesignLayout. Offset queries (GetBodyOffset, GetInstanceOffset) are total for all body-local slots. Design arena contains only package/global state (forwarding dead space removed).
+- **Access plane.** kForwardedInline and kForwardedContainer deleted from SpecSlotAccessKind. All module-local pointer paths go through this_ptr + local offset. No module-local access routes through design_ptr. Observable descriptors for body slots are always body-relative (ObservableOwnerAbsoluteStorageRef deleted).
+- **Runtime slot resolution.** ResolveSlotBytes uses direct domain switch only. No owner-chase for instance-owned slots. R2 self-ownership invariant enforced (storage_owner_slot_id == slot_id for all instance-owned slots).
+- **Connection analysis.** ForwardingMap deleted. Replaced by AnalyzeConnections producing ConnectionAnalysisResult with original-slot-ID connection edges, per-slot usage summaries, and relay-candidate classification. Connection entries use original slot IDs; no canonical-owner aliasing or identity-edge elimination.
+- **Trace.** Forwarded-alias dirty-set validation and alias fanout loop removed from trace flush. Direct per-slot trace path only.
 
 ## R3: Object-local signal identity and coordination API
 

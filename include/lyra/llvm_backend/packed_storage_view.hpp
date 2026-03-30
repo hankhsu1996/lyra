@@ -265,7 +265,7 @@ struct PackedStorePolicy {
   // Canonical storage-owner slot for trace observation query.
   // Set when mutation_signal was provided to BuildStorePolicyFromContext.
   // Used by packed-store emission sites for the LyraIsTraceObserved call.
-  std::optional<uint32_t> mutation_owner_slot;
+  std::optional<uint32_t> mutation_resolved_slot;
 
   std::optional<SignalIdExpr> signal_id;
   llvm::Value* engine_ptr = nullptr;

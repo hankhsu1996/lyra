@@ -105,15 +105,6 @@ auto SnapshotSlotValue(
       std::format("unknown SlotStorageKind: {}", static_cast<int>(meta.kind)));
 }
 
-// Snapshot a slot's storage as a TraceValue.
-// owner_slot_id is used only for diagnostic messages; the actual storage
-// bytes are read from slot_base using meta.
-auto SnapshotOwnerStorage(
-    uint32_t owner_slot_id, const SlotMeta& meta, const uint8_t* slot_base)
-    -> trace::TraceValue {
-  return SnapshotSlotValue(owner_slot_id, meta, slot_base);
-}
-
 }  // namespace
 
 void FlushDirtySlotsToTrace(
@@ -139,39 +130,17 @@ void FlushDirtySlotsToTrace(
       const auto* slot_base =
           ResolveSlotBase(meta, design_state_base, instances);
       trace.EmitValueChange(
-          slot_id, SnapshotOwnerStorage(slot_id, meta, slot_base));
+          slot_id, SnapshotSlotValue(slot_id, meta, slot_base));
     }
     return;
   }
 
-  // Owner-aware path: dirty flush with alias fanout.
-  for (uint32_t owner_slot_id : updates.DirtySlots()) {
-    // Backstop: forwarded alias slots must never appear in the dirty set.
-    auto owner = slot_registry.GetStorageOwnerSlotId(owner_slot_id);
-    if (owner != owner_slot_id) {
-      throw common::InternalError(
-          "FlushDirtySlotsToTrace",
-          std::format(
-              "forwarded alias slot {} appeared in dirty set (owner {})",
-              owner_slot_id, owner));
-    }
-
-    // Snapshot owner storage once.
-    const auto& meta = slot_registry.Get(owner_slot_id);
+  // Direct dirty-slot trace flush with slot metadata.
+  for (uint32_t slot_id : updates.DirtySlots()) {
+    if (!selection.IsSelected(slot_id)) continue;
+    const auto& meta = slot_registry.Get(slot_id);
     const auto* slot_base = ResolveSlotBase(meta, design_state_base, instances);
-    auto snapshot = SnapshotOwnerStorage(owner_slot_id, meta, slot_base);
-
-    // Emit for the owner if selected.
-    if (selection.IsSelected(owner_slot_id)) {
-      trace.EmitValueChange(owner_slot_id, snapshot);
-    }
-
-    // Emit for all aliases sharing this owner, using the same snapshot.
-    for (uint32_t alias : trace_registry.GetAliasGroup(owner_slot_id)) {
-      if (alias == owner_slot_id) continue;
-      if (!selection.IsSelected(alias)) continue;
-      trace.EmitValueChange(alias, snapshot);
-    }
+    trace.EmitValueChange(slot_id, SnapshotSlotValue(slot_id, meta, slot_base));
   }
 }
 
