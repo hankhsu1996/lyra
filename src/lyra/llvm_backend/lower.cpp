@@ -30,10 +30,9 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
+#include "lyra/llvm_backend/connection_analysis.hpp"
 #include "lyra/llvm_backend/connection_kernel_collection.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/forwarding_analysis.hpp"
-#include "lyra/llvm_backend/forwarding_map.hpp"
 #include "lyra/llvm_backend/init_descriptor_utils.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/observable_storage_ref.hpp"
@@ -521,16 +520,15 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
 
   // Helper: mark a single design-global trigger slot in the bitmap.
   auto mark_global_slot = [&](mir::SlotId trigger_slot) {
-    auto owner = design_layout.GetStorageOwnerSlotId(trigger_slot);
-    if (owner.value >= num_slots) {
+    if (trigger_slot.value >= num_slots) {
       throw common::InternalError(
           "BuildDesignGlobalBehavioralTriggerBitmap",
           std::format(
-              "design-global trigger slot {} (owner {}) out of "
+              "design-global trigger slot {} out of "
               "range ({} slots)",
-              trigger_slot.value, owner.value, num_slots));
+              trigger_slot.value, num_slots));
     }
-    bitmap[owner.value] = true;
+    bitmap[trigger_slot.value] = true;
   };
 
   // Init processes: design-level, data lives in design_arena.
@@ -793,22 +791,15 @@ auto BuildSpecSlotInfos(
     for (uint32_t s = 0; s < slot_count; ++s) {
       uint32_t design_slot_row = rep_base_slot + s;
       auto slot_id = layout.design.slots[design_slot_row];
-      auto rel = layout.design.TryGetOwnedInstanceOffset(
+      auto rel = layout.design.GetInstanceOffset(
           design_slot_row, base_info, rep_range);
       info.inline_offsets.push_back(rel);
       auto shape = design_slots[design_slot_row].storage_shape;
       info.shapes.push_back(shape);
-      bool is_owned = rel.has_value();
       bool is_container = shape == mir::StorageShape::kOwnedContainer;
-      if (is_owned) {
-        info.access_kinds.push_back(
-            is_container ? SpecSlotAccessKind::kOwnedContainer
-                         : SpecSlotAccessKind::kOwnedInline);
-      } else {
-        info.access_kinds.push_back(
-            is_container ? SpecSlotAccessKind::kForwardedContainer
-                         : SpecSlotAccessKind::kForwardedInline);
-      }
+      info.access_kinds.push_back(
+          is_container ? SpecSlotAccessKind::kOwnedContainer
+                       : SpecSlotAccessKind::kOwnedInline);
       info.representative_design_slots.push_back(slot_id.value);
     }
 
@@ -828,10 +819,6 @@ auto BuildSpecSlotInfos(
       }
       uint32_t inst_base =
           module_base_slots[unit.instances[i].module_index.value];
-      const auto& inst_base_info =
-          layout.GetInstanceStorageBase(unit.instances[i].module_index);
-      InstanceSlotRange inst_range{
-          .base_slot = inst_base, .slot_count = slot_count};
       for (uint32_t s = 0; s < slot_count; ++s) {
         auto inst_shape = design_slots[inst_base + s].storage_shape;
         if (inst_shape != info.shapes[s]) {
@@ -842,26 +829,6 @@ auto BuildSpecSlotInfos(
                   "representative={} instance={}",
                   s, static_cast<int>(info.shapes[s]),
                   static_cast<int>(inst_shape)));
-        }
-        auto inst_offset = layout.design.TryGetOwnedInstanceOffset(
-            inst_base + s, inst_base_info, inst_range);
-        bool inst_owned = inst_offset.has_value();
-        bool inst_container = inst_shape == mir::StorageShape::kOwnedContainer;
-        SpecSlotAccessKind inst_access =
-            inst_owned
-                ? (inst_container ? SpecSlotAccessKind::kOwnedContainer
-                                  : SpecSlotAccessKind::kOwnedInline)
-                : (inst_container ? SpecSlotAccessKind::kForwardedContainer
-                                  : SpecSlotAccessKind::kForwardedInline);
-        if (inst_access != info.access_kinds[s]) {
-          throw common::InternalError(
-              "BuildSpecSlotInfos",
-              std::format(
-                  "access kind mismatch at body-local slot {}: "
-                  "representative={} instance {}={}",
-                  s, static_cast<int>(info.access_kinds[s]),
-                  unit.instances[i].module_index.value,
-                  static_cast<int>(inst_access)));
         }
       }
     }
@@ -1024,12 +991,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto slot_info =
       BuildSlotInfo(input.design->slots, *input.type_arena, force_two_state);
 
-  // Pre-forwarding layout: used by connection collection for observation
+  // Preliminary layout: used by connection collection for observation
   // resolution (needs slot specs, not byte offsets).
-  ForwardingMap empty_forwarding;
-  auto pre_forwarding_layout = BuildDesignLayout(
-      slot_info, *input.type_arena, module->getDataLayout(), force_two_state,
-      empty_forwarding, 0, {});
+  auto pre_layout = BuildDesignLayout(
+      slot_info, *input.type_arena, module->getDataLayout(), force_two_state, 0,
+      {});
 
   // Extract narrow layout-planning inputs from design.
   // module_plans and module_base_slots are produced once and consumed by
@@ -1076,28 +1042,16 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto connection_collection = CollectConnectionKernels(
       input.design->connection_processes, *input.mir_arena,
       SlotSpecView{
-          .slot_to_index = pre_forwarding_layout.slot_to_index,
-          .slot_storage_specs = pre_forwarding_layout.slot_storage_specs,
-          .storage_spec_arena = pre_forwarding_layout.storage_spec_arena,
+          .slot_to_index = pre_layout.slot_to_index,
+          .slot_storage_specs = pre_layout.slot_storage_specs,
+          .storage_spec_arena = pre_layout.storage_spec_arena,
       });
 
-  // Non-connection trigger slot summary for forwarding exclusion.
-  auto trigger_summary =
-      CollectTriggerSlotSummary(module_plans, *input.design, *input.mir_arena);
-
-  // Canonical forwarding analysis. No later phase may add new candidates.
-  auto num_design_slots = static_cast<uint32_t>(input.design->slots.size());
-  auto forwarding_map = BuildForwardingMap(
-      connection_collection.kernel_entries, trigger_summary, num_design_slots);
-
-  // Rebuild connections through canonical forwarding resolution.
-  auto canonicalized_connections = RebuildCanonicalConnections(
-      std::move(connection_collection.kernel_entries), forwarding_map);
-
-  // Structural verification: canonicalized connections must not contain
-  // any forwarded alias slot in any slot-bearing field.
-  VerifyCanonicalizedConnectionObservations(
-      forwarding_map, canonicalized_connections);
+  // Connection analysis: classify slot usage and relay candidates.
+  // Connection edges use original slot IDs; no canonical-owner aliasing.
+  auto connection_analysis = AnalyzeConnections(
+      std::move(connection_collection.kernel_entries), module_plans,
+      *input.design, *input.mir_arena);
 
   // Build instance slot ranges for body-local appendix layout.
   uint32_t num_package_slots_for_layout = 0;
@@ -1118,10 +1072,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
         });
   }
 
-  // Build final layout with forwarding-aware storage ownership.
+  // Build final layout: every body-local slot owns storage.
   auto design_layout = BuildDesignLayout(
       slot_info, *input.type_arena, module->getDataLayout(), force_two_state,
-      forwarding_map, num_package_slots_for_layout, instance_ranges);
+      num_package_slots_for_layout, instance_ranges);
 
   // Build body-owned storage layouts from body-local MIR inputs.
   // Iterates the body inventory directly. No design-global forwarding,
@@ -1137,7 +1091,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   auto layout = std::make_unique<Layout>(BuildLayout(
-      input.design->init_processes, std::move(canonicalized_connections),
+      input.design->init_processes,
+      std::move(connection_analysis.connection_edges),
       std::move(connection_collection.non_kernelized_processes), module_plans,
       *input.design, *input.mir_arena, *input.type_arena,
       std::move(design_layout), body_storage_layouts, *llvm_ctx,
@@ -1884,8 +1839,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
       if (info.slot_count == 0) continue;
 
-      auto owned_base = layout->design.GetOwnedStorageBaseForRange(
-          base_slot, info.slot_count);
+      auto owned_base =
+          layout->design.GetStorageBaseForRange(base_slot, info.slot_count);
 
       for (uint32_t i = 0; i < info.slot_count; ++i) {
         uint32_t gsi = base_slot + i;
@@ -1897,8 +1852,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
                   info.body_id.value, i, gsi, layout->design.slots.size()));
         }
 
-        const ObservableOwnerSlotId owner = ObservableOwnerSlotId::Create(
-            layout->design.storage_owner_slot_id[gsi]);
+        const ObservableOwnerSlotId owner =
+            ObservableOwnerSlotId::Create(layout->design.slots[gsi].value);
         const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
             owner, layout->design, realization, *input.type_arena);
         const ObservableDescriptorShapeFields sf =
@@ -1908,39 +1863,16 @@ auto CompileDesignProcesses(const LoweringInput& input)
             realization.slot_trace_provenance[gsi].local_name_str_off);
         uint32_t name_off = append_to_pool(tmpl, local_name);
 
-        auto storage_ref = [&]() -> ObservableStorageRef {
-          if (owned_base.has_value()) {
-            auto body_offset =
-                layout->design.TryGetOwnedBodyOffset(gsi, *owned_base);
-            if (body_offset.has_value()) {
-              return ObservableBodyRelativeStorageRef{*body_offset};
-            }
-          }
-          auto owner_abs =
-              layout->design.GetStorageByteOffset(layout->design.slots[gsi]);
-          return ObservableOwnerAbsoluteStorageRef{ArenaByteOffset{owner_abs}};
-        }();
+        // Every body-local slot has body-relative storage (R2 invariant).
+        auto body_offset = layout->design.GetBodyOffset(gsi, *owned_base);
 
         ObservableDescriptorOwnerRefFields refs =
             BuildBodyObservableDescriptorOwnerRefFields(
                 owner, base_slot, info.slot_count);
 
-        uint32_t domain = 0;
-        uint32_t storage_offset = std::visit(
-            common::Overloaded{
-                [&](const ObservableBodyRelativeStorageRef& ref) -> uint32_t {
-                  domain = 1;
-                  return narrow_u64_to_u32(
-                      ref.offset.value, "body-local byte offset");
-                },
-                [&](const ObservableOwnerAbsoluteStorageRef& ref) -> uint32_t {
-                  refs.flags |= runtime::kObservableFlagStorageAbsolute;
-                  domain = 0;
-                  return narrow_u64_to_u32(
-                      ref.offset.value, "owner-absolute byte offset");
-                },
-            },
-            storage_ref);
+        uint32_t domain = 1;
+        uint32_t storage_offset =
+            narrow_u64_to_u32(body_offset.value, "body-local byte offset");
 
         tmpl.entries.push_back(MakeObservableDescriptorEntry(
             storage_offset, name_off, refs, sf, domain));
@@ -1965,19 +1897,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
                 info.body_id.value));
       }
       uint32_t base_slot = base_it->second;
-      auto init_owned_base = layout->design.GetOwnedStorageBaseForRange(
-          base_slot, info.slot_count);
+      auto init_owned_base =
+          layout->design.GetStorageBaseForRange(base_slot, info.slot_count);
       if (!init_owned_base.has_value()) continue;
 
       std::vector<ParamSlotTemplateEntry> param_entries;
 
       for (uint32_t i = 0; i < info.slot_count; ++i) {
         uint32_t gsi = base_slot + i;
-
-        if (!std::holds_alternative<OwnedLocalStorage>(
-                layout->design.GetSlotStorageBinding(gsi))) {
-          continue;
-        }
 
         uint64_t inst_rel_offset =
             layout->design.slot_byte_offsets[gsi] - init_owned_base->value;
@@ -2134,12 +2061,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
       for (uint32_t gsi = 0; gsi < num_pkg; ++gsi) {
         if (gsi >= layout->design.slots.size()) break;
-        mir::SlotId slot_id = layout->design.slots[gsi];
-
-        if (layout->design.storage_owner_slot_id[gsi] != slot_id.value) {
-          continue;
-        }
-
         const auto& spec = layout->design.slot_storage_specs[gsi];
         uint64_t abs_offset = layout->design.slot_byte_offsets[gsi];
 
@@ -2177,8 +2098,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
       for (uint32_t gsi = 0; gsi < num_pkg; ++gsi) {
         if (gsi >= layout->design.slots.size()) break;
 
-        const ObservableOwnerSlotId owner = ObservableOwnerSlotId::Create(
-            layout->design.storage_owner_slot_id[gsi]);
+        const ObservableOwnerSlotId owner =
+            ObservableOwnerSlotId::Create(layout->design.slots[gsi].value);
         const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
             owner, layout->design, realization, *input.type_arena);
         const ObservableDescriptorShapeFields sf =

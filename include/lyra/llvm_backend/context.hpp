@@ -518,11 +518,10 @@ class Context {
   [[nodiscard]] auto RequiresStaticDirtyPropagation(
       const mir::SignalRef& sig) const -> bool;
 
-  // Resolve the canonical storage-owner slot for a signal, as a host-
-  // side uint32_t. Hard-fails on out-of-range or malformed canonicalization.
-  // Used for compile-time trace-query owner-slot materialization and for
-  // populating PackedStorePolicy::mutation_owner_slot.
-  [[nodiscard]] auto GetCanonicalOwnerSlot(const mir::SignalRef& sig) const
+  // Resolve the design-global slot index for a signal reference.
+  // For module-local signals, maps through representative_design_slots.
+  // For design-global signals, returns the id directly.
+  [[nodiscard]] auto GetResolvedSignalSlot(const mir::SignalRef& sig) const
       -> uint32_t;
 
   // Emit IR that queries whether the canonical storage-owner slot for

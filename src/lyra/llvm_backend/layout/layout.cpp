@@ -22,7 +22,6 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/connection_kernel_collection.hpp"
-#include "lyra/llvm_backend/forwarding_map.hpp"
 #include "lyra/llvm_backend/layout/layout_four_state.hpp"
 #include "lyra/llvm_backend/layout/storage_types.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
@@ -1241,7 +1240,7 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
     const llvm::DataLayout& dl, bool force_two_state,
-    const ForwardingMap& forwarding, uint32_t num_package_slots,
+    uint32_t num_package_slots,
     std::span<const InstanceSlotRange> instance_ranges) -> DesignLayout {
   DesignLayout layout;
 
@@ -1255,8 +1254,7 @@ auto BuildDesignLayout(
       .pointer_alignment = pointer_align,
   };
 
-  // Resolve canonical storage spec for each slot and build owner mapping.
-  layout.storage_owner_slot_id.reserve(slots.size());
+  // Resolve storage spec for each slot. Every slot owns its own storage.
   for (size_t i = 0; i < slots.size(); ++i) {
     const auto& slot = slots[i];
     layout.slots.push_back(slot.slot_id);
@@ -1264,8 +1262,6 @@ auto BuildDesignLayout(
     layout.slot_storage_specs.push_back(ResolveStorageSpec(
         slot.type_id, types, storage_mode, target_abi,
         layout.storage_spec_arena));
-    layout.storage_owner_slot_id.push_back(
-        forwarding.Resolve(slot.slot_id).value);
   }
 
   // Initialize owned data offset vector (nullopt for all slots initially).
@@ -1278,7 +1274,7 @@ auto BuildDesignLayout(
   // that owned-container offsets are body-relative and repeatable.
   // Layout order: [pkg inline + pkg appendix][inst0 inline + inst0 appendix]...
   //
-  // When instance_ranges is empty (pre-forwarding layout), all slots
+  // When instance_ranges is empty (preliminary layout), all slots
   // are laid out sequentially with appendix at the end.
   layout.slot_byte_offsets.resize(slots.size(), 0);
 
@@ -1286,14 +1282,13 @@ auto BuildDesignLayout(
 
   // Helper: assign inline byte offsets for a contiguous slot range,
   // then assign appendix offsets for owned containers in that range.
-  // Returns the running offset after the group (aligned to max_align).
+  // Every slot in the range gets storage (no forwarding skip).
   auto assign_group_offsets = [&](uint32_t begin, uint32_t end,
                                   uint64_t group_start) -> uint64_t {
     uint64_t offset = group_start;
 
-    // Inline pass: storage owners only.
+    // Inline pass: all slots.
     for (uint32_t i = begin; i < end; ++i) {
-      if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
       uint64_t slot_size = 0;
       uint64_t slot_align = 0;
       if (slots[i].storage_shape == mir::StorageShape::kOwnedContainer) {
@@ -1310,13 +1305,9 @@ auto BuildDesignLayout(
       offset += slot_size;
     }
 
-    // NOTE: forwarded alias resolution is deferred to after all groups
-    // are processed, because aliases can reference owners in other groups.
-
     // Appendix pass: owned-container backing data.
     offset = AlignUp(offset, max_align);
     for (uint32_t i = begin; i < end; ++i) {
-      if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
       if (slots[i].storage_shape != mir::StorageShape::kOwnedContainer) {
         continue;
       }
@@ -1340,7 +1331,7 @@ auto BuildDesignLayout(
   };
 
   if (instance_ranges.empty()) {
-    // Pre-forwarding layout: all slots in one group, appendix at end.
+    // Preliminary layout: all slots in one group, appendix at end.
     auto total = static_cast<uint32_t>(slots.size());
     uint64_t end_offset = assign_group_offsets(0, total, 0);
     layout.inline_region_size = end_offset;
@@ -1364,109 +1355,28 @@ auto BuildDesignLayout(
     layout.arena_size = std::max(uint64_t{1}, running);
   }
 
-  // Global alias resolution pass: forwarded aliases share canonical source's
-  // byte offset and storage spec. Done after all groups so cross-instance
-  // aliases resolve correctly.
-  for (size_t i = 0; i < slots.size(); ++i) {
-    if (!forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
-    mir::SlotId canonical = forwarding.Resolve(slots[i].slot_id);
-    auto canonical_it = layout.slot_to_index.find(canonical);
-    if (canonical_it == layout.slot_to_index.end()) {
-      throw common::InternalError(
-          "BuildDesignLayout",
-          std::format(
-              "forwarded alias slot {} has canonical {} not in layout",
-              slots[i].slot_id.value, canonical.value));
-    }
-    auto owner_row = canonical_it->second;
-    layout.slot_byte_offsets[i] = layout.slot_byte_offsets[owner_row];
-    layout.slot_storage_specs[i] = layout.slot_storage_specs[owner_row];
-  }
-
-  // Validate forwarded alias consistency.
-  for (size_t i = 0; i < slots.size(); ++i) {
-    if (!forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
-    mir::SlotId canonical = forwarding.Resolve(slots[i].slot_id);
-    auto owner_row = layout.slot_to_index.at(canonical);
-    auto owner_slot_id = mir::SlotId{layout.storage_owner_slot_id[i]};
-    if (owner_slot_id != canonical) {
-      throw common::InternalError(
-          "BuildDesignLayout",
-          std::format(
-              "alias slot {} recorded owner {} but canonical owner is {}",
-              slots[i].slot_id.value, owner_slot_id.value, canonical.value));
-    }
-    if (layout.storage_owner_slot_id[owner_row] != canonical.value) {
-      throw common::InternalError(
-          "BuildDesignLayout", std::format(
-                                   "alias slot {} owner {} is not self-owning",
-                                   slots[i].slot_id.value, canonical.value));
-    }
-    if (layout.slot_byte_offsets[i] != layout.slot_byte_offsets[owner_row]) {
-      throw common::InternalError(
-          "BuildDesignLayout",
-          std::format(
-              "alias slot {} offset {} != owner {} offset {}",
-              slots[i].slot_id.value, layout.slot_byte_offsets[i],
-              canonical.value, layout.slot_byte_offsets[owner_row]));
-    }
-    if (layout.slot_storage_specs[i] != layout.slot_storage_specs[owner_row]) {
-      throw common::InternalError(
-          "BuildDesignLayout",
-          std::format(
-              "alias slot {} storage spec != owner {} storage spec",
-              slots[i].slot_id.value, canonical.value));
-    }
-  }
-
   // Verify invariants: kInlineValue slots must have nullopt owned offset,
   // kOwnedContainer slots must have engaged owned offset.
   for (size_t i = 0; i < slots.size(); ++i) {
-    if (forwarding.IsForwardedAlias(slots[i].slot_id)) continue;
-    bool is_owned =
+    bool is_container =
         slots[i].storage_shape == mir::StorageShape::kOwnedContainer;
-    if (is_owned && !layout.owned_data_offsets[i].has_value()) {
+    if (is_container && !layout.owned_data_offsets[i].has_value()) {
       throw common::InternalError(
           "BuildDesignLayout",
           std::format("owned-container slot {} missing appendix offset", i));
     }
-    if (!is_owned && layout.owned_data_offsets[i].has_value()) {
+    if (!is_container && layout.owned_data_offsets[i].has_value()) {
       throw common::InternalError(
           "BuildDesignLayout",
           std::format("inline-value slot {} has spurious appendix offset", i));
     }
   }
 
-  // Design-level 4-state patches are no longer collected here.
-  // H6 moved design-state 4-state initialization to constructor-owned
-  // body/package init descriptors built in lower.cpp.
-  // Frame-level patches are still collected in BuildFrameLayout.
-
-  // Structural invariant: owned containers must be storage owners.
-  for (size_t i = 0; i < slots.size(); ++i) {
-    if (slots[i].storage_shape == mir::StorageShape::kOwnedContainer &&
-        layout.storage_owner_slot_id[i] != slots[i].slot_id.value) {
-      throw common::InternalError(
-          "BuildDesignLayout",
-          std::format(
-              "owned-container slot {} is a forwarded alias",
-              slots[i].slot_id.value));
-    }
-  }
-
-  // Build the semantic storage binding table.
+  // Build storage binding table. Every slot owns storage.
   layout.slot_storage_bindings.reserve(slots.size());
   for (size_t i = 0; i < slots.size(); ++i) {
-    mir::SlotId slot_id = slots[i].slot_id;
-    if (layout.storage_owner_slot_id[i] == slot_id.value) {
-      layout.slot_storage_bindings.push_back(
-          OwnedLocalStorage{ArenaByteOffset{layout.slot_byte_offsets[i]}});
-    } else {
-      mir::SlotId owner{layout.storage_owner_slot_id[i]};
-      layout.slot_storage_bindings.push_back(
-          ForwardedStorageAlias{
-              StorageOwnerSlotId::FromVerified(owner, layout)});
-    }
+    layout.slot_storage_bindings.push_back(
+        OwnedLocalStorage{ArenaByteOffset{layout.slot_byte_offsets[i]}});
   }
 
   return layout;
@@ -1545,76 +1455,29 @@ auto DesignLayout::ContainsSlot(mir::SlotId slot_id) const -> bool {
   return slot_to_index.contains(slot_id);
 }
 
-auto DesignLayout::IsStorageOwner(mir::SlotId slot_id) const -> bool {
-  auto it = slot_to_index.find(slot_id);
-  if (it == slot_to_index.end()) {
-    throw common::InternalError(
-        "DesignLayout::IsStorageOwner",
-        std::format("slot {} not in layout", slot_id.value));
-  }
-  return storage_owner_slot_id[it->second] == slot_id.value;
-}
-
-auto StorageOwnerSlotId::FromVerified(
-    mir::SlotId slot, const DesignLayout& layout) -> StorageOwnerSlotId {
-  if (!layout.IsStorageOwner(slot)) {
-    throw common::InternalError(
-        "StorageOwnerSlotId::FromVerified",
-        std::format(
-            "slot {} is a forwarded alias, not a storage owner", slot.value));
-  }
-  return StorageOwnerSlotId(slot);
-}
-
-auto DesignLayout::GetStorageOwnerSlotId(mir::SlotId slot_id) const
-    -> mir::SlotId {
-  auto it = slot_to_index.find(slot_id);
-  if (it == slot_to_index.end()) {
-    throw common::InternalError(
-        "DesignLayout::GetStorageOwnerSlotId",
-        std::format("slot {} not in layout", slot_id.value));
-  }
-  return mir::SlotId{storage_owner_slot_id[it->second]};
-}
-
-auto DesignLayout::ResolveStorageOwnerIndex(mir::SlotId slot_id) const
-    -> uint32_t {
-  auto it = slot_to_index.find(slot_id);
-  if (it == slot_to_index.end()) {
-    throw common::InternalError(
-        "DesignLayout::ResolveStorageOwnerIndex",
-        std::format("slot {} not in layout", slot_id.value));
-  }
-  auto owner_slot_id = mir::SlotId{storage_owner_slot_id[it->second]};
-  auto owner_it = slot_to_index.find(owner_slot_id);
-  if (owner_it == slot_to_index.end()) {
-    throw common::InternalError(
-        "DesignLayout::ResolveStorageOwnerIndex",
-        std::format(
-            "owner slot {} for slot {} not in layout", owner_slot_id.value,
-            slot_id.value));
-  }
-  if (storage_owner_slot_id[owner_it->second] != owner_slot_id.value) {
-    throw common::InternalError(
-        "DesignLayout::ResolveStorageOwnerIndex",
-        std::format(
-            "owner slot {} for slot {} is not self-owning", owner_slot_id.value,
-            slot_id.value));
-  }
-  return owner_it->second;
-}
-
 auto DesignLayout::GetStorageByteOffset(mir::SlotId slot_id) const -> uint64_t {
-  return slot_byte_offsets[ResolveStorageOwnerIndex(slot_id)];
+  auto it = slot_to_index.find(slot_id);
+  if (it == slot_to_index.end()) {
+    throw common::InternalError(
+        "DesignLayout::GetStorageByteOffset",
+        std::format("slot {} not in layout", slot_id.value));
+  }
+  return slot_byte_offsets[it->second];
 }
 
 auto DesignLayout::GetStorageSpec(mir::SlotId slot_id) const
     -> const SlotStorageSpec& {
-  return slot_storage_specs[ResolveStorageOwnerIndex(slot_id)];
+  auto it = slot_to_index.find(slot_id);
+  if (it == slot_to_index.end()) {
+    throw common::InternalError(
+        "DesignLayout::GetStorageSpec",
+        std::format("slot {} not in layout", slot_id.value));
+  }
+  return slot_storage_specs[it->second];
 }
 
 auto DesignLayout::GetSlotStorageBinding(uint32_t slot_row) const
-    -> const SlotStorageBinding& {
+    -> const OwnedLocalStorage& {
   if (slot_row >= slot_storage_bindings.size()) {
     throw common::InternalError(
         "DesignLayout::GetSlotStorageBinding",
@@ -1625,30 +1488,28 @@ auto DesignLayout::GetSlotStorageBinding(uint32_t slot_row) const
   return slot_storage_bindings[slot_row];
 }
 
-auto DesignLayout::TryGetOwnedInstanceOffset(
+auto DesignLayout::GetInstanceOffset(
     uint32_t slot_row, const InstanceStorageBase& instance_base,
-    const InstanceSlotRange& range) const -> std::optional<InstanceByteOffset> {
+    const InstanceSlotRange& range) const -> InstanceByteOffset {
   if (slot_row < range.base_slot ||
       slot_row >= range.base_slot + range.slot_count) {
     throw common::InternalError(
-        "DesignLayout::TryGetOwnedInstanceOffset",
+        "DesignLayout::GetInstanceOffset",
         std::format(
             "slot_row {} outside instance range [{}, {})", slot_row,
             range.base_slot, range.base_slot + range.slot_count));
   }
   const auto& binding = GetSlotStorageBinding(slot_row);
-  const auto* owned = std::get_if<OwnedLocalStorage>(&binding);
-  if (owned == nullptr) return std::nullopt;
   if (!instance_base.abs_byte_offset.has_value()) {
     throw common::InternalError(
-        "DesignLayout::TryGetOwnedInstanceOffset",
+        "DesignLayout::GetInstanceOffset",
         std::format(
-            "owned-local slot_row {} requires instance storage base, "
+            "slot_row {} requires instance storage base, "
             "but the instance base is missing",
             slot_row));
   }
   return ToInstanceOffset(
-      owned->abs_byte_offset, *instance_base.abs_byte_offset);
+      binding.abs_byte_offset, *instance_base.abs_byte_offset);
 }
 
 auto DesignLayout::GetSlotRow(mir::SlotId slot_id) const -> uint32_t {
@@ -1661,25 +1522,17 @@ auto DesignLayout::GetSlotRow(mir::SlotId slot_id) const -> uint32_t {
   return it->second;
 }
 
-auto DesignLayout::TryGetOwnedBodyOffset(
-    uint32_t slot_row, ArenaByteOffset body_base) const
-    -> std::optional<BodyByteOffset> {
+auto DesignLayout::GetBodyOffset(
+    uint32_t slot_row, ArenaByteOffset body_base) const -> BodyByteOffset {
   const auto& binding = GetSlotStorageBinding(slot_row);
-  const auto* owned = std::get_if<OwnedLocalStorage>(&binding);
-  if (owned == nullptr) return std::nullopt;
-  return ToBodyOffset(owned->abs_byte_offset, body_base);
+  return ToBodyOffset(binding.abs_byte_offset, body_base);
 }
 
-auto DesignLayout::GetOwnedStorageBaseForRange(
+auto DesignLayout::GetStorageBaseForRange(
     uint32_t base_slot, uint32_t slot_count) const
     -> std::optional<ArenaByteOffset> {
-  for (uint32_t i = 0; i < slot_count; ++i) {
-    const auto& binding = GetSlotStorageBinding(base_slot + i);
-    if (const auto* owned = std::get_if<OwnedLocalStorage>(&binding)) {
-      return owned->abs_byte_offset;
-    }
-  }
-  return std::nullopt;
+  if (slot_count == 0) return std::nullopt;
+  return GetSlotStorageBinding(base_slot).abs_byte_offset;
 }
 
 namespace {
@@ -1857,9 +1710,7 @@ auto BuildLayout(
   // BuildLayout consumes them; it does not collect or canonicalize them.
   layout.connection_kernel_entries = std::move(precollected_connection_kernels);
 
-  // Build connection dirty-propagation contract from canonical trigger slots.
-  // trigger_slot values are already canonical storage-owner identity
-  // (post-forwarding, verified by RebuildCanonicalConnections post-condition).
+  // Build connection dirty-propagation contract from trigger slots.
   layout.slot_has_connection_trigger.assign(layout.design.slots.size(), false);
   for (const auto& entry : layout.connection_kernel_entries) {
     auto trigger = entry.trigger_slot.value;
@@ -2264,14 +2115,10 @@ auto BuildLayout(
       layout.instance_slot_counts[mi] = plan.slot_count;
 
       InstanceStorageBase base;
-      for (uint32_t i = 0; i < plan.slot_count; ++i) {
-        uint32_t row = plan.design_state_base_slot + i;
-        const auto& binding = layout.design.slot_storage_bindings[row];
-        if (std::holds_alternative<OwnedLocalStorage>(binding)) {
-          base.abs_byte_offset =
-              std::get<OwnedLocalStorage>(binding).abs_byte_offset;
-          break;
-        }
+      if (plan.slot_count > 0) {
+        uint32_t row = plan.design_state_base_slot;
+        base.abs_byte_offset =
+            layout.design.slot_storage_bindings[row].abs_byte_offset;
       }
       layout.instance_storage_bases[mi] = base;
 
@@ -2287,10 +2134,6 @@ auto BuildLayout(
         // Find the end of appendix region: last owned backing + its size.
         for (uint32_t i = 0; i < plan.slot_count; ++i) {
           uint32_t row = plan.design_state_base_slot + i;
-          if (!std::holds_alternative<OwnedLocalStorage>(
-                  layout.design.slot_storage_bindings[row])) {
-            continue;
-          }
           uint64_t slot_off = layout.design.slot_byte_offsets[row];
           bool has_backing = layout.design.owned_data_offsets[row].has_value();
           uint64_t slot_size =

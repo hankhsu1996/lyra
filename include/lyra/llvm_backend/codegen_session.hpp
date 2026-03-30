@@ -58,46 +58,32 @@ struct SpecCodegenView {
   std::vector<SpecProcessView> processes;
 };
 
-// Per-specialization slot info for owned-container dispatch.
-// All inline offsets are stable (owned slots are fixed-size handles).
-// Used by body codegen to dispatch between inline and owned access paths.
-// Specialization-wide per-body-local-slot access classification.
-// Computed once during BuildSpecSlotInfos and validated across all instances
-// in the specialization. Forwarding decisions are per design-global slot ID,
-// so all instances of a specialization have identical access kinds.
+// Per-specialization slot access classification.
+// After R2, every body-local slot owns storage. Access kind distinguishes
+// inline value slots from owned-container slots.
 enum class SpecSlotAccessKind : uint8_t {
   kOwnedInline,
   kOwnedContainer,
-  kForwardedInline,
-  kForwardedContainer,
 };
 
 struct SpecSlotInfo {
-  // Body identity for this specialization. Used by
-  // Context::GetCurrentBodyRealizationInfo to resolve body-relative
-  // metadata (behavioral trigger contract, etc.) from Layout.
+  // Body identity for this specialization.
   mir::ModuleBodyId body_id;
   // Stable index into Layout::body_realization_infos for this body.
-  // Set during BuildSpecSlotInfos. Used by GetCurrentBodyRealizationInfo
-  // for O(1) lookup without pointer-stability assumptions.
   static constexpr uint32_t kInvalidBodyInfoIndex = UINT32_MAX;
   uint32_t body_realization_info_index = kInvalidBodyInfoIndex;
 
-  // Per-slot instance-relative offset for owned-local storage.
-  // nullopt for forwarded aliases (which have no local storage and must
-  // be accessed through design-global addressing instead).
-  // For kInlineValue owners: offset of the slot's value bytes from this_ptr.
-  // For kOwnedContainer owners: offset of the OwnedStorageHandle from this_ptr.
-  std::vector<std::optional<lowering::mir_to_llvm::InstanceByteOffset>>
-      inline_offsets;
+  // Per-slot instance-relative offset for local storage.
+  // Every body-local slot has a valid offset (no forwarded aliases).
+  // For kInlineValue: offset of the slot's value bytes from this_ptr.
+  // For kOwnedContainer: offset of the OwnedStorageHandle from this_ptr.
+  std::vector<lowering::mir_to_llvm::InstanceByteOffset> inline_offsets;
   // Per-slot storage shape.
   std::vector<mir::StorageShape> shapes;
-  // Per-slot access classification. Precomputed from representative
-  // instance storage bindings and validated across all instances.
+  // Per-slot access classification.
   std::vector<SpecSlotAccessKind> access_kinds;
   // Per-slot representative design-global slot index. Used to resolve
-  // compile-time metadata (e.g., element stride from ArrayStorageSpec)
-  // and design-global addressing for forwarded aliases.
+  // compile-time metadata (e.g., element stride from ArrayStorageSpec).
   std::vector<uint32_t> representative_design_slots;
 
   [[nodiscard]] auto SlotCount() const -> uint32_t {

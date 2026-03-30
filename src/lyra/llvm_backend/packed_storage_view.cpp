@@ -758,8 +758,9 @@ void EmitPackedStoreNotification(
   // (meaning unconditional propagation).
   llvm::Value* trace_guard = nullptr;
   if (!policy.requires_static_dirty_propagation &&
-      policy.mutation_owner_slot.has_value()) {
-    trace_guard = ctx.EmitIsTraceObservedOwnerSlot(*policy.mutation_owner_slot);
+      policy.mutation_resolved_slot.has_value()) {
+    trace_guard =
+        ctx.EmitIsTraceObservedOwnerSlot(*policy.mutation_resolved_slot);
   }
 
   // Constant-fold: if changed is a known false constant, skip entirely.
@@ -1260,7 +1261,7 @@ auto BuildStorePolicyFromContext(
   if (mutation_signal != nullptr) {
     policy.requires_static_dirty_propagation =
         ctx.RequiresStaticDirtyPropagation(*mutation_signal);
-    policy.mutation_owner_slot = ctx.GetCanonicalOwnerSlot(*mutation_signal);
+    policy.mutation_resolved_slot = ctx.GetResolvedSignalSlot(*mutation_signal);
   }
   policy.signal_id = std::move(signal_id);
   policy.engine_ptr = ctx.GetEnginePointer();
@@ -1400,9 +1401,9 @@ void EmitGuardedLyraStorePacked(
   // trace_done_bb is set when we need a merge point after the notify path.
   llvm::BasicBlock* trace_done_bb = nullptr;
   if (!policy.requires_static_dirty_propagation &&
-      policy.mutation_owner_slot.has_value()) {
+      policy.mutation_resolved_slot.has_value()) {
     auto* trace_observed =
-        ctx.EmitIsTraceObservedOwnerSlot(*policy.mutation_owner_slot);
+        ctx.EmitIsTraceObservedOwnerSlot(*policy.mutation_resolved_slot);
     auto* fn = builder.GetInsertBlock()->getParent();
     auto* notify_bb = llvm::BasicBlock::Create(llvm_ctx, "rt.traced", fn);
     auto* plain_bb = llvm::BasicBlock::Create(llvm_ctx, "rt.plain", fn);

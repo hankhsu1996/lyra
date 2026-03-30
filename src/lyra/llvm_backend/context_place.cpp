@@ -327,17 +327,16 @@ auto Context::EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr {
 
 namespace {
 
-// Resolve a design-global signal ref to its canonical storage owner.
-auto ResolveDesignGlobalOwner(
+// Validate a design-global signal ref is in the layout.
+auto ValidateDesignGlobalSignal(
     const mir::SignalRef& sig, const DesignLayout& design) -> mir::SignalRef {
   auto slot_id = mir::SlotId{sig.id};
   if (!design.ContainsSlot(slot_id)) {
     throw common::InternalError(
-        "ResolveDesignGlobalOwner",
+        "ValidateDesignGlobalSignal",
         std::format("design-global signal {} not in layout", sig.id));
   }
-  auto owner = design.GetStorageOwnerSlotId(slot_id);
-  return {.scope = mir::SignalRef::Scope::kDesignGlobal, .id = owner.value};
+  return sig;
 }
 
 }  // namespace
@@ -345,21 +344,9 @@ auto ResolveDesignGlobalOwner(
 auto Context::EmitMutationTargetSignalId(const mir::SignalRef& sig)
     -> SignalIdExpr {
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    return EmitSignalId(ResolveDesignGlobalOwner(sig, layout_.design));
+    return EmitSignalId(ValidateDesignGlobalSignal(sig, layout_.design));
   }
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
-    // For module-local signals, check if this slot is a forwarded alias.
-    // If so, resolve to the canonical owner via design-global addressing.
-    if (spec_slot_info_ != nullptr && sig.id < spec_slot_info_->SlotCount()) {
-      auto access = spec_slot_info_->access_kinds[sig.id];
-      if (access == SpecSlotAccessKind::kForwardedInline ||
-          access == SpecSlotAccessKind::kForwardedContainer) {
-        auto global_slot = spec_slot_info_->representative_design_slots[sig.id];
-        return EmitSignalId(ResolveDesignGlobalOwner(
-            {.scope = mir::SignalRef::Scope::kDesignGlobal, .id = global_slot},
-            layout_.design));
-      }
-    }
     return EmitSignalId(sig);
   }
   throw common::InternalError(
@@ -394,18 +381,10 @@ auto Context::EmitInlineSlotPtr(uint32_t local_slot_id) -> llvm::Value* {
             "slot {} is kOwnedContainer, use EmitOwnedHandlePtr instead",
             local_slot_id));
   }
-  const auto& offset = spec_slot_info_->inline_offsets[local_slot_id];
-  if (!offset.has_value()) {
-    throw common::InternalError(
-        "EmitInlineSlotPtr",
-        std::format(
-            "local slot {} has no owned-local storage (forwarded "
-            "alias must use design-global addressing)",
-            local_slot_id));
-  }
+  auto offset = spec_slot_info_->inline_offsets[local_slot_id];
   auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
   return builder_.CreateGEP(
-      i8_ty, this_ptr_, builder_.getInt64(offset->value), "inline_slot_ptr");
+      i8_ty, this_ptr_, builder_.getInt64(offset.value), "inline_slot_ptr");
 }
 
 auto Context::EmitOwnedHandlePtr(uint32_t local_slot_id) -> llvm::Value* {
@@ -430,18 +409,10 @@ auto Context::EmitOwnedHandlePtr(uint32_t local_slot_id) -> llvm::Value* {
             "slot {} is kInlineValue, use EmitInlineSlotPtr instead",
             local_slot_id));
   }
-  const auto& offset = spec_slot_info_->inline_offsets[local_slot_id];
-  if (!offset.has_value()) {
-    throw common::InternalError(
-        "EmitOwnedHandlePtr",
-        std::format(
-            "local slot {} has no owned-local storage (forwarded "
-            "alias must use design-global addressing)",
-            local_slot_id));
-  }
+  auto offset = spec_slot_info_->inline_offsets[local_slot_id];
   auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
   return builder_.CreateGEP(
-      i8_ty, this_ptr_, builder_.getInt64(offset->value), "owned_handle_ptr");
+      i8_ty, this_ptr_, builder_.getInt64(offset.value), "owned_handle_ptr");
 }
 
 auto Context::EmitLoadOwnedDataPtr(llvm::Value* handle_ptr) -> llvm::Value* {
@@ -471,14 +442,6 @@ auto Context::GetModuleSlotPointer(uint32_t local_slot_id) -> llvm::Value* {
 
   auto access = spec_slot_info_->access_kinds[local_slot_id];
   switch (access) {
-    case SpecSlotAccessKind::kForwardedInline: {
-      auto gid = spec_slot_info_->representative_design_slots[local_slot_id];
-      return GetDesignGlobalSlotPointer(gid);
-    }
-    case SpecSlotAccessKind::kForwardedContainer: {
-      auto gid = spec_slot_info_->representative_design_slots[local_slot_id];
-      return EmitLoadOwnedDataPtr(GetDesignGlobalSlotPointer(gid));
-    }
     case SpecSlotAccessKind::kOwnedContainer: {
       auto* handle_ptr = EmitOwnedHandlePtr(local_slot_id);
       return EmitLoadOwnedDataPtr(handle_ptr);
@@ -829,45 +792,40 @@ auto Context::RequiresStaticDirtyPropagation(const mir::SignalRef& sig) const
               spec.representative_design_slots.size()));
     }
     auto global_slot = spec.representative_design_slots[local_slot];
-    auto owner = layout.design.GetStorageOwnerSlotId(mir::SlotId{global_slot});
 
-    if (owner.value >= layout.slot_has_connection_trigger.size()) {
+    if (global_slot >= layout.slot_has_connection_trigger.size()) {
       throw common::InternalError(
           "Context::RequiresStaticDirtyPropagation",
           std::format(
-              "canonical owner slot {} out of range for "
-              "connection trigger bitmap (size={})",
-              owner.value, layout.slot_has_connection_trigger.size()));
+              "slot {} out of range for connection trigger bitmap (size={})",
+              global_slot, layout.slot_has_connection_trigger.size()));
     }
-    bool connection = layout.slot_has_connection_trigger[owner.value];
+    bool connection = layout.slot_has_connection_trigger[global_slot];
 
     return behavioral || connection;
   }
 
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    auto owner = layout.design.GetStorageOwnerSlotId(
-        mir::SlotId{static_cast<uint32_t>(sig.id)});
+    auto slot = static_cast<uint32_t>(sig.id);
 
-    if (owner.value >= layout.slot_has_connection_trigger.size()) {
+    if (slot >= layout.slot_has_connection_trigger.size()) {
       throw common::InternalError(
           "Context::RequiresStaticDirtyPropagation",
           std::format(
-              "canonical owner slot {} out of range for "
-              "connection trigger bitmap (size={})",
-              owner.value, layout.slot_has_connection_trigger.size()));
+              "slot {} out of range for connection trigger bitmap (size={})",
+              slot, layout.slot_has_connection_trigger.size()));
     }
-    bool connection = layout.slot_has_connection_trigger[owner.value];
+    bool connection = layout.slot_has_connection_trigger[slot];
 
-    if (owner.value >= layout.slot_has_design_behavioral_trigger.size()) {
+    if (slot >= layout.slot_has_design_behavioral_trigger.size()) {
       throw common::InternalError(
           "Context::RequiresStaticDirtyPropagation",
           std::format(
-              "canonical owner slot {} out of range for "
+              "slot {} out of range for "
               "design behavioral trigger bitmap (size={})",
-              owner.value, layout.slot_has_design_behavioral_trigger.size()));
+              slot, layout.slot_has_design_behavioral_trigger.size()));
     }
-    bool design_behavior =
-        layout.slot_has_design_behavioral_trigger[owner.value];
+    bool design_behavior = layout.slot_has_design_behavioral_trigger[slot];
 
     return connection || design_behavior;
   }
@@ -876,7 +834,7 @@ auto Context::RequiresStaticDirtyPropagation(const mir::SignalRef& sig) const
   return true;
 }
 
-auto Context::GetCanonicalOwnerSlot(const mir::SignalRef& sig) const
+auto Context::GetResolvedSignalSlot(const mir::SignalRef& sig) const
     -> uint32_t {
   const auto& layout = GetLayout();
   uint32_t owner_slot = 0;
@@ -884,7 +842,7 @@ auto Context::GetCanonicalOwnerSlot(const mir::SignalRef& sig) const
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
     if (GetSpecSlotInfo() == nullptr) {
       throw common::InternalError(
-          "Context::GetCanonicalOwnerSlot",
+          "Context::GetResolvedSignalSlot",
           "module-local signal queried without active "
           "specialization context");
     }
@@ -892,28 +850,23 @@ auto Context::GetCanonicalOwnerSlot(const mir::SignalRef& sig) const
     auto local_slot = static_cast<uint32_t>(sig.id);
     if (local_slot >= spec.representative_design_slots.size()) {
       throw common::InternalError(
-          "Context::GetCanonicalOwnerSlot",
+          "Context::GetResolvedSignalSlot",
           std::format(
               "module-local slot {} out of range "
               "(representative_design_slots size={})",
               local_slot, spec.representative_design_slots.size()));
     }
-    auto global_slot = spec.representative_design_slots[local_slot];
-    owner_slot =
-        layout.design.GetStorageOwnerSlotId(mir::SlotId{global_slot}).value;
+    owner_slot = spec.representative_design_slots[local_slot];
   } else if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    owner_slot =
-        layout.design
-            .GetStorageOwnerSlotId(mir::SlotId{static_cast<uint32_t>(sig.id)})
-            .value;
+    owner_slot = static_cast<uint32_t>(sig.id);
   } else {
     throw common::InternalError(
-        "Context::GetCanonicalOwnerSlot", "unknown signal scope");
+        "Context::GetResolvedSignalSlot", "unknown signal scope");
   }
 
   if (owner_slot >= layout.design.slots.size()) {
     throw common::InternalError(
-        "Context::GetCanonicalOwnerSlot",
+        "Context::GetResolvedSignalSlot",
         std::format(
             "owner slot {} out of range (design has {} slots)", owner_slot,
             layout.design.slots.size()));
@@ -938,7 +891,7 @@ auto Context::EmitIsTraceObservedOwnerSlot(uint32_t owner_slot)
 }
 
 auto Context::EmitIsTraceObserved(const mir::SignalRef& sig) -> llvm::Value* {
-  return EmitIsTraceObservedOwnerSlot(GetCanonicalOwnerSlot(sig));
+  return EmitIsTraceObservedOwnerSlot(GetResolvedSignalSlot(sig));
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

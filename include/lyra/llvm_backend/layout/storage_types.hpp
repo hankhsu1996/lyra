@@ -3,14 +3,10 @@
 #include <cstdint>
 #include <format>
 #include <optional>
-#include <variant>
 
 #include "lyra/common/internal_error.hpp"
-#include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
-
-struct DesignLayout;
 
 // Arena-absolute byte offset in DesignState.
 // This is the canonical offset kind for design-global storage positions.
@@ -21,14 +17,13 @@ struct ArenaByteOffset {
 };
 
 // Instance-relative byte offset (from an instance's owned-local storage base).
-// Only meaningful for storage-owning slots within a specific instance.
 struct InstanceByteOffset {
   uint64_t value = 0;
   auto operator==(const InstanceByteOffset&) const -> bool = default;
   auto operator<=>(const InstanceByteOffset&) const = default;
 };
 
-// Body-relative byte offset (from a body's first owned-local slot).
+// Body-relative byte offset (from a body's first slot).
 // Used in init descriptors, observable descriptors, and body-shaped templates.
 struct BodyByteOffset {
   uint64_t value = 0;
@@ -36,54 +31,15 @@ struct BodyByteOffset {
   auto operator<=>(const BodyByteOffset&) const = default;
 };
 
-// Canonical storage owner slot identity.
-// Construction is checked: FromVerified() takes a DesignLayout and performs
-// IsStorageOwner() before constructing. This is not a renamed SlotId -- the
-// type carries the proof that the wrapped slot is a storage owner.
-class StorageOwnerSlotId {
- public:
-  // Checked construction. Throws InternalError if the slot is a forwarded
-  // alias in the given layout.
-  static auto FromVerified(mir::SlotId slot, const DesignLayout& layout)
-      -> StorageOwnerSlotId;
-
-  [[nodiscard]] auto Value() const -> mir::SlotId {
-    return value_;
-  }
-
-  auto operator==(const StorageOwnerSlotId&) const -> bool = default;
-
- private:
-  explicit StorageOwnerSlotId(mir::SlotId slot) : value_(slot) {
-  }
-  mir::SlotId value_{};
-};
-
 // Storage binding for a slot that owns its own storage.
-// The absolute arena offset is the canonical location of this slot's bytes.
+// Every body-local slot has one of these after R2.
 struct OwnedLocalStorage {
   ArenaByteOffset abs_byte_offset;
 };
 
-// Storage binding for a forwarded alias slot.
-// The slot does not own storage; it aliases the canonical owner's storage.
-// No local offset of any kind is representable here.
-struct ForwardedStorageAlias {
-  StorageOwnerSlotId owner;
-};
-
-// Semantic source of truth for whether a slot owns storage or aliases another
-// slot's storage. Callers must pattern-match the variant to access the offset,
-// making it impossible to accidentally treat a forwarded alias as if it had
-// local storage.
-using SlotStorageBinding =
-    std::variant<OwnedLocalStorage, ForwardedStorageAlias>;
-
 // Explicit per-instance storage base.
-// Computed from the first owned-local slot in the instance's slot range.
-// Never derived from a forwarded alias.
-// nullopt: the instance has no owned-local storage region (all slots are
-// forwarded aliases or the instance has zero slots).
+// Computed from the first slot in the instance's slot range.
+// nullopt: the instance has zero slots.
 struct InstanceStorageBase {
   std::optional<ArenaByteOffset> abs_byte_offset;
 };

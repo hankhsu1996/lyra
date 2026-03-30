@@ -114,74 +114,43 @@ struct DesignLayout {
   // Size of the inline region alone (before appendix).
   uint64_t inline_region_size = 0;
 
-  // Canonical storage ownership. Parallel to slots.
-  // For storage owners: equals the slot's own id.
-  // For forwarded aliases: equals the canonical storage owner's slot id.
-  // Always an actual slot id; no sentinels.
-  std::vector<uint32_t> storage_owner_slot_id;
-
-  // Semantic storage binding per slot. Parallel to slots.
-  // For storage owners: OwnedLocalStorage with arena-absolute offset.
-  // For forwarded aliases: ForwardedStorageAlias with canonical owner.
-  // This is the semantic source of truth for slot-vs-storage.
-  // slot_byte_offsets is retained as a derived compatibility table for
-  // runtime per-slot-index lookup (EmitSlotByteOffsets oracle), not as the
-  // semantic storage model.
-  std::vector<SlotStorageBinding> slot_storage_bindings;
+  // Storage binding per slot. Parallel to slots.
+  // Every slot has OwnedLocalStorage with arena-absolute offset.
+  std::vector<OwnedLocalStorage> slot_storage_bindings;
 
   // Check if a slot is in this layout.
   [[nodiscard]] auto ContainsSlot(mir::SlotId slot_id) const -> bool;
 
-  // Check if a slot is a storage owner (not a forwarded alias).
-  // Throws InternalError if slot_id is not in the layout.
-  [[nodiscard]] auto IsStorageOwner(mir::SlotId slot_id) const -> bool;
-
-  // Get the canonical storage owner slot id for any slot.
-  // Throws InternalError if slot_id is not in the layout.
-  [[nodiscard]] auto GetStorageOwnerSlotId(mir::SlotId slot_id) const
-      -> mir::SlotId;
-
-  // Resolve to the storage owner's layout row index.
-  // Throws InternalError if slot_id or its owner is not in the layout.
-  [[nodiscard]] auto ResolveStorageOwnerIndex(mir::SlotId slot_id) const
-      -> uint32_t;
-
-  // Get the byte offset of the canonical storage for this slot.
-  // Resolves through storage ownership: aliases return the owner's offset.
+  // Get the byte offset of storage for this slot.
   [[nodiscard]] auto GetStorageByteOffset(mir::SlotId slot_id) const
       -> uint64_t;
 
-  // Get the storage spec of the canonical storage for this slot.
-  // Resolves through storage ownership: aliases return the owner's spec.
+  // Get the storage spec for this slot.
   [[nodiscard]] auto GetStorageSpec(mir::SlotId slot_id) const
       -> const SlotStorageSpec&;
 
   // Get the storage binding for a slot by layout row index.
   [[nodiscard]] auto GetSlotStorageBinding(uint32_t slot_row) const
-      -> const SlotStorageBinding&;
+      -> const OwnedLocalStorage&;
 
-  // Get the instance-relative offset for an owned-local slot.
-  // Returns nullopt for forwarded aliases.
+  // Get the instance-relative offset for a slot.
+  // Total for all body-local slots (every slot owns storage).
   // slot_row must lie within the instance's slot range.
-  // Throws InternalError on range violation.
-  [[nodiscard]] auto TryGetOwnedInstanceOffset(
+  [[nodiscard]] auto GetInstanceOffset(
       uint32_t slot_row, const InstanceStorageBase& instance_base,
-      const InstanceSlotRange& instance_range) const
-      -> std::optional<InstanceByteOffset>;
+      const InstanceSlotRange& instance_range) const -> InstanceByteOffset;
 
   // Get the layout row index for a slot. Throws InternalError if not found.
   [[nodiscard]] auto GetSlotRow(mir::SlotId slot_id) const -> uint32_t;
 
-  // Get the body-relative offset for an owned-local slot.
-  // Returns nullopt for forwarded aliases.
-  [[nodiscard]] auto TryGetOwnedBodyOffset(
-      uint32_t slot_row, ArenaByteOffset body_base) const
-      -> std::optional<BodyByteOffset>;
+  // Get the body-relative offset for a slot.
+  // Total for all body-local slots (every slot owns storage).
+  [[nodiscard]] auto GetBodyOffset(
+      uint32_t slot_row, ArenaByteOffset body_base) const -> BodyByteOffset;
 
-  // Get the arena-absolute offset of the first owned-local slot in a
-  // contiguous slot range. Returns nullopt if the range contains no
-  // owned-local slots (all forwarded aliases or empty range).
-  [[nodiscard]] auto GetOwnedStorageBaseForRange(
+  // Get the arena-absolute offset of the first slot in a contiguous
+  // slot range. Returns nullopt only if the range is empty.
+  [[nodiscard]] auto GetStorageBaseForRange(
       uint32_t base_slot, uint32_t slot_count) const
       -> std::optional<ArenaByteOffset>;
 };
@@ -419,15 +388,11 @@ struct Layout {
   llvm::StructType* runtime_instance_type = nullptr;
 
   // Explicit per-instance storage base.
-  // Computed from the first owned-local slot in each instance's slot range.
-  // Never derived from a forwarded alias.
+  // Computed from the first slot in each instance's slot range.
   auto GetInstanceStorageBase(ModuleIndex idx) const
       -> const InstanceStorageBase&;
 
   // Total number of body-local slots for a given instance.
-  // This is the body's full slot count including both owned-local and
-  // forwarded alias positions. It is NOT the count of owned-local slots
-  // only. Used for body-local slot iteration bounds.
   auto GetInstanceSlotCount(ModuleIndex idx) const -> uint32_t;
 
   // Number of package-owned slots (before any module instance slots).
@@ -523,10 +488,7 @@ struct Layout {
     // same behavioral trigger set.
     std::vector<bool> slot_has_behavioral_trigger;
     // Body-local state region sizes in bytes. Produced from body-local
-    // storage spec computation. These are body-local sizing metadata,
-    // not realized instance placement facts. Realized placement is
-    // forwarding-aware and may differ when alias collapsing reduces
-    // per-instance regions.
+    // storage spec computation.
     uint64_t inline_state_size_bytes = 0;
     uint64_t appendix_state_size_bytes = 0;
     uint64_t total_state_size_bytes = 0;
@@ -689,12 +651,8 @@ auto BuildSlotInfo(
 auto IsScalarPatchable(
     TypeId type_id, const TypeArena& types, bool force_two_state) -> bool;
 
-class ForwardingMap;
-
 // Build the design-wide DesignState layout from precomputed slot metadata.
-// Forwarding map controls storage ownership: alias slots share the canonical
-// source's byte offset. Pass an empty ForwardingMap for the pre-forwarding
-// layout (used by connection collection for observation resolution).
+// Every body-local slot owns storage; layout is topology-invariant.
 // DataLayout is needed only for TargetStorageAbi (pointer size/alignment).
 // Per-instance slot range for layout construction. Describes one
 // instance's contiguous slot range within the design slot table.
@@ -715,18 +673,12 @@ struct BodyStateSizeInfo {
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
     const llvm::DataLayout& dl, bool force_two_state,
-    const ForwardingMap& forwarding, uint32_t num_package_slots,
+    uint32_t num_package_slots,
     std::span<const InstanceSlotRange> instance_ranges) -> DesignLayout;
 
 // Body-owned storage layout: slot specs resolved from body-local MIR
 // inputs. No design-global slot arrays, no instance placements, no
-// design_state_base_slot.
-//
-// Body-local storage ownership is identity: every body-local slot is a
-// storage owner. Forwarding/aliasing is a design-global connection
-// concept (built from ConnectionKernelEntry in BuildForwardingMap) that
-// creates cross-instance aliases. No body-local alias concept exists
-// in MIR.
+// design_state_base_slot. Every body-local slot owns storage.
 struct BodyStorageLayout {
   std::vector<SlotStorageSpec> slot_specs;
   StorageSpecArena spec_arena;
@@ -738,10 +690,7 @@ auto BuildBodyStorageLayout(
     const llvm::DataLayout& dl, bool force_two_state) -> BodyStorageLayout;
 
 // Compute body-local state region sizes from body-owned storage layout.
-// Respects storage ownership: only slots where
-// storage_owner_local_ids[i] == i contribute to body size.
-// Does not reference realized instances, design-global topology,
-// or connection/forwarding state.
+// Every body-local slot contributes to body size.
 auto ComputeBodyStateSize(
     std::span<const mir::SlotDesc> slot_descs, const BodyStorageLayout& storage)
     -> BodyStateSizeInfo;

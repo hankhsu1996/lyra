@@ -74,20 +74,6 @@ auto ValidateCanonicalOwner(
     const RealizationData& realization) -> ValidatedCanonicalOwner {
   const uint32_t owner = owner_id.Raw();
 
-  // Canonical-ness check first: storage_owner_slot_id is the authority.
-  if (owner >= layout.storage_owner_slot_id.size()) {
-    throw common::InternalError(
-        "ValidateCanonicalOwner",
-        std::format("storage_owner_slot_id missing canonical owner {}", owner));
-  }
-  if (layout.storage_owner_slot_id[owner] != owner) {
-    throw common::InternalError(
-        "ValidateCanonicalOwner",
-        std::format(
-            "owner {} is not self-owning; points to {}", owner,
-            layout.storage_owner_slot_id[owner]));
-  }
-
   // Companion table consistency checks.
   if (owner >= layout.slot_storage_specs.size()) {
     throw common::InternalError(
