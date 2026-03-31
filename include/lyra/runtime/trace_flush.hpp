@@ -21,7 +21,7 @@ class UpdateSet;
 // same snapshot). Skips slots not selected by selection.IsSelected().
 //
 // Backstop invariant: forwarded alias slots must never appear in the dirty
-// set. Alias canonicalization is compile-time (EmitMutationTargetSignalId)
+// set. Alias canonicalization is compile-time (EmitMutationTargetSignalCoord)
 // and descriptor-time (RebuildCanonicalConnections), not runtime per-mark.
 // Throws InternalError if a dirty alias is encountered.
 //

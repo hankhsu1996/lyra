@@ -85,9 +85,9 @@ enum class NotificationPolicy {
 // fields.
 //
 // kSpecializationLocal: Module slots accessed via this_ptr +
-//   rel_byte_offsets. Signal identity is dynamic (signal_id_offset +
-//   local_id). Used in shared module behavioral process bodies and
-//   module-scoped user functions.
+//   rel_byte_offsets. Signal coordination uses typed local/global runtime
+//   helpers (engine_ptr, instance_ptr, local_id). Used in shared module
+//   behavioral process bodies and module-scoped user functions.
 //
 // kDesignGlobal: Design-global slots accessed via design_ptr + struct GEP.
 //   Signal identity is a constant design-global slot ID. Used in standalone
@@ -117,11 +117,10 @@ struct ExecutionContractState {
   llvm::Value* design_ptr = nullptr;
   llvm::Value* frame_ptr = nullptr;
   llvm::Value* engine_ptr = nullptr;
-  llvm::Value* first_dirty_seen_ptr = nullptr;
   llvm::Value* instance_ptr = nullptr;
   llvm::Value* this_ptr = nullptr;
   llvm::Value* dynamic_instance_id = nullptr;
-  llvm::Value* signal_id_offset = nullptr;
+  llvm::Value* local_signal_coord_base = nullptr;
 };
 
 // RAII guard that sets execution-contract state on Context and restores it
@@ -266,15 +265,26 @@ class Context {
   [[nodiscard]] auto GetLyraSuspendRepeat() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAllocTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFreeTriggers() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraStorePacked() -> llvm::Function*;
   [[nodiscard]] auto GetLyraResolveSlotPtr() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraMarkDirty() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraGetFirstDirtySeenPtr() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraMarkDirtyFirst() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraIsTraceObserved() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraStoreString() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraScheduleNba() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraScheduleNbaCanonicalPacked() -> llvm::Function*;
+  // R3 typed coordination helpers (take frame* instead of engine*).
+  [[nodiscard]] auto GetLyraMarkDirtyLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraMarkDirtyGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStorePackedLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStorePackedGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStoreStringLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStoreStringGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraScheduleNbaLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraScheduleNbaGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraScheduleNbaCanonicalPackedLocal()
+      -> llvm::Function*;
+  [[nodiscard]] auto GetLyraScheduleNbaCanonicalPackedGlobal()
+      -> llvm::Function*;
+  [[nodiscard]] auto GetLyraIsTraceObservedLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraIsTraceObservedGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraNotifyContainerMutationLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraNotifyContainerMutationGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraNotifySignalLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraNotifySignalGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraTerminate() -> llvm::Function*;
   [[nodiscard]] auto GetLyraGetTime() -> llvm::Function*;
   [[nodiscard]] auto GetLyraInitRuntime() -> llvm::Function*;
@@ -288,7 +298,6 @@ class Context {
   [[nodiscard]] auto GetLyraDynArrayDelete() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayRelease() -> llvm::Function*;
   [[nodiscard]] auto GetLyraStoreDynArray() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraNotifyContainerMutation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayCloneElem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayDestroyElem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraQueuePushBack() -> llvm::Function*;
@@ -314,7 +323,6 @@ class Context {
   [[nodiscard]] auto GetLyraMonitorRegister() -> llvm::Function*;
   [[nodiscard]] auto GetLyraReadmem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraWritemem() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraNotifySignal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintModulePath() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFillPackedElements() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRandom() -> llvm::Function*;
@@ -432,8 +440,8 @@ class Context {
   void SetThisPointer(llvm::Value* ptr);
   [[nodiscard]] auto GetThisPointer() const -> llvm::Value*;
   void SetDynamicInstanceId(llvm::Value* id);
-  void SetSignalIdOffset(llvm::Value* offset);
-  [[nodiscard]] auto GetSignalIdOffset() const -> llvm::Value*;
+  void SetLocalSignalCoordBase(llvm::Value* base);
+  [[nodiscard]] auto GetLocalSignalCoordBase() const -> llvm::Value*;
   [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
   void SetSpecSlotInfo(const SpecSlotInfo* info);
   [[nodiscard]] auto GetSpecSlotInfo() const -> const SpecSlotInfo* {
@@ -489,19 +497,18 @@ class Context {
   [[nodiscard]] auto GetSignalSlotPointer(const mir::SignalRef& sig)
       -> llvm::Value*;
 
-  // Emit runtime signal ID for a signal ref (scope-based, not flag-based).
-  // This is the visible-identity emitter. Use for subscription/trigger
-  // registration where the original slot identity must be preserved.
-  // kModuleLocal + kSpecializationLocal: Dynamic(signal_id_offset_ + sig.id)
-  // kModuleLocal + kDesignGlobal: InternalError (architecture violation).
-  // kDesignGlobal: Const(sig.id) -- always constant.
-  [[nodiscard]] auto EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr;
+  // Emit semantic signal coordinate for a signal ref.
+  // kModuleLocal: Local(sig.id) -- body-local slot ordinal.
+  // kDesignGlobal: Global(sig.id) -- design-global slot id.
+  // kModuleLocal in kDesignGlobal addressing: InternalError.
+  [[nodiscard]] auto EmitSignalCoord(const mir::SignalRef& sig)
+      -> SignalCoordExpr;
 
   // Emit runtime signal ID resolved to the storage owner.
   // Use ONLY for dirty-mark / mutation-target formation paths.
-  // Do NOT use for subscription/trigger registration (use EmitSignalId).
-  [[nodiscard]] auto EmitMutationTargetSignalId(const mir::SignalRef& sig)
-      -> SignalIdExpr;
+  // Do NOT use for subscription/trigger registration (use EmitSignalCoord).
+  [[nodiscard]] auto EmitMutationTargetSignalCoord(const mir::SignalRef& sig)
+      -> SignalCoordExpr;
 
   // Resolve the canonical mutation-target SignalRef for a place's root.
   // Returns the pre-emission SignalRef (scope + id) without emitting IR.
@@ -599,7 +606,7 @@ class Context {
 
   // Load realized instance binding from the frame header for shared bodies.
   // Loads instance pointer, then derives storage base, instance_id, and
-  // signal_id_offset from the RuntimeInstance object.
+  // local_signal_coord_base from the RuntimeInstance object.
   // Called after EmitProcessStateSetup by shared body generation only.
   void EmitSharedBodyBindingSetup(llvm::Value* state_arg);
 
@@ -611,7 +618,7 @@ class Context {
   auto EmitLoadInstancePtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadInstanceInlineBase(llvm::Value* instance_ptr) -> llvm::Value*;
   auto EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value*;
-  auto EmitLoadSignalIdOffset(llvm::Value* instance_ptr) -> llvm::Value*;
+  auto EmitLoadLocalSignalCoordBase(llvm::Value* instance_ptr) -> llvm::Value*;
   void EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value);
   auto EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value*;
 
@@ -644,11 +651,6 @@ class Context {
   // but the dirty-mark is emitted at the loop-exit edge.
   void SetNotificationPolicy(NotificationPolicy policy);
   [[nodiscard]] auto GetNotificationPolicy() const -> NotificationPolicy;
-
-  // first_dirty_seen_ptr: per-delta first-dirty bitmap, hoisted once per
-  // activation. Generated code uses this for inline first-dirty guards.
-  void SetFirstDirtySeenPtr(llvm::Value* ptr);
-  [[nodiscard]] auto GetFirstDirtySeenPtr() -> llvm::Value*;
 
   // Get pointer to a place's base storage via GEP into design or frame.
   // Applies all non-BitRange projections (IndexProjection, etc.) and stops
@@ -796,7 +798,8 @@ class Context {
 
   // Build LLVM function type from MIR function signature.
   // Package-scoped: (DesignState*, Engine*, args...)
-  // Module-scoped:  (DesignState*, Engine*, this_ptr*, signal_id_offset_i32,
+  // Module-scoped:  (DesignState*, Engine*, this_ptr*,
+  // local_signal_coord_base_i32,
   //                  instance_id_i32, args...)
   // For managed returns: out_ptr* prepended, return type becomes void.
   [[nodiscard]] auto BuildUserFunctionType(
@@ -857,8 +860,8 @@ class Context {
   // Resolves forwarded aliases to the storage owner for dirty-mark identity.
   // Returns nullopt if the root has no notifiable mutation-target signal
   // identity (e.g., local/temp roots that are not design storage).
-  [[nodiscard]] auto GetMutationTargetSignalId(mir::PlaceId place_id)
-      -> std::optional<SignalIdExpr>;
+  [[nodiscard]] auto GetMutationTargetSignalCoord(mir::PlaceId place_id)
+      -> std::optional<SignalCoordExpr>;
 
   // Internal helper: compute pointer from an already-resolved place.
   // The original_place_id is needed for frame field index lookup (for
@@ -912,15 +915,24 @@ class Context {
   llvm::Function* lyra_suspend_repeat_ = nullptr;
   llvm::Function* lyra_alloc_triggers_ = nullptr;
   llvm::Function* lyra_free_triggers_ = nullptr;
-  llvm::Function* lyra_store_packed_ = nullptr;
   llvm::Function* lyra_resolve_slot_ptr_ = nullptr;
-  llvm::Function* lyra_mark_dirty_ = nullptr;
-  llvm::Function* lyra_get_first_dirty_seen_ptr_ = nullptr;
-  llvm::Function* lyra_mark_dirty_first_ = nullptr;
-  llvm::Function* lyra_is_trace_observed_ = nullptr;
-  llvm::Function* lyra_store_string_ = nullptr;
-  llvm::Function* lyra_schedule_nba_ = nullptr;
-  llvm::Function* lyra_schedule_nba_canonical_packed_ = nullptr;
+  // R3 typed coordination helpers.
+  llvm::Function* lyra_mark_dirty_local_ = nullptr;
+  llvm::Function* lyra_mark_dirty_global_ = nullptr;
+  llvm::Function* lyra_store_packed_local_ = nullptr;
+  llvm::Function* lyra_store_packed_global_ = nullptr;
+  llvm::Function* lyra_store_string_local_ = nullptr;
+  llvm::Function* lyra_store_string_global_ = nullptr;
+  llvm::Function* lyra_schedule_nba_local_ = nullptr;
+  llvm::Function* lyra_schedule_nba_global_ = nullptr;
+  llvm::Function* lyra_schedule_nba_canonical_packed_local_ = nullptr;
+  llvm::Function* lyra_schedule_nba_canonical_packed_global_ = nullptr;
+  llvm::Function* lyra_is_trace_observed_local_ = nullptr;
+  llvm::Function* lyra_is_trace_observed_global_ = nullptr;
+  llvm::Function* lyra_notify_container_mutation_local_ = nullptr;
+  llvm::Function* lyra_notify_container_mutation_global_ = nullptr;
+  llvm::Function* lyra_notify_signal_local_ = nullptr;
+  llvm::Function* lyra_notify_signal_global_ = nullptr;
   llvm::Function* lyra_terminate_ = nullptr;
   llvm::Function* lyra_get_time_ = nullptr;
   llvm::Function* lyra_init_runtime_ = nullptr;
@@ -935,7 +947,6 @@ class Context {
   llvm::Function* lyra_dynarray_delete_ = nullptr;
   llvm::Function* lyra_dynarray_release_ = nullptr;
   llvm::Function* lyra_store_dynarray_ = nullptr;
-  llvm::Function* lyra_notify_container_mutation_ = nullptr;
   llvm::Function* lyra_dynarray_clone_elem_ = nullptr;
   llvm::Function* lyra_dynarray_destroy_elem_ = nullptr;
   llvm::Function* lyra_queue_push_back_ = nullptr;
@@ -961,7 +972,6 @@ class Context {
   llvm::Function* lyra_monitor_register_ = nullptr;
   llvm::Function* lyra_readmem_ = nullptr;
   llvm::Function* lyra_writemem_ = nullptr;
-  llvm::Function* lyra_notify_signal_ = nullptr;
   llvm::Function* lyra_print_module_path_ = nullptr;
   llvm::Function* lyra_fill_packed_elements_ = nullptr;
   llvm::Function* lyra_random_ = nullptr;
@@ -1017,7 +1027,6 @@ class Context {
   llvm::Value* design_ptr_ = nullptr;
   llvm::Value* frame_ptr_ = nullptr;
   llvm::Value* engine_ptr_ = nullptr;
-  llvm::Value* first_dirty_seen_ptr_ = nullptr;
   DesignStoreMode design_store_mode_ = DesignStoreMode::kNotifySimulation;
   NotificationPolicy notification_policy_ = NotificationPolicy::kImmediate;
 
@@ -1026,7 +1035,7 @@ class Context {
   llvm::Value* instance_ptr_ = nullptr;
   llvm::Value* this_ptr_ = nullptr;
   llvm::Value* dynamic_instance_id_ = nullptr;
-  llvm::Value* signal_id_offset_ = nullptr;
+  llvm::Value* local_signal_coord_base_ = nullptr;
   const SpecSlotInfo* spec_slot_info_ = nullptr;
 
   // Current origin for error reporting

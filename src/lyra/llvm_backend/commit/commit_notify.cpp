@@ -26,16 +26,24 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
         "deferred notification not supported for container mutation path");
   }
 
-  auto signal_id = ctx.EmitMutationTargetSignalId(*mutation_sig);
+  auto signal_id = ctx.EmitMutationTargetSignalCoord(*mutation_sig);
   auto& builder = ctx.GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx.GetLlvmContext());
 
   auto emit_notify = [&]() {
-    builder.CreateCall(
-        ctx.GetLyraNotifyContainerMutation(),
-        {ctx.GetEnginePointer(), signal_id.Emit(builder),
-         llvm::ConstantInt::get(i32_ty, 1), llvm::ConstantInt::get(i32_ty, 0),
-         llvm::ConstantInt::get(i32_ty, 0)});
+    if (signal_id.IsLocal()) {
+      builder.CreateCall(
+          ctx.GetLyraNotifyContainerMutationLocal(),
+          {ctx.GetEnginePointer(), ctx.GetInstancePointer(),
+           signal_id.Emit(builder), llvm::ConstantInt::get(i32_ty, 1),
+           llvm::ConstantInt::get(i32_ty, 0)});
+    } else {
+      builder.CreateCall(
+          ctx.GetLyraNotifyContainerMutationGlobal(),
+          {ctx.GetEnginePointer(), signal_id.Emit(builder),
+           llvm::ConstantInt::get(i32_ty, 1),
+           llvm::ConstantInt::get(i32_ty, 0)});
+    }
   };
 
   if (static_hit) {
@@ -46,16 +54,18 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
   }
 }
 
-auto GetDesignSignalId(Context& ctx, mir::PlaceId target)
-    -> std::optional<SignalIdExpr> {
-  return commit::Access::GetMutationTargetSignalId(ctx, target);
+auto GetDesignSignalCoord(Context& ctx, mir::PlaceId target)
+    -> std::optional<SignalCoordExpr> {
+  return commit::Access::GetMutationTargetSignalCoord(ctx, target);
 }
 
-auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> SignalIdExpr {
-  auto signal_id_opt = commit::Access::GetMutationTargetSignalId(ctx, target);
+auto GetSignalCoordForNba(Context& ctx, mir::PlaceId target)
+    -> SignalCoordExpr {
+  auto signal_id_opt =
+      commit::Access::GetMutationTargetSignalCoord(ctx, target);
   if (!signal_id_opt.has_value()) {
     throw common::InternalError(
-        "GetSignalIdForNba", "NBA target must resolve to a design slot");
+        "GetSignalCoordForNba", "NBA target must resolve to a design slot");
   }
   return *signal_id_opt;
 }
@@ -75,7 +85,7 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
         "deferred notification not supported for aggregate notify path");
   }
 
-  auto signal_id = ctx.EmitMutationTargetSignalId(*mutation_sig);
+  auto signal_id = ctx.EmitMutationTargetSignalCoord(*mutation_sig);
 
   auto target_ptr_or_err = ctx.GetPlacePointer(target);
   if (!target_ptr_or_err) {
@@ -87,9 +97,17 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
   auto& builder = ctx.GetBuilder();
 
   auto emit_notify = [&]() {
-    builder.CreateCall(
-        ctx.GetLyraNotifySignal(),
-        {ctx.GetEnginePointer(), *target_ptr_or_err, signal_id.Emit(builder)});
+    if (signal_id.IsLocal()) {
+      builder.CreateCall(
+          ctx.GetLyraNotifySignalLocal(),
+          {ctx.GetEnginePointer(), ctx.GetInstancePointer(), *target_ptr_or_err,
+           signal_id.Emit(builder)});
+    } else {
+      builder.CreateCall(
+          ctx.GetLyraNotifySignalGlobal(),
+          {ctx.GetEnginePointer(), *target_ptr_or_err,
+           signal_id.Emit(builder)});
+    }
   };
 
   if (static_hit) {

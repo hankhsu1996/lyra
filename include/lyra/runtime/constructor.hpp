@@ -121,7 +121,9 @@ struct RealizedCombMeta {
 
   void Init();
   auto BeginKernel(uint32_t proc_idx, uint32_t flags) -> uint32_t;
-  void AppendTrigger(uint32_t slot_id, uint32_t byte_off, uint32_t byte_size);
+  void AppendTrigger(
+      uint32_t slot_id, uint32_t byte_off, uint32_t byte_size,
+      uint32_t trigger_flags = 0);
   void EndKernel(uint32_t trigger_count_pos, uint32_t trigger_count);
   void Finalize();
 

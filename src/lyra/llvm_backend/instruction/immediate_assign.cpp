@@ -43,7 +43,7 @@ namespace {
 auto BuildStorePolicy(Context& ctx, mir::PlaceId target) -> PackedStorePolicy {
   PackedStorePolicy policy;
 
-  auto signal_id = GetDesignSignalId(ctx, target);
+  auto signal_id = GetDesignSignalCoord(ctx, target);
   if (!signal_id.has_value()) {
     // Non-design target (process-local): direct store, no notification.
     policy.store_mode = PackedStoreMode::kDirectInit;
@@ -52,7 +52,6 @@ auto BuildStorePolicy(Context& ctx, mir::PlaceId target) -> PackedStorePolicy {
 
   policy.signal_id = *signal_id;
   policy.engine_ptr = ctx.GetEnginePointer();
-  policy.first_dirty_seen = ctx.GetFirstDirtySeenPtr();
   policy.notification_deferred =
       ctx.GetNotificationPolicy() == NotificationPolicy::kDeferred;
 

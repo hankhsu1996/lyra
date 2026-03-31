@@ -105,7 +105,8 @@ auto RealizedCombMeta::BeginKernel(uint32_t proc_idx, uint32_t flags)
 }
 
 void RealizedCombMeta::AppendTrigger(
-    uint32_t slot_id, uint32_t byte_off, uint32_t byte_size) {
+    uint32_t slot_id, uint32_t byte_off, uint32_t byte_size,
+    uint32_t trigger_flags) {
   if (words.empty()) {
     throw common::InternalError(
         "RealizedCombMeta::AppendTrigger", "Init() not called");
@@ -113,6 +114,7 @@ void RealizedCombMeta::AppendTrigger(
   words.push_back(slot_id);
   words.push_back(byte_off);
   words.push_back(byte_size);
+  words.push_back(trigger_flags);
 }
 
 void RealizedCombMeta::EndKernel(
@@ -773,13 +775,13 @@ void Constructor::AddInstance(
   connections_finalized_ = true;
 
   uint32_t instance_id = next_instance_id_;
-  uint32_t signal_id_offset = next_slot_base_;
+  uint32_t local_signal_coord_base = next_slot_base_;
 
   uint32_t instance_ord = next_module_instance_ordinal_;
   auto instance = std::make_unique<RuntimeInstance>();
   instance->instance_id = instance_id;
   instance->owner_ordinal = instance_ord;
-  instance->signal_id_offset = signal_id_offset;
+  instance->local_signal_coord_base = local_signal_coord_base;
   // path_c_str is patched in Finalize to point into stable instance_paths.
   instance->path_c_str = nullptr;
 
@@ -880,11 +882,14 @@ void Constructor::AddInstance(
                            : 0;
       for (uint32_t t = 0; t < range.count; ++t) {
         const auto& te = body_.triggers.entries[range.start + t];
-        // Relocate body-relative slot IDs, pass design-global through.
-        uint32_t slot_id = (te.flags & kTriggerTemplateFlagDesignGlobal)
-                               ? te.slot_id
-                               : te.slot_id + signal_id_offset;
-        realized_triggers_.AppendEntry(proc_idx, slot_id, te.edge, flags);
+        // Pass body-local slot IDs with kFlagBodyLocal for engine-side
+        // relocation. Design-global slot IDs pass through unchanged.
+        uint32_t slot_id = te.slot_id;
+        uint32_t entry_flags = flags;
+        if ((te.flags & kTriggerTemplateFlagDesignGlobal) == 0) {
+          entry_flags |= process_trigger_abi::kFlagBodyLocal;
+        }
+        realized_triggers_.AppendEntry(proc_idx, slot_id, te.edge, entry_flags);
         trigger_provenance_.push_back(
             TriggerProvenanceRecord{
                 .domain = TemplateDomain::kModule,
@@ -913,10 +918,15 @@ void Constructor::AddInstance(
       uint32_t trigger_count = 0;
       for (uint32_t t = 0; t < kernel.trigger_count; ++t) {
         const auto& ce = body_.comb.entries[kernel.trigger_start + t];
-        uint32_t slot_id = (ce.flags & kCombTemplateFlagDesignGlobal)
-                               ? ce.slot_id
-                               : ce.slot_id + signal_id_offset;
-        realized_comb_.AppendTrigger(slot_id, ce.byte_offset, ce.byte_size);
+        // Pass body-local slot IDs with body-local flag for engine-side
+        // relocation. Design-global slot IDs pass through unchanged.
+        uint32_t slot_id = ce.slot_id;
+        uint32_t trigger_flags =
+            ((ce.flags & kCombTemplateFlagDesignGlobal) == 0)
+                ? kCombTriggerFlagBodyLocal
+                : 0U;
+        realized_comb_.AppendTrigger(
+            slot_id, ce.byte_offset, ce.byte_size, trigger_flags);
         ++trigger_count;
       }
       realized_comb_.EndKernel(kernel_start_pos, trigger_count);
@@ -949,7 +959,7 @@ void Constructor::AddInstance(
       uint32_t realized_owner =
           (entry.flags & kObservableFlagOwnerAbsolute) != 0
               ? entry.storage_owner_ref
-              : entry.storage_owner_ref + signal_id_offset;
+              : entry.storage_owner_ref + local_signal_coord_base;
 
       if (entry.storage_domain == 0) {
         // Design-global: offset is already absolute.

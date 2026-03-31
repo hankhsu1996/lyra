@@ -8,6 +8,8 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/process_trigger_abi.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 
 namespace lyra::runtime {
@@ -108,7 +110,7 @@ void Engine::InitCombKernels(
     uint32_t proc_idx = words[pos++];
     uint32_t flags = words[pos++];
     uint32_t num_triggers = words[pos++];
-    if (pos + num_triggers * 3 > words.size()) {
+    if (pos + num_triggers * 4 > words.size()) {
       throw common::InternalError(
           "Engine::InitCombKernels", "trigger list truncated");
     }
@@ -156,6 +158,20 @@ void Engine::InitCombKernels(
       uint32_t trigger_slot = words[pos++];
       uint32_t byte_offset = words[pos++];
       uint32_t byte_size = words[pos++];
+      uint32_t trigger_flags = words[pos++];
+      // Relocate body-local trigger slot ids using the owning instance's
+      // dense coordination base.
+      if ((trigger_flags & kCombTriggerFlagBodyLocal) != 0) {
+        if (header->instance == nullptr) {
+          throw common::InternalError(
+              "Engine::InitCombKernels",
+              std::format(
+                  "body-local comb trigger has no owning instance for "
+                  "process {}",
+                  proc_idx));
+        }
+        trigger_slot += header->instance->local_signal_coord_base;
+      }
       entries.push_back(
           {trigger_slot, comb_idx, byte_offset, byte_size, kernel_self_edge});
       if (byte_size > 0) {

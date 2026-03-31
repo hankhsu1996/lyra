@@ -14,14 +14,14 @@ auto Access::GetWriteTarget(Context& ctx, mir::PlaceId target)
   return ctx.GetWriteTarget(target);
 }
 
-auto Access::GetMutationTargetSignalId(Context& ctx, mir::PlaceId target)
-    -> std::optional<SignalIdExpr> {
-  return ctx.GetMutationTargetSignalId(target);
+auto Access::GetMutationTargetSignalCoord(Context& ctx, mir::PlaceId target)
+    -> std::optional<SignalCoordExpr> {
+  return ctx.GetMutationTargetSignalCoord(target);
 }
 
 auto Access::IsNotifiableMutationTarget(Context& ctx, mir::PlaceId target)
     -> bool {
-  return ctx.GetMutationTargetSignalId(target).has_value();
+  return ctx.GetMutationTargetSignalCoord(target).has_value();
 }
 
 }  // namespace lyra::lowering::mir_to_llvm::commit

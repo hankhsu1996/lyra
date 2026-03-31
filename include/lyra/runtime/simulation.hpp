@@ -42,13 +42,6 @@ struct ProcessOutcome {
 using LyraProcessFunc = void (*)(
     void* state, uint32_t resume_block, lyra::runtime::ProcessOutcome* out);
 
-// Container mutation kind for LyraNotifyContainerMutation.
-enum class ContainerMutationKind : uint32_t {
-  kElementWrite = 0,
-  kStructural = 1,
-  kDelete = 2,
-};
-
 extern "C" {
 
 // Run a process synchronously to completion (for init processes).
@@ -106,52 +99,6 @@ void LyraSuspendWaitWithLateBound(
     uint32_t num_dep_slots, uint32_t wait_site_id);
 void LyraSuspendRepeat(void* state);
 
-// Store a packed (integer/packed-array) value to a design slot with change
-// notification.
-// - engine_ptr: pointer to Engine (from state header)
-// - slot_ptr: pointer to the design slot storage
-// - new_value_ptr: pointer to the new value to store
-// - byte_size: size of the value in bytes
-// - signal_id: slot ID for notification
-// - dirty_off: byte offset within slot for dirty range (0 = start)
-// - dirty_size: dirty range size; 0 = full slot, > 0 = precise byte range
-void LyraStorePacked(
-    void* engine_ptr, void* slot_ptr, const void* new_value_ptr,
-    uint32_t byte_size, uint32_t signal_id, uint32_t dirty_off,
-    uint32_t dirty_size);
-
-// Store a string value to a design slot with change notification.
-// - engine_ptr: pointer to Engine
-// - slot_ptr: pointer to the design slot (void* pointing to string storage)
-// - new_str: pointer to the new string value
-// - signal_id: slot ID for notification
-void LyraStoreString(
-    void* engine_ptr, void* slot_ptr, void* new_str, uint32_t signal_id);
-
-// Schedule a non-blocking assignment for later commit in the NBA region.
-// - engine_ptr: pointer to Engine (from state header)
-// - write_ptr: exact write address for the target
-// - notify_base_ptr: base design slot pointer (for registry)
-// - value_ptr: pointer to value bytes to write
-// - mask_ptr: pointer to mask bytes, or nullptr for full overwrite.
-//   nullptr -- kFullOverwrite (direct compare/copy, no mask storage).
-//   non-null -- kMaskedMerge (per-byte: (old & ~mask) | (new & mask)).
-// - byte_size: size of the write region in bytes
-// - notify_slot_id: slot ID for trigger lookup
-void LyraScheduleNba(
-    void* engine_ptr, void* write_ptr, const void* notify_base_ptr,
-    const void* value_ptr, const void* mask_ptr, uint32_t byte_size,
-    uint32_t notify_slot_id);
-
-// Schedule a canonical two-plane packed narrow NBA write.
-// Writes region_byte_size bytes to write_ptr (value plane) and to
-// write_ptr + second_region_offset (unknown plane) as one semantic record.
-// Used for byte-addressable 4-state packed subview deferred writes.
-void LyraScheduleNbaCanonicalPacked(
-    void* engine_ptr, void* write_ptr, const void* notify_base_ptr,
-    const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
-    uint32_t second_region_offset, uint32_t notify_slot_id);
-
 // Strobe observer program type: uses canonical StrobeProgramFn from
 // observer.hpp.
 using LyraStrobeProgramFn = lyra::runtime::StrobeProgramFn;
@@ -161,7 +108,7 @@ using LyraStrobeProgramFn = lyra::runtime::StrobeProgramFn;
 // runtime side.
 void LyraRegisterStrobe(
     void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset);
+    void* this_ptr, uint32_t instance_id, uint32_t local_signal_coord_base);
 
 // Unified termination with kind/level/message support.
 // kind: 0=finish, 1=fatal, 2=stop, 3=exit
@@ -205,24 +152,13 @@ using LyraMonitorCheckProgramFn = lyra::runtime::MonitorCheckProgramFn;
 // runtime side.
 void LyraMonitorRegister(
     void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset,
+    void* this_ptr, uint32_t instance_id, uint32_t local_signal_coord_base,
     const void* initial_prev, uint32_t size);
 
 // Enable/disable the active monitor. No-op if no active monitor.
 // - engine_ptr: pointer to Engine
 // - enabled: true to enable, false to disable
 void LyraMonitorSetEnabled(void* engine_ptr, bool enabled);
-
-// Signal notification for aggregate assignments (struct/array with managed
-// fields). Used after field-by-field assignment to design slots. Guarantees
-// level-sensitive re-evaluation (always_comb, always @(*), always @(sig));
-// edge-sensitive events (posedge/negedge) on aggregates are NOT supported.
-// - engine_ptr: pointer to Engine
-// - slot_ptr: pointer to the aggregate's storage (used for best-effort LSB
-// read)
-// - signal_id: slot ID for notification
-void LyraNotifySignal(
-    void* engine_ptr, const void* slot_ptr, uint32_t signal_id);
 
 // Apply 4-state X-encoding patches to unknown planes after memset(0).
 // Each variant handles a different store width. Uses memcpy for alignment and
@@ -239,22 +175,4 @@ void LyraApply4StatePatches32(
     void* base, const uint64_t* offsets, const uint32_t* masks, uint64_t count);
 void LyraApply4StatePatches64(
     void* base, const uint64_t* offsets, const uint64_t* masks, uint64_t count);
-
-// Notify engine of a container (dynamic array/queue) mutation.
-// kind: ContainerMutationKind (0=element write, 1=structural, 2=delete)
-// off/size: heap-relative byte range (kElementWrite only; 0/0 for others)
-void LyraNotifyContainerMutation(
-    void* engine_ptr, uint32_t signal_id, uint32_t kind, uint32_t off,
-    uint32_t size);
-
-// Mark a design slot dirty (conditional on value change done by caller).
-// Thin wrapper for inline store codegen: the caller emits compare+store in
-// LLVM IR and calls this only when the value actually changed.
-// - engine_ptr: pointer to Engine (from state header)
-// - signal_id: slot ID for notification
-// - dirty_off: byte offset within slot for dirty range (0 = start)
-// - dirty_size: dirty range size; 0 = full slot, > 0 = precise byte range
-void LyraMarkDirty(
-    void* engine_ptr, uint32_t signal_id, uint32_t dirty_off,
-    uint32_t dirty_size);
 }

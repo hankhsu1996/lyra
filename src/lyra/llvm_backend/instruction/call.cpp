@@ -93,7 +93,7 @@ auto LowerUserCallImpl(
               resolved.func_id.value));
     }
     if (context.GetThisPointer() == nullptr ||
-        context.GetSignalIdOffset() == nullptr ||
+        context.GetInstancePointer() == nullptr ||
         context.GetDynamicInstanceId() == nullptr) {
       throw common::InternalError(
           "LowerUserCall", std::format(
@@ -102,7 +102,7 @@ auto LowerUserCallImpl(
                                resolved.func_id.value));
     }
     args.push_back(context.GetThisPointer());
-    args.push_back(context.GetSignalIdOffset());
+    args.push_back(context.GetInstancePointer());
     args.push_back(context.GetDynamicInstanceId());
   }
 
@@ -524,7 +524,7 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
   llvm::Value* fread_slot_id_val =
       llvm::ConstantInt::get(i32_ty, lyra::runtime::kNoSlotId);
   if (wb.kind == mir::WritebackKind::kDirectToDest) {
-    auto slot_expr = GetDesignSignalId(context, wb.dest);
+    auto slot_expr = GetDesignSignalCoord(context, wb.dest);
     if (slot_expr.has_value()) {
       fread_slot_id_val = slot_expr->Emit(builder);
     }

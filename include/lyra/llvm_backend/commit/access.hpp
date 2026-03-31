@@ -23,7 +23,7 @@ class Context;
 // This eliminates redundancy and the need for call-site mutation.
 struct WriteTarget {
   llvm::Value* ptr = nullptr;  // Pointer to canonical storage
-  std::optional<SignalIdExpr>
+  std::optional<SignalCoordExpr>
       canonical_signal_id;  // Root slot ID, nullopt if not design
   uint32_t dirty_off = 0;   // Byte offset within slot (write-side dirty range)
   uint32_t dirty_size = 0;  // 0 = full slot; > 0 = precise byte range
@@ -56,8 +56,8 @@ class Access {
   // Resolves forwarded aliases to the storage owner for dirty-mark identity.
   // Returns nullopt if the root has no notifiable mutation-target signal
   // identity (e.g., local/temp roots that are not design storage).
-  [[nodiscard]] static auto GetMutationTargetSignalId(
-      Context& ctx, mir::PlaceId target) -> std::optional<SignalIdExpr>;
+  [[nodiscard]] static auto GetMutationTargetSignalCoord(
+      Context& ctx, mir::PlaceId target) -> std::optional<SignalCoordExpr>;
 
   // Check if a place has a notifiable mutation-target signal identity.
   [[nodiscard]] static auto IsNotifiableMutationTarget(

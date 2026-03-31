@@ -17,7 +17,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] C1 -- Remove per-instance emitted constructor IR/globals
 - [x] R1 -- Runtime instance/object model: two-domain storage, domain-aware slot resolution, process-instance binding
 - [x] R2 -- Forwarding as connectivity, not storage redefinition
-- [ ] R3 -- Object-local signal identity and coordination API
+- [x] R3 -- Object-local signal identity and coordination API
 - [ ] R4 -- Constructor-to-runtime handoff preserves per-instance structure
 - [ ] R5 -- Observability/trace/snapshot on object-local coordinates
 - [ ] T1 -- Topology-independence validation (scaling gates)
@@ -77,15 +77,17 @@ Forwarding no longer redefines object storage shape. Every body-local slot owns 
 - **Connection analysis.** ForwardingMap deleted. Replaced by AnalyzeConnections producing ConnectionAnalysisResult with original-slot-ID connection edges, per-slot usage summaries, and relay-candidate classification. Connection entries use original slot IDs; no canonical-owner aliasing or identity-edge elimination.
 - **Trace.** Forwarded-alias dirty-set validation and alias fanout loop removed from trace flush. Direct per-slot trace path only.
 
-## R3: Object-local signal identity and coordination API
+## R3: Object-local signal identity and coordination API (completed)
 
-Merges the former R4 (signal identity) and R5 (coordination API) because they share a single seam: signal_id_offset is the sole bridge between body-local and design-global coordinates, and removing it immediately breaks every dirty/subscription/trace caller. No stable intermediate state exists where signal identity is object-local but the coordination API still requires design-global slot_ids.
+Signal identity for instance-owned signals is now object-local. The design-global signal namespace is removed as a semantic concept for instance-owned coordination.
 
-**Current state:** signal identity requires design-global renumbering. signal_id_offset + local_id produces a design-global slot_id at runtime. Every dirty mark, subscription install, and trace event uses this design-global coordinate. The public engine API (MarkSlotDirty, MarkDirtyRange) requires design-global slot_ids. UpdateSet vectors, SlotSubscriptions, conn_trigger_map\_, comb_trigger_map\_ are all sized and indexed by design-global slot count. design_ptr in every process frame header gives every process access to the entire design's state.
-
-**Target:** signal identity is object-local -- a signal is member N of this instance, not design-global slot M. The public runtime contract (the API boundary between codegen/constructor and engine) accepts object-scoped coordinates (instance + local signal). The engine may keep flat arrays internally for performance, but the public interface must not force callers to reason in design-global coordinates. signal_id_offset is removed from RuntimeInstance.
-
-Where to look: ProcessFrameHeader (signal_id_offset, design_ptr), EmitSignalId, EmitMutationTargetSignalId, LyraMarkDirty, engine (MarkSlotDirty, MarkDirtyRange), update_set, engine_subscriptions.
+- **Identity layer.** LocalSignalId, GlobalSignalId, ObjectSignalRef, DenseSignalCoord defined in signal_coord.hpp. signal_id_offset removed from RuntimeInstance, ObserverContext, ProcessDescriptorEntry. Replaced by local_signal_coord_base (engine-private dense coordination base).
+- **Codegen.** SignalCoordExpr carries semantic domain (kLocal/kGlobal). EmitSignalCoord returns typed coordinates. Generated code passes (engine_ptr, instance_ptr, local_id) for local signals, (engine_ptr, global_id) for global signals. No codegen path forms signal_id_offset + local_id. Inline first-dirty-seen bitmap path removed.
+- **Runtime helpers.** Typed local/global helper pairs for dirty marking, packed/string store, NBA scheduling, trace observation, container/aggregate notification. All local helpers take (engine_ptr, instance_ptr, local_id) -- valid in both process bodies and module-scoped user functions.
+- **Engine API.** Typed overloads: MarkDirty(ObjectSignalRef), MarkDirty(GlobalSignalId), ScheduleNba, IsTraceObserved. Flat-slot conversion is engine-internal via ToFlatSlotId.
+- **Dense coordination.** Engine owns base assignment via AssignDenseCoordinationBases (scans slot meta, validates contiguous local-id ordering). Module-scoped user function ABI extended to carry instance_ptr.
+- **Constructor.** Trigger and comb realization pass body-local slot ids with kFlagBodyLocal / kCombTriggerFlagBodyLocal. Engine init does the relocation. Observable/slot-meta relocation remains (R5 scope).
+- **Remaining follow-up.** 3 EmitTemporaryFlatSignalCoord call sites in process.cpp (trigger table signal_id, plan-op slot_id, dep_slots) still produce flat slot ids for WaitTriggerRecord/IndexPlanOp formats. These formats are consumed by the existing flat trigger installation path. Migrating them requires changing the trigger/dep-slot word formats, which is beyond R3 scope.
 
 ## R4: Constructor-to-runtime handoff preserves per-instance structure
 

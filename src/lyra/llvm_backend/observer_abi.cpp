@@ -30,14 +30,14 @@ auto LoadObserverContextFields(
   auto* instance_id = builder.CreateLoad(
       i32_ty, builder.CreateStructGEP(ctx_ty, observer_ctx_ptr, 1),
       "instance_id");
-  auto* signal_id_offset = builder.CreateLoad(
+  auto* local_signal_coord_base = builder.CreateLoad(
       i32_ty, builder.CreateStructGEP(ctx_ty, observer_ctx_ptr, 2),
-      "signal_id_offset");
+      "local_signal_coord_base");
 
   return {
       .this_ptr = this_ptr,
       .instance_id = instance_id,
-      .signal_id_offset = signal_id_offset,
+      .local_signal_coord_base = local_signal_coord_base,
   };
 }
 
@@ -52,7 +52,7 @@ void EnterObserverSpecializationLocalContext(
 
   context.SetThisPointer(fields.this_ptr);
   context.SetDynamicInstanceId(fields.instance_id);
-  context.SetSignalIdOffset(fields.signal_id_offset);
+  context.SetLocalSignalCoordBase(fields.local_signal_coord_base);
   context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
 }
 
@@ -63,7 +63,7 @@ auto GetObserverContextFieldValues(Context& context) -> LoadedObserverContext {
 
   llvm::Value* this_ptr = context.GetThisPointer();
   llvm::Value* instance_id = context.GetDynamicInstanceId();
-  llvm::Value* sig_offset = context.GetSignalIdOffset();
+  llvm::Value* sig_offset = context.GetLocalSignalCoordBase();
 
   if (this_ptr == nullptr) {
     this_ptr = llvm::ConstantPointerNull::get(ptr_ty);
@@ -78,7 +78,7 @@ auto GetObserverContextFieldValues(Context& context) -> LoadedObserverContext {
   return {
       .this_ptr = this_ptr,
       .instance_id = instance_id,
-      .signal_id_offset = sig_offset,
+      .local_signal_coord_base = sig_offset,
   };
 }
 
@@ -96,7 +96,8 @@ auto MaterializeObserverContext(Context& context) -> llvm::Value* {
   builder.CreateStore(
       fields.instance_id, builder.CreateStructGEP(ctx_ty, ctx_alloca, 1));
   builder.CreateStore(
-      fields.signal_id_offset, builder.CreateStructGEP(ctx_ty, ctx_alloca, 2));
+      fields.local_signal_coord_base,
+      builder.CreateStructGEP(ctx_ty, ctx_alloca, 2));
 
   return ctx_alloca;
 }

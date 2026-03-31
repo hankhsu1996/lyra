@@ -124,7 +124,7 @@ void ActivationLocalSlotAccess::SyncSlot(const ManagedSlotStorage& storage) {
       builder.CreateLoad(llvm_type, storage.alloca_inst, "actlocal.sync");
   auto* canonical_ptr = ctx_.GetSignalSlotPointer(storage.slot);
   // Mutation-target: resolve to storage owner for dirty-mark identity.
-  auto signal_id = ctx_.EmitMutationTargetSignalId(storage.slot);
+  auto signal_id = ctx_.EmitMutationTargetSignalCoord(storage.slot);
 
   const auto& types = ctx_.GetTypeArena();
   const Type& type = types[storage.root_type];

@@ -498,6 +498,25 @@ extern "C" void LyraRunSimulation(
       engine.ValidateInstanceOwnedSlotMeta();
     }
 
+    // Engine-owned dense coordination base assignment.
+    // The engine scans slot meta to determine per-instance slot ranges and
+    // writes local_signal_coord_base on each instance. This makes the engine
+    // the authority for dense coordination base values, replacing the
+    // constructor-assigned values.
+    if (abi->instance_ptrs != nullptr && abi->num_instances > 0 &&
+        abi->slot_meta_words != nullptr && abi->slot_meta_word_count > 0) {
+      // Build mutable span from the ABI instance pointer array.
+      // The instances are mutable objects owned by the construction result;
+      // the const in the ABI is an access-control convention, not a
+      // memory-protection guarantee.
+      auto mutable_ptrs = std::span(
+          const_cast<lyra::runtime::RuntimeInstance**>(
+              const_cast<lyra::runtime::RuntimeInstance* const*>(
+                  abi->instance_ptrs)),
+          abi->num_instances);
+      engine.AssignDenseCoordinationBases(mutable_ptrs);
+    }
+
     // Process metadata
     if (abi->process_meta_words != nullptr &&
         abi->process_meta_word_count > 0) {
@@ -538,8 +557,8 @@ extern "C" void LyraRunSimulation(
     if (abi->process_trigger_words != nullptr &&
         abi->num_process_trigger_words > 0) {
       engine.InitProcessTriggerRegistry(
-          std::span(
-              abi->process_trigger_words, abi->num_process_trigger_words));
+          std::span(abi->process_trigger_words, abi->num_process_trigger_words),
+          num_connection, states_raw);
     }
 
     // Wait-site metadata
@@ -670,96 +689,14 @@ extern "C" auto LyraSystemCmd(void* engine_ptr, LyraStringHandle cmd_handle)
   return static_cast<int32_t>(std::system(cmd.c_str()));
 }
 
-extern "C" void LyraStorePacked(
-    void* engine_ptr, void* slot_ptr, const void* new_value_ptr,
-    uint32_t byte_size, uint32_t signal_id, uint32_t dirty_off,
-    uint32_t dirty_size) {
-  bool value_changed = std::memcmp(slot_ptr, new_value_ptr, byte_size) != 0;
-  std::memcpy(slot_ptr, new_value_ptr, byte_size);
-
-  if (value_changed && engine_ptr != nullptr) {
-    auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    if (dirty_size > 0) {
-      engine->MarkDirtyRange(signal_id, dirty_off, dirty_size);
-    } else {
-      engine->MarkSlotDirty(signal_id);
-    }
-  }
-}
-
-extern "C" auto LyraGetFirstDirtySeenPtr(void* engine_ptr) -> uint8_t* {
-  if (engine_ptr == nullptr) return nullptr;
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  if (!engine->IsFirstDirtyFastPathAllowed()) return nullptr;
-  return engine->GetFirstDirtySeenPtr();
-}
-
-extern "C" auto LyraIsTraceObserved(void* engine_ptr, uint32_t owner_slot)
-    -> bool {
-  if (engine_ptr == nullptr) return false;
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  return engine->GetTraceSelection().IsSelected(owner_slot);
-}
-
-extern "C" void LyraMarkDirtyFirst(void* engine_ptr, uint32_t slot_id) {
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  engine->MarkSlotDirtyFirst(slot_id);
-}
-
-extern "C" void LyraMarkDirty(
-    void* engine_ptr, uint32_t signal_id, uint32_t dirty_off,
-    uint32_t dirty_size) {
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  if (dirty_size > 0) {
-    engine->MarkDirtyRange(signal_id, dirty_off, dirty_size);
-  } else {
-    engine->MarkSlotDirty(signal_id);
-  }
-}
-
-extern "C" void LyraStoreString(
-    void* engine_ptr, void* slot_ptr, void* new_str, uint32_t signal_id) {
-  auto** str_slot = static_cast<void**>(slot_ptr);
-  void* old_str = *str_slot;
-  bool value_changed = (old_str != new_str);
-
-  *str_slot = new_str;
-
-  if (value_changed && engine_ptr != nullptr) {
-    auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    engine->MarkSlotDirty(signal_id);
-  }
-}
-
-extern "C" void LyraScheduleNba(
-    void* engine_ptr, void* write_ptr, const void* notify_base_ptr,
-    const void* value_ptr, const void* mask_ptr, uint32_t byte_size,
-    uint32_t notify_slot_id) {
-  // mask_ptr == nullptr means full overwrite; non-null means masked merge.
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  engine->ScheduleNba(
-      write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size,
-      notify_slot_id);
-}
-
-extern "C" void LyraScheduleNbaCanonicalPacked(
-    void* engine_ptr, void* write_ptr, const void* notify_base_ptr,
-    const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
-    uint32_t second_region_offset, uint32_t notify_slot_id) {
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  engine->ScheduleNbaCanonicalPacked(
-      write_ptr, notify_base_ptr, value_ptr, unk_ptr, region_byte_size,
-      second_region_offset, notify_slot_id);
-}
-
 extern "C" void LyraRegisterStrobe(
     void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset) {
+    void* this_ptr, uint32_t instance_id, uint32_t local_signal_coord_base) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
       .instance_id = instance_id,
-      .signal_id_offset = signal_id_offset,
+      .local_signal_coord_base = local_signal_coord_base,
   };
   engine->RegisterStrobe(program, design_state, ctx);
 }
@@ -886,13 +823,13 @@ extern "C" void LyraReportTime() {
 
 extern "C" void LyraMonitorRegister(
     void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, uint32_t signal_id_offset,
+    void* this_ptr, uint32_t instance_id, uint32_t local_signal_coord_base,
     const void* initial_prev, uint32_t size) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
       .instance_id = instance_id,
-      .signal_id_offset = signal_id_offset,
+      .local_signal_coord_base = local_signal_coord_base,
   };
   engine->RegisterMonitor(program, design_state, ctx, initial_prev, size);
 }
@@ -900,14 +837,6 @@ extern "C" void LyraMonitorRegister(
 extern "C" void LyraMonitorSetEnabled(void* engine_ptr, bool enabled) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   engine->SetMonitorEnabled(enabled);
-}
-
-extern "C" void LyraNotifySignal(
-    void* engine_ptr, const void* slot_ptr, uint32_t signal_id) {
-  if (engine_ptr == nullptr || slot_ptr == nullptr) return;
-
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  engine->MarkSlotDirty(signal_id);
 }
 
 extern "C" auto LyraRandom(void* engine_ptr) -> int32_t {
@@ -918,35 +847,6 @@ extern "C" auto LyraRandom(void* engine_ptr) -> int32_t {
 extern "C" auto LyraUrandom(void* engine_ptr) -> uint32_t {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   return engine->Urandom();
-}
-
-extern "C" void LyraNotifyContainerMutation(
-    void* engine_ptr, uint32_t signal_id, uint32_t kind, uint32_t off,
-    uint32_t size) {
-  if (engine_ptr == nullptr) return;
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  engine->MarkSlotDirty(signal_id);
-  switch (kind) {
-    case 0:  // kElementWrite
-      if (size == 0) {
-        throw lyra::common::InternalError(
-            "LyraNotifyContainerMutation", "element write size must be > 0");
-      }
-      engine->MarkExternalDirtyRange(signal_id, off, size);
-      break;
-    case 1:  // kStructural
-    case 2:  // kDelete
-      if (off != 0 || size != 0) {
-        throw lyra::common::InternalError(
-            "LyraNotifyContainerMutation",
-            "structural/delete must have off=0, size=0");
-      }
-      engine->MarkExternalDirtyRange(signal_id, 0, 0);
-      break;
-    default:
-      throw lyra::common::InternalError(
-          "LyraNotifyContainerMutation", "unknown mutation kind");
-  }
 }
 
 extern "C" void LyraApply4StatePatches8(
@@ -1039,4 +939,149 @@ extern "C" auto LyraResolveSlotAddress(
 
   return lyra::runtime::ResolveInstanceStorageOffset(
       *inst, meta.instance_rel_off, meta.total_bytes, "LyraResolveSlotAddress");
+}
+
+// R3 typed coordination helpers.
+// Local helpers take (engine_ptr, instance_ptr, local_id, ...).
+// Global helpers take (engine_ptr, global_id, ...).
+// These do not assume a process frame -- they work in any module-scoped
+// context (process bodies, user functions, comb kernels).
+//
+// Shared implementations are templated on Signal (ObjectSignalRef or
+// GlobalSignalId) so local/global externs are thin wrappers with no
+// duplicated mutation semantics.
+
+namespace {
+
+using lyra::runtime::Engine;
+using lyra::runtime::GlobalSignalId;
+using lyra::runtime::LocalSignalId;
+using lyra::runtime::ObjectSignalRef;
+using lyra::runtime::RuntimeInstance;
+
+auto AsEngine(void* engine_ptr) -> Engine* {
+  return static_cast<Engine*>(engine_ptr);
+}
+
+auto MakeLocalRef(void* instance_ptr, uint32_t local_id) -> ObjectSignalRef {
+  return ObjectSignalRef{
+      static_cast<RuntimeInstance*>(instance_ptr), LocalSignalId{local_id}};
+}
+
+template <class Signal>
+void MarkDirtyTyped(
+    Engine* engine, Signal signal, uint32_t dirty_off, uint32_t dirty_size) {
+  if (dirty_size > 0) {
+    engine->MarkDirtyRange(signal, dirty_off, dirty_size);
+  } else {
+    engine->MarkDirty(signal);
+  }
+}
+
+template <class Signal>
+void StorePackedTyped(
+    void* engine_ptr, Signal signal, void* slot_ptr, const void* new_value_ptr,
+    uint32_t byte_size, uint32_t dirty_off, uint32_t dirty_size) {
+  bool value_changed = std::memcmp(slot_ptr, new_value_ptr, byte_size) != 0;
+  std::memcpy(slot_ptr, new_value_ptr, byte_size);
+  if (!value_changed || engine_ptr == nullptr) return;
+  MarkDirtyTyped(AsEngine(engine_ptr), signal, dirty_off, dirty_size);
+}
+
+template <class Signal>
+void StoreStringTyped(
+    void* engine_ptr, Signal signal, void* slot_ptr, void* new_str) {
+  auto** str_slot = static_cast<void**>(slot_ptr);
+  void* old_str = *str_slot;
+  *str_slot = new_str;
+  if (old_str == new_str || engine_ptr == nullptr) return;
+  AsEngine(engine_ptr)->MarkDirty(signal);
+}
+
+}  // namespace
+
+// Local helpers: (engine_ptr, instance_ptr, local_id, ...)
+// Global helpers: (engine_ptr, global_id, ...)
+
+extern "C" void LyraMarkDirtyLocal(
+    void* eng, void* inst, uint32_t id, uint32_t off, uint32_t size) {
+  MarkDirtyTyped(AsEngine(eng), MakeLocalRef(inst, id), off, size);
+}
+extern "C" void LyraMarkDirtyGlobal(
+    void* eng, uint32_t id, uint32_t off, uint32_t size) {
+  MarkDirtyTyped(AsEngine(eng), GlobalSignalId{id}, off, size);
+}
+
+extern "C" void LyraStorePackedLocal(
+    void* eng, void* inst, void* slot, const void* val, uint32_t bsz,
+    uint32_t id, uint32_t off, uint32_t dsz) {
+  StorePackedTyped(eng, MakeLocalRef(inst, id), slot, val, bsz, off, dsz);
+}
+extern "C" void LyraStorePackedGlobal(
+    void* eng, void* slot, const void* val, uint32_t bsz, uint32_t id,
+    uint32_t off, uint32_t dsz) {
+  StorePackedTyped(eng, GlobalSignalId{id}, slot, val, bsz, off, dsz);
+}
+
+extern "C" void LyraStoreStringLocal(
+    void* eng, void* inst, void* slot, void* str, uint32_t id) {
+  StoreStringTyped(eng, MakeLocalRef(inst, id), slot, str);
+}
+extern "C" void LyraStoreStringGlobal(
+    void* eng, void* slot, void* str, uint32_t id) {
+  StoreStringTyped(eng, GlobalSignalId{id}, slot, str);
+}
+
+extern "C" void LyraScheduleNbaLocal(
+    void* eng, void* inst, void* wp, const void* nb, const void* vp,
+    const void* mp, uint32_t bsz, uint32_t id) {
+  AsEngine(eng)->ScheduleNba(MakeLocalRef(inst, id), wp, nb, vp, mp, bsz);
+}
+extern "C" void LyraScheduleNbaGlobal(
+    void* eng, void* wp, const void* nb, const void* vp, const void* mp,
+    uint32_t bsz, uint32_t id) {
+  AsEngine(eng)->ScheduleNba(GlobalSignalId{id}, wp, nb, vp, mp, bsz);
+}
+
+extern "C" void LyraScheduleNbaCanonicalPackedLocal(
+    void* eng, void* inst, void* wp, const void* nb, const void* vp,
+    const void* up, uint32_t rsz, uint32_t sro, uint32_t id) {
+  AsEngine(eng)->ScheduleNbaCanonicalPacked(
+      MakeLocalRef(inst, id), wp, nb, vp, up, rsz, sro);
+}
+extern "C" void LyraScheduleNbaCanonicalPackedGlobal(
+    void* eng, void* wp, const void* nb, const void* vp, const void* up,
+    uint32_t rsz, uint32_t sro, uint32_t id) {
+  AsEngine(eng)->ScheduleNbaCanonicalPacked(
+      GlobalSignalId{id}, wp, nb, vp, up, rsz, sro);
+}
+
+extern "C" auto LyraIsTraceObservedLocal(void* eng, void* inst, uint32_t id)
+    -> bool {
+  if (eng == nullptr) return false;
+  return AsEngine(eng)->IsTraceObserved(MakeLocalRef(inst, id));
+}
+extern "C" auto LyraIsTraceObservedGlobal(void* eng, uint32_t id) -> bool {
+  if (eng == nullptr) return false;
+  return AsEngine(eng)->IsTraceObserved(GlobalSignalId{id});
+}
+
+extern "C" void LyraNotifyContainerMutationLocal(
+    void* eng, void* inst, uint32_t id, uint32_t off, uint32_t size) {
+  MarkDirtyTyped(AsEngine(eng), MakeLocalRef(inst, id), off, size);
+}
+extern "C" void LyraNotifyContainerMutationGlobal(
+    void* eng, uint32_t id, uint32_t off, uint32_t size) {
+  MarkDirtyTyped(AsEngine(eng), GlobalSignalId{id}, off, size);
+}
+
+extern "C" void LyraNotifySignalLocal(
+    void* eng, void* inst, const void* slot, uint32_t id) {
+  if (eng == nullptr || slot == nullptr) return;
+  AsEngine(eng)->MarkDirty(MakeLocalRef(inst, id));
+}
+extern "C" void LyraNotifySignalGlobal(
+    void* eng, const void* slot, uint32_t id) {
+  if (eng == nullptr || slot == nullptr) return;
+  AsEngine(eng)->MarkDirty(GlobalSignalId{id});
 }

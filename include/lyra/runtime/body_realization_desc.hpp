@@ -121,7 +121,8 @@ static_assert(std::is_standard_layout_v<TriggerTemplateEntry>);
 inline constexpr uint32_t kTriggerTemplateFlagHasObservedPlace = 1U << 0;
 // Slot ID is design-global (already absolute). When set, constructor
 // does not apply slot-base relocation for this entry. When clear,
-// slot_id is body-relative and constructor adds signal_id_offset.
+// slot_id is body-relative and constructor adds the per-instance
+// slot-base offset (legacy flat relocation, still globally indexed).
 inline constexpr uint32_t kTriggerTemplateFlagDesignGlobal = 1U << 1;
 
 // Named values for OwnedTriggerTemplate::proc_groupable entries.

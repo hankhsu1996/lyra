@@ -9,7 +9,6 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
-#include "lyra/llvm_backend/packed_width_types.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace llvm {
@@ -235,16 +234,14 @@ auto BuildPackedStorePlan(
 // Semantic store mode for packed writes.
 enum class PackedStoreMode {
   // Init path: direct store, no compare, no dirty mark, no engine.
-  // signal_id, engine_ptr, first_dirty_seen are unused.
+  // signal_id and engine_ptr are unused.
   kDirectInit,
-  // Simulation path: compare + conditional dirty mark.
+  // Simulation path: compare + conditional dirty mark via typed helpers.
   // signal_id and engine_ptr required (engine_ptr non-null at runtime).
-  // first_dirty_seen may be non-null for inline fast path.
   kNotifySimulation,
   // Cross-context: compare + conditional dirty mark.
   // signal_id required. engine_ptr required as LLVM value but may be
   // null at runtime (guarded branch in generated IR).
-  // first_dirty_seen unused (not available in cross-context scope).
   kNotifyCrossContext,
 };
 
@@ -267,9 +264,8 @@ struct PackedStorePolicy {
   // Used by packed-store emission sites for the LyraIsTraceObserved call.
   std::optional<uint32_t> mutation_resolved_slot;
 
-  std::optional<SignalIdExpr> signal_id;
+  std::optional<SignalCoordExpr> signal_id;
   llvm::Value* engine_ptr = nullptr;
-  llvm::Value* first_dirty_seen = nullptr;
 };
 
 // Dirty range for packed store notification.
@@ -322,7 +318,7 @@ auto EmitStoreToPackedSubview(
 struct PackedNbaPolicy {
   llvm::Value* engine_ptr = nullptr;
   llvm::Value* notify_base_ptr = nullptr;
-  SignalIdExpr signal_id;
+  SignalCoordExpr signal_id;
 };
 
 // Localized subview deferred/NBA write.
@@ -351,14 +347,14 @@ auto BuildRawBytesStorageView(llvm::Value* base_ptr, uint32_t byte_size)
 
 // Build PackedStorePolicy from current Context execution contract.
 // Single conversion point: DesignStoreMode -> PackedStoreMode, extracts
-// engine_ptr, first_dirty_seen, notification policy from Context.
+// engine_ptr and notification policy from Context.
 // signal_id is the runtime notification identity (emitted into IR).
 // mutation_signal is the canonical semantic identity used to decide
 // whether static dirty propagation is required.
 // When mutation_signal is non-null, sets requires_static_dirty_propagation
 // from the static contract query. Conservative default (true) when null.
 auto BuildStorePolicyFromContext(
-    Context& ctx, std::optional<SignalIdExpr> signal_id,
+    Context& ctx, std::optional<SignalCoordExpr> signal_id,
     const mir::SignalRef* mutation_signal = nullptr) -> PackedStorePolicy;
 
 // Plane pointers for runtime-helper interop.

@@ -796,69 +796,25 @@ void EmitPackedStoreNotification(
   }
 
   auto* fn = builder.GetInsertBlock()->getParent();
-  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* done_bb = llvm::BasicBlock::Create(llvm_ctx, "psw.done", fn);
 
-  // Check if this is a full-slot dirty mark eligible for first-dirty fast path.
-  bool is_full_slot = false;
-  if (const auto* off_ci =
-          llvm::dyn_cast<llvm::ConstantInt>(dirty_range.byte_offset)) {
-    if (const auto* sz_ci =
-            llvm::dyn_cast<llvm::ConstantInt>(dirty_range.byte_size)) {
-      is_full_slot = off_ci->isZero() && sz_ci->isZero();
-    }
-  }
-
-  if (is_full_slot && policy.first_dirty_seen != nullptr &&
-      policy.store_mode == PackedStoreMode::kNotifySimulation) {
-    // Inline first-dirty fast path: check per-delta seen bitmap.
-    // Common case (already dirty) skips the runtime call entirely.
-    auto* null_ptr =
-        llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(llvm_ctx));
-    auto* check_bitmap_bb =
-        llvm::BasicBlock::Create(llvm_ctx, "check_bitmap", fn);
-    auto* check_seen_bb = llvm::BasicBlock::Create(llvm_ctx, "check_seen", fn);
-    auto* mark_first_bb = llvm::BasicBlock::Create(llvm_ctx, "mark_first", fn);
-    auto* fallback_bb =
-        llvm::BasicBlock::Create(llvm_ctx, "mark_dirty_fallback", fn);
-
-    builder.CreateCondBr(should_mark, check_bitmap_bb, done_bb);
-
-    builder.SetInsertPoint(check_bitmap_bb);
-    auto* slot_id = policy.signal_id->Emit(builder);
-    auto* bitmap_nonnull = builder.CreateICmpNE(
-        policy.first_dirty_seen, null_ptr, "bitmap.nonnull");
-    builder.CreateCondBr(bitmap_nonnull, check_seen_bb, fallback_bb);
-
-    builder.SetInsertPoint(check_seen_bb);
-    auto* seen_ptr = builder.CreateGEP(
-        i8_ty, policy.first_dirty_seen, {slot_id}, "seen_ptr");
-    auto* seen = builder.CreateLoad(i8_ty, seen_ptr, "seen");
-    auto* already_dirty = builder.CreateICmpNE(
-        seen, llvm::ConstantInt::get(i8_ty, 0), "already_dirty");
-    builder.CreateCondBr(already_dirty, done_bb, mark_first_bb);
-
-    builder.SetInsertPoint(mark_first_bb);
-    builder.CreateCall(
-        ctx.GetLyraMarkDirtyFirst(), {policy.engine_ptr, slot_id});
-    builder.CreateBr(done_bb);
-
-    builder.SetInsertPoint(fallback_bb);
-    builder.CreateCall(
-        ctx.GetLyraMarkDirty(),
-        {policy.engine_ptr, slot_id, llvm::ConstantInt::get(i32_ty, 0),
-         llvm::ConstantInt::get(i32_ty, 0)});
-    builder.CreateBr(done_bb);
-  } else {
+  {
     auto* dirty_bb = llvm::BasicBlock::Create(llvm_ctx, "psw.dirty", fn);
     builder.CreateCondBr(should_mark, dirty_bb, done_bb);
 
     builder.SetInsertPoint(dirty_bb);
-    builder.CreateCall(
-        ctx.GetLyraMarkDirty(),
-        {policy.engine_ptr, policy.signal_id->Emit(builder),
-         dirty_range.byte_offset, dirty_range.byte_size});
+    if (policy.signal_id->IsLocal()) {
+      builder.CreateCall(
+          ctx.GetLyraMarkDirtyLocal(),
+          {policy.engine_ptr, ctx.GetInstancePointer(),
+           policy.signal_id->Emit(builder), dirty_range.byte_offset,
+           dirty_range.byte_size});
+    } else {
+      builder.CreateCall(
+          ctx.GetLyraMarkDirtyGlobal(),
+          {policy.engine_ptr, policy.signal_id->Emit(builder),
+           dirty_range.byte_offset, dirty_range.byte_size});
+    }
     builder.CreateBr(done_bb);
   }
 
@@ -976,11 +932,20 @@ void EmitNarrow2StateNbaCall(
 
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::PointerType::get(llvm_ctx, 0));
-  builder.CreateCall(
-      ctx.GetLyraScheduleNba(),
-      {policy.engine_ptr, write_ptr, policy.notify_base_ptr, val_alloca,
-       null_ptr, llvm::ConstantInt::get(i32_ty, narrow_bytes),
-       policy.signal_id.Emit(builder)});
+  if (policy.signal_id.IsLocal()) {
+    builder.CreateCall(
+        ctx.GetLyraScheduleNbaLocal(),
+        {policy.engine_ptr, ctx.GetInstancePointer(), write_ptr,
+         policy.notify_base_ptr, val_alloca, null_ptr,
+         llvm::ConstantInt::get(i32_ty, narrow_bytes),
+         policy.signal_id.Emit(builder)});
+  } else {
+    builder.CreateCall(
+        ctx.GetLyraScheduleNbaGlobal(),
+        {policy.engine_ptr, write_ptr, policy.notify_base_ptr, val_alloca,
+         null_ptr, llvm::ConstantInt::get(i32_ty, narrow_bytes),
+         policy.signal_id.Emit(builder)});
+  }
 }
 
 // Emit a 4-state byte-addressable narrow NBA using the canonical two-plane
@@ -1015,12 +980,22 @@ void EmitNarrow4StateNbaCall(
   auto* unk_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.unk.a");
   EncodePlaneValueToByteBuffer(builder, llvm_ctx, unk_alloca, 0, unk_store);
 
-  builder.CreateCall(
-      ctx.GetLyraScheduleNbaCanonicalPacked(),
-      {policy.engine_ptr, write_ptr, policy.notify_base_ptr, val_alloca,
-       unk_alloca, llvm::ConstantInt::get(i32_ty, narrow_bytes),
-       llvm::ConstantInt::get(i32_ty, access.storage.unk_plane_offset_bytes),
-       policy.signal_id.Emit(builder)});
+  if (policy.signal_id.IsLocal()) {
+    builder.CreateCall(
+        ctx.GetLyraScheduleNbaCanonicalPackedLocal(),
+        {policy.engine_ptr, ctx.GetInstancePointer(), write_ptr,
+         policy.notify_base_ptr, val_alloca, unk_alloca,
+         llvm::ConstantInt::get(i32_ty, narrow_bytes),
+         llvm::ConstantInt::get(i32_ty, access.storage.unk_plane_offset_bytes),
+         policy.signal_id.Emit(builder)});
+  } else {
+    builder.CreateCall(
+        ctx.GetLyraScheduleNbaCanonicalPackedGlobal(),
+        {policy.engine_ptr, write_ptr, policy.notify_base_ptr, val_alloca,
+         unk_alloca, llvm::ConstantInt::get(i32_ty, narrow_bytes),
+         llvm::ConstantInt::get(i32_ty, access.storage.unk_plane_offset_bytes),
+         policy.signal_id.Emit(builder)});
+  }
 }
 
 // Emit a full-width masked NBA call for a bit-addressable subview.
@@ -1071,11 +1046,20 @@ void EmitFullWidthMaskedNbaCall(
     EncodePlaneValueToByteBuffer(
         builder, llvm_ctx, mask_alloca, plane_bytes, mask_shifted);
 
-    builder.CreateCall(
-        ctx.GetLyraScheduleNba(),
-        {policy.engine_ptr, access.storage.base_ptr, policy.notify_base_ptr,
-         val_alloca, mask_alloca, llvm::ConstantInt::get(i32_ty, total_bytes),
-         policy.signal_id.Emit(builder)});
+    if (policy.signal_id.IsLocal()) {
+      builder.CreateCall(
+          ctx.GetLyraScheduleNbaLocal(),
+          {policy.engine_ptr, ctx.GetInstancePointer(), access.storage.base_ptr,
+           policy.notify_base_ptr, val_alloca, mask_alloca,
+           llvm::ConstantInt::get(i32_ty, total_bytes),
+           policy.signal_id.Emit(builder)});
+    } else {
+      builder.CreateCall(
+          ctx.GetLyraScheduleNbaGlobal(),
+          {policy.engine_ptr, access.storage.base_ptr, policy.notify_base_ptr,
+           val_alloca, mask_alloca, llvm::ConstantInt::get(i32_ty, total_bytes),
+           policy.signal_id.Emit(builder)});
+    }
   } else {
     auto* buf_ty = llvm::ArrayType::get(i8_ty, plane_bytes);
     auto* val_alloca = builder.CreateAlloca(buf_ty, nullptr, "nba.val.a");
@@ -1085,11 +1069,20 @@ void EmitFullWidthMaskedNbaCall(
     EncodePlaneValueToByteBuffer(
         builder, llvm_ctx, mask_alloca, 0, mask_shifted);
 
-    builder.CreateCall(
-        ctx.GetLyraScheduleNba(),
-        {policy.engine_ptr, access.storage.base_ptr, policy.notify_base_ptr,
-         val_alloca, mask_alloca, llvm::ConstantInt::get(i32_ty, plane_bytes),
-         policy.signal_id.Emit(builder)});
+    if (policy.signal_id.IsLocal()) {
+      builder.CreateCall(
+          ctx.GetLyraScheduleNbaLocal(),
+          {policy.engine_ptr, ctx.GetInstancePointer(), access.storage.base_ptr,
+           policy.notify_base_ptr, val_alloca, mask_alloca,
+           llvm::ConstantInt::get(i32_ty, plane_bytes),
+           policy.signal_id.Emit(builder)});
+    } else {
+      builder.CreateCall(
+          ctx.GetLyraScheduleNbaGlobal(),
+          {policy.engine_ptr, access.storage.base_ptr, policy.notify_base_ptr,
+           val_alloca, mask_alloca, llvm::ConstantInt::get(i32_ty, plane_bytes),
+           policy.signal_id.Emit(builder)});
+    }
   }
 }
 
@@ -1240,7 +1233,7 @@ auto BuildRawBytesStorageView(llvm::Value* base_ptr, uint32_t byte_size)
 }
 
 auto BuildStorePolicyFromContext(
-    Context& ctx, std::optional<SignalIdExpr> signal_id,
+    Context& ctx, std::optional<SignalCoordExpr> signal_id,
     const mir::SignalRef* mutation_signal) -> PackedStorePolicy {
   PackedStorePolicy policy;
 
@@ -1265,7 +1258,6 @@ auto BuildStorePolicyFromContext(
   }
   policy.signal_id = std::move(signal_id);
   policy.engine_ptr = ctx.GetEnginePointer();
-  policy.first_dirty_seen = ctx.GetFirstDirtySeenPtr();
 
   return policy;
 }
@@ -1422,12 +1414,21 @@ void EmitGuardedLyraStorePacked(
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
   auto emit_call = [&]() {
-    builder.CreateCall(
-        ctx.GetLyraStorePacked(),
-        {policy.engine_ptr, dst_ptr, src_ptr,
-         llvm::ConstantInt::get(i32_ty, byte_size),
-         policy.signal_id->Emit(builder), llvm::ConstantInt::get(i32_ty, 0),
-         llvm::ConstantInt::get(i32_ty, 0)});
+    if (policy.signal_id->IsLocal()) {
+      builder.CreateCall(
+          ctx.GetLyraStorePackedLocal(),
+          {policy.engine_ptr, ctx.GetInstancePointer(), dst_ptr, src_ptr,
+           llvm::ConstantInt::get(i32_ty, byte_size),
+           policy.signal_id->Emit(builder), llvm::ConstantInt::get(i32_ty, 0),
+           llvm::ConstantInt::get(i32_ty, 0)});
+    } else {
+      builder.CreateCall(
+          ctx.GetLyraStorePackedGlobal(),
+          {policy.engine_ptr, dst_ptr, src_ptr,
+           llvm::ConstantInt::get(i32_ty, byte_size),
+           policy.signal_id->Emit(builder), llvm::ConstantInt::get(i32_ty, 0),
+           llvm::ConstantInt::get(i32_ty, 0)});
+    }
   };
 
   if (policy.store_mode == PackedStoreMode::kNotifyCrossContext) {

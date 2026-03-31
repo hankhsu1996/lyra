@@ -28,7 +28,11 @@ struct LoweringResult;
 // Stores stable IDs/values; variant is looked up from Layout when needed.
 struct SpecInstanceBinding {
   ModuleIndex module_index;
-  uint32_t signal_id_offset = 0;
+  // Flat slot base sourced from InstancePlacement.design_state_base_slot.
+  // Mapped into RuntimeInstance.local_signal_coord_base at the runtime
+  // boundary. This is still the old placement-derived design-global base
+  // offset, used by current flat runtime coordination consumers.
+  uint32_t flat_slot_base = 0;
 };
 
 // Specialization-owned MIR content: identity + behavioral IR references.
@@ -147,7 +151,7 @@ struct RealizationData {
   // Pure-data construction program. Built by lowering, serialized to LLVM
   // globals by emission, replayed by the runtime constructor. Entries are in
   // strict ModuleIndex order. Runtime relies on this order for instance_id
-  // and signal_id_offset allocation.
+  // and flat slot-base allocation (currently local_signal_coord_base).
   ConstructionProgramData construction_program;
 };
 
