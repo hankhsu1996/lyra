@@ -35,10 +35,13 @@ TYPE_OPS_DIR = "src/lyra/llvm_backend/type_ops/"
 INSTRUCTION_DIR = "src/lyra/llvm_backend/instruction/"
 
 STORE_GETTERS = [
-    "GetLyraStorePacked",
+    "GetLyraStorePackedLocal",
+    "GetLyraStorePackedGlobal",
     "GetLyraStoreDynArray",
-    "GetLyraStoreString",
-    "GetLyraNotifyContainerMutation",
+    "GetLyraStoreStringLocal",
+    "GetLyraStoreStringGlobal",
+    "GetLyraNotifyContainerMutationLocal",
+    "GetLyraNotifyContainerMutationGlobal",
 ]
 
 LIFECYCLE_GETTERS = [

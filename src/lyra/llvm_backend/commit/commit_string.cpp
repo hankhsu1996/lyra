@@ -71,9 +71,17 @@ void StoreStringToWriteTarget(
           "StoreStringToWriteTarget",
           "deferred notification not supported for string store path");
     }
-    builder.CreateCall(
-        ctx.GetLyraStoreString(), {ctx.GetEnginePointer(), wt.ptr, new_val,
-                                   wt.canonical_signal_id->Emit(builder)});
+    if (wt.canonical_signal_id->IsLocal()) {
+      builder.CreateCall(
+          ctx.GetLyraStoreStringLocal(),
+          {ctx.GetEnginePointer(), ctx.GetInstancePointer(), wt.ptr, new_val,
+           wt.canonical_signal_id->Emit(builder)});
+    } else {
+      builder.CreateCall(
+          ctx.GetLyraStoreStringGlobal(),
+          {ctx.GetEnginePointer(), wt.ptr, new_val,
+           wt.canonical_signal_id->Emit(builder)});
+    }
   };
 
   auto emit_plain_store = [&]() { builder.CreateStore(new_val, wt.ptr); };

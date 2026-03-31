@@ -13,7 +13,7 @@ namespace lyra::runtime {
 struct ObserverContext {
   void* this_ptr = nullptr;
   uint32_t instance_id = 0;
-  uint32_t signal_id_offset = 0;
+  uint32_t local_signal_coord_base = 0;
 };
 
 // Observer program entrypoints.

@@ -29,6 +29,7 @@
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_trigger_registry.hpp"
 #include "lyra/runtime/scheduler_snapshot.hpp"
+#include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_selection.hpp"
@@ -385,6 +386,14 @@ class Engine {
   // installed. Throws InternalError on any mismatch.
   void ValidateInstanceOwnedSlotMeta() const;
 
+  // Assign dense coordination bases on instances from slot meta.
+  // Scans the slot meta registry to determine per-instance slot ranges
+  // and writes local_signal_coord_base on each instance. This makes the
+  // engine the authority for dense coordination base assignment.
+  // Must be called after InitSlotMeta and SetInstances.
+  void AssignDenseCoordinationBases(
+      std::span<RuntimeInstance* const> mutable_instances);
+
   // Resolve the storage byte address for a slot.
   // For kDesignGlobal slots: returns design_state_base_ + design_base_off.
   // For kInstanceOwned slots: returns instance->storage.inline_base +
@@ -395,27 +404,15 @@ class Engine {
   // Route a MutationEvent to the UpdateSet (design slots only; heap NYI).
   void OnMutation(const common::MutationEvent& event);
 
-  // Whether the inline first-dirty fast path is allowed in the current
-  // execution context. Returns false during comb-fixpoint evaluation, where
-  // repeated dirty marks carry semantic work (comb_write_capture_ bookkeeping
-  // for convergence). Returns true during normal process-body execution.
-  [[nodiscard]] auto IsFirstDirtyFastPathAllowed() const -> bool {
-    return comb_write_capture_ == nullptr;
-  }
+  // Internal flat-slot coordination methods. These accept raw uint32_t
+  // slot ids and are used by engine internals (connections, comb fixpoint,
+  // typed API wrappers) and a few legacy runtime utility paths (dyn_array,
+  // io). New code should use the typed API (ObjectSignalRef/GlobalSignalId)
+  // instead.
 
-  // Pointer to the per-delta first-dirty seen bitmap. Pure data accessor;
-  // does not encode execution-policy decisions. Returns null if the update
-  // set is not yet initialized.
-  auto GetFirstDirtySeenPtr() -> uint8_t* {
-    return update_set_.DeltaSeenData();
-  }
-
-  // First-dirty slow path: called by generated code when the inline guard
-  // detects a slot not yet dirty in the current delta. Performs all first-
-  // dirty bookkeeping (dedup tracking, activation dirty count, stats).
-  // Precondition: the inline guard already confirmed delta_seen[slot] == 0.
+  // First-dirty slow path.
   // Precondition: slot_id must be a canonical storage owner.
-  // Alias canonicalization is compile-time (EmitMutationTargetSignalId)
+  // Alias canonicalization is compile-time (EmitMutationTargetSignalCoord)
   // and descriptor-time (RebuildCanonicalConnections). Runtime dirty
   // paths assume canonical slot ids. Trace flush is the backstop.
   void MarkSlotDirtyFirst(uint32_t slot_id) {
@@ -468,6 +465,35 @@ class Engine {
       uint32_t slot_id, uint32_t byte_off, uint32_t byte_size) {
     update_set_.MarkExternalDirtyRange(slot_id, byte_off, byte_size);
   }
+
+  // Typed signal coordination API (R3).
+  // Accepts object-local or global signal coordinates. Internally lowers to
+  // flat slot id for current coordination storage. The flat conversion is
+  // engine-internal; callers use typed coordinates only.
+  void MarkDirty(ObjectSignalRef signal);
+  void MarkDirtyRange(
+      ObjectSignalRef signal, uint32_t byte_off, uint32_t byte_size);
+  void MarkDirty(GlobalSignalId signal);
+  void MarkDirtyRange(
+      GlobalSignalId signal, uint32_t byte_off, uint32_t byte_size);
+  void ScheduleNba(
+      ObjectSignalRef notify_signal, void* write_ptr,
+      const void* notify_base_ptr, const void* value_ptr, const void* mask_ptr,
+      uint32_t byte_size);
+  void ScheduleNba(
+      GlobalSignalId notify_signal, void* write_ptr,
+      const void* notify_base_ptr, const void* value_ptr, const void* mask_ptr,
+      uint32_t byte_size);
+  void ScheduleNbaCanonicalPacked(
+      ObjectSignalRef notify_signal, void* write_ptr,
+      const void* notify_base_ptr, const void* value_ptr, const void* unk_ptr,
+      uint32_t region_byte_size, uint32_t second_region_offset);
+  void ScheduleNbaCanonicalPacked(
+      GlobalSignalId notify_signal, void* write_ptr,
+      const void* notify_base_ptr, const void* value_ptr, const void* unk_ptr,
+      uint32_t region_byte_size, uint32_t second_region_offset);
+  [[nodiscard]] auto IsTraceObserved(ObjectSignalRef signal) const -> bool;
+  [[nodiscard]] auto IsTraceObserved(GlobalSignalId signal) const -> bool;
 
   [[nodiscard]] auto GetSlotMetaRegistry() const -> const SlotMetaRegistry& {
     return slot_meta_registry_;
@@ -538,8 +564,11 @@ class Engine {
   void SeedCombKernelDirtyMarks();
 
   // Parse process trigger word table and build constructor-time trigger
-  // groups in one call. Must be called after InitSlotMeta.
-  void InitProcessTriggerRegistry(std::span<const uint32_t> words);
+  // groups in one call. Must be called after InitSlotMeta and SetInstances.
+  // Body-local trigger entries (kFlagBodyLocal) are relocated to dense
+  // coordination coordinates using the owning instance's base.
+  void InitProcessTriggerRegistry(
+      std::span<const uint32_t> words, uint32_t num_connection, void** states);
 
   // Flush signal updates + evaluate triggered connections/comb kernels until
   // convergence. Also used for initial value propagation before Run().

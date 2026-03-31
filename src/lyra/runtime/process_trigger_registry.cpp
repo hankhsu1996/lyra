@@ -10,6 +10,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/process_trigger_abi.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 
 namespace lyra::runtime {
 
@@ -29,7 +30,8 @@ auto ParseProcessTriggerDescriptors(
             expected_size, num_entries, words.size()));
   }
 
-  constexpr uint32_t kKnownFlags = process_trigger_abi::kFlagGroupable;
+  constexpr uint32_t kKnownFlags =
+      process_trigger_abi::kFlagGroupable | process_trigger_abi::kFlagBodyLocal;
 
   std::vector<ProcessTriggerDescriptor> descriptors;
   descriptors.reserve(num_entries);
@@ -50,7 +52,9 @@ auto ParseProcessTriggerDescriptors(
               proc_idx, num_processes, i));
     }
 
-    if (slot_id >= slot_count) {
+    bool is_body_local = (flags & process_trigger_abi::kFlagBodyLocal) != 0;
+    // Body-local slot ids are validated after relocation below.
+    if (!is_body_local && slot_id >= slot_count) {
       throw common::InternalError(
           "ParseProcessTriggerDescriptors",
           std::format(
@@ -153,9 +157,59 @@ auto BuildProcessTriggerRegistry(
   return registry;
 }
 
-void Engine::InitProcessTriggerRegistry(std::span<const uint32_t> words) {
+void Engine::InitProcessTriggerRegistry(
+    std::span<const uint32_t> words, uint32_t num_connection, void** states) {
   auto descriptors = ParseProcessTriggerDescriptors(
       words, slot_meta_registry_.Size(), num_processes_);
+
+  // Relocate body-local trigger entries to dense coordination coordinates.
+  // Body-local entries carry kFlagBodyLocal in the word table. Re-read
+  // the flags from the word table to apply instance-based relocation.
+  auto proc_states = std::span(states, num_processes_);
+  uint32_t slot_count = slot_meta_registry_.Size();
+  if (!words.empty()) {
+    uint32_t num_entries = words[0];
+    for (uint32_t i = 0; i < num_entries && i < descriptors.size(); ++i) {
+      uint32_t pos = 1 + (i * process_trigger_abi::kStride);
+      uint32_t flags = words[pos + process_trigger_abi::kFieldFlags];
+      if ((flags & process_trigger_abi::kFlagBodyLocal) != 0) {
+        uint32_t proc_idx = descriptors[i].scheduled_process_index;
+        if (proc_idx < num_connection) {
+          throw common::InternalError(
+              "InitProcessTriggerRegistry",
+              std::format(
+                  "body-local trigger entry {} targets connection process {}",
+                  i, proc_idx));
+        }
+        if (proc_idx >= num_processes_) {
+          throw common::InternalError(
+              "InitProcessTriggerRegistry",
+              std::format(
+                  "body-local trigger entry {} targets invalid process {}", i,
+                  proc_idx));
+        }
+        const auto* header =
+            static_cast<const ProcessFrameHeader*>(proc_states[proc_idx]);
+        if (header == nullptr || header->instance == nullptr) {
+          throw common::InternalError(
+              "InitProcessTriggerRegistry",
+              std::format(
+                  "body-local trigger entry {} has no owning instance "
+                  "for process {}",
+                  i, proc_idx));
+        }
+        descriptors[i].slot_id += header->instance->local_signal_coord_base;
+        if (descriptors[i].slot_id >= slot_count) {
+          throw common::InternalError(
+              "InitProcessTriggerRegistry",
+              std::format(
+                  "relocated slot_id {} exceeds slot count {} in entry {}",
+                  descriptors[i].slot_id, slot_count, i));
+        }
+      }
+    }
+  }
+
   process_trigger_registry_ =
       BuildProcessTriggerRegistry(std::move(descriptors));
 }

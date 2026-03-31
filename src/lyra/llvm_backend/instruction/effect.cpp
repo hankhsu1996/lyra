@@ -79,11 +79,11 @@ auto LowerStrobeEffect(Context& context, const mir::StrobeEffect& strobe)
   auto obs_fields = GetObserverContextFieldValues(context);
 
   // LyraRegisterStrobe(engine, program, design_state,
-  //                     this_ptr, instance_id, signal_id_offset)
+  //                     this_ptr, instance_id, local_signal_coord_base)
   context.GetBuilder().CreateCall(
       context.GetLyraRegisterStrobe(),
       {engine_ptr, program_fn, design_ptr, obs_fields.this_ptr,
-       obs_fields.instance_id, obs_fields.signal_id_offset});
+       obs_fields.instance_id, obs_fields.local_signal_coord_base});
 
   return {};
 }
@@ -243,7 +243,7 @@ auto LowerElementFillRuntime(
   auto target_ptr = ctx.GetPlacePointer(t.place_id);
   if (!target_ptr) return std::unexpected(target_ptr.error());
 
-  auto signal_id = GetDesignSignalId(ctx, t.place_id);
+  auto signal_id = GetDesignSignalCoord(ctx, t.place_id);
   bool is_canonical = signal_id.has_value();
 
   auto view =
@@ -482,7 +482,7 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
   llvm::Value* readmem_slot_id_val =
       llvm::ConstantInt::get(i32_ty, lyra::runtime::kNoSlotId);
   if (mem_io.is_read) {
-    auto slot_expr = GetDesignSignalId(context, mem_io.target);
+    auto slot_expr = GetDesignSignalCoord(context, mem_io.target);
     if (slot_expr.has_value()) {
       readmem_slot_id_val = slot_expr->Emit(builder);
     }

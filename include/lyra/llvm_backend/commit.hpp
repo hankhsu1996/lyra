@@ -50,7 +50,7 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target);
 // NBA-specific signal_id extraction.
 // NBA always targets design slots, so fail-fast is correct behavior.
 // Throws InternalError if target is not a design slot.
-auto GetSignalIdForNba(Context& ctx, mir::PlaceId target) -> SignalIdExpr;
+auto GetSignalCoordForNba(Context& ctx, mir::PlaceId target) -> SignalCoordExpr;
 
 // Null-out source managed fields if move from temp.
 // Policy gate: only acts if policy==kMove AND source place root is kTemp.
@@ -76,9 +76,9 @@ auto CommitArrayFieldByField(
     TypeId array_type_id, OwnershipPolicy policy) -> Result<void>;
 
 // Resolve design signal ID for a target place (after alias resolution).
-// Returns SignalIdExpr if design slot, nullopt if not.
-auto GetDesignSignalId(Context& ctx, mir::PlaceId target)
-    -> std::optional<SignalIdExpr>;
+// Returns SignalCoordExpr if design slot, nullopt if not.
+auto GetDesignSignalCoord(Context& ctx, mir::PlaceId target)
+    -> std::optional<SignalCoordExpr>;
 
 namespace detail {
 

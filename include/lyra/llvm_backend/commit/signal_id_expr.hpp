@@ -8,75 +8,63 @@
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
 
-#include "lyra/common/internal_error.hpp"
-
 namespace lyra::lowering::mir_to_llvm {
 
-// Represents a signal ID that may be a compile-time constant or a dynamic
-// value (for shared processes where the signal ID depends on instance offset).
-class SignalIdExpr {
+// Semantic signal coordinate for codegen emission.
+//
+// Carries the domain (kLocal for instance-owned, kGlobal for package/global)
+// and a constant integer id within that domain. This is a pure semantic
+// carrier -- it does not know how to lower to engine-internal coordinates.
+//
+// kLocal: body-local slot ordinal. Identity within a module body.
+// kGlobal: design-global slot id. Identity for package/global state.
+class SignalCoordExpr {
  public:
-  enum class Kind { kConst, kDynamic };
+  enum class Kind : uint8_t {
+    kLocal,
+    kGlobal,
+  };
 
-  static auto Const(uint32_t v) -> SignalIdExpr {
-    SignalIdExpr e;
-    e.kind_ = Kind::kConst;
-    e.const_value_ = v;
+  static auto Local(uint32_t id) -> SignalCoordExpr {
+    SignalCoordExpr e;
+    e.kind_ = Kind::kLocal;
+    e.value_ = id;
     return e;
   }
 
-  static auto Dynamic(llvm::Value* v) -> SignalIdExpr {
-    if (v == nullptr) {
-      throw common::InternalError(
-          "SignalIdExpr::Dynamic", "dynamic_value must not be null");
-    }
-    if (!v->getType()->isIntegerTy(32)) {
-      throw common::InternalError(
-          "SignalIdExpr::Dynamic", "dynamic_value must be i32");
-    }
-    SignalIdExpr e;
-    e.kind_ = Kind::kDynamic;
-    e.dynamic_value_ = v;
+  static auto Global(uint32_t id) -> SignalCoordExpr {
+    SignalCoordExpr e;
+    e.kind_ = Kind::kGlobal;
+    e.value_ = id;
     return e;
   }
 
   [[nodiscard]] auto GetKind() const -> Kind {
     return kind_;
   }
-  [[nodiscard]] auto IsConst() const -> bool {
-    return kind_ == Kind::kConst;
+  [[nodiscard]] auto IsLocal() const -> bool {
+    return kind_ == Kind::kLocal;
   }
-  [[nodiscard]] auto IsDynamic() const -> bool {
-    return kind_ == Kind::kDynamic;
-  }
-
-  [[nodiscard]] auto ConstValue() const -> uint32_t {
-    if (kind_ != Kind::kConst) {
-      throw common::InternalError(
-          "SignalIdExpr::ConstValue",
-          "cannot read const_value from a dynamic SignalIdExpr");
-    }
-    return const_value_;
+  [[nodiscard]] auto IsGlobal() const -> bool {
+    return kind_ == Kind::kGlobal;
   }
 
+  [[nodiscard]] auto Value() const -> uint32_t {
+    return value_;
+  }
+
+  // Emit the semantic id value as an LLVM i32 constant.
+  // This is the raw local or global id, NOT a dense coordination coordinate.
   [[nodiscard]] auto Emit(llvm::IRBuilder<>& builder) const -> llvm::Value* {
-    if (kind_ == Kind::kConst) {
-      auto& ctx = builder.getContext();
-      return llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), const_value_);
-    }
-    if (!dynamic_value_->getType()->isIntegerTy(32)) {
-      throw common::InternalError(
-          "SignalIdExpr::Emit", "dynamic_value must be i32 at point of use");
-    }
-    return dynamic_value_;
+    auto& ctx = builder.getContext();
+    return llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), value_);
   }
 
  private:
-  SignalIdExpr() = default;
+  SignalCoordExpr() = default;
 
-  Kind kind_ = Kind::kConst;
-  uint32_t const_value_ = 0;
-  llvm::Value* dynamic_value_ = nullptr;
+  Kind kind_ = Kind::kGlobal;
+  uint32_t value_ = 0;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -286,8 +286,8 @@ auto BuildParamPayloads(
 
 // Build the pure-data construction program from parallel topology arrays.
 // Pools path strings and param payloads; entries are in strict ModuleIndex
-// order. The runtime relies on this order for instance_id and
-// signal_id_offset allocation.
+// order. The runtime relies on this order for instance_id and flat
+// slot-base allocation (currently local_signal_coord_base).
 auto BuildConstructionProgram(
     std::span<const uint32_t> instance_body_group, const Layout& layout,
     const mir::InstanceTable& instance_table,
@@ -615,7 +615,7 @@ auto BuildSpecCompilationUnits(const mir::Design& design)
 
     SpecInstanceBinding binding{
         .module_index = ModuleIndex{module_idx},
-        .signal_id_offset = placement.design_state_base_slot,
+        .flat_slot_base = placement.design_state_base_slot,
     };
 
     auto [it, inserted] = body_to_unit.try_emplace(body_id.value, units.size());
@@ -2034,7 +2034,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
     // Build pure-data construction program from the same sources that
     // currently drive per-instance constructor emission. Entries are in
     // strict ModuleIndex order. The runtime relies on this order for
-    // instance_id and signal_id_offset allocation.
+    // instance_id and flat slot-base allocation.
     realization.construction_program = BuildConstructionProgram(
         instance_body_group, *layout, input.design->instance_table,
         param_payloads);

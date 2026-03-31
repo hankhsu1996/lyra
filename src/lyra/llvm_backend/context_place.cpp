@@ -195,7 +195,7 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
   if (!ptr_or_err) return std::unexpected(ptr_or_err.error());
 
   // Determine canonical_signal_id from root
-  std::optional<SignalIdExpr> signal_id;
+  std::optional<SignalCoordExpr> signal_id;
   uint32_t dirty_off = 0;
   uint32_t dirty_size = 0;
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
@@ -207,7 +207,7 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
         .id = static_cast<uint32_t>(resolved.root.id),
     };
     // Mutation-target: resolve to storage owner for dirty-mark identity.
-    signal_id = EmitMutationTargetSignalId(sig);
+    signal_id = EmitMutationTargetSignalCoord(sig);
     auto resolver = [this](const mir::Operand& op) -> std::optional<uint64_t> {
       if (op.kind != mir::Operand::Kind::kUseTemp) return std::nullopt;
       auto temp_id = std::get<mir::TempId>(op.payload);
@@ -262,11 +262,11 @@ auto Context::ResolveMutationSignalRef(mir::PlaceId place_id) const
   return std::nullopt;
 }
 
-auto Context::GetMutationTargetSignalId(mir::PlaceId place_id)
-    -> std::optional<SignalIdExpr> {
+auto Context::GetMutationTargetSignalCoord(mir::PlaceId place_id)
+    -> std::optional<SignalCoordExpr> {
   auto sig = ResolveMutationSignalRef(place_id);
   if (!sig.has_value()) return std::nullopt;
-  return EmitMutationTargetSignalId(*sig);
+  return EmitMutationTargetSignalCoord(*sig);
 }
 
 auto Context::ResolveDesignGlobalSlotId(const mir::PlaceRoot& root) const
@@ -308,21 +308,19 @@ auto Context::ResolveDesignGlobalSlotId(const mir::ScopedSlotRef& ref) const
           ref.id));
 }
 
-auto Context::EmitSignalId(const mir::SignalRef& sig) -> SignalIdExpr {
+auto Context::EmitSignalCoord(const mir::SignalRef& sig) -> SignalCoordExpr {
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
     if (slot_addressing_ == SlotAddressingMode::kSpecializationLocal) {
-      auto* abs =
-          builder_.CreateAdd(signal_id_offset_, builder_.getInt32(sig.id));
-      return SignalIdExpr::Dynamic(abs);
+      return SignalCoordExpr::Local(sig.id);
     }
     throw common::InternalError(
-        "EmitSignalId",
+        "EmitSignalCoord",
         std::format(
             "module-local signal (id={}) in design-global addressing mode; "
             "module-scoped code must use specialization-local addressing",
             sig.id));
   }
-  return SignalIdExpr::Const(sig.id);
+  return SignalCoordExpr::Global(sig.id);
 }
 
 namespace {
@@ -341,16 +339,16 @@ auto ValidateDesignGlobalSignal(
 
 }  // namespace
 
-auto Context::EmitMutationTargetSignalId(const mir::SignalRef& sig)
-    -> SignalIdExpr {
+auto Context::EmitMutationTargetSignalCoord(const mir::SignalRef& sig)
+    -> SignalCoordExpr {
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    return EmitSignalId(ValidateDesignGlobalSignal(sig, layout_.design));
+    return EmitSignalCoord(ValidateDesignGlobalSignal(sig, layout_.design));
   }
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
-    return EmitSignalId(sig);
+    return EmitSignalCoord(sig);
   }
   throw common::InternalError(
-      "EmitMutationTargetSignalId", "unknown signal scope");
+      "EmitMutationTargetSignalCoord", "unknown signal scope");
 }
 
 auto Context::GetOwnedHandleLlvmType() -> llvm::StructType* {
@@ -885,8 +883,11 @@ auto Context::EmitIsTraceObservedOwnerSlot(uint32_t owner_slot)
   }
   auto& builder = GetBuilder();
   auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
+  // Trace observation query uses the canonical storage-owner slot id,
+  // which is always in the design-global coordination space (resolved
+  // at compile time from the storage layout).
   return builder.CreateCall(
-      GetLyraIsTraceObserved(),
+      GetLyraIsTraceObservedGlobal(),
       {GetEnginePointer(), llvm::ConstantInt::get(i32_ty, owner_slot)});
 }
 

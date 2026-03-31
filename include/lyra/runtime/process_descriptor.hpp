@@ -19,7 +19,7 @@ struct ProcessDescriptorEntry {
   void* shared_body;
   uint64_t base_byte_offset;
   uint32_t instance_id;
-  uint32_t signal_id_offset;
+  uint32_t local_signal_coord_base;
 };
 
 static_assert(
@@ -28,6 +28,6 @@ static_assert(
 static_assert(offsetof(ProcessDescriptorEntry, shared_body) == 0);
 static_assert(offsetof(ProcessDescriptorEntry, base_byte_offset) == 8);
 static_assert(offsetof(ProcessDescriptorEntry, instance_id) == 16);
-static_assert(offsetof(ProcessDescriptorEntry, signal_id_offset) == 20);
+static_assert(offsetof(ProcessDescriptorEntry, local_signal_coord_base) == 20);
 
 }  // namespace lyra::runtime

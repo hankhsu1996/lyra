@@ -431,12 +431,12 @@ void Context::SetDynamicInstanceId(llvm::Value* id) {
   dynamic_instance_id_ = id;
 }
 
-void Context::SetSignalIdOffset(llvm::Value* offset) {
-  signal_id_offset_ = offset;
+void Context::SetLocalSignalCoordBase(llvm::Value* base) {
+  local_signal_coord_base_ = base;
 }
 
-auto Context::GetSignalIdOffset() const -> llvm::Value* {
-  return signal_id_offset_;
+auto Context::GetLocalSignalCoordBase() const -> llvm::Value* {
+  return local_signal_coord_base_;
 }
 
 auto Context::GetDynamicInstanceId() const -> llvm::Value* {
@@ -509,15 +509,15 @@ auto Context::EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value* {
       llvm::Type::getInt32Ty(*llvm_context_), id_ptr, "instance_id");
 }
 
-auto Context::EmitLoadSignalIdOffset(llvm::Value* instance_ptr)
+auto Context::EmitLoadLocalSignalCoordBase(llvm::Value* instance_ptr)
     -> llvm::Value* {
-  // Transitional compat field for R1. Targeted for removal in R4/R5.
   using IF = lyra::runtime::RuntimeInstanceField;
   auto* ptr = builder_.CreateStructGEP(
       GetRuntimeInstanceType(), instance_ptr,
-      static_cast<unsigned>(IF::kSignalIdOffset), "signal_id_offset_ptr");
+      static_cast<unsigned>(IF::kLocalSignalCoordBase),
+      "local_signal_coord_base_ptr");
   return builder_.CreateLoad(
-      llvm::Type::getInt32Ty(*llvm_context_), ptr, "signal_id_offset");
+      llvm::Type::getInt32Ty(*llvm_context_), ptr, "local_signal_coord_base");
 }
 
 void Context::EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value) {
@@ -547,7 +547,7 @@ void Context::EmitSharedBodyBindingSetup(llvm::Value* state_arg) {
   SetInstancePointer(inst);
   SetThisPointer(EmitLoadInstanceInlineBase(inst));
   SetDynamicInstanceId(EmitLoadInstanceId(inst));
-  SetSignalIdOffset(EmitLoadSignalIdOffset(inst));
+  SetLocalSignalCoordBase(EmitLoadLocalSignalCoordBase(inst));
 }
 
 void Context::SetStatePointer(llvm::Value* state_ptr) {
@@ -608,14 +608,6 @@ NotificationPolicyScope::~NotificationPolicyScope() {
   ctx_.SetNotificationPolicy(saved_);
 }
 
-void Context::SetFirstDirtySeenPtr(llvm::Value* ptr) {
-  first_dirty_seen_ptr_ = ptr;
-}
-
-auto Context::GetFirstDirtySeenPtr() -> llvm::Value* {
-  return first_dirty_seen_ptr_;
-}
-
 auto Context::SaveExecutionContractState() -> ExecutionContractState {
   return {
       .design_store_mode = design_store_mode_,
@@ -625,11 +617,10 @@ auto Context::SaveExecutionContractState() -> ExecutionContractState {
       .design_ptr = design_ptr_,
       .frame_ptr = frame_ptr_,
       .engine_ptr = engine_ptr_,
-      .first_dirty_seen_ptr = first_dirty_seen_ptr_,
       .instance_ptr = instance_ptr_,
       .this_ptr = this_ptr_,
       .dynamic_instance_id = dynamic_instance_id_,
-      .signal_id_offset = signal_id_offset_,
+      .local_signal_coord_base = local_signal_coord_base_,
   };
 }
 
@@ -642,11 +633,10 @@ void Context::RestoreExecutionContractState(
   design_ptr_ = state.design_ptr;
   frame_ptr_ = state.frame_ptr;
   engine_ptr_ = state.engine_ptr;
-  first_dirty_seen_ptr_ = state.first_dirty_seen_ptr;
   instance_ptr_ = state.instance_ptr;
   this_ptr_ = state.this_ptr;
   dynamic_instance_id_ = state.dynamic_instance_id;
-  signal_id_offset_ = state.signal_id_offset;
+  local_signal_coord_base_ = state.local_signal_coord_base;
 }
 
 ExecutionContractScope::ExecutionContractScope(
@@ -659,10 +649,9 @@ ExecutionContractScope::ExecutionContractScope(
   ctx.SetDesignPointer(nullptr);
   ctx.SetFramePointer(nullptr);
   ctx.SetEnginePointer(nullptr);
-  ctx.SetFirstDirtySeenPtr(nullptr);
   ctx.SetThisPointer(nullptr);
   ctx.SetDynamicInstanceId(nullptr);
-  ctx.SetSignalIdOffset(nullptr);
+  ctx.SetLocalSignalCoordBase(nullptr);
   // spec_slot_info is NOT reset: it is session-scoped (set by
   // CompileModuleSpecSession), not per-function.
 }
@@ -808,7 +797,7 @@ auto Context::BuildUserFunctionType(
   // Module-scoped functions receive specialization-local context
   if (is_module_scoped) {
     param_types.push_back(ptr_ty);  // this_ptr (module instance storage)
-    param_types.push_back(i32_ty);  // signal_id_offset
+    param_types.push_back(ptr_ty);  // instance_ptr (RuntimeInstance*)
     param_types.push_back(i32_ty);  // instance_id
   }
 

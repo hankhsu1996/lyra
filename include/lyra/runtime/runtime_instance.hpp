@@ -60,14 +60,12 @@ struct RuntimeInstance {
   uint32_t module_proc_base = 0;
   uint32_t num_module_processes = 0;
 
-  // Transitional compatibility field for R1.
-  // The global-signal-ID relocation offset needed by generated code to
-  // translate body-local slot IDs into design-global slot IDs. This is NOT
-  // part of the object's semantic identity -- it exists only because the
-  // runtime coordination subsystems (dirty tracking, subscriptions, trace)
-  // still use a flat global signal namespace. Targeted for removal in R4/R5
-  // when process execution moves to object-local signal identity.
-  uint32_t signal_id_offset = 0;
+  // Temporary flat slot-id base for the pre-R3 runtime boundary.
+  // Current code still computes (base + local_id) and feeds globally-indexed
+  // engine APIs. This will be replaced by true engine-private dense
+  // coordination indexing. The value is still the old placement-derived
+  // design-global base offset.
+  uint32_t local_signal_coord_base = 0;
 };
 
 // Strongly typed field indices for RuntimeInstanceStorage.
@@ -90,7 +88,7 @@ enum class RuntimeInstanceField : unsigned {
   kOwnerOrdinal = 4,
   kModuleProcBase = 5,
   kNumModuleProcesses = 6,
-  kSignalIdOffset = 7,
+  kLocalSignalCoordBase = 7,
   kFieldCount = 8,
 };
 
@@ -128,7 +126,7 @@ static_assert(
     offsetof(RuntimeInstance, num_module_processes) ==
     offsetof(RuntimeInstance, module_proc_base) + sizeof(uint32_t));
 static_assert(
-    offsetof(RuntimeInstance, signal_id_offset) ==
+    offsetof(RuntimeInstance, local_signal_coord_base) ==
     offsetof(RuntimeInstance, num_module_processes) + sizeof(uint32_t));
 
 // Allocate zero-initialized owned storage for an instance's inline region.
