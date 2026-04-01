@@ -21,10 +21,6 @@ struct UnionStorageInfo {
   llvm::Type* storage_type;  // [size x i8] array type
 };
 
-// Get LLVM storage type for an integral, rounding up to power-of-2.
-auto GetBackingLlvmType(llvm::LLVMContext& ctx, uint32_t bit_width)
-    -> llvm::Type*;
-
 // Build LLVM type for a TypeId (Context-aware version).
 // Use this when unions may be encountered - uses DataLayout for correct sizing.
 // Returns error for unsupported types (e.g., 4-state unions).

@@ -25,10 +25,12 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
+#include "lyra/llvm_backend/callable_abi.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
+#include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
@@ -801,18 +803,18 @@ auto Context::BuildUserFunctionType(
     param_types.push_back(i32_ty);  // instance_id
   }
 
-  // Add parameter types from signature
+  // Add parameter types from signature.
+  // All direct-value types must be representable by the generic callable
+  // ABI classifier. Output/inout parameters bypass classification and use
+  // pointer-to-destination directly.
   for (const auto& param : sig.params) {
-    llvm::Type* param_ty = nullptr;
-
-    // Output/inout parameters: always pass as pointer to destination
     if (param.kind == mir::PassingKind::kOut ||
         param.kind == mir::PassingKind::kInOut) {
-      param_ty = ptr_ty;  // Pointer to destination (direct passing)
+      param_types.push_back(ptr_ty);
     } else {
-      param_ty = GetLlvmAbiTypeForValue(
+      auto abi_info = ClassifyCallableValueAbi(
           *llvm_context_, param.type, types_, force_two_state_);
-      if (param_ty == nullptr) {
+      if (!abi_info) {
         return std::unexpected(
             GetDiagnosticContext().MakeUnsupported(
                 current_origin_,
@@ -821,16 +823,16 @@ auto Context::BuildUserFunctionType(
                     param.type.value),
                 UnsupportedCategory::kType));
       }
+      param_types.push_back(abi_info->llvm_type);
     }
-
-    param_types.push_back(param_ty);
   }
 
-  // Return type: void for sret, otherwise derive from signature
+  // Return type: void for sret, otherwise classified by the generic
+  // callable ABI. The classifier is the single source of truth for
+  // direct-return LLVM types.
   llvm::Type* llvm_ret_type = nullptr;
 
   if (uses_sret) {
-    // Sret functions return void - the result is written to the sret pointer
     llvm_ret_type = llvm::Type::getVoidTy(*llvm_context_);
   } else {
     const Type& ret_type = types_[sig.return_type];
@@ -838,9 +840,9 @@ auto Context::BuildUserFunctionType(
     if (ret_type.Kind() == TypeKind::kVoid) {
       llvm_ret_type = llvm::Type::getVoidTy(*llvm_context_);
     } else {
-      llvm_ret_type = GetLlvmAbiTypeForValue(
+      auto abi_info = ClassifyCallableValueAbi(
           *llvm_context_, sig.return_type, types_, force_two_state_);
-      if (llvm_ret_type == nullptr) {
+      if (!abi_info) {
         return std::unexpected(
             GetDiagnosticContext().MakeUnsupported(
                 current_origin_,
@@ -849,6 +851,7 @@ auto Context::BuildUserFunctionType(
                     sig.return_type.value),
                 UnsupportedCategory::kType));
       }
+      llvm_ret_type = abi_info->llvm_type;
     }
   }
 

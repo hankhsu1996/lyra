@@ -25,6 +25,7 @@
 #include "lyra/llvm_backend/emit_string_conv.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
+#include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"

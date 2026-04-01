@@ -14,6 +14,7 @@
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/abi_check.hpp"
+#include "lyra/llvm_backend/callable_abi.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/rvalue.hpp"
@@ -117,16 +118,15 @@ auto LowerUserCallImpl(
     const auto& param = resolved.signature->params[param_idx];
 
     if (param.kind == mir::PassingKind::kValue) {
-      // Input parameter: pass value coerced to expected ABI type
+      // Direct value argument: classified by the generic callable ABI.
       if (in_arg_idx >= call.in_args.size()) {
         throw common::InternalError("LowerUserCall", "in_args underflow");
       }
 
-      // Compute expected LLVM type using centralized ABI mapping
-      llvm::Type* expected_type = GetLlvmAbiTypeForValue(
+      auto abi_info = ClassifyCallableValueAbi(
           context.GetLlvmContext(), param.type, context.GetTypeArena(),
           context.IsForceTwoState());
-      if (expected_type == nullptr) {
+      if (!abi_info) {
         throw common::InternalError(
             "LowerUserCall",
             std::format(
@@ -135,7 +135,7 @@ auto LowerUserCallImpl(
       }
 
       auto val_result = LowerOperandAsStorage(
-          context, call.in_args[in_arg_idx], expected_type);
+          context, call.in_args[in_arg_idx], abi_info->llvm_type);
       if (!val_result) return std::unexpected(val_result.error());
       args.push_back(*val_result);
       ++in_arg_idx;
