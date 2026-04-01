@@ -1,0 +1,103 @@
+feature: functions_chandle
+description: >
+  chandle as user-function parameter and return value through the
+  generic internal callable ABI. No DPI involvement.
+
+cases:
+  - name: chandle_param_void_return
+    sv: |
+      module Test;
+        function void takes_chandle(chandle h);
+        endfunction
+
+        initial begin
+          chandle h;
+          h = null;
+          takes_chandle(h);
+        end
+      endmodule
+
+  - name: chandle_return_null
+    sv: |
+      module Test;
+        int result;
+
+        function chandle returns_null();
+          return null;
+        endfunction
+
+        initial begin
+          chandle h;
+          h = returns_null();
+          result = (h == null) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: chandle_identity_roundtrip
+    sv: |
+      module Test;
+        int result;
+
+        function chandle identity(chandle h);
+          return h;
+        endfunction
+
+        initial begin
+          chandle h, r;
+          h = null;
+          r = identity(h);
+          result = (r == null) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: chandle_nested_forwarding
+    sv: |
+      module Test;
+        int result;
+
+        function chandle identity(chandle h);
+          return h;
+        endfunction
+
+        function chandle forward(chandle h);
+          return identity(h);
+        endfunction
+
+        initial begin
+          chandle h, r;
+          h = null;
+          r = forward(h);
+          result = (r == null) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: chandle_local_storage_and_return
+    sv: |
+      module Test;
+        int result;
+
+        function chandle store_and_return(chandle h);
+          chandle local_h;
+          local_h = h;
+          return local_h;
+        endfunction
+
+        initial begin
+          chandle h, r;
+          h = null;
+          r = store_and_return(h);
+          result = (r == null) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

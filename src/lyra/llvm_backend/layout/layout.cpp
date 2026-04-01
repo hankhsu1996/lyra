@@ -25,6 +25,7 @@
 #include "lyra/llvm_backend/layout/layout_four_state.hpp"
 #include "lyra/llvm_backend/layout/storage_types.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
+#include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/effect.hpp"
@@ -45,83 +46,6 @@
 namespace lyra::lowering::mir_to_llvm {
 
 // Get the LLVM storage type for an integral type, rounding up to power-of-2.
-auto GetBackingLlvmType(llvm::LLVMContext& ctx, uint32_t bit_width)
-    -> llvm::Type* {
-  if (bit_width <= 8) {
-    return llvm::Type::getInt8Ty(ctx);
-  }
-  if (bit_width <= 16) {
-    return llvm::Type::getInt16Ty(ctx);
-  }
-  if (bit_width <= 32) {
-    return llvm::Type::getInt32Ty(ctx);
-  }
-  if (bit_width <= 64) {
-    return llvm::Type::getInt64Ty(ctx);
-  }
-  return llvm::Type::getIntNTy(ctx, bit_width);
-}
-
-// Get the LLVM struct type for a 4-state value: {iN_storage, iN_storage}
-auto GetBackingFourStateType(llvm::LLVMContext& ctx, uint32_t bit_width)
-    -> llvm::StructType* {
-  auto* elem = GetBackingLlvmType(ctx, bit_width);
-  return llvm::StructType::get(ctx, {elem, elem});
-}
-
-auto GetLlvmAbiTypeForValue(
-    llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types,
-    bool force_two_state) -> llvm::Type* {
-  const auto& type = types[type_id];
-
-  // Handle types (passed as ptr handle value)
-  if (type.Kind() == TypeKind::kString ||
-      type.Kind() == TypeKind::kDynamicArray ||
-      type.Kind() == TypeKind::kQueue ||
-      type.Kind() == TypeKind::kAssociativeArray) {
-    return llvm::PointerType::getUnqual(ctx);
-  }
-
-  // Floating point
-  if (type.Kind() == TypeKind::kReal) {
-    return llvm::Type::getDoubleTy(ctx);
-  }
-  if (type.Kind() == TypeKind::kShortReal) {
-    return llvm::Type::getFloatTy(ctx);
-  }
-
-  // Packed integrals (2-state or 4-state)
-  if (IsPacked(type)) {
-    uint32_t width = PackedBitWidth(type, types);
-    if (IsLayoutPackedFourState(type, types, force_two_state)) {
-      return GetBackingFourStateType(ctx, width);
-    }
-    return GetBackingLlvmType(ctx, width);
-  }
-
-  // Aggregates (unpacked array/struct/union) - not passable by value
-  // Return nullptr; caller must handle via out-param or error
-  if (type.Kind() == TypeKind::kUnpackedArray ||
-      type.Kind() == TypeKind::kUnpackedStruct ||
-      type.Kind() == TypeKind::kUnpackedUnion) {
-    return nullptr;
-  }
-
-  // Void - cannot be passed by value (throw, don't return nullptr)
-  if (type.Kind() == TypeKind::kVoid) {
-    throw common::InternalError(
-        "GetLlvmAbiTypeForValue",
-        std::format("void type {} cannot be passed by value", type_id.value));
-  }
-
-  // Unsupported type kind (throw, don't return nullptr)
-  throw common::InternalError(
-      "GetLlvmAbiTypeForValue",
-      std::format(
-          "unsupported type kind {} for type {}", static_cast<int>(type.Kind()),
-          type_id.value));
-}
-
 namespace {
 
 // GetLlvmTypeForTypeId is declared in the header (layout.hpp) and defined

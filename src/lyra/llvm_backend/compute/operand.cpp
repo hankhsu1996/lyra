@@ -23,6 +23,7 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
+#include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"

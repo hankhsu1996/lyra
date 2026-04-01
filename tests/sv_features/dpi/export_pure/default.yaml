@@ -126,6 +126,33 @@ cases:
         initial begin end
       endmodule
 
+  # D3c boundary-reuse regression: export wrapper that hands off to an
+  # internal function with chandle param should now build because the
+  # shared internal callable ABI supports chandle as a direct value.
+  - name: accept_package_export_chandle_param
+    sv: |
+      package dpi_pkg;
+        function int check_handle(chandle h);
+          return (h == null) ? 1 : 0;
+        endfunction
+        export "DPI-C" function check_handle;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+
+  - name: accept_package_export_chandle_return
+    sv: |
+      package dpi_pkg;
+        function chandle get_null_handle();
+          return null;
+        endfunction
+        export "DPI-C" function get_null_handle;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+
   - name: reject_export_unsupported_return_type
     sv: |
       package dpi_pkg;

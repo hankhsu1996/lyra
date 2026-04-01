@@ -21,6 +21,7 @@
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/storage_boundary.hpp"
+#include "lyra/llvm_backend/value_repr.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

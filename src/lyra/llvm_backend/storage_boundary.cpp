@@ -11,6 +11,7 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/llvm_backend/canonical_plane_write.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
+#include "lyra/llvm_backend/value_repr.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 

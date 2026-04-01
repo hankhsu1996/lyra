@@ -9,6 +9,7 @@
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
+#include "lyra/llvm_backend/value_repr.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
