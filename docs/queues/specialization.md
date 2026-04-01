@@ -27,6 +27,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
   - [ ] m3 -- Param transmission table: replace raw symbol pointers with group-scoped key
   - [ ] F1-impl -- Per-group isolated compilation with deterministic merge
 - [ ] F2 -- Specialization caching
+- [x] I1 -- Constructor-time container construction recipes
 - [ ] Documentation: natural model, ownership boundaries, and runtime model docs need alignment
 - [ ] CI policy gates: specialization invariants and natural model regression checks
 
@@ -124,6 +125,18 @@ Independent of the R-series. Can proceed in parallel.
 ## F2: Specialization caching
 
 Not yet designed. Depends on F1 completing the parallel compilation model.
+
+## I1: Constructor-time container construction recipes
+
+**Current state:** the descriptor/ABI layer has been migrated. Body and package descriptors now carry typed `StorageConstructionOp` arrays with explicit op kinds (kScalarFourStateInit, kStructInit, kInlineArrayInit, kOwnedContainerConstruct) that preserve container structure. The compile-time recipe builder produces these from the `StorageSpecArena` tree. The constructor carries the recipe data through the ABI boundary but does not yet interpret it -- a hard failure guard rejects non-empty recipes until the runtime interpreter lands.
+
+**Target:** implement the runtime recipe interpreter that applies construction recipes at constructor time, then delete the old flat patch/handle code paths entirely. The constructor should perform generic recursive element initialization driven by the recipe, with container realization (handle binding + backing setup) as a first-class operation.
+
+**Remaining work:** runtime recipe interpreter (`storage_construction.cpp`), dead-code cleanup (delete `init_descriptor_utils.*`, old patch/handle types from `body_realization_desc.hpp`), shape validation tests proving O(1) recipe size for uniform containers.
+
+**Why separate from R4:** this is a body-descriptor-internal representation concern. It replaces the wrong abstraction (flat byte-write patches) with a container-aware construction model, independently of the constructor-to-runtime handoff restructuring in R4.
+
+Where to look: `storage_construction_recipe.hpp` (recipe IR), `storage_construction_recipe_builder.cpp` (compile-time builder), constructor init application path, `emit_design_main.cpp` (recipe emission).
 
 ## Documentation: natural model and runtime model alignment
 

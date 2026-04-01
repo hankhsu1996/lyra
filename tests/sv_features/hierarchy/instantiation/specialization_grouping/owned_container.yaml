@@ -10,6 +10,9 @@ cases:
       Two parameterized arrays with different sizes plus a scalar after them.
       All slots must have stable offsets. Both arrays must be correctly
       accessible and the scalar must be at the correct position.
+      Both instances share one specialization (unpacked dims are
+      constructor-owned, not compile-owned).
+    dump_specialization_map: true
     sv: |
       module M #(parameter int A = 4, parameter int B = 2);
         int arr_a[A];
@@ -28,6 +31,10 @@ cases:
         M #(.A(8), .B(6)) m2();
       endmodule
     expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 2"
+          - "instances=2"
       stdout:
         contains:
           - "a0=100 b0=200 flag=42"
@@ -36,6 +43,7 @@ cases:
     description: >
       Non-blocking assignment to an element of an owned container array.
       Verifies the NBA write path works through owned storage handles.
+    dump_specialization_map: true
     sv: |
       module M #(parameter int DEPTH = 4);
         bit [7:0] data [DEPTH];
@@ -62,6 +70,10 @@ cases:
         M #(.DEPTH(8)) m8();
       endmodule
     expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 2"
+          - "instances=2"
       stdout:
         contains:
           - "depth=4 v=ab"
@@ -71,6 +83,7 @@ cases:
     description: >
       Module with both inline (scalar, fixed-size array) and owned
       (parameterized array) slots. Verifies mixed storage works correctly.
+    dump_specialization_map: true
     sv: |
       module M #(parameter int DEPTH = 4);
         int fixed[2];
@@ -91,6 +104,10 @@ cases:
         M #(.DEPTH(7)) m7();
       endmodule
     expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 2"
+          - "instances=2"
       stdout:
         contains:
           - "f0=10 f1=20 d0=30 s=40 depth=3"
@@ -100,6 +117,7 @@ cases:
     description: >
       Nested unpacked array where the outer dimension varies.
       int data[STAGES][8] where STAGES is parameterized.
+    dump_specialization_map: true
     sv: |
       module M #(parameter int STAGES = 2);
         int data[STAGES][8];
@@ -115,6 +133,10 @@ cases:
         M #(.STAGES(4)) m4();
       endmodule
     expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 2"
+          - "instances=2"
       stdout:
         contains:
           - "stages=2 d00=100 d07=200"
@@ -151,6 +173,8 @@ cases:
       Under the current conservative policy, the fixed-size array is
       still classified as owned-container storage because the module
       has promoted parameters. This documents the accepted tradeoff.
+      Different packed widths produce separate specializations.
+    dump_specialization_map: true
     sv: |
       module M #(parameter int WIDTH = 8);
         bit [WIDTH-1:0] value;
@@ -168,6 +192,9 @@ cases:
         M #(.WIDTH(16)) m16();
       endmodule
     expect:
+      compiler_output:
+        contains:
+          - "spec_groups: 3"
       stdout:
         contains:
           - "w=8 v=255 a0=10 a3=40"

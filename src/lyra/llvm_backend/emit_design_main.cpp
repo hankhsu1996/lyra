@@ -572,10 +572,12 @@ struct ObservableDescriptorEmission {
 // Emitted body descriptor package: descriptor header, process entries,
 // and metadata/trigger/comb/observable templates. One per body.
 struct InitDescriptorEmission {
-  llvm::Constant* patches_ptr;
-  uint32_t num_patches;
-  llvm::Constant* handles_ptr;
-  uint32_t num_handles;
+  llvm::Constant* recipe_ptr;
+  uint32_t num_recipe_ops;
+  llvm::Constant* recipe_roots_ptr;
+  uint32_t num_recipe_roots;
+  llvm::Constant* recipe_child_indices_ptr;
+  uint32_t num_recipe_child_indices;
   llvm::Constant* param_slots_ptr;
   uint32_t num_param_slots;
 };
@@ -782,73 +784,100 @@ auto EmitObservableDescriptorTemplate(
 
 auto EmitInitDescriptor(
     llvm::LLVMContext& ctx, llvm::Module& mod,
-    std::span<const runtime::InitPatchEntry> patches,
-    std::span<const runtime::InitHandleEntry> handles,
+    std::span<const runtime::StorageConstructionOp> recipe,
+    std::span<const uint32_t> recipe_roots,
+    std::span<const uint32_t> recipe_child_indices,
     std::span<const runtime::ParamInitSlotEntry> param_slots,
     const std::string& name_prefix) -> InitDescriptorEmission {
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
-  auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
   InitDescriptorEmission result{};
-  result.patches_ptr = null_ptr;
-  result.num_patches = 0;
-  result.handles_ptr = null_ptr;
-  result.num_handles = 0;
+  result.recipe_ptr = null_ptr;
+  result.num_recipe_ops = 0;
+  result.recipe_roots_ptr = null_ptr;
+  result.num_recipe_roots = 0;
+  result.recipe_child_indices_ptr = null_ptr;
+  result.num_recipe_child_indices = 0;
   result.param_slots_ptr = null_ptr;
   result.num_param_slots = 0;
 
-  // Emit patches: {i32 rel_byte_offset, i32 byte_width, i64 mask}
-  if (!patches.empty()) {
-    auto* entry_ty = llvm::StructType::get(ctx, {i32_ty, i32_ty, i64_ty});
-    std::vector<llvm::Constant*> constants;
-    constants.reserve(patches.size());
-    for (const auto& p : patches) {
-      constants.push_back(
-          llvm::ConstantStruct::get(
-              entry_ty, {llvm::ConstantInt::get(i32_ty, p.rel_byte_offset),
-                         llvm::ConstantInt::get(i32_ty, p.byte_width),
-                         llvm::ConstantInt::get(i64_ty, p.mask)}));
-    }
-    auto num = static_cast<uint32_t>(patches.size());
-    auto* arr_ty = llvm::ArrayType::get(entry_ty, num);
+  // Emit storage construction recipe ops as a raw byte blob.
+  //
+  // StorageConstructionOp is a POD tagged union (trivially copyable,
+  // standard layout). We emit the entire op array as a single
+  // [N * sizeof(Op) x i8] constant with the correct alignment.
+  // The runtime reads via const StorageConstructionOp* pointer,
+  // which is valid because the alignment and size contract is
+  // enforced by static_assert in the recipe header.
+  //
+  // This approach is preferred over per-field LLVM struct emission
+  // because the union variant makes typed emission complex, and the
+  // POD contract guarantees identical binary representation.
+  if (!recipe.empty()) {
+    constexpr auto kOpSize = sizeof(runtime::StorageConstructionOp);
+    constexpr auto kOpAlign = alignof(runtime::StorageConstructionOp);
+    auto num = static_cast<uint32_t>(recipe.size());
+    auto total_bytes = num * kOpSize;
+
+    // Build raw byte data from the POD op array.
+    auto blob = llvm::StringRef(
+        reinterpret_cast<const char*>(recipe.data()), total_bytes);
+    auto* data = llvm::ConstantDataArray::getRaw(blob, total_bytes, i8_ty);
+
     auto* global = new llvm::GlobalVariable(
-        mod, arr_ty, true, llvm::GlobalValue::InternalLinkage,
-        llvm::ConstantArray::get(arr_ty, constants),
-        name_prefix + "_init_patches");
+        mod, data->getType(), true, llvm::GlobalValue::InternalLinkage, data,
+        name_prefix + "_init_recipe");
     global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    global->setAlignment(llvm::Align(kOpAlign));
     auto* zero = llvm::ConstantInt::get(i32_ty, 0);
-    result.patches_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
-        arr_ty, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
-    result.num_patches = num;
+    result.recipe_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        data->getType(), global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+    result.num_recipe_ops = num;
   }
 
-  // Emit handles: {i32 handle_rel, i32 backing_rel, i64 backing_size}
-  if (!handles.empty()) {
-    auto* entry_ty = llvm::StructType::get(ctx, {i32_ty, i32_ty, i64_ty});
+  // Emit recipe root indices: [N x i32]
+  if (!recipe_roots.empty()) {
     std::vector<llvm::Constant*> constants;
-    constants.reserve(handles.size());
-    for (const auto& h : handles) {
-      constants.push_back(
-          llvm::ConstantStruct::get(
-              entry_ty,
-              {llvm::ConstantInt::get(i32_ty, h.handle_rel_byte_offset),
-               llvm::ConstantInt::get(i32_ty, h.backing_rel_byte_offset),
-               llvm::ConstantInt::get(i64_ty, h.backing_byte_size)}));
+    constants.reserve(recipe_roots.size());
+    for (uint32_t root : recipe_roots) {
+      constants.push_back(llvm::ConstantInt::get(i32_ty, root));
     }
-    auto num = static_cast<uint32_t>(handles.size());
-    auto* arr_ty = llvm::ArrayType::get(entry_ty, num);
+    auto num = static_cast<uint32_t>(recipe_roots.size());
+    auto* arr_ty = llvm::ArrayType::get(i32_ty, num);
     auto* global = new llvm::GlobalVariable(
         mod, arr_ty, true, llvm::GlobalValue::InternalLinkage,
         llvm::ConstantArray::get(arr_ty, constants),
-        name_prefix + "_init_handles");
+        name_prefix + "_init_recipe_roots");
     global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     auto* zero = llvm::ConstantInt::get(i32_ty, 0);
-    result.handles_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+    result.recipe_roots_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
         arr_ty, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
-    result.num_handles = num;
+    result.num_recipe_roots = num;
+  }
+
+  // Emit recipe child indices: [N x i32]
+  if (!recipe_child_indices.empty()) {
+    std::vector<llvm::Constant*> constants;
+    constants.reserve(recipe_child_indices.size());
+    for (uint32_t idx : recipe_child_indices) {
+      constants.push_back(llvm::ConstantInt::get(i32_ty, idx));
+    }
+    auto num = static_cast<uint32_t>(recipe_child_indices.size());
+    auto* arr_ty = llvm::ArrayType::get(i32_ty, num);
+    auto* global = new llvm::GlobalVariable(
+        mod, arr_ty, true, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantArray::get(arr_ty, constants),
+        name_prefix + "_init_recipe_child_indices");
+    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+    result.recipe_child_indices_ptr =
+        llvm::ConstantExpr::getInBoundsGetElementPtr(
+            arr_ty, global, llvm::ArrayRef<llvm::Constant*>{zero, zero});
+    result.num_recipe_child_indices = num;
   }
 
   // Emit param slots: {i32 rel_byte_offset, i32 byte_size}
@@ -942,8 +971,9 @@ auto GetBodyDescriptorRefType(llvm::LLVMContext& ctx) -> llvm::StructType* {
        ptr_ty, i32_ty, ptr_ty, i32_ty,
        // observable: entries, num, pool, pool_size
        ptr_ty, i32_ty, ptr_ty, i32_ty,
-       // init: patches, num, handles, num, param_slots, num
-       ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty});
+       // init: recipe, num_ops, roots, num_roots, child_indices, num,
+       //       param_slots, num
+       ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty});
 }
 
 // Encode one BodyDescriptorPackageEmission as a BodyDescriptorRef constant.
@@ -973,10 +1003,12 @@ auto EncodeBodyDescriptorRef(
            llvm::ConstantInt::get(i32_ty, pkg.observable.num_entries),
            pkg.observable.pool_ptr,
            llvm::ConstantInt::get(i32_ty, pkg.observable.pool_size),
-           pkg.init.patches_ptr,
-           llvm::ConstantInt::get(i32_ty, pkg.init.num_patches),
-           pkg.init.handles_ptr,
-           llvm::ConstantInt::get(i32_ty, pkg.init.num_handles),
+           pkg.init.recipe_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.init.num_recipe_ops),
+           pkg.init.recipe_roots_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.init.num_recipe_roots),
+           pkg.init.recipe_child_indices_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.init.num_recipe_child_indices),
            pkg.init.param_slots_ptr,
            llvm::ConstantInt::get(i32_ty, pkg.init.num_param_slots)});
 }
@@ -1420,8 +1452,9 @@ auto EmitBodyRealizationDescs(
         std::format("__lyra_body_desc_{}", body_id_val));
 
     auto init_emission = EmitInitDescriptor(
-        ctx, mod, info.init.four_state_patches, info.init.owned_handles,
-        info.init.param_slots, std::format("__lyra_body_desc_{}", body_id_val));
+        ctx, mod, info.init.storage_recipe, info.init.recipe_root_indices,
+        info.init.recipe_child_indices, info.init.param_slots,
+        std::format("__lyra_body_desc_{}", body_id_val));
 
     result.push_back(
         BodyDescriptorPackageEmission{
@@ -2009,7 +2042,7 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           {ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i64_ty,
            ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
            i32_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-           ptr_ty, i32_ty, ptr_ty, i32_ty}),
+           ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}),
       .add_connection =
           declare("LyraConstructorAddConnection", void_ty, {ptr_ty, ptr_ty}),
       .run_program = declare(
@@ -2115,10 +2148,12 @@ auto EmitConstructorFunction(
        llvm::ConstantInt::get(i32_ty, pkg_observable.num_entries),
        pkg_observable.pool_ptr,
        llvm::ConstantInt::get(i32_ty, pkg_observable.pool_size),
-       pkg_init.patches_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg_init.num_patches),
-       pkg_init.handles_ptr,
-       llvm::ConstantInt::get(i32_ty, pkg_init.num_handles)},
+       pkg_init.recipe_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg_init.num_recipe_ops),
+       pkg_init.recipe_roots_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg_init.num_recipe_roots),
+       pkg_init.recipe_child_indices_ptr,
+       llvm::ConstantInt::get(i32_ty, pkg_init.num_recipe_child_indices)},
       "ctor");
 
   // Add connection processes.
@@ -2332,8 +2367,10 @@ auto EmitDesignMain(
       // Emit package/global init descriptor globals.
       auto pkg_init_emission = EmitInitDescriptor(
           ctx, context.GetModule(),
-          layout.package_init_descriptor.four_state_patches,
-          layout.package_init_descriptor.owned_handles, {}, "__lyra_pkg");
+          layout.package_init_descriptor.storage_recipe,
+          layout.package_init_descriptor.recipe_root_indices,
+          layout.package_init_descriptor.recipe_child_indices,
+          std::span<const runtime::ParamInitSlotEntry>{}, "__lyra_pkg");
 
       // Emit the constructor function: creates the constructor, adds
       // connections, and replays the construction program via a single

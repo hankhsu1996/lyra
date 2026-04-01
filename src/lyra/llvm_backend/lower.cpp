@@ -40,6 +40,7 @@
 #include "lyra/llvm_backend/observable_descriptor_utils.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
+#include "lyra/llvm_backend/storage_construction_recipe_builder.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
@@ -1936,27 +1937,20 @@ auto CompileDesignProcesses(const LoweringInput& input)
         if (is_owned) {
           uint64_t backing_rel =
               *layout->design.owned_data_offsets[gsi] - init_owned_base->value;
-
-          info.init.owned_handles.push_back(
-              runtime::InitHandleEntry{
-                  .handle_rel_byte_offset =
-                      NarrowToU32(inst_rel_offset, "init handle rel offset"),
-                  .backing_rel_byte_offset =
-                      NarrowToU32(backing_rel, "init backing rel offset"),
-                  .backing_byte_size = spec.TotalByteSize(),
-              });
-
-          const auto& spec_arena = layout->design.storage_spec_arena;
-          if (HasFourStateContent(spec, spec_arena)) {
-            FlattenFourStatePatches(
-                spec, spec_arena, backing_rel, info.init.four_state_patches);
+          if (auto root = BuildStorageConstructionRecipeForSlot(
+                  spec, layout->design.storage_spec_arena,
+                  NarrowToU32(inst_rel_offset, "init rel offset"), true,
+                  NarrowToU32(inst_rel_offset, "init handle rel offset"),
+                  NarrowToU32(backing_rel, "init backing rel offset"),
+                  info.init.storage_recipe, info.init.recipe_child_indices)) {
+            info.init.recipe_root_indices.push_back(*root);
           }
         } else {
-          const auto& spec_arena = layout->design.storage_spec_arena;
-          if (HasFourStateContent(spec, spec_arena)) {
-            FlattenFourStatePatches(
-                spec, spec_arena, inst_rel_offset,
-                info.init.four_state_patches);
+          if (auto root = BuildStorageConstructionRecipeForSlot(
+                  spec, layout->design.storage_spec_arena,
+                  NarrowToU32(inst_rel_offset, "init rel offset"), false, 0, 0,
+                  info.init.storage_recipe, info.init.recipe_child_indices)) {
+            info.init.recipe_root_indices.push_back(*root);
           }
         }
       }
@@ -2076,22 +2070,20 @@ auto CompileDesignProcesses(const LoweringInput& input)
         bool is_owned = layout->design.owned_data_offsets[gsi].has_value();
         if (is_owned) {
           uint64_t backing_abs = *layout->design.owned_data_offsets[gsi];
-          pkg_init.owned_handles.push_back(
-              runtime::InitHandleEntry{
-                  .handle_rel_byte_offset =
-                      NarrowToU32(abs_offset, "pkg init handle offset"),
-                  .backing_rel_byte_offset =
-                      NarrowToU32(backing_abs, "pkg init backing offset"),
-                  .backing_byte_size = spec.TotalByteSize(),
-              });
-          if (HasFourStateContent(spec, spec_arena)) {
-            FlattenFourStatePatches(
-                spec, spec_arena, backing_abs, pkg_init.four_state_patches);
+          if (auto root = BuildStorageConstructionRecipeForSlot(
+                  spec, spec_arena,
+                  NarrowToU32(abs_offset, "pkg init rel offset"), true,
+                  NarrowToU32(abs_offset, "pkg init handle offset"),
+                  NarrowToU32(backing_abs, "pkg init backing offset"),
+                  pkg_init.storage_recipe, pkg_init.recipe_child_indices)) {
+            pkg_init.recipe_root_indices.push_back(*root);
           }
         } else {
-          if (HasFourStateContent(spec, spec_arena)) {
-            FlattenFourStatePatches(
-                spec, spec_arena, abs_offset, pkg_init.four_state_patches);
+          if (auto root = BuildStorageConstructionRecipeForSlot(
+                  spec, spec_arena,
+                  NarrowToU32(abs_offset, "pkg init rel offset"), false, 0, 0,
+                  pkg_init.storage_recipe, pkg_init.recipe_child_indices)) {
+            pkg_init.recipe_root_indices.push_back(*root);
           }
         }
       }

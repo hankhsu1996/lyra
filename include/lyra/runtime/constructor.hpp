@@ -63,16 +63,6 @@ struct ObservableDescriptorTemplateView {
   uint32_t pool_size = 0;
 };
 
-// Non-owning view of init patch entries for the C ABI boundary.
-struct InitPatchView {
-  std::span<const InitPatchEntry> entries;
-};
-
-// Non-owning view of init handle entries for the C ABI boundary.
-struct InitHandleView {
-  std::span<const InitHandleEntry> entries;
-};
-
 // Non-owning view of param init slot template entries for the C ABI boundary.
 struct ParamInitView {
   std::span<const ParamInitSlotEntry> slots;
@@ -91,8 +81,8 @@ struct BodyDescriptorPackage {
   TriggerTemplateView triggers;
   CombTemplateView comb;
   ObservableDescriptorTemplateView observable_descriptors;
-  InitPatchView init_patches;
-  InitHandleView init_handles;
+  StorageConstructionRecipeView init_recipe;
+  StorageConstructionRootView init_recipe_roots;
   ParamInitView init_params;
 };
 
@@ -268,7 +258,8 @@ class Constructor {
       std::span<std::byte> design_state, ProcessMetaTemplateView conn_meta,
       TriggerTemplateView conn_triggers,
       ObservableDescriptorTemplateView pkg_observable,
-      InitPatchView pkg_init_patches, InitHandleView pkg_init_handles);
+      StorageConstructionRecipeView pkg_init_recipe,
+      StorageConstructionRootView pkg_init_recipe_roots);
 
   // Add a connection process. Must be called before any BeginBody/AddInstance.
   // Fails immediately if connection template is exhausted.
@@ -323,8 +314,8 @@ class Constructor {
     TriggerTemplateView triggers;
     CombTemplateView comb;
     ObservableDescriptorTemplateView observable_descriptors;
-    InitPatchView init_patches;
-    InitHandleView init_handles;
+    StorageConstructionRecipeView init_recipe;
+    StorageConstructionRootView init_recipe_roots;
     ParamInitView init_params;
     bool active = false;
   };
@@ -372,9 +363,9 @@ class Constructor {
   // construction).
   ObservableDescriptorTemplateView pkg_observable_;
 
-  // Package/global init descriptor views (immutable after construction).
-  InitPatchView pkg_init_patches_;
-  InitHandleView pkg_init_handles_;
+  // Package/global storage construction recipe (immutable after construction).
+  StorageConstructionRecipeView pkg_init_recipe_;
+  StorageConstructionRootView pkg_init_recipe_roots_;
 
   // Process-index verification infrastructure.
   uint32_t next_module_instance_ordinal_ = 0;
@@ -434,10 +425,11 @@ auto LyraConstructorCreate(
     const uint8_t* conn_trigger_groupable,
     const lyra::runtime::ObservableDescriptorEntry* pkg_obs_entries,
     uint32_t num_pkg_obs, const char* pkg_obs_pool, uint32_t pkg_obs_pool_size,
-    const lyra::runtime::InitPatchEntry* pkg_init_patches,
-    uint32_t num_pkg_init_patches,
-    const lyra::runtime::InitHandleEntry* pkg_init_handles,
-    uint32_t num_pkg_init_handles) -> void*;
+    const lyra::runtime::StorageConstructionOp* pkg_init_recipe,
+    uint32_t num_pkg_init_recipe_ops, const uint32_t* pkg_init_recipe_roots,
+    uint32_t num_pkg_init_recipe_roots,
+    const uint32_t* pkg_init_recipe_child_indices,
+    uint32_t num_pkg_init_recipe_child_indices) -> void*;
 
 void LyraConstructorAddConnection(
     void* ctor, const lyra::runtime::ConnectionRealizationDesc* desc);
@@ -458,10 +450,10 @@ void LyraConstructorBeginBody(
     uint32_t num_comb_kernels,
     const lyra::runtime::ObservableDescriptorEntry* obs_entries,
     uint32_t num_obs, const char* obs_pool, uint32_t obs_pool_size,
-    const lyra::runtime::InitPatchEntry* init_patches,
-    uint32_t num_init_patches,
-    const lyra::runtime::InitHandleEntry* init_handles,
-    uint32_t num_init_handles,
+    const lyra::runtime::StorageConstructionOp* init_recipe,
+    uint32_t num_init_recipe_ops, const uint32_t* init_recipe_roots,
+    uint32_t num_init_recipe_roots, const uint32_t* init_recipe_child_indices,
+    uint32_t num_init_recipe_child_indices,
     const lyra::runtime::ParamInitSlotEntry* init_param_slots,
     uint32_t num_init_param_slots);
 
