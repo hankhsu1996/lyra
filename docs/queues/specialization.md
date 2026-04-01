@@ -116,6 +116,23 @@ After C1 and the R-series migrations, compile time, optimize time, and object em
 
 Validation: re-run the generate-expand compile benchmark at 128 / 1024 / 4096 instances and verify that all three compile phases (lower_llvm, optimize_ir, emit_obj) are flat or near-flat across instance count changes.
 
+**Current status (post-I1):** LLVM IR line count is constant (1051 lines at all N). But optimize_ir and emit_obj still scale linearly because four emitted LLVM constant globals grow with instance count:
+
+- `__lyra_slot_byte_offsets` -- `[N*slots_per_instance x i64]`, per-slot per-instance byte offsets
+- `__lyra_path_pool` -- `[~18*N x i8]`, per-instance hierarchical path strings
+- `__lyra_param_pool` -- `[4*N x i8]`, per-instance parameter value payloads
+- `__lyra_construction_program` -- `[N x ConstructionProgramEntry]`, one entry per instance
+
+Measured scaling (generate-expand, -c opt):
+
+| N    | lower_llvm | optimize_ir | emit_obj |
+| ---- | ---------- | ----------- | -------- |
+| 128  | 0.00s      | 0.09s       | 0.14s    |
+| 1024 | 0.02s      | 0.42s       | 0.91s    |
+| 4096 | 0.08s      | 1.82s       | 4.45s    |
+
+Body descriptors and recipes are O(1). The remaining O(N) data is constructor-time topology data (paths, params, slot offsets, program entries) that is currently baked into LLVM constants at compile time. These should be moved out of the LLVM compilation path entirely.
+
 ## F1: Parallel specialization compilation
 
 See [parallel-compilation.md](../parallel-compilation.md) for the full design. All prep cuts are complete. Next: m3 (param transmission table) then F1-impl (per-group isolated compilation with deterministic merge).
@@ -126,17 +143,11 @@ Independent of the R-series. Can proceed in parallel.
 
 Not yet designed. Depends on F1 completing the parallel compilation model.
 
-## I1: Constructor-time container construction recipes
+## I1: Constructor-time container construction recipes (completed)
 
-**Current state:** the descriptor/ABI layer has been migrated. Body and package descriptors now carry typed `StorageConstructionOp` arrays with explicit op kinds (kScalarFourStateInit, kStructInit, kInlineArrayInit, kOwnedContainerConstruct) that preserve container structure. The compile-time recipe builder produces these from the `StorageSpecArena` tree. The constructor carries the recipe data through the ABI boundary but does not yet interpret it -- a hard failure guard rejects non-empty recipes until the runtime interpreter lands.
+Replaced the flat InitPatchEntry/InitHandleEntry model with a typed storage construction recipe IR. Body and package descriptors now carry `StorageConstructionOp` arrays with explicit op kinds (kScalarFourStateInit, kStructInit, kInlineArrayInit, kOwnedContainerConstruct) that preserve container structure. The compile-time recipe builder produces O(1) recipes from the StorageSpecArena tree. The runtime interpreter applies recipes recursively at constructor time, performing container handle realization and element initialization as first-class operations.
 
-**Target:** implement the runtime recipe interpreter that applies construction recipes at constructor time, then delete the old flat patch/handle code paths entirely. The constructor should perform generic recursive element initialization driven by the recipe, with container realization (handle binding + backing setup) as a first-class operation.
-
-**Remaining work:** runtime recipe interpreter (`storage_construction.cpp`), dead-code cleanup (delete `init_descriptor_utils.*`, old patch/handle types from `body_realization_desc.hpp`), shape validation tests proving O(1) recipe size for uniform containers.
-
-**Why separate from R4:** this is a body-descriptor-internal representation concern. It replaces the wrong abstraction (flat byte-write patches) with a container-aware construction model, independently of the constructor-to-runtime handoff restructuring in R4.
-
-Where to look: `storage_construction_recipe.hpp` (recipe IR), `storage_construction_recipe_builder.cpp` (compile-time builder), constructor init application path, `emit_design_main.cpp` (recipe emission).
+Key files: `storage_construction_recipe.hpp` (recipe IR), `storage_construction_recipe_builder.cpp` (compile-time builder), `storage_construction.cpp` (runtime interpreter).
 
 ## Documentation: natural model and runtime model alignment
 
