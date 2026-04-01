@@ -480,6 +480,7 @@ auto PrepareLlvmModule(
       .signal_trace_path = {},
       .iteration_limit = 0,
       .force_two_state = force_two_state,
+      .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
   };
 
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);

@@ -17,6 +17,8 @@ struct Package {
   // DPI-C import declarations owned by this package.
   // Downstream design-level resolution is built from this owned collection.
   std::vector<DpiImportDecl> dpi_imports;
+  // DPI-C export declarations owned by this package.
+  std::vector<DpiExportDecl> dpi_exports;
   ProcessId init_process = kInvalidProcessId;
 };
 

@@ -219,6 +219,8 @@ auto main(int argc, char* argv[]) -> int {
           return lyra::driver::DumpHir(*input);
         case lyra::driver::DumpFormat::kMir:
           return lyra::driver::DumpMir(*input);
+        case lyra::driver::DumpFormat::kDpiHeader:
+          return lyra::driver::DumpDpiHeader(*input);
         case lyra::driver::DumpFormat::kLlvm:
           return lyra::driver::DumpLlvm(*input);
       }

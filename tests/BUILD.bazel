@@ -155,3 +155,12 @@ cc_test(
         "@googletest//:gtest",
     ],
 )
+
+cc_test(
+    name = "dpi_visible_name_collision_test",
+    srcs = ["dpi_visible_name_collision_test.cpp"],
+    deps = [
+        "//:lowering",
+        "@googletest//:gtest_main",
+    ],
+)

@@ -164,6 +164,7 @@ auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
   mir::Design design = std::move(design_result->design);
   auto compiled_bindings = std::move(design_result->compiled_bindings);
   auto body_origins = std::move(design_result->body_origins);
+  auto dpi_export_wrappers = std::move(design_result->dpi_export_wrappers);
 
   // Pre-optimization verification: lowered MIR must be structurally valid
   VerifyLoweredMir(design, *design_arena, *input.type_arena);
@@ -183,6 +184,8 @@ auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
       .body_origins = std::move(body_origins),
       .stats = stats,
       .compiled_bindings = std::move(compiled_bindings),
+      .dpi_export_wrappers = std::move(dpi_export_wrappers),
+      .dpi_header = std::move(design_result->dpi_header),
   };
 }
 

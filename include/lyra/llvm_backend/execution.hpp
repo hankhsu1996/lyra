@@ -90,6 +90,10 @@ struct JitCompileOptions {
   // DPI link input paths to load into the JIT symbol resolver.
   // These must be validated (absolute, existing) before reaching here.
   std::vector<std::filesystem::path> dpi_link_inputs;
+  // DPI object file paths to add directly to the JIT's symbol space.
+  // Used when DPI code contains both import and export symbols that
+  // need bidirectional resolution within the same JITDylib.
+  std::vector<std::filesystem::path> dpi_object_inputs;
 };
 
 // Holds compiled JIT state. Must stay alive during simulation

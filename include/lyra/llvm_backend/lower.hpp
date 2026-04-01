@@ -99,6 +99,9 @@ struct LoweringInput {
   bool force_two_state = false;  // Force 2-state LLVM representation
   bool collect_forwarding_analysis = false;
   MainAbi main_abi = MainAbi::kEmbeddedPlusargs;
+  // DPI export wrapper descriptors for wrapper emission.
+  // Owned by the MIR lowering result; passed by pointer (nullable).
+  const std::vector<mir::DpiExportWrapperDesc>* dpi_export_wrappers = nullptr;
 };
 
 struct LoweringResult {

@@ -47,4 +47,33 @@ struct DpiImportDecl {
   std::vector<DpiParam> params;
 };
 
+// Normalized DPI-C export declaration.
+// Lean declaration metadata only. Does not carry ABI-classified types.
+// The canonical DPI signature for each export is produced as a separate
+// artifact (DpiSignatureCache) at AST-to-HIR time and consumed at MIR time.
+//
+// Not stored in hir::Arena (DPI exports have no HIR statement body).
+// Owned by ModuleBody::dpi_exports and Package::dpi_exports.
+struct DpiExportDecl {
+  SymbolId symbol;  // SV function/task symbol being exported
+  SourceSpan span;
+  std::string c_name;  // Resolved final C symbol name; never empty.
+  bool is_task = false;
+  bool is_context = false;
+  bool is_module_scoped = false;
+};
+
+// Pre-classified DPI signature for an exported subroutine.
+// Produced at AST-to-HIR time (when slang types are available) as a
+// separate artifact from the lean DpiExportDecl. Consumed at MIR time
+// to build the canonical mir::DpiSignature without a second classifier.
+//
+// Reuses DpiParam and DpiAbiTypeClass from the import path -- same
+// classification model, same canonical type rules.
+struct DpiExportSignature {
+  TypeId return_type_id;
+  DpiAbiTypeClass return_dpi_type = DpiAbiTypeClass::kInvalid;
+  std::vector<DpiParam> params;
+};
+
 }  // namespace lyra::hir

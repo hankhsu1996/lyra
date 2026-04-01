@@ -65,6 +65,11 @@ struct LoweringResult {
   std::vector<std::vector<OriginEntry>> body_origins;
   LoweringStats stats;
   mir::CompiledBindingPlan compiled_bindings;
+  // DPI export wrapper descriptors for LLVM backend emission.
+  // Deterministically sorted by c_name.
+  std::vector<mir::DpiExportWrapperDesc> dpi_export_wrappers;
+  // Generated DPI header content. Empty if no DPI symbols exist.
+  std::string dpi_header;
 };
 
 auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult>;

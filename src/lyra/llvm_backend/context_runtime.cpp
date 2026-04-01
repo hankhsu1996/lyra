@@ -1661,4 +1661,33 @@ auto Context::GetLyraSystemCmd() -> llvm::Function* {
   return lyra_system_cmd_;
 }
 
+auto Context::GetLyraGetDpiExportCallContext() -> llvm::Function* {
+  if (lyra_get_dpi_export_call_context_ == nullptr) {
+    // ptr LyraGetDpiExportCallContext()
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {}, false);
+    lyra_get_dpi_export_call_context_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraGetDpiExportCallContext",
+        llvm_module_.get());
+    lyra_get_dpi_export_call_context_->setCallingConv(llvm::CallingConv::C);
+  }
+  return lyra_get_dpi_export_call_context_;
+}
+
+auto Context::GetLyraFailMissingDpiExportCallContext() -> llvm::Function* {
+  if (lyra_fail_missing_dpi_export_call_context_ == nullptr) {
+    // void LyraFailMissingDpiExportCallContext()  [[noreturn]]
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(void_ty, {}, false);
+    lyra_fail_missing_dpi_export_call_context_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage,
+        "LyraFailMissingDpiExportCallContext", llvm_module_.get());
+    lyra_fail_missing_dpi_export_call_context_->setCallingConv(
+        llvm::CallingConv::C);
+    lyra_fail_missing_dpi_export_call_context_->addFnAttr(
+        llvm::Attribute::NoReturn);
+  }
+  return lyra_fail_missing_dpi_export_call_context_;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

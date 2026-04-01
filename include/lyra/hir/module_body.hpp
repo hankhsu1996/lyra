@@ -33,6 +33,8 @@ struct ModuleBody {
   // DPI-C import declarations owned by this body.
   // Downstream design-level resolution is built from this owned collection.
   std::vector<DpiImportDecl> dpi_imports;
+  // DPI-C export declarations owned by this body.
+  std::vector<DpiExportDecl> dpi_exports;
 
   // Body-local HIR node storage.
   Arena arena;

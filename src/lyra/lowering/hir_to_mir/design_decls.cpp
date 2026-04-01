@@ -1,10 +1,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
@@ -17,10 +19,13 @@
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
+#include "lyra/lowering/hir_to_mir/dpi_name_checks.hpp"
 #include "lyra/lowering/hir_to_mir/dpi_registry.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/routine.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/call.hpp"
+#include "lyra/mir/dpi_verify.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
@@ -132,6 +137,113 @@ class StringPoolIntern {
   std::unordered_map<std::string, uint32_t> index_;
 };
 
+// Build a DpiReturnDesc for the currently supported return model.
+// Returns nullopt for return types that cannot be modeled with the current
+// DpiReturnKind variants (e.g., packed vectors that would need indirect
+// return modeling, not yet supported). This is a subset builder, not a
+// fully canonical return model -- DpiReturnKind will need extension when
+// indirect returns are added.
+auto BuildDpiReturnDescForCurrentModel(
+    TypeId return_type, DpiAbiTypeClass abi_type)
+    -> std::optional<mir::DpiReturnDesc> {
+  if (abi_type == DpiAbiTypeClass::kVoid) {
+    return mir::DpiReturnDesc{
+        .sv_type = return_type,
+        .abi_type = abi_type,
+        .kind = mir::DpiReturnKind::kVoid,
+    };
+  }
+  if (!IsValidDpiReturnType(abi_type)) {
+    return std::nullopt;
+  }
+  return mir::DpiReturnDesc{
+      .sv_type = return_type,
+      .abi_type = abi_type,
+      .kind = mir::DpiReturnKind::kDirectValue,
+  };
+}
+
+// Result of attempting to register a DPI export.
+enum class DpiExportRegResult {
+  kOk,
+  kSignatureError,
+  kDuplicateSymbol,
+};
+
+struct DpiExportRegOutcome {
+  DpiExportRegResult result = DpiExportRegResult::kOk;
+  std::string diagnostic;
+  std::optional<mir::DpiSignature> signature;
+};
+
+// Build the MIR-level DpiSignature for the currently supported export
+// model from the preclassified export signature cache. This is not a
+// fully canonical signature builder: return types that would need
+// indirect return modeling are rejected here because DpiReturnKind
+// does not yet have an indirect variant.
+auto BuildDpiSignatureFromCache(
+    const hir::DpiExportSignature& sig_cache, const std::string& c_name)
+    -> DpiExportRegOutcome {
+  auto return_desc = BuildDpiReturnDescForCurrentModel(
+      sig_cache.return_type_id, sig_cache.return_dpi_type);
+  if (!return_desc) {
+    return {
+        .result = DpiExportRegResult::kSignatureError,
+        .diagnostic = std::format(
+            "DPI-C export '{}': return type requires indirect return "
+            "modeling, not yet supported",
+            c_name),
+        .signature = std::nullopt,
+    };
+  }
+
+  mir::DpiSignature sig;
+  sig.result = *return_desc;
+
+  for (const auto& p : sig_cache.params) {
+    sig.params.push_back({
+        .sv_type = p.type_id,
+        .abi_type = p.dpi_type,
+        .direction = p.direction,
+        .passing = mir::GetDpiPassingMode(p.direction, p.dpi_type),
+    });
+  }
+
+  mir::ValidateDpiSignatureContract(sig, "BuildDpiSignatureFromCache");
+
+  return {
+      .result = DpiExportRegResult::kOk,
+      .diagnostic = {},
+      .signature = std::move(sig),
+  };
+}
+
+auto TryRegisterDpiExport(
+    const hir::DpiExportDecl& decl, const hir::DpiExportSignature& sig_cache,
+    DesignDpiExports& registry) -> DpiExportRegOutcome {
+  auto build = BuildDpiSignatureFromCache(sig_cache, decl.c_name);
+  if (build.result != DpiExportRegResult::kOk) {
+    return build;
+  }
+
+  DpiExportInfo info{
+      .symbol = decl.symbol,
+      .span = decl.span,
+      .c_name = decl.c_name,
+      .signature = std::move(*build.signature),
+      .is_module_scoped = decl.is_module_scoped,
+  };
+  if (!registry.Insert(std::move(info))) {
+    return {
+        .result = DpiExportRegResult::kDuplicateSymbol,
+        .diagnostic =
+            std::format("duplicate DPI export symbol {}", decl.symbol.value),
+        .signature = std::nullopt,
+    };
+  }
+  return {};
+}
+
 void RegisterDpiImport(
     const hir::DpiImportDecl& dpi, DesignDpiImports& registry) {
   std::vector<DpiParamInfo> params;
@@ -160,6 +272,33 @@ void RegisterDpiImport(
 }
 
 }  // namespace
+
+void CheckDpiVisibleNameCollisions(DesignDeclarations& decls) {
+  // Map: c_name -> (symbol, source description for diagnostics)
+  std::unordered_map<std::string, std::pair<SymbolId, std::string>>
+      visible_names;
+
+  // Register all exports.
+  for (const auto& [sym, info] : decls.dpi_exports.Entries()) {
+    visible_names[info.c_name] = {sym, "export"};
+  }
+
+  // Check all imports against the visible namespace.
+  for (const auto& [sym, info] : decls.dpi_imports.Entries()) {
+    auto [it, inserted] = visible_names.try_emplace(info.c_name, sym, "import");
+    if (!inserted && it->second.first != sym) {
+      decls.export_diagnostics.push_back(
+          DesignDeclarations::ExportDiagnostic{
+              .span = info.span,
+              .message = std::format(
+                  "DPI-C visible name '{}' collision: {} (symbol {}) "
+                  "conflicts with {} (symbol {})",
+                  info.c_name, "import", sym.value, it->second.second,
+                  it->second.first.value),
+          });
+    }
+  }
+}
 
 auto CollectDesignDeclarations(
     const hir::Design& design, const LoweringInput& input,
@@ -340,6 +479,42 @@ auto CollectDesignDeclarations(
       RegisterDpiImport(dpi, decls.dpi_imports);
     }
   }
+
+  // Collect DPI exports from packages and module bodies.
+  // Exports with unsupported signatures produce user diagnostics, not
+  // InternalError. They are skipped (not registered in the design registry).
+  const auto& sig_cache = design.dpi_export_signatures;
+  auto collect_exports = [&](const std::vector<hir::DpiExportDecl>& exports) {
+    for (const auto& decl : exports) {
+      auto it = sig_cache.find(decl.symbol);
+      if (it == sig_cache.end()) {
+        throw common::InternalError(
+            "CollectDesignDeclarations",
+            std::format(
+                "no pre-classified signature for DPI export '{}'",
+                decl.c_name));
+      }
+      auto outcome = TryRegisterDpiExport(decl, it->second, decls.dpi_exports);
+      if (outcome.result == DpiExportRegResult::kSignatureError) {
+        decls.export_diagnostics.push_back(
+            {.span = decl.span, .message = std::move(outcome.diagnostic)});
+      } else if (outcome.result == DpiExportRegResult::kDuplicateSymbol) {
+        throw common::InternalError(
+            "CollectDesignDeclarations", outcome.diagnostic);
+      }
+    }
+  };
+
+  for (const auto& element : design.elements) {
+    if (const auto* pkg = std::get_if<hir::Package>(&element)) {
+      collect_exports(pkg->dpi_exports);
+    }
+  }
+  for (const auto& body : design.module_bodies) {
+    collect_exports(body.dpi_exports);
+  }
+
+  CheckDpiVisibleNameCollisions(decls);
 
   return decls;
 }

@@ -33,9 +33,11 @@ auto ParseDumpFormat(const std::string& s) -> lyra::Result<DumpFormat> {
   if (s == "hir") return DumpFormat::kHir;
   if (s == "mir") return DumpFormat::kMir;
   if (s == "llvm") return DumpFormat::kLlvm;
+  if (s == "dpi-header") return DumpFormat::kDpiHeader;
   return std::unexpected(
       Diagnostic::HostError(
-          "unknown format '" + s + "', use 'hir', 'mir', or 'llvm'"));
+          "unknown format '" + s +
+          "', use 'hir', 'mir', 'llvm', or 'dpi-header'"));
 }
 
 namespace {

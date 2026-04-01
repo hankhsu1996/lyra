@@ -41,24 +41,27 @@ auto RunJitBackend(
   result.timings.mir_lower = prep_result->mir_lower_seconds;
   result.timings.llvm_lower = prep_result->llvm_lower_seconds;
 
-  // Compile DPI companion C sources into shared objects.
-  std::vector<std::filesystem::path> dpi_link_inputs;
+  // Compile DPI companion C sources into object files.
+  // Object files are loaded directly into the JIT's symbol space,
+  // enabling bidirectional symbol resolution (both import and export).
+  std::vector<std::filesystem::path> dpi_object_inputs;
   if (!test_case.dpi_sources.empty()) {
-    auto dpi = CompileDpiSources(test_case.dpi_sources, work_directory);
+    auto dpi =
+        CompileDpiSourcesToObjects(test_case.dpi_sources, work_directory);
     if (!dpi.Ok()) {
       result.error_message = dpi.error;
       return result;
     }
-    dpi_link_inputs = std::move(dpi.link_inputs);
+    dpi_object_inputs = std::move(dpi.link_inputs);
   }
 
   // Compile using in-process ORC JIT with host process symbols.
-  // DPI link inputs are loaded through the real ORC generator path.
+  // DPI object files are added directly to the JIT symbol space.
   std::string captured_output;
   auto t_backend = Clock::now();
   lowering::mir_to_llvm::JitCompileOptions jit_opts{
       .opt_level = OptLevel::kO0,
-      .dpi_link_inputs = std::move(dpi_link_inputs),
+      .dpi_object_inputs = std::move(dpi_object_inputs),
   };
   auto session = lowering::mir_to_llvm::CompileJitInProcess(
       prep_result->llvm_result, jit_opts);

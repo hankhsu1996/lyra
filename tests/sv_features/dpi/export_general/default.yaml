@@ -1,0 +1,38 @@
+feature: dpi_export_general
+description: DPI-C export end-to-end integration tests
+
+cases:
+  - name: export_scalar_return_roundtrip
+    sv: |
+      package dpi_pkg;
+        function int get_forty_two();
+          return 42;
+        endfunction
+        export "DPI-C" function get_forty_two;
+
+        function int add_two(int a, int b);
+          return a + b;
+        endfunction
+        export "DPI-C" function add_two;
+      endpackage
+
+      module Test;
+        import "DPI-C" function int call_get_forty_two();
+        import "DPI-C" function int call_add_two(int a, int b);
+        import dpi_pkg::*;
+
+        int r1;
+        int r2;
+
+        initial begin
+          r1 = call_get_forty_two();
+          r2 = call_add_two(17, 25);
+          $display("r1=%0d r2=%0d", r1, r2);
+        end
+      endmodule
+    dpi_sources:
+      - dpi_helpers/export_caller.c
+    expect:
+      variables:
+        r1: 42
+        r2: 42
