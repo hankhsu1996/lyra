@@ -81,7 +81,7 @@ struct SpecSlotInfo {
   // Every body-local slot has a valid offset (no forwarded aliases).
   // For kInlineValue: offset of the slot's value bytes from this_ptr.
   // For kOwnedContainer: offset of the OwnedStorageHandle from this_ptr.
-  std::vector<lowering::mir_to_llvm::InstanceByteOffset> inline_offsets;
+  std::vector<common::InstanceByteOffset> inline_offsets;
   // Per-slot storage shape.
   std::vector<mir::StorageShape> shapes;
   // Per-slot access classification.

@@ -25,11 +25,12 @@
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/design_metadata_lowering.hpp"
+#include "lyra/llvm_backend/inspection_plan.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
+#include "lyra/llvm_backend/runtime_abi_codegen.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
-#include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/realization/build_design_metadata.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
@@ -134,78 +135,6 @@ void InitializeProcessState(
     auto* field_ptr = builder.CreateStructGEP(frame_type, frame_ptr, i);
     EmitSVDefaultInitAfterZero(context, field_ptr, type_id);
   }
-}
-
-void ReleaseStringSlots(
-    Context& context, const std::vector<SlotInfo>& slots,
-    llvm::Value* design_state, llvm::Value* abi_ptr) {
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
-  auto& mod = context.GetModule();
-  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
-  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
-  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-
-  bool has_strings = false;
-  for (const auto& slot : slots) {
-    if (slot.type_info.kind == lowering::mir_to_llvm::VarTypeKind::kString) {
-      has_strings = true;
-      break;
-    }
-  }
-  if (!has_strings) return;
-
-  auto* resolve_fn =
-      mod.getOrInsertFunction(
-             "LyraResolveSlotAddress",
-             llvm::FunctionType::get(ptr_ty, {ptr_ty, i32_ty}, false))
-          .getCallee();
-
-  auto* fn = builder.GetInsertBlock()->getParent();
-  auto* null_ptr_val =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-  auto* has_abi = builder.CreateICmpNE(abi_ptr, null_ptr_val, "has_abi_rel");
-
-  auto* with_abi_bb =
-      llvm::BasicBlock::Create(llvm_ctx, "str_release.with_abi", fn);
-  auto* direct_bb =
-      llvm::BasicBlock::Create(llvm_ctx, "str_release.direct", fn);
-  auto* done_bb = llvm::BasicBlock::Create(llvm_ctx, "str_release.done", fn);
-
-  builder.CreateCondBr(has_abi, with_abi_bb, direct_bb);
-
-  auto emit_release = [&](llvm::Value* slot_ptr) {
-    auto* val = builder.CreateLoad(ptr_ty, slot_ptr);
-    builder.CreateCall(context.GetLyraStringRelease(), {val});
-  };
-
-  builder.SetInsertPoint(with_abi_bb);
-  for (const auto& slot : slots) {
-    if (slot.type_info.kind != lowering::mir_to_llvm::VarTypeKind::kString) {
-      continue;
-    }
-    auto* slot_id_val = llvm::ConstantInt::get(
-        i32_ty, static_cast<uint32_t>(slot.slot_id.value));
-    auto* slot_ptr = builder.CreateCall(
-        llvm::cast<llvm::Function>(resolve_fn), {abi_ptr, slot_id_val},
-        "str_release_ptr");
-    emit_release(slot_ptr);
-  }
-  builder.CreateBr(done_bb);
-
-  builder.SetInsertPoint(direct_bb);
-  for (const auto& slot : slots) {
-    if (slot.type_info.kind != lowering::mir_to_llvm::VarTypeKind::kString) {
-      continue;
-    }
-    uint64_t offset = context.GetDesignSlotByteOffset(slot.slot_id);
-    auto* slot_ptr = builder.CreateGEP(
-        i8_ty, design_state, builder.getInt64(offset), "str_release_ptr");
-    emit_release(slot_ptr);
-  }
-  builder.CreateBr(done_bb);
-
-  builder.SetInsertPoint(done_bb);
 }
 
 struct MainFunctionSetup {
@@ -1117,8 +1046,7 @@ auto EmitBodyRealizationDescs(
     const auto& info = layout.body_realization_infos[bi];
     const auto& funcs = body_compiled_funcs[bi];
     uint32_t body_id_val = info.body_id.value;
-    uint32_t num_procs =
-        static_cast<uint32_t>(info.process_schema_indices.size());
+    auto num_procs = static_cast<uint32_t>(info.process_schema_indices.size());
 
     if (funcs.body_id != info.body_id) {
       throw common::InternalError(
@@ -1188,7 +1116,7 @@ auto EmitBodyRealizationDescs(
     }
 
     // Validate and emit metadata template as part of body descriptor package.
-    uint32_t num_meta = static_cast<uint32_t>(info.meta.entries.size());
+    auto num_meta = static_cast<uint32_t>(info.meta.entries.size());
     if (num_meta != num_procs) {
       throw common::InternalError(
           "EmitBodyRealizationDescs",
@@ -1777,8 +1705,6 @@ struct DesignMetadataOutputs {
 auto BuildDesignMetadataOutputs(
     Context& context, const Layout& layout, const EmitDesignMainInput& input)
     -> DesignMetadataOutputs {
-  auto& builder = context.GetBuilder();
-
   auto conn_desc_entries = ExtractConnectionDescriptorEntries(layout);
   auto back_edge_site_inputs =
       PrepareBackEdgeSiteInputs(context, input.diag_ctx, input.source_manager);
@@ -1797,7 +1723,7 @@ auto BuildDesignMetadataOutputs(
   auto metadata = realization::BuildDesignMetadata(metadata_inputs);
 
   return DesignMetadataOutputs{
-      .globals = EmitDesignMetadataGlobals(context, metadata, builder),
+      .globals = EmitDesignMetadataGlobals(context, metadata),
       .forwarding_analysis = std::move(forwarding_report),
   };
 }
@@ -1832,6 +1758,8 @@ struct ConstructorSlotTraceMeta {
   llvm::Value* instance_path_count = nullptr;
   llvm::Value* instance_ptrs = nullptr;
   llvm::Value* instance_count = nullptr;
+  llvm::Value* instance_bundles = nullptr;
+  llvm::Value* instance_bundle_count = nullptr;
 };
 
 struct ConstructorEmissionResult {
@@ -1858,15 +1786,7 @@ auto BuildRuntimeAbi(
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
-  // v14: trigger/comb metadata from constructor result.
-  constexpr unsigned kAbiFieldCount = 29;
-  std::array<llvm::Type*, kAbiFieldCount> abi_fields = {
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty,
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty,
-      i32_ty, i32_ty, ptr_ty, ptr_ty, i32_ty,
-  };
-  auto* abi_struct_type = llvm::StructType::get(ctx, abi_fields, false);
+  auto* abi_struct_type = GetRuntimeAbiStructType(ctx);
 
   auto* abi_alloca = builder.CreateAlloca(abi_struct_type, nullptr, "abi");
 
@@ -1929,6 +1849,11 @@ auto BuildRuntimeAbi(
   store_field(27, slot_trace.instance_ptrs);
   store_field(28, slot_trace.instance_count);
 
+  // R4: Per-instance metadata bundles for engine-derived registries.
+  store_field(29, slot_trace.instance_bundles);
+  store_field(30, slot_trace.instance_bundle_count);
+  store_field(31, llvm::ConstantInt::get(i32_ty, 0));
+
   return abi_alloca;
 }
 
@@ -1949,17 +1874,25 @@ void EmitMainExit(
     Context& context, llvm::Value* design_state,
     const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input,
     llvm::BasicBlock* exit_block, llvm::Value* abi_alloca,
-    const ConstructorEmissionResult& ctor_result) {
+    const ConstructorEmissionResult& ctor_result,
+    const InspectionPlan& inspection_plan) {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
 
   builder.CreateBr(exit_block);
   builder.SetInsertPoint(exit_block);
 
-  ReleaseStringSlots(context, slot_info, design_state, abi_alloca);
+  // String slot release is now handled by Engine::ReleaseStringSlots()
+  // inside LyraRunSimulation, before engine destruction.
+
+  // Backend-owned variable inspection from typed placement descriptors.
+  if (!inspection_plan.IsEmpty()) {
+    EmitVariableInspection(
+        context, inspection_plan, slot_info, design_state, abi_alloca);
+  }
 
   if (input.hooks != nullptr) {
-    input.hooks->OnAfterRunSimulation(
+    input.hooks->EmitPostSimulationReports(
         context, slot_info, design_state, abi_alloca);
   }
 
@@ -2016,6 +1949,8 @@ struct ConstructorRuntimeFuncs {
   llvm::Function* result_get_instance_path_count;
   llvm::Function* result_get_instances;
   llvm::Function* result_get_instance_count;
+  llvm::Function* result_get_instance_bundles;
+  llvm::Function* result_get_instance_bundle_count;
   llvm::Function* result_destroy;
 };
 
@@ -2091,6 +2026,10 @@ auto DeclareConstructorRuntimeFuncs(Context& context)
           declare("LyraConstructionResultGetInstances", ptr_ty, {ptr_ty}),
       .result_get_instance_count =
           declare("LyraConstructionResultGetInstanceCount", i32_ty, {ptr_ty}),
+      .result_get_instance_bundles =
+          declare("LyraConstructionResultGetInstanceBundles", ptr_ty, {ptr_ty}),
+      .result_get_instance_bundle_count = declare(
+          "LyraConstructionResultGetInstanceBundleCount", i32_ty, {ptr_ty}),
       .result_destroy =
           declare("LyraConstructionResultDestroy", void_ty, {ptr_ty}),
   };
@@ -2263,6 +2202,10 @@ auto EmitConstructorFunction(
       builder.CreateCall(rt.result_get_instances, {result}, "instance_ptrs");
   auto* inst_count = builder.CreateCall(
       rt.result_get_instance_count, {result}, "instance_count");
+  auto* inst_bundles = builder.CreateCall(
+      rt.result_get_instance_bundles, {result}, "instance_bundles");
+  auto* inst_bundle_count = builder.CreateCall(
+      rt.result_get_instance_bundle_count, {result}, "instance_bundle_count");
 
   return ConstructorEmissionResult{
       .states_array = states_array,
@@ -2295,6 +2238,8 @@ auto EmitConstructorFunction(
               .instance_path_count = inst_path_count,
               .instance_ptrs = inst_ptrs,
               .instance_count = inst_count,
+              .instance_bundles = inst_bundles,
+              .instance_bundle_count = inst_bundle_count,
           },
   };
 }
@@ -2325,7 +2270,6 @@ auto EmitDesignMain(
   ConstructorEmissionResult ctor_result{};
 
   if (num_simulation > 0 || num_kernelized > 0) {
-    auto& builder = context.GetBuilder();
     auto& ctx = context.GetLlvmContext();
     auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
     auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -2432,6 +2376,10 @@ auto EmitDesignMain(
         .trace_meta_pool_size = llvm::ConstantInt::get(i32_ty, 0),
         .instance_paths = null_ptr,
         .instance_path_count = llvm::ConstantInt::get(i32_ty, 0),
+        .instance_ptrs = null_ptr,
+        .instance_count = llvm::ConstantInt::get(i32_ty, 0),
+        .instance_bundles = null_ptr,
+        .instance_bundle_count = llvm::ConstantInt::get(i32_ty, 0),
     };
     if (ctor_result.result_handle != nullptr) {
       process_meta_for_abi = ctor_result.process_meta;
@@ -2466,9 +2414,20 @@ auto EmitDesignMain(
     }
   }
 
+  // Build typed inspection plan from session data.
+  // Backend owns placement construction; test framework only provides
+  // identity (name + slot_id) via GetTrackedVariables().
+  InspectionPlan inspection_plan;
+  if (input.hooks != nullptr) {
+    auto refs = input.hooks->GetTrackedVariables();
+    if (!refs.empty()) {
+      inspection_plan = BuildInspectionPlan(session, refs);
+    }
+  }
+
   EmitMainExit(
       context, design_state, slot_info, input, exit_block, abi_for_exit,
-      ctor_result);
+      ctor_result, inspection_plan);
 
   return LoweringReport{
       .forwarding_analysis = std::move(forwarding_report),

@@ -11,6 +11,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/inspection_plan.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
@@ -21,12 +22,6 @@ namespace lyra::lowering::mir_to_llvm {
 
 class Context;
 
-// Information about a module variable for runtime inspection
-struct VariableInfo {
-  std::string name;
-  size_t slot_id;  // Index into design.slots
-};
-
 // Abstract interface for simulation instrumentation hooks.
 // Provides milestone-based hooks that map to the simulation pipeline:
 //   1. InitializeDesignState + LyraInitRuntime
@@ -35,8 +30,9 @@ struct VariableInfo {
 //   4. OnBeforeRunSimulation hook
 //   5. LyraRunSimulation (module processes)
 //   6. String cleanup
-//   7. OnAfterRunSimulation hook
-//   8. Return from main
+//   7. Backend-emitted variable inspection (from GetTrackedVariables)
+//   8. EmitPostSimulationReports hook
+//   9. Return from main
 //
 // All hooks have empty default implementations - override only what you need.
 class SimulationHooks {
@@ -47,6 +43,14 @@ class SimulationHooks {
   auto operator=(const SimulationHooks&) -> SimulationHooks& = default;
   SimulationHooks(SimulationHooks&&) = default;
   auto operator=(SimulationHooks&&) -> SimulationHooks& = default;
+
+  // Variables the test framework wants inspected post-simulation.
+  // Backend builds typed placement from session data; hook only provides
+  // identity (name + slot_id). No ownership or storage routing facts here.
+  [[nodiscard]] virtual auto GetTrackedVariables() const
+      -> std::span<const InspectedVarRef> {
+    return {};
+  }
 
   // Called after DesignState is initialized (before any processes run).
   // Use for: pre-simulation setup, initial state inspection.
@@ -62,10 +66,10 @@ class SimulationHooks {
       llvm::Value* /*design_state*/) {
   }
 
-  // Called after simulation completes (before main returns).
-  // Use for: final variable inspection, timing reports, test assertions.
-  // abi_ptr is the LyraRuntimeAbi* for slot address resolution.
-  virtual void OnAfterRunSimulation(
+  // Called after backend-emitted variable inspection is already emitted.
+  // For non-inspection post-simulation reports (e.g., time report).
+  // Variable inspection is backend-owned via GetTrackedVariables().
+  virtual void EmitPostSimulationReports(
       Context& /*context*/, const std::vector<SlotInfo>& /*slots*/,
       llvm::Value* /*design_state*/, llvm::Value* /*abi_ptr*/) {
   }
@@ -114,13 +118,12 @@ auto LowerMirToLlvm(const LoweringInput& input) -> Result<LoweringResult>;
 
 auto DumpLlvmIr(const LoweringResult& result) -> std::string;
 
-// Utility functions for use in SimulationHooks implementations.
-// These emit LLVM IR for common instrumentation tasks.
-
 // Emit variable registration calls for runtime inspection.
-// Registers each variable with the runtime and emits a snapshot call.
+// Consumes a typed InspectionPlan built by BuildInspectionPlan.
+// Uses std::visit to pattern-match DesignGlobalPlacement vs
+// InstanceOwnedPlacement for each variable.
 void EmitVariableInspection(
-    Context& context, const std::vector<VariableInfo>& variables,
+    Context& context, const InspectionPlan& plan,
     const std::vector<SlotInfo>& slots, llvm::Value* design_state,
     llvm::Value* abi_ptr);
 

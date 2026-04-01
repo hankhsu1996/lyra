@@ -169,7 +169,7 @@ auto Context::GetDesignArenaSize() const -> uint64_t {
   return layout_.design.arena_size;
 }
 
-auto Context::ResolveDesignSlotIndex(mir::SlotId slot_id) const -> uint32_t {
+auto Context::ResolveDesignSlotIndex(common::SlotId slot_id) const -> uint32_t {
   auto it = layout_.design.slot_to_index.find(slot_id);
   if (it == layout_.design.slot_to_index.end()) {
     throw common::InternalError(
@@ -178,11 +178,12 @@ auto Context::ResolveDesignSlotIndex(mir::SlotId slot_id) const -> uint32_t {
   return it->second;
 }
 
-auto Context::GetDesignSlotByteOffset(mir::SlotId slot_id) const -> uint64_t {
+auto Context::GetDesignSlotByteOffset(common::SlotId slot_id) const
+    -> uint64_t {
   return layout_.design.GetStorageByteOffset(slot_id);
 }
 
-auto Context::GetDesignSlotStorageSpec(mir::SlotId slot_id) const
+auto Context::GetDesignSlotStorageSpec(common::SlotId slot_id) const
     -> const SlotStorageSpec& {
   return layout_.design.GetStorageSpec(slot_id);
 }

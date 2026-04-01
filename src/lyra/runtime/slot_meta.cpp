@@ -200,6 +200,19 @@ SlotMetaRegistry::SlotMetaRegistry(const uint32_t* words, uint32_t count) {
   }
 }
 
+void SlotMetaRegistry::AppendSlot(SlotMeta meta) {
+  if (meta.total_bytes == 0) {
+    throw common::InternalError(
+        "SlotMetaRegistry::AppendSlot",
+        std::format("zero total_bytes for slot {}", slots_.size()));
+  }
+  if (meta.domain == SlotStorageDomain::kDesignGlobal) {
+    max_extent_ =
+        std::max(max_extent_, meta.design_base_off + meta.total_bytes);
+  }
+  slots_.push_back(meta);
+}
+
 void SlotMetaRegistry::ThrowOutOfRange(uint32_t slot_id) const {
   throw common::InternalError(
       "SlotMetaRegistry::Get",

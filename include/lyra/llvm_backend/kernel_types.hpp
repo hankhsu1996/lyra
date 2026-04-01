@@ -3,16 +3,16 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
-#include <vector>
 
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/common/slot_id.hpp"
 #include "lyra/metadata/design_metadata.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 struct SlotIdHash {
-  auto operator()(mir::SlotId id) const noexcept -> size_t {
+  auto operator()(common::SlotId id) const noexcept -> size_t {
     return std::hash<uint32_t>{}(id.value);
   }
 };
@@ -34,9 +34,9 @@ struct ResolvedObservation {
 // as always_comb processes and kernelized as CombKernels, not connections.
 struct ConnectionKernelEntry {
   mir::ProcessId process_id;
-  mir::SlotId src_slot;
-  mir::SlotId dst_slot;
-  mir::SlotId trigger_slot;
+  common::SlotId src_slot;
+  common::SlotId dst_slot;
+  common::SlotId trigger_slot;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
   std::optional<ResolvedObservation> trigger_observation;
   metadata::ConnectionKernelOrigin origin =

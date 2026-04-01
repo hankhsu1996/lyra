@@ -1,4 +1,5 @@
-#include "lyra/runtime/constructor.hpp"
+// NOTE: See constructor_.hpp for why this file has a trailing underscore.
+#include "lyra/runtime/constructor_.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -29,9 +30,9 @@ ConstructionResult::ConstructionResult(ConstructionResult&& other) noexcept
       num_total(std::exchange(other.num_total, 0)),
       num_connection(std::exchange(other.num_connection, 0)),
       instances(std::move(other.instances)),
+      instance_bundles(std::move(other.instance_bundles)),
       process_meta(std::move(other.process_meta)),
       trigger_meta(std::move(other.trigger_meta)),
-      comb_meta(std::move(other.comb_meta)),
       slot_meta(std::move(other.slot_meta)),
       trace_signal_meta(std::move(other.trace_signal_meta)),
       instance_paths(std::move(other.instance_paths)),
@@ -48,9 +49,9 @@ auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
     num_total = std::exchange(other.num_total, 0);
     num_connection = std::exchange(other.num_connection, 0);
     instances = std::move(other.instances);
+    instance_bundles = std::move(other.instance_bundles);
     process_meta = std::move(other.process_meta);
     trigger_meta = std::move(other.trigger_meta);
-    comb_meta = std::move(other.comb_meta);
     slot_meta = std::move(other.slot_meta);
     trace_signal_meta = std::move(other.trace_signal_meta);
     instance_paths = std::move(other.instance_paths);
@@ -82,57 +83,6 @@ void RealizedTriggerMeta::AppendEntry(
 void RealizedTriggerMeta::Finalize() {
   if (!words.empty()) {
     words[0] = entry_count;
-  }
-}
-
-void RealizedCombMeta::Init() {
-  words.clear();
-  words.push_back(0);
-  kernel_count = 0;
-}
-
-auto RealizedCombMeta::BeginKernel(uint32_t proc_idx, uint32_t flags)
-    -> uint32_t {
-  if (words.empty()) {
-    throw common::InternalError(
-        "RealizedCombMeta::BeginKernel", "Init() not called");
-  }
-  words.push_back(proc_idx);
-  words.push_back(flags);
-  auto trigger_count_pos = static_cast<uint32_t>(words.size());
-  words.push_back(0);
-  ++kernel_count;
-  return trigger_count_pos;
-}
-
-void RealizedCombMeta::AppendTrigger(
-    uint32_t slot_id, uint32_t byte_off, uint32_t byte_size,
-    uint32_t trigger_flags) {
-  if (words.empty()) {
-    throw common::InternalError(
-        "RealizedCombMeta::AppendTrigger", "Init() not called");
-  }
-  words.push_back(slot_id);
-  words.push_back(byte_off);
-  words.push_back(byte_size);
-  words.push_back(trigger_flags);
-}
-
-void RealizedCombMeta::EndKernel(
-    uint32_t trigger_count_pos, uint32_t trigger_count) {
-  if (trigger_count_pos >= words.size()) {
-    throw common::InternalError(
-        "RealizedCombMeta::EndKernel",
-        std::format(
-            "trigger_count_pos {} >= words.size() {}", trigger_count_pos,
-            words.size()));
-  }
-  words[trigger_count_pos] = trigger_count;
-}
-
-void RealizedCombMeta::Finalize() {
-  if (!words.empty()) {
-    words[0] = kernel_count;
   }
 }
 
@@ -327,7 +277,6 @@ Constructor::Constructor(
   ValidateMetaTemplate(conn_meta_, "Constructor");
   realized_meta_.pool.push_back('\0');
   realized_triggers_.Init();
-  realized_comb_.Init();
   realized_slot_meta_.Init();
   realized_trace_meta_.Init();
 
@@ -404,6 +353,11 @@ void Constructor::CheckNotFinalized(const char* caller) const {
   }
 }
 
+void Constructor::ClearActiveBody() {
+  body_ = ActiveBodyDescriptor{};
+  current_body_package_ = nullptr;
+}
+
 void Constructor::AddConnection(const ConnectionRealizationDesc& desc) {
   CheckNotFinalized("Constructor::AddConnection");
   if (connections_finalized_) {
@@ -477,6 +431,7 @@ void Constructor::AddConnection(const ConnectionRealizationDesc& desc) {
 void Constructor::BeginBody(const BodyDescriptorPackage& package) {
   CheckNotFinalized("Constructor::BeginBody");
   connections_finalized_ = true;
+  ClearActiveBody();
 
   if (package.desc == nullptr) {
     throw common::InternalError("Constructor::BeginBody", "null descriptor");
@@ -630,6 +585,23 @@ void Constructor::BeginBody(const BodyDescriptorPackage& package) {
       .init_params = package.init_params,
       .active = true,
   };
+
+  // Canonicalize: reuse existing stable template if this body was seen
+  // before. Body identity is keyed by BodyRealizationDesc pointer
+  // (compile-time constant, unique per body).
+  const void* key = package.desc;
+  for (const auto& stored : body_desc_storage_) {
+    if (stored.key == key) {
+      current_body_package_ = &stored.package;
+      return;
+    }
+  }
+  body_desc_storage_.push_back(
+      StableBodyTemplate{
+          .key = key,
+          .package = package,
+      });
+  current_body_package_ = &body_desc_storage_.back().package;
 }
 
 void Constructor::AddInstance(
@@ -640,9 +612,10 @@ void Constructor::AddInstance(
     throw common::InternalError(
         "Constructor::AddInstance", "null instance_path");
   }
-  if (!body_.active) {
+  if (!body_.active || current_body_package_ == nullptr) {
     throw common::InternalError(
-        "Constructor::AddInstance", "no active body (call BeginBody first)");
+        "Constructor::AddInstance",
+        "no active body package (call BeginBody first)");
   }
   if ((param_data == nullptr) != (param_data_size == 0)) {
     throw common::InternalError(
@@ -716,110 +689,16 @@ void Constructor::AddInstance(
   staged_instances_[instance_index]->num_module_processes =
       num_module_processes;
 
-  // Append metadata entries for all non-final body processes of this instance.
-  uint32_t inst_path_off = AppendString(instance_path);
-  for (const auto& meta : body_.meta.entries) {
-    auto body_pool = std::span(body_.meta.pool, body_.meta.pool_size);
-    uint32_t file_off = InternString(body_pool, meta.file_pool_off);
-    realized_meta_.words.push_back(inst_path_off);
-    realized_meta_.words.push_back(meta.kind_packed);
-    realized_meta_.words.push_back(file_off);
-    realized_meta_.words.push_back(meta.line);
-    realized_meta_.words.push_back(meta.col);
-  }
-
-  // Trigger realization for all non-final body processes of this instance.
-  // proc_within_body is a dense non-final body-local ordinal.
-  if (!body_.triggers.proc_ranges.empty()) {
-    if (body_.triggers.proc_ranges.size() != num_module_processes) {
-      throw common::InternalError(
-          "Constructor::AddInstance",
-          std::format(
-              "trigger proc_ranges size {} != body process count {}",
-              body_.triggers.proc_ranges.size(), num_module_processes));
-    }
-    if (body_.triggers.proc_groupable.size() != num_module_processes) {
-      throw common::InternalError(
-          "Constructor::AddInstance",
-          std::format(
-              "trigger proc_groupable size {} != body process count {}",
-              body_.triggers.proc_groupable.size(), num_module_processes));
-    }
-    if (body_.triggers.proc_shapes.size() != num_module_processes) {
-      throw common::InternalError(
-          "Constructor::AddInstance",
-          std::format(
-              "trigger proc_shapes size {} != body process count {}",
-              body_.triggers.proc_shapes.size(), num_module_processes));
-    }
-    for (uint32_t pwb = 0; pwb < num_module_processes; ++pwb) {
-      uint32_t proc_idx = module_proc_base + pwb;
-      const auto& range = body_.triggers.proc_ranges[pwb];
-      uint32_t flags = (body_.triggers.proc_groupable[pwb] != 0)
-                           ? process_trigger_abi::kFlagGroupable
-                           : 0;
-      for (uint32_t t = 0; t < range.count; ++t) {
-        const auto& te = body_.triggers.entries[range.start + t];
-        // Pass body-local slot IDs with kFlagBodyLocal for engine-side
-        // relocation. Design-global slot IDs pass through unchanged.
-        uint32_t slot_id = te.slot_id;
-        uint32_t entry_flags = flags;
-        if ((te.flags & kTriggerTemplateFlagDesignGlobal) == 0) {
-          entry_flags |= process_trigger_abi::kFlagBodyLocal;
-        }
-        realized_triggers_.AppendEntry(proc_idx, slot_id, te.edge, entry_flags);
-        trigger_provenance_.push_back(
-            TriggerProvenanceRecord{
-                .domain = TemplateDomain::kModule,
-                .owner_ordinal = instance_ord,
-                .local_ordinal = pwb,
-                .realized_proc_idx = proc_idx,
-            });
-      }
-    }
-  }
-
-  // Comb realization for comb kernels of this instance.
-  if (!body_.comb.kernels.empty()) {
-    for (const auto& kernel : body_.comb.kernels) {
-      if (kernel.proc_within_body >= num_module_processes) {
-        throw common::InternalError(
-            "Constructor::AddInstance",
-            std::format(
-                "comb kernel proc_within_body {} >= body process count {}",
-                kernel.proc_within_body, num_module_processes));
-      }
-      uint32_t proc_idx = module_proc_base + kernel.proc_within_body;
-      uint32_t comb_flags = (kernel.has_self_edge != 0) ? 1U : 0U;
-      uint32_t kernel_start_pos =
-          realized_comb_.BeginKernel(proc_idx, comb_flags);
-      uint32_t trigger_count = 0;
-      for (uint32_t t = 0; t < kernel.trigger_count; ++t) {
-        const auto& ce = body_.comb.entries[kernel.trigger_start + t];
-        // Pass body-local slot IDs with body-local flag for engine-side
-        // relocation. Design-global slot IDs pass through unchanged.
-        uint32_t slot_id = ce.slot_id;
-        uint32_t trigger_flags =
-            ((ce.flags & kCombTemplateFlagDesignGlobal) == 0)
-                ? kCombTriggerFlagBodyLocal
-                : 0U;
-        realized_comb_.AppendTrigger(
-            slot_id, ce.byte_offset, ce.byte_size, trigger_flags);
-        ++trigger_count;
-      }
-      realized_comb_.EndKernel(kernel_start_pos, trigger_count);
-      comb_provenance_.push_back(
-          CombProvenanceRecord{
-              .owner_ordinal = instance_ord,
-              .proc_within_body = kernel.proc_within_body,
-              .realized_proc_idx = proc_idx,
-          });
-    }
-  }
-
-  // Observable descriptor realization for this instance.
-  // Absolute entries (package/global) keep their offset as-is.
-  // Body-relative entries are tagged with instance identity in Step 6.
+  // R4: Module-instance process meta, trigger, and comb metadata are no
+  // longer flattened here. The engine derives them from per-instance bundles
+  // and body templates.
+  //
+  // R4: Module-instance process meta, trigger, comb, instance-owned slot,
+  // and instance-owned trace metadata are all engine-derived from bundles.
+  // Constructor builds only design-global/package observable metadata
+  // (slot meta + trace signals). Instance-owned entries are skipped here
+  // and derived from the shared observable walk in
+  // InitModuleInstancesFromBundles.
   if (!body_.observable_descriptors.entries.empty()) {
     bool has_storage = realized_inline_size > 0;
     if (!has_storage) {
@@ -833,25 +712,21 @@ void Constructor::AddInstance(
       }
     }
 
+    // R4 closure: only design-global observable entries are constructor-built.
+    // Instance-owned entries (storage_domain == 1) are engine-derived from
+    // bundles in InitModuleInstancesFromBundles.
     for (const auto& entry : body_.observable_descriptors.entries) {
+      if (entry.storage_domain != 0) continue;
+
       uint32_t realized_owner =
           (entry.flags & kObservableFlagOwnerAbsolute) != 0
               ? entry.storage_owner_ref
               : entry.storage_owner_ref + local_signal_coord_base;
 
-      if (entry.storage_domain == 0) {
-        // Design-global: offset is already absolute.
-        realized_slot_meta_.AppendDesignGlobalSlot(
-            entry.storage_byte_offset, entry.total_bytes, entry.storage_kind,
-            entry.value_lane_offset, entry.value_lane_bytes,
-            entry.unk_lane_offset, entry.unk_lane_bytes, realized_owner);
-      } else {
-        // Instance-owned module-local: body-relative offset.
-        realized_slot_meta_.AppendInstanceOwnedSlot(
-            instance_id, entry.storage_byte_offset, entry.total_bytes,
-            entry.storage_kind, entry.value_lane_offset, entry.value_lane_bytes,
-            entry.unk_lane_offset, entry.unk_lane_bytes, realized_owner);
-      }
+      realized_slot_meta_.AppendDesignGlobalSlot(
+          entry.storage_byte_offset, entry.total_bytes, entry.storage_kind,
+          entry.value_lane_offset, entry.value_lane_bytes,
+          entry.unk_lane_offset, entry.unk_lane_bytes, realized_owner);
 
       std::string_view local_name;
       if (entry.local_name_pool_off > 0 &&
@@ -870,6 +745,20 @@ void Constructor::AddInstance(
 
   // Collect instance path for runtime naming ownership.
   instance_paths_.emplace_back(instance_path);
+
+  // R4 prep: record per-instance metadata bundle alongside existing flat
+  // metadata. instance_path pointer is patched in Finalize after string
+  // storage is stable.
+  staged_bundles_.push_back(
+      InstanceMetadataBundle{
+          .instance = staged_instances_[instance_index].get(),
+          .body_desc = nullptr,
+          .body_key = current_body_package_->desc,
+          .instance_id = instance_id,
+          .module_proc_base = module_proc_base,
+          .num_module_processes = num_module_processes,
+          .instance_path = nullptr,
+      });
 
   uint32_t new_slot_base = next_slot_base_ + body_.slot_count;
   if (new_slot_base < next_slot_base_) {
@@ -934,21 +823,23 @@ auto Constructor::Finalize() -> ConstructionResult {
 
   auto num_total = static_cast<uint32_t>(staged_.size());
 
-  // Validate metadata-process ordering alignment.
-  auto expected_meta_words =
-      static_cast<size_t>(num_total) * process_meta_abi::kStride;
-  if (realized_meta_.words.size() != expected_meta_words) {
+  // R4: validate connection-only process meta count.
+  // Module-instance process meta is engine-derived from bundles.
+  auto expected_conn_meta_words =
+      static_cast<size_t>(num_connection_) * process_meta_abi::kStride;
+  if (realized_meta_.words.size() != expected_conn_meta_words) {
     throw common::InternalError(
         "Constructor::Finalize",
         std::format(
-            "metadata word count {} != expected {} (num_total={} * stride={})",
-            realized_meta_.words.size(), expected_meta_words, num_total,
-            process_meta_abi::kStride));
+            "connection metadata word count {} != expected {} "
+            "(num_connection={} * stride={})",
+            realized_meta_.words.size(), expected_conn_meta_words,
+            num_connection_, process_meta_abi::kStride));
   }
 
-  // Finalize trigger/comb/slot/trace realized builders.
+  // Finalize connection-only trigger, slot/trace realized builders.
+  // R4: comb is fully engine-derived from bundles (no constructor output).
   realized_triggers_.Finalize();
-  realized_comb_.Finalize();
   realized_slot_meta_.Finalize();
   realized_trace_meta_.Finalize();
 
@@ -976,61 +867,16 @@ auto Constructor::Finalize() -> ConstructionResult {
     }
   }
 
-  // Connection triggers: realized_proc_idx must equal the connection
-  // ordinal (connections are staged first, so i-th connection has
-  // staged_ position i).
-  // Module triggers: look up by dense ordinal in staged_instances_.
+  // R4: Only connection triggers remain in the flat provenance.
+  // Module triggers are derived from bundles by the engine.
   for (const auto& rec : trigger_provenance_) {
-    if (rec.domain == TemplateDomain::kConnection) {
-      if (rec.realized_proc_idx != rec.owner_ordinal) {
-        throw common::InternalError(
-            "Constructor::Finalize",
-            std::format(
-                "connection trigger proc_idx mismatch: "
-                "realized {} != owner_ordinal {}",
-                rec.realized_proc_idx, rec.owner_ordinal));
-      }
-    } else {
-      if (rec.owner_ordinal >= staged_instances_.size()) {
-        throw common::InternalError(
-            "Constructor::Finalize",
-            std::format(
-                "module trigger owner_ordinal {} >= instance count {}",
-                rec.owner_ordinal, staged_instances_.size()));
-      }
-      const auto& inst = *staged_instances_[rec.owner_ordinal];
-      uint32_t expected = inst.module_proc_base + rec.local_ordinal;
-      if (rec.realized_proc_idx != expected) {
-        throw common::InternalError(
-            "Constructor::Finalize",
-            std::format(
-                "module trigger proc_idx mismatch: "
-                "realized {} != expected {} "
-                "(base {} + ordinal {})",
-                rec.realized_proc_idx, expected, inst.module_proc_base,
-                rec.local_ordinal));
-      }
-    }
-  }
-  for (const auto& rec : comb_provenance_) {
-    if (rec.owner_ordinal >= staged_instances_.size()) {
+    if (rec.realized_proc_idx != rec.owner_ordinal) {
       throw common::InternalError(
           "Constructor::Finalize",
           std::format(
-              "comb owner_ordinal {} >= instance count {}", rec.owner_ordinal,
-              staged_instances_.size()));
-    }
-    const auto& inst = *staged_instances_[rec.owner_ordinal];
-    uint32_t expected = inst.module_proc_base + rec.proc_within_body;
-    if (rec.realized_proc_idx != expected) {
-      throw common::InternalError(
-          "Constructor::Finalize",
-          std::format(
-              "comb proc_idx mismatch: "
-              "realized {} != expected {} "
-              "(base {} + pwb {})",
-              rec.realized_proc_idx, expected, inst.module_proc_base,
-              rec.proc_within_body));
+              "connection trigger proc_idx mismatch: "
+              "realized {} != owner_ordinal {}",
+              rec.realized_proc_idx, rec.owner_ordinal));
     }
   }
 
@@ -1038,7 +884,6 @@ auto Constructor::Finalize() -> ConstructionResult {
     ConstructionResult result;
     result.process_meta = std::move(realized_meta_);
     result.trigger_meta = std::move(realized_triggers_);
-    result.comb_meta = std::move(realized_comb_);
     result.slot_meta = std::move(realized_slot_meta_);
     result.trace_signal_meta = std::move(realized_trace_meta_);
     result.instance_paths = std::move(instance_paths_);
@@ -1075,7 +920,6 @@ auto Constructor::Finalize() -> ConstructionResult {
   result.instances = std::move(staged_instances_);
   result.process_meta = std::move(realized_meta_);
   result.trigger_meta = std::move(realized_triggers_);
-  result.comb_meta = std::move(realized_comb_);
   result.slot_meta = std::move(realized_slot_meta_);
   result.trace_signal_meta = std::move(realized_trace_meta_);
   result.instance_paths = std::move(instance_paths_);
@@ -1094,6 +938,68 @@ auto Constructor::Finalize() -> ConstructionResult {
   result.instance_ptrs.reserve(result.instances.size());
   for (const auto& inst : result.instances) {
     result.instance_ptrs.push_back(inst.get());
+  }
+
+  // R4: Move body descriptor storage into result (final owner).
+  result.body_desc_storage = std::move(body_desc_storage_);
+
+  // Resolve body_desc pointers against final storage.
+  auto resolve_body_desc =
+      [&](const void* key) -> const BodyDescriptorPackage* {
+    for (const auto& stored : result.body_desc_storage) {
+      if (stored.key == key) return &stored.package;
+    }
+    return nullptr;
+  };
+
+  // R4: validate and move per-instance metadata bundles.
+  result.instance_bundles = std::move(staged_bundles_);
+
+  if (result.instance_bundles.size() != result.instance_paths.size() ||
+      result.instance_bundles.size() != result.instances.size()) {
+    throw common::InternalError(
+        "Constructor::Finalize", "R4 bundle/path/instance count mismatch");
+  }
+
+  for (uint32_t i = 0; i < result.instance_bundles.size(); ++i) {
+    auto& bundle = result.instance_bundles[i];
+    const RuntimeInstance* expected_instance = result.instances[i].get();
+
+    if (bundle.instance == nullptr) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format("R4 bundle {} has null instance", i));
+    }
+
+    // Resolve body_desc from body_key against final owner storage.
+    bundle.body_desc = resolve_body_desc(bundle.body_key);
+    if (bundle.body_desc == nullptr) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format("R4 bundle {} has unresolved body template", i));
+    }
+    if (bundle.instance_id != i) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "R4 bundle {} instance_id mismatch: got {}", i,
+              bundle.instance_id));
+    }
+    if (bundle.instance != expected_instance) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format("R4 bundle {} instance pointer mismatch", i));
+    }
+    if (bundle.instance->instance_id != bundle.instance_id) {
+      throw common::InternalError(
+          "Constructor::Finalize",
+          std::format(
+              "R4 bundle {} pointed instance_id mismatch: "
+              "bundle={}, instance={}",
+              i, bundle.instance_id, bundle.instance->instance_id));
+    }
+
+    result.instance_bundles[i].instance_path = result.instance_paths[i].c_str();
   }
 
   return result;
@@ -1475,7 +1381,6 @@ void LyraConstructorRunProgram(
   }
 
   uint32_t last_body_group = UINT32_MAX;
-
   auto entry_span = std::span(entries, entry_count);
   auto body_desc_span = std::span(body_descs, body_desc_count);
   auto path_span = std::span(path_pool, path_pool_size);
@@ -1609,20 +1514,15 @@ auto LyraConstructionResultGetTriggerWordCount(void* result_raw) -> uint32_t {
   return static_cast<uint32_t>(meta.words.size());
 }
 
+// R4: comb metadata is engine-derived from bundles. Returns empty.
 auto LyraConstructionResultGetCombWords(void* result_raw) -> const uint32_t* {
   ValidateHandle(result_raw, "LyraConstructionResultGetCombWords");
-  auto& meta =
-      static_cast<lyra::runtime::ConstructionResult*>(result_raw)->comb_meta;
-  if (meta.IsEmpty()) return nullptr;
-  return meta.words.data();
+  return nullptr;
 }
 
 auto LyraConstructionResultGetCombWordCount(void* result_raw) -> uint32_t {
   ValidateHandle(result_raw, "LyraConstructionResultGetCombWordCount");
-  auto& meta =
-      static_cast<lyra::runtime::ConstructionResult*>(result_raw)->comb_meta;
-  if (meta.IsEmpty()) return 0;
-  return static_cast<uint32_t>(meta.words.size());
+  return 0;
 }
 
 auto LyraConstructionResultGetSlotMetaWords(void* result_raw)
@@ -1703,6 +1603,23 @@ auto LyraConstructionResultGetInstanceCount(void* result_raw) -> uint32_t {
   return static_cast<uint32_t>(
       static_cast<lyra::runtime::ConstructionResult*>(result_raw)
           ->instance_ptrs.size());
+}
+
+auto LyraConstructionResultGetInstanceBundles(void* result_raw)
+    -> const lyra::runtime::InstanceMetadataBundle* {
+  ValidateHandle(result_raw, "LyraConstructionResultGetInstanceBundles");
+  auto& bundles = static_cast<lyra::runtime::ConstructionResult*>(result_raw)
+                      ->instance_bundles;
+  if (bundles.empty()) return nullptr;
+  return bundles.data();
+}
+
+auto LyraConstructionResultGetInstanceBundleCount(void* result_raw)
+    -> uint32_t {
+  ValidateHandle(result_raw, "LyraConstructionResultGetInstanceBundleCount");
+  return static_cast<uint32_t>(
+      static_cast<lyra::runtime::ConstructionResult*>(result_raw)
+          ->instance_bundles.size());
 }
 
 void LyraConstructionResultDestroy(void* result_raw) {

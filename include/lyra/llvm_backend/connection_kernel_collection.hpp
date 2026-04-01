@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "lyra/common/slot_id.hpp"
 #include "lyra/llvm_backend/kernel_types.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
 #include "lyra/mir/arena.hpp"
@@ -25,7 +26,7 @@ struct ConnectionKernelCollectionResult {
 // slot_storage_specs for storage spec, storage_spec_arena for child specs.
 // Forwarding-aware byte offsets and storage_owner_slot_id are NOT consumed.
 struct SlotSpecView {
-  const std::unordered_map<mir::SlotId, uint32_t, SlotIdHash>& slot_to_index;
+  const std::unordered_map<common::SlotId, uint32_t, SlotIdHash>& slot_to_index;
   const std::vector<SlotStorageSpec>& slot_storage_specs;
   const StorageSpecArena& storage_spec_arena;
 };

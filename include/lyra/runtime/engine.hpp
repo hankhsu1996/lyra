@@ -24,6 +24,7 @@
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
+#include "lyra/runtime/instance_metadata.hpp"
 #include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
@@ -394,12 +395,42 @@ class Engine {
   void AssignDenseCoordinationBases(
       std::span<RuntimeInstance* const> mutable_instances);
 
+  // R4: Assign dense coordination bases from slot meta registry and bundles.
+  // One canonical engine-owned path for dense base assignment.
+  void AssignDenseCoordinationBasesFromBundles(
+      std::span<const InstanceMetadataBundle> bundles);
+
+  // R4: Initialize all module-instance runtime registries from per-instance
+  // bundles and body templates. Replaces the flat-table init path for
+  // module instances (InitSlotMeta/InitProcessTriggerRegistry/InitCombKernels
+  // for module-instance data). Connection and design-global init remains
+  // separate.
+  //
+  // This method:
+  //   1. Assigns dense coordination bases from bundle slot counts.
+  //   2. Builds the slot meta registry from design-global words + bundles.
+  //   3. Builds module-instance trigger descriptors from body templates.
+  //   4. Builds module-instance comb kernels from body templates.
+  //   5. Builds module-instance process meta from body templates.
+  //   6. Sizes coordination arrays (update_set, signal_subs).
+  //
+  // Must be called after SetInstances. Must be called before connection
+  // trigger/comb init (which merge into the registries built here).
+  auto InitModuleInstancesFromBundles(
+      std::span<const InstanceMetadataBundle> bundles,
+      std::span<const uint32_t> design_global_slot_meta_words, void** states)
+      -> TraceSignalMetaRegistry;
+
   // Resolve the storage byte address for a slot.
   // For kDesignGlobal slots: returns design_state_base_ + design_base_off.
   // For kInstanceOwned slots: returns instance->storage.inline_base +
   // instance_rel_off.
   [[nodiscard]] auto ResolveSlotBytes(uint32_t slot_id) const -> const uint8_t*;
   [[nodiscard]] auto ResolveSlotBytesMut(uint32_t slot_id) -> uint8_t*;
+
+  // Release all string-typed slot handles. Called at shutdown, before
+  // engine destruction. Uses engine-owned slot meta and slot resolution.
+  void ReleaseStringSlots();
 
   // Route a MutationEvent to the UpdateSet (design slots only; heap NYI).
   void OnMutation(const common::MutationEvent& event);
@@ -575,9 +606,10 @@ class Engine {
   void FlushAndPropagateConnections();
 
   // One-time init for process metadata registry.
-  void InitProcessMeta(ProcessMetaRegistry registry) {
-    process_meta_ = std::move(registry);
-  }
+  // R4: When pending module meta words exist (from bundle init), merges
+  // connection-only registry with module process meta into one combined
+  // registry. The merged registry covers all processes.
+  void InitProcessMeta(ProcessMetaRegistry connection_registry);
 
   // One-time init for back-edge site metadata registry.
   void InitBackEdgeSiteMeta(BackEdgeSiteRegistry registry) {
@@ -601,6 +633,7 @@ class Engine {
           "Engine::InitTraceSignalMeta",
           "trace signal metadata already initialized");
     }
+
     auto signal_count = static_cast<uint32_t>(registry.Count());
     if (slot_meta_registry_.IsPopulated() &&
         signal_count != slot_meta_registry_.Size()) {
@@ -1112,6 +1145,20 @@ class Engine {
   // Constructor-time process trigger registry. Owns parsed descriptors,
   // trigger groups, and flat-backed group membership.
   ProcessTriggerRegistry process_trigger_registry_;
+
+  // R4: Pending module-instance trigger descriptors built from bundles.
+  // Merged with connection triggers in InitProcessTriggerRegistry.
+  std::vector<ProcessTriggerDescriptor> pending_module_trigger_descs_;
+
+  // R4: Narrow pending data for module-instance process meta assembly.
+  // Stored during InitModuleInstancesFromBundles, consumed in
+  // InitProcessMeta to build the combined process meta registry.
+  struct PendingModuleProcessMeta {
+    const BodyDescriptorPackage* body_desc = nullptr;
+    const char* instance_path = nullptr;
+    uint32_t module_proc_base = 0;
+  };
+  std::vector<PendingModuleProcessMeta> pending_module_process_meta_;
 };
 
 }  // namespace lyra::runtime

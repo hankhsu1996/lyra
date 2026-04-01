@@ -18,7 +18,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] R1 -- Runtime instance/object model: two-domain storage, domain-aware slot resolution, process-instance binding
 - [x] R2 -- Forwarding as connectivity, not storage redefinition
 - [x] R3 -- Object-local signal identity and coordination API
-- [ ] R4 -- Constructor-to-runtime handoff preserves per-instance structure
+- [x] R4 -- Constructor-to-runtime handoff preserves per-instance structure
 - [ ] R5 -- Observability/trace/snapshot on object-local coordinates
 - [ ] T1 -- Topology-independence validation (scaling gates)
 - [ ] F1 -- Parallel specialization compilation
@@ -90,15 +90,15 @@ Signal identity for instance-owned signals is now object-local. The design-globa
 - **Constructor.** Trigger and comb realization pass body-local slot ids with kFlagBodyLocal / kCombTriggerFlagBodyLocal. Engine init does the relocation. Observable/slot-meta relocation remains (R5 scope).
 - **Remaining follow-up.** 3 EmitTemporaryFlatSignalCoord call sites in process.cpp (trigger table signal_id, plan-op slot_id, dep_slots) still produce flat slot ids for WaitTriggerRecord/IndexPlanOp formats. These formats are consumed by the existing flat trigger installation path. Migrating them requires changing the trigger/dep-slot word formats, which is beyond R3 scope.
 
-## R4: Constructor-to-runtime handoff preserves per-instance structure
+## R4: Constructor-to-runtime handoff preserves per-instance structure (completed)
 
-**Current state:** the constructor produces flat per-design arrays for all metadata categories: RealizedSlotMeta (indexed by global slot_id), RealizedTriggerMeta (global process_id + global slot_id), RealizedCombMeta (global process_id), RealizedTraceSignalMeta (global trace signal index), process metadata (global process_id). Instance identity is dissolved in the handoff -- ConstructionResult contains RuntimeInstance objects but all metadata is flattened.
+The constructor-to-runtime boundary now preserves per-instance structure for all metadata categories. The constructor builds only design-global/package observable metadata; all instance-owned metadata is engine-derived from bundles.
 
-**Target:** the constructor-to-runtime handoff preserves per-instance metadata bundles. The runtime receives instance-structured data, not only flattened per-design metadata. Per-instance process lists, trigger metadata, and slot metadata are grouped by instance.
-
-**Depends on R3:** the flat arrays are indexed by design-global coordinates that R3 eliminates. Until the new object-scoped coordinate system exists, per-instance metadata bundles cannot be cleanly defined.
-
-Where to look: ConstructionResult in constructor, RealizedSlotMeta/TriggerMeta/CombMeta/TraceSignalMeta, SetupAndRunSimulation in simulation, Engine initialization.
+- **Slot meta.** Constructor narrowed to design-global-only slot entries. Engine builds instance-owned SlotMeta from bundles via shared observable walk (ForEachBundleObservable) in InitModuleInstancesFromBundles. Dense coordination base assignment derived from bundle observable descriptors, not from a pre-built flat slot registry.
+- **Trace signal meta.** Constructor builds design-global/package trace entries only. Instance trace signals are built from the same shared observable walk and returned from InitModuleInstancesFromBundles. Final merged TraceSignalMetaRegistry is assembled by BuildMergedTraceSignalMeta in simulation.cpp before InitTraceSignalMeta.
+- **Variable inspection.** LyraResolveSlotAddress deleted. Test framework variable inspection restructured: codegen-time InspectionPlan with typed placements (DesignGlobalPlacement, InstanceOwnedPlacement) resolved at compile time. EmitVariableInspection emits per-domain IR with runtime abi_ptr null guard for instance-owned variables. No post-engine-destruction slot resolution needed.
+- **ABI codegen.** Canonical GetRuntimeAbiStructType in runtime_abi_codegen.cpp (single source of truth). EmitLoadAbiInstancePtr and EmitInstanceOwnedByteAddress as canonical instance storage resolution helpers.
+- **Type unification.** SlotId moved to common::SlotId (common/slot_id.hpp), InstanceByteOffset moved to common::InstanceByteOffset (common/byte_offset.hpp). Both used across MIR, codegen, and runtime layers without aliases or compatibility shims.
 
 ## R5: Observability/trace/snapshot on object-local coordinates
 

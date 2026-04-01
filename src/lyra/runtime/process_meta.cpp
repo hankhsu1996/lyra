@@ -116,6 +116,10 @@ auto ProcessMetaRegistry::Get(uint32_t process_id) const -> const ProcessMeta& {
   return metas_[process_id];
 }
 
+auto ProcessMetaRegistry::GetPoolString(uint32_t offset) const -> const char* {
+  return PoolString(offset);
+}
+
 auto ProcessMetaRegistry::PoolString(uint32_t offset) const -> const char* {
   if (string_pool_.empty() || offset >= string_pool_.size()) {
     return "";

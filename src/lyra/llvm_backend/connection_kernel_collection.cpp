@@ -1,7 +1,6 @@
 #include "lyra/llvm_backend/connection_kernel_collection.hpp"
 
 #include <cstdint>
-#include <format>
 #include <optional>
 #include <variant>
 
@@ -21,9 +20,9 @@ namespace {
 // Pending connection kernel entry before observation resolution.
 struct PendingConnectionKernelEntry {
   mir::ProcessId process_id;
-  mir::SlotId src_slot;
-  mir::SlotId dst_slot;
-  mir::SlotId trigger_slot;
+  common::SlotId src_slot;
+  common::SlotId dst_slot;
+  common::SlotId trigger_slot;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
   std::optional<mir::PlaceId> trigger_observed_place;
 };
@@ -68,9 +67,9 @@ auto TryKernelizeConnection(
 
   return PendingConnectionKernelEntry{
       .process_id = {},
-      .src_slot = mir::SlotId{static_cast<uint32_t>(src_place.root.id)},
-      .dst_slot = mir::SlotId{static_cast<uint32_t>(dest_place.root.id)},
-      .trigger_slot = mir::SlotId{trigger.signal.id},
+      .src_slot = common::SlotId{static_cast<uint32_t>(src_place.root.id)},
+      .dst_slot = common::SlotId{static_cast<uint32_t>(dest_place.root.id)},
+      .trigger_slot = common::SlotId{trigger.signal.id},
       .trigger_edge = trigger.edge,
       .trigger_observed_place = trigger.observed_place,
   };

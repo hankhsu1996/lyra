@@ -13,6 +13,7 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 
+#include "lyra/common/slot_id.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/kernel_types.hpp"
@@ -83,10 +84,10 @@ struct InstanceSlotRange;
 // Appendix region: backing data for kOwnedContainer slots.
 struct DesignLayout {
   // Ordered slots, in declaration order.
-  std::vector<mir::SlotId> slots;
+  std::vector<common::SlotId> slots;
 
   // Map from SlotId to slot position index (into slots/offsets/specs vectors).
-  std::unordered_map<mir::SlotId, uint32_t, SlotIdHash> slot_to_index;
+  std::unordered_map<common::SlotId, uint32_t, SlotIdHash> slot_to_index;
 
   // Inline-region byte offset of each slot's inline representation.
   // For kInlineValue: offset of the slot's value bytes.
@@ -120,14 +121,14 @@ struct DesignLayout {
   std::vector<OwnedLocalStorage> slot_storage_bindings;
 
   // Check if a slot is in this layout.
-  [[nodiscard]] auto ContainsSlot(mir::SlotId slot_id) const -> bool;
+  [[nodiscard]] auto ContainsSlot(common::SlotId slot_id) const -> bool;
 
   // Get the byte offset of storage for this slot.
-  [[nodiscard]] auto GetStorageByteOffset(mir::SlotId slot_id) const
+  [[nodiscard]] auto GetStorageByteOffset(common::SlotId slot_id) const
       -> uint64_t;
 
   // Get the storage spec for this slot.
-  [[nodiscard]] auto GetStorageSpec(mir::SlotId slot_id) const
+  [[nodiscard]] auto GetStorageSpec(common::SlotId slot_id) const
       -> const SlotStorageSpec&;
 
   // Get the storage binding for a slot by layout row index.
@@ -139,10 +140,11 @@ struct DesignLayout {
   // slot_row must lie within the instance's slot range.
   [[nodiscard]] auto GetInstanceOffset(
       uint32_t slot_row, const InstanceStorageBase& instance_base,
-      const InstanceSlotRange& instance_range) const -> InstanceByteOffset;
+      const InstanceSlotRange& instance_range) const
+      -> common::InstanceByteOffset;
 
   // Get the layout row index for a slot. Throws InternalError if not found.
-  [[nodiscard]] auto GetSlotRow(mir::SlotId slot_id) const -> uint32_t;
+  [[nodiscard]] auto GetSlotRow(common::SlotId slot_id) const -> uint32_t;
 
   // Get the body-relative offset for a slot.
   // Total for all body-local slots (every slot owns storage).
@@ -593,7 +595,7 @@ struct SlotTypeInfo {
 
 // Input for slot type information (provided by caller)
 struct SlotInfo {
-  mir::SlotId slot_id;
+  common::SlotId slot_id;
   TypeId type_id;            // For LLVM type derivation (actual type)
   SlotTypeInfo type_info{};  // For variable registration (width, signedness)
   mir::StorageShape storage_shape = mir::StorageShape::kInlineValue;
@@ -626,8 +628,8 @@ auto IsScalarPatchable(
 // Per-instance slot range for layout construction. Describes one
 // instance's contiguous slot range within the design slot table.
 struct InstanceSlotRange {
-  uint32_t base_slot;
-  uint32_t slot_count;
+  uint32_t base_slot = 0;
+  uint32_t slot_count = 0;
   mir::ModuleBodyId body_id;
 };
 
@@ -748,7 +750,7 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
 // (degraded to full-slot observation).
 auto ResolveObservation(
     const mir::Arena& arena, const DesignLayout& design_layout,
-    mir::SlotId design_global_slot, mir::PlaceId place_id)
+    common::SlotId design_global_slot, mir::PlaceId place_id)
     -> std::optional<ResolvedObservation>;
 
 }  // namespace lyra::lowering::mir_to_llvm

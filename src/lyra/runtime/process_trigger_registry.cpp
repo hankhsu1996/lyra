@@ -210,8 +210,25 @@ void Engine::InitProcessTriggerRegistry(
     }
   }
 
-  process_trigger_registry_ =
-      BuildProcessTriggerRegistry(std::move(descriptors));
+  // R4: Merge pending module-instance trigger descriptors (built from
+  // bundles in InitModuleInstancesFromBundles) with connection trigger
+  // descriptors parsed above. The final registry is built once from
+  // the combined set.
+  if (!pending_module_trigger_descs_.empty()) {
+    std::vector<ProcessTriggerDescriptor> all_descs;
+    all_descs.reserve(
+        pending_module_trigger_descs_.size() + descriptors.size());
+    all_descs.insert(
+        all_descs.end(), pending_module_trigger_descs_.begin(),
+        pending_module_trigger_descs_.end());
+    all_descs.insert(all_descs.end(), descriptors.begin(), descriptors.end());
+    process_trigger_registry_ =
+        BuildProcessTriggerRegistry(std::move(all_descs));
+    pending_module_trigger_descs_.clear();
+  } else {
+    process_trigger_registry_ =
+        BuildProcessTriggerRegistry(std::move(descriptors));
+  }
 }
 
 }  // namespace lyra::runtime

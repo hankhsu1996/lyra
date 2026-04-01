@@ -12,6 +12,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 
 #include <llvm/ADT/StringMap.h>
@@ -36,10 +37,10 @@
 #include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/init_descriptor_utils.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
-#include "lyra/llvm_backend/layout/observable_storage_ref.hpp"
 #include "lyra/llvm_backend/observable_descriptor_utils.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
+#include "lyra/llvm_backend/runtime_abi_codegen.hpp"
 #include "lyra/llvm_backend/storage_construction_recipe_builder.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -48,7 +49,6 @@
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
-#include "lyra/runtime/owned_storage_handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -170,9 +170,7 @@ auto ValidateAndSortParamInits(
             .init = &si,
         });
   }
-  std::sort(refs.begin(), refs.end(), [](const auto& a, const auto& b) {
-    return a.body_local_slot < b.body_local_slot;
-  });
+  std::ranges::sort(refs, {}, &SortedParamInitRef::body_local_slot);
   for (size_t k = 1; k < refs.size(); ++k) {
     if (refs[k].body_local_slot == refs[k - 1].body_local_slot) {
       throw common::InternalError(
@@ -521,7 +519,7 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
   std::vector<bool> bitmap(num_slots, false);
 
   // Helper: mark a single design-global trigger slot in the bitmap.
-  auto mark_global_slot = [&](mir::SlotId trigger_slot) {
+  auto mark_global_slot = [&](common::SlotId trigger_slot) {
     if (trigger_slot.value >= num_slots) {
       throw common::InternalError(
           "BuildDesignGlobalBehavioralTriggerBitmap",
@@ -549,7 +547,8 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
                   "non-design-global scope (id={})",
                   proc_id.value, trigger.signal.id));
         }
-        mark_global_slot(mir::SlotId{static_cast<uint32_t>(trigger.signal.id)});
+        mark_global_slot(
+            common::SlotId{static_cast<uint32_t>(trigger.signal.id)});
       }
     }
   }
@@ -570,7 +569,7 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
             continue;
           }
           mark_global_slot(
-              mir::SlotId{static_cast<uint32_t>(trigger.signal.id)});
+              common::SlotId{static_cast<uint32_t>(trigger.signal.id)});
         }
       }
     }
@@ -789,7 +788,11 @@ auto BuildSpecSlotInfos(
     info.access_kinds.reserve(slot_count);
     info.representative_design_slots.reserve(slot_count);
     const auto& base_info = layout.GetInstanceStorageBase(rep_idx);
-    InstanceSlotRange rep_range{rep_base_slot, slot_count};
+    InstanceSlotRange rep_range{
+        .base_slot = rep_base_slot,
+        .slot_count = slot_count,
+        .body_id = unit.body_id,
+    };
     for (uint32_t s = 0; s < slot_count; ++s) {
       uint32_t design_slot_row = rep_base_slot + s;
       auto slot_id = layout.design.slots[design_slot_row];
@@ -1706,12 +1709,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
               if (fact.observed_place) {
                 if (is_global) {
                   obs = ResolveObservation(
-                      body.arena, layout->design, mir::SlotId{fact.signal.id},
-                      *fact.observed_place);
+                      body.arena, layout->design,
+                      common::SlotId{fact.signal.id}, *fact.observed_place);
                 } else {
                   obs = ResolveObservation(
-                      body.arena, layout->design, mir::SlotId{final_global_id},
-                      *fact.observed_place);
+                      body.arena, layout->design,
+                      common::SlotId{final_global_id}, *fact.observed_place);
                 }
               }
 
@@ -1955,11 +1958,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
         }
       }
 
-      std::sort(
-          param_entries.begin(), param_entries.end(),
-          [](const auto& a, const auto& b) {
-            return a.body_local_slot < b.body_local_slot;
-          });
+      std::ranges::sort(
+          param_entries, {}, &ParamSlotTemplateEntry::body_local_slot);
       info.init.param_slots.reserve(param_entries.size());
       for (const auto& pe : param_entries) {
         info.init.param_slots.push_back(pe.slot);
@@ -2152,24 +2152,23 @@ auto FinalizeModule(CodegenSession session, LoweringReport report)
 }
 
 void EmitVariableInspection(
-    Context& context, const std::vector<VariableInfo>& variables,
+    Context& context, const InspectionPlan& plan,
     const std::vector<SlotInfo>& slots, llvm::Value* design_state,
     llvm::Value* abi_ptr) {
-  if (variables.empty()) {
+  if (plan.IsEmpty()) {
     return;
   }
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  auto& mod = context.GetModule();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
-  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
 
-  auto emit_register = [&](llvm::Value* slot_ptr, const VariableInfo& var) {
-    const auto& type_info = slots[var.slot_id].type_info;
-    auto* name_ptr = builder.CreateGlobalStringPtr(var.name);
+  auto emit_register = [&](llvm::Value* slot_ptr, std::string_view name,
+                           common::SlotId slot_id) {
+    const auto& type_info = slots[slot_id.value].type_info;
+    auto* name_ptr = builder.CreateGlobalStringPtr(name);
     auto* kind_val =
         llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(type_info.kind));
     auto* width_val = llvm::ConstantInt::get(i32_ty, type_info.width);
@@ -2182,50 +2181,39 @@ void EmitVariableInspection(
         {name_ptr, slot_ptr, kind_val, width_val, signed_val, four_state_val});
   };
 
-  auto* fn = builder.GetInsertBlock()->getParent();
-  auto* null_ptr_val =
-      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-  auto* has_abi = builder.CreateICmpNE(abi_ptr, null_ptr_val, "has_abi");
-
-  auto* with_abi_bb =
-      llvm::BasicBlock::Create(llvm_ctx, "inspect.with_abi", fn);
-  auto* direct_bb = llvm::BasicBlock::Create(llvm_ctx, "inspect.direct", fn);
-  auto* done_bb = llvm::BasicBlock::Create(llvm_ctx, "inspect.done", fn);
-
-  builder.CreateCondBr(has_abi, with_abi_bb, direct_bb);
-
-  auto* resolve_fn =
-      mod.getOrInsertFunction(
-             "LyraResolveSlotAddress",
-             llvm::FunctionType::get(ptr_ty, {ptr_ty, i32_ty}, false))
-          .getCallee();
-
-  builder.SetInsertPoint(with_abi_bb);
-  for (const auto& var : variables) {
-    if (var.slot_id >= slots.size()) continue;
-    auto* slot_id_val =
-        llvm::ConstantInt::get(i32_ty, static_cast<uint32_t>(var.slot_id));
-    auto* slot_ptr = builder.CreateCall(
-        llvm::cast<llvm::Function>(resolve_fn), {abi_ptr, slot_id_val},
+  // Design-global variables: always emitted unconditionally.
+  for (const auto& var : plan.globals) {
+    auto* addr = builder.CreateGEP(
+        i8_ty, design_state, builder.getInt64(var.placement.abs_off.value),
         "var_ptr");
-    emit_register(slot_ptr, var);
+    emit_register(addr, var.name, var.slot_id);
   }
-  builder.CreateCall(context.GetLyraSnapshotVars());
-  builder.CreateBr(done_bb);
 
-  builder.SetInsertPoint(direct_bb);
-  for (const auto& var : variables) {
-    if (var.slot_id >= slots.size()) continue;
-    auto slot_id = mir::SlotId{static_cast<uint32_t>(var.slot_id)};
-    uint64_t offset = context.GetDesignSlotByteOffset(slot_id);
-    auto* slot_ptr = builder.CreateGEP(
-        i8_ty, design_state, builder.getInt64(offset), "var_ptr");
-    emit_register(slot_ptr, var);
+  // Instance-owned variables: guarded by runtime abi_ptr null check.
+  if (!plan.instance_owned.empty()) {
+    auto* fn = builder.GetInsertBlock()->getParent();
+    auto* with_abi_bb = llvm::BasicBlock::Create(llvm_ctx, "inspect.inst", fn);
+    auto* skip_bb = llvm::BasicBlock::Create(llvm_ctx, "inspect.inst.done", fn);
+
+    auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+    auto* null_ptr_val =
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+    auto* has_abi = builder.CreateICmpNE(abi_ptr, null_ptr_val, "has_abi");
+    builder.CreateCondBr(has_abi, with_abi_bb, skip_bb);
+
+    builder.SetInsertPoint(with_abi_bb);
+    for (const auto& var : plan.instance_owned) {
+      auto* inst = EmitLoadAbiInstancePtr(
+          context, abi_ptr, var.placement.owner_instance_id);
+      auto* addr =
+          EmitInstanceOwnedByteAddress(context, inst, var.placement.rel_off);
+      emit_register(addr, var.name, var.slot_id);
+    }
+    builder.CreateBr(skip_bb);
+    builder.SetInsertPoint(skip_bb);
   }
-  builder.CreateCall(context.GetLyraSnapshotVars());
-  builder.CreateBr(done_bb);
 
-  builder.SetInsertPoint(done_bb);
+  builder.CreateCall(context.GetLyraSnapshotVars());
 }
 
 void EmitTimeReport(Context& context) {

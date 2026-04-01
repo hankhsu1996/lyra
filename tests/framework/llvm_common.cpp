@@ -10,6 +10,7 @@
 #include <format>
 #include <memory>
 #include <poll.h>
+#include <span>
 #include <spawn.h>
 #include <sstream>
 #include <string>
@@ -55,39 +56,46 @@ namespace lyra::test {
 namespace {
 
 // Test framework hooks for variable inspection and timing.
+// Variable inspection is backend-owned: the hook provides identity
+// (name + slot_id) via GetTrackedVariables(), and the backend builds
+// typed placements from session data. This hook only emits non-inspection
+// post-simulation reports (e.g., time report).
 class TestSimulationHooks : public lowering::mir_to_llvm::SimulationHooks {
  public:
   TestSimulationHooks(
-      std::vector<lowering::mir_to_llvm::VariableInfo> variables,
+      std::vector<lowering::mir_to_llvm::InspectedVarRef> variables,
       bool emit_time_report)
       : variables_(std::move(variables)), emit_time_report_(emit_time_report) {
   }
 
-  void OnAfterRunSimulation(
+  [[nodiscard]] auto GetTrackedVariables() const
+      -> std::span<const lowering::mir_to_llvm::InspectedVarRef> override {
+    return variables_;
+  }
+
+  void EmitPostSimulationReports(
       lowering::mir_to_llvm::Context& context,
-      const std::vector<lowering::mir_to_llvm::SlotInfo>& slots,
-      llvm::Value* design_state, llvm::Value* abi_ptr) override {
-    lowering::mir_to_llvm::EmitVariableInspection(
-        context, variables_, slots, design_state, abi_ptr);
+      const std::vector<lowering::mir_to_llvm::SlotInfo>& /*slots*/,
+      llvm::Value* /*design_state*/, llvm::Value* /*abi_ptr*/) override {
     if (emit_time_report_) {
       lowering::mir_to_llvm::EmitTimeReport(context);
     }
   }
 
  private:
-  std::vector<lowering::mir_to_llvm::VariableInfo> variables_;
+  std::vector<lowering::mir_to_llvm::InspectedVarRef> variables_;
   bool emit_time_report_;
 };
 
-// Build tracked variables for inspection (maps variable names to slot IDs)
-// Note: slot_id is the index into the module's variables list, which
-// corresponds to the design slot ID (after any package variables).
+// Build tracked variables for inspection (maps variable names to slot IDs).
+// Returns identity-only records; the backend builds typed placements from
+// session data during codegen.
 auto BuildTrackedVariables(
     const hir::Module* hir_module,
     const lowering::hir_to_mir::LoweringInput& mir_input,
     const lowering::ast_to_hir::LoweringResult& hir_result, size_t base_slot_id)
-    -> std::vector<lowering::mir_to_llvm::VariableInfo> {
-  std::vector<lowering::mir_to_llvm::VariableInfo> variables;
+    -> std::vector<lowering::mir_to_llvm::InspectedVarRef> {
+  std::vector<lowering::mir_to_llvm::InspectedVarRef> variables;
   if (hir_module == nullptr) {
     return variables;
   }
@@ -98,7 +106,9 @@ auto BuildTrackedVariables(
 
     // Handle real types
     if (type.Kind() == TypeKind::kReal) {
-      variables.push_back({.name = sym.name, .slot_id = base_slot_id + i});
+      variables.push_back(
+          {.name = sym.name,
+           .slot_id = common::SlotId{static_cast<uint32_t>(base_slot_id + i)}});
       continue;
     }
 
@@ -112,14 +122,16 @@ auto BuildTrackedVariables(
       continue;
     }
 
-    variables.push_back({.name = sym.name, .slot_id = base_slot_id + i});
+    variables.push_back(
+        {.name = sym.name,
+         .slot_id = common::SlotId{static_cast<uint32_t>(base_slot_id + i)}});
   }
   return variables;
 }
 
 // Holder for hooks - must outlive LLVM lowering
 struct HooksHolder {
-  std::vector<lowering::mir_to_llvm::VariableInfo> tracked_variables;
+  std::vector<lowering::mir_to_llvm::InspectedVarRef> tracked_variables;
   std::unique_ptr<TestSimulationHooks> hooks;
 };
 

@@ -4,6 +4,7 @@
 #include <cstdint>
 
 namespace lyra::runtime {
+struct InstanceMetadataBundle;
 struct RuntimeInstance;
 }  // namespace lyra::runtime
 
@@ -67,7 +68,11 @@ struct RuntimeInstance;
 //      total_state_size_bytes). Runtime constructor derives instance
 //      byte placement from body-sized arithmetic instead of
 //      design-global slot byte offset oracle.
-inline constexpr uint32_t kRuntimeAbiVersion = 18;
+// v19: R4 per-instance metadata bundles. Module-instance slot, trigger,
+//      and comb metadata are derived from bundles by the engine. Flat
+//      slot_meta/process_trigger/comb handoff fields now contain
+//      connection/design-global data only.
+inline constexpr uint32_t kRuntimeAbiVersion = 19;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -122,12 +127,21 @@ struct LyraRuntimeAbi {
   // Indexed by instance_id. Populated from ConstructionResult::instance_ptrs.
   const lyra::runtime::RuntimeInstance* const* instance_ptrs;
   uint32_t num_instances;
+
+  // R4: Per-instance metadata bundles for engine-derived registries.
+  // Module-instance slot, trigger, and comb metadata are derived from
+  // these bundles. Populated from ConstructionResult::instance_bundles.
+  const lyra::runtime::InstanceMetadataBundle* instance_bundles;
+  uint32_t num_instance_bundles;
+  uint32_t pad_bundles;
 };
 
 // Hard size/offset contract.
-static_assert(sizeof(LyraRuntimeAbi) == 216);
+static_assert(sizeof(LyraRuntimeAbi) == 232);
 static_assert(offsetof(LyraRuntimeAbi, version) == 0);
 static_assert(offsetof(LyraRuntimeAbi, num_connection_processes) == 188);
 static_assert(offsetof(LyraRuntimeAbi, design_state) == 192);
 static_assert(offsetof(LyraRuntimeAbi, instance_ptrs) == 200);
 static_assert(offsetof(LyraRuntimeAbi, num_instances) == 208);
+static_assert(offsetof(LyraRuntimeAbi, instance_bundles) == 216);
+static_assert(offsetof(LyraRuntimeAbi, num_instance_bundles) == 224);

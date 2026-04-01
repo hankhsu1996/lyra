@@ -32,7 +32,6 @@
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/signal_dump.hpp"
 #include "lyra/runtime/slot_meta.hpp"
-#include "lyra/runtime/slot_meta_abi.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
@@ -113,20 +112,15 @@ void ReleaseTriggerOverflow(lyra::runtime::SuspendRecord* suspend) {
   }
   suspend->num_triggers = 0;
   suspend->triggers_ptr = nullptr;
-  if (suspend->late_bound_ptr != nullptr) {
-    delete[] suspend
-        ->late_bound_ptr;  // NOLINT(cppcoreguidelines-owning-memory)
-  }
+  // NOLINTBEGIN(cppcoreguidelines-owning-memory)
+  delete[] suspend->late_bound_ptr;
   suspend->num_late_bound = 0;
   suspend->late_bound_ptr = nullptr;
-  if (suspend->plan_ops_ptr != nullptr) {
-    delete[] suspend->plan_ops_ptr;  // NOLINT(cppcoreguidelines-owning-memory)
-  }
+  delete[] suspend->plan_ops_ptr;
   suspend->num_plan_ops = 0;
   suspend->plan_ops_ptr = nullptr;
-  if (suspend->dep_slots_ptr != nullptr) {
-    delete[] suspend->dep_slots_ptr;  // NOLINT(cppcoreguidelines-owning-memory)
-  }
+  delete[] suspend->dep_slots_ptr;
+  // NOLINTEND(cppcoreguidelines-owning-memory)
   suspend->num_dep_slots = 0;
   suspend->dep_slots_ptr = nullptr;
 }
@@ -201,6 +195,7 @@ extern "C" void LyraSuspendWaitWithLateBound(
   if (num_triggers <= lyra::runtime::kInlineTriggerCapacity) {
     suspend->triggers_ptr = suspend->inline_triggers.data();
   } else {
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
     suspend->triggers_ptr = new lyra::runtime::WaitTriggerRecord[num_triggers];
   }
 
@@ -210,6 +205,7 @@ extern "C" void LyraSuspendWaitWithLateBound(
         num_triggers * sizeof(lyra::runtime::WaitTriggerRecord));
   }
 
+  // NOLINTBEGIN(cppcoreguidelines-owning-memory)
   suspend->num_late_bound = num_headers;
   if (num_headers > 0 && headers != nullptr) {
     suspend->late_bound_ptr = new lyra::runtime::LateBoundHeader[num_headers];
@@ -238,6 +234,7 @@ extern "C" void LyraSuspendWaitWithLateBound(
   } else {
     suspend->dep_slots_ptr = nullptr;
   }
+  // NOLINTEND(cppcoreguidelines-owning-memory)
 }
 
 extern "C" void LyraSuspendRepeat(void* state) {
@@ -407,6 +404,36 @@ void SetupAndRunSimulation(
   FinalTime() = std::max(FinalTime(), final_time);
 }
 
+// Build the final merged trace signal meta registry from constructor-built
+// (design-global/package) entries and engine-derived instance entries.
+// This is the single policy point for the dual-ingestion trace merge seam.
+auto BuildMergedTraceSignalMeta(
+    const LyraRuntimeAbi* abi,
+    lyra::runtime::TraceSignalMetaRegistry instance_trace)
+    -> std::optional<lyra::runtime::TraceSignalMetaRegistry> {
+  bool has_constructor = abi->trace_signal_meta_words != nullptr &&
+                         abi->trace_signal_meta_word_count > 0;
+  bool has_instance = instance_trace.IsPopulated();
+  if (!has_constructor && !has_instance) return std::nullopt;
+
+  lyra::runtime::TraceSignalMetaRegistry merged;
+  if (has_constructor) {
+    merged = lyra::runtime::TraceSignalMetaRegistry(
+        abi->trace_signal_meta_words, abi->trace_signal_meta_word_count,
+        abi->trace_signal_meta_string_pool,
+        abi->trace_signal_meta_string_pool_size);
+  }
+  if (has_instance) {
+    for (uint32_t i = 0; i < instance_trace.Count(); ++i) {
+      const auto& meta = instance_trace.Get(i);
+      merged.AppendSignal(
+          instance_trace.Name(i), meta.bit_width, meta.kind,
+          meta.storage_owner_slot_id);
+    }
+  }
+  return merged;
+}
+
 }  // namespace
 
 extern "C" void LyraRunSimulation(
@@ -482,43 +509,32 @@ extern "C" void LyraRunSimulation(
               kRuntimeAbiVersion));
     }
 
-    // Slot metadata
-    if (abi->slot_meta_words != nullptr && abi->slot_meta_word_count > 0) {
-      engine.InitSlotMeta(
-          lyra::runtime::SlotMetaRegistry(
-              abi->slot_meta_words, abi->slot_meta_word_count));
-    }
-
     // Instance pointer list for slot storage resolution.
     if (abi->instance_ptrs != nullptr && abi->num_instances > 0) {
       engine.SetInstances(std::span(abi->instance_ptrs, abi->num_instances));
     }
 
-    // Validate that instance-owned slot meta entries reference valid instances.
-    if (abi->slot_meta_words != nullptr && abi->slot_meta_word_count > 0) {
-      engine.ValidateInstanceOwnedSlotMeta();
-    }
-
-    // Engine-owned dense coordination base assignment.
-    // The engine scans slot meta to determine per-instance slot ranges and
-    // writes local_signal_coord_base on each instance. This makes the engine
-    // the authority for dense coordination base values, replacing the
-    // constructor-assigned values.
-    if (abi->instance_ptrs != nullptr && abi->num_instances > 0 &&
+    // R4: Initialize module-instance registries from per-instance bundles.
+    // Builds slot meta, coordination bases, trigger and comb registries
+    // from structured bundle data. Connection/design-global metadata
+    // remains flat through separate init paths below.
+    lyra::runtime::TraceSignalMetaRegistry instance_trace;
+    if (abi->instance_bundles != nullptr && abi->num_instance_bundles > 0) {
+      instance_trace = engine.InitModuleInstancesFromBundles(
+          std::span(abi->instance_bundles, abi->num_instance_bundles),
+          std::span(abi->slot_meta_words, abi->slot_meta_word_count),
+          states_raw);
+    } else if (
         abi->slot_meta_words != nullptr && abi->slot_meta_word_count > 0) {
-      // Build mutable span from the ABI instance pointer array.
-      // The instances are mutable objects owned by the construction result;
-      // the const in the ABI is an access-control convention, not a
-      // memory-protection guarantee.
-      auto mutable_ptrs = std::span(
-          const_cast<lyra::runtime::RuntimeInstance**>(
-              const_cast<lyra::runtime::RuntimeInstance* const*>(
-                  abi->instance_ptrs)),
-          abi->num_instances);
-      engine.AssignDenseCoordinationBases(mutable_ptrs);
+      // No bundles: fall back to flat slot meta init (no module instances).
+      engine.InitSlotMeta(
+          lyra::runtime::SlotMetaRegistry(
+              abi->slot_meta_words, abi->slot_meta_word_count));
     }
 
-    // Process metadata
+    // Process metadata. When bundles are present, the flat ABI path
+    // contains connection-only process meta. InitProcessMeta merges
+    // it with module process meta built from bundles.
     if (abi->process_meta_words != nullptr &&
         abi->process_meta_word_count > 0) {
       engine.InitProcessMeta(
@@ -538,6 +554,7 @@ extern "C" void LyraRunSimulation(
               abi->back_edge_site_meta_string_pool,
               abi->back_edge_site_meta_string_pool_size));
     }
+
     // Connection descriptors
     if (abi->conn_descs != nullptr && abi->num_conn_descs > 0) {
       auto conn_descs = std::span(
@@ -547,20 +564,27 @@ extern "C" void LyraRunSimulation(
       engine.InitConnectionBatch(conn_descs);
     }
 
-    // Comb kernel word table. Body pointers resolved from frame headers.
-    if (abi->comb_kernel_words != nullptr && abi->num_comb_kernel_words > 0) {
+    // Connection-only comb and trigger metadata (flat path).
+    // When bundles are present, module-instance comb and triggers are
+    // already built by InitModuleInstancesFromBundles. Connection
+    // processes have no comb kernels. Connection triggers merge into
+    // the module trigger registry via InitProcessTriggerRegistry.
+    if (abi->comb_kernel_words != nullptr && abi->num_comb_kernel_words > 0 &&
+        abi->instance_bundles == nullptr) {
+      // No bundles: use flat comb path (legacy).
       engine.InitCombKernels(
           std::span(abi->comb_kernel_words, abi->num_comb_kernel_words),
           num_connection, states_raw);
     }
 
-    // Process trigger metadata and constructor-time trigger groups (G13).
-    if (abi->process_trigger_words != nullptr &&
-        abi->num_process_trigger_words > 0) {
-      engine.InitProcessTriggerRegistry(
-          std::span(abi->process_trigger_words, abi->num_process_trigger_words),
-          num_connection, states_raw);
-    }
+    // Trigger registry finalization. Always called: merges pending
+    // module triggers (from bundles) with connection triggers (from flat).
+    engine.InitProcessTriggerRegistry(
+        abi->process_trigger_words != nullptr
+            ? std::span(
+                  abi->process_trigger_words, abi->num_process_trigger_words)
+            : std::span<const uint32_t>{},
+        num_connection, states_raw);
 
     // Wait-site metadata
     if (abi->wait_site_words != nullptr && abi->wait_site_word_count > 0) {
@@ -569,14 +593,11 @@ extern "C" void LyraRunSimulation(
               abi->wait_site_words, abi->wait_site_word_count));
     }
 
-    // Trace signal metadata
-    if (abi->trace_signal_meta_words != nullptr &&
-        abi->trace_signal_meta_word_count > 0) {
-      engine.InitTraceSignalMeta(
-          lyra::runtime::TraceSignalMetaRegistry(
-              abi->trace_signal_meta_words, abi->trace_signal_meta_word_count,
-              abi->trace_signal_meta_string_pool,
-              abi->trace_signal_meta_string_pool_size));
+    // Trace signal metadata: merge constructor globals + instance entries.
+    auto merged_trace =
+        BuildMergedTraceSignalMeta(abi, std::move(instance_trace));
+    if (merged_trace.has_value()) {
+      engine.InitTraceSignalMeta(std::move(*merged_trace));
     }
   }
 
@@ -653,6 +674,10 @@ extern "C" void LyraRunSimulation(
       lyra::runtime::Engine::RenderSchedulerSnapshot(stderr, snapshot);
     }
   }
+
+  // Release string-typed slot handles before engine destruction.
+  // The engine owns the slot meta registry needed for address resolution.
+  engine.ReleaseStringSlots();
 }
 
 extern "C" auto LyraPlusargsTest(void* engine_ptr, LyraStringHandle query)
@@ -777,14 +802,18 @@ extern "C" auto LyraResolveBaseDir(const char* argv0) -> const char* {
 
   // Priority 1: explicit env var (set by `lyra run` for temp-dir bundles)
   if (const char* env = std::getenv("LYRA_FS_BASE_DIR");
-      env != nullptr && env[0] != '\0') {
+      env != nullptr &&
+      env[0] !=
+          '\0') {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
     resolved = env;
     return resolved.c_str();
   }
 
   // Priority 2: derive from executable directory
   // Layout: <dir>/<name> (produced by `lyra compile`)
-  if (argv0 != nullptr && argv0[0] != '\0') {
+  if (argv0 != nullptr &&
+      argv0[0] !=
+          '\0') {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
     std::error_code ec;
     auto exe_path = std::filesystem::canonical(argv0, ec);
     if (ec) {
@@ -909,45 +938,6 @@ extern "C" auto LyraResolveSlotPtr(void* engine_ptr, uint32_t slot_id)
     -> void* {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   return engine->ResolveSlotBytesMut(slot_id);
-}
-
-extern "C" auto LyraResolveSlotAddress(
-    const LyraRuntimeAbi* abi, uint32_t slot_id) -> void* {
-  if (abi == nullptr) {
-    throw lyra::common::InternalError("LyraResolveSlotAddress", "abi is null");
-  }
-  if (abi->slot_meta_words == nullptr || abi->slot_meta_word_count == 0) {
-    throw lyra::common::InternalError(
-        "LyraResolveSlotAddress", "no slot metadata");
-  }
-  lyra::runtime::SlotMetaRegistry registry(
-      abi->slot_meta_words, abi->slot_meta_word_count);
-  const auto& meta = registry.Get(slot_id);
-
-  if (meta.domain == lyra::runtime::SlotStorageDomain::kDesignGlobal) {
-    return static_cast<uint8_t*>(abi->design_state) + meta.design_base_off;
-  }
-
-  if (abi->instance_ptrs == nullptr ||
-      meta.owner_instance_id >= abi->num_instances) {
-    throw lyra::common::InternalError(
-        "LyraResolveSlotAddress",
-        std::format(
-            "slot {} owner_instance_id {} out of range for {} instances",
-            slot_id, meta.owner_instance_id, abi->num_instances));
-  }
-
-  const auto* inst = abi->instance_ptrs[meta.owner_instance_id];
-  if (inst == nullptr) {
-    throw lyra::common::InternalError(
-        "LyraResolveSlotAddress",
-        std::format(
-            "slot {} owner_instance_id {} resolved to null instance", slot_id,
-            meta.owner_instance_id));
-  }
-
-  return lyra::runtime::ResolveInstanceStorageOffset(
-      *inst, meta.instance_rel_off, meta.total_bytes, "LyraResolveSlotAddress");
 }
 
 // R3 typed coordination helpers.

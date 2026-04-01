@@ -4,6 +4,7 @@
 #include <format>
 #include <optional>
 
+#include "lyra/common/byte_offset.hpp"
 #include "lyra/common/internal_error.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -14,13 +15,6 @@ struct ArenaByteOffset {
   uint64_t value = 0;
   auto operator==(const ArenaByteOffset&) const -> bool = default;
   auto operator<=>(const ArenaByteOffset&) const = default;
-};
-
-// Instance-relative byte offset (from an instance's owned-local storage base).
-struct InstanceByteOffset {
-  uint64_t value = 0;
-  auto operator==(const InstanceByteOffset&) const -> bool = default;
-  auto operator<=>(const InstanceByteOffset&) const = default;
 };
 
 // Body-relative byte offset (from a body's first slot).
@@ -47,14 +41,15 @@ struct InstanceStorageBase {
 // Convert an arena-absolute offset to an instance-relative offset.
 // Precondition: abs.value >= instance_base.value.
 [[nodiscard]] inline auto ToInstanceOffset(
-    ArenaByteOffset abs, ArenaByteOffset instance_base) -> InstanceByteOffset {
+    ArenaByteOffset abs, ArenaByteOffset instance_base)
+    -> common::InstanceByteOffset {
   if (abs.value < instance_base.value) {
     throw common::InternalError(
         "ToInstanceOffset",
         std::format(
             "abs {} < instance_base {}", abs.value, instance_base.value));
   }
-  return InstanceByteOffset{abs.value - instance_base.value};
+  return common::InstanceByteOffset{abs.value - instance_base.value};
 }
 
 // Convert an arena-absolute offset to a body-relative offset.

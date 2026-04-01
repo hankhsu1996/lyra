@@ -54,6 +54,15 @@ class TraceSignalMetaRegistry {
   [[nodiscard]] auto GetAliasGroup(uint32_t owner_slot_id) const
       -> std::span<const uint32_t>;
 
+  // Reserve capacity for known signal count.
+  void Reserve(size_t count);
+
+  // Append a trace signal from structured facts.
+  // name is copied into the internal string pool.
+  void AppendSignal(
+      std::string_view name, uint32_t bit_width, TraceSignalKind kind,
+      uint32_t storage_owner_slot_id);
+
  private:
   [[nodiscard]] auto PoolString(uint32_t offset) const -> const char*;
 

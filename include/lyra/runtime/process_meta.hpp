@@ -55,6 +55,10 @@ class ProcessMetaRegistry {
   // Debug dump to stdout.
   void DumpSummary() const;
 
+  // Access a NUL-terminated string from the pool by offset.
+  // Returns "" for offset 0 or out-of-range.
+  [[nodiscard]] auto GetPoolString(uint32_t offset) const -> const char*;
+
  private:
   [[nodiscard]] auto PoolString(uint32_t offset) const -> const char*;
 
