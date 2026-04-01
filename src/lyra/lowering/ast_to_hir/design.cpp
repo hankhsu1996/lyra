@@ -7,19 +7,23 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include <slang/ast/Compilation.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/syntax/AllSyntax.h>
 
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/source_span.hpp"
@@ -27,6 +31,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
+#include "lyra/hir/dpi.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
@@ -36,6 +41,7 @@
 #include "lyra/lowering/ast_to_hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/param_transmission.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
+#include "lyra/lowering/ast_to_hir/routine.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/specialization.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
@@ -44,6 +50,146 @@
 #include "lyra/mir/instance.hpp"
 
 namespace lyra::lowering::ast_to_hir {
+
+namespace {
+
+// Classify a DPI export subroutine's signature using the canonical
+// slang-type classifier (shared with imports). Returns nullopt and
+// emits user diagnostics if any parameter or return type is unsupported.
+auto ClassifyExportSignature(
+    const slang::ast::SubroutineSymbol& sub, SourceSpan span,
+    SymbolRegistrar& registrar, Context* ctx)
+    -> std::optional<hir::DpiExportSignature> {
+  const auto& ret_type = sub.getReturnType();
+  auto return_class = ClassifyDpiAbiType(ret_type);
+  if (!return_class) {
+    ctx->sink->Unsupported(
+        span,
+        std::format(
+            "DPI-C export return type '{}' not yet supported",
+            ret_type.toString()),
+        UnsupportedCategory::kType);
+    return std::nullopt;
+  }
+  if (!hir::IsValidDpiReturnType(*return_class)) {
+    ctx->sink->Unsupported(
+        span,
+        std::format(
+            "DPI-C export return type '{}' requires indirect return "
+            "modeling, not yet supported",
+            ret_type.toString()),
+        UnsupportedCategory::kType);
+    return std::nullopt;
+  }
+  TypeId return_type_id = LowerType(ret_type, span, ctx);
+  if (!return_type_id) {
+    return std::nullopt;
+  }
+
+  std::vector<hir::DpiParam> params;
+  bool has_error = false;
+  for (const slang::ast::FormalArgumentSymbol* arg : sub.getArguments()) {
+    SourceSpan arg_span = ctx->SpanOf(GetSourceRange(*arg));
+    if (arg->direction == slang::ast::ArgumentDirection::Ref) {
+      ctx->sink->Unsupported(
+          arg_span, "DPI-C export ref parameters not yet supported",
+          UnsupportedCategory::kFeature);
+      has_error = true;
+      continue;
+    }
+    auto arg_class = ClassifyDpiAbiType(arg->getType());
+    if (!arg_class || !hir::IsValidDpiParamType(*arg_class)) {
+      ctx->sink->Unsupported(
+          arg_span,
+          std::format(
+              "DPI-C export argument type '{}' not yet supported",
+              arg->getType().toString()),
+          UnsupportedCategory::kType);
+      has_error = true;
+      continue;
+    }
+    TypeId arg_type_id = LowerType(arg->getType(), arg_span, ctx);
+    if (!arg_type_id) {
+      has_error = true;
+      continue;
+    }
+    SymbolId arg_sym = registrar.Lookup(*arg);
+    if (!arg_sym) {
+      has_error = true;
+      continue;
+    }
+    ParameterDirection dir = ParameterDirection::kInput;
+    switch (arg->direction) {
+      case slang::ast::ArgumentDirection::In:
+        dir = ParameterDirection::kInput;
+        break;
+      case slang::ast::ArgumentDirection::Out:
+        dir = ParameterDirection::kOutput;
+        break;
+      case slang::ast::ArgumentDirection::InOut:
+        dir = ParameterDirection::kInOut;
+        break;
+      default:
+        throw common::InternalError(
+            "ClassifyExportSignature",
+            "unexpected argument direction after ref rejection");
+    }
+    params.push_back({
+        .symbol = arg_sym,
+        .span = arg_span,
+        .type_id = arg_type_id,
+        .dpi_type = *arg_class,
+        .direction = dir,
+    });
+  }
+  if (has_error) {
+    return std::nullopt;
+  }
+
+  return hir::DpiExportSignature{
+      .return_type_id = return_type_id,
+      .return_dpi_type = *return_class,
+      .params = std::move(params),
+  };
+}
+
+// Get the source span for a DPI export directive. Uses the export
+// declaration syntax when available, falling back to the function.
+auto GetDpiExportSpan(
+    const slang::ast::Compilation::DPIExport& dpi_export,
+    const slang::ast::SubroutineSymbol& sub, Context* ctx) -> SourceSpan {
+  if (dpi_export.syntax != nullptr) {
+    return ctx->SpanOf(dpi_export.syntax->sourceRange());
+  }
+  return ctx->SpanOf(GetSourceRange(sub));
+}
+
+// Attach a DpiExportDecl to its owning package or module body container.
+void AttachDpiExportDecl(
+    const slang::ast::Symbol& parent, hir::DpiExportDecl decl,
+    std::unordered_map<const slang::ast::Symbol*, size_t>& pkg_to_element_idx,
+    std::unordered_map<const slang::ast::Symbol*, size_t>& scope_to_body_idx,
+    std::vector<hir::DesignElement>& elements,
+    std::vector<hir::ModuleBody>& module_bodies) {
+  if (auto it = pkg_to_element_idx.find(&parent);
+      it != pkg_to_element_idx.end()) {
+    auto& pkg = std::get<hir::Package>(elements[it->second]);
+    pkg.dpi_exports.push_back(std::move(decl));
+    return;
+  }
+  if (auto it = scope_to_body_idx.find(&parent);
+      it != scope_to_body_idx.end()) {
+    module_bodies[it->second].dpi_exports.push_back(std::move(decl));
+    return;
+  }
+  throw common::InternalError(
+      "AttachDpiExportDecl",
+      std::format(
+          "DPI export owner scope not mapped to HIR container: '{}'",
+          std::string(parent.name)));
+}
+
+}  // namespace
 
 namespace {
 
@@ -558,12 +704,16 @@ auto LowerDesign(
   DesignBindingPlan binding_plan =
       LowerPortBindings(pending_bindings, registrar, ctx);
 
-  // Lower packages (independent of instances)
+  // Lower packages (independent of instances).
+  // Track package pointer -> elements index for DPI export attachment.
+  std::unordered_map<const slang::ast::Symbol*, size_t> pkg_to_element_idx;
   for (const slang::ast::PackageSymbol* pkg : compilation.getPackages()) {
     if (pkg->name == "std") {
       continue;
     }
+    size_t idx = elements.size();
     elements.emplace_back(LowerPackage(*pkg, registrar, ctx));
+    pkg_to_element_idx[pkg] = idx;
   }
 
   auto [body_inputs, instance_inputs] =
@@ -595,6 +745,8 @@ auto LowerDesign(
   module_bodies.reserve(body_results.size());
 
   std::vector<hir::ModuleBodyId> body_id_by_instance(all_instances.size());
+  // Track representative instance body scope -> body index for DPI export.
+  std::unordered_map<const slang::ast::Symbol*, size_t> scope_to_body_idx;
 
   for (size_t g = 0; g < body_results.size(); ++g) {
     for (auto& diag : body_results[g].diagnostics) {
@@ -604,8 +756,10 @@ auto LowerDesign(
     hir::ModuleBodyId body_id{static_cast<uint32_t>(module_bodies.size())};
     module_bodies.push_back(std::move(body_results[g].body));
 
+    // Map all instance body scopes in this group to the same body index.
     for (uint32_t idx : spec_map.groups[g].instance_indices) {
       body_id_by_instance[idx] = body_id;
+      scope_to_body_idx[&all_instances[idx]->body] = body_id.value;
     }
   }
 
@@ -629,11 +783,89 @@ auto LowerDesign(
         });
   }
 
+  // Collect DPI export declarations from slang's resolved export list.
+  // Slang provides a named struct with subroutine, cIdentifier, and
+  // syntax provenance -- no manual resolution needed.
+  // ABI type classification is produced as a separate artifact
+  // (DpiExportSignatureCache) for MIR consumption.
+  hir::DpiExportSignatureCache export_sig_cache;
+
+  for (const auto& dpi_export : compilation.getDPIExports()) {
+    if (dpi_export.subroutine == nullptr) {
+      throw common::InternalError(
+          "LowerDesign",
+          "slang returned DPI export entry with null subroutine");
+    }
+
+    const auto& sub = *dpi_export.subroutine;
+    const std::string& c_name = dpi_export.cIdentifier;
+    SourceSpan span = GetDpiExportSpan(dpi_export, sub, ctx);
+
+    bool is_task = sub.subroutineKind == slang::ast::SubroutineKind::Task;
+    bool is_context = sub.flags.has(slang::ast::MethodFlags::DPIContext);
+
+    const auto& parent = sub.getParentScope()->asSymbol();
+    bool is_module_scoped = parent.kind == slang::ast::SymbolKind::InstanceBody;
+
+    // Scope/kind gating: reject unsupported forms with diagnostics.
+    if (is_task) {
+      ctx->sink->Unsupported(
+          span, "DPI-C export tasks not yet supported",
+          UnsupportedCategory::kFeature);
+      continue;
+    }
+    if (is_context) {
+      ctx->sink->Unsupported(
+          span, "DPI-C context export functions not yet supported",
+          UnsupportedCategory::kFeature);
+      continue;
+    }
+    if (is_module_scoped) {
+      ctx->sink->Unsupported(
+          span, "DPI-C module-scoped export functions not yet supported",
+          UnsupportedCategory::kFeature);
+      continue;
+    }
+
+    SymbolId symbol = registrar.Lookup(sub);
+    if (!symbol) {
+      continue;
+    }
+
+    hir::DpiExportDecl decl{
+        .symbol = symbol,
+        .span = span,
+        .c_name = c_name,
+        .is_task = is_task,
+        .is_context = is_context,
+        .is_module_scoped = is_module_scoped,
+    };
+
+    auto sig = ClassifyExportSignature(sub, span, registrar, ctx);
+    if (!sig) {
+      continue;
+    }
+    auto [cache_it, cache_inserted] =
+        export_sig_cache.emplace(symbol, std::move(*sig));
+    if (!cache_inserted) {
+      throw common::InternalError(
+          "LowerDesign",
+          std::format(
+              "duplicate DPI export signature cache entry for symbol {}",
+              symbol.value));
+    }
+
+    AttachDpiExportDecl(
+        parent, std::move(decl), pkg_to_element_idx, scope_to_body_idx,
+        elements, module_bodies);
+  }
+
   return DesignLoweringResult{
       .design =
           hir::Design{
               .elements = std::move(elements),
               .module_bodies = std::move(module_bodies),
+              .dpi_export_signatures = std::move(export_sig_cache),
           },
       .binding_plan = std::move(binding_plan),
       .specialization_map = std::move(spec_map),

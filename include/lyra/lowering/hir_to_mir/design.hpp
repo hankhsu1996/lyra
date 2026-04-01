@@ -36,6 +36,12 @@ struct DesignLoweringResult {
   // Body-local MIR origins stay body-local -- not merged into the
   // design-global origin map.
   std::vector<std::vector<OriginEntry>> body_origins;
+  // DPI export wrapper descriptors for LLVM backend emission.
+  // Deterministically sorted by c_name. Built from DesignDeclarations
+  // export registry, not from mir::Design.
+  std::vector<mir::DpiExportWrapperDesc> dpi_export_wrappers;
+  // Generated DPI header content. Empty if no DPI symbols exist.
+  std::string dpi_header;
 };
 
 auto LowerDesign(

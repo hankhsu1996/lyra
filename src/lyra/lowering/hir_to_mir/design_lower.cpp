@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
 #include "lyra/lowering/hir_to_mir/design_internal.hpp"
+#include "lyra/lowering/hir_to_mir/dpi_header.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/module.hpp"
 #include "lyra/lowering/hir_to_mir/package.hpp"
@@ -129,6 +130,18 @@ auto LowerDesign(
   const DesignDeclarations decls =
       CollectDesignDeclarations(design, input, mir_arena);
 
+  // Surface export signature diagnostics as user-facing errors.
+  if (!decls.export_diagnostics.empty()) {
+    const auto& first = decls.export_diagnostics[0];
+    auto diag = Diagnostic::Error(first.span, first.message);
+    for (size_t i = 1; i < decls.export_diagnostics.size(); ++i) {
+      diag = std::move(diag).WithNote(
+          decls.export_diagnostics[i].span,
+          decls.export_diagnostics[i].message);
+    }
+    return std::unexpected(std::move(diag));
+  }
+
   mir::Design result;
   result.num_design_slots = decls.num_design_slots;
   result.slots = decls.slots;
@@ -152,6 +165,77 @@ auto LowerDesign(
   result.module_def_ids = decls.module_def_ids;
   if (input.instance_table != nullptr) {
     result.instance_table = *input.instance_table;
+  }
+
+  // Check whether the current LLVM wrapper model supports a given export
+  // signature. Returns a diagnostic message if unsupported, nullopt if OK.
+  // D4.4 supports: scalar 2-state by-value params/returns, real, shortreal,
+  // string, chandle. Not yet supported: kLogicScalar, packed by-pointer.
+  auto UnsupportedByCurrentWrapperModel =
+      [](const mir::DpiSignature& sig) -> std::optional<std::string> {
+    if (sig.result.abi_type == DpiAbiTypeClass::kLogicScalar) {
+      return "4-state scalar return not yet supported in export wrappers";
+    }
+    for (const auto& p : sig.params) {
+      if (p.abi_type == DpiAbiTypeClass::kLogicScalar) {
+        return "4-state scalar parameters not yet supported in export "
+               "wrappers";
+      }
+      if (p.passing == mir::DpiPassingMode::kByPointer) {
+        if (IsFourStateVecDpiType(p.abi_type) ||
+            IsTwoStateWideVecDpiType(p.abi_type)) {
+          return "packed by-pointer parameters not yet supported in export "
+                 "wrappers";
+        }
+      }
+    }
+    return std::nullopt;
+  };
+
+  // Build deterministically ordered DPI export wrapper descriptors.
+  // Exports whose signatures are not yet supported by the current wrapper
+  // model are rejected with user diagnostics instead of being emitted.
+  std::vector<DesignDeclarations::ExportDiagnostic> wrapper_diagnostics;
+  std::vector<mir::DpiExportWrapperDesc> dpi_export_wrappers;
+  {
+    std::vector<const DpiExportInfo*> sorted_exports;
+    sorted_exports.reserve(decls.dpi_exports.Size());
+    for (const auto& [_, info] : decls.dpi_exports.Entries()) {
+      sorted_exports.push_back(&info);
+    }
+    std::ranges::sort(sorted_exports, [](const auto* a, const auto* b) {
+      if (a->c_name != b->c_name) return a->c_name < b->c_name;
+      return a->symbol.value < b->symbol.value;
+    });
+    for (const auto* exp : sorted_exports) {
+      auto unsupported = UnsupportedByCurrentWrapperModel(exp->signature);
+      if (unsupported) {
+        wrapper_diagnostics.push_back(
+            DesignDeclarations::ExportDiagnostic{
+                .span = exp->span,
+                .message = std::format(
+                    "DPI-C export '{}': {}", exp->c_name, *unsupported),
+            });
+        continue;
+      }
+      dpi_export_wrappers.push_back(
+          mir::DpiExportWrapperDesc{
+              .symbol = exp->symbol,
+              .c_name = exp->c_name,
+              .signature = exp->signature,
+          });
+    }
+  }
+
+  // Surface wrapper-model diagnostics as user-facing errors.
+  if (!wrapper_diagnostics.empty()) {
+    const auto& first = wrapper_diagnostics[0];
+    auto diag = Diagnostic::Error(first.span, first.message);
+    for (size_t i = 1; i < wrapper_diagnostics.size(); ++i) {
+      diag = std::move(diag).WithNote(
+          wrapper_diagnostics[i].span, wrapper_diagnostics[i].message);
+    }
+    return std::unexpected(std::move(diag));
   }
 
   // Phase 0: Lower package init processes into design arena.
@@ -347,6 +431,10 @@ auto LowerDesign(
       .design = std::move(result),
       .compiled_bindings = std::move(compiled_bindings),
       .body_origins = std::move(body_origins),
+      .dpi_export_wrappers = std::move(dpi_export_wrappers),
+      .dpi_header = (!decls.dpi_exports.Empty() || !decls.dpi_imports.Empty())
+                        ? RenderDpiHeader(decls.dpi_exports, decls.dpi_imports)
+                        : std::string{},
   };
 }
 

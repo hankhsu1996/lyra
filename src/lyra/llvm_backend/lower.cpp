@@ -33,6 +33,7 @@
 #include "lyra/llvm_backend/connection_analysis.hpp"
 #include "lyra/llvm_backend/connection_kernel_collection.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/init_descriptor_utils.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/layout/observable_storage_ref.hpp"
@@ -1165,6 +1166,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
       context->RegisterDesignFunction(
           func.canonical_symbol, func_id, llvm_func);
     }
+  }
+
+  // Phase 3b: Emit DPI export wrappers (after internal functions are defined).
+  if (input.dpi_export_wrappers != nullptr &&
+      !input.dpi_export_wrappers->empty()) {
+    auto export_result =
+        dpi::EmitDpiExportWrappers(*context, *input.dpi_export_wrappers);
+    if (!export_result) return std::unexpected(export_result.error());
   }
 
   // Phase 4: Compile each specialization via CompileModuleSpecSession

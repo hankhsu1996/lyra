@@ -437,6 +437,27 @@ auto CompileJitImpl(
   }
   timings.add_ir = ElapsedSeconds(t3);
 
+  // Load DPI object files directly into the JIT's symbol space.
+  // Object files participate in bidirectional symbol resolution within
+  // the same JITDylib, enabling both import (JIT calls C) and export
+  // (C calls JIT) patterns.
+  for (size_t i = 0; i < options.dpi_object_inputs.size(); ++i) {
+    auto obj_path = options.dpi_object_inputs[i].string();
+    auto buf = llvm::MemoryBuffer::getFile(obj_path);
+    if (!buf) {
+      return std::unexpected(
+          std::format(
+              "failed to read DPI object file '{}': {}", obj_path,
+              buf.getError().message()));
+    }
+    if (auto err = (*jit)->addObjectFile(std::move(*buf))) {
+      return std::unexpected(
+          std::format(
+              "failed to add DPI object file '{}': {}", obj_path,
+              llvm::toString(std::move(err))));
+    }
+  }
+
   // Sub-phase 5: lookup_main (triggers full JIT compilation + linking)
   if (progress) {
     progress->lookup_start = Clock::now();

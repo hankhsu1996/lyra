@@ -1,14 +1,16 @@
 #pragma once
 
 // DPI-C ABI lowering layer for LLVM codegen.
-// Owns all import-side foreign ABI decisions: type mapping, function
-// declaration, argument marshaling, return coercion, and calling convention.
+// Owns all foreign ABI decisions: type mapping, function declaration,
+// argument marshaling, return coercion, calling convention, and export
+// wrapper emission.
 // Separate from internal Lyra function ABI; never reuses BuildUserFunctionType.
 
 #include <string>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/dpi_types.hpp"
+#include "lyra/mir/call.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace llvm {
@@ -48,6 +50,16 @@ auto GetOrDeclareDpiImport(
 // types, emit call with C calling convention, coerce return value back to
 // internal representation, and handle return staging.
 auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
+    -> Result<void>;
+
+// Emit public C-ABI wrapper functions for package-scoped DPI exports
+// supported by the current wrapper model (scalar 2-state by-value params
+// and returns, real, shortreal, string, chandle). Signatures requiring
+// 4-state scalar or packed by-pointer marshaling are filtered before
+// reaching this function.
+// Must be called after internal design functions are declared and defined.
+auto EmitDpiExportWrappers(
+    Context& context, const std::vector<mir::DpiExportWrapperDesc>& exports)
     -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm::dpi

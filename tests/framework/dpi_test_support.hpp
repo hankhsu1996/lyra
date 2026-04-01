@@ -24,4 +24,11 @@ auto CompileDpiSources(
     std::span<const std::string> dpi_sources,
     const std::filesystem::path& work_dir) -> DpiCompileResult;
 
+// Compile DPI companion C source files into relocatable object files (.o)
+// in work_dir. Used by JIT mode where object files are loaded directly
+// into the JIT's symbol space (supports both import and export symbols).
+auto CompileDpiSourcesToObjects(
+    std::span<const std::string> dpi_sources,
+    const std::filesystem::path& work_dir) -> DpiCompileResult;
+
 }  // namespace lyra::test

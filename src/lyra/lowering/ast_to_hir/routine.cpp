@@ -102,8 +102,10 @@ auto MakeUnsupportedIndirectDpiReturnDiagnostic(
   }
 }
 
-// Classify a slang type as a DPI ABI type class.
-// Returns nullopt for unsupported types (unpacked, realtime, etc.).
+}  // namespace
+
+// Canonical DPI ABI type classifier over slang types.
+// Shared between import and export classification paths.
 auto ClassifyDpiAbiType(const slang::ast::Type& type)
     -> std::optional<hir::DpiAbiTypeClass> {
   const auto& canonical = type.getCanonicalType();
@@ -188,8 +190,6 @@ auto ClassifyDpiAbiType(const slang::ast::Type& type)
 
   return std::nullopt;
 }
-
-}  // namespace
 
 auto TryLowerDpiImport(
     const slang::ast::SubroutineSymbol& sub, SymbolRegistrar& registrar,

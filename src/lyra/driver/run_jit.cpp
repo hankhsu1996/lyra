@@ -127,6 +127,7 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
       .force_two_state = input.input.two_state,
       .collect_forwarding_analysis =
           output.IsEnabled(OutputCategory::kAnalysis),
+      .dpi_export_wrappers = &compilation.mir.dpi_export_wrappers,
   };
 
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;

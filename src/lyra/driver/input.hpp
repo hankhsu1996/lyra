@@ -13,7 +13,7 @@
 namespace lyra::driver {
 
 enum class Backend { kAot, kJit, kLli };
-enum class DumpFormat { kHir, kMir, kLlvm };
+enum class DumpFormat { kHir, kMir, kLlvm, kDpiHeader };
 
 auto ParseBackend(const std::string& s) -> lyra::Result<Backend>;
 auto ParseDumpFormat(const std::string& s) -> lyra::Result<DumpFormat>;

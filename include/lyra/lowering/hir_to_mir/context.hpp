@@ -98,6 +98,19 @@ struct DesignDeclarations {
 
   // Design-visible DPI imports from all packages and module bodies.
   DesignDpiImports dpi_imports;
+  // Design-visible DPI exports from all packages and module bodies.
+  // Exports with unsupported signatures are not registered; diagnostics
+  // are collected in export_diagnostics instead.
+  DesignDpiExports dpi_exports;
+
+  // Diagnostics from export signature validation (unsupported types, etc.).
+  // These are user-facing errors, not internal invariant violations.
+  // The caller should surface them through the pipeline diagnostic sink.
+  struct ExportDiagnostic {
+    SourceSpan span;
+    std::string message;
+  };
+  std::vector<ExportDiagnostic> export_diagnostics;
 };
 
 // Read-only view into declaration artifacts for lower-level helpers

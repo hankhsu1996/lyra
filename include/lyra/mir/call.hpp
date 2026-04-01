@@ -161,4 +161,14 @@ struct CallWriteback {
   int32_t arg_index = 0;  // Formal param index (for commit ordering)
 };
 
+// DPI export wrapper descriptor for LLVM backend emission.
+// Binds a visible C name to the canonical DpiSignature and the internal
+// function's canonical symbol. Populated during MIR design lowering,
+// deterministically sorted by c_name.
+struct DpiExportWrapperDesc {
+  SymbolId symbol;
+  std::string c_name;
+  DpiSignature signature;
+};
+
 }  // namespace lyra::mir

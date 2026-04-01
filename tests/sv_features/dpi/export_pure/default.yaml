@@ -1,0 +1,232 @@
+feature: dpi_export_pure
+description: DPI-C export function declaration acceptance and rejection
+
+cases:
+  - name: accept_package_export_void
+    sv: |
+      package dpi_pkg;
+        function void pkg_fn();
+        endfunction
+        export "DPI-C" function pkg_fn;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+
+  - name: accept_package_export_scalar_return
+    sv: |
+      package dpi_pkg;
+        function int get_value();
+          return 42;
+        endfunction
+        export "DPI-C" function get_value;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+
+  - name: accept_package_export_with_params
+    sv: |
+      package dpi_pkg;
+        function int add(int a, int b);
+          return a + b;
+        endfunction
+        export "DPI-C" function add;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+
+  - name: accept_package_export_explicit_c_name
+    sv: |
+      package dpi_pkg;
+        function int my_fn();
+          return 0;
+        endfunction
+        export "DPI-C" c_my_fn = function my_fn;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+
+  - name: reject_export_task
+    sv: |
+      package dpi_pkg;
+        task my_task();
+        endtask
+        export "DPI-C" task my_task;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C export tasks not yet supported"
+
+  - name: reject_module_scoped_export
+    sv: |
+      module Test;
+        function int mod_fn();
+          return 0;
+        endfunction
+        export "DPI-C" function mod_fn;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C module-scoped export functions not yet supported"
+
+  - name: accept_package_export_real_param
+    sv: |
+      package dpi_pkg;
+        function real double_it(real x);
+          return x * 2.0;
+        endfunction
+        export "DPI-C" function double_it;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+
+  - name: accept_package_export_string
+    sv: |
+      package dpi_pkg;
+        function string greet();
+          return "hello";
+        endfunction
+        export "DPI-C" function greet;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+
+  - name: accept_package_export_output_param
+    sv: |
+      package dpi_pkg;
+        function void set_val(output int x);
+          x = 42;
+        endfunction
+        export "DPI-C" function set_val;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+
+  - name: accept_package_export_byte_param
+    sv: |
+      package dpi_pkg;
+        function byte echo_byte(byte b);
+          return b;
+        endfunction
+        export "DPI-C" function echo_byte;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+
+  - name: reject_export_unsupported_return_type
+    sv: |
+      package dpi_pkg;
+        function realtime get_rt();
+          return 0.0;
+        endfunction
+        export "DPI-C" function get_rt;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C export return type"
+          - "not yet supported"
+
+  - name: reject_export_logic_scalar_param
+    sv: |
+      package dpi_pkg;
+        function int logic_fn(logic x);
+          return 0;
+        endfunction
+        export "DPI-C" function logic_fn;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "4-state scalar parameters not yet supported in export wrappers"
+
+  - name: reject_export_logic_scalar_return
+    sv: |
+      package dpi_pkg;
+        function logic get_logic();
+          return 1'b1;
+        endfunction
+        export "DPI-C" function get_logic;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "4-state scalar return not yet supported in export wrappers"
+
+  - name: reject_export_packed_by_pointer_param
+    sv: |
+      package dpi_pkg;
+        function void wide_fn(input bit [127:0] v);
+        endfunction
+        export "DPI-C" function wide_fn;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "packed by-pointer parameters not yet supported in export wrappers"
+
+  # Import/export visible-name collision: slang catches this at parse time
+  # with "more than one DPI subroutine with C identifier" before Lyra sees it.
+  # Lyra's own design-wide collision check in CollectDesignDeclarations
+  # serves as a safety net for cases slang might not catch.
+  - name: reject_export_import_name_collision
+    sv: |
+      package dpi_pkg;
+        import "DPI-C" function int my_fn(int x);
+        function int my_fn_impl();
+          return 0;
+        endfunction
+        export "DPI-C" my_fn = function my_fn_impl;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "my_fn"
+
+  # `integer` is a 4-state 32-bit predefined type, classified as
+  # kLogicVecNarrow. Packed-vector DPI returns require indirect return
+  # modeling (svLogicVecVal* out-param), which is not yet supported.
+  # This is the same rejection as the import-side reject_dpi_integer_return.
+  - name: reject_export_integer_return
+    sv: |
+      package dpi_pkg;
+        function integer get_int();
+          return 42;
+        endfunction
+        export "DPI-C" function get_int;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "indirect return modeling"

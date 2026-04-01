@@ -56,4 +56,10 @@ auto TryLowerDpiImport(
     const slang::ast::SubroutineSymbol& sub, SymbolRegistrar& registrar,
     Context* ctx) -> DpiLoweringResult;
 
+// Canonical DPI ABI type classifier over slang types.
+// Shared between import and export classification paths.
+// Returns nullopt for types that have no DPI ABI representation.
+auto ClassifyDpiAbiType(const slang::ast::Type& type)
+    -> std::optional<hir::DpiAbiTypeClass>;
+
 }  // namespace lyra::lowering::ast_to_hir

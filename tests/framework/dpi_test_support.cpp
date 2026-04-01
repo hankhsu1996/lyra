@@ -64,4 +64,41 @@ auto CompileDpiSources(
   return result;
 }
 
+auto CompileDpiSourcesToObjects(
+    std::span<const std::string> dpi_sources,
+    const std::filesystem::path& work_dir) -> DpiCompileResult {
+  namespace fs = std::filesystem;
+  DpiCompileResult result;
+
+  auto toolchain = lowering::mir_to_llvm::DetectToolchain();
+  if (!toolchain) {
+    result.error =
+        std::format("toolchain detection failed: {}", toolchain.error());
+    return result;
+  }
+
+  fs::create_directories(work_dir);
+
+  for (const auto& src : dpi_sources) {
+    auto src_abs = fs::absolute(src);
+    auto out_path = fs::absolute(work_dir / fs::path(src).stem());
+    out_path += ".o";
+
+    std::vector<std::string> args = {
+        "-c", "-fPIC", "-o", out_path.string(), src_abs.string(),
+    };
+
+    auto sub = RunSubprocess(toolchain->cc_path, args);
+    if (sub.exit_code != 0) {
+      result.error = std::format(
+          "DPI C compilation failed for '{}' -> '{}' (exit code {}): {}",
+          src_abs.string(), out_path.string(), sub.exit_code, sub.stderr_text);
+      return result;
+    }
+    result.link_inputs.push_back(out_path);
+  }
+
+  return result;
+}
+
 }  // namespace lyra::test

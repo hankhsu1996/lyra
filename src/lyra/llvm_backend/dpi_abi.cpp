@@ -941,4 +941,142 @@ auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
   return CommitDpiReturnValue(context, call, call_inst);
 }
 
+namespace {
+
+// Build the LLVM function type for a DPI export wrapper from its DpiSignature.
+// By-value params use their scalar LLVM type, by-pointer params use ptr.
+auto BuildExportWrapperType(
+    llvm::LLVMContext& ctx, const mir::DpiSignature& sig)
+    -> llvm::FunctionType* {
+  llvm::Type* ret_ty = (sig.result.kind == mir::DpiReturnKind::kVoid)
+                           ? llvm::Type::getVoidTy(ctx)
+                           : GetLlvmScalarDpiType(ctx, sig.result.abi_type);
+
+  std::vector<llvm::Type*> param_types;
+  param_types.reserve(sig.params.size());
+  for (const auto& p : sig.params) {
+    if (p.passing == mir::DpiPassingMode::kByPointer) {
+      param_types.push_back(llvm::PointerType::getUnqual(ctx));
+    } else {
+      param_types.push_back(GetLlvmScalarDpiType(ctx, p.abi_type));
+    }
+  }
+  return llvm::FunctionType::get(ret_ty, param_types, false);
+}
+
+}  // namespace
+
+auto EmitDpiExportWrappers(
+    Context& context, const std::vector<mir::DpiExportWrapperDesc>& exports)
+    -> Result<void> {
+  if (exports.empty()) return {};
+
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto& module = context.GetModule();
+
+  // DpiExportCallContext layout: { ptr design_state, ptr engine }
+  auto* ctx_struct_ty = llvm::StructType::get(
+      llvm::PointerType::getUnqual(llvm_ctx),
+      llvm::PointerType::getUnqual(llvm_ctx));
+
+  for (const auto& desc : exports) {
+    // Resolve the internal function.
+    const auto& entry = context.GetDesignFunction(desc.symbol);
+    llvm::Function* internal_fn = entry.llvm_func;
+    if (internal_fn == nullptr) {
+      throw common::InternalError(
+          "EmitDpiExportWrappers",
+          std::format(
+              "internal function for DPI export '{}' is null", desc.c_name));
+    }
+
+    // Build wrapper function.
+    auto* wrapper_ty = BuildExportWrapperType(llvm_ctx, desc.signature);
+    auto* wrapper = llvm::Function::Create(
+        wrapper_ty, llvm::Function::ExternalLinkage, desc.c_name, &module);
+    wrapper->setCallingConv(llvm::CallingConv::C);
+
+    auto* entry_bb = llvm::BasicBlock::Create(llvm_ctx, "entry", wrapper);
+    auto& b = context.GetBuilder();
+    b.SetInsertPoint(entry_bb);
+
+    // Fetch active export-call context.
+    auto* get_ctx_fn = context.GetLyraGetDpiExportCallContext();
+    auto* ctx_ptr = b.CreateCall(get_ctx_fn, {}, "export.ctx");
+    static_cast<llvm::CallInst*>(ctx_ptr)->setCallingConv(llvm::CallingConv::C);
+
+    // Check for null context.
+    auto* is_null = b.CreateICmpEQ(
+        ctx_ptr,
+        llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(llvm_ctx)),
+        "export.ctx.null");
+    auto* ok_bb = llvm::BasicBlock::Create(llvm_ctx, "ctx.ok", wrapper);
+    auto* fail_bb = llvm::BasicBlock::Create(llvm_ctx, "ctx.fail", wrapper);
+    b.CreateCondBr(is_null, fail_bb, ok_bb);
+
+    // Fail path: call trap.
+    b.SetInsertPoint(fail_bb);
+    auto* fail_fn = context.GetLyraFailMissingDpiExportCallContext();
+    auto* fail_call = b.CreateCall(fail_fn, {});
+    fail_call->setCallingConv(llvm::CallingConv::C);
+    b.CreateUnreachable();
+
+    // OK path: extract design_state and engine from context struct.
+    b.SetInsertPoint(ok_bb);
+    auto* design_ptr = b.CreateLoad(
+        llvm::PointerType::getUnqual(llvm_ctx),
+        b.CreateStructGEP(ctx_struct_ty, ctx_ptr, 0), "export.design");
+    auto* engine_ptr = b.CreateLoad(
+        llvm::PointerType::getUnqual(llvm_ctx),
+        b.CreateStructGEP(ctx_struct_ty, ctx_ptr, 1), "export.engine");
+
+    // Build internal call arguments: [design, engine, user_args...]
+    std::vector<llvm::Value*> internal_args;
+    internal_args.push_back(design_ptr);
+    internal_args.push_back(engine_ptr);
+
+    // Decode C ABI arguments to internal Lyra form using the shared
+    // ABI coercion helpers (same primitives as import writeback).
+    const auto& sig = desc.signature;
+    for (size_t i = 0; i < sig.params.size(); ++i) {
+      llvm::Value* wrapper_arg = wrapper->getArg(static_cast<unsigned>(i));
+      const auto& param = sig.params[i];
+
+      if (param.passing == mir::DpiPassingMode::kByValue) {
+        // Scalar by-value input: C ABI type -> internal Lyra type.
+        // Uses CoerceFromDpiAbiType (same as import return coercion).
+        unsigned internal_idx = static_cast<unsigned>(i) + 2;
+        llvm::Type* internal_ty =
+            internal_fn->getFunctionType()->getParamType(internal_idx);
+        llvm::Value* coerced = CoerceFromDpiAbiType(
+            context, wrapper_arg, param.abi_type, internal_ty);
+        internal_args.push_back(coerced);
+      } else {
+        // By-pointer (output/inout): pass the foreign pointer through.
+        // The internal function takes output params as pointers to
+        // destination storage. For export, the caller provides the
+        // DPI-ABI-typed buffer pointer directly.
+        // TODO(hankhsu): D4.5 will add proper staged decode/writeback
+        // for packed vector by-pointer params.
+        internal_args.push_back(wrapper_arg);
+      }
+    }
+
+    // Call internal function.
+    auto* ret_val = b.CreateCall(internal_fn, internal_args);
+
+    // Encode return value: internal Lyra type -> C ABI type.
+    if (sig.result.kind == mir::DpiReturnKind::kVoid) {
+      b.CreateRetVoid();
+    } else {
+      // Uses CoerceToDpiAbiType (same as import argument marshaling).
+      llvm::Value* encoded =
+          CoerceToDpiAbiType(context, ret_val, sig.result.abi_type);
+      b.CreateRet(encoded);
+    }
+  }
+
+  return {};
+}
+
 }  // namespace lyra::lowering::mir_to_llvm::dpi

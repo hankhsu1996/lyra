@@ -20,6 +20,7 @@
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
+#include "lyra/runtime/dpi_export_context.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
@@ -617,6 +618,14 @@ extern "C" void LyraRunSimulation(
 
   // Install SIGUSR1 dump handler for last-resort visibility
   lyra::runtime::InstallSignalDumpHandler(&engine);
+
+  // Install DPI export-call context so export wrappers can borrow
+  // DesignState* and Engine* during simulation.
+  lyra::runtime::DpiExportCallContext export_ctx{
+      .design_state = abi->design_state,
+      .engine = &engine,
+  };
+  lyra::runtime::ScopedDpiExportCallContext export_scope(export_ctx);
 
   SetupAndRunSimulation(engine, states, num_processes);
 

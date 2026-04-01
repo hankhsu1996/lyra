@@ -135,6 +135,73 @@ auto DumpMir(const CompilationInput& input) -> int {
   return 0;
 }
 
+auto DumpDpiHeader(const CompilationInput& input) -> int {
+  CompilationOutput output(BuildDumpDriverOutputOptions(input));
+
+  std::optional<ParseResult> parse_result;
+  {
+    PhaseTimer timer(output, Phase::kParse);
+    parse_result = ParseFiles(input);
+  }
+  if (!parse_result) {
+    output.Flush();
+    return 1;
+  }
+
+  {
+    PhaseTimer timer(output, Phase::kElaborate);
+    if (!Elaborate(*parse_result, input)) {
+      output.Flush();
+      return 1;
+    }
+  }
+
+  DiagnosticSink sink;
+  lowering::ast_to_hir::LoweringResult hir_result;
+  {
+    PhaseTimer timer(output, Phase::kLowerHir);
+    lowering::ast_to_hir::HirLoweringOptions hir_options{
+        .disable_assertions = input.disable_assertions,
+    };
+    hir_result = lowering::ast_to_hir::LowerAstToHir(
+        *parse_result->compilation, sink, hir_options);
+  }
+
+  if (sink.HasErrors()) {
+    output.PrintDiagnostics(sink, hir_result.source_manager.get());
+    output.Flush();
+    return 1;
+  }
+
+  lowering::hir_to_mir::LoweringInput mir_input{
+      .design = &hir_result.design,
+      .hir_arena = hir_result.hir_arena.get(),
+      .type_arena = hir_result.type_arena.get(),
+      .active_constant_arena = hir_result.constant_arena.get(),
+      .symbol_table = hir_result.symbol_table.get(),
+      .builtin_types = {},
+      .binding_plan = &hir_result.binding_plan,
+      .global_precision_power = hir_result.global_precision_power,
+      .instance_table = &hir_result.instance_table,
+      .specialization_map = &hir_result.specialization_map,
+  };
+  std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
+  {
+    PhaseTimer timer(output, Phase::kLowerMir);
+    mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
+  }
+  if (!mir_result) {
+    output.PrintDiagnostic(mir_result.error(), *hir_result.source_manager);
+    output.Flush();
+    return 1;
+  }
+
+  std::cout << mir_result->dpi_header;
+
+  output.Flush();
+  return 0;
+}
+
 auto DumpLlvm(const CompilationInput& input) -> int {
   CompilationOutput output(BuildDumpDriverOutputOptions(input));
 
@@ -215,6 +282,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .force_two_state = input.two_state,
       .collect_forwarding_analysis =
           output.IsEnabled(OutputCategory::kAnalysis),
+      .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
   };
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
   {

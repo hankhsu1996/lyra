@@ -19,9 +19,14 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
   - [x] D2c -- `chandle` variable LLVM support (load/store/null literal)
 - [x] D3a -- 4-state scalar/vector marshaling (narrow <=64-bit, input/output/inout, scalar return)
 - [x] D3b -- Wide packed multiword transport (> 64-bit vectors, parameters only)
+- [ ] D3c -- `chandle` in internal callable ABI (user-function parameter/return, not DPI-specific)
 - [ ] D4 -- DPI export (C-callable wrappers, header generation)
 - [ ] D5a -- Context functions (simulator scope access)
 - [ ] D5b -- DPI tasks (time-consuming foreign calls)
+
+## D3c: chandle in internal callable ABI
+
+`chandle` as user-function parameter or return type is not supported in the internal callable ABI. `GetLlvmAbiTypeForValue` does not map `TypeKind::kChandle`. Works through the DPI import path only (which has its own ABI mapper). Blocks D4 export of functions that take or return `chandle`. Fix belongs in the internal callable ABI layer, not in the DPI layer.
 
 ## D4: DPI export
 
