@@ -76,23 +76,6 @@ struct PlaceId {
 
 constexpr PlaceId kInvalidPlaceId{UINT32_MAX};
 
-struct SlotId {
-  uint32_t value = UINT32_MAX;
-
-  auto operator==(const SlotId&) const -> bool = default;
-  auto operator<=>(const SlotId&) const = default;
-  explicit operator bool() const {
-    return value != UINT32_MAX;
-  }
-
-  template <typename H>
-  friend auto AbslHashValue(H h, SlotId id) -> H {
-    return H::combine(std::move(h), id.value);
-  }
-};
-
-constexpr SlotId kInvalidSlotId{UINT32_MAX};
-
 struct ModuleBodyId {
   uint32_t value = UINT32_MAX;
 
@@ -111,14 +94,6 @@ struct ModuleBodyId {
 constexpr ModuleBodyId kInvalidModuleBodyId{UINT32_MAX};
 
 }  // namespace lyra::mir
-
-// std::hash specialization for SlotId (enables std::unordered_set/map)
-template <>
-struct std::hash<lyra::mir::SlotId> {
-  auto operator()(lyra::mir::SlotId s) const noexcept -> size_t {
-    return std::hash<uint32_t>{}(s.value);
-  }
-};
 
 // std::hash specialization for ModuleBodyId (enables std::unordered_set/map)
 template <>

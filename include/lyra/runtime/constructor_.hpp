@@ -1,3 +1,7 @@
+// NOTE: This file is named constructor_.hpp (with trailing underscore)
+// because the Claude Code TUI crashes when editing files whose name
+// starts with "constructor". The underscore suffix is a permanent
+// workaround. The corresponding source file is constructor_.cpp.
 #pragma once
 
 #include <cstdint>
@@ -12,6 +16,7 @@
 #include "lyra/runtime/body_realization_desc.hpp"
 #include "lyra/runtime/construction_program_abi.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/instance_metadata.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_schema.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
@@ -86,6 +91,13 @@ struct BodyDescriptorPackage {
   ParamInitView init_params;
 };
 
+// Canonical stable storage for a body template. Keyed by body identity
+// (BodyRealizationDesc pointer). Bundles hold pointers into .package.
+struct StableBodyTemplate {
+  const void* key = nullptr;
+  BodyDescriptorPackage package;
+};
+
 // Constructor-produced trigger metadata artifact.
 // Builder/owner that encapsulates header-patch bookkeeping.
 struct RealizedTriggerMeta {
@@ -100,26 +112,6 @@ struct RealizedTriggerMeta {
   // Header-only word table (entry_count == 0) is semantically empty.
   [[nodiscard]] auto IsEmpty() const -> bool {
     return entry_count == 0;
-  }
-};
-
-// Constructor-produced comb kernel metadata artifact.
-// Builder/owner that encapsulates header-patch bookkeeping.
-struct RealizedCombMeta {
-  std::vector<uint32_t> words;
-  uint32_t kernel_count = 0;
-
-  void Init();
-  auto BeginKernel(uint32_t proc_idx, uint32_t flags) -> uint32_t;
-  void AppendTrigger(
-      uint32_t slot_id, uint32_t byte_off, uint32_t byte_size,
-      uint32_t trigger_flags = 0);
-  void EndKernel(uint32_t trigger_count_pos, uint32_t trigger_count);
-  void Finalize();
-
-  // Header-only word table (kernel_count == 0) is semantically empty.
-  [[nodiscard]] auto IsEmpty() const -> bool {
-    return kernel_count == 0;
   }
 };
 
@@ -187,14 +179,25 @@ struct ConstructionResult {
   // Lifetime: owned by this result, outlives simulation.
   std::vector<std::unique_ptr<RuntimeInstance>> instances;
 
+  // R4 prep: per-instance metadata bundles alongside existing flat handoff.
+  // Each bundle binds one module instance to its shared body template.
+  // Validated: bundle[i].instance_id == i.
+  // Existing flat metadata tables above remain fully populated and are
+  // the active runtime handoff in this cut. Bundles become the primary
+  // handoff when the engine consumer path is migrated in a later cut.
+  std::vector<InstanceMetadataBundle> instance_bundles;
+
+  // Stable storage for body templates referenced by bundles.
+  // Bundle body_desc pointers point into .package fields of these entries.
+  // Moved from Constructor::body_desc_storage_ during Finalize.
+  // Lifetime: owned by this result, outlives simulation.
+  std::deque<StableBodyTemplate> body_desc_storage;
+
   // Constructor-produced process metadata.
   RealizedProcessMeta process_meta;
 
   // Constructor-produced trigger metadata.
   RealizedTriggerMeta trigger_meta;
-
-  // Constructor-produced comb kernel metadata.
-  RealizedCombMeta comb_meta;
 
   // Constructor-produced slot metadata.
   RealizedSlotMeta slot_meta;
@@ -288,6 +291,7 @@ class Constructor {
 
  private:
   void CheckNotFinalized(const char* caller) const;
+  void ClearActiveBody();
 
   // Constructor-private runtime staging for a single process.
   struct StagedProcess {
@@ -337,20 +341,32 @@ class Constructor {
   // Active body descriptor (set atomically by BeginBody).
   ActiveBodyDescriptor body_;
 
+  // Pointer to the current body's stable descriptor (R4).
+  // Points into body_desc_storage_. Set by BeginBody, cleared by
+  // ClearActiveBody.
+  const BodyDescriptorPackage* current_body_package_ = nullptr;
+
+  // Canonical stable storage for body templates (R4). One entry per
+  // unique body identity. Bundles hold pointers into .package fields.
+  // std::deque: push_back never invalidates existing element addresses.
+  std::deque<StableBodyTemplate> body_desc_storage_;
+
   std::vector<StagedProcess> staged_;
   // Constructor-owned RuntimeInstance objects created during AddInstance.
   // Moved into ConstructionResult at Finalize.
   std::vector<std::unique_ptr<RuntimeInstance>> staged_instances_;
+  // R4 prep: per-instance metadata bundles. Moved into ConstructionResult
+  // at Finalize.
+  std::vector<InstanceMetadataBundle> staged_bundles_;
   uint32_t num_connection_ = 0;
   bool connections_finalized_ = false;
   bool finalized_ = false;
 
-  // Realized metadata output.
+  // Connection-only realized metadata output.
   RealizedProcessMeta realized_meta_;
 
-  // Realized trigger/comb output.
+  // Connection-only realized trigger output.
   RealizedTriggerMeta realized_triggers_;
-  RealizedCombMeta realized_comb_;
 
   // Realized slot/trace metadata output.
   RealizedSlotMeta realized_slot_meta_;
@@ -377,13 +393,7 @@ class Constructor {
     uint32_t local_ordinal;
     uint32_t realized_proc_idx;
   };
-  struct CombProvenanceRecord {
-    uint32_t owner_ordinal;
-    uint32_t proc_within_body;
-    uint32_t realized_proc_idx;
-  };
   std::vector<TriggerProvenanceRecord> trigger_provenance_;
-  std::vector<CombProvenanceRecord> comb_provenance_;
 
   // Stable string storage for intern map keys.
   // std::deque never invalidates existing entries on push_back,
@@ -501,6 +511,10 @@ auto LyraConstructionResultGetInstancePathCount(void* result) -> uint32_t;
 auto LyraConstructionResultGetInstances(void* result)
     -> const lyra::runtime::RuntimeInstance* const*;
 auto LyraConstructionResultGetInstanceCount(void* result) -> uint32_t;
+
+auto LyraConstructionResultGetInstanceBundles(void* result)
+    -> const lyra::runtime::InstanceMetadataBundle*;
+auto LyraConstructionResultGetInstanceBundleCount(void* result) -> uint32_t;
 
 void LyraConstructionResultDestroy(void* result);
 

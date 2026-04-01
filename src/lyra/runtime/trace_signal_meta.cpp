@@ -201,6 +201,29 @@ auto TraceSignalMetaRegistry::GetAliasGroup(uint32_t owner_slot_id) const
   return it->second;
 }
 
+void TraceSignalMetaRegistry::Reserve(size_t count) {
+  metas_.reserve(count);
+}
+
+void TraceSignalMetaRegistry::AppendSignal(
+    std::string_view name, uint32_t bit_width, TraceSignalKind kind,
+    uint32_t storage_owner_slot_id) {
+  // Ensure pool starts with NUL sentinel if empty.
+  if (string_pool_.empty()) {
+    string_pool_.push_back('\0');
+  }
+  auto name_off = static_cast<uint32_t>(string_pool_.size());
+  string_pool_.insert(string_pool_.end(), name.begin(), name.end());
+  string_pool_.push_back('\0');
+  metas_.push_back(
+      TraceSignalMeta{
+          .name_str_off = name_off,
+          .bit_width = bit_width,
+          .kind = kind,
+          .storage_owner_slot_id = storage_owner_slot_id,
+      });
+}
+
 auto TraceSignalMetaRegistry::PoolString(uint32_t offset) const -> const char* {
   if (offset >= string_pool_.size()) {
     throw common::InternalError(

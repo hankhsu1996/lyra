@@ -52,7 +52,7 @@ struct MetadataGlobals {
 // table packing or serialization. All tables in DesignMetadata are already
 // runtime-shaped.
 auto EmitDesignMetadataGlobals(
-    Context& context, const metadata::DesignMetadata& metadata,
-    llvm::IRBuilder<>& builder) -> MetadataGlobals;
+    Context& context, const metadata::DesignMetadata& metadata)
+    -> MetadataGlobals;
 
 }  // namespace lyra::lowering::mir_to_llvm

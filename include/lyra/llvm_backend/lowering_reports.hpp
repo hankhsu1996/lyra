@@ -5,7 +5,7 @@
 #include <span>
 #include <vector>
 
-#include "lyra/mir/handle.hpp"
+#include "lyra/common/slot_id.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -19,7 +19,7 @@ struct ConnectionIndex {
 // candidate check for reviewability. Unresolved checks are marked
 // explicitly.
 struct PortBindingForwardingCandidate {
-  mir::SlotId intermediate_slot_id{};
+  common::SlotId intermediate_slot_id{};
   ConnectionIndex upstream_connection_index{};
   ConnectionIndex downstream_connection_index{};
 

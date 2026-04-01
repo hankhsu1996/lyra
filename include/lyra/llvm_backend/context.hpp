@@ -12,6 +12,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/origin_id.hpp"
+#include "lyra/common/slot_id.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/common/type_queries.hpp"
@@ -388,9 +389,9 @@ class Context {
   [[nodiscard]] auto GetRuntimeInstanceType() const -> llvm::StructType*;
   [[nodiscard]] auto GetRuntimeInstanceStorageType() const -> llvm::StructType*;
   [[nodiscard]] auto GetDesignArenaSize() const -> uint64_t;
-  [[nodiscard]] auto GetDesignSlotByteOffset(mir::SlotId slot_id) const
+  [[nodiscard]] auto GetDesignSlotByteOffset(common::SlotId slot_id) const
       -> uint64_t;
-  [[nodiscard]] auto GetDesignSlotStorageSpec(mir::SlotId slot_id) const
+  [[nodiscard]] auto GetDesignSlotStorageSpec(common::SlotId slot_id) const
       -> const SlotStorageSpec&;
   [[nodiscard]] auto GetDesignStorageSpecArena() const
       -> const StorageSpecArena&;
@@ -585,12 +586,12 @@ class Context {
   // kDesignGlobal roots: identity (root.id is already design-global).
   // kModuleSlot roots: InternalError (module-local roots have no
   //   design-global identity in design-global addressing mode).
-  [[nodiscard]] auto ResolveDesignGlobalSlotId(const mir::PlaceRoot& root) const
-      -> uint32_t;
-  [[nodiscard]] auto ResolveDesignGlobalSlotId(const mir::SignalRef& sig) const
-      -> uint32_t;
-  [[nodiscard]] auto ResolveDesignGlobalSlotId(
-      const mir::ScopedSlotRef& ref) const -> uint32_t;
+  [[nodiscard]] static auto ResolveDesignGlobalSlotId(
+      const mir::PlaceRoot& root) -> common::SlotId;
+  [[nodiscard]] static auto ResolveDesignGlobalSlotId(const mir::SignalRef& sig)
+      -> common::SlotId;
+  [[nodiscard]] static auto ResolveDesignGlobalSlotId(
+      const mir::ScopedSlotRef& ref) -> common::SlotId;
 
   // Resolve aliases + get storage pointer for a place root.
   // Returns root slot pointer for kModuleSlot or kDesignGlobal roots.
@@ -849,7 +850,7 @@ class Context {
 
  private:
   // Internal helper: resolve SlotId to position index in design layout.
-  [[nodiscard]] auto ResolveDesignSlotIndex(mir::SlotId slot_id) const
+  [[nodiscard]] auto ResolveDesignSlotIndex(common::SlotId slot_id) const
       -> uint32_t;
 
   // Commit-module-only methods (accessed via friend class commit::Access)

@@ -122,6 +122,15 @@ class SlotMetaRegistry {
     return max_extent_;
   }
 
+  // R4: Reserve capacity for incremental building from bundles.
+  void Reserve(uint32_t count) {
+    slots_.reserve(count);
+  }
+
+  // R4: Append a fully-formed slot entry. Used by engine bundle init
+  // to build the registry from structured inputs instead of word tables.
+  void AppendSlot(SlotMeta meta);
+
   // Machine-stable dump to WriteOutput. Includes version and count header.
   // Called right after registry construction, before simulation runs.
   void DumpSummary() const;

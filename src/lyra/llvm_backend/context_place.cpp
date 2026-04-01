@@ -219,7 +219,7 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
       }
       return std::nullopt;
     };
-    auto slot_id = mir::SlotId{static_cast<uint32_t>(resolved.root.id)};
+    auto slot_id = common::SlotId{static_cast<uint32_t>(resolved.root.id)};
     const auto& spec = GetDesignSlotStorageSpec(slot_id);
     const auto& spec_arena = GetDesignStorageSpecArena();
     auto range = ResolveByteRange(spec, spec_arena, resolved, resolver);
@@ -270,10 +270,10 @@ auto Context::GetMutationTargetSignalCoord(mir::PlaceId place_id)
   return EmitMutationTargetSignalCoord(*sig);
 }
 
-auto Context::ResolveDesignGlobalSlotId(const mir::PlaceRoot& root) const
-    -> uint32_t {
+auto Context::ResolveDesignGlobalSlotId(const mir::PlaceRoot& root)
+    -> common::SlotId {
   if (root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-    return static_cast<uint32_t>(root.id);
+    return common::SlotId{static_cast<uint32_t>(root.id)};
   }
   throw common::InternalError(
       "ResolveDesignGlobalSlotId",
@@ -283,10 +283,10 @@ auto Context::ResolveDesignGlobalSlotId(const mir::PlaceRoot& root) const
           static_cast<int>(root.kind)));
 }
 
-auto Context::ResolveDesignGlobalSlotId(const mir::SignalRef& sig) const
-    -> uint32_t {
+auto Context::ResolveDesignGlobalSlotId(const mir::SignalRef& sig)
+    -> common::SlotId {
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
-    return sig.id;
+    return common::SlotId{sig.id};
   }
   throw common::InternalError(
       "ResolveDesignGlobalSlotId",
@@ -296,10 +296,10 @@ auto Context::ResolveDesignGlobalSlotId(const mir::SignalRef& sig) const
           sig.id));
 }
 
-auto Context::ResolveDesignGlobalSlotId(const mir::ScopedSlotRef& ref) const
-    -> uint32_t {
+auto Context::ResolveDesignGlobalSlotId(const mir::ScopedSlotRef& ref)
+    -> common::SlotId {
   if (ref.scope == mir::ScopedSlotRef::Scope::kDesignGlobal) {
-    return ref.id;
+    return common::SlotId{ref.id};
   }
   throw common::InternalError(
       "ResolveDesignGlobalSlotId",
@@ -329,7 +329,7 @@ namespace {
 // Validate a design-global signal ref is in the layout.
 auto ValidateDesignGlobalSignal(
     const mir::SignalRef& sig, const DesignLayout& design) -> mir::SignalRef {
-  auto slot_id = mir::SlotId{sig.id};
+  auto slot_id = common::SlotId{sig.id};
   if (!design.ContainsSlot(slot_id)) {
     throw common::InternalError(
         "ValidateDesignGlobalSignal",
@@ -468,7 +468,7 @@ auto Context::GetDesignGlobalSlotPointer(uint32_t global_slot_id)
     throw common::InternalError(
         "GetDesignGlobalSlotPointer", "design pointer not set");
   }
-  uint64_t offset = GetDesignSlotByteOffset(mir::SlotId{global_slot_id});
+  uint64_t offset = GetDesignSlotByteOffset(common::SlotId{global_slot_id});
   return builder_.CreateGEP(
       llvm::Type::getInt8Ty(*llvm_context_), design_ptr_,
       builder_.getInt64(offset), "design_global_slot_ptr");

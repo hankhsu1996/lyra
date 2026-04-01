@@ -22,10 +22,6 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/body_realization_desc.hpp"
-#include "lyra/runtime/slot_meta.hpp"
-#include "lyra/runtime/slot_meta_abi.hpp"
-#include "lyra/runtime/trace_signal_meta.hpp"
-#include "lyra/runtime/trace_signal_meta_abi.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -159,8 +155,8 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
 }
 
 auto EmitDesignMetadataGlobals(
-    Context& context, const metadata::DesignMetadata& metadata,
-    llvm::IRBuilder<>& builder) -> MetadataGlobals {
+    Context& context, const metadata::DesignMetadata& metadata)
+    -> MetadataGlobals {
   auto& ctx = context.GetLlvmContext();
   auto& mod = context.GetModule();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -319,7 +315,7 @@ auto FindPortBindingForwardingCandidates(
     const auto& downstream = connections[downstream_ci];
 
     PortBindingForwardingCandidate candidate;
-    candidate.intermediate_slot_id = mir::SlotId{slot_id};
+    candidate.intermediate_slot_id = common::SlotId{slot_id};
     candidate.upstream_connection_index = ConnectionIndex{upstream_ci};
     candidate.downstream_connection_index = ConnectionIndex{downstream_ci};
     candidate.single_writer = true;

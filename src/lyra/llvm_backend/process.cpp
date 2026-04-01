@@ -65,7 +65,6 @@
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
-#include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/simulation.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trap.hpp"
@@ -487,12 +486,6 @@ auto LoadConditionAsI1(
   return cond_val;
 }
 
-auto LoadConditionAsI1(Context& context, const mir::Operand& operand)
-    -> Result<llvm::Value*> {
-  CanonicalSlotAccess canonical(context);
-  return LoadConditionAsI1(context, canonical, operand);
-}
-
 auto LowerEdgeArgs(
     Context& context, SlotAccessResolver& resolver,
     const std::vector<mir::Operand>& args)
@@ -505,12 +498,6 @@ auto LowerEdgeArgs(
     llvm_args.push_back(*val_or_err);
   }
   return llvm_args;
-}
-
-auto LowerEdgeArgs(Context& context, const std::vector<mir::Operand>& args)
-    -> Result<std::vector<llvm::Value*>> {
-  CanonicalSlotAccess canonical(context);
-  return LowerEdgeArgs(context, canonical, args);
 }
 
 // Check if a terminator has any back-edge targets (target index <= source
@@ -732,7 +719,7 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
     }
     return std::nullopt;
   };
-  auto slot_id = mir::SlotId{static_cast<uint32_t>(place.root.id)};
+  auto slot_id = common::SlotId{static_cast<uint32_t>(place.root.id)};
   const auto& spec = context.GetDesignSlotStorageSpec(slot_id);
   const auto& spec_arena = context.GetDesignStorageSpecArena();
   auto range = ResolveByteRange(spec, spec_arena, place, resolver);

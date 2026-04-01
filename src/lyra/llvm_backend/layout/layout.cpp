@@ -858,9 +858,9 @@ auto ProcessHasSuspension(const mir::Process& process) -> bool {
 
 struct PendingConnectionKernelEntry {
   mir::ProcessId process_id;
-  mir::SlotId src_slot;
-  mir::SlotId dst_slot;
-  mir::SlotId trigger_slot;
+  common::SlotId src_slot;
+  common::SlotId dst_slot;
+  common::SlotId trigger_slot;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
   std::optional<mir::PlaceId> trigger_observed_place;
 };
@@ -939,9 +939,9 @@ auto TryKernelizeConnection(
 
   return PendingConnectionKernelEntry{
       .process_id = {},  // Set by caller
-      .src_slot = mir::SlotId{static_cast<uint32_t>(src_place.root.id)},
-      .dst_slot = mir::SlotId{static_cast<uint32_t>(dest_place.root.id)},
-      .trigger_slot = mir::SlotId{trigger.signal.id},
+      .src_slot = common::SlotId{static_cast<uint32_t>(src_place.root.id)},
+      .dst_slot = common::SlotId{static_cast<uint32_t>(dest_place.root.id)},
+      .trigger_slot = common::SlotId{trigger.signal.id},
       .trigger_edge = trigger.edge,
       .trigger_observed_place = trigger.observed_place,
   };
@@ -1054,7 +1054,7 @@ auto BuildRuntimeInstanceType(
 
 auto ResolveObservation(
     const mir::Arena& arena, const DesignLayout& design_layout,
-    mir::SlotId design_global_slot, mir::PlaceId place_id)
+    common::SlotId design_global_slot, mir::PlaceId place_id)
     -> std::optional<ResolvedObservation> {
   auto slot_it = design_layout.slot_to_index.find(design_global_slot);
   if (slot_it == design_layout.slot_to_index.end()) {
@@ -1375,11 +1375,12 @@ auto ComputeBodyStateSize(
 
 // DesignLayout method implementations.
 
-auto DesignLayout::ContainsSlot(mir::SlotId slot_id) const -> bool {
+auto DesignLayout::ContainsSlot(common::SlotId slot_id) const -> bool {
   return slot_to_index.contains(slot_id);
 }
 
-auto DesignLayout::GetStorageByteOffset(mir::SlotId slot_id) const -> uint64_t {
+auto DesignLayout::GetStorageByteOffset(common::SlotId slot_id) const
+    -> uint64_t {
   auto it = slot_to_index.find(slot_id);
   if (it == slot_to_index.end()) {
     throw common::InternalError(
@@ -1389,7 +1390,7 @@ auto DesignLayout::GetStorageByteOffset(mir::SlotId slot_id) const -> uint64_t {
   return slot_byte_offsets[it->second];
 }
 
-auto DesignLayout::GetStorageSpec(mir::SlotId slot_id) const
+auto DesignLayout::GetStorageSpec(common::SlotId slot_id) const
     -> const SlotStorageSpec& {
   auto it = slot_to_index.find(slot_id);
   if (it == slot_to_index.end()) {
@@ -1414,7 +1415,7 @@ auto DesignLayout::GetSlotStorageBinding(uint32_t slot_row) const
 
 auto DesignLayout::GetInstanceOffset(
     uint32_t slot_row, const InstanceStorageBase& instance_base,
-    const InstanceSlotRange& range) const -> InstanceByteOffset {
+    const InstanceSlotRange& range) const -> common::InstanceByteOffset {
   if (slot_row < range.base_slot ||
       slot_row >= range.base_slot + range.slot_count) {
     throw common::InternalError(
@@ -1436,7 +1437,7 @@ auto DesignLayout::GetInstanceOffset(
       binding.abs_byte_offset, *instance_base.abs_byte_offset);
 }
 
-auto DesignLayout::GetSlotRow(mir::SlotId slot_id) const -> uint32_t {
+auto DesignLayout::GetSlotRow(common::SlotId slot_id) const -> uint32_t {
   auto it = slot_to_index.find(slot_id);
   if (it == slot_to_index.end()) {
     throw common::InternalError(
@@ -1570,7 +1571,7 @@ auto BuildSlotInfo(
 
     slots.push_back(
         SlotInfo{
-            .slot_id = mir::SlotId{static_cast<uint32_t>(i)},
+            .slot_id = common::SlotId{static_cast<uint32_t>(i)},
             .type_id = type_id,
             .type_info = type_info,
             .storage_shape = slots_in[i].storage_shape,
