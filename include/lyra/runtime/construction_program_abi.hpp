@@ -4,6 +4,7 @@
 
 #include "lyra/runtime/body_realization_desc.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/storage_construction_recipe.hpp"
 
 namespace lyra::runtime {
 
@@ -44,10 +45,12 @@ struct BodyDescriptorRef {
   uint32_t num_obs_entries;
   const char* obs_pool;
   uint32_t obs_pool_size;
-  const InitPatchEntry* init_patches;
-  uint32_t num_init_patches;
-  const InitHandleEntry* init_handles;
-  uint32_t num_init_handles;
+  const StorageConstructionOp* init_recipe;
+  uint32_t num_init_recipe_ops;
+  const uint32_t* init_recipe_roots;
+  uint32_t num_init_recipe_roots;
+  const uint32_t* init_recipe_child_indices;
+  uint32_t num_init_recipe_child_indices;
   const ParamInitSlotEntry* init_param_slots;
   uint32_t num_init_param_slots;
 };

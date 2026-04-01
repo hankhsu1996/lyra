@@ -2,76 +2,13 @@
 
 #include <cstdint>
 #include <cstring>
-#include <variant>
 #include <vector>
 
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/overloaded.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
-#include "lyra/runtime/body_realization_desc.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
-
-namespace {
-
-void FlattenImpl(
-    const SlotStorageSpec& spec, const StorageSpecArena& arena,
-    uint64_t base_offset, std::vector<runtime::InitPatchEntry>& out) {
-  std::visit(
-      common::Overloaded{
-          [&](const PackedStorageSpec& packed) {
-            if (!packed.is_four_state) return;
-            uint32_t lane_bytes = packed.LaneByteSize();
-            uint32_t unk_offset = packed.UnknownLaneOffset();
-            uint32_t mask_width = lane_bytes * 8;
-            uint64_t mask = packed.bit_width >= mask_width
-                                ? ~uint64_t{0}
-                                : (uint64_t{1} << packed.bit_width) - 1;
-            out.push_back(
-                runtime::InitPatchEntry{
-                    .rel_byte_offset = NarrowToU32(
-                        base_offset + unk_offset, "FlattenFourStatePatches"),
-                    .byte_width = lane_bytes,
-                    .mask = mask,
-                });
-          },
-          [](const FloatStorageSpec&) {},
-          [&](const ArrayStorageSpec& arr) {
-            const auto& elem_spec = arena.Get(arr.element_spec_id);
-            if (!HasFourStateContent(elem_spec, arena)) return;
-            for (uint32_t i = 0; i < arr.element_count; ++i) {
-              uint64_t elem_offset =
-                  base_offset + static_cast<uint64_t>(i) * arr.element_stride;
-              FlattenImpl(elem_spec, arena, elem_offset, out);
-            }
-          },
-          [&](const StructStorageSpec& s) {
-            for (const auto& field : s.fields) {
-              const auto& field_spec = arena.Get(field.field_spec_id);
-              if (!HasFourStateContent(field_spec, arena)) continue;
-              FlattenImpl(
-                  field_spec, arena, base_offset + field.byte_offset, out);
-            }
-          },
-          [&](const UnionStorageSpec& u) {
-            if (!u.has_four_state_content) return;
-            // Unions use zero-fill normalization. After memset(0), the
-            // entire union storage is already zero. X-initialization of
-            // unions is not supported (matches EmitSVDefaultInitImpl).
-          },
-          [](const HandleStorageSpec&) {},
-      },
-      spec.data);
-}
-
-}  // namespace
-
-void FlattenFourStatePatches(
-    const SlotStorageSpec& spec, const StorageSpecArena& arena,
-    uint64_t base_rel_offset, std::vector<runtime::InitPatchEntry>& out) {
-  FlattenImpl(spec, arena, base_rel_offset, out);
-}
 
 void LowerIntegralConstantToCanonicalBytes(
     const IntegralConstant& value, const SlotStorageSpec& spec,

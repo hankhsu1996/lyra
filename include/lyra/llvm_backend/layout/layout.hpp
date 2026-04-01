@@ -24,6 +24,7 @@
 #include "lyra/mir/place.hpp"
 #include "lyra/runtime/body_realization_desc.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/storage_construction_recipe.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -309,21 +310,22 @@ struct OwnedObservableDescriptorTemplate {
   std::vector<char> pool;
 };
 
-// Body-shaped design-state initialization descriptor.
-// Contains all compile-time-computed init metadata for one body.
-// The constructor applies these per-instance using instance_byte_base.
+// Body-shaped design-state storage construction descriptor.
+// Contains a construction recipe that the constructor interprets
+// recursively per-instance to realize containers and initialize elements.
 struct BodyInitDescriptor {
-  std::vector<runtime::InitPatchEntry> four_state_patches;
-  std::vector<runtime::InitHandleEntry> owned_handles;
+  std::vector<runtime::StorageConstructionOp> storage_recipe;
+  std::vector<uint32_t> recipe_root_indices;
+  std::vector<uint32_t> recipe_child_indices;
   std::vector<runtime::ParamInitSlotEntry> param_slots;
 };
 
-// Package/global design-state initialization descriptor.
-// Contains init metadata for package/global slots.
+// Package/global design-state storage construction descriptor.
 // Applied once in constructor prelude with arena-relative offsets.
 struct PackageInitDescriptor {
-  std::vector<runtime::InitPatchEntry> four_state_patches;
-  std::vector<runtime::InitHandleEntry> owned_handles;
+  std::vector<runtime::StorageConstructionOp> storage_recipe;
+  std::vector<uint32_t> recipe_root_indices;
+  std::vector<uint32_t> recipe_child_indices;
 };
 
 // Scoped signal identity key. Used for scope-aware slot identity
