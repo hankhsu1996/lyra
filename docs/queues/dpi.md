@@ -21,41 +21,111 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [x] D3b -- Wide packed multiword transport (> 64-bit vectors, parameters only)
 - [x] D3c -- `chandle` in internal callable ABI (user-function parameter/return, not DPI-specific)
 - [x] D4 -- DPI export (package-scoped, scalar 2-state + real + string wrappers, header generation)
-- [ ] D4a -- Module-scoped DPI export (instance binding for wrapper entry)
+- [ ] D6a -- svdpi.h runtime library and linker surface
+- [ ] D6b -- DPI scope registry and instance-bound export context
+- [ ] D6c -- Context import functions (svGetScope in import bodies)
+- [ ] D4a -- Module-scoped DPI export (instance-bound wrapper dispatch)
 - [ ] D4b -- 4-state scalar and packed by-pointer export wrapper marshaling
 - [ ] D4c -- Packed-vector DPI return types (import and export, indirect return modeling)
 - [ ] D4d -- AOT/LLI export end-to-end integration (currently JIT-only tested)
-- [ ] D5a -- Context functions (simulator scope access)
-- [ ] D5b -- DPI tasks (time-consuming foreign calls)
+- [ ] D7a -- DPI import task suspension protocol
+- [ ] D7b -- DPI import task scheduler integration
+- [ ] D7c -- DPI export tasks (external C invocation of time-consuming SV tasks)
 
-## D3c: chandle in internal callable ABI
+## D6a: svdpi.h runtime library and linker surface
 
-`chandle` as user-function parameter or return type is not supported in the internal callable ABI. Works through the DPI import path only (which has its own ABI mapper). Blocks export of functions that take or return `chandle`. Fix belongs in the internal callable ABI layer, not in the DPI layer.
+The generated DPI header includes `<svdpi.h>`, but Lyra provides zero implementations of the standard functions declared in that header. Any user DPI code calling a svdpi.h function gets a linker error. This is a tool obligation, not optional convenience.
+
+This item establishes a Lyra-owned svdpi.h runtime library as a build target and wires it into the JIT/AOT/LLI link paths so it is automatically available. Stateless utility functions (version query, packed-array bit/part-select helpers, canonical size helpers) get working implementations. All scope-dependent and time-dependent functions are present as hard-error traps with clear diagnostics. No scope registry, no instance binding, no context threading.
+
+Prerequisite-free. Can land independently.
+
+Where to look: svdpi.h (slang `external/ieee1800/`), JIT symbol resolution in execution.cpp, AOT link command in driver, LLI --dlopen path.
+
+## D6b: DPI scope registry and instance-bound export context
+
+The export call context carries only design_state and engine pointers. No runtime data structure maps scope handles to instances. Module-scoped exports and context imports both need scope-to-instance resolution that does not exist.
+
+This item builds the scope registry (hierarchical path to RuntimeInstance mapping, constructed during instance realization), defines svScope as an opaque handle into the registry, and extends the export call context to carry active scope. Replaces the scope-dependent traps from D6a with working implementations: scope lookup/set/get and per-scope user data storage. Caller info and time queries remain traps (require additional metadata threading beyond scope).
+
+Depends on D6a (runtime library exists to host scope implementations).
+
+Where to look: RuntimeInstance (path_c_str, instance_id), constructor instance registration, DpiExportCallContext, dpi_export_context.hpp.
+
+## D6c: Context import functions (svGetScope in import bodies)
+
+Context imports are explicitly rejected at AST-to-HIR time. The DPIContext flag on imports is detected but gated. Inside a context import body, user C code should be able to call svGetScope() to retrieve the scope of the import call site.
+
+This item removes the context import rejection, threads instance identity through the import call boundary (codegen passes scope handle as implicit state), and ensures svGetScope() returns the correct scope during context import execution.
+
+Depends on D6b (scope registry and svGetScope implementation exist).
+
+Where to look: routine.cpp context import rejection, scope threading through import calls, svGetScope implementation from D6b.
 
 ## D4a: Module-scoped DPI export
 
-Module-scoped exports are explicitly rejected with a diagnostic. The wrapper would need instance binding (this_ptr, signal-id offset, instance id) which the current export-call runtime context does not carry. The runtime context only has design_state and engine.
+Module-scoped exports are explicitly rejected at AST-to-HIR time. The is_module_scoped flag exists on DpiExportDecl but is gated. Export wrappers currently call internal functions with only design and engine pointers. Module-scoped internal functions take three additional arguments: this_ptr, instance_ptr, and instance_id.
 
-Ibex dependency: `mhpmcounter_num` and `mhpmcounter_get` in `ibex_simple_system.sv` are module-scoped exports hidden behind `ifndef LYRA`. Removing the guard requires D4a.
+This item removes the module-scoped export rejection, emits module-scoped export wrappers that resolve active scope to a RuntimeInstance and extract the three instance-binding arguments, and calls the internal function with the full module-scoped ABI.
+
+Depends on D6b (scope registry and instance-bound export context exist).
+
+Ibex dependency: module-scoped exports in ibex_simple_system.sv are hidden behind `ifndef LYRA`. Removing the guard requires this item.
+
+Where to look: design.cpp module-scoped export rejection, dpi_abi.cpp EmitDpiExportWrappers, process.cpp module-scoped function entry (this_ptr/instance_ptr/instance_id arguments).
 
 ## D4b: 4-state scalar and packed by-pointer export wrapper marshaling
 
-The current export wrapper model validator explicitly rejects: 4-state scalar (kLogicScalar) parameters and returns, and packed by-pointer parameters (kLogicVecNarrow, kLogicVecWide, kBitVecWide). These require the same encode/decode helpers used by the import path but composed in the reverse direction.
+The export wrapper model validator rejects 4-state scalar (svLogic) parameters and returns, and packed by-pointer parameters (narrow/wide logic vectors, wide bit vectors). The encode/decode helpers exist in the import path but are not composed in the export direction.
 
-## D4c: Packed-vector DPI return types
+This item extends export wrappers to support the same type surface as import calls: 4-state scalar params use the existing svLogic encode/decode, packed by-pointer params use staged decode/writeback with the same temporary buffer strategy as imports reversed.
 
-Both import and export reject packed-vector return types (kLogicVecNarrow, kLogicVecWide, kBitVecWide). These require indirect return modeling (sret-style or output-param convention) which DpiReturnKind does not yet have a variant for.
+No infrastructure dependencies. Can land in parallel with the D6 series.
+
+Where to look: dpi_abi.cpp export wrapper emission (type filter), svLogic encode/decode helpers, packed vector marshaling helpers.
+
+## D4c: Packed-vector DPI return types (import and export, indirect return modeling)
+
+Both import and export reject packed-vector return types. DpiReturnKind has only kVoid and kDirectValue. Packed vectors cannot be returned by value in C; the standard convention is an implicit output pointer parameter.
+
+This item adds an indirect return variant to DpiReturnKind, modifies import call lowering to pass a caller-allocated return buffer as an implicit first argument, and modifies export wrappers to write the return value into the caller-provided buffer.
+
+No infrastructure dependencies. Can land in parallel with the D6 series.
+
+Where to look: DpiReturnKind in call.hpp, import return handling in LowerDpiImportCall, export return encoding in EmitDpiExportWrappers, return type rejections in routine.cpp and design.cpp.
 
 ## D4d: AOT/LLI export end-to-end integration
 
-Export wrappers are emitted with ExternalLinkage for all backends, but only JIT has been tested end-to-end (via object-file loading into the JITDylib). AOT and LLI need verification that the wrapper symbols are linkable and callable from external C code.
+Export wrappers are emitted with ExternalLinkage for all backends, but only JIT has been tested end-to-end. AOT and LLI need verification that export symbols are linkable and callable from external C code.
 
-## D5a: Context functions
+No infrastructure dependencies.
 
-Adds DPI context property support. Context functions may call back into the simulator to query or manipulate scope, requiring a scope/context handle infrastructure that does not exist today. This is effectively a minimal simulator-access API surface.
+Where to look: AOT LinkRequest in driver, LLI --dlopen path, test infrastructure for backend-specific DPI tests.
 
-Shares runtime context infrastructure with D4 -- the dependency is on the infrastructure, not on D4 being fully complete.
+## D7a: DPI import task suspension protocol
 
-## D5b: DPI tasks
+DPI import tasks are rejected at AST-to-HIR time. DPI tasks can consume simulation time, requiring the calling process to suspend and resume. This is fundamentally different from DPI import functions, which are instantaneous.
 
-Adds support for time-consuming DPI foreign calls. DPI tasks can consume simulation time, which requires integration with Lyra's cooperative process scheduling model. This is a separate problem from context scope access (D5a) and may require changes to the suspension protocol.
+This item defines the suspension/resumption contract for foreign task calls: how a DPI task signals that it needs to consume time, how the calling process yields to the scheduler, and how it resumes when the time advance completes. Includes the disable protocol (svIsDisabledState, svAckDisabledState) since it is part of the same suspension contract.
+
+Does not remove the import task rejection or integrate with the scheduler -- those are D7b.
+
+Where to look: process scheduling/suspension in engine, svIsDisabledState/svAckDisabledState in svdpi.h, cooperative scheduling model.
+
+## D7b: DPI import task scheduler integration
+
+Wires the suspension protocol from D7a into the live scheduler. Removes the import task rejection at AST-to-HIR time. Adds MIR/codegen support for DPI task calls that can suspend. End-to-end: a DPI import task that calls a delay advances simulation time and resumes correctly.
+
+Depends on D7a (suspension protocol defined).
+
+Where to look: routine.cpp task rejection, MIR DpiCall (task vs function distinction), process scheduler yield/resume path.
+
+## D7c: DPI export tasks (external C invocation of time-consuming SV tasks)
+
+DPI export tasks allow external C code to invoke SV tasks that consume simulation time. This requires both the suspension protocol from D7a/D7b and the scope/instance binding from D6b (export tasks are typically module-scoped).
+
+Depends on D7b (import task suspension works) and D6b (scope registry for instance binding).
+
+Where to look: design.cpp task rejection, export wrapper emission, scheduler integration from D7b.
+
+Open arrays (svOpenArrayHandle query/access APIs) are deferred. They are a large self-contained LRM surface unrelated to the scope/export/context unblock path. They belong in a later DPI completeness pass, not the current queue.
