@@ -1,8 +1,18 @@
 CompileFlags:
   Add:
-    - "-std=c++23"
     - "-Wall"
     - "-Wextra"
+    - "-Ithird_party/systemverilog"
+
+---
+
+If:
+  PathMatch: [.*\.hpp, .*\.cpp]
+CompileFlags:
+  Add:
+    - "-std=c++23"
+
+---
 
 Diagnostics:
   ClangTidy:

@@ -58,4 +58,17 @@ auto LyraGetDpiExportCallContextMut() -> lyra::runtime::DpiExportCallContext*;
 // simulation context. Called by LLVM-generated export wrappers when
 // LyraGetDpiExportCallContext returns nullptr.
 [[noreturn]] void LyraFailMissingDpiExportCallContext();
+
+// Compiler-internal current-DPI-scope push/pop.
+// Used by compiler-generated DPI call boundaries that must expose a
+// specific call-site scope through svGetScope() during foreign execution.
+// Do not call svSetScope() from compiler-generated IR.
+
+// Sets active_scope to new_scope, returns previous scope for pop.
+// Does NOT validate new_scope (compiler-generated: scope is either a valid
+// RuntimeInstance* from instance_ptr or nullptr).
+svScope LyraPushCurrentDpiScope(svScope new_scope);
+
+// Restores active_scope to prev_scope after context import returns.
+void LyraPopCurrentDpiScope(svScope prev_scope);
 }

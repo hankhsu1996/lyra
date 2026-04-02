@@ -62,3 +62,21 @@ extern "C" [[noreturn]] void LyraFailMissingDpiExportCallContext() {
       stderr);
   std::abort();
 }
+
+extern "C" svScope LyraPushCurrentDpiScope(svScope new_scope) {
+  auto* ctx = LyraGetDpiExportCallContextMut();
+  if (ctx == nullptr) {
+    LyraFailMissingDpiExportCallContext();
+  }
+  svScope prev = ctx->active_scope;
+  ctx->active_scope = new_scope;
+  return prev;
+}
+
+extern "C" void LyraPopCurrentDpiScope(svScope prev_scope) {
+  auto* ctx = LyraGetDpiExportCallContextMut();
+  if (ctx == nullptr) {
+    LyraFailMissingDpiExportCallContext();
+  }
+  ctx->active_scope = prev_scope;
+}

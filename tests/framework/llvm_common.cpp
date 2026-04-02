@@ -418,6 +418,10 @@ auto PrepareLlvmModule(
             "MIR lowering error: {}", mir_result.error().primary.message));
   }
 
+  if (test_case.dump_dpi_header && !mir_result->dpi_header.empty()) {
+    compiler_output += mir_result->dpi_header;
+  }
+
   // Realization: attach compiled bindings to design.
   realization::AssembleBindings(
       std::move(mir_result->compiled_bindings), *mir_result->design_arena,
@@ -516,6 +520,10 @@ auto PrepareLlvmModule(
     }
     return std::unexpected(
         std::format("LLVM lowering error: {}", diag.primary.message));
+  }
+
+  if (test_case.dump_llvm_ir) {
+    compiler_output += lowering::mir_to_llvm::DumpLlvmIr(*llvm_result);
   }
 
   double llvm_lower_seconds =

@@ -1690,4 +1690,29 @@ auto Context::GetLyraFailMissingDpiExportCallContext() -> llvm::Function* {
   return lyra_fail_missing_dpi_export_call_context_;
 }
 
+auto Context::GetLyraPushCurrentDpiScope() -> llvm::Function* {
+  if (lyra_push_current_dpi_scope_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    lyra_push_current_dpi_scope_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraPushCurrentDpiScope",
+        llvm_module_.get());
+    lyra_push_current_dpi_scope_->setCallingConv(llvm::CallingConv::C);
+  }
+  return lyra_push_current_dpi_scope_;
+}
+
+auto Context::GetLyraPopCurrentDpiScope() -> llvm::Function* {
+  if (lyra_pop_current_dpi_scope_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(void_ty, {ptr_ty}, false);
+    lyra_pop_current_dpi_scope_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraPopCurrentDpiScope",
+        llvm_module_.get());
+    lyra_pop_current_dpi_scope_->setCallingConv(llvm::CallingConv::C);
+  }
+  return lyra_pop_current_dpi_scope_;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

@@ -68,6 +68,11 @@ struct DpiImportRef {
   SymbolId symbol;     // SV declaration identity (for diagnostics/debug)
   std::string c_name;  // External C symbol name
   DpiSignature signature;
+  // True for `import "DPI-C" context ...`.
+  // The hidden svScope call-context parameter is NOT represented in
+  // DpiSignature; it is added separately by LLVM import declaration and
+  // call emission. DpiSignature describes the user-visible DPI ABI only.
+  bool is_context = false;
 };
 
 // Per-argument binding at a DPI call site.

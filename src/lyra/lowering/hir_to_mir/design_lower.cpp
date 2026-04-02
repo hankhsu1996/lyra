@@ -243,7 +243,8 @@ auto LowerDesign(
   DeclView init_view{
       .design_places = &decls.design_places,
       .functions = &decls.functions,
-      .slots = &decls.slots};
+      .slots = &decls.slots,
+      .dpi_imports = &decls.dpi_imports};
   for (const auto& element : design.elements) {
     if (const auto* pkg = std::get_if<hir::Package>(&element)) {
       if (pkg->init_process) {

@@ -2,17 +2,6 @@ feature: dpi_import_pure
 description: DPI-C pure import function declaration acceptance and rejection
 
 cases:
-  - name: reject_dpi_context_function
-    sv: |
-      module Test;
-        import "DPI-C" context function int ctx_fn(int x);
-        initial begin end
-      endmodule
-    expect:
-      error:
-        contains:
-          - "DPI-C context import functions not yet supported"
-
   - name: accept_dpi_non_pure
     sv: |
       module Test;

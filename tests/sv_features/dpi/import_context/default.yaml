@@ -1,0 +1,130 @@
+feature: dpi_import_context
+description: DPI-C context import functions (D6c)
+
+cases:
+  - name: context_import_module_scope
+    dpi_sources:
+      - dpi_helpers/context_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" context function int get_scope_info();
+        int result;
+        initial begin
+          result = get_scope_info();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # Representative non-module context case. The implementation rule is
+  # broader: any call site with no instance_ptr (package scope,
+  # compilation-unit scope, etc.) must pass and install null scope.
+  - name: context_import_non_module_scope
+    dpi_sources:
+      - dpi_helpers/context_ops.c
+    sv: |
+      package pkg;
+        import "DPI-C" context function int get_scope_from_pkg();
+        function int call_it();
+          return get_scope_from_pkg();
+        endfunction
+      endpackage
+
+      module Test;
+        import pkg::*;
+        int result;
+        initial begin
+          result = call_it();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: context_import_scope_restore
+    dpi_sources:
+      - dpi_helpers/context_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" context function void corrupt_scope();
+        import "DPI-C" context function int check_scope_restored();
+        int result;
+        initial begin
+          corrupt_scope();
+          result = check_scope_restored();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: pure_import_arity_unchanged
+    dpi_sources:
+      - dpi_helpers/context_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function int add_pair(int a, int b);
+        int result;
+        initial begin
+          result = add_pair(1, 2);
+        end
+      endmodule
+    expect:
+      variables:
+        result: 102
+
+  - name: dpi_header_context_import_shape
+    dump_dpi_header: true
+    sv: |
+      module Test;
+        import "DPI-C" context function int ctx_fn(int x);
+        import "DPI-C" function int pure_fn(int x);
+        initial begin end
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "int ctx_fn(svScope scope, int);"
+          - "int pure_fn(int);"
+        not_contains:
+          - "int pure_fn(svScope"
+
+  - name: context_import_ir_push_call_pop_sequence
+    dump_llvm_ir: true
+    dpi_sources:
+      - dpi_helpers/ir_stubs.c
+    sv: |
+      module Test;
+        import "DPI-C" context function int ctx_fn(int x);
+        int result;
+        initial begin
+          result = ctx_fn(42);
+        end
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "call ptr @LyraPushCurrentDpiScope("
+          - "call i32 @ctx_fn(ptr"
+          - "call void @LyraPopCurrentDpiScope("
+
+  - name: pure_import_ir_no_scope_push_pop
+    dump_llvm_ir: true
+    dpi_sources:
+      - dpi_helpers/ir_stubs.c
+    sv: |
+      module Test;
+        import "DPI-C" function int pure_fn(int x);
+        int result;
+        initial begin
+          result = pure_fn(42);
+        end
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "call i32 @pure_fn(i32"
+        not_contains:
+          - "LyraPushCurrentDpiScope"
+          - "LyraPopCurrentDpiScope"
