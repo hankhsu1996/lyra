@@ -112,7 +112,8 @@ auto BuildObservableDescriptorShapeFields(const CanonicalObservableShape& shape)
 auto MakeObservableDescriptorEntry(
     uint32_t storage_byte_offset, uint32_t local_name_pool_off,
     const ObservableDescriptorOwnerRefFields& refs,
-    const ObservableDescriptorShapeFields& sf, uint32_t storage_domain)
+    const ObservableDescriptorShapeFields& sf, uint32_t storage_domain,
+    uint32_t local_signal_id = UINT32_MAX)
     -> runtime::ObservableDescriptorEntry {
   return runtime::ObservableDescriptorEntry{
       .storage_byte_offset = storage_byte_offset,
@@ -128,6 +129,7 @@ auto MakeObservableDescriptorEntry(
       .storage_owner_ref = refs.storage_owner_ref,
       .flags = refs.flags,
       .storage_domain = storage_domain,
+      .local_signal_id = local_signal_id,
   };
 }
 
@@ -1912,14 +1914,23 @@ auto CompileDesignProcesses(const LoweringInput& input)
       auto owned_base =
           layout->design.GetStorageBaseForRange(base_slot, info.slot_count);
 
+      // Body-local observable identity: each slot in the body's contiguous
+      // range [base_slot, base_slot + slot_count) has a canonical body-local
+      // signal id = (gsi - base_slot). This identity is determined by the
+      // body's slot allocation in the design layout, which is fixed per
+      // specialization. The descriptor consumer validates that every id in
+      // [0, slot_count) is populated exactly once.
       for (uint32_t i = 0; i < info.slot_count; ++i) {
         uint32_t gsi = base_slot + i;
+        uint32_t body_local_signal_id = gsi - base_slot;
+
         if (gsi >= layout->design.slots.size()) {
           throw common::InternalError(
               "CompileDesignProcesses",
               std::format(
                   "body {} slot {} (gsi {}) out of range (design slots {})",
-                  info.body_id.value, i, gsi, layout->design.slots.size()));
+                  info.body_id.value, body_local_signal_id, gsi,
+                  layout->design.slots.size()));
         }
 
         const ObservableOwnerSlotId owner =
@@ -1945,7 +1956,26 @@ auto CompileDesignProcesses(const LoweringInput& input)
             narrow_u64_to_u32(body_offset.value, "body-local byte offset");
 
         tmpl.entries.push_back(MakeObservableDescriptorEntry(
-            storage_offset, name_off, refs, sf, domain));
+            storage_offset, name_off, refs, sf, domain, body_local_signal_id));
+      }
+
+      // Producer-side validation: verify all instance-owned descriptors
+      // form a complete dense [0, slot_count) range.
+      {
+        std::vector<uint8_t> seen(info.slot_count, 0);
+        for (const auto& entry : tmpl.entries) {
+          if (entry.storage_domain != 1) continue;
+          if (entry.local_signal_id >= info.slot_count ||
+              seen[entry.local_signal_id]++ != 0) {
+            throw common::InternalError(
+                "CompileDesignProcesses",
+                std::format(
+                    "body {}: invalid or duplicate local_signal_id {} "
+                    "(slot_count {})",
+                    info.body_id.value, entry.local_signal_id,
+                    info.slot_count));
+          }
+        }
       }
     }
 

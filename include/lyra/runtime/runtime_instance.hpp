@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/process_frame.hpp"
 
 namespace lyra::runtime {
@@ -60,12 +61,15 @@ struct RuntimeInstance {
   uint32_t module_proc_base = 0;
   uint32_t num_module_processes = 0;
 
-  // Temporary flat slot-id base for the pre-R3 runtime boundary.
-  // Current code still computes (base + local_id) and feeds globally-indexed
-  // engine APIs. This will be replaced by true engine-private dense
-  // coordination indexing. The value is still the old placement-derived
-  // design-global base offset.
+  // Legacy flat bridge. R5 new code must not read or write this field.
+  // Used only by pre-R5 flat callers (connections, comb fixpoint, NBA queue,
+  // trigger relocation). Removed in Cut 2.
   uint32_t local_signal_coord_base = 0;
+
+  // R5: Per-instance observability state.
+  // Populated by Engine::InitModuleInstancesFromBundles. Not part of the
+  // binary contract with codegen (not accessed via GEP, no LLVM struct type).
+  RuntimeInstanceObservability observability;
 };
 
 // Strongly typed field indices for RuntimeInstanceStorage.

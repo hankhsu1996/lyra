@@ -509,7 +509,7 @@ extern "C" void LyraRunSimulation(
               kRuntimeAbiVersion));
     }
 
-    // Instance pointer list for slot storage resolution.
+    // Instance pointer list for slot storage resolution and observability.
     if (abi->instance_ptrs != nullptr && abi->num_instances > 0) {
       engine.SetInstances(std::span(abi->instance_ptrs, abi->num_instances));
     }
@@ -805,18 +805,14 @@ extern "C" auto LyraResolveBaseDir(const char* argv0) -> const char* {
 
   // Priority 1: explicit env var (set by `lyra run` for temp-dir bundles)
   if (const char* env = std::getenv("LYRA_FS_BASE_DIR");
-      env != nullptr &&
-      env[0] !=
-          '\0') {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      env != nullptr && std::string_view(env) != "") {
     resolved = env;
     return resolved.c_str();
   }
 
   // Priority 2: derive from executable directory
   // Layout: <dir>/<name> (produced by `lyra compile`)
-  if (argv0 != nullptr &&
-      argv0[0] !=
-          '\0') {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  if (argv0 != nullptr && std::string_view(argv0) != "") {
     std::error_code ec;
     auto exe_path = std::filesystem::canonical(argv0, ec);
     if (ec) {
@@ -967,7 +963,8 @@ auto AsEngine(void* engine_ptr) -> Engine* {
 
 auto MakeLocalRef(void* instance_ptr, uint32_t local_id) -> ObjectSignalRef {
   return ObjectSignalRef{
-      static_cast<RuntimeInstance*>(instance_ptr), LocalSignalId{local_id}};
+      .instance = static_cast<RuntimeInstance*>(instance_ptr),
+      .local = LocalSignalId{local_id}};
 }
 
 template <class Signal>

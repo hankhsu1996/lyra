@@ -343,10 +343,11 @@ void Engine::FlushDirtySlots() {
     if (!update_set_.IsEmpty() && design_state_base_ != nullptr) {
       FlushDirtySlotsToTrace(
           trace_manager_, slot_meta_registry_, trace_signal_meta_,
-          design_state_base_, instances_, update_set_, trace_selection_);
+          design_state_base_, const_instances_, update_set_, trace_selection_);
     }
   }
   update_set_.Clear();
+  ClearLocalUpdates();
 }
 
 void Engine::HandleTrap(uint32_t process_id, const TrapPayload& payload) {

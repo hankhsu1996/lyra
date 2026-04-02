@@ -13,10 +13,22 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/index_plan.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/update_set.hpp"
 
 namespace lyra::runtime {
+
+namespace {
+
+// Transitional legacy flat conversion for consumer-boundary mirror.
+// One search target for all local flattening in this file. Deleted in Cut 2.
+auto ToLegacyFlatLocalSignal(const RuntimeInstance& inst, LocalSignalId lid)
+    -> uint32_t {
+  return inst.local_signal_coord_base + lid.value;
+}
+
+}  // namespace
 
 auto Engine::EvaluateEdge(common::EdgeKind edge, bool old_lsb, bool new_lsb)
     -> bool {
@@ -90,7 +102,7 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
 
   bool should_deactivate = false;
   int64_t index_val = EvaluateIndexPlan(
-      design_state_base_, instances_, slot_meta_registry_, plan_span,
+      design_state_base_, const_instances_, slot_meta_registry_, plan_span,
       &should_deactivate);
 
   // Helper lambdas for active/inactive flag setting.
@@ -450,21 +462,23 @@ void Engine::FlushDirtySlotPostRebind(
 }
 
 void Engine::FlushSignalUpdates() {
-  if (finished_) {
-    return;
-  }
+  if (finished_) return;
+  // Local dirty marks were already mirrored to flat by the caller
+  // (FlushAndPropagateConnections) before the fixpoint seeded.
+  // This function only dispatches subscriptions.
+  FlushGlobalSignalUpdates();
+}
 
-  // Guard: MIR path has no slot meta / design state.
+// R5: Domain-split flush entrypoints.
+
+void Engine::FlushGlobalSignalUpdates() {
   if (!slot_meta_registry_.IsPopulated() || design_state_base_ == nullptr) {
     return;
   }
 
   auto newly_dirty = update_set_.DeltaDirtySlots();
-  if (newly_dirty.empty()) {
-    return;
-  }
+  if (newly_dirty.empty()) return;
 
-  // Increment flush epoch for rebind deduplication.
   ++flush_epoch_;
 
   const bool detailed = detailed_stats_enabled_;
@@ -473,20 +487,6 @@ void Engine::FlushSignalUpdates() {
       slot_meta_registry_.MaxExtent());
 
   // Two-phase flush: rebinds globally first, then edge/change/container.
-  //
-  // Phase 1: flush all rebind subscriptions across all dirty slots.
-  // Rebind watchers update observation points (e.g., which bit of a
-  // target slot an edge trigger watches). This must complete globally
-  // before any edge evaluation, because a dependency slot (e.g., a
-  // dynamic index) and its target slot (e.g., a bus) may both be dirty
-  // in the same pass. If the target were flushed before the dependency,
-  // the edge trigger would evaluate at the stale observation point.
-  //
-  // Load-bearing invariant: FlushSlotRebindSubs must only update
-  // observation points (cold state, bit targets, snapshot bytes).
-  // It must not trigger edge/change/container dispatch or add new
-  // dirty slots. If rebind handling ever gains side effects that
-  // require dispatch, the phase split must be revisited.
   for (uint32_t slot_id : newly_dirty) {
     auto& slot = signal_subs_[slot_id];
     if (slot.rebind_subs.empty()) continue;
@@ -494,8 +494,6 @@ void Engine::FlushSignalUpdates() {
     FlushSlotRebindSubs(slot.rebind_subs, meta, design_state);
   }
 
-  // Phase 2: flush edge, change, and container subscriptions.
-  // All rebind observation points are now up-to-date.
   for (uint32_t slot_id : newly_dirty) {
     auto& slot = signal_subs_[slot_id];
     if (slot.edge_groups.empty() && slot.change_subs.empty() &&
@@ -504,6 +502,30 @@ void Engine::FlushSignalUpdates() {
     if (detailed) ++stats_.detailed.flush_dirty_slots;
     const auto& meta = slot_meta_registry_.Get(slot_id);
     FlushDirtySlotPostRebind(slot_id, slot, meta, design_state);
+  }
+}
+
+void Engine::FlushLocalSignalUpdates(RuntimeInstance& inst) {
+  // Transitional Cut 1: mirror per-instance local dirty signals into
+  // the flat update_set_ with full fidelity (ranges, kind, epoch).
+  // Deleted when subscriptions move to per-instance containers.
+  auto& obs = inst.observability;
+  if (obs.local_signal_count == 0) return;
+
+  for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
+    uint32_t flat = ToLegacyFlatLocalSignal(inst, lid);
+    const auto& ranges = obs.local_updates.DeltaRangesFor(lid);
+    auto kind = obs.local_updates.DeltaKindFor(lid);
+    auto epoch = obs.local_updates.DeltaEpochFor(lid);
+
+    if (ranges.IsFullExtent()) {
+      update_set_.MarkSlotDirty(flat, kind, epoch);
+      continue;
+    }
+
+    for (const auto& r : ranges.Ranges()) {
+      update_set_.MarkDirtyRange(flat, r.offset, r.size, kind, epoch);
+    }
   }
 }
 

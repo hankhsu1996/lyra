@@ -57,7 +57,7 @@ void Engine::ScheduleNba(
 
   ValidateSlotRootPointer(
       notify_base_ptr, notify_slot_id, slot_meta_registry_, design_state_base_,
-      instances_, "Engine::ScheduleNba");
+      const_instances_, "Engine::ScheduleNba");
 
   NbaEntry entry;
   entry.write_ptr = write_ptr;
@@ -95,7 +95,7 @@ void Engine::ScheduleNbaCanonicalPacked(
 
   ValidateSlotRootPointer(
       notify_base_ptr, notify_slot_id, slot_meta_registry_, design_state_base_,
-      instances_, "Engine::ScheduleNbaCanonicalPacked");
+      const_instances_, "Engine::ScheduleNbaCanonicalPacked");
 
   NbaEntry entry;
   entry.write_ptr = write_ptr;

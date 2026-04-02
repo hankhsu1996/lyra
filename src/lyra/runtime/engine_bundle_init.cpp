@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "lyra/common/byte_offset.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/slot_id.hpp"
@@ -15,6 +16,7 @@
 #include "lyra/runtime/constructor_.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/instance_metadata.hpp"
+#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
@@ -246,6 +248,119 @@ auto Engine::InitModuleInstancesFromBundles(
             fact.trace->trace_kind, fact.storage.owner_slot_id.value);
       }
     });
+  }
+
+  // R5: Build per-body observable layouts and per-instance observability.
+  // One BodyObservableLayout per distinct body_key (shared across instances
+  // of the same specialization). Each instance's observability gets a
+  // non-owning pointer to its body's layout.
+  //
+  // Temporary Cut 1 build-time map key. Final ownership is by shared-body
+  // runtime metadata object.
+  body_observable_layouts_.clear();
+  auto get_or_create_layout =
+      [this](
+          const InstanceMetadataBundle& bundle,
+          absl::flat_hash_map<const void*, BodyObservableLayout*>& map)
+      -> BodyObservableLayout& {
+    auto [it, inserted] = map.try_emplace(bundle.body_key, nullptr);
+    if (!inserted) return *it->second;
+
+    body_observable_layouts_.emplace_back();
+    it->second = &body_observable_layouts_.back();
+    auto& layout = *it->second;
+
+    // Seed trace name pool with sentinel '\0' at offset 0.
+    // Offset 0 means "no name". Real names start at offset >= 1.
+    layout.trace_name_pool.push_back('\0');
+
+    // Count instance-owned descriptors to size vectors upfront.
+    const auto& obs = bundle.body_desc->observable_descriptors;
+    uint32_t local_count = 0;
+    for (const auto& entry : obs.entries) {
+      if (entry.storage_domain == 1) ++local_count;
+    }
+
+    layout.slot_meta.resize(local_count);
+    layout.trace_meta.resize(local_count);
+    // Preserve existing behavior: all instance-owned signals are
+    // trace-selected by default until a later trace-selection policy cut
+    // changes this explicitly.
+    layout.trace_select_default.assign(local_count, 1);
+
+    // Populate by explicit local_signal_id, not encounter order.
+    // Each instance-owned descriptor carries a stable body-local signal id
+    // set at codegen time. Validates every id is populated exactly once.
+    std::vector<uint8_t> populated(local_count, 0);
+    for (const auto& entry : obs.entries) {
+      if (entry.storage_domain != 1) continue;
+
+      if (entry.local_signal_id >= local_count) {
+        throw common::InternalError(
+            "get_or_create_layout",
+            std::format(
+                "local_signal_id {} out of range (local_count {})",
+                entry.local_signal_id, local_count));
+      }
+      if (populated[entry.local_signal_id] != 0) {
+        throw common::InternalError(
+            "get_or_create_layout",
+            std::format("duplicate local_signal_id {}", entry.local_signal_id));
+      }
+      populated[entry.local_signal_id] = 1;
+
+      auto lid = entry.local_signal_id;
+      layout.slot_meta[lid] = InstanceSlotMeta{
+          .instance_rel_off = entry.storage_byte_offset,
+          .total_bytes = entry.total_bytes,
+          .kind = static_cast<SlotStorageKind>(entry.storage_kind),
+          .planes =
+              PackedPlanes{
+                  .value_off = entry.value_lane_offset,
+                  .value_bytes = entry.value_lane_bytes,
+                  .unk_off = entry.unk_lane_offset,
+                  .unk_bytes = entry.unk_lane_bytes,
+              },
+      };
+
+      auto local_name =
+          ReadObservablePoolString(obs, entry.local_name_pool_off);
+      uint32_t name_off = 0;
+      if (!local_name.empty()) {
+        name_off = static_cast<uint32_t>(layout.trace_name_pool.size());
+        layout.trace_name_pool.insert(
+            layout.trace_name_pool.end(), local_name.begin(), local_name.end());
+        layout.trace_name_pool.push_back('\0');
+      }
+
+      layout.trace_meta[lid] = BodyTraceMeta{
+          .local_name_offset = name_off,
+          .bit_width = entry.bit_width,
+          .kind = static_cast<TraceSignalKind>(entry.trace_kind),
+      };
+    }
+
+    // Validate every local signal id is populated.
+    for (uint32_t i = 0; i < local_count; ++i) {
+      if (populated[i] == 0) {
+        throw common::InternalError(
+            "get_or_create_layout",
+            std::format("local_signal_id {} not populated", i));
+      }
+    }
+
+    return layout;
+  };
+
+  absl::flat_hash_map<const void*, BodyObservableLayout*> body_layout_map;
+  for (const auto& bundle : bundles) {
+    auto& layout = get_or_create_layout(bundle, body_layout_map);
+    auto local_count = static_cast<uint32_t>(layout.slot_meta.size());
+    bundle.instance->observability.layout = &layout;
+    bundle.instance->observability.local_signal_count = local_count;
+    if (local_count > 0) {
+      bundle.instance->observability.Init();
+    }
   }
 
   uint32_t total_slots = slot_meta_registry_.Size();

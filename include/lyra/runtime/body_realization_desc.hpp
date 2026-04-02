@@ -257,9 +257,13 @@ struct ObservableDescriptorEntry {
   // 1 = kInstanceOwned (owned module-local, body-relative offset).
   // Set at descriptor emission time from the storage ref variant.
   uint32_t storage_domain = 0;
+  // R5: Stable body-local signal id for instance-owned entries.
+  // Defines the canonical LocalSignalId for this signal within the body.
+  // Set at descriptor emission time. UINT32_MAX for design-global entries.
+  uint32_t local_signal_id = UINT32_MAX;
 };
 
-static_assert(sizeof(ObservableDescriptorEntry) == 52);
+static_assert(sizeof(ObservableDescriptorEntry) == 56);
 static_assert(offsetof(ObservableDescriptorEntry, storage_byte_offset) == 0);
 static_assert(offsetof(ObservableDescriptorEntry, total_bytes) == 4);
 static_assert(offsetof(ObservableDescriptorEntry, storage_kind) == 8);
@@ -273,6 +277,7 @@ static_assert(offsetof(ObservableDescriptorEntry, trace_kind) == 36);
 static_assert(offsetof(ObservableDescriptorEntry, storage_owner_ref) == 40);
 static_assert(offsetof(ObservableDescriptorEntry, flags) == 44);
 static_assert(offsetof(ObservableDescriptorEntry, storage_domain) == 48);
+static_assert(offsetof(ObservableDescriptorEntry, local_signal_id) == 52);
 static_assert(std::is_trivially_copyable_v<ObservableDescriptorEntry>);
 static_assert(std::is_standard_layout_v<ObservableDescriptorEntry>);
 

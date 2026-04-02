@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <format>
 #include <map>
 #include <optional>
@@ -28,6 +29,7 @@
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/instance_metadata.hpp"
+#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
@@ -383,11 +385,10 @@ class Engine {
     design_state_base_ = base;
   }
 
-  // Set the instance list for slot storage resolution.
-  // The span must remain valid for the lifetime of the engine.
-  void SetInstances(std::span<const RuntimeInstance* const> instances) {
-    instances_ = instances;
-  }
+  // Set the instance list for slot storage resolution and observability.
+  // Engine copies the pointers and owns the canonical mutable list.
+  // All callers read through instances_.
+  void SetInstances(std::span<const RuntimeInstance* const> instances);
 
   // Validate that all kInstanceOwned slot-meta entries reference valid
   // instances. Must be called after both slot meta and instance list are
@@ -866,6 +867,15 @@ class Engine {
   void TraceWake(const WakeupEntry& entry);
   void TraceRun(const WakeupEntry& entry);
 
+  // R5: Domain-split flush entrypoints.
+  // Global flush iterates global dirty slots. Local flush iterates one
+  // instance's local dirty signals. Currently these are stub entrypoints
+  // that route to the existing flat subscription infrastructure for
+  // signals that have subscriptions. Later cuts make them the primary
+  // flush path.
+  void FlushGlobalSignalUpdates();
+  void FlushLocalSignalUpdates(RuntimeInstance& inst);
+
   // Per-kind flush helpers (called from FlushDirtySlot).
   void FlushSlotRebindSubs(
       std::vector<RebindWatcherSub>& subs, const SlotMeta& meta,
@@ -945,6 +955,22 @@ class Engine {
   // Edge evaluation helpers
   static auto EvaluateEdge(common::EdgeKind edge, bool old_lsb, bool new_lsb)
       -> bool;
+
+  // R5: Clear per-instance local update sets (delta or full).
+  void ClearLocalUpdatesDelta();
+  void ClearLocalUpdates();
+
+  // R5 transitional: feed comb fixpoint capture from a local typed write.
+  // Only remaining producer-side flat bridge. Deleted when comb fixpoint
+  // reads directly from local containers.
+  void FeedCombCaptureFullFromLocal(
+      ObjectSignalRef signal,
+      common::MutationKind kind = common::MutationKind::kValueWrite,
+      common::EpochEffect epoch = common::EpochEffect::kNone);
+  void FeedCombCaptureRangeFromLocal(
+      ObjectSignalRef signal, uint32_t byte_off, uint32_t byte_size,
+      common::MutationKind kind = common::MutationKind::kValueWrite,
+      common::EpochEffect epoch = common::EpochEffect::kNone);
 
   ProcessDispatch process_dispatch_;
   uint32_t num_processes_ = 0;
@@ -1042,7 +1068,14 @@ class Engine {
   // update_set_: tracks dirty slots (per-delta for scheduler, per-time-slot
   // for trace).
   void* design_state_base_ = nullptr;
-  std::span<const RuntimeInstance* const> instances_;
+  // Canonical owned instance pointer list. Both mutable and const views
+  // are derived from this single source in SetInstances().
+  // C++ span<T*> does not convert to span<const T*>, so both views need
+  // separate backing storage.
+  std::vector<RuntimeInstance*> instance_ptrs_;
+  std::span<RuntimeInstance* const> instances_;  // mutable view
+  std::vector<const RuntimeInstance*> const_instance_ptrs_;
+  std::span<const RuntimeInstance* const> const_instances_;  // read-only view
   UpdateSet update_set_;
 
   // Connection batch: fast-path for kernelized connection processes.
@@ -1128,6 +1161,12 @@ class Engine {
   // Per-slot selection mask for producer-side trace filtering.
   // Initialized alongside trace_signal_meta_ in InitTraceSignalMeta().
   TraceSelectionRegistry trace_selection_;
+
+  // R5: Per-body observable layouts (one per distinct shared body /
+  // specialization). Keyed by body_key from InstanceMetadataBundle.
+  // Each RuntimeInstance's observability.layout points into this storage.
+  // The deque provides pointer stability across inserts.
+  std::deque<BodyObservableLayout> body_observable_layouts_;
 
   // Suspend record access for post-activation reconciliation.
   std::vector<SuspendRecord*> suspend_records_;

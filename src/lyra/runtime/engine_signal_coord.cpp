@@ -6,27 +6,80 @@ namespace lyra::runtime {
 
 namespace {
 
-// Temporary flat slot-id conversion for current coordination storage.
-// All typed engine API methods lower through this until private dense
-// coordination indexing replaces flat slot-id vectors.
-auto ToFlatSlotId(ObjectSignalRef signal) -> uint32_t {
-  return signal.instance->local_signal_coord_base + signal.local.value;
-}
-
+// Legacy flat slot-id conversion for global paths. R5 Cut 2 deletes this.
 auto ToFlatSlotId(GlobalSignalId signal) -> uint32_t {
   return signal.value;
 }
 
+// Legacy flat conversion for local signals. Used ONLY by narrowly scoped
+// transitional bridges (NBA queue, comb capture). R5 Cut 2 deletes this.
+auto ToLegacyFlatLocalSignal(ObjectSignalRef signal) -> uint32_t {
+  return signal.instance->local_signal_coord_base + signal.local.value;
+}
+
 }  // namespace
 
+// --- Instance-owned local paths (source of truth: per-instance containers) ---
+
 void Engine::MarkDirty(ObjectSignalRef signal) {
-  MarkSlotDirty(ToFlatSlotId(signal));
+  if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
+  signal.instance->observability.local_updates.MarkSlotDirty(signal.local);
+  FeedCombCaptureFullFromLocal(signal);
 }
 
 void Engine::MarkDirtyRange(
     ObjectSignalRef signal, uint32_t byte_off, uint32_t byte_size) {
-  MarkDirtyRange(ToFlatSlotId(signal), byte_off, byte_size);
+  if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
+  signal.instance->observability.local_updates.MarkDirtyRange(
+      signal.local, byte_off, byte_size);
+  FeedCombCaptureRangeFromLocal(signal, byte_off, byte_size);
 }
+
+void Engine::FeedCombCaptureFullFromLocal(
+    ObjectSignalRef signal, common::MutationKind kind,
+    common::EpochEffect epoch) {
+  if (comb_write_capture_ == nullptr) return;
+  uint32_t flat = ToLegacyFlatLocalSignal(signal);
+  comb_write_capture_->push_back(flat);
+  update_set_.MarkSlotDirty(flat, kind, epoch);
+}
+
+void Engine::FeedCombCaptureRangeFromLocal(
+    ObjectSignalRef signal, uint32_t byte_off, uint32_t byte_size,
+    common::MutationKind kind, common::EpochEffect epoch) {
+  if (comb_write_capture_ == nullptr) return;
+  uint32_t flat = ToLegacyFlatLocalSignal(signal);
+  comb_write_capture_->push_back(flat);
+  update_set_.MarkDirtyRange(flat, byte_off, byte_size, kind, epoch);
+}
+
+void Engine::ScheduleNba(
+    ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
+    const void* value_ptr, const void* mask_ptr, uint32_t byte_size) {
+  // NBA queue still uses flat slot_id internally (transitional).
+  // The dirty notification will come through MarkDirty when the NBA commits.
+  ScheduleNba(
+      write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size,
+      ToLegacyFlatLocalSignal(notify_signal));
+}
+
+void Engine::ScheduleNbaCanonicalPacked(
+    ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
+    const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
+    uint32_t second_region_offset) {
+  // NBA queue still uses flat slot_id internally (transitional).
+  ScheduleNbaCanonicalPacked(
+      write_ptr, notify_base_ptr, value_ptr, unk_ptr, region_byte_size,
+      second_region_offset, ToLegacyFlatLocalSignal(notify_signal));
+}
+
+auto Engine::IsTraceObserved(ObjectSignalRef signal) const -> bool {
+  auto& obs = signal.instance->observability;
+  if (signal.local.value >= obs.trace_select.size()) return false;
+  return obs.trace_select[signal.local.value] != 0;
+}
+
+// --- Global paths (flat slot_id is the correct identity) ---
 
 void Engine::MarkDirty(GlobalSignalId signal) {
   MarkSlotDirty(ToFlatSlotId(signal));
@@ -38,28 +91,11 @@ void Engine::MarkDirtyRange(
 }
 
 void Engine::ScheduleNba(
-    ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
-    const void* value_ptr, const void* mask_ptr, uint32_t byte_size) {
-  ScheduleNba(
-      write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size,
-      ToFlatSlotId(notify_signal));
-}
-
-void Engine::ScheduleNba(
     GlobalSignalId notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size) {
   ScheduleNba(
       write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size,
       ToFlatSlotId(notify_signal));
-}
-
-void Engine::ScheduleNbaCanonicalPacked(
-    ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
-    const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
-    uint32_t second_region_offset) {
-  ScheduleNbaCanonicalPacked(
-      write_ptr, notify_base_ptr, value_ptr, unk_ptr, region_byte_size,
-      second_region_offset, ToFlatSlotId(notify_signal));
 }
 
 void Engine::ScheduleNbaCanonicalPacked(
@@ -69,15 +105,13 @@ void Engine::ScheduleNbaCanonicalPacked(
   ScheduleNbaCanonicalPacked(
       write_ptr, notify_base_ptr, value_ptr, unk_ptr, region_byte_size,
       second_region_offset, ToFlatSlotId(notify_signal));
-}
-
-auto Engine::IsTraceObserved(ObjectSignalRef signal) const -> bool {
-  return trace_selection_.IsSelected(ToFlatSlotId(signal));
 }
 
 auto Engine::IsTraceObserved(GlobalSignalId signal) const -> bool {
   return trace_selection_.IsSelected(ToFlatSlotId(signal));
 }
+
+// --- Dense coordination (legacy, pre-R5) ---
 
 void Engine::AssignDenseCoordinationBases(
     std::span<RuntimeInstance* const> mutable_instances) {
@@ -87,8 +121,6 @@ void Engine::AssignDenseCoordinationBases(
         "slot meta registry must be initialized first");
   }
 
-  // Count slots per instance from slot meta registry.
-  // Also count package/global slots (not owned by any instance).
   uint32_t total_slots = slot_meta_registry_.Size();
   std::vector<uint32_t> instance_slot_counts(mutable_instances.size(), 0);
   uint32_t global_slot_count = 0;
@@ -104,14 +136,12 @@ void Engine::AssignDenseCoordinationBases(
     }
   }
 
-  // Assign dense coordination bases: global slots first, then per-instance.
   uint32_t next_base = global_slot_count;
   for (uint32_t i = 0; i < mutable_instances.size(); ++i) {
     mutable_instances[i]->local_signal_coord_base = next_base;
     next_base += instance_slot_counts[i];
   }
 
-  // Validate total matches.
   if (next_base != total_slots) {
     throw common::InternalError(
         "Engine::AssignDenseCoordinationBases",
@@ -121,10 +151,6 @@ void Engine::AssignDenseCoordinationBases(
             next_base, total_slots));
   }
 
-  // Validate contiguity: for each instance-owned slot, the internal slot id
-  // must equal base + local_offset where local offsets are 0, 1, 2, ...
-  // in slot-meta order. If this invariant does not hold, the
-  // local_signal_coord_base + LocalSignalId arithmetic is wrong.
   std::vector<uint32_t> next_expected(mutable_instances.size());
   for (uint32_t i = 0; i < mutable_instances.size(); ++i) {
     next_expected[i] = mutable_instances[i]->local_signal_coord_base;
@@ -153,6 +179,41 @@ void Engine::AssignDenseCoordinationBases(
               mutable_instances[inst]->local_signal_coord_base));
     }
     ++next_expected[inst];
+  }
+}
+
+// --- R5: Mutable instance span and local update lifecycle ---
+
+void Engine::SetInstances(std::span<const RuntimeInstance* const> instances) {
+  // Build canonical mutable list. The ABI passes const pointers, but the
+  // underlying RuntimeInstance objects are non-const (owned by
+  // ConstructionResult). The const_cast is safe because observability
+  // fields are runtime-only state not part of the codegen binary contract.
+  instance_ptrs_.resize(instances.size());
+  for (size_t i = 0; i < instances.size(); ++i) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
+    instance_ptrs_[i] = const_cast<RuntimeInstance*>(instances[i]);
+  }
+  instances_ = instance_ptrs_;
+
+  // Const view for read-only APIs.
+  const_instance_ptrs_.assign(instances.begin(), instances.end());
+  const_instances_ = const_instance_ptrs_;
+}
+
+void Engine::ClearLocalUpdatesDelta() {
+  for (auto* inst : instances_) {
+    if (inst->observability.local_signal_count > 0) {
+      inst->observability.local_updates.ClearDelta();
+    }
+  }
+}
+
+void Engine::ClearLocalUpdates() {
+  for (auto* inst : instances_) {
+    if (inst->observability.local_signal_count > 0) {
+      inst->observability.local_updates.Clear();
+    }
   }
 }
 

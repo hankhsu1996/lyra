@@ -228,6 +228,13 @@ void Engine::SeedCombKernelDirtyMarks() {
 }
 
 void Engine::FlushAndPropagateConnections() {
+  // R5 transitional: mirror local dirty into flat before any DeltaDirtySlots
+  // read. FlushLocalSignalUpdates is the sole consumer-boundary mirror.
+  // Called here (before fixpoint seeding) and not inside FlushSignalUpdates.
+  for (auto* inst : instances_) {
+    FlushLocalSignalUpdates(*inst);
+  }
+
   if (detailed_stats_enabled_) {
     auto pending = update_set_.DeltaDirtySlots().size();
     ++stats_.detailed.prop_calls_total;
@@ -246,6 +253,7 @@ void Engine::FlushAndPropagateConnections() {
   if (!has_conns && !has_combs) {
     FlushSignalUpdates();
     update_set_.ClearDelta();
+    ClearLocalUpdatesDelta();
     return;
   }
 
@@ -376,7 +384,7 @@ void Engine::FlushAndPropagateConnections() {
           auto buf_off = static_cast<uint32_t>(fp_work_.snapshot_buf.size());
           fp_work_.snapshot_buf.resize(buf_off + meta.total_bytes);
           const auto* slot_base =
-              ResolveSlotBase(meta, design_state_base_, instances_);
+              ResolveSlotBase(meta, design_state_base_, const_instances_);
           std::memcpy(
               &fp_work_.snapshot_buf[buf_off], slot_base, meta.total_bytes);
           fp_work_.snapshot_index[slot_id] =
@@ -433,7 +441,7 @@ void Engine::FlushAndPropagateConnections() {
           const auto& snap = fp_work_.snapshots[fp_work_.snapshot_index[s]];
           const auto& snap_meta = slot_meta_registry_.Get(snap.slot_id);
           const auto* snap_base =
-              ResolveSlotBase(snap_meta, design_state_base_, instances_);
+              ResolveSlotBase(snap_meta, design_state_base_, const_instances_);
           if (std::memcmp(
                   snap_base, &fp_work_.snapshot_buf[snap.buf_off],
                   snap.total_bytes) == 0) {
@@ -476,6 +484,7 @@ void Engine::FlushAndPropagateConnections() {
   // connection propagation + comb kernels), then clear the delta.
   FlushSignalUpdates();
   update_set_.ClearDelta();
+  ClearLocalUpdatesDelta();
 }
 
 }  // namespace lyra::runtime

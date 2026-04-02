@@ -35,22 +35,6 @@ struct ObjectSignalRef {
   LocalSignalId local;
 };
 
-// Engine-private dense coordination coordinate.
-//
-// INVARIANT: DenseSignalCoord must never cross the public runtime boundary.
-// Generated code, runtime helpers, and constructor-fed metadata must not
-// traffic in DenseSignalCoord directly. It is an engine-internal
-// implementation detail of hot coordination structures. All public
-// coordination paths use ObjectSignalRef or GlobalSignalId.
-//
-// Not yet wired into engine internals. Currently defined as a target type
-// for the R3 migration. Actual engine-internal rekeying is a later step.
-struct DenseSignalCoord {
-  uint32_t value;
-
-  auto operator==(const DenseSignalCoord&) const -> bool = default;
-};
-
 // Semantic domain tag for trigger and mutation coordinates.
 enum class SignalCoordKind : uint8_t {
   kLocalInstance,

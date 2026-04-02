@@ -102,13 +102,13 @@ The constructor-to-runtime boundary now preserves per-instance structure for all
 
 ## R5: Observability/trace/snapshot on object-local coordinates
 
-**Current state:** observable descriptors are built per-body with body-relative offsets (this is correct). The constructor relocates them to design-global SlotMeta entries. Trace and snapshot systems index by design-global slot_id. Forwarded alias trace fanout uses storage_owner_slot_id alias groups keyed by global slot_id. TraceSignalMetaRegistry is a flat dense vector.
+**Current state:** observable descriptors are built per-body with body-relative offsets (correct). The constructor relocates them to design-global SlotMeta entries. Trace and snapshot systems index by flat design-global slot*id. All runtime observability containers (UpdateSet, signal_subs*, TraceSelectionRegistry, SlotMetaRegistry, TraceSignalMetaRegistry) are flat mixed-domain vectors indexed by design-global slot_id. The local_signal_coord_base bridge on RuntimeInstance converts (instance, local_id) to flat slot_id at every engine entry point.
 
-**Target:** observability works in object-local coordinates. SlotMeta describes a member within an instance, not a byte offset into a design-global arena. Trace coordinates are (instance, local_signal), not flat design-global slot_id.
+**Target:** instance-owned observability uses (RuntimeInstance\*, LocalSignalId) identity end-to-end. Runtime containers split by domain: GlobalSlotMetaRegistry / GlobalUpdateSet / global*signal_subs* for package/global, and per-instance RuntimeInstanceObservability (with BodyObservableLayout, LocalUpdateSet, local*signal_subs*) for instance-owned. Trace events carry domain-typed identity (GlobalValueChange / LocalValueChange), not flat slot_id. Hierarchical names composed at sink boundary, not pre-flattened. Observer/strobe/monitor use direct object-local addressing via this_ptr, no flat-base ABI argument.
 
-**Why last:** the target coordinate system -- (instance, local_signal) -- does not exist until R3 defines object-local signal identity. Forwarded alias trace fanout is cleanest after R2 resolves forwarding. The observable descriptor templates are already body-shaped; the remaining work is the realized output coordinates and trace/snapshot consumers.
+**Cuts:** (1) split update + subscription containers, wire mutation helpers; (2) split slot metadata, delete ToFlatSlotId and local_signal_coord_base; (3) split trace metadata + events + sinks, delete merged registry; (4) rewrite observer ABI/codegen; (5) delete alias residue and remaining flat artifacts.
 
-Where to look: observable_storage_ref, observable_descriptor_utils, constructor observable realization, slot_meta, trace_manager, trace_flush.
+**Why last:** the target coordinate system -- (instance, local_signal) -- does not exist until R3 defines object-local signal identity. The observable descriptor templates are already body-shaped; the remaining work is the realized output coordinates and trace/snapshot consumers.
 
 ## T1: Topology-independence validation
 

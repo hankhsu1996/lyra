@@ -304,7 +304,7 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
 
     const auto& meta = slot_meta_registry_.Get(ref.slot_id);
     const auto* slot_base =
-        ResolveSlotBase(meta, design_state_base_, instances_);
+        ResolveSlotBase(meta, design_state_base_, const_instances_);
 
     switch (ref.kind) {
       case SubKind::kEdge: {
@@ -732,7 +732,8 @@ auto Engine::SubscribeChange(
   // Baseline capture: always snapshot regardless of initially_active.
   // When a rebind later activates an inactive sub, the baseline prevents
   // a false trigger on the first flush.
-  const auto* slot_base = ResolveSlotBase(meta, design_state_base_, instances_);
+  const auto* slot_base =
+      ResolveSlotBase(meta, design_state_base_, const_instances_);
   const auto* src = &slot_base[byte_offset];
   if (byte_size <= ChangeSub::kInlineSnapshotCap) {
     std::memcpy(sub.snapshot_inline.data(), src, byte_size);
@@ -769,7 +770,8 @@ auto Engine::SubscribeEdge(
   auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
 
   uint8_t initial_last_bit =
-      (ResolveSlotBase(meta, design_state_base_, instances_)[byte_offset] >>
+      (ResolveSlotBase(
+           meta, design_state_base_, const_instances_)[byte_offset] >>
        bit_index) &
       1;
   uint8_t group_idx =
@@ -938,7 +940,7 @@ auto Engine::SubscribeContainerElement(
 
   // Chase handle from slot storage.
   const auto* container_base =
-      ResolveSlotBase(meta, design_state_base_, instances_);
+      ResolveSlotBase(meta, design_state_base_, const_instances_);
   void* handle_ptr = nullptr;
   std::memcpy(&handle_ptr, container_base, sizeof(void*));
 
@@ -1072,7 +1074,7 @@ void Engine::SubscribeRebind(
       auto& new_cold = edge_cold_pool_[esub.cold_idx];
       const auto& tmeta = slot_meta_registry_.Get(target_slot);
       const auto* tbase =
-          ResolveSlotBase(tmeta, design_state_base_, instances_);
+          ResolveSlotBase(tmeta, design_state_base_, const_instances_);
       new_cold.edge_last_byte = tbase[group.byte_offset];
       new_cold.has_edge_last_byte = true;
     }
@@ -1120,7 +1122,8 @@ void Engine::SubscribeRebind(
     wcold.edge_target_id = edge_target_id;
 
     // Capture initial snapshot of dep slot.
-    const auto* src = ResolveSlotBase(meta, design_state_base_, instances_);
+    const auto* src =
+        ResolveSlotBase(meta, design_state_base_, const_instances_);
     wcold.snapshot.resize(meta.total_bytes);
     std::memcpy(wcold.snapshot.data(), src, meta.total_bytes);
 
