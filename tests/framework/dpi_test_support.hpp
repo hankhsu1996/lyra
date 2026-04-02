@@ -20,6 +20,9 @@ struct DpiCompileResult {
 // Uses DetectToolchain() for the C compiler and RunSubprocess() for
 // execution with captured stderr. Returns produced shared-library paths in
 // stable order, or an error with actionable diagnostics.
+//
+// Automatically discovers the vendored svdpi.h include path and passes it
+// to the C compiler so DPI companion code can #include <svdpi.h>.
 auto CompileDpiSources(
     std::span<const std::string> dpi_sources,
     const std::filesystem::path& work_dir) -> DpiCompileResult;

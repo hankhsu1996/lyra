@@ -136,6 +136,7 @@ struct HooksHolder {
 };
 
 // Thread-local storage for hooks (must outlive LLVM module execution)
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 thread_local std::unique_ptr<HooksHolder> g_hooks_holder;
 
 }  // namespace
@@ -228,10 +229,12 @@ auto RunSubprocess(
   char** envp = environ;  // NOLINT(misc-include-cleaner)
   if (!env_overrides.empty()) {
     // Copy current environ
+    // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic)
     for (char** e = environ; *e != nullptr;
          ++e) {  // NOLINT(misc-include-cleaner)
       env_owned.emplace_back(*e);
     }
+    // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
     for (const auto& [key, value] : env_overrides) {
       auto prefix = key + "=";
       bool replaced = false;

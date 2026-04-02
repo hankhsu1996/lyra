@@ -1,0 +1,183 @@
+feature: dpi_svdpi_runtime
+description: svdpi.h runtime library utility functions (D6a)
+
+cases:
+  - name: svdpi_version_available
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_svdpi_version();
+        int result;
+        initial begin
+          result = test_svdpi_version();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: bitsel_bit_roundtrip
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_bitsel_roundtrip();
+        int result;
+        initial begin
+          result = test_bitsel_roundtrip();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: bitsel_logic_roundtrip
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_bitsel_logic_roundtrip();
+        int result;
+        initial begin
+          result = test_bitsel_logic_roundtrip();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: partsel_bit_roundtrip
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_partsel_bit_roundtrip();
+        int result;
+        initial begin
+          result = test_partsel_bit_roundtrip();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: partsel_logic_roundtrip
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_partsel_logic_roundtrip();
+        int result;
+        initial begin
+          result = test_partsel_logic_roundtrip();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: cross_word_boundary
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_cross_word_boundary();
+        int result;
+        initial begin
+          result = test_cross_word_boundary();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: legacy_named_select_entrypoints_work
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_legacy_named_select();
+        int result;
+        initial begin
+          result = test_legacy_named_select();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: legacy_named_bitvec32_entrypoints_work
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_legacy_named_bitvec32();
+        int result;
+        initial begin
+          result = test_legacy_named_bitvec32();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: legacy_named_logicvec32_entrypoints_work
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_legacy_named_logicvec32();
+        int result;
+        initial begin
+          result = test_legacy_named_logicvec32();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: legacy_named_partial_width_entrypoints_work
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_legacy_named_partial_width();
+        int result;
+        initial begin
+          result = test_legacy_named_partial_width();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: legacy_named_partselect_entrypoints_work
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_legacy_named_partselect();
+        int result;
+        initial begin
+          result = test_legacy_named_partselect();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: size_helpers_work
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" pure function int test_size_helpers();
+        int result;
+        initial begin
+          result = test_size_helpers();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

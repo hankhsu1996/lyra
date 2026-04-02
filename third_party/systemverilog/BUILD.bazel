@@ -1,0 +1,19 @@
+# Vendored standard headers from IEEE Std 1800-2023.
+#
+# This directory contains normative header files from the SystemVerilog
+# standard, pinned as Lyra-owned third-party artifacts. The DPI boundary
+# does not depend on the frontend library.
+#
+# Do not modify these headers. They are standard ABI contracts.
+# Source: IEEE Std 1800-2023, Annex I (svdpi.h).
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+exports_files(["svdpi.h"])
+
+cc_library(
+    name = "svdpi",
+    hdrs = ["svdpi.h"],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
