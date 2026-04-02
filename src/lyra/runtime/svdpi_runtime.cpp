@@ -13,9 +13,21 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "lyra/runtime/dpi_export_context.hpp"
+#include "lyra/runtime/engine.hpp"
 #include "svdpi.h"
 
 namespace {
+
+// Canonical context fetch for all D6b scope APIs.
+// Aborts if no active simulation context (same behavior as export wrappers).
+auto GetActiveDpiContextOrAbort() -> lyra::runtime::DpiExportCallContext* {
+  auto* ctx = LyraGetDpiExportCallContextMut();
+  if (ctx == nullptr) {
+    LyraFailMissingDpiExportCallContext();
+  }
+  return ctx;
+}
 
 // Trap for unsupported svdpi APIs. Fixed format for grep-ability.
 [[noreturn]] void TrapUnsupportedSvdpi(const char* api, const char* owner) {
@@ -293,38 +305,63 @@ extern "C" void svGetLogicVec32(
 
 // -- scope (D6b) --
 
+// NOLINTBEGIN(cppcoreguidelines-pro-type-const-cast)
+
 extern "C" svScope svGetScope(void) {
-  TrapUnsupportedSvdpi("svGetScope", "D6b");
+  auto* ctx = GetActiveDpiContextOrAbort();
+  return ctx->active_scope;
 }
 
 extern "C" svScope svSetScope(const svScope scope) {
-  (void)scope;
-  TrapUnsupportedSvdpi("svSetScope", "D6b");
+  auto* ctx = GetActiveDpiContextOrAbort();
+  auto* engine = static_cast<lyra::runtime::Engine*>(ctx->engine);
+  if (scope != nullptr) {
+    (void)engine->ValidateScopeHandle(scope);
+  }
+  svScope prev = ctx->active_scope;
+  ctx->active_scope = scope;
+  return prev;
 }
 
 extern "C" const char* svGetNameFromScope(const svScope scope) {
-  (void)scope;
-  TrapUnsupportedSvdpi("svGetNameFromScope", "D6b");
+  auto* ctx = GetActiveDpiContextOrAbort();
+  auto* engine = static_cast<const lyra::runtime::Engine*>(ctx->engine);
+  const auto* inst = engine->ValidateScopeHandle(scope);
+  return engine->GetScopePath(inst);
 }
 
 extern "C" svScope svGetScopeFromName(const char* scopeName) {
-  (void)scopeName;
-  TrapUnsupportedSvdpi("svGetScopeFromName", "D6b");
+  auto* ctx = GetActiveDpiContextOrAbort();
+  if (scopeName == nullptr) {
+    return nullptr;
+  }
+  auto* engine = static_cast<const lyra::runtime::Engine*>(ctx->engine);
+  const auto* inst = engine->ResolveScopeByPath(scopeName);
+  return const_cast<lyra::runtime::RuntimeInstance*>(inst);
 }
 
 extern "C" int svPutUserData(
     const svScope scope, void* userKey, void* userData) {
-  (void)scope;
-  (void)userKey;
-  (void)userData;
-  TrapUnsupportedSvdpi("svPutUserData", "D6b");
+  auto* ctx = GetActiveDpiContextOrAbort();
+  auto* engine = static_cast<lyra::runtime::Engine*>(ctx->engine);
+  const auto* inst = engine->ValidateScopeHandle(scope);
+  if (inst == nullptr || userKey == nullptr) {
+    return -1;
+  }
+  return engine->PutScopeUserData(inst, userKey, userData);
 }
 
 extern "C" void* svGetUserData(const svScope scope, void* userKey) {
-  (void)scope;
-  (void)userKey;
-  TrapUnsupportedSvdpi("svGetUserData", "D6b");
+  auto* ctx = GetActiveDpiContextOrAbort();
+  auto* engine = static_cast<const lyra::runtime::Engine*>(ctx->engine);
+  const auto* inst = engine->ValidateScopeHandle(scope);
+  if (inst == nullptr || userKey == nullptr) {
+    return nullptr;
+  }
+  return engine->GetScopeUserData(inst, userKey);
 }
+
+// NOLINTEND(cppcoreguidelines-pro-type-const-cast)
 
 // ---------------------------------------------------------------------------
 // Trapped: time APIs (later time-query work)

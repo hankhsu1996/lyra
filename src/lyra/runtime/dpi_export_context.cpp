@@ -47,6 +47,14 @@ extern "C" auto LyraGetDpiExportCallContext()
   return &g_context;
 }
 
+extern "C" auto LyraGetDpiExportCallContextMut()
+    -> lyra::runtime::DpiExportCallContext* {
+  if (!g_context_active) {
+    return nullptr;
+  }
+  return &g_context;
+}
+
 extern "C" [[noreturn]] void LyraFailMissingDpiExportCallContext() {
   std::fputs(
       "fatal: DPI export function called without active Lyra simulation "

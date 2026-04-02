@@ -306,6 +306,79 @@ int test_legacy_named_partselect(void) {
   return 1;
 }
 
+/* D6b scope API tests. These run during simulation when the DPI export
+   context is active, so svGetScope/svSetScope/etc. are available. */
+
+#include <string.h>
+
+int test_scope_get_returns_null_initially(void) {
+  svScope s = svGetScope();
+  return s == 0;
+}
+
+int test_scope_from_name_valid(void) {
+  svScope s = svGetScopeFromName("Test");
+  return s != 0;
+}
+
+int test_scope_from_name_invalid(void) {
+  svScope s = svGetScopeFromName("NonExistent.Path");
+  return s == 0;
+}
+
+int test_scope_name_roundtrip(void) {
+  svScope s = svGetScopeFromName("Test");
+  if (s == 0) return 0;
+  const char* name = svGetNameFromScope(s);
+  if (name == 0) return 0;
+  return strcmp(name, "Test") == 0;
+}
+
+int test_scope_set_get_roundtrip(void) {
+  svScope s = svGetScopeFromName("Test");
+  if (s == 0) return 0;
+  svScope prev = svSetScope(s);
+  svScope cur = svGetScope();
+  if (cur != s) return 0;
+  svSetScope(prev);
+  return 1;
+}
+
+int test_scope_set_returns_previous(void) {
+  svScope s = svGetScopeFromName("Test");
+  if (s == 0) return 0;
+  svScope prev1 = svSetScope(s);
+  svScope prev2 = svSetScope(0);
+  if (prev2 != s) return 0;
+  svScope cur = svGetScope();
+  if (cur != 0) return 0;
+  (void)prev1;
+  return 1;
+}
+
+int test_scope_user_data_roundtrip(void) {
+  svScope s = svGetScopeFromName("Test");
+  if (s == 0) return 0;
+  int dummy_key = 42;
+  int dummy_data = 99;
+  int rc = svPutUserData(s, &dummy_key, &dummy_data);
+  if (rc != 0) return 0;
+  void* got = svGetUserData(s, &dummy_key);
+  if (got != &dummy_data) return 0;
+  return 1;
+}
+
+int test_scope_user_data_null_scope(void) {
+  int dummy_key = 1;
+  int rc = svPutUserData(0, &dummy_key, &dummy_key);
+  return rc == -1;
+}
+
+int test_scope_name_from_null(void) {
+  const char* name = svGetNameFromScope(0);
+  return name == 0;
+}
+
 int test_size_helpers(void) {
   if (svSizeOfBitPackedArr(1) != 4) return 0;
   if (svSizeOfBitPackedArr(32) != 4) return 0;

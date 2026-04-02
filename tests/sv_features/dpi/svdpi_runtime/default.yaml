@@ -181,3 +181,138 @@ cases:
     expect:
       variables:
         result: 1
+
+  - name: scope_get_returns_null_initially
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" function int test_scope_get_returns_null_initially();
+        int result;
+        initial begin
+          result = test_scope_get_returns_null_initially();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: scope_from_name_valid
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" function int test_scope_from_name_valid();
+        int result;
+        initial begin
+          result = test_scope_from_name_valid();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: scope_from_name_invalid
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" function int test_scope_from_name_invalid();
+        int result;
+        initial begin
+          result = test_scope_from_name_invalid();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: scope_name_roundtrip
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" function int test_scope_name_roundtrip();
+        int result;
+        initial begin
+          result = test_scope_name_roundtrip();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: scope_set_get_roundtrip
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" function int test_scope_set_get_roundtrip();
+        int result;
+        initial begin
+          result = test_scope_set_get_roundtrip();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: scope_set_returns_previous
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" function int test_scope_set_returns_previous();
+        int result;
+        initial begin
+          result = test_scope_set_returns_previous();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: scope_user_data_roundtrip
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" function int test_scope_user_data_roundtrip();
+        int result;
+        initial begin
+          result = test_scope_user_data_roundtrip();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: scope_user_data_null_scope
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" function int test_scope_user_data_null_scope();
+        int result;
+        initial begin
+          result = test_scope_user_data_null_scope();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: scope_name_from_null
+    dpi_sources:
+      - dpi_helpers/svdpi_utils.c
+    sv: |
+      module Test;
+        import "DPI-C" function int test_scope_name_from_null();
+        int result;
+        initial begin
+          result = test_scope_name_from_null();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

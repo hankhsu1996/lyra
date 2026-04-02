@@ -22,7 +22,7 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [x] D3c -- `chandle` in internal callable ABI (user-function parameter/return, not DPI-specific)
 - [x] D4 -- DPI export (package-scoped, scalar 2-state + real + string wrappers, header generation)
 - [x] D6a -- svdpi.h runtime library and linker surface
-- [ ] D6b -- DPI scope registry and instance-bound export context
+- [x] D6b -- DPI scope registry and instance-bound export context
 - [ ] D6c -- Context import functions (svGetScope in import bodies)
 - [ ] D4a -- Module-scoped DPI export (instance-bound wrapper dispatch)
 - [ ] D4b -- 4-state scalar and packed by-pointer export wrapper marshaling
@@ -35,16 +35,6 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [ ] D7c -- DPI export tasks (external C invocation of time-consuming SV tasks)
 - [ ] D8a -- Open-array query and pointer surface
 - [ ] D8b -- Open-array packed/scalar element access
-
-## D6b: DPI scope registry and instance-bound export context
-
-The export call context carries only design_state and engine pointers. No runtime data structure maps scope handles to instances. Module-scoped exports and context imports both need scope-to-instance resolution that does not exist.
-
-This item builds the scope registry (hierarchical path to RuntimeInstance mapping, constructed during instance realization), defines svScope as an opaque handle into the registry, and extends the export call context to carry active scope. Replaces the scope-dependent traps from D6a with working implementations: scope lookup/set/get and per-scope user data storage. Caller info and time queries remain traps (require additional metadata threading beyond scope).
-
-Depends on D6a (runtime library exists to host scope implementations).
-
-Where to look: RuntimeInstance (path_c_str, instance_id), constructor instance registration, DpiExportCallContext, dpi_export_context.hpp.
 
 ## D6c: Context import functions (svGetScope in import bodies)
 
