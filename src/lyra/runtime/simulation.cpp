@@ -514,6 +514,9 @@ extern "C" void LyraRunSimulation(
       engine.SetInstances(std::span(abi->instance_ptrs, abi->num_instances));
     }
 
+    // Build DPI scope registry for svGetScope/svSetScope family (D6b).
+    engine.BuildDpiScopeRegistry();
+
     // R4: Initialize module-instance registries from per-instance bundles.
     // Builds slot meta, coordination bases, trigger and comb registries
     // from structured bundle data. Connection/design-global metadata

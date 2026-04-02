@@ -10,6 +10,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -39,6 +41,7 @@
 #include "lyra/runtime/update_set.hpp"
 #include "lyra/runtime/wait_site.hpp"
 #include "lyra/trace/trace_manager.hpp"
+#include "svdpi.h"
 
 namespace lyra::runtime {
 
@@ -543,6 +546,35 @@ class Engine {
     }
     return instance_paths_[instance_id];
   }
+
+  // Build the DPI scope registry from instances_ and instance_paths_.
+  // Must be called after SetInstances and before simulation start.
+  void BuildDpiScopeRegistry();
+
+  // Validate an svScope handle against the authoritative registry.
+  // Returns nullptr for null scope. Throws InternalError for non-null
+  // handles that are not registered (prevents dangling pointer use).
+  [[nodiscard]] auto ValidateScopeHandle(svScope scope) const
+      -> const RuntimeInstance*;
+
+  // Resolve a hierarchical path to an instance scope handle.
+  // Returns nullptr if path is not found.
+  [[nodiscard]] auto ResolveScopeByPath(std::string_view path) const
+      -> const RuntimeInstance*;
+
+  // Get the canonical hierarchical path for a scope handle.
+  // Returns nullptr for null inst. Throws InternalError for unregistered inst.
+  [[nodiscard]] auto GetScopePath(const RuntimeInstance* inst) const -> const
+      char*;
+
+  // Per-scope user-data storage (svPutUserData/svGetUserData).
+  // Returns 0 on success, -1 on error (null scope or null key).
+  auto PutScopeUserData(const RuntimeInstance* inst, void* key, void* data)
+      -> int;
+
+  // Returns nullptr on error (null scope, null key, or key not found).
+  [[nodiscard]] auto GetScopeUserData(
+      const RuntimeInstance* inst, void* key) const -> void*;
 
   // Plusargs query interface for $test$plusargs and $value$plusargs.
   // Returns 1 if prefix matches any plusarg, 0 otherwise.
@@ -1159,6 +1191,19 @@ class Engine {
     uint32_t module_proc_base = 0;
   };
   std::vector<PendingModuleProcessMeta> pending_module_process_meta_;
+
+  // DPI scope registry (D6b). Built once by BuildDpiScopeRegistry().
+  // Authoritative membership set for scope handle validation.
+  std::unordered_set<const RuntimeInstance*> valid_scopes_;
+  // Reverse path -> instance lookup for svGetScopeFromName.
+  std::unordered_map<std::string_view, const RuntimeInstance*> scope_path_map_;
+  // Reverse instance -> canonical path for svGetNameFromScope.
+  std::unordered_map<const RuntimeInstance*, const char*> scope_inst_path_map_;
+  // Per-scope user-data storage for svPutUserData/svGetUserData.
+  // Outer key: instance pointer. Inner key: user-provided void* key.
+  mutable std::unordered_map<
+      const RuntimeInstance*, std::unordered_map<void*, void*>>
+      scope_user_data_;
 };
 
 }  // namespace lyra::runtime
