@@ -34,7 +34,8 @@ namespace {
 auto RelocateBodyLocalSlot(
     const RuntimeInstance& instance, uint32_t body_local_index)
     -> common::SlotId {
-  return common::SlotId{instance.local_signal_coord_base + body_local_index};
+  return common::SlotId{
+      instance.observability.flat_coord_base + body_local_index};
 }
 
 // Relocate an observable descriptor's storage_owner_ref to design-global.
@@ -45,7 +46,7 @@ auto RelocateObservableOwnerSlot(
     return common::SlotId{entry.storage_owner_ref};
   }
   return common::SlotId{
-      instance.local_signal_coord_base + entry.storage_owner_ref};
+      instance.observability.flat_coord_base + entry.storage_owner_ref};
 }
 
 // Compose hierarchical trace signal name from instance path and local name.
@@ -94,7 +95,7 @@ auto ReadObservablePoolString(
 // and call back with pre-resolved facts.
 template <typename Fn>
 void ForEachBundleObservable(
-    const InstanceMetadataBundle& bundle, const Fn& callback) {
+    const InstanceMetadataBundle& bundle, Fn callback) {
   const auto& obs = bundle.body_desc->observable_descriptors;
   for (uint32_t local = 0; local < obs.entries.size(); ++local) {
     const auto& entry = obs.entries[local];
@@ -146,7 +147,7 @@ auto BuildModuleTriggerDescriptors(
     const auto& triggers = bundle.body_desc->triggers;
     if (triggers.proc_ranges.empty()) continue;
 
-    uint32_t slot_base = bundle.instance->local_signal_coord_base;
+    uint32_t slot_base = bundle.instance->observability.flat_coord_base;
 
     for (uint32_t pwb = 0; pwb < triggers.proc_ranges.size(); ++pwb) {
       uint32_t proc_idx = bundle.module_proc_base + pwb;
@@ -190,6 +191,7 @@ auto Engine::InitModuleInstancesFromBundles(
   // Reset all module-owned outputs for clean initialization.
   pending_module_trigger_descs_.clear();
   pending_module_process_meta_.clear();
+  process_instance_map_.assign(num_processes_, 0);
   slot_meta_registry_ = SlotMetaRegistry{};
   comb_kernels_.clear();
   comb_kernel_flags_.clear();
@@ -217,7 +219,7 @@ auto Engine::InitModuleInstancesFromBundles(
   }
 
   // Assign dense coordination bases before building instance-owned metadata.
-  // This sets local_signal_coord_base on each instance, which relocation
+  // This sets observability.flat_coord_base on each instance, which relocation
   // helpers depend on.
   AssignDenseCoordinationBasesFromBundles(bundles);
 
@@ -361,6 +363,14 @@ auto Engine::InitModuleInstancesFromBundles(
     if (local_count > 0) {
       bundle.instance->observability.Init();
     }
+
+    // R5: populate process-to-instance mapping for subscription routing.
+    for (uint32_t p = 0; p < bundle.num_module_processes; ++p) {
+      uint32_t proc_idx = bundle.module_proc_base + p;
+      if (proc_idx < process_instance_map_.size()) {
+        process_instance_map_[proc_idx] = bundle.instance_id;
+      }
+    }
   }
 
   uint32_t total_slots = slot_meta_registry_.Size();
@@ -400,7 +410,7 @@ auto Engine::InitModuleInstancesFromBundles(
     const auto& comb = bundle.body_desc->comb;
     if (comb.kernels.empty()) continue;
 
-    uint32_t slot_base = bundle.instance->local_signal_coord_base;
+    uint32_t slot_base = bundle.instance->observability.flat_coord_base;
 
     for (const auto& kernel : comb.kernels) {
       uint32_t proc_idx = bundle.module_proc_base + kernel.proc_within_body;
@@ -529,7 +539,7 @@ void Engine::AssignDenseCoordinationBasesFromBundles(
   // Count instance-owned slots per bundle from observable descriptors.
   uint32_t next_base = global_slot_count;
   for (const InstanceMetadataBundle& bundle : bundles) {
-    bundle.instance->local_signal_coord_base = next_base;
+    bundle.instance->observability.flat_coord_base = next_base;
     uint32_t instance_owned_count = 0;
     for (const auto& entry : bundle.body_desc->observable_descriptors.entries) {
       if (entry.storage_domain == 1) {

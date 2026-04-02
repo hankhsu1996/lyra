@@ -170,7 +170,7 @@ void Engine::InitCombKernels(
                   "process {}",
                   proc_idx));
         }
-        trigger_slot += header->instance->local_signal_coord_base;
+        trigger_slot += header->instance->observability.flat_coord_base;
       }
       entries.push_back(
           {trigger_slot, comb_idx, byte_offset, byte_size, kernel_self_edge});

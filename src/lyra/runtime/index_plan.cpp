@@ -7,6 +7,8 @@
 #include <span>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/runtime/instance_observability.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 
 namespace lyra::runtime {
@@ -14,8 +16,8 @@ namespace lyra::runtime {
 auto EvaluateIndexPlan(
     const void* design_state_base,
     std::span<const RuntimeInstance* const> instances,
-    const SlotMetaRegistry& registry, std::span<const IndexPlanOp> plan,
-    bool* should_deactivate) -> int64_t {
+    const SlotMetaRegistry& registry, const RuntimeInstance* instance,
+    std::span<const IndexPlanOp> plan, bool* should_deactivate) -> int64_t {
   if (plan.empty()) {
     throw common::InternalError("EvaluateIndexPlan", "empty plan");
   }
@@ -35,22 +37,76 @@ auto EvaluateIndexPlan(
         if (sp >= kMaxPlanStackDepth) {
           throw common::InternalError("EvaluateIndexPlan", "stack overflow");
         }
-        const auto& meta = registry.Get(op.slot_id);
-        const auto* slot_base =
-            ResolveSlotBase(meta, design_state_base, instances);
+        // R5: Resolve storage via typed identity.
+        const uint8_t* slot_base = nullptr;
+        bool is_four_state = false;
+        PackedPlanes planes;
+        uint32_t total_bytes = 0;
+        if ((op.flags & kIndexPlanLocalSignal) != 0) {
+          if (instance == nullptr) {
+            throw common::InternalError(
+                "EvaluateIndexPlan", "local signal read but instance is null");
+          }
+          if (instance->observability.layout == nullptr) {
+            throw common::InternalError(
+                "EvaluateIndexPlan",
+                "local signal read but instance has no observability layout");
+          }
+          if (op.slot_id >= instance->observability.layout->slot_meta.size()) {
+            throw common::InternalError(
+                "EvaluateIndexPlan",
+                std::format(
+                    "local slot_id {} out of range {}", op.slot_id,
+                    instance->observability.layout->slot_meta.size()));
+          }
+          const auto& imeta =
+              instance->observability.layout->slot_meta[op.slot_id];
+          total_bytes = imeta.total_bytes;
+          if (static_cast<uint64_t>(op.byte_offset) + op.byte_size >
+              total_bytes) {
+            throw common::InternalError(
+                "EvaluateIndexPlan",
+                std::format(
+                    "local read range [{}, +{}) exceeds slot size {} for "
+                    "slot {}",
+                    op.byte_offset, op.byte_size, total_bytes, op.slot_id));
+          }
+          slot_base =
+              ResolveInstanceSlotBase(*instance, LocalSignalId{op.slot_id});
+          is_four_state = (imeta.kind == SlotStorageKind::kPacked4);
+          planes = imeta.planes;
+        } else {
+          const auto& meta = registry.Get(op.slot_id);
+          total_bytes = meta.total_bytes;
+          if (static_cast<uint64_t>(op.byte_offset) + op.byte_size >
+              total_bytes) {
+            throw common::InternalError(
+                "EvaluateIndexPlan",
+                std::format(
+                    "global read range [{}, +{}) exceeds slot size {} for "
+                    "slot {}",
+                    op.byte_offset, op.byte_size, total_bytes, op.slot_id));
+          }
+          slot_base = ResolveSlotBase(meta, design_state_base, instances);
+          is_four_state = (meta.kind == SlotStorageKind::kPacked4);
+          planes = meta.planes;
+        }
         // Check for X/Z bits.
-        if (meta.kind == SlotStorageKind::kPacked4) {
-          const auto* unk = slot_base + meta.planes.unk_off + op.byte_offset;
+        if (is_four_state) {
+          auto unk_storage = std::span(
+              slot_base, planes.unk_off + op.byte_offset + op.byte_size);
+          uint32_t unk_start = planes.unk_off + op.byte_offset;
           for (uint8_t i = 0; i < op.byte_size; ++i) {
-            if (unk[i] != 0) {
+            if (unk_storage[unk_start + i] != 0) {
               *should_deactivate = true;
               return 0;
             }
           }
         }
         // Read value.
+        auto storage = std::span(slot_base, op.byte_offset + op.byte_size);
         uint64_t v = 0;
-        std::memcpy(&v, &slot_base[op.byte_offset], op.byte_size);
+        std::memcpy(&v, &storage[op.byte_offset], op.byte_size);
         // Mask to bit_width.
         if (op.bit_width > 0 && op.bit_width < 64) {
           v &= (uint64_t{1} << op.bit_width) - 1;

@@ -1206,13 +1206,12 @@ auto Context::GetLyraFWrite() -> llvm::Function* {
 auto Context::GetLyraRegisterStrobe() -> llvm::Function* {
   if (lyra_register_strobe_ == nullptr) {
     // void LyraRegisterStrobe(ptr engine, ptr program, ptr design_state,
-    //                         ptr this_ptr, i32 instance_id,
-    //                         i32 local_signal_coord_base)
+    //                         ptr this_ptr, i32 instance_id)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty}, false);
+        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, false);
     lyra_register_strobe_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraRegisterStrobe",
         llvm_module_.get());
@@ -1238,14 +1237,12 @@ auto Context::GetLyraMonitorRegister() -> llvm::Function* {
   if (lyra_monitor_register_ == nullptr) {
     // void LyraMonitorRegister(ptr engine, ptr program, ptr design,
     //                          ptr this_ptr, i32 instance_id,
-    //                          i32 local_signal_coord_base,
     //                          ptr initial_prev, i32 size)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
         llvm::Type::getVoidTy(*llvm_context_),
-        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty},
-        false);
+        {ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, i32_ty}, false);
     lyra_monitor_register_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraMonitorRegister",
         llvm_module_.get());

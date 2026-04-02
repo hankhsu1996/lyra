@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <ranges>
 #include <span>
 #include <vector>
 
@@ -39,7 +40,31 @@
 // This file must NOT write group.last_bit except during group creation
 // (FindOrCreateEdgeGroup, empty-group init only).
 
+#include "lyra/runtime/runtime_instance.hpp"
+
 namespace lyra::runtime {
+
+auto Engine::ResolveSubSlot(const SubRef& ref) -> SlotSubscriptions& {
+  return ResolveSubSlot(ref.signal_id, ref.is_local, ref.instance_id);
+}
+
+auto Engine::ResolveSubSlot(const SubRef& ref) const
+    -> const SlotSubscriptions& {
+  if (ref.is_local) {
+    return instances_[ref.instance_id]
+        ->observability.local_signal_subs[ref.signal_id];
+  }
+  return signal_subs_[ref.signal_id];
+}
+
+auto Engine::ResolveSubSlot(
+    uint32_t slot_id, bool is_local, uint32_t instance_id)
+    -> SlotSubscriptions& {
+  if (is_local) {
+    return instances_[instance_id]->observability.local_signal_subs[slot_id];
+  }
+  return signal_subs_[slot_id];
+}
 
 namespace {
 
@@ -64,12 +89,19 @@ auto Engine::EdgeSubVec(uint32_t slot_id, uint32_t group, EdgeBucket bucket)
 }
 
 auto Engine::ResolveEdgeSub(const SubRef& ref) -> EdgeSub& {
-  return EdgeSubVec(ref.slot_id, ref.edge_group, ref.edge_bucket)[ref.index];
+  auto& subs = ResolveSubSlot(ref);
+  auto& g = subs.edge_groups[ref.edge_group];
+  auto& vec = (ref.edge_bucket == EdgeBucket::kPosedge) ? g.posedge_subs
+                                                        : g.negedge_subs;
+  return vec[ref.index];
 }
 
 auto Engine::FindOrCreateEdgeGroup(
     uint32_t slot_id, uint32_t byte_offset, uint8_t bit_index,
     uint8_t initial_last_bit) -> uint32_t {
+  // For callers that don't have a slot reference, use flat signal_subs_.
+  // This is used by flush paths only (for global slots). Subscribe paths
+  // should call FindOrCreateEdgeGroupInSlot instead.
   auto& groups = signal_subs_[slot_id].edge_groups;
 
   // Search for existing group with matching observation point.
@@ -110,7 +142,14 @@ auto Engine::FindOrCreateEdgeGroup(
 
 void Engine::RemoveEdgeSubFromBucket(
     uint32_t slot_id, uint32_t group, EdgeBucket bucket, uint32_t index) {
-  auto& vec = EdgeSubVec(slot_id, group, bucket);
+  // R5: Route through ResolveSubSlot for domain-aware access.
+  // For now, callers that remove edge subs from the flush path (rebind
+  // migration) use the flat path. Subscribe/remove paths route correctly.
+  // TODO(hankhsu): Thread SubRef through all callers.
+  auto& subs = signal_subs_[slot_id];
+  auto& g = subs.edge_groups[group];
+  auto& vec =
+      (bucket == EdgeBucket::kPosedge) ? g.posedge_subs : g.negedge_subs;
 
   uint32_t last = static_cast<uint32_t>(vec.size()) - 1;
   if (index != last) {
@@ -148,12 +187,41 @@ void Engine::RemoveEdgeSub(const SubRef& ref) {
     FreeEdgeCold(cold_idx);
   }
 
-  RemoveEdgeSubFromBucket(
-      ref.slot_id, ref.edge_group, ref.edge_bucket, ref.index);
+  // R5: Use ResolveSubSlot for domain-aware removal.
+  auto& subs = ResolveSubSlot(ref);
+  auto& g = subs.edge_groups[ref.edge_group];
+  auto& vec = (ref.edge_bucket == EdgeBucket::kPosedge) ? g.posedge_subs
+                                                        : g.negedge_subs;
+  auto index = ref.index;
+  auto group = ref.edge_group;
+  auto bucket = ref.edge_bucket;
+
+  uint32_t last = static_cast<uint32_t>(vec.size()) - 1;
+  if (index != last) {
+    vec[index] = vec[last];
+    auto& moved = vec[index];
+    BackpatchMovedSubRef(
+        process_states_, moved.process_id, moved.process_sub_idx, index);
+    auto& moved_ref =
+        process_states_[moved.process_id].sub_refs[moved.process_sub_idx];
+    moved_ref.edge_group = group;
+    moved_ref.edge_bucket = bucket;
+    if (moved.cold_idx != UINT32_MAX) {
+      auto& moved_cold = edge_cold_pool_[moved.cold_idx];
+      if (moved_cold.edge_target_id != UINT32_MAX) {
+        auto& moved_handle = edge_target_table_[moved_cold.edge_target_id];
+        moved_handle.index = index;
+        moved_handle.edge_group = group;
+        moved_handle.edge_bucket = bucket;
+      }
+    }
+  }
+  vec.pop_back();
 }
 
-void Engine::RemoveChangeSub(uint32_t slot_id, uint32_t index) {
-  auto& vec = signal_subs_[slot_id].change_subs;
+void Engine::RemoveChangeSub(const SubRef& ref) {
+  auto& vec = ResolveSubSlot(ref).change_subs;
+  auto index = ref.index;
 
   if (vec[index].cold_idx != UINT32_MAX) {
     FreeChangeCold(vec[index].cold_idx);
@@ -169,8 +237,9 @@ void Engine::RemoveChangeSub(uint32_t slot_id, uint32_t index) {
   vec.pop_back();
 }
 
-void Engine::RemoveRebindWatcherSub(uint32_t slot_id, uint32_t index) {
-  auto& vec = signal_subs_[slot_id].rebind_subs;
+void Engine::RemoveRebindWatcherSub(const SubRef& ref) {
+  auto& vec = ResolveSubSlot(ref).rebind_subs;
+  auto index = ref.index;
 
   if (vec[index].cold_idx != UINT32_MAX) {
     FreeWatcherCold(vec[index].cold_idx);
@@ -186,8 +255,9 @@ void Engine::RemoveRebindWatcherSub(uint32_t slot_id, uint32_t index) {
   vec.pop_back();
 }
 
-void Engine::RemoveContainerSub(uint32_t slot_id, uint32_t index) {
-  auto& vec = signal_subs_[slot_id].container_subs;
+void Engine::RemoveContainerSub(const SubRef& ref) {
+  auto& vec = ResolveSubSlot(ref).container_subs;
+  auto index = ref.index;
 
   if (vec[index].cold_idx != UINT32_MAX) {
     auto& cold = container_cold_pool_[vec[index].cold_idx];
@@ -221,20 +291,19 @@ void Engine::ClearInstalledSubscriptions(ProcessHandle handle) {
 
   // Iterate in reverse so swap-and-pop doesn't invalidate earlier indices
   // belonging to this same process (they'll be removed too).
-  for (auto it = proc_state.sub_refs.rbegin(); it != proc_state.sub_refs.rend();
-       ++it) {
-    switch (it->kind) {
+  for (const auto& ref : std::views::reverse(proc_state.sub_refs)) {
+    switch (ref.kind) {
       case SubKind::kEdge:
-        RemoveEdgeSub(*it);
+        RemoveEdgeSub(ref);
         break;
       case SubKind::kChange:
-        RemoveChangeSub(it->slot_id, it->index);
+        RemoveChangeSub(ref);
         break;
       case SubKind::kRebindWatcher:
-        RemoveRebindWatcherSub(it->slot_id, it->index);
+        RemoveRebindWatcherSub(ref);
         break;
       case SubKind::kContainer:
-        RemoveContainerSub(it->slot_id, it->index);
+        RemoveContainerSub(ref);
         break;
     }
     if (live_subscription_count_ == 0) {
@@ -300,22 +369,30 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
   }
 
   for (const auto& ref : proc_state.sub_refs) {
-    if (!update_set_.IsDeltaDirty(ref.slot_id)) continue;
-
-    const auto& meta = slot_meta_registry_.Get(ref.slot_id);
-    const auto* slot_base =
-        ResolveSlotBase(meta, design_state_base_, const_instances_);
+    // R5: Domain-aware dirty check and slot resolution.
+    std::span<const uint8_t> storage;
+    if (ref.is_local) {
+      auto& obs = instances_[ref.instance_id]->observability;
+      if (!obs.local_updates.IsDeltaDirty(ref.LocalSignal())) continue;
+      const auto& imeta = obs.layout->slot_meta[ref.signal_id];
+      storage = std::span(
+          ResolveInstanceSlotBase(
+              *instances_[ref.instance_id], ref.LocalSignal()),
+          imeta.total_bytes);
+    } else {
+      if (!update_set_.IsDeltaDirty(ref.signal_id)) continue;
+      const auto& meta = slot_meta_registry_.Get(ref.signal_id);
+      storage = std::span(
+          ResolveSlotBase(meta, design_state_base_, const_instances_),
+          meta.total_bytes);
+    }
 
     switch (ref.kind) {
       case SubKind::kEdge: {
-        // Refresh cold snapshot only. Do NOT update group.last_bit here.
-        // group.last_bit is owned by FlushSlotEdgeGroups, which updates it
-        // after dispatching subscribers. Updating it here would consume the
-        // transition before subscribers are woken.
         auto& sub = ResolveEdgeSub(ref);
         if (sub.cold_idx != UINT32_MAX) {
-          auto& group = GetEdgeGroup(ref.slot_id, ref.edge_group);
-          uint8_t current_byte = slot_base[group.byte_offset];
+          auto& group = ResolveSubSlot(ref).edge_groups[ref.edge_group];
+          uint8_t current_byte = storage[group.byte_offset];
           auto& cold = edge_cold_pool_[sub.cold_idx];
           cold.edge_last_byte = current_byte;
           cold.has_edge_last_byte = true;
@@ -323,8 +400,8 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
         break;
       }
       case SubKind::kChange: {
-        auto& sub = signal_subs_[ref.slot_id].change_subs[ref.index];
-        const auto* current = &slot_base[sub.byte_offset];
+        auto& sub = ResolveSubSlot(ref).change_subs[ref.index];
+        const auto* current = &storage[sub.byte_offset];
         if (sub.byte_size <= ChangeSub::kInlineSnapshotCap) {
           std::memcpy(sub.snapshot_inline.data(), current, sub.byte_size);
         } else if (sub.cold_idx != UINT32_MAX) {
@@ -362,31 +439,44 @@ void Engine::InstallTriggers(
     std::span<const WaitTriggerRecord> triggers,
     std::span<const LateBoundHeader> late_bound,
     std::span<const IndexPlanOp> plan_ops,
-    std::span<const uint32_t> dep_slots) {
+    std::span<const DepSignalRecord> dep_records) {
   // Track created subscription info for late-bound rebinding.
   // Invariant: created_subs[i] records the dense vector index assigned
   // to trigger i at creation time. These indices remain stable within
   // this function because no removals occur between subscription
   // creation and rebind hookup below.
   struct CreatedSub {
-    SignalId slot_id;
+    SignalId signal_id;
     SubKind kind;
     uint32_t index;
     uint8_t edge_group = 0;
     EdgeBucket edge_bucket = EdgeBucket::kPosedge;
+    bool is_local = false;
   };
   bool has_late_bound = !late_bound.empty();
   std::vector<CreatedSub> created_subs;
   if (has_late_bound) {
     created_subs.resize(
         triggers.size(),
-        CreatedSub{.slot_id = 0, .kind = SubKind::kEdge, .index = UINT32_MAX});
+        CreatedSub{
+            .signal_id = 0, .kind = SubKind::kEdge, .index = UINT32_MAX});
   }
 
   for (uint32_t i = 0; i < triggers.size(); ++i) {
     const auto& trigger = triggers[i];
     auto edge = static_cast<common::EdgeKind>(trigger.edge);
     bool initially_active = (trigger.flags & kTriggerInitiallyActive) != 0;
+    bool is_local = (trigger.flags & kTriggerLocalSignal) != 0;
+    // R5: Build typed signal reference for the subscription API boundary.
+    uint32_t inst_id =
+        (is_local && handle.process_id < process_instance_map_.size())
+            ? process_instance_map_[handle.process_id]
+            : handle.instance_id;
+    SignalRef sig_ref = is_local
+                            ? SignalRef{LocalSignalRef{
+                                  .instance_id = inst_id,
+                                  .signal = LocalSignalId{trigger.signal_id}}}
+                            : SignalRef{GlobalSignalId{trigger.signal_id}};
     uint32_t sub_idx = UINT32_MAX;
     SubKind sub_kind = SubKind::kEdge;
 
@@ -433,7 +523,7 @@ void Engine::InstallTriggers(
         int64_t sv_index =
             initially_active ? static_cast<int64_t>(trigger.byte_offset) : -1;
         sub_idx = SubscribeContainerElement(
-            handle, resume, trigger.signal_id, edge, sv_index,
+            handle, resume, sig_ref, edge, sv_index,
             trigger.container_elem_stride, initially_active);
         sub_kind = SubKind::kContainer;
         break;
@@ -448,11 +538,10 @@ void Engine::InstallTriggers(
         }
         if (trigger.byte_size > 0) {
           sub_idx = Subscribe(
-              handle, resume, trigger.signal_id, edge, trigger.byte_offset,
+              handle, resume, sig_ref, edge, trigger.byte_offset,
               trigger.byte_size, trigger.bit_index, initially_active);
         } else {
-          sub_idx = Subscribe(
-              handle, resume, trigger.signal_id, edge, initially_active);
+          sub_idx = Subscribe(handle, resume, sig_ref, edge, initially_active);
         }
         sub_kind = SubKind::kChange;
         break;
@@ -467,11 +556,10 @@ void Engine::InstallTriggers(
         }
         if (trigger.byte_size > 0) {
           sub_idx = Subscribe(
-              handle, resume, trigger.signal_id, edge, trigger.byte_offset,
+              handle, resume, sig_ref, edge, trigger.byte_offset,
               trigger.byte_size, trigger.bit_index, initially_active);
         } else {
-          sub_idx = Subscribe(
-              handle, resume, trigger.signal_id, edge, initially_active);
+          sub_idx = Subscribe(handle, resume, sig_ref, edge, initially_active);
         }
         sub_kind = SubKind::kEdge;
         break;
@@ -480,7 +568,10 @@ void Engine::InstallTriggers(
 
     if (has_late_bound) {
       CreatedSub cs{
-          .slot_id = trigger.signal_id, .kind = sub_kind, .index = sub_idx};
+          .signal_id = trigger.signal_id,
+          .kind = sub_kind,
+          .index = sub_idx,
+          .is_local = is_local};
       if (sub_kind == SubKind::kEdge && sub_idx != UINT32_MAX) {
         auto& last_ref = process_states_[handle.process_id].sub_refs.back();
         cs.edge_group = last_ref.edge_group;
@@ -510,12 +601,12 @@ void Engine::InstallTriggers(
               hdr.plan_ops_start, hdr.plan_ops_count, plan_ops.size()));
     }
     if (static_cast<uint64_t>(hdr.dep_slots_start) + hdr.dep_slots_count >
-        dep_slots.size()) {
+        dep_records.size()) {
       throw common::InternalError(
           "Engine::InstallTriggers",
           std::format(
               "late_bound[{}]: dep_slots span [{}, +{}) exceeds pool size {}",
-              h, hdr.dep_slots_start, hdr.dep_slots_count, dep_slots.size()));
+              h, hdr.dep_slots_start, hdr.dep_slots_count, dep_records.size()));
     }
 
     const auto& target = created_subs[hdr.trigger_index];
@@ -527,10 +618,36 @@ void Engine::InstallTriggers(
         .index_step = hdr.index_step,
         .total_bits = hdr.total_bits};
     auto hdr_plan = plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
-    auto hdr_deps = dep_slots.subspan(hdr.dep_slots_start, hdr.dep_slots_count);
+
+    // Resolve instance_id for the process (used for local deps).
+    uint32_t rebind_inst_id = (handle.process_id < process_instance_map_.size())
+                                  ? process_instance_map_[handle.process_id]
+                                  : handle.instance_id;
+
+    // Decode each dep record into a typed SignalRef.
+    auto hdr_dep_records =
+        dep_records.subspan(hdr.dep_slots_start, hdr.dep_slots_count);
+    std::vector<SignalRef> dep_signals;
+    dep_signals.reserve(hdr_dep_records.size());
+    for (const auto& rec : hdr_dep_records) {
+      if ((rec.flags & kDepLocalSignal) != 0) {
+        dep_signals.emplace_back(
+            LocalSignalRef{
+                .instance_id = rebind_inst_id,
+                .signal = LocalSignalId{rec.signal_id}});
+      } else {
+        dep_signals.emplace_back(GlobalSignalId{rec.signal_id});
+      }
+    }
+
+    SignalRef rebind_target =
+        target.is_local ? SignalRef{LocalSignalRef{
+                              .instance_id = rebind_inst_id,
+                              .signal = LocalSignalId{target.signal_id}}}
+                        : SignalRef{GlobalSignalId{target.signal_id}};
     SubscribeRebind(
-        handle, UINT32_MAX, target.slot_id, target.kind, target.index,
-        target.edge_group, target.edge_bucket, hdr_plan, mapping, hdr_deps);
+        handle, UINT32_MAX, rebind_target, target.kind, target.index,
+        target.edge_group, target.edge_bucket, hdr_plan, mapping, dep_signals);
   }
 }
 
@@ -582,12 +699,12 @@ void Engine::InstallWaitSite(
   auto plan_ops = (suspend->plan_ops_ptr != nullptr)
                       ? std::span(suspend->plan_ops_ptr, suspend->num_plan_ops)
                       : std::span<const IndexPlanOp>{};
-  auto dep_slots =
+  auto dep_records =
       (suspend->dep_slots_ptr != nullptr)
           ? std::span(suspend->dep_slots_ptr, suspend->num_dep_slots)
-          : std::span<const uint32_t>{};
+          : std::span<const DepSignalRecord>{};
 
-  InstallTriggers(handle, resume, triggers, late_bound, plan_ops, dep_slots);
+  InstallTriggers(handle, resume, triggers, late_bound, plan_ops, dep_records);
 
   // Install-time realized-state invariant: when the compiled shape is
   // kStatic, the installed subscription set must contain only
@@ -710,12 +827,75 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
   }
 }
 
-auto Engine::SubscribeChange(
-    ProcessHandle handle, ResumePoint resume, SignalId signal,
-    uint32_t byte_offset, uint32_t byte_size, bool initially_active,
-    ProcessState& proc_state, const SlotMeta& meta,
-    std::span<const uint8_t> design_state, SlotSubscriptions& slot)
+// R5: Domain-split edge/change subscribe helpers.
+// Shared core that operates on pre-resolved slot_base and SlotSubscriptions.
+
+namespace {
+
+auto FindOrCreateEdgeGroupInSlot(
+    SlotSubscriptions& slot, uint32_t byte_offset, uint8_t bit_index,
+    uint8_t initial_last_bit) -> uint8_t {
+  auto& groups = slot.edge_groups;
+  for (uint32_t i = 0; i < groups.size(); ++i) {
+    if (groups[i].byte_offset == byte_offset &&
+        groups[i].bit_index == bit_index) {
+      if (groups[i].posedge_subs.empty() && groups[i].negedge_subs.empty()) {
+        groups[i].last_bit = initial_last_bit;
+      }
+      return static_cast<uint8_t>(i);
+    }
+  }
+  for (uint32_t i = 0; i < groups.size(); ++i) {
+    if (groups[i].posedge_subs.empty() && groups[i].negedge_subs.empty()) {
+      groups[i].byte_offset = byte_offset;
+      groups[i].bit_index = bit_index;
+      groups[i].last_bit = initial_last_bit;
+      return static_cast<uint8_t>(i);
+    }
+  }
+  auto idx = static_cast<uint8_t>(groups.size());
+  groups.push_back(
+      EdgeWatchGroup{
+          .byte_offset = byte_offset,
+          .bit_index = bit_index,
+          .last_bit = initial_last_bit,
+          .posedge_subs = {},
+          .negedge_subs = {}});
+  return idx;
+}
+
+}  // namespace
+
+auto Engine::SubscribeGlobalChange(
+    ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
+    uint32_t byte_offset, uint32_t byte_size, bool initially_active)
     -> uint32_t {
+  if (finished_) return UINT32_MAX;
+  if (design_state_base_ == nullptr) {
+    throw common::InternalError(
+        "Engine::SubscribeGlobalChange", "Subscribe before SetDesignStateBase");
+  }
+  if (!slot_meta_registry_.IsPopulated()) {
+    throw common::InternalError(
+        "Engine::SubscribeGlobalChange", "Subscribe before InitSlotMeta");
+  }
+  if (handle.process_id >= num_processes_) {
+    throw common::InternalError(
+        "Engine::SubscribeGlobalChange",
+        std::format(
+            "process_id {} exceeds num_processes {}", handle.process_id,
+            num_processes_));
+  }
+  auto& proc_state = process_states_[handle.process_id];
+  if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
+
+  const auto& meta = slot_meta_registry_.Get(signal.value);
+  if (byte_size == 0 || byte_offset + byte_size > meta.total_bytes) {
+    throw common::InternalError(
+        "Engine::SubscribeGlobalChange", "invalid observation range");
+  }
+
+  auto& slot = signal_subs_[signal.value];
   auto sub_idx = static_cast<uint32_t>(slot.change_subs.size());
   auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
 
@@ -729,12 +909,10 @@ auto Engine::SubscribeChange(
   sub.cold_idx = UINT32_MAX;
   sub.flags = initially_active ? kSubActive : 0;
 
-  // Baseline capture: always snapshot regardless of initially_active.
-  // When a rebind later activates an inactive sub, the baseline prevents
-  // a false trigger on the first flush.
-  const auto* slot_base =
-      ResolveSlotBase(meta, design_state_base_, const_instances_);
-  const auto* src = &slot_base[byte_offset];
+  auto storage = std::span(
+      ResolveSlotBase(meta, design_state_base_, const_instances_),
+      meta.total_bytes);
+  const auto* src = &storage[byte_offset];
   if (byte_size <= ChangeSub::kInlineSnapshotCap) {
     std::memcpy(sub.snapshot_inline.data(), src, byte_size);
   } else {
@@ -746,36 +924,125 @@ auto Engine::SubscribeChange(
 
   slot.change_subs.push_back(sub);
   proc_state.sub_refs.push_back(
-      SubRef{.slot_id = signal, .index = sub_idx, .kind = SubKind::kChange});
+      SubRef{
+          .signal_id = signal.value,
+          .index = sub_idx,
+          .kind = SubKind::kChange,
+          .instance_id = handle.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
   return sub_idx;
 }
 
-auto Engine::SubscribeEdge(
-    ProcessHandle handle, ResumePoint resume, SignalId signal,
+auto Engine::SubscribeLocalChange(
+    ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+    uint32_t byte_offset, uint32_t byte_size, bool initially_active)
+    -> uint32_t {
+  if (finished_) return UINT32_MAX;
+  if (handle.process_id >= num_processes_) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalChange",
+        std::format(
+            "process_id {} exceeds num_processes {}", handle.process_id,
+            num_processes_));
+  }
+  auto& proc_state = process_states_[handle.process_id];
+  if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
+
+  auto& inst = *instances_[signal.instance_id];
+  const auto& inst_meta =
+      inst.observability.layout->slot_meta[signal.signal.value];
+  if (byte_size == 0 || byte_offset + byte_size > inst_meta.total_bytes) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalChange", "invalid observation range");
+  }
+
+  auto& slot = inst.observability.local_signal_subs[signal.signal.value];
+  auto sub_idx = static_cast<uint32_t>(slot.change_subs.size());
+  auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
+
+  ChangeSub sub{};
+  sub.process_id = handle.process_id;
+  sub.instance_id = signal.instance_id;
+  sub.resume_block = resume.block_index;
+  sub.byte_offset = byte_offset;
+  sub.byte_size = byte_size;
+  sub.process_sub_idx = proc_sub_idx;
+  sub.cold_idx = UINT32_MAX;
+  sub.flags = initially_active ? kSubActive : 0;
+
+  auto storage = std::span(
+      ResolveInstanceSlotBase(inst, signal.signal), inst_meta.total_bytes);
+  const auto* src = &storage[byte_offset];
+  if (byte_size <= ChangeSub::kInlineSnapshotCap) {
+    std::memcpy(sub.snapshot_inline.data(), src, byte_size);
+  } else {
+    sub.cold_idx = AllocChangeCold();
+    auto& cold = change_cold_pool_[sub.cold_idx];
+    cold.snapshot.resize(byte_size);
+    std::memcpy(cold.snapshot.data(), src, byte_size);
+  }
+
+  slot.change_subs.push_back(sub);
+  proc_state.sub_refs.push_back(
+      SubRef{
+          .signal_id = signal.signal.value,
+          .index = sub_idx,
+          .kind = SubKind::kChange,
+          .is_local = true,
+          .instance_id = signal.instance_id});
+  ++proc_state.subscription_count;
+  ++live_subscription_count_;
+  return sub_idx;
+}
+
+auto Engine::SubscribeGlobalEdge(
+    ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
     common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
-    uint8_t bit_index, bool initially_active, ProcessState& proc_state,
-    const SlotMeta& meta, std::span<const uint8_t> design_state,
-    SlotSubscriptions& slot) -> uint32_t {
+    uint8_t bit_index, bool initially_active) -> uint32_t {
+  if (finished_) return UINT32_MAX;
   if (byte_size != 1) {
     throw common::InternalError(
-        "Engine::SubscribeEdge", "edge subscriptions require byte_size=1");
+        "Engine::SubscribeGlobalEdge",
+        "edge subscriptions require byte_size=1");
   }
   if (bit_index > 7) {
     throw common::InternalError(
-        "Engine::SubscribeEdge", "bit_index must be in [0,7]");
+        "Engine::SubscribeGlobalEdge", "bit_index must be in [0,7]");
+  }
+  if (design_state_base_ == nullptr) {
+    throw common::InternalError(
+        "Engine::SubscribeGlobalEdge", "Subscribe before SetDesignStateBase");
+  }
+  if (!slot_meta_registry_.IsPopulated()) {
+    throw common::InternalError(
+        "Engine::SubscribeGlobalEdge", "Subscribe before InitSlotMeta");
+  }
+  if (handle.process_id >= num_processes_) {
+    throw common::InternalError(
+        "Engine::SubscribeGlobalEdge",
+        std::format(
+            "process_id {} exceeds num_processes {}", handle.process_id,
+            num_processes_));
+  }
+  auto& proc_state = process_states_[handle.process_id];
+  if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
+
+  const auto& meta = slot_meta_registry_.Get(signal.value);
+  if (byte_offset + byte_size > meta.total_bytes) {
+    throw common::InternalError(
+        "Engine::SubscribeGlobalEdge", "observation range exceeds slot size");
   }
 
+  auto& slot = signal_subs_[signal.value];
   auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
 
-  uint8_t initial_last_bit =
-      (ResolveSlotBase(
-           meta, design_state_base_, const_instances_)[byte_offset] >>
-       bit_index) &
-      1;
-  uint8_t group_idx =
-      FindOrCreateEdgeGroup(signal, byte_offset, bit_index, initial_last_bit);
+  auto storage = std::span(
+      ResolveSlotBase(meta, design_state_base_, const_instances_),
+      meta.total_bytes);
+  uint8_t initial_last_bit = (storage[byte_offset] >> bit_index) & 1;
+  uint8_t group_idx = FindOrCreateEdgeGroupInSlot(
+      slot, byte_offset, bit_index, initial_last_bit);
 
   EdgeBucket bucket = (edge == common::EdgeKind::kPosedge)
                           ? EdgeBucket::kPosedge
@@ -796,137 +1063,251 @@ auto Engine::SubscribeEdge(
   target_vec.push_back(sub);
   proc_state.sub_refs.push_back(
       SubRef{
-          .slot_id = signal,
+          .signal_id = signal.value,
           .index = sub_idx,
           .kind = SubKind::kEdge,
           .edge_bucket = bucket,
-          .edge_group = group_idx});
+          .edge_group = group_idx,
+          .instance_id = handle.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
   return sub_idx;
 }
 
-auto Engine::Subscribe(
-    ProcessHandle handle, ResumePoint resume, SignalId signal,
-    common::EdgeKind edge, bool initially_active) -> uint32_t {
-  if (design_state_base_ == nullptr) {
+auto Engine::SubscribeLocalEdge(
+    ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+    common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
+    uint8_t bit_index, bool initially_active) -> uint32_t {
+  if (finished_) return UINT32_MAX;
+  if (byte_size != 1) {
     throw common::InternalError(
-        "Engine::Subscribe", "Subscribe before SetDesignStateBase");
+        "Engine::SubscribeLocalEdge", "edge subscriptions require byte_size=1");
   }
-  if (!slot_meta_registry_.IsPopulated()) {
+  if (bit_index > 7) {
     throw common::InternalError(
-        "Engine::Subscribe", "Subscribe before InitSlotMeta");
+        "Engine::SubscribeLocalEdge", "bit_index must be in [0,7]");
+  }
+  if (handle.process_id >= num_processes_) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalEdge",
+        std::format(
+            "process_id {} exceeds num_processes {}", handle.process_id,
+            num_processes_));
+  }
+  auto& proc_state = process_states_[handle.process_id];
+  if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
+
+  auto& inst = *instances_[signal.instance_id];
+  const auto& inst_meta =
+      inst.observability.layout->slot_meta[signal.signal.value];
+  if (byte_offset + byte_size > inst_meta.total_bytes) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalEdge", "observation range exceeds slot size");
   }
 
-  const auto& meta = slot_meta_registry_.Get(signal);
-  uint32_t obs_size =
-      (edge == common::EdgeKind::kAnyChange) ? meta.total_bytes : 1;
-  return Subscribe(
-      handle, resume, signal, edge, 0, obs_size, 0, initially_active);
+  auto& slot = inst.observability.local_signal_subs[signal.signal.value];
+  auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
+
+  auto storage = std::span(
+      ResolveInstanceSlotBase(inst, signal.signal), inst_meta.total_bytes);
+  uint8_t initial_last_bit = (storage[byte_offset] >> bit_index) & 1;
+  uint8_t group_idx = FindOrCreateEdgeGroupInSlot(
+      slot, byte_offset, bit_index, initial_last_bit);
+
+  EdgeBucket bucket = (edge == common::EdgeKind::kPosedge)
+                          ? EdgeBucket::kPosedge
+                          : EdgeBucket::kNegedge;
+  auto& group = slot.edge_groups[group_idx];
+  auto& target_vec = (bucket == EdgeBucket::kPosedge) ? group.posedge_subs
+                                                      : group.negedge_subs;
+  auto sub_idx = static_cast<uint32_t>(target_vec.size());
+
+  EdgeSub sub{};
+  sub.process_id = handle.process_id;
+  sub.instance_id = signal.instance_id;
+  sub.resume_block = resume.block_index;
+  sub.flags = initially_active ? kSubActive : 0;
+  sub.process_sub_idx = proc_sub_idx;
+  sub.cold_idx = UINT32_MAX;
+
+  target_vec.push_back(sub);
+  proc_state.sub_refs.push_back(
+      SubRef{
+          .signal_id = signal.signal.value,
+          .index = sub_idx,
+          .kind = SubKind::kEdge,
+          .edge_bucket = bucket,
+          .is_local = true,
+          .edge_group = group_idx,
+          .instance_id = signal.instance_id});
+  ++proc_state.subscription_count;
+  ++live_subscription_count_;
+  return sub_idx;
+}
+
+// R5: SignalRef top boundary -- dispatch once, then domain-specific internals.
+auto Engine::Subscribe(
+    ProcessHandle handle, ResumePoint resume, SignalRef signal_ref,
+    common::EdgeKind edge, bool initially_active) -> uint32_t {
+  return std::visit(
+      [&](auto sig) -> uint32_t {
+        using T = std::decay_t<decltype(sig)>;
+        if constexpr (std::is_same_v<T, GlobalSignalId>) {
+          if (!slot_meta_registry_.IsPopulated()) {
+            throw common::InternalError(
+                "Engine::Subscribe", "Subscribe before InitSlotMeta");
+          }
+          const auto& meta = slot_meta_registry_.Get(sig.value);
+          uint32_t obs_size =
+              (edge == common::EdgeKind::kAnyChange) ? meta.total_bytes : 1;
+          if (edge == common::EdgeKind::kAnyChange) {
+            return SubscribeGlobalChange(
+                handle, resume, sig, 0, obs_size, initially_active);
+          }
+          return SubscribeGlobalEdge(
+              handle, resume, sig, edge, 0, obs_size, 0, initially_active);
+        } else {
+          const auto& inst_meta =
+              instances_[sig.instance_id]
+                  ->observability.layout->slot_meta[sig.signal.value];
+          uint32_t obs_size = (edge == common::EdgeKind::kAnyChange)
+                                  ? inst_meta.total_bytes
+                                  : 1;
+          if (edge == common::EdgeKind::kAnyChange) {
+            return SubscribeLocalChange(
+                handle, resume, sig, 0, obs_size, initially_active);
+          }
+          return SubscribeLocalEdge(
+              handle, resume, sig, edge, 0, obs_size, 0, initially_active);
+        }
+      },
+      signal_ref);
 }
 
 auto Engine::Subscribe(
-    ProcessHandle handle, ResumePoint resume, SignalId signal,
+    ProcessHandle handle, ResumePoint resume, SignalRef signal_ref,
     common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
     uint8_t bit_index, bool initially_active) -> uint32_t {
-  if (finished_) {
-    return UINT32_MAX;
-  }
-
-  if (design_state_base_ == nullptr) {
-    throw common::InternalError(
-        "Engine::Subscribe", "Subscribe before SetDesignStateBase");
-  }
-  if (!slot_meta_registry_.IsPopulated()) {
-    throw common::InternalError(
-        "Engine::Subscribe", "Subscribe before InitSlotMeta");
-  }
-
-  if (handle.process_id >= num_processes_) {
-    throw common::InternalError(
-        "Engine::Subscribe", std::format(
-                                 "process_id {} exceeds num_processes {}",
-                                 handle.process_id, num_processes_));
-  }
-  auto& proc_state = process_states_[handle.process_id];
-
-  if (!CheckSubscriptionLimits(proc_state)) {
-    return UINT32_MAX;
-  }
-
-  const auto& meta = slot_meta_registry_.Get(signal);
-
-  // Range validation.
-  if (byte_size == 0) {
-    throw common::InternalError("Engine::Subscribe", "byte_size must be > 0");
-  }
-  if (static_cast<uint64_t>(byte_offset) + static_cast<uint64_t>(byte_size) >
-      meta.total_bytes) {
-    throw common::InternalError(
-        "Engine::Subscribe", "observation range exceeds slot size");
-  }
-
-  auto& slot = signal_subs_[signal];
-
-  // design_state span passed to helpers for signature compatibility.
-  // Helpers resolve slot addresses through ResolveSlotBase internally.
-  std::span<const uint8_t> ds;
-
-  if (edge == common::EdgeKind::kAnyChange) {
-    return SubscribeChange(
-        handle, resume, signal, byte_offset, byte_size, initially_active,
-        proc_state, meta, ds, slot);
-  }
-
-  return SubscribeEdge(
-      handle, resume, signal, edge, byte_offset, byte_size, bit_index,
-      initially_active, proc_state, meta, ds, slot);
+  return std::visit(
+      [&](auto sig) -> uint32_t {
+        using T = std::decay_t<decltype(sig)>;
+        if constexpr (std::is_same_v<T, GlobalSignalId>) {
+          if (edge == common::EdgeKind::kAnyChange) {
+            return SubscribeGlobalChange(
+                handle, resume, sig, byte_offset, byte_size, initially_active);
+          }
+          return SubscribeGlobalEdge(
+              handle, resume, sig, edge, byte_offset, byte_size, bit_index,
+              initially_active);
+        } else {
+          if (edge == common::EdgeKind::kAnyChange) {
+            return SubscribeLocalChange(
+                handle, resume, sig, byte_offset, byte_size, initially_active);
+          }
+          return SubscribeLocalEdge(
+              handle, resume, sig, edge, byte_offset, byte_size, bit_index,
+              initially_active);
+        }
+      },
+      signal_ref);
 }
 
 auto Engine::SubscribeContainerElement(
-    ProcessHandle handle, ResumePoint resume, SignalId signal,
+    ProcessHandle handle, ResumePoint resume, SignalRef signal_ref,
+    common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
+    bool initially_active) -> uint32_t {
+  return std::visit(
+      [&](auto sig) -> uint32_t {
+        using T = std::decay_t<decltype(sig)>;
+        if constexpr (std::is_same_v<T, GlobalSignalId>) {
+          return SubscribeGlobalContainerElement(
+              handle, resume, sig, edge, sv_index, elem_stride,
+              initially_active);
+        } else {
+          return SubscribeLocalContainerElement(
+              handle, resume, sig, edge, sv_index, elem_stride,
+              initially_active);
+        }
+      },
+      signal_ref);
+}
+
+namespace {
+
+// Create and initialize a container sub from pre-resolved slot_base.
+// Returns the container sub index within the slot.
+void InitContainerSubState(
+    ContainerSub& sub, ContainerCold& cold, StoredSignalRef signal,
+    int64_t sv_index, uint32_t elem_stride, bool initially_active,
+    const uint8_t* slot_base) {
+  cold.container_signal = signal;
+  cold.container_elem_stride = elem_stride;
+  cold.container_sv_index = sv_index;
+
+  void* handle_ptr = nullptr;
+  std::memcpy(&handle_ptr, slot_base, sizeof(void*));
+
+  if (!initially_active) {
+    cold.container_epoch = 0;
+  } else if (handle_ptr == nullptr) {
+    cold.container_epoch = 0;
+  } else {
+    const auto* arr = static_cast<const DynArrayData*>(handle_ptr);
+    if (arr->magic != DynArrayData::kMagic) {
+      throw common::InternalError(
+          "SubscribeContainerElement", "invalid container magic");
+    }
+    cold.container_epoch = arr->epoch;
+
+    if (arr->data != nullptr && sv_index >= 0 && sv_index < arr->size) {
+      auto byte_off = static_cast<uint32_t>(sv_index) * elem_stride;
+      auto heap_data = std::span(
+          static_cast<const uint8_t*>(arr->data), byte_off + elem_stride);
+      sub.last_bit = heap_data[byte_off] & 1;
+      sub.flags = kSubActive;
+    }
+  }
+}
+
+}  // namespace
+
+auto Engine::SubscribeGlobalContainerElement(
+    ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
     common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
     bool initially_active) -> uint32_t {
   if (finished_) return UINT32_MAX;
-
   if (design_state_base_ == nullptr) {
     throw common::InternalError(
-        "Engine::SubscribeContainerElement",
-        "SubscribeContainerElement before SetDesignStateBase");
+        "Engine::SubscribeGlobalContainerElement",
+        "Subscribe before SetDesignStateBase");
   }
   if (!slot_meta_registry_.IsPopulated()) {
     throw common::InternalError(
-        "Engine::SubscribeContainerElement",
-        "SubscribeContainerElement before InitSlotMeta");
+        "Engine::SubscribeGlobalContainerElement",
+        "Subscribe before InitSlotMeta");
   }
-
   if (handle.process_id >= num_processes_) {
     throw common::InternalError(
-        "Engine::SubscribeContainerElement",
+        "Engine::SubscribeGlobalContainerElement",
         std::format(
             "process_id {} exceeds num_processes {}", handle.process_id,
             num_processes_));
   }
   if (elem_stride == 0) {
     throw common::InternalError(
-        "Engine::SubscribeContainerElement", "elem_stride must be > 0");
+        "Engine::SubscribeGlobalContainerElement", "elem_stride must be > 0");
   }
-
   auto& proc_state = process_states_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
-  const auto& meta = slot_meta_registry_.Get(signal);
-  auto& slot = signal_subs_[signal];
+  const auto& meta = slot_meta_registry_.Get(signal.value);
+  auto& slot = signal_subs_[signal.value];
+  const auto* slot_base =
+      ResolveSlotBase(meta, design_state_base_, const_instances_);
 
   auto sub_idx = static_cast<uint32_t>(slot.container_subs.size());
   auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
-
-  // Always allocate cold entry for container subs.
   uint32_t cold_idx = AllocContainerCold();
-  auto& cold = container_cold_pool_[cold_idx];
-  cold.container_slot_id = signal;
-  cold.container_elem_stride = elem_stride;
-  cold.container_sv_index = sv_index;
 
   ContainerSub sub{};
   sub.process_id = handle.process_id;
@@ -938,109 +1319,293 @@ auto Engine::SubscribeContainerElement(
   sub.last_bit = 0;
   sub.flags = 0;
 
-  // Chase handle from slot storage.
-  const auto* container_base =
-      ResolveSlotBase(meta, design_state_base_, const_instances_);
-  void* handle_ptr = nullptr;
-  std::memcpy(&handle_ptr, container_base, sizeof(void*));
-
-  if (!initially_active) {
-    // Descriptor says inactive -- skip runtime validation entirely.
-    cold.container_epoch = 0;
-  } else if (handle_ptr == nullptr) {
-    cold.container_epoch = 0;
-  } else {
-    const auto* arr = static_cast<const DynArrayData*>(handle_ptr);
-    if (arr->magic != DynArrayData::kMagic) {
-      throw common::InternalError(
-          "Engine::SubscribeContainerElement", "invalid container magic");
-    }
-    cold.container_epoch = arr->epoch;
-
-    if (arr->data != nullptr && sv_index >= 0 && sv_index < arr->size) {
-      // Capture initial LSB of element byte 0 for edge detection.
-      // Container edge triggers observe bit 0 of the first byte of each
-      // element (byte_off = sv_index * elem_stride). This matches the
-      // scalar edge semantics: @(posedge d[i]) triggers on the LSB.
-      auto byte_off = static_cast<uint32_t>(sv_index) * elem_stride;
-      auto heap_data = std::span(
-          static_cast<const uint8_t*>(arr->data), byte_off + elem_stride);
-      sub.last_bit = heap_data[byte_off] & 1;
-      sub.flags = kSubActive;
-    }
-  }
+  InitContainerSubState(
+      sub, container_cold_pool_[cold_idx],
+      StoredSignalRef{.signal_id = signal.value}, sv_index, elem_stride,
+      initially_active, slot_base);
 
   slot.container_subs.push_back(sub);
   proc_state.sub_refs.push_back(
-      SubRef{.slot_id = signal, .index = sub_idx, .kind = SubKind::kContainer});
+      SubRef{
+          .signal_id = signal.value,
+          .index = sub_idx,
+          .kind = SubKind::kContainer,
+          .instance_id = handle.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
   return sub_idx;
 }
 
+auto Engine::SubscribeLocalContainerElement(
+    ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+    common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
+    bool initially_active) -> uint32_t {
+  if (finished_) return UINT32_MAX;
+  if (handle.process_id >= num_processes_) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalContainerElement",
+        std::format(
+            "process_id {} exceeds num_processes {}", handle.process_id,
+            num_processes_));
+  }
+  if (elem_stride == 0) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalContainerElement", "elem_stride must be > 0");
+  }
+  auto& proc_state = process_states_[handle.process_id];
+  if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
+
+  auto& inst = *instances_[signal.instance_id];
+  auto& slot = inst.observability.local_signal_subs[signal.signal.value];
+  const auto* slot_base = ResolveInstanceSlotBase(inst, signal.signal);
+
+  auto sub_idx = static_cast<uint32_t>(slot.container_subs.size());
+  auto proc_sub_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
+  uint32_t cold_idx = AllocContainerCold();
+
+  ContainerSub sub{};
+  sub.process_id = handle.process_id;
+  sub.instance_id = signal.instance_id;
+  sub.resume_block = resume.block_index;
+  sub.process_sub_idx = proc_sub_idx;
+  sub.cold_idx = cold_idx;
+  sub.edge = edge;
+  sub.last_bit = 0;
+  sub.flags = 0;
+
+  InitContainerSubState(
+      sub, container_cold_pool_[cold_idx],
+      StoredSignalRef{
+          .signal_id = signal.signal.value,
+          .is_local = true,
+          .instance_id = signal.instance_id},
+      sv_index, elem_stride, initially_active, slot_base);
+
+  slot.container_subs.push_back(sub);
+  proc_state.sub_refs.push_back(
+      SubRef{
+          .signal_id = signal.signal.value,
+          .index = sub_idx,
+          .kind = SubKind::kContainer,
+          .is_local = true,
+          .instance_id = signal.instance_id});
+  ++proc_state.subscription_count;
+  ++live_subscription_count_;
+  return sub_idx;
+}
+
+void Engine::ValidateRebindDepSignals(
+    std::span<const SignalRef> dep_signals) const {
+  for (const auto& dep : dep_signals) {
+    std::visit(
+        [&](const auto& sig) {
+          using T = std::decay_t<decltype(sig)>;
+          if constexpr (std::is_same_v<T, GlobalSignalId>) {
+            if (!slot_meta_registry_.IsPopulated() ||
+                sig.value >= slot_meta_registry_.Size()) {
+              throw common::InternalError(
+                  "Engine::ValidateRebindDepSignals",
+                  std::format(
+                      "global dep signal {} out of range (slot_meta size {})",
+                      sig.value, slot_meta_registry_.Size()));
+            }
+            if (sig.value >= signal_subs_.size()) {
+              throw common::InternalError(
+                  "Engine::ValidateRebindDepSignals",
+                  std::format(
+                      "global dep signal {} >= signal_subs size {}", sig.value,
+                      signal_subs_.size()));
+            }
+          } else {
+            if (sig.instance_id >= instances_.size() ||
+                instances_[sig.instance_id] == nullptr) {
+              throw common::InternalError(
+                  "Engine::ValidateRebindDepSignals",
+                  std::format(
+                      "local dep instance_id {} invalid (instances size {})",
+                      sig.instance_id, instances_.size()));
+            }
+            const auto& obs = instances_[sig.instance_id]->observability;
+            if (obs.layout == nullptr ||
+                sig.signal.value >= obs.layout->slot_meta.size()) {
+              throw common::InternalError(
+                  "Engine::ValidateRebindDepSignals",
+                  std::format(
+                      "local dep signal {} out of range (layout slot_meta "
+                      "size {})",
+                      sig.signal.value,
+                      obs.layout != nullptr ? obs.layout->slot_meta.size()
+                                            : 0));
+            }
+            if (sig.signal.value >= obs.local_signal_subs.size()) {
+              throw common::InternalError(
+                  "Engine::ValidateRebindDepSignals",
+                  std::format(
+                      "local dep signal {} >= local_signal_subs size {}",
+                      sig.signal.value, obs.local_signal_subs.size()));
+            }
+          }
+        },
+        dep);
+  }
+}
+
+// R5: Thin boundary wrapper -- dispatch to domain-specific rebind.
 void Engine::SubscribeRebind(
-    ProcessHandle handle, uint32_t edge_target_id, SignalId target_slot,
+    ProcessHandle handle, uint32_t edge_target_id, SignalRef target_signal,
     SubKind target_kind, uint32_t target_index, uint8_t target_edge_group,
     EdgeBucket target_edge_bucket, std::span<const IndexPlanOp> plan,
-    BitTargetMapping mapping, std::span<const uint32_t> dep_slots) {
-  if (finished_) return;
+    BitTargetMapping mapping, std::span<const SignalRef> dep_signals) {
+  std::visit(
+      [&](const auto& target) {
+        using T = std::decay_t<decltype(target)>;
+        if constexpr (std::is_same_v<T, GlobalSignalId>) {
+          SubscribeGlobalRebind(
+              handle, edge_target_id, target, target_kind, target_index,
+              target_edge_group, target_edge_bucket, plan, mapping,
+              dep_signals);
+        } else {
+          SubscribeLocalRebind(
+              handle, edge_target_id, target, target_kind, target_index,
+              target_edge_group, target_edge_bucket, plan, mapping,
+              dep_signals);
+        }
+      },
+      target_signal);
+}
 
+// Shared dep-watcher installation. Called from both domain-specific rebind
+// functions after the target cold entry and edge_target_id are established.
+void Engine::InstallRebindDepWatchers(
+    ProcessHandle handle, uint32_t edge_target_id,
+    std::span<const SignalRef> dep_signals) {
+  auto& proc_state = process_states_[handle.process_id];
+  for (const auto& dep : dep_signals) {
+    std::visit(
+        [&](const auto& sig) {
+          using T = std::decay_t<decltype(sig)>;
+          SlotSubscriptions* dep_subs = nullptr;
+          const uint8_t* dep_base = nullptr;
+          uint32_t dep_total_bytes = 0;
+          uint32_t dep_signal_id = 0;
+          bool dep_is_local = false;
+          uint32_t dep_instance_id = 0;
+
+          if constexpr (std::is_same_v<T, LocalSignalRef>) {
+            dep_is_local = true;
+            dep_signal_id = sig.signal.value;
+            dep_instance_id = sig.instance_id;
+            auto& obs = instances_[sig.instance_id]->observability;
+            const auto& imeta = obs.layout->slot_meta[sig.signal.value];
+            dep_subs = &obs.local_signal_subs[sig.signal.value];
+            dep_total_bytes = imeta.total_bytes;
+            dep_base = ResolveInstanceSlotBase(
+                *instances_[sig.instance_id], sig.signal);
+          } else {
+            dep_signal_id = sig.value;
+            const auto& meta = slot_meta_registry_.Get(sig.value);
+            dep_subs = &signal_subs_[sig.value];
+            dep_total_bytes = meta.total_bytes;
+            dep_base =
+                ResolveSlotBase(meta, design_state_base_, const_instances_);
+          }
+
+          auto watcher_idx =
+              static_cast<uint32_t>(dep_subs->rebind_subs.size());
+          auto watcher_proc_idx =
+              static_cast<uint32_t>(proc_state.sub_refs.size());
+
+          uint32_t watcher_cold = AllocWatcherCold();
+          auto& wcold = watcher_cold_pool_[watcher_cold];
+          wcold.edge_target_id = edge_target_id;
+          wcold.snapshot.resize(dep_total_bytes);
+          std::memcpy(wcold.snapshot.data(), dep_base, dep_total_bytes);
+
+          RebindWatcherSub watcher{};
+          watcher.process_id = handle.process_id;
+          watcher.byte_offset = 0;
+          watcher.byte_size = dep_total_bytes;
+          watcher.process_sub_idx = watcher_proc_idx;
+          watcher.cold_idx = watcher_cold;
+          watcher.flags = kSubActive;
+
+          dep_subs->rebind_subs.push_back(watcher);
+          proc_state.sub_refs.push_back(
+              SubRef{
+                  .signal_id = dep_signal_id,
+                  .index = watcher_idx,
+                  .kind = SubKind::kRebindWatcher,
+                  .is_local = dep_is_local,
+                  .instance_id = dep_instance_id});
+          ++proc_state.subscription_count;
+          ++live_subscription_count_;
+        },
+        dep);
+  }
+}
+
+void Engine::SubscribeGlobalRebind(
+    ProcessHandle handle, uint32_t edge_target_id, GlobalSignalId target_signal,
+    SubKind target_kind, uint32_t target_index, uint8_t target_edge_group,
+    EdgeBucket target_edge_bucket, std::span<const IndexPlanOp> plan,
+    BitTargetMapping mapping, std::span<const SignalRef> dep_signals) {
+  if (finished_) return;
   if (design_state_base_ == nullptr) {
     throw common::InternalError(
-        "Engine::SubscribeRebind", "SubscribeRebind before SetDesignStateBase");
+        "Engine::SubscribeGlobalRebind",
+        "SubscribeRebind before SetDesignStateBase");
   }
   if (!slot_meta_registry_.IsPopulated()) {
     throw common::InternalError(
-        "Engine::SubscribeRebind", "SubscribeRebind before InitSlotMeta");
+        "Engine::SubscribeGlobalRebind", "SubscribeRebind before InitSlotMeta");
   }
-
   if (handle.process_id >= num_processes_) {
     throw common::InternalError(
-        "Engine::SubscribeRebind", std::format(
-                                       "process_id {} exceeds num_processes {}",
-                                       handle.process_id, num_processes_));
+        "Engine::SubscribeGlobalRebind",
+        std::format(
+            "process_id {} exceeds num_processes {}", handle.process_id,
+            num_processes_));
   }
   if (target_kind != SubKind::kEdge && target_kind != SubKind::kContainer) {
     throw common::InternalError(
-        "Engine::SubscribeRebind",
+        "Engine::SubscribeGlobalRebind",
         std::format(
-            "rebind target kind {} not supported (must be kEdge or kContainer)",
+            "rebind target kind {} not supported",
             static_cast<int>(target_kind)));
   }
 
-  // Validate target_slot and target_index against current dense storage.
-  if (target_slot >= signal_subs_.size()) {
-    throw common::InternalError(
-        "Engine::SubscribeRebind", std::format(
-                                       "target_slot {} >= signal_subs size {}",
-                                       target_slot, signal_subs_.size()));
-  }
+  auto& target_subs = signal_subs_[target_signal.value];
   if (target_kind == SubKind::kEdge) {
-    auto& tvec = EdgeSubVec(target_slot, target_edge_group, target_edge_bucket);
+    if (target_edge_group >= target_subs.edge_groups.size()) {
+      throw common::InternalError(
+          "Engine::SubscribeGlobalRebind",
+          std::format(
+              "target_edge_group {} >= edge_groups size {}", target_edge_group,
+              target_subs.edge_groups.size()));
+    }
+    auto& g = target_subs.edge_groups[target_edge_group];
+    auto& tvec = (target_edge_bucket == EdgeBucket::kPosedge) ? g.posedge_subs
+                                                              : g.negedge_subs;
     if (target_index >= tvec.size()) {
       throw common::InternalError(
-          "Engine::SubscribeRebind",
+          "Engine::SubscribeGlobalRebind",
           std::format(
-              "target_index {} >= edge bucket size {} for slot {}",
-              target_index, tvec.size(), target_slot));
+              "target_index {} >= edge bucket size {}", target_index,
+              tvec.size()));
     }
-  } else {
-    if (target_index >= signal_subs_[target_slot].container_subs.size()) {
-      throw common::InternalError(
-          "Engine::SubscribeRebind",
-          std::format(
-              "target_index {} >= container_subs size {} for slot {}",
-              target_index, signal_subs_[target_slot].container_subs.size(),
-              target_slot));
-    }
+  } else if (target_index >= target_subs.container_subs.size()) {
+    throw common::InternalError(
+        "Engine::SubscribeGlobalRebind",
+        std::format(
+            "target_index {} >= container_subs size {}", target_index,
+            target_subs.container_subs.size()));
   }
 
-  auto& proc_state = process_states_[handle.process_id];
+  ValidateRebindDepSignals(dep_signals);
 
-  // Pre-validate capacity for ALL dep_slot watchers before mutating state.
-  // This ensures atomicity: either all watchers install or none do.
-  auto total_after = proc_state.subscription_count + dep_slots.size();
-  auto global_after = live_subscription_count_ + dep_slots.size();
+  auto& proc_state = process_states_[handle.process_id];
+  auto total_after = proc_state.subscription_count + dep_signals.size();
+  auto global_after = live_subscription_count_ + dep_signals.size();
   if (max_total_subscriptions_ > 0 && global_after > max_total_subscriptions_) {
     TerminateWithResourceError(
         "global subscription limit exceeded (rebind batch)",
@@ -1055,27 +1620,28 @@ void Engine::SubscribeRebind(
     return;
   }
 
-  // Store plan in process's pool.
   auto plan_start = static_cast<uint32_t>(proc_state.plan_pool.ops.size());
   proc_state.plan_pool.ops.insert(
       proc_state.plan_pool.ops.end(), plan.begin(), plan.end());
   IndexPlanRef plan_ref = {
       .start = plan_start, .count = static_cast<uint16_t>(plan.size())};
 
-  // Ensure the target has a cold entry and store plan/mapping.
+  const auto& tmeta = slot_meta_registry_.Get(target_signal.value);
+  auto target_storage = std::span(
+      ResolveSlotBase(tmeta, design_state_base_, const_instances_),
+      tmeta.total_bytes);
+
   if (target_kind == SubKind::kEdge) {
-    auto& esub = EdgeSubVec(
-        target_slot, target_edge_group, target_edge_bucket)[target_index];
-    auto& group = GetEdgeGroup(target_slot, target_edge_group);
+    auto& group = target_subs.edge_groups[target_edge_group];
+    auto& tvec = (target_edge_bucket == EdgeBucket::kPosedge)
+                     ? group.posedge_subs
+                     : group.negedge_subs;
+    auto& esub = tvec[target_index];
     if (esub.cold_idx == UINT32_MAX) {
       esub.cold_idx = AllocEdgeCold();
       esub.flags |= kSubHasCold;
-      // Seed byte snapshot for same-byte rebinding detection.
       auto& new_cold = edge_cold_pool_[esub.cold_idx];
-      const auto& tmeta = slot_meta_registry_.Get(target_slot);
-      const auto* tbase =
-          ResolveSlotBase(tmeta, design_state_base_, const_instances_);
-      new_cold.edge_last_byte = tbase[group.byte_offset];
+      new_cold.edge_last_byte = target_storage[group.byte_offset];
       new_cold.has_edge_last_byte = true;
     }
     auto& ecold = edge_cold_pool_[esub.cold_idx];
@@ -1084,7 +1650,7 @@ void Engine::SubscribeRebind(
     if (edge_target_id == UINT32_MAX) {
       edge_target_id = AllocEdgeTarget(
           EdgeTargetHandle{
-              .slot_id = target_slot,
+              .slot_id = target_signal.value,
               .kind = SubKind::kEdge,
               .edge_bucket = target_edge_bucket,
               .edge_group = target_edge_group,
@@ -1092,60 +1658,150 @@ void Engine::SubscribeRebind(
       ecold.edge_target_id = edge_target_id;
     }
   } else {
-    // kContainer
-    auto& csub = signal_subs_[target_slot].container_subs[target_index];
+    auto& csub = target_subs.container_subs[target_index];
     auto& ccold = container_cold_pool_[csub.cold_idx];
     ccold.plan_ref = plan_ref;
     ccold.rebind_mapping = mapping;
     if (edge_target_id == UINT32_MAX) {
       edge_target_id = AllocEdgeTarget(
           EdgeTargetHandle{
-              .slot_id = target_slot,
+              .slot_id = target_signal.value,
               .kind = SubKind::kContainer,
               .index = target_index});
       ccold.edge_target_id = edge_target_id;
     }
   }
 
-  // Create a rebind watcher for each dep slot.
-  // Capacity was pre-validated above, so no per-watcher limit check needed.
-  for (uint32_t dep_slot : dep_slots) {
-    const auto& meta = slot_meta_registry_.Get(dep_slot);
-    auto& slot = signal_subs_[dep_slot];
+  InstallRebindDepWatchers(handle, edge_target_id, dep_signals);
+  RebindSubscription(edge_target_id);
+}
 
-    auto watcher_idx = static_cast<uint32_t>(slot.rebind_subs.size());
-    auto watcher_proc_idx = static_cast<uint32_t>(proc_state.sub_refs.size());
-
-    // Always allocate cold entry for rebind watchers.
-    uint32_t watcher_cold = AllocWatcherCold();
-    auto& wcold = watcher_cold_pool_[watcher_cold];
-    wcold.edge_target_id = edge_target_id;
-
-    // Capture initial snapshot of dep slot.
-    const auto* src =
-        ResolveSlotBase(meta, design_state_base_, const_instances_);
-    wcold.snapshot.resize(meta.total_bytes);
-    std::memcpy(wcold.snapshot.data(), src, meta.total_bytes);
-
-    RebindWatcherSub watcher{};
-    watcher.process_id = handle.process_id;
-    watcher.byte_offset = 0;
-    watcher.byte_size = meta.total_bytes;
-    watcher.process_sub_idx = watcher_proc_idx;
-    watcher.cold_idx = watcher_cold;
-    watcher.flags = kSubActive;
-
-    slot.rebind_subs.push_back(watcher);
-    proc_state.sub_refs.push_back(
-        SubRef{
-            .slot_id = dep_slot,
-            .index = watcher_idx,
-            .kind = SubKind::kRebindWatcher});
-    ++proc_state.subscription_count;
-    ++live_subscription_count_;
+void Engine::SubscribeLocalRebind(
+    ProcessHandle handle, uint32_t edge_target_id, LocalSignalRef target_signal,
+    SubKind target_kind, uint32_t target_index, uint8_t target_edge_group,
+    EdgeBucket target_edge_bucket, std::span<const IndexPlanOp> plan,
+    BitTargetMapping mapping, std::span<const SignalRef> dep_signals) {
+  if (finished_) return;
+  if (handle.process_id >= num_processes_) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalRebind",
+        std::format(
+            "process_id {} exceeds num_processes {}", handle.process_id,
+            num_processes_));
+  }
+  if (target_kind != SubKind::kEdge && target_kind != SubKind::kContainer) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalRebind",
+        std::format(
+            "rebind target kind {} not supported",
+            static_cast<int>(target_kind)));
   }
 
-  // Initial rebind: validate codegen-computed target against runtime state.
+  auto& inst = *instances_[target_signal.instance_id];
+  auto& target_subs =
+      inst.observability.local_signal_subs[target_signal.signal.value];
+  if (target_kind == SubKind::kEdge) {
+    if (target_edge_group >= target_subs.edge_groups.size()) {
+      throw common::InternalError(
+          "Engine::SubscribeLocalRebind",
+          std::format(
+              "target_edge_group {} >= edge_groups size {}", target_edge_group,
+              target_subs.edge_groups.size()));
+    }
+    auto& g = target_subs.edge_groups[target_edge_group];
+    auto& tvec = (target_edge_bucket == EdgeBucket::kPosedge) ? g.posedge_subs
+                                                              : g.negedge_subs;
+    if (target_index >= tvec.size()) {
+      throw common::InternalError(
+          "Engine::SubscribeLocalRebind",
+          std::format(
+              "target_index {} >= edge bucket size {}", target_index,
+              tvec.size()));
+    }
+  } else if (target_index >= target_subs.container_subs.size()) {
+    throw common::InternalError(
+        "Engine::SubscribeLocalRebind",
+        std::format(
+            "target_index {} >= container_subs size {}", target_index,
+            target_subs.container_subs.size()));
+  }
+
+  ValidateRebindDepSignals(dep_signals);
+
+  auto& proc_state = process_states_[handle.process_id];
+  auto total_after = proc_state.subscription_count + dep_signals.size();
+  auto global_after = live_subscription_count_ + dep_signals.size();
+  if (max_total_subscriptions_ > 0 && global_after > max_total_subscriptions_) {
+    TerminateWithResourceError(
+        "global subscription limit exceeded (rebind batch)",
+        live_subscription_count_, max_total_subscriptions_);
+    return;
+  }
+  if (max_subscriptions_per_process_ > 0 &&
+      total_after > max_subscriptions_per_process_) {
+    TerminateWithResourceError(
+        "per-process subscription limit exceeded (rebind batch)",
+        proc_state.subscription_count, max_subscriptions_per_process_);
+    return;
+  }
+
+  auto plan_start = static_cast<uint32_t>(proc_state.plan_pool.ops.size());
+  proc_state.plan_pool.ops.insert(
+      proc_state.plan_pool.ops.end(), plan.begin(), plan.end());
+  IndexPlanRef plan_ref = {
+      .start = plan_start, .count = static_cast<uint16_t>(plan.size())};
+
+  const auto& imeta =
+      inst.observability.layout->slot_meta[target_signal.signal.value];
+  auto target_storage = std::span(
+      ResolveInstanceSlotBase(inst, target_signal.signal), imeta.total_bytes);
+
+  if (target_kind == SubKind::kEdge) {
+    auto& group = target_subs.edge_groups[target_edge_group];
+    auto& tvec = (target_edge_bucket == EdgeBucket::kPosedge)
+                     ? group.posedge_subs
+                     : group.negedge_subs;
+    auto& esub = tvec[target_index];
+    if (esub.cold_idx == UINT32_MAX) {
+      esub.cold_idx = AllocEdgeCold();
+      esub.flags |= kSubHasCold;
+      auto& new_cold = edge_cold_pool_[esub.cold_idx];
+      new_cold.edge_last_byte = target_storage[group.byte_offset];
+      new_cold.has_edge_last_byte = true;
+    }
+    auto& ecold = edge_cold_pool_[esub.cold_idx];
+    ecold.plan_ref = plan_ref;
+    ecold.rebind_mapping = mapping;
+    if (edge_target_id == UINT32_MAX) {
+      edge_target_id = AllocEdgeTarget(
+          EdgeTargetHandle{
+              .slot_id = target_signal.signal.value,
+              .kind = SubKind::kEdge,
+              .edge_bucket = target_edge_bucket,
+              .is_local = true,
+              .edge_group = target_edge_group,
+              .index = target_index,
+              .instance_id = target_signal.instance_id});
+      ecold.edge_target_id = edge_target_id;
+    }
+  } else {
+    auto& csub = target_subs.container_subs[target_index];
+    auto& ccold = container_cold_pool_[csub.cold_idx];
+    ccold.plan_ref = plan_ref;
+    ccold.rebind_mapping = mapping;
+    if (edge_target_id == UINT32_MAX) {
+      edge_target_id = AllocEdgeTarget(
+          EdgeTargetHandle{
+              .slot_id = target_signal.signal.value,
+              .kind = SubKind::kContainer,
+              .is_local = true,
+              .index = target_index,
+              .instance_id = target_signal.instance_id});
+      ccold.edge_target_id = edge_target_id;
+    }
+  }
+
+  InstallRebindDepWatchers(handle, edge_target_id, dep_signals);
   RebindSubscription(edge_target_id);
 }
 

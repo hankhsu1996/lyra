@@ -5,6 +5,7 @@
 #include <variant>
 
 #include "lyra/runtime/activation_trace.hpp"
+#include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/small_byte_buffer.hpp"
 
 namespace lyra::runtime {
@@ -70,12 +71,23 @@ struct NbaCanonicalPackedTwoPlane {
 using NbaPayload =
     std::variant<NbaFullOverwrite, NbaMaskedMerge, NbaCanonicalPackedTwoPlane>;
 
+// R5: NBA notification signal identity. Typed at enqueue time, not
+// reverse-engineered at commit time.
+struct NbaNotifyGlobal {
+  GlobalSignalId signal;
+};
+struct NbaNotifyLocal {
+  uint32_t instance_id;
+  LocalSignalId signal;
+};
+using NbaNotifySignal = std::variant<NbaNotifyGlobal, NbaNotifyLocal>;
+
 // NBA queue entry: deferred write committed in the NBA region.
 // Common header (write target + notification) plus typed payload.
 struct NbaEntry {
   void* write_ptr;
   const void* notify_base_ptr;
-  uint32_t notify_slot_id;
+  NbaNotifySignal notify_signal;
   NbaPayload payload;
 };
 

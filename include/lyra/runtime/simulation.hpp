@@ -108,7 +108,7 @@ using LyraStrobeProgramFn = lyra::runtime::StrobeProgramFn;
 // runtime side.
 void LyraRegisterStrobe(
     void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, uint32_t local_signal_coord_base);
+    void* this_ptr, uint32_t instance_id);
 
 // Unified termination with kind/level/message support.
 // kind: 0=finish, 1=fatal, 2=stop, 3=exit
@@ -152,8 +152,8 @@ using LyraMonitorCheckProgramFn = lyra::runtime::MonitorCheckProgramFn;
 // runtime side.
 void LyraMonitorRegister(
     void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, uint32_t local_signal_coord_base,
-    const void* initial_prev, uint32_t size);
+    void* this_ptr, uint32_t instance_id, const void* initial_prev,
+    uint32_t size);
 
 // Enable/disable the active monitor. No-op if no active monitor.
 // - engine_ptr: pointer to Engine

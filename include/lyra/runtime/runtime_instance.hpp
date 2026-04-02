@@ -61,11 +61,6 @@ struct RuntimeInstance {
   uint32_t module_proc_base = 0;
   uint32_t num_module_processes = 0;
 
-  // Legacy flat bridge. R5 new code must not read or write this field.
-  // Used only by pre-R5 flat callers (connections, comb fixpoint, NBA queue,
-  // trigger relocation). Removed in Cut 2.
-  uint32_t local_signal_coord_base = 0;
-
   // R5: Per-instance observability state.
   // Populated by Engine::InitModuleInstancesFromBundles. Not part of the
   // binary contract with codegen (not accessed via GEP, no LLVM struct type).
@@ -92,8 +87,7 @@ enum class RuntimeInstanceField : unsigned {
   kOwnerOrdinal = 4,
   kModuleProcBase = 5,
   kNumModuleProcesses = 6,
-  kLocalSignalCoordBase = 7,
-  kFieldCount = 8,
+  kFieldCount = 7,
 };
 
 // Hard binary contract assertions for RuntimeInstanceStorage.
@@ -129,9 +123,6 @@ static_assert(
 static_assert(
     offsetof(RuntimeInstance, num_module_processes) ==
     offsetof(RuntimeInstance, module_proc_base) + sizeof(uint32_t));
-static_assert(
-    offsetof(RuntimeInstance, local_signal_coord_base) ==
-    offsetof(RuntimeInstance, num_module_processes) + sizeof(uint32_t));
 
 // Allocate zero-initialized owned storage for an instance's inline region.
 auto AllocateOwnedInlineStorage(uint64_t size) -> std::byte*;

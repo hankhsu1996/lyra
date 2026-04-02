@@ -14,11 +14,10 @@ namespace lyra::lowering::mir_to_llvm {
 struct LoadedObserverContext {
   llvm::Value* this_ptr;
   llvm::Value* instance_id;
-  llvm::Value* local_signal_coord_base;
 };
 
 // Get the LLVM struct type for ObserverContext.
-// Layout: { ptr this_ptr, i32 instance_id, i32 local_signal_coord_base }
+// Layout: { ptr this_ptr, i32 instance_id }
 auto GetObserverContextStructType(llvm::LLVMContext& llvm_ctx)
     -> llvm::StructType*;
 
@@ -28,7 +27,7 @@ auto LoadObserverContextFields(
     llvm::Value* observer_ctx_ptr) -> LoadedObserverContext;
 
 // Enter specialization-local lowering mode from an ObserverContext*.
-// Loads fields, installs this_ptr/instance_id/local_signal_coord_base
+// Loads fields, installs this_ptr/instance_id
 // and sets kSpecializationLocal addressing mode.
 void EnterObserverSpecializationLocalContext(
     Context& context, mir::FunctionId func_id, llvm::Value* observer_ctx_ptr);

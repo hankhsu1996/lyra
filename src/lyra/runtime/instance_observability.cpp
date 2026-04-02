@@ -78,10 +78,51 @@ auto ComposeHierarchicalTraceName(
     const RuntimeInstance& inst, LocalSignalId local_signal,
     const BodyObservableLayout& layout) -> std::string {
   auto local_name = layout.TraceLocalName(local_signal);
-  if (inst.path_c_str == nullptr || inst.path_c_str[0] == '\0') {
+  std::string_view path =
+      inst.path_c_str != nullptr ? inst.path_c_str : std::string_view{};
+  if (path.empty()) {
     return std::string(local_name);
   }
-  return std::format("{}.{}", inst.path_c_str, local_name);
+  return std::format("{}.{}", path, local_name);
+}
+
+auto ResolveInstanceSlotBase(const RuntimeInstance& inst, LocalSignalId signal)
+    -> const uint8_t* {
+  const auto& obs = inst.observability;
+  if (obs.layout == nullptr) {
+    throw common::InternalError(
+        "ResolveInstanceSlotBase", "instance has no observable layout");
+  }
+  if (signal.value >= obs.layout->slot_meta.size()) {
+    throw common::InternalError(
+        "ResolveInstanceSlotBase",
+        std::format(
+            "local_signal_id {} out of range {}", signal.value,
+            obs.layout->slot_meta.size()));
+  }
+  const auto& meta = obs.layout->slot_meta[signal.value];
+  return ResolveInstanceStorageOffset(
+      inst, meta.instance_rel_off, meta.total_bytes, "ResolveInstanceSlotBase");
+}
+
+auto ResolveInstanceSlotBaseMut(RuntimeInstance& inst, LocalSignalId signal)
+    -> uint8_t* {
+  const auto& obs = inst.observability;
+  if (obs.layout == nullptr) {
+    throw common::InternalError(
+        "ResolveInstanceSlotBaseMut", "instance has no observable layout");
+  }
+  if (signal.value >= obs.layout->slot_meta.size()) {
+    throw common::InternalError(
+        "ResolveInstanceSlotBaseMut",
+        std::format(
+            "local_signal_id {} out of range {}", signal.value,
+            obs.layout->slot_meta.size()));
+  }
+  const auto& meta = obs.layout->slot_meta[signal.value];
+  return ResolveInstanceStorageOffset(
+      inst, meta.instance_rel_off, meta.total_bytes,
+      "ResolveInstanceSlotBaseMut");
 }
 
 }  // namespace lyra::runtime

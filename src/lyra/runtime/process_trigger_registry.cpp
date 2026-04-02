@@ -198,7 +198,8 @@ void Engine::InitProcessTriggerRegistry(
                   "for process {}",
                   i, proc_idx));
         }
-        descriptors[i].slot_id += header->instance->local_signal_coord_base;
+        descriptors[i].slot_id +=
+            header->instance->observability.flat_coord_base;
         if (descriptors[i].slot_id >= slot_count) {
           throw common::InternalError(
               "InitProcessTriggerRegistry",

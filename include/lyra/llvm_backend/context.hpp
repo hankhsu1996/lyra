@@ -122,7 +122,6 @@ struct ExecutionContractState {
   llvm::Value* instance_ptr = nullptr;
   llvm::Value* this_ptr = nullptr;
   llvm::Value* dynamic_instance_id = nullptr;
-  llvm::Value* local_signal_coord_base = nullptr;
 };
 
 // RAII guard that sets execution-contract state on Context and restores it
@@ -450,8 +449,6 @@ class Context {
   void SetThisPointer(llvm::Value* ptr);
   [[nodiscard]] auto GetThisPointer() const -> llvm::Value*;
   void SetDynamicInstanceId(llvm::Value* id);
-  void SetLocalSignalCoordBase(llvm::Value* base);
-  [[nodiscard]] auto GetLocalSignalCoordBase() const -> llvm::Value*;
   [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
   void SetSpecSlotInfo(const SpecSlotInfo* info);
   [[nodiscard]] auto GetSpecSlotInfo() const -> const SpecSlotInfo* {
@@ -615,8 +612,8 @@ class Context {
   void EmitProcessStateSetup(llvm::Value* state_arg);
 
   // Load realized instance binding from the frame header for shared bodies.
-  // Loads instance pointer, then derives storage base, instance_id, and
-  // local_signal_coord_base from the RuntimeInstance object.
+  // Loads instance pointer, then derives storage base and instance_id
+  // from the RuntimeInstance object.
   // Called after EmitProcessStateSetup by shared body generation only.
   void EmitSharedBodyBindingSetup(llvm::Value* state_arg);
 
@@ -629,7 +626,6 @@ class Context {
   auto EmitLoadInstancePtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadInstanceInlineBase(llvm::Value* instance_ptr) -> llvm::Value*;
   auto EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value*;
-  auto EmitLoadLocalSignalCoordBase(llvm::Value* instance_ptr) -> llvm::Value*;
   void EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value);
   auto EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value*;
 
@@ -814,8 +810,7 @@ class Context {
   // Build LLVM function type from MIR function signature.
   // Package-scoped: (DesignState*, Engine*, args...)
   // Module-scoped:  (DesignState*, Engine*, this_ptr*,
-  // local_signal_coord_base_i32,
-  //                  instance_id_i32, args...)
+  //                  instance_ptr*, instance_id_i32, args...)
   // For managed returns: out_ptr* prepended, return type becomes void.
   [[nodiscard]] auto BuildUserFunctionType(
       const mir::FunctionSignature& sig, bool is_module_scoped)
@@ -1058,7 +1053,6 @@ class Context {
   llvm::Value* instance_ptr_ = nullptr;
   llvm::Value* this_ptr_ = nullptr;
   llvm::Value* dynamic_instance_id_ = nullptr;
-  llvm::Value* local_signal_coord_base_ = nullptr;
   const SpecSlotInfo* spec_slot_info_ = nullptr;
 
   // Current origin for error reporting

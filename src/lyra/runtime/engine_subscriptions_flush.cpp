@@ -13,6 +13,7 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/index_plan.hpp"
+#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/update_set.hpp"
@@ -21,11 +22,12 @@ namespace lyra::runtime {
 
 namespace {
 
-// Transitional legacy flat conversion for consumer-boundary mirror.
-// One search target for all local flattening in this file. Deleted in Cut 2.
+// Transitional flat conversion for comb fixpoint interop.
+// Uses observability.flat_coord_base (runtime-internal, not ABI).
+// Deleted when comb fixpoint reads local containers directly (Cut 3+).
 auto ToLegacyFlatLocalSignal(const RuntimeInstance& inst, LocalSignalId lid)
     -> uint32_t {
-  return inst.local_signal_coord_base + lid.value;
+  return inst.observability.flat_coord_base + lid.value;
 }
 
 }  // namespace
@@ -63,11 +65,13 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   if (target_handle.kind == SubKind::kEdge) {
     auto& esub = ResolveEdgeSub(
         SubRef{
-            .slot_id = target_handle.slot_id,
+            .signal_id = target_handle.slot_id,
             .index = target_handle.index,
             .kind = SubKind::kEdge,
             .edge_bucket = target_handle.edge_bucket,
-            .edge_group = target_handle.edge_group});
+            .is_local = target_handle.is_local,
+            .edge_group = target_handle.edge_group,
+            .instance_id = target_handle.instance_id});
     if (esub.cold_idx == UINT32_MAX) return;
     auto& ecold = edge_cold_pool_[esub.cold_idx];
     plan_ref = ecold.plan_ref;
@@ -75,8 +79,10 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
     epoch_ptr = &ecold.last_rebind_epoch;
     target_process_id = esub.process_id;
   } else {
-    auto& csub =
-        signal_subs_[target_handle.slot_id].container_subs[target_handle.index];
+    auto& csub = ResolveSubSlot(
+                     target_handle.slot_id, target_handle.is_local,
+                     target_handle.instance_id)
+                     .container_subs[target_handle.index];
     auto& ccold = container_cold_pool_[csub.cold_idx];
     plan_ref = ccold.plan_ref;
     mapping = ccold.rebind_mapping;
@@ -101,23 +107,30 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   auto plan_span = all_ops.subspan(plan_ref.start, plan_ref.count);
 
   bool should_deactivate = false;
+  // Resolve the owning instance for local signal reads in the plan.
+  const RuntimeInstance* plan_instance =
+      target_handle.is_local ? instances_[target_handle.instance_id] : nullptr;
   int64_t index_val = EvaluateIndexPlan(
-      design_state_base_, const_instances_, slot_meta_registry_, plan_span,
-      &should_deactivate);
+      design_state_base_, const_instances_, slot_meta_registry_, plan_instance,
+      plan_span, &should_deactivate);
 
   // Helper lambdas for active/inactive flag setting.
   auto set_inactive = [&]() {
     if (target_handle.kind == SubKind::kEdge) {
       ResolveEdgeSub(
           SubRef{
-              .slot_id = target_handle.slot_id,
+              .signal_id = target_handle.slot_id,
               .index = target_handle.index,
               .kind = SubKind::kEdge,
               .edge_bucket = target_handle.edge_bucket,
-              .edge_group = target_handle.edge_group})
+              .is_local = target_handle.is_local,
+              .edge_group = target_handle.edge_group,
+              .instance_id = target_handle.instance_id})
           .flags &= ~kSubActive;
     } else {
-      signal_subs_[target_handle.slot_id]
+      ResolveSubSlot(
+          target_handle.slot_id, target_handle.is_local,
+          target_handle.instance_id)
           .container_subs[target_handle.index]
           .flags &= ~kSubActive;
     }
@@ -130,12 +143,22 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
 
   // Container rebind path: recompute which element is observed.
   if (target_handle.kind == SubKind::kContainer) {
-    auto& csub =
-        signal_subs_[target_handle.slot_id].container_subs[target_handle.index];
+    auto& csub = ResolveSubSlot(
+                     target_handle.slot_id, target_handle.is_local,
+                     target_handle.instance_id)
+                     .container_subs[target_handle.index];
     auto& ccold = container_cold_pool_[csub.cold_idx];
 
-    const auto& cmeta = slot_meta_registry_.Get(ccold.container_slot_id);
-    const auto* cbase = ResolveSlotBase(cmeta, design_state_base_, instances_);
+    const uint8_t* cbase = nullptr;
+    if (ccold.container_signal.is_local) {
+      cbase = ResolveInstanceSlotBase(
+          *instances_[ccold.container_signal.instance_id],
+          LocalSignalId{ccold.container_signal.signal_id});
+    } else {
+      const auto& cmeta =
+          slot_meta_registry_.Get(ccold.container_signal.signal_id);
+      cbase = ResolveSlotBase(cmeta, design_state_base_, instances_);
+    }
     void* handle_ptr = nullptr;
     std::memcpy(&handle_ptr, cbase, sizeof(void*));
 
@@ -180,12 +203,29 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   auto new_bit_index = static_cast<uint8_t>(bit % 8);
 
   // Read current byte for cold snapshot and last_bit initialization.
-  const auto& meta = slot_meta_registry_.Get(target_handle.slot_id);
-  const auto* slot_base = ResolveSlotBase(meta, design_state_base_, instances_);
+  // R5: resolve storage via domain-aware path, wrapped in span.
+  std::span<const uint8_t> slot_storage;
+  if (target_handle.is_local) {
+    const auto& imeta =
+        instances_[target_handle.instance_id]
+            ->observability.layout->slot_meta[target_handle.slot_id];
+    slot_storage = std::span(
+        ResolveInstanceSlotBase(
+            *instances_[target_handle.instance_id],
+            LocalSignalId{target_handle.slot_id}),
+        imeta.total_bytes);
+  } else {
+    const auto& meta = slot_meta_registry_.Get(target_handle.slot_id);
+    slot_storage = std::span(
+        ResolveSlotBase(meta, design_state_base_, const_instances_),
+        meta.total_bytes);
+  }
 
   // Resolve old group to get the sub and its cold state.
-  auto& old_group =
-      GetEdgeGroup(target_handle.slot_id, target_handle.edge_group);
+  // R5: use ResolveSubSlot for domain-aware access.
+  auto& target_subs = ResolveSubSlot(
+      target_handle.slot_id, target_handle.is_local, target_handle.instance_id);
+  auto& old_group = target_subs.edge_groups[target_handle.edge_group];
   auto& old_vec = (target_handle.edge_bucket == EdgeBucket::kPosedge)
                       ? old_group.posedge_subs
                       : old_group.negedge_subs;
@@ -193,7 +233,7 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
 
   // Update cold snapshot for same-byte rebind detection.
   auto& ecold = edge_cold_pool_[esub.cold_idx];
-  uint8_t current_byte = slot_base[new_byte_offset];
+  uint8_t current_byte = slot_storage[new_byte_offset];
 
   // Check if the new observation point is in the same group.
   bool same_group =
@@ -213,28 +253,87 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   EdgeSub sub_copy = esub;
   sub_copy.flags |= kSubActive;
 
-  // Remove from old bucket via centralized helper.
-  RemoveEdgeSubFromBucket(
-      target_handle.slot_id, target_handle.edge_group,
-      target_handle.edge_bucket, target_handle.index);
+  // Remove from old bucket. R5: use target_subs for domain-aware access.
+  {
+    auto& rm_vec = (target_handle.edge_bucket == EdgeBucket::kPosedge)
+                       ? old_group.posedge_subs
+                       : old_group.negedge_subs;
+    uint32_t rm_last = static_cast<uint32_t>(rm_vec.size()) - 1;
+    if (target_handle.index != rm_last) {
+      rm_vec[target_handle.index] = rm_vec[rm_last];
+      auto& moved = rm_vec[target_handle.index];
+      process_states_[moved.process_id].sub_refs[moved.process_sub_idx].index =
+          target_handle.index;
+      auto& moved_ref =
+          process_states_[moved.process_id].sub_refs[moved.process_sub_idx];
+      moved_ref.edge_group = target_handle.edge_group;
+      moved_ref.edge_bucket = target_handle.edge_bucket;
+      if (moved.cold_idx != UINT32_MAX) {
+        auto& moved_cold = edge_cold_pool_[moved.cold_idx];
+        if (moved_cold.edge_target_id != UINT32_MAX) {
+          auto& moved_handle = edge_target_table_[moved_cold.edge_target_id];
+          moved_handle.index = target_handle.index;
+          moved_handle.edge_group = target_handle.edge_group;
+          moved_handle.edge_bucket = target_handle.edge_bucket;
+        }
+      }
+    }
+    rm_vec.pop_back();
+  }
 
-  // Find or create the target group.
-  // For the initial_last_bit of a new group, use the pre-change byte snapshot
-  // (from the cold pool) when available. This preserves transition detection:
-  // if the bit was 0 before and is now 1, the group starts with last_bit=0
-  // so the flush detects the 0->1 posedge.
+  // Find or create the target group in the domain-resolved container.
   uint8_t pre_change_bit = 0;
   if (new_byte_offset == old_group.byte_offset && ecold.has_edge_last_byte) {
     pre_change_bit = (ecold.edge_last_byte >> new_bit_index) & 1;
   } else {
     pre_change_bit = (current_byte >> new_bit_index) & 1;
   }
-  uint8_t new_group_idx = FindOrCreateEdgeGroup(
-      target_handle.slot_id, new_byte_offset, new_bit_index, pre_change_bit);
+  uint8_t new_group_idx = 0;
+  {
+    auto& groups = target_subs.edge_groups;
+    bool found = false;
+    for (uint32_t gi = 0; gi < groups.size(); ++gi) {
+      if (groups[gi].byte_offset == new_byte_offset &&
+          groups[gi].bit_index == new_bit_index) {
+        if (groups[gi].posedge_subs.empty() &&
+            groups[gi].negedge_subs.empty()) {
+          groups[gi].last_bit = pre_change_bit;
+        }
+        new_group_idx = static_cast<uint8_t>(gi);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      for (uint32_t gi = 0; gi < groups.size(); ++gi) {
+        if (groups[gi].posedge_subs.empty() &&
+            groups[gi].negedge_subs.empty()) {
+          groups[gi].byte_offset = new_byte_offset;
+          groups[gi].bit_index = new_bit_index;
+          groups[gi].last_bit = pre_change_bit;
+          new_group_idx = static_cast<uint8_t>(gi);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        new_group_idx = static_cast<uint8_t>(groups.size());
+        groups.push_back(
+            EdgeWatchGroup{
+                .byte_offset = new_byte_offset,
+                .bit_index = new_bit_index,
+                .last_bit = pre_change_bit,
+                .posedge_subs = {},
+                .negedge_subs = {}});
+      }
+    }
+  }
 
   // Insert into target group's matching polarity bucket.
-  auto& new_vec = EdgeSubVec(
-      target_handle.slot_id, new_group_idx, target_handle.edge_bucket);
+  auto& new_group = target_subs.edge_groups[new_group_idx];
+  auto& new_vec = (target_handle.edge_bucket == EdgeBucket::kPosedge)
+                      ? new_group.posedge_subs
+                      : new_group.negedge_subs;
   auto new_index = static_cast<uint32_t>(new_vec.size());
   new_vec.push_back(sub_copy);
 
@@ -255,14 +354,12 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
 
 void Engine::FlushContainerSub(
     uint32_t slot_id, ContainerSub& sub,
-    std::span<const uint8_t> design_state) {
+    std::span<const uint8_t> slot_storage) {
   auto& cold = container_cold_pool_[sub.cold_idx];
 
   // Chase handle from slot storage.
-  const auto& cmeta = slot_meta_registry_.Get(cold.container_slot_id);
-  const auto* cbase = ResolveSlotBase(cmeta, design_state_base_, instances_);
   void* handle_ptr = nullptr;
-  std::memcpy(&handle_ptr, cbase, sizeof(void*));
+  std::memcpy(&handle_ptr, slot_storage.data(), sizeof(void*));
 
   if (handle_ptr == nullptr) {
     sub.flags &= ~kSubActive;
@@ -315,14 +412,13 @@ void Engine::FlushContainerSub(
 }
 
 void Engine::FlushSlotRebindSubs(
-    std::vector<RebindWatcherSub>& subs, const SlotMeta& meta,
-    std::span<const uint8_t> design_state) {
+    std::vector<RebindWatcherSub>& subs,
+    std::span<const uint8_t> slot_storage) {
   if (subs.empty()) return;
 
-  const auto* slot_base = ResolveSlotBase(meta, design_state_base_, instances_);
   for (auto& sub : subs) {
     auto& wcold = watcher_cold_pool_[sub.cold_idx];
-    const auto* current = &slot_base[sub.byte_offset];
+    const auto* current = &slot_storage[sub.byte_offset];
     auto* snapshot = wcold.snapshot.data();
     if (std::memcmp(current, snapshot, sub.byte_size) != 0) {
       std::memcpy(snapshot, current, sub.byte_size);
@@ -349,19 +445,17 @@ void Engine::UpdateEdgeColdSnapshots(
 }
 
 void Engine::FlushSlotEdgeGroups(
-    uint32_t slot_id, std::vector<EdgeWatchGroup>& groups, const SlotMeta& meta,
-    const common::RangeSet& dirty_ranges, RangeFilterMode mode,
-    std::span<const uint8_t> design_state) {
+    uint32_t slot_id, std::vector<EdgeWatchGroup>& groups,
+    std::span<const uint8_t> slot_storage, const common::RangeSet& dirty_ranges,
+    RangeFilterMode mode) {
   const bool detailed = detailed_stats_enabled_;
-
-  const auto* slot_base = ResolveSlotBase(meta, design_state_base_, instances_);
   for (auto& group : groups) {
     if (mode == RangeFilterMode::kPartial &&
         !dirty_ranges.Overlaps(group.byte_offset, 1)) {
       continue;
     }
 
-    uint8_t current_byte = slot_base[group.byte_offset];
+    uint8_t current_byte = slot_storage[group.byte_offset];
     uint8_t current_bit = (current_byte >> group.bit_index) & 1;
 
     // Cold byte snapshot must be refreshed whenever the observed byte is
@@ -390,13 +484,11 @@ void Engine::FlushSlotEdgeGroups(
 }
 
 void Engine::FlushSlotChangeSubs(
-    uint32_t slot_id, std::vector<ChangeSub>& subs, const SlotMeta& meta,
-    const common::RangeSet& dirty_ranges, RangeFilterMode mode,
-    std::span<const uint8_t> design_state) {
+    uint32_t slot_id, std::vector<ChangeSub>& subs,
+    std::span<const uint8_t> slot_storage, const common::RangeSet& dirty_ranges,
+    RangeFilterMode mode) {
   if (subs.empty()) return;
   const bool detailed = detailed_stats_enabled_;
-
-  const auto* slot_base = ResolveSlotBase(meta, design_state_base_, instances_);
   for (auto& sub : subs) {
     if ((sub.flags & kSubActive) == 0) continue;
     if (mode == RangeFilterMode::kPartial &&
@@ -404,7 +496,7 @@ void Engine::FlushSlotChangeSubs(
       continue;
 
     if (detailed) ++stats_.detailed.change_sub_checks;
-    const auto* current = &slot_base[sub.byte_offset];
+    const auto* current = &slot_storage[sub.byte_offset];
     uint8_t* snapshot = nullptr;
     if (sub.byte_size <= ChangeSub::kInlineSnapshotCap) {
       snapshot = sub.snapshot_inline.data();
@@ -425,48 +517,52 @@ void Engine::FlushSlotChangeSubs(
 
 void Engine::FlushSlotContainerSubs(
     uint32_t slot_id, std::vector<ContainerSub>& subs,
-    std::span<const uint8_t> design_state) {
+    std::span<const uint8_t> slot_storage) {
   if (subs.empty()) return;
 
   for (auto& sub : subs) {
-    FlushContainerSub(slot_id, sub, design_state);
+    FlushContainerSub(slot_id, sub, slot_storage);
   }
 }
 
 // Flush edge, change, and container subscriptions for one slot.
-// Rebind subscriptions are handled in the global rebind phase and
+// Rebind subscriptions are handled in the rebind phase and
 // must not be repeated here.
 void Engine::FlushDirtySlotPostRebind(
-    uint32_t slot_id, SlotSubscriptions& slot, const SlotMeta& meta,
-    std::span<const uint8_t> design_state) {
+    uint32_t slot_id, SlotSubscriptions& slot,
+    std::span<const uint8_t> slot_storage) {
   if (!slot.edge_groups.empty() || !slot.change_subs.empty()) {
     const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
     if (dirty_ranges.IsFullExtent()) {
       FlushSlotEdgeGroups(
-          slot_id, slot.edge_groups, meta, dirty_ranges, RangeFilterMode::kFull,
-          design_state);
+          slot_id, slot.edge_groups, slot_storage, dirty_ranges,
+          RangeFilterMode::kFull);
       FlushSlotChangeSubs(
-          slot_id, slot.change_subs, meta, dirty_ranges, RangeFilterMode::kFull,
-          design_state);
+          slot_id, slot.change_subs, slot_storage, dirty_ranges,
+          RangeFilterMode::kFull);
     } else if (!dirty_ranges.IsEmpty()) {
       FlushSlotEdgeGroups(
-          slot_id, slot.edge_groups, meta, dirty_ranges,
-          RangeFilterMode::kPartial, design_state);
+          slot_id, slot.edge_groups, slot_storage, dirty_ranges,
+          RangeFilterMode::kPartial);
       FlushSlotChangeSubs(
-          slot_id, slot.change_subs, meta, dirty_ranges,
-          RangeFilterMode::kPartial, design_state);
+          slot_id, slot.change_subs, slot_storage, dirty_ranges,
+          RangeFilterMode::kPartial);
     }
   }
 
-  FlushSlotContainerSubs(slot_id, slot.container_subs, design_state);
+  FlushSlotContainerSubs(slot_id, slot.container_subs, slot_storage);
 }
 
 void Engine::FlushSignalUpdates() {
   if (finished_) return;
-  // Local dirty marks were already mirrored to flat by the caller
-  // (FlushAndPropagateConnections) before the fixpoint seeded.
-  // This function only dispatches subscriptions.
+  // Dispatch global subscriptions.
   FlushGlobalSignalUpdates();
+  // R5: Also dispatch local subscriptions for signals that were dirtied
+  // by the fixpoint (connections, comb). The reverse mirror inside
+  // FlushLocalSignalUpdates imports flat dirty marks into local_updates.
+  for (auto* inst : instances_) {
+    FlushLocalSignalUpdates(*inst);
+  }
 }
 
 // R5: Domain-split flush entrypoints.
@@ -482,16 +578,16 @@ void Engine::FlushGlobalSignalUpdates() {
   ++flush_epoch_;
 
   const bool detailed = detailed_stats_enabled_;
-  std::span design_state(
-      static_cast<const uint8_t*>(design_state_base_),
-      slot_meta_registry_.MaxExtent());
 
   // Two-phase flush: rebinds globally first, then edge/change/container.
   for (uint32_t slot_id : newly_dirty) {
     auto& slot = signal_subs_[slot_id];
     if (slot.rebind_subs.empty()) continue;
     const auto& meta = slot_meta_registry_.Get(slot_id);
-    FlushSlotRebindSubs(slot.rebind_subs, meta, design_state);
+    auto slot_storage = std::span(
+        ResolveSlotBase(meta, design_state_base_, const_instances_),
+        meta.total_bytes);
+    FlushSlotRebindSubs(slot.rebind_subs, slot_storage);
   }
 
   for (uint32_t slot_id : newly_dirty) {
@@ -501,17 +597,34 @@ void Engine::FlushGlobalSignalUpdates() {
       continue;
     if (detailed) ++stats_.detailed.flush_dirty_slots;
     const auto& meta = slot_meta_registry_.Get(slot_id);
-    FlushDirtySlotPostRebind(slot_id, slot, meta, design_state);
+    auto slot_storage = std::span(
+        ResolveSlotBase(meta, design_state_base_, const_instances_),
+        meta.total_bytes);
+    FlushDirtySlotPostRebind(slot_id, slot, slot_storage);
   }
 }
 
 void Engine::FlushLocalSignalUpdates(RuntimeInstance& inst) {
-  // Transitional Cut 1: mirror per-instance local dirty signals into
-  // the flat update_set_ with full fidelity (ranges, kind, epoch).
-  // Deleted when subscriptions move to per-instance containers.
   auto& obs = inst.observability;
   if (obs.local_signal_count == 0) return;
 
+  // R5 transitional: import flat dirty marks into local_updates for
+  // instance-owned slots that were dirtied by flat callers (connections,
+  // comb fixpoint, NBA). This reverse mirror ensures local subscription
+  // dispatch sees all dirty signals. Removed when all dirty producers
+  // write to local containers directly.
+  for (uint32_t lid_val = 0; lid_val < obs.local_signal_count; ++lid_val) {
+    uint32_t flat = ToLegacyFlatLocalSignal(inst, LocalSignalId{lid_val});
+    if (update_set_.IsDeltaDirty(flat) &&
+        !obs.local_updates.IsDeltaDirty(LocalSignalId{lid_val})) {
+      obs.local_updates.MarkSlotDirty(LocalSignalId{lid_val});
+    }
+  }
+
+  if (obs.local_updates.DeltaDirtySignals().empty()) return;
+
+  // Mirror dirty marks into flat update_set_ for trace flush and
+  // RefreshInstalledSnapshots (still read flat). Removed in Cut 3+.
   for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
     uint32_t flat = ToLegacyFlatLocalSignal(inst, lid);
     const auto& ranges = obs.local_updates.DeltaRangesFor(lid);
@@ -527,6 +640,61 @@ void Engine::FlushLocalSignalUpdates(RuntimeInstance& inst) {
       update_set_.MarkDirtyRange(flat, r.offset, r.size, kind, epoch);
     }
   }
+
+  // Dispatch subscriptions for locally dirty instance-owned signals.
+  // Two-phase: rebinds first, then edge/change/container.
+
+  // Phase 1: rebind watchers.
+  for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
+    auto& slot = obs.local_signal_subs[lid.value];
+    if (slot.rebind_subs.empty()) continue;
+    const auto& imeta = obs.layout->slot_meta[lid.value];
+    auto slot_storage =
+        std::span(ResolveInstanceSlotBase(inst, lid), imeta.total_bytes);
+    FlushSlotRebindSubs(slot.rebind_subs, slot_storage);
+  }
+
+  // Phase 2: edge/change/container via native local flush.
+  for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
+    auto& slot = obs.local_signal_subs[lid.value];
+    if (slot.edge_groups.empty() && slot.change_subs.empty() &&
+        slot.container_subs.empty())
+      continue;
+    if (detailed_stats_enabled_) ++stats_.detailed.flush_dirty_slots;
+    FlushLocalDirtySlotPostRebind(inst, lid, slot);
+  }
+}
+
+void Engine::FlushLocalDirtySlotPostRebind(
+    RuntimeInstance& inst, LocalSignalId signal, SlotSubscriptions& slot) {
+  const auto& imeta = inst.observability.layout->slot_meta[signal.value];
+  auto slot_storage =
+      std::span(ResolveInstanceSlotBase(inst, signal), imeta.total_bytes);
+  // Use flat slot_id for EnqueueProcessWakeup trigger_slot parameter.
+  // This is cosmetic (only used for activation trace). Removed in Cut 3+.
+  uint32_t flat_for_trace = ToLegacyFlatLocalSignal(inst, signal);
+
+  if (!slot.edge_groups.empty() || !slot.change_subs.empty()) {
+    const auto& dirty_ranges =
+        inst.observability.local_updates.DeltaRangesFor(signal);
+    if (dirty_ranges.IsFullExtent()) {
+      FlushSlotEdgeGroups(
+          flat_for_trace, slot.edge_groups, slot_storage, dirty_ranges,
+          RangeFilterMode::kFull);
+      FlushSlotChangeSubs(
+          flat_for_trace, slot.change_subs, slot_storage, dirty_ranges,
+          RangeFilterMode::kFull);
+    } else if (!dirty_ranges.IsEmpty()) {
+      FlushSlotEdgeGroups(
+          flat_for_trace, slot.edge_groups, slot_storage, dirty_ranges,
+          RangeFilterMode::kPartial);
+      FlushSlotChangeSubs(
+          flat_for_trace, slot.change_subs, slot_storage, dirty_ranges,
+          RangeFilterMode::kPartial);
+    }
+  }
+
+  FlushSlotContainerSubs(flat_for_trace, slot.container_subs, slot_storage);
 }
 
 }  // namespace lyra::runtime

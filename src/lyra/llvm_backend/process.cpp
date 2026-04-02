@@ -1017,18 +1017,13 @@ void FillTriggerArray(
     auto* elem_ptr = builder.CreateConstGEP2_32(array_type, base_ptr, 0, i);
 
     // Write signal_id (field 0).
-    // WaitTriggerRecord.signal_id is still a flat slot id consumed by the
-    // existing trigger installation path (InstallTriggers). This is the
-    // last remaining flat-coord emission in codegen; changing it requires
-    // migrating the trigger installation format to typed coordinates.
+    // R5: local signals emit body-local LocalSignalId directly (no flat
+    // base addition). Global signals emit GlobalSignalId. The domain
+    // is recorded in the flags field (kTriggerLocalSignal).
     auto* signal_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 0);
     auto signal_expr = context.EmitSignalCoord(triggers[i].signal);
-    auto* flat_id = signal_expr.IsLocal()
-                        ? builder.CreateAdd(
-                              context.GetLocalSignalCoordBase(),
-                              signal_expr.Emit(builder), "trigger.flat_slot")
-                        : signal_expr.Emit(builder);
-    builder.CreateStore(flat_id, signal_ptr);
+    bool is_local_signal = signal_expr.IsLocal();
+    builder.CreateStore(signal_expr.Emit(builder), signal_ptr);
 
     // Write edge (field 1)
     auto* edge_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 1);
@@ -1071,9 +1066,12 @@ void FillTriggerArray(
       builder.CreateStore(
           llvm::ConstantInt::get(i8_ty, range.bit_index), bit_idx_ptr);
       auto* flags_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+      uint8_t trigger_flags = runtime::kTriggerInitiallyActive;
+      if (is_local_signal) {
+        trigger_flags |= runtime::kTriggerLocalSignal;
+      }
       builder.CreateStore(
-          llvm::ConstantInt::get(i8_ty, runtime::kTriggerInitiallyActive),
-          flags_ptr);
+          llvm::ConstantInt::get(i8_ty, trigger_flags), flags_ptr);
       auto* offset_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 5);
       builder.CreateStore(
           llvm::ConstantInt::get(i32_ty, range.byte_offset), offset_ptr);
@@ -1082,6 +1080,18 @@ void FillTriggerArray(
           llvm::ConstantInt::get(i32_ty, range.byte_size), size_ptr);
       auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
       builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
+    }
+
+    // R5: set kTriggerLocalSignal flag for local signals. This is done
+    // after the per-kind path because each path writes its own flags value.
+    // We OR in the local bit unconditionally via load-OR-store.
+    if (is_local_signal) {
+      auto* flags_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
+      auto* current = builder.CreateLoad(i8_ty, flags_ptr, "trigger.flags");
+      auto* with_local = builder.CreateOr(
+          current, llvm::ConstantInt::get(i8_ty, runtime::kTriggerLocalSignal),
+          "trigger.flags.local");
+      builder.CreateStore(with_local, flags_ptr);
     }
   }
 }
@@ -1151,9 +1161,13 @@ auto EmitLateBoundData(
         builder.CreateAlloca(plan_array_type, nullptr, "lb_plan_ops");
   }
 
+  // DepSignalRecord: {i32 signal_id, i8 flags, [3 x i8] padding}
+  auto* dep_record_type = llvm::StructType::get(
+      llvm_ctx, {i32_ty, i8_ty, llvm::ArrayType::get(i8_ty, 3)});
   llvm::Value* dep_slots_alloca = nullptr;
   if (total_dep_slots > 0) {
-    auto* dep_array_type = llvm::ArrayType::get(i32_ty, total_dep_slots);
+    auto* dep_array_type =
+        llvm::ArrayType::get(dep_record_type, total_dep_slots);
     dep_slots_alloca =
         builder.CreateAlloca(dep_array_type, nullptr, "lb_dep_slots");
   }
@@ -1218,9 +1232,8 @@ auto EmitLateBoundData(
     builder.CreateStore(
         llvm::ConstantInt::get(i32_ty, container_elem_stride), f8);
 
-    // Fill plan ops. Module-local slot IDs use dynamic signal identity
-    // (local_signal_coord_base + local_id) to stay topology-independent in
-    // shared bodies.
+    // Fill plan ops. Module-local reads emit body-local signal_id with
+    // kIndexPlanLocalSignal flag; runtime resolves via the instance.
     if (plan_ops_alloca != nullptr) {
       auto* plan_array_type =
           llvm::ArrayType::get(plan_op_type, total_plan_ops);
@@ -1239,29 +1252,27 @@ auto EmitLateBoundData(
         builder.CreateStore(llvm::ConstantInt::get(i8_ty, op.is_signed), pf2);
         auto* pf3 = builder.CreateStructGEP(plan_op_type, op_ptr, 3);
         builder.CreateStore(llvm::ConstantInt::get(i8_ty, op.byte_size), pf3);
-        // Resolve slot_id: module-local uses dynamic signal identity,
-        // design-global uses constant.
+        // Resolve slot_id: module-local emits body-local signal_id with
+        // kIndexPlanLocalSignal flag; design-global emits flat slot_id.
         auto* pf4 = builder.CreateStructGEP(plan_op_type, op_ptr, 4);
+        auto* pf6 = builder.CreateStructGEP(plan_op_type, op_ptr, 6);
         if (op.kind == runtime::IndexPlanOp::Kind::kReadSlot &&
             scoped_op.slot_scope == mir::ScopedSlotRef::Scope::kModuleLocal) {
-          // IndexPlanOp.slot_id is still a flat slot id consumed by the
-          // existing late-bound evaluation path (EvaluateIndexPlan).
           auto signal_expr = context.EmitSignalCoord(
               mir::SignalRef{
                   .scope = mir::SignalRef::Scope::kModuleLocal,
                   .id = op.slot_id});
-          auto* flat_id = builder.CreateAdd(
-              context.GetLocalSignalCoordBase(), signal_expr.Emit(builder),
-              "planop.flat_slot");
-          builder.CreateStore(flat_id, pf4);
+          builder.CreateStore(signal_expr.Emit(builder), pf4);
+          builder.CreateStore(
+              llvm::ConstantInt::get(i32_ty, runtime::kIndexPlanLocalSignal),
+              pf6);
         } else {
           builder.CreateStore(llvm::ConstantInt::get(i32_ty, op.slot_id), pf4);
+          builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), pf6);
         }
         auto* pf5 = builder.CreateStructGEP(plan_op_type, op_ptr, 5);
         builder.CreateStore(
             llvm::ConstantInt::get(i32_ty, op.byte_offset), pf5);
-        auto* pf6 = builder.CreateStructGEP(plan_op_type, op_ptr, 6);
-        builder.CreateStore(llvm::ConstantInt::get(i32_ty, op.padding), pf6);
         auto* pf7 = builder.CreateStructGEP(plan_op_type, op_ptr, 7);
         builder.CreateStore(
             llvm::ConstantInt::get(
@@ -1270,27 +1281,29 @@ auto EmitLateBoundData(
       }
     }
 
-    // Fill dep slots. Module-local refs use dynamic signal identity.
+    // Fill dep records. Each dep carries its own domain identity.
     if (dep_slots_alloca != nullptr) {
-      auto* dep_array_type = llvm::ArrayType::get(i32_ty, total_dep_slots);
+      auto* dep_array_type =
+          llvm::ArrayType::get(dep_record_type, total_dep_slots);
       for (uint32_t d = 0; d < lb.dep_slots.size(); ++d) {
         const auto& ref = lb.dep_slots[d];
-        auto signal_scope =
-            (ref.scope == mir::ScopedSlotRef::Scope::kModuleLocal)
-                ? mir::SignalRef::Scope::kModuleLocal
-                : mir::SignalRef::Scope::kDesignGlobal;
-        // dep_slots entries are still flat slot ids consumed by the
-        // existing late-bound rebind subscription path.
+        bool dep_is_local =
+            (ref.scope == mir::ScopedSlotRef::Scope::kModuleLocal);
+        auto signal_scope = dep_is_local ? mir::SignalRef::Scope::kModuleLocal
+                                         : mir::SignalRef::Scope::kDesignGlobal;
         auto signal_expr = context.EmitSignalCoord(
             mir::SignalRef{.scope = signal_scope, .id = ref.id});
-        auto* flat_id = signal_expr.IsLocal()
-                            ? builder.CreateAdd(
-                                  context.GetLocalSignalCoordBase(),
-                                  signal_expr.Emit(builder), "dep.flat_slot")
-                            : signal_expr.Emit(builder);
-        auto* slot_ptr = builder.CreateConstGEP2_32(
+        // R5: Emit body-local signal_id for local deps (no flattening).
+        // Global deps emit flat slot_id as before.
+        auto* signal_id = signal_expr.Emit(builder);
+        uint8_t flags = dep_is_local ? 0x01 : 0x00;  // kDepLocalSignal
+
+        auto* rec_ptr = builder.CreateConstGEP2_32(
             dep_array_type, dep_slots_alloca, 0, dep_offset + d);
-        builder.CreateStore(flat_id, slot_ptr);
+        auto* id_ptr = builder.CreateStructGEP(dep_record_type, rec_ptr, 0);
+        builder.CreateStore(signal_id, id_ptr);
+        auto* flags_ptr = builder.CreateStructGEP(dep_record_type, rec_ptr, 1);
+        builder.CreateStore(llvm::ConstantInt::get(i8_ty, flags), flags_ptr);
       }
     }
 
@@ -1792,12 +1805,12 @@ auto GenerateSharedProcessFunction(
   // Load realized instance binding from the frame header.
   // Module slots accessed via this_ptr + spec_slot_layout (stable offsets
   // are compile-time constants; unstable offsets loaded from header).
-  // Signal coordination via local_signal_coord_base + local_id.
+  // Signal coordination via typed identity (local signals are body-local).
   context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
   context.EmitSharedBodyBindingSetup(func->getArg(0));
 
   // Create activation-local managed slot storage (shadow allocas).
-  // Must be after slot addressing setup (this_ptr, local_signal_coord_base).
+  // Must be after slot addressing setup (this_ptr, instance binding).
   auto managed_storage = CreateManagedSlotStorage(activation_plan, context);
 
   // Resume dispatch (same logic as GenerateProcessFunction)
@@ -2672,12 +2685,11 @@ auto EmitMonitorSetupEpilogue(
   auto obs_fields = GetObserverContextFieldValues(context);
 
   // Call LyraMonitorRegister(engine, check_fn, design,
-  //                          this_ptr, instance_id, local_signal_coord_base,
-  //                          init_buf, size)
+  //                          this_ptr, instance_id, init_buf, size)
   builder.CreateCall(
       context.GetLyraMonitorRegister(),
       {engine_ptr, check_fn, design_ptr, obs_fields.this_ptr,
-       obs_fields.instance_id, obs_fields.local_signal_coord_base, init_buf,
+       obs_fields.instance_id, init_buf,
        llvm::ConstantInt::get(i32_ty, layout->total_size)});
 
   return {};
@@ -2787,8 +2799,6 @@ auto DefineMirFunction(
     auto* instance_arg = llvm_func->getArg(arg_offset + 3);
     instance_arg->setName("instance_ptr");
     context.SetInstancePointer(instance_arg);
-    context.SetLocalSignalCoordBase(
-        context.EmitLoadLocalSignalCoordBase(instance_arg));
 
     auto* instance_id_arg = llvm_func->getArg(arg_offset + 4);
     instance_id_arg->setName("instance_id");

@@ -8,6 +8,7 @@
 #include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/index_plan.hpp"
+#include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::runtime {
@@ -59,14 +60,28 @@ enum class EdgeBucket : uint8_t {
 // grouped edge storage: signal_subs_[slot_id].edge_groups[edge_group]
 //   .posedge_subs or .negedge_subs (selected by edge_bucket) [index].
 struct SubRef {
-  uint32_t slot_id = 0;
+  uint32_t signal_id = 0;  // local_signal_id or global_signal_id
   uint32_t index = 0;
   SubKind kind = SubKind::kEdge;
   EdgeBucket edge_bucket = EdgeBucket::kPosedge;  // polarity (kEdge only)
-  uint16_t padding = 0;
+  bool is_local = false;
+  uint8_t padding = 0;
   uint32_t edge_group = 0;  // group index (kEdge only)
+  uint32_t instance_id = 0;
+
+  // R5: Typed accessors. Use these instead of raw signal_id.
+  [[nodiscard]] auto LocalSignal() const -> LocalSignalId {
+    return LocalSignalId{signal_id};
+  }
+  [[nodiscard]] auto GlobalSignal() const -> GlobalSignalId {
+    return GlobalSignalId{signal_id};
+  }
+  [[nodiscard]] auto AsLocalRef() const -> LocalSignalRef {
+    return LocalSignalRef{
+        .instance_id = instance_id, .signal = LocalSignalId{signal_id}};
+  }
 };
-static_assert(sizeof(SubRef) == 16);
+static_assert(sizeof(SubRef) == 20);
 
 // Stable indirection handle for rebind targets.
 // Stored in edge_target_table_, updated on swap-and-pop.
@@ -74,9 +89,11 @@ struct EdgeTargetHandle {
   uint32_t slot_id = 0;
   SubKind kind = SubKind::kEdge;  // kEdge or kContainer
   EdgeBucket edge_bucket = EdgeBucket::kPosedge;
-  uint16_t padding = 0;
+  bool is_local = false;
+  uint8_t padding = 0;
   uint32_t edge_group = 0;
   uint32_t index = 0;
+  uint32_t instance_id = 0;  // R5: for local subs
 };
 
 // Cold state for EdgeSub rebind targets. Lives in edge_cold_pool_, indexed
@@ -112,7 +129,7 @@ struct WatcherCold {
 // by ContainerSub.cold_idx. Always allocated (holds container runtime state
 // and optional rebind target metadata).
 struct ContainerCold {
-  uint32_t container_slot_id = UINT32_MAX;
+  StoredSignalRef container_signal;
   uint32_t container_elem_stride = 0;
   int64_t container_sv_index = 0;
   uint64_t container_epoch = 0;

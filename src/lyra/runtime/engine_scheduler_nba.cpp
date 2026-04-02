@@ -6,6 +6,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 
 namespace lyra::runtime {
@@ -40,7 +41,7 @@ void ValidateSlotRootPointer(
 
 void Engine::ScheduleNba(
     void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
-    const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id) {
+    const void* mask_ptr, uint32_t byte_size, NbaNotifySignal notify_signal) {
   ++stats_.core.nba_entries;
 
   if (write_ptr == nullptr || notify_base_ptr == nullptr ||
@@ -55,14 +56,18 @@ void Engine::ScheduleNba(
     return;
   }
 
-  ValidateSlotRootPointer(
-      notify_base_ptr, notify_slot_id, slot_meta_registry_, design_state_base_,
-      const_instances_, "Engine::ScheduleNba");
+  // TODO(hankhsu): R5: Update ValidateSlotRootPointer for typed identity.
+  // For now, extract flat slot_id for validation only.
+  if (auto* g = std::get_if<NbaNotifyGlobal>(&notify_signal)) {
+    ValidateSlotRootPointer(
+        notify_base_ptr, g->signal.value, slot_meta_registry_,
+        design_state_base_, const_instances_, "Engine::ScheduleNba");
+  }
 
   NbaEntry entry;
   entry.write_ptr = write_ptr;
   entry.notify_base_ptr = notify_base_ptr;
-  entry.notify_slot_id = notify_slot_id;
+  entry.notify_signal = notify_signal;
 
   if (mask_ptr != nullptr) {
     NbaMaskedMerge p;
@@ -83,7 +88,7 @@ void Engine::ScheduleNba(
 void Engine::ScheduleNbaCanonicalPacked(
     void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
     const void* unk_ptr, uint32_t region_byte_size,
-    uint32_t second_region_offset, uint32_t notify_slot_id) {
+    uint32_t second_region_offset, NbaNotifySignal notify_signal) {
   ++stats_.core.nba_entries;
 
   if (write_ptr == nullptr || notify_base_ptr == nullptr ||
@@ -93,14 +98,17 @@ void Engine::ScheduleNbaCanonicalPacked(
         "null pointer or zero region_byte_size");
   }
 
-  ValidateSlotRootPointer(
-      notify_base_ptr, notify_slot_id, slot_meta_registry_, design_state_base_,
-      const_instances_, "Engine::ScheduleNbaCanonicalPacked");
+  if (auto* g = std::get_if<NbaNotifyGlobal>(&notify_signal)) {
+    ValidateSlotRootPointer(
+        notify_base_ptr, g->signal.value, slot_meta_registry_,
+        design_state_base_, const_instances_,
+        "Engine::ScheduleNbaCanonicalPacked");
+  }
 
   NbaEntry entry;
   entry.write_ptr = write_ptr;
   entry.notify_base_ptr = notify_base_ptr;
-  entry.notify_slot_id = notify_slot_id;
+  entry.notify_signal = notify_signal;
 
   NbaCanonicalPackedTwoPlane p;
   p.region_byte_size = region_byte_size;
@@ -199,17 +207,34 @@ void Engine::ExecuteNbaRegion() {
 
     // Dirty-mark dispatch: single-range for full-overwrite and masked-merge,
     // precise two-range for canonical packed two-plane.
+    // R5: Typed NBA dirty dispatch. No reverse-engineering from flat slot_id.
+    auto nba_dirty = [&](uint32_t byte_off, uint32_t byte_size) {
+      std::visit(
+          [&](const auto& notify) {
+            using T = std::decay_t<decltype(notify)>;
+            if constexpr (std::is_same_v<T, NbaNotifyGlobal>) {
+              MarkDirtyRange(notify.signal.value, byte_off, byte_size);
+            } else {
+              auto* inst = instances_[notify.instance_id];
+              inst->observability.local_updates.MarkDirtyRange(
+                  notify.signal, byte_off, byte_size);
+              // Transitional: also mark flat for comb fixpoint interop.
+              uint32_t flat =
+                  inst->observability.flat_coord_base + notify.signal.value;
+              MarkDirtyRange(flat, byte_off, byte_size);
+            }
+          },
+          entry.notify_signal);
+    };
     if (std::holds_alternative<NbaCanonicalPackedTwoPlane>(entry.payload)) {
       if (result.val_changed) {
-        MarkDirtyRange(entry.notify_slot_id, diff, result.region_byte_size);
+        nba_dirty(diff, result.region_byte_size);
       }
       if (result.unk_changed) {
-        MarkDirtyRange(
-            entry.notify_slot_id, diff + result.second_region_offset,
-            result.region_byte_size);
+        nba_dirty(diff + result.second_region_offset, result.region_byte_size);
       }
     } else {
-      MarkDirtyRange(entry.notify_slot_id, diff, result.dirty_size);
+      nba_dirty(diff, result.dirty_size);
     }
   }
   nba_queue_.clear();

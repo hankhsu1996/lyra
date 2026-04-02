@@ -434,14 +434,6 @@ void Context::SetDynamicInstanceId(llvm::Value* id) {
   dynamic_instance_id_ = id;
 }
 
-void Context::SetLocalSignalCoordBase(llvm::Value* base) {
-  local_signal_coord_base_ = base;
-}
-
-auto Context::GetLocalSignalCoordBase() const -> llvm::Value* {
-  return local_signal_coord_base_;
-}
-
 auto Context::GetDynamicInstanceId() const -> llvm::Value* {
   return dynamic_instance_id_;
 }
@@ -512,17 +504,6 @@ auto Context::EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value* {
       llvm::Type::getInt32Ty(*llvm_context_), id_ptr, "instance_id");
 }
 
-auto Context::EmitLoadLocalSignalCoordBase(llvm::Value* instance_ptr)
-    -> llvm::Value* {
-  using IF = lyra::runtime::RuntimeInstanceField;
-  auto* ptr = builder_.CreateStructGEP(
-      GetRuntimeInstanceType(), instance_ptr,
-      static_cast<unsigned>(IF::kLocalSignalCoordBase),
-      "local_signal_coord_base_ptr");
-  return builder_.CreateLoad(
-      llvm::Type::getInt32Ty(*llvm_context_), ptr, "local_signal_coord_base");
-}
-
 void Context::EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value) {
   using F = lyra::runtime::ProcessFrameHeaderField;
   auto* ptr =
@@ -559,7 +540,6 @@ void Context::EmitSharedBodyBindingSetup(llvm::Value* state_arg) {
   SetInstancePointer(inst);
   SetThisPointer(EmitLoadInstanceInlineBase(inst));
   SetDynamicInstanceId(EmitLoadInstanceId(inst));
-  SetLocalSignalCoordBase(EmitLoadLocalSignalCoordBase(inst));
 }
 
 void Context::SetStatePointer(llvm::Value* state_ptr) {
@@ -641,7 +621,6 @@ auto Context::SaveExecutionContractState() -> ExecutionContractState {
       .instance_ptr = instance_ptr_,
       .this_ptr = this_ptr_,
       .dynamic_instance_id = dynamic_instance_id_,
-      .local_signal_coord_base = local_signal_coord_base_,
   };
 }
 
@@ -658,7 +637,6 @@ void Context::RestoreExecutionContractState(
   instance_ptr_ = state.instance_ptr;
   this_ptr_ = state.this_ptr;
   dynamic_instance_id_ = state.dynamic_instance_id;
-  local_signal_coord_base_ = state.local_signal_coord_base;
 }
 
 ExecutionContractScope::ExecutionContractScope(
@@ -674,7 +652,6 @@ ExecutionContractScope::ExecutionContractScope(
   ctx.SetCurrentProcessId(nullptr);
   ctx.SetThisPointer(nullptr);
   ctx.SetDynamicInstanceId(nullptr);
-  ctx.SetLocalSignalCoordBase(nullptr);
   // spec_slot_info is NOT reset: it is session-scoped (set by
   // CompileModuleSpecSession), not per-function.
 }

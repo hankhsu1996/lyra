@@ -1,6 +1,5 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
-#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 
 namespace lyra::runtime {
@@ -8,8 +7,10 @@ namespace lyra::runtime {
 auto Engine::ResolveSlotBytes(uint32_t slot_id) const -> const uint8_t* {
   const auto& meta = slot_meta_registry_.Get(slot_id);
   if (meta.domain == SlotStorageDomain::kDesignGlobal) {
-    return static_cast<const uint8_t*>(design_state_base_) +
-           meta.design_base_off;
+    auto base = std::span(
+        static_cast<const uint8_t*>(design_state_base_),
+        meta.design_base_off + meta.total_bytes);
+    return &base[meta.design_base_off];
   }
   if (meta.owner_instance_id >= const_instances_.size()) {
     throw common::InternalError(
@@ -27,7 +28,10 @@ auto Engine::ResolveSlotBytes(uint32_t slot_id) const -> const uint8_t* {
 auto Engine::ResolveSlotBytesMut(uint32_t slot_id) -> uint8_t* {
   const auto& meta = slot_meta_registry_.Get(slot_id);
   if (meta.domain == SlotStorageDomain::kDesignGlobal) {
-    return static_cast<uint8_t*>(design_state_base_) + meta.design_base_off;
+    auto base = std::span(
+        static_cast<uint8_t*>(design_state_base_),
+        meta.design_base_off + meta.total_bytes);
+    return &base[meta.design_base_off];
   }
   if (meta.owner_instance_id >= const_instances_.size()) {
     throw common::InternalError(
@@ -40,6 +44,23 @@ auto Engine::ResolveSlotBytesMut(uint32_t slot_id) -> uint8_t* {
   return ResolveInstanceStorageOffset(
       *instance, meta.instance_rel_off, meta.total_bytes,
       "Engine::ResolveSlotBytesMut");
+}
+
+auto Engine::ResolveGlobalSlotBase(GlobalSignalId signal) const
+    -> const uint8_t* {
+  const auto& meta = slot_meta_registry_.Get(signal.value);
+  auto base = std::span(
+      static_cast<const uint8_t*>(design_state_base_),
+      meta.design_base_off + meta.total_bytes);
+  return &base[meta.design_base_off];
+}
+
+auto Engine::ResolveGlobalSlotBaseMut(GlobalSignalId signal) -> uint8_t* {
+  const auto& meta = slot_meta_registry_.Get(signal.value);
+  auto base = std::span(
+      static_cast<uint8_t*>(design_state_base_),
+      meta.design_base_off + meta.total_bytes);
+  return &base[meta.design_base_off];
 }
 
 void Engine::ValidateInstanceOwnedSlotMeta() const {

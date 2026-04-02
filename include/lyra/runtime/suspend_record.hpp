@@ -4,10 +4,11 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "lyra/runtime/index_plan.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::runtime {
+
+struct IndexPlanOp;
 
 // Suspend tag - matches SuspendReason variant index for consistency.
 // Used in C ABI struct for both interpreter and LLVM backend communication.
@@ -29,6 +30,21 @@ enum class TriggerInstallKind : uint8_t {
 
 // Trigger flags: explicit per-trigger metadata written by codegen.
 inline constexpr uint8_t kTriggerInitiallyActive = 0x01;
+// R5: signal_id is a body-local LocalSignalId, not a flat design-global
+// slot_id. Runtime resolves via the process's owning instance.
+inline constexpr uint8_t kTriggerLocalSignal = 0x02;
+
+// R5: Per-dependency signal record for typed rebind dependencies.
+// Each dependency carries its own domain identity (local or global),
+// independent of the target trigger's domain.
+struct DepSignalRecord {
+  uint32_t signal_id = 0;
+  uint8_t flags = 0;
+  std::array<uint8_t, 3> padding = {};
+};
+inline constexpr uint8_t kDepLocalSignal = 0x01;
+static_assert(sizeof(DepSignalRecord) == 8);
+static_assert(alignof(DepSignalRecord) == 4);
 
 struct WaitTriggerRecord {
   uint32_t signal_id = 0;
@@ -163,7 +179,7 @@ struct SuspendRecord {
   uint32_t num_plan_ops = 0;
   IndexPlanOp* plan_ops_ptr = nullptr;
   uint32_t num_dep_slots = 0;
-  uint32_t* dep_slots_ptr = nullptr;
+  DepSignalRecord* dep_slots_ptr = nullptr;
   std::array<WaitTriggerRecord, kInlineTriggerCapacity> inline_triggers = {};
 };
 

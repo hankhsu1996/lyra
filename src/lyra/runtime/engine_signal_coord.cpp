@@ -6,15 +6,11 @@ namespace lyra::runtime {
 
 namespace {
 
-// Legacy flat slot-id conversion for global paths. R5 Cut 2 deletes this.
-auto ToFlatSlotId(GlobalSignalId signal) -> uint32_t {
-  return signal.value;
-}
-
-// Legacy flat conversion for local signals. Used ONLY by narrowly scoped
-// transitional bridges (NBA queue, comb capture). R5 Cut 2 deletes this.
+// Transitional flat conversion for comb fixpoint interop.
+// Uses observability.flat_coord_base (runtime-internal, not ABI).
+// Deleted when comb fixpoint reads local containers directly (Cut 3+).
 auto ToLegacyFlatLocalSignal(ObjectSignalRef signal) -> uint32_t {
-  return signal.instance->local_signal_coord_base + signal.local.value;
+  return signal.instance->observability.flat_coord_base + signal.local.value;
 }
 
 }  // namespace
@@ -56,24 +52,26 @@ void Engine::FeedCombCaptureRangeFromLocal(
 void Engine::ScheduleNba(
     ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size) {
-  // NBA queue still uses flat slot_id internally (transitional).
-  // The dirty notification will come through MarkDirty when the NBA commits.
+  NbaNotifySignal notify{NbaNotifyLocal{
+      .instance_id = notify_signal.instance->instance_id,
+      .signal = notify_signal.local}};
   ScheduleNba(
-      write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size,
-      ToLegacyFlatLocalSignal(notify_signal));
+      write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size, notify);
 }
 
 void Engine::ScheduleNbaCanonicalPacked(
     ObjectSignalRef notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
     uint32_t second_region_offset) {
-  // NBA queue still uses flat slot_id internally (transitional).
+  NbaNotifySignal notify{NbaNotifyLocal{
+      .instance_id = notify_signal.instance->instance_id,
+      .signal = notify_signal.local}};
   ScheduleNbaCanonicalPacked(
       write_ptr, notify_base_ptr, value_ptr, unk_ptr, region_byte_size,
-      second_region_offset, ToLegacyFlatLocalSignal(notify_signal));
+      second_region_offset, notify);
 }
 
-auto Engine::IsTraceObserved(ObjectSignalRef signal) const -> bool {
+auto Engine::IsTraceObserved(ObjectSignalRef signal) -> bool {
   auto& obs = signal.instance->observability;
   if (signal.local.value >= obs.trace_select.size()) return false;
   return obs.trace_select[signal.local.value] != 0;
@@ -82,33 +80,34 @@ auto Engine::IsTraceObserved(ObjectSignalRef signal) const -> bool {
 // --- Global paths (flat slot_id is the correct identity) ---
 
 void Engine::MarkDirty(GlobalSignalId signal) {
-  MarkSlotDirty(ToFlatSlotId(signal));
+  MarkSlotDirty(signal.value);
 }
 
 void Engine::MarkDirtyRange(
     GlobalSignalId signal, uint32_t byte_off, uint32_t byte_size) {
-  MarkDirtyRange(ToFlatSlotId(signal), byte_off, byte_size);
+  MarkDirtyRange(signal.value, byte_off, byte_size);
 }
 
 void Engine::ScheduleNba(
     GlobalSignalId notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* mask_ptr, uint32_t byte_size) {
+  NbaNotifySignal notify{NbaNotifyGlobal{notify_signal}};
   ScheduleNba(
-      write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size,
-      ToFlatSlotId(notify_signal));
+      write_ptr, notify_base_ptr, value_ptr, mask_ptr, byte_size, notify);
 }
 
 void Engine::ScheduleNbaCanonicalPacked(
     GlobalSignalId notify_signal, void* write_ptr, const void* notify_base_ptr,
     const void* value_ptr, const void* unk_ptr, uint32_t region_byte_size,
     uint32_t second_region_offset) {
+  NbaNotifySignal notify{NbaNotifyGlobal{notify_signal}};
   ScheduleNbaCanonicalPacked(
       write_ptr, notify_base_ptr, value_ptr, unk_ptr, region_byte_size,
-      second_region_offset, ToFlatSlotId(notify_signal));
+      second_region_offset, notify);
 }
 
 auto Engine::IsTraceObserved(GlobalSignalId signal) const -> bool {
-  return trace_selection_.IsSelected(ToFlatSlotId(signal));
+  return trace_selection_.IsSelected(signal.value);
 }
 
 // --- Dense coordination (legacy, pre-R5) ---
@@ -138,7 +137,7 @@ void Engine::AssignDenseCoordinationBases(
 
   uint32_t next_base = global_slot_count;
   for (uint32_t i = 0; i < mutable_instances.size(); ++i) {
-    mutable_instances[i]->local_signal_coord_base = next_base;
+    mutable_instances[i]->observability.flat_coord_base = next_base;
     next_base += instance_slot_counts[i];
   }
 
@@ -153,7 +152,7 @@ void Engine::AssignDenseCoordinationBases(
 
   std::vector<uint32_t> next_expected(mutable_instances.size());
   for (uint32_t i = 0; i < mutable_instances.size(); ++i) {
-    next_expected[i] = mutable_instances[i]->local_signal_coord_base;
+    next_expected[i] = mutable_instances[i]->observability.flat_coord_base;
   }
 
   for (uint32_t slot_id = 0; slot_id < total_slots; ++slot_id) {
@@ -176,7 +175,7 @@ void Engine::AssignDenseCoordinationBases(
               "instance {} slot ordering is not contiguous/local-id-ordered: "
               "expected internal slot {}, got {} (base={})",
               inst, next_expected[inst], slot_id,
-              mutable_instances[inst]->local_signal_coord_base));
+              mutable_instances[inst]->observability.flat_coord_base));
     }
     ++next_expected[inst];
   }

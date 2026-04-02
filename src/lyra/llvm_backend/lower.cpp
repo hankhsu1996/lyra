@@ -289,7 +289,7 @@ auto BuildParamPayloads(
 // Build the pure-data construction program from parallel topology arrays.
 // Pools path strings and param payloads; entries are in strict ModuleIndex
 // order. The runtime relies on this order for instance_id and flat
-// slot-base allocation (currently local_signal_coord_base).
+// slot-base allocation.
 auto BuildConstructionProgram(
     std::span<const uint32_t> instance_body_group, const Layout& layout,
     const mir::InstanceTable& instance_table,
@@ -1918,19 +1918,15 @@ auto CompileDesignProcesses(const LoweringInput& input)
       // range [base_slot, base_slot + slot_count) has a canonical body-local
       // signal id = (gsi - base_slot). This identity is determined by the
       // body's slot allocation in the design layout, which is fixed per
-      // specialization. The descriptor consumer validates that every id in
-      // [0, slot_count) is populated exactly once.
+      // specialization. The runtime consumer validates dense population.
       for (uint32_t i = 0; i < info.slot_count; ++i) {
         uint32_t gsi = base_slot + i;
-        uint32_t body_local_signal_id = gsi - base_slot;
-
         if (gsi >= layout->design.slots.size()) {
           throw common::InternalError(
               "CompileDesignProcesses",
               std::format(
                   "body {} slot {} (gsi {}) out of range (design slots {})",
-                  info.body_id.value, body_local_signal_id, gsi,
-                  layout->design.slots.size()));
+                  info.body_id.value, i, gsi, layout->design.slots.size()));
         }
 
         const ObservableOwnerSlotId owner =
@@ -1955,6 +1951,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
         uint32_t storage_offset =
             narrow_u64_to_u32(body_offset.value, "body-local byte offset");
 
+        uint32_t body_local_signal_id = gsi - base_slot;
         tmpl.entries.push_back(MakeObservableDescriptorEntry(
             storage_offset, name_off, refs, sf, domain, body_local_signal_id));
       }

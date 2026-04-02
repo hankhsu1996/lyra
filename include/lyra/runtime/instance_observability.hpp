@@ -74,6 +74,12 @@ struct RuntimeInstanceObservability {
   std::vector<SlotSubscriptions> local_signal_subs;
   std::vector<uint32_t> activation_gen;
 
+  // Transitional flat coordinate base for comb fixpoint interop.
+  // Maps local_signal_id -> flat_slot_id as (flat_coord_base + local_id).
+  // Runtime-internal only -- not part of the binary ABI or codegen contract.
+  // Deleted when comb fixpoint reads local containers directly (Cut 3+).
+  uint32_t flat_coord_base = 0;
+
   // Initialize all local vectors to local_signal_count.
   // Must be called after layout and local_signal_count are set.
   void Init();
@@ -85,5 +91,13 @@ struct RuntimeInstanceObservability {
 auto ComposeHierarchicalTraceName(
     const RuntimeInstance& inst, LocalSignalId local_signal,
     const BodyObservableLayout& layout) -> std::string;
+
+// R5: Object-local slot resolution for instance-owned signals.
+// The instance is the lookup root; LocalSignalId indexes into the
+// body's InstanceSlotMeta table. No flat slot_id conversion needed.
+[[nodiscard]] auto ResolveInstanceSlotBase(
+    const RuntimeInstance& inst, LocalSignalId signal) -> const uint8_t*;
+[[nodiscard]] auto ResolveInstanceSlotBaseMut(
+    RuntimeInstance& inst, LocalSignalId signal) -> uint8_t*;
 
 }  // namespace lyra::runtime

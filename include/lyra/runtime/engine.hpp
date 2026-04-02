@@ -208,30 +208,17 @@ class Engine {
   void DelayZero(ProcessHandle handle, ResumePoint resume);
 
   // Subscribe to signal edge. Process resumes when signal changes.
-  // Called by interpreter/codegen when process hits a Wait terminator.
-  // Returns the index of the created subscription in the slot's typed vector,
-  // or UINT32_MAX if subscription failed.
-  // initially_active: if false, subscription is created in inactive state.
+  // R5: Subscribe with typed signal identity. Dispatches once at the top
+  // boundary, then routes to domain-specific helpers. No `is_local` below.
   auto Subscribe(
-      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      ProcessHandle handle, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, bool initially_active = true) -> uint32_t;
-
-  // Subscribe with explicit observation byte range within the slot.
-  // Returns the index of the created subscription in the slot's typed vector,
-  // or UINT32_MAX if subscription failed.
-  // initially_active: if false, subscription is created in inactive state.
   auto Subscribe(
-      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      ProcessHandle handle, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
       uint8_t bit_index, bool initially_active = true) -> uint32_t;
-
-  // Subscribe to a container (dynamic array/queue) element edge trigger.
-  // Chases the handle from DesignState, validates magic, performs OOB check.
-  // initially_active: codegen's descriptor-time classification. If false,
-  // the subscription is created inactive and runtime skips validation. If
-  // true, runtime still validates handle/bounds and may downgrade to inactive.
   auto SubscribeContainerElement(
-      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      ProcessHandle handle, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
       bool initially_active = true) -> uint32_t;
 
@@ -244,7 +231,7 @@ class Engine {
       std::span<const WaitTriggerRecord> triggers,
       std::span<const LateBoundHeader> late_bound,
       std::span<const IndexPlanOp> plan_ops,
-      std::span<const uint32_t> dep_slots);
+      std::span<const DepSignalRecord> dep_records);
 
   // Create rebind subscriptions for a late-bound edge trigger. For each dep
   // slot, an AnyChange rebind node is created. When any dep changes, the plan
@@ -252,14 +239,14 @@ class Engine {
   // edge_target_id identifies the target in edge_target_table_.
   // target_kind must be kEdge or kContainer (kChange not supported).
   //
-  // Atomicity: either all dep_slot watchers are installed, or none are.
-  // Pre-validates capacity for all watchers before mutating any state.
-  // Validates target_slot and target_index against current dense storage.
+  // R5: Domain-specific. Global deps install into signal_subs_, local deps
+  // into instance observability. dep_slots values are global slot_ids or
+  // local signal_ids matching the target's domain.
   void SubscribeRebind(
-      ProcessHandle handle, uint32_t edge_target_id, SignalId target_slot,
+      ProcessHandle handle, uint32_t edge_target_id, SignalRef target_signal,
       SubKind target_kind, uint32_t target_index, uint8_t target_edge_group,
       EdgeBucket target_edge_bucket, std::span<const IndexPlanOp> plan,
-      BitTargetMapping mapping, std::span<const uint32_t> dep_slots);
+      BitTargetMapping mapping, std::span<const SignalRef> dep_signals);
 
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.
@@ -270,7 +257,7 @@ class Engine {
   // mask_ptr != nullptr: masked merge (per-byte mask).
   void ScheduleNba(
       void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
-      const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id);
+      const void* mask_ptr, uint32_t byte_size, NbaNotifySignal notify_signal);
 
   // Schedule a canonical two-plane packed narrow NBA write as one semantic
   // record. Writes region_byte_size bytes to write_ptr (value plane) and to
@@ -278,7 +265,7 @@ class Engine {
   void ScheduleNbaCanonicalPacked(
       void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
       const void* unk_ptr, uint32_t region_byte_size,
-      uint32_t second_region_offset, uint32_t notify_slot_id);
+      uint32_t second_region_offset, NbaNotifySignal notify_signal);
 
   // Register a strobe observer for the Postponed region.
   // Executes at end of time slot with final signal values.
@@ -397,7 +384,7 @@ class Engine {
 
   // Assign dense coordination bases on instances from slot meta.
   // Scans the slot meta registry to determine per-instance slot ranges
-  // and writes local_signal_coord_base on each instance. This makes the
+  // and writes observability.flat_coord_base on each instance. This makes the
   // engine the authority for dense coordination base assignment.
   // Must be called after InitSlotMeta and SetInstances.
   void AssignDenseCoordinationBases(
@@ -435,6 +422,12 @@ class Engine {
   // instance_rel_off.
   [[nodiscard]] auto ResolveSlotBytes(uint32_t slot_id) const -> const uint8_t*;
   [[nodiscard]] auto ResolveSlotBytesMut(uint32_t slot_id) -> uint8_t*;
+
+  // R5: Global slot resolution by GlobalSignalId.
+  [[nodiscard]] auto ResolveGlobalSlotBase(GlobalSignalId signal) const
+      -> const uint8_t*;
+  [[nodiscard]] auto ResolveGlobalSlotBaseMut(GlobalSignalId signal)
+      -> uint8_t*;
 
   // Release all string-typed slot handles. Called at shutdown, before
   // engine destruction. Uses engine-owned slot meta and slot resolution.
@@ -531,7 +524,7 @@ class Engine {
       GlobalSignalId notify_signal, void* write_ptr,
       const void* notify_base_ptr, const void* value_ptr, const void* unk_ptr,
       uint32_t region_byte_size, uint32_t second_region_offset);
-  [[nodiscard]] auto IsTraceObserved(ObjectSignalRef signal) const -> bool;
+  [[nodiscard]] static auto IsTraceObserved(ObjectSignalRef signal) -> bool;
   [[nodiscard]] auto IsTraceObserved(GlobalSignalId signal) const -> bool;
 
   [[nodiscard]] auto GetSlotMetaRegistry() const -> const SlotMetaRegistry& {
@@ -822,23 +815,52 @@ class Engine {
 
   // Typed swap-and-pop removal from dense vectors.
   void RemoveEdgeSub(const SubRef& ref);
-  void RemoveChangeSub(uint32_t slot_id, uint32_t index);
-  void RemoveRebindWatcherSub(uint32_t slot_id, uint32_t index);
-  void RemoveContainerSub(uint32_t slot_id, uint32_t index);
+  void RemoveChangeSub(const SubRef& ref);
+  void RemoveRebindWatcherSub(const SubRef& ref);
+  void RemoveContainerSub(const SubRef& ref);
 
-  // Focused subscribe helpers (called from Subscribe after validation).
-  auto SubscribeChange(
-      ProcessHandle handle, ResumePoint resume, SignalId signal,
-      uint32_t byte_offset, uint32_t byte_size, bool initially_active,
-      ProcessState& proc_state, const SlotMeta& meta,
-      std::span<const uint8_t> design_state, SlotSubscriptions& slot)
-      -> uint32_t;
-  auto SubscribeEdge(
-      ProcessHandle handle, ResumePoint resume, SignalId signal,
+  // R5: Domain-split subscribe helpers. Top boundary dispatches once
+  // via std::visit on SignalRef, then routes to one of these.
+  auto SubscribeGlobalEdge(
+      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
-      uint8_t bit_index, bool initially_active, ProcessState& proc_state,
-      const SlotMeta& meta, std::span<const uint8_t> design_state,
-      SlotSubscriptions& slot) -> uint32_t;
+      uint8_t bit_index, bool initially_active) -> uint32_t;
+  auto SubscribeLocalEdge(
+      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
+      uint8_t bit_index, bool initially_active) -> uint32_t;
+  auto SubscribeGlobalChange(
+      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
+      uint32_t byte_offset, uint32_t byte_size, bool initially_active)
+      -> uint32_t;
+  auto SubscribeLocalChange(
+      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      uint32_t byte_offset, uint32_t byte_size, bool initially_active)
+      -> uint32_t;
+  auto SubscribeGlobalContainerElement(
+      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
+      common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
+      bool initially_active) -> uint32_t;
+  auto SubscribeLocalContainerElement(
+      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
+      bool initially_active) -> uint32_t;
+  void ValidateRebindDepSignals(std::span<const SignalRef> dep_signals) const;
+  void InstallRebindDepWatchers(
+      ProcessHandle handle, uint32_t edge_target_id,
+      std::span<const SignalRef> dep_signals);
+  void SubscribeGlobalRebind(
+      ProcessHandle handle, uint32_t edge_target_id,
+      GlobalSignalId target_signal, SubKind target_kind, uint32_t target_index,
+      uint8_t target_edge_group, EdgeBucket target_edge_bucket,
+      std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
+      std::span<const SignalRef> dep_signals);
+  void SubscribeLocalRebind(
+      ProcessHandle handle, uint32_t edge_target_id,
+      LocalSignalRef target_signal, SubKind target_kind, uint32_t target_index,
+      uint8_t target_edge_group, EdgeBucket target_edge_bucket,
+      std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
+      std::span<const SignalRef> dep_signals);
 
   // Persistent wait-site installation
   void InstallWaitSite(
@@ -852,8 +874,8 @@ class Engine {
   // Per-dirty-slot flush: edge, change, and container dispatch.
   // Called after the global rebind phase completes.
   void FlushDirtySlotPostRebind(
-      uint32_t slot_id, SlotSubscriptions& slot, const SlotMeta& meta,
-      std::span<const uint8_t> design_state);
+      uint32_t slot_id, SlotSubscriptions& slot,
+      std::span<const uint8_t> slot_storage);
 
   // Activation-local dirty dedup for design-slot dirties only.
   // Called from MarkSlotDirty and MarkDirtyRange. Excludes
@@ -876,27 +898,37 @@ class Engine {
   void FlushGlobalSignalUpdates();
   void FlushLocalSignalUpdates(RuntimeInstance& inst);
 
-  // Per-kind flush helpers (called from FlushDirtySlot).
+  // R5: Resolve SlotSubscriptions for a sub reference (local or global).
+  auto ResolveSubSlot(const SubRef& ref) -> SlotSubscriptions&;
+  auto ResolveSubSlot(const SubRef& ref) const -> const SlotSubscriptions&;
+  auto ResolveSubSlot(uint32_t slot_id, bool is_local, uint32_t instance_id)
+      -> SlotSubscriptions&;
+
+  // Per-kind flush helpers. Callers resolve slot storage before calling.
   void FlushSlotRebindSubs(
-      std::vector<RebindWatcherSub>& subs, const SlotMeta& meta,
-      std::span<const uint8_t> design_state);
+      std::vector<RebindWatcherSub>& subs,
+      std::span<const uint8_t> slot_storage);
   void FlushSlotEdgeGroups(
       uint32_t slot_id, std::vector<EdgeWatchGroup>& groups,
-      const SlotMeta& meta, const common::RangeSet& dirty_ranges,
-      RangeFilterMode mode, std::span<const uint8_t> design_state);
+      std::span<const uint8_t> slot_storage,
+      const common::RangeSet& dirty_ranges, RangeFilterMode mode);
   void UpdateEdgeColdSnapshots(EdgeWatchGroup& group, uint8_t current_byte);
   void FlushSlotChangeSubs(
-      uint32_t slot_id, std::vector<ChangeSub>& subs, const SlotMeta& meta,
-      const common::RangeSet& dirty_ranges, RangeFilterMode mode,
-      std::span<const uint8_t> design_state);
+      uint32_t slot_id, std::vector<ChangeSub>& subs,
+      std::span<const uint8_t> slot_storage,
+      const common::RangeSet& dirty_ranges, RangeFilterMode mode);
   void FlushSlotContainerSubs(
       uint32_t slot_id, std::vector<ContainerSub>& subs,
-      std::span<const uint8_t> design_state);
+      std::span<const uint8_t> slot_storage);
 
   // Single container sub flush.
   void FlushContainerSub(
       uint32_t slot_id, ContainerSub& sub,
-      std::span<const uint8_t> design_state);
+      std::span<const uint8_t> slot_storage);
+
+  // R5: Native local dirty-slot flush (no synthetic SlotMeta).
+  void FlushLocalDirtySlotPostRebind(
+      RuntimeInstance& inst, LocalSignalId signal, SlotSubscriptions& slot);
 
   // Deduplicated wakeup enqueue: push to next_delta_queue_ if not already
   // enqueued. Shared by edge, change, and container flush paths.
@@ -1161,6 +1193,10 @@ class Engine {
   // Per-slot selection mask for producer-side trace filtering.
   // Initialized alongside trace_signal_meta_ in InitTraceSignalMeta().
   TraceSelectionRegistry trace_selection_;
+
+  // R5: Process-to-instance mapping. Indexed by process_id, gives the
+  // owning instance_id for module processes. 0 for connection/init processes.
+  std::vector<uint32_t> process_instance_map_;
 
   // R5: Per-body observable layouts (one per distinct shared body /
   // specialization). Keyed by body_key from InstanceMetadataBundle.

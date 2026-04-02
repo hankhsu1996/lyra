@@ -85,13 +85,13 @@ void HandleSuspendRecord(
           (suspend->plan_ops_ptr != nullptr)
               ? std::span(suspend->plan_ops_ptr, suspend->num_plan_ops)
               : std::span<const lyra::runtime::IndexPlanOp>{};
-      auto dep_slots =
+      auto dep_records =
           (suspend->dep_slots_ptr != nullptr)
               ? std::span(suspend->dep_slots_ptr, suspend->num_dep_slots)
-              : std::span<const uint32_t>{};
+              : std::span<const lyra::runtime::DepSignalRecord>{};
 
       eng.InstallTriggers(
-          handle, resume, triggers, late_bound, plan_ops, dep_slots);
+          handle, resume, triggers, late_bound, plan_ops, dep_records);
       break;
     }
 
@@ -228,9 +228,10 @@ extern "C" void LyraSuspendWaitWithLateBound(
 
   suspend->num_dep_slots = num_dep_slots;
   if (num_dep_slots > 0 && dep_slots != nullptr) {
-    suspend->dep_slots_ptr = new uint32_t[num_dep_slots];
+    suspend->dep_slots_ptr = new lyra::runtime::DepSignalRecord[num_dep_slots];
     std::memcpy(
-        suspend->dep_slots_ptr, dep_slots, num_dep_slots * sizeof(uint32_t));
+        suspend->dep_slots_ptr, dep_slots,
+        num_dep_slots * sizeof(lyra::runtime::DepSignalRecord));
   } else {
     suspend->dep_slots_ptr = nullptr;
   }
@@ -728,12 +729,11 @@ extern "C" auto LyraSystemCmd(void* engine_ptr, LyraStringHandle cmd_handle)
 
 extern "C" void LyraRegisterStrobe(
     void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, uint32_t local_signal_coord_base) {
+    void* this_ptr, uint32_t instance_id) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
       .instance_id = instance_id,
-      .local_signal_coord_base = local_signal_coord_base,
   };
   engine->RegisterStrobe(program, design_state, ctx);
 }
@@ -860,13 +860,12 @@ extern "C" void LyraReportTime() {
 
 extern "C" void LyraMonitorRegister(
     void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, uint32_t local_signal_coord_base,
-    const void* initial_prev, uint32_t size) {
+    void* this_ptr, uint32_t instance_id, const void* initial_prev,
+    uint32_t size) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
       .instance_id = instance_id,
-      .local_signal_coord_base = local_signal_coord_base,
   };
   engine->RegisterMonitor(program, design_state, ctx, initial_prev, size);
 }
