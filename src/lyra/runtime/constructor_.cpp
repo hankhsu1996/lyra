@@ -31,6 +31,7 @@ ConstructionResult::ConstructionResult(ConstructionResult&& other) noexcept
       num_connection(std::exchange(other.num_connection, 0)),
       instances(std::move(other.instances)),
       instance_bundles(std::move(other.instance_bundles)),
+      body_desc_storage(std::move(other.body_desc_storage)),
       process_meta(std::move(other.process_meta)),
       trigger_meta(std::move(other.trigger_meta)),
       slot_meta(std::move(other.slot_meta)),
@@ -50,6 +51,7 @@ auto ConstructionResult::operator=(ConstructionResult&& other) noexcept
     num_connection = std::exchange(other.num_connection, 0);
     instances = std::move(other.instances);
     instance_bundles = std::move(other.instance_bundles);
+    body_desc_storage = std::move(other.body_desc_storage);
     process_meta = std::move(other.process_meta);
     trigger_meta = std::move(other.trigger_meta);
     slot_meta = std::move(other.slot_meta);
