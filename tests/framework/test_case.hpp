@@ -52,6 +52,8 @@ struct TestCase {
   bool dump_specialization_map = false;  // Dump specialization grouping
   bool dump_repertoire = false;          // Dump generate repertoire observation
   bool dump_repertoire_desc = false;     // Dump repertoire descriptor
+  bool dump_dpi_header = false;          // Dump generated DPI-C header
+  bool dump_llvm_ir = false;             // Dump LLVM IR module
   bool disable_assertions = false;
   bool single_unit = false;
   std::vector<std::string> defines;

@@ -196,6 +196,7 @@ auto Context::ResolveDpiImport(SymbolId sym) const
       .symbol = sym,
       .c_name = dpi->c_name,
       .signature = BuildDpiSignature(*dpi),
+      .is_context = dpi->is_context,
   };
 }
 

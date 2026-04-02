@@ -7,7 +7,6 @@
 #include <format>
 #include <initializer_list>
 #include <optional>
-#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -316,11 +315,26 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
 
     ValidateKeys(
         node,
-        {"name", "description", "sv", "files", "defines", "plusargs",
-         "param_overrides", "pedantic", "trace_summary", "signal_trace",
-         "dump_slot_meta", "dump_specialization_map", "dump_repertoire",
-         "dump_repertoire_desc", "disable_assertions", "single_unit",
-         "dpi_sources", "expect"},
+        {"name",
+         "description",
+         "sv",
+         "files",
+         "defines",
+         "plusargs",
+         "param_overrides",
+         "pedantic",
+         "trace_summary",
+         "signal_trace",
+         "dump_slot_meta",
+         "dump_specialization_map",
+         "dump_repertoire",
+         "dump_repertoire_desc",
+         "dump_dpi_header",
+         "dump_llvm_ir",
+         "disable_assertions",
+         "single_unit",
+         "dpi_sources",
+         "expect"},
         case_context, path);
 
     // Single-file format: sv: |
@@ -402,6 +416,12 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
     // Dump repertoire descriptor (test-only)
     if (node["dump_repertoire_desc"]) {
       test_case.dump_repertoire_desc = node["dump_repertoire_desc"].as<bool>();
+    }
+    if (node["dump_dpi_header"]) {
+      test_case.dump_dpi_header = node["dump_dpi_header"].as<bool>();
+    }
+    if (node["dump_llvm_ir"]) {
+      test_case.dump_llvm_ir = node["dump_llvm_ir"].as<bool>();
     }
 
     // Disable assertions

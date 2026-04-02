@@ -263,6 +263,7 @@ void RegisterDpiImport(
       .return_type_id = dpi.return_type_id,
       .return_abi_type = dpi.return_dpi_type,
       .params = std::move(params),
+      .is_context = dpi.is_context,
   };
   if (!registry.Insert(std::move(info))) {
     throw common::InternalError(

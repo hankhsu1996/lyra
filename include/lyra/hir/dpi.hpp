@@ -45,6 +45,10 @@ struct DpiImportDecl {
   TypeId return_type_id;
   DpiAbiTypeClass return_dpi_type = DpiAbiTypeClass::kInvalid;
   std::vector<DpiParam> params;
+  // True for `import "DPI-C" context ...`.
+  // Records the hidden call-context requirement only. The hidden svScope
+  // parameter is not represented in the user-visible DPI signature fields.
+  bool is_context = false;
 };
 
 // Normalized DPI-C export declaration.

@@ -29,7 +29,8 @@ auto LowerPackage(
   DeclView decl_view{
       .design_places = &decls.design_places,
       .functions = &decls.functions,
-      .slots = &decls.slots};
+      .slots = &decls.slots,
+      .dpi_imports = &decls.dpi_imports};
   for (hir::FunctionId hir_func_id : package.functions) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
     mir::FunctionId mir_func_id = decls.functions.at(hir_func.symbol);

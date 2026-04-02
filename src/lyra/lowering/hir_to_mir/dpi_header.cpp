@@ -73,16 +73,25 @@ auto RenderParam(const mir::DpiParamDesc& p) -> std::string {
 }
 
 // Render a full C function prototype line.
-auto RenderPrototype(const std::string& c_name, const mir::DpiSignature& sig)
+// For context imports, prepends the hidden svScope parameter before user
+// params.
+auto RenderPrototype(
+    const std::string& c_name, const mir::DpiSignature& sig, bool is_context)
     -> std::string {
   std::string ret = DpiAbiTypeToCString(sig.result.abi_type);
   std::string params;
-  if (sig.params.empty()) {
+  if (sig.params.empty() && !is_context) {
     params = "void";
   } else {
+    bool first = true;
+    if (is_context) {
+      params += "svScope scope";
+      first = false;
+    }
     for (size_t i = 0; i < sig.params.size(); ++i) {
-      if (i > 0) params += ", ";
+      if (!first) params += ", ";
       params += RenderParam(sig.params[i]);
+      first = false;
     }
   }
   return std::format("{} {}({});", ret, c_name, params);
@@ -93,6 +102,7 @@ struct HeaderEntry {
   std::string c_name;
   mir::DpiSignature signature;
   bool is_export = false;
+  bool is_context = false;
 };
 
 }  // namespace
@@ -131,6 +141,7 @@ auto RenderDpiHeader(
         .c_name = info.c_name,
         .signature = std::move(sig),
         .is_export = false,
+        .is_context = info.is_context,
     });
   }
 
@@ -161,7 +172,7 @@ auto RenderDpiHeader(
     out += "/* Exported functions (callable from C) */\n";
     for (const auto& e : entries) {
       if (!e.is_export) continue;
-      out += RenderPrototype(e.c_name, e.signature);
+      out += RenderPrototype(e.c_name, e.signature, e.is_context);
       out += "\n";
     }
     out += "\n";
@@ -171,7 +182,7 @@ auto RenderDpiHeader(
     out += "/* Imported functions (implemented by C) */\n";
     for (const auto& e : entries) {
       if (e.is_export) continue;
-      out += RenderPrototype(e.c_name, e.signature);
+      out += RenderPrototype(e.c_name, e.signature, e.is_context);
       out += "\n";
     }
     out += "\n";

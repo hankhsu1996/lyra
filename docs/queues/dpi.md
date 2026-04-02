@@ -23,7 +23,7 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [x] D4 -- DPI export (package-scoped, scalar 2-state + real + string wrappers, header generation)
 - [x] D6a -- svdpi.h runtime library and linker surface
 - [x] D6b -- DPI scope registry and instance-bound export context
-- [ ] D6c -- Context import functions (svGetScope in import bodies)
+- [x] D6c -- Context import functions (svGetScope in import bodies)
 - [ ] D4a -- Module-scoped DPI export (instance-bound wrapper dispatch)
 - [ ] D4b -- 4-state scalar and packed by-pointer export wrapper marshaling
 - [ ] D4c -- Packed-vector DPI return types (import and export, indirect return modeling)
@@ -35,16 +35,6 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [ ] D7c -- DPI export tasks (external C invocation of time-consuming SV tasks)
 - [ ] D8a -- Open-array query and pointer surface
 - [ ] D8b -- Open-array packed/scalar element access
-
-## D6c: Context import functions (svGetScope in import bodies)
-
-Context imports are explicitly rejected at AST-to-HIR time. The DPIContext flag on imports is detected but gated. Inside a context import body, user C code should be able to call svGetScope() to retrieve the scope of the import call site.
-
-This item removes the context import rejection, threads instance identity through the import call boundary (codegen passes scope handle as implicit state), and ensures svGetScope() returns the correct scope during context import execution.
-
-Depends on D6b (scope registry and svGetScope implementation exist).
-
-Where to look: routine.cpp context import rejection, scope threading through import calls, svGetScope implementation from D6b.
 
 ## D4a: Module-scoped DPI export
 

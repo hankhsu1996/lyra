@@ -21,7 +21,6 @@
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/mir/dpi_verify.hpp"
 
@@ -225,8 +224,7 @@ auto GetSemanticWidth(TypeId sv_type, const TypeArena& types) -> uint32_t {
   return PackedBitWidth(type, types);
 }
 
-auto LowBitsMask(
-    llvm::IRBuilder<>& b, llvm::Type* backing_ty, uint32_t semantic_width)
+auto LowBitsMask(llvm::Type* backing_ty, uint32_t semantic_width)
     -> llvm::Value* {
   auto* int_ty = llvm::dyn_cast<llvm::IntegerType>(backing_ty);
   if (int_ty == nullptr) {
@@ -434,7 +432,7 @@ auto DecodeDpiLogicVecStorage(
     full_bval = InsertWord32(b, full_bval, bval_w, i);
   }
 
-  llvm::Value* mask = LowBitsMask(b, backing_ty, semantic_width);
+  llvm::Value* mask = LowBitsMask(backing_ty, semantic_width);
   llvm::Value* lyra_val =
       b.CreateAnd(b.CreateXor(full_aval, full_bval), mask, "dpi.dec.val");
   llvm::Value* lyra_unk = b.CreateAnd(full_bval, mask, "dpi.dec.unk");
@@ -469,8 +467,7 @@ auto BuildDpiBitVecStorage(
   }
 
   if (val_int_ty->getBitWidth() > semantic_width) {
-    llvm::Value* mask =
-        LowBitsMask(b, two_state_val->getType(), semantic_width);
+    llvm::Value* mask = LowBitsMask(two_state_val->getType(), semantic_width);
     two_state_val = b.CreateAnd(two_state_val, mask, "dpi.bv.mask");
   }
 
@@ -520,7 +517,7 @@ auto DecodeDpiBitVecStorage(
     accum = InsertWord32(b, accum, word, i);
   }
   if (backing_int_ty->getBitWidth() > semantic_width) {
-    llvm::Value* mask = LowBitsMask(b, backing_ty, semantic_width);
+    llvm::Value* mask = LowBitsMask(backing_ty, semantic_width);
     accum = b.CreateAnd(accum, mask, "dpi.bv.dec.mask");
   }
   return accum;
@@ -866,17 +863,17 @@ auto GetLlvmDpiStorageType(
   return GetLlvmScalarDpiType(ctx, abi_type);
 }
 
-auto GetOrDeclareDpiImport(
-    Context& context, const std::string& c_name, const mir::DpiSignature& sig)
-    -> llvm::Function* {
-  mir::ValidateDpiSignatureContract(sig, "GetOrDeclareDpiImport");
-
+auto BuildDpiImportFunctionType(
+    Context& context, const mir::DpiSignature& sig, bool is_context)
+    -> llvm::FunctionType* {
   auto& llvm_ctx = context.GetLlvmContext();
-  auto& module = context.GetModule();
   const auto& types = context.GetTypeArena();
 
   std::vector<llvm::Type*> param_types;
-  param_types.reserve(sig.params.size());
+  param_types.reserve(sig.params.size() + (is_context ? 1 : 0));
+  if (is_context) {
+    param_types.push_back(llvm::PointerType::getUnqual(llvm_ctx));
+  }
   for (const auto& p : sig.params) {
     if (p.passing == mir::DpiPassingMode::kByPointer) {
       param_types.push_back(llvm::PointerType::getUnqual(llvm_ctx));
@@ -887,20 +884,29 @@ auto GetOrDeclareDpiImport(
   }
 
   llvm::Type* ret_type = GetLlvmScalarDpiType(llvm_ctx, sig.result.abi_type);
-  auto* fn_type = llvm::FunctionType::get(ret_type, param_types, false);
+  return llvm::FunctionType::get(ret_type, param_types, false);
+}
+
+auto GetOrDeclareDpiImport(
+    Context& context, const std::string& c_name, const mir::DpiSignature& sig,
+    bool is_context) -> llvm::Function* {
+  mir::ValidateDpiSignatureContract(sig, "GetOrDeclareDpiImport");
+
+  auto& module = context.GetModule();
+  auto* fn_type = BuildDpiImportFunctionType(context, sig, is_context);
 
   if (auto* existing = module.getFunction(c_name)) {
     if (existing->getFunctionType() != fn_type) {
       throw common::InternalError(
           "GetOrDeclareDpiImport",
           std::format(
-              "DPI import '{}' already declared with mismatched type", c_name));
+              "existing declaration for '{}' has mismatched DPI ABI", c_name));
     }
     if (existing->getCallingConv() != llvm::CallingConv::C) {
       throw common::InternalError(
           "GetOrDeclareDpiImport",
           std::format(
-              "DPI import '{}' already declared with non-C calling convention",
+              "existing declaration for '{}' has non-C calling convention",
               c_name));
     }
     return existing;
@@ -912,6 +918,65 @@ auto GetOrDeclareDpiImport(
   return fn;
 }
 
+// Single source of truth for the caller's DPI scope at a context import
+// call site.
+// In Lyra runtime, RuntimeInstance* is the canonical svScope handle.
+// Module-scoped lowering already carries that exact pointer in instance_ptr.
+// All other contexts (package scope, compilation-unit scope) get null.
+auto ResolveDpiCallerScope(Context& context) -> llvm::Value* {
+  if (llvm::Value* inst = context.GetInstancePointer()) {
+    return inst;
+  }
+  auto* ptr_ty = llvm::PointerType::getUnqual(context.GetLlvmContext());
+  return llvm::ConstantPointerNull::get(ptr_ty);
+}
+
+// State for the push/call/pop region of a context import call.
+struct DpiContextCallState {
+  llvm::Value* caller_scope = nullptr;
+  llvm::Value* prev_scope = nullptr;
+};
+
+// Emit push: resolve caller scope, push it into runtime context,
+// prepend it to abi_args. Returns state for EndContextImportCall.
+//
+// Must remain infallible.
+// No type validation, no ABI classification, no temporary allocation logic.
+// Only: resolve caller scope, emit push call, prepend ABI arg.
+auto BeginContextImportCall(
+    Context& context, const mir::DpiImportRef& ref,
+    std::vector<llvm::Value*>& abi_args) -> DpiContextCallState {
+  DpiContextCallState st;
+  if (!ref.is_context) return st;
+
+  auto& builder = context.GetBuilder();
+
+  // Single source of truth: both ABI arg and runtime push use this value.
+  st.caller_scope = ResolveDpiCallerScope(context);
+
+  // Runtime query obligation: push caller scope into active context.
+  auto* push_fn = context.GetLyraPushCurrentDpiScope();
+  auto* push_call =
+      builder.CreateCall(push_fn, {st.caller_scope}, "dpi.prev.scope");
+  static_cast<llvm::CallInst*>(push_call)->setCallingConv(llvm::CallingConv::C);
+  st.prev_scope = push_call;
+
+  // C ABI obligation: prepend caller scope as hidden first parameter.
+  abi_args.push_back(st.caller_scope);
+
+  return st;
+}
+
+// Emit pop: restore previous scope after foreign call returns.
+void EndContextImportCall(Context& context, const DpiContextCallState& st) {
+  if (st.prev_scope == nullptr) return;
+
+  auto& builder = context.GetBuilder();
+  auto* pop_fn = context.GetLyraPopCurrentDpiScope();
+  auto* pop_call = builder.CreateCall(pop_fn, {st.prev_scope});
+  pop_call->setCallingConv(llvm::CallingConv::C);
+}
+
 auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
     -> Result<void> {
   const auto& ref = call.callee;
@@ -919,20 +984,36 @@ auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
   mir::ValidateDpiSignatureContract(sig, "LowerDpiImportCall");
   mir::ValidateDpiCallContract(sig, call.args, "LowerDpiImportCall");
 
-  llvm::Function* fn = GetOrDeclareDpiImport(context, ref.c_name, sig);
+  // Phase A: all fallible work completes before scope push.
+  llvm::Function* fn =
+      GetOrDeclareDpiImport(context, ref.c_name, sig, ref.is_context);
   auto& builder = context.GetBuilder();
 
-  // Phase A: prepare ABI arguments.
-  std::vector<llvm::Value*> abi_args;
+  std::vector<llvm::Value*> user_abi_args;
   std::vector<DpiArgLoweringState> arg_states(call.args.size());
-  abi_args.reserve(call.args.size());
+  user_abi_args.reserve(call.args.size());
 
-  auto prep_result = PrepareDpiCallArgs(context, call, abi_args, arg_states);
+  auto prep_result =
+      PrepareDpiCallArgs(context, call, user_abi_args, arg_states);
   if (!prep_result) return std::unexpected(prep_result.error());
+
+  // --- Non-fallible region: push -> call -> pop ---
+
+  // Context import prologue: push scope, prepend ABI arg.
+  std::vector<llvm::Value*> abi_args;
+  auto ctx_state = BeginContextImportCall(context, ref, abi_args);
+
+  // Append user args after optional scope arg.
+  abi_args.insert(abi_args.end(), user_abi_args.begin(), user_abi_args.end());
 
   // Phase B: emit foreign call.
   auto* call_inst = builder.CreateCall(fn, abi_args);
   call_inst->setCallingConv(llvm::CallingConv::C);
+
+  // Context import epilogue: pop scope.
+  EndContextImportCall(context, ctx_state);
+
+  // --- End non-fallible region ---
 
   // Phase C.1: writeback output/inout params.
   auto wb_result = CommitDpiOutputWritebacks(context, call, arg_states);

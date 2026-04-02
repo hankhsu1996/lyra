@@ -208,13 +208,7 @@ auto TryLowerDpiImport(
     return DpiLoweringResult::Rejected();
   }
 
-  // Reject context imports.
-  if (sub.flags.has(slang::ast::MethodFlags::DPIContext)) {
-    ctx->sink->Unsupported(
-        span, "DPI-C context import functions not yet supported",
-        UnsupportedCategory::kFeature);
-    return DpiLoweringResult::Rejected();
-  }
+  const bool is_context = sub.flags.has(slang::ast::MethodFlags::DPIContext);
 
   // Classify return type.
   const auto& ret_type = sub.getReturnType();
@@ -337,6 +331,7 @@ auto TryLowerDpiImport(
           .return_type_id = return_type_id,
           .return_dpi_type = *return_class,
           .params = std::move(params),
+          .is_context = is_context,
       });
 }
 

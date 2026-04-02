@@ -356,6 +356,8 @@ class Context {
   [[nodiscard]] auto GetLyraGetDpiExportCallContext() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFailMissingDpiExportCallContext()
       -> llvm::Function*;
+  [[nodiscard]] auto GetLyraPushCurrentDpiScope() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraPopCurrentDpiScope() -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -1007,6 +1009,8 @@ class Context {
   llvm::Function* lyra_system_cmd_ = nullptr;
   llvm::Function* lyra_get_dpi_export_call_context_ = nullptr;
   llvm::Function* lyra_fail_missing_dpi_export_call_context_ = nullptr;
+  llvm::Function* lyra_push_current_dpi_scope_ = nullptr;
+  llvm::Function* lyra_pop_current_dpi_scope_ = nullptr;
 
   // Maps PlaceRootKey to its LLVM alloca storage.
   // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root
