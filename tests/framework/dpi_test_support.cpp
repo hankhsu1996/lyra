@@ -1,7 +1,9 @@
 #include "tests/framework/dpi_test_support.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -23,6 +25,34 @@ auto GetSharedLibraryExtension() -> std::string {
 #endif
 }
 
+// Discover the vendored svdpi.h include directory from Bazel runfiles.
+// Vendored SystemVerilog standard headers live under third_party/systemverilog.
+// This helper resolves the svdpi.h include path within that boundary.
+// In runfiles: _main/third_party/systemverilog/svdpi.h.
+auto FindVendoredSvdpiIncludeDir() -> std::optional<std::filesystem::path> {
+  namespace fs = std::filesystem;
+  static constexpr auto kRelPath = "_main/third_party/systemverilog";
+
+  const char* test_srcdir = std::getenv("TEST_SRCDIR");
+  if (test_srcdir != nullptr) {
+    auto candidate = fs::path(test_srcdir) / kRelPath;
+    if (fs::exists(candidate / "svdpi.h")) {
+      return candidate;
+    }
+  }
+
+  try {
+    auto exe_path = fs::read_symlink("/proc/self/exe");
+    auto candidate = fs::path(exe_path.string() + ".runfiles") / kRelPath;
+    if (fs::exists(candidate / "svdpi.h")) {
+      return candidate;
+    }
+  } catch (const fs::filesystem_error&) {
+  }
+
+  return std::nullopt;
+}
+
 }  // namespace
 
 auto CompileDpiSources(
@@ -38,6 +68,13 @@ auto CompileDpiSources(
     return result;
   }
 
+  auto svdpi_dir = FindVendoredSvdpiIncludeDir();
+  if (!svdpi_dir.has_value()) {
+    result.error =
+        "Failed to locate vendored svdpi.h for DPI companion compilation";
+    return result;
+  }
+
   fs::create_directories(work_dir);
 
   auto ext = GetSharedLibraryExtension();
@@ -48,7 +85,12 @@ auto CompileDpiSources(
     out_path += ext;
 
     std::vector<std::string> args = {
-        "-shared", "-fPIC", "-o", out_path.string(), src_abs.string(),
+        "-shared",
+        "-fPIC",
+        "-o",
+        out_path.string(),
+        std::format("-I{}", svdpi_dir->string()),
+        src_abs.string(),
     };
 
     auto sub = RunSubprocess(toolchain->cc_path, args);
@@ -77,6 +119,13 @@ auto CompileDpiSourcesToObjects(
     return result;
   }
 
+  auto svdpi_dir = FindVendoredSvdpiIncludeDir();
+  if (!svdpi_dir.has_value()) {
+    result.error =
+        "Failed to locate vendored svdpi.h for DPI companion compilation";
+    return result;
+  }
+
   fs::create_directories(work_dir);
 
   for (const auto& src : dpi_sources) {
@@ -85,7 +134,12 @@ auto CompileDpiSourcesToObjects(
     out_path += ".o";
 
     std::vector<std::string> args = {
-        "-c", "-fPIC", "-o", out_path.string(), src_abs.string(),
+        "-c",
+        "-fPIC",
+        "-o",
+        out_path.string(),
+        std::format("-I{}", svdpi_dir->string()),
+        src_abs.string(),
     };
 
     auto sub = RunSubprocess(toolchain->cc_path, args);

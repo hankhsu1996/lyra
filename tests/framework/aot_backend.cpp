@@ -100,7 +100,7 @@ auto RunAotBackend(
     ld_path += lib_dirs[i].string();
   }
   const char* existing = std::getenv("LD_LIBRARY_PATH");
-  if (existing != nullptr && existing[0] != '\0') {
+  if (existing != nullptr && std::strlen(existing) > 0) {
     ld_path += ':';
     ld_path += existing;
   }

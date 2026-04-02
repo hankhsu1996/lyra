@@ -79,6 +79,7 @@ cc_library(
     deps = [
         ":common",
         ":semantic",
+        "//third_party/systemverilog:svdpi",
         "@abseil-cpp//absl/container:flat_hash_set",
     ],
     alwayslink = True,  # Ensure extern "C" symbols are kept for dynamic linking

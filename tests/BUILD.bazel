@@ -32,6 +32,7 @@ cc_test(
     ],
     data = [
         "suites.yaml",
+        "//third_party/systemverilog:svdpi.h",
     ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
     shard_count = 4,
     deps = [

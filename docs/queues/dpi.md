@@ -21,26 +21,20 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [x] D3b -- Wide packed multiword transport (> 64-bit vectors, parameters only)
 - [x] D3c -- `chandle` in internal callable ABI (user-function parameter/return, not DPI-specific)
 - [x] D4 -- DPI export (package-scoped, scalar 2-state + real + string wrappers, header generation)
-- [ ] D6a -- svdpi.h runtime library and linker surface
+- [x] D6a -- svdpi.h runtime library and linker surface
 - [ ] D6b -- DPI scope registry and instance-bound export context
 - [ ] D6c -- Context import functions (svGetScope in import bodies)
 - [ ] D4a -- Module-scoped DPI export (instance-bound wrapper dispatch)
 - [ ] D4b -- 4-state scalar and packed by-pointer export wrapper marshaling
 - [ ] D4c -- Packed-vector DPI return types (import and export, indirect return modeling)
 - [ ] D4d -- AOT/LLI export end-to-end integration (currently JIT-only tested)
+- [ ] D6d -- svdpi time query functions
+- [ ] D6e -- svGetCallerInfo import call-site metadata
 - [ ] D7a -- DPI import task suspension protocol
 - [ ] D7b -- DPI import task scheduler integration
 - [ ] D7c -- DPI export tasks (external C invocation of time-consuming SV tasks)
-
-## D6a: svdpi.h runtime library and linker surface
-
-The generated DPI header includes `<svdpi.h>`, but Lyra provides zero implementations of the standard functions declared in that header. Any user DPI code calling a svdpi.h function gets a linker error. This is a tool obligation, not optional convenience.
-
-This item establishes a Lyra-owned svdpi.h runtime library as a build target and wires it into the JIT/AOT/LLI link paths so it is automatically available. Stateless utility functions (version query, packed-array bit/part-select helpers, canonical size helpers) get working implementations. All scope-dependent and time-dependent functions are present as hard-error traps with clear diagnostics. No scope registry, no instance binding, no context threading.
-
-Prerequisite-free. Can land independently.
-
-Where to look: svdpi.h (slang `external/ieee1800/`), JIT symbol resolution in execution.cpp, AOT link command in driver, LLI --dlopen path.
+- [ ] D8a -- Open-array query and pointer surface
+- [ ] D8b -- Open-array packed/scalar element access
 
 ## D6b: DPI scope registry and instance-bound export context
 
@@ -128,4 +122,56 @@ Depends on D7b (import task suspension works) and D6b (scope registry for instan
 
 Where to look: design.cpp task rejection, export wrapper emission, scheduler integration from D7b.
 
-Open arrays (svOpenArrayHandle query/access APIs) are deferred. They are a large self-contained LRM surface unrelated to the scope/export/context unblock path. They belong in a later DPI completeness pass, not the current queue.
+## D6d: svdpi time query functions
+
+Three svdpi.h time query functions are trapped from D6a: `svGetTime`, `svGetTimeUnit`, `svGetTimePrecision`. These require a scope handle to determine the time unit/precision context, plus access to the current simulation time.
+
+This item replaces the time traps with working implementations. Defines what `scope == NULL` means in Lyra (simulation-level time unit), maps non-null scope to the correct time unit/precision context via the scope registry, and exposes current simulation time through the svdpi surface.
+
+Depends on D6b (scope registry must exist for scope-to-time-unit resolution).
+
+Where to look: runtime time model, scope registry from D6b, `svdpi_runtime.cpp` time trap section.
+
+## D6e: svGetCallerInfo import call-site metadata
+
+`svGetCallerInfo` is trapped from D6a. It returns the SV source file and line number of the import call site. This requires threading source-location metadata through DPI import call boundaries so imported C code can query it at runtime.
+
+This item threads call-site source location into the DPI import context and replaces the trap with a working implementation.
+
+Depends on D6b (import context infrastructure).
+
+Where to look: AST/HIR/MIR call-site metadata, DPI import lowering, `svdpi_runtime.cpp` caller-info trap.
+
+## D8a: Open-array query and pointer surface
+
+First open-array cut. Replaces traps for the introspection and pointer-access families (13 functions):
+
+- Query (7): `svLeft`, `svRight`, `svLow`, `svHigh`, `svIncrement`, `svSize`, `svDimensions`
+- Pointer access (6): `svGetArrayPtr`, `svSizeOfArray`, `svGetArrElemPtr`, `svGetArrElemPtr1`, `svGetArrElemPtr2`, `svGetArrElemPtr3`
+
+This is the foundational open-array step -- all data access helpers depend on the query/pointer infrastructure.
+
+Where to look: `svdpi_runtime.cpp` open-array trap section, open-array parameter passing in DPI ABI layer.
+
+## D8b: Open-array packed/scalar element access
+
+Replaces traps for the remaining 48 open-array data access functions:
+
+- Packed VecVal copy (16): `svPut{Bit,Logic}ArrElem{,1,2,3}VecVal`, `svGet{Bit,Logic}ArrElem{,1,2,3}VecVal`
+- Scalar element access (16): `svGet{Bit,Logic}ArrElem{,1,2,3}`, `svPut{Bit,Logic}ArrElem{,1,2,3}`
+- Legacy-named Vec32 entrypoints (16): `svPut{Bit,Logic}ArrElem{,1,2,3}Vec32`, `svGet{Bit,Logic}ArrElem{,1,2,3}Vec32`
+
+Depends on D8a (query/pointer infrastructure exists).
+
+Where to look: `svdpi_runtime.cpp` open-array trap sections, packed-array marshaling helpers from D6a.
+
+## Trapped svdpi.h functions (from D6a)
+
+D6a added all 99 svdpi.h symbols to the runtime. 26 have working implementations. The remaining 73 are hard-error traps that print a diagnostic and abort. Each trap names its owning queue item.
+
+- Scope (6, unblocked by D6b)
+- Time (3, unblocked by D6d)
+- Caller-info (1, unblocked by D6e)
+- Disable-state (2, unblocked by D7a)
+- Open-array query/pointer (13, unblocked by D8a)
+- Open-array data access/copy (48, unblocked by D8b)
