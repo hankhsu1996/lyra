@@ -164,21 +164,47 @@ auto GetDpiExportSpan(
   return ctx->SpanOf(GetSourceRange(sub));
 }
 
+// Walk up through transparent scopes and return the first non-transparent
+// ancestor. Generate blocks are transparent -- declarations inside them
+// belong to the enclosing module body or package, not to the generate
+// block itself.
+//
+// This is a general AST-to-HIR ownership rule. The transparent set
+// (GenerateBlock, GenerateBlockArray) follows from Lyra's compilation
+// model where generate scopes do not create ownership boundaries.
+//
+// The helper does not validate whether the returned ancestor is a valid
+// terminal for a particular declaration kind. Callers must check the
+// returned symbol's kind against their own terminal set.
+auto GetFirstNonTransparentAncestor(const slang::ast::Symbol& start)
+    -> const slang::ast::Symbol& {
+  const slang::ast::Symbol* current = &start;
+  while (true) {
+    switch (current->kind) {
+      case slang::ast::SymbolKind::GenerateBlock:
+      case slang::ast::SymbolKind::GenerateBlockArray:
+        current = &current->getParentScope()->asSymbol();
+        continue;
+      default:
+        return *current;
+    }
+  }
+}
+
 // Attach a DpiExportDecl to its owning package or module body container.
 void AttachDpiExportDecl(
-    const slang::ast::Symbol& parent, hir::DpiExportDecl decl,
+    const slang::ast::Symbol& owner, hir::DpiExportDecl decl,
     std::unordered_map<const slang::ast::Symbol*, size_t>& pkg_to_element_idx,
     std::unordered_map<const slang::ast::Symbol*, size_t>& scope_to_body_idx,
     std::vector<hir::DesignElement>& elements,
     std::vector<hir::ModuleBody>& module_bodies) {
-  if (auto it = pkg_to_element_idx.find(&parent);
+  if (auto it = pkg_to_element_idx.find(&owner);
       it != pkg_to_element_idx.end()) {
     auto& pkg = std::get<hir::Package>(elements[it->second]);
     pkg.dpi_exports.push_back(std::move(decl));
     return;
   }
-  if (auto it = scope_to_body_idx.find(&parent);
-      it != scope_to_body_idx.end()) {
+  if (auto it = scope_to_body_idx.find(&owner); it != scope_to_body_idx.end()) {
     module_bodies[it->second].dpi_exports.push_back(std::move(decl));
     return;
   }
@@ -186,7 +212,7 @@ void AttachDpiExportDecl(
       "AttachDpiExportDecl",
       std::format(
           "DPI export owner scope not mapped to HIR container: '{}'",
-          std::string(parent.name)));
+          std::string(owner.name)));
 }
 
 }  // namespace
@@ -804,8 +830,16 @@ auto LowerDesign(
     bool is_task = sub.subroutineKind == slang::ast::SubroutineKind::Task;
     bool is_context = sub.flags.has(slang::ast::MethodFlags::DPIContext);
 
-    const auto& parent = sub.getParentScope()->asSymbol();
-    bool is_module_scoped = parent.kind == slang::ast::SymbolKind::InstanceBody;
+    const auto& owner =
+        GetFirstNonTransparentAncestor(sub.getParentScope()->asSymbol());
+    if (owner.kind != slang::ast::SymbolKind::InstanceBody &&
+        owner.kind != slang::ast::SymbolKind::Package) {
+      throw common::InternalError(
+          "LowerDesign", std::format(
+                             "unexpected DPI export owner scope '{}' for '{}'",
+                             std::string(owner.name), std::string(sub.name)));
+    }
+    bool is_module_scoped = owner.kind == slang::ast::SymbolKind::InstanceBody;
 
     // Scope/kind gating: reject unsupported forms with diagnostics.
     if (is_task) {
@@ -850,8 +884,8 @@ auto LowerDesign(
     }
 
     AttachDpiExportDecl(
-        parent, std::move(decl), pkg_to_element_idx, scope_to_body_idx,
-        elements, module_bodies);
+        owner, std::move(decl), pkg_to_element_idx, scope_to_body_idx, elements,
+        module_bodies);
   }
 
   return DesignLoweringResult{
