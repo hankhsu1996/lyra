@@ -4,6 +4,8 @@
 #include <cstdlib>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 
 namespace {
 
@@ -55,7 +57,7 @@ extern "C" auto LyraGetDpiExportCallContextMut()
   return &g_context;
 }
 
-extern "C" [[noreturn]] void LyraFailMissingDpiExportCallContext() {
+extern "C" [[noreturn]] auto LyraFailMissingDpiExportCallContext() -> void {
   std::fputs(
       "fatal: DPI export function called without active Lyra simulation "
       "context\n",
@@ -63,7 +65,48 @@ extern "C" [[noreturn]] void LyraFailMissingDpiExportCallContext() {
   std::abort();
 }
 
-extern "C" svScope LyraPushCurrentDpiScope(svScope new_scope) {
+extern "C" void LyraResolvePackageExportBinding(
+    lyra::runtime::DpiResolvedPackageBinding* out) {
+  auto* ctx = LyraGetDpiExportCallContextMut();
+  if (ctx == nullptr) {
+    LyraFailMissingDpiExportCallContext();
+  }
+  out->design_state = ctx->design_state;
+  out->engine = ctx->engine;
+}
+
+// NOLINTBEGIN(cppcoreguidelines-pro-type-const-cast)
+
+extern "C" void LyraResolveModuleInstanceBinding(
+    lyra::runtime::DpiResolvedModuleBinding* out) {
+  auto* ctx = LyraGetDpiExportCallContextMut();
+  if (ctx == nullptr) {
+    LyraFailMissingDpiExportCallContext();
+  }
+  if (ctx->active_scope == nullptr) {
+    LyraFailMissingModuleExportScope();
+  }
+  auto* engine = static_cast<lyra::runtime::Engine*>(ctx->engine);
+  auto* inst = const_cast<lyra::runtime::RuntimeInstance*>(
+      engine->ValidateScopeHandle(ctx->active_scope));
+  out->design_state = ctx->design_state;
+  out->engine = ctx->engine;
+  out->this_ptr = inst->storage.inline_base;
+  out->instance_ptr = inst;
+  out->instance_id = inst->instance_id;
+}
+
+// NOLINTEND(cppcoreguidelines-pro-type-const-cast)
+
+extern "C" [[noreturn]] auto LyraFailMissingModuleExportScope() -> void {
+  std::fputs(
+      "fatal: module-scoped DPI export function called without active "
+      "instance scope (svSetScope required)\n",
+      stderr);
+  std::abort();
+}
+
+extern "C" auto LyraPushCurrentDpiScope(svScope new_scope) -> svScope {
   auto* ctx = LyraGetDpiExportCallContextMut();
   if (ctx == nullptr) {
     LyraFailMissingDpiExportCallContext();
@@ -73,7 +116,7 @@ extern "C" svScope LyraPushCurrentDpiScope(svScope new_scope) {
   return prev;
 }
 
-extern "C" void LyraPopCurrentDpiScope(svScope prev_scope) {
+extern "C" auto LyraPopCurrentDpiScope(svScope prev_scope) -> void {
   auto* ctx = LyraGetDpiExportCallContextMut();
   if (ctx == nullptr) {
     LyraFailMissingDpiExportCallContext();

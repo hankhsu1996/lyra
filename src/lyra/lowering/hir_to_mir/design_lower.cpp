@@ -14,7 +14,6 @@
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/module_body.hpp"
 #include "lyra/hir/package.hpp"
-#include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
 #include "lyra/lowering/hir_to_mir/design_internal.hpp"
@@ -30,9 +29,7 @@
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/module_body.hpp"
 #include "lyra/mir/package.hpp"
-#include "lyra/mir/place.hpp"
 #include "lyra/mir/placement.hpp"
-#include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -47,8 +44,8 @@ using common::ModuleSpecIdHash;
 // representative_module_index is the first instance in design order for this
 // spec. All members share the same ModuleDefId and behavioral fingerprint.
 struct MirSpecGroup {
-  common::ModuleSpecId spec_id;
-  uint32_t representative_module_index;
+  common::ModuleSpecId spec_id{};
+  uint32_t representative_module_index = 0;
   std::vector<uint32_t> member_module_indices;
 };
 
@@ -171,7 +168,7 @@ auto LowerDesign(
   // signature. Returns a diagnostic message if unsupported, nullopt if OK.
   // D4.4 supports: scalar 2-state by-value params/returns, real, shortreal,
   // string, chandle. Not yet supported: kLogicScalar, packed by-pointer.
-  auto UnsupportedByCurrentWrapperModel =
+  auto unsupported_by_current_wrapper_model =
       [](const mir::DpiSignature& sig) -> std::optional<std::string> {
     if (sig.result.abi_type == DpiAbiTypeClass::kLogicScalar) {
       return "4-state scalar return not yet supported in export wrappers";
@@ -192,51 +189,10 @@ auto LowerDesign(
     return std::nullopt;
   };
 
-  // Build deterministically ordered DPI export wrapper descriptors.
-  // Exports whose signatures are not yet supported by the current wrapper
-  // model are rejected with user diagnostics instead of being emitted.
-  std::vector<DesignDeclarations::ExportDiagnostic> wrapper_diagnostics;
+  // DPI export wrapper descriptors are built after Phase 2 (body lowering)
+  // because module-scoped exports need body-local function maps to resolve
+  // their target FunctionId.
   std::vector<mir::DpiExportWrapperDesc> dpi_export_wrappers;
-  {
-    std::vector<const DpiExportInfo*> sorted_exports;
-    sorted_exports.reserve(decls.dpi_exports.Size());
-    for (const auto& [_, info] : decls.dpi_exports.Entries()) {
-      sorted_exports.push_back(&info);
-    }
-    std::ranges::sort(sorted_exports, [](const auto* a, const auto* b) {
-      if (a->c_name != b->c_name) return a->c_name < b->c_name;
-      return a->symbol.value < b->symbol.value;
-    });
-    for (const auto* exp : sorted_exports) {
-      auto unsupported = UnsupportedByCurrentWrapperModel(exp->signature);
-      if (unsupported) {
-        wrapper_diagnostics.push_back(
-            DesignDeclarations::ExportDiagnostic{
-                .span = exp->span,
-                .message = std::format(
-                    "DPI-C export '{}': {}", exp->c_name, *unsupported),
-            });
-        continue;
-      }
-      dpi_export_wrappers.push_back(
-          mir::DpiExportWrapperDesc{
-              .symbol = exp->symbol,
-              .c_name = exp->c_name,
-              .signature = exp->signature,
-          });
-    }
-  }
-
-  // Surface wrapper-model diagnostics as user-facing errors.
-  if (!wrapper_diagnostics.empty()) {
-    const auto& first = wrapper_diagnostics[0];
-    auto diag = Diagnostic::Error(first.span, first.message);
-    for (size_t i = 1; i < wrapper_diagnostics.size(); ++i) {
-      diag = std::move(diag).WithNote(
-          wrapper_diagnostics[i].span, wrapper_diagnostics[i].message);
-    }
-    return std::unexpected(std::move(diag));
-  }
 
   // Phase 0: Lower package init processes into design arena.
   // Design-global origin storage for design-global MIR.
@@ -311,6 +267,9 @@ auto LowerDesign(
       spec_to_body;
   std::vector<std::vector<OriginEntry>> body_origins;
   body_origins.reserve(body_results.size());
+  // Retain body-local symbol-to-function maps for module-scoped DPI export
+  // target resolution. Keyed by ModuleBodyId.
+  std::unordered_map<uint32_t, SymbolToMirFunctionMap> body_function_maps;
 
   for (size_t g = 0; g < body_results.size(); ++g) {
     if (!body_results[g]) {
@@ -322,10 +281,127 @@ auto LowerDesign(
         static_cast<uint32_t>(result.module_bodies.size())};
     result.module_bodies.push_back(std::move(product.body));
     body_origins.push_back(std::move(product.origins));
+    body_function_maps[body_id.value] = std::move(product.symbol_to_function);
     spec_to_body[spec_groups[g].spec_id] = body_id;
   }
 
-  // Phase 2: Emit one mir::Module per HIR module instance and build placement.
+  // Build DPI export wrapper descriptors now that body-local function maps
+  // are available. Module-scoped exports need these maps to resolve their
+  // target FunctionId.
+  {
+    // Collect module-scoped export targets with multi-body collision
+    // detection. For each module-scoped export symbol, collect all
+    // (body_id, function_id) pairs across specialization groups.
+    struct ModuleExportResolution {
+      std::string c_name;
+      SourceSpan span;
+      std::vector<mir::ModuleExportCalleeKey> targets;
+    };
+    std::unordered_map<SymbolId, ModuleExportResolution, SymbolIdHash>
+        module_export_resolutions;
+    for (size_t g = 0; g < spec_groups.size(); ++g) {
+      uint32_t rep_idx = spec_groups[g].representative_module_index;
+      const hir::Module& rep_mod = *hir_modules[rep_idx];
+      const hir::ModuleBody& hir_body =
+          design.module_bodies[rep_mod.body_id.value];
+      mir::ModuleBodyId body_id{static_cast<uint32_t>(g)};
+      auto map_it = body_function_maps.find(body_id.value);
+      if (map_it == body_function_maps.end()) continue;
+      const auto& func_map = map_it->second;
+      for (const auto& exp : hir_body.dpi_exports) {
+        auto func_it = func_map.find(exp.symbol);
+        if (func_it == func_map.end()) continue;
+        auto& resolution = module_export_resolutions[exp.symbol];
+        if (resolution.c_name.empty()) {
+          resolution.c_name = exp.c_name;
+          resolution.span = exp.span;
+        }
+        resolution.targets.push_back(
+            mir::ModuleExportCalleeKey{
+                .body_id = body_id, .function_id = func_it->second});
+      }
+    }
+
+    std::vector<const DpiExportInfo*> sorted_exports;
+    sorted_exports.reserve(decls.dpi_exports.Size());
+    for (const auto& [_, info] : decls.dpi_exports.Entries()) {
+      sorted_exports.push_back(&info);
+    }
+    std::ranges::sort(sorted_exports, [](const auto* a, const auto* b) {
+      if (a->c_name != b->c_name) return a->c_name < b->c_name;
+      return a->symbol.value < b->symbol.value;
+    });
+    std::vector<DesignDeclarations::ExportDiagnostic> wrapper_diagnostics;
+    for (const auto* exp : sorted_exports) {
+      auto unsupported = unsupported_by_current_wrapper_model(exp->signature);
+      if (unsupported) {
+        wrapper_diagnostics.push_back(
+            DesignDeclarations::ExportDiagnostic{
+                .span = exp->span,
+                .message = std::format(
+                    "DPI-C export '{}': {}", exp->c_name, *unsupported),
+            });
+        continue;
+      }
+      mir::DpiExportTarget target{};
+      if (exp->is_module_scoped) {
+        target.scope_kind = mir::DpiExportScopeKind::kModule;
+        auto res_it = module_export_resolutions.find(exp->symbol);
+        if (res_it == module_export_resolutions.end() ||
+            res_it->second.targets.empty()) {
+          throw common::InternalError(
+              "LowerDesign",
+              std::format(
+                  "module-scoped DPI export '{}' has no resolved body-local "
+                  "target",
+                  exp->c_name));
+        }
+        const auto& resolution = res_it->second;
+        if (resolution.targets.size() > 1) {
+          wrapper_diagnostics.push_back(
+              DesignDeclarations::ExportDiagnostic{
+                  .span = exp->span,
+                  .message = std::format(
+                      "DPI-C export '{}': module-scoped export appears in {} "
+                      "distinct specialization bodies; multi-body callable "
+                      "dispatch not yet supported",
+                      exp->c_name, resolution.targets.size()),
+              });
+          continue;
+        }
+        target.module_target = resolution.targets[0];
+      } else {
+        target.scope_kind = mir::DpiExportScopeKind::kPackage;
+        auto it = decls.functions.find(exp->symbol);
+        if (it == decls.functions.end()) {
+          throw common::InternalError(
+              "LowerDesign",
+              std::format(
+                  "package-scoped DPI export '{}' has no resolved "
+                  "design-global FunctionId",
+                  exp->c_name));
+        }
+        target.package_symbol = exp->symbol;
+      }
+      dpi_export_wrappers.push_back(
+          mir::DpiExportWrapperDesc{
+              .c_name = exp->c_name,
+              .signature = exp->signature,
+              .target = target,
+          });
+    }
+    if (!wrapper_diagnostics.empty()) {
+      const auto& first = wrapper_diagnostics[0];
+      auto diag = Diagnostic::Error(first.span, first.message);
+      for (size_t i = 1; i < wrapper_diagnostics.size(); ++i) {
+        diag = std::move(diag).WithNote(
+            wrapper_diagnostics[i].span, wrapper_diagnostics[i].message);
+      }
+      return std::unexpected(std::move(diag));
+    }
+  }
+
+  // Phase 2b: Emit one mir::Module per HIR module instance and build placement.
   // Walk design elements in original order to preserve instance ordering.
   //
   // Placement computes its own running base counter from the authoritative

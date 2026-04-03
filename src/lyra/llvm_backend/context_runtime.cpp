@@ -1715,4 +1715,32 @@ auto Context::GetLyraPopCurrentDpiScope() -> llvm::Function* {
   return lyra_pop_current_dpi_scope_;
 }
 
+auto Context::GetLyraResolvePackageExportBinding() -> llvm::Function* {
+  if (lyra_resolve_package_export_binding_ == nullptr) {
+    // void LyraResolvePackageExportBinding(DpiResolvedPackageBinding* out)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(void_ty, {ptr_ty}, false);
+    lyra_resolve_package_export_binding_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage,
+        "LyraResolvePackageExportBinding", llvm_module_.get());
+    lyra_resolve_package_export_binding_->setCallingConv(llvm::CallingConv::C);
+  }
+  return lyra_resolve_package_export_binding_;
+}
+
+auto Context::GetLyraResolveModuleInstanceBinding() -> llvm::Function* {
+  if (lyra_resolve_module_instance_binding_ == nullptr) {
+    // void LyraResolveModuleInstanceBinding(DpiResolvedModuleBinding* out)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(void_ty, {ptr_ty}, false);
+    lyra_resolve_module_instance_binding_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage,
+        "LyraResolveModuleInstanceBinding", llvm_module_.get());
+    lyra_resolve_module_instance_binding_->setCallingConv(llvm::CallingConv::C);
+  }
+  return lyra_resolve_module_instance_binding_;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

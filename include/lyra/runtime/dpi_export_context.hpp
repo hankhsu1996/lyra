@@ -26,6 +26,23 @@ struct DpiExportCallContext {
   svScope active_scope = nullptr;
 };
 
+// Resolved binding for package-scoped DPI export wrappers.
+// Contains only simulation-lifetime base context.
+struct DpiResolvedPackageBinding {
+  void* design_state = nullptr;
+  void* engine = nullptr;
+};
+
+// Resolved binding for module-scoped DPI export wrappers (D4a).
+// Contains simulation-lifetime base context plus instance-binding triple.
+struct DpiResolvedModuleBinding {
+  void* design_state = nullptr;
+  void* engine = nullptr;
+  void* this_ptr = nullptr;
+  void* instance_ptr = nullptr;
+  uint32_t instance_id = 0;
+};
+
 // RAII guard: installs context on construction, removes on destruction.
 // Asserts no nested installation (single-threaded model).
 class ScopedDpiExportCallContext {
@@ -58,6 +75,24 @@ auto LyraGetDpiExportCallContextMut() -> lyra::runtime::DpiExportCallContext*;
 // simulation context. Called by LLVM-generated export wrappers when
 // LyraGetDpiExportCallContext returns nullptr.
 [[noreturn]] void LyraFailMissingDpiExportCallContext();
+
+// Resolve package-scoped export binding: design_state + engine only.
+// Called by LLVM-generated package export wrappers.
+// Writes result to caller-provided output pointer.
+void LyraResolvePackageExportBinding(
+    lyra::runtime::DpiResolvedPackageBinding* out);
+
+// Resolve module-scoped export instance binding: design_state + engine +
+// this_ptr + instance_ptr + instance_id.
+// Fails fatally if no active simulation context or no active scope.
+// Called by LLVM-generated module export wrappers (D4a).
+// Writes result to caller-provided output pointer.
+void LyraResolveModuleInstanceBinding(
+    lyra::runtime::DpiResolvedModuleBinding* out);
+
+// Deterministic trap when a module-scoped export wrapper is called without
+// an active instance scope (svSetScope not called).
+[[noreturn]] void LyraFailMissingModuleExportScope();
 
 // Compiler-internal current-DPI-scope push/pop.
 // Used by compiler-generated DPI call boundaries that must expose a

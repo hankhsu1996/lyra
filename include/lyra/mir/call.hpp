@@ -166,14 +166,47 @@ struct CallWriteback {
   int32_t arg_index = 0;  // Formal param index (for commit ordering)
 };
 
+// Scope classification for DPI export wrappers.
+enum class DpiExportScopeKind : uint8_t {
+  kPackage,
+  kModule,
+};
+
+// Stable cross-session identity for a module-scoped export callee.
+// Body-local FunctionIds are 0-based per body and can collide across bodies.
+// Pairing with ModuleBodyId makes the identity design-global and unique.
+struct ModuleExportCalleeKey {
+  ModuleBodyId body_id;
+  FunctionId function_id;
+  auto operator==(const ModuleExportCalleeKey&) const -> bool = default;
+};
+
+struct ModuleExportCalleeKeyHash {
+  auto operator()(const ModuleExportCalleeKey& k) const -> size_t {
+    return std::hash<uint64_t>{}(
+        (static_cast<uint64_t>(k.body_id.value) << 32) | k.function_id.value);
+  }
+};
+
+// Resolved export target for wrapper emission.
+// Package path uses package_symbol (design-global callable, resolved by
+// SymbolId through the design function registry).
+// Module path uses module_target (body_id + body-local function_id),
+// resolved through the module-scoped function accumulator after Phase 4.
+struct DpiExportTarget {
+  DpiExportScopeKind scope_kind = DpiExportScopeKind::kPackage;
+  SymbolId package_symbol;
+  ModuleExportCalleeKey module_target;
+};
+
 // DPI export wrapper descriptor for LLVM backend emission.
-// Binds a visible C name to the canonical DpiSignature and the internal
-// function's canonical symbol. Populated during MIR design lowering,
+// Binds a visible C name to the canonical DpiSignature and a resolved
+// export target. Populated during MIR design lowering,
 // deterministically sorted by c_name.
 struct DpiExportWrapperDesc {
-  SymbolId symbol;
   std::string c_name;
   DpiSignature signature;
+  DpiExportTarget target;
 };
 
 }  // namespace lyra::mir

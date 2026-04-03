@@ -24,7 +24,7 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [x] D6a -- svdpi.h runtime library and linker surface
 - [x] D6b -- DPI scope registry and instance-bound export context
 - [x] D6c -- Context import functions (svGetScope in import bodies)
-- [ ] D4a -- Module-scoped DPI export (instance-bound wrapper dispatch)
+- [x] D4a -- Module-scoped DPI export (instance-bound wrapper dispatch)
 - [ ] D4b -- 4-state scalar and packed by-pointer export wrapper marshaling
 - [ ] D4c -- Packed-vector DPI return types (import and export, indirect return modeling)
 - [ ] D4d -- AOT/LLI export end-to-end integration (currently JIT-only tested)
@@ -35,18 +35,6 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [ ] D7c -- DPI export tasks (external C invocation of time-consuming SV tasks)
 - [ ] D8a -- Open-array query and pointer surface
 - [ ] D8b -- Open-array packed/scalar element access
-
-## D4a: Module-scoped DPI export
-
-Module-scoped exports are explicitly rejected at AST-to-HIR time. The is_module_scoped flag exists on DpiExportDecl but is gated. Export wrappers currently call internal functions with only design and engine pointers. Module-scoped internal functions take three additional arguments: this_ptr, instance_ptr, and instance_id.
-
-This item removes the module-scoped export rejection, emits module-scoped export wrappers that resolve active scope to a RuntimeInstance and extract the three instance-binding arguments, and calls the internal function with the full module-scoped ABI.
-
-Depends on D6b (scope registry and instance-bound export context exist).
-
-Ibex dependency: module-scoped exports in ibex_simple_system.sv are hidden behind `ifndef LYRA`. Removing the guard requires this item.
-
-Where to look: design.cpp module-scoped export rejection, dpi_abi.cpp EmitDpiExportWrappers, process.cpp module-scoped function entry (this_ptr/instance_ptr/instance_id arguments).
 
 ## D4b: 4-state scalar and packed by-pointer export wrapper marshaling
 

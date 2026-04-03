@@ -1172,14 +1172,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
   }
 
-  // Phase 3b: Emit DPI export wrappers (after internal functions are defined).
-  if (input.dpi_export_wrappers != nullptr &&
-      !input.dpi_export_wrappers->empty()) {
-    auto export_result =
-        dpi::EmitDpiExportWrappers(*context, *input.dpi_export_wrappers);
-    if (!export_result) return std::unexpected(export_result.error());
-  }
-
   // Phase 4: Compile each specialization via CompileModuleSpecSession
   // Build body_id -> compiled process functions routing table
   std::unordered_map<uint32_t, std::vector<llvm::Function*>>
@@ -1187,6 +1179,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
   std::unordered_map<uint32_t, std::vector<std::optional<ProcessTriggerEntry>>>
       body_to_process_triggers;
   std::vector<WaitSiteEntry> all_wait_sites;
+  // Accumulate module-scoped export callees for wrapper emission (D4a).
+  // Keyed by (body_id, function_id) to avoid body-local FunctionId collisions.
+  // Captured after each CompileModuleSpecSession before user_functions_
+  // is overwritten by the next session.
+  std::unordered_map<
+      mir::ModuleExportCalleeKey, llvm::Function*,
+      mir::ModuleExportCalleeKeyHash>
+      module_export_callees;
 
   for (size_t si = 0; si < spec_inputs.size(); ++si) {
     const auto& spec_input = spec_inputs[si];
@@ -1194,6 +1194,24 @@ auto CompileDesignProcesses(const LoweringInput& input)
     auto product =
         CompileModuleSpecSession(*context, *input.design, spec_input);
     if (!product) return std::unexpected(product.error());
+
+    // Capture module export callees from this session's user_functions_
+    // before the next session overwrites them.
+    if (input.dpi_export_wrappers != nullptr) {
+      for (const auto& desc : *input.dpi_export_wrappers) {
+        if (desc.target.scope_kind != mir::DpiExportScopeKind::kModule) {
+          continue;
+        }
+        if (desc.target.module_target.body_id != product->body_id) {
+          continue;
+        }
+        auto func_id = desc.target.module_target.function_id;
+        if (context->HasUserFunction(func_id)) {
+          module_export_callees[desc.target.module_target] =
+              context->GetUserFunction(func_id);
+        }
+      }
+    }
 
     body_to_process_triggers.try_emplace(
         product->body_id.value, std::move(product->process_triggers));
@@ -1215,6 +1233,15 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   // Clear per-specialization context state after the compilation loop.
   context->SetSpecSlotInfo(nullptr);
+
+  // Phase 5: Emit DPI export wrappers (after all callables are declared).
+  // Both package and module export wrappers are emitted in one pass.
+  if (input.dpi_export_wrappers != nullptr &&
+      !input.dpi_export_wrappers->empty()) {
+    auto export_result = dpi::EmitDpiExportWrappers(
+        *context, *input.dpi_export_wrappers, module_export_callees);
+    if (!export_result) return std::unexpected(export_result.error());
+  }
 
   // ArenaScope in CompileModuleSpecSession restores design arena automatically.
 

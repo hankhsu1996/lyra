@@ -7,6 +7,7 @@
 // Separate from internal Lyra function ABI; never reuses BuildUserFunctionType.
 
 #include <string>
+#include <unordered_map>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/dpi_types.hpp"
@@ -52,14 +53,18 @@ auto GetOrDeclareDpiImport(
 auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
     -> Result<void>;
 
-// Emit public C-ABI wrapper functions for package-scoped DPI exports
-// supported by the current wrapper model (scalar 2-state by-value params
-// and returns, real, shortreal, string, chandle). Signatures requiring
-// 4-state scalar or packed by-pointer marshaling are filtered before
-// reaching this function.
-// Must be called after internal design functions are declared and defined.
+// Emit public C-ABI wrapper functions for DPI exports.
+// Package-scoped exports: direct call to design-global callable.
+// Module-scoped exports: instance binding via LyraResolveModuleInstanceBinding
+// + direct call to compile-time-known module callable.
+// Signatures requiring 4-state scalar or packed by-pointer marshaling are
+// filtered before reaching this function.
+// Must be called after all internal functions are declared and defined
+// (both package Phase 3 and module Phase 4).
 auto EmitDpiExportWrappers(
-    Context& context, const std::vector<mir::DpiExportWrapperDesc>& exports)
-    -> Result<void>;
+    Context& context, const std::vector<mir::DpiExportWrapperDesc>& exports,
+    const std::unordered_map<
+        mir::ModuleExportCalleeKey, llvm::Function*,
+        mir::ModuleExportCalleeKeyHash>& module_export_callees) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm::dpi
