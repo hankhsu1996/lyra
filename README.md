@@ -65,12 +65,11 @@ See [docs/philosophy.md](docs/philosophy.md) for design rationale.
 
 ## Limitations
 
-Lyra supports a focused subset of SystemVerilog. See [docs/limitations.md](docs/limitations.md).
+Lyra supports a focused subset of SystemVerilog. Feature gaps are tracked in [docs/queues/](docs/queues/) as operational working queues.
 
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) - component boundaries and data flow
 - [docs/cli-design.md](docs/cli-design.md) - CLI behavior and configuration
-- [docs/limitations.md](docs/limitations.md) - unsupported language features
 - [docs/design-principles.md](docs/design-principles.md) - implementation guidelines
 - [docs/philosophy.md](docs/philosophy.md) - product priorities and tradeoffs

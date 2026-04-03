@@ -23,7 +23,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `docs/module-hierarchy.md`         | Module hierarchy, port connections, realization     |
 | `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands         |
 | `docs/state-layout.md`             | Byte-level state layout, container semantics        |
-| `docs/limitations.md`              | Unsupported SystemVerilog features                  |
 | `docs/string-types.md`             | String type handling, slang interaction             |
 | `docs/error-handling.md`           | Error types, when to use each                       |
 | `docs/execution-modes.md`          | AOT vs JIT, shared pipeline, CLI semantics          |
