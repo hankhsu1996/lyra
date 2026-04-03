@@ -218,10 +218,6 @@ void Engine::ExecuteNbaRegion() {
               auto* inst = instances_[notify.instance_id];
               inst->observability.local_updates.MarkDirtyRange(
                   notify.signal, byte_off, byte_size);
-              // Transitional: also mark flat for comb fixpoint interop.
-              uint32_t flat =
-                  inst->observability.flat_coord_base + notify.signal.value;
-              MarkDirtyRange(flat, byte_off, byte_size);
             }
           },
           entry.notify_signal);

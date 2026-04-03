@@ -11,16 +11,10 @@ namespace lyra::trace {
 // Default summary sink for --trace compatibility output.
 //
 // Incrementally accumulates aggregate counters (per-event-kind totals and
-// per-slot breakdowns) and emits the __LYRA_TRACE__ format on PrintSummary().
+// per-signal breakdowns) and emits the __LYRA_TRACE__ format on PrintSummary().
 //
-// This is the built-in default sink, not the optimized long-term signal
-// tracing path. Future text trace (O3) and VCD (O2) sinks will be the
-// primary user-facing trace consumers; this sink will remain as a
-// lightweight debug/summary tool.
-//
-// Slot counts use std::map for deterministic output ordering. If profiling
-// shows this matters on the hot path, switch to a dense vector indexed by
-// slot id (requires knowing the slot count at construction).
+// R5: Tracks global and local signals separately. Global signals are keyed
+// by GlobalSignalId. Local signals are keyed by (instance_id, LocalSignalId).
 class SummaryTraceSink : public TraceSink {
  public:
   void OnEvent(const TraceEvent& event) override;
@@ -32,15 +26,23 @@ class SummaryTraceSink : public TraceSink {
   void Reset();
 
  private:
-  struct SlotCounts {
+  struct SignalCounts {
     size_t value_changes = 0;
     size_t memory_dirty = 0;
+  };
+
+  // Key for local signal counts: (instance_id, local_signal_id).
+  struct LocalKey {
+    uint32_t instance_id;
+    uint32_t signal_id;
+    auto operator<=>(const LocalKey&) const = default;
   };
 
   size_t time_advances_ = 0;
   size_t value_changes_ = 0;
   size_t memory_dirty_ = 0;
-  std::map<uint32_t, SlotCounts> slot_counts_;
+  std::map<uint32_t, SignalCounts> global_counts_;
+  std::map<LocalKey, SignalCounts> local_counts_;
 };
 
 }  // namespace lyra::trace

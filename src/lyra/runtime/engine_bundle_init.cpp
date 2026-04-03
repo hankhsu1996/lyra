@@ -147,8 +147,6 @@ auto BuildModuleTriggerDescriptors(
     const auto& triggers = bundle.body_desc->triggers;
     if (triggers.proc_ranges.empty()) continue;
 
-    uint32_t slot_base = bundle.instance->observability.flat_coord_base;
-
     for (uint32_t pwb = 0; pwb < triggers.proc_ranges.size(); ++pwb) {
       uint32_t proc_idx = bundle.module_proc_base + pwb;
       const auto& range = triggers.proc_ranges[pwb];
@@ -156,25 +154,46 @@ auto BuildModuleTriggerDescriptors(
 
       for (uint32_t t = 0; t < range.count; ++t) {
         const auto& te = triggers.entries[range.start + t];
-        uint32_t slot_id = (te.flags & kTriggerTemplateFlagDesignGlobal) != 0
-                               ? te.slot_id
-                               : slot_base + te.slot_id;
+        bool is_global = (te.flags & kTriggerTemplateFlagDesignGlobal) != 0;
 
-        if (slot_id >= total_slot_count) {
-          throw common::InternalError(
-              "BuildModuleTriggerDescriptors",
-              std::format(
-                  "relocated slot_id {} exceeds total {} for instance {}",
-                  slot_id, total_slot_count, bundle.instance_id));
+        if (is_global) {
+          if (te.slot_id >= total_slot_count) {
+            throw common::InternalError(
+                "BuildModuleTriggerDescriptors",
+                std::format(
+                    "global slot_id {} exceeds total {} for instance {}",
+                    te.slot_id, total_slot_count, bundle.instance_id));
+          }
+          descriptors.push_back(
+              ProcessTriggerDescriptor{
+                  .scheduled_process_index = proc_idx,
+                  .slot_id = te.slot_id,
+                  .edge = static_cast<common::EdgeKind>(te.edge),
+                  .is_groupable = groupable,
+                  .is_local = false,
+                  .instance_id = 0,
+              });
+        } else {
+          if (te.slot_id >= bundle.instance->observability.local_signal_count) {
+            throw common::InternalError(
+                "BuildModuleTriggerDescriptors",
+                std::format(
+                    "local slot_id {} exceeds local_signal_count {} "
+                    "for instance {}",
+                    te.slot_id,
+                    bundle.instance->observability.local_signal_count,
+                    bundle.instance_id));
+          }
+          descriptors.push_back(
+              ProcessTriggerDescriptor{
+                  .scheduled_process_index = proc_idx,
+                  .slot_id = te.slot_id,
+                  .edge = static_cast<common::EdgeKind>(te.edge),
+                  .is_groupable = groupable,
+                  .is_local = true,
+                  .instance_id = bundle.instance_id,
+              });
         }
-
-        descriptors.push_back(
-            ProcessTriggerDescriptor{
-                .scheduled_process_index = proc_idx,
-                .slot_id = slot_id,
-                .edge = static_cast<common::EdgeKind>(te.edge),
-                .is_groupable = groupable,
-            });
       }
     }
   }
@@ -184,10 +203,9 @@ auto BuildModuleTriggerDescriptors(
 
 }  // namespace
 
-auto Engine::InitModuleInstancesFromBundles(
+void Engine::InitModuleInstancesFromBundles(
     std::span<const InstanceMetadataBundle> bundles,
-    std::span<const uint32_t> design_global_slot_meta_words, void** states)
-    -> TraceSignalMetaRegistry {
+    std::span<const uint32_t> design_global_slot_meta_words, void** states) {
   // Reset all module-owned outputs for clean initialization.
   pending_module_trigger_descs_.clear();
   pending_module_process_meta_.clear();
@@ -206,28 +224,28 @@ auto Engine::InitModuleInstancesFromBundles(
   signal_subs_.clear();
   activation_slot_gen_.clear();
 
-  if (bundles.empty() && design_global_slot_meta_words.empty()) return {};
+  if (bundles.empty() && design_global_slot_meta_words.empty()) return;
 
   // Step B: Build slot meta registry.
   // Design-global slots from constructor flat transport (structural debt).
   // Instance-owned slots from bundles via shared observable walk.
-  auto global_slot_count =
+  auto global_word_count =
       static_cast<uint32_t>(design_global_slot_meta_words.size());
-  if (global_slot_count > 0) {
+  if (global_word_count > 0) {
     slot_meta_registry_ = SlotMetaRegistry(
-        design_global_slot_meta_words.data(), global_slot_count);
+        design_global_slot_meta_words.data(), global_word_count);
   }
+  global_slot_count_ = slot_meta_registry_.Size();
 
   // Assign dense coordination bases before building instance-owned metadata.
   // This sets observability.flat_coord_base on each instance, which relocation
   // helpers depend on.
   AssignDenseCoordinationBasesFromBundles(bundles);
 
-  // Shared observable walk: build instance-owned slot meta and trace meta
-  // from the same pre-resolved facts in the same order. Instance trace
-  // signals are returned to the caller for merging with constructor-built
-  // trace entries before InitTraceSignalMeta.
-  TraceSignalMetaRegistry instance_trace;
+  // Shared observable walk: build instance-owned slot meta from the
+  // pre-resolved facts. Instance-owned trace metadata lives in
+  // BodyObservableLayout (built per-body below), not in a flat merged
+  // registry.
   for (const auto& bundle : bundles) {
     ForEachBundleObservable(bundle, [&](const ObservableRuntimeFact& fact) {
       if (fact.storage.domain != SlotStorageDomain::kInstanceOwned) return;
@@ -243,12 +261,6 @@ auto Engine::InitModuleInstancesFromBundles(
               .planes = fact.storage.planes,
               .storage_owner_slot_id = fact.storage.owner_slot_id.value,
           });
-
-      if (fact.trace.has_value()) {
-        instance_trace.AppendSignal(
-            fact.trace->hierarchical_name, fact.trace->bit_width,
-            fact.trace->trace_kind, fact.storage.owner_slot_id.value);
-      }
     });
   }
 
@@ -528,7 +540,6 @@ auto Engine::InitModuleInstancesFromBundles(
     }
   }
 
-  return instance_trace;
 }
 
 void Engine::AssignDenseCoordinationBasesFromBundles(

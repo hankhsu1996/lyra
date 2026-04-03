@@ -405,36 +405,6 @@ void SetupAndRunSimulation(
   FinalTime() = std::max(FinalTime(), final_time);
 }
 
-// Build the final merged trace signal meta registry from constructor-built
-// (design-global/package) entries and engine-derived instance entries.
-// This is the single policy point for the dual-ingestion trace merge seam.
-auto BuildMergedTraceSignalMeta(
-    const LyraRuntimeAbi* abi,
-    lyra::runtime::TraceSignalMetaRegistry instance_trace)
-    -> std::optional<lyra::runtime::TraceSignalMetaRegistry> {
-  bool has_constructor = abi->trace_signal_meta_words != nullptr &&
-                         abi->trace_signal_meta_word_count > 0;
-  bool has_instance = instance_trace.IsPopulated();
-  if (!has_constructor && !has_instance) return std::nullopt;
-
-  lyra::runtime::TraceSignalMetaRegistry merged;
-  if (has_constructor) {
-    merged = lyra::runtime::TraceSignalMetaRegistry(
-        abi->trace_signal_meta_words, abi->trace_signal_meta_word_count,
-        abi->trace_signal_meta_string_pool,
-        abi->trace_signal_meta_string_pool_size);
-  }
-  if (has_instance) {
-    for (uint32_t i = 0; i < instance_trace.Count(); ++i) {
-      const auto& meta = instance_trace.Get(i);
-      merged.AppendSignal(
-          instance_trace.Name(i), meta.bit_width, meta.kind,
-          meta.storage_owner_slot_id);
-    }
-  }
-  return merged;
-}
-
 }  // namespace
 
 extern "C" void LyraRunSimulation(
@@ -522,9 +492,8 @@ extern "C" void LyraRunSimulation(
     // Builds slot meta, coordination bases, trigger and comb registries
     // from structured bundle data. Connection/design-global metadata
     // remains flat through separate init paths below.
-    lyra::runtime::TraceSignalMetaRegistry instance_trace;
     if (abi->instance_bundles != nullptr && abi->num_instance_bundles > 0) {
-      instance_trace = engine.InitModuleInstancesFromBundles(
+      engine.InitModuleInstancesFromBundles(
           std::span(abi->instance_bundles, abi->num_instance_bundles),
           std::span(abi->slot_meta_words, abi->slot_meta_word_count),
           states_raw);
@@ -597,12 +566,20 @@ extern "C" void LyraRunSimulation(
               abi->wait_site_words, abi->wait_site_word_count));
     }
 
-    // Trace signal metadata: merge constructor globals + instance entries.
-    auto merged_trace =
-        BuildMergedTraceSignalMeta(abi, std::move(instance_trace));
-    if (merged_trace.has_value()) {
-      engine.InitTraceSignalMeta(std::move(*merged_trace));
+    // R5: Global-only trace signal metadata from constructor.
+    // Instance-owned trace metadata lives in BodyObservableLayout::trace_meta.
+    if (abi->trace_signal_meta_words != nullptr &&
+        abi->trace_signal_meta_word_count > 0) {
+      engine.InitTraceSignalMeta(
+          lyra::runtime::TraceSignalMetaRegistry(
+              abi->trace_signal_meta_words, abi->trace_signal_meta_word_count,
+              abi->trace_signal_meta_string_pool,
+              abi->trace_signal_meta_string_pool_size));
     }
+
+    // R5: Trace selection must cover all flat slot_ids (global +
+    // instance-owned). Called unconditionally after all init paths.
+    engine.InitTraceSelection();
   }
 
   // Register suspend records for post-activation reconciliation.
@@ -627,14 +604,15 @@ extern "C" void LyraRunSimulation(
   // Register trace sinks before enabling TraceManager.
   if (HasFlag(flags, FeatureFlag::kEnableSignalTrace)) {
     const auto* meta = engine.GetTraceManager().GetSignalMeta();
+    std::unique_ptr<lyra::trace::TextTraceSink> text_sink;
     if (abi != nullptr && abi->signal_trace_path != nullptr) {
-      engine.GetTraceManager().AddSink(
-          std::make_unique<lyra::trace::TextTraceSink>(
-              meta, std::string(abi->signal_trace_path)));
+      text_sink = std::make_unique<lyra::trace::TextTraceSink>(
+          meta, std::string(abi->signal_trace_path));
     } else {
-      engine.GetTraceManager().AddSink(
-          std::make_unique<lyra::trace::TextTraceSink>(meta));
+      text_sink = std::make_unique<lyra::trace::TextTraceSink>(meta);
     }
+    text_sink->SetInstanceResolver(&engine.GetInstanceTraceResolver());
+    engine.GetTraceManager().AddSink(std::move(text_sink));
   }
 
   if (HasFlag(flags, FeatureFlag::kEnableTrace)) {

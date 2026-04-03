@@ -80,6 +80,8 @@ auto ParseProcessTriggerDescriptors(
         .slot_id = slot_id,
         .edge = static_cast<common::EdgeKind>(edge_raw),
         .is_groupable = (flags & process_trigger_abi::kFlagGroupable) != 0,
+        .is_local = is_body_local,
+        .instance_id = 0,
     });
   }
 
@@ -94,10 +96,9 @@ auto BuildProcessTriggerRegistry(
 
   if (registry.descriptors.empty()) return registry;
 
-  // Collect groupable entries keyed by (slot_id, edge).
+  // Collect groupable entries keyed by domain-aware trigger key.
   struct GroupableEntry {
-    uint32_t slot_id;
-    common::EdgeKind edge;
+    ProcessTriggerKey key;
     uint32_t scheduled_process_index;
   };
   std::vector<GroupableEntry> groupable;
@@ -105,18 +106,22 @@ auto BuildProcessTriggerRegistry(
   for (const auto& desc : registry.descriptors) {
     if (!desc.is_groupable) continue;
     groupable.push_back({
-        .slot_id = desc.slot_id,
-        .edge = desc.edge,
+        .key =
+            ProcessTriggerKey{
+                .is_local = desc.is_local,
+                .instance_id = desc.is_local ? desc.instance_id : 0,
+                .slot_id = desc.slot_id,
+                .edge = desc.edge,
+            },
         .scheduled_process_index = desc.scheduled_process_index,
     });
   }
 
   if (groupable.empty()) return registry;
 
-  // Sort by (slot_id, edge, process_index) for deterministic grouping.
+  // Sort by (key, process_index) for deterministic grouping.
   std::ranges::sort(groupable, [](const auto& a, const auto& b) {
-    if (a.slot_id != b.slot_id) return a.slot_id < b.slot_id;
-    if (a.edge != b.edge) return a.edge < b.edge;
+    if (a.key != b.key) return a.key < b.key;
     return a.scheduled_process_index < b.scheduled_process_index;
   });
 
@@ -126,14 +131,12 @@ auto BuildProcessTriggerRegistry(
 
   uint32_t gi = 0;
   while (gi < groupable.size()) {
-    uint32_t slot_id = groupable[gi].slot_id;
-    auto edge = groupable[gi].edge;
+    auto key = groupable[gi].key;
     auto process_start =
         static_cast<uint32_t>(registry.group_process_backing.size());
 
     uint32_t last_proc = UINT32_MAX;
-    while (gi < groupable.size() && groupable[gi].slot_id == slot_id &&
-           groupable[gi].edge == edge) {
+    while (gi < groupable.size() && groupable[gi].key == key) {
       if (groupable[gi].scheduled_process_index != last_proc) {
         registry.group_process_backing.push_back(
             groupable[gi].scheduled_process_index);
@@ -147,8 +150,7 @@ auto BuildProcessTriggerRegistry(
         process_start;
 
     registry.groups.push_back({
-        .slot_id = slot_id,
-        .edge = edge,
+        .key = key,
         .process_start = process_start,
         .process_count = process_count,
     });
@@ -198,14 +200,18 @@ void Engine::InitProcessTriggerRegistry(
                   "for process {}",
                   i, proc_idx));
         }
-        descriptors[i].slot_id +=
-            header->instance->observability.flat_coord_base;
-        if (descriptors[i].slot_id >= slot_count) {
+        // R5: Keep body-local slot_id as LocalSignalId, populate
+        // instance_id for typed subscription install. No flat relocation.
+        descriptors[i].instance_id = header->instance->instance_id;
+        if (descriptors[i].slot_id >=
+            header->instance->observability.local_signal_count) {
           throw common::InternalError(
               "InitProcessTriggerRegistry",
               std::format(
-                  "relocated slot_id {} exceeds slot count {} in entry {}",
-                  descriptors[i].slot_id, slot_count, i));
+                  "body-local slot_id {} exceeds local_signal_count {} "
+                  "in entry {}",
+                  descriptors[i].slot_id,
+                  header->instance->observability.local_signal_count, i));
         }
       }
     }

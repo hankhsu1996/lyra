@@ -1,26 +1,18 @@
+#include <algorithm>
+#include <format>
+
+#include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/signal_coord.hpp"
 
 namespace lyra::runtime {
 
-namespace {
-
-// Transitional flat conversion for comb fixpoint interop.
-// Uses observability.flat_coord_base (runtime-internal, not ABI).
-// Deleted when comb fixpoint reads local containers directly (Cut 3+).
-auto ToLegacyFlatLocalSignal(ObjectSignalRef signal) -> uint32_t {
-  return signal.instance->observability.flat_coord_base + signal.local.value;
-}
-
-}  // namespace
-
 // --- Instance-owned local paths (source of truth: per-instance containers) ---
 
 void Engine::MarkDirty(ObjectSignalRef signal) {
   if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
   signal.instance->observability.local_updates.MarkSlotDirty(signal.local);
-  FeedCombCaptureFullFromLocal(signal);
 }
 
 void Engine::MarkDirtyRange(
@@ -28,25 +20,6 @@ void Engine::MarkDirtyRange(
   if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
   signal.instance->observability.local_updates.MarkDirtyRange(
       signal.local, byte_off, byte_size);
-  FeedCombCaptureRangeFromLocal(signal, byte_off, byte_size);
-}
-
-void Engine::FeedCombCaptureFullFromLocal(
-    ObjectSignalRef signal, common::MutationKind kind,
-    common::EpochEffect epoch) {
-  if (comb_write_capture_ == nullptr) return;
-  uint32_t flat = ToLegacyFlatLocalSignal(signal);
-  comb_write_capture_->push_back(flat);
-  update_set_.MarkSlotDirty(flat, kind, epoch);
-}
-
-void Engine::FeedCombCaptureRangeFromLocal(
-    ObjectSignalRef signal, uint32_t byte_off, uint32_t byte_size,
-    common::MutationKind kind, common::EpochEffect epoch) {
-  if (comb_write_capture_ == nullptr) return;
-  uint32_t flat = ToLegacyFlatLocalSignal(signal);
-  comb_write_capture_->push_back(flat);
-  update_set_.MarkDirtyRange(flat, byte_off, byte_size, kind, epoch);
 }
 
 void Engine::ScheduleNba(
@@ -198,6 +171,36 @@ void Engine::SetInstances(std::span<const RuntimeInstance* const> instances) {
   // Const view for read-only APIs.
   const_instance_ptrs_.assign(instances.begin(), instances.end());
   const_instances_ = const_instance_ptrs_;
+
+  // Wire trace resolver keyed by RuntimeInstance::instance_id.
+  instance_trace_resolver_.Build(instances_);
+}
+
+void InstanceIdTraceResolver::Build(
+    std::span<RuntimeInstance* const> instances) {
+  lookup_.clear();
+
+  if (instances.empty()) return;
+
+  uint32_t max_id = 0;
+  for (auto* inst : instances) {
+    if (inst == nullptr) {
+      throw common::InternalError(
+          "InstanceIdTraceResolver::Build", "null instance in instance list");
+    }
+    max_id = std::max(max_id, inst->instance_id);
+  }
+
+  lookup_.assign(static_cast<size_t>(max_id) + 1, nullptr);
+
+  for (auto* inst : instances) {
+    if (lookup_[inst->instance_id] != nullptr) {
+      throw common::InternalError(
+          "InstanceIdTraceResolver::Build",
+          std::format("duplicate instance_id {}", inst->instance_id));
+    }
+    lookup_[inst->instance_id] = inst;
+  }
 }
 
 void Engine::ClearLocalUpdatesDelta() {

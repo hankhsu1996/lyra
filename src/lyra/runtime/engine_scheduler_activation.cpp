@@ -341,10 +341,11 @@ void Engine::FlushDirtySlots() {
   if (trace_manager_.IsEnabled()) {
     trace_manager_.EmitTimeAdvance(current_time_, current_delta_);
     if (!update_set_.IsEmpty() && design_state_base_ != nullptr) {
-      FlushDirtySlotsToTrace(
-          trace_manager_, slot_meta_registry_, trace_signal_meta_,
-          design_state_base_, const_instances_, update_set_, trace_selection_);
+      FlushGlobalDirtySlotsToTrace(
+          trace_manager_, slot_meta_registry_, design_state_base_,
+          const_instances_, update_set_, trace_selection_, global_slot_count_);
     }
+    FlushLocalDirtySlotsToTrace(trace_manager_, instances_);
   }
   update_set_.Clear();
   ClearLocalUpdates();

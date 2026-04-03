@@ -43,6 +43,7 @@
 #include "lyra/runtime/trap.hpp"
 #include "lyra/runtime/update_set.hpp"
 #include "lyra/runtime/wait_site.hpp"
+#include "lyra/trace/instance_trace_resolver.hpp"
 #include "lyra/trace/trace_manager.hpp"
 #include "svdpi.h"
 
@@ -148,6 +149,23 @@ struct RuntimeStats {
 // - IEEE 1800 stratified event scheduler (Active -> Inactive -> NBA regions)
 // - Processes suspend via Delay/Subscribe, engine resumes them later
 //
+// Concrete InstanceTraceResolver keyed by RuntimeInstance::instance_id.
+// Built once from the instance list; validates uniqueness and null-free.
+// Lookup is O(1) via dense table indexed by instance_id.
+class InstanceIdTraceResolver final : public trace::InstanceTraceResolver {
+ public:
+  void Build(std::span<RuntimeInstance* const> instances);
+
+  [[nodiscard]] auto FindInstance(uint32_t instance_id) const
+      -> const RuntimeInstance* override {
+    if (instance_id >= lookup_.size()) return nullptr;
+    return lookup_[instance_id];
+  }
+
+ private:
+  std::vector<const RuntimeInstance*> lookup_;
+};
+
 // Usage:
 // 1. Create engine with a ProcessDispatch callback
 // 2. Schedule initial processes with ScheduleInitial()
@@ -363,6 +381,8 @@ class Engine {
     update_set_.Init(registry.Size(), sizes);
     signal_subs_.resize(registry.Size());
     activation_slot_gen_.resize(registry.Size(), 0);
+    // Flat path (no bundles): all slots are design-global.
+    global_slot_count_ = registry.Size();
     slot_meta_registry_ = std::move(registry);
   }
 
@@ -376,6 +396,14 @@ class Engine {
   // Engine copies the pointers and owns the canonical mutable list.
   // All callers read through instances_.
   void SetInstances(std::span<const RuntimeInstance* const> instances);
+
+  // R5: Instance trace resolver for trace sinks. Resolves instance_id
+  // to RuntimeInstance through explicit validated lookup, not positional
+  // indexing. Must be called after SetInstances.
+  [[nodiscard]] auto GetInstanceTraceResolver() const
+      -> const trace::InstanceTraceResolver& {
+    return instance_trace_resolver_;
+  }
 
   // Validate that all kInstanceOwned slot-meta entries reference valid
   // instances. Must be called after both slot meta and instance list are
@@ -411,10 +439,9 @@ class Engine {
   //
   // Must be called after SetInstances. Must be called before connection
   // trigger/comb init (which merge into the registries built here).
-  auto InitModuleInstancesFromBundles(
+  void InitModuleInstancesFromBundles(
       std::span<const InstanceMetadataBundle> bundles,
-      std::span<const uint32_t> design_global_slot_meta_words, void** states)
-      -> TraceSignalMetaRegistry;
+      std::span<const uint32_t> design_global_slot_meta_words, void** states);
 
   // Resolve the storage byte address for a slot.
   // For kDesignGlobal slots: returns design_state_base_ + design_base_off.
@@ -651,12 +678,13 @@ class Engine {
     wait_site_meta_ = std::move(registry);
   }
 
-  // One-time init for trace signal metadata registry. Must be called exactly
-  // once, after InitSlotMeta. Engine owns both the registry and the selection
-  // mask. The non-owning pointer passed to TraceManager remains valid for
-  // Engine's lifetime because trace_signal_meta_ is never moved after this
-  // call. Validates that signal count matches slot count (compile-time
-  // invariant: one trace signal per design slot).
+  // One-time init for global trace signal metadata registry. Must be called
+  // exactly once. Engine owns both the registry and the global selection mask.
+  // The non-owning pointer passed to TraceManager remains valid for Engine's
+  // lifetime because trace_signal_meta_ is never moved after this call.
+  //
+  // R5: This registry is global-only. Instance-owned trace metadata lives
+  // in BodyObservableLayout::trace_meta, accessed via RuntimeInstance.
   void InitTraceSignalMeta(TraceSignalMetaRegistry registry) {
     if (trace_signal_meta_.IsPopulated()) {
       throw common::InternalError(
@@ -664,15 +692,18 @@ class Engine {
           "trace signal metadata already initialized");
     }
 
-    auto signal_count = static_cast<uint32_t>(registry.Count());
-    if (slot_meta_registry_.IsPopulated() &&
-        signal_count != slot_meta_registry_.Size()) {
+    // R5: Global trace meta is indexed by GlobalSignalId. The count must
+    // match the global slot count (constructor builds both in lockstep).
+    auto trace_count = static_cast<uint32_t>(registry.Count());
+    if (global_slot_count_ > 0 && trace_count != global_slot_count_) {
       throw common::InternalError(
           "Engine::InitTraceSignalMeta",
           std::format(
-              "signal count {} does not match slot count {}", signal_count,
-              slot_meta_registry_.Size()));
+              "global trace meta count {} does not match global slot "
+              "count {}",
+              trace_count, global_slot_count_));
     }
+
     trace_signal_meta_ = std::move(registry);
 
     // Rebuild alias groups with cross-registry validation when slot
@@ -683,12 +714,26 @@ class Engine {
     trace_signal_meta_.BuildAliasGroups(slot_reg);
 
     trace_manager_.SetSignalMeta(&trace_signal_meta_);
-    trace_selection_.Init(signal_count);
   }
 
   [[nodiscard]] auto GetTraceSignalMetaRegistry() const
       -> const TraceSignalMetaRegistry& {
     return trace_signal_meta_;
+  }
+
+  // R5: Initialize trace selection to cover all flat slot_ids.
+  // Must be called after InitSlotMeta / InitModuleInstancesFromBundles
+  // and optionally after InitTraceSignalMeta. The selection must cover
+  // instance-owned flat slot_ids because the compiled code's trace guard
+  // uses flat slot_id to check selection.
+  void InitTraceSelection() {
+    if (trace_selection_.IsConfigured()) return;
+    uint32_t count = slot_meta_registry_.IsPopulated()
+                         ? slot_meta_registry_.Size()
+                         : static_cast<uint32_t>(trace_signal_meta_.Count());
+    if (count > 0) {
+      trace_selection_.Init(count);
+    }
   }
 
   [[nodiscard]] auto GetTraceSelection() const
@@ -992,18 +1037,6 @@ class Engine {
   void ClearLocalUpdatesDelta();
   void ClearLocalUpdates();
 
-  // R5 transitional: feed comb fixpoint capture from a local typed write.
-  // Only remaining producer-side flat bridge. Deleted when comb fixpoint
-  // reads directly from local containers.
-  void FeedCombCaptureFullFromLocal(
-      ObjectSignalRef signal,
-      common::MutationKind kind = common::MutationKind::kValueWrite,
-      common::EpochEffect epoch = common::EpochEffect::kNone);
-  void FeedCombCaptureRangeFromLocal(
-      ObjectSignalRef signal, uint32_t byte_off, uint32_t byte_size,
-      common::MutationKind kind = common::MutationKind::kValueWrite,
-      common::EpochEffect epoch = common::EpochEffect::kNone);
-
   ProcessDispatch process_dispatch_;
   uint32_t num_processes_ = 0;
   std::vector<ProcessState> process_states_;
@@ -1089,6 +1122,10 @@ class Engine {
   // Cached from kDetailedStats feature flag at construction.
   bool detailed_stats_enabled_ = false;
 
+  // R5: Number of design-global (non-instance-owned) slots. Set during
+  // slot meta initialization, used to validate global trace meta count.
+  uint32_t global_slot_count_ = 0;
+
   // Slot metadata registry (empty until populated by JIT codegen).
   SlotMetaRegistry slot_meta_registry_;
 
@@ -1108,6 +1145,7 @@ class Engine {
   std::span<RuntimeInstance* const> instances_;  // mutable view
   std::vector<const RuntimeInstance*> const_instance_ptrs_;
   std::span<const RuntimeInstance* const> const_instances_;  // read-only view
+  InstanceIdTraceResolver instance_trace_resolver_;
   UpdateSet update_set_;
 
   // Connection batch: fast-path for kernelized connection processes.
@@ -1264,6 +1302,9 @@ class Engine {
     std::vector<uint8_t> snapshot_buf;
     std::vector<CombSnapshot> snapshots;
     std::vector<uint32_t> snapshotted_slots;
+    // Per-instance local delta size before comb eval, used to detect
+    // newly-dirty local signals written by comb kernels.
+    std::vector<uint32_t> local_delta_pre;
   };
   FixpointWorkspace fp_work_;
 

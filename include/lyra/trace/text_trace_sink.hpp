@@ -5,6 +5,7 @@
 #include <string>
 
 #include "lyra/runtime/trace_signal_meta.hpp"
+#include "lyra/trace/instance_trace_resolver.hpp"
 #include "lyra/trace/trace_sink.hpp"
 
 namespace lyra::trace {
@@ -20,10 +21,18 @@ namespace lyra::trace {
 //   string: "<content>"
 //
 // Constructor dependencies:
-//   - TraceSignalMetaRegistry for signal names/widths (non-owning)
+//   - TraceSignalMetaRegistry for global signal names/widths (non-owning)
 //   - Output destination: stdout (borrowed) or file (owned)
 //
+// R5: Handles both GlobalValueChange (via TraceSignalMetaRegistry, keyed
+// by GlobalSignalId) and LocalValueChange (via InstanceTraceResolver +
+// ComposeHierarchicalTraceName + BodyTraceMeta).
 // Ignores MemoryDirty events.
+//
+// Contract: once trace dispatch is enabled, global events require populated
+// global trace metadata, and local events require a non-null instance
+// resolver. Malformed event identity or missing metadata is an InternalError,
+// not a silently dropped event.
 class TextTraceSink : public TraceSink {
  public:
   // Borrow stdout for output.
@@ -40,13 +49,21 @@ class TextTraceSink : public TraceSink {
   TextTraceSink(TextTraceSink&&) = delete;
   auto operator=(TextTraceSink&&) -> TextTraceSink& = delete;
 
+  // Set non-owning pointer to the instance resolver for local signal
+  // name resolution. Must be called before trace events are dispatched.
+  void SetInstanceResolver(const InstanceTraceResolver* resolver) {
+    resolver_ = resolver;
+  }
+
   void OnEvent(const TraceEvent& event) override;
 
  private:
   void HandleTimeAdvance(const struct TimeAdvance& ta);
-  void HandleValueChange(const struct ValueChange& vc);
+  void HandleGlobalValueChange(const struct GlobalValueChange& vc);
+  void HandleLocalValueChange(const struct LocalValueChange& vc);
 
   const runtime::TraceSignalMetaRegistry* meta_;
+  const InstanceTraceResolver* resolver_ = nullptr;
   FILE* output_;
   bool owns_file_;
   uint64_t current_time_ = 0;

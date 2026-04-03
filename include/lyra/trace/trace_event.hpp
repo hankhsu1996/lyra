@@ -5,6 +5,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/runtime/signal_coord.hpp"
+
 namespace lyra::trace {
 
 // Raw snapshot of packed storage (2-state or 4-state).
@@ -32,23 +34,36 @@ struct TimeAdvance {
   uint32_t delta = 0;
 };
 
-// Scalar value change. Snapshot captures the *new* value after the store.
-// For packed types, the snapshot is taken from slot storage (post-memcpy).
-// For strings, the snapshot is a deep copy of the new string content.
-struct ValueChange {
-  uint32_t slot_id;
+// R5: Domain-split value change events.
+// Global: for package/global signals, identified by GlobalSignalId.
+// Local: for instance-owned signals, identified by stable (instance_id,
+// LocalSignalId) pair. No live runtime object pointer -- trace events
+// are stable data. Sinks resolve names via metadata registries.
+struct GlobalValueChange {
+  runtime::GlobalSignalId signal_id;
   TraceValue value;
 };
 
-// Bulk memory write ($readmemh, $readmemb, $fread into unpacked array).
-// Emitted once per call, not per element.
-// Best-effort: only emitted when the target Place is rooted in a design slot
-// (PlaceRoot::kDesignGlobal/kModuleSlot). For non-design targets (temporaries,
-// stack memory), no MemoryDirty event is emitted.
-struct MemoryDirty {
-  uint32_t slot_id;
+struct LocalValueChange {
+  uint32_t instance_id;
+  runtime::LocalSignalId signal_id;
+  TraceValue value;
 };
 
-using TraceEvent = std::variant<TimeAdvance, ValueChange, MemoryDirty>;
+// R5: Domain-split bulk memory write events.
+// Emitted once per call ($readmemh, $readmemb, $fread into unpacked array),
+// not per element.
+struct GlobalMemoryDirty {
+  runtime::GlobalSignalId signal_id;
+};
+
+struct LocalMemoryDirty {
+  uint32_t instance_id;
+  runtime::LocalSignalId signal_id;
+};
+
+using TraceEvent = std::variant<
+    TimeAdvance, GlobalValueChange, LocalValueChange, GlobalMemoryDirty,
+    LocalMemoryDirty>;
 
 }  // namespace lyra::trace

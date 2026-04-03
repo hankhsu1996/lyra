@@ -20,18 +20,6 @@
 
 namespace lyra::runtime {
 
-namespace {
-
-// Transitional flat conversion for comb fixpoint interop.
-// Uses observability.flat_coord_base (runtime-internal, not ABI).
-// Deleted when comb fixpoint reads local containers directly (Cut 3+).
-auto ToLegacyFlatLocalSignal(const RuntimeInstance& inst, LocalSignalId lid)
-    -> uint32_t {
-  return inst.observability.flat_coord_base + lid.value;
-}
-
-}  // namespace
-
 auto Engine::EvaluateEdge(common::EdgeKind edge, bool old_lsb, bool new_lsb)
     -> bool {
   switch (edge) {
@@ -555,11 +543,37 @@ void Engine::FlushDirtySlotPostRebind(
 
 void Engine::FlushSignalUpdates() {
   if (finished_) return;
-  // Dispatch global subscriptions.
+
+  // R5 transitional: mirror local delta into update_set_ for
+  // subscription dispatch. Connection processes may have triggers
+  // installed in signal_subs_[flat_id] (legacy flat trigger path).
+  // FlushGlobalSignalUpdates dispatches from update_set_, so local
+  // dirty marks must be visible there. Removed when all process
+  // triggers install via typed local subscriptions.
+  for (auto* inst : instances_) {
+    auto& obs = inst->observability;
+    if (obs.local_signal_count == 0) continue;
+    uint32_t base = obs.flat_coord_base;
+    for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
+      uint32_t flat = base + lid.value;
+      if (!update_set_.IsDeltaDirty(flat)) {
+        const auto& ranges = obs.local_updates.DeltaRangesFor(lid);
+        auto kind = obs.local_updates.DeltaKindFor(lid);
+        auto epoch = obs.local_updates.DeltaEpochFor(lid);
+        if (ranges.IsFullExtent()) {
+          update_set_.MarkSlotDirty(flat, kind, epoch);
+        } else {
+          for (const auto& r : ranges.Ranges()) {
+            update_set_.MarkDirtyRange(flat, r.offset, r.size, kind, epoch);
+          }
+        }
+      }
+    }
+  }
+
+  // Dispatch global subscriptions from update_set_, then local
+  // subscriptions from per-instance local_updates.
   FlushGlobalSignalUpdates();
-  // R5: Also dispatch local subscriptions for signals that were dirtied
-  // by the fixpoint (connections, comb). The reverse mirror inside
-  // FlushLocalSignalUpdates imports flat dirty marks into local_updates.
   for (auto* inst : instances_) {
     FlushLocalSignalUpdates(*inst);
   }
@@ -607,39 +621,7 @@ void Engine::FlushGlobalSignalUpdates() {
 void Engine::FlushLocalSignalUpdates(RuntimeInstance& inst) {
   auto& obs = inst.observability;
   if (obs.local_signal_count == 0) return;
-
-  // R5 transitional: import flat dirty marks into local_updates for
-  // instance-owned slots that were dirtied by flat callers (connections,
-  // comb fixpoint, NBA). This reverse mirror ensures local subscription
-  // dispatch sees all dirty signals. Removed when all dirty producers
-  // write to local containers directly.
-  for (uint32_t lid_val = 0; lid_val < obs.local_signal_count; ++lid_val) {
-    uint32_t flat = ToLegacyFlatLocalSignal(inst, LocalSignalId{lid_val});
-    if (update_set_.IsDeltaDirty(flat) &&
-        !obs.local_updates.IsDeltaDirty(LocalSignalId{lid_val})) {
-      obs.local_updates.MarkSlotDirty(LocalSignalId{lid_val});
-    }
-  }
-
   if (obs.local_updates.DeltaDirtySignals().empty()) return;
-
-  // Mirror dirty marks into flat update_set_ for trace flush and
-  // RefreshInstalledSnapshots (still read flat). Removed in Cut 3+.
-  for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
-    uint32_t flat = ToLegacyFlatLocalSignal(inst, lid);
-    const auto& ranges = obs.local_updates.DeltaRangesFor(lid);
-    auto kind = obs.local_updates.DeltaKindFor(lid);
-    auto epoch = obs.local_updates.DeltaEpochFor(lid);
-
-    if (ranges.IsFullExtent()) {
-      update_set_.MarkSlotDirty(flat, kind, epoch);
-      continue;
-    }
-
-    for (const auto& r : ranges.Ranges()) {
-      update_set_.MarkDirtyRange(flat, r.offset, r.size, kind, epoch);
-    }
-  }
 
   // Dispatch subscriptions for locally dirty instance-owned signals.
   // Two-phase: rebinds first, then edge/change/container.
@@ -670,31 +652,31 @@ void Engine::FlushLocalDirtySlotPostRebind(
   const auto& imeta = inst.observability.layout->slot_meta[signal.value];
   auto slot_storage =
       std::span(ResolveInstanceSlotBase(inst, signal), imeta.total_bytes);
-  // Use flat slot_id for EnqueueProcessWakeup trigger_slot parameter.
-  // This is cosmetic (only used for activation trace). Removed in Cut 3+.
-  uint32_t flat_for_trace = ToLegacyFlatLocalSignal(inst, signal);
+  // Trigger slot for EnqueueProcessWakeup is cosmetic (activation trace
+  // only). Use local signal id directly.
+  uint32_t trigger_slot = signal.value;
 
   if (!slot.edge_groups.empty() || !slot.change_subs.empty()) {
     const auto& dirty_ranges =
         inst.observability.local_updates.DeltaRangesFor(signal);
     if (dirty_ranges.IsFullExtent()) {
       FlushSlotEdgeGroups(
-          flat_for_trace, slot.edge_groups, slot_storage, dirty_ranges,
+          trigger_slot, slot.edge_groups, slot_storage, dirty_ranges,
           RangeFilterMode::kFull);
       FlushSlotChangeSubs(
-          flat_for_trace, slot.change_subs, slot_storage, dirty_ranges,
+          trigger_slot, slot.change_subs, slot_storage, dirty_ranges,
           RangeFilterMode::kFull);
     } else if (!dirty_ranges.IsEmpty()) {
       FlushSlotEdgeGroups(
-          flat_for_trace, slot.edge_groups, slot_storage, dirty_ranges,
+          trigger_slot, slot.edge_groups, slot_storage, dirty_ranges,
           RangeFilterMode::kPartial);
       FlushSlotChangeSubs(
-          flat_for_trace, slot.change_subs, slot_storage, dirty_ranges,
+          trigger_slot, slot.change_subs, slot_storage, dirty_ranges,
           RangeFilterMode::kPartial);
     }
   }
 
-  FlushSlotContainerSubs(flat_for_trace, slot.container_subs, slot_storage);
+  FlushSlotContainerSubs(trigger_slot, slot.container_subs, slot_storage);
 }
 
 }  // namespace lyra::runtime

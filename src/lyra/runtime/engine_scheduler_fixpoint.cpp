@@ -228,24 +228,28 @@ void Engine::SeedCombKernelDirtyMarks() {
 }
 
 void Engine::FlushAndPropagateConnections() {
-  // R5 transitional: mirror local dirty into flat before any DeltaDirtySlots
-  // read. FlushLocalSignalUpdates is the sole consumer-boundary mirror.
-  // Called here (before fixpoint seeding) and not inside FlushSignalUpdates.
+  // Check whether there is any work to do across both domains.
+  bool has_global_dirty = !update_set_.DeltaDirtySlots().empty();
+  bool has_local_dirty = false;
   for (auto* inst : instances_) {
-    FlushLocalSignalUpdates(*inst);
+    if (inst->observability.local_signal_count > 0 &&
+        !inst->observability.local_updates.DeltaDirtySignals().empty()) {
+      has_local_dirty = true;
+      break;
+    }
   }
 
   if (detailed_stats_enabled_) {
     auto pending = update_set_.DeltaDirtySlots().size();
     ++stats_.detailed.prop_calls_total;
     stats_.detailed.prop_pending_slots_total += pending;
-    if (pending > 0) {
+    if (pending > 0 || has_local_dirty) {
       ++stats_.detailed.prop_calls_with_work;
     } else {
       ++stats_.detailed.prop_calls_without_work;
     }
   }
-  if (update_set_.DeltaDirtySlots().empty()) {
+  if (!has_global_dirty && !has_local_dirty) {
     return;
   }
   bool has_conns = !all_connections_.empty();
@@ -260,35 +264,35 @@ void Engine::FlushAndPropagateConnections() {
   // Fixed-point propagation of connections and comb kernels.
   //
   // Two tracking channels serve different purposes:
-  //   update_set_ (delta_dirty_/delta_seen_): cross-phase dirty tracking for
-  //     scheduler wakeup and trace snapshots. Uses dedup (delta_seen_) so each
-  //     slot appears at most once per delta.
+  //   update_set_ (delta_dirty_/delta_seen_): dirty tracking for global slots.
+  //   per-instance local_updates: dirty tracking for instance-owned slots.
   //   pending/next_pending (local work list): fixed-point propagation
-  //     scheduling within this function only. Per-iteration dedup via
-  //     pending_seen[] ensures each slot appears at most once per iteration,
-  //     preventing exponential blowup from comb kernel intermediate writes.
+  //     scheduling within this function only. Uses flat slot_ids for the
+  //     trigger lookup (comb_trigger_map_ is flat-indexed). Per-iteration
+  //     dedup via pending_seen[] ensures each slot appears at most once.
   //
-  // The local work list exists because delta_seen_ dedup is wrong for
-  // convergence: if a comb kernel writes an intermediate value then re-writes
-  // the correct value in a later iteration, the corrected write would be
-  // invisible to delta_dirty_ (already deduped). The local list captures
-  // comb writes via comb_write_capture_ which bypasses delta_seen_.
-  //
-  // Using a local vector also avoids span invalidation: iterating
-  // delta_dirty_ while MarkSlotDirty pushes to it would be UB.
+  // Global comb writes (from MarkSlotDirty(uint32_t)) are captured via
+  // comb_write_capture_ which bypasses delta_seen_ dedup. Local comb
+  // writes go to local_updates and are collected after comb eval by
+  // scanning instance delta dirty lists.
   constexpr uint32_t kMaxIterations = 100;
   const bool detailed = detailed_stats_enabled_;
   uint32_t iterations_used = 0;
-  auto design_state = std::span(
-      static_cast<uint8_t*>(design_state_base_),
-      slot_meta_registry_.MaxExtent());
 
-  // Seed work list from current delta dirty slots.
-  auto initial = update_set_.DeltaDirtySlots();
+  // Seed work list from both global and local delta dirty slots.
   fp_work_.pending.clear();
-  fp_work_.pending.insert(
-      fp_work_.pending.end(), initial.begin(), initial.end());
-
+  for (uint32_t s : update_set_.DeltaDirtySlots()) {
+    fp_work_.pending.push_back(s);
+  }
+  // Convert local delta dirty to flat for trigger lookup.
+  for (auto* inst : instances_) {
+    auto& obs = inst->observability;
+    if (obs.local_signal_count == 0) continue;
+    uint32_t base = obs.flat_coord_base;
+    for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
+      fp_work_.pending.push_back(base + lid.value);
+    }
+  }
   // Per-iteration dedup bitvector. Prevents exponential blowup when comb
   // kernels write intermediate values (e.g. a = f(x); a = a + g(x)) that
   // differ from the final value. Lazy-clear resets only touched slots each
@@ -352,6 +356,19 @@ void Engine::FlushAndPropagateConnections() {
             if (detailed) ++stats_.detailed.conn_memcpy_executed;
             std::memcpy(dst, src, conn.byte_size);
             MarkSlotDirty(conn.dst_slot_id);
+            // Also mark local_updates for instance-owned destinations
+            // so local subscription dispatch sees the connection write.
+            if (conn.dst_slot_id >= global_slot_count_) {
+              const auto& meta = slot_meta_registry_.Get(conn.dst_slot_id);
+              if (meta.domain == SlotStorageDomain::kInstanceOwned &&
+                  meta.owner_instance_id < instances_.size()) {
+                auto* inst = instances_[meta.owner_instance_id];
+                uint32_t local_id =
+                    conn.dst_slot_id - inst->observability.flat_coord_base;
+                inst->observability.local_updates.MarkSlotDirty(
+                    LocalSignalId{local_id});
+              }
+            }
             enqueue_pending(conn.dst_slot_id);
           }
         }
@@ -394,12 +411,24 @@ void Engine::FlushAndPropagateConnections() {
         }
       }
 
-      // Install capture so comb writes feed into the work list.
+      // Install capture for global comb writes. Local comb writes go to
+      // local_updates and are collected after comb eval by scanning deltas.
       // Invariant: comb_write_capture_ must be nullptr on every exit from
-      // this function. The pointer targets persistent workspace storage, so
-      // a stale pointer would silently corrupt future calls.
+      // this function.
       fp_work_.comb_writes.clear();
       comb_write_capture_ = &fp_work_.comb_writes;
+
+      // Record per-instance local delta sizes before comb eval so we can
+      // identify newly-dirty local signals written by comb kernels.
+      fp_work_.local_delta_pre.clear();
+      for (auto* inst : instances_) {
+        auto& obs = inst->observability;
+        fp_work_.local_delta_pre.push_back(
+            obs.local_signal_count > 0
+                ? static_cast<uint32_t>(
+                      obs.local_updates.DeltaDirtySignals().size())
+                : 0);
+      }
 
       for (uint32_t slot_id : fp_work_.pending) {
         if (slot_id >= comb_trigger_map_.size()) continue;
@@ -408,14 +437,22 @@ void Engine::FlushAndPropagateConnections() {
         if (ccount == 0) continue;
         if (detailed) ++stats_.detailed.prop_comb_trigger_hits;
 
-        const auto& dirty_ranges = update_set_.DeltaRangesFor(slot_id);
+        // Dirty range check: for global slots use update_set_ ranges;
+        // for instance-owned slots (beyond global_slot_count_) treat as
+        // full-extent (conservative but correct -- range filtering is an
+        // optimization, not a correctness requirement).
+        bool is_global = slot_id < global_slot_count_;
+        const common::RangeSet* dirty_ranges_ptr = nullptr;
+        if (is_global) {
+          dirty_ranges_ptr = &update_set_.DeltaRangesFor(slot_id);
+        }
 
         for (uint32_t ci = cstart; ci < cstart + ccount; ++ci) {
           if (detailed) ++stats_.detailed.comb_considered;
           const auto& entry = comb_trigger_backing_[ci];
 
-          if (entry.byte_size > 0 &&
-              !dirty_ranges.Overlaps(entry.byte_offset, entry.byte_size)) {
+          if (entry.byte_size > 0 && dirty_ranges_ptr != nullptr &&
+              !dirty_ranges_ptr->Overlaps(entry.byte_offset, entry.byte_size)) {
             if (detailed) ++stats_.detailed.comb_skipped_range;
             continue;
           }
@@ -428,11 +465,22 @@ void Engine::FlushAndPropagateConnections() {
 
       comb_write_capture_ = nullptr;
 
-      // Enqueue comb writes, suppressing net-zero self-triggers.
-      // For non-snapshotted slots (no self-edge risk), writes are enqueued
-      // directly. This may cause at most one bounded extra fixpoint iteration
-      // per multi-write output slot: the kernel re-evaluates, store-level
-      // memcmp catches the no-op, convergence is reached.
+      // Collect local comb writes: scan instances for newly-dirty local
+      // signals that appeared after comb eval. Convert to flat for pending.
+      for (size_t i = 0; i < instances_.size(); ++i) {
+        auto& obs = instances_[i]->observability;
+        if (obs.local_signal_count == 0) continue;
+        auto delta = obs.local_updates.DeltaDirtySignals();
+        auto pre_size = fp_work_.local_delta_pre[i];
+        if (delta.size() <= pre_size) continue;
+        uint32_t base = obs.flat_coord_base;
+        for (size_t j = pre_size; j < delta.size(); ++j) {
+          fp_work_.comb_writes.push_back(base + delta[j].value);
+        }
+      }
+
+      // Enqueue comb writes (global + local), suppressing net-zero
+      // self-triggers.
       for (uint32_t s : fp_work_.comb_writes) {
         if (s >= slot_count || fp_work_.pending_seen[s] != 0) continue;
 
@@ -482,6 +530,7 @@ void Engine::FlushAndPropagateConnections() {
 
   // Flush subscriptions with all accumulated dirty marks (process writes +
   // connection propagation + comb kernels), then clear the delta.
+  // FlushSignalUpdates internally dispatches both global and local subs.
   FlushSignalUpdates();
   update_set_.ClearDelta();
   ClearLocalUpdatesDelta();

@@ -36,15 +36,33 @@ void TraceManager::EmitTimeAdvance(uint64_t time, uint32_t delta) {
   Dispatch(event);
 }
 
-void TraceManager::EmitValueChange(uint32_t slot_id, TraceValue value) {
+void TraceManager::EmitGlobalValueChange(
+    runtime::GlobalSignalId signal_id, TraceValue value) {
   if (!enabled_) return;
-  ValueChange event{.slot_id = slot_id, .value = std::move(value)};
+  GlobalValueChange event{.signal_id = signal_id, .value = std::move(value)};
   Dispatch(event);
 }
 
-void TraceManager::EmitMemoryDirty(uint32_t slot_id) {
+void TraceManager::EmitLocalValueChange(
+    uint32_t instance_id, runtime::LocalSignalId signal_id, TraceValue value) {
   if (!enabled_) return;
-  MemoryDirty event{.slot_id = slot_id};
+  LocalValueChange event{
+      .instance_id = instance_id,
+      .signal_id = signal_id,
+      .value = std::move(value)};
+  Dispatch(event);
+}
+
+void TraceManager::EmitGlobalMemoryDirty(runtime::GlobalSignalId signal_id) {
+  if (!enabled_) return;
+  GlobalMemoryDirty event{.signal_id = signal_id};
+  Dispatch(event);
+}
+
+void TraceManager::EmitLocalMemoryDirty(
+    uint32_t instance_id, runtime::LocalSignalId signal_id) {
+  if (!enabled_) return;
+  LocalMemoryDirty event{.instance_id = instance_id, .signal_id = signal_id};
   Dispatch(event);
 }
 
