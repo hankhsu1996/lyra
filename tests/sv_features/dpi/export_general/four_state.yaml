@@ -1,0 +1,120 @@
+feature: dpi_export_general_four_state
+description: DPI-C export 4-state marshaling end-to-end tests (D4b)
+
+cases:
+  - name: export_logic_scalar_and_vec_roundtrip
+    dpi_sources:
+      - dpi_helpers/export_four_state_ops.c
+    sv: |
+      package dpi_pkg;
+        function int echo_logic_as_int(logic x);
+          return (x === 1'b1) ? 1 : 0;
+        endfunction
+        export "DPI-C" function echo_logic_as_int;
+
+        function logic get_logic_one();
+          return 1'b1;
+        endfunction
+        export "DPI-C" function get_logic_one;
+
+        function int check_all_four_logic(logic a, logic b, logic c, logic d);
+          int ok;
+          ok = 1;
+          if (a !== 1'b0) ok = 0;
+          if (b !== 1'b1) ok = 0;
+          if (c !== 1'bx) ok = 0;
+          if (d !== 1'bz) ok = 0;
+          return ok;
+        endfunction
+        export "DPI-C" function check_all_four_logic;
+
+        function int read_logic8_aval_export(input logic [7:0] v);
+          return v;
+        endfunction
+        export "DPI-C" function read_logic8_aval_export;
+
+        function void write_logic8_export(output logic [7:0] v);
+          v = 8'hA5;
+        endfunction
+        export "DPI-C" function write_logic8_export;
+
+        function void flip_logic8_export(inout logic [7:0] v);
+          v = v ^ 8'hFF;
+        endfunction
+        export "DPI-C" function flip_logic8_export;
+
+        function int sum_logic8_avals(input logic [7:0] v);
+          return v;
+        endfunction
+        export "DPI-C" function sum_logic8_avals;
+
+        function int read_logic8_mod_export(input logic [7:0] v);
+          return v;
+        endfunction
+        export "DPI-C" function read_logic8_mod_export;
+      endpackage
+
+      module Test;
+        import "DPI-C" function int call_echo_logic_as_int(byte x);
+        import "DPI-C" function int call_get_logic_one();
+        import "DPI-C" function int call_check_all_four_logic();
+        import "DPI-C" function int call_read_logic8_aval_export();
+        import "DPI-C" function int call_write_logic8_export();
+        import "DPI-C" function int call_flip_logic8_export();
+        import "DPI-C" function int call_read_logic8_mod_export();
+        import "DPI-C" function int call_consecutive_export();
+        import dpi_pkg::*;
+
+        int r_scalar_input;
+        int r_scalar_return;
+        int r_four_values;
+        int r_vec_input;
+        int r_vec_output;
+        int r_vec_inout;
+        int r_mod_pkg;
+        int r_consecutive;
+
+        initial begin
+          r_scalar_input = call_echo_logic_as_int(1);
+          r_scalar_return = call_get_logic_one();
+          r_four_values = call_check_all_four_logic();
+          r_vec_input = call_read_logic8_aval_export();
+          r_vec_output = call_write_logic8_export();
+          r_vec_inout = call_flip_logic8_export();
+          r_mod_pkg = call_read_logic8_mod_export();
+          r_consecutive = call_consecutive_export();
+        end
+      endmodule
+    expect:
+      variables:
+        r_scalar_input: 1
+        r_scalar_return: 1
+        r_four_values: 1
+        r_vec_input: 165
+        r_vec_output: 1
+        r_vec_inout: 1
+        r_mod_pkg: 66
+        r_consecutive: 1
+
+  - name: export_module_scoped_packed_param
+    dpi_sources:
+      - dpi_helpers/export_mod_packed.c
+    sv: |
+      module Inner ();
+        export "DPI-C" function read_logic8_mod_export;
+        function automatic int read_logic8_mod_export(input logic [7:0] v);
+          return v;
+        endfunction
+      endmodule
+
+      module Test;
+        Inner u();
+        import "DPI-C" function int call_read_logic8_mod_export();
+        int result;
+        initial begin
+          result = call_read_logic8_mod_export();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 66
