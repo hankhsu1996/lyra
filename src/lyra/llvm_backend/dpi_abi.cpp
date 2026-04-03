@@ -1213,11 +1213,18 @@ void PrepareExportUserArgs(
               "PrepareExportUserArgs",
               "logic-scalar export param unexpectedly lowered as pointer");
         }
-        uint32_t width =
-            GetSemanticWidth(param.sv_type, context.GetTypeArena());
-        llvm::Value* decoded =
-            BuildLyraLogicScalarValue(b, llvm_ctx, wrapper_arg, width);
-        internal_args.push_back(decoded);
+        if (internal_ty->isStructTy()) {
+          uint32_t width =
+              GetSemanticWidth(param.sv_type, context.GetTypeArena());
+          llvm::Value* decoded =
+              BuildLyraLogicScalarValue(b, llvm_ctx, wrapper_arg, width);
+          internal_args.push_back(decoded);
+        } else {
+          auto [val, unk] = DecodeSvLogic(b, wrapper_arg);
+          llvm::Value* coerced = CoerceFromDpiAbiType(
+              context, val, DpiAbiTypeClass::kBit, internal_ty);
+          internal_args.push_back(coerced);
+        }
         break;
       }
 
@@ -1340,10 +1347,16 @@ void EmitExportReturn(
     return;
   }
   if (sig.result.abi_type == DpiAbiTypeClass::kLogicScalar) {
-    auto* val = b.CreateExtractValue(ret_val, {0}, "exp.ret.val");
-    auto* unk = b.CreateExtractValue(ret_val, {1}, "exp.ret.unk");
-    llvm::Value* encoded = EncodeSvLogic(b, ToI1(b, val), ToI1(b, unk));
-    b.CreateRet(encoded);
+    if (ret_val->getType()->isStructTy()) {
+      auto* val = b.CreateExtractValue(ret_val, {0}, "exp.ret.val");
+      auto* unk = b.CreateExtractValue(ret_val, {1}, "exp.ret.unk");
+      llvm::Value* encoded = EncodeSvLogic(b, ToI1(b, val), ToI1(b, unk));
+      b.CreateRet(encoded);
+    } else {
+      llvm::Value* encoded =
+          CoerceToDpiAbiType(context, ret_val, DpiAbiTypeClass::kBit);
+      b.CreateRet(encoded);
+    }
     return;
   }
   llvm::Value* encoded =
