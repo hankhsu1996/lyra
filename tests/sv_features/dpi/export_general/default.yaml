@@ -156,3 +156,85 @@ cases:
       variables:
         r1: 42
         r2: 42
+
+  - name: export_in_generate_if
+    description: DPI export inside a single-branch generate-if
+    sv: |
+      module Inner #(parameter bit USE_FAST = 1) ();
+        if (USE_FAST) begin : gen_fast
+          export "DPI-C" function get_mode;
+          function automatic int get_mode();
+            return 1;
+          endfunction
+        end
+      endmodule
+
+      module Test;
+        Inner #(1) u();
+        initial begin end
+      endmodule
+    expect:
+      stdout: ""
+
+  - name: export_in_generate_else
+    description: DPI export inside the else branch of a generate-if
+    sv: |
+      module Inner #(parameter bit USE_ICACHE = 0) ();
+        if (USE_ICACHE) begin : gen_icache
+          function automatic int get_scramble_key();
+            return 1;
+          endfunction
+        end else begin : gen_prefetch
+          export "DPI-C" function get_scramble_key;
+          function automatic int get_scramble_key();
+            return 0;
+          endfunction
+        end
+      endmodule
+
+      module Test;
+        Inner #(0) u();
+        initial begin end
+      endmodule
+    expect:
+      stdout: ""
+
+  - name: export_in_nested_generate
+    description: DPI export inside two levels of generate-if
+    sv: |
+      module Inner #(parameter bit P = 1, bit Q = 1) ();
+        if (P) begin : g1
+          if (Q) begin : g2
+            export "DPI-C" function get_val;
+            function automatic int get_val();
+              return 42;
+            endfunction
+          end
+        end
+      endmodule
+
+      module Test;
+        Inner #(1, 1) u();
+        initial begin end
+      endmodule
+    expect:
+      stdout: ""
+
+  - name: export_in_generate_for
+    description: DPI export inside a loop generate (GenerateBlockArray)
+    sv: |
+      module Inner ();
+        for (genvar i = 0; i < 1; i++) begin : g
+          export "DPI-C" function get_idx;
+          function automatic int get_idx();
+            return i;
+          endfunction
+        end
+      endmodule
+
+      module Test;
+        Inner u();
+        initial begin end
+      endmodule
+    expect:
+      stdout: ""
