@@ -111,10 +111,12 @@ auto LowerProcess(
       .body_places = decl_view.body_places,
       .design_places = decl_view.design_places,
       .local_places = {},
+      .design_place_cache = {},
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
       .temp_types = {},
+      .temp_metadata = {},
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = decl_view.functions,
       .design_functions = decl_view.design_functions,
@@ -140,6 +142,7 @@ auto LowerProcess(
   builder.EmitProcessEpilogue(mir_kind);
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
+  auto decision_sites = builder.TakeDecisionSites();
 
   // For always_comb/always_latch: replace the Repeat terminator with
   // Wait(sensitivity_triggers, resume=entry). This makes the process
@@ -150,6 +153,10 @@ auto LowerProcess(
         .kind = mir_kind,
         .entry = mir::BasicBlockId{entry_idx.value},
         .blocks = blocks,
+        .origin = {},
+        .temp_metadata = {},
+        .materialize_count = 0,
+        .decision_sites = {},
     };
     auto triggers = mir::CollectSensitivity(temp_process, mir_arena);
 
@@ -189,6 +196,7 @@ auto LowerProcess(
       .origin = origin,
       .temp_metadata = std::move(ctx.temp_metadata),
       .materialize_count = ctx.materialize_count,
+      .decision_sites = std::move(decision_sites),
   };
 
   mir_arena.SetProcessBody(mir_proc_id, std::move(mir_process));

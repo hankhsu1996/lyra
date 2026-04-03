@@ -20,6 +20,7 @@
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
+#include "lyra/llvm_backend/instruction/decision.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
@@ -569,6 +570,14 @@ auto LowerEffectOp(
           },
           [&](const mir::FillPackedEffect& fill) -> Result<void> {
             return LowerFillPackedEffect(context, fill);
+          },
+          [&](const mir::RecordDecisionObservation& obs) -> Result<void> {
+            return LowerRecordDecisionObservation(context, obs);
+          },
+          [&](const mir::RecordDecisionObservationDynamic& obs)
+              -> Result<void> {
+            return LowerRecordDecisionObservationDynamic(
+                context, resolver, obs);
           },
       },
       effect_op);

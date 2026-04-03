@@ -241,6 +241,7 @@ void Engine::ExecutePostponedRegion() {
 }
 
 void Engine::ExecuteTimeSlot() {
+  current_timeslot_epoch_ = current_timeslot_epoch_.Next();
   current_delta_ = 0;
 
   while (true) {
@@ -288,6 +289,12 @@ void Engine::ExecuteTimeSlot() {
     active_queue_.clear();
     active_queue_.swap(next_delta_queue_);
   }
+
+  // Settle-complete: validate decision observations after all deltas converge.
+  // Only observations from the current timeslot epoch are checked.
+  phase_.store(
+      static_cast<uint32_t>(Phase::kSettleComplete), std::memory_order_release);
+  RunSettleCompleteChecks();
 
   phase_.store(
       static_cast<uint32_t>(Phase::kPostponed), std::memory_order_release);

@@ -2,14 +2,12 @@
 
 #include <expected>
 #include <variant>
-#include <vector>
 
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -36,8 +34,8 @@ namespace {
 // Returns 1 if a plusarg matching the query prefix exists, 0 otherwise.
 // Query is stored in info.query as TypedOperand for packed-to-string coercion.
 auto LowerTestPlusargsRvalue(
-    Context& context, const mir::Rvalue& rvalue,
-    const mir::TestPlusargsRvalueInfo& info) -> Result<RvalueValue> {
+    Context& context, const mir::TestPlusargsRvalueInfo& info)
+    -> Result<RvalueValue> {
   auto& builder = context.GetBuilder();
 
   llvm::Value* result = nullptr;
@@ -192,7 +190,7 @@ auto LowerRvalue(
             return LowerMathRvalue(context, resolver, rvalue, result_type);
           },
           [&](const mir::TestPlusargsRvalueInfo& info) -> Result<RvalueValue> {
-            return LowerTestPlusargsRvalue(context, rvalue, info);
+            return LowerTestPlusargsRvalue(context, info);
           },
           [&](const mir::FopenRvalueInfo& info) -> Result<RvalueValue> {
             return LowerFopenRvalue(context, info);
@@ -203,6 +201,27 @@ auto LowerRvalue(
           [&](const mir::ArrayQueryRvalueInfo& info) -> Result<RvalueValue> {
             return LowerArrayQueryRvalue(
                 context, resolver, rvalue, info, result_type);
+          },
+          [&](const mir::SelectRvalueInfo&) -> Result<RvalueValue> {
+            auto cond_or_err =
+                LowerOperand(context, resolver, rvalue.operands[0]);
+            if (!cond_or_err) return std::unexpected(cond_or_err.error());
+            auto true_or_err =
+                LowerOperandRaw(context, resolver, rvalue.operands[1]);
+            if (!true_or_err) return std::unexpected(true_or_err.error());
+            auto false_or_err =
+                LowerOperandRaw(context, resolver, rvalue.operands[2]);
+            if (!false_or_err) return std::unexpected(false_or_err.error());
+            auto& builder = context.GetBuilder();
+            llvm::Value* cond_i1 = *cond_or_err;
+            if (!cond_i1->getType()->isIntegerTy(1)) {
+              cond_i1 = builder.CreateICmpNE(
+                  cond_i1, llvm::ConstantInt::get(cond_i1->getType(), 0),
+                  "select.cond");
+            }
+            auto* result = builder.CreateSelect(
+                cond_i1, *true_or_err, *false_or_err, "select");
+            return RvalueValue::TwoState(result);
           },
           [&](const mir::SystemCmdRvalueInfo& info) -> Result<RvalueValue> {
             auto& builder = context.GetBuilder();

@@ -10,6 +10,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/constant.hpp"
+#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/overloaded.hpp"
@@ -217,10 +219,6 @@ void MirBuilder::EmitTerm(TermT term) {
     pred_edges_[term.else_target.value].push_back(
         {current_block_, PredEdge::kBranchElse});
   } else if constexpr (std::is_same_v<TermT, mir::Switch>) {
-    for (const auto& target : term.targets) {
-      pred_edges_[target.value].push_back({current_block_, PredEdge::kJump});
-    }
-  } else if constexpr (std::is_same_v<TermT, mir::QualifiedDispatch>) {
     for (const auto& target : term.targets) {
       pred_edges_[target.value].push_back({current_block_, PredEdge::kJump});
     }
@@ -708,13 +706,13 @@ void MirBuilder::EmitIfElse(
   }
 }
 
-void MirBuilder::EmitPriorityChain(
+void MirBuilder::EmitPriorityChainNone(
     const std::vector<std::function<mir::Operand()>>& conditions,
     const std::vector<std::function<void()>>& bodies,
     std::function<void()> else_body) {
   if (conditions.size() != bodies.size()) {
     throw common::InternalError(
-        "EmitPriorityChain", "conditions.size() != bodies.size()");
+        "EmitPriorityChainNone", "conditions.size() != bodies.size()");
   }
 
   // Create body blocks for each condition
@@ -768,52 +766,335 @@ void MirBuilder::EmitPriorityChain(
   }
 }
 
-void MirBuilder::EmitUniqueDispatch(
-    mir::DispatchQualifier qualifier, mir::DispatchStatementKind statement_kind,
-    const std::vector<mir::Operand>& conditions,
-    const std::vector<std::function<void()>>& bodies,
-    std::function<void()> else_body, bool has_else) {
-  // Create body blocks + else block
-  std::vector<BlockIndex> body_blocks;
-  for (size_t i = 0; i < bodies.size(); ++i) {
-    body_blocks.push_back(CreateBlock());
-  }
-  BlockIndex else_bb = CreateBlock();
+auto MirBuilder::AllocateDecisionSite(
+    semantic::DecisionQualifier qualifier, semantic::DecisionKind kind,
+    bool has_fallback, semantic::DecisionArmCount arm_count,
+    common::OriginId origin) -> semantic::DecisionId {
+  auto id = semantic::DecisionId::FromIndex(
+      static_cast<uint32_t>(process_decision_sites_.size()));
+  process_decision_sites_.push_back(
+      mir::Process::MirDecisionSite{
+          .qualifier = qualifier,
+          .kind = kind,
+          .has_fallback = has_fallback,
+          .arm_count = arm_count,
+          .origin = origin,
+      });
+  return id;
+}
 
-  // Build targets: [body0, body1, ..., bodyN, else]
-  std::vector<BlockIndex> targets = body_blocks;
-  targets.push_back(else_bb);
+auto MirBuilder::EmitSelect(
+    mir::Operand condition, mir::Operand true_val, mir::Operand false_val,
+    TypeId result_type) -> mir::Operand {
+  return EmitValueTemp(
+      result_type,
+      mir::Rvalue{
+          .operands =
+              {std::move(condition), std::move(true_val), std::move(false_val)},
+          .info = mir::SelectRvalueInfo{.result_type = result_type},
+      });
+}
 
-  EmitQualifiedDispatch(
-      qualifier, statement_kind, conditions, targets, has_else);
+void MirBuilder::EmitDecision(const DecisionBuildSpec& spec) {
+  using semantic::DecisionSelectedKind;
+  using semantic::MatchClass;
+  using semantic::NeedsOverlapCheck;
 
-  // Execute body blocks and track which fall through
-  std::vector<BlockIndex> fallthrough_blocks;
-  for (size_t i = 0; i < bodies.size(); ++i) {
-    SetCurrentBlock(body_blocks[i]);
-    bodies[i]();
-    if (IsReachable()) {
-      fallthrough_blocks.push_back(CurrentBlock());
+  // Helper to create an integral constant operand.
+  auto make_const = [](uint64_t value, TypeId type) -> mir::Operand {
+    IntegralConstant ic;
+    ic.value.push_back(value);
+    ic.unknown.push_back(0);
+    return mir::Operand::Const(Constant{.type = type, .value = std::move(ic)});
+  };
+
+  const bool has_fallback = spec.build_fallback_body.has_value();
+  const size_t n = spec.arms.size();
+
+  // Degenerate case: no condition arms (e.g., case with only default).
+  if (n == 0) {
+    if (spec.id.has_value()) {
+      EmitEffect(
+          mir::RecordDecisionObservation{
+              .id = *spec.id,
+              .match_class_const = MatchClass::kZero,
+              .selected_kind_const = has_fallback
+                                         ? DecisionSelectedKind::kFallback
+                                         : DecisionSelectedKind::kNoMatch,
+              .selected_arm_const = semantic::DecisionArmIndex{0},
+          });
     }
-  }
-
-  // Execute else block
-  SetCurrentBlock(else_bb);
-  else_body();
-  if (IsReachable()) {
-    fallthrough_blocks.push_back(CurrentBlock());
-  }
-
-  // Structural join: only create merge block if needed
-  if (!fallthrough_blocks.empty()) {
-    BlockIndex merge_bb = CreateBlock();
-    for (BlockIndex fb : fallthrough_blocks) {
-      SetCurrentBlock(fb);
-      EmitJump(merge_bb);
+    if (has_fallback) {
+      (*spec.build_fallback_body)(*this);
     }
-    SetCurrentBlock(merge_bb);
+    return;
+  }
+
+  if (NeedsOverlapCheck(spec.qualifier)) {
+    // Eager path (kUnique/kUnique0): evaluate all conditions upfront,
+    // compute match_class + selected_arm via straight-line select logic.
+
+    // Block creation up front
+    std::vector<BlockIndex> arm_body_blocks(n);
+    std::vector<BlockIndex> dispatch_check_blocks(n);
+    for (size_t i = 0; i < n; ++i) {
+      arm_body_blocks[i] = CreateBlock();
+      dispatch_check_blocks[i] = CreateBlock();
+    }
+    BlockIndex fallback_body_block =
+        has_fallback ? CreateBlock() : kInvalidBlockIndex;
+    BlockIndex merge_block = CreateBlock();
+    BlockIndex no_match_target =
+        has_fallback ? fallback_body_block : merge_block;
+
+    // 1. Evaluate all conditions eagerly
+    TypeId bit_type = ctx_->GetBitType();
+    std::vector<mir::Operand> conds;
+    conds.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      conds.push_back(spec.arms[i].build_condition(*this));
+    }
+
+    // 2. Straight-line selected-arm + match-class computation using Select
+    TypeId i8_type = ctx_->GetI8Type();
+    TypeId i16_type = ctx_->GetI16Type();
+
+    mir::Operand cnt = EmitValueTempAssign(i8_type, make_const(0, i8_type));
+    mir::Operand found = EmitValueTempAssign(bit_type, make_const(0, bit_type));
+    mir::Operand first_arm =
+        EmitValueTempAssign(i16_type, make_const(0, i16_type));
+
+    for (uint16_t i = 0; i < n; ++i) {
+      // cnt += zext(cond[i])
+      mir::Operand ci8 = EmitValueTemp(
+          i8_type, mir::Rvalue{
+                       .operands = {conds[i]},
+                       .info =
+                           mir::CastRvalueInfo{
+                               .source_type = bit_type, .target_type = i8_type},
+                   });
+      cnt = EmitValueTemp(
+          i8_type, mir::Rvalue{
+                       .operands = {cnt, ci8},
+                       .info = mir::BinaryRvalueInfo{.op = mir::BinaryOp::kAdd},
+                   });
+
+      // take_first = cond[i] & !found
+      mir::Operand not_found = EmitValueTemp(
+          bit_type,
+          mir::Rvalue{
+              .operands = {found},
+              .info = mir::UnaryRvalueInfo{.op = mir::UnaryOp::kBitwiseNot},
+          });
+      mir::Operand take_first = EmitValueTemp(
+          bit_type,
+          mir::Rvalue{
+              .operands = {conds[i], not_found},
+              .info = mir::BinaryRvalueInfo{.op = mir::BinaryOp::kBitwiseAnd},
+          });
+
+      // first_arm = take_first ? i : first_arm
+      first_arm =
+          EmitSelect(take_first, make_const(i, i16_type), first_arm, i16_type);
+
+      // found = found | cond[i]
+      found = EmitValueTemp(
+          bit_type,
+          mir::Rvalue{
+              .operands = {found, conds[i]},
+              .info = mir::BinaryRvalueInfo{.op = mir::BinaryOp::kBitwiseOr},
+          });
+    }
+
+    // 3. Saturate count to MatchClass {kZero=0, kOne=1, kMultiple=2}
+    mir::Operand cnt_eq_zero = EmitValueTemp(
+        bit_type,
+        mir::Rvalue{
+            .operands = {cnt, make_const(0, i8_type)},
+            .info = mir::BinaryRvalueInfo{.op = mir::BinaryOp::kEqual},
+        });
+    mir::Operand cnt_eq_one = EmitValueTemp(
+        bit_type,
+        mir::Rvalue{
+            .operands = {cnt, make_const(1, i8_type)},
+            .info = mir::BinaryRvalueInfo{.op = mir::BinaryOp::kEqual},
+        });
+    mir::Operand mc_one_or_multi = EmitSelect(
+        cnt_eq_one, make_const(static_cast<uint8_t>(MatchClass::kOne), i8_type),
+        make_const(static_cast<uint8_t>(MatchClass::kMultiple), i8_type),
+        i8_type);
+    mir::Operand match_class = EmitSelect(
+        cnt_eq_zero,
+        make_const(static_cast<uint8_t>(MatchClass::kZero), i8_type),
+        mc_one_or_multi, i8_type);
+
+    // 4. Compute selected_kind
+    mir::Operand selected_kind = EmitSelect(
+        found,
+        make_const(static_cast<uint8_t>(DecisionSelectedKind::kArm), i8_type),
+        make_const(
+            static_cast<uint8_t>(
+                has_fallback ? DecisionSelectedKind::kFallback
+                             : DecisionSelectedKind::kNoMatch),
+            i8_type),
+        i8_type);
+
+    // 5. Record observation
+    EmitEffect(
+        mir::RecordDecisionObservationDynamic{
+            .id = *spec.id,
+            .match_class = match_class,
+            .selected_kind = selected_kind,
+            .selected_arm = first_arm,
+        });
+
+    // 6. First-true-wins dispatch cascade
+    EmitJump(dispatch_check_blocks[0]);
+    for (size_t i = 0; i < n; ++i) {
+      SetCurrentBlock(dispatch_check_blocks[i]);
+      BlockIndex next =
+          (i + 1 < n) ? dispatch_check_blocks[i + 1] : no_match_target;
+      EmitBranch(conds[i], arm_body_blocks[i], next);
+    }
+
+    // 7. Lower body blocks into single merge_block
+    bool merge_reachable = false;
+    for (size_t i = 0; i < n; ++i) {
+      SetCurrentBlock(arm_body_blocks[i]);
+      spec.arms[i].build_body(*this);
+      if (IsReachable()) {
+        EmitJump(merge_block);
+        merge_reachable = true;
+      }
+    }
+    if (has_fallback) {
+      SetCurrentBlock(fallback_body_block);
+      (*spec.build_fallback_body)(*this);
+      if (IsReachable()) {
+        EmitJump(merge_block);
+        merge_reachable = true;
+      }
+    }
+    // no_match_target == merge_block when !has_fallback
+    if (!has_fallback) {
+      merge_reachable = true;
+    }
+    if (merge_reachable) {
+      SetCurrentBlock(merge_block);
+    } else {
+      ClearInsertionPoint();
+    }
+
+  } else if (spec.id.has_value()) {
+    // Lazy path with observation (kPriority): short-circuit cascade with
+    // recording edges before each body.
+
+    // Block creation up front
+    std::vector<BlockIndex> check_blocks(n);
+    std::vector<BlockIndex> arm_record_blocks(n);
+    std::vector<BlockIndex> arm_body_blocks(n);
+    for (size_t i = 0; i < n; ++i) {
+      check_blocks[i] = CreateBlock();
+      arm_record_blocks[i] = CreateBlock();
+      arm_body_blocks[i] = CreateBlock();
+    }
+    BlockIndex fallback_record_block =
+        has_fallback ? CreateBlock() : kInvalidBlockIndex;
+    BlockIndex fallback_body_block =
+        has_fallback ? CreateBlock() : kInvalidBlockIndex;
+    BlockIndex nomatch_record_block =
+        has_fallback ? kInvalidBlockIndex : CreateBlock();
+    BlockIndex merge_block = CreateBlock();
+    BlockIndex terminal_record =
+        has_fallback ? fallback_record_block : nomatch_record_block;
+
+    // Cascade with recording edges
+    EmitJump(check_blocks[0]);
+    for (uint16_t i = 0; i < n; ++i) {
+      SetCurrentBlock(check_blocks[i]);
+      mir::Operand cond = spec.arms[i].build_condition(*this);
+      BlockIndex next = (i + 1 < n) ? check_blocks[i + 1] : terminal_record;
+      EmitBranch(cond, arm_record_blocks[i], next);
+
+      SetCurrentBlock(arm_record_blocks[i]);
+      EmitEffect(
+          mir::RecordDecisionObservation{
+              .id = *spec.id,
+              .match_class_const = MatchClass::kOne,
+              .selected_kind_const = DecisionSelectedKind::kArm,
+              .selected_arm_const = semantic::DecisionArmIndex{i},
+          });
+      EmitJump(arm_body_blocks[i]);
+    }
+
+    // Terminal recording: no condition arm matched, so match_class is kZero.
+    if (has_fallback) {
+      SetCurrentBlock(fallback_record_block);
+      EmitEffect(
+          mir::RecordDecisionObservation{
+              .id = *spec.id,
+              .match_class_const = MatchClass::kZero,
+              .selected_kind_const = DecisionSelectedKind::kFallback,
+              .selected_arm_const = semantic::DecisionArmIndex{0},
+          });
+      EmitJump(fallback_body_block);
+    } else {
+      SetCurrentBlock(nomatch_record_block);
+      EmitEffect(
+          mir::RecordDecisionObservation{
+              .id = *spec.id,
+              .match_class_const = MatchClass::kZero,
+              .selected_kind_const = DecisionSelectedKind::kNoMatch,
+              .selected_arm_const = semantic::DecisionArmIndex{0},
+          });
+      EmitJump(merge_block);
+    }
+
+    // Lower body blocks into single merge_block
+    bool merge_reachable = !has_fallback;  // nomatch path jumps to merge
+    for (size_t i = 0; i < n; ++i) {
+      SetCurrentBlock(arm_body_blocks[i]);
+      spec.arms[i].build_body(*this);
+      if (IsReachable()) {
+        EmitJump(merge_block);
+        merge_reachable = true;
+      }
+    }
+    if (has_fallback) {
+      SetCurrentBlock(fallback_body_block);
+      (*spec.build_fallback_body)(*this);
+      if (IsReachable()) {
+        EmitJump(merge_block);
+        merge_reachable = true;
+      }
+    }
+    if (merge_reachable) {
+      SetCurrentBlock(merge_block);
+    } else {
+      ClearInsertionPoint();
+    }
+
   } else {
-    ClearInsertionPoint();
+    // kNone path: same lazy cascade but without observation recording.
+    // Reuse EmitPriorityChainNone for simplicity.
+    std::vector<std::function<mir::Operand()>> conditions;
+    conditions.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      conditions.emplace_back(
+          [this, &spec, i]() { return spec.arms[i].build_condition(*this); });
+    }
+    std::vector<std::function<void()>> bodies;
+    bodies.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      bodies.emplace_back(
+          [this, &spec, i]() { spec.arms[i].build_body(*this); });
+    }
+    auto fallback = [&]() {
+      if (spec.build_fallback_body.has_value()) {
+        (*spec.build_fallback_body)(*this);
+      }
+    };
+    EmitPriorityChainNone(conditions, bodies, fallback);
   }
 }
 
@@ -936,33 +1217,6 @@ auto MirBuilder::MaterializeForBranch(mir::Operand cond) -> mir::Operand {
   return mir::Operand::Use(temp);
 }
 
-void MirBuilder::EmitQualifiedDispatch(
-    mir::DispatchQualifier qualifier, mir::DispatchStatementKind statement_kind,
-    const std::vector<mir::Operand>& conditions,
-    const std::vector<BlockIndex>& targets, bool has_else) {
-  // Validate invariant: targets = one per condition + else fallthrough
-  if (targets.size() != conditions.size() + 1) {
-    throw common::InternalError(
-        "EmitQualifiedDispatch",
-        "targets.size() must equal conditions.size() + 1");
-  }
-
-  std::vector<mir::BasicBlockId> bb_targets;
-  bb_targets.reserve(targets.size());
-  for (const auto& target : targets) {
-    bb_targets.push_back(mir::BasicBlockId{target.value});
-  }
-
-  EmitTerm(
-      mir::QualifiedDispatch{
-          .qualifier = qualifier,
-          .statement_kind = statement_kind,
-          .conditions = conditions,
-          .targets = std::move(bb_targets),
-          .has_else = has_else,
-      });
-}
-
 void MirBuilder::EmitReturn(mir::Operand value) {
   EmitTerm(mir::Return{.value = std::make_optional(std::move(value))});
 }
@@ -1082,10 +1336,6 @@ void RemapTerminatorTargets(
           RemapTarget(t.then_target, block_map);
           RemapTarget(t.else_target, block_map);
         } else if constexpr (std::is_same_v<T, mir::Switch>) {
-          for (auto& target : t.targets) {
-            RemapTarget(target, block_map);
-          }
-        } else if constexpr (std::is_same_v<T, mir::QualifiedDispatch>) {
           for (auto& target : t.targets) {
             RemapTarget(target, block_map);
           }

@@ -206,22 +206,35 @@ class MirBuilder {
       mir::Operand condition, std::function<void()> then_body,
       std::function<void()> else_body);
 
-  // Emit priority if chain: cascade of condition checks with short-circuit.
-  // Each condition is evaluated lazily; on match, corresponding body executes.
-  // After return, insertion point is at merge if any branch fell through.
-  void EmitPriorityChain(
-      const std::vector<std::function<mir::Operand()>>& conditions,
-      const std::vector<std::function<void()>>& bodies,
-      std::function<void()> else_body);
+  // Allocate a decision site with full metadata.
+  // Returns the DecisionId for use in observation effects.
+  auto AllocateDecisionSite(
+      semantic::DecisionQualifier qualifier, semantic::DecisionKind kind,
+      bool has_fallback, semantic::DecisionArmCount arm_count,
+      common::OriginId origin) -> semantic::DecisionId;
 
-  // Emit unique dispatch: all conditions evaluated upfront, QualifiedDispatch.
-  // After return, insertion point is at merge if any branch fell through.
-  void EmitUniqueDispatch(
-      mir::DispatchQualifier qualifier,
-      mir::DispatchStatementKind statement_kind,
-      const std::vector<mir::Operand>& conditions,
-      const std::vector<std::function<void()>>& bodies,
-      std::function<void()> else_body, bool has_else);
+  // Structured input for EmitDecision.
+  struct DecisionArmBuilder {
+    std::function<mir::Operand(MirBuilder&)> build_condition;
+    std::function<void(MirBuilder&)> build_body;
+  };
+
+  struct DecisionBuildSpec {
+    semantic::DecisionQualifier qualifier;
+    std::optional<semantic::DecisionId> id;
+    std::vector<DecisionArmBuilder> arms;
+    std::optional<std::function<void(MirBuilder&)>> build_fallback_body;
+  };
+
+  // Unified decision emission. Emits the correct block structure
+  // per qualifier (lazy cascade vs eager evaluation).
+  // For qualified decisions, emits observation recording effects.
+  void EmitDecision(const DecisionBuildSpec& spec);
+
+  // Emit select (ternary) rvalue: condition ? true_val : false_val
+  auto EmitSelect(
+      mir::Operand condition, mir::Operand true_val, mir::Operand false_val,
+      TypeId result_type) -> mir::Operand;
 
   // Case item for EmitCaseCascade: expressions (OR'd together) + body.
   struct CaseItem {
@@ -264,11 +277,12 @@ class MirBuilder {
   // Materialize a condition operand for use in EmitBranch.
   // EmitBranch requires kUse or kUseTemp; this spills kConst to a temp.
   auto MaterializeForBranch(mir::Operand cond) -> mir::Operand;
-  void EmitQualifiedDispatch(
-      mir::DispatchQualifier qualifier,
-      mir::DispatchStatementKind statement_kind,
-      const std::vector<mir::Operand>& conditions,
-      const std::vector<BlockIndex>& targets, bool has_else);
+  // Emit priority chain (kNone path only -- no observation).
+  // Lazy short-circuit cascade: each condition evaluated in order.
+  void EmitPriorityChainNone(
+      const std::vector<std::function<mir::Operand()>>& conditions,
+      const std::vector<std::function<void()>>& bodies,
+      std::function<void()> else_body);
   void EmitReturn(mir::Operand value);
   void EmitRepeat();
   void EmitDelay(uint64_t ticks, BlockIndex resume);
@@ -301,7 +315,7 @@ class MirBuilder {
   auto GetOriginMap() -> OriginMap* {
     return origin_map_;
   }
-  auto GetBodyId() const -> hir::ModuleBodyId {
+  [[nodiscard]] auto GetBodyId() const -> hir::ModuleBodyId {
     return body_id_;
   }
 
@@ -384,6 +398,13 @@ class MirBuilder {
   hir::ModuleBodyId body_id_ = hir::kInvalidModuleBodyId;
   bool finished_ = false;
   BlockIndex exit_block_ = kInvalidBlockIndex;  // Single-exit form
+  std::vector<mir::Process::MirDecisionSite> process_decision_sites_;
+
+ public:
+  // Move decision sites out after Finish(). Transfers ownership.
+  auto TakeDecisionSites() -> std::vector<mir::Process::MirDecisionSite> {
+    return std::move(process_decision_sites_);
+  }
 };
 
 }  // namespace lyra::lowering::hir_to_mir

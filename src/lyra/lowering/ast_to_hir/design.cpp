@@ -750,6 +750,16 @@ auto LowerDesign(
     SeedBodyTypes(body_inputs[g], ctx);
   }
 
+  // Seed decision observation types (i8, i16) before freeze.
+  // These are not SV types but are needed by MIR decision lowering.
+  ctx->type_arena->Intern(
+      TypeKind::kIntegral,
+      IntegralInfo{.bit_width = 8, .is_signed = false, .is_four_state = false});
+  ctx->type_arena->Intern(
+      TypeKind::kIntegral,
+      IntegralInfo{
+          .bit_width = 16, .is_signed = false, .is_four_state = false});
+
   // TypeArena is now a shared read-only artifact for Phase 1.
   ctx->type_arena->Freeze();
 

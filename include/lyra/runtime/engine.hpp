@@ -21,6 +21,7 @@
 #include "lyra/common/time_format.hpp"
 #include "lyra/runtime/activation_trace.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
+#include "lyra/runtime/decision.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/engine_types.hpp"
@@ -181,6 +182,9 @@ class Engine {
     if (detailed_stats_enabled_) {
       per_process_stats_.resize(num_processes);
     }
+    process_decision_tables_.resize(num_processes);
+    decision_states_.resize(num_processes);
+    decision_pending_flags_.resize(num_processes, 0);
   }
 
   ~Engine() = default;
@@ -740,6 +744,12 @@ class Engine {
   // Handle a trap raised by generated code (loop budget exceeded, etc.).
   void HandleTrap(uint32_t process_id, const TrapPayload& payload);
 
+  // Record a decision observation for an explicit process.
+  // Called from LyraRecordDecisionObservation (extern "C" ABI boundary).
+  void RecordDecisionObservation(
+      ProcessId process_id, DecisionId decision_id, MatchClass match_class,
+      DecisionSelectedKind selected_kind, DecisionArmIndex selected_arm);
+
   // Scheduler phase for signal-safe status dump.
   enum class Phase : uint32_t {
     kIdle,
@@ -747,6 +757,7 @@ class Engine {
     kRunProcess,
     kFlushUpdates,
     kCommitNba,
+    kSettleComplete,
     kPostponed,
   };
 
@@ -763,6 +774,13 @@ class Engine {
   void ExecuteNbaRegion();
   void ExecutePostponedRegion();
   void FlushDirtySlots();
+
+  // Decision settle-complete validation and diagnostics.
+  void RunSettleCompleteChecks();
+  void ValidateProcessDecisionChecks(ProcessId process_id);
+  [[nodiscard]] auto FormatDecisionViolation(
+      ProcessId process_id, const DecisionMetaEntry& meta,
+      DecisionViolation violation) const -> std::string;
 
   // Subscription lifecycle
   void ClearInstalledSubscriptions(ProcessHandle handle);
@@ -1204,6 +1222,23 @@ class Engine {
   mutable std::unordered_map<
       const RuntimeInstance*, std::unordered_map<void*, void*>>
       scope_user_data_;
+
+  // Immutable per-process decision metadata tables. Indexed by process_id.
+  // Populated during InitModuleInstancesFromBundles from body descriptor data.
+  // Points into emitted LLVM globals; valid for program lifetime.
+  std::vector<ProcessBodyDecisionTable> process_decision_tables_;
+  // Per-process mutable decision observation state. Indexed by process_id.
+  // Sized from the immutable table count during registration.
+  std::vector<ProcessDecisionState> decision_states_;
+  // Dedup flag for pending_decision_processes_ (indexed by process_id).
+  std::vector<uint8_t> decision_pending_flags_;
+  // Process IDs with pending decision checks this timeslot.
+  std::vector<ProcessId> pending_decision_processes_;
+  // Monotonic timeslot epoch for observation staleness detection.
+  TimeslotEpoch current_timeslot_epoch_;
+  // Per-(process, site, violation) diagnostic counter for rate limiting.
+  std::unordered_map<DecisionDiagKey, uint32_t, DecisionDiagKeyHash>
+      decision_diag_counts_;
 };
 
 }  // namespace lyra::runtime

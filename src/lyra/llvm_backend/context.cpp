@@ -535,10 +535,19 @@ auto Context::EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value* {
   return EmitHeaderFieldGep(*this, state_arg, F::kOutcome, "outcome_ptr");
 }
 
+auto Context::EmitLoadProcessId(llvm::Value* state_arg) -> llvm::Value* {
+  using F = lyra::runtime::ProcessFrameHeaderField;
+  auto* ptr =
+      EmitHeaderFieldGep(*this, state_arg, F::kProcessId, "process_id_ptr");
+  return builder_.CreateLoad(
+      llvm::Type::getInt32Ty(*llvm_context_), ptr, "process_id");
+}
+
 void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
   SetStatePointer(state_arg);
   SetEnginePointer(EmitLoadEnginePtr(state_arg));
   SetDesignPointer(EmitLoadDesignPtr(state_arg));
+  SetCurrentProcessId(EmitLoadProcessId(state_arg));
 
   auto* frame_ptr = builder_.CreateStructGEP(
       GetProcessStateType(), state_arg, 1, "frame_ptr");
@@ -585,6 +594,14 @@ auto Context::GetEnginePointer() -> llvm::Value* {
   return engine_ptr_;
 }
 
+void Context::SetCurrentProcessId(llvm::Value* process_id) {
+  current_process_id_ = process_id;
+}
+
+auto Context::GetCurrentProcessId() -> llvm::Value* {
+  return current_process_id_;
+}
+
 void Context::SetDesignStoreMode(DesignStoreMode mode) {
   design_store_mode_ = mode;
 }
@@ -620,6 +637,7 @@ auto Context::SaveExecutionContractState() -> ExecutionContractState {
       .design_ptr = design_ptr_,
       .frame_ptr = frame_ptr_,
       .engine_ptr = engine_ptr_,
+      .current_process_id = current_process_id_,
       .instance_ptr = instance_ptr_,
       .this_ptr = this_ptr_,
       .dynamic_instance_id = dynamic_instance_id_,
@@ -636,6 +654,7 @@ void Context::RestoreExecutionContractState(
   design_ptr_ = state.design_ptr;
   frame_ptr_ = state.frame_ptr;
   engine_ptr_ = state.engine_ptr;
+  current_process_id_ = state.current_process_id;
   instance_ptr_ = state.instance_ptr;
   this_ptr_ = state.this_ptr;
   dynamic_instance_id_ = state.dynamic_instance_id;
@@ -652,6 +671,7 @@ ExecutionContractScope::ExecutionContractScope(
   ctx.SetDesignPointer(nullptr);
   ctx.SetFramePointer(nullptr);
   ctx.SetEnginePointer(nullptr);
+  ctx.SetCurrentProcessId(nullptr);
   ctx.SetThisPointer(nullptr);
   ctx.SetDynamicInstanceId(nullptr);
   ctx.SetLocalSignalCoordBase(nullptr);

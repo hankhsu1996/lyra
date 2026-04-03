@@ -21,7 +21,6 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
-#include "lyra/llvm_backend/connection_kernel_collection.hpp"
 #include "lyra/llvm_backend/layout/layout_four_state.hpp"
 #include "lyra/llvm_backend/layout/storage_types.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
@@ -602,7 +601,8 @@ void CollectPlacesFromRvalue(
             std::is_same_v<T, mir::RuntimeQueryRvalueInfo> ||
             std::is_same_v<T, mir::MathCallRvalueInfo> ||
             std::is_same_v<T, mir::SystemTfRvalueInfo> ||
-            std::is_same_v<T, mir::ArrayQueryRvalueInfo>) {
+            std::is_same_v<T, mir::ArrayQueryRvalueInfo> ||
+            std::is_same_v<T, mir::SelectRvalueInfo>) {
           // These RvalueInfo types have no embedded PlaceIds or Operands
           // beyond what's in Rvalue::operands (already collected above)
         } else {
@@ -668,6 +668,14 @@ void CollectPlacesFromEffectOp(
           [&](const mir::FillPackedEffect& f) {
             places.insert(f.target);
             CollectPlaceFromOperand(f.fill_value, places);
+          },
+          [&](const mir::RecordDecisionObservation&) {
+            // Static payload only, no operands
+          },
+          [&](const mir::RecordDecisionObservationDynamic& r) {
+            CollectPlaceFromOperand(r.match_class, places);
+            CollectPlaceFromOperand(r.selected_kind, places);
+            CollectPlaceFromOperand(r.selected_arm, places);
           },
       },
       effect);
@@ -782,11 +790,6 @@ auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
             [&](const mir::Switch& s) {
               CollectPlaceFromOperand(s.selector, places);
             },
-            [&](const mir::QualifiedDispatch& qd) {
-              for (const auto& cond : qd.conditions) {
-                CollectPlaceFromOperand(cond, places);
-              }
-            },
             [](const auto&) {},
         },
         block.terminator.data);
@@ -850,103 +853,6 @@ auto ProcessHasSuspension(const mir::Process& process) -> bool {
   });
 }
 
-// Check if a connection process can be kernelized (single Assign + Wait with
-// 1 trigger, source is a design slot read, dest is a design slot write).
-// File-local intermediates for kernelization.
-// These carry raw PlaceIds from the owning arena. BuildLayout converts them
-// into final boundary structs with ResolvedObservation before they escape.
-
-struct PendingConnectionKernelEntry {
-  mir::ProcessId process_id;
-  common::SlotId src_slot;
-  common::SlotId dst_slot;
-  common::SlotId trigger_slot;
-  common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
-  std::optional<mir::PlaceId> trigger_observed_place;
-};
-
-auto TryKernelizeConnection(
-    const mir::Process& process, const mir::Arena& arena)
-    -> std::optional<PendingConnectionKernelEntry> {
-  // Must have exactly 1 basic block
-  if (process.blocks.size() != 1) {
-    return std::nullopt;
-  }
-  const auto& block = process.blocks[0];
-
-  // Must have exactly 1 statement (the Assign)
-  if (block.statements.size() != 1) {
-    return std::nullopt;
-  }
-
-  // Statement must be an Assign
-  const auto* assign = std::get_if<mir::Assign>(&block.statements[0].data);
-  if (assign == nullptr) {
-    return std::nullopt;
-  }
-
-  // Dest must be a design slot (PlaceRoot::kDesign, no projections)
-  const auto& dest_place = arena[assign->dest];
-  if (dest_place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
-    return std::nullopt;
-  }
-  if (!dest_place.projections.empty()) {
-    return std::nullopt;
-  }
-
-  // RHS must be an Operand (not Rvalue)
-  const auto* rhs_operand = std::get_if<mir::Operand>(&assign->rhs);
-  if (rhs_operand == nullptr) {
-    return std::nullopt;
-  }
-
-  // RHS operand must be a Use (place read)
-  if (rhs_operand->kind != mir::Operand::Kind::kUse) {
-    return std::nullopt;
-  }
-
-  // Source must be a design slot (no projections)
-  auto src_place_id = std::get<mir::PlaceId>(rhs_operand->payload);
-  const auto& src_place = arena[src_place_id];
-  if (src_place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
-    return std::nullopt;
-  }
-  if (!src_place.projections.empty()) {
-    return std::nullopt;
-  }
-
-  // Terminator must be a Wait with exactly 1 trigger
-  const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
-  if (wait == nullptr) {
-    return std::nullopt;
-  }
-  if (wait->triggers.size() != 1) {
-    return std::nullopt;
-  }
-
-  const auto& trigger = wait->triggers[0];
-
-  // No late-bound triggers
-  if (trigger.late_bound.has_value()) {
-    return std::nullopt;
-  }
-
-  // Connection processes operate on design-global storage only.
-  if (trigger.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
-    throw common::InternalError(
-        "TryKernelizeConnection", "connection trigger must be design-global");
-  }
-
-  return PendingConnectionKernelEntry{
-      .process_id = {},  // Set by caller
-      .src_slot = common::SlotId{static_cast<uint32_t>(src_place.root.id)},
-      .dst_slot = common::SlotId{static_cast<uint32_t>(dest_place.root.id)},
-      .trigger_slot = common::SlotId{trigger.signal.id},
-      .trigger_edge = trigger.edge,
-      .trigger_observed_place = trigger.observed_place,
-  };
-}
-
 // Check if a statement is "pure" for comb kernel batching.
 // Pure means: no I/O, no NBA, no function calls, no container mutations.
 auto IsStatementPure(const mir::Statement& stmt) -> bool {
@@ -978,7 +884,6 @@ auto IsTerminatorPureCF(const mir::Terminator& term) -> bool {
           [](const mir::Jump&) { return true; },
           [](const mir::Branch&) { return true; },
           [](const mir::Switch&) { return true; },
-          [](const mir::QualifiedDispatch&) { return true; },
           [](const mir::Wait&) { return true; },
           [](const mir::Delay&) { return false; },
           [](const mir::Return&) { return false; },
@@ -1010,11 +915,11 @@ auto BuildHeaderType(llvm::LLVMContext& ctx, llvm::StructType* suspend_type)
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* outcome_ty =
       llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty});
-  // { suspend, body, engine_ptr, design_ptr, instance, outcome }
+  // { suspend, body, engine_ptr, design_ptr, instance, outcome, process_id }
   using F = lyra::runtime::ProcessFrameHeaderField;
   constexpr auto kFieldCount = static_cast<size_t>(F::kFieldCount);
   std::array<llvm::Type*, kFieldCount> fields = {
-      suspend_type, ptr_ty, ptr_ty, ptr_ty, ptr_ty, outcome_ty};
+      suspend_type, ptr_ty, ptr_ty, ptr_ty, ptr_ty, outcome_ty, i32_ty};
   return llvm::StructType::create(ctx, fields, "ProcessStateHeader");
 }
 
@@ -1948,6 +1853,8 @@ auto BuildLayout(
                   .inline_state_size_bytes = size.inline_bytes,
                   .appendix_state_size_bytes = size.appendix_bytes,
                   .total_state_size_bytes = size.total_bytes,
+                  .decision_metas = {},
+                  .decision_meta_files = {},
               });
         } else {
           // Validate all plans for the same body agree on slot_count.
@@ -2066,7 +1973,7 @@ auto BuildLayout(
                   ? runtime::kOwnedStorageHandleByteSize
                   : layout.design.slot_storage_specs[row].TotalByteSize();
           uint64_t slot_end = slot_off + slot_size;
-          if (slot_end > inline_end) inline_end = slot_end;
+          inline_end = std::max(inline_end, slot_end);
 
           // Check for owned backing data (container appendix).
           if (layout.design.owned_data_offsets[row].has_value()) {
@@ -2074,14 +1981,15 @@ auto BuildLayout(
             uint64_t backing_size =
                 layout.design.slot_storage_specs[row].TotalByteSize();
             uint64_t backing_end = backing_off + backing_size;
-            if (backing_end > total_end) total_end = backing_end;
+            total_end = std::max(total_end, backing_end);
           }
         }
 
         uint64_t inline_bytes = inline_end - inst_base;
         uint64_t appendix_bytes =
             (total_end > inline_end) ? (total_end - inline_end) : 0;
-        layout.instance_storage_sizes[mi] = {inline_bytes, appendix_bytes};
+        layout.instance_storage_sizes[mi] = {
+            .inline_bytes = inline_bytes, .appendix_bytes = appendix_bytes};
       }
     }
   }

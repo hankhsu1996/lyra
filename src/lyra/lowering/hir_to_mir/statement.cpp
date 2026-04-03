@@ -225,6 +225,7 @@ auto LowerStrobeEffect(
       .body_places = original_ctx.body_places,
       .design_places = original_ctx.design_places,
       .local_places = {},  // Fresh local mapping (program has no SV locals)
+      .design_place_cache = {},
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
@@ -512,6 +513,7 @@ auto LowerMonitorCheckProgram(
       .body_places = original_ctx.body_places,
       .design_places = original_ctx.design_places,
       .local_places = {},
+      .design_place_cache = {},
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
@@ -593,6 +595,7 @@ auto LowerMonitorSetupProgram(
       .body_places = original_ctx.body_places,
       .design_places = original_ctx.design_places,
       .local_places = {},
+      .design_place_cache = {},
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
@@ -904,7 +907,7 @@ auto FlattenIfElseChain(
   return result;
 }
 
-// Materialize condition to an Operand (for EmitBranch/QualifiedDispatch).
+// Materialize condition to an Operand (for EmitBranch/DecisionDispatch).
 // Returns Use or UseTemp operands directly; materializes constants to temps.
 auto MaterializeCondition(hir::ExpressionId cond_expr_id, MirBuilder& builder)
     -> Result<mir::Operand> {
@@ -925,325 +928,147 @@ auto MaterializeCondition(hir::ExpressionId cond_expr_id, MirBuilder& builder)
   return mir::Operand::Use(temp);
 }
 
-// Standard if-else lowering without qualifiers.
-auto LowerConditionalNone(
-    const hir::ConditionalStatementData& data, MirBuilder& builder)
-    -> Result<void> {
-  Result<mir::Operand> cond_result =
-      MaterializeCondition(data.condition, builder);
-  if (!cond_result) return std::unexpected(cond_result.error());
-  mir::Operand cond = *cond_result;
-
-  // Use a result holder to capture errors from callbacks
-  Result<void> callback_result;
-  if (data.else_branch.has_value()) {
-    builder.EmitIfElse(
-        cond,
-        [&] { callback_result = LowerStatement(data.then_branch, builder); },
-        [&] {
-          if (callback_result) {
-            callback_result = LowerStatement(*data.else_branch, builder);
-          }
-        });
-  } else {
-    builder.EmitIf(cond, [&] {
-      callback_result = LowerStatement(data.then_branch, builder);
-    });
+// Map HIR qualifier to semantic DecisionQualifier.
+auto MapQualifier(hir::UniquePriorityCheck check)
+    -> semantic::DecisionQualifier {
+  switch (check) {
+    case hir::UniquePriorityCheck::kNone:
+      return semantic::DecisionQualifier::kNone;
+    case hir::UniquePriorityCheck::kUnique:
+      return semantic::DecisionQualifier::kUnique;
+    case hir::UniquePriorityCheck::kUnique0:
+      return semantic::DecisionQualifier::kUnique0;
+    case hir::UniquePriorityCheck::kPriority:
+      return semantic::DecisionQualifier::kPriority;
   }
-  return callback_result;
+  return semantic::DecisionQualifier::kNone;
 }
 
-// Priority if: branch cascade + warning at end if no else.
-auto LowerConditionalPriority(
-    const hir::ConditionalStatementData& data, MirBuilder& builder)
-    -> Result<void> {
-  Context& ctx = builder.GetContext();
-
-  // Flatten the if-else chain (only chain same-qualifier else-if's)
-  FlattenResult flat = FlattenIfElseChain(
-      data, *ctx.hir_arena, hir::UniquePriorityCheck::kPriority);
-  const auto& pairs = flat.pairs;
-
-  // Use a result holder to capture errors from callbacks
-  Result<void> callback_result;
-
-  // Build condition callbacks (each evaluates and materializes a condition)
-  std::vector<std::function<mir::Operand()>> conditions;
-  for (const auto& pair : pairs) {
-    conditions.emplace_back([&builder, &callback_result,
-                             cond_id = pair.condition]() {
-      Result<mir::Operand> cond_result = MaterializeCondition(cond_id, builder);
-      if (!cond_result) {
-        callback_result = std::unexpected(cond_result.error());
-        return mir::Operand::Use(mir::kInvalidPlaceId);  // Will be ignored
-      }
-      return *cond_result;
-    });
-  }
-
-  // Build body callbacks
-  std::vector<std::function<void()>> bodies;
-  for (const auto& pair : pairs) {
-    bodies.emplace_back([&builder, &callback_result, body_id = pair.body]() {
-      if (callback_result) {
-        callback_result = LowerStatement(body_id, builder);
-      }
-    });
-  }
-
-  // Build else callback
-  auto else_callback = [&]() {
-    if (!callback_result) {
-      return;
-    }
-    if (flat.else_body.has_value()) {
-      callback_result = LowerStatement(*flat.else_body, builder);
-    } else {
-      // No else clause: emit warning
-      mir::DisplayEffect display{
-          .print_kind = PrintKind::kDisplay,
-          .ops = {mir::FormatOp{
-              .kind = FormatKind::kLiteral,
-              .value = std::nullopt,
-              .literal = "warning: no condition matched in priority if",
-              .type = TypeId{},
-              .mods = {}}},
-          .descriptor = std::nullopt,
-      };
-      builder.EmitEffect(std::move(display));
-    }
-  };
-
-  builder.EmitPriorityChain(conditions, bodies, else_callback);
-  return callback_result;
-}
-
-// Unique/Unique0 if: eval all conditions, emit QualifiedDispatch.
-auto LowerConditionalUnique(
-    const hir::ConditionalStatementData& data, MirBuilder& builder,
-    hir::UniquePriorityCheck check) -> Result<void> {
-  Context& ctx = builder.GetContext();
-
-  // Flatten the if-else chain (only chain same-qualifier else-if's)
-  FlattenResult flat = FlattenIfElseChain(data, *ctx.hir_arena, check);
-  const auto& pairs = flat.pairs;
-  bool has_else = flat.else_body.has_value();
-
-  // Evaluate all conditions upfront
-  std::vector<mir::Operand> condition_operands;
-  for (const auto& pair : pairs) {
-    Result<mir::Operand> cond_result =
-        MaterializeCondition(pair.condition, builder);
-    if (!cond_result) return std::unexpected(cond_result.error());
-    condition_operands.push_back(*cond_result);
-  }
-
-  // Use a result holder to capture errors from callbacks
-  Result<void> callback_result;
-
-  // Build body callbacks
-  std::vector<std::function<void()>> bodies;
-  for (const auto& pair : pairs) {
-    bodies.emplace_back([&builder, &callback_result, body_id = pair.body]() {
-      if (callback_result) {
-        callback_result = LowerStatement(body_id, builder);
-      }
-    });
-  }
-
-  // Determine qualifier
-  mir::DispatchQualifier qualifier =
-      (check == hir::UniquePriorityCheck::kUnique)
-          ? mir::DispatchQualifier::kUnique
-          : mir::DispatchQualifier::kUnique0;
-
-  builder.EmitUniqueDispatch(
-      qualifier, mir::DispatchStatementKind::kIf, condition_operands, bodies,
-      [&]() {
-        if (callback_result && flat.else_body.has_value()) {
-          callback_result = LowerStatement(*flat.else_body, builder);
-        }
-      },
-      has_else);
-  return callback_result;
-}
-
+// Unified conditional (if) lowering for all qualifiers.
 auto LowerConditional(
     const hir::ConditionalStatementData& data, MirBuilder& builder)
     -> Result<void> {
-  switch (data.check) {
-    case hir::UniquePriorityCheck::kNone:
-      return LowerConditionalNone(data, builder);
-    case hir::UniquePriorityCheck::kPriority:
-      return LowerConditionalPriority(data, builder);
-    case hir::UniquePriorityCheck::kUnique:
-    case hir::UniquePriorityCheck::kUnique0:
-      return LowerConditionalUnique(data, builder, data.check);
-  }
-  return {};
-}
-
-// Standard case lowering without qualifiers.
-// Predicates are pre-built in HIR; we just consume them with EmitPriorityChain.
-auto LowerCaseNone(const hir::CaseStatementData& data, MirBuilder& builder)
-    -> Result<void> {
-  Result<void> callback_result;
-
-  // Build condition lambdas from predicates
-  std::vector<std::function<mir::Operand()>> conditions;
-  for (const auto& item : data.items) {
-    conditions.emplace_back(
-        [&builder, &callback_result, pred_id = item.predicate]() {
-          Result<mir::Operand> pred_result = LowerExpression(pred_id, builder);
-          if (!pred_result) {
-            callback_result = std::unexpected(pred_result.error());
-            return mir::Operand::Const(Constant{});
-          }
-          return *pred_result;
-        });
-  }
-
-  // Build body callbacks
-  std::vector<std::function<void()>> bodies;
-  for (const auto& item : data.items) {
-    bodies.emplace_back(
-        [&builder, &callback_result, stmt_id = item.statement]() {
-          if (callback_result && stmt_id.has_value()) {
-            callback_result = LowerStatement(*stmt_id, builder);
-          }
-        });
-  }
-
-  builder.EmitPriorityChain(conditions, bodies, [&]() {
-    if (callback_result && data.default_statement.has_value()) {
-      callback_result = LowerStatement(*data.default_statement, builder);
-    }
-  });
-  return callback_result;
-}
-
-// Priority case: priority chain + warning at end if no default.
-auto LowerCasePriority(const hir::CaseStatementData& data, MirBuilder& builder)
-    -> Result<void> {
-  bool has_default = data.default_statement.has_value();
-  Result<void> callback_result;
-
-  // Build condition lambdas from predicates
-  std::vector<std::function<mir::Operand()>> conditions;
-  for (const auto& item : data.items) {
-    conditions.emplace_back(
-        [&builder, &callback_result, pred_id = item.predicate]() {
-          Result<mir::Operand> pred_result = LowerExpression(pred_id, builder);
-          if (!pred_result) {
-            callback_result = std::unexpected(pred_result.error());
-            return mir::Operand::Const(Constant{});
-          }
-          return *pred_result;
-        });
-  }
-
-  // Build body callbacks
-  std::vector<std::function<void()>> bodies;
-  for (const auto& item : data.items) {
-    bodies.emplace_back(
-        [&builder, &callback_result, stmt_id = item.statement]() {
-          if (callback_result && stmt_id.has_value()) {
-            callback_result = LowerStatement(*stmt_id, builder);
-          }
-        });
-  }
-
-  builder.EmitPriorityChain(conditions, bodies, [&]() {
-    if (!callback_result) {
-      return;
-    }
-    if (has_default) {
-      callback_result = LowerStatement(*data.default_statement, builder);
-    } else {
-      mir::DisplayEffect display{
-          .print_kind = PrintKind::kDisplay,
-          .ops = {mir::FormatOp{
-              .kind = FormatKind::kLiteral,
-              .value = std::nullopt,
-              .literal = "warning: no matching case item in priority case",
-              .type = TypeId{},
-              .mods = {}}},
-          .descriptor = std::nullopt,
-      };
-      builder.EmitEffect(std::move(display));
-    }
-  });
-  return callback_result;
-}
-
-// Unique/Unique0 case: eval all predicates upfront, emit QualifiedDispatch.
-auto LowerCaseUnique(
-    const hir::CaseStatementData& data, MirBuilder& builder,
-    hir::UniquePriorityCheck check) -> Result<void> {
   Context& ctx = builder.GetContext();
-  bool has_default = data.default_statement.has_value();
+  auto qualifier = MapQualifier(data.check);
 
-  // Evaluate all predicates upfront
-  std::vector<mir::Operand> item_conditions;
-  for (const auto& item : data.items) {
-    auto pred_result = LowerExpression(item.predicate, builder);
-    if (!pred_result) return std::unexpected(pred_result.error());
-    mir::Operand pred = std::move(*pred_result);
+  // Flatten the if-else chain
+  FlattenResult flat = FlattenIfElseChain(data, *ctx.hir_arena, data.check);
+  bool has_fallback = flat.else_body.has_value();
 
-    // Use and UseTemp can be used directly; materialize constants to temps
-    if (pred.kind == mir::Operand::Kind::kUse ||
-        pred.kind == mir::Operand::Kind::kUseTemp) {
-      item_conditions.push_back(std::move(pred));
-    } else {
-      mir::PlaceId pred_place = ctx.AllocTemp(ctx.GetBitType());
-      builder.EmitAssign(pred_place, std::move(pred));
-      item_conditions.push_back(mir::Operand::Use(pred_place));
-    }
+  // Capture decision origin before any nested lowering mutates it.
+  const common::OriginId decision_origin = builder.GetCurrentOrigin();
+
+  // Allocate decision site for qualified decisions
+  std::optional<semantic::DecisionId> decision_id;
+  if (qualifier != semantic::DecisionQualifier::kNone) {
+    decision_id = builder.AllocateDecisionSite(
+        qualifier, semantic::DecisionKind::kIf, has_fallback,
+        semantic::DecisionArmCount{static_cast<uint16_t>(flat.pairs.size())},
+        decision_origin);
   }
 
-  // Build body callbacks with error capture
+  // Build arm builders
   Result<void> callback_result;
-  std::vector<std::function<void()>> bodies;
-  for (const auto& item : data.items) {
-    bodies.emplace_back(
-        [&builder, &callback_result, stmt_id = item.statement]() {
-          if (callback_result && stmt_id.has_value()) {
-            callback_result = LowerStatement(*stmt_id, builder);
-          }
+  std::vector<MirBuilder::DecisionArmBuilder> arms;
+  for (const auto& pair : flat.pairs) {
+    arms.push_back(
+        MirBuilder::DecisionArmBuilder{
+            .build_condition = [&callback_result, cond_id = pair.condition](
+                                   MirBuilder& b) -> mir::Operand {
+              Result<mir::Operand> cond_result =
+                  MaterializeCondition(cond_id, b);
+              if (!cond_result) {
+                callback_result = std::unexpected(cond_result.error());
+                return mir::Operand::Use(mir::kInvalidPlaceId);
+              }
+              return *cond_result;
+            },
+            .build_body =
+                [&callback_result, body_id = pair.body](MirBuilder& b) {
+                  if (callback_result) {
+                    callback_result = LowerStatement(body_id, b);
+                  }
+                },
         });
   }
 
-  mir::DispatchQualifier qualifier =
-      (check == hir::UniquePriorityCheck::kUnique)
-          ? mir::DispatchQualifier::kUnique
-          : mir::DispatchQualifier::kUnique0;
-
-  builder.EmitUniqueDispatch(
-      qualifier, mir::DispatchStatementKind::kCase, item_conditions, bodies,
-      [&]() {
-        if (!callback_result) {
-          return;
-        }
-        if (has_default) {
-          callback_result = LowerStatement(*data.default_statement, builder);
-        }
-      },
-      has_default);
+  MirBuilder::DecisionBuildSpec spec{
+      .qualifier = qualifier,
+      .id = decision_id,
+      .arms = std::move(arms),
+      .build_fallback_body =
+          has_fallback ? std::optional<std::function<void(MirBuilder&)>>(
+                             [&callback_result,
+                              else_id = *flat.else_body](MirBuilder& b) {
+                               if (callback_result) {
+                                 callback_result = LowerStatement(else_id, b);
+                               }
+                             })
+                       : std::nullopt,
+  };
+  builder.EmitDecision(spec);
   return callback_result;
 }
 
+// Unified case lowering for all qualifiers.
 auto LowerCase(const hir::CaseStatementData& data, MirBuilder& builder)
     -> Result<void> {
-  switch (data.check) {
-    case hir::UniquePriorityCheck::kNone:
-      return LowerCaseNone(data, builder);
-    case hir::UniquePriorityCheck::kPriority:
-      return LowerCasePriority(data, builder);
-    case hir::UniquePriorityCheck::kUnique:
-    case hir::UniquePriorityCheck::kUnique0:
-      return LowerCaseUnique(data, builder, data.check);
+  auto qualifier = MapQualifier(data.check);
+  bool has_fallback = data.default_statement.has_value();
+
+  // Capture decision origin before any nested lowering mutates it.
+  const common::OriginId decision_origin = builder.GetCurrentOrigin();
+
+  // Allocate decision site for qualified decisions
+  std::optional<semantic::DecisionId> decision_id;
+  if (qualifier != semantic::DecisionQualifier::kNone) {
+    decision_id = builder.AllocateDecisionSite(
+        qualifier, semantic::DecisionKind::kCase, has_fallback,
+        semantic::DecisionArmCount{static_cast<uint16_t>(data.items.size())},
+        decision_origin);
   }
-  return {};
+
+  // Build arm builders
+  Result<void> callback_result;
+  std::vector<MirBuilder::DecisionArmBuilder> arms;
+  for (const auto& item : data.items) {
+    arms.push_back(
+        MirBuilder::DecisionArmBuilder{
+            .build_condition = [&callback_result, pred_id = item.predicate](
+                                   MirBuilder& b) -> mir::Operand {
+              Result<mir::Operand> pred_result = LowerExpression(pred_id, b);
+              if (!pred_result) {
+                callback_result = std::unexpected(pred_result.error());
+                return mir::Operand::Use(mir::kInvalidPlaceId);
+              }
+              return *pred_result;
+            },
+            .build_body =
+                [&callback_result, stmt_id = item.statement](MirBuilder& b) {
+                  if (callback_result && stmt_id.has_value()) {
+                    callback_result = LowerStatement(*stmt_id, b);
+                  }
+                },
+        });
+  }
+
+  MirBuilder::DecisionBuildSpec spec{
+      .qualifier = qualifier,
+      .id = decision_id,
+      .arms = std::move(arms),
+      .build_fallback_body =
+          has_fallback
+              ? std::optional<std::function<void(MirBuilder&)>>(
+                    [&callback_result,
+                     default_id = *data.default_statement](MirBuilder& b) {
+                      if (callback_result) {
+                        callback_result = LowerStatement(default_id, b);
+                      }
+                    })
+              : std::nullopt,
+  };
+  builder.EmitDecision(spec);
+  return callback_result;
 }
 
 auto LowerForLoop(const hir::ForLoopStatementData& data, MirBuilder& builder)
@@ -2180,15 +2005,15 @@ auto LowerEventWait(
     }
 
     const auto& place = (*ctx.mir_arena)[place_id];
-    mir::SignalRef signal_ref;
+    mir::SignalRef signal_ref{};
     if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
       signal_ref = {
-          mir::SignalRef::Scope::kModuleLocal,
-          static_cast<uint32_t>(place.root.id)};
+          .scope = mir::SignalRef::Scope::kModuleLocal,
+          .id = static_cast<uint32_t>(place.root.id)};
     } else if (place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
       signal_ref = {
-          mir::SignalRef::Scope::kDesignGlobal,
-          static_cast<uint32_t>(place.root.id)};
+          .scope = mir::SignalRef::Scope::kDesignGlobal,
+          .id = static_cast<uint32_t>(place.root.id)};
     } else {
       throw common::InternalError(
           "LowerEventWait", "event trigger must reference a design variable");

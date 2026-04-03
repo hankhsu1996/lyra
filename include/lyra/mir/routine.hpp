@@ -9,6 +9,7 @@
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/semantic/decision.hpp"
 
 namespace lyra::mir {
 
@@ -33,6 +34,19 @@ struct Process {
 
   // Stats: materialize-to-place operations (for --stats output).
   uint64_t materialize_count = 0;
+
+  // Decision site metadata, indexed by DecisionId::Index().
+  // Populated during MIR body building via AllocateDecisionSite().
+  // Lowered into ProcessBodyDecisionTable at LLVM emission.
+  struct MirDecisionSite {
+    semantic::DecisionQualifier qualifier{};
+    semantic::DecisionKind kind{};
+    bool has_fallback = false;
+    semantic::DecisionArmCount arm_count;
+    common::OriginId origin = common::OriginId::Invalid();
+  };
+
+  std::vector<MirDecisionSite> decision_sites;
 };
 
 enum class PassingKind {

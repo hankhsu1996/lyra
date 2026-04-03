@@ -47,11 +47,6 @@ void ForEachIntraSegmentSuccessor(const Terminator& term, auto&& func) {
               func(t.value);
             }
           },
-          [&](const QualifiedDispatch& qd) {
-            for (auto t : qd.targets) {
-              func(t.value);
-            }
-          },
           [](const Delay&) {},
           [](const Wait&) {},
           [](const Return&) {},
@@ -247,6 +242,8 @@ void CollectStatementAccesses(
                     [](const MonitorEffect&) {},
                     [](const MonitorControlEffect&) {},
                     [](const TimeFormatEffect&) {},
+                    [](const RecordDecisionObservation&) {},
+                    [](const RecordDecisionObservationDynamic&) {},
                 },
                 e.op);
           },
@@ -506,6 +503,8 @@ void AnalyzeStatementSemantics(
                     [](const MonitorEffect&) {},
                     [](const MonitorControlEffect&) {},
                     [](const TimeFormatEffect&) {},
+                    [](const RecordDecisionObservation&) {},
+                    [](const RecordDecisionObservationDynamic&) {},
                 },
                 e.op);
           },
@@ -765,7 +764,8 @@ auto EvaluateSlotEligibility(
     for (auto& p : proofs) {
       if (p.slot == slot) return p;
     }
-    proofs.push_back(SlotProof{.slot = slot, .root_type = root_type});
+    proofs.push_back(
+        SlotProof{.slot = slot, .root_type = root_type, .rejection = {}});
     return proofs.back();
   };
 

@@ -187,6 +187,16 @@ struct SystemCmdRvalueInfo {
   std::optional<TypedOperand> command;  // nullopt = system(NULL)
 };
 
+// Select: conditional value selection for direct two-state scalar values.
+// This rvalue is currently restricted to decision bookkeeping payloads
+// (i8 / i16 / bit) and is not a generic four-state or aggregate select.
+// operands[0] = condition (1-bit 2-state bool)
+// operands[1] = true_value (must match result_type, two-state integral)
+// operands[2] = false_value (must match result_type, two-state integral)
+struct SelectRvalueInfo {
+  TypeId result_type;
+};
+
 // Variant of all info types - determines Rvalue kind implicitly
 using RvalueInfo = std::variant<
     UnaryRvalueInfo, BinaryRvalueInfo, CastRvalueInfo, BitCastRvalueInfo,
@@ -194,7 +204,8 @@ using RvalueInfo = std::variant<
     IndexInRangeRvalueInfo, GuardedUseRvalueInfo, ConcatRvalueInfo,
     ReplicateRvalueInfo, SFormatRvalueInfo, TestPlusargsRvalueInfo,
     FopenRvalueInfo, RuntimeQueryRvalueInfo, MathCallRvalueInfo,
-    SystemTfRvalueInfo, ArrayQueryRvalueInfo, SystemCmdRvalueInfo>;
+    SystemTfRvalueInfo, ArrayQueryRvalueInfo, SystemCmdRvalueInfo,
+    SelectRvalueInfo>;
 
 struct Rvalue {
   std::vector<Operand> operands;
@@ -244,6 +255,8 @@ inline auto GetRvalueKind(const RvalueInfo& info) -> const char* {
           return "array_query";
         } else if constexpr (std::is_same_v<T, SystemCmdRvalueInfo>) {
           return "system_cmd";
+        } else if constexpr (std::is_same_v<T, SelectRvalueInfo>) {
+          return "select";
         } else {
           static_assert(false, "unhandled RvalueInfo kind");
         }

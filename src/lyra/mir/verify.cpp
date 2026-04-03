@@ -5,7 +5,6 @@
 #include <format>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
@@ -385,6 +384,29 @@ void VerifyConditionType(
   }
 }
 
+// Verify operand type matches an expected TypeId exactly.
+void VerifyOperandHasType(
+    const Operand& op, TypeId expected_type,
+    const std::vector<BasicBlock>& blocks, const Arena& arena,
+    const TypeArena& types,
+    const std::unordered_map<int, TempDefinition>& defined_temps,
+    size_t block_idx, std::string_view context, std::string_view routine_kind) {
+  if (op.kind == Operand::Kind::kPoison) return;
+
+  TypeId actual_type = GetOperandType(op, blocks, arena, types, defined_temps);
+  if (!actual_type) return;
+
+  if (actual_type != expected_type) {
+    throw common::InternalError(
+        "MIR verify",
+        std::format(
+            "{}: block {}: {}: operand type mismatch (expected type id {}, "
+            "got {})",
+            routine_kind, block_idx, context, expected_type.value,
+            actual_type.value));
+  }
+}
+
 // Verify operand type is valid for a switch selector.
 void VerifySelectorType(
     const Operand& op, const std::vector<BasicBlock>& blocks,
@@ -699,7 +721,6 @@ void VerifyStatementOwnership(
             verify_place(aop.receiver, "AssocOp.receiver");
             std::visit(
                 [&](const auto& op) {
-                  using T = std::decay_t<decltype(op)>;
                   if constexpr (requires { op.dest; }) {
                     verify_place(op.dest, "AssocOp.dest");
                   }
@@ -760,8 +781,23 @@ void VerifyIntraBlockDefOrder(
                   ga.guard, available_temps, block_idx, stmt_idx, "guard",
                   routine_kind);
             },
-            [&](const Effect&) {
-              // Effects may contain operands - skip for now
+            [&](const Effect& eff) {
+              // Verify operand def-before-use for decision observation
+              if (const auto* dyn =
+                      std::get_if<RecordDecisionObservationDynamic>(&eff.op)) {
+                VerifyOperandDefBeforeUse(
+                    dyn->match_class, available_temps, block_idx, stmt_idx,
+                    "RecordDecisionObservationDynamic.match_class",
+                    routine_kind);
+                VerifyOperandDefBeforeUse(
+                    dyn->selected_kind, available_temps, block_idx, stmt_idx,
+                    "RecordDecisionObservationDynamic.selected_kind",
+                    routine_kind);
+                VerifyOperandDefBeforeUse(
+                    dyn->selected_arm, available_temps, block_idx, stmt_idx,
+                    "RecordDecisionObservationDynamic.selected_arm",
+                    routine_kind);
+              }
             },
             [&](const DeferredAssign& da) {
               VerifyRhsDefBeforeUse(
@@ -803,7 +839,6 @@ void VerifyIntraBlockDefOrder(
             [&](const AssocOp& aop) {
               std::visit(
                   [&](const auto& op) {
-                    using T = std::decay_t<decltype(op)>;
                     if constexpr (requires { op.key; }) {
                       VerifyOperandDefBeforeUse(
                           op.key, available_temps, block_idx, stmt_idx, "key",
@@ -844,6 +879,106 @@ void VerifyBlockParamsAndEdgeArgs(
     for (size_t j = 0; j < block.statements.size(); ++j) {
       VerifyStatementOwnership(
           block.statements[j], arena, temp_metadata, i, j, routine_kind);
+    }
+
+    // Verify decision-specific MIR invariants per statement.
+    for (size_t j = 0; j < block.statements.size(); ++j) {
+      const auto& stmt = block.statements[j];
+
+      // SelectRvalueInfo: 3 operands, condition-typed cond, two-state result
+      if (const auto* dt = std::get_if<DefineTemp>(&stmt.data)) {
+        if (const auto* rv = std::get_if<Rvalue>(&dt->rhs)) {
+          if (const auto* sel = std::get_if<SelectRvalueInfo>(&rv->info)) {
+            if (rv->operands.size() != 3) {
+              throw common::InternalError(
+                  "MIR verify",
+                  std::format(
+                      "{}: block {} stmt {}: SelectRvalueInfo must have "
+                      "exactly 3 operands, got {}",
+                      routine_kind, i, j, rv->operands.size()));
+            }
+            VerifyConditionType(
+                rv->operands[0], blocks, arena, types, defined_temps, i,
+                "Select.condition", routine_kind);
+            VerifyOperandHasType(
+                rv->operands[1], sel->result_type, blocks, arena, types,
+                defined_temps, i, "Select.true_value", routine_kind);
+            VerifyOperandHasType(
+                rv->operands[2], sel->result_type, blocks, arena, types,
+                defined_temps, i, "Select.false_value", routine_kind);
+            const Type& result_ty = types[sel->result_type];
+            if (result_ty.Kind() != TypeKind::kIntegral ||
+                result_ty.AsIntegral().is_four_state) {
+              throw common::InternalError(
+                  "MIR verify",
+                  std::format(
+                      "{}: block {} stmt {}: SelectRvalueInfo result_type "
+                      "must be two-state integral",
+                      routine_kind, i, j));
+            }
+          }
+        }
+      }
+
+      // RecordDecisionObservation: non-arm must have selected_arm == 0
+      if (const auto* eff = std::get_if<Effect>(&stmt.data)) {
+        if (const auto* obs =
+                std::get_if<RecordDecisionObservation>(&eff->op)) {
+          if (obs->selected_kind_const !=
+                  semantic::DecisionSelectedKind::kArm &&
+              obs->selected_arm_const.Index() != 0) {
+            throw common::InternalError(
+                "MIR verify",
+                std::format(
+                    "{}: block {} stmt {}: non-arm decision observation "
+                    "must encode selected_arm = 0",
+                    routine_kind, i, j));
+          }
+        }
+
+        // RecordDecisionObservationDynamic: verify operand types
+        if (const auto* dyn =
+                std::get_if<RecordDecisionObservationDynamic>(&eff->op)) {
+          auto verify_is_i8 = [&](const Operand& op, std::string_view ctx) {
+            TypeId tid =
+                GetOperandType(op, blocks, arena, types, defined_temps);
+            if (!tid) return;
+            const Type& ty = types[tid];
+            if (ty.Kind() != TypeKind::kIntegral ||
+                ty.AsIntegral().bit_width != 8 ||
+                ty.AsIntegral().is_four_state) {
+              throw common::InternalError(
+                  "MIR verify",
+                  std::format(
+                      "{}: block {} stmt {}: {}: expected two-state i8",
+                      routine_kind, i, j, ctx));
+            }
+          };
+          auto verify_is_i16 = [&](const Operand& op, std::string_view ctx) {
+            TypeId tid =
+                GetOperandType(op, blocks, arena, types, defined_temps);
+            if (!tid) return;
+            const Type& ty = types[tid];
+            if (ty.Kind() != TypeKind::kIntegral ||
+                ty.AsIntegral().bit_width != 16 ||
+                ty.AsIntegral().is_four_state) {
+              throw common::InternalError(
+                  "MIR verify",
+                  std::format(
+                      "{}: block {} stmt {}: {}: expected two-state i16",
+                      routine_kind, i, j, ctx));
+            }
+          };
+          verify_is_i8(
+              dyn->match_class, "RecordDecisionObservationDynamic.match_class");
+          verify_is_i8(
+              dyn->selected_kind,
+              "RecordDecisionObservationDynamic.selected_kind");
+          verify_is_i16(
+              dyn->selected_arm,
+              "RecordDecisionObservationDynamic.selected_arm");
+        }
+      }
     }
   }
 
@@ -901,21 +1036,6 @@ void VerifyBlockParamsAndEdgeArgs(
               VerifySelectorType(
                   sw.selector, blocks, arena, types, defined_temps, i,
                   "Switch.selector", routine_kind);
-            },
-            [&](const QualifiedDispatch& qd) {
-              // Verify all condition operands are not Poison, UseTemp is
-              // defined, type is valid
-              for (size_t j = 0; j < qd.conditions.size(); ++j) {
-                std::string ctx =
-                    std::format("QualifiedDispatch.conditions[{}]", j);
-                VerifyNotPoison(qd.conditions[j], i, ctx, routine_kind);
-                VerifyUseTempDefined(
-                    qd.conditions[j], defined_temps, temp_metadata, i, ctx,
-                    routine_kind);
-                VerifyConditionType(
-                    qd.conditions[j], blocks, arena, types, defined_temps, i,
-                    ctx, routine_kind);
-              }
             },
             [](const auto&) {
               // Other terminators don't have operands that need temp

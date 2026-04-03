@@ -24,8 +24,7 @@ auto IsAllowedTerminator(const Terminator& term) -> bool {
       [](const auto& t) -> bool {
         using T = std::decay_t<decltype(t)>;
         return std::is_same_v<T, Jump> || std::is_same_v<T, Branch> ||
-               std::is_same_v<T, Switch> ||
-               std::is_same_v<T, QualifiedDispatch>;
+               std::is_same_v<T, Switch>;
       },
       term.data);
 }

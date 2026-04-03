@@ -61,7 +61,10 @@ cc_library(
     hdrs = glob(["include/lyra/mir/*.hpp"]) + glob(["include/lyra/mir/passes/*.hpp"]),
     includes = ["include"],
     visibility = ["//visibility:public"],
-    deps = [":common"],
+    deps = [
+        ":common",
+        ":semantic",
+    ],
 )
 
 cc_library(

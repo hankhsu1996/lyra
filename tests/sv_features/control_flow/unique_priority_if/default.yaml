@@ -144,3 +144,81 @@ cases:
           - "warning"
           - "multiple conditions"
           - "unique0"
+
+  - name: unique_comb_cascade_no_spurious_warning
+    description: >
+      Combinational cascade: unique if on a downstream signal that is
+      re-evaluated multiple times within one timeslot as upstream comb
+      settles. The intermediate evaluation may see a stale value with
+      no match, but the final settled value has exactly one match.
+      Settle-complete must suppress the intermediate false positive.
+      Exact output match proves zero warnings were emitted.
+    sv: |
+      module Test;
+        logic [1:0] sel;
+        logic [1:0] stage;
+        int result;
+
+        always_comb begin
+          stage = sel;
+        end
+
+        always_comb begin
+          unique if (stage == 2'd1)
+            result = 10;
+          else if (stage == 2'd2)
+            result = 20;
+          else if (stage == 2'd3)
+            result = 30;
+        end
+
+        initial begin
+          sel = 2'd1;
+          #1;
+          sel = 2'd2;
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expect:
+      stdout: "result=20\n"
+
+  - name: priority_comb_cascade_warns_once_not_per_activation
+    description: >
+      Combinational cascade with priority if without else: the downstream
+      comb block is evaluated multiple times per timeslot (once on stale
+      intermediate, once on settled). The final settled value still has no
+      match, so one warning is correct. But only ONE warning must appear,
+      not one per activation. The not_contains check for a doubled warning
+      line proves at most one was emitted.
+    sv: |
+      module Test;
+        logic [1:0] sel;
+        logic [1:0] stage;
+        int result;
+
+        always_comb begin
+          stage = sel;
+        end
+
+        always_comb begin
+          result = 100;
+          priority if (stage == 2'd1)
+            result = 10;
+          else if (stage == 2'd2)
+            result = 20;
+        end
+
+        initial begin
+          sel = 2'd0;
+          #1;
+          $display("result=%0d", result);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "no condition matched"
+          - "result=100"
+        not_contains:
+          - "matched\nwarning"

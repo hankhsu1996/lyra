@@ -511,6 +511,11 @@ struct InitDescriptorEmission {
   uint32_t num_param_slots;
 };
 
+struct DecisionTableEmission {
+  llvm::Constant* tables_ptr;
+  uint32_t num_tables;
+};
+
 struct BodyDescriptorPackageEmission {
   llvm::Constant* header_ptr;
   llvm::Constant* entries_ptr;
@@ -520,6 +525,7 @@ struct BodyDescriptorPackageEmission {
   CombTemplateEmission comb;
   ObservableDescriptorEmission observable;
   InitDescriptorEmission init;
+  DecisionTableEmission decision;
 };
 
 // Validate an owned metadata template before emission: pool sentinel,
@@ -752,9 +758,13 @@ auto EmitInitDescriptor(
     auto num = static_cast<uint32_t>(recipe.size());
     auto total_bytes = num * kOpSize;
 
-    // Build raw byte data from the POD op array.
+    // Build raw byte data from the POD op array. reinterpret_cast is
+    // required: trivially-copyable POD array to LLVM byte blob has no
+    // type-safe alternative.
+    // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
     auto blob = llvm::StringRef(
         reinterpret_cast<const char*>(recipe.data()), total_bytes);
+    // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
     auto* data = llvm::ConstantDataArray::getRaw(blob, total_bytes, i8_ty);
 
     auto* global = new llvm::GlobalVariable(
@@ -902,7 +912,9 @@ auto GetBodyDescriptorRefType(llvm::LLVMContext& ctx) -> llvm::StructType* {
        ptr_ty, i32_ty, ptr_ty, i32_ty,
        // init: recipe, num_ops, roots, num_roots, child_indices, num,
        //       param_slots, num
-       ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty});
+       ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
+       // decision: tables, num_tables
+       ptr_ty, i32_ty});
 }
 
 // Encode one BodyDescriptorPackageEmission as a BodyDescriptorRef constant.
@@ -939,7 +951,9 @@ auto EncodeBodyDescriptorRef(
            pkg.init.recipe_child_indices_ptr,
            llvm::ConstantInt::get(i32_ty, pkg.init.num_recipe_child_indices),
            pkg.init.param_slots_ptr,
-           llvm::ConstantInt::get(i32_ty, pkg.init.num_param_slots)});
+           llvm::ConstantInt::get(i32_ty, pkg.init.num_param_slots),
+           pkg.decision.tables_ptr,
+           llvm::ConstantInt::get(i32_ty, pkg.decision.num_tables)});
 }
 
 // Emit the construction program entry table as a single constant global.
@@ -1384,6 +1398,95 @@ auto EmitBodyRealizationDescs(
         info.init.recipe_child_indices, info.init.param_slots,
         std::format("__lyra_body_desc_{}", body_id_val));
 
+    // Decision metadata tables: per body-local process, emit a
+    // DecisionMetaEntry array and a DecisionTableDescriptor.
+    // Layout: { i32 packed, i32 arm_count, ptr file, i32 line, i32 col }
+    auto* decision_meta_type =
+        llvm::StructType::get(ctx, {i32_ty, i32_ty, ptr_ty, i32_ty, i32_ty});
+    auto* decision_table_type = llvm::StructType::get(ctx, {ptr_ty, i32_ty});
+    DecisionTableEmission decision_emission{};
+    {
+      std::vector<llvm::Constant*> table_descs;
+      table_descs.reserve(num_procs);
+      for (uint32_t p = 0; p < num_procs; ++p) {
+        const auto& per_proc = (p < info.decision_metas.size())
+                                   ? info.decision_metas[p]
+                                   : std::vector<runtime::DecisionMetaEntry>{};
+        const auto& per_proc_files = (p < info.decision_meta_files.size())
+                                         ? info.decision_meta_files[p]
+                                         : std::vector<std::string>{};
+        auto site_count = static_cast<uint32_t>(per_proc.size());
+        llvm::Constant* meta_array_ptr = nullptr;
+        if (site_count > 0) {
+          std::vector<llvm::Constant*> entries_c;
+          entries_c.reserve(site_count);
+          for (uint32_t s = 0; s < site_count; ++s) {
+            const auto& e = per_proc[s];
+            // Emit file path as global string constant (or null).
+            llvm::Constant* file_ptr = nullptr;
+            if (s < per_proc_files.size() && !per_proc_files[s].empty()) {
+              auto* str_val =
+                  llvm::ConstantDataArray::getString(ctx, per_proc_files[s]);
+              auto* str_global = new llvm::GlobalVariable(
+                  mod, str_val->getType(), true,
+                  llvm::GlobalValue::InternalLinkage, str_val,
+                  std::format(
+                      "__lyra_decision_file_{}_p{}_s{}", body_id_val, p, s));
+              str_global->setUnnamedAddr(
+                  llvm::GlobalValue::UnnamedAddr::Global);
+              file_ptr = str_global;
+            } else {
+              file_ptr = llvm::ConstantPointerNull::get(
+                  llvm::cast<llvm::PointerType>(ptr_ty));
+            }
+            entries_c.push_back(
+                llvm::ConstantStruct::get(
+                    decision_meta_type,
+                    {llvm::ConstantInt::get(i32_ty, e.qualifier_kind_packed),
+                     llvm::ConstantInt::get(i32_ty, e.arm_count), file_ptr,
+                     llvm::ConstantInt::get(i32_ty, e.line),
+                     llvm::ConstantInt::get(i32_ty, e.col)}));
+          }
+          auto* arr_type = llvm::ArrayType::get(decision_meta_type, site_count);
+          auto* arr_global = new llvm::GlobalVariable(
+              mod, arr_type, true, llvm::GlobalValue::InternalLinkage,
+              llvm::ConstantArray::get(arr_type, entries_c),
+              std::format("__lyra_decision_meta_{}_p{}", body_id_val, p));
+          arr_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+          auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+          meta_array_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+              arr_type, arr_global,
+              llvm::ArrayRef<llvm::Constant*>{zero, zero});
+        } else {
+          meta_array_ptr = llvm::ConstantPointerNull::get(
+              llvm::cast<llvm::PointerType>(ptr_ty));
+        }
+        table_descs.push_back(
+            llvm::ConstantStruct::get(
+                decision_table_type,
+                {meta_array_ptr, llvm::ConstantInt::get(i32_ty, site_count)}));
+      }
+      if (!table_descs.empty()) {
+        auto* tables_arr_type =
+            llvm::ArrayType::get(decision_table_type, num_procs);
+        auto* tables_global = new llvm::GlobalVariable(
+            mod, tables_arr_type, true, llvm::GlobalValue::InternalLinkage,
+            llvm::ConstantArray::get(tables_arr_type, table_descs),
+            std::format("__lyra_decision_tables_{}", body_id_val));
+        tables_global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+        decision_emission.tables_ptr =
+            llvm::ConstantExpr::getInBoundsGetElementPtr(
+                tables_arr_type, tables_global,
+                llvm::ArrayRef<llvm::Constant*>{zero, zero});
+        decision_emission.num_tables = num_procs;
+      } else {
+        decision_emission.tables_ptr = llvm::ConstantPointerNull::get(
+            llvm::cast<llvm::PointerType>(ptr_ty));
+        decision_emission.num_tables = 0;
+      }
+    }
+
     result.push_back(
         BodyDescriptorPackageEmission{
             .header_ptr = header_global,
@@ -1400,6 +1503,7 @@ auto EmitBodyRealizationDescs(
             .comb = comb_emission,
             .observable = obs_emission,
             .init = init_emission,
+            .decision = decision_emission,
         });
   }
 

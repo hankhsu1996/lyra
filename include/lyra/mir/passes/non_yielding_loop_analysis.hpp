@@ -46,7 +46,7 @@ struct DeferredNotificationLoop {
 //
 // A loop qualifies when every block in the loop (header, body, latch)
 // satisfies the stage-1 positive semantic subset:
-//   - terminators: Jump, Branch, Switch, QualifiedDispatch only
+//   - terminators: Jump, Branch, Switch only
 //   - statements: DefineTemp, Assign, GuardedAssign only
 //   - effects: DisplayEffect, SeverityEffect, MonitorControlEffect,
 //     TimeFormatEffect only

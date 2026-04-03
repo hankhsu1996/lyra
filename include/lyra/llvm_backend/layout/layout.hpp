@@ -24,6 +24,7 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/runtime/body_realization_desc.hpp"
+#include "lyra/runtime/decision.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/storage_construction_recipe.hpp"
 #include "lyra/runtime/wait_site.hpp"
@@ -496,6 +497,15 @@ struct Layout {
     uint64_t inline_state_size_bytes = 0;
     uint64_t appendix_state_size_bytes = 0;
     uint64_t total_state_size_bytes = 0;
+    // Per-process decision site metadata. Outer vector indexed by
+    // body-local process ordinal. Inner vector: one DecisionMetaEntry
+    // per decision site in that process.
+    // The DecisionMetaEntry::file field is null at this stage; the actual
+    // file strings are in decision_meta_files (parallel structure).
+    std::vector<std::vector<runtime::DecisionMetaEntry>> decision_metas;
+    // Parallel file path strings for decision_metas. Same shape.
+    // Used at LLVM emission time to create global string constants.
+    std::vector<std::vector<std::string>> decision_meta_files;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
 

@@ -52,6 +52,10 @@ struct ProcessFrameHeader {
   void* design_ptr = nullptr;
   RuntimeInstance* instance = nullptr;
   ProcessOutcome outcome = {};
+  // Runtime-assigned process identity. Set during constructor realization.
+  // Used by generated code (decision observation recording, etc.) to
+  // identify the process without ambient engine state.
+  uint32_t process_id = 0;
 };
 
 // Strongly typed field indices matching the LLVM struct type emitted by
@@ -64,7 +68,8 @@ enum class ProcessFrameHeaderField : unsigned {
   kDesignPtr = 3,
   kInstance = 4,
   kOutcome = 5,
-  kFieldCount = 6,
+  kProcessId = 6,
+  kFieldCount = 7,
 };
 
 // Hard binary contract assertions. If the struct layout changes, these
@@ -83,5 +88,8 @@ static_assert(
 static_assert(
     offsetof(ProcessFrameHeader, outcome) ==
     offsetof(ProcessFrameHeader, instance) + sizeof(RuntimeInstance*));
+static_assert(
+    offsetof(ProcessFrameHeader, process_id) ==
+    offsetof(ProcessFrameHeader, outcome) + sizeof(ProcessOutcome));
 
 }  // namespace lyra::runtime

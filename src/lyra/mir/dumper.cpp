@@ -102,31 +102,6 @@ auto FormatTerminator(const Terminator& term) -> std::string {
           }
           result += "]";
           return result;
-        } else if constexpr (std::is_same_v<T, QualifiedDispatch>) {
-          const char* qualifier_str =
-              (t.qualifier == DispatchQualifier::kUnique) ? "unique"
-                                                          : "unique0";
-          const char* stmt_str =
-              (t.statement_kind == DispatchStatementKind::kIf) ? "if" : "case";
-          std::string result = std::format("{}_{}(", qualifier_str, stmt_str);
-          for (size_t i = 0; i < t.conditions.size(); ++i) {
-            if (i > 0) {
-              result += ", ";
-            }
-            result += FormatTermOperand(t.conditions[i]);
-          }
-          result += ") -> [";
-          for (size_t i = 0; i < t.targets.size(); ++i) {
-            if (i > 0) {
-              result += ", ";
-            }
-            result += std::format("bb{}", t.targets[i].value);
-          }
-          result += "]";
-          if (t.has_else) {
-            result += " (has_else)";
-          }
-          return result;
         } else if constexpr (std::is_same_v<T, Delay>) {
           return std::format("delay #{} -> bb{}", t.ticks, t.resume.value);
         } else if constexpr (std::is_same_v<T, Wait>) {
@@ -765,6 +740,7 @@ auto Dumper::FormatRvalue(const Rvalue& rv) const -> std::string {
             }
             return std::string("$system()");
           },
+          [](const SelectRvalueInfo&) { return std::string("select"); },
       },
       rv.info);
 
@@ -949,6 +925,22 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
               effect_op.prev_buffer_size);
         } else if constexpr (std::is_same_v<T, MonitorControlEffect>) {
           return std::format("$monitor{}()", effect_op.enable ? "on" : "off");
+        } else if constexpr (std::is_same_v<T, FillPackedEffect>) {
+          return std::format(
+              "fill_packed({}, unit_bits={}, count={}, total_bits={})",
+              FormatPlace(effect_op.target), effect_op.unit_bits,
+              effect_op.count, effect_op.total_bits);
+        } else if constexpr (std::is_same_v<T, RecordDecisionObservation>) {
+          return std::format(
+              "record_decision(id={}, mc={}, sk={}, arm={})",
+              effect_op.id.Index(),
+              static_cast<uint8_t>(effect_op.match_class_const),
+              static_cast<uint8_t>(effect_op.selected_kind_const),
+              effect_op.selected_arm_const.Index());
+        } else if constexpr (std::is_same_v<
+                                 T, RecordDecisionObservationDynamic>) {
+          return std::format(
+              "record_decision_dynamic(id={})", effect_op.id.Index());
         } else {
           return "unknown_effect";
         }

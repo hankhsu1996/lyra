@@ -38,35 +38,6 @@ struct Switch {
   std::vector<BasicBlockId> targets;  // Index targets + default (last)
 };
 
-// Qualifier for QualifiedDispatch terminator (unique/unique0).
-// Priority uses regular branch cascade, not QualifiedDispatch.
-enum class DispatchQualifier : uint8_t {
-  kUnique,   // Warn on overlap AND no-match (unless has_else)
-  kUnique0,  // Warn on overlap only
-};
-
-// Source statement kind for QualifiedDispatch (affects warning messages).
-enum class DispatchStatementKind : uint8_t {
-  kIf,    // "unique if" / "unique0 if"
-  kCase,  // "unique case" / "unique0 case"
-};
-
-// Multi-condition dispatch with unique/unique0 semantics.
-// All conditions are pre-evaluated before the dispatch decision.
-// Semantic contract:
-// 1. Count how many conditions are true
-// 2. If count > 1: emit overlap warning
-// 3. If count == 0 AND !has_else AND qualifier == kUnique: emit no-match
-// warning
-// 4. Dispatch to first true condition's target (or else target if none true)
-struct QualifiedDispatch {
-  DispatchQualifier qualifier;
-  DispatchStatementKind statement_kind;
-  std::vector<Operand> conditions;    // Pre-evaluated condition results
-  std::vector<BasicBlockId> targets;  // One per condition + else (last)
-  bool has_else;                      // Suppresses no-match warning for kUnique
-};
-
 // Time delay suspension (requires scheduler).
 struct Delay {
   uint64_t ticks = 0;        // Canonical delay ticks (from HIR)
@@ -133,7 +104,7 @@ struct SignalRef {
 
 // A single trigger in a Wait terminator.
 struct WaitTrigger {
-  SignalRef signal;
+  SignalRef signal{};
   common::EdgeKind edge = common::EdgeKind::kAnyChange;
   // Optional place reference for sub-slot observation narrowing.
   // Set by sensitivity analysis when the observed sub-range is statically known
@@ -183,9 +154,8 @@ struct Finish {
 struct Repeat {};
 
 // Terminator data variant.
-using TerminatorData = std::variant<
-    Jump, Branch, Switch, QualifiedDispatch, Delay, Wait, Return, Finish,
-    Repeat>;
+using TerminatorData =
+    std::variant<Jump, Branch, Switch, Delay, Wait, Return, Finish, Repeat>;
 
 // A block terminator that determines control flow.
 struct Terminator {
@@ -220,11 +190,6 @@ void ForEachSuccessor(const Terminator& term, const F& func) {
               func(TerminatorSuccessor{.target = t, .args = {}});
             }
           },
-          [&](const QualifiedDispatch& qd) {
-            for (auto t : qd.targets) {
-              func(TerminatorSuccessor{.target = t, .args = {}});
-            }
-          },
           [&](const Delay& d) {
             func(TerminatorSuccessor{.target = d.resume, .args = {}});
           },
@@ -246,11 +211,6 @@ void ForEachLocalOperand(const Terminator& term, const F& func) {
           [](const Jump&) {},
           [&](const Branch& b) { func(b.condition); },
           [&](const Switch& s) { func(s.selector); },
-          [&](const QualifiedDispatch& qd) {
-            for (const auto& c : qd.conditions) {
-              func(c);
-            }
-          },
           [](const Delay&) {},
           [](const Wait&) {},
           [&](const Return& r) {

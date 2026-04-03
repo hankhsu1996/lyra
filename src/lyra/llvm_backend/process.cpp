@@ -1425,121 +1425,6 @@ void LowerRepeat(Context& context, llvm::BasicBlock* exit_block) {
   builder.CreateBr(exit_block);
 }
 
-auto ComputeOverlapMessage(const mir::QualifiedDispatch& d) -> std::string {
-  const char* what = (d.statement_kind == mir::DispatchStatementKind::kIf)
-                         ? "multiple conditions true"
-                         : "multiple case items match";
-  const char* qualifier =
-      (d.qualifier == mir::DispatchQualifier::kUnique) ? "unique" : "unique0";
-  const char* stmt =
-      (d.statement_kind == mir::DispatchStatementKind::kIf) ? "if" : "case";
-  return std::format("warning: {} in {} {}\n", what, qualifier, stmt);
-}
-
-auto ComputeNomatchMessage(const mir::QualifiedDispatch& d) -> std::string {
-  const char* what = (d.statement_kind == mir::DispatchStatementKind::kIf)
-                         ? "no condition matched"
-                         : "no matching case item";
-  const char* stmt =
-      (d.statement_kind == mir::DispatchStatementKind::kIf) ? "if" : "case";
-  return std::format("warning: {} in unique {}\n", what, stmt);
-}
-
-auto LowerQualifiedDispatch(
-    Context& context, SlotAccessResolver& resolver,
-    const mir::QualifiedDispatch& dispatch,
-    const std::vector<llvm::BasicBlock*>& blocks) -> Result<void> {
-  auto& builder = context.GetBuilder();
-  auto& llvm_ctx = context.GetLlvmContext();
-  auto* func = builder.GetInsertBlock()->getParent();
-  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-
-  auto* else_target = blocks[dispatch.targets.back().value];
-
-  // Load all conditions as i1
-  std::vector<llvm::Value*> conds;
-  conds.reserve(dispatch.conditions.size());
-  for (const auto& cond_op : dispatch.conditions) {
-    auto cond_or_err = LoadConditionAsI1(context, resolver, cond_op);
-    if (!cond_or_err) return std::unexpected(cond_or_err.error());
-    conds.push_back(*cond_or_err);
-  }
-
-  // No conditions: jump directly to else target
-  if (conds.empty()) {
-    builder.CreateBr(else_target);
-    return {};
-  }
-
-  // Count true conditions (i32 accumulator)
-  llvm::Value* cnt = llvm::ConstantInt::get(i32_ty, 0);
-  for (auto* cond : conds) {
-    auto* ext = builder.CreateZExt(cond, i32_ty);
-    cnt = builder.CreateAdd(cnt, ext);
-  }
-
-  // Overlap warning: cnt > 1
-  auto overlap_msg = ComputeOverlapMessage(dispatch);
-  auto* overlap_str =
-      builder.CreateGlobalStringPtr(overlap_msg, "qd.overlap.str");
-  auto* overlap_counter = new llvm::GlobalVariable(
-      context.GetModule(), i32_ty, false, llvm::GlobalValue::InternalLinkage,
-      llvm::ConstantInt::get(i32_ty, 0), "qd.overlap.cnt");
-  auto* after_overlap =
-      llvm::BasicBlock::Create(llvm_ctx, "qd.after_overlap", func);
-  auto* overlap_bb =
-      llvm::BasicBlock::Create(llvm_ctx, "qd.warn_overlap", func);
-  auto* overlap_cond =
-      builder.CreateICmpUGT(cnt, llvm::ConstantInt::get(i32_ty, 1));
-  builder.CreateCondBr(overlap_cond, overlap_bb, after_overlap);
-
-  builder.SetInsertPoint(overlap_bb);
-  builder.CreateCall(
-      context.GetLyraWarnRateLimited(), {overlap_str, overlap_counter});
-  builder.CreateBr(after_overlap);
-
-  builder.SetInsertPoint(after_overlap);
-
-  // No-match warning: only for kUnique && !has_else
-  if (dispatch.qualifier == mir::DispatchQualifier::kUnique &&
-      !dispatch.has_else) {
-    auto nomatch_msg = ComputeNomatchMessage(dispatch);
-    auto* nomatch_str =
-        builder.CreateGlobalStringPtr(nomatch_msg, "qd.nomatch.str");
-    auto* nomatch_counter = new llvm::GlobalVariable(
-        context.GetModule(), i32_ty, false, llvm::GlobalValue::InternalLinkage,
-        llvm::ConstantInt::get(i32_ty, 0), "qd.nomatch.cnt");
-    auto* dispatch_bb = llvm::BasicBlock::Create(llvm_ctx, "qd.dispatch", func);
-    auto* nomatch_bb =
-        llvm::BasicBlock::Create(llvm_ctx, "qd.warn_nomatch", func);
-    auto* nomatch_cond =
-        builder.CreateICmpEQ(cnt, llvm::ConstantInt::get(i32_ty, 0));
-    builder.CreateCondBr(nomatch_cond, nomatch_bb, dispatch_bb);
-
-    builder.SetInsertPoint(nomatch_bb);
-    builder.CreateCall(
-        context.GetLyraWarnRateLimited(), {nomatch_str, nomatch_counter});
-    builder.CreateBr(dispatch_bb);
-
-    builder.SetInsertPoint(dispatch_bb);
-  }
-
-  // Dispatch cascade: first true condition wins
-  for (size_t i = 0; i < conds.size(); ++i) {
-    auto* target = blocks[dispatch.targets[i].value];
-    auto* next_check =
-        (i + 1 < conds.size())
-            ? llvm::BasicBlock::Create(
-                  llvm_ctx, std::format("qd.check{}", i + 1), func)
-            : else_target;
-    builder.CreateCondBr(conds[i], target, next_check);
-    if (i + 1 < conds.size()) {
-      builder.SetInsertPoint(next_check);
-    }
-  }
-  return {};
-}
-
 auto LowerTerminator(
     Context& context, SlotAccessResolver& resolver, const mir::Terminator& term,
     const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block,
@@ -1575,9 +1460,6 @@ auto LowerTerminator(
           [&](const mir::Repeat&) -> Result<void> {
             LowerRepeat(context, exit_block);
             return {};
-          },
-          [&](const mir::QualifiedDispatch& d) -> Result<void> {
-            return LowerQualifiedDispatch(context, resolver, d, blocks);
           },
           [&](const auto&) -> Result<void> {
             return std::unexpected(
@@ -2176,7 +2058,8 @@ struct PlaceCollector {
               std::is_same_v<T, mir::RuntimeQueryRvalueInfo> ||
               std::is_same_v<T, mir::MathCallRvalueInfo> ||
               std::is_same_v<T, mir::SystemTfRvalueInfo> ||
-              std::is_same_v<T, mir::ArrayQueryRvalueInfo>) {
+              std::is_same_v<T, mir::ArrayQueryRvalueInfo> ||
+              std::is_same_v<T, mir::SelectRvalueInfo>) {
             // These RvalueInfo types have no embedded PlaceIds or Operands
             // beyond what's in Rvalue::operands (already collected above)
           } else {
@@ -2241,8 +2124,14 @@ struct PlaceCollector {
             for (const auto& op : eff.args) {
               CollectFromOperand(op, arena);
             }
+          } else if constexpr (std::is_same_v<
+                                   E, mir::RecordDecisionObservationDynamic>) {
+            CollectFromOperand(eff.match_class, arena);
+            CollectFromOperand(eff.selected_kind, arena);
+            CollectFromOperand(eff.selected_arm, arena);
           }
-          // StrobeEffect, TimeFormatEffect, MonitorControlEffect: no operands
+          // StrobeEffect, TimeFormatEffect, MonitorControlEffect,
+          // RecordDecisionObservation: no operands
         },
         effect_op);
   }
@@ -2338,11 +2227,6 @@ struct PlaceCollector {
             } else if constexpr (std::is_same_v<T, mir::Switch>) {
               // Switch::selector is Operand
               CollectFromOperand(term.selector, arena);
-            } else if constexpr (std::is_same_v<T, mir::QualifiedDispatch>) {
-              // QualifiedDispatch::conditions is vector<Operand>
-              for (const auto& cond : term.conditions) {
-                CollectFromOperand(cond, arena);
-              }
             }
           },
           block.terminator.data);
@@ -3112,11 +2996,6 @@ auto DefineMirFunction(
               // $finish in a function - just return (shouldn't happen normally)
               builder.CreateBr(exit_block);
               return {};
-            },
-            [&](const mir::QualifiedDispatch& d) -> Result<void> {
-              CanonicalSlotAccess qd_canonical(context);
-              return LowerQualifiedDispatch(
-                  context, qd_canonical, d, llvm_blocks);
             },
             [&](const auto&) -> Result<void> {
               return std::unexpected(

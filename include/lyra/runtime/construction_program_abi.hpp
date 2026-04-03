@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "lyra/runtime/body_realization_desc.hpp"
+#include "lyra/runtime/decision.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/storage_construction_recipe.hpp"
 
@@ -53,6 +54,9 @@ struct BodyDescriptorRef {
   uint32_t num_init_recipe_child_indices;
   const ParamInitSlotEntry* init_param_slots;
   uint32_t num_init_param_slots;
+  // Per body-local process decision metadata tables.
+  const DecisionTableDescriptor* decision_tables;
+  uint32_t num_decision_tables;
 };
 
 }  // namespace lyra::runtime

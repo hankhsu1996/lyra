@@ -12,6 +12,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/semantic/decision.hpp"
 
 namespace lyra::mir {
 
@@ -137,12 +138,33 @@ struct FillPackedEffect {
   uint32_t total_bits = 0;
 };
 
+// Record a decision observation with compile-time-constant payload.
+// Used on the lazy path (kPriority) where each recording edge knows the exact
+// match class and selected arm statically.
+struct RecordDecisionObservation {
+  semantic::DecisionId id;
+  semantic::MatchClass match_class_const{};
+  semantic::DecisionSelectedKind selected_kind_const{};
+  semantic::DecisionArmIndex selected_arm_const;
+};
+
+// Record a decision observation with dynamic payload from straight-line
+// select logic. Used on the eager path (kUnique/kUnique0) where match class
+// and selected arm are computed at runtime from all pre-evaluated conditions.
+struct RecordDecisionObservationDynamic {
+  semantic::DecisionId id;
+  Operand match_class;    // i8: MatchClass enum value
+  Operand selected_kind;  // i8: DecisionSelectedKind enum value
+  Operand selected_arm;   // i16: arm index (valid when kArm)
+};
+
 // EffectOp is the variant of all effect operations.
 // Effect operations produce side effects but no value.
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
 using EffectOp = std::variant<
     DisplayEffect, SeverityEffect, MemIOEffect, TimeFormatEffect,
     SystemTfEffect, StrobeEffect, MonitorEffect, MonitorControlEffect,
-    FillPackedEffect>;
+    FillPackedEffect, RecordDecisionObservation,
+    RecordDecisionObservationDynamic>;
 
 }  // namespace lyra::mir
