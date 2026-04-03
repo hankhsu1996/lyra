@@ -69,44 +69,27 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
       dst = GlobalConnectionTarget{GlobalSignalId{d.dst_slot_id}};
     }
 
-    // Classify trigger domain.
-    bool trigger_is_local = false;
-    InstanceId trigger_instance_id = InstanceId{0};
-    uint32_t trigger_local_id = 0;
+    // Decode typed trigger from descriptor fields.
+    bool trigger_is_local = (d.trigger_is_local != 0);
+    InstanceId trigger_instance_id = InstanceId{d.trigger_instance_id};
+    uint32_t trigger_local_id = d.trigger_local_id;
     uint32_t trigger_global_id = d.trigger_slot_id;
-    if (d.trigger_slot_id >= global_slot_count_) {
-      const auto& tmeta = slot_meta_registry_.Get(d.trigger_slot_id);
-      if (tmeta.domain == SlotStorageDomain::kInstanceOwned) {
-        auto* tinst =
-            instance_trace_resolver_.FindInstanceMut(tmeta.owner_instance_id);
-        if (tinst == nullptr) {
-          throw common::InternalError(
-              "Engine::InitConnectionBatch",
-              std::format(
-                  "trigger_slot_id {} owner_instance_id {} has no instance",
-                  d.trigger_slot_id, tmeta.owner_instance_id));
-        }
-        trigger_is_local = true;
-        trigger_instance_id = tmeta.owner_instance_id;
-        if (d.trigger_slot_id < tinst->observability.flat_coord_base) {
-          throw common::InternalError(
-              "Engine::InitConnectionBatch",
-              std::format(
-                  "trigger_slot_id {} < flat_coord_base {} for instance {}",
-                  d.trigger_slot_id, tinst->observability.flat_coord_base,
-                  tmeta.owner_instance_id));
-        }
-        trigger_local_id =
-            d.trigger_slot_id - tinst->observability.flat_coord_base;
-        if (trigger_local_id >= tinst->observability.local_signal_count) {
-          throw common::InternalError(
-              "Engine::InitConnectionBatch",
-              std::format(
-                  "trigger local_id {} >= local_signal_count {} for "
-                  "instance {}",
-                  trigger_local_id, tinst->observability.local_signal_count,
-                  tmeta.owner_instance_id));
-        }
+    if (trigger_is_local) {
+      auto* tinst = FindInstanceMut(trigger_instance_id);
+      if (tinst == nullptr) {
+        throw common::InternalError(
+            "Engine::InitConnectionBatch",
+            std::format(
+                "trigger instance_id {} not found", trigger_instance_id));
+      }
+      if (trigger_local_id >= tinst->observability.local_signal_count) {
+        throw common::InternalError(
+            "Engine::InitConnectionBatch",
+            std::format(
+                "trigger local_id {} >= local_signal_count {} for "
+                "instance {}",
+                trigger_local_id, tinst->observability.local_signal_count,
+                trigger_instance_id));
       }
     }
 
@@ -537,18 +520,14 @@ void Engine::FlushAndPropagateConnections() {
     if (s < global_slot_count_) {
       fp_work_.pending_globals.push_back(GlobalSignalId{s});
     } else {
-      // Instance-owned slot written via flat path. Convert to local.
-      const auto& meta = slot_meta_registry_.Get(s);
-      if (meta.domain == SlotStorageDomain::kInstanceOwned) {
-        auto* inst = FindInstanceMut(meta.owner_instance_id);
-        if (inst != nullptr) {
-          uint32_t local_id = s - inst->observability.flat_coord_base;
-          if (local_id < inst->observability.local_signal_count) {
-            inst->observability.local_updates.MarkSlotDirty(
-                LocalSignalId{local_id});
-          }
-        }
-      }
+      // Instance-owned slot in update_set_ is a producer bug.
+      // All instance-owned dirty marks must enter through local_updates.
+      throw common::InternalError(
+          "Engine::FlushAndPropagateConnections",
+          std::format(
+              "instance-owned slot {} in update_set_ delta "
+              "(global_slot_count={})",
+              s, global_slot_count_));
     }
   }
   for (size_t i = 0; i < instances_.size(); ++i) {

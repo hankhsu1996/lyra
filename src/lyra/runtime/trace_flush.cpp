@@ -177,10 +177,10 @@ void FlushGlobalDirtySlotsToTrace(
     std::span<const RuntimeInstance* const> instances, const UpdateSet& updates,
     const TraceSelectionRegistry& selection, uint32_t global_slot_count) {
   for (uint32_t slot_id : updates.DirtySlots()) {
-    // Skip instance-owned dirty marks. These reach the global UpdateSet
-    // via connection propagation and the subscription dispatch mirror.
-    // Instance-owned signals are flushed via FlushLocalDirtySlotsToTrace
-    // from local_updates.
+    // Skip instance-owned dirty marks. These may still appear in
+    // update_set_ from legacy flat paths (dyn_array, io). Instance-owned
+    // signals are flushed via FlushLocalDirtySlotsToTrace from
+    // local_updates.
     if (slot_id >= global_slot_count) continue;
     if (!selection.IsSelected(slot_id)) continue;
     const auto& meta = slot_registry.Get(slot_id);

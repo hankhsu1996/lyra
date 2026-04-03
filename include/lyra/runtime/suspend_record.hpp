@@ -148,10 +148,16 @@ struct ConnectionDescriptor {
   uint32_t trigger_byte_size = 0;    // WaitTriggerRecord.byte_size
   uint32_t dst_instance_id = 0;  // InstanceId.value (valid when dst_is_local)
   uint32_t dst_local_id = 0;  // LocalSignalId.value (valid when dst_is_local)
+  // R5: Typed trigger identity. Same pattern as destination.
+  uint8_t trigger_is_local = 0;
+  uint8_t padding2 = 0;
+  uint16_t padding3 = 0;
+  uint32_t trigger_instance_id = 0;
+  uint32_t trigger_local_id = 0;
 };
 
 static_assert(
-    sizeof(ConnectionDescriptor) == 36, "ConnectionDescriptor size mismatch");
+    sizeof(ConnectionDescriptor) == 48, "ConnectionDescriptor size mismatch");
 static_assert(
     alignof(ConnectionDescriptor) == 4,
     "ConnectionDescriptor alignment mismatch");

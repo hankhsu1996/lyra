@@ -325,13 +325,15 @@ auto Context::EmitSignalCoord(const mir::SignalRef& sig) -> SignalCoordExpr {
   // local identity with a resolved target instance pointer. This happens
   // for design-level connection processes writing to child port signals.
   if (sig.id >= layout_.num_package_slots) {
-    // Find owning instance from layout slot ranges.
+    // Find owning instance from layout slot ranges. The loop index mi
+    // IS the semantic InstanceId.value -- guaranteed by the constructor
+    // which assigns instance_id sequentially and validates
+    // bundle[i].instance_id == i.
     uint32_t running_base = layout_.num_package_slots;
     for (uint32_t mi = 0; mi < layout_.instance_slot_counts.size(); ++mi) {
       uint32_t count = layout_.instance_slot_counts[mi];
       if (sig.id < running_base + count) {
         uint32_t local_id = sig.id - running_base;
-        // Resolve target instance pointer at runtime.
         auto& builder = GetBuilder();
         auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
         auto* target_inst = builder.CreateCall(

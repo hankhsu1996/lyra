@@ -40,6 +40,10 @@ struct ConnectionDescriptorEntry {
   uint8_t dst_is_local = 0;
   uint32_t dst_instance_id = 0;
   uint32_t dst_local_id = 0;
+  // R5: Typed trigger identity. Same pattern as destination.
+  uint8_t trigger_is_local = 0;
+  uint32_t trigger_instance_id = 0;
+  uint32_t trigger_local_id = 0;
   // Compile-time-only provenance. Not serialized to runtime ABI.
   ConnectionKernelOrigin origin = ConnectionKernelOrigin::kPortBinding;
 };
