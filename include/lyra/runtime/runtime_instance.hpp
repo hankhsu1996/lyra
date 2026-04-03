@@ -3,7 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/process_frame.hpp"
+#include "lyra/runtime/signal_coord.hpp"
 
 namespace lyra::runtime {
 
@@ -48,7 +50,7 @@ struct RuntimeInstance {
   RuntimeInstance(RuntimeInstance&&) = delete;
   auto operator=(RuntimeInstance&&) -> RuntimeInstance& = delete;
 
-  uint32_t instance_id = 0;
+  InstanceId instance_id = InstanceId{0};
   SharedBodyFn body = nullptr;
 
   RuntimeInstanceStorage storage;
@@ -60,12 +62,10 @@ struct RuntimeInstance {
   uint32_t module_proc_base = 0;
   uint32_t num_module_processes = 0;
 
-  // Temporary flat slot-id base for the pre-R3 runtime boundary.
-  // Current code still computes (base + local_id) and feeds globally-indexed
-  // engine APIs. This will be replaced by true engine-private dense
-  // coordination indexing. The value is still the old placement-derived
-  // design-global base offset.
-  uint32_t local_signal_coord_base = 0;
+  // R5: Per-instance observability state.
+  // Populated by Engine::InitModuleInstancesFromBundles. Not part of the
+  // binary contract with codegen (not accessed via GEP, no LLVM struct type).
+  RuntimeInstanceObservability observability;
 };
 
 // Strongly typed field indices for RuntimeInstanceStorage.
@@ -88,8 +88,7 @@ enum class RuntimeInstanceField : unsigned {
   kOwnerOrdinal = 4,
   kModuleProcBase = 5,
   kNumModuleProcesses = 6,
-  kLocalSignalCoordBase = 7,
-  kFieldCount = 8,
+  kFieldCount = 7,
 };
 
 // Hard binary contract assertions for RuntimeInstanceStorage.
@@ -125,9 +124,6 @@ static_assert(
 static_assert(
     offsetof(RuntimeInstance, num_module_processes) ==
     offsetof(RuntimeInstance, module_proc_base) + sizeof(uint32_t));
-static_assert(
-    offsetof(RuntimeInstance, local_signal_coord_base) ==
-    offsetof(RuntimeInstance, num_module_processes) + sizeof(uint32_t));
 
 // Allocate zero-initialized owned storage for an instance's inline region.
 auto AllocateOwnedInlineStorage(uint64_t size) -> std::byte*;

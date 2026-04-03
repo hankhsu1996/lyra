@@ -658,11 +658,11 @@ auto EmitObservableDescriptorTemplate(
 
   auto num_entries = static_cast<uint32_t>(tmpl.entries.size());
   if (num_entries > 0) {
-    auto* entry_type = llvm::ArrayType::get(i32_ty, 13);
+    auto* entry_type = llvm::ArrayType::get(i32_ty, 14);
     std::vector<llvm::Constant*> entry_constants;
     entry_constants.reserve(num_entries);
     for (const auto& e : tmpl.entries) {
-      std::array<llvm::Constant*, 13> fields = {
+      std::array<llvm::Constant*, 14> fields = {
           llvm::ConstantInt::get(i32_ty, e.storage_byte_offset),
           llvm::ConstantInt::get(i32_ty, e.total_bytes),
           llvm::ConstantInt::get(i32_ty, e.storage_kind),
@@ -676,6 +676,7 @@ auto EmitObservableDescriptorTemplate(
           llvm::ConstantInt::get(i32_ty, e.storage_owner_ref),
           llvm::ConstantInt::get(i32_ty, e.flags),
           llvm::ConstantInt::get(i32_ty, e.storage_domain),
+          llvm::ConstantInt::get(i32_ty, e.local_signal_id),
       };
       entry_constants.push_back(llvm::ConstantArray::get(entry_type, fields));
     }
@@ -1324,9 +1325,9 @@ auto EmitBodyRealizationDescs(
     auto num_comb_entries = static_cast<uint32_t>(comb.entries.size());
     auto num_comb_kernels = static_cast<uint32_t>(comb.kernels.size());
     if (num_comb_kernels > 0) {
-      // CombTemplateEntry = {u32, u32, u32, u32}
-      auto* comb_entry_type =
-          llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty});
+      // CombTemplateEntry = {u32, u32, u32, u32, u32, u32}
+      auto* comb_entry_type = llvm::StructType::get(
+          ctx, {i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty});
       std::vector<llvm::Constant*> comb_entry_constants;
       comb_entry_constants.reserve(num_comb_entries);
       for (const auto& ce : comb.entries) {
@@ -1336,7 +1337,9 @@ auto EmitBodyRealizationDescs(
                 {llvm::ConstantInt::get(i32_ty, ce.slot_id),
                  llvm::ConstantInt::get(i32_ty, ce.byte_offset),
                  llvm::ConstantInt::get(i32_ty, ce.byte_size),
-                 llvm::ConstantInt::get(i32_ty, ce.flags)}));
+                 llvm::ConstantInt::get(i32_ty, ce.flags),
+                 llvm::ConstantInt::get(i32_ty, ce.owner_instance_id),
+                 llvm::ConstantInt::get(i32_ty, ce.local_signal_id)}));
       }
       if (num_comb_entries > 0) {
         auto comb_name =

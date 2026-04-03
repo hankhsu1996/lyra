@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <format>
+#include <variant>
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/runtime/suspend_record.hpp"
@@ -8,6 +10,29 @@
 namespace lyra::runtime {
 
 struct RuntimeInstance;
+
+// R5: Strong identity type for module instances.
+// Stable semantic identity assigned during construction, never changes.
+// Must not be used as a positional index into dense arrays -- use
+// a validated resolver for that conversion.
+struct InstanceId {
+  uint32_t value;
+
+  auto operator==(const InstanceId&) const -> bool = default;
+  auto operator<=>(const InstanceId&) const = default;
+};
+
+}  // namespace lyra::runtime
+
+// std::format support for InstanceId. Formats as the raw integer value.
+template <>
+struct std::formatter<lyra::runtime::InstanceId> : std::formatter<uint32_t> {
+  auto format(lyra::runtime::InstanceId id, std::format_context& ctx) const {
+    return std::formatter<uint32_t>::format(id.value, ctx);
+  }
+};
+
+namespace lyra::runtime {
 
 // Semantic identity for an instance-owned signal.
 // Body-local dense slot ordinal: 0-based, stable across instances of the
@@ -35,20 +60,33 @@ struct ObjectSignalRef {
   LocalSignalId local;
 };
 
-// Engine-private dense coordination coordinate.
-//
-// INVARIANT: DenseSignalCoord must never cross the public runtime boundary.
-// Generated code, runtime helpers, and constructor-fed metadata must not
-// traffic in DenseSignalCoord directly. It is an engine-internal
-// implementation detail of hot coordination structures. All public
-// coordination paths use ObjectSignalRef or GlobalSignalId.
-//
-// Not yet wired into engine internals. Currently defined as a target type
-// for the R3 migration. Actual engine-internal rekeying is a later step.
-struct DenseSignalCoord {
-  uint32_t value;
+// R5: Instance-scoped signal reference for subscription and NBA boundaries.
+// Carries instance_id (for container lookup) and LocalSignalId (for indexing).
+// Used at the top-level subscription API; below that, domain-specific helpers
+// take GlobalSignalId or LocalSignalRef directly.
+struct LocalSignalRef {
+  InstanceId instance_id;
+  LocalSignalId signal;
+};
 
-  auto operator==(const DenseSignalCoord&) const -> bool = default;
+// R5: Tagged union for the subscription/NBA top boundary.
+// Dispatch once at entry, then use domain-specific helpers below.
+using SignalRef = std::variant<GlobalSignalId, LocalSignalRef>;
+
+// R5: POD-safe typed signal identity for cold storage (e.g. ContainerCold).
+// Avoids std::variant overhead in dense cold pools.
+struct StoredSignalRef {
+  uint32_t signal_id = UINT32_MAX;
+  bool is_local = false;
+  InstanceId instance_id = InstanceId{0};
+
+  [[nodiscard]] auto ToSignalRef() const -> SignalRef {
+    if (is_local) {
+      return LocalSignalRef{
+          .instance_id = instance_id, .signal = LocalSignalId{signal_id}};
+    }
+    return GlobalSignalId{signal_id};
+  }
 };
 
 // Semantic domain tag for trigger and mutation coordinates.

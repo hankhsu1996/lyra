@@ -133,11 +133,15 @@ inline constexpr uint8_t kProcGroupable = 1;
 // Per-comb-trigger body-shaped template entry.
 //
 // One per comb trigger observation per body-local comb kernel.
-// Body-relative slot IDs.
+// Three domain cases at codegen time:
+//   1. Body-local: flags=0, slot_id=body-relative local_id
+//   2. Truly global: flags=kCombTemplateFlagDesignGlobal,
+//   slot_id=GlobalSignalId
+//   3. Cross-instance: flags=kCombTemplateFlagCrossInstance,
+//      owner_instance_id/local_signal_id carry typed identity
 struct CombTemplateEntry {
-  // Slot identifier. Body-relative when kCombTemplateFlagDesignGlobal
-  // is clear, design-global when set. Constructor applies slot-base
-  // relocation only for entries without the design-global flag.
+  // Slot identifier. Body-relative for body-local, design-global for
+  // truly-global. Unused for cross-instance (identity in typed fields).
   uint32_t slot_id = 0;
   // Observation byte offset (0 if full-slot).
   uint32_t byte_offset = 0;
@@ -145,17 +149,24 @@ struct CombTemplateEntry {
   uint32_t byte_size = 0;
   // Template-level flags.
   uint32_t flags = 0;
+  // R5: Typed identity for cross-instance triggers.
+  // Valid when kCombTemplateFlagCrossInstance is set.
+  uint32_t owner_instance_id = 0;
+  uint32_t local_signal_id = 0;
 };
 
-static_assert(sizeof(CombTemplateEntry) == 16);
+static_assert(sizeof(CombTemplateEntry) == 24);
 static_assert(offsetof(CombTemplateEntry, slot_id) == 0);
 static_assert(offsetof(CombTemplateEntry, byte_offset) == 4);
 static_assert(offsetof(CombTemplateEntry, byte_size) == 8);
 static_assert(offsetof(CombTemplateEntry, flags) == 12);
+static_assert(offsetof(CombTemplateEntry, owner_instance_id) == 16);
+static_assert(offsetof(CombTemplateEntry, local_signal_id) == 20);
 static_assert(std::is_trivially_copyable_v<CombTemplateEntry>);
 static_assert(std::is_standard_layout_v<CombTemplateEntry>);
 
 inline constexpr uint32_t kCombTemplateFlagDesignGlobal = 1U << 0;
+inline constexpr uint32_t kCombTemplateFlagCrossInstance = 1U << 1;
 
 // Per-comb-kernel descriptor within a body template.
 struct CombKernelDesc {
@@ -257,9 +268,13 @@ struct ObservableDescriptorEntry {
   // 1 = kInstanceOwned (owned module-local, body-relative offset).
   // Set at descriptor emission time from the storage ref variant.
   uint32_t storage_domain = 0;
+  // R5: Stable body-local signal id for instance-owned entries.
+  // Defines the canonical LocalSignalId for this signal within the body.
+  // Set at descriptor emission time. UINT32_MAX for design-global entries.
+  uint32_t local_signal_id = UINT32_MAX;
 };
 
-static_assert(sizeof(ObservableDescriptorEntry) == 52);
+static_assert(sizeof(ObservableDescriptorEntry) == 56);
 static_assert(offsetof(ObservableDescriptorEntry, storage_byte_offset) == 0);
 static_assert(offsetof(ObservableDescriptorEntry, total_bytes) == 4);
 static_assert(offsetof(ObservableDescriptorEntry, storage_kind) == 8);
@@ -273,6 +288,7 @@ static_assert(offsetof(ObservableDescriptorEntry, trace_kind) == 36);
 static_assert(offsetof(ObservableDescriptorEntry, storage_owner_ref) == 40);
 static_assert(offsetof(ObservableDescriptorEntry, flags) == 44);
 static_assert(offsetof(ObservableDescriptorEntry, storage_domain) == 48);
+static_assert(offsetof(ObservableDescriptorEntry, local_signal_id) == 52);
 static_assert(std::is_trivially_copyable_v<ObservableDescriptorEntry>);
 static_assert(std::is_standard_layout_v<ObservableDescriptorEntry>);
 

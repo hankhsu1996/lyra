@@ -4,10 +4,11 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "lyra/runtime/index_plan.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::runtime {
+
+struct IndexPlanOp;
 
 // Suspend tag - matches SuspendReason variant index for consistency.
 // Used in C ABI struct for both interpreter and LLVM backend communication.
@@ -29,6 +30,29 @@ enum class TriggerInstallKind : uint8_t {
 
 // Trigger flags: explicit per-trigger metadata written by codegen.
 inline constexpr uint8_t kTriggerInitiallyActive = 0x01;
+// R5: signal_id is a body-local LocalSignalId. Runtime resolves the
+// owning instance from the process owner (same-instance).
+inline constexpr uint8_t kTriggerLocalSignal = 0x02;
+// R5: cross-instance local trigger. target_instance_id and
+// target_local_signal_id carry the typed identity. Always combined
+// with kTriggerLocalSignal.
+inline constexpr uint8_t kTriggerCrossInstanceLocal = 0x04;
+
+// R5: Per-dependency signal record for typed rebind dependencies.
+// Each dependency carries its own domain identity (local or global),
+// independent of the target trigger's domain.
+struct DepSignalRecord {
+  uint32_t signal_id = 0;
+  uint8_t flags = 0;
+  std::array<uint8_t, 3> padding = {};
+  // R5: valid when kDepCrossInstanceLocal is set.
+  uint32_t target_instance_id = 0;
+  uint32_t target_local_signal_id = 0;
+};
+inline constexpr uint8_t kDepLocalSignal = 0x01;
+inline constexpr uint8_t kDepCrossInstanceLocal = 0x02;
+static_assert(sizeof(DepSignalRecord) == 16);
+static_assert(alignof(DepSignalRecord) == 4);
 
 struct WaitTriggerRecord {
   uint32_t signal_id = 0;
@@ -52,10 +76,14 @@ struct WaitTriggerRecord {
 
   // For kContainer only. Element stride in bytes. 0 for non-container triggers.
   uint32_t container_elem_stride = 0;
+
+  // R5: valid when kTriggerCrossInstanceLocal is set.
+  uint32_t target_instance_id = 0;
+  uint32_t target_local_signal_id = 0;
 };
 
 static_assert(
-    sizeof(WaitTriggerRecord) == 20, "WaitTriggerRecord size mismatch");
+    sizeof(WaitTriggerRecord) == 28, "WaitTriggerRecord size mismatch");
 static_assert(
     alignof(WaitTriggerRecord) == 4, "WaitTriggerRecord alignment mismatch");
 static_assert(
@@ -76,6 +104,12 @@ static_assert(
 static_assert(
     offsetof(WaitTriggerRecord, container_elem_stride) == 16,
     "WaitTriggerRecord container_elem_stride offset mismatch");
+static_assert(
+    offsetof(WaitTriggerRecord, target_instance_id) == 20,
+    "WaitTriggerRecord target_instance_id offset mismatch");
+static_assert(
+    offsetof(WaitTriggerRecord, target_local_signal_id) == 24,
+    "WaitTriggerRecord target_local_signal_id offset mismatch");
 
 // Late-bound header for dynamic-index edge triggers.
 // References into plan_ops and dep_slots pools via start/count spans.
@@ -123,13 +157,25 @@ struct ConnectionDescriptor {
   uint32_t trigger_slot_id = 0;   // WaitTriggerRecord.signal_id
   uint8_t trigger_edge = 0;       // WaitTriggerRecord.edge
   uint8_t trigger_bit_index = 0;  // WaitTriggerRecord.bit_index
-  uint16_t padding = 0;
+  // R5: Typed destination identity. When dst_is_local != 0,
+  // dst_instance_id and dst_local_id carry the owning instance and
+  // body-local signal identity. Runtime decodes into ConnectionTarget.
+  uint8_t dst_is_local = 0;
+  uint8_t padding = 0;
   uint32_t trigger_byte_offset = 0;  // WaitTriggerRecord.byte_offset
   uint32_t trigger_byte_size = 0;    // WaitTriggerRecord.byte_size
+  uint32_t dst_instance_id = 0;  // InstanceId.value (valid when dst_is_local)
+  uint32_t dst_local_id = 0;  // LocalSignalId.value (valid when dst_is_local)
+  // R5: Typed trigger identity. Same pattern as destination.
+  uint8_t trigger_is_local = 0;
+  uint8_t padding2 = 0;
+  uint16_t padding3 = 0;
+  uint32_t trigger_instance_id = 0;
+  uint32_t trigger_local_id = 0;
 };
 
 static_assert(
-    sizeof(ConnectionDescriptor) == 28, "ConnectionDescriptor size mismatch");
+    sizeof(ConnectionDescriptor) == 48, "ConnectionDescriptor size mismatch");
 static_assert(
     alignof(ConnectionDescriptor) == 4,
     "ConnectionDescriptor alignment mismatch");
@@ -163,7 +209,7 @@ struct SuspendRecord {
   uint32_t num_plan_ops = 0;
   IndexPlanOp* plan_ops_ptr = nullptr;
   uint32_t num_dep_slots = 0;
-  uint32_t* dep_slots_ptr = nullptr;
+  DepSignalRecord* dep_slots_ptr = nullptr;
   std::array<WaitTriggerRecord, kInlineTriggerCapacity> inline_triggers = {};
 };
 

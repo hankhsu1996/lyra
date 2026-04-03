@@ -15,7 +15,9 @@
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
+#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/process_meta.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/scheduler_snapshot.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/suspend_record.hpp"
@@ -161,7 +163,7 @@ void Engine::DumpRuntimeStats(FILE* sink) const {
     if (!per_process_stats_.empty()) {
       // Build sorted index by total wake attempts (descending).
       std::vector<uint32_t> order(per_process_stats_.size());
-      std::iota(order.begin(), order.end(), 0U);
+      std::ranges::iota(order, 0U);
       std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
         auto total_a = per_process_stats_[a].wake_edge +
                        per_process_stats_[a].wake_change +
@@ -543,13 +545,20 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
         if (ref.kind == SubKind::kRebindWatcher) continue;
 
         SubscriptionSummary summary;
-        summary.slot_id = ref.slot_id;
-        summary.signal_name = signal_name(ref.slot_id);
+        summary.slot_id = ref.signal_id;
+        if (ref.is_local) {
+          auto local = ref.AsLocalRef();
+          const auto& inst = GetInstance(local.instance_id);
+          summary.signal_name = ComposeHierarchicalTraceName(
+              inst, local.signal, *inst.observability.layout);
+        } else {
+          summary.signal_name = signal_name(ref.signal_id);
+        }
         summary.kind = ref.kind;
         summary.edge_bucket = ref.edge_bucket;
 
-        if (ref.kind == SubKind::kEdge && ref.slot_id < signal_subs_.size()) {
-          const auto& groups = signal_subs_[ref.slot_id].edge_groups;
+        if (ref.kind == SubKind::kEdge) {
+          const auto& groups = ResolveSubSlot(ref).edge_groups;
           if (ref.edge_group < groups.size()) {
             const auto& group = groups[ref.edge_group];
             const auto& vec = (ref.edge_bucket == EdgeBucket::kPosedge)
@@ -559,21 +568,30 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
             if (ref.index < vec.size()) {
               summary.is_active = (vec[ref.index].flags & kSubActive) != 0;
             }
-            if (!design_state.empty() &&
-                ref.slot_id < slot_meta_registry_.Size()) {
-              const auto& meta = slot_meta_registry_.Get(ref.slot_id);
-              {
-                auto slot_bytes = std::span(
-                    ResolveSlotBase(meta, design_state_base_, instances_),
-                    meta.total_bytes);
-                uint8_t byte_val = slot_bytes[group.byte_offset];
-                summary.current_bit = (byte_val >> group.bit_index) & 1;
-              }
+            // Resolve storage via domain-aware path.
+            std::span<const uint8_t> storage;
+            if (ref.is_local) {
+              const auto& ref_inst = GetInstance(ref.instance_id);
+              const auto& imeta =
+                  ref_inst.observability.layout->slot_meta[ref.signal_id];
+              storage = std::span(
+                  ResolveInstanceSlotBase(ref_inst, ref.LocalSignal()),
+                  imeta.total_bytes);
+            } else if (
+                !design_state.empty() &&
+                ref.signal_id < slot_meta_registry_.Size()) {
+              const auto& meta = slot_meta_registry_.Get(ref.signal_id);
+              storage = std::span(
+                  ResolveSlotBase(meta, design_state_base_, const_instances_),
+                  meta.total_bytes);
+            }
+            if (!storage.empty()) {
+              uint8_t byte_val = storage[group.byte_offset];
+              summary.current_bit = (byte_val >> group.bit_index) & 1;
             }
           }
-        } else if (
-            ref.kind == SubKind::kChange && ref.slot_id < signal_subs_.size()) {
-          const auto& subs = signal_subs_[ref.slot_id].change_subs;
+        } else if (ref.kind == SubKind::kChange) {
+          const auto& subs = ResolveSubSlot(ref).change_subs;
           if (ref.index < subs.size()) {
             summary.is_active = (subs[ref.index].flags & kSubActive) != 0;
           }

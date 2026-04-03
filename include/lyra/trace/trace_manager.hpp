@@ -4,10 +4,13 @@
 #include <memory>
 #include <vector>
 
-#include "lyra/runtime/trace_signal_meta.hpp"
 #include "lyra/trace/summary_trace_sink.hpp"
 #include "lyra/trace/trace_event.hpp"
 #include "lyra/trace/trace_sink.hpp"
+
+namespace lyra::runtime {
+class TraceSignalMetaRegistry;
+}
 
 namespace lyra::trace {
 
@@ -66,8 +69,16 @@ class TraceManager {
   void AddSink(std::unique_ptr<TraceSink> sink);
 
   void EmitTimeAdvance(uint64_t time, uint32_t delta = 0);
-  void EmitValueChange(uint32_t slot_id, TraceValue value);
-  void EmitMemoryDirty(uint32_t slot_id);
+
+  // R5: Domain-split emit methods. Typed identity throughout.
+  void EmitGlobalValueChange(
+      runtime::GlobalSignalId signal_id, TraceValue value);
+  void EmitLocalValueChange(
+      runtime::InstanceId instance_id, runtime::LocalSignalId signal_id,
+      TraceValue value);
+  void EmitGlobalMemoryDirty(runtime::GlobalSignalId signal_id);
+  void EmitLocalMemoryDirty(
+      runtime::InstanceId instance_id, runtime::LocalSignalId signal_id);
 
   // Snapshot helpers.
   // SnapshotPacked: copies byte_size raw bytes from ptr.

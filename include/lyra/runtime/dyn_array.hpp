@@ -32,10 +32,16 @@ void LyraDynArrayDelete(LyraDynArrayHandle arr);
 // Release: destroy elements, free buffer, free struct. Null-safe.
 void LyraDynArrayRelease(LyraDynArrayHandle arr);
 
-// Store new handle to design slot + notify engine unconditionally.
+// Store new handle to instance-owned design slot + notify engine.
 // Does NOT release old handle (caller's responsibility).
-void LyraStoreDynArray(
-    void* engine, void* slot, void* new_handle, uint32_t signal_id);
+void LyraStoreDynArrayLocal(
+    void* engine, void* slot, void* new_handle, void* instance_ptr,
+    uint32_t local_signal_id);
+
+// Store new handle to global design slot + notify engine.
+// Does NOT release old handle (caller's responsibility).
+void LyraStoreDynArrayGlobal(
+    void* engine, void* slot, void* new_handle, uint32_t global_signal_id);
 
 // Element-level wrappers for nested dynamic arrays.
 void LyraDynArrayCloneElem(void* dst, const void* src);

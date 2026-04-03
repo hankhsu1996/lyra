@@ -626,14 +626,12 @@ void Constructor::AddInstance(
   }
   connections_finalized_ = true;
 
-  uint32_t instance_id = next_instance_id_;
-  uint32_t local_signal_coord_base = next_slot_base_;
+  auto instance_id = InstanceId{next_instance_id_};
 
   uint32_t instance_ord = next_module_instance_ordinal_;
   auto instance = std::make_unique<RuntimeInstance>();
   instance->instance_id = instance_id;
   instance->owner_ordinal = instance_ord;
-  instance->local_signal_coord_base = local_signal_coord_base;
   // path_c_str is patched in Finalize to point into stable instance_paths.
   instance->path_c_str = nullptr;
 
@@ -723,7 +721,7 @@ void Constructor::AddInstance(
       uint32_t realized_owner =
           (entry.flags & kObservableFlagOwnerAbsolute) != 0
               ? entry.storage_owner_ref
-              : entry.storage_owner_ref + local_signal_coord_base;
+              : entry.storage_owner_ref + next_slot_base_;
 
       realized_slot_meta_.AppendDesignGlobalSlot(
           entry.storage_byte_offset, entry.total_bytes, entry.storage_kind,
@@ -981,7 +979,7 @@ auto Constructor::Finalize() -> ConstructionResult {
           "Constructor::Finalize",
           std::format("R4 bundle {} has unresolved body template", i));
     }
-    if (bundle.instance_id != i) {
+    if (bundle.instance_id != InstanceId{static_cast<uint32_t>(i)}) {
       throw common::InternalError(
           "Constructor::Finalize",
           std::format(

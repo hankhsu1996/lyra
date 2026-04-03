@@ -74,8 +74,9 @@ void StoreStringToWriteTarget(
     if (wt.canonical_signal_id->IsLocal()) {
       builder.CreateCall(
           ctx.GetLyraStoreStringLocal(),
-          {ctx.GetEnginePointer(), ctx.GetInstancePointer(), wt.ptr, new_val,
-           wt.canonical_signal_id->Emit(builder)});
+          {ctx.GetEnginePointer(),
+           wt.canonical_signal_id->GetInstancePointer(ctx.GetInstancePointer()),
+           wt.ptr, new_val, wt.canonical_signal_id->Emit(builder)});
     } else {
       builder.CreateCall(
           ctx.GetLyraStoreStringGlobal(),

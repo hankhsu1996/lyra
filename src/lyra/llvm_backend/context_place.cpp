@@ -321,6 +321,20 @@ auto Context::EmitSignalCoord(const mir::SignalRef& sig) -> SignalCoordExpr {
             "module-scoped code must use specialization-local addressing",
             sig.id));
   }
+  // R5: Design-global signals that are actually instance-owned must emit
+  // local identity with a resolved target instance pointer. This happens
+  // for design-level connection processes writing to child port signals.
+  if (sig.id >= layout_.num_package_slots) {
+    auto owner = ResolveInstanceOwnedFlatSlot(layout_, sig.id);
+    auto& builder = GetBuilder();
+    auto* i32_ty = llvm::Type::getInt32Ty(GetLlvmContext());
+    auto* target_inst = builder.CreateCall(
+        GetLyraResolveInstancePtr(),
+        {GetEnginePointer(),
+         llvm::ConstantInt::get(i32_ty, owner.instance_id.value)});
+    return SignalCoordExpr::LocalWithInstance(
+        owner.local_signal_id.value, owner.instance_id, target_inst);
+  }
   return SignalCoordExpr::Global(sig.id);
 }
 

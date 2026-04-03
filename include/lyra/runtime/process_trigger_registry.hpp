@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/runtime/signal_coord.hpp"
 
 namespace lyra::runtime {
 
@@ -15,13 +16,28 @@ struct ProcessTriggerDescriptor {
   uint32_t slot_id = 0;
   common::EdgeKind edge = common::EdgeKind::kAnyChange;
   bool is_groupable = false;
+  // R5: True if slot_id is a body-local LocalSignalId, not a flat
+  // design-global slot. When true, instance_id identifies the owning
+  // instance and slot_id is the local signal ordinal.
+  bool is_local = false;
+  InstanceId instance_id = InstanceId{0};
 };
 
-// Constructor-time trigger group: processes grouped by (slot_id, edge).
-// Only groupable descriptors participate. References into flat backing.
-struct TriggerGroup {
+// R5: Domain-aware trigger identity key. Two different instances can have
+// the same local slot_id and edge but represent distinct trigger sources.
+struct ProcessTriggerKey {
+  bool is_local = false;
+  InstanceId instance_id = InstanceId{0};
   uint32_t slot_id = 0;
   common::EdgeKind edge = common::EdgeKind::kAnyChange;
+
+  auto operator<=>(const ProcessTriggerKey&) const = default;
+};
+
+// Constructor-time trigger group: processes grouped by domain-aware key.
+// Only groupable descriptors participate. References into flat backing.
+struct TriggerGroup {
+  ProcessTriggerKey key;
   uint32_t process_start = 0;
   uint32_t process_count = 0;
 };

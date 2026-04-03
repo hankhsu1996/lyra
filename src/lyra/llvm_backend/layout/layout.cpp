@@ -947,11 +947,11 @@ auto BuildRuntimeInstanceType(
   auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   // { instance_id, body, storage, path_c_str, owner_ordinal,
-  //   module_proc_base, num_module_processes, local_signal_coord_base }
+  //   module_proc_base, num_module_processes }
   using F = lyra::runtime::RuntimeInstanceField;
   constexpr auto kFieldCount = static_cast<size_t>(F::kFieldCount);
   std::array<llvm::Type*, kFieldCount> fields = {
-      i32_ty, ptr_ty, storage_type, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty};
+      i32_ty, ptr_ty, storage_type, ptr_ty, i32_ty, i32_ty, i32_ty};
   return llvm::StructType::create(ctx, fields, "RuntimeInstance");
 }
 
@@ -1506,6 +1506,29 @@ auto Layout::GetInstanceSlotCount(ModuleIndex idx) const -> uint32_t {
                                     idx.value, instance_slot_counts.size()));
   }
   return instance_slot_counts[idx.value];
+}
+
+auto ResolveInstanceOwnedFlatSlot(const Layout& layout, uint32_t flat_slot_id)
+    -> SlotOwnerInfo {
+  uint32_t running_base = layout.num_package_slots;
+  for (uint32_t mi = 0; mi < layout.instance_slot_counts.size(); ++mi) {
+    uint32_t count = layout.instance_slot_counts[mi];
+    if (flat_slot_id < running_base + count) {
+      return {
+          .instance_id = runtime::InstanceId{mi},
+          .local_signal_id =
+              runtime::LocalSignalId{flat_slot_id - running_base},
+      };
+    }
+    running_base += count;
+  }
+  throw common::InternalError(
+      "ResolveInstanceOwnedFlatSlot",
+      std::format(
+          "flat slot {} not found in any instance slot range "
+          "(num_package_slots={}, num_instances={})",
+          flat_slot_id, layout.num_package_slots,
+          layout.instance_slot_counts.size()));
 }
 
 auto BuildLayout(

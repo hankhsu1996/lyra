@@ -806,7 +806,8 @@ void EmitPackedStoreNotification(
     if (policy.signal_id->IsLocal()) {
       builder.CreateCall(
           ctx.GetLyraMarkDirtyLocal(),
-          {policy.engine_ptr, ctx.GetInstancePointer(),
+          {policy.engine_ptr,
+           policy.signal_id->GetInstancePointer(ctx.GetInstancePointer()),
            policy.signal_id->Emit(builder), dirty_range.byte_offset,
            dirty_range.byte_size});
     } else {
@@ -935,8 +936,9 @@ void EmitNarrow2StateNbaCall(
   if (policy.signal_id.IsLocal()) {
     builder.CreateCall(
         ctx.GetLyraScheduleNbaLocal(),
-        {policy.engine_ptr, ctx.GetInstancePointer(), write_ptr,
-         policy.notify_base_ptr, val_alloca, null_ptr,
+        {policy.engine_ptr,
+         policy.signal_id.GetInstancePointer(ctx.GetInstancePointer()),
+         write_ptr, policy.notify_base_ptr, val_alloca, null_ptr,
          llvm::ConstantInt::get(i32_ty, narrow_bytes),
          policy.signal_id.Emit(builder)});
   } else {
@@ -983,8 +985,9 @@ void EmitNarrow4StateNbaCall(
   if (policy.signal_id.IsLocal()) {
     builder.CreateCall(
         ctx.GetLyraScheduleNbaCanonicalPackedLocal(),
-        {policy.engine_ptr, ctx.GetInstancePointer(), write_ptr,
-         policy.notify_base_ptr, val_alloca, unk_alloca,
+        {policy.engine_ptr,
+         policy.signal_id.GetInstancePointer(ctx.GetInstancePointer()),
+         write_ptr, policy.notify_base_ptr, val_alloca, unk_alloca,
          llvm::ConstantInt::get(i32_ty, narrow_bytes),
          llvm::ConstantInt::get(i32_ty, access.storage.unk_plane_offset_bytes),
          policy.signal_id.Emit(builder)});
@@ -1049,9 +1052,10 @@ void EmitFullWidthMaskedNbaCall(
     if (policy.signal_id.IsLocal()) {
       builder.CreateCall(
           ctx.GetLyraScheduleNbaLocal(),
-          {policy.engine_ptr, ctx.GetInstancePointer(), access.storage.base_ptr,
-           policy.notify_base_ptr, val_alloca, mask_alloca,
-           llvm::ConstantInt::get(i32_ty, total_bytes),
+          {policy.engine_ptr,
+           policy.signal_id.GetInstancePointer(ctx.GetInstancePointer()),
+           access.storage.base_ptr, policy.notify_base_ptr, val_alloca,
+           mask_alloca, llvm::ConstantInt::get(i32_ty, total_bytes),
            policy.signal_id.Emit(builder)});
     } else {
       builder.CreateCall(
@@ -1072,9 +1076,10 @@ void EmitFullWidthMaskedNbaCall(
     if (policy.signal_id.IsLocal()) {
       builder.CreateCall(
           ctx.GetLyraScheduleNbaLocal(),
-          {policy.engine_ptr, ctx.GetInstancePointer(), access.storage.base_ptr,
-           policy.notify_base_ptr, val_alloca, mask_alloca,
-           llvm::ConstantInt::get(i32_ty, plane_bytes),
+          {policy.engine_ptr,
+           policy.signal_id.GetInstancePointer(ctx.GetInstancePointer()),
+           access.storage.base_ptr, policy.notify_base_ptr, val_alloca,
+           mask_alloca, llvm::ConstantInt::get(i32_ty, plane_bytes),
            policy.signal_id.Emit(builder)});
     } else {
       builder.CreateCall(
@@ -1417,8 +1422,9 @@ void EmitGuardedLyraStorePacked(
     if (policy.signal_id->IsLocal()) {
       builder.CreateCall(
           ctx.GetLyraStorePackedLocal(),
-          {policy.engine_ptr, ctx.GetInstancePointer(), dst_ptr, src_ptr,
-           llvm::ConstantInt::get(i32_ty, byte_size),
+          {policy.engine_ptr,
+           policy.signal_id->GetInstancePointer(ctx.GetInstancePointer()),
+           dst_ptr, src_ptr, llvm::ConstantInt::get(i32_ty, byte_size),
            policy.signal_id->Emit(builder), llvm::ConstantInt::get(i32_ty, 0),
            llvm::ConstantInt::get(i32_ty, 0)});
     } else {

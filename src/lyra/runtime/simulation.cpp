@@ -85,13 +85,13 @@ void HandleSuspendRecord(
           (suspend->plan_ops_ptr != nullptr)
               ? std::span(suspend->plan_ops_ptr, suspend->num_plan_ops)
               : std::span<const lyra::runtime::IndexPlanOp>{};
-      auto dep_slots =
+      auto dep_records =
           (suspend->dep_slots_ptr != nullptr)
               ? std::span(suspend->dep_slots_ptr, suspend->num_dep_slots)
-              : std::span<const uint32_t>{};
+              : std::span<const lyra::runtime::DepSignalRecord>{};
 
       eng.InstallTriggers(
-          handle, resume, triggers, late_bound, plan_ops, dep_slots);
+          handle, resume, triggers, late_bound, plan_ops, dep_records);
       break;
     }
 
@@ -228,9 +228,10 @@ extern "C" void LyraSuspendWaitWithLateBound(
 
   suspend->num_dep_slots = num_dep_slots;
   if (num_dep_slots > 0 && dep_slots != nullptr) {
-    suspend->dep_slots_ptr = new uint32_t[num_dep_slots];
+    suspend->dep_slots_ptr = new lyra::runtime::DepSignalRecord[num_dep_slots];
     std::memcpy(
-        suspend->dep_slots_ptr, dep_slots, num_dep_slots * sizeof(uint32_t));
+        suspend->dep_slots_ptr, dep_slots,
+        num_dep_slots * sizeof(lyra::runtime::DepSignalRecord));
   } else {
     suspend->dep_slots_ptr = nullptr;
   }
@@ -386,7 +387,8 @@ void SetupAndRunSimulation(
 
   for (uint32_t i = 0; i < num_processes; ++i) {
     engine.ScheduleInitial(
-        lyra::runtime::ProcessHandle{.process_id = i, .instance_id = 0});
+        lyra::runtime::ProcessHandle{
+            .process_id = i, .instance_id = lyra::runtime::InstanceId{0}});
   }
 
   // Propagate initial values through connections and comb kernels before Run().
@@ -402,36 +404,6 @@ void SetupAndRunSimulation(
 
   auto final_time = engine.Run();
   FinalTime() = std::max(FinalTime(), final_time);
-}
-
-// Build the final merged trace signal meta registry from constructor-built
-// (design-global/package) entries and engine-derived instance entries.
-// This is the single policy point for the dual-ingestion trace merge seam.
-auto BuildMergedTraceSignalMeta(
-    const LyraRuntimeAbi* abi,
-    lyra::runtime::TraceSignalMetaRegistry instance_trace)
-    -> std::optional<lyra::runtime::TraceSignalMetaRegistry> {
-  bool has_constructor = abi->trace_signal_meta_words != nullptr &&
-                         abi->trace_signal_meta_word_count > 0;
-  bool has_instance = instance_trace.IsPopulated();
-  if (!has_constructor && !has_instance) return std::nullopt;
-
-  lyra::runtime::TraceSignalMetaRegistry merged;
-  if (has_constructor) {
-    merged = lyra::runtime::TraceSignalMetaRegistry(
-        abi->trace_signal_meta_words, abi->trace_signal_meta_word_count,
-        abi->trace_signal_meta_string_pool,
-        abi->trace_signal_meta_string_pool_size);
-  }
-  if (has_instance) {
-    for (uint32_t i = 0; i < instance_trace.Count(); ++i) {
-      const auto& meta = instance_trace.Get(i);
-      merged.AppendSignal(
-          instance_trace.Name(i), meta.bit_width, meta.kind,
-          meta.storage_owner_slot_id);
-    }
-  }
-  return merged;
 }
 
 }  // namespace
@@ -509,7 +481,7 @@ extern "C" void LyraRunSimulation(
               kRuntimeAbiVersion));
     }
 
-    // Instance pointer list for slot storage resolution.
+    // Instance pointer list for slot storage resolution and observability.
     if (abi->instance_ptrs != nullptr && abi->num_instances > 0) {
       engine.SetInstances(std::span(abi->instance_ptrs, abi->num_instances));
     }
@@ -521,9 +493,8 @@ extern "C" void LyraRunSimulation(
     // Builds slot meta, coordination bases, trigger and comb registries
     // from structured bundle data. Connection/design-global metadata
     // remains flat through separate init paths below.
-    lyra::runtime::TraceSignalMetaRegistry instance_trace;
     if (abi->instance_bundles != nullptr && abi->num_instance_bundles > 0) {
-      instance_trace = engine.InitModuleInstancesFromBundles(
+      engine.InitModuleInstancesFromBundles(
           std::span(abi->instance_bundles, abi->num_instance_bundles),
           std::span(abi->slot_meta_words, abi->slot_meta_word_count),
           states_raw);
@@ -567,14 +538,11 @@ extern "C" void LyraRunSimulation(
       engine.InitConnectionBatch(conn_descs);
     }
 
-    // Connection-only comb and trigger metadata (flat path).
-    // When bundles are present, module-instance comb and triggers are
-    // already built by InitModuleInstancesFromBundles. Connection
-    // processes have no comb kernels. Connection triggers merge into
-    // the module trigger registry via InitProcessTriggerRegistry.
+    // Comb kernel metadata (flat path). Only used when no bundles exist.
+    // When bundles are present, module-instance comb kernels are built
+    // from bundle body templates in InitModuleInstancesFromBundles.
     if (abi->comb_kernel_words != nullptr && abi->num_comb_kernel_words > 0 &&
         abi->instance_bundles == nullptr) {
-      // No bundles: use flat comb path (legacy).
       engine.InitCombKernels(
           std::span(abi->comb_kernel_words, abi->num_comb_kernel_words),
           num_connection, states_raw);
@@ -596,12 +564,20 @@ extern "C" void LyraRunSimulation(
               abi->wait_site_words, abi->wait_site_word_count));
     }
 
-    // Trace signal metadata: merge constructor globals + instance entries.
-    auto merged_trace =
-        BuildMergedTraceSignalMeta(abi, std::move(instance_trace));
-    if (merged_trace.has_value()) {
-      engine.InitTraceSignalMeta(std::move(*merged_trace));
+    // R5: Global-only trace signal metadata from constructor.
+    // Instance-owned trace metadata lives in BodyObservableLayout::trace_meta.
+    if (abi->trace_signal_meta_words != nullptr &&
+        abi->trace_signal_meta_word_count > 0) {
+      engine.InitTraceSignalMeta(
+          lyra::runtime::TraceSignalMetaRegistry(
+              abi->trace_signal_meta_words, abi->trace_signal_meta_word_count,
+              abi->trace_signal_meta_string_pool,
+              abi->trace_signal_meta_string_pool_size));
     }
+
+    // R5: Trace selection must cover all flat slot_ids (global +
+    // instance-owned). Called unconditionally after all init paths.
+    engine.InitTraceSelection();
   }
 
   // Register suspend records for post-activation reconciliation.
@@ -626,14 +602,15 @@ extern "C" void LyraRunSimulation(
   // Register trace sinks before enabling TraceManager.
   if (HasFlag(flags, FeatureFlag::kEnableSignalTrace)) {
     const auto* meta = engine.GetTraceManager().GetSignalMeta();
+    std::unique_ptr<lyra::trace::TextTraceSink> text_sink;
     if (abi != nullptr && abi->signal_trace_path != nullptr) {
-      engine.GetTraceManager().AddSink(
-          std::make_unique<lyra::trace::TextTraceSink>(
-              meta, std::string(abi->signal_trace_path)));
+      text_sink = std::make_unique<lyra::trace::TextTraceSink>(
+          meta, std::string(abi->signal_trace_path));
     } else {
-      engine.GetTraceManager().AddSink(
-          std::make_unique<lyra::trace::TextTraceSink>(meta));
+      text_sink = std::make_unique<lyra::trace::TextTraceSink>(meta);
     }
+    text_sink->SetInstanceResolver(&engine.GetInstanceTraceResolver());
+    engine.GetTraceManager().AddSink(std::move(text_sink));
   }
 
   if (HasFlag(flags, FeatureFlag::kEnableTrace)) {
@@ -728,12 +705,11 @@ extern "C" auto LyraSystemCmd(void* engine_ptr, LyraStringHandle cmd_handle)
 
 extern "C" void LyraRegisterStrobe(
     void* engine_ptr, LyraStrobeProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, uint32_t local_signal_coord_base) {
+    void* this_ptr, uint32_t instance_id) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
-      .instance_id = instance_id,
-      .local_signal_coord_base = local_signal_coord_base,
+      .instance_id = lyra::runtime::InstanceId{instance_id},
   };
   engine->RegisterStrobe(program, design_state, ctx);
 }
@@ -805,18 +781,14 @@ extern "C" auto LyraResolveBaseDir(const char* argv0) -> const char* {
 
   // Priority 1: explicit env var (set by `lyra run` for temp-dir bundles)
   if (const char* env = std::getenv("LYRA_FS_BASE_DIR");
-      env != nullptr &&
-      env[0] !=
-          '\0') {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      env != nullptr && std::string_view(env) != "") {
     resolved = env;
     return resolved.c_str();
   }
 
   // Priority 2: derive from executable directory
   // Layout: <dir>/<name> (produced by `lyra compile`)
-  if (argv0 != nullptr &&
-      argv0[0] !=
-          '\0') {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  if (argv0 != nullptr && std::string_view(argv0) != "") {
     std::error_code ec;
     auto exe_path = std::filesystem::canonical(argv0, ec);
     if (ec) {
@@ -864,13 +836,12 @@ extern "C" void LyraReportTime() {
 
 extern "C" void LyraMonitorRegister(
     void* engine_ptr, LyraMonitorCheckProgramFn program, void* design_state,
-    void* this_ptr, uint32_t instance_id, uint32_t local_signal_coord_base,
-    const void* initial_prev, uint32_t size) {
+    void* this_ptr, uint32_t instance_id, const void* initial_prev,
+    uint32_t size) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
-      .instance_id = instance_id,
-      .local_signal_coord_base = local_signal_coord_base,
+      .instance_id = lyra::runtime::InstanceId{instance_id},
   };
   engine->RegisterMonitor(program, design_state, ctx, initial_prev, size);
 }
@@ -967,7 +938,8 @@ auto AsEngine(void* engine_ptr) -> Engine* {
 
 auto MakeLocalRef(void* instance_ptr, uint32_t local_id) -> ObjectSignalRef {
   return ObjectSignalRef{
-      static_cast<RuntimeInstance*>(instance_ptr), LocalSignalId{local_id}};
+      .instance = static_cast<RuntimeInstance*>(instance_ptr),
+      .local = LocalSignalId{local_id}};
 }
 
 template <class Signal>
@@ -1056,6 +1028,15 @@ extern "C" void LyraScheduleNbaCanonicalPackedGlobal(
     uint32_t rsz, uint32_t sro, uint32_t id) {
   AsEngine(eng)->ScheduleNbaCanonicalPacked(
       GlobalSignalId{id}, wp, nb, vp, up, rsz, sro);
+}
+
+// R5: Resolve RuntimeInstance* from InstanceId at runtime.
+// Used by codegen for cross-instance writes (design-level connection
+// processes writing to child instance signals).
+extern "C" auto LyraResolveInstancePtr(void* eng, uint32_t instance_id)
+    -> void* {
+  if (eng == nullptr) return nullptr;
+  return AsEngine(eng)->FindInstanceMut(lyra::runtime::InstanceId{instance_id});
 }
 
 extern "C" auto LyraIsTraceObservedLocal(void* eng, void* inst, uint32_t id)

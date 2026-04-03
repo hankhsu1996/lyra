@@ -1,6 +1,5 @@
 #include "lyra/trace/text_trace_sink.hpp"
 
-#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <format>
@@ -10,7 +9,9 @@
 #include <variant>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/output_sink.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/trace/trace_event.hpp"
 
 namespace lyra::trace {
@@ -44,9 +45,12 @@ void TextTraceSink::OnEvent(const TraceEvent& event) {
         using T = std::decay_t<decltype(e)>;
         if constexpr (std::is_same_v<T, TimeAdvance>) {
           HandleTimeAdvance(e);
-        } else if constexpr (std::is_same_v<T, ValueChange>) {
-          HandleValueChange(e);
+        } else if constexpr (std::is_same_v<T, GlobalValueChange>) {
+          HandleGlobalValueChange(e);
+        } else if constexpr (std::is_same_v<T, LocalValueChange>) {
+          HandleLocalValueChange(e);
         }
+        // Ignore GlobalMemoryDirty and LocalMemoryDirty.
       },
       event);
 }
@@ -102,21 +106,80 @@ auto RenderPacked(const PackedSnapshot& snap, uint32_t bit_width)
   return std::format("{}'h{}", bit_width, hex);
 }
 
+auto RenderTraceValue(const TraceValue& value, uint32_t bit_width)
+    -> std::string {
+  if (const auto* packed = std::get_if<PackedSnapshot>(&value)) {
+    return RenderPacked(*packed, bit_width);
+  }
+  if (const auto* str = std::get_if<std::string>(&value)) {
+    return std::format("\"{}\"", *str);
+  }
+  return "?";
+}
+
 }  // namespace
 
-void TextTraceSink::HandleValueChange(const ValueChange& vc) {
-  if (meta_ == nullptr || !meta_->IsPopulated()) return;
-  if (vc.slot_id >= meta_->Count()) return;
-
-  auto name = meta_->Name(vc.slot_id);
-  const auto& signal_meta = meta_->Get(vc.slot_id);
-
-  std::string value_str;
-  if (const auto* packed = std::get_if<PackedSnapshot>(&vc.value)) {
-    value_str = RenderPacked(*packed, signal_meta.bit_width);
-  } else if (const auto* str = std::get_if<std::string>(&vc.value)) {
-    value_str = std::format("\"{}\"", *str);
+void TextTraceSink::HandleGlobalValueChange(const GlobalValueChange& vc) {
+  if (meta_ == nullptr || !meta_->IsPopulated()) {
+    throw common::InternalError(
+        "TextTraceSink::HandleGlobalValueChange",
+        "global trace event received without populated global trace metadata");
   }
+  if (vc.signal_id.value >= meta_->Count()) {
+    throw common::InternalError(
+        "TextTraceSink::HandleGlobalValueChange",
+        std::format(
+            "global signal id {} out of range {}", vc.signal_id.value,
+            meta_->Count()));
+  }
+
+  auto name = meta_->Name(vc.signal_id.value);
+  const auto& signal_meta = meta_->Get(vc.signal_id.value);
+  auto value_str = RenderTraceValue(vc.value, signal_meta.bit_width);
+
+  auto line = std::format(
+      "t={} d={} {} = {}\n", current_time_, current_delta_, name, value_str);
+
+  if (output_ != nullptr) {
+    std::fwrite(line.data(), 1, line.size(), output_);
+  } else {
+    runtime::WriteOutput(line);
+  }
+}
+
+void TextTraceSink::HandleLocalValueChange(const LocalValueChange& vc) {
+  if (resolver_ == nullptr) {
+    throw common::InternalError(
+        "TextTraceSink::HandleLocalValueChange",
+        "local trace event received without instance resolver");
+  }
+
+  const auto* inst = resolver_->FindInstance(vc.instance_id);
+  if (inst == nullptr) {
+    throw common::InternalError(
+        "TextTraceSink::HandleLocalValueChange",
+        std::format("no instance found for instance_id {}", vc.instance_id));
+  }
+
+  const auto* layout = inst->observability.layout;
+  if (layout == nullptr) {
+    throw common::InternalError(
+        "TextTraceSink::HandleLocalValueChange",
+        std::format("instance {} has no observability layout", vc.instance_id));
+  }
+
+  if (vc.signal_id.value >= layout->trace_meta.size()) {
+    throw common::InternalError(
+        "TextTraceSink::HandleLocalValueChange",
+        std::format(
+            "instance {} local signal {} out of range {}", vc.instance_id,
+            vc.signal_id.value, layout->trace_meta.size()));
+  }
+
+  auto name =
+      runtime::ComposeHierarchicalTraceName(*inst, vc.signal_id, *layout);
+  const auto& trace_meta = layout->trace_meta[vc.signal_id.value];
+  auto value_str = RenderTraceValue(vc.value, trace_meta.bit_width);
 
   auto line = std::format(
       "t={} d={} {} = {}\n", current_time_, current_delta_, name, value_str);

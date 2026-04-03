@@ -63,7 +63,7 @@ auto ResolveSlotBase(
     return static_cast<const uint8_t*>(design_state_base) +
            meta.design_base_off;
   }
-  const auto* instance = instances[meta.owner_instance_id];
+  const auto* instance = instances[meta.owner_instance_id.value];
   if (instance == nullptr) {
     throw common::InternalError("ResolveSlotBase", "null RuntimeInstance");
   }
@@ -77,7 +77,7 @@ auto ResolveSlotBaseMut(
   if (meta.domain == SlotStorageDomain::kDesignGlobal) {
     return static_cast<uint8_t*>(design_state_base) + meta.design_base_off;
   }
-  const auto* instance = instances[meta.owner_instance_id];
+  const auto* instance = instances[meta.owner_instance_id.value];
   if (instance == nullptr) {
     throw common::InternalError("ResolveSlotBaseMut", "null RuntimeInstance");
   }

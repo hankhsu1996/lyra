@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <span>
 
 namespace lyra::trace {
@@ -11,27 +12,43 @@ namespace lyra::runtime {
 struct RuntimeInstance;
 class SlotMetaRegistry;
 class TraceSelectionRegistry;
-class TraceSignalMetaRegistry;
 class UpdateSet;
 
-// Flush dirty slots to trace manager at end-of-time-slot.
-// Iterates dirty slots, snapshots each based on SlotMetaRegistry, emits
-// ValueChange events. For each dirty storage-owner slot, also emits
-// ValueChange for all alias-visible entries sharing that owner (using the
-// same snapshot). Skips slots not selected by selection.IsSelected().
+// R5: Flush dirty global slots to trace manager at end-of-time-slot.
+// Iterates dirty global slots, snapshots each based on SlotMetaRegistry,
+// emits GlobalValueChange events. Skips slots not selected by selection.
 //
-// Backstop invariant: forwarded alias slots must never appear in the dirty
-// set. Alias canonicalization is compile-time (EmitMutationTargetSignalCoord)
-// and descriptor-time (RebuildCanonicalConnections), not runtime per-mark.
-// Throws InternalError if a dirty alias is encountered.
+// Only design-global slots (slot_id < global_slot_count) are emitted.
+// Instance-owned slot_ids may appear in the global UpdateSet from:
+//   - Connection propagation (writes flat slot_ids for both domains)
+//   - Subscription dispatch mirror (FlushSignalUpdates mirrors local
+//     delta into update_set_ for legacy flat trigger dispatch)
+// These are skipped here and flushed through local update sets by
+// FlushLocalDirtySlotsToTrace.
 //
 // Does NOT clear the UpdateSet; caller is responsible for calling
 // UpdateSet::Clear() afterward.
-void FlushDirtySlotsToTrace(
+void FlushGlobalDirtySlotsToTrace(
     trace::TraceManager& trace, const SlotMetaRegistry& slot_registry,
-    const TraceSignalMetaRegistry& trace_registry,
     const void* design_state_base,
     std::span<const RuntimeInstance* const> instances, const UpdateSet& updates,
-    const TraceSelectionRegistry& selection);
+    const TraceSelectionRegistry& selection, uint32_t global_slot_count);
+
+// R5: Flush dirty local slots for all instances to trace manager.
+// Iterates each instance's local_updates, snapshots via InstanceSlotMeta,
+// emits LocalValueChange events. Skips signals not selected by per-instance
+// trace_select.
+//
+// Invariants enforced (throws InternalError on violation):
+//   - No null instance pointers in the instance list.
+//   - Instance with dirty local signals must have local_signal_count > 0.
+//   - Instance with local signals must have a non-null observability layout.
+//   - trace_select must be sized to local_signal_count.
+//   - Dirty local signal id must be within local_signal_count range.
+// Only "not selected" is a normal skip; all other unexpected states are bugs.
+//
+// Does NOT clear local update sets; caller is responsible.
+void FlushLocalDirtySlotsToTrace(
+    trace::TraceManager& trace, std::span<RuntimeInstance* const> instances);
 
 }  // namespace lyra::runtime

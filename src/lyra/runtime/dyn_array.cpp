@@ -5,10 +5,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <format>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/dyn_array_data.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
+#include "lyra/runtime/signal_coord.hpp"
 
 using LyraDynArrayData = lyra::runtime::DynArrayData;
 
@@ -231,17 +234,38 @@ extern "C" void LyraDynArrayRelease(LyraDynArrayHandle arr) {
   delete a;
 }
 
-extern "C" void LyraStoreDynArray(
-    void* engine_ptr, void* slot_ptr, void* new_handle, uint32_t signal_id) {
+extern "C" void LyraStoreDynArrayLocal(
+    void* engine_ptr, void* slot_ptr, void* new_handle, void* instance_ptr,
+    uint32_t local_signal_id) {
   auto** handle_slot = static_cast<void**>(slot_ptr);
   void* old_handle = *handle_slot;
-  bool value_changed = (old_handle != new_handle);
-
   *handle_slot = new_handle;
+  if (old_handle == new_handle || engine_ptr == nullptr) {
+    return;
+  }
+  if (instance_ptr == nullptr) {
+    throw lyra::common::InternalError(
+        "LyraStoreDynArrayLocal",
+        std::format(
+            "null instance_ptr for local_signal_id {}", local_signal_id));
+  }
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  auto* inst = static_cast<lyra::runtime::RuntimeInstance*>(instance_ptr);
+  engine->MarkDirty(
+      lyra::runtime::ObjectSignalRef{
+          .instance = inst,
+          .local = lyra::runtime::LocalSignalId{local_signal_id}});
+}
 
-  if (value_changed && engine_ptr != nullptr) {
+extern "C" void LyraStoreDynArrayGlobal(
+    void* engine_ptr, void* slot_ptr, void* new_handle,
+    uint32_t global_signal_id) {
+  auto** handle_slot = static_cast<void**>(slot_ptr);
+  void* old_handle = *handle_slot;
+  *handle_slot = new_handle;
+  if (old_handle != new_handle && engine_ptr != nullptr) {
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    engine->MarkSlotDirty(signal_id);
+    engine->MarkDirty(lyra::runtime::GlobalSignalId{global_signal_id});
   }
 }
 

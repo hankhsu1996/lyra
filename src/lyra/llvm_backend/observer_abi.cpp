@@ -15,7 +15,7 @@ auto GetObserverContextStructType(llvm::LLVMContext& llvm_ctx)
     -> llvm::StructType* {
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-  return llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty, i32_ty});
+  return llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
 }
 
 auto LoadObserverContextFields(
@@ -30,14 +30,10 @@ auto LoadObserverContextFields(
   auto* instance_id = builder.CreateLoad(
       i32_ty, builder.CreateStructGEP(ctx_ty, observer_ctx_ptr, 1),
       "instance_id");
-  auto* local_signal_coord_base = builder.CreateLoad(
-      i32_ty, builder.CreateStructGEP(ctx_ty, observer_ctx_ptr, 2),
-      "local_signal_coord_base");
 
   return {
       .this_ptr = this_ptr,
       .instance_id = instance_id,
-      .local_signal_coord_base = local_signal_coord_base,
   };
 }
 
@@ -52,7 +48,6 @@ void EnterObserverSpecializationLocalContext(
 
   context.SetThisPointer(fields.this_ptr);
   context.SetDynamicInstanceId(fields.instance_id);
-  context.SetLocalSignalCoordBase(fields.local_signal_coord_base);
   context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
 }
 
@@ -63,7 +58,6 @@ auto GetObserverContextFieldValues(Context& context) -> LoadedObserverContext {
 
   llvm::Value* this_ptr = context.GetThisPointer();
   llvm::Value* instance_id = context.GetDynamicInstanceId();
-  llvm::Value* sig_offset = context.GetLocalSignalCoordBase();
 
   if (this_ptr == nullptr) {
     this_ptr = llvm::ConstantPointerNull::get(ptr_ty);
@@ -71,14 +65,10 @@ auto GetObserverContextFieldValues(Context& context) -> LoadedObserverContext {
   if (instance_id == nullptr) {
     instance_id = llvm::ConstantInt::get(i32_ty, 0);
   }
-  if (sig_offset == nullptr) {
-    sig_offset = llvm::ConstantInt::get(i32_ty, 0);
-  }
 
   return {
       .this_ptr = this_ptr,
       .instance_id = instance_id,
-      .local_signal_coord_base = sig_offset,
   };
 }
 
@@ -95,9 +85,6 @@ auto MaterializeObserverContext(Context& context) -> llvm::Value* {
       fields.this_ptr, builder.CreateStructGEP(ctx_ty, ctx_alloca, 0));
   builder.CreateStore(
       fields.instance_id, builder.CreateStructGEP(ctx_ty, ctx_alloca, 1));
-  builder.CreateStore(
-      fields.local_signal_coord_base,
-      builder.CreateStructGEP(ctx_ty, ctx_alloca, 2));
 
   return ctx_alloca;
 }

@@ -1,6 +1,8 @@
+#include <variant>
+
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
-#include "lyra/runtime/runtime_instance.hpp"
+#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 
 namespace lyra::runtime {
@@ -8,38 +10,62 @@ namespace lyra::runtime {
 auto Engine::ResolveSlotBytes(uint32_t slot_id) const -> const uint8_t* {
   const auto& meta = slot_meta_registry_.Get(slot_id);
   if (meta.domain == SlotStorageDomain::kDesignGlobal) {
-    return static_cast<const uint8_t*>(design_state_base_) +
-           meta.design_base_off;
+    auto base = std::span(
+        static_cast<const uint8_t*>(design_state_base_),
+        meta.design_base_off + meta.total_bytes);
+    return &base[meta.design_base_off];
   }
-  if (meta.owner_instance_id >= instances_.size()) {
-    throw common::InternalError(
-        "Engine::ResolveSlotBytes",
-        std::format(
-            "slot {} owner_instance_id {} out of range (instances={})", slot_id,
-            meta.owner_instance_id, instances_.size()));
-  }
-  const auto* instance = instances_[meta.owner_instance_id];
+  const auto& instance = GetInstance(meta.owner_instance_id);
   return ResolveInstanceStorageOffset(
-      *instance, meta.instance_rel_off, meta.total_bytes,
+      instance, meta.instance_rel_off, meta.total_bytes,
       "Engine::ResolveSlotBytes");
 }
 
 auto Engine::ResolveSlotBytesMut(uint32_t slot_id) -> uint8_t* {
   const auto& meta = slot_meta_registry_.Get(slot_id);
   if (meta.domain == SlotStorageDomain::kDesignGlobal) {
-    return static_cast<uint8_t*>(design_state_base_) + meta.design_base_off;
+    auto base = std::span(
+        static_cast<uint8_t*>(design_state_base_),
+        meta.design_base_off + meta.total_bytes);
+    return &base[meta.design_base_off];
   }
-  if (meta.owner_instance_id >= instances_.size()) {
-    throw common::InternalError(
-        "Engine::ResolveSlotBytesMut",
-        std::format(
-            "slot {} owner_instance_id {} out of range (instances={})", slot_id,
-            meta.owner_instance_id, instances_.size()));
-  }
-  const auto* instance = instances_[meta.owner_instance_id];
+  const auto& instance = GetInstance(meta.owner_instance_id);
   return ResolveInstanceStorageOffset(
-      *instance, meta.instance_rel_off, meta.total_bytes,
+      instance, meta.instance_rel_off, meta.total_bytes,
       "Engine::ResolveSlotBytesMut");
+}
+
+auto Engine::ResolveGlobalSlotBase(GlobalSignalId signal) const
+    -> const uint8_t* {
+  const auto& meta = slot_meta_registry_.Get(signal.value);
+  auto base = std::span(
+      static_cast<const uint8_t*>(design_state_base_),
+      meta.design_base_off + meta.total_bytes);
+  return &base[meta.design_base_off];
+}
+
+auto Engine::ResolveGlobalSlotBaseMut(GlobalSignalId signal) -> uint8_t* {
+  const auto& meta = slot_meta_registry_.Get(signal.value);
+  auto base = std::span(
+      static_cast<uint8_t*>(design_state_base_),
+      meta.design_base_off + meta.total_bytes);
+  return &base[meta.design_base_off];
+}
+
+auto Engine::ResolveConnectionDstMut(const ConnectionTarget& dst) -> uint8_t* {
+  if (const auto* global = std::get_if<GlobalConnectionTarget>(&dst)) {
+    return ResolveGlobalSlotBaseMut(global->signal);
+  }
+  const auto& local = std::get<LocalConnectionTarget>(dst);
+  auto* inst = instance_trace_resolver_.FindInstanceMut(local.instance_id);
+  if (inst == nullptr) {
+    throw common::InternalError(
+        "Engine::ResolveConnectionDstMut",
+        std::format(
+            "no instance for connection dst instance_id {}",
+            local.instance_id));
+  }
+  return ResolveInstanceSlotBaseMut(*inst, local.signal);
 }
 
 void Engine::ValidateInstanceOwnedSlotMeta() const {
@@ -56,20 +82,9 @@ void Engine::ValidateInstanceOwnedSlotMeta() const {
               slot_id, meta.storage_owner_slot_id));
     }
 
-    if (meta.owner_instance_id >= instances_.size()) {
-      throw common::InternalError(
-          "Engine::ValidateInstanceOwnedSlotMeta",
-          std::format(
-              "slot {} owner_instance_id {} >= instance count {}", slot_id,
-              meta.owner_instance_id, instances_.size()));
-    }
-    if (instances_[meta.owner_instance_id] == nullptr) {
-      throw common::InternalError(
-          "Engine::ValidateInstanceOwnedSlotMeta",
-          std::format(
-              "slot {} owner_instance_id {} resolves to null instance", slot_id,
-              meta.owner_instance_id));
-    }
+    // GetInstance throws InternalError if the instance_id is invalid or
+    // missing.
+    GetInstance(meta.owner_instance_id);
   }
 }
 

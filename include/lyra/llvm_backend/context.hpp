@@ -122,7 +122,6 @@ struct ExecutionContractState {
   llvm::Value* instance_ptr = nullptr;
   llvm::Value* this_ptr = nullptr;
   llvm::Value* dynamic_instance_id = nullptr;
-  llvm::Value* local_signal_coord_base = nullptr;
 };
 
 // RAII guard that sets execution-contract state on Context and restores it
@@ -269,6 +268,8 @@ class Context {
   [[nodiscard]] auto GetLyraAllocTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFreeTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraResolveSlotPtr() -> llvm::Function*;
+  // R5: Resolve RuntimeInstance* from InstanceId at runtime.
+  [[nodiscard]] auto GetLyraResolveInstancePtr() -> llvm::Function*;
   // R3 typed coordination helpers (take frame* instead of engine*).
   [[nodiscard]] auto GetLyraMarkDirtyLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMarkDirtyGlobal() -> llvm::Function*;
@@ -300,7 +301,8 @@ class Context {
   [[nodiscard]] auto GetLyraDynArrayClone() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayDelete() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayRelease() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraStoreDynArray() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStoreDynArrayLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStoreDynArrayGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayCloneElem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayDestroyElem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraQueuePushBack() -> llvm::Function*;
@@ -324,7 +326,9 @@ class Context {
   [[nodiscard]] auto GetLyraRegisterStrobe() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMonitorSetEnabled() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMonitorRegister() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraReadmem() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraReadmemLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraReadmemGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraReadmemNoNotify() -> llvm::Function*;
   [[nodiscard]] auto GetLyraWritemem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintModulePath() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFillPackedElements() -> llvm::Function*;
@@ -333,7 +337,9 @@ class Context {
   [[nodiscard]] auto GetLyraFgetc() -> llvm::Function*;
   [[nodiscard]] auto GetLyraUngetc() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFgets() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraFread() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraFreadLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraFreadGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraFreadNoNotify() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFscanf() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAssocNew() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAssocRelease() -> llvm::Function*;
@@ -450,8 +456,6 @@ class Context {
   void SetThisPointer(llvm::Value* ptr);
   [[nodiscard]] auto GetThisPointer() const -> llvm::Value*;
   void SetDynamicInstanceId(llvm::Value* id);
-  void SetLocalSignalCoordBase(llvm::Value* base);
-  [[nodiscard]] auto GetLocalSignalCoordBase() const -> llvm::Value*;
   [[nodiscard]] auto GetDynamicInstanceId() const -> llvm::Value*;
   void SetSpecSlotInfo(const SpecSlotInfo* info);
   [[nodiscard]] auto GetSpecSlotInfo() const -> const SpecSlotInfo* {
@@ -615,8 +619,8 @@ class Context {
   void EmitProcessStateSetup(llvm::Value* state_arg);
 
   // Load realized instance binding from the frame header for shared bodies.
-  // Loads instance pointer, then derives storage base, instance_id, and
-  // local_signal_coord_base from the RuntimeInstance object.
+  // Loads instance pointer, then derives storage base and instance_id
+  // from the RuntimeInstance object.
   // Called after EmitProcessStateSetup by shared body generation only.
   void EmitSharedBodyBindingSetup(llvm::Value* state_arg);
 
@@ -629,7 +633,6 @@ class Context {
   auto EmitLoadInstancePtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadInstanceInlineBase(llvm::Value* instance_ptr) -> llvm::Value*;
   auto EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value*;
-  auto EmitLoadLocalSignalCoordBase(llvm::Value* instance_ptr) -> llvm::Value*;
   void EmitStoreDesignPtr(llvm::Value* state_arg, llvm::Value* value);
   auto EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value*;
 
@@ -814,8 +817,7 @@ class Context {
   // Build LLVM function type from MIR function signature.
   // Package-scoped: (DesignState*, Engine*, args...)
   // Module-scoped:  (DesignState*, Engine*, this_ptr*,
-  // local_signal_coord_base_i32,
-  //                  instance_id_i32, args...)
+  //                  instance_ptr*, instance_id_i32, args...)
   // For managed returns: out_ptr* prepended, return type becomes void.
   [[nodiscard]] auto BuildUserFunctionType(
       const mir::FunctionSignature& sig, bool is_module_scoped)
@@ -932,6 +934,7 @@ class Context {
   llvm::Function* lyra_alloc_triggers_ = nullptr;
   llvm::Function* lyra_free_triggers_ = nullptr;
   llvm::Function* lyra_resolve_slot_ptr_ = nullptr;
+  llvm::Function* lyra_resolve_instance_ptr_ = nullptr;
   // R3 typed coordination helpers.
   llvm::Function* lyra_mark_dirty_local_ = nullptr;
   llvm::Function* lyra_mark_dirty_global_ = nullptr;
@@ -962,7 +965,8 @@ class Context {
   llvm::Function* lyra_dynarray_clone_ = nullptr;
   llvm::Function* lyra_dynarray_delete_ = nullptr;
   llvm::Function* lyra_dynarray_release_ = nullptr;
-  llvm::Function* lyra_store_dynarray_ = nullptr;
+  llvm::Function* lyra_store_dynarray_local_ = nullptr;
+  llvm::Function* lyra_store_dynarray_global_ = nullptr;
   llvm::Function* lyra_dynarray_clone_elem_ = nullptr;
   llvm::Function* lyra_dynarray_destroy_elem_ = nullptr;
   llvm::Function* lyra_queue_push_back_ = nullptr;
@@ -986,7 +990,9 @@ class Context {
   llvm::Function* lyra_register_strobe_ = nullptr;
   llvm::Function* lyra_monitor_set_enabled_ = nullptr;
   llvm::Function* lyra_monitor_register_ = nullptr;
-  llvm::Function* lyra_readmem_ = nullptr;
+  llvm::Function* lyra_readmem_local_ = nullptr;
+  llvm::Function* lyra_readmem_global_ = nullptr;
+  llvm::Function* lyra_readmem_no_notify_ = nullptr;
   llvm::Function* lyra_writemem_ = nullptr;
   llvm::Function* lyra_print_module_path_ = nullptr;
   llvm::Function* lyra_fill_packed_elements_ = nullptr;
@@ -995,7 +1001,9 @@ class Context {
   llvm::Function* lyra_fgetc_ = nullptr;
   llvm::Function* lyra_ungetc_ = nullptr;
   llvm::Function* lyra_fgets_ = nullptr;
-  llvm::Function* lyra_fread_ = nullptr;
+  llvm::Function* lyra_fread_local_ = nullptr;
+  llvm::Function* lyra_fread_global_ = nullptr;
+  llvm::Function* lyra_fread_no_notify_ = nullptr;
   llvm::Function* lyra_fscanf_ = nullptr;
   llvm::Function* lyra_assoc_new_ = nullptr;
   llvm::Function* lyra_assoc_release_ = nullptr;
@@ -1058,7 +1066,6 @@ class Context {
   llvm::Value* instance_ptr_ = nullptr;
   llvm::Value* this_ptr_ = nullptr;
   llvm::Value* dynamic_instance_id_ = nullptr;
-  llvm::Value* local_signal_coord_base_ = nullptr;
   const SpecSlotInfo* spec_slot_info_ = nullptr;
 
   // Current origin for error reporting

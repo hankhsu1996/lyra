@@ -213,7 +213,8 @@ auto EmitDeferredStoreCore(
   if (signal_id.IsLocal()) {
     builder.CreateCall(
         context.GetLyraScheduleNbaLocal(),
-        {context.GetEnginePointer(), context.GetInstancePointer(), write_ptr,
+        {context.GetEnginePointer(),
+         signal_id.GetInstancePointer(context.GetInstancePointer()), write_ptr,
          notify_base_ptr, val_alloca, null_ptr,
          llvm::ConstantInt::get(i32_ty, byte_size), signal_id.Emit(builder)});
   } else {

@@ -31,9 +31,19 @@ void StoreContainerToWriteTarget(
 
   auto emit_notifying_store = [&]() {
     auto* old_handle = builder.CreateLoad(ptr_ty, wt.ptr, "ctr.old");
-    builder.CreateCall(
-        ctx.GetLyraStoreDynArray(), {ctx.GetEnginePointer(), wt.ptr, new_handle,
-                                     wt.canonical_signal_id->Emit(builder)});
+    if (wt.canonical_signal_id->IsLocal()) {
+      auto* inst_ptr =
+          wt.canonical_signal_id->GetInstancePointer(ctx.GetInstancePointer());
+      builder.CreateCall(
+          ctx.GetLyraStoreDynArrayLocal(),
+          {ctx.GetEnginePointer(), wt.ptr, new_handle, inst_ptr,
+           wt.canonical_signal_id->Emit(builder)});
+    } else {
+      builder.CreateCall(
+          ctx.GetLyraStoreDynArrayGlobal(),
+          {ctx.GetEnginePointer(), wt.ptr, new_handle,
+           wt.canonical_signal_id->Emit(builder)});
+    }
     const auto& types = ctx.GetTypeArena();
     if (types[type_id].Kind() == TypeKind::kAssociativeArray) {
       builder.CreateCall(ctx.GetLyraAssocRelease(), {old_handle});

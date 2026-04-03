@@ -20,10 +20,11 @@
 #include "lyra/common/memfile.hpp"
 #include "lyra/common/packed_storage_abi.hpp"
 #include "lyra/runtime/engine.hpp"
-#include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/marshal.hpp"
 #include "lyra/runtime/output_sink.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
+#include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/simulation.hpp"
 #include "lyra/runtime/string.hpp"
 #include "lyra/semantic/format.hpp"
@@ -258,25 +259,23 @@ extern "C" void LyraFWrite(
   }
 }
 
-extern "C" void LyraReadmem(
-    void* engine_ptr, LyraStringHandle filename_handle, void* target,
-    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
-    int32_t element_count, int64_t min_addr, int64_t current_addr,
-    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind,
-    uint32_t slot_id) {
+// Common readmem implementation. Returns true if any element was written.
+auto ReadmemImpl(
+    LyraStringHandle filename_handle, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t value_size_bytes, int32_t element_count,
+    int64_t min_addr, int64_t current_addr, int64_t final_addr, int64_t step,
+    bool is_hex, int32_t element_kind) -> bool {
   std::string_view task_name = is_hex ? "$readmemh" : "$readmemb";
 
-  // Sanity checks
   if (element_width <= 0 || stride_bytes <= 0 || value_size_bytes <= 0 ||
       element_count <= 0) {
     lyra::PrintWarning(
         std::format("{}: invalid element parameters", task_name));
-    return;
+    return false;
   }
 
   auto elem_kind = static_cast<MemElementKind>(element_kind);
 
-  // Assert layout consistency
   int32_t expected_stride = (elem_kind == MemElementKind::kFourState)
                                 ? 2 * value_size_bytes
                                 : value_size_bytes;
@@ -285,12 +284,11 @@ extern "C" void LyraReadmem(
         std::format(
             "{}: stride mismatch (got {}, expected {})", task_name,
             stride_bytes, expected_stride));
-    return;
+    return false;
   }
 
   std::string filename{LyraStringAsView(filename_handle)};
 
-  // Resolve path relative to fs_base_dir (same as $fopen)
   std::filesystem::path path{filename};
   if (path.is_relative()) {
     path = lyra::runtime::GetFsBaseDir() / path;
@@ -300,7 +298,7 @@ extern "C" void LyraReadmem(
   if (!file) {
     lyra::PrintWarning(
         std::format("{}: cannot open file '{}'", task_name, filename));
-    return;
+    return false;
   }
 
   std::string content(
@@ -311,16 +309,13 @@ extern "C" void LyraReadmem(
   auto stride = static_cast<size_t>(stride_bytes);
   auto value_size = static_cast<size_t>(value_size_bytes);
 
-  // Create a span over the target storage for bounds-safe access
   auto total_bytes = static_cast<size_t>(element_count) * stride;
   std::span<uint8_t> target_span(static_cast<uint8_t*>(target), total_bytes);
 
-  // Store callback - maps SV address to storage index with bounds check
   bool wrote_any = false;
   auto store = [&](std::string_view token, int64_t addr) {
-    // Bounds check before computing storage index
     if (addr < min_addr || addr > max_addr) {
-      return;  // Ignore out-of-bounds addresses
+      return;
     }
 
     auto words_result =
@@ -332,24 +327,20 @@ extern "C" void LyraReadmem(
     }
     const auto& words = *words_result;
 
-    // Compute storage offset: (addr - min_addr) * stride
     auto storage_index = static_cast<size_t>(addr - min_addr);
     size_t offset = storage_index * stride;
 
-    // Copy value (same for both 2-state and 4-state)
     size_t bytes_to_copy = std::min(value_size, words.size() * 8);
     std::memcpy(
         target_span.subspan(offset).data(), words.data(), bytes_to_copy);
 
     if (elem_kind == MemElementKind::kFourState) {
-      // 4-state: zero the x_mask field (all bits known, no X/Z)
       std::memset(
           target_span.subspan(offset + value_size).data(), 0, value_size);
     }
     wrote_any = true;
   };
 
-  // Forward to canonical parser (step handles direction)
   auto result = lyra::common::ParseMemFile(
       content, is_hex, min_addr, max_addr, current_addr, final_addr, step,
       task_name, store);
@@ -357,16 +348,66 @@ extern "C" void LyraReadmem(
     lyra::PrintWarning(std::format("{}: {}", task_name, result.error));
   }
 
-  if (wrote_any && slot_id != lyra::runtime::kNoSlotId &&
-      engine_ptr != nullptr) {
+  return wrote_any;
+}
+
+extern "C" void LyraReadmemLocal(
+    void* engine_ptr, LyraStringHandle filename_handle, void* target,
+    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
+    int32_t element_count, int64_t min_addr, int64_t current_addr,
+    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind,
+    void* instance_ptr, uint32_t local_signal_id) {
+  bool wrote = ReadmemImpl(
+      filename_handle, target, element_width, stride_bytes, value_size_bytes,
+      element_count, min_addr, current_addr, final_addr, step, is_hex,
+      element_kind);
+  if (wrote && engine_ptr != nullptr) {
+    if (instance_ptr == nullptr) {
+      throw lyra::common::InternalError(
+          "LyraReadmemLocal",
+          std::format(
+              "null instance_ptr for local_signal_id {}", local_signal_id));
+    }
     auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-    engine->MarkSlotDirty(slot_id);
+    auto* inst = static_cast<lyra::runtime::RuntimeInstance*>(instance_ptr);
+    engine->MarkDirty(
+        lyra::runtime::ObjectSignalRef{
+            .instance = inst,
+            .local = lyra::runtime::LocalSignalId{local_signal_id}});
   }
+}
+
+extern "C" void LyraReadmemGlobal(
+    void* engine_ptr, LyraStringHandle filename_handle, void* target,
+    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
+    int32_t element_count, int64_t min_addr, int64_t current_addr,
+    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind,
+    uint32_t global_slot_id) {
+  bool wrote = ReadmemImpl(
+      filename_handle, target, element_width, stride_bytes, value_size_bytes,
+      element_count, min_addr, current_addr, final_addr, step, is_hex,
+      element_kind);
+  if (wrote && engine_ptr != nullptr) {
+    auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+    engine->MarkDirty(lyra::runtime::GlobalSignalId{global_slot_id});
+  }
+}
+
+extern "C" void LyraReadmemNoNotify(
+    void* /*engine_ptr*/, LyraStringHandle filename_handle, void* target,
+    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
+    int32_t element_count, int64_t min_addr, int64_t current_addr,
+    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind) {
+  ReadmemImpl(
+      filename_handle, target, element_width, stride_bytes, value_size_bytes,
+      element_count, min_addr, current_addr, final_addr, step, is_hex,
+      element_kind);
 }
 
 extern "C" void LyraPrintModulePath(void* engine_ptr, uint32_t instance_id) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  lyra::runtime::WriteOutput(engine->GetInstancePath(instance_id));
+  lyra::runtime::WriteOutput(
+      engine->GetInstancePath(lyra::runtime::InstanceId{instance_id}));
 }
 
 extern "C" void LyraWritemem(
@@ -448,19 +489,14 @@ extern "C" void LyraWritemem(
   }
 }
 
-extern "C" auto LyraFread(
-    void* engine_ptr, int32_t descriptor, void* target, int32_t element_width,
-    int32_t stride_bytes, int32_t is_memory, int64_t start_index,
-    int64_t max_count, int64_t element_count, uint32_t slot_id) -> int32_t {
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-
-  // Calculate bytes per element (ceil(element_width / 8))
+// Common fread implementation. Returns bytes read.
+auto FreadImpl(
+    lyra::runtime::Engine* engine, int32_t descriptor, void* target,
+    int32_t element_width, int32_t stride_bytes, int32_t is_memory,
+    int64_t start_index, int64_t max_count, int64_t element_count) -> int32_t {
   auto bytes_per_elem = static_cast<size_t>((element_width + 7) / 8);
   auto stride = static_cast<size_t>(stride_bytes);
 
-  // Helper to pack big-endian buffer into a target memory location.
-  // Converts to little-endian word array, then memcpys into dest.
-  // Masks to element_width bits to handle non-byte-aligned widths (e.g. 9-bit).
   auto elem_bits = static_cast<size_t>(element_width);
   auto pack_to_dest = [&](std::span<const uint8_t> src,
                           std::span<uint8_t> dest) {
@@ -472,12 +508,10 @@ extern "C" auto LyraFread(
         std::min(bytes_per_elem, words.size() * sizeof(uint64_t)));
   };
 
-  // Buffer for reading bytes
   std::vector<uint8_t> buffer(bytes_per_elem);
   int32_t total_bytes_read = 0;
 
   if (is_memory == 0) {
-    // Integral variant: read bytes_per_elem bytes into target
     int32_t bytes_read = engine->GetFileManager().FreadBytes(
         descriptor, buffer.data(), bytes_per_elem);
     if (bytes_read > 0) {
@@ -487,18 +521,14 @@ extern "C" auto LyraFread(
       total_bytes_read = bytes_read;
     }
   } else {
-    // Memory variant: read into array elements
-    // Determine start and count
     size_t start_idx = (start_index < 0) ? 0 : static_cast<size_t>(start_index);
     size_t count = (max_count < 0) ? static_cast<size_t>(element_count)
                                    : static_cast<size_t>(max_count);
 
-    // Validate start
     if (start_idx >= static_cast<size_t>(element_count)) {
-      return 0;  // OOB start
+      return 0;
     }
 
-    // Limit count to available elements
     size_t end_idx =
         std::min(start_idx + count, static_cast<size_t>(element_count));
 
@@ -507,11 +537,9 @@ extern "C" auto LyraFread(
           descriptor, buffer.data(), bytes_per_elem);
 
       if (static_cast<size_t>(bytes_read) < bytes_per_elem) {
-        // Partial element - stop at element boundary
         break;
       }
 
-      // Pack into element at idx
       pack_to_dest(
           std::span(buffer), std::span(
                                  static_cast<uint8_t*>(target),
@@ -521,12 +549,57 @@ extern "C" auto LyraFread(
     }
   }
 
-  if (total_bytes_read > 0 && slot_id != lyra::runtime::kNoSlotId &&
-      engine_ptr != nullptr) {
-    engine->MarkSlotDirty(slot_id);
-  }
-
   return total_bytes_read;
+}
+
+extern "C" auto LyraFreadLocal(
+    void* engine_ptr, int32_t descriptor, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t is_memory, int64_t start_index,
+    int64_t max_count, int64_t element_count, void* instance_ptr,
+    uint32_t local_signal_id) -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  int32_t bytes = FreadImpl(
+      engine, descriptor, target, element_width, stride_bytes, is_memory,
+      start_index, max_count, element_count);
+  if (bytes > 0) {
+    if (instance_ptr == nullptr) {
+      throw lyra::common::InternalError(
+          "LyraFreadLocal",
+          std::format(
+              "null instance_ptr for local_signal_id {}", local_signal_id));
+    }
+    auto* inst = static_cast<lyra::runtime::RuntimeInstance*>(instance_ptr);
+    engine->MarkDirty(
+        lyra::runtime::ObjectSignalRef{
+            .instance = inst,
+            .local = lyra::runtime::LocalSignalId{local_signal_id}});
+  }
+  return bytes;
+}
+
+extern "C" auto LyraFreadGlobal(
+    void* engine_ptr, int32_t descriptor, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t is_memory, int64_t start_index,
+    int64_t max_count, int64_t element_count, uint32_t global_slot_id)
+    -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  int32_t bytes = FreadImpl(
+      engine, descriptor, target, element_width, stride_bytes, is_memory,
+      start_index, max_count, element_count);
+  if (bytes > 0) {
+    engine->MarkDirty(lyra::runtime::GlobalSignalId{global_slot_id});
+  }
+  return bytes;
+}
+
+extern "C" auto LyraFreadNoNotify(
+    void* engine_ptr, int32_t descriptor, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t is_memory, int64_t start_index,
+    int64_t max_count, int64_t element_count) -> int32_t {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  return FreadImpl(
+      engine, descriptor, target, element_width, stride_bytes, is_memory,
+      start_index, max_count, element_count);
 }
 
 extern "C" auto LyraFscanf(

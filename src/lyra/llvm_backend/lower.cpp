@@ -112,7 +112,8 @@ auto BuildObservableDescriptorShapeFields(const CanonicalObservableShape& shape)
 auto MakeObservableDescriptorEntry(
     uint32_t storage_byte_offset, uint32_t local_name_pool_off,
     const ObservableDescriptorOwnerRefFields& refs,
-    const ObservableDescriptorShapeFields& sf, uint32_t storage_domain)
+    const ObservableDescriptorShapeFields& sf, uint32_t storage_domain,
+    uint32_t local_signal_id = UINT32_MAX)
     -> runtime::ObservableDescriptorEntry {
   return runtime::ObservableDescriptorEntry{
       .storage_byte_offset = storage_byte_offset,
@@ -128,6 +129,7 @@ auto MakeObservableDescriptorEntry(
       .storage_owner_ref = refs.storage_owner_ref,
       .flags = refs.flags,
       .storage_domain = storage_domain,
+      .local_signal_id = local_signal_id,
   };
 }
 
@@ -287,7 +289,7 @@ auto BuildParamPayloads(
 // Build the pure-data construction program from parallel topology arrays.
 // Pools path strings and param payloads; entries are in strict ModuleIndex
 // order. The runtime relies on this order for instance_id and flat
-// slot-base allocation (currently local_signal_coord_base).
+// slot-base allocation.
 auto BuildConstructionProgram(
     std::span<const uint32_t> instance_body_group, const Layout& layout,
     const mir::InstanceTable& instance_table,
@@ -1828,8 +1830,18 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
             for (const auto& [key, accum] : sorted_slots) {
               uint32_t flags = 0;
+              uint32_t owner_instance_id = 0;
+              uint32_t local_signal_id = 0;
               if (accum.is_design_global) {
-                flags |= runtime::kCombTemplateFlagDesignGlobal;
+                if (accum.final_global_id < layout->num_package_slots) {
+                  flags |= runtime::kCombTemplateFlagDesignGlobal;
+                } else {
+                  flags |= runtime::kCombTemplateFlagCrossInstance;
+                  auto owner = ResolveInstanceOwnedFlatSlot(
+                      *layout, accum.final_global_id);
+                  owner_instance_id = owner.instance_id.value;
+                  local_signal_id = owner.local_signal_id.value;
+                }
               }
               info.comb.entries.push_back(
                   runtime::CombTemplateEntry{
@@ -1837,6 +1849,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
                       .byte_offset = accum.is_full_slot ? 0 : accum.byte_offset,
                       .byte_size = accum.is_full_slot ? 0 : accum.byte_size,
                       .flags = flags,
+                      .owner_instance_id = owner_instance_id,
+                      .local_signal_id = local_signal_id,
                   });
             }
 
@@ -1912,6 +1926,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
       auto owned_base =
           layout->design.GetStorageBaseForRange(base_slot, info.slot_count);
 
+      // Body-local observable identity: each slot in the body's contiguous
+      // range [base_slot, base_slot + slot_count) has a canonical body-local
+      // signal id = (gsi - base_slot). This identity is determined by the
+      // body's slot allocation in the design layout, which is fixed per
+      // specialization. The runtime consumer validates dense population.
       for (uint32_t i = 0; i < info.slot_count; ++i) {
         uint32_t gsi = base_slot + i;
         if (gsi >= layout->design.slots.size()) {
@@ -1944,8 +1963,28 @@ auto CompileDesignProcesses(const LoweringInput& input)
         uint32_t storage_offset =
             narrow_u64_to_u32(body_offset.value, "body-local byte offset");
 
+        uint32_t body_local_signal_id = gsi - base_slot;
         tmpl.entries.push_back(MakeObservableDescriptorEntry(
-            storage_offset, name_off, refs, sf, domain));
+            storage_offset, name_off, refs, sf, domain, body_local_signal_id));
+      }
+
+      // Producer-side validation: verify all instance-owned descriptors
+      // form a complete dense [0, slot_count) range.
+      {
+        std::vector<uint8_t> seen(info.slot_count, 0);
+        for (const auto& entry : tmpl.entries) {
+          if (entry.storage_domain != 1) continue;
+          if (entry.local_signal_id >= info.slot_count ||
+              seen[entry.local_signal_id]++ != 0) {
+            throw common::InternalError(
+                "CompileDesignProcesses",
+                std::format(
+                    "body {}: invalid or duplicate local_signal_id {} "
+                    "(slot_count {})",
+                    info.body_id.value, entry.local_signal_id,
+                    info.slot_count));
+          }
+        }
       }
     }
 

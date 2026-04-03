@@ -195,6 +195,7 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
         .enable_profiling = emit_stats,
         .progress_reporter = std::move(progress_reporter),
         .dpi_link_inputs = input.input.dpi_link_inputs,
+        .dpi_object_inputs = {},
     };
     session =
         lowering::mir_to_llvm::CompileJit(*llvm_result, runtime_path, jit_opts);

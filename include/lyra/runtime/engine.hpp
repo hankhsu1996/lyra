@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <format>
 #include <map>
 #include <optional>
@@ -28,6 +29,7 @@
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/instance_metadata.hpp"
+#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/observer.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
@@ -41,6 +43,7 @@
 #include "lyra/runtime/trap.hpp"
 #include "lyra/runtime/update_set.hpp"
 #include "lyra/runtime/wait_site.hpp"
+#include "lyra/trace/instance_trace_resolver.hpp"
 #include "lyra/trace/trace_manager.hpp"
 #include "svdpi.h"
 
@@ -146,6 +149,31 @@ struct RuntimeStats {
 // - IEEE 1800 stratified event scheduler (Active -> Inactive -> NBA regions)
 // - Processes suspend via Delay/Subscribe, engine resumes them later
 //
+// Concrete InstanceTraceResolver keyed by RuntimeInstance::instance_id.
+// Built once from the instance list; validates uniqueness and null-free.
+// Lookup is O(1) via dense table indexed by instance_id.
+class InstanceIdTraceResolver final : public trace::InstanceTraceResolver {
+ public:
+  void Build(std::span<RuntimeInstance* const> instances);
+
+  [[nodiscard]] auto FindInstance(InstanceId instance_id) const
+      -> const RuntimeInstance* override {
+    if (instance_id.value >= lookup_.size()) return nullptr;
+    return lookup_[instance_id.value];
+  }
+
+  // Mutable lookup for engine-internal use.
+  [[nodiscard]] auto FindInstanceMut(InstanceId instance_id) const
+      -> RuntimeInstance* {
+    if (instance_id.value >= lookup_mut_.size()) return nullptr;
+    return lookup_mut_[instance_id.value];
+  }
+
+ private:
+  std::vector<const RuntimeInstance*> lookup_;
+  std::vector<RuntimeInstance*> lookup_mut_;
+};
+
 // Usage:
 // 1. Create engine with a ProcessDispatch callback
 // 2. Schedule initial processes with ScheduleInitial()
@@ -206,30 +234,17 @@ class Engine {
   void DelayZero(ProcessHandle handle, ResumePoint resume);
 
   // Subscribe to signal edge. Process resumes when signal changes.
-  // Called by interpreter/codegen when process hits a Wait terminator.
-  // Returns the index of the created subscription in the slot's typed vector,
-  // or UINT32_MAX if subscription failed.
-  // initially_active: if false, subscription is created in inactive state.
+  // R5: Subscribe with typed signal identity. Dispatches once at the top
+  // boundary, then routes to domain-specific helpers. No `is_local` below.
   auto Subscribe(
-      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      ProcessHandle handle, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, bool initially_active = true) -> uint32_t;
-
-  // Subscribe with explicit observation byte range within the slot.
-  // Returns the index of the created subscription in the slot's typed vector,
-  // or UINT32_MAX if subscription failed.
-  // initially_active: if false, subscription is created in inactive state.
   auto Subscribe(
-      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      ProcessHandle handle, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
       uint8_t bit_index, bool initially_active = true) -> uint32_t;
-
-  // Subscribe to a container (dynamic array/queue) element edge trigger.
-  // Chases the handle from DesignState, validates magic, performs OOB check.
-  // initially_active: codegen's descriptor-time classification. If false,
-  // the subscription is created inactive and runtime skips validation. If
-  // true, runtime still validates handle/bounds and may downgrade to inactive.
   auto SubscribeContainerElement(
-      ProcessHandle handle, ResumePoint resume, SignalId signal,
+      ProcessHandle handle, ResumePoint resume, SignalRef signal,
       common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
       bool initially_active = true) -> uint32_t;
 
@@ -242,7 +257,7 @@ class Engine {
       std::span<const WaitTriggerRecord> triggers,
       std::span<const LateBoundHeader> late_bound,
       std::span<const IndexPlanOp> plan_ops,
-      std::span<const uint32_t> dep_slots);
+      std::span<const DepSignalRecord> dep_records);
 
   // Create rebind subscriptions for a late-bound edge trigger. For each dep
   // slot, an AnyChange rebind node is created. When any dep changes, the plan
@@ -250,14 +265,14 @@ class Engine {
   // edge_target_id identifies the target in edge_target_table_.
   // target_kind must be kEdge or kContainer (kChange not supported).
   //
-  // Atomicity: either all dep_slot watchers are installed, or none are.
-  // Pre-validates capacity for all watchers before mutating any state.
-  // Validates target_slot and target_index against current dense storage.
+  // R5: Domain-specific. Global deps install into signal_subs_, local deps
+  // into instance observability. dep_slots values are global slot_ids or
+  // local signal_ids matching the target's domain.
   void SubscribeRebind(
-      ProcessHandle handle, uint32_t edge_target_id, SignalId target_slot,
+      ProcessHandle handle, uint32_t edge_target_id, SignalRef target_signal,
       SubKind target_kind, uint32_t target_index, uint8_t target_edge_group,
       EdgeBucket target_edge_bucket, std::span<const IndexPlanOp> plan,
-      BitTargetMapping mapping, std::span<const uint32_t> dep_slots);
+      BitTargetMapping mapping, std::span<const SignalRef> dep_signals);
 
   // Schedule process to resume in the next delta cycle (same time).
   // Used for kRepeat terminator.
@@ -268,7 +283,7 @@ class Engine {
   // mask_ptr != nullptr: masked merge (per-byte mask).
   void ScheduleNba(
       void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
-      const void* mask_ptr, uint32_t byte_size, uint32_t notify_slot_id);
+      const void* mask_ptr, uint32_t byte_size, NbaNotifySignal notify_signal);
 
   // Schedule a canonical two-plane packed narrow NBA write as one semantic
   // record. Writes region_byte_size bytes to write_ptr (value plane) and to
@@ -276,7 +291,7 @@ class Engine {
   void ScheduleNbaCanonicalPacked(
       void* write_ptr, const void* notify_base_ptr, const void* value_ptr,
       const void* unk_ptr, uint32_t region_byte_size,
-      uint32_t second_region_offset, uint32_t notify_slot_id);
+      uint32_t second_region_offset, NbaNotifySignal notify_signal);
 
   // Register a strobe observer for the Postponed region.
   // Executes at end of time slot with final signal values.
@@ -374,6 +389,8 @@ class Engine {
     update_set_.Init(registry.Size(), sizes);
     signal_subs_.resize(registry.Size());
     activation_slot_gen_.resize(registry.Size(), 0);
+    // Flat path (no bundles): all slots are design-global.
+    global_slot_count_ = registry.Size();
     slot_meta_registry_ = std::move(registry);
   }
 
@@ -383,29 +400,53 @@ class Engine {
     design_state_base_ = base;
   }
 
-  // Set the instance list for slot storage resolution.
-  // The span must remain valid for the lifetime of the engine.
-  void SetInstances(std::span<const RuntimeInstance* const> instances) {
-    instances_ = instances;
+  // Set the instance list for slot storage resolution and observability.
+  // Engine copies the pointers and owns the canonical mutable list.
+  // All callers read through instances_.
+  void SetInstances(std::span<const RuntimeInstance* const> instances);
+
+  // R5: Instance trace resolver for trace sinks. Resolves instance_id
+  // to RuntimeInstance through explicit validated lookup, not positional
+  // indexing. Must be called after SetInstances.
+  [[nodiscard]] auto GetInstanceTraceResolver() const
+      -> const trace::InstanceTraceResolver& {
+    return instance_trace_resolver_;
+  }
+
+  // R5: Typed instance lookup by stable InstanceId.
+  // These are the ONLY approved way to go from InstanceId to RuntimeInstance
+  // in semantic/runtime code. Never index instances_ by InstanceId.value.
+  [[nodiscard]] auto FindInstance(InstanceId id) const
+      -> const RuntimeInstance* {
+    return instance_trace_resolver_.FindInstance(id);
+  }
+  [[nodiscard]] auto FindInstanceMut(InstanceId id) -> RuntimeInstance* {
+    return instance_trace_resolver_.FindInstanceMut(id);
+  }
+  [[nodiscard]] auto GetInstance(InstanceId id) const
+      -> const RuntimeInstance& {
+    const auto* inst = instance_trace_resolver_.FindInstance(id);
+    if (inst == nullptr) {
+      throw common::InternalError(
+          "Engine::GetInstance",
+          std::format("no instance for instance_id {}", id));
+    }
+    return *inst;
+  }
+  [[nodiscard]] auto GetInstanceMut(InstanceId id) -> RuntimeInstance& {
+    auto* inst = instance_trace_resolver_.FindInstanceMut(id);
+    if (inst == nullptr) {
+      throw common::InternalError(
+          "Engine::GetInstanceMut",
+          std::format("no instance for instance_id {}", id));
+    }
+    return *inst;
   }
 
   // Validate that all kInstanceOwned slot-meta entries reference valid
   // instances. Must be called after both slot meta and instance list are
   // installed. Throws InternalError on any mismatch.
   void ValidateInstanceOwnedSlotMeta() const;
-
-  // Assign dense coordination bases on instances from slot meta.
-  // Scans the slot meta registry to determine per-instance slot ranges
-  // and writes local_signal_coord_base on each instance. This makes the
-  // engine the authority for dense coordination base assignment.
-  // Must be called after InitSlotMeta and SetInstances.
-  void AssignDenseCoordinationBases(
-      std::span<RuntimeInstance* const> mutable_instances);
-
-  // R4: Assign dense coordination bases from slot meta registry and bundles.
-  // One canonical engine-owned path for dense base assignment.
-  void AssignDenseCoordinationBasesFromBundles(
-      std::span<const InstanceMetadataBundle> bundles);
 
   // R4: Initialize all module-instance runtime registries from per-instance
   // bundles and body templates. Replaces the flat-table init path for
@@ -414,7 +455,7 @@ class Engine {
   // separate.
   //
   // This method:
-  //   1. Assigns dense coordination bases from bundle slot counts.
+  //   1. Computes per-instance flat coordinate bases from bundle slot counts.
   //   2. Builds the slot meta registry from design-global words + bundles.
   //   3. Builds module-instance trigger descriptors from body templates.
   //   4. Builds module-instance comb kernels from body templates.
@@ -423,10 +464,15 @@ class Engine {
   //
   // Must be called after SetInstances. Must be called before connection
   // trigger/comb init (which merge into the registries built here).
-  auto InitModuleInstancesFromBundles(
+  void InitModuleInstancesFromBundles(
       std::span<const InstanceMetadataBundle> bundles,
-      std::span<const uint32_t> design_global_slot_meta_words, void** states)
-      -> TraceSignalMetaRegistry;
+      std::span<const uint32_t> design_global_slot_meta_words, void** states);
+
+  // Resolve connection destination byte address via typed target.
+  // Global targets resolve via design_state_base_.
+  // Local targets resolve via instance resolver + local slot meta.
+  [[nodiscard]] auto ResolveConnectionDstMut(const ConnectionTarget& dst)
+      -> uint8_t*;
 
   // Resolve the storage byte address for a slot.
   // For kDesignGlobal slots: returns design_state_base_ + design_base_off.
@@ -434,6 +480,12 @@ class Engine {
   // instance_rel_off.
   [[nodiscard]] auto ResolveSlotBytes(uint32_t slot_id) const -> const uint8_t*;
   [[nodiscard]] auto ResolveSlotBytesMut(uint32_t slot_id) -> uint8_t*;
+
+  // R5: Global slot resolution by GlobalSignalId.
+  [[nodiscard]] auto ResolveGlobalSlotBase(GlobalSignalId signal) const
+      -> const uint8_t*;
+  [[nodiscard]] auto ResolveGlobalSlotBaseMut(GlobalSignalId signal)
+      -> uint8_t*;
 
   // Release all string-typed slot handles. Called at shutdown, before
   // engine destruction. Uses engine-owned slot meta and slot resolution.
@@ -530,7 +582,7 @@ class Engine {
       GlobalSignalId notify_signal, void* write_ptr,
       const void* notify_base_ptr, const void* value_ptr, const void* unk_ptr,
       uint32_t region_byte_size, uint32_t second_region_offset);
-  [[nodiscard]] auto IsTraceObserved(ObjectSignalRef signal) const -> bool;
+  [[nodiscard]] static auto IsTraceObserved(ObjectSignalRef signal) -> bool;
   [[nodiscard]] auto IsTraceObserved(GlobalSignalId signal) const -> bool;
 
   [[nodiscard]] auto GetSlotMetaRegistry() const -> const SlotMetaRegistry& {
@@ -539,16 +591,16 @@ class Engine {
 
   // Get hierarchical path for an instance (%m support).
   // Throws InternalError for invalid instance_id (compiler/runtime bug).
-  [[nodiscard]] auto GetInstancePath(uint32_t instance_id) const
+  [[nodiscard]] auto GetInstancePath(InstanceId instance_id) const
       -> std::string_view {
-    if (instance_id >= instance_paths_.size()) {
+    if (instance_id.value >= instance_paths_.size()) {
       throw common::InternalError(
           "Engine::GetInstancePath",
           std::format(
               "invalid instance_id {} (have {} instances)", instance_id,
               instance_paths_.size()));
     }
-    return instance_paths_[instance_id];
+    return instance_paths_[instance_id.value];
   }
 
   // Build the DPI scope registry from instances_ and instance_paths_.
@@ -657,12 +709,13 @@ class Engine {
     wait_site_meta_ = std::move(registry);
   }
 
-  // One-time init for trace signal metadata registry. Must be called exactly
-  // once, after InitSlotMeta. Engine owns both the registry and the selection
-  // mask. The non-owning pointer passed to TraceManager remains valid for
-  // Engine's lifetime because trace_signal_meta_ is never moved after this
-  // call. Validates that signal count matches slot count (compile-time
-  // invariant: one trace signal per design slot).
+  // One-time init for global trace signal metadata registry. Must be called
+  // exactly once. Engine owns both the registry and the global selection mask.
+  // The non-owning pointer passed to TraceManager remains valid for Engine's
+  // lifetime because trace_signal_meta_ is never moved after this call.
+  //
+  // R5: This registry is global-only. Instance-owned trace metadata lives
+  // in BodyObservableLayout::trace_meta, accessed via RuntimeInstance.
   void InitTraceSignalMeta(TraceSignalMetaRegistry registry) {
     if (trace_signal_meta_.IsPopulated()) {
       throw common::InternalError(
@@ -670,15 +723,18 @@ class Engine {
           "trace signal metadata already initialized");
     }
 
-    auto signal_count = static_cast<uint32_t>(registry.Count());
-    if (slot_meta_registry_.IsPopulated() &&
-        signal_count != slot_meta_registry_.Size()) {
+    // R5: Global trace meta is indexed by GlobalSignalId. The count must
+    // match the global slot count (constructor builds both in lockstep).
+    auto trace_count = static_cast<uint32_t>(registry.Count());
+    if (global_slot_count_ > 0 && trace_count != global_slot_count_) {
       throw common::InternalError(
           "Engine::InitTraceSignalMeta",
           std::format(
-              "signal count {} does not match slot count {}", signal_count,
-              slot_meta_registry_.Size()));
+              "global trace meta count {} does not match global slot "
+              "count {}",
+              trace_count, global_slot_count_));
     }
+
     trace_signal_meta_ = std::move(registry);
 
     // Rebuild alias groups with cross-registry validation when slot
@@ -689,12 +745,26 @@ class Engine {
     trace_signal_meta_.BuildAliasGroups(slot_reg);
 
     trace_manager_.SetSignalMeta(&trace_signal_meta_);
-    trace_selection_.Init(signal_count);
   }
 
   [[nodiscard]] auto GetTraceSignalMetaRegistry() const
       -> const TraceSignalMetaRegistry& {
     return trace_signal_meta_;
+  }
+
+  // R5: Initialize trace selection to cover all flat slot_ids.
+  // Must be called after InitSlotMeta / InitModuleInstancesFromBundles
+  // and optionally after InitTraceSignalMeta. The selection must cover
+  // instance-owned flat slot_ids because the compiled code's trace guard
+  // uses flat slot_id to check selection.
+  void InitTraceSelection() {
+    if (trace_selection_.IsConfigured()) return;
+    uint32_t count = slot_meta_registry_.IsPopulated()
+                         ? slot_meta_registry_.Size()
+                         : static_cast<uint32_t>(trace_signal_meta_.Count());
+    if (count > 0) {
+      trace_selection_.Init(count);
+    }
   }
 
   [[nodiscard]] auto GetTraceSelection() const
@@ -821,23 +891,52 @@ class Engine {
 
   // Typed swap-and-pop removal from dense vectors.
   void RemoveEdgeSub(const SubRef& ref);
-  void RemoveChangeSub(uint32_t slot_id, uint32_t index);
-  void RemoveRebindWatcherSub(uint32_t slot_id, uint32_t index);
-  void RemoveContainerSub(uint32_t slot_id, uint32_t index);
+  void RemoveChangeSub(const SubRef& ref);
+  void RemoveRebindWatcherSub(const SubRef& ref);
+  void RemoveContainerSub(const SubRef& ref);
 
-  // Focused subscribe helpers (called from Subscribe after validation).
-  auto SubscribeChange(
-      ProcessHandle handle, ResumePoint resume, SignalId signal,
-      uint32_t byte_offset, uint32_t byte_size, bool initially_active,
-      ProcessState& proc_state, const SlotMeta& meta,
-      std::span<const uint8_t> design_state, SlotSubscriptions& slot)
-      -> uint32_t;
-  auto SubscribeEdge(
-      ProcessHandle handle, ResumePoint resume, SignalId signal,
+  // R5: Domain-split subscribe helpers. Top boundary dispatches once
+  // via std::visit on SignalRef, then routes to one of these.
+  auto SubscribeGlobalEdge(
+      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
       common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
-      uint8_t bit_index, bool initially_active, ProcessState& proc_state,
-      const SlotMeta& meta, std::span<const uint8_t> design_state,
-      SlotSubscriptions& slot) -> uint32_t;
+      uint8_t bit_index, bool initially_active) -> uint32_t;
+  auto SubscribeLocalEdge(
+      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      common::EdgeKind edge, uint32_t byte_offset, uint32_t byte_size,
+      uint8_t bit_index, bool initially_active) -> uint32_t;
+  auto SubscribeGlobalChange(
+      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
+      uint32_t byte_offset, uint32_t byte_size, bool initially_active)
+      -> uint32_t;
+  auto SubscribeLocalChange(
+      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      uint32_t byte_offset, uint32_t byte_size, bool initially_active)
+      -> uint32_t;
+  auto SubscribeGlobalContainerElement(
+      ProcessHandle handle, ResumePoint resume, GlobalSignalId signal,
+      common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
+      bool initially_active) -> uint32_t;
+  auto SubscribeLocalContainerElement(
+      ProcessHandle handle, ResumePoint resume, LocalSignalRef signal,
+      common::EdgeKind edge, int64_t sv_index, uint32_t elem_stride,
+      bool initially_active) -> uint32_t;
+  void ValidateRebindDepSignals(std::span<const SignalRef> dep_signals) const;
+  void InstallRebindDepWatchers(
+      ProcessHandle handle, uint32_t edge_target_id,
+      std::span<const SignalRef> dep_signals);
+  void SubscribeGlobalRebind(
+      ProcessHandle handle, uint32_t edge_target_id,
+      GlobalSignalId target_signal, SubKind target_kind, uint32_t target_index,
+      uint8_t target_edge_group, EdgeBucket target_edge_bucket,
+      std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
+      std::span<const SignalRef> dep_signals);
+  void SubscribeLocalRebind(
+      ProcessHandle handle, uint32_t edge_target_id,
+      LocalSignalRef target_signal, SubKind target_kind, uint32_t target_index,
+      uint8_t target_edge_group, EdgeBucket target_edge_bucket,
+      std::span<const IndexPlanOp> plan, BitTargetMapping mapping,
+      std::span<const SignalRef> dep_signals);
 
   // Persistent wait-site installation
   void InstallWaitSite(
@@ -851,8 +950,8 @@ class Engine {
   // Per-dirty-slot flush: edge, change, and container dispatch.
   // Called after the global rebind phase completes.
   void FlushDirtySlotPostRebind(
-      uint32_t slot_id, SlotSubscriptions& slot, const SlotMeta& meta,
-      std::span<const uint8_t> design_state);
+      uint32_t slot_id, SlotSubscriptions& slot,
+      std::span<const uint8_t> slot_storage);
 
   // Activation-local dirty dedup for design-slot dirties only.
   // Called from MarkSlotDirty and MarkDirtyRange. Excludes
@@ -866,27 +965,46 @@ class Engine {
   void TraceWake(const WakeupEntry& entry);
   void TraceRun(const WakeupEntry& entry);
 
-  // Per-kind flush helpers (called from FlushDirtySlot).
+  // R5: Domain-split flush entrypoints.
+  // Global flush iterates global dirty slots. Local flush iterates one
+  // instance's local dirty signals. Currently these are stub entrypoints
+  // that route to the existing flat subscription infrastructure for
+  // signals that have subscriptions. Later cuts make them the primary
+  // flush path.
+  void FlushGlobalSignalUpdates();
+  void FlushLocalSignalUpdates(RuntimeInstance& inst);
+
+  // R5: Resolve SlotSubscriptions for a sub reference (local or global).
+  auto ResolveSubSlot(const SubRef& ref) -> SlotSubscriptions&;
+  auto ResolveSubSlot(const SubRef& ref) const -> const SlotSubscriptions&;
+  auto ResolveSubSlot(uint32_t slot_id, bool is_local, InstanceId instance_id)
+      -> SlotSubscriptions&;
+
+  // Per-kind flush helpers. Callers resolve slot storage before calling.
   void FlushSlotRebindSubs(
-      std::vector<RebindWatcherSub>& subs, const SlotMeta& meta,
-      std::span<const uint8_t> design_state);
+      std::vector<RebindWatcherSub>& subs,
+      std::span<const uint8_t> slot_storage);
   void FlushSlotEdgeGroups(
       uint32_t slot_id, std::vector<EdgeWatchGroup>& groups,
-      const SlotMeta& meta, const common::RangeSet& dirty_ranges,
-      RangeFilterMode mode, std::span<const uint8_t> design_state);
+      std::span<const uint8_t> slot_storage,
+      const common::RangeSet& dirty_ranges, RangeFilterMode mode);
   void UpdateEdgeColdSnapshots(EdgeWatchGroup& group, uint8_t current_byte);
   void FlushSlotChangeSubs(
-      uint32_t slot_id, std::vector<ChangeSub>& subs, const SlotMeta& meta,
-      const common::RangeSet& dirty_ranges, RangeFilterMode mode,
-      std::span<const uint8_t> design_state);
+      uint32_t slot_id, std::vector<ChangeSub>& subs,
+      std::span<const uint8_t> slot_storage,
+      const common::RangeSet& dirty_ranges, RangeFilterMode mode);
   void FlushSlotContainerSubs(
       uint32_t slot_id, std::vector<ContainerSub>& subs,
-      std::span<const uint8_t> design_state);
+      std::span<const uint8_t> slot_storage);
 
   // Single container sub flush.
   void FlushContainerSub(
       uint32_t slot_id, ContainerSub& sub,
-      std::span<const uint8_t> design_state);
+      std::span<const uint8_t> slot_storage);
+
+  // R5: Native local dirty-slot flush (no synthetic SlotMeta).
+  void FlushLocalDirtySlotPostRebind(
+      RuntimeInstance& inst, LocalSignalId signal, SlotSubscriptions& slot);
 
   // Deduplicated wakeup enqueue: push to next_delta_queue_ if not already
   // enqueued. Shared by edge, change, and container flush paths.
@@ -929,7 +1047,8 @@ class Engine {
       }
       return;
     }
-    next_delta_queue_.push_back({process_id, instance_id, resume_block});
+    next_delta_queue_.push_back(
+        {process_id, InstanceId{instance_id}, resume_block});
     process_states_[process_id].is_enqueued = true;
     if (activation_trace_.has_value()) {
       wake_trace_[process_id] = {.cause = cause, .trigger_slot = trigger_slot};
@@ -945,6 +1064,10 @@ class Engine {
   // Edge evaluation helpers
   static auto EvaluateEdge(common::EdgeKind edge, bool old_lsb, bool new_lsb)
       -> bool;
+
+  // R5: Clear per-instance local update sets (delta or full).
+  void ClearLocalUpdatesDelta();
+  void ClearLocalUpdates();
 
   ProcessDispatch process_dispatch_;
   uint32_t num_processes_ = 0;
@@ -1031,6 +1154,10 @@ class Engine {
   // Cached from kDetailedStats feature flag at construction.
   bool detailed_stats_enabled_ = false;
 
+  // R5: Number of design-global (non-instance-owned) slots. Set during
+  // slot meta initialization, used to validate global trace meta count.
+  uint32_t global_slot_count_ = 0;
+
   // Slot metadata registry (empty until populated by JIT codegen).
   SlotMetaRegistry slot_meta_registry_;
 
@@ -1042,21 +1169,31 @@ class Engine {
   // update_set_: tracks dirty slots (per-delta for scheduler, per-time-slot
   // for trace).
   void* design_state_base_ = nullptr;
-  std::span<const RuntimeInstance* const> instances_;
+  // Canonical owned instance pointer list. Both mutable and const views
+  // are derived from this single source in SetInstances().
+  // C++ span<T*> does not convert to span<const T*>, so both views need
+  // separate backing storage.
+  std::vector<RuntimeInstance*> instance_ptrs_;
+  std::span<RuntimeInstance* const> instances_;  // mutable view
+  std::vector<const RuntimeInstance*> const_instance_ptrs_;
+  std::span<const RuntimeInstance* const> const_instances_;  // read-only view
+  InstanceIdTraceResolver instance_trace_resolver_;
   UpdateSet update_set_;
 
   // Connection batch: fast-path for kernelized connection processes.
   // Instead of scheduling connection processes through the full engine,
   // connections are evaluated inline during signal propagation.
   struct BatchedConnection {
-    uint32_t src_slot_id;
-    uint32_t dst_slot_id;
+    uint32_t src_slot_id;  // flat, for ResolveSlotBytes (read-only)
     uint32_t byte_size;
+    ConnectionTarget dst;
   };
   // All batched connections (for initial evaluation).
   std::vector<BatchedConnection> all_connections_;
-  // Dense trigger range table (indexed by slot_id, sized from slot registry).
-  std::vector<TriggerRange> conn_trigger_map_;
+  // R5: Global connection trigger map (indexed by GlobalSignalId.value,
+  // sized to global_slot_count_). Per-instance local trigger maps live
+  // on RuntimeInstanceObservability.
+  std::vector<TriggerRange> global_conn_trigger_map_;
 
   // Comb kernel batch: pure combinational processes evaluated inline.
   // Each kernel has a compiled function pointer and state pointer.
@@ -1077,11 +1214,12 @@ class Engine {
     bool has_self_edge;
   };
   std::vector<CombTriggerEntry> comb_trigger_backing_;
-  // Dense per-slot range table into comb_trigger_backing_ (sized from slot
-  // registry).
-  std::vector<TriggerRange> comb_trigger_map_;
-  // List of trigger slots for seeding dirty marks.
-  std::vector<uint32_t> comb_trigger_slots_;
+  // R5: Global comb trigger map (indexed by GlobalSignalId.value,
+  // sized to global_slot_count_). Per-instance local trigger maps live
+  // on RuntimeInstanceObservability.
+  std::vector<TriggerRange> global_comb_trigger_map_;
+  // List of global trigger slots for seeding dirty marks.
+  std::vector<GlobalSignalId> global_comb_trigger_slots_;
   // Dense flag table by process index (sized from num_processes_ in
   // InitCombKernels, true = comb kernel, skip in ScheduleInitial).
   std::vector<uint8_t> comb_kernel_flags_;
@@ -1128,6 +1266,16 @@ class Engine {
   // Per-slot selection mask for producer-side trace filtering.
   // Initialized alongside trace_signal_meta_ in InitTraceSignalMeta().
   TraceSelectionRegistry trace_selection_;
+
+  // R5: Process-to-instance mapping. Indexed by process_id, gives the
+  // owning instance_id for module processes. 0 for connection/init processes.
+  std::vector<InstanceId> process_instance_map_;
+
+  // R5: Per-body observable layouts (one per distinct shared body /
+  // specialization). Keyed by body_key from InstanceMetadataBundle.
+  // Each RuntimeInstance's observability.layout points into this storage.
+  // The deque provides pointer stability across inserts.
+  std::deque<BodyObservableLayout> body_observable_layouts_;
 
   // Suspend record access for post-activation reconciliation.
   std::vector<SuspendRecord*> suspend_records_;
@@ -1180,15 +1328,43 @@ class Engine {
   // - Snapshot vectors (snapshot_buf, snapshots, snapshotted_slots) are only
   //   used when has_any_self_edge_comb_ is true. Same clear()-preserves-
   //   capacity pattern.
+  // R5: Domain-split fixpoint workspace for FlushAndPropagateConnections.
+  // Global pending uses GlobalSignalId with dense bitvec dedup.
+  // Local pending is per-instance with LocalSignalId and per-instance dedup.
+  struct LocalPendingSet {
+    RuntimeInstance* instance = nullptr;
+    std::vector<LocalSignalId> pending;
+    std::vector<LocalSignalId> next;
+    std::vector<uint8_t> seen;  // sized to local_signal_count
+  };
+
   struct FixpointWorkspace {
-    std::vector<uint32_t> pending;
-    std::vector<uint32_t> next_pending;
-    std::vector<uint32_t> comb_writes;
-    std::vector<uint8_t> pending_seen;
-    std::vector<uint32_t> snapshot_index;
+    // Global domain
+    std::vector<GlobalSignalId> pending_globals;
+    std::vector<GlobalSignalId> next_globals;
+    std::vector<uint8_t> global_pending_seen;  // sized to global_slot_count_
+
+    // Local domain -- one per instance with local signals
+    std::vector<LocalPendingSet> locals;
+
+    // Comb write capture (split by domain)
+    std::vector<GlobalSignalId> comb_writes_global;
+    struct LocalCombWrite {
+      uint32_t instance_idx;  // index into locals[]
+      LocalSignalId signal;
+    };
+    std::vector<LocalCombWrite> comb_writes_local;
+
+    // Self-edge snapshot (global signals only; local comb self-edges
+    // use a separate per-instance structure).
+    std::vector<uint32_t> global_snapshot_index;
     std::vector<uint8_t> snapshot_buf;
     std::vector<CombSnapshot> snapshots;
-    std::vector<uint32_t> snapshotted_slots;
+    std::vector<GlobalSignalId> snapshotted_slots;
+
+    // Per-instance local delta size before comb eval, used to detect
+    // newly-dirty local signals written by comb kernels.
+    std::vector<uint32_t> local_delta_pre;
   };
   FixpointWorkspace fp_work_;
 

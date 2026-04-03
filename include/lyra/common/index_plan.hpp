@@ -36,7 +36,10 @@ struct IndexPlanOp {
   uint8_t byte_size = 0;
   uint32_t slot_id = 0;
   uint32_t byte_offset = 0;
-  uint32_t padding = 0;
+  // R5: kIndexPlanLocalSignal means slot_id is a body-local LocalSignalId,
+  // resolved via the evaluating instance. Otherwise slot_id is a flat
+  // design-global slot id resolved via SlotMetaRegistry.
+  uint32_t flags = 0;
   int64_t const_value = 0;
 
   static constexpr auto MakeReadSlot(
@@ -62,6 +65,8 @@ struct IndexPlanOp {
 
 static_assert(sizeof(IndexPlanOp) == 24);
 static_assert(alignof(IndexPlanOp) == 8);
+
+inline constexpr uint32_t kIndexPlanLocalSignal = 0x01;
 
 inline constexpr uint32_t kMaxPlanOps = 32;
 inline constexpr uint32_t kMaxPlanStackDepth = 32;

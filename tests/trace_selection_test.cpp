@@ -184,12 +184,12 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
   selection.Init(2);
 
   // All selected: both slots should emit.
-  FlushDirtySlotsToTrace(
-      tm, slot_meta, signal_meta, design_state.data(), {}, updates, selection);
+  FlushGlobalDirtySlotsToTrace(
+      tm, slot_meta, design_state.data(), {}, updates, selection, 2);
 
   uint32_t value_changes = 0;
   for (const auto& event : sink_ptr->events) {
-    if (std::holds_alternative<trace::ValueChange>(event)) {
+    if (std::holds_alternative<trace::GlobalValueChange>(event)) {
       ++value_changes;
     }
   }
@@ -202,15 +202,15 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
   updates.MarkSlotDirty(1);
   selection.SetSelected(0, false);
 
-  FlushDirtySlotsToTrace(
-      tm, slot_meta, signal_meta, design_state.data(), {}, updates, selection);
+  FlushGlobalDirtySlotsToTrace(
+      tm, slot_meta, design_state.data(), {}, updates, selection, 2);
 
   value_changes = 0;
   std::vector<uint32_t> emitted_slots;
   for (const auto& event : sink_ptr->events) {
-    if (const auto* vc = std::get_if<trace::ValueChange>(&event)) {
+    if (const auto* vc = std::get_if<trace::GlobalValueChange>(&event)) {
       ++value_changes;
-      emitted_slots.push_back(vc->slot_id);
+      emitted_slots.push_back(vc->signal_id.value);
     }
   }
   EXPECT_EQ(value_changes, 1);
@@ -224,12 +224,12 @@ TEST(TraceSelectionTest, ProducerSkipsDeselectedSlots) {
   updates.MarkSlotDirty(1);
   selection.SelectNone();
 
-  FlushDirtySlotsToTrace(
-      tm, slot_meta, signal_meta, design_state.data(), {}, updates, selection);
+  FlushGlobalDirtySlotsToTrace(
+      tm, slot_meta, design_state.data(), {}, updates, selection, 2);
 
   value_changes = 0;
   for (const auto& event : sink_ptr->events) {
-    if (std::holds_alternative<trace::ValueChange>(event)) {
+    if (std::holds_alternative<trace::GlobalValueChange>(event)) {
       ++value_changes;
     }
   }
