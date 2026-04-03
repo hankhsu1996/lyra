@@ -35,6 +35,5 @@ Start here for an overview of Lyra's design and constraints.
 
 ## Reference
 
-- [limitations.md](limitations.md) - unsupported SystemVerilog features
 - [error-handling.md](error-handling.md) - error types and usage
 - [documentation-guidelines.md](documentation-guidelines.md) - documentation conventions

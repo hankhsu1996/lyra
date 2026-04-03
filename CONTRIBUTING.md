@@ -79,4 +79,4 @@ bazel test //tests:jit_dev_tests \
 ## Documentation
 
 If you add or change behavior, update the relevant design or reference docs.
-When adding SystemVerilog support, update [docs/limitations.md](docs/limitations.md).
+When closing a language feature gap, update the relevant queue in [docs/queues/](docs/queues/).

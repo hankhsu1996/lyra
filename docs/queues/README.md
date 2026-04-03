@@ -9,7 +9,7 @@ A queue tracks a multi-step, long-lived development stream that has its own prio
 Queues are **operational** -- they drive what gets built and in what order. They are distinct from:
 
 - **Design docs** (`docs/*.md`) -- describe how things work
-- **Limitations** (`docs/limitations.md`) -- describe what is unsupported (descriptive, not operational)
+- **Language gaps** -- tracked as queue items in `language.md`
 - **Scratch notes** (`playground/`) -- rough thoughts, temporary exploration, not yet accepted as project work
 
 **Rule**: if it drives real development priority, it must be a tracked queue here. If it is just exploration, it stays in `playground/`.
@@ -60,3 +60,5 @@ Bad: `migration`, `debug-gaps`, `runtime-performance-gaps`, `specialization-refa
 | `observability.md`  | Debugging, tracing, and inspection tooling |
 | `infrastructure.md` | Correctness, code quality, and tooling     |
 | `dpi.md`            | DPI-C foreign function interface           |
+| `assertions.md`     | SystemVerilog assertions (LRM 16)          |
+| `language.md`       | General SV language feature gaps           |
