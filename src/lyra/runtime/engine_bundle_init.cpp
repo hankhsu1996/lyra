@@ -772,7 +772,6 @@ void Engine::InitModuleInstancesFromBundles(
       }
     }
   }
-
 }
 
 void Engine::InitProcessMeta(ProcessMetaRegistry connection_registry) {

@@ -93,7 +93,7 @@ extern "C" void LyraResolveModuleInstanceBinding(
   out->engine = ctx->engine;
   out->this_ptr = inst->storage.inline_base;
   out->instance_ptr = inst;
-  out->instance_id = inst->instance_id;
+  out->instance_id = inst->instance_id.value;
 }
 
 // NOLINTEND(cppcoreguidelines-pro-type-const-cast)
