@@ -102,8 +102,8 @@ void Engine::AssignDenseCoordinationBases(
     if (meta.domain == SlotStorageDomain::kDesignGlobal) {
       ++global_slot_count;
     } else {
-      if (meta.owner_instance_id < instance_slot_counts.size()) {
-        ++instance_slot_counts[meta.owner_instance_id];
+      if (meta.owner_instance_id.value < instance_slot_counts.size()) {
+        ++instance_slot_counts[meta.owner_instance_id.value];
       }
     }
   }
@@ -132,7 +132,7 @@ void Engine::AssignDenseCoordinationBases(
     const auto& meta = slot_meta_registry_.Get(slot_id);
     if (meta.domain != SlotStorageDomain::kInstanceOwned) continue;
 
-    uint32_t inst = meta.owner_instance_id;
+    auto inst = meta.owner_instance_id.value;
     if (inst >= mutable_instances.size()) {
       throw common::InternalError(
           "Engine::AssignDenseCoordinationBases",
@@ -179,6 +179,7 @@ void Engine::SetInstances(std::span<const RuntimeInstance* const> instances) {
 void InstanceIdTraceResolver::Build(
     std::span<RuntimeInstance* const> instances) {
   lookup_.clear();
+  lookup_mut_.clear();
 
   if (instances.empty()) return;
 
@@ -188,18 +189,22 @@ void InstanceIdTraceResolver::Build(
       throw common::InternalError(
           "InstanceIdTraceResolver::Build", "null instance in instance list");
     }
-    max_id = std::max(max_id, inst->instance_id);
+    max_id = std::max(max_id, inst->instance_id.value);
   }
 
-  lookup_.assign(static_cast<size_t>(max_id) + 1, nullptr);
+  auto table_size = static_cast<size_t>(max_id) + 1;
+  lookup_.assign(table_size, nullptr);
+  lookup_mut_.assign(table_size, nullptr);
 
   for (auto* inst : instances) {
-    if (lookup_[inst->instance_id] != nullptr) {
+    auto id = inst->instance_id.value;
+    if (lookup_[id] != nullptr) {
       throw common::InternalError(
           "InstanceIdTraceResolver::Build",
           std::format("duplicate instance_id {}", inst->instance_id));
     }
-    lookup_[inst->instance_id] = inst;
+    lookup_[id] = inst;
+    lookup_mut_[id] = inst;
   }
 }
 

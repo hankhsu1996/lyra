@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/runtime/signal_coord.hpp"
 
 namespace lyra::runtime {
 
@@ -19,14 +20,14 @@ struct ProcessTriggerDescriptor {
   // design-global slot. When true, instance_id identifies the owning
   // instance and slot_id is the local signal ordinal.
   bool is_local = false;
-  uint32_t instance_id = 0;
+  InstanceId instance_id = InstanceId{0};
 };
 
 // R5: Domain-aware trigger identity key. Two different instances can have
 // the same local slot_id and edge but represent distinct trigger sources.
 struct ProcessTriggerKey {
   bool is_local = false;
-  uint32_t instance_id = 0;
+  InstanceId instance_id = InstanceId{0};
   uint32_t slot_id = 0;
   common::EdgeKind edge = common::EdgeKind::kAnyChange;
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <format>
 #include <variant>
 
 #include "lyra/common/edge_kind.hpp"
@@ -9,6 +10,29 @@
 namespace lyra::runtime {
 
 struct RuntimeInstance;
+
+// R5: Strong identity type for module instances.
+// Stable semantic identity assigned during construction, never changes.
+// Must not be used as a positional index into dense arrays -- use
+// a validated resolver for that conversion.
+struct InstanceId {
+  uint32_t value;
+
+  auto operator==(const InstanceId&) const -> bool = default;
+  auto operator<=>(const InstanceId&) const = default;
+};
+
+}  // namespace lyra::runtime
+
+// std::format support for InstanceId. Formats as the raw integer value.
+template <>
+struct std::formatter<lyra::runtime::InstanceId> : std::formatter<uint32_t> {
+  auto format(lyra::runtime::InstanceId id, std::format_context& ctx) const {
+    return std::formatter<uint32_t>::format(id.value, ctx);
+  }
+};
+
+namespace lyra::runtime {
 
 // Semantic identity for an instance-owned signal.
 // Body-local dense slot ordinal: 0-based, stable across instances of the
@@ -41,7 +65,7 @@ struct ObjectSignalRef {
 // Used at the top-level subscription API; below that, domain-specific helpers
 // take GlobalSignalId or LocalSignalRef directly.
 struct LocalSignalRef {
-  uint32_t instance_id;
+  InstanceId instance_id;
   LocalSignalId signal;
 };
 
@@ -54,7 +78,7 @@ using SignalRef = std::variant<GlobalSignalId, LocalSignalRef>;
 struct StoredSignalRef {
   uint32_t signal_id = UINT32_MAX;
   bool is_local = false;
-  uint32_t instance_id = 0;
+  InstanceId instance_id = InstanceId{0};
 
   [[nodiscard]] auto ToSignalRef() const -> SignalRef {
     if (is_local) {

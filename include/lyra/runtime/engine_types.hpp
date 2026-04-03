@@ -3,6 +3,9 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <variant>
+
+#include "lyra/runtime/signal_coord.hpp"
 
 namespace lyra::runtime {
 
@@ -17,7 +20,7 @@ inline constexpr SimTime kNoTimeLimit = std::numeric_limits<SimTime>::max();
 // Combines process definition ID with instance path for hierarchical designs.
 struct ProcessHandle {
   uint32_t process_id = 0;
-  uint32_t instance_id = 0;  // For future hierarchy support
+  InstanceId instance_id = InstanceId{0};  // For future hierarchy support
 
   auto operator==(const ProcessHandle&) const -> bool = default;
 };
@@ -26,7 +29,7 @@ struct ProcessHandle {
 struct ProcessHandleHash {
   auto operator()(const ProcessHandle& h) const noexcept -> size_t {
     return std::hash<uint64_t>{}(
-        (static_cast<uint64_t>(h.process_id) << 32) | h.instance_id);
+        (static_cast<uint64_t>(h.process_id) << 32) | h.instance_id.value);
   }
 };
 
@@ -51,5 +54,21 @@ struct TriggerRange {
   uint32_t start = 0;
   uint32_t count = 0;
 };
+
+// R5: Typed connection destination. Sum type eliminates cross-domain
+// flat bridging -- propagation dispatches by variant, not boolean/int.
+// Local targets store stable instance_id, resolved at propagation time
+// through the engine's validated instance resolver.
+struct GlobalConnectionTarget {
+  GlobalSignalId signal;
+};
+
+struct LocalConnectionTarget {
+  InstanceId instance_id;
+  LocalSignalId signal;
+};
+
+using ConnectionTarget =
+    std::variant<GlobalConnectionTarget, LocalConnectionTarget>;
 
 }  // namespace lyra::runtime

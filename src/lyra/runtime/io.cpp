@@ -366,7 +366,8 @@ extern "C" void LyraReadmem(
 
 extern "C" void LyraPrintModulePath(void* engine_ptr, uint32_t instance_id) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  lyra::runtime::WriteOutput(engine->GetInstancePath(instance_id));
+  lyra::runtime::WriteOutput(
+      engine->GetInstancePath(lyra::runtime::InstanceId{instance_id}));
 }
 
 extern "C" void LyraWritemem(

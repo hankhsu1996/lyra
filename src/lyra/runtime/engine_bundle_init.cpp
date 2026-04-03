@@ -63,7 +63,7 @@ struct ObservableStorageFact {
   common::SlotId slot_id;
   common::SlotId owner_slot_id;
   SlotStorageDomain domain;
-  uint32_t instance_id;
+  InstanceId instance_id;
   common::InstanceByteOffset instance_rel_off;
   uint32_t total_bytes;
   SlotStorageKind storage_kind;
@@ -171,7 +171,7 @@ auto BuildModuleTriggerDescriptors(
                   .edge = static_cast<common::EdgeKind>(te.edge),
                   .is_groupable = groupable,
                   .is_local = false,
-                  .instance_id = 0,
+                  .instance_id = InstanceId{0},
               });
         } else {
           if (te.slot_id >= bundle.instance->observability.local_signal_count) {
@@ -209,20 +209,23 @@ void Engine::InitModuleInstancesFromBundles(
   // Reset all module-owned outputs for clean initialization.
   pending_module_trigger_descs_.clear();
   pending_module_process_meta_.clear();
-  process_instance_map_.assign(num_processes_, 0);
+  process_instance_map_.assign(num_processes_, InstanceId{.value = 0});
   slot_meta_registry_ = SlotMetaRegistry{};
   comb_kernels_.clear();
   comb_kernel_flags_.clear();
   comb_trigger_backing_.clear();
-  comb_trigger_map_.clear();
-  comb_trigger_slots_.clear();
+  global_comb_trigger_map_.clear();
+  global_comb_trigger_slots_.clear();
+  global_conn_trigger_map_.clear();
   comb_narrow_count_ = 0;
   comb_full_slot_count_ = 0;
   has_any_self_edge_comb_ = false;
-  fp_work_.pending_seen.clear();
-  fp_work_.snapshot_index.clear();
+  fp_work_.global_pending_seen.clear();
+  fp_work_.global_snapshot_index.clear();
+  fp_work_.locals.clear();
   signal_subs_.clear();
   activation_slot_gen_.clear();
+  body_observable_layouts_.clear();
 
   if (bundles.empty() && design_global_slot_meta_words.empty()) return;
 
@@ -240,6 +243,25 @@ void Engine::InitModuleInstancesFromBundles(
   // Assign dense coordination bases before building instance-owned metadata.
   // This sets observability.flat_coord_base on each instance, which relocation
   // helpers depend on.
+  // Validate all bundle pointers before any dereference.
+  for (size_t bi = 0; bi < bundles.size(); ++bi) {
+    const auto& b = bundles[bi];
+    if (b.instance == nullptr) {
+      throw common::InternalError(
+          "Engine::InitModuleInstancesFromBundles",
+          std::format(
+              "bundle {} (instance_id {}) has null instance", bi,
+              b.instance_id));
+    }
+    if (b.body_desc == nullptr) {
+      throw common::InternalError(
+          "Engine::InitModuleInstancesFromBundles",
+          std::format(
+              "bundle {} (instance_id {}) has null body_desc", bi,
+              b.instance_id));
+    }
+  }
+
   AssignDenseCoordinationBasesFromBundles(bundles);
 
   // Shared observable walk: build instance-owned slot meta from the
@@ -368,6 +390,13 @@ void Engine::InitModuleInstancesFromBundles(
 
   absl::flat_hash_map<const void*, BodyObservableLayout*> body_layout_map;
   for (const auto& bundle : bundles) {
+    if (bundle.instance == nullptr) {
+      throw common::InternalError(
+          "Engine::InitModuleInstancesFromBundles",
+          std::format(
+              "bundle instance_id {} has null instance pointer",
+              bundle.instance_id));
+    }
     auto& layout = get_or_create_layout(bundle, body_layout_map);
     auto local_count = static_cast<uint32_t>(layout.slot_meta.size());
     bundle.instance->observability.layout = &layout;
@@ -406,11 +435,17 @@ void Engine::InitModuleInstancesFromBundles(
       BuildModuleTriggerDescriptors(bundles, total_slots);
 
   // Step D: Build comb kernels from body templates.
+  // R5: Domain-split comb trigger maps. Global triggers go to
+  // global_comb_trigger_map_. Local triggers go to per-instance
+  // local_comb_trigger_map on observability. No flat_coord_base addition.
   auto proc_states = std::span(states, num_processes_);
   comb_kernel_flags_.resize(num_processes_, 0);
 
   struct ParsedCombTrigger {
-    uint32_t slot_id;
+    bool is_local;
+    RuntimeInstance* instance;  // valid when is_local
+    uint32_t local_id;          // valid when is_local
+    uint32_t global_id;         // valid when !is_local
     uint32_t kernel_idx;
     uint32_t byte_offset;
     uint32_t byte_size;
@@ -422,19 +457,28 @@ void Engine::InitModuleInstancesFromBundles(
     const auto& comb = bundle.body_desc->comb;
     if (comb.kernels.empty()) continue;
 
-    uint32_t slot_base = bundle.instance->observability.flat_coord_base;
-
     for (const auto& kernel : comb.kernels) {
       uint32_t proc_idx = bundle.module_proc_base + kernel.proc_within_body;
+      if (proc_idx >= num_processes_) {
+        throw common::InternalError(
+            "InitModuleInstancesFromBundles",
+            std::format(
+                "comb proc_idx {} >= num_processes {}", proc_idx,
+                num_processes_));
+      }
       uint32_t flags = (kernel.has_self_edge != 0) ? CombKernel::kSelfEdge : 0U;
 
       if ((flags & CombKernel::kSelfEdge) != 0) {
         has_any_self_edge_comb_ = true;
       }
 
-      const auto* header =
-          static_cast<const ProcessFrameHeader*>(proc_states[proc_idx]);
-
+      auto* state_ptr = proc_states[proc_idx];
+      if (state_ptr == nullptr) {
+        throw common::InternalError(
+            "InitModuleInstancesFromBundles",
+            std::format("null proc state for comb proc_idx {}", proc_idx));
+      }
+      const auto* header = static_cast<const ProcessFrameHeader*>(state_ptr);
       auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
       comb_kernels_.push_back(
           CombKernel{
@@ -445,18 +489,63 @@ void Engine::InitModuleInstancesFromBundles(
           });
 
       comb_kernel_flags_[proc_idx] = 1;
-
       bool kernel_self_edge = (flags & CombKernel::kSelfEdge) != 0;
       for (uint32_t ti = 0; ti < kernel.trigger_count; ++ti) {
         const auto& trig = comb.entries[kernel.trigger_start + ti];
-        uint32_t trigger_slot =
-            (trig.flags & kCombTemplateFlagDesignGlobal) != 0
-                ? trig.slot_id
-                : slot_base + trig.slot_id;
+        bool template_global =
+            (trig.flags & kCombTemplateFlagDesignGlobal) != 0;
+        // R5 transitional: codegen marks triggers as "design-global"
+        // based on compile-time slot IDs, but the runtime domain
+        // boundary (global_slot_count_) may differ. When a "global"
+        // trigger's slot_id >= global_slot_count_, it is actually an
+        // instance-owned flat slot. Reclassify it as local by resolving
+        // the owning instance from the flat slot meta registry.
+        //
+        // Root cause: codegen comb trigger template does not yet emit
+        // typed (GlobalSignalId vs LocalSignalId) identity. It emits
+        // flat slot_ids with a domain flag. This reclassification is
+        // deleted when the template emits typed identity directly.
+        bool is_global = template_global && trig.slot_id < global_slot_count_;
+        bool is_local = !is_global;
+
+        RuntimeInstance* trigger_inst = nullptr;
+        uint32_t local_id = 0;
+        uint32_t global_id = 0;
+        if (is_global) {
+          global_id = trig.slot_id;
+        } else if (template_global) {
+          // Was marked global by codegen but is instance-owned at runtime.
+          // Resolve owning instance from flat slot meta.
+          const auto& meta = slot_meta_registry_.Get(trig.slot_id);
+          trigger_inst = FindInstanceMut(meta.owner_instance_id);
+          if (trigger_inst == nullptr) {
+            throw common::InternalError(
+                "InitModuleInstancesFromBundles",
+                std::format(
+                    "comb trigger slot {} owner_instance_id {} not found",
+                    trig.slot_id, meta.owner_instance_id));
+          }
+          if (trig.slot_id < trigger_inst->observability.flat_coord_base) {
+            throw common::InternalError(
+                "InitModuleInstancesFromBundles",
+                std::format(
+                    "comb trigger slot {} < flat_coord_base {} for inst {}",
+                    trig.slot_id, trigger_inst->observability.flat_coord_base,
+                    meta.owner_instance_id));
+          }
+          local_id = trig.slot_id - trigger_inst->observability.flat_coord_base;
+        } else {
+          // Body-local trigger: use bundle's instance directly.
+          trigger_inst = const_cast<RuntimeInstance*>(bundle.instance);
+          local_id = trig.slot_id;
+        }
 
         comb_entries.push_back(
             ParsedCombTrigger{
-                .slot_id = trigger_slot,
+                .is_local = is_local,
+                .instance = trigger_inst,
+                .local_id = local_id,
+                .global_id = global_id,
                 .kernel_idx = comb_idx,
                 .byte_offset = trig.byte_offset,
                 .byte_size = trig.byte_size,
@@ -472,33 +561,102 @@ void Engine::InitModuleInstancesFromBundles(
   }
 
   if (!comb_entries.empty()) {
-    fp_work_.pending_seen.resize(total_slots, 0);
+    fp_work_.global_pending_seen.resize(global_slot_count_, 0);
     if (has_any_self_edge_comb_) {
-      fp_work_.snapshot_index.assign(total_slots, UINT32_MAX);
+      fp_work_.global_snapshot_index.assign(global_slot_count_, UINT32_MAX);
     }
 
-    std::ranges::sort(comb_entries, {}, &ParsedCombTrigger::slot_id);
-
-    comb_trigger_backing_.reserve(comb_entries.size());
-    comb_trigger_map_.resize(total_slots);
-
-    uint32_t i = 0;
-    while (i < comb_entries.size()) {
-      uint32_t slot = comb_entries[i].slot_id;
-      auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
-      while (i < comb_entries.size() && comb_entries[i].slot_id == slot) {
-        comb_trigger_backing_.push_back({
-            .kernel_idx = comb_entries[i].kernel_idx,
-            .byte_offset = comb_entries[i].byte_offset,
-            .byte_size = comb_entries[i].byte_size,
-            .has_self_edge = comb_entries[i].has_self_edge,
-        });
-        ++i;
+    // Separate global and local triggers.
+    std::vector<ParsedCombTrigger> global_triggers;
+    std::vector<ParsedCombTrigger> local_triggers;
+    for (auto& e : comb_entries) {
+      if (e.is_local) {
+        local_triggers.push_back(std::move(e));
+      } else {
+        global_triggers.push_back(std::move(e));
       }
-      uint32_t count =
-          static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
-      comb_trigger_map_[slot] = {.start = start, .count = count};
-      comb_trigger_slots_.push_back(slot);
+    }
+
+    // Build global comb trigger map.
+    if (!global_triggers.empty()) {
+      std::ranges::sort(global_triggers, {}, &ParsedCombTrigger::global_id);
+      comb_trigger_backing_.reserve(global_triggers.size());
+      global_comb_trigger_map_.resize(global_slot_count_);
+
+      uint32_t i = 0;
+      while (i < global_triggers.size()) {
+        uint32_t slot = global_triggers[i].global_id;
+        auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
+        while (i < global_triggers.size() &&
+               global_triggers[i].global_id == slot) {
+          comb_trigger_backing_.push_back({
+              .kernel_idx = global_triggers[i].kernel_idx,
+              .byte_offset = global_triggers[i].byte_offset,
+              .byte_size = global_triggers[i].byte_size,
+              .has_self_edge = global_triggers[i].has_self_edge,
+          });
+          ++i;
+        }
+        auto count =
+            static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
+        if (slot >= global_comb_trigger_map_.size()) {
+          throw common::InternalError(
+              "InitModuleInstancesFromBundles",
+              std::format(
+                  "global comb trigger slot {} >= global_comb_trigger_map "
+                  "size {} (global_slot_count={})",
+                  slot, global_comb_trigger_map_.size(), global_slot_count_));
+        }
+        global_comb_trigger_map_[slot] = {.start = start, .count = count};
+        global_comb_trigger_slots_.push_back(GlobalSignalId{slot});
+      }
+    }
+
+    // Build per-instance local comb trigger maps.
+    if (!local_triggers.empty()) {
+      std::ranges::sort(local_triggers, [](const auto& a, const auto& b) {
+        if (a.instance != b.instance) return a.instance < b.instance;
+        return a.local_id < b.local_id;
+      });
+
+      uint32_t i = 0;
+      while (i < local_triggers.size()) {
+        auto* inst = local_triggers[i].instance;
+        auto& obs = inst->observability;
+        if (obs.local_comb_trigger_map.empty() && obs.local_signal_count > 0) {
+          obs.local_comb_trigger_map.resize(obs.local_signal_count);
+        }
+        while (i < local_triggers.size() &&
+               local_triggers[i].instance == inst) {
+          uint32_t local_id = local_triggers[i].local_id;
+          auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
+          while (i < local_triggers.size() &&
+                 local_triggers[i].instance == inst &&
+                 local_triggers[i].local_id == local_id) {
+            comb_trigger_backing_.push_back({
+                .kernel_idx = local_triggers[i].kernel_idx,
+                .byte_offset = local_triggers[i].byte_offset,
+                .byte_size = local_triggers[i].byte_size,
+                .has_self_edge = local_triggers[i].has_self_edge,
+            });
+            ++i;
+          }
+          auto count =
+              static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
+          if (local_id >= obs.local_comb_trigger_map.size()) {
+            throw common::InternalError(
+                "InitModuleInstancesFromBundles",
+                std::format(
+                    "local comb trigger id {} >= local_comb_trigger_map "
+                    "size {} for instance {}",
+                    local_id, obs.local_comb_trigger_map.size(),
+                    inst->instance_id));
+          }
+          obs.local_comb_trigger_map[local_id] = {
+              .start = start, .count = count};
+          obs.local_comb_trigger_slots.push_back(LocalSignalId{local_id});
+        }
+      }
     }
   }
 
@@ -550,6 +708,13 @@ void Engine::AssignDenseCoordinationBasesFromBundles(
   // Count instance-owned slots per bundle from observable descriptors.
   uint32_t next_base = global_slot_count;
   for (const InstanceMetadataBundle& bundle : bundles) {
+    if (bundle.instance == nullptr) {
+      throw common::InternalError(
+          "Engine::AssignDenseCoordinationBasesFromBundles",
+          std::format(
+              "bundle instance_id {} has null instance pointer",
+              bundle.instance_id));
+    }
     bundle.instance->observability.flat_coord_base = next_base;
     uint32_t instance_owned_count = 0;
     for (const auto& entry : bundle.body_desc->observable_descriptors.entries) {

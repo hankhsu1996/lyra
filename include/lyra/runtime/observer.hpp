@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "lyra/runtime/signal_coord.hpp"
+
 namespace lyra::runtime {
 
 // Captured specialization-local addressing state for observer programs.
@@ -12,7 +14,7 @@ namespace lyra::runtime {
 // For design-global observers, all fields are zero/null.
 struct ObserverContext {
   void* this_ptr = nullptr;
-  uint32_t instance_id = 0;
+  InstanceId instance_id = InstanceId{0};
 };
 
 // Observer program entrypoints.

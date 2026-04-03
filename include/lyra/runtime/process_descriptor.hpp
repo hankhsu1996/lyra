@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "lyra/runtime/signal_coord.hpp"
+
 namespace lyra::runtime {
 
 // Canonical process descriptor entry layout.
@@ -18,7 +20,7 @@ namespace lyra::runtime {
 struct ProcessDescriptorEntry {
   void* shared_body;
   uint64_t base_byte_offset;
-  uint32_t instance_id;
+  InstanceId instance_id;
 };
 
 static_assert(

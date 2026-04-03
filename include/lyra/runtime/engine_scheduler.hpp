@@ -23,7 +23,7 @@ enum class Region : uint8_t {
 // per-process in wake_trace_ when activation tracing is enabled.
 struct WakeupEntry {
   uint32_t process_id;
-  uint32_t instance_id;
+  InstanceId instance_id;
   uint32_t resume_block;
 };
 
@@ -77,7 +77,7 @@ struct NbaNotifyGlobal {
   GlobalSignalId signal;
 };
 struct NbaNotifyLocal {
-  uint32_t instance_id;
+  InstanceId instance_id;
   LocalSignalId signal;
 };
 using NbaNotifySignal = std::variant<NbaNotifyGlobal, NbaNotifyLocal>;

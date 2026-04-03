@@ -97,7 +97,8 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   bool should_deactivate = false;
   // Resolve the owning instance for local signal reads in the plan.
   const RuntimeInstance* plan_instance =
-      target_handle.is_local ? instances_[target_handle.instance_id] : nullptr;
+      target_handle.is_local ? FindInstanceMut(target_handle.instance_id)
+                             : nullptr;
   int64_t index_val = EvaluateIndexPlan(
       design_state_base_, const_instances_, slot_meta_registry_, plan_instance,
       plan_span, &should_deactivate);
@@ -140,7 +141,7 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
     const uint8_t* cbase = nullptr;
     if (ccold.container_signal.is_local) {
       cbase = ResolveInstanceSlotBase(
-          *instances_[ccold.container_signal.instance_id],
+          GetInstanceMut(ccold.container_signal.instance_id),
           LocalSignalId{ccold.container_signal.signal_id});
     } else {
       const auto& cmeta =
@@ -194,13 +195,11 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
   // R5: resolve storage via domain-aware path, wrapped in span.
   std::span<const uint8_t> slot_storage;
   if (target_handle.is_local) {
+    auto& th_inst = GetInstanceMut(target_handle.instance_id);
     const auto& imeta =
-        instances_[target_handle.instance_id]
-            ->observability.layout->slot_meta[target_handle.slot_id];
+        th_inst.observability.layout->slot_meta[target_handle.slot_id];
     slot_storage = std::span(
-        ResolveInstanceSlotBase(
-            *instances_[target_handle.instance_id],
-            LocalSignalId{target_handle.slot_id}),
+        ResolveInstanceSlotBase(th_inst, LocalSignalId{target_handle.slot_id}),
         imeta.total_bytes);
   } else {
     const auto& meta = slot_meta_registry_.Get(target_handle.slot_id);
@@ -394,7 +393,7 @@ void Engine::FlushContainerSub(
 
   if (should_wake) {
     EnqueueProcessWakeup(
-        sub.process_id, sub.instance_id, sub.resume_block, slot_id,
+        sub.process_id, sub.instance_id.value, sub.resume_block, slot_id,
         WakeCause::kContainer);
   }
 }
@@ -463,7 +462,7 @@ void Engine::FlushSlotEdgeGroups(
       if (detailed) ++stats_.detailed.edge_sub_checks;
       if (detailed) ++stats_.detailed.edge_sub_wakeups;
       EnqueueProcessWakeup(
-          sub.process_id, sub.instance_id, sub.resume_block, slot_id,
+          sub.process_id, sub.instance_id.value, sub.resume_block, slot_id,
           WakeCause::kEdge);
     }
 
@@ -497,7 +496,7 @@ void Engine::FlushSlotChangeSubs(
       if (detailed) ++stats_.detailed.change_sub_wakeups;
       std::memcpy(snapshot, current, sub.byte_size);
       EnqueueProcessWakeup(
-          sub.process_id, sub.instance_id, sub.resume_block, slot_id,
+          sub.process_id, sub.instance_id.value, sub.resume_block, slot_id,
           WakeCause::kChange);
     }
   }
@@ -544,18 +543,75 @@ void Engine::FlushDirtySlotPostRebind(
 void Engine::FlushSignalUpdates() {
   if (finished_) return;
 
-  // R5 transitional: mirror local delta into update_set_ for
-  // subscription dispatch. Connection processes may have triggers
-  // installed in signal_subs_[flat_id] (legacy flat trigger path).
-  // FlushGlobalSignalUpdates dispatches from update_set_, so local
-  // dirty marks must be visible there. Removed when all process
-  // triggers install via typed local subscriptions.
+  // R5 transitional: bidirectional mirror between update_set_ and
+  // local_updates. These exist because two producer bugs have not been
+  // fixed yet:
+  //
+  //   Reverse mirror (flat -> local): codegen port expression connection
+  //   processes call MarkDirty(ObjectSignalRef) with the PARENT instance
+  //   pointer instead of the CHILD instance pointer for hierarchical
+  //   writes. The dirty mark lands in the wrong instance's local_updates.
+  //   The reverse mirror catches the corresponding flat dirty mark in
+  //   update_set_ and copies it to the correct instance's local_updates.
+  //   Root cause: codegen uses context.GetInstancePointer() (process's
+  //   own instance) instead of the target signal's owning instance.
+  //
+  //   Forward mirror (local -> flat): some legacy subscription paths
+  //   still dispatch from update_set_ via signal_subs_[flat_id].
+  //   The forward mirror copies local dirty marks to update_set_ so
+  //   those subscriptions fire.
+  //
+  // Both mirrors are deleted when:
+  //   1. Codegen emits correct target instance for cross-instance writes
+  //   2. All local triggers install into per-instance local_signal_subs
+  //
+  // Reverse mirror: flat update_set_ -> local_updates.
+  if (slot_meta_registry_.IsPopulated()) {
+    for (uint32_t s : update_set_.DeltaDirtySlots()) {
+      if (s < global_slot_count_) continue;
+      if (s >= slot_meta_registry_.Size()) continue;
+      const auto& meta = slot_meta_registry_.Get(s);
+      if (meta.domain != SlotStorageDomain::kInstanceOwned) continue;
+      auto* inst = FindInstanceMut(meta.owner_instance_id);
+      if (inst == nullptr) continue;
+      auto& obs = inst->observability;
+      if (obs.local_signal_count == 0) continue;
+      if (s < obs.flat_coord_base) continue;
+      uint32_t local_id = s - obs.flat_coord_base;
+      if (local_id >= obs.local_signal_count) continue;
+      if (!obs.local_updates.IsDeltaDirty(LocalSignalId{local_id})) {
+        const auto& ranges = update_set_.DeltaRangesFor(s);
+        auto kind = update_set_.DeltaKindFor(s);
+        auto epoch = update_set_.DeltaEpochFor(s);
+        if (ranges.IsFullExtent()) {
+          obs.local_updates.MarkSlotDirty(LocalSignalId{local_id}, kind, epoch);
+        } else {
+          for (const auto& r : ranges.Ranges()) {
+            obs.local_updates.MarkDirtyRange(
+                LocalSignalId{local_id}, r.offset, r.size, kind, epoch);
+          }
+        }
+      }
+    }
+  }  // slot_meta_registry guard
+
+  // Forward mirror: local_updates -> update_set_ for instance-owned
+  // slots written via typed MarkDirty(ObjectSignalRef).
   for (auto* inst : instances_) {
     auto& obs = inst->observability;
     if (obs.local_signal_count == 0) continue;
     uint32_t base = obs.flat_coord_base;
     for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
       uint32_t flat = base + lid.value;
+      if (flat >= slot_meta_registry_.Size()) {
+        throw common::InternalError(
+            "Engine::FlushSignalUpdates",
+            std::format(
+                "forward mirror: flat {} (base {} + lid {}) >= slot_meta "
+                "size {} for instance {}",
+                flat, base, lid.value, slot_meta_registry_.Size(),
+                inst->instance_id));
+      }
       if (!update_set_.IsDeltaDirty(flat)) {
         const auto& ranges = obs.local_updates.DeltaRangesFor(lid);
         auto kind = obs.local_updates.DeltaKindFor(lid);

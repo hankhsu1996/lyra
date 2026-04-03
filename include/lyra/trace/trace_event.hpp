@@ -45,7 +45,7 @@ struct GlobalValueChange {
 };
 
 struct LocalValueChange {
-  uint32_t instance_id;
+  runtime::InstanceId instance_id;
   runtime::LocalSignalId signal_id;
   TraceValue value;
 };
@@ -58,7 +58,7 @@ struct GlobalMemoryDirty {
 };
 
 struct LocalMemoryDirty {
-  uint32_t instance_id;
+  runtime::InstanceId instance_id;
   runtime::LocalSignalId signal_id;
 };
 

@@ -3,11 +3,13 @@
 #include <cstring>
 #include <format>
 #include <span>
+#include <variant>
 #include <vector>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/process_trigger_abi.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -17,49 +19,218 @@ namespace lyra::runtime {
 void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
   if (descs.empty()) return;
 
-  // Sort by trigger_slot_id so each group is contiguous
+  if (!slot_meta_registry_.IsPopulated()) {
+    throw common::InternalError(
+        "Engine::InitConnectionBatch",
+        "InitConnectionBatch before InitSlotMeta");
+  }
+
+  // Build typed connections with domain-aware destinations and triggers.
+  // Classify each connection's trigger and destination by domain at build
+  // time, so the fixpoint loop never needs flat_coord_base conversion.
   struct IndexedConn {
-    uint32_t trigger_slot_id;
+    bool trigger_is_local;
+    InstanceId trigger_instance_id;  // valid when trigger_is_local
+    uint32_t trigger_local_id;       // valid when trigger_is_local
+    uint32_t trigger_global_id;      // valid when !trigger_is_local
     BatchedConnection conn;
   };
   std::vector<IndexedConn> sorted;
   sorted.reserve(descs.size());
+
   for (const auto& d : descs) {
     if (d.trigger_byte_size > 0) {
       ++conn_narrow_count_;
     } else {
       ++conn_full_slot_count_;
     }
-    sorted.push_back(
-        {d.trigger_slot_id, BatchedConnection{
-                                .src_slot_id = d.src_slot_id,
-                                .dst_slot_id = d.dst_slot_id,
-                                .byte_size = d.byte_size}});
-  }
-  std::ranges::sort(sorted, {}, &IndexedConn::trigger_slot_id);
 
-  all_connections_.reserve(sorted.size());
-  for (const auto& s : sorted) {
-    all_connections_.push_back(s.conn);
-  }
-
-  // Build dense trigger map: trigger_slot_id -> {start, count}
-  // Sized from authoritative slot count (same universe as signal_waiters_).
-  if (!slot_meta_registry_.IsPopulated()) {
-    throw common::InternalError(
-        "Engine::InitConnectionBatch",
-        "InitConnectionBatch before InitSlotMeta");
-  }
-  conn_trigger_map_.resize(slot_meta_registry_.Size());
-
-  uint32_t i = 0;
-  while (i < sorted.size()) {
-    uint32_t trigger = sorted[i].trigger_slot_id;
-    uint32_t start = i;
-    while (i < sorted.size() && sorted[i].trigger_slot_id == trigger) {
-      ++i;
+    // Classify destination domain.
+    ConnectionTarget dst;
+    if (d.dst_slot_id < global_slot_count_) {
+      dst = GlobalConnectionTarget{GlobalSignalId{d.dst_slot_id}};
+    } else {
+      const auto& meta = slot_meta_registry_.Get(d.dst_slot_id);
+      if (meta.domain != SlotStorageDomain::kInstanceOwned) {
+        throw common::InternalError(
+            "Engine::InitConnectionBatch",
+            std::format(
+                "dst_slot_id {} >= global_slot_count {} but domain is not "
+                "instance-owned",
+                d.dst_slot_id, global_slot_count_));
+      }
+      auto* inst =
+          instance_trace_resolver_.FindInstanceMut(meta.owner_instance_id);
+      if (inst == nullptr) {
+        throw common::InternalError(
+            "Engine::InitConnectionBatch",
+            std::format(
+                "dst_slot_id {} owner_instance_id {} has no instance",
+                d.dst_slot_id, meta.owner_instance_id));
+      }
+      if (d.dst_slot_id < inst->observability.flat_coord_base) {
+        throw common::InternalError(
+            "Engine::InitConnectionBatch",
+            std::format(
+                "dst_slot_id {} < flat_coord_base {} for instance {}",
+                d.dst_slot_id, inst->observability.flat_coord_base,
+                meta.owner_instance_id));
+      }
+      uint32_t local_id = d.dst_slot_id - inst->observability.flat_coord_base;
+      if (local_id >= inst->observability.local_signal_count) {
+        throw common::InternalError(
+            "Engine::InitConnectionBatch",
+            std::format(
+                "computed local_id {} >= local_signal_count {} for "
+                "instance {}",
+                local_id, inst->observability.local_signal_count,
+                meta.owner_instance_id));
+      }
+      dst = LocalConnectionTarget{
+          .instance_id = meta.owner_instance_id,
+          .signal = LocalSignalId{local_id}};
     }
-    conn_trigger_map_[trigger] = {.start = start, .count = i - start};
+
+    // Classify trigger domain.
+    bool trigger_is_local = false;
+    InstanceId trigger_instance_id = InstanceId{0};
+    uint32_t trigger_local_id = 0;
+    uint32_t trigger_global_id = d.trigger_slot_id;
+    if (d.trigger_slot_id >= global_slot_count_) {
+      const auto& tmeta = slot_meta_registry_.Get(d.trigger_slot_id);
+      if (tmeta.domain == SlotStorageDomain::kInstanceOwned) {
+        auto* tinst =
+            instance_trace_resolver_.FindInstanceMut(tmeta.owner_instance_id);
+        if (tinst == nullptr) {
+          throw common::InternalError(
+              "Engine::InitConnectionBatch",
+              std::format(
+                  "trigger_slot_id {} owner_instance_id {} has no instance",
+                  d.trigger_slot_id, tmeta.owner_instance_id));
+        }
+        trigger_is_local = true;
+        trigger_instance_id = tmeta.owner_instance_id;
+        if (d.trigger_slot_id < tinst->observability.flat_coord_base) {
+          throw common::InternalError(
+              "Engine::InitConnectionBatch",
+              std::format(
+                  "trigger_slot_id {} < flat_coord_base {} for instance {}",
+                  d.trigger_slot_id, tinst->observability.flat_coord_base,
+                  tmeta.owner_instance_id));
+        }
+        trigger_local_id =
+            d.trigger_slot_id - tinst->observability.flat_coord_base;
+        if (trigger_local_id >= tinst->observability.local_signal_count) {
+          throw common::InternalError(
+              "Engine::InitConnectionBatch",
+              std::format(
+                  "trigger local_id {} >= local_signal_count {} for "
+                  "instance {}",
+                  trigger_local_id, tinst->observability.local_signal_count,
+                  tmeta.owner_instance_id));
+        }
+      }
+    }
+
+    sorted.push_back(
+        IndexedConn{
+            .trigger_is_local = trigger_is_local,
+            .trigger_instance_id = trigger_instance_id,
+            .trigger_local_id = trigger_local_id,
+            .trigger_global_id = trigger_global_id,
+            .conn =
+                BatchedConnection{
+                    .src_slot_id = d.src_slot_id,
+                    .byte_size = d.byte_size,
+                    .dst = dst,
+                },
+        });
+  }
+
+  // Separate global and local trigger entries, sort each group, and build
+  // domain-split trigger maps.
+  std::vector<IndexedConn> global_entries;
+  std::vector<IndexedConn> local_entries;
+  for (auto& ic : sorted) {
+    if (ic.trigger_is_local) {
+      local_entries.push_back(std::move(ic));
+    } else {
+      global_entries.push_back(std::move(ic));
+    }
+  }
+
+  // Sort global entries by trigger_global_id for contiguous grouping.
+  std::ranges::sort(global_entries, {}, &IndexedConn::trigger_global_id);
+
+  // Build global connection trigger map.
+  global_conn_trigger_map_.resize(global_slot_count_);
+  uint32_t conn_base = static_cast<uint32_t>(all_connections_.size());
+  for (const auto& ge : global_entries) {
+    all_connections_.push_back(ge.conn);
+  }
+  {
+    uint32_t i = 0;
+    while (i < global_entries.size()) {
+      uint32_t trigger = global_entries[i].trigger_global_id;
+      uint32_t start = conn_base + i;
+      while (i < global_entries.size() &&
+             global_entries[i].trigger_global_id == trigger) {
+        ++i;
+      }
+      if (trigger < global_conn_trigger_map_.size()) {
+        global_conn_trigger_map_[trigger] = {
+            .start = start, .count = conn_base + i - start};
+      }
+    }
+  }
+
+  // Build per-instance local connection trigger maps.
+  // Group local_entries by instance_id, then by trigger_local_id.
+  std::ranges::sort(local_entries, [](const auto& a, const auto& b) {
+    if (a.trigger_instance_id != b.trigger_instance_id)
+      return a.trigger_instance_id < b.trigger_instance_id;
+    return a.trigger_local_id < b.trigger_local_id;
+  });
+
+  conn_base = static_cast<uint32_t>(all_connections_.size());
+  for (const auto& le : local_entries) {
+    all_connections_.push_back(le.conn);
+  }
+  {
+    uint32_t i = 0;
+    while (i < local_entries.size()) {
+      auto iid = local_entries[i].trigger_instance_id;
+      auto* inst = instance_trace_resolver_.FindInstanceMut(iid);
+      if (inst == nullptr) {
+        throw common::InternalError(
+            "Engine::InitConnectionBatch",
+            std::format("trigger instance_id {} not found", iid));
+      }
+      auto& obs = inst->observability;
+      if (obs.local_conn_trigger_map.empty() && obs.local_signal_count > 0) {
+        obs.local_conn_trigger_map.resize(obs.local_signal_count);
+      }
+      while (i < local_entries.size() &&
+             local_entries[i].trigger_instance_id == iid) {
+        uint32_t local_id = local_entries[i].trigger_local_id;
+        uint32_t start = conn_base + i;
+        while (i < local_entries.size() &&
+               local_entries[i].trigger_instance_id == iid &&
+               local_entries[i].trigger_local_id == local_id) {
+          ++i;
+        }
+        if (local_id >= obs.local_conn_trigger_map.size()) {
+          throw common::InternalError(
+              "Engine::InitConnectionBatch",
+              std::format(
+                  "trigger local_id {} >= local_conn_trigger_map size {} "
+                  "for instance {}",
+                  local_id, obs.local_conn_trigger_map.size(), iid));
+        }
+        obs.local_conn_trigger_map[local_id] = {
+            .start = start, .count = conn_base + i - start};
+      }
+    }
   }
 }
 
@@ -67,10 +238,21 @@ void Engine::EvaluateAllConnections() {
   if (all_connections_.empty()) return;
   for (const auto& conn : all_connections_) {
     const auto* src = ResolveSlotBytes(conn.src_slot_id);
-    auto* dst = ResolveSlotBytesMut(conn.dst_slot_id);
+    auto* dst = ResolveConnectionDstMut(conn.dst);
     if (std::memcmp(dst, src, conn.byte_size) != 0) {
       std::memcpy(dst, src, conn.byte_size);
-      MarkSlotDirty(conn.dst_slot_id);
+      std::visit(
+          [this](const auto& t) {
+            using T = std::decay_t<decltype(t)>;
+            if constexpr (std::is_same_v<T, GlobalConnectionTarget>) {
+              MarkSlotDirty(t.signal.value);
+            } else {
+              auto* inst =
+                  instance_trace_resolver_.FindInstanceMut(t.instance_id);
+              inst->observability.local_updates.MarkSlotDirty(t.signal);
+            }
+          },
+          conn.dst);
     }
   }
 }
@@ -94,7 +276,10 @@ void Engine::InitCombKernels(
   comb_kernel_flags_.resize(num_processes_, 0);
 
   struct ParsedTrigger {
-    uint32_t slot_id;
+    bool is_local;
+    InstanceId instance_id;  // valid when is_local
+    uint32_t local_id;       // valid when is_local
+    uint32_t global_id;      // valid when !is_local
     uint32_t kernel_idx;
     uint32_t byte_offset;
     uint32_t byte_size;
@@ -136,8 +321,6 @@ void Engine::InitCombKernels(
       has_any_self_edge_comb_ = true;
     }
 
-    // Resolve body pointer from the frame header. After H2, process
-    // binding is constructor-owned and the body field is already set.
     auto* header =
         static_cast<const ProcessFrameHeader*>(proc_states[proc_idx]);
     auto body = header->body;
@@ -159,9 +342,13 @@ void Engine::InitCombKernels(
       uint32_t byte_offset = words[pos++];
       uint32_t byte_size = words[pos++];
       uint32_t trigger_flags = words[pos++];
-      // Relocate body-local trigger slot ids using the owning instance's
-      // dense coordination base.
-      if ((trigger_flags & kCombTriggerFlagBodyLocal) != 0) {
+
+      // Classify trigger domain.
+      bool is_local = (trigger_flags & kCombTriggerFlagBodyLocal) != 0;
+      InstanceId trigger_iid = InstanceId{0};
+      uint32_t local_id = 0;
+      uint32_t global_id = trigger_slot;
+      if (is_local) {
         if (header->instance == nullptr) {
           throw common::InternalError(
               "Engine::InitCombKernels",
@@ -170,10 +357,21 @@ void Engine::InitCombKernels(
                   "process {}",
                   proc_idx));
         }
-        trigger_slot += header->instance->observability.flat_coord_base;
+        trigger_iid = header->instance->instance_id;
+        local_id = trigger_slot;
       }
+
       entries.push_back(
-          {trigger_slot, comb_idx, byte_offset, byte_size, kernel_self_edge});
+          ParsedTrigger{
+              .is_local = is_local,
+              .instance_id = trigger_iid,
+              .local_id = local_id,
+              .global_id = global_id,
+              .kernel_idx = comb_idx,
+              .byte_offset = byte_offset,
+              .byte_size = byte_size,
+              .has_self_edge = kernel_self_edge,
+          });
       if (byte_size > 0) {
         ++comb_narrow_count_;
       } else {
@@ -184,46 +382,111 @@ void Engine::InitCombKernels(
 
   if (entries.empty()) return;
 
-  // Allocate persistent scratch storage for FlushAndPropagateConnections.
-  // Sized once here; lazy-clear pattern in the hot loop resets only touched
-  // elements per iteration.
-  uint32_t slot_count = slot_meta_registry_.Size();
-  fp_work_.pending_seen.resize(slot_count, 0);
-  if (has_any_self_edge_comb_) {
-    fp_work_.snapshot_index.assign(slot_count, UINT32_MAX);
+  // Separate global and local triggers.
+  std::vector<ParsedTrigger> global_triggers;
+  std::vector<ParsedTrigger> local_triggers;
+  for (auto& e : entries) {
+    if (e.is_local) {
+      local_triggers.push_back(std::move(e));
+    } else {
+      global_triggers.push_back(std::move(e));
+    }
   }
 
-  // Sort by slot_id for contiguous grouping.
-  std::ranges::sort(entries, {}, &ParsedTrigger::slot_id);
+  // Build global comb trigger map.
+  fp_work_.global_pending_seen.resize(global_slot_count_, 0);
+  if (has_any_self_edge_comb_) {
+    fp_work_.global_snapshot_index.assign(global_slot_count_, UINT32_MAX);
+  }
 
-  // Build flat backing array and dense range table.
-  // Sized from authoritative slot count (same universe as signal_waiters_).
-  comb_trigger_backing_.reserve(entries.size());
-  comb_trigger_map_.resize(slot_meta_registry_.Size());
+  if (!global_triggers.empty()) {
+    std::ranges::sort(global_triggers, {}, &ParsedTrigger::global_id);
 
-  uint32_t i = 0;
-  while (i < entries.size()) {
-    uint32_t slot = entries[i].slot_id;
-    auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
-    while (i < entries.size() && entries[i].slot_id == slot) {
-      comb_trigger_backing_.push_back({
-          .kernel_idx = entries[i].kernel_idx,
-          .byte_offset = entries[i].byte_offset,
-          .byte_size = entries[i].byte_size,
-          .has_self_edge = entries[i].has_self_edge,
-      });
-      ++i;
+    global_comb_trigger_map_.resize(global_slot_count_);
+    uint32_t i = 0;
+    while (i < global_triggers.size()) {
+      uint32_t slot = global_triggers[i].global_id;
+      auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
+      while (i < global_triggers.size() &&
+             global_triggers[i].global_id == slot) {
+        comb_trigger_backing_.push_back({
+            .kernel_idx = global_triggers[i].kernel_idx,
+            .byte_offset = global_triggers[i].byte_offset,
+            .byte_size = global_triggers[i].byte_size,
+            .has_self_edge = global_triggers[i].has_self_edge,
+        });
+        ++i;
+      }
+      uint32_t count =
+          static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
+      global_comb_trigger_map_[slot] = {.start = start, .count = count};
+      global_comb_trigger_slots_.push_back(GlobalSignalId{slot});
     }
-    uint32_t count =
-        static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
-    comb_trigger_map_[slot] = {.start = start, .count = count};
-    comb_trigger_slots_.push_back(slot);
+  }
+
+  // Build per-instance local comb trigger maps.
+  if (!local_triggers.empty()) {
+    std::ranges::sort(local_triggers, [](const auto& a, const auto& b) {
+      if (a.instance_id != b.instance_id) return a.instance_id < b.instance_id;
+      return a.local_id < b.local_id;
+    });
+
+    uint32_t i = 0;
+    while (i < local_triggers.size()) {
+      auto iid = local_triggers[i].instance_id;
+      auto* inst = instance_trace_resolver_.FindInstanceMut(iid);
+      if (inst == nullptr) {
+        throw common::InternalError(
+            "Engine::InitCombKernels",
+            std::format("comb trigger instance_id {} not found", iid));
+      }
+      auto& obs = inst->observability;
+      if (obs.local_comb_trigger_map.empty() && obs.local_signal_count > 0) {
+        obs.local_comb_trigger_map.resize(obs.local_signal_count);
+      }
+      while (i < local_triggers.size() &&
+             local_triggers[i].instance_id == iid) {
+        uint32_t local_id = local_triggers[i].local_id;
+        auto start = static_cast<uint32_t>(comb_trigger_backing_.size());
+        while (i < local_triggers.size() &&
+               local_triggers[i].instance_id == iid &&
+               local_triggers[i].local_id == local_id) {
+          comb_trigger_backing_.push_back({
+              .kernel_idx = local_triggers[i].kernel_idx,
+              .byte_offset = local_triggers[i].byte_offset,
+              .byte_size = local_triggers[i].byte_size,
+              .has_self_edge = local_triggers[i].has_self_edge,
+          });
+          ++i;
+        }
+        uint32_t count =
+            static_cast<uint32_t>(comb_trigger_backing_.size()) - start;
+        if (local_id >= obs.local_comb_trigger_map.size()) {
+          throw common::InternalError(
+              "Engine::InitCombKernels",
+              std::format(
+                  "local comb trigger id {} >= local_comb_trigger_map "
+                  "size {} for instance {}",
+                  local_id, obs.local_comb_trigger_map.size(), iid));
+        }
+        obs.local_comb_trigger_map[local_id] = {.start = start, .count = count};
+        obs.local_comb_trigger_slots.push_back(LocalSignalId{local_id});
+      }
+    }
   }
 }
 
 void Engine::SeedCombKernelDirtyMarks() {
-  for (uint32_t trigger_slot : comb_trigger_slots_) {
-    MarkSlotDirty(trigger_slot);
+  // Seed global comb trigger slots.
+  for (GlobalSignalId gid : global_comb_trigger_slots_) {
+    MarkSlotDirty(gid.value);
+  }
+  // Seed local comb trigger slots.
+  for (auto* inst : instances_) {
+    auto& obs = inst->observability;
+    for (LocalSignalId lid : obs.local_comb_trigger_slots) {
+      obs.local_updates.MarkSlotDirty(lid);
+    }
   }
 }
 
@@ -261,133 +524,224 @@ void Engine::FlushAndPropagateConnections() {
     return;
   }
 
-  // Fixed-point propagation of connections and comb kernels.
-  //
-  // Two tracking channels serve different purposes:
-  //   update_set_ (delta_dirty_/delta_seen_): dirty tracking for global slots.
-  //   per-instance local_updates: dirty tracking for instance-owned slots.
-  //   pending/next_pending (local work list): fixed-point propagation
-  //     scheduling within this function only. Uses flat slot_ids for the
-  //     trigger lookup (comb_trigger_map_ is flat-indexed). Per-iteration
-  //     dedup via pending_seen[] ensures each slot appears at most once.
-  //
-  // Global comb writes (from MarkSlotDirty(uint32_t)) are captured via
-  // comb_write_capture_ which bypasses delta_seen_ dedup. Local comb
-  // writes go to local_updates and are collected after comb eval by
-  // scanning instance delta dirty lists.
   constexpr uint32_t kMaxIterations = 100;
   const bool detailed = detailed_stats_enabled_;
   uint32_t iterations_used = 0;
 
-  // Seed work list from both global and local delta dirty slots.
-  fp_work_.pending.clear();
-  for (uint32_t s : update_set_.DeltaDirtySlots()) {
-    fp_work_.pending.push_back(s);
+  // Ensure workspace is sized.
+  if (fp_work_.global_pending_seen.size() < global_slot_count_) {
+    fp_work_.global_pending_seen.resize(global_slot_count_, 0);
   }
-  // Convert local delta dirty to flat for trigger lookup.
-  for (auto* inst : instances_) {
-    auto& obs = inst->observability;
-    if (obs.local_signal_count == 0) continue;
-    uint32_t base = obs.flat_coord_base;
-    for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
-      fp_work_.pending.push_back(base + lid.value);
-    }
-  }
-  // Per-iteration dedup bitvector. Prevents exponential blowup when comb
-  // kernels write intermediate values (e.g. a = f(x); a = a + g(x)) that
-  // differ from the final value. Lazy-clear resets only touched slots each
-  // iteration. Allocated on first call (covers both conn-only and comb cases).
-  uint32_t slot_count = slot_meta_registry_.Size();
-  if (fp_work_.pending_seen.size() < slot_count) {
-    fp_work_.pending_seen.resize(slot_count, 0);
-  }
-  if (has_any_self_edge_comb_ && fp_work_.snapshot_index.size() < slot_count) {
-    fp_work_.snapshot_index.assign(slot_count, UINT32_MAX);
+  if (has_any_self_edge_comb_ &&
+      fp_work_.global_snapshot_index.size() < global_slot_count_) {
+    fp_work_.global_snapshot_index.assign(global_slot_count_, UINT32_MAX);
   }
 
-  // Helper: enqueue a slot into next_pending with dedup.
-  auto enqueue_pending = [&](uint32_t slot_id) {
+  // Build per-instance local pending sets if not already sized.
+  if (fp_work_.locals.size() != instances_.size()) {
+    fp_work_.locals.resize(instances_.size());
+    for (size_t i = 0; i < instances_.size(); ++i) {
+      auto& lps = fp_work_.locals[i];
+      lps.instance = instances_[i];
+      auto lsc = instances_[i]->observability.local_signal_count;
+      if (lsc > 0 && lps.seen.size() < lsc) {
+        lps.seen.resize(lsc, 0);
+      }
+    }
+  }
+
+  // Seed work lists from delta dirty slots.
+  // Global slots go to global pending. Instance-owned slots in update_set_
+  // (from legacy flat MarkSlotDirty paths) are converted to local pending
+  // using SlotMeta domain/owner lookup.
+  fp_work_.pending_globals.clear();
+  for (uint32_t s : update_set_.DeltaDirtySlots()) {
+    if (s < global_slot_count_) {
+      fp_work_.pending_globals.push_back(GlobalSignalId{s});
+    } else {
+      // Instance-owned slot written via flat path. Convert to local.
+      const auto& meta = slot_meta_registry_.Get(s);
+      if (meta.domain == SlotStorageDomain::kInstanceOwned) {
+        auto* inst = FindInstanceMut(meta.owner_instance_id);
+        if (inst != nullptr) {
+          uint32_t local_id = s - inst->observability.flat_coord_base;
+          if (local_id < inst->observability.local_signal_count) {
+            inst->observability.local_updates.MarkSlotDirty(
+                LocalSignalId{local_id});
+          }
+        }
+      }
+    }
+  }
+  for (size_t i = 0; i < instances_.size(); ++i) {
+    auto& obs = instances_[i]->observability;
+    auto& lps = fp_work_.locals[i];
+    lps.pending.clear();
+    if (obs.local_signal_count == 0) continue;
+    for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
+      lps.pending.push_back(lid);
+    }
+  }
+
+  // Helper: check if any local pending set has work.
+  auto any_local_pending = [&]() -> bool {
+    for (const auto& lps : fp_work_.locals) {
+      if (!lps.pending.empty()) return true;
+    }
+    return false;
+  };
+
+  // Helper: enqueue into global next with dedup.
+  auto enqueue_global = [&](GlobalSignalId gid) {
     if (detailed) ++stats_.detailed.prop_enqueue_attempts;
-    if (slot_id < slot_count && fp_work_.pending_seen[slot_id] == 0) {
-      fp_work_.pending_seen[slot_id] = 1;
-      fp_work_.next_pending.push_back(slot_id);
+    if (gid.value < global_slot_count_ &&
+        fp_work_.global_pending_seen[gid.value] == 0) {
+      fp_work_.global_pending_seen[gid.value] = 1;
+      fp_work_.next_globals.push_back(gid);
     } else {
       if (detailed) ++stats_.detailed.prop_enqueue_deduped;
     }
   };
 
-  // Pre-comb snapshot state for self-trigger suppression. Only allocated when
-  // at least one kernel has self-edge risk (has_any_self_edge_comb_). A kernel
-  // triggered by slot S may write intermediate values to S that differ from the
-  // final value. Both intermediate and final writes pass LyraStorePacked's
-  // memcmp, but the NET change (pre-comb vs post-comb) is zero. Without
-  // snapshot comparison, the slot oscillates indefinitely.
-  //
-  // For kernels WITHOUT self-edges: skipping snapshot is safe because those
-  // kernels cannot trigger themselves, so multi-write intermediate values at
-  // most cause one bounded extra fixpoint iteration (store-level memcmp catches
-  // the no-op on the next pass).
+  // Helper: enqueue into local next with dedup.
+  auto enqueue_local = [&](size_t inst_idx, LocalSignalId lid) {
+    if (detailed) ++stats_.detailed.prop_enqueue_attempts;
+    auto& lps = fp_work_.locals[inst_idx];
+    if (lid.value < lps.seen.size() && lps.seen[lid.value] == 0) {
+      lps.seen[lid.value] = 1;
+      lps.next.push_back(lid);
+    } else {
+      if (detailed) ++stats_.detailed.prop_enqueue_deduped;
+    }
+  };
+
+  // Helper: find instance index for a RuntimeInstance*.
+  // Connection targets carry RuntimeInstance* resolved at build time.
+  auto find_instance_idx = [&](const RuntimeInstance* inst) -> size_t {
+    // Linear scan is acceptable -- instance count is small (typically < 100).
+    for (size_t i = 0; i < instances_.size(); ++i) {
+      if (instances_[i] == inst) return i;
+    }
+    throw common::InternalError(
+        "FlushAndPropagateConnections",
+        "connection target instance not found in instance list");
+  };
 
   for (uint32_t iter = 0; iter < kMaxIterations; ++iter) {
-    if (fp_work_.pending.empty()) break;
+    if (fp_work_.pending_globals.empty() && !any_local_pending()) break;
     ++iterations_used;
-    fp_work_.next_pending.clear();
+    fp_work_.next_globals.clear();
+    for (auto& lps : fp_work_.locals) lps.next.clear();
 
-    // Reset seen bits for slots in the current work list.
-    for (uint32_t s : fp_work_.pending) fp_work_.pending_seen[s] = 0;
+    // Reset seen bits for current work list entries.
+    for (GlobalSignalId gid : fp_work_.pending_globals) {
+      fp_work_.global_pending_seen[gid.value] = 0;
+    }
+    for (auto& lps : fp_work_.locals) {
+      for (LocalSignalId lid : lps.pending) {
+        lps.seen[lid.value] = 0;
+      }
+    }
 
-    if (detailed) stats_.detailed.prop_pending_slots += fp_work_.pending.size();
+    if (detailed) {
+      uint32_t total_pending =
+          static_cast<uint32_t>(fp_work_.pending_globals.size());
+      for (const auto& lps : fp_work_.locals) {
+        total_pending += static_cast<uint32_t>(lps.pending.size());
+      }
+      stats_.detailed.prop_pending_slots += total_pending;
+    }
 
-    // Phase 1: connection propagation (memcmp guards actual change).
+    // Phase 1: connection propagation.
     if (has_conns) {
-      for (uint32_t slot_id : fp_work_.pending) {
-        if (slot_id >= conn_trigger_map_.size()) continue;
+      // Global triggers.
+      for (GlobalSignalId gid : fp_work_.pending_globals) {
+        if (gid.value >= global_conn_trigger_map_.size()) continue;
         if (detailed) ++stats_.detailed.prop_conn_trigger_lookups;
-        auto [start, count] = conn_trigger_map_[slot_id];
+        auto [start, count] = global_conn_trigger_map_[gid.value];
         if (count == 0) continue;
         if (detailed) ++stats_.detailed.prop_conn_trigger_hits;
         for (uint32_t ci = start; ci < start + count; ++ci) {
           if (detailed) ++stats_.detailed.conn_considered;
           const auto& conn = all_connections_[ci];
           const auto* src = ResolveSlotBytes(conn.src_slot_id);
-          auto* dst = ResolveSlotBytesMut(conn.dst_slot_id);
+          auto* dst = ResolveConnectionDstMut(conn.dst);
           if (detailed) ++stats_.detailed.conn_memcmp_executed;
           if (std::memcmp(dst, src, conn.byte_size) != 0) {
             if (detailed) ++stats_.detailed.conn_memcpy_executed;
             std::memcpy(dst, src, conn.byte_size);
-            MarkSlotDirty(conn.dst_slot_id);
-            // Also mark local_updates for instance-owned destinations
-            // so local subscription dispatch sees the connection write.
-            if (conn.dst_slot_id >= global_slot_count_) {
-              const auto& meta = slot_meta_registry_.Get(conn.dst_slot_id);
-              if (meta.domain == SlotStorageDomain::kInstanceOwned &&
-                  meta.owner_instance_id < instances_.size()) {
-                auto* inst = instances_[meta.owner_instance_id];
-                uint32_t local_id =
-                    conn.dst_slot_id - inst->observability.flat_coord_base;
-                inst->observability.local_updates.MarkSlotDirty(
-                    LocalSignalId{local_id});
-              }
+            // Enqueue destination into appropriate domain.
+            std::visit(
+                [&](const auto& t) {
+                  using T = std::decay_t<decltype(t)>;
+                  if constexpr (std::is_same_v<T, GlobalConnectionTarget>) {
+                    MarkSlotDirty(t.signal.value);
+                    enqueue_global(t.signal);
+                  } else {
+                    auto* local_inst =
+                        instance_trace_resolver_.FindInstanceMut(t.instance_id);
+                    local_inst->observability.local_updates.MarkSlotDirty(
+                        t.signal);
+                    enqueue_local(find_instance_idx(local_inst), t.signal);
+                  }
+                },
+                conn.dst);
+          }
+        }
+      }
+
+      // Local triggers.
+      for (size_t inst_idx = 0; inst_idx < fp_work_.locals.size(); ++inst_idx) {
+        auto& lps = fp_work_.locals[inst_idx];
+        if (lps.pending.empty()) continue;
+        auto& obs = lps.instance->observability;
+        for (LocalSignalId lid : lps.pending) {
+          if (lid.value >= obs.local_conn_trigger_map.size()) continue;
+          if (detailed) ++stats_.detailed.prop_conn_trigger_lookups;
+          auto [start, count] = obs.local_conn_trigger_map[lid.value];
+          if (count == 0) continue;
+          if (detailed) ++stats_.detailed.prop_conn_trigger_hits;
+          for (uint32_t ci = start; ci < start + count; ++ci) {
+            if (detailed) ++stats_.detailed.conn_considered;
+            const auto& conn = all_connections_[ci];
+            const auto* src = ResolveSlotBytes(conn.src_slot_id);
+            auto* dst = ResolveConnectionDstMut(conn.dst);
+            if (detailed) ++stats_.detailed.conn_memcmp_executed;
+            if (std::memcmp(dst, src, conn.byte_size) != 0) {
+              if (detailed) ++stats_.detailed.conn_memcpy_executed;
+              std::memcpy(dst, src, conn.byte_size);
+              std::visit(
+                  [&](const auto& t) {
+                    using T = std::decay_t<decltype(t)>;
+                    if constexpr (std::is_same_v<T, GlobalConnectionTarget>) {
+                      MarkSlotDirty(t.signal.value);
+                      enqueue_global(t.signal);
+                    } else {
+                      auto* local_inst =
+                          instance_trace_resolver_.FindInstanceMut(
+                              t.instance_id);
+                      local_inst->observability.local_updates.MarkSlotDirty(
+                          t.signal);
+                      enqueue_local(find_instance_idx(local_inst), t.signal);
+                    }
+                  },
+                  conn.dst);
             }
-            enqueue_pending(conn.dst_slot_id);
           }
         }
       }
     }
 
     // Phase 2: comb kernel evaluation.
-    // Install capture so comb writes feed back into the work list.
     if (has_combs) {
-      // Snapshot pending slots that have self-edge comb triggers (pre-comb
-      // state). Only slots where at least one trigger entry has has_self_edge
-      // need snapshot protection; others are safe without it.
+      // Snapshot global pending slots with self-edge comb triggers.
       if (has_any_self_edge_comb_) {
         fp_work_.snapshot_buf.clear();
         fp_work_.snapshots.clear();
         fp_work_.snapshotted_slots.clear();
-        for (uint32_t slot_id : fp_work_.pending) {
-          if (slot_id >= comb_trigger_map_.size()) continue;
-          auto [start, count] = comb_trigger_map_[slot_id];
+        for (GlobalSignalId gid : fp_work_.pending_globals) {
+          if (gid.value >= global_comb_trigger_map_.size()) continue;
+          auto [start, count] = global_comb_trigger_map_[gid.value];
           if (count == 0) continue;
           bool needs_snapshot = false;
           for (uint32_t ci = start; ci < start + count; ++ci) {
@@ -397,29 +751,31 @@ void Engine::FlushAndPropagateConnections() {
             }
           }
           if (!needs_snapshot) continue;
-          const auto& meta = slot_meta_registry_.Get(slot_id);
+          const auto& meta = slot_meta_registry_.Get(gid.value);
           auto buf_off = static_cast<uint32_t>(fp_work_.snapshot_buf.size());
           fp_work_.snapshot_buf.resize(buf_off + meta.total_bytes);
           const auto* slot_base =
               ResolveSlotBase(meta, design_state_base_, const_instances_);
           std::memcpy(
               &fp_work_.snapshot_buf[buf_off], slot_base, meta.total_bytes);
-          fp_work_.snapshot_index[slot_id] =
+          fp_work_.global_snapshot_index[gid.value] =
               static_cast<uint32_t>(fp_work_.snapshots.size());
-          fp_work_.snapshots.push_back({buf_off, slot_id, meta.total_bytes});
-          fp_work_.snapshotted_slots.push_back(slot_id);
+          fp_work_.snapshots.push_back({buf_off, gid.value, meta.total_bytes});
+          fp_work_.snapshotted_slots.push_back(gid);
         }
       }
 
-      // Install capture for global comb writes. Local comb writes go to
-      // local_updates and are collected after comb eval by scanning deltas.
-      // Invariant: comb_write_capture_ must be nullptr on every exit from
-      // this function.
-      fp_work_.comb_writes.clear();
-      comb_write_capture_ = &fp_work_.comb_writes;
+      // Install capture for global comb writes.
+      fp_work_.comb_writes_global.clear();
+      fp_work_.comb_writes_local.clear();
+      comb_write_capture_ = nullptr;  // We'll use domain-split capture.
 
-      // Record per-instance local delta sizes before comb eval so we can
-      // identify newly-dirty local signals written by comb kernels.
+      // Use a temporary flat capture vector for global comb writes
+      // since MarkSlotDirty pushes to comb_write_capture_.
+      std::vector<uint32_t> flat_comb_writes;
+      comb_write_capture_ = &flat_comb_writes;
+
+      // Record per-instance local delta sizes before comb eval.
       fp_work_.local_delta_pre.clear();
       for (auto* inst : instances_) {
         auto& obs = inst->observability;
@@ -430,29 +786,22 @@ void Engine::FlushAndPropagateConnections() {
                 : 0);
       }
 
-      for (uint32_t slot_id : fp_work_.pending) {
-        if (slot_id >= comb_trigger_map_.size()) continue;
+      // Evaluate comb kernels from global pending.
+      for (GlobalSignalId gid : fp_work_.pending_globals) {
+        if (gid.value >= global_comb_trigger_map_.size()) continue;
         if (detailed) ++stats_.detailed.prop_comb_trigger_lookups;
-        auto [cstart, ccount] = comb_trigger_map_[slot_id];
+        auto [cstart, ccount] = global_comb_trigger_map_[gid.value];
         if (ccount == 0) continue;
         if (detailed) ++stats_.detailed.prop_comb_trigger_hits;
 
-        // Dirty range check: for global slots use update_set_ ranges;
-        // for instance-owned slots (beyond global_slot_count_) treat as
-        // full-extent (conservative but correct -- range filtering is an
-        // optimization, not a correctness requirement).
-        bool is_global = slot_id < global_slot_count_;
-        const common::RangeSet* dirty_ranges_ptr = nullptr;
-        if (is_global) {
-          dirty_ranges_ptr = &update_set_.DeltaRangesFor(slot_id);
-        }
+        const auto& dirty_ranges = update_set_.DeltaRangesFor(gid.value);
 
         for (uint32_t ci = cstart; ci < cstart + ccount; ++ci) {
           if (detailed) ++stats_.detailed.comb_considered;
           const auto& entry = comb_trigger_backing_[ci];
 
-          if (entry.byte_size > 0 && dirty_ranges_ptr != nullptr &&
-              !dirty_ranges_ptr->Overlaps(entry.byte_offset, entry.byte_size)) {
+          if (entry.byte_size > 0 &&
+              !dirty_ranges.Overlaps(entry.byte_offset, entry.byte_size)) {
             if (detailed) ++stats_.detailed.comb_skipped_range;
             continue;
           }
@@ -463,30 +812,65 @@ void Engine::FlushAndPropagateConnections() {
         }
       }
 
+      // Evaluate comb kernels from local pending.
+      for (size_t inst_idx = 0; inst_idx < fp_work_.locals.size(); ++inst_idx) {
+        auto& lps = fp_work_.locals[inst_idx];
+        if (lps.pending.empty()) continue;
+        auto& obs = lps.instance->observability;
+        for (LocalSignalId lid : lps.pending) {
+          if (lid.value >= obs.local_comb_trigger_map.size()) continue;
+          if (detailed) ++stats_.detailed.prop_comb_trigger_lookups;
+          auto [cstart, ccount] = obs.local_comb_trigger_map[lid.value];
+          if (ccount == 0) continue;
+          if (detailed) ++stats_.detailed.prop_comb_trigger_hits;
+
+          // Local slots: no range filtering (conservative).
+          for (uint32_t ci = cstart; ci < cstart + ccount; ++ci) {
+            if (detailed) ++stats_.detailed.comb_considered;
+            if (detailed) ++stats_.detailed.comb_executed;
+            const auto& ck =
+                comb_kernels_[comb_trigger_backing_[ci].kernel_idx];
+            ck.body(ck.frame, 0);
+          }
+        }
+      }
+
       comb_write_capture_ = nullptr;
 
-      // Collect local comb writes: scan instances for newly-dirty local
-      // signals that appeared after comb eval. Convert to flat for pending.
+      // Classify flat comb writes into global domain.
+      for (uint32_t s : flat_comb_writes) {
+        if (s < global_slot_count_) {
+          fp_work_.comb_writes_global.push_back(GlobalSignalId{s});
+        }
+        // Instance-owned flat writes are also captured below via local delta.
+      }
+
+      // Collect local comb writes by scanning instance delta changes.
       for (size_t i = 0; i < instances_.size(); ++i) {
         auto& obs = instances_[i]->observability;
         if (obs.local_signal_count == 0) continue;
         auto delta = obs.local_updates.DeltaDirtySignals();
         auto pre_size = fp_work_.local_delta_pre[i];
         if (delta.size() <= pre_size) continue;
-        uint32_t base = obs.flat_coord_base;
         for (size_t j = pre_size; j < delta.size(); ++j) {
-          fp_work_.comb_writes.push_back(base + delta[j].value);
+          fp_work_.comb_writes_local.push_back(
+              FixpointWorkspace::LocalCombWrite{
+                  .instance_idx = static_cast<uint32_t>(i),
+                  .signal = delta[j],
+              });
         }
       }
 
-      // Enqueue comb writes (global + local), suppressing net-zero
-      // self-triggers.
-      for (uint32_t s : fp_work_.comb_writes) {
-        if (s >= slot_count || fp_work_.pending_seen[s] != 0) continue;
+      // Enqueue global comb writes, suppressing net-zero self-triggers.
+      for (GlobalSignalId gid : fp_work_.comb_writes_global) {
+        if (gid.value >= global_slot_count_ ||
+            fp_work_.global_pending_seen[gid.value] != 0)
+          continue;
 
         if (has_any_self_edge_comb_ &&
-            fp_work_.snapshot_index[s] != UINT32_MAX) {
-          const auto& snap = fp_work_.snapshots[fp_work_.snapshot_index[s]];
+            fp_work_.global_snapshot_index[gid.value] != UINT32_MAX) {
+          const auto& snap =
+              fp_work_.snapshots[fp_work_.global_snapshot_index[gid.value]];
           const auto& snap_meta = slot_meta_registry_.Get(snap.slot_id);
           const auto* snap_base =
               ResolveSlotBase(snap_meta, design_state_base_, const_instances_);
@@ -497,29 +881,35 @@ void Engine::FlushAndPropagateConnections() {
           }
         }
 
-        enqueue_pending(s);
+        enqueue_global(gid);
+      }
+
+      // Enqueue local comb writes.
+      for (const auto& lw : fp_work_.comb_writes_local) {
+        enqueue_local(lw.instance_idx, lw.signal);
       }
 
       if (has_any_self_edge_comb_) {
-        for (uint32_t slot_id : fp_work_.snapshotted_slots) {
-          fp_work_.snapshot_index[slot_id] = UINT32_MAX;
+        for (GlobalSignalId gid : fp_work_.snapshotted_slots) {
+          fp_work_.global_snapshot_index[gid.value] = UINT32_MAX;
         }
       }
     }
 
-    // Swap preserves both vectors' capacity. Clear after swap (not before)
-    // so next_pending is empty before any enqueue in the next iteration.
-    std::swap(fp_work_.pending, fp_work_.next_pending);
-    fp_work_.next_pending.clear();
+    // Swap pending/next.
+    std::swap(fp_work_.pending_globals, fp_work_.next_globals);
+    fp_work_.next_globals.clear();
+    for (auto& lps : fp_work_.locals) {
+      std::swap(lps.pending, lps.next);
+      lps.next.clear();
+    }
   }
 
-  if (!fp_work_.pending.empty()) {
+  if (!fp_work_.pending_globals.empty() || any_local_pending()) {
     throw common::InternalError(
         "Engine::FlushAndPropagateConnections",
         std::format(
-            "convergence not reached after {} iterations "
-            "({} slots still pending)",
-            kMaxIterations, fp_work_.pending.size()));
+            "convergence not reached after {} iterations", kMaxIterations));
   }
 
   ++stats_.core.propagation_calls;
@@ -528,9 +918,6 @@ void Engine::FlushAndPropagateConnections() {
       stats_.core.propagation_max_iterations,
       static_cast<uint64_t>(iterations_used));
 
-  // Flush subscriptions with all accumulated dirty marks (process writes +
-  // connection propagation + comb kernels), then clear the delta.
-  // FlushSignalUpdates internally dispatches both global and local subs.
   FlushSignalUpdates();
   update_set_.ClearDelta();
   ClearLocalUpdatesDelta();

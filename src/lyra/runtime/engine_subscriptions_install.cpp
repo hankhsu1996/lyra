@@ -51,17 +51,17 @@ auto Engine::ResolveSubSlot(const SubRef& ref) -> SlotSubscriptions& {
 auto Engine::ResolveSubSlot(const SubRef& ref) const
     -> const SlotSubscriptions& {
   if (ref.is_local) {
-    return instances_[ref.instance_id]
-        ->observability.local_signal_subs[ref.signal_id];
+    return GetInstance(ref.instance_id)
+        .observability.local_signal_subs[ref.signal_id];
   }
   return signal_subs_[ref.signal_id];
 }
 
 auto Engine::ResolveSubSlot(
-    uint32_t slot_id, bool is_local, uint32_t instance_id)
+    uint32_t slot_id, bool is_local, InstanceId instance_id)
     -> SlotSubscriptions& {
   if (is_local) {
-    return instances_[instance_id]->observability.local_signal_subs[slot_id];
+    return GetInstanceMut(instance_id).observability.local_signal_subs[slot_id];
   }
   return signal_subs_[slot_id];
 }
@@ -372,12 +372,12 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
     // R5: Domain-aware dirty check and slot resolution.
     std::span<const uint8_t> storage;
     if (ref.is_local) {
-      auto& obs = instances_[ref.instance_id]->observability;
+      auto& ref_inst = GetInstanceMut(ref.instance_id);
+      auto& obs = ref_inst.observability;
       if (!obs.local_updates.IsDeltaDirty(ref.LocalSignal())) continue;
       const auto& imeta = obs.layout->slot_meta[ref.signal_id];
       storage = std::span(
-          ResolveInstanceSlotBase(
-              *instances_[ref.instance_id], ref.LocalSignal()),
+          ResolveInstanceSlotBase(ref_inst, ref.LocalSignal()),
           imeta.total_bytes);
     } else {
       if (!update_set_.IsDeltaDirty(ref.signal_id)) continue;
@@ -468,7 +468,7 @@ void Engine::InstallTriggers(
     bool initially_active = (trigger.flags & kTriggerInitiallyActive) != 0;
     bool is_local = (trigger.flags & kTriggerLocalSignal) != 0;
     // R5: Build typed signal reference for the subscription API boundary.
-    uint32_t inst_id =
+    InstanceId inst_id =
         (is_local && handle.process_id < process_instance_map_.size())
             ? process_instance_map_[handle.process_id]
             : handle.instance_id;
@@ -620,9 +620,10 @@ void Engine::InstallTriggers(
     auto hdr_plan = plan_ops.subspan(hdr.plan_ops_start, hdr.plan_ops_count);
 
     // Resolve instance_id for the process (used for local deps).
-    uint32_t rebind_inst_id = (handle.process_id < process_instance_map_.size())
-                                  ? process_instance_map_[handle.process_id]
-                                  : handle.instance_id;
+    InstanceId rebind_inst_id =
+        (handle.process_id < process_instance_map_.size())
+            ? process_instance_map_[handle.process_id]
+            : handle.instance_id;
 
     // Decode each dep record into a typed SignalRef.
     auto hdr_dep_records =
@@ -949,7 +950,7 @@ auto Engine::SubscribeLocalChange(
   auto& proc_state = process_states_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
-  auto& inst = *instances_[signal.instance_id];
+  auto& inst = GetInstanceMut(signal.instance_id);
   const auto& inst_meta =
       inst.observability.layout->slot_meta[signal.signal.value];
   if (byte_size == 0 || byte_offset + byte_size > inst_meta.total_bytes) {
@@ -1097,7 +1098,7 @@ auto Engine::SubscribeLocalEdge(
   auto& proc_state = process_states_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
-  auto& inst = *instances_[signal.instance_id];
+  auto& inst = GetInstanceMut(signal.instance_id);
   const auto& inst_meta =
       inst.observability.layout->slot_meta[signal.signal.value];
   if (byte_offset + byte_size > inst_meta.total_bytes) {
@@ -1168,8 +1169,8 @@ auto Engine::Subscribe(
               handle, resume, sig, edge, 0, obs_size, 0, initially_active);
         } else {
           const auto& inst_meta =
-              instances_[sig.instance_id]
-                  ->observability.layout->slot_meta[sig.signal.value];
+              GetInstance(sig.instance_id)
+                  .observability.layout->slot_meta[sig.signal.value];
           uint32_t obs_size = (edge == common::EdgeKind::kAnyChange)
                                   ? inst_meta.total_bytes
                                   : 1;
@@ -1355,7 +1356,7 @@ auto Engine::SubscribeLocalContainerElement(
   auto& proc_state = process_states_[handle.process_id];
   if (!CheckSubscriptionLimits(proc_state)) return UINT32_MAX;
 
-  auto& inst = *instances_[signal.instance_id];
+  auto& inst = GetInstanceMut(signal.instance_id);
   auto& slot = inst.observability.local_signal_subs[signal.signal.value];
   const auto* slot_base = ResolveInstanceSlotBase(inst, signal.signal);
 
@@ -1417,15 +1418,14 @@ void Engine::ValidateRebindDepSignals(
                       signal_subs_.size()));
             }
           } else {
-            if (sig.instance_id >= instances_.size() ||
-                instances_[sig.instance_id] == nullptr) {
+            const auto* dep_inst = FindInstance(sig.instance_id);
+            if (dep_inst == nullptr) {
               throw common::InternalError(
                   "Engine::ValidateRebindDepSignals",
                   std::format(
-                      "local dep instance_id {} invalid (instances size {})",
-                      sig.instance_id, instances_.size()));
+                      "local dep instance_id {} not found", sig.instance_id));
             }
-            const auto& obs = instances_[sig.instance_id]->observability;
+            const auto& obs = dep_inst->observability;
             if (obs.layout == nullptr ||
                 sig.signal.value >= obs.layout->slot_meta.size()) {
               throw common::InternalError(
@@ -1489,18 +1489,18 @@ void Engine::InstallRebindDepWatchers(
           uint32_t dep_total_bytes = 0;
           uint32_t dep_signal_id = 0;
           bool dep_is_local = false;
-          uint32_t dep_instance_id = 0;
+          InstanceId dep_instance_id = InstanceId{0};
 
           if constexpr (std::is_same_v<T, LocalSignalRef>) {
             dep_is_local = true;
             dep_signal_id = sig.signal.value;
             dep_instance_id = sig.instance_id;
-            auto& obs = instances_[sig.instance_id]->observability;
+            auto& dep_inst_ref = GetInstanceMut(sig.instance_id);
+            auto& obs = dep_inst_ref.observability;
             const auto& imeta = obs.layout->slot_meta[sig.signal.value];
             dep_subs = &obs.local_signal_subs[sig.signal.value];
             dep_total_bytes = imeta.total_bytes;
-            dep_base = ResolveInstanceSlotBase(
-                *instances_[sig.instance_id], sig.signal);
+            dep_base = ResolveInstanceSlotBase(dep_inst_ref, sig.signal);
           } else {
             dep_signal_id = sig.value;
             const auto& meta = slot_meta_registry_.Get(sig.value);
@@ -1697,7 +1697,7 @@ void Engine::SubscribeLocalRebind(
             static_cast<int>(target_kind)));
   }
 
-  auto& inst = *instances_[target_signal.instance_id];
+  auto& inst = GetInstanceMut(target_signal.instance_id);
   auto& target_subs =
       inst.observability.local_signal_subs[target_signal.signal.value];
   if (target_kind == SubKind::kEdge) {

@@ -156,14 +156,22 @@ class InstanceIdTraceResolver final : public trace::InstanceTraceResolver {
  public:
   void Build(std::span<RuntimeInstance* const> instances);
 
-  [[nodiscard]] auto FindInstance(uint32_t instance_id) const
+  [[nodiscard]] auto FindInstance(InstanceId instance_id) const
       -> const RuntimeInstance* override {
-    if (instance_id >= lookup_.size()) return nullptr;
-    return lookup_[instance_id];
+    if (instance_id.value >= lookup_.size()) return nullptr;
+    return lookup_[instance_id.value];
+  }
+
+  // Mutable lookup for engine-internal use.
+  [[nodiscard]] auto FindInstanceMut(InstanceId instance_id) const
+      -> RuntimeInstance* {
+    if (instance_id.value >= lookup_mut_.size()) return nullptr;
+    return lookup_mut_[instance_id.value];
   }
 
  private:
   std::vector<const RuntimeInstance*> lookup_;
+  std::vector<RuntimeInstance*> lookup_mut_;
 };
 
 // Usage:
@@ -405,6 +413,36 @@ class Engine {
     return instance_trace_resolver_;
   }
 
+  // R5: Typed instance lookup by stable InstanceId.
+  // These are the ONLY approved way to go from InstanceId to RuntimeInstance
+  // in semantic/runtime code. Never index instances_ by InstanceId.value.
+  [[nodiscard]] auto FindInstance(InstanceId id) const
+      -> const RuntimeInstance* {
+    return instance_trace_resolver_.FindInstance(id);
+  }
+  [[nodiscard]] auto FindInstanceMut(InstanceId id) -> RuntimeInstance* {
+    return instance_trace_resolver_.FindInstanceMut(id);
+  }
+  [[nodiscard]] auto GetInstance(InstanceId id) const
+      -> const RuntimeInstance& {
+    const auto* inst = instance_trace_resolver_.FindInstance(id);
+    if (inst == nullptr) {
+      throw common::InternalError(
+          "Engine::GetInstance",
+          std::format("no instance for instance_id {}", id));
+    }
+    return *inst;
+  }
+  [[nodiscard]] auto GetInstanceMut(InstanceId id) -> RuntimeInstance& {
+    auto* inst = instance_trace_resolver_.FindInstanceMut(id);
+    if (inst == nullptr) {
+      throw common::InternalError(
+          "Engine::GetInstanceMut",
+          std::format("no instance for instance_id {}", id));
+    }
+    return *inst;
+  }
+
   // Validate that all kInstanceOwned slot-meta entries reference valid
   // instances. Must be called after both slot meta and instance list are
   // installed. Throws InternalError on any mismatch.
@@ -442,6 +480,12 @@ class Engine {
   void InitModuleInstancesFromBundles(
       std::span<const InstanceMetadataBundle> bundles,
       std::span<const uint32_t> design_global_slot_meta_words, void** states);
+
+  // Resolve connection destination byte address via typed target.
+  // Global targets resolve via design_state_base_.
+  // Local targets resolve via instance resolver + local slot meta.
+  [[nodiscard]] auto ResolveConnectionDstMut(const ConnectionTarget& dst)
+      -> uint8_t*;
 
   // Resolve the storage byte address for a slot.
   // For kDesignGlobal slots: returns design_state_base_ + design_base_off.
@@ -560,16 +604,16 @@ class Engine {
 
   // Get hierarchical path for an instance (%m support).
   // Throws InternalError for invalid instance_id (compiler/runtime bug).
-  [[nodiscard]] auto GetInstancePath(uint32_t instance_id) const
+  [[nodiscard]] auto GetInstancePath(InstanceId instance_id) const
       -> std::string_view {
-    if (instance_id >= instance_paths_.size()) {
+    if (instance_id.value >= instance_paths_.size()) {
       throw common::InternalError(
           "Engine::GetInstancePath",
           std::format(
               "invalid instance_id {} (have {} instances)", instance_id,
               instance_paths_.size()));
     }
-    return instance_paths_[instance_id];
+    return instance_paths_[instance_id.value];
   }
 
   // Build the DPI scope registry from instances_ and instance_paths_.
@@ -946,7 +990,7 @@ class Engine {
   // R5: Resolve SlotSubscriptions for a sub reference (local or global).
   auto ResolveSubSlot(const SubRef& ref) -> SlotSubscriptions&;
   auto ResolveSubSlot(const SubRef& ref) const -> const SlotSubscriptions&;
-  auto ResolveSubSlot(uint32_t slot_id, bool is_local, uint32_t instance_id)
+  auto ResolveSubSlot(uint32_t slot_id, bool is_local, InstanceId instance_id)
       -> SlotSubscriptions&;
 
   // Per-kind flush helpers. Callers resolve slot storage before calling.
@@ -1152,14 +1196,16 @@ class Engine {
   // Instead of scheduling connection processes through the full engine,
   // connections are evaluated inline during signal propagation.
   struct BatchedConnection {
-    uint32_t src_slot_id;
-    uint32_t dst_slot_id;
+    uint32_t src_slot_id;  // flat, for ResolveSlotBytes (read-only)
     uint32_t byte_size;
+    ConnectionTarget dst;
   };
   // All batched connections (for initial evaluation).
   std::vector<BatchedConnection> all_connections_;
-  // Dense trigger range table (indexed by slot_id, sized from slot registry).
-  std::vector<TriggerRange> conn_trigger_map_;
+  // R5: Global connection trigger map (indexed by GlobalSignalId.value,
+  // sized to global_slot_count_). Per-instance local trigger maps live
+  // on RuntimeInstanceObservability.
+  std::vector<TriggerRange> global_conn_trigger_map_;
 
   // Comb kernel batch: pure combinational processes evaluated inline.
   // Each kernel has a compiled function pointer and state pointer.
@@ -1180,11 +1226,12 @@ class Engine {
     bool has_self_edge;
   };
   std::vector<CombTriggerEntry> comb_trigger_backing_;
-  // Dense per-slot range table into comb_trigger_backing_ (sized from slot
-  // registry).
-  std::vector<TriggerRange> comb_trigger_map_;
-  // List of trigger slots for seeding dirty marks.
-  std::vector<uint32_t> comb_trigger_slots_;
+  // R5: Global comb trigger map (indexed by GlobalSignalId.value,
+  // sized to global_slot_count_). Per-instance local trigger maps live
+  // on RuntimeInstanceObservability.
+  std::vector<TriggerRange> global_comb_trigger_map_;
+  // List of global trigger slots for seeding dirty marks.
+  std::vector<GlobalSignalId> global_comb_trigger_slots_;
   // Dense flag table by process index (sized from num_processes_ in
   // InitCombKernels, true = comb kernel, skip in ScheduleInitial).
   std::vector<uint8_t> comb_kernel_flags_;
@@ -1234,7 +1281,7 @@ class Engine {
 
   // R5: Process-to-instance mapping. Indexed by process_id, gives the
   // owning instance_id for module processes. 0 for connection/init processes.
-  std::vector<uint32_t> process_instance_map_;
+  std::vector<InstanceId> process_instance_map_;
 
   // R5: Per-body observable layouts (one per distinct shared body /
   // specialization). Keyed by body_key from InstanceMetadataBundle.
@@ -1293,15 +1340,40 @@ class Engine {
   // - Snapshot vectors (snapshot_buf, snapshots, snapshotted_slots) are only
   //   used when has_any_self_edge_comb_ is true. Same clear()-preserves-
   //   capacity pattern.
+  // R5: Domain-split fixpoint workspace for FlushAndPropagateConnections.
+  // Global pending uses GlobalSignalId with dense bitvec dedup.
+  // Local pending is per-instance with LocalSignalId and per-instance dedup.
+  struct LocalPendingSet {
+    RuntimeInstance* instance = nullptr;
+    std::vector<LocalSignalId> pending;
+    std::vector<LocalSignalId> next;
+    std::vector<uint8_t> seen;  // sized to local_signal_count
+  };
+
   struct FixpointWorkspace {
-    std::vector<uint32_t> pending;
-    std::vector<uint32_t> next_pending;
-    std::vector<uint32_t> comb_writes;
-    std::vector<uint8_t> pending_seen;
-    std::vector<uint32_t> snapshot_index;
+    // Global domain
+    std::vector<GlobalSignalId> pending_globals;
+    std::vector<GlobalSignalId> next_globals;
+    std::vector<uint8_t> global_pending_seen;  // sized to global_slot_count_
+
+    // Local domain -- one per instance with local signals
+    std::vector<LocalPendingSet> locals;
+
+    // Comb write capture (split by domain)
+    std::vector<GlobalSignalId> comb_writes_global;
+    struct LocalCombWrite {
+      uint32_t instance_idx;  // index into locals[]
+      LocalSignalId signal;
+    };
+    std::vector<LocalCombWrite> comb_writes_local;
+
+    // Self-edge snapshot (global signals only; local comb self-edges
+    // use a separate per-instance structure).
+    std::vector<uint32_t> global_snapshot_index;
     std::vector<uint8_t> snapshot_buf;
     std::vector<CombSnapshot> snapshots;
-    std::vector<uint32_t> snapshotted_slots;
+    std::vector<GlobalSignalId> snapshotted_slots;
+
     // Per-instance local delta size before comb eval, used to detect
     // newly-dirty local signals written by comb kernels.
     std::vector<uint32_t> local_delta_pre;

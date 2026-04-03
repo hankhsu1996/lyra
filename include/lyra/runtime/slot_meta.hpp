@@ -4,6 +4,8 @@
 #include <span>
 #include <vector>
 
+#include "lyra/runtime/signal_coord.hpp"
+
 namespace lyra::runtime {
 
 // Storage layout classification for a design slot.
@@ -52,7 +54,7 @@ struct SlotMeta {
   // For kDesignGlobal: arena-absolute byte offset within design_state.
   uint32_t design_base_off = 0;
   // For kInstanceOwned: instance_id of the owning RuntimeInstance.
-  uint32_t owner_instance_id = 0;
+  InstanceId owner_instance_id = InstanceId{0};
   // For kInstanceOwned: body-relative byte offset within the instance's
   // inline storage.
   uint32_t instance_rel_off = 0;

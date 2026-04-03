@@ -387,7 +387,8 @@ void SetupAndRunSimulation(
 
   for (uint32_t i = 0; i < num_processes; ++i) {
     engine.ScheduleInitial(
-        lyra::runtime::ProcessHandle{.process_id = i, .instance_id = 0});
+        lyra::runtime::ProcessHandle{
+            .process_id = i, .instance_id = lyra::runtime::InstanceId{0}});
   }
 
   // Propagate initial values through connections and comb kernels before Run().
@@ -537,14 +538,11 @@ extern "C" void LyraRunSimulation(
       engine.InitConnectionBatch(conn_descs);
     }
 
-    // Connection-only comb and trigger metadata (flat path).
-    // When bundles are present, module-instance comb and triggers are
-    // already built by InitModuleInstancesFromBundles. Connection
-    // processes have no comb kernels. Connection triggers merge into
-    // the module trigger registry via InitProcessTriggerRegistry.
+    // Comb kernel metadata (flat path). Only used when no bundles exist.
+    // When bundles are present, module-instance comb kernels are built
+    // from bundle body templates in InitModuleInstancesFromBundles.
     if (abi->comb_kernel_words != nullptr && abi->num_comb_kernel_words > 0 &&
         abi->instance_bundles == nullptr) {
-      // No bundles: use flat comb path (legacy).
       engine.InitCombKernels(
           std::span(abi->comb_kernel_words, abi->num_comb_kernel_words),
           num_connection, states_raw);
@@ -711,7 +709,7 @@ extern "C" void LyraRegisterStrobe(
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
-      .instance_id = instance_id,
+      .instance_id = lyra::runtime::InstanceId{instance_id},
   };
   engine->RegisterStrobe(program, design_state, ctx);
 }
@@ -843,7 +841,7 @@ extern "C" void LyraMonitorRegister(
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   lyra::runtime::ObserverContext ctx{
       .this_ptr = this_ptr,
-      .instance_id = instance_id,
+      .instance_id = lyra::runtime::InstanceId{instance_id},
   };
   engine->RegisterMonitor(program, design_state, ctx, initial_prev, size);
 }

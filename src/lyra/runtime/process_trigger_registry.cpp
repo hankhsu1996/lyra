@@ -81,7 +81,7 @@ auto ParseProcessTriggerDescriptors(
         .edge = static_cast<common::EdgeKind>(edge_raw),
         .is_groupable = (flags & process_trigger_abi::kFlagGroupable) != 0,
         .is_local = is_body_local,
-        .instance_id = 0,
+        .instance_id = InstanceId{0},
     });
   }
 
@@ -109,7 +109,7 @@ auto BuildProcessTriggerRegistry(
         .key =
             ProcessTriggerKey{
                 .is_local = desc.is_local,
-                .instance_id = desc.is_local ? desc.instance_id : 0,
+                .instance_id = desc.is_local ? desc.instance_id : InstanceId{0},
                 .slot_id = desc.slot_id,
                 .edge = desc.edge,
             },

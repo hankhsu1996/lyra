@@ -548,7 +548,7 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
         summary.slot_id = ref.signal_id;
         if (ref.is_local) {
           auto local = ref.AsLocalRef();
-          auto& inst = *instances_[local.instance_id];
+          const auto& inst = GetInstance(local.instance_id);
           summary.signal_name = ComposeHierarchicalTraceName(
               inst, local.signal, *inst.observability.layout);
         } else {
@@ -571,12 +571,11 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
             // Resolve storage via domain-aware path.
             std::span<const uint8_t> storage;
             if (ref.is_local) {
+              const auto& ref_inst = GetInstance(ref.instance_id);
               const auto& imeta =
-                  instances_[ref.instance_id]
-                      ->observability.layout->slot_meta[ref.signal_id];
+                  ref_inst.observability.layout->slot_meta[ref.signal_id];
               storage = std::span(
-                  ResolveInstanceSlotBase(
-                      *instances_[ref.instance_id], ref.LocalSignal()),
+                  ResolveInstanceSlotBase(ref_inst, ref.LocalSignal()),
                   imeta.total_bytes);
             } else if (
                 !design_state.empty() &&

@@ -626,7 +626,7 @@ void Constructor::AddInstance(
   }
   connections_finalized_ = true;
 
-  uint32_t instance_id = next_instance_id_;
+  auto instance_id = InstanceId{next_instance_id_};
 
   uint32_t instance_ord = next_module_instance_ordinal_;
   auto instance = std::make_unique<RuntimeInstance>();
@@ -979,7 +979,7 @@ auto Constructor::Finalize() -> ConstructionResult {
           "Constructor::Finalize",
           std::format("R4 bundle {} has unresolved body template", i));
     }
-    if (bundle.instance_id != i) {
+    if (bundle.instance_id != InstanceId{static_cast<uint32_t>(i)}) {
       throw common::InternalError(
           "Constructor::Finalize",
           std::format(

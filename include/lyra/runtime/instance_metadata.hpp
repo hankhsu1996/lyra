@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "lyra/runtime/signal_coord.hpp"
+
 namespace lyra::runtime {
 
 struct BodyDescriptorPackage;
@@ -27,7 +29,7 @@ struct InstanceMetadataBundle {
   // storage after ownership transfer. Set during AddInstance, resolved
   // in Finalize.
   const void* body_key = nullptr;
-  uint32_t instance_id = 0;
+  InstanceId instance_id = InstanceId{0};
   uint32_t module_proc_base = 0;
   uint32_t num_module_processes = 0;
   const char* instance_path = nullptr;

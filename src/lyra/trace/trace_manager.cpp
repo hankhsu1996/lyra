@@ -44,7 +44,8 @@ void TraceManager::EmitGlobalValueChange(
 }
 
 void TraceManager::EmitLocalValueChange(
-    uint32_t instance_id, runtime::LocalSignalId signal_id, TraceValue value) {
+    runtime::InstanceId instance_id, runtime::LocalSignalId signal_id,
+    TraceValue value) {
   if (!enabled_) return;
   LocalValueChange event{
       .instance_id = instance_id,
@@ -60,7 +61,7 @@ void TraceManager::EmitGlobalMemoryDirty(runtime::GlobalSignalId signal_id) {
 }
 
 void TraceManager::EmitLocalMemoryDirty(
-    uint32_t instance_id, runtime::LocalSignalId signal_id) {
+    runtime::InstanceId instance_id, runtime::LocalSignalId signal_id) {
   if (!enabled_) return;
   LocalMemoryDirty event{.instance_id = instance_id, .signal_id = signal_id};
   Dispatch(event);

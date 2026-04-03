@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/runtime/engine_subscriptions.hpp"
+#include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/local_update_set.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
@@ -73,6 +74,16 @@ struct RuntimeInstanceObservability {
   std::vector<uint8_t> trace_select;
   std::vector<SlotSubscriptions> local_signal_subs;
   std::vector<uint32_t> activation_gen;
+
+  // R5: Per-instance comb trigger map, indexed by LocalSignalId.value.
+  // Maps local signals to ranges in the engine's shared comb_trigger_backing_.
+  std::vector<TriggerRange> local_comb_trigger_map;
+  // List of local signal IDs that have comb triggers (for seeding dirty marks).
+  std::vector<LocalSignalId> local_comb_trigger_slots;
+
+  // R5: Per-instance connection trigger map, indexed by LocalSignalId.value.
+  // Maps local signals to ranges in the engine's shared all_connections_.
+  std::vector<TriggerRange> local_conn_trigger_map;
 
   // Transitional flat coordinate base for comb fixpoint interop.
   // Maps local_signal_id -> flat_slot_id as (flat_coord_base + local_id).

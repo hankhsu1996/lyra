@@ -74,10 +74,11 @@ class TraceManager {
   void EmitGlobalValueChange(
       runtime::GlobalSignalId signal_id, TraceValue value);
   void EmitLocalValueChange(
-      uint32_t instance_id, runtime::LocalSignalId signal_id, TraceValue value);
+      runtime::InstanceId instance_id, runtime::LocalSignalId signal_id,
+      TraceValue value);
   void EmitGlobalMemoryDirty(runtime::GlobalSignalId signal_id);
   void EmitLocalMemoryDirty(
-      uint32_t instance_id, runtime::LocalSignalId signal_id);
+      runtime::InstanceId instance_id, runtime::LocalSignalId signal_id);
 
   // Snapshot helpers.
   // SnapshotPacked: copies byte_size raw bytes from ptr.

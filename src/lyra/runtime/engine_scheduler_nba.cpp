@@ -215,7 +215,8 @@ void Engine::ExecuteNbaRegion() {
             if constexpr (std::is_same_v<T, NbaNotifyGlobal>) {
               MarkDirtyRange(notify.signal.value, byte_off, byte_size);
             } else {
-              auto* inst = instances_[notify.instance_id];
+              auto* inst =
+                  instance_trace_resolver_.FindInstanceMut(notify.instance_id);
               inst->observability.local_updates.MarkDirtyRange(
                   notify.signal, byte_off, byte_size);
             }

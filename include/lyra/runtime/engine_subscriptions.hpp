@@ -67,7 +67,7 @@ struct SubRef {
   bool is_local = false;
   uint8_t padding = 0;
   uint32_t edge_group = 0;  // group index (kEdge only)
-  uint32_t instance_id = 0;
+  InstanceId instance_id = InstanceId{0};
 
   // R5: Typed accessors. Use these instead of raw signal_id.
   [[nodiscard]] auto LocalSignal() const -> LocalSignalId {
@@ -93,7 +93,7 @@ struct EdgeTargetHandle {
   uint8_t padding = 0;
   uint32_t edge_group = 0;
   uint32_t index = 0;
-  uint32_t instance_id = 0;  // R5: for local subs
+  InstanceId instance_id = InstanceId{0};  // R5: for local subs
 };
 
 // Cold state for EdgeSub rebind targets. Lives in edge_cold_pool_, indexed
@@ -149,7 +149,7 @@ struct ContainerCold {
 // which bucket the sub lives in.
 struct EdgeSub {
   uint32_t process_id = 0;
-  uint32_t instance_id = 0;
+  InstanceId instance_id = InstanceId{0};
   uint32_t resume_block = 0;
   uint8_t flags = 0;  // kActive=0x01, kHasCold=0x02
   std::array<uint8_t, 3> padding = {};
@@ -176,7 +176,7 @@ struct EdgeWatchGroup {
 // keeps the dominant clock-edge path smaller.
 struct ChangeSub {
   uint32_t process_id = 0;
-  uint32_t instance_id = 0;
+  InstanceId instance_id = InstanceId{0};
   uint32_t resume_block = 0;
   uint32_t byte_offset = 0;
   uint32_t byte_size = 0;
@@ -216,7 +216,7 @@ static_assert(sizeof(RebindWatcherSub) == 24);
 // Multi-bit or multi-byte element observation is not supported.
 struct ContainerSub {
   uint32_t process_id = 0;
-  uint32_t instance_id = 0;
+  InstanceId instance_id = InstanceId{0};
   uint32_t resume_block = 0;
   uint32_t process_sub_idx = 0;
   uint32_t cold_idx = 0;  // always valid (container_cold_pool_)

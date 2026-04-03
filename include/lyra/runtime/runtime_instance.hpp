@@ -5,6 +5,7 @@
 
 #include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/process_frame.hpp"
+#include "lyra/runtime/signal_coord.hpp"
 
 namespace lyra::runtime {
 
@@ -49,7 +50,7 @@ struct RuntimeInstance {
   RuntimeInstance(RuntimeInstance&&) = delete;
   auto operator=(RuntimeInstance&&) -> RuntimeInstance& = delete;
 
-  uint32_t instance_id = 0;
+  InstanceId instance_id = InstanceId{0};
   SharedBodyFn body = nullptr;
 
   RuntimeInstanceStorage storage;

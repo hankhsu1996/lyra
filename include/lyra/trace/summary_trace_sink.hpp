@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 
+#include "lyra/runtime/signal_coord.hpp"
 #include "lyra/trace/trace_sink.hpp"
 
 namespace lyra::trace {
@@ -33,7 +34,7 @@ class SummaryTraceSink : public TraceSink {
 
   // Key for local signal counts: (instance_id, local_signal_id).
   struct LocalKey {
-    uint32_t instance_id;
+    runtime::InstanceId instance_id;
     uint32_t signal_id;
     auto operator<=>(const LocalKey&) const = default;
   };
