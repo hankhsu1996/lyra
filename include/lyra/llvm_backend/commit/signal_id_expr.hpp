@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/IRBuilder.h>
@@ -8,20 +9,23 @@
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
 
+#include "lyra/runtime/signal_coord.hpp"
+
 namespace lyra::lowering::mir_to_llvm {
 
 // Semantic signal coordinate for codegen emission.
 //
-// Carries the domain (kLocal for instance-owned, kGlobal for package/global)
-// and a constant integer id within that domain. This is a pure semantic
-// carrier -- it does not know how to lower to engine-internal coordinates.
-//
-// kLocal: body-local slot ordinal. Identity within a module body.
-// kGlobal: design-global slot id. Identity for package/global state.
+// Three modes:
+//   kLocal: body-local slot ordinal. Same-instance signal.
+//   kLocalCrossInstance: body-local slot ordinal in a DIFFERENT instance.
+//     Carries both the target InstanceId (for metadata) and a runtime
+//     instance pointer (for address materialization).
+//   kGlobal: design-global slot id. Package/global state.
 class SignalCoordExpr {
  public:
   enum class Kind : uint8_t {
     kLocal,
+    kLocalCrossInstance,
     kGlobal,
   };
 
@@ -32,15 +36,16 @@ class SignalCoordExpr {
     return e;
   }
 
-  // R5: Local signal with explicit target instance pointer override.
-  // Used for cross-instance writes (e.g., connection processes writing
-  // to child instance signals). When set, callers must use this pointer
-  // instead of context.GetInstancePointer().
-  static auto LocalWithInstance(uint32_t id, llvm::Value* instance_ptr)
+  // Cross-instance local signal. Carries both stable identity
+  // (InstanceId for metadata) and runtime pointer (for address
+  // materialization).
+  static auto LocalWithInstance(
+      uint32_t id, runtime::InstanceId instance_id, llvm::Value* instance_ptr)
       -> SignalCoordExpr {
     SignalCoordExpr e;
-    e.kind_ = Kind::kLocal;
+    e.kind_ = Kind::kLocalCrossInstance;
     e.value_ = id;
+    e.instance_id_override_ = instance_id;
     e.instance_override_ = instance_ptr;
     return e;
   }
@@ -56,7 +61,7 @@ class SignalCoordExpr {
     return kind_;
   }
   [[nodiscard]] auto IsLocal() const -> bool {
-    return kind_ == Kind::kLocal;
+    return kind_ == Kind::kLocal || kind_ == Kind::kLocalCrossInstance;
   }
   [[nodiscard]] auto IsGlobal() const -> bool {
     return kind_ == Kind::kGlobal;
@@ -67,8 +72,9 @@ class SignalCoordExpr {
   }
 
   // Returns the target instance pointer for local signals.
-  // If an instance override is set (cross-instance write), returns that.
-  // Otherwise returns the default context instance pointer.
+  // Cross-instance: returns the resolved target instance pointer.
+  // Same-instance: returns default_ptr (caller's context instance).
+  // Global: returns default_ptr.
   [[nodiscard]] auto GetInstancePointer(llvm::Value* default_ptr) const
       -> llvm::Value* {
     return instance_override_ != nullptr ? instance_override_ : default_ptr;
@@ -77,7 +83,17 @@ class SignalCoordExpr {
   // True if this local signal targets a different instance than the
   // current process's own instance.
   [[nodiscard]] auto HasInstanceOverride() const -> bool {
-    return instance_override_ != nullptr;
+    return kind_ == Kind::kLocalCrossInstance;
+  }
+
+  // Returns the target InstanceId for cross-instance local signals.
+  // Used by trigger/dependency metadata emission (not address materialization).
+  [[nodiscard]] auto GetInstanceIdOverride() const
+      -> std::optional<runtime::InstanceId> {
+    if (kind_ == Kind::kLocalCrossInstance) {
+      return instance_id_override_;
+    }
+    return std::nullopt;
   }
 
   // Emit the semantic id value as an LLVM i32 constant.
@@ -93,6 +109,7 @@ class SignalCoordExpr {
   Kind kind_ = Kind::kGlobal;
   uint32_t value_ = 0;
   llvm::Value* instance_override_ = nullptr;
+  runtime::InstanceId instance_id_override_ = runtime::InstanceId{0};
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

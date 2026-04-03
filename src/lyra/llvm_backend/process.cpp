@@ -1083,16 +1083,30 @@ void FillTriggerArray(
       builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
     }
 
-    // R5: set kTriggerLocalSignal flag for local signals. This is done
-    // after the per-kind path because each path writes its own flags value.
-    // We OR in the local bit unconditionally via load-OR-store.
+    // R5: set domain flags and cross-instance identity. Done after the
+    // per-kind path because each path writes its own flags value.
     if (is_local_signal) {
+      uint8_t local_flags = runtime::kTriggerLocalSignal;
+      auto cross_id = signal_expr.GetInstanceIdOverride();
+      if (cross_id.has_value()) {
+        local_flags |= runtime::kTriggerCrossInstanceLocal;
+      }
       auto* flags_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 4);
       auto* current = builder.CreateLoad(i8_ty, flags_ptr, "trigger.flags");
       auto* with_local = builder.CreateOr(
-          current, llvm::ConstantInt::get(i8_ty, runtime::kTriggerLocalSignal),
+          current, llvm::ConstantInt::get(i8_ty, local_flags),
           "trigger.flags.local");
       builder.CreateStore(with_local, flags_ptr);
+
+      // Cross-instance: write target_instance_id (field 8) and
+      // target_local_signal_id (field 9).
+      if (cross_id.has_value()) {
+        auto* inst_id_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 8);
+        builder.CreateStore(
+            llvm::ConstantInt::get(i32_ty, cross_id->value), inst_id_ptr);
+        auto* local_id_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 9);
+        builder.CreateStore(signal_expr.Emit(builder), local_id_ptr);
+      }
     }
   }
 }
@@ -1162,9 +1176,11 @@ auto EmitLateBoundData(
         builder.CreateAlloca(plan_array_type, nullptr, "lb_plan_ops");
   }
 
-  // DepSignalRecord: {i32 signal_id, i8 flags, [3 x i8] padding}
+  // DepSignalRecord: {i32 signal_id, i8 flags, [3 x i8] padding,
+  //                   i32 target_instance_id, i32 target_local_signal_id}
   auto* dep_record_type = llvm::StructType::get(
-      llvm_ctx, {i32_ty, i8_ty, llvm::ArrayType::get(i8_ty, 3)});
+      llvm_ctx,
+      {i32_ty, i8_ty, llvm::ArrayType::get(i8_ty, 3), i32_ty, i32_ty});
   llvm::Value* dep_slots_alloca = nullptr;
   if (total_dep_slots > 0) {
     auto* dep_array_type =
@@ -1297,14 +1313,33 @@ auto EmitLateBoundData(
         // EmitSignalCoord reclassifies instance-owned design-global
         // signals to local with the correct target instance.
         auto* signal_id = signal_expr.Emit(builder);
-        uint8_t flags = signal_expr.IsLocal() ? 0x01 : 0x00;
+        uint8_t dep_flags =
+            signal_expr.IsLocal() ? runtime::kDepLocalSignal : 0x00;
+        auto cross_id = signal_expr.GetInstanceIdOverride();
+        if (cross_id.has_value()) {
+          dep_flags |= runtime::kDepCrossInstanceLocal;
+        }
 
         auto* rec_ptr = builder.CreateConstGEP2_32(
             dep_array_type, dep_slots_alloca, 0, dep_offset + d);
         auto* id_ptr = builder.CreateStructGEP(dep_record_type, rec_ptr, 0);
         builder.CreateStore(signal_id, id_ptr);
         auto* flags_ptr = builder.CreateStructGEP(dep_record_type, rec_ptr, 1);
-        builder.CreateStore(llvm::ConstantInt::get(i8_ty, flags), flags_ptr);
+        builder.CreateStore(
+            llvm::ConstantInt::get(i8_ty, dep_flags), flags_ptr);
+        // Cross-instance fields (fields 3, 4).
+        auto* dep_inst_ptr =
+            builder.CreateStructGEP(dep_record_type, rec_ptr, 3);
+        auto* dep_local_ptr =
+            builder.CreateStructGEP(dep_record_type, rec_ptr, 4);
+        if (cross_id.has_value()) {
+          builder.CreateStore(
+              llvm::ConstantInt::get(i32_ty, cross_id->value), dep_inst_ptr);
+          builder.CreateStore(signal_id, dep_local_ptr);
+        } else {
+          builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), dep_inst_ptr);
+          builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), dep_local_ptr);
+        }
       }
     }
 
@@ -1324,7 +1359,7 @@ auto EmitLateBoundData(
 auto LowerWait(
     Context& context, const mir::Wait& wait, llvm::BasicBlock* exit_block,
     std::vector<WaitSiteEntry>& wait_sites) -> Result<void> {
-  static_assert(sizeof(runtime::WaitTriggerRecord) == 20);
+  static_assert(sizeof(runtime::WaitTriggerRecord) == 28);
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -1336,9 +1371,11 @@ auto LowerWait(
 
   // WaitTriggerRecord layout:
   // {i32 signal_id, i8 edge, i8 bit_index, i8 kind, i8 flags,
-  //  i32 byte_offset, i32 byte_size, i32 container_elem_stride}
+  //  i32 byte_offset, i32 byte_size, i32 container_elem_stride,
+  //  i32 target_instance_id, i32 target_local_signal_id}
   auto* trigger_type = llvm::StructType::get(
-      llvm_ctx, {i32_ty, i8_ty, i8_ty, i8_ty, i8_ty, i32_ty, i32_ty, i32_ty});
+      llvm_ctx, {i32_ty, i8_ty, i8_ty, i8_ty, i8_ty, i32_ty, i32_ty, i32_ty,
+                 i32_ty, i32_ty});
 
   // Emit late-bound data (headers + plan ops pool + dep slots pool).
   auto lb_data = EmitLateBoundData(context, wait.triggers);

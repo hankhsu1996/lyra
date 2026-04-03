@@ -333,7 +333,7 @@ auto Context::EmitSignalCoord(const mir::SignalRef& sig) -> SignalCoordExpr {
         {GetEnginePointer(),
          llvm::ConstantInt::get(i32_ty, owner.instance_id.value)});
     return SignalCoordExpr::LocalWithInstance(
-        owner.local_signal_id.value, target_inst);
+        owner.local_signal_id.value, owner.instance_id, target_inst);
   }
   return SignalCoordExpr::Global(sig.id);
 }

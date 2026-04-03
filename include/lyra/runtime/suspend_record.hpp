@@ -30,9 +30,13 @@ enum class TriggerInstallKind : uint8_t {
 
 // Trigger flags: explicit per-trigger metadata written by codegen.
 inline constexpr uint8_t kTriggerInitiallyActive = 0x01;
-// R5: signal_id is a body-local LocalSignalId, not a flat design-global
-// slot_id. Runtime resolves via the process's owning instance.
+// R5: signal_id is a body-local LocalSignalId. Runtime resolves the
+// owning instance from the process owner (same-instance).
 inline constexpr uint8_t kTriggerLocalSignal = 0x02;
+// R5: cross-instance local trigger. target_instance_id and
+// target_local_signal_id carry the typed identity. Always combined
+// with kTriggerLocalSignal.
+inline constexpr uint8_t kTriggerCrossInstanceLocal = 0x04;
 
 // R5: Per-dependency signal record for typed rebind dependencies.
 // Each dependency carries its own domain identity (local or global),
@@ -41,9 +45,13 @@ struct DepSignalRecord {
   uint32_t signal_id = 0;
   uint8_t flags = 0;
   std::array<uint8_t, 3> padding = {};
+  // R5: valid when kDepCrossInstanceLocal is set.
+  uint32_t target_instance_id = 0;
+  uint32_t target_local_signal_id = 0;
 };
 inline constexpr uint8_t kDepLocalSignal = 0x01;
-static_assert(sizeof(DepSignalRecord) == 8);
+inline constexpr uint8_t kDepCrossInstanceLocal = 0x02;
+static_assert(sizeof(DepSignalRecord) == 16);
 static_assert(alignof(DepSignalRecord) == 4);
 
 struct WaitTriggerRecord {
@@ -68,10 +76,14 @@ struct WaitTriggerRecord {
 
   // For kContainer only. Element stride in bytes. 0 for non-container triggers.
   uint32_t container_elem_stride = 0;
+
+  // R5: valid when kTriggerCrossInstanceLocal is set.
+  uint32_t target_instance_id = 0;
+  uint32_t target_local_signal_id = 0;
 };
 
 static_assert(
-    sizeof(WaitTriggerRecord) == 20, "WaitTriggerRecord size mismatch");
+    sizeof(WaitTriggerRecord) == 28, "WaitTriggerRecord size mismatch");
 static_assert(
     alignof(WaitTriggerRecord) == 4, "WaitTriggerRecord alignment mismatch");
 static_assert(
@@ -92,6 +104,12 @@ static_assert(
 static_assert(
     offsetof(WaitTriggerRecord, container_elem_stride) == 16,
     "WaitTriggerRecord container_elem_stride offset mismatch");
+static_assert(
+    offsetof(WaitTriggerRecord, target_instance_id) == 20,
+    "WaitTriggerRecord target_instance_id offset mismatch");
+static_assert(
+    offsetof(WaitTriggerRecord, target_local_signal_id) == 24,
+    "WaitTriggerRecord target_local_signal_id offset mismatch");
 
 // Late-bound header for dynamic-index edge triggers.
 // References into plan_ops and dep_slots pools via start/count spans.

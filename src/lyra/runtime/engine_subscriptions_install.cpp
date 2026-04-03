@@ -44,6 +44,32 @@
 
 namespace lyra::runtime {
 
+namespace {
+
+// Validate cross-instance local identity and return a typed LocalSignalRef.
+// Throws InternalError if the target instance doesn't exist or the local
+// signal id is out of range.
+auto ValidateCrossInstanceLocal(
+    const Engine& eng, InstanceId iid, LocalSignalId lid, const char* where)
+    -> LocalSignalRef {
+  const auto* inst = eng.FindInstance(iid);
+  if (inst == nullptr) {
+    throw common::InternalError(
+        where, std::format(
+                   "cross-instance local references missing instance {}", iid));
+  }
+  if (lid.value >= inst->observability.local_signal_count) {
+    throw common::InternalError(
+        where, std::format(
+                   "cross-instance local_id {} >= local_signal_count {} "
+                   "for instance {}",
+                   lid.value, inst->observability.local_signal_count, iid));
+  }
+  return LocalSignalRef{.instance_id = iid, .signal = lid};
+}
+
+}  // namespace
+
 auto Engine::ResolveSubSlot(const SubRef& ref) -> SlotSubscriptions& {
   return ResolveSubSlot(ref.signal_id, ref.is_local, ref.instance_id);
 }
@@ -493,16 +519,34 @@ void Engine::InstallTriggers(
     auto edge = static_cast<common::EdgeKind>(trigger.edge);
     bool initially_active = (trigger.flags & kTriggerInitiallyActive) != 0;
     bool is_local = (trigger.flags & kTriggerLocalSignal) != 0;
+    bool is_cross_instance = (trigger.flags & kTriggerCrossInstanceLocal) != 0;
+
+    // Validate flag consistency.
+    if (is_cross_instance && !is_local) {
+      throw common::InternalError(
+          "Engine::InstallTriggers",
+          std::format(
+              "trigger {}: kTriggerCrossInstanceLocal without "
+              "kTriggerLocalSignal",
+              i));
+    }
+
     // Build typed signal reference from producer metadata directly.
-    InstanceId inst_id =
-        (is_local && handle.process_id < process_instance_map_.size())
-            ? process_instance_map_[handle.process_id]
-            : handle.instance_id;
-    SignalRef sig_ref = is_local
-                            ? SignalRef{LocalSignalRef{
-                                  .instance_id = inst_id,
-                                  .signal = LocalSignalId{trigger.signal_id}}}
-                            : SignalRef{GlobalSignalId{trigger.signal_id}};
+    SignalRef sig_ref;
+    if (is_cross_instance) {
+      sig_ref = ValidateCrossInstanceLocal(
+          *this, InstanceId{trigger.target_instance_id},
+          LocalSignalId{trigger.target_local_signal_id},
+          "Engine::InstallTriggers");
+    } else if (is_local) {
+      InstanceId inst_id = (handle.process_id < process_instance_map_.size())
+                               ? process_instance_map_[handle.process_id]
+                               : handle.instance_id;
+      sig_ref = LocalSignalRef{
+          .instance_id = inst_id, .signal = LocalSignalId{trigger.signal_id}};
+    } else {
+      sig_ref = GlobalSignalId{trigger.signal_id};
+    }
     uint32_t sub_idx = UINT32_MAX;
     SubKind sub_kind = SubKind::kEdge;
 
@@ -657,7 +701,18 @@ void Engine::InstallTriggers(
     std::vector<SignalRef> dep_signals;
     dep_signals.reserve(hdr_dep_records.size());
     for (const auto& rec : hdr_dep_records) {
-      if ((rec.flags & kDepLocalSignal) != 0) {
+      bool dep_cross = (rec.flags & kDepCrossInstanceLocal) != 0;
+      if (dep_cross) {
+        if ((rec.flags & kDepLocalSignal) == 0) {
+          throw common::InternalError(
+              "Engine::InstallTriggers",
+              "dep record: kDepCrossInstanceLocal without kDepLocalSignal");
+        }
+        dep_signals.emplace_back(ValidateCrossInstanceLocal(
+            *this, InstanceId{rec.target_instance_id},
+            LocalSignalId{rec.target_local_signal_id},
+            "Engine::InstallTriggers(dep)"));
+      } else if ((rec.flags & kDepLocalSignal) != 0) {
         dep_signals.emplace_back(
             LocalSignalRef{
                 .instance_id = rebind_inst_id,
@@ -1555,7 +1610,7 @@ void Engine::InstallRebindDepWatchers(
           uint32_t dep_total_bytes = 0;
           uint32_t dep_signal_id = 0;
           bool dep_is_local = false;
-          InstanceId dep_instance_id = InstanceId{0};
+          auto dep_instance_id = InstanceId{0};
 
           if constexpr (std::is_same_v<T, LocalSignalRef>) {
             dep_is_local = true;

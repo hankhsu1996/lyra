@@ -175,3 +175,67 @@ cases:
           - "result = 15"
           - "result = 25"
           - "result = 35"
+
+  - name: cross_instance_edge_trigger
+    description: always_ff with posedge trigger on child instance signal
+    sv: |
+      module ClkGen;
+        logic clk;
+        initial begin
+          clk = 0;
+          #5 clk = 1;
+          #5 clk = 0;
+          #5 clk = 1;
+        end
+      endmodule
+
+      module Top;
+        ClkGen u_clk();
+        int count;
+
+        always_ff @(posedge u_clk.clk) begin
+          count <= count + 1;
+        end
+
+        initial begin
+          count = 0;
+          #20;
+          $display("count = %0d", count);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "count = 2"
+
+  - name: cross_instance_change_trigger
+    description: always block with change trigger on child instance signal
+    sv: |
+      module Child;
+        int value;
+      endmodule
+
+      module Top;
+        Child u_child();
+        int observed_count;
+
+        always @(u_child.value) begin
+          observed_count = observed_count + 1;
+        end
+
+        initial begin
+          observed_count = 0;
+          #1;
+          u_child.value = 10;
+          #1;
+          u_child.value = 20;
+          #1;
+          u_child.value = 20;
+          #1;
+          $display("observed_count = %0d", observed_count);
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "observed_count = 2"
