@@ -1508,6 +1508,29 @@ auto Layout::GetInstanceSlotCount(ModuleIndex idx) const -> uint32_t {
   return instance_slot_counts[idx.value];
 }
 
+auto ResolveInstanceOwnedFlatSlot(const Layout& layout, uint32_t flat_slot_id)
+    -> SlotOwnerInfo {
+  uint32_t running_base = layout.num_package_slots;
+  for (uint32_t mi = 0; mi < layout.instance_slot_counts.size(); ++mi) {
+    uint32_t count = layout.instance_slot_counts[mi];
+    if (flat_slot_id < running_base + count) {
+      return {
+          .instance_id = runtime::InstanceId{mi},
+          .local_signal_id =
+              runtime::LocalSignalId{flat_slot_id - running_base},
+      };
+    }
+    running_base += count;
+  }
+  throw common::InternalError(
+      "ResolveInstanceOwnedFlatSlot",
+      std::format(
+          "flat slot {} not found in any instance slot range "
+          "(num_package_slots={}, num_instances={})",
+          flat_slot_id, layout.num_package_slots,
+          layout.instance_slot_counts.size()));
+}
+
 auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
     std::vector<ConnectionKernelEntry> precollected_connection_kernels,

@@ -1830,8 +1830,18 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
             for (const auto& [key, accum] : sorted_slots) {
               uint32_t flags = 0;
+              uint32_t owner_instance_id = 0;
+              uint32_t local_signal_id = 0;
               if (accum.is_design_global) {
-                flags |= runtime::kCombTemplateFlagDesignGlobal;
+                if (accum.final_global_id < layout->num_package_slots) {
+                  flags |= runtime::kCombTemplateFlagDesignGlobal;
+                } else {
+                  flags |= runtime::kCombTemplateFlagCrossInstance;
+                  auto owner = ResolveInstanceOwnedFlatSlot(
+                      *layout, accum.final_global_id);
+                  owner_instance_id = owner.instance_id.value;
+                  local_signal_id = owner.local_signal_id.value;
+                }
               }
               info.comb.entries.push_back(
                   runtime::CombTemplateEntry{
@@ -1839,6 +1849,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
                       .byte_offset = accum.is_full_slot ? 0 : accum.byte_offset,
                       .byte_size = accum.is_full_slot ? 0 : accum.byte_size,
                       .flags = flags,
+                      .owner_instance_id = owner_instance_id,
+                      .local_signal_id = local_signal_id,
                   });
             }
 

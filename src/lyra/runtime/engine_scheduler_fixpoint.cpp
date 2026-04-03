@@ -26,8 +26,8 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
   }
 
   // Build typed connections with domain-aware destinations and triggers.
-  // Classify each connection's trigger and destination by domain at build
-  // time, so the fixpoint loop never needs flat_coord_base conversion.
+  // Each connection's trigger and destination domain is pre-classified
+  // at codegen time via typed descriptor fields.
   struct IndexedConn {
     bool trigger_is_local;
     InstanceId trigger_instance_id;  // valid when trigger_is_local
@@ -46,7 +46,6 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
     }
 
     // Decode typed destination from descriptor fields.
-    // No slot_meta_registry_ lookup or flat_coord_base computation.
     ConnectionTarget dst;
     if (d.dst_is_local != 0) {
       auto iid = InstanceId{d.dst_instance_id};
@@ -70,8 +69,8 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
     }
 
     // Decode typed trigger from descriptor fields.
-    bool trigger_is_local = (d.trigger_is_local != 0);
-    InstanceId trigger_instance_id = InstanceId{d.trigger_instance_id};
+    auto trigger_is_local = (d.trigger_is_local != 0);
+    auto trigger_instance_id = InstanceId{d.trigger_instance_id};
     uint32_t trigger_local_id = d.trigger_local_id;
     uint32_t trigger_global_id = d.trigger_slot_id;
     if (trigger_is_local) {
@@ -125,7 +124,7 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
 
   // Build global connection trigger map.
   global_conn_trigger_map_.resize(global_slot_count_);
-  uint32_t conn_base = static_cast<uint32_t>(all_connections_.size());
+  auto conn_base = static_cast<uint32_t>(all_connections_.size());
   for (const auto& ge : global_entries) {
     all_connections_.push_back(ge.conn);
   }
@@ -282,7 +281,7 @@ void Engine::InitCombKernels(
       has_any_self_edge_comb_ = true;
     }
 
-    auto* header =
+    const auto* header =
         static_cast<const ProcessFrameHeader*>(proc_states[proc_idx]);
     auto body = header->body;
 
@@ -306,7 +305,7 @@ void Engine::InitCombKernels(
 
       // Classify trigger domain.
       bool is_local = (trigger_flags & kCombTriggerFlagBodyLocal) != 0;
-      InstanceId trigger_iid = InstanceId{0};
+      auto trigger_iid = InstanceId{0};
       uint32_t local_id = 0;
       uint32_t global_id = trigger_slot;
       if (is_local) {
@@ -512,9 +511,9 @@ void Engine::FlushAndPropagateConnections() {
   }
 
   // Seed work lists from delta dirty slots.
-  // Global slots go to global pending. Instance-owned slots in update_set_
-  // (from legacy flat MarkSlotDirty paths) are converted to local pending
-  // using SlotMeta domain/owner lookup.
+  // Global slots go to global pending. Instance-owned slots must not
+  // appear in update_set_ -- all instance-owned dirty marks enter
+  // through local_updates.
   fp_work_.pending_globals.clear();
   for (uint32_t s : update_set_.DeltaDirtySlots()) {
     if (s < global_slot_count_) {
@@ -542,10 +541,8 @@ void Engine::FlushAndPropagateConnections() {
 
   // Helper: check if any local pending set has work.
   auto any_local_pending = [&]() -> bool {
-    for (const auto& lps : fp_work_.locals) {
-      if (!lps.pending.empty()) return true;
-    }
-    return false;
+    return std::ranges::any_of(
+        fp_work_.locals, [](const auto& lps) { return !lps.pending.empty(); });
   };
 
   // Helper: enqueue into global next with dedup.
@@ -601,7 +598,7 @@ void Engine::FlushAndPropagateConnections() {
     }
 
     if (detailed) {
-      uint32_t total_pending =
+      auto total_pending =
           static_cast<uint32_t>(fp_work_.pending_globals.size());
       for (const auto& lps : fp_work_.locals) {
         total_pending += static_cast<uint32_t>(lps.pending.size());
@@ -648,8 +645,7 @@ void Engine::FlushAndPropagateConnections() {
       }
 
       // Local triggers.
-      for (size_t inst_idx = 0; inst_idx < fp_work_.locals.size(); ++inst_idx) {
-        auto& lps = fp_work_.locals[inst_idx];
+      for (auto& lps : fp_work_.locals) {
         if (lps.pending.empty()) continue;
         auto& obs = lps.instance->observability;
         for (LocalSignalId lid : lps.pending) {
@@ -770,8 +766,7 @@ void Engine::FlushAndPropagateConnections() {
       }
 
       // Evaluate comb kernels from local pending.
-      for (size_t inst_idx = 0; inst_idx < fp_work_.locals.size(); ++inst_idx) {
-        auto& lps = fp_work_.locals[inst_idx];
+      for (auto& lps : fp_work_.locals) {
         if (lps.pending.empty()) continue;
         auto& obs = lps.instance->observability;
         for (LocalSignalId lid : lps.pending) {

@@ -122,38 +122,6 @@ auto PrepareBackEdgeSiteInputs(
   return entries;
 }
 
-// Resolve the owning InstanceId and body-local signal ID for an
-// instance-owned flat slot. Uses the layout's per-instance slot counts
-// to find the owning instance.
-//
-// Contract: the returned instance index IS the semantic InstanceId.value.
-// This is guaranteed by the constructor which assigns instance_id = 0, 1, 2...
-// sequentially and validates bundle[i].instance_id == i in Finalize.
-struct SlotOwnerInfo {
-  uint32_t instance_id;
-  uint32_t local_signal_id;
-};
-
-auto ResolveSlotOwner(const Layout& layout, uint32_t flat_slot_id)
-    -> SlotOwnerInfo {
-  uint32_t running_base = layout.num_package_slots;
-  for (uint32_t mi = 0; mi < layout.instance_slot_counts.size(); ++mi) {
-    uint32_t count = layout.instance_slot_counts[mi];
-    if (flat_slot_id < running_base + count) {
-      return {
-          .instance_id = mi, .local_signal_id = flat_slot_id - running_base};
-    }
-    running_base += count;
-  }
-  throw common::InternalError(
-      "ResolveSlotOwner",
-      std::format(
-          "flat slot {} not found in any instance slot range "
-          "(num_package_slots={}, num_instances={})",
-          flat_slot_id, layout.num_package_slots,
-          layout.instance_slot_counts.size()));
-}
-
 auto ExtractConnectionDescriptorEntries(const Layout& layout)
     -> std::vector<metadata::ConnectionDescriptorEntry> {
   const auto& kernel_entries = layout.connection_kernel_entries;
@@ -180,9 +148,9 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
     uint32_t dst_local_id = 0;
     if (entry.dst_slot.value >= layout.num_package_slots) {
       dst_is_local = 1;
-      auto owner = ResolveSlotOwner(layout, entry.dst_slot.value);
-      dst_instance_id = owner.instance_id;
-      dst_local_id = owner.local_signal_id;
+      auto owner = ResolveInstanceOwnedFlatSlot(layout, entry.dst_slot.value);
+      dst_instance_id = owner.instance_id.value;
+      dst_local_id = owner.local_signal_id.value;
     }
 
     // R5: Classify trigger domain from layout slot ownership.
@@ -191,9 +159,10 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
     uint32_t trigger_local_id = 0;
     if (entry.trigger_slot.value >= layout.num_package_slots) {
       trigger_is_local = 1;
-      auto owner = ResolveSlotOwner(layout, entry.trigger_slot.value);
-      trigger_instance_id = owner.instance_id;
-      trigger_local_id = owner.local_signal_id;
+      auto owner =
+          ResolveInstanceOwnedFlatSlot(layout, entry.trigger_slot.value);
+      trigger_instance_id = owner.instance_id.value;
+      trigger_local_id = owner.local_signal_id.value;
     }
 
     entries.push_back({

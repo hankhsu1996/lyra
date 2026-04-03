@@ -448,19 +448,6 @@ class Engine {
   // installed. Throws InternalError on any mismatch.
   void ValidateInstanceOwnedSlotMeta() const;
 
-  // Assign dense coordination bases on instances from slot meta.
-  // Scans the slot meta registry to determine per-instance slot ranges
-  // and writes observability.flat_coord_base on each instance. This makes the
-  // engine the authority for dense coordination base assignment.
-  // Must be called after InitSlotMeta and SetInstances.
-  void AssignDenseCoordinationBases(
-      std::span<RuntimeInstance* const> mutable_instances);
-
-  // R4: Assign dense coordination bases from slot meta registry and bundles.
-  // One canonical engine-owned path for dense base assignment.
-  void AssignDenseCoordinationBasesFromBundles(
-      std::span<const InstanceMetadataBundle> bundles);
-
   // R4: Initialize all module-instance runtime registries from per-instance
   // bundles and body templates. Replaces the flat-table init path for
   // module instances (InitSlotMeta/InitProcessTriggerRegistry/InitCombKernels
@@ -468,7 +455,7 @@ class Engine {
   // separate.
   //
   // This method:
-  //   1. Assigns dense coordination bases from bundle slot counts.
+  //   1. Computes per-instance flat coordinate bases from bundle slot counts.
   //   2. Builds the slot meta registry from design-global words + bundles.
   //   3. Builds module-instance trigger descriptors from body templates.
   //   4. Builds module-instance comb kernels from body templates.
@@ -1060,7 +1047,8 @@ class Engine {
       }
       return;
     }
-    next_delta_queue_.push_back({process_id, instance_id, resume_block});
+    next_delta_queue_.push_back(
+        {process_id, InstanceId{instance_id}, resume_block});
     process_states_[process_id].is_enqueued = true;
     if (activation_trace_.has_value()) {
       wake_trace_[process_id] = {.cause = cause, .trigger_slot = trigger_slot};

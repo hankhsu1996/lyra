@@ -90,12 +90,6 @@ struct RuntimeInstanceObservability {
   // freshness checks to skip unnecessary snapshot refresh.
   uint64_t local_flush_epoch = 0;
 
-  // Transitional flat coordinate base for comb fixpoint interop.
-  // Maps local_signal_id -> flat_slot_id as (flat_coord_base + local_id).
-  // Runtime-internal only -- not part of the binary ABI or codegen contract.
-  // Deleted when comb fixpoint reads local containers directly (Cut 3+).
-  uint32_t flat_coord_base = 0;
-
   // Initialize all local vectors to local_signal_count.
   // Must be called after layout and local_signal_count are set.
   void Init();

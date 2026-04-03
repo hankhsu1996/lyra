@@ -31,7 +31,6 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place_type.hpp"
-#include "lyra/runtime/engine_types.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -479,14 +478,10 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
   llvm::Value* current_addr = (step > 0) ? low : high;
   llvm::Value* final_addr = (step > 0) ? high : low;
 
-  // Resolve slot_id for readmem trace emission (writemem doesn't need it)
-  llvm::Value* readmem_slot_id_val =
-      llvm::ConstantInt::get(i32_ty, lyra::runtime::kNoSlotId);
+  // Resolve readmem signal identity for dirty notification.
+  std::optional<SignalCoordExpr> readmem_slot_expr;
   if (mem_io.is_read) {
-    auto slot_expr = GetDesignSignalCoord(context, mem_io.target);
-    if (slot_expr.has_value()) {
-      readmem_slot_id_val = slot_expr->Emit(builder);
-    }
+    readmem_slot_expr = GetDesignSignalCoord(context, mem_io.target);
   }
 
   // Lower filename and emit runtime call with automatic handle release
@@ -494,7 +489,7 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
       context, mem_io.filename.operand, mem_io.filename.type,
       [&](llvm::Value* filename_handle) -> Result<void> {
         if (mem_io.is_read) {
-          std::vector<llvm::Value*> args = {
+          std::vector<llvm::Value*> common_args = {
               context.GetEnginePointer(),
               filename_handle,
               target_ptr,
@@ -508,9 +503,20 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
               llvm::ConstantInt::get(i64_ty, step),
               llvm::ConstantInt::get(i1_ty, mem_io.is_hex ? 1 : 0),
               llvm::ConstantInt::get(i32_ty, element_kind),
-              readmem_slot_id_val,
           };
-          builder.CreateCall(context.GetLyraReadmem(), args);
+          if (readmem_slot_expr.has_value() && readmem_slot_expr->IsLocal()) {
+            auto args = common_args;
+            args.push_back(readmem_slot_expr->GetInstancePointer(
+                context.GetInstancePointer()));
+            args.push_back(readmem_slot_expr->Emit(builder));
+            builder.CreateCall(context.GetLyraReadmemLocal(), args);
+          } else if (readmem_slot_expr.has_value()) {
+            auto args = common_args;
+            args.push_back(readmem_slot_expr->Emit(builder));
+            builder.CreateCall(context.GetLyraReadmemGlobal(), args);
+          } else {
+            builder.CreateCall(context.GetLyraReadmemNoNotify(), common_args);
+          }
         } else {
           std::vector<llvm::Value*> args = {
               filename_handle,

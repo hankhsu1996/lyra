@@ -119,12 +119,25 @@ void LyraFWrite(
 // rounded bytes. 4-state elements are struct {value, x_mask} where each plane
 // uses the same power-of-2 storage type. Lowering computes all parameters;
 // runtime has zero semantic decisions.
-void LyraReadmem(
+void LyraReadmemLocal(
     void* engine_ptr, LyraStringHandle filename, void* target,
     int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
     int32_t element_count, int64_t min_addr, int64_t current_addr,
     int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind,
-    uint32_t slot_id);
+    void* instance_ptr, uint32_t local_signal_id);
+
+void LyraReadmemGlobal(
+    void* engine_ptr, LyraStringHandle filename, void* target,
+    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
+    int32_t element_count, int64_t min_addr, int64_t current_addr,
+    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind,
+    uint32_t global_slot_id);
+
+void LyraReadmemNoNotify(
+    void* engine_ptr, LyraStringHandle filename, void* target,
+    int32_t element_width, int32_t stride_bytes, int32_t value_size_bytes,
+    int32_t element_count, int64_t min_addr, int64_t current_addr,
+    int64_t final_addr, int64_t step, bool is_hex, int32_t element_kind);
 
 // $writememh/$writememb: write array to memory file
 // Parameters match LyraReadmem, but source is read-only.
@@ -153,10 +166,22 @@ void LyraPrintModulePath(void* engine, uint32_t instance_id);
 // Returns: number of bytes read on success, 0 on error.
 // Data is read big-endian: first byte fills MSB of each element.
 // Partial elements are not written (stops at element boundary).
-auto LyraFread(
+auto LyraFreadLocal(
     void* engine, int32_t descriptor, void* target, int32_t element_width,
     int32_t stride_bytes, int32_t is_memory, int64_t start_index,
-    int64_t max_count, int64_t element_count, uint32_t slot_id) -> int32_t;
+    int64_t max_count, int64_t element_count, void* instance_ptr,
+    uint32_t local_signal_id) -> int32_t;
+
+auto LyraFreadGlobal(
+    void* engine, int32_t descriptor, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t is_memory, int64_t start_index,
+    int64_t max_count, int64_t element_count, uint32_t global_slot_id)
+    -> int32_t;
+
+auto LyraFreadNoNotify(
+    void* engine, int32_t descriptor, void* target, int32_t element_width,
+    int32_t stride_bytes, int32_t is_memory, int64_t start_index,
+    int64_t max_count, int64_t element_count) -> int32_t;
 
 // $fscanf - formatted file input
 // - engine: pointer to Engine (for FileManager access)

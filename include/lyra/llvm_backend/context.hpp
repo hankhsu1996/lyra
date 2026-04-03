@@ -301,7 +301,8 @@ class Context {
   [[nodiscard]] auto GetLyraDynArrayClone() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayDelete() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayRelease() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraStoreDynArray() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStoreDynArrayLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraStoreDynArrayGlobal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayCloneElem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraDynArrayDestroyElem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraQueuePushBack() -> llvm::Function*;
@@ -325,7 +326,9 @@ class Context {
   [[nodiscard]] auto GetLyraRegisterStrobe() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMonitorSetEnabled() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMonitorRegister() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraReadmem() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraReadmemLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraReadmemGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraReadmemNoNotify() -> llvm::Function*;
   [[nodiscard]] auto GetLyraWritemem() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintModulePath() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFillPackedElements() -> llvm::Function*;
@@ -334,7 +337,9 @@ class Context {
   [[nodiscard]] auto GetLyraFgetc() -> llvm::Function*;
   [[nodiscard]] auto GetLyraUngetc() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFgets() -> llvm::Function*;
-  [[nodiscard]] auto GetLyraFread() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraFreadLocal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraFreadGlobal() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraFreadNoNotify() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFscanf() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAssocNew() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAssocRelease() -> llvm::Function*;
@@ -960,7 +965,8 @@ class Context {
   llvm::Function* lyra_dynarray_clone_ = nullptr;
   llvm::Function* lyra_dynarray_delete_ = nullptr;
   llvm::Function* lyra_dynarray_release_ = nullptr;
-  llvm::Function* lyra_store_dynarray_ = nullptr;
+  llvm::Function* lyra_store_dynarray_local_ = nullptr;
+  llvm::Function* lyra_store_dynarray_global_ = nullptr;
   llvm::Function* lyra_dynarray_clone_elem_ = nullptr;
   llvm::Function* lyra_dynarray_destroy_elem_ = nullptr;
   llvm::Function* lyra_queue_push_back_ = nullptr;
@@ -984,7 +990,9 @@ class Context {
   llvm::Function* lyra_register_strobe_ = nullptr;
   llvm::Function* lyra_monitor_set_enabled_ = nullptr;
   llvm::Function* lyra_monitor_register_ = nullptr;
-  llvm::Function* lyra_readmem_ = nullptr;
+  llvm::Function* lyra_readmem_local_ = nullptr;
+  llvm::Function* lyra_readmem_global_ = nullptr;
+  llvm::Function* lyra_readmem_no_notify_ = nullptr;
   llvm::Function* lyra_writemem_ = nullptr;
   llvm::Function* lyra_print_module_path_ = nullptr;
   llvm::Function* lyra_fill_packed_elements_ = nullptr;
@@ -993,7 +1001,9 @@ class Context {
   llvm::Function* lyra_fgetc_ = nullptr;
   llvm::Function* lyra_ungetc_ = nullptr;
   llvm::Function* lyra_fgets_ = nullptr;
-  llvm::Function* lyra_fread_ = nullptr;
+  llvm::Function* lyra_fread_local_ = nullptr;
+  llvm::Function* lyra_fread_global_ = nullptr;
+  llvm::Function* lyra_fread_no_notify_ = nullptr;
   llvm::Function* lyra_fscanf_ = nullptr;
   llvm::Function* lyra_assoc_new_ = nullptr;
   llvm::Function* lyra_assoc_release_ = nullptr;

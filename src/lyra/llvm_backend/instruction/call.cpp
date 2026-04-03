@@ -20,14 +20,12 @@
 #include "lyra/llvm_backend/compute/rvalue.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/dpi_abi.hpp"
-#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/statement.hpp"
-#include "lyra/runtime/engine_types.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -35,11 +33,11 @@ namespace {
 
 // Resolved callee info for LowerUserCallImpl.
 struct ResolvedCallee {
-  llvm::Function* llvm_func;
-  const mir::FunctionSignature* signature;
+  llvm::Function* llvm_func = nullptr;
+  const mir::FunctionSignature* signature = nullptr;
   TypeId return_type;
-  bool uses_sret;
-  bool is_module_scoped;
+  bool uses_sret = false;
+  bool is_module_scoped = false;
   mir::FunctionId func_id;  // For error messages
 };
 
@@ -520,25 +518,38 @@ auto LowerFreadCall(Context& context, const mir::Call& call) -> Result<void> {
   llvm::Value* start_i64 = builder.CreateSExt(*start_or_err, i64_ty);
   llvm::Value* count_i64 = builder.CreateSExt(*count_or_err, i64_ty);
 
-  // Resolve slot_id for trace: real ID for kDirectToDest, kNoSlotId for kStaged
-  llvm::Value* fread_slot_id_val =
-      llvm::ConstantInt::get(i32_ty, lyra::runtime::kNoSlotId);
+  // Resolve fread signal identity for dirty notification.
+  std::optional<SignalCoordExpr> fread_slot_expr;
   if (wb.kind == mir::WritebackKind::kDirectToDest) {
-    auto slot_expr = GetDesignSignalCoord(context, wb.dest);
-    if (slot_expr.has_value()) {
-      fread_slot_id_val = slot_expr->Emit(builder);
-    }
+    fread_slot_expr = GetDesignSignalCoord(context, wb.dest);
   }
 
-  // Call runtime: int32_t LyraFread(void* engine, int32_t descriptor,
-  //   void* target, int32_t element_width, int32_t stride_bytes,
-  //   int32_t is_memory, int64_t start_index, int64_t max_count,
-  //   int64_t element_count, uint32_t slot_id)
-  llvm::Value* bytes_read = builder.CreateCall(
-      context.GetLyraFread(),
-      {context.GetEnginePointer(), *desc_or_err, target_ptr_val, *width_or_err,
-       stride_bytes, *is_mem_or_err, start_i64, count_i64, element_count,
-       fread_slot_id_val});
+  std::vector<llvm::Value*> common_args = {
+      context.GetEnginePointer(),
+      *desc_or_err,
+      target_ptr_val,
+      *width_or_err,
+      stride_bytes,
+      *is_mem_or_err,
+      start_i64,
+      count_i64,
+      element_count};
+
+  llvm::Value* bytes_read = nullptr;
+  if (fread_slot_expr.has_value() && fread_slot_expr->IsLocal()) {
+    auto args = common_args;
+    args.push_back(
+        fread_slot_expr->GetInstancePointer(context.GetInstancePointer()));
+    args.push_back(fread_slot_expr->Emit(builder));
+    bytes_read = builder.CreateCall(context.GetLyraFreadLocal(), args);
+  } else if (fread_slot_expr.has_value()) {
+    auto args = common_args;
+    args.push_back(fread_slot_expr->Emit(builder));
+    bytes_read = builder.CreateCall(context.GetLyraFreadGlobal(), args);
+  } else {
+    bytes_read =
+        builder.CreateCall(context.GetLyraFreadNoNotify(), common_args);
+  }
 
   // Stage return (bytes_read) to tmp, then commit if statement form
   if (call.ret) {

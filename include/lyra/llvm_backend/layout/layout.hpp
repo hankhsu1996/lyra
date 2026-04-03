@@ -651,6 +651,24 @@ struct BodyStateSizeInfo {
   uint64_t total_bytes = 0;
 };
 
+// Resolve a flat design-global slot ID to its owning (InstanceId,
+// LocalSignalId). Uses the layout's per-instance slot counts to walk the flat
+// slot range.
+//
+// Contract: the returned instance index IS the semantic InstanceId.value.
+// This is guaranteed by the constructor which assigns instance_id = 0, 1, 2...
+// sequentially and validates bundle[i].instance_id == i in Finalize.
+//
+// Throws InternalError if the slot is not in any instance's range.
+// Precondition: flat_slot_id >= layout.num_package_slots.
+struct SlotOwnerInfo {
+  runtime::InstanceId instance_id;
+  runtime::LocalSignalId local_signal_id;
+};
+
+auto ResolveInstanceOwnedFlatSlot(const Layout& layout, uint32_t flat_slot_id)
+    -> SlotOwnerInfo;
+
 auto BuildDesignLayout(
     const std::vector<SlotInfo>& slots, const TypeArena& types,
     const llvm::DataLayout& dl, bool force_two_state,

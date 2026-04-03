@@ -133,11 +133,15 @@ inline constexpr uint8_t kProcGroupable = 1;
 // Per-comb-trigger body-shaped template entry.
 //
 // One per comb trigger observation per body-local comb kernel.
-// Body-relative slot IDs.
+// Three domain cases at codegen time:
+//   1. Body-local: flags=0, slot_id=body-relative local_id
+//   2. Truly global: flags=kCombTemplateFlagDesignGlobal,
+//   slot_id=GlobalSignalId
+//   3. Cross-instance: flags=kCombTemplateFlagCrossInstance,
+//      owner_instance_id/local_signal_id carry typed identity
 struct CombTemplateEntry {
-  // Slot identifier. Body-relative when kCombTemplateFlagDesignGlobal
-  // is clear, design-global when set. Constructor applies slot-base
-  // relocation only for entries without the design-global flag.
+  // Slot identifier. Body-relative for body-local, design-global for
+  // truly-global. Unused for cross-instance (identity in typed fields).
   uint32_t slot_id = 0;
   // Observation byte offset (0 if full-slot).
   uint32_t byte_offset = 0;
@@ -145,17 +149,24 @@ struct CombTemplateEntry {
   uint32_t byte_size = 0;
   // Template-level flags.
   uint32_t flags = 0;
+  // R5: Typed identity for cross-instance triggers.
+  // Valid when kCombTemplateFlagCrossInstance is set.
+  uint32_t owner_instance_id = 0;
+  uint32_t local_signal_id = 0;
 };
 
-static_assert(sizeof(CombTemplateEntry) == 16);
+static_assert(sizeof(CombTemplateEntry) == 24);
 static_assert(offsetof(CombTemplateEntry, slot_id) == 0);
 static_assert(offsetof(CombTemplateEntry, byte_offset) == 4);
 static_assert(offsetof(CombTemplateEntry, byte_size) == 8);
 static_assert(offsetof(CombTemplateEntry, flags) == 12);
+static_assert(offsetof(CombTemplateEntry, owner_instance_id) == 16);
+static_assert(offsetof(CombTemplateEntry, local_signal_id) == 20);
 static_assert(std::is_trivially_copyable_v<CombTemplateEntry>);
 static_assert(std::is_standard_layout_v<CombTemplateEntry>);
 
 inline constexpr uint32_t kCombTemplateFlagDesignGlobal = 1U << 0;
+inline constexpr uint32_t kCombTemplateFlagCrossInstance = 1U << 1;
 
 // Per-comb-kernel descriptor within a body template.
 struct CombKernelDesc {
