@@ -164,31 +164,6 @@ auto LowerDesign(
     result.instance_table = *input.instance_table;
   }
 
-  // Check whether the current LLVM wrapper model supports a given export
-  // signature. Returns a diagnostic message if unsupported, nullopt if OK.
-  // D4.4 supports: scalar 2-state by-value params/returns, real, shortreal,
-  // string, chandle. Not yet supported: kLogicScalar, packed by-pointer.
-  auto unsupported_by_current_wrapper_model =
-      [](const mir::DpiSignature& sig) -> std::optional<std::string> {
-    if (sig.result.abi_type == DpiAbiTypeClass::kLogicScalar) {
-      return "4-state scalar return not yet supported in export wrappers";
-    }
-    for (const auto& p : sig.params) {
-      if (p.abi_type == DpiAbiTypeClass::kLogicScalar) {
-        return "4-state scalar parameters not yet supported in export "
-               "wrappers";
-      }
-      if (p.passing == mir::DpiPassingMode::kByPointer) {
-        if (IsFourStateVecDpiType(p.abi_type) ||
-            IsTwoStateWideVecDpiType(p.abi_type)) {
-          return "packed by-pointer parameters not yet supported in export "
-                 "wrappers";
-        }
-      }
-    }
-    return std::nullopt;
-  };
-
   // DPI export wrapper descriptors are built after Phase 2 (body lowering)
   // because module-scoped exports need body-local function maps to resolve
   // their target FunctionId.
@@ -333,16 +308,6 @@ auto LowerDesign(
     });
     std::vector<DesignDeclarations::ExportDiagnostic> wrapper_diagnostics;
     for (const auto* exp : sorted_exports) {
-      auto unsupported = unsupported_by_current_wrapper_model(exp->signature);
-      if (unsupported) {
-        wrapper_diagnostics.push_back(
-            DesignDeclarations::ExportDiagnostic{
-                .span = exp->span,
-                .message = std::format(
-                    "DPI-C export '{}': {}", exp->c_name, *unsupported),
-            });
-        continue;
-      }
       mir::DpiExportTarget target{};
       if (exp->is_module_scoped) {
         target.scope_kind = mir::DpiExportScopeKind::kModule;

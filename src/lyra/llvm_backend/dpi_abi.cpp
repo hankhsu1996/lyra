@@ -17,6 +17,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type_queries.hpp"
+#include "lyra/llvm_backend/callable_abi.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
@@ -1046,46 +1047,308 @@ auto BuildExportWrapperType(
   return llvm::FunctionType::get(ret_ty, param_types, false);
 }
 
+// Export parameter lowering classification.
+// kDirectValue: 2-state scalar by-value (CoerceFromDpiAbiType).
+// kLogicScalar: 4-state scalar by-value (DecodeSvLogic path).
+// kByPointer: all by-pointer params -- packed vectors and scalar
+//   output/inout. Uses staged decode/writeback.
+enum class ExportParamLoweringKind : uint8_t {
+  kDirectValue,
+  kLogicScalar,
+  kByPointer,
+};
+
+struct ExportParamPlan {
+  ExportParamLoweringKind kind = ExportParamLoweringKind::kDirectValue;
+  ParameterDirection dir = ParameterDirection::kInput;
+  DpiAbiTypeClass abi_type = DpiAbiTypeClass::kInvalid;
+  TypeId sv_type;
+};
+
+auto PlanExportParam(const mir::DpiParamDesc& param) -> ExportParamPlan {
+  ExportParamLoweringKind kind = ExportParamLoweringKind::kDirectValue;
+  if (param.passing == mir::DpiPassingMode::kByPointer) {
+    kind = ExportParamLoweringKind::kByPointer;
+  } else if (param.abi_type == DpiAbiTypeClass::kLogicScalar) {
+    kind = ExportParamLoweringKind::kLogicScalar;
+  } else {
+    kind = ExportParamLoweringKind::kDirectValue;
+  }
+  return {
+      .kind = kind,
+      .dir = param.direction,
+      .abi_type = param.abi_type,
+      .sv_type = param.sv_type,
+  };
+}
+
+struct ExportByPointerState {
+  const mir::DpiParamDesc* param = nullptr;
+  llvm::Value* foreign_ptr = nullptr;
+  llvm::AllocaInst* staged_alloca = nullptr;
+};
+
+auto LoadForeignDpiStorage(
+    Context& context, llvm::Value* foreign_ptr, llvm::Type* storage_ty)
+    -> llvm::Value* {
+  auto& b = context.GetBuilder();
+  if (!foreign_ptr->getType()->isPointerTy()) {
+    throw common::InternalError(
+        "LoadForeignDpiStorage",
+        "expected pointer type for foreign DPI storage");
+  }
+  llvm::Value* typed_ptr = foreign_ptr;
+  auto* wanted_ptr_ty = storage_ty->getPointerTo();
+  if (foreign_ptr->getType() != wanted_ptr_ty) {
+    typed_ptr = b.CreateBitCast(foreign_ptr, wanted_ptr_ty, "exp.foreign.cast");
+  }
+  return b.CreateLoad(storage_ty, typed_ptr, "exp.foreign.load");
+}
+
+void StoreForeignDpiStorage(
+    Context& context, llvm::Value* foreign_ptr, llvm::Value* encoded) {
+  auto& b = context.GetBuilder();
+  if (!foreign_ptr->getType()->isPointerTy()) {
+    throw common::InternalError(
+        "StoreForeignDpiStorage",
+        "expected pointer type for foreign DPI storage");
+  }
+  llvm::Value* typed_ptr = foreign_ptr;
+  auto* wanted_ptr_ty = encoded->getType()->getPointerTo();
+  if (foreign_ptr->getType() != wanted_ptr_ty) {
+    typed_ptr =
+        b.CreateBitCast(foreign_ptr, wanted_ptr_ty, "exp.foreign.store.cast");
+  }
+  b.CreateStore(encoded, typed_ptr);
+}
+
+auto DecodeExportByPointerArg(
+    Context& context, llvm::Value* foreign_ptr, const mir::DpiParamDesc& param)
+    -> llvm::Value* {
+  auto& b = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  llvm::Type* storage_ty = GetLlvmDpiStorageType(
+      llvm_ctx, param.abi_type, param.sv_type, context.GetTypeArena());
+  llvm::Value* raw = LoadForeignDpiStorage(context, foreign_ptr, storage_ty);
+  if (IsFourStateVecDpiType(param.abi_type)) {
+    uint32_t width = GetSemanticWidth(param.sv_type, context.GetTypeArena());
+    auto* backing_ty = GetBackingLlvmType(llvm_ctx, width);
+    return DecodeDpiLogicVecStorage(b, raw, width, backing_ty);
+  }
+  if (param.abi_type == DpiAbiTypeClass::kBitVecWide) {
+    uint32_t width = GetSemanticWidth(param.sv_type, context.GetTypeArena());
+    auto* backing_ty = GetBackingLlvmType(llvm_ctx, width);
+    return DecodeDpiBitVecStorage(b, raw, width, backing_ty);
+  }
+  throw common::InternalError(
+      "DecodeExportByPointerArg",
+      std::format(
+          "non-packed ABI class {} routed to packed export decoder",
+          static_cast<int>(param.abi_type)));
+}
+
+auto ToI1(llvm::IRBuilder<>& b, llvm::Value* v) -> llvm::Value* {
+  auto* i1 = llvm::Type::getInt1Ty(b.getContext());
+  if (v->getType() == i1) return v;
+  return b.CreateTrunc(v, i1);
+}
+
+auto EncodeExportByPointerValue(
+    Context& context, llvm::Value* canonical, const mir::DpiParamDesc& param)
+    -> llvm::Value* {
+  auto& b = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  if (IsFourStateVecDpiType(param.abi_type)) {
+    uint32_t width = GetSemanticWidth(param.sv_type, context.GetTypeArena());
+    auto* val = b.CreateExtractValue(canonical, {0}, "exp.enc.val");
+    auto* unk = b.CreateExtractValue(canonical, {1}, "exp.enc.unk");
+    uint32_t wc = GetDpiLogicWordCount(width);
+    auto* arr_ty = GetDpiLogicVecStorageType(llvm_ctx, wc);
+    auto* word_ty = GetDpiLogicVecWordType(llvm_ctx);
+    DpiFourStateValue fsv{.val = val, .unk = unk, .semantic_width = width};
+    return BuildDpiLogicVecStorage(b, fsv, arr_ty, word_ty);
+  }
+  if (param.abi_type == DpiAbiTypeClass::kBitVecWide) {
+    uint32_t width = GetSemanticWidth(param.sv_type, context.GetTypeArena());
+    uint32_t wc = GetDpiLogicWordCount(width);
+    auto* arr_ty = GetDpiBitVecStorageType(llvm_ctx, wc);
+    return BuildDpiBitVecStorage(b, canonical, width, arr_ty);
+  }
+  throw common::InternalError(
+      "EncodeExportByPointerValue",
+      std::format(
+          "non-packed ABI class {} routed to packed export encoder",
+          static_cast<int>(param.abi_type)));
+}
+
 }  // namespace
 
-// Append coerced user arguments from C ABI wrapper to internal call args.
-// user_arg_base is the internal function param index where user args start
-// (2 for package, 5 for module).
-void AppendCoercedExportUserArgs(
+void PrepareExportUserArgs(
     Context& context, const mir::DpiSignature& sig, llvm::Function* wrapper,
     llvm::Function* internal_fn, unsigned user_arg_base,
-    std::vector<llvm::Value*>& internal_args) {
+    std::vector<llvm::Value*>& internal_args,
+    std::vector<ExportByPointerState>& by_pointer_states) {
+  auto& b = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+
   for (size_t i = 0; i < sig.params.size(); ++i) {
     llvm::Value* wrapper_arg = wrapper->getArg(static_cast<unsigned>(i));
     const auto& param = sig.params[i];
+    auto plan = PlanExportParam(param);
+    unsigned internal_idx = static_cast<unsigned>(i) + user_arg_base;
+    llvm::Type* internal_ty =
+        internal_fn->getFunctionType()->getParamType(internal_idx);
 
-    if (param.passing == mir::DpiPassingMode::kByValue) {
-      unsigned internal_idx = static_cast<unsigned>(i) + user_arg_base;
-      llvm::Type* internal_ty =
-          internal_fn->getFunctionType()->getParamType(internal_idx);
-      llvm::Value* coerced = CoerceFromDpiAbiType(
-          context, wrapper_arg, param.abi_type, internal_ty);
-      internal_args.push_back(coerced);
-    } else {
-      // By-pointer (output/inout): pass the foreign pointer through.
-      // TODO(hankhsu): D4.5 will add proper staged decode/writeback
-      // for packed vector by-pointer params.
-      internal_args.push_back(wrapper_arg);
+    switch (plan.kind) {
+      case ExportParamLoweringKind::kDirectValue: {
+        llvm::Value* coerced = CoerceFromDpiAbiType(
+            context, wrapper_arg, param.abi_type, internal_ty);
+        internal_args.push_back(coerced);
+        break;
+      }
+
+      case ExportParamLoweringKind::kLogicScalar: {
+        if (internal_ty->isPointerTy()) {
+          throw common::InternalError(
+              "PrepareExportUserArgs",
+              "logic-scalar export param unexpectedly lowered as pointer");
+        }
+        uint32_t width =
+            GetSemanticWidth(param.sv_type, context.GetTypeArena());
+        llvm::Value* decoded =
+            BuildLyraLogicScalarValue(b, llvm_ctx, wrapper_arg, width);
+        internal_args.push_back(decoded);
+        break;
+      }
+
+      case ExportParamLoweringKind::kByPointer: {
+        bool internal_expects_ptr = internal_ty->isPointerTy();
+        bool dir_has_output = param.direction == ParameterDirection::kOutput ||
+                              param.direction == ParameterDirection::kInOut;
+        bool dir_input_only = param.direction == ParameterDirection::kInput;
+
+        if (dir_has_output && !internal_expects_ptr) {
+          throw common::InternalError(
+              "PrepareExportUserArgs",
+              "output/inout export param unexpectedly lowered as value");
+        }
+        if (dir_input_only && internal_expects_ptr) {
+          throw common::InternalError(
+              "PrepareExportUserArgs",
+              "input-only export param unexpectedly lowered as pointer");
+        }
+
+        // Canonical value type for this DPI parameter, derived from the same
+        // callable-ABI builder that defined the internal callable signature.
+        // The wrapper must reuse that ABI source of truth instead of deriving
+        // an independent local type model.
+        auto* expected_value_ty = GetCallableAbiLlvmType(
+            llvm_ctx, param.sv_type, context.GetTypeArena(),
+            context.IsForceTwoState());
+
+        bool is_packed = IsPackedVecDpiType(param.abi_type);
+
+        llvm::Value* canonical = nullptr;
+        if (!dir_has_output || param.direction == ParameterDirection::kInOut) {
+          if (is_packed) {
+            canonical = DecodeExportByPointerArg(context, wrapper_arg, param);
+          } else {
+            llvm::Type* storage_ty = GetLlvmDpiStorageType(
+                llvm_ctx, param.abi_type, param.sv_type,
+                context.GetTypeArena());
+            llvm::Value* raw =
+                LoadForeignDpiStorage(context, wrapper_arg, storage_ty);
+            if (param.abi_type == DpiAbiTypeClass::kLogicScalar) {
+              uint32_t width =
+                  GetSemanticWidth(param.sv_type, context.GetTypeArena());
+              canonical = BuildLyraLogicScalarValue(b, llvm_ctx, raw, width);
+            } else if (param.abi_type == DpiAbiTypeClass::kString) {
+              canonical = MaterializeStringWriteback(context, raw);
+            } else {
+              canonical = CoerceFromDpiAbiType(
+                  context, raw, param.abi_type, expected_value_ty);
+            }
+          }
+        }
+        if (canonical == nullptr) {
+          canonical = llvm::Constant::getNullValue(expected_value_ty);
+        }
+
+        if (canonical->getType() != expected_value_ty) {
+          throw common::InternalError(
+              "PrepareExportUserArgs",
+              "decoded export argument type does not match internal "
+              "callable ABI");
+        }
+
+        if (internal_expects_ptr) {
+          auto* alloca =
+              CreateDpiStagedAlloca(b, expected_value_ty, "exp.bp.staged");
+          b.CreateStore(canonical, alloca);
+          internal_args.push_back(alloca);
+          if (dir_has_output) {
+            by_pointer_states.push_back({
+                .param = &sig.params[i],
+                .foreign_ptr = wrapper_arg,
+                .staged_alloca = alloca,
+            });
+          }
+        } else {
+          internal_args.push_back(canonical);
+        }
+        break;
+      }
     }
   }
 }
 
-// Emit return value marshaling from internal Lyra type to C ABI type.
+void CommitExportByPointerWritebacks(
+    Context& context, const std::vector<ExportByPointerState>& states) {
+  auto& b = context.GetBuilder();
+
+  for (const auto& state : states) {
+    const auto& param = *state.param;
+    llvm::Type* canonical_ty = state.staged_alloca->getAllocatedType();
+    llvm::Value* canonical =
+        b.CreateLoad(canonical_ty, state.staged_alloca, "exp.wb.canon");
+
+    if (IsPackedVecDpiType(param.abi_type)) {
+      llvm::Value* encoded =
+          EncodeExportByPointerValue(context, canonical, param);
+      StoreForeignDpiStorage(context, state.foreign_ptr, encoded);
+    } else if (param.abi_type == DpiAbiTypeClass::kLogicScalar) {
+      auto* val = b.CreateExtractValue(canonical, {0}, "exp.wb.ls.val");
+      auto* unk = b.CreateExtractValue(canonical, {1}, "exp.wb.ls.unk");
+      llvm::Value* encoded = EncodeSvLogic(b, ToI1(b, val), ToI1(b, unk));
+      StoreForeignDpiStorage(context, state.foreign_ptr, encoded);
+    } else if (param.abi_type == DpiAbiTypeClass::kString) {
+      llvm::Value* encoded = MarshalInputString(context, canonical);
+      StoreForeignDpiStorage(context, state.foreign_ptr, encoded);
+    } else {
+      llvm::Value* encoded =
+          CoerceToDpiAbiType(context, canonical, param.abi_type);
+      StoreForeignDpiStorage(context, state.foreign_ptr, encoded);
+    }
+  }
+}
+
 void EmitExportReturn(
     Context& context, const mir::DpiSignature& sig, llvm::Value* ret_val) {
   auto& b = context.GetBuilder();
   if (sig.result.kind == mir::DpiReturnKind::kVoid) {
     b.CreateRetVoid();
-  } else {
-    llvm::Value* encoded =
-        CoerceToDpiAbiType(context, ret_val, sig.result.abi_type);
-    b.CreateRet(encoded);
+    return;
   }
+  if (sig.result.abi_type == DpiAbiTypeClass::kLogicScalar) {
+    auto* val = b.CreateExtractValue(ret_val, {0}, "exp.ret.val");
+    auto* unk = b.CreateExtractValue(ret_val, {1}, "exp.ret.unk");
+    llvm::Value* encoded = EncodeSvLogic(b, ToI1(b, val), ToI1(b, unk));
+    b.CreateRet(encoded);
+    return;
+  }
+  llvm::Value* encoded =
+      CoerceToDpiAbiType(context, ret_val, sig.result.abi_type);
+  b.CreateRet(encoded);
 }
 
 // Emit package-scoped export wrapper binding resolution.
@@ -1190,9 +1453,11 @@ auto EmitDpiExportWrappers(
       std::vector<llvm::Value*> args;
       args.push_back(binding.design_ptr);
       args.push_back(binding.engine_ptr);
-      AppendCoercedExportUserArgs(
-          context, desc.signature, wrapper, internal_fn, 2, args);
+      std::vector<ExportByPointerState> bp_states;
+      PrepareExportUserArgs(
+          context, desc.signature, wrapper, internal_fn, 2, args, bp_states);
       auto* ret_val = context.GetBuilder().CreateCall(internal_fn, args);
+      CommitExportByPointerWritebacks(context, bp_states);
       EmitExportReturn(context, desc.signature, ret_val);
 
     } else {
@@ -1214,9 +1479,11 @@ auto EmitDpiExportWrappers(
       args.push_back(binding.this_ptr);
       args.push_back(binding.instance_ptr);
       args.push_back(binding.instance_id);
-      AppendCoercedExportUserArgs(
-          context, desc.signature, wrapper, internal_fn, 5, args);
+      std::vector<ExportByPointerState> bp_states;
+      PrepareExportUserArgs(
+          context, desc.signature, wrapper, internal_fn, 5, args, bp_states);
       auto* ret_val = context.GetBuilder().CreateCall(internal_fn, args);
+      CommitExportByPointerWritebacks(context, bp_states);
       EmitExportReturn(context, desc.signature, ret_val);
     }
   }

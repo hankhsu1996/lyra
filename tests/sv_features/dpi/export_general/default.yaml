@@ -238,3 +238,45 @@ cases:
       endmodule
     expect:
       stdout: ""
+
+  - name: export_bit_vec_wide_roundtrip
+    dpi_sources:
+      - dpi_helpers/export_bit_wide_ops.c
+    sv: |
+      package dpi_pkg;
+        function int read_bit128_word0_export(input bit [127:0] v);
+          return v[31:0];
+        endfunction
+        export "DPI-C" function read_bit128_word0_export;
+
+        function void write_bit128_export(output bit [127:0] v);
+          v = 128'h44444444_33333333_22222222_11111111;
+        endfunction
+        export "DPI-C" function write_bit128_export;
+
+        function void inc_bit128_export(inout bit [127:0] v);
+          v[31:0] = v[31:0] + 1;
+          v[127:96] = v[127:96] + 1;
+        endfunction
+        export "DPI-C" function inc_bit128_export;
+      endpackage
+
+      module Test;
+        import "DPI-C" function int call_read_bit128_word0_export();
+        import "DPI-C" function int call_write_bit128_export();
+        import "DPI-C" function int call_inc_bit128_export();
+        import dpi_pkg::*;
+        int r_input;
+        int r_output;
+        int r_inout;
+        initial begin
+          r_input = call_read_bit128_word0_export();
+          r_output = call_write_bit128_export();
+          r_inout = call_inc_bit128_export();
+        end
+      endmodule
+    expect:
+      variables:
+        r_input: 286331153
+        r_output: 1
+        r_inout: 1

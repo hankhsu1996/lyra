@@ -25,7 +25,7 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [x] D6b -- DPI scope registry and instance-bound export context
 - [x] D6c -- Context import functions (svGetScope in import bodies)
 - [x] D4a -- Module-scoped DPI export (instance-bound wrapper dispatch)
-- [ ] D4b -- 4-state scalar and packed by-pointer export wrapper marshaling
+- [x] D4b -- 4-state scalar and packed by-pointer export wrapper marshaling
 - [ ] D4c -- Packed-vector DPI return types (import and export, indirect return modeling)
 - [ ] D4d -- AOT/LLI export end-to-end integration (currently JIT-only tested)
 - [ ] D6d -- svdpi time query functions
@@ -35,16 +35,6 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [ ] D7c -- DPI export tasks (external C invocation of time-consuming SV tasks)
 - [ ] D8a -- Open-array query and pointer surface
 - [ ] D8b -- Open-array packed/scalar element access
-
-## D4b: 4-state scalar and packed by-pointer export wrapper marshaling
-
-The export wrapper model validator rejects 4-state scalar (svLogic) parameters and returns, and packed by-pointer parameters (narrow/wide logic vectors, wide bit vectors). The encode/decode helpers exist in the import path but are not composed in the export direction.
-
-This item extends export wrappers to support the same type surface as import calls: 4-state scalar params use the existing svLogic encode/decode, packed by-pointer params use staged decode/writeback with the same temporary buffer strategy as imports reversed.
-
-No infrastructure dependencies. Can land in parallel with the D6 series.
-
-Where to look: dpi_abi.cpp export wrapper emission (type filter), svLogic encode/decode helpers, packed vector marshaling helpers.
 
 ## D4c: Packed-vector DPI return types (import and export, indirect return modeling)
 

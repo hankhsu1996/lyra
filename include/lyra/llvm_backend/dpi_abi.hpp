@@ -57,8 +57,9 @@ auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
 // Package-scoped exports: direct call to design-global callable.
 // Module-scoped exports: instance binding via LyraResolveModuleInstanceBinding
 // + direct call to compile-time-known module callable.
-// Signatures requiring 4-state scalar or packed by-pointer marshaling are
-// filtered before reaching this function.
+// Supports all DPI parameter types: scalar by-value (2-state and 4-state),
+// and by-pointer params (packed vectors and scalar output/inout) through
+// staged decode/writeback. Packed-vector returns rejected upstream (D4c).
 // Must be called after all internal functions are declared and defined
 // (both package Phase 3 and module Phase 4).
 auto EmitDpiExportWrappers(

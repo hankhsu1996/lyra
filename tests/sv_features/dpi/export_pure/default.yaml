@@ -166,7 +166,7 @@ cases:
           - "DPI-C export return type"
           - "not yet supported"
 
-  - name: reject_export_logic_scalar_param
+  - name: accept_export_logic_scalar_param
     sv: |
       package dpi_pkg;
         function int logic_fn(logic x);
@@ -177,12 +177,8 @@ cases:
       module Test;
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "4-state scalar parameters not yet supported in export wrappers"
 
-  - name: reject_export_logic_scalar_return
+  - name: accept_export_logic_scalar_return
     sv: |
       package dpi_pkg;
         function logic get_logic();
@@ -193,12 +189,8 @@ cases:
       module Test;
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "4-state scalar return not yet supported in export wrappers"
 
-  - name: reject_export_packed_by_pointer_param
+  - name: accept_export_packed_by_pointer_param
     sv: |
       package dpi_pkg;
         function void wide_fn(input bit [127:0] v);
@@ -208,10 +200,6 @@ cases:
       module Test;
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "packed by-pointer parameters not yet supported in export wrappers"
 
   # Import/export visible-name collision: slang catches this at parse time
   # with "more than one DPI subroutine with C identifier" before Lyra sees it.
