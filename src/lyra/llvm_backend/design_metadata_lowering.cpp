@@ -89,10 +89,12 @@ auto EmitPoolGlobal(
 auto GetConnectionDescriptorLlvmType(llvm::LLVMContext& ctx)
     -> llvm::StructType* {
   auto* i8 = llvm::Type::getInt8Ty(ctx);
-  auto* i16 = llvm::Type::getInt16Ty(ctx);
   auto* i32 = llvm::Type::getInt32Ty(ctx);
+  // R5: Extended with typed destination fields (dst_is_local,
+  // dst_instance_id, dst_local_id).
   return llvm::StructType::create(
-      ctx, {i32, i32, i32, i32, i8, i8, i16, i32, i32}, "ConnectionDescriptor");
+      ctx, {i32, i32, i32, i32, i8, i8, i8, i8, i32, i32, i32, i32},
+      "ConnectionDescriptor");
 }
 
 }  // namespace
@@ -138,6 +140,26 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
       trigger_bit_index = entry.trigger_observation->bit_index;
     }
 
+    // R5: Classify destination domain from layout slot ownership.
+    uint8_t dst_is_local = 0;
+    uint32_t dst_instance_id = 0;
+    uint32_t dst_local_id = 0;
+    if (entry.dst_slot.value >= layout.num_package_slots) {
+      // Instance-owned destination. Find the owning instance and
+      // compute body-local signal ID from the instance's slot range.
+      dst_is_local = 1;
+      uint32_t running_base = layout.num_package_slots;
+      for (uint32_t mi = 0; mi < layout.instance_slot_counts.size(); ++mi) {
+        uint32_t count = layout.instance_slot_counts[mi];
+        if (entry.dst_slot.value < running_base + count) {
+          dst_instance_id = mi;
+          dst_local_id = entry.dst_slot.value - running_base;
+          break;
+        }
+        running_base += count;
+      }
+    }
+
     entries.push_back({
         .src_slot_id = entry.src_slot.value,
         .dst_slot_id = entry.dst_slot.value,
@@ -147,6 +169,9 @@ auto ExtractConnectionDescriptorEntries(const Layout& layout)
         .trigger_bit_index = trigger_bit_index,
         .trigger_byte_offset = trigger_byte_offset,
         .trigger_byte_size = trigger_byte_size,
+        .dst_is_local = dst_is_local,
+        .dst_instance_id = dst_instance_id,
+        .dst_local_id = dst_local_id,
         .origin = entry.origin,
     });
   }
@@ -193,7 +218,6 @@ auto EmitDesignMetadataGlobals(
   result.conn_desc_count = num_conn;
   if (num_conn > 0) {
     auto* i8_llvm = llvm::Type::getInt8Ty(ctx);
-    auto* i16_llvm = llvm::Type::getInt16Ty(ctx);
     auto* i32_llvm = llvm::Type::getInt32Ty(ctx);
 
     auto* conn_desc_llvm_type = GetConnectionDescriptorLlvmType(ctx);
@@ -211,9 +235,12 @@ auto EmitDesignMetadataGlobals(
                llvm::ConstantInt::get(i32_llvm, desc.trigger_slot_id),
                llvm::ConstantInt::get(i8_llvm, desc.trigger_edge),
                llvm::ConstantInt::get(i8_llvm, desc.trigger_bit_index),
-               llvm::ConstantInt::get(i16_llvm, 0),
+               llvm::ConstantInt::get(i8_llvm, desc.dst_is_local),
+               llvm::ConstantInt::get(i8_llvm, 0),
                llvm::ConstantInt::get(i32_llvm, desc.trigger_byte_offset),
-               llvm::ConstantInt::get(i32_llvm, desc.trigger_byte_size)}));
+               llvm::ConstantInt::get(i32_llvm, desc.trigger_byte_size),
+               llvm::ConstantInt::get(i32_llvm, desc.dst_instance_id),
+               llvm::ConstantInt::get(i32_llvm, desc.dst_local_id)}));
     }
 
     auto* desc_array_type = llvm::ArrayType::get(conn_desc_llvm_type, num_conn);

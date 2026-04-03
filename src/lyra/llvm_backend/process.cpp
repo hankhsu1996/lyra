@@ -165,7 +165,8 @@ void EmitLoopExitDeferredMarks(
       if (signal_id.IsLocal()) {
         builder.CreateCall(
             context.GetLyraMarkDirtyLocal(),
-            {context.GetEnginePointer(), context.GetInstancePointer(),
+            {context.GetEnginePointer(),
+             signal_id.GetInstancePointer(context.GetInstancePointer()),
              signal_id.Emit(builder), llvm::ConstantInt::get(i32_ty, 0),
              llvm::ConstantInt::get(i32_ty, 0)});
       } else {
@@ -1287,16 +1288,16 @@ auto EmitLateBoundData(
           llvm::ArrayType::get(dep_record_type, total_dep_slots);
       for (uint32_t d = 0; d < lb.dep_slots.size(); ++d) {
         const auto& ref = lb.dep_slots[d];
-        bool dep_is_local =
-            (ref.scope == mir::ScopedSlotRef::Scope::kModuleLocal);
-        auto signal_scope = dep_is_local ? mir::SignalRef::Scope::kModuleLocal
-                                         : mir::SignalRef::Scope::kDesignGlobal;
+        auto mir_scope = (ref.scope == mir::ScopedSlotRef::Scope::kModuleLocal)
+                             ? mir::SignalRef::Scope::kModuleLocal
+                             : mir::SignalRef::Scope::kDesignGlobal;
         auto signal_expr = context.EmitSignalCoord(
-            mir::SignalRef{.scope = signal_scope, .id = ref.id});
-        // R5: Emit body-local signal_id for local deps (no flattening).
-        // Global deps emit flat slot_id as before.
+            mir::SignalRef{.scope = mir_scope, .id = ref.id});
+        // Use the resolved domain, not the original MIR scope.
+        // EmitSignalCoord reclassifies instance-owned design-global
+        // signals to local with the correct target instance.
         auto* signal_id = signal_expr.Emit(builder);
-        uint8_t flags = dep_is_local ? 0x01 : 0x00;  // kDepLocalSignal
+        uint8_t flags = signal_expr.IsLocal() ? 0x01 : 0x00;
 
         auto* rec_ptr = builder.CreateConstGEP2_32(
             dep_array_type, dep_slots_alloca, 0, dep_offset + d);

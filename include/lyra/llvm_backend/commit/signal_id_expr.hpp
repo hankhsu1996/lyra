@@ -32,6 +32,19 @@ class SignalCoordExpr {
     return e;
   }
 
+  // R5: Local signal with explicit target instance pointer override.
+  // Used for cross-instance writes (e.g., connection processes writing
+  // to child instance signals). When set, callers must use this pointer
+  // instead of context.GetInstancePointer().
+  static auto LocalWithInstance(uint32_t id, llvm::Value* instance_ptr)
+      -> SignalCoordExpr {
+    SignalCoordExpr e;
+    e.kind_ = Kind::kLocal;
+    e.value_ = id;
+    e.instance_override_ = instance_ptr;
+    return e;
+  }
+
   static auto Global(uint32_t id) -> SignalCoordExpr {
     SignalCoordExpr e;
     e.kind_ = Kind::kGlobal;
@@ -53,6 +66,20 @@ class SignalCoordExpr {
     return value_;
   }
 
+  // Returns the target instance pointer for local signals.
+  // If an instance override is set (cross-instance write), returns that.
+  // Otherwise returns the default context instance pointer.
+  [[nodiscard]] auto GetInstancePointer(llvm::Value* default_ptr) const
+      -> llvm::Value* {
+    return instance_override_ != nullptr ? instance_override_ : default_ptr;
+  }
+
+  // True if this local signal targets a different instance than the
+  // current process's own instance.
+  [[nodiscard]] auto HasInstanceOverride() const -> bool {
+    return instance_override_ != nullptr;
+  }
+
   // Emit the semantic id value as an LLVM i32 constant.
   // This is the raw local or global id, NOT a dense coordination coordinate.
   [[nodiscard]] auto Emit(llvm::IRBuilder<>& builder) const -> llvm::Value* {
@@ -65,6 +92,7 @@ class SignalCoordExpr {
 
   Kind kind_ = Kind::kGlobal;
   uint32_t value_ = 0;
+  llvm::Value* instance_override_ = nullptr;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

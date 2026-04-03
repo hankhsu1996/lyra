@@ -268,6 +268,8 @@ class Context {
   [[nodiscard]] auto GetLyraAllocTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFreeTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraResolveSlotPtr() -> llvm::Function*;
+  // R5: Resolve RuntimeInstance* from InstanceId at runtime.
+  [[nodiscard]] auto GetLyraResolveInstancePtr() -> llvm::Function*;
   // R3 typed coordination helpers (take frame* instead of engine*).
   [[nodiscard]] auto GetLyraMarkDirtyLocal() -> llvm::Function*;
   [[nodiscard]] auto GetLyraMarkDirtyGlobal() -> llvm::Function*;
@@ -927,6 +929,7 @@ class Context {
   llvm::Function* lyra_alloc_triggers_ = nullptr;
   llvm::Function* lyra_free_triggers_ = nullptr;
   llvm::Function* lyra_resolve_slot_ptr_ = nullptr;
+  llvm::Function* lyra_resolve_instance_ptr_ = nullptr;
   // R3 typed coordination helpers.
   llvm::Function* lyra_mark_dirty_local_ = nullptr;
   llvm::Function* lyra_mark_dirty_global_ = nullptr;

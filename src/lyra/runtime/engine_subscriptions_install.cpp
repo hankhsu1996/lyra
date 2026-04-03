@@ -347,24 +347,37 @@ void Engine::ClearProcessSubscriptions(ProcessHandle handle) {
 // sub_refs are snapshot-bearing (kEdge or kChange). Rebind watchers and
 // container subs are structurally impossible here.
 void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
-  if (update_set_.DeltaDirtySlots().empty()) {
-    throw common::InternalError(
-        "Engine::RefreshInstalledSnapshots",
-        "called with empty DeltaDirtySlots; flush already established "
-        "correct baselines and caller should have skipped this call");
-  }
   if (handle.process_id >= num_processes_) return;
 
   auto& proc_state = process_states_[handle.process_id];
 
-  // Watermark skip: if no new dirty slots appeared since our last refresh
-  // in this delta, the installed snapshots are already current.
-  auto current_epoch = update_set_.DeltaEpoch();
-  auto current_dirty_count =
+  // R5: Domain-split watermark skip. Check both global and local
+  // freshness to determine if any new dirty marks appeared since the
+  // last refresh. Skip if both domains are unchanged.
+  auto current_global_epoch = update_set_.DeltaEpoch();
+  auto current_global_dirty =
       static_cast<uint32_t>(update_set_.DeltaDirtySlots().size());
-  if (current_epoch == proc_state.installed_wait.last_refresh_epoch &&
-      current_dirty_count ==
-          proc_state.installed_wait.last_refresh_dirty_count) {
+  bool global_unchanged =
+      (current_global_epoch ==
+           proc_state.installed_wait.last_global_refresh_epoch &&
+       current_global_dirty ==
+           proc_state.installed_wait.last_global_refresh_dirty_count);
+  bool local_unchanged = true;
+  for (const auto& stamp : proc_state.installed_wait.local_refresh_epochs) {
+    const auto* inst = FindInstance(stamp.instance_id);
+    if (inst == nullptr) {
+      throw common::InternalError(
+          "Engine::RefreshInstalledSnapshots",
+          std::format(
+              "installed wait references missing instance {}",
+              stamp.instance_id));
+    }
+    if (inst->observability.local_flush_epoch != stamp.epoch) {
+      local_unchanged = false;
+      break;
+    }
+  }
+  if (global_unchanged && local_unchanged) {
     return;
   }
 
@@ -430,8 +443,21 @@ void Engine::RefreshInstalledSnapshots(ProcessHandle handle) {
     }
   }
 
-  proc_state.installed_wait.last_refresh_epoch = current_epoch;
-  proc_state.installed_wait.last_refresh_dirty_count = current_dirty_count;
+  // Update watermark after refresh.
+  proc_state.installed_wait.last_global_refresh_epoch = current_global_epoch;
+  proc_state.installed_wait.last_global_refresh_dirty_count =
+      current_global_dirty;
+  for (auto& stamp : proc_state.installed_wait.local_refresh_epochs) {
+    const auto* inst = FindInstance(stamp.instance_id);
+    if (inst == nullptr) {
+      throw common::InternalError(
+          "Engine::RefreshInstalledSnapshots",
+          std::format(
+              "installed wait references missing instance {}",
+              stamp.instance_id));
+    }
+    stamp.epoch = inst->observability.local_flush_epoch;
+  }
 }
 
 void Engine::InstallTriggers(
@@ -467,7 +493,7 @@ void Engine::InstallTriggers(
     auto edge = static_cast<common::EdgeKind>(trigger.edge);
     bool initially_active = (trigger.flags & kTriggerInitiallyActive) != 0;
     bool is_local = (trigger.flags & kTriggerLocalSignal) != 0;
-    // R5: Build typed signal reference for the subscription API boundary.
+    // Build typed signal reference from producer metadata directly.
     InstanceId inst_id =
         (is_local && handle.process_id < process_instance_map_.size())
             ? process_instance_map_[handle.process_id]
@@ -730,13 +756,41 @@ void Engine::InstallWaitSite(
   proc_state.installed_wait = InstalledWaitState{
       .wait_site_id = descriptor.id,
       .valid = true,
-      .can_refresh_snapshot = (descriptor.shape == WaitShapeKind::kStatic)};
+      .can_refresh_snapshot = (descriptor.shape == WaitShapeKind::kStatic),
+      .local_refresh_epochs = {}};
 
-  // Snapshots are fresh from install -- set watermark so the next
-  // RefreshInstalledSnapshots skips unless new dirty slots appear.
-  proc_state.installed_wait.last_refresh_epoch = update_set_.DeltaEpoch();
-  proc_state.installed_wait.last_refresh_dirty_count =
+  // Snapshots are fresh from install -- set domain-split watermark.
+  // Global watermark from update_set_.
+  proc_state.installed_wait.last_global_refresh_epoch =
+      update_set_.DeltaEpoch();
+  proc_state.installed_wait.last_global_refresh_dirty_count =
       static_cast<uint32_t>(update_set_.DeltaDirtySlots().size());
+  // Local watermark: track only instances this wait site depends on.
+  proc_state.installed_wait.local_refresh_epochs.clear();
+  for (const auto& ref : proc_state.sub_refs) {
+    // Deduplicate by instance_id (small sets, linear scan fine).
+    bool already_tracked = false;
+    for (const auto& stamp : proc_state.installed_wait.local_refresh_epochs) {
+      if (stamp.instance_id == ref.instance_id) {
+        already_tracked = true;
+        break;
+      }
+    }
+    if (ref.is_local && !already_tracked) {
+      const auto* inst = FindInstance(ref.instance_id);
+      if (inst == nullptr) {
+        throw common::InternalError(
+            "Engine::InstallWaitSite",
+            std::format(
+                "installed wait references missing instance {}",
+                ref.instance_id));
+      }
+      proc_state.installed_wait.local_refresh_epochs.push_back(
+          InstalledWaitState::LocalRefreshStamp{
+              .instance_id = ref.instance_id,
+              .epoch = inst->observability.local_flush_epoch});
+    }
+  }
 }
 
 void Engine::RegisterSuspendRecords(std::span<SuspendRecord*> records) {
@@ -813,7 +867,19 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
       // over-invalidation. Edge/change baselines observe design-state
       // bytes, not heap data, so the per-sub IsDeltaDirty checks inside
       // RefreshInstalledSnapshots filter these out harmlessly.
-      if (update_set_.DeltaDirtySlots().empty()) {
+      // R5: check both global and local dirty state. Instance-owned
+      // signals go to local_updates, not update_set_.
+      bool has_any_dirty = !update_set_.DeltaDirtySlots().empty();
+      if (!has_any_dirty) {
+        for (auto* inst : instances_) {
+          if (inst->observability.local_signal_count > 0 &&
+              !inst->observability.local_updates.DeltaDirtySignals().empty()) {
+            has_any_dirty = true;
+            break;
+          }
+        }
+      }
+      if (!has_any_dirty) {
         break;
       }
 

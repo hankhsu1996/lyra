@@ -1030,6 +1030,15 @@ extern "C" void LyraScheduleNbaCanonicalPackedGlobal(
       GlobalSignalId{id}, wp, nb, vp, up, rsz, sro);
 }
 
+// R5: Resolve RuntimeInstance* from InstanceId at runtime.
+// Used by codegen for cross-instance writes (design-level connection
+// processes writing to child instance signals).
+extern "C" auto LyraResolveInstancePtr(void* eng, uint32_t instance_id)
+    -> void* {
+  if (eng == nullptr) return nullptr;
+  return AsEngine(eng)->FindInstanceMut(lyra::runtime::InstanceId{instance_id});
+}
+
 extern "C" auto LyraIsTraceObservedLocal(void* eng, void* inst, uint32_t id)
     -> bool {
   if (eng == nullptr) return false;

@@ -139,13 +139,19 @@ struct ConnectionDescriptor {
   uint32_t trigger_slot_id = 0;   // WaitTriggerRecord.signal_id
   uint8_t trigger_edge = 0;       // WaitTriggerRecord.edge
   uint8_t trigger_bit_index = 0;  // WaitTriggerRecord.bit_index
-  uint16_t padding = 0;
+  // R5: Typed destination identity. When dst_is_local != 0,
+  // dst_instance_id and dst_local_id carry the owning instance and
+  // body-local signal identity. Runtime decodes into ConnectionTarget.
+  uint8_t dst_is_local = 0;
+  uint8_t padding = 0;
   uint32_t trigger_byte_offset = 0;  // WaitTriggerRecord.byte_offset
   uint32_t trigger_byte_size = 0;    // WaitTriggerRecord.byte_size
+  uint32_t dst_instance_id = 0;  // InstanceId.value (valid when dst_is_local)
+  uint32_t dst_local_id = 0;  // LocalSignalId.value (valid when dst_is_local)
 };
 
 static_assert(
-    sizeof(ConnectionDescriptor) == 28, "ConnectionDescriptor size mismatch");
+    sizeof(ConnectionDescriptor) == 36, "ConnectionDescriptor size mismatch");
 static_assert(
     alignof(ConnectionDescriptor) == 4,
     "ConnectionDescriptor alignment mismatch");

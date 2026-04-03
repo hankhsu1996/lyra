@@ -543,94 +543,19 @@ void Engine::FlushDirtySlotPostRebind(
 void Engine::FlushSignalUpdates() {
   if (finished_) return;
 
-  // R5 transitional: bidirectional mirror between update_set_ and
-  // local_updates. These exist because two producer bugs have not been
-  // fixed yet:
-  //
-  //   Reverse mirror (flat -> local): codegen port expression connection
-  //   processes call MarkDirty(ObjectSignalRef) with the PARENT instance
-  //   pointer instead of the CHILD instance pointer for hierarchical
-  //   writes. The dirty mark lands in the wrong instance's local_updates.
-  //   The reverse mirror catches the corresponding flat dirty mark in
-  //   update_set_ and copies it to the correct instance's local_updates.
-  //   Root cause: codegen uses context.GetInstancePointer() (process's
-  //   own instance) instead of the target signal's owning instance.
-  //
-  //   Forward mirror (local -> flat): some legacy subscription paths
-  //   still dispatch from update_set_ via signal_subs_[flat_id].
-  //   The forward mirror copies local dirty marks to update_set_ so
-  //   those subscriptions fire.
-  //
-  // Both mirrors are deleted when:
-  //   1. Codegen emits correct target instance for cross-instance writes
-  //   2. All local triggers install into per-instance local_signal_subs
-  //
-  // Reverse mirror: flat update_set_ -> local_updates.
-  if (slot_meta_registry_.IsPopulated()) {
-    for (uint32_t s : update_set_.DeltaDirtySlots()) {
-      if (s < global_slot_count_) continue;
-      if (s >= slot_meta_registry_.Size()) continue;
-      const auto& meta = slot_meta_registry_.Get(s);
-      if (meta.domain != SlotStorageDomain::kInstanceOwned) continue;
-      auto* inst = FindInstanceMut(meta.owner_instance_id);
-      if (inst == nullptr) continue;
-      auto& obs = inst->observability;
-      if (obs.local_signal_count == 0) continue;
-      if (s < obs.flat_coord_base) continue;
-      uint32_t local_id = s - obs.flat_coord_base;
-      if (local_id >= obs.local_signal_count) continue;
-      if (!obs.local_updates.IsDeltaDirty(LocalSignalId{local_id})) {
-        const auto& ranges = update_set_.DeltaRangesFor(s);
-        auto kind = update_set_.DeltaKindFor(s);
-        auto epoch = update_set_.DeltaEpochFor(s);
-        if (ranges.IsFullExtent()) {
-          obs.local_updates.MarkSlotDirty(LocalSignalId{local_id}, kind, epoch);
-        } else {
-          for (const auto& r : ranges.Ranges()) {
-            obs.local_updates.MarkDirtyRange(
-                LocalSignalId{local_id}, r.offset, r.size, kind, epoch);
-          }
-        }
-      }
-    }
-  }  // slot_meta_registry guard
-
-  // Forward mirror: local_updates -> update_set_ for instance-owned
-  // slots written via typed MarkDirty(ObjectSignalRef).
-  for (auto* inst : instances_) {
-    auto& obs = inst->observability;
-    if (obs.local_signal_count == 0) continue;
-    uint32_t base = obs.flat_coord_base;
-    for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
-      uint32_t flat = base + lid.value;
-      if (flat >= slot_meta_registry_.Size()) {
-        throw common::InternalError(
-            "Engine::FlushSignalUpdates",
-            std::format(
-                "forward mirror: flat {} (base {} + lid {}) >= slot_meta "
-                "size {} for instance {}",
-                flat, base, lid.value, slot_meta_registry_.Size(),
-                inst->instance_id));
-      }
-      if (!update_set_.IsDeltaDirty(flat)) {
-        const auto& ranges = obs.local_updates.DeltaRangesFor(lid);
-        auto kind = obs.local_updates.DeltaKindFor(lid);
-        auto epoch = obs.local_updates.DeltaEpochFor(lid);
-        if (ranges.IsFullExtent()) {
-          update_set_.MarkSlotDirty(flat, kind, epoch);
-        } else {
-          for (const auto& r : ranges.Ranges()) {
-            update_set_.MarkDirtyRange(flat, r.offset, r.size, kind, epoch);
-          }
-        }
-      }
-    }
-  }
+  // Advance flush epoch for rebind epoch guard. Must cover both global
+  // and local flush cycles.
+  ++flush_epoch_;
 
   // Dispatch global subscriptions from update_set_, then local
   // subscriptions from per-instance local_updates.
   FlushGlobalSignalUpdates();
   for (auto* inst : instances_) {
+    auto& obs = inst->observability;
+    if (obs.local_signal_count > 0 &&
+        !obs.local_updates.DeltaDirtySignals().empty()) {
+      ++obs.local_flush_epoch;
+    }
     FlushLocalSignalUpdates(*inst);
   }
 }
@@ -644,8 +569,6 @@ void Engine::FlushGlobalSignalUpdates() {
 
   auto newly_dirty = update_set_.DeltaDirtySlots();
   if (newly_dirty.empty()) return;
-
-  ++flush_epoch_;
 
   const bool detailed = detailed_stats_enabled_;
 

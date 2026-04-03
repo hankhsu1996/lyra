@@ -34,7 +34,8 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target) {
     if (signal_id.IsLocal()) {
       builder.CreateCall(
           ctx.GetLyraNotifyContainerMutationLocal(),
-          {ctx.GetEnginePointer(), ctx.GetInstancePointer(),
+          {ctx.GetEnginePointer(),
+           signal_id.GetInstancePointer(ctx.GetInstancePointer()),
            signal_id.Emit(builder), llvm::ConstantInt::get(i32_ty, 1),
            llvm::ConstantInt::get(i32_ty, 0)});
     } else {
@@ -100,8 +101,9 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
     if (signal_id.IsLocal()) {
       builder.CreateCall(
           ctx.GetLyraNotifySignalLocal(),
-          {ctx.GetEnginePointer(), ctx.GetInstancePointer(), *target_ptr_or_err,
-           signal_id.Emit(builder)});
+          {ctx.GetEnginePointer(),
+           signal_id.GetInstancePointer(ctx.GetInstancePointer()),
+           *target_ptr_or_err, signal_id.Emit(builder)});
     } else {
       builder.CreateCall(
           ctx.GetLyraNotifySignalGlobal(),

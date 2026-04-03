@@ -85,6 +85,11 @@ struct RuntimeInstanceObservability {
   // Maps local signals to ranges in the engine's shared all_connections_.
   std::vector<TriggerRange> local_conn_trigger_map;
 
+  // R5: Per-instance flush epoch. Advanced when FlushLocalSignalUpdates
+  // dispatches local delta for this instance. Used by rebind watcher
+  // freshness checks to skip unnecessary snapshot refresh.
+  uint64_t local_flush_epoch = 0;
+
   // Transitional flat coordinate base for comb fixpoint interop.
   // Maps local_signal_id -> flat_slot_id as (flat_coord_base + local_id).
   // Runtime-internal only -- not part of the binary ABI or codegen contract.

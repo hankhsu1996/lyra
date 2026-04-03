@@ -45,50 +45,28 @@ void Engine::InitConnectionBatch(std::span<const ConnectionDescriptor> descs) {
       ++conn_full_slot_count_;
     }
 
-    // Classify destination domain.
+    // Decode typed destination from descriptor fields.
+    // No slot_meta_registry_ lookup or flat_coord_base computation.
     ConnectionTarget dst;
-    if (d.dst_slot_id < global_slot_count_) {
-      dst = GlobalConnectionTarget{GlobalSignalId{d.dst_slot_id}};
-    } else {
-      const auto& meta = slot_meta_registry_.Get(d.dst_slot_id);
-      if (meta.domain != SlotStorageDomain::kInstanceOwned) {
-        throw common::InternalError(
-            "Engine::InitConnectionBatch",
-            std::format(
-                "dst_slot_id {} >= global_slot_count {} but domain is not "
-                "instance-owned",
-                d.dst_slot_id, global_slot_count_));
-      }
-      auto* inst =
-          instance_trace_resolver_.FindInstanceMut(meta.owner_instance_id);
+    if (d.dst_is_local != 0) {
+      auto iid = InstanceId{d.dst_instance_id};
+      auto lid = LocalSignalId{d.dst_local_id};
+      auto* inst = FindInstanceMut(iid);
       if (inst == nullptr) {
         throw common::InternalError(
             "Engine::InitConnectionBatch",
-            std::format(
-                "dst_slot_id {} owner_instance_id {} has no instance",
-                d.dst_slot_id, meta.owner_instance_id));
+            std::format("dst instance_id {} not found", iid));
       }
-      if (d.dst_slot_id < inst->observability.flat_coord_base) {
+      if (lid.value >= inst->observability.local_signal_count) {
         throw common::InternalError(
             "Engine::InitConnectionBatch",
             std::format(
-                "dst_slot_id {} < flat_coord_base {} for instance {}",
-                d.dst_slot_id, inst->observability.flat_coord_base,
-                meta.owner_instance_id));
+                "dst local_id {} >= local_signal_count {} for instance {}",
+                lid.value, inst->observability.local_signal_count, iid));
       }
-      uint32_t local_id = d.dst_slot_id - inst->observability.flat_coord_base;
-      if (local_id >= inst->observability.local_signal_count) {
-        throw common::InternalError(
-            "Engine::InitConnectionBatch",
-            std::format(
-                "computed local_id {} >= local_signal_count {} for "
-                "instance {}",
-                local_id, inst->observability.local_signal_count,
-                meta.owner_instance_id));
-      }
-      dst = LocalConnectionTarget{
-          .instance_id = meta.owner_instance_id,
-          .signal = LocalSignalId{local_id}};
+      dst = LocalConnectionTarget{.instance_id = iid, .signal = lid};
+    } else {
+      dst = GlobalConnectionTarget{GlobalSignalId{d.dst_slot_id}};
     }
 
     // Classify trigger domain.

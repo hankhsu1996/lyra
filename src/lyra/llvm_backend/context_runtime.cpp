@@ -497,6 +497,19 @@ auto Context::GetLyraResolveSlotPtr() -> llvm::Function* {
 // Local: (ptr engine, ptr instance, ..., i32 local_id, ...)
 // Global: (ptr engine, ..., i32 global_id, ...)
 
+auto Context::GetLyraResolveInstancePtr() -> llvm::Function* {
+  if (lyra_resolve_instance_ptr_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    // (eng, instance_id) -> ptr
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty, i32_ty}, false);
+    lyra_resolve_instance_ptr_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraResolveInstancePtr",
+        llvm_module_.get());
+  }
+  return lyra_resolve_instance_ptr_;
+}
+
 auto Context::GetLyraMarkDirtyLocal() -> llvm::Function* {
   if (lyra_mark_dirty_local_ == nullptr) {
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);

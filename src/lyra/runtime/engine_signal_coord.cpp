@@ -50,7 +50,7 @@ auto Engine::IsTraceObserved(ObjectSignalRef signal) -> bool {
   return obs.trace_select[signal.local.value] != 0;
 }
 
-// --- Global paths (flat slot_id is the correct identity) ---
+// --- Global paths (truly global-only) ---
 
 void Engine::MarkDirty(GlobalSignalId signal) {
   MarkSlotDirty(signal.value);

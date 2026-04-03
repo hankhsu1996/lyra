@@ -261,13 +261,20 @@ struct InstalledWaitState {
   // time: true iff shape is kStatic.
   bool can_refresh_snapshot = false;
 
-  // Snapshot refresh watermark: delta epoch + dirty count at last refresh.
-  // Used inside RefreshInstalledSnapshots to skip redundant per-sub scans
-  // when no new dirty slots appeared since the last refresh.
-  // Automatically reset when the installed wait is cleared or replaced
-  // (default construction zeros both fields).
-  uint32_t last_refresh_epoch = 0;
-  uint32_t last_refresh_dirty_count = 0;
+  // R5: Domain-split snapshot refresh watermark. Used by
+  // RefreshInstalledSnapshots to skip redundant per-sub scans when
+  // no new dirty slots appeared since the last refresh.
+  // Global: tracks update_set_ epoch and dirty count.
+  // Local: tracks per-dependent-instance local_flush_epoch.
+  // Only instances that this wait site depends on are tracked.
+  // Automatically reset when the installed wait is cleared or replaced.
+  uint32_t last_global_refresh_epoch = 0;
+  uint32_t last_global_refresh_dirty_count = 0;
+  struct LocalRefreshStamp {
+    InstanceId instance_id = InstanceId{0};
+    uint64_t epoch = 0;
+  };
+  std::vector<LocalRefreshStamp> local_refresh_epochs;
 };
 
 // Per-process state (keyed by ProcessHandle).
