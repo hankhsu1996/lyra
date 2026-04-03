@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <type_traits>
 #include <unordered_map>
 #include <variant>
 #include <vector>
@@ -50,7 +49,7 @@ struct ObservationSet {
 
   void Add(
       SignalRef::Scope scope, uint32_t id, std::optional<PlaceId> place_id) {
-    SignalKey key{scope, id};
+    SignalKey key{.scope = scope, .id = id};
     auto& vec = entries[key];
 
     // If we already have a full-slot observation, no need to add more.
@@ -61,7 +60,7 @@ struct ObservationSet {
     // If adding a full-slot observation, clear all sub-range entries.
     if (!place_id.has_value()) {
       vec.clear();
-      vec.push_back(std::nullopt);
+      vec.emplace_back(std::nullopt);
       return;
     }
 
@@ -215,6 +214,7 @@ void CollectReadsFromRvalue(
           [](const MathCallRvalueInfo&) {},
           [](const SystemTfRvalueInfo&) {},
           [](const ArrayQueryRvalueInfo&) {},
+          [](const SelectRvalueInfo&) {},
           [&](const SystemCmdRvalueInfo& info) {
             if (info.command) {
               CollectReadsFromOperand(
@@ -298,7 +298,6 @@ void TransferStatement(
           [&](const AssocOp& aop) {
             std::visit(
                 [&](const auto& op) {
-                  using T = std::decay_t<decltype(op)>;
                   if constexpr (requires { op.key; }) {
                     CollectReadsFromOperand(op.key, arena, must_def, obs);
                   }
@@ -368,7 +367,7 @@ auto CollectSensitivity(const Process& process, const Arena& arena)
   std::vector<uint32_t> rpo;
   rpo.reserve(num_blocks);
   ComputeRPO(entry_idx, blocks, visited, rpo);
-  std::reverse(rpo.begin(), rpo.end());
+  std::ranges::reverse(rpo);
 
   // Initialize dataflow state.
   // Entry block starts with Empty (nothing is must-defined).
@@ -427,7 +426,8 @@ auto CollectSensitivity(const Process& process, const Arena& arena)
       triggers.push_back(
           {.signal = SignalRef{.scope = key.scope, .id = key.id},
            .edge = common::EdgeKind::kAnyChange,
-           .observed_place = place});
+           .observed_place = place,
+           .late_bound = std::nullopt});
     }
   }
   return triggers;

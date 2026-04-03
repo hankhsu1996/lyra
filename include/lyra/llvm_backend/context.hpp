@@ -236,6 +236,7 @@ class Context {
 
   [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
   [[nodiscard]] auto GetLyraWarnRateLimited() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraRecordDecisionObservation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintValue() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintEnd() -> llvm::Function*;
@@ -894,6 +895,7 @@ class Context {
 
   llvm::Function* lyra_print_literal_ = nullptr;
   llvm::Function* lyra_warn_rate_limited_ = nullptr;
+  llvm::Function* lyra_record_decision_observation_ = nullptr;
   llvm::Function* lyra_print_value_ = nullptr;
   llvm::Function* lyra_print_string_ = nullptr;
   llvm::Function* lyra_print_end_ = nullptr;

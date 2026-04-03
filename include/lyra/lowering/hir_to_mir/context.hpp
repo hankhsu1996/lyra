@@ -23,6 +23,8 @@ struct BuiltinTypes {
   TypeId offset_type;
   TypeId string_type;
   TypeId void_type;
+  TypeId i8_type;   // 8-bit unsigned 2-state (for decision observation)
+  TypeId i16_type;  // 16-bit unsigned 2-state (for decision observation)
 };
 
 auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes;
@@ -280,6 +282,14 @@ struct Context {
 
   [[nodiscard]] auto GetStringType() const -> TypeId {
     return builtin_types.string_type;
+  }
+
+  [[nodiscard]] auto GetI8Type() const -> TypeId {
+    return builtin_types.i8_type;
+  }
+
+  [[nodiscard]] auto GetI16Type() const -> TypeId {
+    return builtin_types.i16_type;
   }
 };
 

@@ -33,6 +33,14 @@ auto InternBuiltinTypes(TypeArena& arena) -> BuiltinTypes {
               .bit_width = 32, .is_signed = false, .is_four_state = false}),
       .string_type = arena.Intern(TypeKind::kString, std::monostate{}),
       .void_type = arena.Intern(TypeKind::kVoid, std::monostate{}),
+      .i8_type = arena.Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 8, .is_signed = false, .is_four_state = false}),
+      .i16_type = arena.Intern(
+          TypeKind::kIntegral,
+          IntegralInfo{
+              .bit_width = 16, .is_signed = false, .is_four_state = false}),
   };
 }
 
