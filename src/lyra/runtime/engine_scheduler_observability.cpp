@@ -268,6 +268,8 @@ auto PhaseLabel(uint32_t phase) -> std::string_view {
       return "FlushUpdates";
     case Engine::Phase::kCommitNba:
       return "CommitNba";
+    case Engine::Phase::kSettleComplete:
+      return "SettleComplete";
     case Engine::Phase::kPostponed:
       return "Postponed";
   }
@@ -561,9 +563,10 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
                 ref.slot_id < slot_meta_registry_.Size()) {
               const auto& meta = slot_meta_registry_.Get(ref.slot_id);
               {
-                const auto* slot_base =
-                    ResolveSlotBase(meta, design_state_base_, instances_);
-                uint8_t byte_val = slot_base[group.byte_offset];
+                auto slot_bytes = std::span(
+                    ResolveSlotBase(meta, design_state_base_, instances_),
+                    meta.total_bytes);
+                uint8_t byte_val = slot_bytes[group.byte_offset];
                 summary.current_bit = (byte_val >> group.bit_index) & 1;
               }
             }

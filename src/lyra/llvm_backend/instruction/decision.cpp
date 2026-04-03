@@ -16,16 +16,15 @@ auto LowerRecordDecisionObservation(
     Context& ctx, const mir::RecordDecisionObservation& obs) -> Result<void> {
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   builder.CreateCall(
       ctx.GetLyraRecordDecisionObservation(),
-      {ctx.GetFramePointer(),
+      {ctx.GetEnginePointer(), ctx.GetCurrentProcessId(),
        llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), obs.id.Index()),
        llvm::ConstantInt::get(
-           llvm::Type::getInt8Ty(llvm_ctx),
-           static_cast<uint8_t>(obs.match_class_const)),
+           i8_ty, static_cast<uint8_t>(obs.match_class_const)),
        llvm::ConstantInt::get(
-           llvm::Type::getInt8Ty(llvm_ctx),
-           static_cast<uint8_t>(obs.selected_kind_const)),
+           i8_ty, static_cast<uint8_t>(obs.selected_kind_const)),
        llvm::ConstantInt::get(
            llvm::Type::getInt16Ty(llvm_ctx), obs.selected_arm_const.Index())});
   return {};
@@ -44,12 +43,6 @@ auto LowerRecordDecisionObservationDynamic(
   auto sa = LowerOperand(ctx, resolver, obs.selected_arm);
   if (!sa) return std::unexpected(sa.error());
 
-  // MIR verifier guarantees:
-  //   match_class   : two-state integral, semantic i8 domain
-  //   selected_kind : two-state integral, semantic i8 domain
-  //   selected_arm  : two-state integral, semantic i16 domain
-  // Normalize to the runtime ABI widths here because lowered storage values
-  // may be represented with wider integer types.
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* i16_ty = llvm::Type::getInt16Ty(llvm_ctx);
 
@@ -68,7 +61,7 @@ auto LowerRecordDecisionObservationDynamic(
 
   builder.CreateCall(
       ctx.GetLyraRecordDecisionObservation(),
-      {ctx.GetFramePointer(),
+      {ctx.GetEnginePointer(), ctx.GetCurrentProcessId(),
        llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), obs.id.Index()),
        mc_v, sk_v, sa_v});
   return {};

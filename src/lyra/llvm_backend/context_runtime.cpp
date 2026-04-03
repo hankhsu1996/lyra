@@ -37,15 +37,15 @@ auto Context::GetLyraWarnRateLimited() -> llvm::Function* {
 auto Context::GetLyraRecordDecisionObservation() -> llvm::Function* {
   if (lyra_record_decision_observation_ == nullptr) {
     // void LyraRecordDecisionObservation(
-    //     void* frame, uint32_t decision_id, uint8_t match_class,
-    //     uint8_t selected_kind, uint16_t selected_arm)
+    //     void* engine, uint32_t process_id, uint32_t decision_id,
+    //     uint8_t match_class, uint8_t selected_kind, uint16_t selected_arm)
     auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
     auto* i16_ty = llvm::Type::getInt16Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        void_ty, {ptr_ty, i32_ty, i8_ty, i8_ty, i16_ty}, false);
+        void_ty, {ptr_ty, i32_ty, i32_ty, i8_ty, i8_ty, i16_ty}, false);
     lyra_record_decision_observation_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage,
         "LyraRecordDecisionObservation", llvm_module_.get());

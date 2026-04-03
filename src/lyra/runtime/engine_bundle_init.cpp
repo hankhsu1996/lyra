@@ -92,7 +92,7 @@ auto ReadObservablePoolString(
 // and call back with pre-resolved facts.
 template <typename Fn>
 void ForEachBundleObservable(
-    const InstanceMetadataBundle& bundle, Fn&& callback) {
+    const InstanceMetadataBundle& bundle, const Fn& callback) {
   const auto& obs = bundle.body_desc->observable_descriptors;
   for (uint32_t local = 0; local < obs.entries.size(); ++local) {
     const auto& entry = obs.entries[local];
@@ -375,6 +375,32 @@ auto Engine::InitModuleInstancesFromBundles(
             .instance_path = bundle.instance_path,
             .module_proc_base = bundle.module_proc_base,
         });
+  }
+
+  // Step F: Register immutable decision metadata tables per process.
+  for (const InstanceMetadataBundle& bundle : bundles) {
+    const auto& dtables = bundle.body_desc->decision_tables;
+    for (uint32_t local = 0; local < dtables.size(); ++local) {
+      const auto pid = ProcessId::FromIndex(bundle.module_proc_base + local);
+      if (pid.Index() >= process_decision_tables_.size()) continue;
+      const auto& desc = dtables[local];
+      if (desc.count > 0 && desc.metas == nullptr) {
+        throw common::InternalError(
+            "Engine::InitModuleInstancesFromBundles",
+            std::format(
+                "decision table for pid {} has count {} but null metas",
+                pid.Index(), desc.count));
+      }
+      process_decision_tables_[pid.Index()] = ProcessBodyDecisionTable{
+          .count = DecisionSiteCount::FromCount(desc.count),
+          .metas = desc.metas,
+      };
+      if (desc.count > 0) {
+        auto& state = decision_states_[pid.Index()];
+        state.slots.resize(desc.count);
+        state.dirty_seen.resize(desc.count, 0);
+      }
+    }
   }
 
   return instance_trace;

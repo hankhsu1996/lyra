@@ -118,6 +118,7 @@ struct ExecutionContractState {
   llvm::Value* design_ptr = nullptr;
   llvm::Value* frame_ptr = nullptr;
   llvm::Value* engine_ptr = nullptr;
+  llvm::Value* current_process_id = nullptr;
   llvm::Value* instance_ptr = nullptr;
   llvm::Value* this_ptr = nullptr;
   llvm::Value* dynamic_instance_id = nullptr;
@@ -624,6 +625,7 @@ class Context {
   // pass raw field indices or choose LLVM result types for header fields.
   auto EmitLoadEnginePtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadDesignPtr(llvm::Value* state_arg) -> llvm::Value*;
+  auto EmitLoadProcessId(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadInstancePtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadInstanceInlineBase(llvm::Value* instance_ptr) -> llvm::Value*;
   auto EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value*;
@@ -647,6 +649,10 @@ class Context {
   // engine_ptr: loaded from state->header.engine, points to shared Engine
   void SetEnginePointer(llvm::Value* engine_ptr);
   [[nodiscard]] auto GetEnginePointer() -> llvm::Value*;
+
+  // process_id: loaded from state->header.process_id, i32 identity
+  void SetCurrentProcessId(llvm::Value* process_id);
+  [[nodiscard]] auto GetCurrentProcessId() -> llvm::Value*;
 
   // Design-slot store mode for the current process body.
   // Controls whether stores emit compare+dirty-mark (kNotify) or plain
@@ -1043,6 +1049,7 @@ class Context {
   llvm::Value* design_ptr_ = nullptr;
   llvm::Value* frame_ptr_ = nullptr;
   llvm::Value* engine_ptr_ = nullptr;
+  llvm::Value* current_process_id_ = nullptr;
   DesignStoreMode design_store_mode_ = DesignStoreMode::kNotifySimulation;
   NotificationPolicy notification_policy_ = NotificationPolicy::kImmediate;
 

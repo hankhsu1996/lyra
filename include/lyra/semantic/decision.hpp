@@ -81,6 +81,9 @@ struct DecisionArmCount {
 struct DecisionSiteCount {
   uint32_t raw = 0;
 
+  static auto FromCount(uint32_t v) -> DecisionSiteCount {
+    return DecisionSiteCount{v};
+  }
   [[nodiscard]] auto Index() const -> uint32_t {
     return raw;
   }

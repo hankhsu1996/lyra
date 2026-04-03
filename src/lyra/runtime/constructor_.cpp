@@ -906,6 +906,7 @@ auto Constructor::Finalize() -> ConstructionResult {
   for (uint32_t i = 0; i < num_total; ++i) {
     auto* header = static_cast<ProcessFrameHeader*>(states[i]);
     header->design_ptr = design_state_.data();
+    header->process_id = i;
 
     const auto& proc = staged_[i];
     if (proc.is_module) {
@@ -1184,6 +1185,8 @@ auto MakeBodyDescriptorPackageView(const lyra::runtime::BodyDescriptorRef& ref)
               .slots =
                   std::span(ref.init_param_slots, ref.num_init_param_slots),
           },
+      .decision_tables =
+          std::span(ref.decision_tables, ref.num_decision_tables),
   };
 }
 
@@ -1286,7 +1289,9 @@ void LyraConstructorBeginBody(
     uint32_t num_init_recipe_roots, const uint32_t* init_recipe_child_indices,
     uint32_t num_init_recipe_child_indices,
     const lyra::runtime::ParamInitSlotEntry* init_param_slots,
-    uint32_t num_init_param_slots) {
+    uint32_t num_init_param_slots,
+    const lyra::runtime::DecisionTableDescriptor* decision_tables,
+    uint32_t num_decision_tables) {
   ValidateHandle(ctor, "LyraConstructorBeginBody");
   ValidateHandle(desc, "LyraConstructorBeginBody");
   ValidateMetaAbiInputs(
@@ -1351,6 +1356,7 @@ void LyraConstructorBeginBody(
           lyra::runtime::ParamInitView{
               .slots = std::span(init_param_slots, num_init_param_slots),
           },
+      .decision_tables = std::span(decision_tables, num_decision_tables),
   };
   static_cast<lyra::runtime::Constructor*>(ctor)->BeginBody(package);
 }

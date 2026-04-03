@@ -89,6 +89,8 @@ struct BodyDescriptorPackage {
   StorageConstructionRecipeView init_recipe;
   StorageConstructionRootView init_recipe_roots;
   ParamInitView init_params;
+  // Per body-local process decision metadata (parallel to entries).
+  std::span<const DecisionTableDescriptor> decision_tables;
 };
 
 // Canonical stable storage for a body template. Keyed by body identity
@@ -465,7 +467,9 @@ void LyraConstructorBeginBody(
     uint32_t num_init_recipe_roots, const uint32_t* init_recipe_child_indices,
     uint32_t num_init_recipe_child_indices,
     const lyra::runtime::ParamInitSlotEntry* init_param_slots,
-    uint32_t num_init_param_slots);
+    uint32_t num_init_param_slots,
+    const lyra::runtime::DecisionTableDescriptor* decision_tables,
+    uint32_t num_decision_tables);
 
 void LyraConstructorAddInstance(
     void* ctor, const char* instance_path, const void* param_data,

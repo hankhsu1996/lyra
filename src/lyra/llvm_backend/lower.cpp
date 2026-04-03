@@ -1478,6 +1478,36 @@ auto CompileDesignProcesses(const LoweringInput& input)
                     .col = loc.col,
                 };
           });
+
+      // Decision site metadata per body-local process.
+      info.decision_metas.resize(num_entries);
+      info.decision_meta_files.resize(num_entries);
+      ForEachNonFinalProcess(
+          body, ordinal_map,
+          [&](uint32_t nonfinal_proc_ordinal, mir::ProcessId /*pid*/,
+              const mir::Process& proc) {
+            auto& per_proc = info.decision_metas[nonfinal_proc_ordinal];
+            auto& per_proc_files =
+                info.decision_meta_files[nonfinal_proc_ordinal];
+            per_proc.reserve(proc.decision_sites.size());
+            per_proc_files.reserve(proc.decision_sites.size());
+            for (const auto& site : proc.decision_sites) {
+              auto site_loc = ResolveProcessOrigin(
+                  site.origin, input.diag_ctx, input.source_manager);
+              uint32_t packed =
+                  static_cast<uint8_t>(site.qualifier) |
+                  (static_cast<uint8_t>(site.kind) << 8) |
+                  (static_cast<uint8_t>(site.has_fallback ? 1 : 0) << 16);
+              per_proc.push_back(
+                  runtime::DecisionMetaEntry{
+                      .qualifier_kind_packed = packed,
+                      .arm_count = static_cast<uint32_t>(site.arm_count.raw),
+                      .line = site_loc.line,
+                      .col = site_loc.col,
+                  });
+              per_proc_files.push_back(site_loc.file);
+            }
+          });
     }
 
     // Connection metadata template.

@@ -915,11 +915,11 @@ auto BuildHeaderType(llvm::LLVMContext& ctx, llvm::StructType* suspend_type)
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
   auto* outcome_ty =
       llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty});
-  // { suspend, body, engine_ptr, design_ptr, instance, outcome }
+  // { suspend, body, engine_ptr, design_ptr, instance, outcome, process_id }
   using F = lyra::runtime::ProcessFrameHeaderField;
   constexpr auto kFieldCount = static_cast<size_t>(F::kFieldCount);
   std::array<llvm::Type*, kFieldCount> fields = {
-      suspend_type, ptr_ty, ptr_ty, ptr_ty, ptr_ty, outcome_ty};
+      suspend_type, ptr_ty, ptr_ty, ptr_ty, ptr_ty, outcome_ty, i32_ty};
   return llvm::StructType::create(ctx, fields, "ProcessStateHeader");
 }
 
@@ -1853,6 +1853,8 @@ auto BuildLayout(
                   .inline_state_size_bytes = size.inline_bytes,
                   .appendix_state_size_bytes = size.appendix_bytes,
                   .total_state_size_bytes = size.total_bytes,
+                  .decision_metas = {},
+                  .decision_meta_files = {},
               });
         } else {
           // Validate all plans for the same body agree on slot_count.
