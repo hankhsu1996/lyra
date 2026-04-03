@@ -1,14 +1,13 @@
 #include "tests/framework/runner.hpp"
 
-#include <algorithm>
 #include <filesystem>
-#include <format>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
 
 #include "tests/framework/aot_backend.hpp"
 #include "tests/framework/assertions.hpp"
+#include "tests/framework/fatal_subprocess.hpp"
 #include "tests/framework/jit_backend.hpp"
 #include "tests/framework/lli_backend.hpp"
 #include "tests/framework/runner_common.hpp"
@@ -34,6 +33,32 @@ void RunTestCase(
     case BackendKind::kJit: {
       if (!test_case.expected_files.empty()) {
         GTEST_SKIP() << "JIT backend does not support file assertions";
+      }
+
+      // Runtime-fatal tests run in a subprocess via the encapsulated helper.
+      if (test_case.expected_runtime_fatal.has_value()) {
+        auto fatal_result = RunExpectingFatal(
+            [&] { RunJitBackend(test_case, work_directory, force_two_state); });
+        ASSERT_EQ(fatal_result.run_status, FatalSubprocessRunStatus::kRan)
+            << "[" << test_case.source_yaml
+            << "] Fatal subprocess helper failed to launch child";
+        ASSERT_EQ(fatal_result.termination, ChildTerminationKind::kSignaled)
+            << "[" << test_case.source_yaml
+            << "] Expected signal-terminated child (abort), got "
+            << (fatal_result.termination ==
+                        ChildTerminationKind::kExitedNormally
+                    ? "normal exit"
+                    : "non-zero exit")
+            << " (code=" << fatal_result.exit_code << ")";
+        for (const auto& expected :
+             test_case.expected_runtime_fatal->stderr_contains) {
+          EXPECT_NE(
+              fatal_result.captured_stderr.find(expected), std::string::npos)
+              << "[" << test_case.source_yaml
+              << "] Expected stderr to contain: " << expected
+              << "\nActual stderr: " << fatal_result.captured_stderr;
+        }
+        break;
       }
 
       auto result = RunJitBackend(test_case, work_directory, force_two_state);
@@ -75,6 +100,10 @@ void RunTestCase(
     }
 
     case BackendKind::kLli: {
+      if (test_case.expected_runtime_fatal.has_value()) {
+        GTEST_SKIP()
+            << "expect.runtime_fatal is only supported on the JIT backend";
+      }
       if (!test_case.expected_files.empty()) {
         GTEST_SKIP() << "LLI backend does not support file assertions";
       }
@@ -118,6 +147,10 @@ void RunTestCase(
     }
 
     case BackendKind::kAot: {
+      if (test_case.expected_runtime_fatal.has_value()) {
+        GTEST_SKIP()
+            << "expect.runtime_fatal is only supported on the JIT backend";
+      }
       if (!test_case.expected_files.empty()) {
         GTEST_SKIP() << "AOT backend does not support file assertions";
       }

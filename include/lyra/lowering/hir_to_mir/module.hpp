@@ -18,6 +18,10 @@ namespace lyra::lowering::hir_to_mir {
 struct MirBodyLoweringResult {
   mir::ModuleBody body;
   std::vector<OriginEntry> origins;
+  // Body-local symbol-to-function map. Retained for downstream consumers
+  // that need to resolve body-owned symbols to body-local FunctionIds
+  // (e.g., module-scoped DPI export target resolution).
+  SymbolToMirFunctionMap symbol_to_function;
 };
 
 // Lower specialization-shared behavioral content for one spec group.

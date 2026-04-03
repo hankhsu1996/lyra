@@ -122,6 +122,7 @@ auto LowerModule(
   return MirBodyLoweringResult{
       .body = std::move(result),
       .origins = std::move(body_origins).TakeEntries(),
+      .symbol_to_function = std::move(symbol_to_mir_function),
   };
 }
 

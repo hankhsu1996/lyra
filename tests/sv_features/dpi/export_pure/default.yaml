@@ -64,7 +64,7 @@ cases:
         contains:
           - "DPI-C export tasks not yet supported"
 
-  - name: reject_module_scoped_export
+  - name: accept_module_scoped_export
     sv: |
       module Test;
         function int mod_fn();
@@ -73,10 +73,6 @@ cases:
         export "DPI-C" function mod_fn;
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "DPI-C module-scoped export functions not yet supported"
 
   - name: accept_package_export_real_param
     sv: |

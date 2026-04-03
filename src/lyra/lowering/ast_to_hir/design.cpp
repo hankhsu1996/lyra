@@ -820,12 +820,6 @@ auto LowerDesign(
           UnsupportedCategory::kFeature);
       continue;
     }
-    if (is_module_scoped) {
-      ctx->sink->Unsupported(
-          span, "DPI-C module-scoped export functions not yet supported",
-          UnsupportedCategory::kFeature);
-      continue;
-    }
 
     SymbolId symbol = registrar.Lookup(sub);
     if (!symbol) {

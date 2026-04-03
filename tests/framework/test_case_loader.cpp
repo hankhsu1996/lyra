@@ -450,7 +450,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       ValidateKeys(
           expect,
           {"variables", "time", "stdout", "compiler_output", "files", "error",
-           "mutations"},
+           "mutations", "runtime_fatal"},
           expect_context, path);
 
       // expect.variables: {var: value, ...}
@@ -521,6 +521,24 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
         test_case.expected_error = ParseExpectedOutput(
             expect["error"], std::format("expect.error in {}", case_context),
             path);
+      }
+
+      // expect.runtime_fatal: { stderr_contains: [...] }
+      if (expect["runtime_fatal"]) {
+        const auto& fatal = expect["runtime_fatal"];
+        ValidateKeys(
+            fatal, {"stderr_contains"},
+            std::format("expect.runtime_fatal in {}", case_context), path);
+        FatalRunExpectation fe;
+        if (fatal["stderr_contains"]) {
+          ValidateIsSequence(
+              fatal["stderr_contains"], "stderr_contains",
+              std::format("expect.runtime_fatal in {}", case_context), path);
+          for (const auto& item : fatal["stderr_contains"]) {
+            fe.stderr_contains.push_back(item.as<std::string>());
+          }
+        }
+        test_case.expected_runtime_fatal = fe;
       }
     }
 

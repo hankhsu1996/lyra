@@ -2,6 +2,126 @@ feature: dpi_export_general
 description: DPI-C export end-to-end integration tests
 
 cases:
+  - name: module_export_single_body_scope_binding
+    dpi_sources:
+      - dpi_helpers/module_export_scope_binding.c
+    sv: |
+      module Inner #(parameter int ID = 0) ();
+        export "DPI-C" function get_id;
+        function automatic int get_id();
+          return ID;
+        endfunction
+      endmodule
+
+      module Test;
+        Inner #(11) a();
+        Inner #(22) b();
+        import "DPI-C" function int call_module_exports();
+        int result;
+        initial begin
+          result = call_module_exports();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: module_export_multiple_exports_same_body
+    dpi_sources:
+      - dpi_helpers/module_export_multi.c
+    sv: |
+      module Inner #(parameter int ID = 0) ();
+        export "DPI-C" function get_id;
+        export "DPI-C" function get_id_plus_one;
+        function automatic int get_id();
+          return ID;
+        endfunction
+        function automatic int get_id_plus_one();
+          return ID + 1;
+        endfunction
+      endmodule
+
+      module Test;
+        Inner #(11) a();
+        Inner #(22) b();
+        import "DPI-C" function int call_both_exports();
+        int result;
+        initial begin
+          result = call_both_exports();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: module_export_instance_local_state
+    dpi_sources:
+      - dpi_helpers/module_export_local_state.c
+    sv: |
+      module Inner ();
+        int x;
+        export "DPI-C" function get_x;
+        function automatic int get_x();
+          return x;
+        endfunction
+      endmodule
+
+      module Test;
+        Inner a();
+        Inner b();
+        import "DPI-C" function int call_same_body_instances();
+        int result;
+        initial begin
+          a.x = 101;
+          b.x = 202;
+          result = call_same_body_instances();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  - name: module_export_header_shape
+    dump_dpi_header: true
+    sv: |
+      module Test;
+        export "DPI-C" function mod_fn;
+        function int mod_fn(int x);
+          return x;
+        endfunction
+        initial begin end
+      endmodule
+    expect:
+      compiler_output:
+        contains:
+          - "int mod_fn(int);"
+        not_contains:
+          - "svScope"
+
+  - name: module_export_null_scope_fatal
+    dpi_sources:
+      - dpi_helpers/module_export_no_scope.c
+    sv: |
+      module Inner #(parameter int ID = 0) ();
+        export "DPI-C" function get_id;
+        function automatic int get_id();
+          return ID;
+        endfunction
+      endmodule
+
+      module Test;
+        Inner #(11) a();
+        import "DPI-C" function int call_without_scope();
+        int result;
+        initial begin
+          result = call_without_scope();
+        end
+      endmodule
+    expect:
+      runtime_fatal:
+        stderr_contains:
+          - "module-scoped DPI export function called without active instance scope"
+
   - name: export_scalar_return_roundtrip
     sv: |
       package dpi_pkg;

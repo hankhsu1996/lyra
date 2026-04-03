@@ -25,6 +25,12 @@ struct ExpectedOutput {
   }
 };
 
+// Expected runtime fatal (abort/crash during simulation).
+// The test is run in a subprocess; non-zero exit is expected.
+struct FatalRunExpectation {
+  std::vector<std::string> stderr_contains;
+};
+
 struct MutationExpectation {
   std::optional<size_t> min_count;
   std::vector<std::string> contains_kind;  // "value_write", "structural", etc.
@@ -45,6 +51,7 @@ struct TestCase {
   std::optional<ExpectedOutput> expected_compiler_output;  // Compiler artifacts
   std::optional<ExpectedOutput> expected_error;  // Expected compilation error
   std::optional<MutationExpectation> expected_mutations;
+  std::optional<FatalRunExpectation> expected_runtime_fatal;
   bool pedantic = false;        // Strict LRM compliance mode for this test
   bool trace_summary = false;   // Enable trace summary output for this test
   bool signal_trace = false;    // Enable text signal trace for this test
