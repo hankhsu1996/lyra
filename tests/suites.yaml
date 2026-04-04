@@ -60,7 +60,8 @@ suites:
   # Keep ~20-40 YAML files max. Tighten patterns if they expand.
   #
   # PR-gate smoke coverage families (distinct lowering/write paths):
-  #   assoc_arrays, dynamic_arrays, queues, unpacked_struct, unpacked_arrays
+  #   assoc_arrays, dynamic_arrays, queues, unpacked_struct, unpacked_arrays,
+  #   dpi_export
   # Extend this list when a new family introduces a distinct write/commit path.
   aot_smoke:
     backend: aot
@@ -68,6 +69,7 @@ suites:
       - ^control_flow/conditional/
       - ^control_flow/for/
       - ^datatypes/integral/variables/
+      - ^dpi/export_general/
       - ^datatypes/packed/packed_struct/
       - ^datatypes/unpacked/assoc_arrays/
       - ^datatypes/unpacked/dynamic_arrays/
