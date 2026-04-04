@@ -274,6 +274,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = hir_result.source_manager.get(),
+      .origin_lookup = &origin_lookup,
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = {},
       .feature_flags = 0,

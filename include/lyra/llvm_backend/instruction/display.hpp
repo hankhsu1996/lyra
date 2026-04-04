@@ -16,12 +16,4 @@ auto LowerDisplayEffect(
     Context& context, SlotAccessResolver& resolver,
     const mir::DisplayEffect& display) -> Result<void>;
 
-auto LowerSeverityEffect(Context& context, const mir::SeverityEffect& severity)
-    -> Result<void>;
-
-// Resolver-aware overload.
-auto LowerSeverityEffect(
-    Context& context, SlotAccessResolver& resolver,
-    const mir::SeverityEffect& severity) -> Result<void>;
-
 }  // namespace lyra::lowering::mir_to_llvm

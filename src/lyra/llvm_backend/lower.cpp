@@ -880,10 +880,16 @@ auto CompareCombSlotsByFinalObservableOrder(
 auto CompileModuleSpecSession(
     Context& context, const mir::Design& design,
     const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec> {
-  // Set the body arena as the current arena for this compilation scope.
-  // ArenaScope restores the previous arena on exit.
+  // Set the body arena and origin scope for this compilation session.
   const auto& body = design.module_bodies.at(input.body_id.value);
   Context::ArenaScope arena_scope(context, &body.arena);
+
+  // Establish body-scoped origin resolution so OriginId lookups during
+  // per-statement codegen resolve against the correct body's origin map.
+  std::optional<lowering::OriginMapLookup::BodyScope> origin_scope;
+  if (context.GetOriginLookup() != nullptr) {
+    origin_scope.emplace(*context.GetOriginLookup(), input.body_id);
+  }
 
   // Clear per-spec state: body-local FunctionIds are 0-based per body,
   // so registrations from a previous spec session would collide.
@@ -1123,7 +1129,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   auto context = std::make_unique<Context>(
       *input.mir_arena, *input.type_arena, *layout, std::move(llvm_ctx),
-      std::move(module), input.diag_ctx, force_two_state);
+      std::move(module), input.diag_ctx, input.source_manager,
+      input.origin_lookup, force_two_state);
 
   // Phase 1: Build specialization inputs (units + layouts + codegen views)
   auto units = BuildSpecCompilationUnits(*input.design);

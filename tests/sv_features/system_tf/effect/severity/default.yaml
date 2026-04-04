@@ -181,8 +181,7 @@ cases:
         x: 1
       stdout:
         contains:
-          - "fatal"
-          - "Fatal error"
+          - ":5:5: fatal: Fatal error"
 
   - name: fatal_no_message
     sv: |

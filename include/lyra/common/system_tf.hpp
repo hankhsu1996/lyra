@@ -12,7 +12,7 @@
 // Those belong in lowering layers.
 //
 // DESIGN:
-//   - Specialized MIR kinds (DisplayEffect, SeverityEffect, etc.) remain for
+//   - Specialized MIR kinds (DisplayEffect, ReportEffect, etc.) remain for
 //     system TFs with rich payload requirements.
 //   - SystemTfRvalueInfo/SystemTfEffect cover the simple cases (fopen, fclose,
 //     etc.) where payload is just opcode + operands.

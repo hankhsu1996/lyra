@@ -76,6 +76,7 @@ auto Compile(
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),
+      .origin_lookup = &origin_lookup,
       .hooks = nullptr,
       .fs_base_dir = input.input.fs_base_dir.string(),
       .plusargs = {},

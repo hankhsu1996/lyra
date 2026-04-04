@@ -21,7 +21,7 @@ cases:
         x: 2
 
   - name: assert_false
-    description: Failing assertion with no else emits default error, execution continues
+    description: Failing assertion with no else emits default error with source location
     sv: |
       module Test;
         int x;
@@ -37,7 +37,7 @@ cases:
         x: 2
       stdout:
         contains:
-          - "error"
+          - ":5:5: error: immediate assertion failed"
 
   - name: assert_pass_and_fail_true
     description: Assertion with both pass and fail actions, condition true
@@ -85,7 +85,7 @@ cases:
         x: 10
 
   - name: assert_pass_only_false
-    description: Assertion with only pass action, condition false emits default error
+    description: Assertion with only pass action, condition false emits default error with source location
     sv: |
       module Test;
         int x;
@@ -101,7 +101,7 @@ cases:
         x: 5
       stdout:
         contains:
-          - "error"
+          - "error: immediate assertion failed"
 
   - name: assert_fail_only_true
     description: Assertion with only else action, condition true falls through
@@ -223,7 +223,7 @@ cases:
         x: 2
 
   - name: assume_false
-    description: Failing assume with no else emits default error
+    description: Failing assume with no else emits default error with source location
     sv: |
       module Test;
         int x;
@@ -239,7 +239,7 @@ cases:
         x: 2
       stdout:
         contains:
-          - "error"
+          - ":5:5: error: immediate assumption failed"
 
   - name: assume_pass_and_fail
     description: Assume with pass and fail actions
@@ -359,6 +359,28 @@ cases:
         not_contains:
           - "error"
           - "Error"
+
+  # A1c origin-aware reporting tests
+
+  - name: mixed_origin_reporting
+    description: Source-full assert and source-less $error go through same report contract
+    sv: |
+      module Test;
+        initial begin
+          $error("plain error");
+          assert (0);
+          $display("done");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "error: plain error"
+          - ":4:5: error: immediate assertion failed"
+          - "done"
+        not_contains:
+          - ":3:"
 
   # disable_assertions tests
 

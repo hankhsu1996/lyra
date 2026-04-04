@@ -493,6 +493,8 @@ auto PrepareLlvmModule(
       .mir_arena = mir_result->design_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = diag_ctx.get(),
+      .source_manager = hir_result.source_manager.get(),
+      .origin_lookup = origin_lookup.get(),
       .hooks = g_hooks_holder->hooks.get(),
       .fs_base_dir = fs_base_dir,
       .plusargs = test_case.plusargs,
