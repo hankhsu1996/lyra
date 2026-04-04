@@ -22,6 +22,7 @@
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/instruction/decision.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
+#include "lyra/llvm_backend/instruction/report.hpp"
 #include "lyra/llvm_backend/instruction/system_tf.hpp"
 #include "lyra/llvm_backend/layout/union_storage.hpp"
 #include "lyra/llvm_backend/observer_abi.hpp"
@@ -553,8 +554,8 @@ auto LowerEffectOp(
           [&](const mir::DisplayEffect& display) -> Result<void> {
             return LowerDisplayEffect(context, resolver, display);
           },
-          [&](const mir::SeverityEffect& severity) -> Result<void> {
-            return LowerSeverityEffect(context, resolver, severity);
+          [&](const mir::ReportEffect& report) -> Result<void> {
+            return LowerReportEffect(context, resolver, report);
           },
           [&](const mir::MemIOEffect& mem_io) -> Result<void> {
             return LowerMemIOEffect(context, mem_io);

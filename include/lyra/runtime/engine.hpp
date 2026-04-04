@@ -34,6 +34,7 @@
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_trigger_registry.hpp"
+#include "lyra/runtime/reporting.hpp"
 #include "lyra/runtime/scheduler_snapshot.hpp"
 #include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -907,9 +908,12 @@ class Engine {
   // Decision settle-complete validation and diagnostics.
   void RunSettleCompleteChecks();
   void ValidateProcessDecisionChecks(ProcessId process_id);
-  [[nodiscard]] auto FormatDecisionViolation(
+  [[nodiscard]] auto BuildDecisionViolationMessage(
       ProcessId process_id, const DecisionMetaEntry& meta,
       DecisionViolation violation) const -> std::string;
+  [[nodiscard]] auto BuildDecisionViolationReport(
+      ProcessId process_id, const DecisionMetaEntry& meta,
+      DecisionViolation violation) const -> ReportRequest;
 
   // Subscription lifecycle
   void ClearInstalledSubscriptions(ProcessHandle handle);

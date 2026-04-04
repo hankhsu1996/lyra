@@ -190,7 +190,7 @@ void CollectStatementAccesses(
                             accesses);
                       }
                     },
-                    [&](const SeverityEffect& s) {
+                    [&](const ReportEffect& s) {
                       CollectFormatOpReads(
                           s.ops, arena, block_index, stmt_index, accesses);
                     },
@@ -351,7 +351,7 @@ void CollectStatementAccesses(
 //     runtime update_set; they do not trigger synchronous subscriber
 //     callbacks or canonical reads.
 //
-//   DisplayEffect/SeverityEffect:
+//   DisplayEffect/ReportEffect:
 //     Values come through the resolver/value lowering path. The runtime
 //     print functions read the provided data pointer, not canonical
 //     slot storage independently.
@@ -401,7 +401,7 @@ void AnalyzeStatementSemantics(
                 common::Overloaded{
                     // Display/severity: resolver-only consumer.
                     [](const DisplayEffect&) {},
-                    [](const SeverityEffect&) {},
+                    [](const ReportEffect&) {},
                     [&](const SystemTfEffect& stf) {
                       switch (stf.opcode) {
                         // $fclose/$fflush: file I/O, no canonical

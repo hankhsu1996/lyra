@@ -48,7 +48,7 @@ struct DeferredNotificationLoop {
 // satisfies the stage-1 positive semantic subset:
 //   - terminators: Jump, Branch, Switch only
 //   - statements: DefineTemp, Assign, GuardedAssign only
-//   - effects: DisplayEffect, SeverityEffect, MonitorControlEffect,
+//   - effects: DisplayEffect, ReportEffect, MonitorControlEffect,
 //     TimeFormatEffect only
 //   - design-slot writes: root type must use a packed/scalar commit
 //     path (not container, string, or managed type)

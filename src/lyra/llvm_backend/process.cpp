@@ -46,6 +46,7 @@
 #include "lyra/llvm_backend/context_scope.hpp"
 #include "lyra/llvm_backend/contract_executor.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
+#include "lyra/llvm_backend/instruction/report.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lifecycle.hpp"
 #include "lyra/llvm_backend/observer_abi.hpp"
@@ -65,6 +66,7 @@
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
+#include "lyra/runtime/reporting.hpp"
 #include "lyra/runtime/simulation.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trap.hpp"
@@ -653,16 +655,42 @@ void LowerReturn(Context& context, llvm::BasicBlock* exit_block) {
 }
 
 auto LowerFinish(
-    Context& context, const mir::Finish& finish, llvm::BasicBlock* exit_block)
-    -> Result<void> {
+    Context& context, const mir::Finish& finish, common::OriginId origin,
+    llvm::BasicBlock* exit_block) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
 
-  auto kind_val = static_cast<uint32_t>(finish.kind);
+  if (finish.kind == mir::TerminationKind::kFatal) {
+    // Fatal: route through unified report contract via LyraEmitReport.
+    llvm::Value* msg_handle = llvm::ConstantPointerNull::get(ptr_ty);
+    bool owns_msg = false;
+    if (finish.message.has_value()) {
+      auto msg_or_err = LowerOperand(context, *finish.message);
+      if (!msg_or_err) return std::unexpected(msg_or_err.error());
+      msg_handle = *msg_or_err;
+      owns_msg = true;
+    }
 
-  // Message is already a string handle from SFormat lowering, or null
+    auto lowered_origin = LowerOptionalReportOrigin(
+        origin.IsValid() ? std::optional{origin} : std::nullopt, context);
+
+    EmitAbiReportCall(
+        context, static_cast<uint8_t>(runtime::ReportKind::kFatalTermination),
+        static_cast<uint8_t>(Severity::kError), lowered_origin, msg_handle,
+        static_cast<uint8_t>(runtime::ReportAction::kFinish));
+
+    if (owns_msg) {
+      builder.CreateCall(context.GetLyraStringRelease(), {msg_handle});
+    }
+
+    builder.CreateBr(exit_block);
+    return {};
+  }
+
+  // Non-fatal termination ($finish/$stop/$exit): use LyraTerminate.
+  auto kind_val = static_cast<uint32_t>(finish.kind);
   llvm::Value* message = llvm::ConstantPointerNull::get(ptr_ty);
   if (finish.message.has_value()) {
     auto msg_or_err = LowerOperand(context, *finish.message);
@@ -1499,7 +1527,7 @@ auto LowerTerminator(
             return {};
           },
           [&](const mir::Finish& f) -> Result<void> {
-            return LowerFinish(context, f, exit_block);
+            return LowerFinish(context, f, term.origin, exit_block);
           },
           [&](const mir::Delay& d) -> Result<void> {
             LowerDelay(context, d, exit_block);
@@ -2150,7 +2178,7 @@ struct PlaceCollector {
             if (eff.descriptor.has_value()) {
               CollectFromOperand(*eff.descriptor, arena);
             }
-          } else if constexpr (std::is_same_v<E, mir::SeverityEffect>) {
+          } else if constexpr (std::is_same_v<E, mir::ReportEffect>) {
             for (const auto& fop : eff.ops) {
               if (fop.value.has_value()) {
                 CollectFromOperand(*fop.value, arena);

@@ -824,9 +824,9 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
           }
           result += ")";
           return result;
-        } else if constexpr (std::is_same_v<T, SeverityEffect>) {
+        } else if constexpr (std::is_same_v<T, ReportEffect>) {
           std::string result;
-          switch (effect_op.level) {
+          switch (effect_op.severity) {
             case Severity::kInfo:
               result = "$info(";
               break;

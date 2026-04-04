@@ -17,7 +17,6 @@
 #include <fmt/core.h>
 
 #include "lyra/common/diagnostic/print.hpp"
-#include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/cover_hook.hpp"
@@ -25,11 +24,11 @@
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
 #include "lyra/runtime/feature_flags.hpp"
-#include "lyra/runtime/format_spec_abi.hpp"
 #include "lyra/runtime/iteration_limit.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
+#include "lyra/runtime/reporting.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/signal_dump.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -736,7 +735,8 @@ extern "C" void LyraRegisterStrobe(
 }
 
 extern "C" void LyraTerminate(
-    void* engine_ptr, uint32_t kind, int32_t level, LyraStringHandle message) {
+    void* engine_ptr, uint32_t kind, int32_t level,
+    LyraStringHandle /*message*/) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
   uint64_t time = engine->CurrentTime();
 
@@ -749,20 +749,10 @@ extern "C" void LyraTerminate(
         lyra::runtime::WriteOutput(
             std::format("$finish called at time {}\n", time));
         break;
-      case 1:  // kFatal - "fatal: <msg>\n", NOT "called at time"
-        lyra::runtime::WriteOutput("fatal: ");
-        if (message != nullptr) {
-          // No width/align for fatal message
-          lyra::runtime::LyraFormatSpec spec{
-              .kind = static_cast<int32_t>(lyra::FormatKind::kString),
-              .width = -1,
-              .precision = -1,
-              .flags = 0,
-              .reserved = {}};
-          LyraPrintString(message, &spec);
-        }
-        lyra::runtime::WriteOutput("\n");
-        break;
+      case 1:
+        throw lyra::common::InternalError(
+            "LyraTerminate",
+            "kFatal must be lowered via LyraEmitReport, not LyraTerminate");
       case 2:  // kStop
         // MVP: same as finish. Future: may pause for interactive debugger.
         lyra::runtime::WriteOutput(

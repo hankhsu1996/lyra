@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <format>
 #include <span>
 
 #include <llvm/IR/Constants.h>
@@ -16,7 +15,6 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/severity.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/cast.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
@@ -422,38 +420,12 @@ auto LowerDisplayEffect(
   return {};
 }
 
-auto LowerSeverityEffect(
-    Context& context, SlotAccessResolver& resolver,
-    const mir::SeverityEffect& severity) -> Result<void> {
-  auto& builder = context.GetBuilder();
-  auto* i32_ty = llvm::Type::getInt32Ty(context.GetLlvmContext());
-
-  const char* prefix = SeverityPrefixCStr(severity.level);
-  auto* prefix_ptr = builder.CreateGlobalStringPtr(prefix);
-  builder.CreateCall(context.GetLyraPrintLiteral(), {prefix_ptr});
-
-  auto result = LowerFormatOps(context, resolver, severity.ops);
-  if (!result) return result;
-
-  auto* kind_val =
-      llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(PrintKind::kDisplay));
-  builder.CreateCall(context.GetLyraPrintEnd(), {kind_val});
-
-  return {};
-}
-
-// Canonical wrappers (thin forwarding to resolver-aware implementations).
+// Canonical wrapper (thin forwarding to resolver-aware implementation).
 
 auto LowerDisplayEffect(Context& context, const mir::DisplayEffect& display)
     -> Result<void> {
   CanonicalSlotAccess canonical(context);
   return LowerDisplayEffect(context, canonical, display);
-}
-
-auto LowerSeverityEffect(Context& context, const mir::SeverityEffect& severity)
-    -> Result<void> {
-  CanonicalSlotAccess canonical(context);
-  return LowerSeverityEffect(context, canonical, severity);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

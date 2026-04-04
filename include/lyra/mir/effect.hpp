@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/common/format.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/common/severity.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
@@ -36,11 +37,29 @@ struct DisplayEffect {
   std::optional<Operand> descriptor;  // nullopt = stdout
 };
 
-// SeverityEffect represents $info/$warning/$error system tasks.
-// These print severity-prefixed messages and continue execution.
-struct SeverityEffect {
-  Severity level;
+// MIR semantic report intent. Distinct from runtime::ReportKind --
+// this is IR-level classification, mapped to runtime kind at codegen.
+enum class ReportIntent : uint8_t {
+  kUserSeverity,
+  kAssertionFailure,
+};
+
+// Post-report continuation. Mapped to runtime::ReportAction at codegen.
+enum class ReportContinuation : uint8_t {
+  kContinue,
+  kFinish,
+};
+
+// ReportEffect: unified semantic reporting for severity tasks and assertion
+// failures. Replaces SeverityEffect. Producers fill intent + severity +
+// optional origin + format ops; codegen materializes to a single runtime
+// report call.
+struct ReportEffect {
+  ReportIntent intent;
+  Severity severity;
+  std::optional<common::OriginId> origin;
   std::vector<FormatOp> ops;
+  ReportContinuation continuation = ReportContinuation::kContinue;
 };
 
 // MemIOEffect represents $readmemh/$readmemb/$writememh/$writememb system
@@ -185,9 +204,9 @@ struct CoverHitEffect {
 // Effect operations produce side effects but no value.
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
 using EffectOp = std::variant<
-    DisplayEffect, SeverityEffect, MemIOEffect, TimeFormatEffect,
-    SystemTfEffect, StrobeEffect, MonitorEffect, MonitorControlEffect,
-    FillPackedEffect, RecordDecisionObservation,
-    RecordDecisionObservationDynamic, CoverHitEffect>;
+    DisplayEffect, ReportEffect, MemIOEffect, TimeFormatEffect, SystemTfEffect,
+    StrobeEffect, MonitorEffect, MonitorControlEffect, FillPackedEffect,
+    RecordDecisionObservation, RecordDecisionObservationDynamic,
+    CoverHitEffect>;
 
 }  // namespace lyra::mir

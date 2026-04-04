@@ -10,8 +10,8 @@ Scope: `assert`, `assume`, `cover property`, `cover sequence`, `expect` are simu
 
 - [ ] A1 -- Immediate assertion statements
   - [x] A1a -- Basic immediate assert: pass/fail behavior
-  - [ ] A1b -- Immediate assume and immediate cover
-  - [ ] A1c -- Immediate assertion reporting: default failure actions and severity
+  - [x] A1b -- Immediate assume and immediate cover
+  - [x] A1c -- Immediate assertion reporting: default failure actions and severity
 
 - [ ] A2 -- Deferred immediate assertions
   - [ ] A2a -- Deferred `#0` evaluation path
@@ -57,10 +57,6 @@ Scope: `assert`, `assume`, `cover property`, `cover sequence`, `expect` are simu
 ## A1b: Immediate assume and immediate cover
 
 Procedural `assume(expr)` and `cover(expr)`. Assume behaves like assert in simulation (LRM 16.3). Immediate cover has `statement_or_null` (no else clause) -- semantics are "record that condition was observed," not "check that it holds." Shares lowering surface with A1a but the reporting and action-block shapes differ.
-
-## A1c: Immediate assertion reporting: default failure actions and severity
-
-Immediate assertions carry assertion-specific failure behavior. When no explicit fail action is written, the default is `$error`. Severity integration with `$fatal`, `$error`, `$warning`, `$info`. This is isolated from A1a so the first bring-up can land without pretending the reporting story is complete.
 
 ## A2a: Deferred `#0` evaluation path
 

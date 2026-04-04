@@ -37,7 +37,7 @@ auto IsAllowedEffect(const EffectOp& op) -> bool {
       [](const auto& e) -> bool {
         using T = std::decay_t<decltype(e)>;
         return std::is_same_v<T, DisplayEffect> ||
-               std::is_same_v<T, SeverityEffect> ||
+               std::is_same_v<T, ReportEffect> ||
                std::is_same_v<T, MonitorControlEffect> ||
                std::is_same_v<T, TimeFormatEffect>;
       },

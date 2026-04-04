@@ -34,6 +34,19 @@ auto Context::GetLyraWarnRateLimited() -> llvm::Function* {
   return lyra_warn_rate_limited_;
 }
 
+auto Context::GetLyraEmitReport() -> llvm::Function* {
+  if (lyra_emit_report_ == nullptr) {
+    // void LyraEmitReport(void* engine, const AbiReportPayload* payload)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, ptr_ty}, false);
+    lyra_emit_report_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraEmitReport",
+        llvm_module_.get());
+  }
+  return lyra_emit_report_;
+}
+
 auto Context::GetLyraRecordDecisionObservation() -> llvm::Function* {
   if (lyra_record_decision_observation_ == nullptr) {
     // void LyraRecordDecisionObservation(

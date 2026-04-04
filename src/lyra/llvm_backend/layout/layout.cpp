@@ -631,7 +631,7 @@ void CollectPlacesFromEffectOp(
               }
             }
           },
-          [&](const mir::SeverityEffect& s) {
+          [&](const mir::ReportEffect& s) {
             for (const auto& op : s.ops) {
               if (op.value.has_value()) {
                 CollectPlaceFromOperand(*op.value, places);

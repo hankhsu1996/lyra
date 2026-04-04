@@ -16,6 +16,7 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 
@@ -92,7 +93,8 @@ struct LoweringInput {
   const mir::Arena* mir_arena = nullptr;
   const TypeArena* type_arena = nullptr;
   const lowering::DiagnosticContext* diag_ctx = nullptr;
-  const SourceManager* source_manager = nullptr;  // For process location info
+  const SourceManager* source_manager = nullptr;
+  lowering::OriginMapLookup* origin_lookup = nullptr;
   SimulationHooks* hooks = nullptr;   // Optional instrumentation (nullable)
   std::string fs_base_dir;            // Base directory for file I/O (absolute)
   std::vector<std::string> plusargs;  // Command-line plusargs for $plusargs

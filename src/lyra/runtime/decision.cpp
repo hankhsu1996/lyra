@@ -2,12 +2,12 @@
 
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 
 #include "lyra/runtime/engine.hpp"
-#include "lyra/runtime/output_sink.hpp"
+#include "lyra/runtime/reporting.hpp"
 
 namespace lyra::runtime {
 
@@ -36,7 +36,7 @@ void Engine::RecordDecisionObservation(
   }
 }
 
-auto Engine::FormatDecisionViolation(
+auto Engine::BuildDecisionViolationMessage(
     ProcessId process_id, const DecisionMetaEntry& meta,
     DecisionViolation violation) const -> std::string {
   auto kind = DecisionMetaKind(meta);
@@ -65,21 +65,26 @@ auto Engine::FormatDecisionViolation(
 
   const char* kind_str = is_case ? "case" : "if";
   std::string proc_str = FormatProcess(process_id.Index());
-  std::string_view file = (meta.file != nullptr) ? meta.file : "";
-
-  if (meta.line > 0 && !file.empty()) {
-    return std::format(
-        "{}:{}:{}: warning: {} {} violation in {}: {}\n", file, meta.line,
-        meta.col, qualifier_str, kind_str, proc_str, violation_str);
-  }
-  if (meta.line > 0) {
-    return std::format(
-        "warning: {} {} violation at line {} in {}: {}\n", qualifier_str,
-        kind_str, meta.line, proc_str, violation_str);
-  }
   return std::format(
-      "warning: {} {} violation in {}: {}\n", qualifier_str, kind_str, proc_str,
+      "{} {} violation in {}: {}", qualifier_str, kind_str, proc_str,
       violation_str);
+}
+
+auto Engine::BuildDecisionViolationReport(
+    ProcessId process_id, const DecisionMetaEntry& meta,
+    DecisionViolation violation) const -> ReportRequest {
+  std::optional<ResolvedOrigin> origin;
+  if (meta.file != nullptr && meta.line > 0) {
+    origin =
+        ResolvedOrigin{.file = meta.file, .line = meta.line, .col = meta.col};
+  }
+  return ReportRequest{
+      .kind = ReportKind::kDecisionViolation,
+      .severity = Severity::kWarning,
+      .origin = origin,
+      .message = BuildDecisionViolationMessage(process_id, meta, violation),
+      .action = ReportAction::kContinue,
+  };
 }
 
 void Engine::RunSettleCompleteChecks() {
@@ -115,12 +120,24 @@ void Engine::ValidateProcessDecisionChecks(ProcessId process_id) {
       auto& count = decision_diag_counts_[key];
       if (count < 10) {
         ++count;
-        WriteOutput(FormatDecisionViolation(process_id, meta, violation));
+        EmitReport(
+            this, BuildDecisionViolationReport(process_id, meta, violation));
         if (count == 10) {
-          std::string proc_str = FormatProcess(process_id.Index());
-          WriteOutput(
-              std::format(
-                  "  (further violations in {} suppressed)\n", proc_str));
+          std::optional<ResolvedOrigin> suppression_origin;
+          if (meta.file != nullptr && meta.line > 0) {
+            suppression_origin = ResolvedOrigin{
+                .file = meta.file, .line = meta.line, .col = meta.col};
+          }
+          EmitReport(
+              this, ReportRequest{
+                        .kind = ReportKind::kDecisionViolation,
+                        .severity = Severity::kWarning,
+                        .origin = suppression_origin,
+                        .message = std::format(
+                            "further decision violations suppressed in {}",
+                            FormatProcess(process_id.Index())),
+                        .action = ReportAction::kContinue,
+                    });
         }
       }
     }

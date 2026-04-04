@@ -315,20 +315,25 @@ auto LowerDisplayEffect(
   return {};
 }
 
-// Emit a severity effect with the given level and pre-lowered MIR format ops.
-// This is the canonical way to produce a severity diagnostic in MIR.
-auto EmitBareSeverity(
-    MirBuilder& builder, Severity level, std::vector<mir::FormatOp> ops = {})
+// Emit a report effect. Canonical way to produce a semantic report in MIR.
+auto EmitReportEffect(
+    MirBuilder& builder, mir::ReportIntent intent, Severity severity,
+    std::optional<common::OriginId> origin = std::nullopt,
+    std::vector<mir::FormatOp> ops = {},
+    mir::ReportContinuation continuation = mir::ReportContinuation::kContinue)
     -> Result<void> {
-  mir::SeverityEffect severity{
-      .level = level,
-      .ops = std::move(ops),
-  };
-  builder.EmitEffect(std::move(severity));
+  builder.EmitEffect(
+      mir::ReportEffect{
+          .intent = intent,
+          .severity = severity,
+          .origin = origin,
+          .ops = std::move(ops),
+          .continuation = continuation,
+      });
   return {};
 }
 
-auto LowerSeverityEffect(
+auto LowerSeverityToReport(
     const hir::SeveritySystemCallData& data, MirBuilder& builder)
     -> Result<void> {
   Context& ctx = builder.GetContext();
@@ -364,7 +369,9 @@ auto LowerSeverityEffect(
     }
   }
 
-  return EmitBareSeverity(builder, data.level, std::move(mir_ops));
+  return EmitReportEffect(
+      builder, mir::ReportIntent::kUserSeverity, data.level, std::nullopt,
+      std::move(mir_ops));
 }
 
 auto BuildSFormatRvalue(
@@ -772,7 +779,7 @@ auto LowerExpressionStatement(
           if constexpr (std::is_same_v<T, hir::DisplaySystemCallData>) {
             result = LowerDisplayEffect(call_data, builder);
           } else if constexpr (std::is_same_v<T, hir::SeveritySystemCallData>) {
-            result = LowerSeverityEffect(call_data, builder);
+            result = LowerSeverityToReport(call_data, builder);
           } else if constexpr (std::is_same_v<T, hir::SFormatSystemCallData>) {
             result = LowerSFormatEffect(call_data, builder);
           } else if constexpr (
@@ -1019,9 +1026,21 @@ auto LowerConditional(
 }
 
 // Emit the default fail effect for immediate assertions when no explicit
-// else action is provided. Reuses the canonical bare-severity path.
-auto EmitDefaultAssertionFail(MirBuilder& builder) -> Result<void> {
-  return EmitBareSeverity(builder, Severity::kError);
+// else action is provided. Uses assertion-specific report intent with origin.
+auto EmitDefaultImmediateAssertionFail(
+    MirBuilder& builder, hir::ImmediateAssertionKind kind,
+    common::OriginId origin) -> Result<void> {
+  const char* default_msg = (kind == hir::ImmediateAssertionKind::kAssume)
+                                ? "immediate assumption failed"
+                                : "immediate assertion failed";
+  return EmitReportEffect(
+      builder, mir::ReportIntent::kAssertionFailure, Severity::kError, origin,
+      {mir::FormatOp{
+          .kind = FormatKind::kLiteral,
+          .value = std::nullopt,
+          .literal = default_msg,
+          .type = {},
+          .mods = {}}});
 }
 
 // Assert-like immediate assertion lowering (assert and assume).
@@ -1029,8 +1048,8 @@ auto EmitDefaultAssertionFail(MirBuilder& builder) -> Result<void> {
 // materialized inside the arm callback, matching LowerConditional() exactly.
 // assume is semantically identical to assert in simulation (LRM 16.3).
 auto LowerImmediateAssertLike(
-    const hir::ImmediateAssertionStatementData& data, MirBuilder& builder)
-    -> Result<void> {
+    const hir::ImmediateAssertionStatementData& data, common::OriginId origin,
+    MirBuilder& builder) -> Result<void> {
   Result<void> callback_result;
 
   std::vector<MirBuilder::DecisionArmBuilder> arms;
@@ -1061,12 +1080,13 @@ auto LowerImmediateAssertLike(
       .id = std::nullopt,
       .arms = std::move(arms),
       .build_fallback_body = std::optional<std::function<void(MirBuilder&)>>(
-          [&callback_result, &data](MirBuilder& b) {
+          [&callback_result, &data, origin](MirBuilder& b) {
             if (!callback_result) return;
             if (data.fail_action.has_value()) {
               callback_result = LowerStatement(*data.fail_action, b);
             } else {
-              callback_result = EmitDefaultAssertionFail(b);
+              callback_result =
+                  EmitDefaultImmediateAssertionFail(b, data.kind, origin);
             }
           }),
   };
@@ -1133,7 +1153,8 @@ auto LowerImmediateAssertion(
   switch (data.kind) {
     case hir::ImmediateAssertionKind::kAssert:
     case hir::ImmediateAssertionKind::kAssume:
-      return LowerImmediateAssertLike(data, builder);
+      return LowerImmediateAssertLike(
+          data, builder.GetCurrentOrigin(), builder);
     case hir::ImmediateAssertionKind::kCover:
       return LowerImmediateCover(data, span, builder);
   }

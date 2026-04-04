@@ -27,6 +27,14 @@
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/terminator.hpp"
 
+namespace lyra {
+class SourceManager;
+}
+
+namespace lyra::lowering {
+class OriginMapLookup;
+}
+
 namespace lyra::mir {
 struct ScopedSlotRef;
 }  // namespace lyra::mir
@@ -173,6 +181,8 @@ class Context {
       std::unique_ptr<llvm::LLVMContext> llvm_ctx,
       std::unique_ptr<llvm::Module> module,
       const lowering::DiagnosticContext* diag_ctx,
+      const SourceManager* source_manager = nullptr,
+      lowering::OriginMapLookup* origin_lookup = nullptr,
       bool force_two_state = false);
 
   [[nodiscard]] auto GetLlvmContext() -> llvm::LLVMContext& {
@@ -236,6 +246,7 @@ class Context {
 
   [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
   [[nodiscard]] auto GetLyraWarnRateLimited() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraEmitReport() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRecordDecisionObservation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRecordImmediateCoverHit() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintValue() -> llvm::Function*;
@@ -741,6 +752,16 @@ class Context {
     return *diag_ctx_;
   }
 
+  // Access source manager for origin resolution.
+  [[nodiscard]] auto GetSourceManager() const -> const SourceManager* {
+    return source_manager_;
+  }
+
+  // Access origin lookup for body-scoped OriginId resolution.
+  [[nodiscard]] auto GetOriginLookup() const -> lowering::OriginMapLookup* {
+    return origin_lookup_;
+  }
+
   // Register an owned string temp that needs release at end of statement
   void RegisterOwnedTemp(llvm::Value* handle);
 
@@ -904,6 +925,7 @@ class Context {
 
   llvm::Function* lyra_print_literal_ = nullptr;
   llvm::Function* lyra_warn_rate_limited_ = nullptr;
+  llvm::Function* lyra_emit_report_ = nullptr;
   llvm::Function* lyra_record_decision_observation_ = nullptr;
   llvm::Function* lyra_print_value_ = nullptr;
   llvm::Function* lyra_print_string_ = nullptr;
@@ -1074,6 +1096,12 @@ class Context {
 
   // Diagnostic context for error reporting (resolves OriginId -> SourceSpan)
   const lowering::DiagnosticContext* diag_ctx_ = nullptr;
+
+  // Source manager for resolving SourceSpan -> file/line/col
+  const SourceManager* source_manager_ = nullptr;
+
+  // Origin lookup for body-scoped OriginId resolution (mutable for BodyScope)
+  lowering::OriginMapLookup* origin_lookup_ = nullptr;
 
   // Owned string temps that need release at end of current statement
   std::vector<llvm::Value*> owned_temps_;
