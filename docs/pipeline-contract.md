@@ -1,5 +1,7 @@
 # Pipeline Contract
 
+> Before editing, see [documentation-guidelines.md](documentation-guidelines.md). Architecture docs describe the target, not history. No "current state," migration plans, or queue references.
+
 This document defines the behavioral boundaries between pipeline stages. It is not an architecture doc (which describes structure) - it enforces rules and guardrails.
 
 ## Correctness Authority
@@ -63,8 +65,6 @@ LLVM IR is not where language semantics live.
 
 The specialization boundary is the key architectural invariant. Violations here break parallelism and incrementality. Per-instance binding should not appear in LLVM function or global identity. Heavy LLVM codegen shape should be determined by the number of unique specializations, not the number of instances.
 
-**Current state:** Per-instance code is eliminated, but fully realized instance topology (metadata, triggers, slot descriptors, trace data) is still embedded in compile-time globals. Object emission is not yet topology-independent. See the H-series items in the specialization queue.
-
 ### Realization -> Runtime
 
 | Must Do                             | Must NOT Do                   |
@@ -111,6 +111,21 @@ These must flow end-to-end through the pipeline:
 | Backend invents scheduling          | Scheduling semantics belong in runtime                          |
 | Design-global IDs in specialization | Breaks parallelism and incrementality                           |
 | Instance paths in compiled code     | Instance binding belongs to design realization, not compilation |
+
+## Forbidden Representation Shapes
+
+These are concrete anti-models. Any design that produces these shapes is architecturally invalid, even if it passes tests. They represent the specific ways the flat design-global model re-emerges.
+
+| Forbidden Shape                                                                                                      | Why It Is Wrong                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Resolving hierarchical refs to `kDesignGlobal` places during specialization compilation                              | Non-local targets are construction-time facts. Specialization code must use typed external-ref handles, not design-global slots.                                                                     |
+| Resolving connections to final object endpoints (object_index, design-global slot) during specialization compilation | Connection targets are construction-time facts. Connections must be recipes referencing body-local identities (child binding site + local slot), not final topology coordinates.                     |
+| Using design-global slot IDs as the semantic source of truth for non-local access                                    | Design-global slot IDs are an implementation detail of the runtime orchestration layer. They must not appear in compiled specialization artifacts or drive correctness of lowering.                  |
+| Backend reconstruction of connection semantics by cloning body-local MIR into design-global processes                | If the backend must rebuild the old representation from the new one, the new representation is not yet the source of truth. The backend must consume recipes/artifacts directly.                     |
+| Any representation whose correctness depends on final object ordering or topology materialization during compile     | Adding or removing instances must not invalidate compiled specialization artifacts. If it does, the representation has leaked topology into compilation.                                             |
+| Representing non-local access as a parent-hop count or path of instance symbols                                      | Hop-count and symbol-path representations bake hierarchy shape into compiled code. Non-local access must use a single typed handle that is bound at construction time regardless of hierarchy depth. |
+
+When evaluating a proposed design, check this table explicitly. The most common failure mode is a representation that uses the right vocabulary ("recipe", "deferred", "body-local") but still encodes final object identity internally.
 
 ## Error Boundaries
 

@@ -20,6 +20,12 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] R3 -- Object-local signal identity and coordination API
 - [x] R4 -- Constructor-to-runtime handoff preserves per-instance structure
 - [x] R5 -- Observability/trace/snapshot on object-local coordinates
+- [ ] B -- Recipe model: non-local access, connections, construction (see [compilation-model.md](../compilation-model.md))
+  - [ ] B-types -- Define external ref handle, connection recipe, child binding site as MIR types
+  - [ ] B-hier -- Hierarchical refs emit external ref handles; delete ResolveHierarchicalRef, cross_instance_places, kDesignGlobal hierarchical lowering
+  - [ ] B-conn -- Connections emit body-local recipes; delete InstanceSlotResolver endpoint resolution, backend flat-process reconstruction
+  - [ ] B-ctor -- Constructor binds recipes using materialized object graph; delete design-level topology resolution from lowering
+  - [ ] B-runtime -- Bound-handle model becomes sole non-local runtime path; delete flat cross-instance design-global arena for instance-owned state
 - [ ] T1 -- Topology-independence validation (scaling gates)
 - [ ] F1 -- Parallel specialization compilation
   - [x] F1-design -- Parallel ownership model
@@ -35,11 +41,13 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 
 C1 is prerequisite-free and can land independently. It is a constructor-time artifact cleanup within the current design-global storage model; it does not require the R-series.
 
-F1 (parallel compilation) is independent of the R-series and can proceed in parallel.
+F1 (parallel compilation) is independent of the R-series and B-series and can proceed in parallel.
 
 The R-series (R1-R5) is complete. All instance-owned state uses object-local coordinates end-to-end.
 
-- **T1 (validation)** runs after C1 and the R-series.
+B-types is prerequisite-free. B-hier and B-conn depend on B-types but are independent of each other. B-ctor depends on B-hier and B-conn. B-runtime depends on B-ctor.
+
+- **T1 (validation)** runs after C1, the R-series, and the B-series.
 
 ## C1: Remove per-instance emitted constructor IR/globals
 

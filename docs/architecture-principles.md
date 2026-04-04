@@ -1,5 +1,7 @@
 # Architecture Principles
 
+> Before editing, see [documentation-guidelines.md](documentation-guidelines.md). Architecture docs describe the target, not history. No "current state," migration plans, or queue references.
+
 Why the system is structured the way it is. These principles drive every major design decision and resolve trade-offs when goals conflict.
 
 For product-level priorities, see [philosophy.md](philosophy.md). For coding patterns, see [design-principles.md](design-principles.md). For the concrete data model, see [compilation-model.md](compilation-model.md).
@@ -75,9 +77,7 @@ This follows from **incrementality** (stable keys) and **lifecycle** (strong inv
 
 HIR, MIR, and LLVM IR are internal to specialization compilation and are specialization-scoped. No instance paths, no design-global slot IDs, no design-global allocation. Instance creation, storage allocation, and hierarchy wiring happen at realization/runtime. The IR never duplicates code for structurally identical instances.
 
-**Target property:** Per-instance binding should not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- should be determined by the number of unique specializations, not the number of instances. Instance-specific constants (base byte offset, instance ID, per-instance slot offsets) belong in runtime-owned data materialized at construction time.
-
-**Current state:** Per-instance code is eliminated. The compiled object still contains per-instance emitted IR (path strings, param payloads, constructor calls) and a design-global slot byte offset oracle. Beyond artifact topology, the runtime state model still uses a single design-global arena with arena-absolute offsets rather than per-instance object-local storage. See the [specialization queue](queues/specialization.md) for the remaining migration toward the natural model.
+Per-instance binding should not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- should be determined by the number of unique specializations, not the number of instances. Instance-specific constants (base byte offset, instance ID, per-instance slot offsets) belong in runtime-owned data materialized at construction time.
 
 This follows from **the natural model** (instances are objects, not coordinates into a global arena), **parallelism** (IR scales with specializations), and **incrementality** (specialization changes do not cascade through instance graphs).
 
@@ -92,6 +92,19 @@ This follows from **parallelism** (specializations compile independently) and **
 Specialization boundaries are determined by differences in compile-owned facts (packed widths, compiled code shape), not by differences in the constructed design graph. Constructor-owned properties (container sizes, instance counts, process instantiation, connectivity) are resolved during realization without recompilation. Only compile-owned properties require distinct specializations. See [compilation-model.md](compilation-model.md) for the full classification and type ownership model.
 
 This follows from **parallelism** (fewer specializations = better parallelism) and **incrementality** (constructor-owned changes don't force recompilation).
+
+### No Final Object Identity in Specialization Compilation
+
+Specialization compilation must not materialize final object identity. No compiled artifact may depend on:
+
+- Final instance count or object ordering (BFS, DFS, or any flattened enumeration)
+- Final hierarchy shape (which instances actually exist after generate evaluation)
+- Final object identity of any non-local target (object index, endpoint address, design-global slot ID)
+- Final connectivity topology (which specific instance a port is wired to)
+
+"Deferred to realization" is necessary but not sufficient. The compiled intermediate representation must make early resolution **structurally impossible** -- non-local targets must be represented as typed handles or recipes that can only be bound at construction time, not as placeholders that happen to be filled in later.
+
+This follows from **the natural model** (instances are objects constructed at realization, not compile-time coordinates), **parallelism** (specialization compilation must not require the full design graph), and **incrementality** (topology changes must not force recompilation).
 
 ### Structural vs Value-Only Parameter Split
 
@@ -114,6 +127,8 @@ For any design change, ask in order:
 4. **Does it keep the scaling law right?** -- Does cost grow with specializations or with instances?
 5. **Are ownership and invariants enforced by structure?** -- Or does correctness depend on "be careful"?
 6. **Is it specialization-local?** -- Does it require cross-module or design-global knowledge?
+
+7. **Does it avoid materializing final object identity at compile time?** -- Does it require knowing final instance count, object ordering, or target object identity during specialization compilation?
 
 If a proposed change fails any of these questions, reconsider the design before proceeding.
 

@@ -1,5 +1,7 @@
 # LLVM Backend
 
+> Before editing, see [documentation-guidelines.md](documentation-guidelines.md). Architecture docs describe the target, not history. No "current state," migration plans, or queue references.
+
 Design decisions for MIR -> LLVM IR lowering.
 
 ## Pipeline Position
@@ -187,17 +189,10 @@ Per-instance binding must not appear in LLVM function or global identity. Heavy 
 
 Shared body functions are the correct long-term shape: one function per (body, process) pair, with a 2-arg call contract `(frame, resume)`. Instance-specific binding lives in the process frame header, populated at runtime init from the descriptor table. No per-instance LLVM executable artifacts exist for process or comb dispatch.
 
-### Current state
+### Dispatch Model
 
-Module-process and comb dispatch use frame-header-cached binding (G1 + G2 complete). Codegen emits a constant descriptor table (`__lyra_process_descriptors`) consumed at init time to populate process frame headers. After init, the descriptor table is not consulted during dispatch. Both comb and process dispatch call shared body functions via `header->body(frame, resume)`. No per-instance process wrappers, comb wrappers, or dispatch trampolines exist. Standalone (connection) processes keep the existing 3-arg direct dispatch path.
+Codegen emits a constant descriptor table consumed at init time to populate process frame headers. After init, the descriptor table is not consulted during dispatch. Both comb and process dispatch call shared body functions via `header->body(frame, resume)`. No per-instance process wrappers, comb wrappers, or dispatch trampolines exist.
 
-One init-time ownership split: `design_ptr` is written by codegen during process state initialization (init processes need it before the runtime exists). All other frame header binding fields are runtime-init from descriptors.
-
-**Remaining per-instance LLVM artifacts** (tracked as G3-G4):
-
-- Per-instance unstable-offset globals (`inst_N_unstable_offsets`) -- constant data, not executable artifacts (G3)
-- Per-scheduled-process named LLVM struct types (`ProcessStateN`, `ProcessFrameN`) -- cosmetic, should be per-body (G4)
-- `__lyra_module_funcs` function pointer array with null module entries -- temporary compatibility residue (G4)
 - `__lyra_proc_offsets` state offset array -- instance-count-shaped data (G4)
 
 ## Engineering Guidelines

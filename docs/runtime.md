@@ -1,5 +1,7 @@
 # Runtime (Simulation Engine)
 
+> Before editing, see [documentation-guidelines.md](documentation-guidelines.md). Architecture docs describe the target, not history. No "current state," migration plans, or queue references.
+
 The runtime provides scheduling and execution infrastructure for SystemVerilog simulation.
 
 ## Design Goals
@@ -8,20 +10,6 @@ The runtime provides scheduling and execution infrastructure for SystemVerilog s
 2. **IEEE 1800 compliant scheduling** - Stratified event scheduler (Active -> Inactive -> NBA)
 3. **Process suspension model** - Processes yield to engine, engine resumes them
 4. **Object-local execution** - Processes run as behavior on instance objects (see [natural-model.md](natural-model.md))
-
-### Current State: Object-Local Execution
-
-Shared-body processes already load per-instance binding (this_ptr, instance_id, signal_id_offset) from their frame header at entry, and access owned-local slots via `this_base + instance_relative_offset`. This is the primary foothold toward the target.
-
-Remaining gaps:
-
-- Forwarded slots bypass this_base and use design-global addressing (design_ptr + arena-absolute offset)
-- Signal identity requires design-global renumbering (signal_id_offset + local_id produces a design-global slot_id)
-- Every process frame carries design_ptr, giving access to the entire design's state
-- Dirty tracking and subscriptions use design-global slot_ids as primary coordinates
-- Connection processes operate entirely in design-global addressing mode
-
-See the [specialization queue](queues/specialization.md) R-series items for the migration plan.
 
 ## Architecture
 
