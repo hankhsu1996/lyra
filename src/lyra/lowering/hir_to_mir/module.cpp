@@ -2,10 +2,13 @@
 
 #include <cstdint>
 #include <expected>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/symbol_types.hpp"
+#include "lyra/hir/dpi.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module_body.hpp"
 #include "lyra/hir/routine.hpp"
@@ -42,6 +45,15 @@ auto LowerModule(
   // Contains only body-local FunctionIds. Package functions are resolved
   // as DesignFunctionRef by ResolveCallTarget.
   SymbolToMirFunctionMap symbol_to_mir_function;
+
+  // Collect task symbols admitted by validated module-scoped DPI exports.
+  // Only these tasks are lowered as immediate callables for export wrappers.
+  std::unordered_set<SymbolId, SymbolIdHash> admitted_export_task_symbols;
+  for (const auto& exp : body.dpi_exports) {
+    if (exp.is_task && exp.is_module_scoped) {
+      admitted_export_task_symbols.insert(exp.symbol);
+    }
+  }
 
   std::vector<std::pair<hir::FunctionId, mir::FunctionId>> function_pairs;
 
@@ -114,9 +126,39 @@ auto LowerModule(
     result.functions.push_back(func_id);
   }
 
-  // Note: Tasks are lowered similarly to functions
-  for (hir::TaskId task_id : body.tasks) {
-    (void)task_id;
+  // Lower admitted export task bodies as immediate callables.
+  // Only tasks in the admitted set (validated non-suspending DPI exports)
+  // are materialized. Task semantic identity is preserved at the export
+  // declaration/wrapper layer; lowering to mir::Function is the immediate
+  // internal callable representation only.
+  std::vector<std::pair<hir::TaskId, mir::FunctionId>> task_pairs;
+  for (hir::TaskId hir_task_id : body.tasks) {
+    const hir::Task& hir_task = (*input.hir_arena)[hir_task_id];
+    if (!admitted_export_task_symbols.contains(hir_task.symbol)) continue;
+    mir::FunctionSignature sig = BuildTaskSignature(
+        hir_task, *input.symbol_table, input.builtin_types.void_type);
+    mir::FunctionId mir_func_id = body_arena.ReserveFunction(std::move(sig));
+    symbol_to_mir_function[hir_task.symbol] = mir_func_id;
+    task_pairs.emplace_back(hir_task_id, mir_func_id);
+    result.functions.push_back(mir_func_id);
+  }
+  for (auto [hir_task_id, mir_func_id] : task_pairs) {
+    const hir::Task& hir_task = (*input.hir_arena)[hir_task_id];
+    Result<mir::Function> mir_func_result = LowerTaskBody(
+        hir_task, input, body_arena, decl_view, &body_origins, body_id);
+    if (!mir_func_result) {
+      return std::unexpected(mir_func_result.error());
+    }
+    mir::Function mir_func = std::move(*mir_func_result);
+    mir_func.origin = body_origins.Record(mir_func_id, hir_task_id, body_id);
+    mir_func.param_origins.reserve(hir_task.parameters.size());
+    for (uint32_t i = 0; i < hir_task.parameters.size(); ++i) {
+      PrologueParamRef mir_ref{.func = mir_func_id, .param_index = i};
+      TaskParamRef hir_ref{.task = hir_task_id, .param_index = i};
+      mir_func.param_origins.push_back(
+          body_origins.Record(mir_ref, hir_ref, body_id));
+    }
+    body_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
   }
 
   // Move body arena into the result body unit

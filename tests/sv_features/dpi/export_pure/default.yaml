@@ -49,7 +49,66 @@ cases:
         initial begin end
       endmodule
 
-  - name: reject_export_task
+  - name: accept_module_export_task_immediate
+    sv: |
+      module Test;
+        int state;
+        export "DPI-C" task set_state;
+        task set_state(int val);
+          state = val;
+        endtask
+        initial begin end
+      endmodule
+
+  - name: reject_export_task_with_delay
+    sv: |
+      module Test;
+        export "DPI-C" task delayed_task;
+        task delayed_task();
+          #1;
+        endtask
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C export task not yet supported"
+          - "contains timing control"
+
+  - name: reject_export_task_calling_task
+    sv: |
+      module Test;
+        task inner_task();
+        endtask
+        export "DPI-C" task outer_task;
+        task outer_task();
+          inner_task();
+        endtask
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C export task not yet supported"
+          - "calls a task"
+
+  - name: reject_export_task_with_event_wait
+    sv: |
+      module Test;
+        logic clk;
+        export "DPI-C" task wait_clk;
+        task wait_clk();
+          @(posedge clk);
+        endtask
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI-C export task not yet supported"
+          - "contains timing control"
+
+  - name: reject_package_export_task
     sv: |
       package dpi_pkg;
         task my_task();
@@ -62,7 +121,8 @@ cases:
     expect:
       error:
         contains:
-          - "DPI-C export tasks not yet supported"
+          - "DPI-C export task not yet supported"
+          - "package-scoped export tasks"
 
   - name: accept_module_scoped_export
     sv: |

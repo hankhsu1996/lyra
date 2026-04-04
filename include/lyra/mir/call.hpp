@@ -167,6 +167,14 @@ struct CallWriteback {
   int32_t arg_index = 0;  // Formal param index (for commit ordering)
 };
 
+// Semantic routine kind for DPI export wrappers.
+// Preserved through the pipeline as task identity; does not affect the
+// immediate-call execution path (both use the same wrapper machinery).
+enum class DpiRoutineKind : uint8_t {
+  kFunction,
+  kTask,
+};
+
 // Scope classification for DPI export wrappers.
 enum class DpiExportScopeKind : uint8_t {
   kPackage,
@@ -208,6 +216,7 @@ struct DpiExportWrapperDesc {
   std::string c_name;
   DpiSignature signature;
   DpiExportTarget target;
+  DpiRoutineKind routine_kind = DpiRoutineKind::kFunction;
 };
 
 }  // namespace lyra::mir

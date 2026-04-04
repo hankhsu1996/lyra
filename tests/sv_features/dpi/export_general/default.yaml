@@ -328,3 +328,31 @@ cases:
     expect:
       variables:
         result: 1
+
+  - name: module_export_task_immediate
+    dpi_sources:
+      - dpi_helpers/export_task_ops.c
+    sv: |
+      module Inner ();
+        int state;
+        export "DPI-C" task set_state;
+        task set_state(int val);
+          state = val;
+        endtask
+        export "DPI-C" function get_state;
+        function automatic int get_state();
+          return state;
+        endfunction
+      endmodule
+
+      module Test;
+        Inner inner();
+        import "DPI-C" function int call_task_export();
+        int result;
+        initial begin
+          result = call_task_export();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

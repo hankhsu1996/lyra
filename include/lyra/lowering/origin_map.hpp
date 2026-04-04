@@ -54,10 +54,17 @@ struct FunctionParamRef {
   auto operator==(const FunctionParamRef&) const -> bool = default;
 };
 
+struct TaskParamRef {
+  hir::TaskId task;
+  uint32_t param_index;
+
+  auto operator==(const TaskParamRef&) const -> bool = default;
+};
+
 // The HIR source that generated a MIR node.
 using HirSource = std::variant<
     hir::StatementId, hir::ExpressionId, hir::FunctionId, hir::ProcessId,
-    FunctionParamRef>;
+    hir::TaskId, FunctionParamRef, TaskParamRef>;
 
 // Entry recording the mapping from a MIR node to its HIR source.
 struct OriginEntry {
@@ -122,6 +129,14 @@ class OriginMap {
   }
   auto Record(
       PrologueParamRef mir, FunctionParamRef hir, hir::ModuleBodyId body_id)
+      -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  }
+  auto Record(mir::FunctionId mir, hir::TaskId hir, hir::ModuleBodyId body_id)
+      -> common::OriginId {
+    return Record(MirNode{mir}, HirSource{hir}, body_id);
+  }
+  auto Record(PrologueParamRef mir, TaskParamRef hir, hir::ModuleBodyId body_id)
       -> common::OriginId {
     return Record(MirNode{mir}, HirSource{hir}, body_id);
   }

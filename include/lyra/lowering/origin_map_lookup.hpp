@@ -113,8 +113,14 @@ class OriginMapLookup {
             [&arena](hir::ProcessId proc_id) -> std::optional<SourceSpan> {
               return arena[proc_id].span;
             },
+            [&arena](hir::TaskId task_id) -> std::optional<SourceSpan> {
+              return arena[task_id].span;
+            },
             [&arena](FunctionParamRef ref) -> std::optional<SourceSpan> {
               return arena[ref.func].span;
+            },
+            [&arena](TaskParamRef ref) -> std::optional<SourceSpan> {
+              return arena[ref.task].span;
             },
         },
         entry->hir_source);

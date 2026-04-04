@@ -357,6 +357,8 @@ auto LowerDesign(
               .c_name = exp->c_name,
               .signature = exp->signature,
               .target = target,
+              .routine_kind = exp->is_task ? mir::DpiRoutineKind::kTask
+                                           : mir::DpiRoutineKind::kFunction,
           });
     }
     if (!wrapper_diagnostics.empty()) {
