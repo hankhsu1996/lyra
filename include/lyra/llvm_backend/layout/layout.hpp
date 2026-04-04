@@ -13,6 +13,7 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 
+#include "lyra/common/body_timescale.hpp"
 #include "lyra/common/slot_id.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -506,6 +507,10 @@ struct Layout {
     // Parallel file path strings for decision_metas. Same shape.
     // Used at LLVM emission time to create global string constants.
     std::vector<std::vector<std::string>> decision_meta_files;
+    // Per-body timescale from compile-time scope metadata.
+    // Must be explicitly initialized from the body timescale table.
+    int8_t time_unit_power;
+    int8_t time_precision_power;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
 
@@ -719,6 +724,7 @@ auto BuildLayout(
     const mir::Arena& design_arena, const TypeArena& types,
     DesignLayout design_layout,
     const std::unordered_map<uint32_t, BodyStorageLayout>& body_storage_layouts,
+    const std::vector<common::BodyTimeScale>* body_timescales,
     llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
     -> Layout;
 

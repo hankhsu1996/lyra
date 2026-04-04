@@ -259,6 +259,9 @@ void Engine::InitModuleInstancesFromBundles(
     }
   }
 
+  // D6d: Populate per-instance time metadata from body descriptors.
+  InitInstanceTimeMetadata(bundles);
+
   // Compute per-instance flat coordinate bases inline from observable
   // descriptor counts. This replaces AssignDenseCoordinationBasesFromBundles.
   uint32_t next_flat_base = global_slot_count_;
@@ -771,6 +774,49 @@ void Engine::InitModuleInstancesFromBundles(
         state.dirty_seen.resize(desc.count, 0);
       }
     }
+  }
+}
+
+void Engine::InitInstanceTimeMetadata(
+    std::span<const InstanceMetadataBundle> bundles) {
+  if (bundles.empty()) {
+    instance_time_metadata_.clear();
+    return;
+  }
+  uint32_t max_id = 0;
+  for (const auto& b : bundles) {
+    max_id = std::max(max_id, b.instance_id.value);
+  }
+  instance_time_metadata_.assign(
+      static_cast<size_t>(max_id) + 1, ScopeTimeMetadata{
+                                           .time_unit_power = 0,
+                                           .time_precision_power = 0,
+                                           .initialized = false,
+                                       });
+  for (const auto& b : bundles) {
+    if (b.body_desc == nullptr) {
+      throw common::InternalError(
+          "InitInstanceTimeMetadata",
+          std::format("instance {} has null body_desc", b.instance_id.value));
+    }
+    if (b.body_desc->desc == nullptr) {
+      throw common::InternalError(
+          "InitInstanceTimeMetadata",
+          std::format(
+              "instance {} has null body realization desc",
+              b.instance_id.value));
+    }
+    auto& slot = instance_time_metadata_.at(b.instance_id.value);
+    if (slot.initialized) {
+      throw common::InternalError(
+          "InitInstanceTimeMetadata",
+          std::format("duplicate instance_id {}", b.instance_id.value));
+    }
+    slot = ScopeTimeMetadata{
+        .time_unit_power = b.body_desc->desc->time_unit_power,
+        .time_precision_power = b.body_desc->desc->time_precision_power,
+        .initialized = true,
+    };
   }
 }
 

@@ -29,7 +29,7 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [x] D6a -- svdpi.h runtime library and linker surface
   - [x] D6b -- DPI scope registry and instance-bound export context
   - [x] D6c -- Context import functions (svGetScope in import bodies)
-  - [ ] D6d -- svdpi time query functions
+  - [x] D6d -- svdpi time query functions
   - [ ] D6e -- svGetCallerInfo import call-site metadata
 - [ ] D7 -- DPI tasks
   - [ ] D7a -- DPI import task suspension protocol
@@ -64,16 +64,6 @@ DPI export tasks allow external C code to invoke SV tasks that consume simulatio
 Depends on D7b (import task suspension works) and D6b (scope registry for instance binding).
 
 Where to look: design.cpp task rejection, export wrapper emission, scheduler integration from D7b.
-
-## D6d: svdpi time query functions
-
-Three svdpi.h time query functions are trapped from D6a: `svGetTime`, `svGetTimeUnit`, `svGetTimePrecision`. These require a scope handle to determine the time unit/precision context, plus access to the current simulation time.
-
-This item replaces the time traps with working implementations. Defines what `scope == NULL` means in Lyra (simulation-level time unit), maps non-null scope to the correct time unit/precision context via the scope registry, and exposes current simulation time through the svdpi surface.
-
-Depends on D6b (scope registry must exist for scope-to-time-unit resolution).
-
-Where to look: runtime time model, scope registry from D6b, `svdpi_runtime.cpp` time trap section.
 
 ## D6e: svGetCallerInfo import call-site metadata
 
@@ -110,10 +100,9 @@ Where to look: `svdpi_runtime.cpp` open-array trap sections, packed-array marsha
 
 ## Trapped svdpi.h functions (from D6a)
 
-D6a added all 99 svdpi.h symbols to the runtime. 26 have working implementations. The remaining 73 are hard-error traps that print a diagnostic and abort. Each trap names its owning queue item.
+D6a added all 99 svdpi.h symbols to the runtime. 29 have working implementations. The remaining 70 are hard-error traps that print a diagnostic and abort. Each trap names its owning queue item.
 
-- Scope (6, unblocked by D6b)
-- Time (3, unblocked by D6d)
+- Time (3, done in D6d)
 - Caller-info (1, unblocked by D6e)
 - Disable-state (2, unblocked by D7a)
 - Open-array query/pointer (13, unblocked by D8a)

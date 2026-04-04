@@ -73,7 +73,8 @@ struct RuntimeInstance;
 //      slot_meta/process_trigger/comb handoff fields now contain
 //      connection/design-global data only.
 // v20: A1b immediate cover site count for runtime hit-count array sizing.
-inline constexpr uint32_t kRuntimeAbiVersion = 20;
+// v21: D6d simulation-global precision power and per-body timescale metadata.
+inline constexpr uint32_t kRuntimeAbiVersion = 21;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -139,10 +140,14 @@ struct LyraRuntimeAbi {
   // A1b: Number of immediate cover sites for runtime hit-count array sizing.
   uint32_t num_immediate_cover_sites;
   uint32_t pad_cover;
+
+  // D6d: Simulation-global precision power (e.g., -12 for 1ps).
+  // Set from mir::Design::global_precision_power at emission time.
+  int8_t global_precision_power;
 };
 
 // Hard size/offset contract.
-static_assert(sizeof(LyraRuntimeAbi) == 240);
+static_assert(sizeof(LyraRuntimeAbi) == 248);
 static_assert(offsetof(LyraRuntimeAbi, version) == 0);
 static_assert(offsetof(LyraRuntimeAbi, num_connection_processes) == 188);
 static_assert(offsetof(LyraRuntimeAbi, design_state) == 192);
@@ -151,3 +156,4 @@ static_assert(offsetof(LyraRuntimeAbi, num_instances) == 208);
 static_assert(offsetof(LyraRuntimeAbi, instance_bundles) == 216);
 static_assert(offsetof(LyraRuntimeAbi, num_instance_bundles) == 224);
 static_assert(offsetof(LyraRuntimeAbi, num_immediate_cover_sites) == 232);
+static_assert(offsetof(LyraRuntimeAbi, global_precision_power) == 240);

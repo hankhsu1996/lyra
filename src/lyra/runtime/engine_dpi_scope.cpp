@@ -60,6 +60,10 @@ auto Engine::ValidateScopeHandle(svScope scope) const
   return inst;
 }
 
+auto Engine::IsScopeHandleValid(const RuntimeInstance* inst) const -> bool {
+  return valid_scopes_.contains(inst);
+}
+
 auto Engine::ResolveScopeByPath(std::string_view path) const
     -> const RuntimeInstance* {
   auto it = scope_path_map_.find(path);
@@ -116,6 +120,45 @@ auto Engine::GetScopeUserData(const RuntimeInstance* inst, void* key) const
     return nullptr;
   }
   return value_it->second;
+}
+
+auto Engine::GetSimulationTimeSemantics() const -> SimulationTimeSemantics {
+  return SimulationTimeSemantics{
+      .unit_power = global_precision_power_,
+      .precision_power = global_precision_power_,
+  };
+}
+
+auto Engine::GetScopeTimeUnitPower(const RuntimeInstance* inst) const
+    -> int32_t {
+  if (inst == nullptr) {
+    return GetSimulationTimeSemantics().unit_power;
+  }
+  const auto& meta = instance_time_metadata_.at(inst->instance_id.value);
+  if (!meta.initialized) {
+    throw common::InternalError(
+        "GetScopeTimeUnitPower",
+        std::format(
+            "uninitialized time metadata for instance {}",
+            inst->instance_id.value));
+  }
+  return meta.time_unit_power;
+}
+
+auto Engine::GetScopeTimePrecisionPower(const RuntimeInstance* inst) const
+    -> int32_t {
+  if (inst == nullptr) {
+    return GetSimulationTimeSemantics().precision_power;
+  }
+  const auto& meta = instance_time_metadata_.at(inst->instance_id.value);
+  if (!meta.initialized) {
+    throw common::InternalError(
+        "GetScopeTimePrecisionPower",
+        std::format(
+            "uninitialized time metadata for instance {}",
+            inst->instance_id.value));
+  }
+  return meta.time_precision_power;
 }
 
 }  // namespace lyra::runtime

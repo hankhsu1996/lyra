@@ -408,6 +408,7 @@ auto PrepareLlvmModule(
       .symbol_table = hir_result.symbol_table.get(),
       .builtin_types = {},
       .binding_plan = &hir_result.binding_plan,
+      .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
   };
@@ -498,6 +499,7 @@ auto PrepareLlvmModule(
       .feature_flags = feature_flags,
       .signal_trace_path = {},
       .iteration_limit = 0,
+      .body_timescales = &hir_result.body_timescales,
       .force_two_state = force_two_state,
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
   };

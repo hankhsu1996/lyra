@@ -2,6 +2,7 @@
 
 #include <slang/ast/Compilation.h>
 
+#include "lyra/common/body_timescale.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
@@ -16,7 +17,8 @@ struct DesignLoweringResult {
   hir::Design design;
   DesignBindingPlan binding_plan;
   common::SpecializationMap specialization_map;
-  mir::InstanceTable instance_table;  // For %m support
+  mir::InstanceTable instance_table;
+  std::vector<common::BodyTimeScale> body_timescales;
 };
 
 auto LowerDesign(

@@ -1,0 +1,123 @@
+feature: dpi_time_query
+description: svGetTime, svGetTimeUnit, svGetTimePrecision DPI functions (D6d)
+
+cases:
+  - name: null_scope_time_unit
+    dpi_sources:
+      - dpi_helpers/time_query_ops.c
+    sv: |
+      `timescale 1ns/1ps
+      module Test;
+        import "DPI-C" context function int get_null_scope_time_unit();
+        initial $display("%0d", get_null_scope_time_unit());
+      endmodule
+    expect:
+      stdout: "-12\n"
+
+  - name: null_scope_time_precision
+    dpi_sources:
+      - dpi_helpers/time_query_ops.c
+    sv: |
+      `timescale 1ns/1ps
+      module Test;
+        import "DPI-C" context function int get_null_scope_time_precision();
+        initial $display("%0d", get_null_scope_time_precision());
+      endmodule
+    expect:
+      stdout: "-12\n"
+
+  - name: module_scope_time_unit
+    dpi_sources:
+      - dpi_helpers/time_query_ops.c
+    sv: |
+      `timescale 1ns/1ps
+      module Test;
+        import "DPI-C" context function int get_current_scope_time_unit();
+        initial $display("%0d", get_current_scope_time_unit());
+      endmodule
+    expect:
+      stdout: "-9\n"
+
+  - name: module_scope_time_precision
+    dpi_sources:
+      - dpi_helpers/time_query_ops.c
+    sv: |
+      `timescale 1ns/1ps
+      module Test;
+        import "DPI-C" context function int get_current_scope_time_precision();
+        initial $display("%0d", get_current_scope_time_precision());
+      endmodule
+    expect:
+      stdout: "-12\n"
+
+  - name: mixed_timescale_different_units
+    dpi_sources:
+      - dpi_helpers/time_query_ops.c
+    sv: |
+      `timescale 1us/1ns
+      module Inner;
+        import "DPI-C" context function int get_inner_scope_time_unit();
+        import "DPI-C" context function int get_inner_scope_time_precision();
+        initial begin
+          $display("inner_unit=%0d", get_inner_scope_time_unit());
+          $display("inner_prec=%0d", get_inner_scope_time_precision());
+        end
+      endmodule
+      `timescale 1ns/1ps
+      module Test;
+        import "DPI-C" context function int get_current_scope_time_unit();
+        import "DPI-C" context function int get_current_scope_time_precision();
+        Inner inner_inst();
+        initial begin
+          $display("top_unit=%0d", get_current_scope_time_unit());
+          $display("top_prec=%0d", get_current_scope_time_precision());
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "inner_unit=-6"
+          - "inner_prec=-9"
+          - "top_unit=-9"
+          - "top_prec=-12"
+
+  - name: get_time_after_delay
+    dpi_sources:
+      - dpi_helpers/time_query_ops.c
+    sv: |
+      `timescale 1ns/1ps
+      module Test;
+        import "DPI-C" context function int unsigned get_sim_time_low();
+        initial begin
+          #5;
+          $display("%0d", get_sim_time_low());
+        end
+      endmodule
+    expect:
+      stdout: "5000\n"
+
+  - name: null_scope_ignores_active_scope
+    dpi_sources:
+      - dpi_helpers/time_query_ops.c
+    sv: |
+      `timescale 1ns/1ps
+      module Test;
+        import "DPI-C" context function int get_null_scope_time_unit_with_active_scope_present();
+        initial $display("%0d", get_null_scope_time_unit_with_active_scope_present());
+      endmodule
+    expect:
+      stdout: "-12\n"
+
+  - name: invalid_scope_fatal
+    dpi_sources:
+      - dpi_helpers/time_query_ops.c
+    sv: |
+      `timescale 1ns/1ps
+      module Test;
+        import "DPI-C" context function void call_time_unit_with_invalid_scope();
+        initial call_time_unit_with_invalid_scope();
+      endmodule
+    expect:
+      runtime_fatal:
+        stderr_contains:
+          - "invalid svScope handle"

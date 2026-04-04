@@ -613,6 +613,11 @@ class Engine {
   [[nodiscard]] auto ValidateScopeHandle(svScope scope) const
       -> const RuntimeInstance*;
 
+  // Non-throwing scope handle validity check.
+  // Returns true if inst is registered in the DPI scope registry.
+  [[nodiscard]] auto IsScopeHandleValid(const RuntimeInstance* inst) const
+      -> bool;
+
   // Resolve a hierarchical path to an instance scope handle.
   // Returns nullptr if path is not found.
   [[nodiscard]] auto ResolveScopeByPath(std::string_view path) const
@@ -631,6 +636,26 @@ class Engine {
   // Returns nullptr on error (null scope, null key, or key not found).
   [[nodiscard]] auto GetScopeUserData(
       const RuntimeInstance* inst, void* key) const -> void*;
+
+  // D6d: Per-instance time metadata, populated from BodyRealizationDesc.
+  void InitInstanceTimeMetadata(
+      std::span<const InstanceMetadataBundle> bundles);
+
+  // D6d: Simulation-level time semantics for null-scope queries.
+  struct SimulationTimeSemantics {
+    int8_t unit_power;
+    int8_t precision_power;
+  };
+  [[nodiscard]] auto GetSimulationTimeSemantics() const
+      -> SimulationTimeSemantics;
+
+  // D6d: Scope-aware time unit/precision queries.
+  // null inst -> simulation-level semantics.
+  // non-null inst -> per-instance metadata from body descriptor.
+  [[nodiscard]] auto GetScopeTimeUnitPower(const RuntimeInstance* inst) const
+      -> int32_t;
+  [[nodiscard]] auto GetScopeTimePrecisionPower(
+      const RuntimeInstance* inst) const -> int32_t;
 
   // Plusargs query interface for $test$plusargs and $value$plusargs.
   // Returns 1 if prefix matches any plusarg, 0 otherwise.
@@ -1435,6 +1460,15 @@ class Engine {
   mutable std::unordered_map<
       const RuntimeInstance*, std::unordered_map<void*, void*>>
       scope_user_data_;
+
+  // D6d: Per-instance time metadata, indexed by InstanceId::value.
+  // Populated from BodyRealizationDesc during InitInstanceTimeMetadata.
+  struct ScopeTimeMetadata {
+    int8_t time_unit_power = 0;
+    int8_t time_precision_power = 0;
+    bool initialized = false;
+  };
+  std::vector<ScopeTimeMetadata> instance_time_metadata_;
 
   // Immutable per-process decision metadata tables. Indexed by process_id.
   // Populated during InitModuleInstancesFromBundles from body descriptor data.
