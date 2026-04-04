@@ -1,20 +1,173 @@
-feature: disable assertions
-description: Tests for --disable-assertions lowering option
+feature: assertions
+description: Tests for immediate assertion statements (A1a) and assertion-related options
 
 cases:
-  - name: immediate_assertion_error
-    description: Immediate assertion without flag produces compile error
+  # A1a positive tests: plain immediate assert
+
+  - name: assert_true
+    description: Passing assertion does not produce error, execution continues
     sv: |
       module Test;
-        int x = 5;
+        int x;
         initial begin
-          assert (x > 0);
+          x = 1;
+          assert (1);
+          x = 2;
           $finish;
         end
       endmodule
     expect:
-      error:
-        contains: ["assertion statements are unsupported"]
+      variables:
+        x: 2
+
+  - name: assert_false
+    description: Failing assertion with no else emits default error, execution continues
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 1;
+          assert (0);
+          x = 2;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 2
+      stdout:
+        contains:
+          - "error"
+
+  - name: assert_pass_and_fail_true
+    description: Assertion with both pass and fail actions, condition true
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          assert (1) x = 10; else x = 20;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 10
+
+  - name: assert_pass_and_fail_false
+    description: Assertion with both pass and fail actions, condition false
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          assert (0) x = 10; else x = 20;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 20
+
+  - name: assert_pass_only_true
+    description: Assertion with only pass action, condition true
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          assert (1) x = 10;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 10
+
+  - name: assert_pass_only_false
+    description: Assertion with only pass action, condition false emits default error
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          assert (0) x = 10;
+          x = 5;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 5
+      stdout:
+        contains:
+          - "error"
+
+  - name: assert_fail_only_true
+    description: Assertion with only else action, condition true falls through
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          assert (1) else x = 20;
+          x = 5;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 5
+
+  - name: assert_fail_only_false
+    description: Assertion with only else action, condition false executes fail
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          assert (0) else x = 20;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 20
+
+  - name: assert_nested_in_if
+    description: Assertion inside an if body
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          if (1) begin
+            assert (1) x = 10; else x = 20;
+          end
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 10
+
+  - name: assert_expression_condition
+    description: Assertion with a non-trivial expression condition
+    sv: |
+      module Test;
+        int a, b;
+        initial begin
+          a = 5;
+          b = 0;
+          assert (a > 3) b = 1; else b = 2;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        b: 1
+
+  # Migration boundary tests
 
   - name: concurrent_assertion_error
     description: Concurrent assertion without flag produces compile error
@@ -33,7 +186,39 @@ cases:
       endmodule
     expect:
       error:
-        contains: ["assertion statements are unsupported"]
+        contains: ["concurrent assertion statements are unsupported"]
+
+  # Still-unsupported form tests
+
+  - name: deferred_assertion_error
+    description: Deferred immediate assertion is unsupported
+    sv: |
+      module Test;
+        int x = 5;
+        initial begin
+          assert #0 (x > 0);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains: ["deferred immediate assertions are unsupported"]
+
+  - name: assume_assertion_error
+    description: Immediate assume is unsupported in A1a
+    sv: |
+      module Test;
+        int x = 5;
+        initial begin
+          assume (x > 0);
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains: ["immediate 'Assume' is unsupported"]
+
+  # disable_assertions tests
 
   - name: immediate_assertion_skipped
     description: Immediate assertion skipped with --disable-assertions

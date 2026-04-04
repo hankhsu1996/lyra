@@ -475,6 +475,29 @@ void Dumper::Dump(StatementId id) {
       *out_ << "@(...);\n";
       break;
     }
+
+    case StatementKind::kImmediateAssertion: {
+      const auto& data = std::get<ImmediateAssertionStatementData>(stmt.data);
+      *out_ << "assert (";
+      Dump(data.condition);
+      *out_ << ")";
+      if (data.pass_action) {
+        *out_ << " ";
+        Dump(*data.pass_action);
+      }
+      if (data.fail_action) {
+        if (!data.pass_action) {
+          *out_ << " ";
+        }
+        PrintIndent();
+        *out_ << "else ";
+        Dump(*data.fail_action);
+      }
+      if (!data.pass_action && !data.fail_action) {
+        *out_ << ";\n";
+      }
+      break;
+    }
   }
 }
 
@@ -943,6 +966,24 @@ void Dumper::Dump(ExpressionId id) {
           break;
         case BuiltinMethod::kEnumName:
           *out_ << ".name()";
+          break;
+        case BuiltinMethod::kAssocExists:
+          *out_ << ".exists(";
+          break;
+        case BuiltinMethod::kAssocFirst:
+          *out_ << ".first(";
+          break;
+        case BuiltinMethod::kAssocLast:
+          *out_ << ".last(";
+          break;
+        case BuiltinMethod::kAssocNext:
+          *out_ << ".next(";
+          break;
+        case BuiltinMethod::kAssocPrev:
+          *out_ << ".prev(";
+          break;
+        case BuiltinMethod::kAssocSnapshot:
+          *out_ << ".__snapshot(";
           break;
       }
       // Methods with no args or that close parens themselves

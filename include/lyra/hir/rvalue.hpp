@@ -34,6 +34,8 @@ struct RValue {
   [[nodiscard]] auto AsPattern() const -> PatternId {
     return std::get<PatternId>(value);
   }
+
+  auto operator==(const RValue&) const -> bool = default;
 };
 
 }  // namespace lyra::hir
