@@ -280,3 +280,51 @@ cases:
         r_input: 286331153
         r_output: 1
         r_inout: 1
+
+  # -- indirect return: package-scoped integer (4-state 32-bit) --
+
+  - name: export_integer_return_package
+    dpi_sources:
+      - dpi_helpers/export_indirect_return.c
+    sv: |
+      package dpi_pkg;
+        function integer get_integer_42();
+          return 42;
+        endfunction
+        export "DPI-C" function get_integer_42;
+      endpackage
+      module Test;
+        import "DPI-C" function int call_get_integer_42();
+        int result;
+        initial begin
+          result = call_get_integer_42();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1
+
+  # -- indirect return: module-scoped integer --
+
+  - name: export_integer_return_module
+    dpi_sources:
+      - dpi_helpers/export_mod_indirect_return.c
+    sv: |
+      module Inner ();
+        export "DPI-C" function get_mod_integer;
+        function automatic integer get_mod_integer();
+          return 99;
+        endfunction
+      endmodule
+
+      module Test;
+        Inner inner_inst();
+        import "DPI-C" function int call_get_mod_integer();
+        int result;
+        initial begin
+          result = call_get_mod_integer();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

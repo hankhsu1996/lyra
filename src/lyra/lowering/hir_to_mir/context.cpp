@@ -151,14 +151,18 @@ auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
 
 namespace {
 
+auto ClassifyDpiReturnKind(DpiAbiTypeClass abi_type) -> mir::DpiReturnKind {
+  if (abi_type == DpiAbiTypeClass::kVoid) return mir::DpiReturnKind::kVoid;
+  if (IsPackedVecDpiType(abi_type)) return mir::DpiReturnKind::kIndirect;
+  return mir::DpiReturnKind::kDirectValue;
+}
+
 auto BuildDpiSignature(const DpiImportInfo& dpi) -> mir::DpiSignature {
   mir::DpiSignature sig;
   sig.result = {
       .sv_type = dpi.return_type_id,
       .abi_type = dpi.return_abi_type,
-      .kind = dpi.return_abi_type == DpiAbiTypeClass::kVoid
-                  ? mir::DpiReturnKind::kVoid
-                  : mir::DpiReturnKind::kDirectValue,
+      .kind = ClassifyDpiReturnKind(dpi.return_abi_type),
   };
   sig.params.reserve(dpi.params.size());
   for (const auto& p : dpi.params) {

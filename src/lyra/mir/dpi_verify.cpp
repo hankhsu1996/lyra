@@ -9,21 +9,26 @@
 namespace lyra::mir {
 
 void ValidateDpiSignatureContract(const DpiSignature& sig, const char* caller) {
-  // Return descriptor: void and non-void shapes must be fully consistent.
+  // Return descriptor: kind must match abi_type classification.
   if (sig.result.abi_type == DpiAbiTypeClass::kVoid) {
     if (sig.result.kind != DpiReturnKind::kVoid) {
       throw common::InternalError(
           caller, "return: abi_type is void but kind is not kVoid");
     }
+  } else if (IsPackedVecDpiType(sig.result.abi_type)) {
+    if (sig.result.kind != DpiReturnKind::kIndirect) {
+      throw common::InternalError(
+          caller, "return: packed-vec abi_type but kind is not kIndirect");
+    }
   } else {
     if (sig.result.kind != DpiReturnKind::kDirectValue) {
       throw common::InternalError(
-          caller, "return: non-void abi_type but kind is not kDirectValue");
+          caller, "return: scalar abi_type but kind is not kDirectValue");
     }
-    if (!IsValidDpiReturnType(sig.result.abi_type)) {
-      throw common::InternalError(
-          caller, "invalid DPI return type in frozen signature");
-    }
+  }
+  if (!IsValidDpiReturnType(sig.result.abi_type)) {
+    throw common::InternalError(
+        caller, "invalid DPI return type in frozen signature");
   }
 
   // Per-parameter structural contract.

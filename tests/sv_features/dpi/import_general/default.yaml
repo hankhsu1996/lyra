@@ -1,0 +1,35 @@
+feature: dpi_import_general_default
+description: DPI-C general import tests that run in both 4-state and 2-state modes
+
+cases:
+  # -- indirect return: integer (kLogicVecNarrow) --
+
+  - name: dpi_integer_return_known_value
+    dpi_sources:
+      - dpi_helpers/indirect_return_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function integer return_integer_42();
+        int result;
+        initial begin
+          result = return_integer_42();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 42
+
+  - name: dpi_integer_return_expression_form
+    dpi_sources:
+      - dpi_helpers/indirect_return_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function integer return_integer_42();
+        int result;
+        initial begin
+          result = return_integer_42() + 8;
+        end
+      endmodule
+    expect:
+      variables:
+        result: 50

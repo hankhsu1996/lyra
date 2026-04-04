@@ -81,17 +81,14 @@ cases:
         initial begin end
       endmodule
 
-  - name: reject_dpi_integer_return
+  - name: accept_dpi_integer_return_declaration
     sv: |
       module Test;
         import "DPI-C" pure function integer int_fn();
         initial begin end
       endmodule
     expect:
-      error:
-        contains:
-          - "DPI-C return type"
-          - "indirect return modeling"
+      variables: {}
 
   - name: accept_dpi_packed_4state
     sv: |
@@ -180,8 +177,8 @@ cases:
 
   # The frontend rejects packed vector DPI return types at parse time before
   # Lyra DPI lowering sees them. Lyra's own kLogicVecNarrow return rejection
-  # (via IsValidDpiReturnType) only fires for predefined 4-state types like
-  # 'integer' that the frontend allows through (see reject_dpi_integer_return).
+  # Explicit packed-array return types are rejected by slang, not Lyra.
+  # Only predefined 4-state types like 'integer' pass through slang.
   - name: reject_dpi_logic_vec_return_frontend_before_lyra
     sv: |
       module Test;

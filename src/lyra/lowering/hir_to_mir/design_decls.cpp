@@ -137,36 +137,24 @@ class StringPoolIntern {
   std::unordered_map<std::string, uint32_t> index_;
 };
 
-// Build a DpiReturnDesc for the currently supported return model.
-// Returns nullopt for return types that cannot be modeled with the current
-// DpiReturnKind variants (e.g., packed vectors that would need indirect
-// return modeling, not yet supported). This is a subset builder, not a
-// fully canonical return model -- DpiReturnKind will need extension when
-// indirect returns are added.
-auto BuildDpiReturnDescForCurrentModel(
-    TypeId return_type, DpiAbiTypeClass abi_type)
-    -> std::optional<mir::DpiReturnDesc> {
-  if (abi_type == DpiAbiTypeClass::kVoid) {
-    return mir::DpiReturnDesc{
-        .sv_type = return_type,
-        .abi_type = abi_type,
-        .kind = mir::DpiReturnKind::kVoid,
-    };
-  }
-  if (!IsValidDpiReturnType(abi_type)) {
-    return std::nullopt;
-  }
-  return mir::DpiReturnDesc{
+auto ClassifyDpiReturnKind(DpiAbiTypeClass abi_type) -> mir::DpiReturnKind {
+  if (abi_type == DpiAbiTypeClass::kVoid) return mir::DpiReturnKind::kVoid;
+  if (IsPackedVecDpiType(abi_type)) return mir::DpiReturnKind::kIndirect;
+  return mir::DpiReturnKind::kDirectValue;
+}
+
+auto BuildDpiReturnDesc(TypeId return_type, DpiAbiTypeClass abi_type)
+    -> mir::DpiReturnDesc {
+  return {
       .sv_type = return_type,
       .abi_type = abi_type,
-      .kind = mir::DpiReturnKind::kDirectValue,
+      .kind = ClassifyDpiReturnKind(abi_type),
   };
 }
 
 // Result of attempting to register a DPI export.
 enum class DpiExportRegResult {
   kOk,
-  kSignatureError,
   kDuplicateSymbol,
 };
 
@@ -176,29 +164,11 @@ struct DpiExportRegOutcome {
   std::optional<mir::DpiSignature> signature;
 };
 
-// Build the MIR-level DpiSignature for the currently supported export
-// model from the preclassified export signature cache. This is not a
-// fully canonical signature builder: return types that would need
-// indirect return modeling are rejected here because DpiReturnKind
-// does not yet have an indirect variant.
-auto BuildDpiSignatureFromCache(
-    const hir::DpiExportSignature& sig_cache, const std::string& c_name)
+auto BuildDpiSignatureFromCache(const hir::DpiExportSignature& sig_cache)
     -> DpiExportRegOutcome {
-  auto return_desc = BuildDpiReturnDescForCurrentModel(
-      sig_cache.return_type_id, sig_cache.return_dpi_type);
-  if (!return_desc) {
-    return {
-        .result = DpiExportRegResult::kSignatureError,
-        .diagnostic = std::format(
-            "DPI-C export '{}': return type requires indirect return "
-            "modeling, not yet supported",
-            c_name),
-        .signature = std::nullopt,
-    };
-  }
-
   mir::DpiSignature sig;
-  sig.result = *return_desc;
+  sig.result =
+      BuildDpiReturnDesc(sig_cache.return_type_id, sig_cache.return_dpi_type);
 
   for (const auto& p : sig_cache.params) {
     sig.params.push_back({
@@ -221,7 +191,7 @@ auto BuildDpiSignatureFromCache(
 auto TryRegisterDpiExport(
     const hir::DpiExportDecl& decl, const hir::DpiExportSignature& sig_cache,
     DesignDpiExports& registry) -> DpiExportRegOutcome {
-  auto build = BuildDpiSignatureFromCache(sig_cache, decl.c_name);
+  auto build = BuildDpiSignatureFromCache(sig_cache);
   if (build.result != DpiExportRegResult::kOk) {
     return build;
   }
@@ -496,10 +466,7 @@ auto CollectDesignDeclarations(
                 decl.c_name));
       }
       auto outcome = TryRegisterDpiExport(decl, it->second, decls.dpi_exports);
-      if (outcome.result == DpiExportRegResult::kSignatureError) {
-        decls.export_diagnostics.push_back(
-            {.span = decl.span, .message = std::move(outcome.diagnostic)});
-      } else if (outcome.result == DpiExportRegResult::kDuplicateSymbol) {
+      if (outcome.result == DpiExportRegResult::kDuplicateSymbol) {
         throw common::InternalError(
             "CollectDesignDeclarations", outcome.diagnostic);
       }
