@@ -315,6 +315,19 @@ auto LowerDisplayEffect(
   return {};
 }
 
+// Emit a severity effect with the given level and pre-lowered MIR format ops.
+// This is the canonical way to produce a severity diagnostic in MIR.
+auto EmitBareSeverity(
+    MirBuilder& builder, Severity level, std::vector<mir::FormatOp> ops = {})
+    -> Result<void> {
+  mir::SeverityEffect severity{
+      .level = level,
+      .ops = std::move(ops),
+  };
+  builder.EmitEffect(std::move(severity));
+  return {};
+}
+
 auto LowerSeverityEffect(
     const hir::SeveritySystemCallData& data, MirBuilder& builder)
     -> Result<void> {
@@ -351,12 +364,7 @@ auto LowerSeverityEffect(
     }
   }
 
-  mir::SeverityEffect severity{
-      .level = data.level,
-      .ops = std::move(mir_ops),
-  };
-  builder.EmitEffect(std::move(severity));
-  return {};
+  return EmitBareSeverity(builder, data.level, std::move(mir_ops));
 }
 
 auto BuildSFormatRvalue(
@@ -1006,6 +1014,62 @@ auto LowerConditional(
                              })
                        : std::nullopt,
   };
+  builder.EmitDecision(spec);
+  return callback_result;
+}
+
+// Emit the default fail effect for immediate assertions when no explicit
+// else action is provided. Reuses the canonical bare-severity path.
+auto EmitDefaultAssertionFail(MirBuilder& builder) -> Result<void> {
+  return EmitBareSeverity(builder, Severity::kError);
+}
+
+// Immediate assertion lowering (A1a: plain non-deferred assert only).
+// Mirrors the plain non-qualified conditional lowering path: condition is
+// materialized inside the arm callback, matching LowerConditional() exactly.
+auto LowerImmediateAssertion(
+    const hir::ImmediateAssertionStatementData& data, MirBuilder& builder)
+    -> Result<void> {
+  Result<void> callback_result;
+
+  std::vector<MirBuilder::DecisionArmBuilder> arms;
+  arms.push_back(
+      MirBuilder::DecisionArmBuilder{
+          .build_condition = [&callback_result, cond_id = data.condition](
+                                 MirBuilder& b) -> mir::Operand {
+            if (!callback_result) {
+              return mir::Operand::Use(mir::kInvalidPlaceId);
+            }
+            auto cond = MaterializeCondition(cond_id, b);
+            if (!cond) {
+              callback_result = std::unexpected(cond.error());
+              return mir::Operand::Use(mir::kInvalidPlaceId);
+            }
+            return *cond;
+          },
+          .build_body =
+              [&callback_result, &data](MirBuilder& b) {
+                if (callback_result && data.pass_action.has_value()) {
+                  callback_result = LowerStatement(*data.pass_action, b);
+                }
+              },
+      });
+
+  MirBuilder::DecisionBuildSpec spec{
+      .qualifier = semantic::DecisionQualifier::kNone,
+      .id = std::nullopt,
+      .arms = std::move(arms),
+      .build_fallback_body = std::optional<std::function<void(MirBuilder&)>>(
+          [&callback_result, &data](MirBuilder& b) {
+            if (!callback_result) return;
+            if (data.fail_action.has_value()) {
+              callback_result = LowerStatement(*data.fail_action, b);
+            } else {
+              callback_result = EmitDefaultAssertionFail(b);
+            }
+          }),
+  };
+
   builder.EmitDecision(spec);
   return callback_result;
 }
@@ -2270,6 +2334,9 @@ auto LowerStatement(hir::StatementId stmt_id, MirBuilder& builder)
           builder.SetCurrentBlock(resume_bb);
         } else if constexpr (std::is_same_v<T, hir::EventWaitStatementData>) {
           result = LowerEventWait(data, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::ImmediateAssertionStatementData>) {
+          result = LowerImmediateAssertion(data, builder);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");

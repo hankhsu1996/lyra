@@ -29,6 +29,7 @@ enum class StatementKind {
   kReturn,
   kDelay,
   kEventWait,
+  kImmediateAssertion,
 };
 
 // unique/unique0/priority qualifier for if and case statements
@@ -189,13 +190,32 @@ struct EventWaitStatementData {
   auto operator==(const EventWaitStatementData&) const -> bool = default;
 };
 
+// Immediate assertion kind (LRM 16.3)
+enum class ImmediateAssertionKind : uint8_t {
+  kAssert,
+};
+
+// Immediate assertion statement (LRM 16.3)
+// Represents non-deferred procedural assert/assume/cover.
+// A1a: only kAssert is supported; assume/cover added in A1b.
+struct ImmediateAssertionStatementData {
+  ImmediateAssertionKind kind = ImmediateAssertionKind::kAssert;
+  ExpressionId condition;
+  std::optional<StatementId> pass_action;
+  std::optional<StatementId> fail_action;
+
+  auto operator==(const ImmediateAssertionStatementData&) const
+      -> bool = default;
+};
+
 using StatementData = std::variant<
     BlockStatementData, VariableDeclarationStatementData,
     AssignmentStatementData, ExpressionStatementData, ConditionalStatementData,
     CaseStatementData, ForLoopStatementData, WhileLoopStatementData,
     DoWhileLoopStatementData, RepeatLoopStatementData, BreakStatementData,
     ContinueStatementData, TerminateStatementData, ReturnStatementData,
-    DelayStatementData, EventWaitStatementData>;
+    DelayStatementData, EventWaitStatementData,
+    ImmediateAssertionStatementData>;
 
 struct Statement {
   StatementKind kind;

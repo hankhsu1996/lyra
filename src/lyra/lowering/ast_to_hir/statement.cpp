@@ -444,6 +444,71 @@ auto BuildForLoop(
       });
 }
 
+// Lower an optional child statement with three-state propagation:
+// nullptr -> nullopt, child error -> kInvalidStatementId, success -> valid id.
+auto LowerOptionalChildStatement(
+    const slang::ast::Statement* child, ScopeLowerer& lowerer)
+    -> std::optional<hir::StatementId> {
+  if (child == nullptr) return std::nullopt;
+  auto result = LowerStatement(*child, lowerer);
+  if (!result.has_value()) return std::nullopt;
+  if (!*result) return hir::kInvalidStatementId;
+  return *result;
+}
+
+// Lower a plain non-deferred immediate assert statement to HIR.
+// Extracted from LowerStatement to keep function complexity within bounds.
+auto LowerImmediateAssertionStatement(
+    const slang::ast::ImmediateAssertionStatement& assert_stmt,
+    ScopeLowerer& lowerer) -> std::optional<hir::StatementId> {
+  auto& registrar = lowerer.Registrar();
+  auto* ctx = &lowerer.Ctx();
+  const auto* frame = &lowerer.Frame();
+  SourceSpan span = ctx->SpanOf(assert_stmt.sourceRange);
+
+  auto lower_expr = [&](const slang::ast::Expression& expr) {
+    return LowerScopedExpression(expr, *ctx, registrar, *frame);
+  };
+
+  if (assert_stmt.isDeferred || assert_stmt.isFinal) {
+    ctx->sink->Error(
+        span,
+        "deferred immediate assertions are unsupported; "
+        "pass --disable-assertions to skip");
+    return hir::kInvalidStatementId;
+  }
+
+  if (assert_stmt.assertionKind != slang::ast::AssertionKind::Assert) {
+    ctx->sink->Error(
+        span, std::format(
+                  "immediate '{}' is unsupported; "
+                  "pass --disable-assertions to skip",
+                  toString(assert_stmt.assertionKind)));
+    return hir::kInvalidStatementId;
+  }
+
+  hir::ExpressionId condition = lower_expr(assert_stmt.cond);
+  if (!condition) {
+    return hir::kInvalidStatementId;
+  }
+
+  auto pass_action = LowerOptionalChildStatement(assert_stmt.ifTrue, lowerer);
+  if (pass_action.has_value() && !*pass_action) return hir::kInvalidStatementId;
+
+  auto fail_action = LowerOptionalChildStatement(assert_stmt.ifFalse, lowerer);
+  if (fail_action.has_value() && !*fail_action) return hir::kInvalidStatementId;
+
+  return ctx->hir_arena->AddStatement(
+      hir::Statement{
+          .kind = hir::StatementKind::kImmediateAssertion,
+          .span = span,
+          .data = hir::ImmediateAssertionStatementData{
+              .kind = hir::ImmediateAssertionKind::kAssert,
+              .condition = condition,
+              .pass_action = pass_action,
+              .fail_action = fail_action}});
+}
+
 }  // namespace
 
 auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
@@ -2028,17 +2093,22 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
       return hir::kInvalidStatementId;
     }
 
-    case StatementKind::ImmediateAssertion:
+    case StatementKind::ImmediateAssertion: {
+      if (ctx->Options().disable_assertions) {
+        return std::nullopt;
+      }
+      return LowerImmediateAssertionStatement(
+          stmt.as<slang::ast::ImmediateAssertionStatement>(), lowerer);
+    }
+
     case StatementKind::ConcurrentAssertion: {
       if (ctx->Options().disable_assertions) {
         return std::nullopt;
       }
       ctx->sink->Error(
           ctx->SpanOf(stmt.sourceRange),
-          std::format(
-              "assertion statements are unsupported; "
-              "pass --disable-assertions to skip (kind '{}')",
-              toString(stmt.kind)));
+          "concurrent assertion statements are unsupported; "
+          "pass --disable-assertions to skip");
       return hir::kInvalidStatementId;
     }
 
