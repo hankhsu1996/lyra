@@ -1,9 +1,75 @@
 #include "lyra/lowering/ast_to_hir/task_analysis.hpp"
 
+#include <string_view>
+
 #include <slang/ast/ASTVisitor.h>
 
 namespace lyra::lowering::ast_to_hir {
 namespace {
+
+// Call suspension capability classification.
+// Used by the non-suspending task validator to decide whether a call
+// is safe on the immediate callable path.
+enum class CallSuspendCapability : uint8_t {
+  kImmediateSafe,
+  kMaySuspend,
+  kUnknown,
+};
+
+// Vetted set of system tasks proven immediate-safe.
+// System tasks not on this list are conservatively classified as kUnknown.
+// Grows as real workloads need additional system tasks in non-suspending
+// export task bodies.
+auto IsVettedImmediateSystemTask(std::string_view name) -> bool {
+  // Memory loading/storing: immediate file I/O, no simulation time.
+  if (name == "$readmemh" || name == "$readmemb") return true;
+  if (name == "$writememh" || name == "$writememb") return true;
+  // Display/output: immediate console I/O.
+  if (name == "$display" || name == "$displayb") return true;
+  if (name == "$displayo" || name == "$displayh") return true;
+  if (name == "$write" || name == "$writeb") return true;
+  if (name == "$writeo" || name == "$writeh") return true;
+  // File I/O tasks.
+  if (name == "$fdisplay" || name == "$fdisplayb") return true;
+  if (name == "$fdisplayo" || name == "$fdisplayh") return true;
+  if (name == "$fwrite" || name == "$fwriteb") return true;
+  if (name == "$fwriteo" || name == "$fwriteh") return true;
+  if (name == "$fclose") return true;
+  // Simulation control: terminates, does not suspend.
+  if (name == "$finish" || name == "$fatal") return true;
+  if (name == "$error" || name == "$warning" || name == "$info") return true;
+  // Strobe/monitor registration: immediate registration, no suspension.
+  if (name == "$strobe" || name == "$strobeb") return true;
+  if (name == "$strobeo" || name == "$strobeh") return true;
+  return false;
+}
+
+// Classify the suspension capability of a call expression.
+//
+// Policy:
+// - User-defined functions: kImmediateSafe (functions cannot suspend)
+// - User-defined tasks: kMaySuspend (tasks may contain timing controls)
+// - System functions: kImmediateSafe (built-in, no SV body)
+// - System tasks in vetted set: kImmediateSafe
+// - System tasks not vetted: kUnknown (conservative)
+auto ClassifyCallSuspendCapability(const slang::ast::CallExpression& expr)
+    -> CallSuspendCapability {
+  if (expr.isSystemCall()) {
+    if (expr.getSubroutineKind() == slang::ast::SubroutineKind::Function) {
+      return CallSuspendCapability::kImmediateSafe;
+    }
+    // System task: check vetted set.
+    if (IsVettedImmediateSystemTask(expr.getSubroutineName())) {
+      return CallSuspendCapability::kImmediateSafe;
+    }
+    return CallSuspendCapability::kUnknown;
+  }
+  // User-defined subroutine.
+  if (expr.getSubroutineKind() == slang::ast::SubroutineKind::Function) {
+    return CallSuspendCapability::kImmediateSafe;
+  }
+  return CallSuspendCapability::kMaySuspend;
+}
 
 // Allowlist-oriented validator for non-suspending task bodies.
 //
@@ -15,7 +81,8 @@ namespace {
 // Specific rejection reasons for known-suspending constructs:
 // - TimedStatement: direct timing control (#delay, @event)
 // - WaitStatement: wait(expr) statement
-// - CallExpression with SubroutineKind::Task: may transitively suspend
+// - Calls classified as kMaySuspend or kUnknown by
+//   ClassifyCallSuspendCapability
 //
 // For all other unclassified constructs: "not yet proven immediate-safe".
 //
@@ -103,11 +170,18 @@ class NonSuspendingWalker
 
   void handle(const slang::ast::CallExpression& expr) {
     if (found_) return;
-    if (expr.getSubroutineKind() == slang::ast::SubroutineKind::Task) {
-      Reject(expr.sourceRange, "calls a task (may transitively suspend)");
-      return;
+    switch (ClassifyCallSuspendCapability(expr)) {
+      case CallSuspendCapability::kImmediateSafe:
+        visitDefault(expr);
+        return;
+      case CallSuspendCapability::kMaySuspend:
+        Reject(expr.sourceRange, "calls a potentially suspending routine");
+        return;
+      case CallSuspendCapability::kUnknown:
+        Reject(
+            expr.sourceRange, "calls a routine not yet proven immediate-safe");
+        return;
     }
-    visitDefault(expr);
   }
 
   [[nodiscard]] auto Found() const -> bool {
