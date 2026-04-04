@@ -202,6 +202,7 @@ auto TryRegisterDpiExport(
       .c_name = decl.c_name,
       .signature = std::move(*build.signature),
       .is_module_scoped = decl.is_module_scoped,
+      .is_task = decl.is_task,
   };
   if (!registry.Insert(std::move(info))) {
     return {

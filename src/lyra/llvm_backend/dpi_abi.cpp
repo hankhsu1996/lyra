@@ -1601,6 +1601,9 @@ auto EmitDpiExportWrappers(
       indirect_ret_ptr = wrapper->getArg(wrapper_arg_idx++);
     }
 
+    // Determine if this is a task export (D7a suspension guard).
+    bool is_task = desc.routine_kind == mir::DpiRoutineKind::kTask;
+
     if (desc.target.scope_kind == mir::DpiExportScopeKind::kPackage) {
       // Package path: resolve binding + direct call to design-global callee.
       auto binding = EmitResolvePackageBinding(context);
@@ -1614,6 +1617,13 @@ auto EmitDpiExportWrappers(
                 desc.c_name));
       }
 
+      // Push per-wrapper-call context (D7a: suspension_disallowed for tasks).
+      // Inherits design/engine/scope from the current simulation-lifetime head.
+      auto& builder = context.GetBuilder();
+      builder.CreateCall(
+          context.GetLyraPushDpiExportCallContext(),
+          {builder.getInt1(is_task)});
+
       std::vector<llvm::Value*> args;
       args.push_back(binding.design_ptr);
       args.push_back(binding.engine_ptr);
@@ -1621,8 +1631,10 @@ auto EmitDpiExportWrappers(
       PrepareExportUserArgs(
           context, desc.signature, wrapper, internal_fn, 2, wrapper_arg_idx,
           args, bp_states);
-      auto* ret_val = context.GetBuilder().CreateCall(internal_fn, args);
+      auto* ret_val = builder.CreateCall(internal_fn, args);
       CommitExportByPointerWritebacks(context, bp_states);
+
+      builder.CreateCall(context.GetLyraPopDpiExportCallContext());
       EmitExportReturn(context, desc.signature, ret_val, indirect_ret_ptr);
 
     } else {
@@ -1638,6 +1650,13 @@ auto EmitDpiExportWrappers(
       }
       llvm::Function* internal_fn = callee_it->second;
 
+      // Push per-wrapper-call context (D7a: suspension_disallowed for tasks).
+      // Inherits design/engine/scope from the current simulation-lifetime head.
+      auto& builder = context.GetBuilder();
+      builder.CreateCall(
+          context.GetLyraPushDpiExportCallContext(),
+          {builder.getInt1(is_task)});
+
       std::vector<llvm::Value*> args;
       args.push_back(binding.design_ptr);
       args.push_back(binding.engine_ptr);
@@ -1648,8 +1667,10 @@ auto EmitDpiExportWrappers(
       PrepareExportUserArgs(
           context, desc.signature, wrapper, internal_fn, 5, wrapper_arg_idx,
           args, bp_states);
-      auto* ret_val = context.GetBuilder().CreateCall(internal_fn, args);
+      auto* ret_val = builder.CreateCall(internal_fn, args);
       CommitExportByPointerWritebacks(context, bp_states);
+
+      builder.CreateCall(context.GetLyraPopDpiExportCallContext());
       EmitExportReturn(context, desc.signature, ret_val, indirect_ret_ptr);
     }
   }

@@ -8,22 +8,29 @@
 // functions, but foreign callers must not provide those. This facility
 // installs a narrow context during simulation that wrappers can borrow.
 //
+// Context frames form a stack (linked via prev pointer). The root frame
+// is pushed by ScopedDpiExportCallContext around LyraRunSimulation.
+// Per-wrapper-call frames are pushed by LyraPushDpiExportCallContext
+// to carry suspension_disallowed for D7a export tasks.
+//
 // Contract:
-// - ScopedDpiExportCallContext is installed around LyraRunSimulation.
-// - LyraGetDpiExportCallContext returns the active context, or nullptr.
+// - LyraGetDpiExportCallContext returns the top frame, or nullptr.
 // - LyraFailMissingDpiExportCallContext traps if called outside simulation.
 // - Single-threaded: no concurrent installation, no TLS.
 // - active_scope is set/read by svSetScope/svGetScope (D6b).
 
 namespace lyra::runtime {
 
-// Active export-call context.
+// Export-call context frame (stack node).
 // design_state and engine are simulation-lifetime base context.
 // active_scope is dynamic DPI scope state set by svSetScope (D6b).
+// suspension_disallowed is true for D7a non-suspending export tasks.
 struct DpiExportCallContext {
+  DpiExportCallContext* prev = nullptr;
   void* design_state = nullptr;
   void* engine = nullptr;
   svScope active_scope = nullptr;
+  bool suspension_disallowed = false;
 };
 
 // Resolved binding for package-scoped DPI export wrappers.
@@ -102,8 +109,20 @@ void LyraResolveModuleInstanceBinding(
 // Sets active_scope to new_scope, returns previous scope for pop.
 // Does NOT validate new_scope (compiler-generated: scope is either a valid
 // RuntimeInstance* from instance_ptr or nullptr).
-svScope LyraPushCurrentDpiScope(svScope new_scope);
+auto LyraPushCurrentDpiScope(svScope new_scope) -> svScope;
 
 // Restores active_scope to prev_scope after context import returns.
 void LyraPopCurrentDpiScope(svScope prev_scope);
+
+// Per-wrapper-call context push/pop for DPI export wrappers (D7a).
+// Pushes a nested frame that inherits design_state, engine, and
+// active_scope from the current head context. Only suspension_disallowed
+// is set per-call. This avoids passing raw pointers through codegen for
+// state that the runtime already owns.
+void LyraPushDpiExportCallContext(bool suspension_disallowed);
+void LyraPopDpiExportCallContext();
+
+// Returns true if the current export-call context disallows suspension.
+// Used by suspension entrypoints as defense-in-depth guard.
+auto LyraIsDpiExportSuspensionDisallowed() -> bool;
 }

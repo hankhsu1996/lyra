@@ -24,4 +24,15 @@ auto LowerFunctionBody(
     mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map,
     hir::ModuleBodyId body_id) -> Result<mir::Function>;
 
+// Build a frozen FunctionSignature for a task (void return, same param rules).
+// Tasks are lowered as mir::Function at the immediate callable level.
+auto BuildTaskSignature(
+    const hir::Task& task, const SymbolTable& symbol_table, TypeId void_type)
+    -> mir::FunctionSignature;
+
+auto LowerTaskBody(
+    const hir::Task& task, const LoweringInput& input, mir::Arena& mir_arena,
+    const DeclView& decl_view, OriginMap* origin_map, hir::ModuleBodyId body_id)
+    -> Result<mir::Function>;
+
 }  // namespace lyra::lowering::hir_to_mir

@@ -46,6 +46,7 @@
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/specialization.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
+#include "lyra/lowering/ast_to_hir/task_analysis.hpp"
 #include "lyra/lowering/ast_to_hir/timescale.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/type_seeder.hpp"
@@ -861,10 +862,23 @@ auto LowerDesign(
 
     // Scope/kind gating: reject unsupported forms with diagnostics.
     if (is_task) {
-      ctx->sink->Unsupported(
-          span, "DPI-C export tasks not yet supported",
-          UnsupportedCategory::kFeature);
-      continue;
+      if (!is_module_scoped) {
+        ctx->sink->Unsupported(
+            span,
+            "DPI-C export task not yet supported: "
+            "package-scoped export tasks",
+            UnsupportedCategory::kFeature);
+        continue;
+      }
+      auto check = CheckNonSuspendingTask(sub, *ctx->source_mapper);
+      if (!check.ok) {
+        ctx->sink->Unsupported(
+            check.offending_span.value_or(span),
+            std::format(
+                "DPI-C export task not yet supported: {}", check.reason),
+            UnsupportedCategory::kFeature);
+        continue;
+      }
     }
     if (is_context) {
       ctx->sink->Unsupported(

@@ -199,4 +199,108 @@ auto LowerFunctionBody(
   };
 }
 
+auto BuildTaskSignature(
+    const hir::Task& task, const SymbolTable& symbol_table, TypeId void_type)
+    -> mir::FunctionSignature {
+  mir::FunctionSignature sig;
+  sig.return_type = void_type;
+  sig.return_policy = mir::ReturnPolicy::kVoid;
+
+  sig.params.reserve(task.parameters.size());
+  for (const hir::FunctionParam& param : task.parameters) {
+    const Symbol& sym = symbol_table[param.symbol];
+    mir::PassingKind kind = mir::PassingKind::kValue;
+    switch (param.direction) {
+      case ParameterDirection::kInput:
+        kind = mir::PassingKind::kValue;
+        break;
+      case ParameterDirection::kOutput:
+        kind = mir::PassingKind::kOut;
+        break;
+      case ParameterDirection::kInOut:
+        kind = mir::PassingKind::kInOut;
+        break;
+      case ParameterDirection::kRef:
+        throw common::InternalError(
+            "BuildTaskSignature", "ref parameters not supported");
+    }
+    sig.params.push_back({.type = sym.type, .kind = kind});
+  }
+
+  return sig;
+}
+
+auto LowerTaskBody(
+    const hir::Task& task, const LoweringInput& input, mir::Arena& mir_arena,
+    const DeclView& decl_view, OriginMap* origin_map, hir::ModuleBodyId body_id)
+    -> Result<mir::Function> {
+  TypeId void_type = input.builtin_types.void_type;
+  Context ctx{
+      .mir_arena = &mir_arena,
+      .design_arena = decl_view.design_arena,
+      .hir_arena = input.hir_arena,
+      .type_arena = input.type_arena,
+      .active_constant_arena = input.active_constant_arena,
+      .symbol_table = input.symbol_table,
+      .body_places = decl_view.body_places,
+      .design_places = decl_view.design_places,
+      .local_places = {},
+      .next_local_id = 0,
+      .next_temp_id = 0,
+      .local_types = {},
+      .temp_types = {},
+      .builtin_types = input.builtin_types,
+      .symbol_to_mir_function = decl_view.functions,
+      .design_functions = decl_view.design_functions,
+      .dpi_imports = decl_view.dpi_imports,
+      .return_slot = std::nullopt,
+      .return_type = void_type,
+      .design_slots = decl_view.slots,
+      .body_slots = decl_view.body_slots,
+  };
+
+  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id);
+  BlockIndex entry_idx = builder.CreateBlock();
+  BlockIndex exit_idx = builder.CreateBlock();
+  builder.SetExitBlock(exit_idx);
+  builder.SetCurrentBlock(entry_idx);
+
+  std::vector<uint32_t> param_local_slots;
+  param_local_slots.reserve(task.parameters.size());
+  for (const hir::FunctionParam& param : task.parameters) {
+    const Symbol& sym = (*input.symbol_table)[param.symbol];
+    auto alloc = ctx.AllocLocal(param.symbol, sym.type);
+    param_local_slots.push_back(alloc.local_slot);
+  }
+
+  Result<void> stmt_result = LowerStatement(task.body, builder);
+  if (!stmt_result) {
+    return std::unexpected(stmt_result.error());
+  }
+
+  if (builder.IsReachable()) {
+    builder.EmitJump(exit_idx);
+  }
+
+  builder.SetCurrentBlock(exit_idx);
+  builder.EmitTerminate(std::nullopt);
+
+  std::vector<mir::BasicBlock> blocks = builder.Finish();
+
+  return mir::Function{
+      .signature = {},
+      .runtime_kind = mir::RuntimeProgramKind::kNone,
+      .canonical_symbol = kInvalidSymbolId,
+      .entry = mir::BasicBlockId{entry_idx.value},
+      .blocks = std::move(blocks),
+      .local_types = std::move(ctx.local_types),
+      .temp_types = std::move(ctx.temp_types),
+      .temp_metadata = std::move(ctx.temp_metadata),
+      .param_local_slots = std::move(param_local_slots),
+      .param_origins = {},
+      .origin = common::OriginId::Invalid(),
+      .materialize_count = ctx.materialize_count,
+  };
+}
+
 }  // namespace lyra::lowering::hir_to_mir

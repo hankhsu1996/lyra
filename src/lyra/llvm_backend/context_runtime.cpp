@@ -1874,4 +1874,31 @@ auto Context::GetLyraResolveModuleInstanceBinding() -> llvm::Function* {
   return lyra_resolve_module_instance_binding_;
 }
 
+auto Context::GetLyraPushDpiExportCallContext() -> llvm::Function* {
+  if (lyra_push_dpi_export_call_context_ == nullptr) {
+    // void LyraPushDpiExportCallContext(bool suspension_disallowed)
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(void_ty, {i1_ty}, false);
+    lyra_push_dpi_export_call_context_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage,
+        "LyraPushDpiExportCallContext", llvm_module_.get());
+    lyra_push_dpi_export_call_context_->setCallingConv(llvm::CallingConv::C);
+  }
+  return lyra_push_dpi_export_call_context_;
+}
+
+auto Context::GetLyraPopDpiExportCallContext() -> llvm::Function* {
+  if (lyra_pop_dpi_export_call_context_ == nullptr) {
+    // void LyraPopDpiExportCallContext()
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(void_ty, {}, false);
+    lyra_pop_dpi_export_call_context_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraPopDpiExportCallContext",
+        llvm_module_.get());
+    lyra_pop_dpi_export_call_context_->setCallingConv(llvm::CallingConv::C);
+  }
+  return lyra_pop_dpi_export_call_context_;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

@@ -130,6 +130,16 @@ void SuspendReset(lyra::runtime::SuspendRecord* suspend) {
   *suspend = lyra::runtime::SuspendRecord{};
 }
 
+// Defense-in-depth guard: abort if a non-suspending DPI export task
+// attempts to suspend. The static gate in design.cpp prevents direct timing
+// controls; this catches unforeseen indirect paths.
+void FailIfSuspensionDisallowed(const char* api) {
+  if (LyraIsDpiExportSuspensionDisallowed()) {
+    throw lyra::common::InternalError(
+        api, "non-suspending DPI export task attempted to suspend");
+  }
+}
+
 }  // namespace
 
 // Runtime allocation for large trigger lists (called from LLVM-generated code)
@@ -145,6 +155,7 @@ extern "C" void LyraFreeTriggers(lyra::runtime::WaitTriggerRecord* ptr) {
 
 extern "C" void LyraSuspendDelay(
     void* state, uint64_t ticks, uint32_t resume_block) {
+  FailIfSuspensionDisallowed("LyraSuspendDelay");
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
   ReleaseTriggerOverflow(suspend);  // Clean up any previous wait
   suspend->tag = lyra::runtime::SuspendTag::kDelay;
@@ -155,6 +166,7 @@ extern "C" void LyraSuspendDelay(
 extern "C" void LyraSuspendWait(
     void* state, uint32_t resume_block, const void* triggers,
     uint32_t num_triggers, uint32_t wait_site_id) {
+  FailIfSuspensionDisallowed("LyraSuspendWait");
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
   ReleaseTriggerOverflow(suspend);  // Clean up any previous wait
 
@@ -184,6 +196,7 @@ extern "C" void LyraSuspendWaitWithLateBound(
     uint32_t num_triggers, const void* headers, uint32_t num_headers,
     const void* plan_ops, uint32_t num_plan_ops, const void* dep_slots,
     uint32_t num_dep_slots, uint32_t wait_site_id) {
+  FailIfSuspensionDisallowed("LyraSuspendWaitWithLateBound");
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
   ReleaseTriggerOverflow(suspend);
 
@@ -239,6 +252,7 @@ extern "C" void LyraSuspendWaitWithLateBound(
 }
 
 extern "C" void LyraSuspendRepeat(void* state) {
+  FailIfSuspensionDisallowed("LyraSuspendRepeat");
   auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
   ReleaseTriggerOverflow(suspend);  // Clean up any previous wait
   suspend->tag = lyra::runtime::SuspendTag::kRepeat;

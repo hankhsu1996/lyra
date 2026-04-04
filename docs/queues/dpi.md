@@ -32,38 +32,43 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
   - [x] D6d -- svdpi time query functions
   - [ ] D6e -- svGetCallerInfo import call-site metadata
 - [ ] D7 -- DPI tasks
-  - [ ] D7a -- DPI import task suspension protocol
-  - [ ] D7b -- DPI import task scheduler integration
-  - [ ] D7c -- DPI export tasks (external C invocation of time-consuming SV tasks)
+  - [x] D7a -- Non-suspending DPI export tasks (module-scoped only)
+  - [ ] D7b -- Non-suspending DPI import tasks
+  - [ ] D7c -- Suspending DPI import tasks (suspension protocol + scheduler integration)
+  - [ ] D7d -- Suspending DPI export tasks (suspend-aware export wrapper reentry)
 - [ ] D8 -- Open arrays
   - [ ] D8a -- Open-array query and pointer surface
   - [ ] D8b -- Open-array packed/scalar element access
 
-## D7a: DPI import task suspension protocol
+## D7b: Non-suspending DPI import tasks
 
-DPI import tasks are rejected at AST-to-HIR time. DPI tasks can consume simulation time, requiring the calling process to suspend and resume. This is fundamentally different from DPI import functions, which are instantaneous.
+DPI import tasks are rejected at AST-to-HIR time (routine.cpp TryLowerDpiImport). Same capability-based first stage as D7a but on the import side: remove the import task rejection and route non-suspending import tasks through the existing immediate-call machinery (shared call ABI, marshaling).
 
-This item defines the suspension/resumption contract for foreign task calls: how a DPI task signals that it needs to consume time, how the calling process yields to the scheduler, and how it resumes when the time advance completes. Includes the disable protocol (svIsDisabledState, svAckDisabledState) since it is part of the same suspension contract.
+Architectural rule: DPI task semantic identity stays task. We reuse the immediate-call machinery where valid, but we do not reinterpret or rewrite a task as a function.
 
-Does not remove the import task rejection or integrate with the scheduler -- those are D7b.
+D7a landed the shared non-suspending task validator (CheckNonSuspendingTask), DpiRoutineKind enum, and nested export-call context with suspension guard. D7b reuses the validator for import admission and extends DpiImportRef / DpiCall with routine kind. The MIR DPI import call path currently carries no task/function distinction; this item adds it.
 
-Where to look: process scheduling/suspension in engine, svIsDisabledState/svAckDisabledState in svdpi.h, cooperative scheduling model.
+Where to look: routine.cpp import task rejection, DpiImportRef/DpiCall in call.hpp (no routine_kind yet), import marshaling path, CheckNonSuspendingTask validator.
 
-## D7b: DPI import task scheduler integration
+## D7c: Suspending DPI import tasks
 
-Wires the suspension protocol from D7a into the live scheduler. Removes the import task rejection at AST-to-HIR time. Adds MIR/codegen support for DPI task calls that can suspend. End-to-end: a DPI import task that calls a delay advances simulation time and resumes correctly.
+Full suspension support for DPI import tasks that consume simulation time. Replaces the D7b runtime error with real suspension. Defines the suspension/resumption contract: how a DPI task signals time consumption, how the calling process yields to the scheduler, how it resumes. Includes the disable protocol (svIsDisabledState, svAckDisabledState). Wires into the live scheduler with MIR/codegen support for suspending calls.
 
-Depends on D7a (suspension protocol defined).
+Architectural rule: DPI task semantic identity stays task. Suspension extends the capability model from D7b, not a separate parallel path.
 
-Where to look: routine.cpp task rejection, MIR DpiCall (task vs function distinction), process scheduler yield/resume path.
+Depends on D7b (non-suspending import path exists).
 
-## D7c: DPI export tasks (external C invocation of time-consuming SV tasks)
+Where to look: process scheduling/suspension in engine, svdpi.h disable-state functions, MIR DpiCall suspend capability, process scheduler yield/resume path.
 
-DPI export tasks allow external C code to invoke SV tasks that consume simulation time. This requires both the suspension protocol from D7a/D7b and the scope/instance binding from D6b (export tasks are typically module-scoped).
+## D7d: Suspending DPI export tasks
 
-Depends on D7b (import task suspension works) and D6b (scope registry for instance binding).
+Adds suspend-aware reentry contract to export wrappers. External C code can invoke SV export tasks that consume simulation time, with the export wrapper managing suspension/resumption across the foreign boundary.
 
-Where to look: design.cpp task rejection, export wrapper emission, scheduler integration from D7b.
+Architectural rule: DPI task semantic identity stays task. Suspension extends the capability model from D7a, reusing the suspension protocol defined in D7c.
+
+Depends on D7a (non-suspending export path exists), D7c (suspension protocol defined), and D6b (scope registry for instance binding).
+
+Where to look: export wrapper emission, scheduler integration from D7c.
 
 ## D6e: svGetCallerInfo import call-site metadata
 
@@ -104,6 +109,6 @@ D6a added all 99 svdpi.h symbols to the runtime. 29 have working implementations
 
 - Time (3, done in D6d)
 - Caller-info (1, unblocked by D6e)
-- Disable-state (2, unblocked by D7a)
+- Disable-state (2, unblocked by D7c)
 - Open-array query/pointer (13, unblocked by D8a)
 - Open-array data access/copy (48, unblocked by D8b)

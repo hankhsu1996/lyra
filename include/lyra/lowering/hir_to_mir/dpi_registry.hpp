@@ -80,6 +80,7 @@ struct DpiExportInfo {
   std::string c_name;
   mir::DpiSignature signature;
   bool is_module_scoped = false;
+  bool is_task = false;
 };
 
 // Registry of all design-visible DPI exports, keyed by declaration SymbolId.
