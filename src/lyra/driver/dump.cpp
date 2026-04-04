@@ -286,6 +286,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .collect_forwarding_analysis =
           output.IsEnabled(OutputCategory::kAnalysis),
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
+      .resolved_bindings = &mir_result->resolved_bindings,
   };
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
   {

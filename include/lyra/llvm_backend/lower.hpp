@@ -18,6 +18,7 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/connection_endpoint.hpp"
 #include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
 
@@ -114,6 +115,9 @@ struct LoweringInput {
   // DPI export wrapper descriptors for wrapper emission.
   // Owned by the MIR lowering result; passed by pointer (nullable).
   const std::vector<mir::DpiExportWrapperDesc>* dpi_export_wrappers = nullptr;
+  // Endpoint-based resolved bindings from HIR-to-MIR lowering.
+  // Backend adapter converts to flat ConnectionKernelEntry for layout.
+  const mir::ResolvedBindingPlan* resolved_bindings = nullptr;
 };
 
 struct LoweringResult {

@@ -30,9 +30,9 @@
 #include <llvm/TargetParser/SubtargetFeature.h>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/connection_analysis.hpp"
-#include "lyra/llvm_backend/connection_kernel_collection.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/init_descriptor_utils.hpp"
@@ -42,11 +42,17 @@
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/llvm_backend/runtime_abi_codegen.hpp"
 #include "lyra/llvm_backend/storage_construction_recipe_builder.hpp"
+#include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
+#include "lyra/mir/operand.hpp"
+#include "lyra/mir/place.hpp"
 #include "lyra/mir/placement.hpp"
+#include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
+#include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/sensitivity.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 
@@ -1033,24 +1039,299 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
   }
 
-  // Connection-kernel collection uses pre-forwarding layout for trigger
-  // observation resolution. Only slot_storage_specs, storage_spec_arena,
-  // and slot_to_index are consumed.
-  // No later phase may re-collect connection kernels.
-  auto connection_collection = CollectConnectionKernels(
-      input.design->connection_processes, *input.mir_arena,
-      SlotSpecView{
-          .slot_to_index = pre_layout.slot_to_index,
-          .slot_storage_specs = pre_layout.slot_storage_specs,
-          .storage_spec_arena = pre_layout.storage_spec_arena,
-      });
+  // Convert endpoint-based ResolvedBindingPlan to flat-slot artifacts
+  // for legacy layout/analysis consumers. This adapter is the sole
+  // consumer of connection data -- design.connection_processes is empty.
+  //
+  // Kernel bindings -> ConnectionKernelEntry with flat SlotIds.
+  // Expr bindings -> synthetic MIR processes with kDesignGlobal places
+  //   (cloned from body-local functions with kModuleSlot -> kDesignGlobal
+  //   remapping). These go to non_kernelized_connection_processes.
+  std::vector<ConnectionKernelEntry> connection_kernel_entries;
+  std::vector<mir::ProcessId> non_kernelized_connection_processes;
+
+  auto to_flat_slot =
+      [&](const mir::ConnectionEndpointRef& ref) -> common::SlotId {
+    const auto& obj = input.construction->objects.at(ref.object_index);
+    return common::SlotId{obj.design_state_base_slot + ref.local_slot.value};
+  };
+
+  if (input.resolved_bindings != nullptr) {
+    for (const auto& kb : input.resolved_bindings->kernel_bindings) {
+      connection_kernel_entries.push_back(
+          ConnectionKernelEntry{
+              .process_id = {},
+              .src_slot = to_flat_slot(kb.src),
+              .dst_slot = to_flat_slot(kb.dst),
+              .trigger_slot = to_flat_slot(kb.trigger),
+              .trigger_edge = kb.trigger_edge,
+              .trigger_observation =
+                  kb.trigger_observation
+                      ? std::optional<ResolvedObservation>(ResolvedObservation{
+                            .byte_offset = kb.trigger_observation->byte_offset,
+                            .byte_size = kb.trigger_observation->byte_size,
+                            .bit_index = kb.trigger_observation->bit_index})
+                      : std::nullopt,
+          });
+    }
+
+    // Clone expr_bindings as flat-slot MIR processes in the design arena.
+    // Remaps kModuleSlot -> kDesignGlobal using parent base slot.
+    for (const auto& expr : input.resolved_bindings->expr_bindings) {
+      const auto& parent_obj =
+          input.construction->objects.at(expr.parent_object_index);
+      uint32_t parent_base = parent_obj.design_state_base_slot;
+      uint32_t child_flat = to_flat_slot(
+                                mir::ConnectionEndpointRef{
+                                    .object_index = expr.child_object_index,
+                                    .local_slot = expr.child_local_slot})
+                                .value;
+
+      // Get the compiled function from the parent body.
+      const auto& parent_body =
+          input.design->module_bodies.at(expr.parent_body_id.value);
+      const auto& func = parent_body.arena[expr.expr_function];
+
+      // Remap operands: kModuleSlot -> kDesignGlobal with parent_base offset.
+      auto remap_place = [&](mir::PlaceId pid,
+                             const mir::Arena& src) -> mir::PlaceId {
+        const auto& place = src[pid];
+        mir::Place new_place = place;
+        if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
+          new_place.root.kind = mir::PlaceRoot::Kind::kDesignGlobal;
+          new_place.root.id = static_cast<int>(parent_base) + place.root.id;
+        }
+        return const_cast<mir::Arena&>(*input.mir_arena)
+            .AddPlace(std::move(new_place));
+      };
+
+      auto remap_operand = [&](const mir::Operand& op,
+                               const mir::Arena& src) -> mir::Operand {
+        if (op.kind == mir::Operand::Kind::kUse) {
+          return mir::Operand::Use(
+              remap_place(std::get<mir::PlaceId>(op.payload), src));
+        }
+        return op;
+      };
+
+      auto remap_rhs = [&](const mir::RightHandSide& rhs,
+                           const mir::Arena& src) -> mir::RightHandSide {
+        return std::visit(
+            common::Overloaded{
+                [&](const mir::Operand& op) -> mir::RightHandSide {
+                  return remap_operand(op, src);
+                },
+                [&](const mir::Rvalue& rv) -> mir::RightHandSide {
+                  mir::Rvalue new_rv;
+                  new_rv.info = rv.info;
+                  new_rv.operands.reserve(rv.operands.size());
+                  for (const auto& op : rv.operands) {
+                    new_rv.operands.push_back(remap_operand(op, src));
+                  }
+                  if (auto* gu = std::get_if<mir::GuardedUseRvalueInfo>(
+                          &new_rv.info)) {
+                    gu->place = remap_place(gu->place, src);
+                  }
+                  if (auto* bc = std::get_if<mir::BuiltinCallRvalueInfo>(
+                          &new_rv.info)) {
+                    if (bc->receiver) {
+                      bc->receiver = remap_place(*bc->receiver, src);
+                    }
+                  }
+                  return new_rv;
+                },
+            },
+            rhs);
+      };
+
+      // Create child destination place (kDesignGlobal).
+      mir::PlaceId child_place =
+          const_cast<mir::Arena&>(*input.mir_arena)
+              .AddPlace(
+                  mir::Place{
+                      .root =
+                          mir::PlaceRoot{
+                              .kind = mir::PlaceRoot::Kind::kDesignGlobal,
+                              .id = static_cast<int>(child_flat),
+                              .type = expr.result_type},
+                      .projections = {}});
+
+      // Collect all kModuleSlot reads for Wait triggers.
+      std::vector<uint32_t> trigger_slots;
+      auto collect_trigger = [&](const mir::Operand& op,
+                                 const mir::Arena& src) {
+        if (op.kind != mir::Operand::Kind::kUse) return;
+        const auto& place = src[std::get<mir::PlaceId>(op.payload)];
+        if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
+          trigger_slots.push_back(parent_base + place.root.id);
+        }
+      };
+
+      // Collect triggers from all operands in the function body.
+      auto collect_rhs_triggers = [&](const mir::RightHandSide& rhs) {
+        std::visit(
+            common::Overloaded{
+                [&](const mir::Operand& op) {
+                  collect_trigger(op, parent_body.arena);
+                },
+                [&](const mir::Rvalue& rv) {
+                  for (const auto& op : rv.operands) {
+                    collect_trigger(op, parent_body.arena);
+                  }
+                },
+            },
+            rhs);
+      };
+
+      for (const auto& block : func.blocks) {
+        for (const auto& stmt : block.statements) {
+          std::visit(
+              common::Overloaded{
+                  [&](const mir::Assign& a) { collect_rhs_triggers(a.rhs); },
+                  [&](const mir::DefineTemp& dt) {
+                    collect_rhs_triggers(dt.rhs);
+                  },
+                  [](const auto&) {},
+              },
+              stmt.data);
+        }
+        // Collect from terminators too (Branch condition, Jump args).
+        std::visit(
+            common::Overloaded{
+                [&](const mir::Branch& b) {
+                  collect_trigger(b.condition, parent_body.arena);
+                },
+                [&](const mir::Jump& j) {
+                  for (const auto& a : j.args) {
+                    collect_trigger(a, parent_body.arena);
+                  }
+                },
+                [](const auto&) {},
+            },
+            block.terminator.data);
+      }
+
+      // Clone function blocks with remapping.
+      std::vector<mir::BasicBlock> process_blocks;
+      mir::BasicBlockId entry_id = func.entry;
+      for (const auto& block : func.blocks) {
+        mir::BasicBlock new_block;
+        new_block.params = block.params;
+        for (const auto& stmt : block.statements) {
+          mir::Statement new_stmt;
+          new_stmt.origin = stmt.origin;
+          new_stmt.data = std::visit(
+              common::Overloaded{
+                  [&](const mir::Assign& a) -> mir::StatementData {
+                    return mir::Assign{
+                        .dest = remap_place(a.dest, parent_body.arena),
+                        .rhs = remap_rhs(a.rhs, parent_body.arena)};
+                  },
+                  [&](const mir::DefineTemp& dt) -> mir::StatementData {
+                    return mir::DefineTemp{
+                        .temp_id = dt.temp_id,
+                        .type = dt.type,
+                        .rhs = remap_rhs(dt.rhs, parent_body.arena)};
+                  },
+                  [&](const auto& other) -> mir::StatementData {
+                    return other;
+                  },
+              },
+              stmt.data);
+          new_block.statements.push_back(std::move(new_stmt));
+        }
+
+        // Remap terminator: replace Return with Assign + Wait.
+        if (const auto* ret =
+                std::get_if<mir::Return>(&block.terminator.data)) {
+          // Return value -> assign to child place.
+          if (ret->value) {
+            auto src_op = remap_operand(*ret->value, parent_body.arena);
+            new_block.statements.push_back(
+                mir::Statement{
+                    .data = mir::Assign{.dest = child_place, .rhs = src_op}});
+          }
+          // Build Wait triggers from collected slots.
+          std::vector<mir::WaitTrigger> triggers;
+          // Deduplicate trigger slots.
+          std::ranges::sort(trigger_slots);
+          auto last = std::ranges::unique(trigger_slots);
+          trigger_slots.erase(last.begin(), last.end());
+          for (uint32_t slot : trigger_slots) {
+            triggers.push_back(
+                mir::WaitTrigger{
+                    .signal =
+                        mir::SignalRef{
+                            .scope = mir::SignalRef::Scope::kDesignGlobal,
+                            .id = slot},
+                    .edge = common::EdgeKind::kAnyChange});
+          }
+          new_block.terminator.data = mir::Wait{
+              .triggers = std::move(triggers),
+              .resume = entry_id,
+          };
+        } else {
+          // Remap operands in non-Return terminators.
+          new_block.terminator.origin = block.terminator.origin;
+          new_block.terminator.data = std::visit(
+              common::Overloaded{
+                  [&](const mir::Jump& j) -> mir::TerminatorData {
+                    std::vector<mir::Operand> args;
+                    for (const auto& a : j.args) {
+                      args.push_back(remap_operand(a, parent_body.arena));
+                    }
+                    return mir::Jump{
+                        .target = j.target, .args = std::move(args)};
+                  },
+                  [&](const mir::Branch& b) -> mir::TerminatorData {
+                    auto cond = remap_operand(b.condition, parent_body.arena);
+                    std::vector<mir::Operand> then_args;
+                    for (const auto& a : b.then_args) {
+                      then_args.push_back(remap_operand(a, parent_body.arena));
+                    }
+                    std::vector<mir::Operand> else_args;
+                    for (const auto& a : b.else_args) {
+                      else_args.push_back(remap_operand(a, parent_body.arena));
+                    }
+                    return mir::Branch{
+                        .condition = cond,
+                        .then_target = b.then_target,
+                        .then_args = std::move(then_args),
+                        .else_target = b.else_target,
+                        .else_args = std::move(else_args)};
+                  },
+                  [&](const mir::Switch& s) -> mir::TerminatorData {
+                    return mir::Switch{
+                        .selector =
+                            remap_operand(s.selector, parent_body.arena),
+                        .targets = s.targets};
+                  },
+                  [&](const auto& other) -> mir::TerminatorData {
+                    return other;
+                  },
+              },
+              block.terminator.data);
+        }
+        process_blocks.push_back(std::move(new_block));
+      }
+
+      mir::Process process{
+          .kind = mir::ProcessKind::kLooping,
+          .entry = entry_id,
+          .blocks = std::move(process_blocks),
+          .temp_metadata = func.temp_metadata,
+      };
+      auto pid = const_cast<mir::Arena&>(*input.mir_arena)
+                     .AddProcess(std::move(process));
+      non_kernelized_connection_processes.push_back(pid);
+    }
+  }
 
   // Connection analysis: classify slot usage and relay candidates.
   // Connection edges use original slot IDs; no canonical-owner aliasing.
   auto connection_analysis = AnalyzeConnections(
-      std::move(connection_collection.kernel_entries), module_plans,
-      *input.design, *input.mir_arena,
-      static_cast<uint32_t>(expanded_slots.size()));
+      std::move(connection_kernel_entries), module_plans, *input.design,
+      *input.mir_arena, static_cast<uint32_t>(expanded_slots.size()));
 
   // Build instance slot ranges for body-local appendix layout.
   uint32_t num_package_slots_for_layout = 0;
@@ -1091,7 +1372,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto layout = std::make_unique<Layout>(BuildLayout(
       input.design->init_processes,
       std::move(connection_analysis.connection_edges),
-      std::move(connection_collection.non_kernelized_processes), module_plans,
+      std::move(non_kernelized_connection_processes), module_plans,
       *input.design, *input.mir_arena, *input.type_arena,
       std::move(design_layout), body_storage_layouts, input.body_timescales,
       *llvm_ctx, module->getDataLayout(), force_two_state));

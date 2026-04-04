@@ -248,11 +248,6 @@ auto LowerDesign(
   // MIR arena and body-local origins. No body-lowering path writes to the
   // design arena.
   // Also retain body-local place maps for InstanceSlotResolver construction.
-  struct BodyLocalSlotEntry {
-    SymbolId sym;
-    common::LocalSlotId local_slot;
-    TypeId type;
-  };
   std::unordered_map<uint32_t, std::vector<BodyLocalSlotEntry>>
       body_local_slots_by_body;
 
@@ -516,13 +511,71 @@ auto LowerDesign(
             construction.objects.size(), construction.const_blocks.size()));
   }
 
-  // Compile port bindings into assembly-ready artifacts (no design mutation).
-  mir::CompiledBindingPlan compiled_bindings;
+  // Build InstanceSlotResolver from canonical body-local slot data.
+  // Maps (instance_sym, variable_sym) -> ConnectionEndpointRef.
+  // LocalSlotId is derived from body_local_slots_by_body, not from manual
+  // ordering assumptions. This ensures the resolver stays consistent if
+  // CollectBodyLocalDecls ordering changes.
+  //
+  // Build body_group -> representative path_index for per-instance mapping.
+  std::unordered_map<uint32_t, uint32_t> body_to_representative;
+  for (const auto& group : spec_groups) {
+    auto body_id = spec_to_body.at(group.spec_id);
+    body_to_representative[body_id.value] = group.representative_module_index;
+  }
+
+  InstanceSlotResolver resolver;
+  for (size_t oi = 0; oi < construction.objects.size(); ++oi) {
+    const auto& obj = construction.objects[oi];
+    uint32_t body_group = obj.body_group;
+
+    // Build representative sym -> LocalSlotId from canonical body-local data.
+    const auto& body_slots = body_local_slots_by_body.at(body_group);
+    std::unordered_map<SymbolId, common::LocalSlotId, SymbolIdHash>
+        rep_sym_to_slot;
+    for (const auto& entry : body_slots) {
+      rep_sym_to_slot[entry.sym] = entry.local_slot;
+    }
+
+    uint32_t rep_path = body_to_representative.at(body_group);
+    const auto& rep_mod = *hir_modules[rep_path];
+    const auto& inst_mod = *hir_modules[obj.path_index];
+
+    auto map_by_position = [&](const std::vector<SymbolId>& inst_syms,
+                               const std::vector<SymbolId>& rep_syms) {
+      for (size_t i = 0; i < inst_syms.size(); ++i) {
+        auto it = rep_sym_to_slot.find(rep_syms[i]);
+        if (it == rep_sym_to_slot.end()) continue;
+        resolver.Insert(
+            obj.instance_sym, inst_syms[i],
+            mir::ConnectionEndpointRef{
+                .object_index = static_cast<uint32_t>(oi),
+                .local_slot = it->second});
+      }
+    };
+
+    map_by_position(inst_mod.variables, rep_mod.variables);
+    map_by_position(inst_mod.nets, rep_mod.nets);
+    map_by_position(inst_mod.param_slots, rep_mod.param_slots);
+  }
+
+  // Resolve port bindings to topology-owned endpoint artifacts.
+  // Simple connections (NameRef) -> ResolvedKernelBinding.
+  // Complex expressions -> CompiledConnectionExpr (body-local function).
+  // ResolvedBindingPlan is the sole connection representation.
+  mir::ResolvedBindingPlan resolved_bindings;
   if (input.binding_plan != nullptr) {
-    auto binding_result = CompileBindings(
-        *input.binding_plan, decls, input, mir_arena, &cross_instance_places);
+    ExprCompilationData expr_data{
+        .module_bodies = &result.module_bodies,
+        .objects = &construction.objects,
+        .hir_modules = &hir_modules,
+        .body_local_slots = &body_local_slots_by_body,
+        .body_to_representative = &body_to_representative,
+    };
+    auto binding_result =
+        CompileBindings(*input.binding_plan, resolver, input, decls, expr_data);
     if (!binding_result) return std::unexpected(binding_result.error());
-    compiled_bindings = std::move(*binding_result);
+    resolved_bindings = std::move(*binding_result);
   }
 
   // Propagate decision owner acceptance through design-global call graph.
@@ -531,7 +584,7 @@ auto LowerDesign(
   return DesignLoweringResult{
       .design = std::move(result),
       .construction = std::move(construction),
-      .compiled_bindings = std::move(compiled_bindings),
+      .resolved_bindings = std::move(resolved_bindings),
       .body_origins = std::move(body_origins),
       .dpi_export_wrappers = std::move(dpi_export_wrappers),
       .dpi_header = (!decls.dpi_exports.Empty() || !decls.dpi_imports.Empty())

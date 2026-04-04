@@ -94,13 +94,10 @@ struct Design {
   // Set from compilation context, used by $timeformat defaults.
   int8_t global_precision_power = -9;
 
-  // Source of truth for all port connections.
-  // Written ONLY by realization::AssembleBindings.
+  // DEPRECATED: connection data is now in ResolvedBindingPlan.
+  // These fields are empty after B2a. Retained for struct layout stability
+  // during migration; will be removed in follow-up.
   std::vector<PortConnection> port_connections;
-
-  // Wiring processes (separate from module processes).
-  // These implement kDriveParentToChild and kDriveChildToParent semantics.
-  // Written ONLY by realization::AssembleBindings.
   std::vector<ProcessId> connection_processes;
 
   // Compile-owned slot trace provenance table (parallel to slots).

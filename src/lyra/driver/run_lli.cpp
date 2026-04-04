@@ -148,6 +148,7 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
           output.IsEnabled(OutputCategory::kAnalysis),
       .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
       .dpi_export_wrappers = &compilation.mir.dpi_export_wrappers,
+      .resolved_bindings = &compilation.mir.resolved_bindings,
   };
 
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;

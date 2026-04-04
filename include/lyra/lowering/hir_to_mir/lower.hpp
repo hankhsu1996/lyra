@@ -15,7 +15,7 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/compiled_bindings.hpp"
+#include "lyra/mir/connection_endpoint.hpp"
 #include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/instance.hpp"
@@ -66,7 +66,7 @@ struct LoweringResult {
   // stay body-local -- not merged into design_origins.
   std::vector<std::vector<OriginEntry>> body_origins;
   LoweringStats stats;
-  mir::CompiledBindingPlan compiled_bindings;
+  mir::ResolvedBindingPlan resolved_bindings;
   // DPI export wrapper descriptors for LLVM backend emission.
   // Deterministically sorted by c_name.
   std::vector<mir::DpiExportWrapperDesc> dpi_export_wrappers;

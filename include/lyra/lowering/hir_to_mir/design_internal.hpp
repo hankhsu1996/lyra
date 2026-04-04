@@ -1,38 +1,132 @@
 #pragma once
 
+#include <cstdint>
+#include <format>
 #include <functional>
+#include <unordered_map>
+#include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
+#include "lyra/common/local_slot_id.hpp"
+#include "lyra/common/symbol_types.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
-#include "lyra/mir/arena.hpp"
-#include "lyra/mir/compiled_bindings.hpp"
-#include "lyra/mir/operand.hpp"
-#include "lyra/mir/routine.hpp"
+#include "lyra/mir/connection_endpoint.hpp"
+#include "lyra/mir/module_body.hpp"
+
+namespace lyra::hir {
+struct Module;
+}
 
 namespace lyra::lowering::hir_to_mir {
 
-class MirBuilder;
+// Canonical body-local slot identity. Captures representative module's
+// SymbolId and the LocalSlotId assigned by CollectBodyLocalDecls.
+// Used for resolver construction and per-instance symbol mapping.
+struct BodyLocalSlotEntry {
+  SymbolId sym;
+  common::LocalSlotId local_slot;
+  TypeId type;
+};
 
-// Create a design-level context for port binding lowering.
-// Port bindings only reference design-level symbols, so module_places
-// points to design_places.
-auto MakeDesignContext(
-    const LoweringInput& input, mir::Arena& mir_arena,
-    const DesignDeclarations& decls) -> Context;
+// Maps (instance_sym, variable_sym) pairs to topology-owned endpoints.
+// Built from canonical body-local declaration data after construction
+// objects are finalized. The compound key preserves instance identity
+// even if variable symbols overlap across specialization groups.
+class InstanceSlotResolver {
+ public:
+  void Insert(
+      SymbolId instance_sym, SymbolId variable_sym,
+      mir::ConnectionEndpointRef ref) {
+    ResolverKey key{instance_sym, variable_sym};
+    auto [it, inserted] = map_.emplace(key, ref);
+    if (!inserted) {
+      throw common::InternalError(
+          "InstanceSlotResolver::Insert",
+          std::format(
+              "duplicate (instance={}, variable={}) in resolver",
+              instance_sym.value, variable_sym.value));
+    }
+    // Reverse map: variable_sym -> (instance_sym, ref).
+    // Valid because per-instance symbols are unique in the elaborated AST.
+    reverse_[variable_sym] = ReverseLookup{instance_sym, ref};
+  }
 
-// Callback type that builds the source operand inside a provided builder.
-// This ensures any temps/instructions are emitted into the correct builder.
-using BuildSrcFn =
-    std::function<Result<mir::Operand>(MirBuilder&, const Context&)>;
+  auto Resolve(SymbolId instance_sym, SymbolId variable_sym) const
+      -> mir::ConnectionEndpointRef {
+    ResolverKey key{instance_sym, variable_sym};
+    auto it = map_.find(key);
+    if (it == map_.end()) {
+      throw common::InternalError(
+          "InstanceSlotResolver::Resolve",
+          std::format(
+              "(instance={}, variable={}) not found in resolver",
+              instance_sym.value, variable_sym.value));
+    }
+    return it->second;
+  }
 
-// Create a synthetic always_comb process for port connection.
-// Uses callback pattern to build source operand inside the process's builder.
-// Returns a Process value (not registered in arena - assembly does that).
-auto CreateConnectionProcess(
-    mir::PlaceId dst, BuildSrcFn build_src, const LoweringInput& input,
-    mir::Arena& mir_arena, const DesignDeclarations& decls,
-    const PlaceMap* cross_instance_places = nullptr) -> Result<mir::Process>;
+  // Resolve by variable symbol alone (for finding parent instance from
+  // expression variable references). Validated unique at insertion time.
+  auto ResolveByVariable(SymbolId variable_sym) const
+      -> mir::ConnectionEndpointRef {
+    auto it = reverse_.find(variable_sym);
+    if (it == reverse_.end()) {
+      throw common::InternalError(
+          "InstanceSlotResolver::ResolveByVariable",
+          std::format("variable {} not found in resolver", variable_sym.value));
+    }
+    return it->second.ref;
+  }
+
+  // Find the owning instance for a variable symbol.
+  auto FindOwnerInstance(SymbolId variable_sym) const -> SymbolId {
+    auto it = reverse_.find(variable_sym);
+    if (it == reverse_.end()) {
+      throw common::InternalError(
+          "InstanceSlotResolver::FindOwnerInstance",
+          std::format("variable {} not found in resolver", variable_sym.value));
+    }
+    return it->second.instance_sym;
+  }
+
+ private:
+  struct ResolverKey {
+    SymbolId instance_sym;
+    SymbolId variable_sym;
+    auto operator==(const ResolverKey&) const -> bool = default;
+  };
+
+  struct ResolverKeyHash {
+    auto operator()(const ResolverKey& k) const noexcept -> size_t {
+      return std::hash<uint32_t>{}(k.instance_sym.value) ^
+             (std::hash<uint32_t>{}(k.variable_sym.value) << 16);
+    }
+  };
+
+  struct ReverseLookup {
+    SymbolId instance_sym;
+    mir::ConnectionEndpointRef ref;
+  };
+
+  std::unordered_map<ResolverKey, mir::ConnectionEndpointRef, ResolverKeyHash>
+      map_;
+  std::unordered_map<SymbolId, ReverseLookup, SymbolIdHash> reverse_;
+};
+
+// Data needed by CompileBindings for non-kernelizable expression compilation.
+// Provides mutable access to body arenas for adding connection functions.
+struct ExprCompilationData {
+  std::vector<mir::ModuleBody>* module_bodies = nullptr;
+  const std::vector<mir::ObjectRecord>* objects = nullptr;
+  const std::vector<const hir::Module*>* hir_modules = nullptr;
+  const std::unordered_map<uint32_t, std::vector<BodyLocalSlotEntry>>*
+      body_local_slots = nullptr;
+  // body_group -> representative module path_index
+  const std::unordered_map<uint32_t, uint32_t>* body_to_representative =
+      nullptr;
+};
 
 }  // namespace lyra::lowering::hir_to_mir
 
@@ -42,12 +136,13 @@ struct DesignBindingPlan;
 
 namespace lyra::lowering::hir_to_mir {
 
-// Compile port bindings into assembly-ready artifacts.
-// Does NOT mutate mir::Design -- assembly attachment is separate.
+// Resolve port bindings into topology-owned endpoint artifacts.
+// Simple connections (NameRef) become ResolvedKernelBinding.
+// Complex expressions become CompiledConnectionExpr with body-local functions.
 auto CompileBindings(
-    const ast_to_hir::DesignBindingPlan& plan, const DesignDeclarations& decls,
-    const LoweringInput& input, mir::Arena& mir_arena,
-    const PlaceMap* cross_instance_places = nullptr)
-    -> Result<mir::CompiledBindingPlan>;
+    const ast_to_hir::DesignBindingPlan& plan,
+    const InstanceSlotResolver& resolver, const LoweringInput& input,
+    const DesignDeclarations& decls, ExprCompilationData& expr_data)
+    -> Result<mir::ResolvedBindingPlan>;
 
 }  // namespace lyra::lowering::hir_to_mir

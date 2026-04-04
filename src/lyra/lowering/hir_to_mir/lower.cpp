@@ -163,7 +163,7 @@ auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
   if (!design_result) return std::unexpected(design_result.error());
   mir::Design design = std::move(design_result->design);
   mir::ConstructionInput construction = std::move(design_result->construction);
-  auto compiled_bindings = std::move(design_result->compiled_bindings);
+  auto resolved_bindings = std::move(design_result->resolved_bindings);
   auto body_origins = std::move(design_result->body_origins);
   auto dpi_export_wrappers = std::move(design_result->dpi_export_wrappers);
 
@@ -187,7 +187,7 @@ auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
       .design_origins = std::move(design_origins),
       .body_origins = std::move(body_origins),
       .stats = stats,
-      .compiled_bindings = std::move(compiled_bindings),
+      .resolved_bindings = std::move(resolved_bindings),
       .dpi_export_wrappers = std::move(dpi_export_wrappers),
       .dpi_header = std::move(design_result->dpi_header),
   };

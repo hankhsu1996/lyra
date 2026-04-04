@@ -7,7 +7,7 @@
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/compiled_bindings.hpp"
+#include "lyra/mir/connection_endpoint.hpp"
 #include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
 
@@ -33,7 +33,7 @@ auto CollectBodyLocalDecls(
 struct DesignLoweringResult {
   mir::Design design;
   mir::ConstructionInput construction;
-  mir::CompiledBindingPlan compiled_bindings;
+  mir::ResolvedBindingPlan resolved_bindings;
   // Per-body origin entries, indexed by ModuleBodyId.
   // Body-local MIR origins stay body-local -- not merged into the
   // design-global origin map.
