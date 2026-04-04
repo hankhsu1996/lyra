@@ -364,26 +364,65 @@ extern "C" void* svGetUserData(const svScope scope, void* userKey) {
 // NOLINTEND(cppcoreguidelines-pro-type-const-cast)
 
 // ---------------------------------------------------------------------------
-// Trapped: time APIs (later time-query work)
+// D6d: time query APIs
 // ---------------------------------------------------------------------------
 
+// Populate svTimeVal from simulation ticks per vpiSimTime convention.
+// Keep exactly in sync with vendored IEEE svdpi.h svTimeVal layout
+// (third_party/systemverilog/svdpi.h:104-122).
+static void EncodeVendoredSvTimeValFromTicks(svTimeVal& out, uint64_t ticks) {
+  out.type = vpiSimTime;
+  out.low = static_cast<uint32_t>(ticks);
+  out.high = static_cast<uint32_t>(ticks >> 32);
+  out.real = 0.0;
+}
+
+// D6d scope contract:
+// - non-null scope: resolve that runtime instance's time metadata
+// - null scope: simulation-level semantics via GetSimulationTimeSemantics()
+// - no package-context inference from active_scope when argument is null
+
+// Validate scope for D6d time APIs. Returns nullptr for null scope,
+// validated instance for non-null scope, aborts for invalid non-null scope.
+// Uses abort (not throw) to stay safe across extern "C" boundary.
+auto ValidateOptionalScopeOrAbort(
+    const lyra::runtime::Engine* engine, svScope scope)
+    -> const lyra::runtime::RuntimeInstance* {
+  if (scope == nullptr) return nullptr;
+  auto* inst = static_cast<const lyra::runtime::RuntimeInstance*>(scope);
+  if (!engine->IsScopeHandleValid(inst)) {
+    std::fputs("fatal: invalid svScope handle\n", stderr);
+    std::abort();
+  }
+  return inst;
+}
+
 extern "C" int svGetTime(const svScope scope, svTimeVal* time) {
-  (void)scope;
-  (void)time;
-  TrapUnsupportedSvdpi("svGetTime", "later time-query work");
+  if (time == nullptr) return -1;
+  auto* ctx = GetActiveDpiContextOrAbort();
+  auto* engine = static_cast<const lyra::runtime::Engine*>(ctx->engine);
+  (void)ValidateOptionalScopeOrAbort(engine, scope);
+  EncodeVendoredSvTimeValFromTicks(*time, engine->CurrentTime());
+  return 0;
 }
 
 extern "C" int svGetTimeUnit(const svScope scope, int32_t* time_unit) {
-  (void)scope;
-  (void)time_unit;
-  TrapUnsupportedSvdpi("svGetTimeUnit", "later time-query work");
+  if (time_unit == nullptr) return -1;
+  auto* ctx = GetActiveDpiContextOrAbort();
+  auto* engine = static_cast<const lyra::runtime::Engine*>(ctx->engine);
+  const auto* inst = ValidateOptionalScopeOrAbort(engine, scope);
+  *time_unit = engine->GetScopeTimeUnitPower(inst);
+  return 0;
 }
 
 extern "C" int svGetTimePrecision(
     const svScope scope, int32_t* time_precision) {
-  (void)scope;
-  (void)time_precision;
-  TrapUnsupportedSvdpi("svGetTimePrecision", "later time-query work");
+  if (time_precision == nullptr) return -1;
+  auto* ctx = GetActiveDpiContextOrAbort();
+  auto* engine = static_cast<const lyra::runtime::Engine*>(ctx->engine);
+  const auto* inst = ValidateOptionalScopeOrAbort(engine, scope);
+  *time_precision = engine->GetScopeTimePrecisionPower(inst);
+  return 0;
 }
 
 // ---------------------------------------------------------------------------

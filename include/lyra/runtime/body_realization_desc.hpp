@@ -53,14 +53,20 @@ struct BodyRealizationDesc {
   uint64_t inline_state_size_bytes = 0;
   uint64_t appendix_state_size_bytes = 0;
   uint64_t total_state_size_bytes = 0;
+  // Scope timescale as power of 10 (e.g., -9 for 1ns, -12 for 1ps).
+  // Set from compile-time scope timescale during body descriptor emission.
+  int8_t time_unit_power = 0;
+  int8_t time_precision_power = 0;
 };
 
-static_assert(sizeof(BodyRealizationDesc) == 32);
+static_assert(sizeof(BodyRealizationDesc) == 40);
 static_assert(offsetof(BodyRealizationDesc, num_processes) == 0);
 static_assert(offsetof(BodyRealizationDesc, slot_count) == 4);
 static_assert(offsetof(BodyRealizationDesc, inline_state_size_bytes) == 8);
 static_assert(offsetof(BodyRealizationDesc, appendix_state_size_bytes) == 16);
 static_assert(offsetof(BodyRealizationDesc, total_state_size_bytes) == 24);
+static_assert(offsetof(BodyRealizationDesc, time_unit_power) == 32);
+static_assert(offsetof(BodyRealizationDesc, time_precision_power) == 33);
 static_assert(std::is_trivially_copyable_v<BodyRealizationDesc>);
 static_assert(std::is_standard_layout_v<BodyRealizationDesc>);
 

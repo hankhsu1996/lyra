@@ -482,6 +482,9 @@ extern "C" void LyraRunSimulation(
               kRuntimeAbiVersion));
     }
 
+    // D6d: Set simulation-global precision from emitted ABI.
+    engine.SetGlobalPrecision(abi->global_precision_power);
+
     // Instance pointer list for slot storage resolution and observability.
     if (abi->instance_ptrs != nullptr && abi->num_instances > 0) {
       engine.SetInstances(std::span(abi->instance_ptrs, abi->num_instances));

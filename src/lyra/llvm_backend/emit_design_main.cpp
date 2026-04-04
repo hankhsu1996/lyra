@@ -1048,9 +1048,10 @@ auto EmitBodyRealizationDescs(
   // BodyRealizationDesc ABI:
   //   {u32 num_processes, u32 slot_count,
   //    u64 inline_state_size_bytes, u64 appendix_state_size_bytes,
-  //    u64 total_state_size_bytes}
-  auto* header_type =
-      llvm::StructType::get(ctx, {i32_ty, i32_ty, i64_ty, i64_ty, i64_ty});
+  //    u64 total_state_size_bytes, i8 time_unit_power, i8 time_precision_power}
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  auto* header_type = llvm::StructType::get(
+      ctx, {i32_ty, i32_ty, i64_ty, i64_ty, i64_ty, i8_ty, i8_ty});
   // BodyProcessEntry ABI: {ptr shared_body_fn, u32 schema_index, u32 pad}
   auto* entry_type = llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
 
@@ -1086,7 +1087,9 @@ auto EmitBodyRealizationDescs(
          llvm::ConstantInt::get(i32_ty, info.slot_count),
          llvm::ConstantInt::get(i64_ty, info.inline_state_size_bytes),
          llvm::ConstantInt::get(i64_ty, info.appendix_state_size_bytes),
-         llvm::ConstantInt::get(i64_ty, info.total_state_size_bytes)});
+         llvm::ConstantInt::get(i64_ty, info.total_state_size_bytes),
+         llvm::ConstantInt::get(i8_ty, info.time_unit_power),
+         llvm::ConstantInt::get(i8_ty, info.time_precision_power)});
     auto* header_global = new llvm::GlobalVariable(
         mod, header_type, true, llvm::GlobalValue::InternalLinkage, header_val,
         header_name);
@@ -1886,7 +1889,8 @@ auto BuildRuntimeAbi(
     llvm::Value* design_state, const ConstructorProcessMeta& process_meta,
     const ConstructorTriggerCombMeta& trigger_comb,
     const ConstructorSlotTraceMeta& slot_trace,
-    uint32_t num_immediate_cover_sites) -> llvm::Value* {
+    uint32_t num_immediate_cover_sites, int8_t global_precision_power)
+    -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -1965,6 +1969,10 @@ auto BuildRuntimeAbi(
   // A1b: Immediate cover site count.
   store_field(32, llvm::ConstantInt::get(i32_ty, num_immediate_cover_sites));
   store_field(33, llvm::ConstantInt::get(i32_ty, 0));
+
+  // D6d: Simulation-global precision power.
+  auto* i8_ty = llvm::Type::getInt8Ty(context.GetLlvmContext());
+  store_field(34, llvm::ConstantInt::get(i8_ty, global_precision_power));
 
   return abi_alloca;
 }
@@ -2503,7 +2511,8 @@ auto EmitDesignMain(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,
         process_meta_for_abi, trigger_comb_for_abi, slot_trace_for_abi,
-        static_cast<uint32_t>(input.design->immediate_cover_sites.size()));
+        static_cast<uint32_t>(input.design->immediate_cover_sites.size()),
+        input.design->global_precision_power);
     abi_for_exit = abi_alloca;
 
     EmitRunSimulation(

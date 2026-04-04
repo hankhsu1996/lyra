@@ -279,6 +279,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .feature_flags = 0,
       .signal_trace_path = {},
       .iteration_limit = 0,
+      .body_timescales = &hir_result.body_timescales,
       .force_two_state = input.two_state,
       .collect_forwarding_analysis =
           output.IsEnabled(OutputCategory::kAnalysis),

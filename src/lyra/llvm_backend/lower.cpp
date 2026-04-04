@@ -987,6 +987,11 @@ auto ExtractRealizationData(
 
 auto CompileDesignProcesses(const LoweringInput& input)
     -> Result<CodegenSession> {
+  if (input.body_timescales == nullptr) {
+    throw common::InternalError(
+        "CompileDesignProcesses", "body_timescales must be non-null");
+  }
+
   // Phase 0: Backend/session setup
   auto llvm_ctx = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("lyra_module", *llvm_ctx);
@@ -1102,8 +1107,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
       std::move(connection_analysis.connection_edges),
       std::move(connection_collection.non_kernelized_processes), module_plans,
       *input.design, *input.mir_arena, *input.type_arena,
-      std::move(design_layout), body_storage_layouts, *llvm_ctx,
-      module->getDataLayout(), force_two_state));
+      std::move(design_layout), body_storage_layouts, input.body_timescales,
+      *llvm_ctx, module->getDataLayout(), force_two_state));
 
   // Populate body-relative behavioral dirty-trigger contracts on
   // BodyRealizationInfo. Must complete before Phase 4 codegen reads them

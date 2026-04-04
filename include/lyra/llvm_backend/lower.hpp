@@ -8,6 +8,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Value.h>
 
+#include "lyra/common/body_timescale.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -100,6 +101,9 @@ struct LoweringInput {
   // Only meaningful when kEnableSignalTrace is set in feature_flags.
   std::string signal_trace_path;
   uint32_t iteration_limit = 0;  // 0 = default (1B)
+  // Per-body timescale table from AST->HIR lowering.
+  // Indexed by ModuleBodyId::value. Must be non-null.
+  const std::vector<common::BodyTimeScale>* body_timescales = nullptr;
   bool force_two_state = false;  // Force 2-state LLVM representation
   bool collect_forwarding_analysis = false;
   MainAbi main_abi = MainAbi::kEmbeddedPlusargs;

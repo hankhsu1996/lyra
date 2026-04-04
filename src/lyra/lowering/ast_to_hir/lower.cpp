@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <utility>
 
 #include "lyra/common/constant_arena.hpp"
@@ -76,6 +75,7 @@ auto LowerAstToHir(
       .specialization_map = std::move(design_result.specialization_map),
       .instance_table = std::move(design_result.instance_table),
       .global_precision_power = global_precision,
+      .body_timescales = std::move(design_result.body_timescales),
   };
 }
 

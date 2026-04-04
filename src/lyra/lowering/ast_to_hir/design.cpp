@@ -28,6 +28,7 @@
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol.hpp"
+#include "lyra/common/timescale_format.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
@@ -45,6 +46,7 @@
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/specialization.hpp"
 #include "lyra/lowering/ast_to_hir/symbol_registrar.hpp"
+#include "lyra/lowering/ast_to_hir/timescale.hpp"
 #include "lyra/lowering/ast_to_hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/type_seeder.hpp"
 #include "lyra/mir/instance.hpp"
@@ -769,6 +771,8 @@ auto LowerDesign(
   // group order. This is the deterministic assembly step.
   std::vector<hir::ModuleBody> module_bodies;
   module_bodies.reserve(body_results.size());
+  std::vector<common::BodyTimeScale> body_timescale_table;
+  body_timescale_table.reserve(body_results.size());
 
   std::vector<hir::ModuleBodyId> body_id_by_instance(all_instances.size());
   // Track representative instance body scope -> body index for DPI export.
@@ -781,6 +785,20 @@ auto LowerDesign(
 
     hir::ModuleBodyId body_id{static_cast<uint32_t>(module_bodies.size())};
     module_bodies.push_back(std::move(body_results[g].body));
+
+    // Extract timescale from the representative instance's scope.
+    uint32_t rep_idx = spec_map.groups[g].instance_indices[0];
+    auto ts = all_instances[rep_idx]->body.getTimeScale();
+    body_timescale_table.push_back(
+        common::BodyTimeScale{
+            .body_id = body_id.value,
+            .unit_power =
+                ts ? static_cast<int8_t>(TimeScaleValueToPower(ts->base))
+                   : static_cast<int8_t>(kDefaultTimeScalePower),
+            .precision_power =
+                ts ? static_cast<int8_t>(TimeScaleValueToPower(ts->precision))
+                   : static_cast<int8_t>(kDefaultTimeScalePower),
+        });
 
     // Map all instance body scopes in this group to the same body index.
     for (uint32_t idx : spec_map.groups[g].instance_indices) {
@@ -898,6 +916,7 @@ auto LowerDesign(
       .binding_plan = std::move(binding_plan),
       .specialization_map = std::move(spec_map),
       .instance_table = std::move(instance_table),
+      .body_timescales = std::move(body_timescale_table),
   };
 }
 
