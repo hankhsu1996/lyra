@@ -52,6 +52,8 @@ class Access;
 
 // Forward declaration for WriteTarget (defined in commit/access.hpp)
 struct WriteTarget;
+// Forward declaration for ConnectionNotificationMask (codegen_session.hpp)
+struct ConnectionNotificationMask;
 
 // How design-slot stores are emitted in the current codegen context.
 // Set from the process execution contract at function generation time.
@@ -480,6 +482,13 @@ class Context {
   [[nodiscard]] auto GetSpecSlotInfo() const -> const SpecSlotInfo* {
     return spec_slot_info_;
   }
+  void SetConnectionNotificationMask(const ConnectionNotificationMask* mask) {
+    connection_notification_mask_ = mask;
+  }
+  [[nodiscard]] auto GetConnectionNotificationMask() const
+      -> const ConnectionNotificationMask* {
+    return connection_notification_mask_;
+  }
 
   // Resolve the current body's BodyRealizationInfo from Layout.
   // Requires spec_slot_info_ to be set (module-body codegen context).
@@ -550,18 +559,37 @@ class Context {
   [[nodiscard]] auto ResolveMutationSignalRef(mir::PlaceId place_id) const
       -> std::optional<mir::SignalRef>;
 
-  // Static dirty-propagation contract query. Returns true iff behavioral,
-  // connection, or design-global behavioral contracts require propagation.
-  // Does NOT cover runtime observers (trace, rebind).
-  // kModuleLocal requires spec_slot_info_ (module-body codegen context).
-  // kDesignGlobal does not require body context.
+  // Body-owned behavioral dirty-propagation query. Returns true iff
+  // body-local behavioral wait triggers reference this slot.
+  // For kModuleLocal: reads BodyRealizationInfo.slot_has_behavioral_trigger.
+  // For kDesignGlobal: reads layout design_behavioral_trigger bitmap.
+  // Does NOT include connection-trigger or runtime notification facts.
+  [[nodiscard]] auto RequiresBehavioralDirtyPropagation(
+      const mir::SignalRef& sig) const -> bool;
+
+  // Topology-derived connection notification query. Returns true iff
+  // any instance of the current body has a connection process that
+  // triggers on this slot. Conservative union across all instances.
+  // For kModuleLocal: reads ConnectionNotificationMask from context.
+  // For kDesignGlobal: reads layout slot_has_connection_trigger bitmap.
+  // This is a codegen compilation decision, not a body semantic fact.
+  [[nodiscard]] auto RequiresConnectionNotification(
+      const mir::SignalRef& sig) const -> bool;
+
+  // Combined static dirty-propagation query. Returns true iff either
+  // behavioral propagation or connection notification is required.
+  // Convenience wrapper for callers that need one boolean.
   [[nodiscard]] auto RequiresStaticDirtyPropagation(
       const mir::SignalRef& sig) const -> bool;
 
-  // Resolve the design-global slot index for a signal reference.
-  // For module-local signals, maps through representative_design_slots.
-  // For design-global signals, returns the id directly.
-  [[nodiscard]] auto GetResolvedSignalSlot(const mir::SignalRef& sig) const
+  // Legacy runtime-interop: resolve a signal reference to a design-global
+  // slot index for runtime APIs that still use flat slot identity (trace
+  // observation, packed store notifications). For module-local signals,
+  // maps through ResolveLegacyRepresentativeDesignSlot. For design-global
+  // signals, returns the id directly.
+  // Must NOT be used for spec compilation decisions -- only for runtime
+  // signal identity at the codegen->runtime boundary.
+  [[nodiscard]] auto GetLegacyRuntimeSignalSlot(const mir::SignalRef& sig) const
       -> uint32_t;
 
   // Emit IR that queries whether the canonical storage-owner slot for
@@ -809,6 +837,7 @@ class Context {
   // SpecSlotInfo, shared across all instances of the same specialization).
   struct ModuleFunctionLowering {
     const SpecSlotInfo* spec_slot_info = nullptr;
+    const ConnectionNotificationMask* connection_notification_mask = nullptr;
   };
   void RegisterModuleScopedFunction(
       mir::FunctionId func_id, ModuleFunctionLowering lowering);
@@ -1120,6 +1149,7 @@ class Context {
   llvm::Value* this_ptr_ = nullptr;
   llvm::Value* dynamic_instance_id_ = nullptr;
   const SpecSlotInfo* spec_slot_info_ = nullptr;
+  const ConnectionNotificationMask* connection_notification_mask_ = nullptr;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();

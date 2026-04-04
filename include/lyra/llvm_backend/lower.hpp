@@ -18,6 +18,7 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -90,6 +91,7 @@ enum class MainAbi {
 
 struct LoweringInput {
   const mir::Design* design = nullptr;
+  const mir::ConstructionInput* construction = nullptr;
   const mir::Arena* mir_arena = nullptr;
   const TypeArena* type_arena = nullptr;
   const lowering::DiagnosticContext* diag_ctx = nullptr;

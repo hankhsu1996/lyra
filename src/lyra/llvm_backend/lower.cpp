@@ -613,12 +613,8 @@ auto BuildSpecCompilationUnits(const mir::Design& design)
     if (mod == nullptr) continue;
 
     auto body_id = mod->body_id;
-    const auto& placement =
-        mir::GetInstancePlacement(design.placement, module_idx);
-
     SpecInstanceBinding binding{
         .module_index = ModuleIndex{module_idx},
-        .flat_slot_base = placement.design_state_base_slot,
     };
 
     auto [it, inserted] = body_to_unit.try_emplace(body_id.value, units.size());
@@ -754,8 +750,7 @@ auto BuildCompiledModuleSpecInputs(
 
 auto BuildSpecSlotInfos(
     const std::vector<SpecCompilationUnit>& units, const Layout& layout,
-    const std::vector<uint32_t>& module_base_slots,
-    std::span<const mir::SlotDesc> design_slots) -> std::vector<SpecSlotInfo> {
+    const mir::Design& design) -> std::vector<SpecSlotInfo> {
   // Build body-id-to-index table once for O(1) lookup per unit.
   std::unordered_map<uint32_t, uint32_t> body_info_index_by_body_id_value;
   for (uint32_t i = 0; i < layout.body_realization_infos.size(); ++i) {
@@ -766,12 +761,9 @@ auto BuildSpecSlotInfos(
   std::vector<SpecSlotInfo> result;
   result.reserve(units.size());
   for (const auto& unit : units) {
-    if (unit.instances.empty()) {
-      throw common::InternalError(
-          "BuildSpecSlotInfos", "specialization unit has no instances");
-    }
     SpecSlotInfo info;
     info.body_id = unit.body_id;
+    uint32_t body_info_idx = 0;
     {
       auto it = body_info_index_by_body_id_value.find(unit.body_id.value);
       if (it == body_info_index_by_body_id_value.end()) {
@@ -780,66 +772,31 @@ auto BuildSpecSlotInfos(
             std::format(
                 "no BodyRealizationInfo for body {}", unit.body_id.value));
       }
-      info.body_realization_info_index = it->second;
+      body_info_idx = it->second;
+      info.body_realization_info_index = body_info_idx;
     }
-    auto rep_idx = unit.instances[0].module_index;
-    uint32_t rep_base_slot = module_base_slots[rep_idx.value];
-    auto slot_count = layout.GetInstanceSlotCount(rep_idx);
+
+    // Build SpecSlotInfo from body-local layout data only.
+    // No design-global slot table, no representative instance, no
+    // flat_slot_base. Specialization grouping guarantees all instances
+    // of the same body have identical slot specs.
+    const auto& body_info = layout.body_realization_infos[body_info_idx];
+    const auto& body_layout = body_info.body_layout;
+    const auto& body = design.module_bodies.at(unit.body_id.value);
+    auto slot_count = body_info.slot_count;
+
     info.inline_offsets.reserve(slot_count);
     info.shapes.reserve(slot_count);
     info.access_kinds.reserve(slot_count);
-    info.representative_design_slots.reserve(slot_count);
-    const auto& base_info = layout.GetInstanceStorageBase(rep_idx);
-    InstanceSlotRange rep_range{
-        .base_slot = rep_base_slot,
-        .slot_count = slot_count,
-        .body_id = unit.body_id,
-    };
     for (uint32_t s = 0; s < slot_count; ++s) {
-      uint32_t design_slot_row = rep_base_slot + s;
-      auto slot_id = layout.design.slots[design_slot_row];
-      auto rel = layout.design.GetInstanceOffset(
-          design_slot_row, base_info, rep_range);
-      info.inline_offsets.push_back(rel);
-      auto shape = design_slots[design_slot_row].storage_shape;
+      info.inline_offsets.push_back(body_layout.inline_offsets[s]);
+      auto shape = body.slots[s].storage_shape;
       info.shapes.push_back(shape);
       bool is_container = shape == mir::StorageShape::kOwnedContainer;
       info.access_kinds.push_back(
           is_container ? SpecSlotAccessKind::kOwnedContainer
                        : SpecSlotAccessKind::kOwnedInline);
-      info.representative_design_slots.push_back(slot_id.value);
     }
-
-    // Verify all instances in this specialization agree on slot count and
-    // storage shape.
-    for (size_t i = 1; i < unit.instances.size(); ++i) {
-      auto inst_slot_count =
-          layout.GetInstanceSlotCount(unit.instances[i].module_index);
-      if (inst_slot_count != slot_count) {
-        throw common::InternalError(
-            "BuildSpecSlotInfos",
-            std::format(
-                "slot count mismatch: representative has {} but instance {} "
-                "has {}",
-                slot_count, unit.instances[i].module_index.value,
-                inst_slot_count));
-      }
-      uint32_t inst_base =
-          module_base_slots[unit.instances[i].module_index.value];
-      for (uint32_t s = 0; s < slot_count; ++s) {
-        auto inst_shape = design_slots[inst_base + s].storage_shape;
-        if (inst_shape != info.shapes[s]) {
-          throw common::InternalError(
-              "BuildSpecSlotInfos",
-              std::format(
-                  "storage shape mismatch at body-local slot {}: "
-                  "representative={} instance={}",
-                  s, static_cast<int>(info.shapes[s]),
-                  static_cast<int>(inst_shape)));
-        }
-      }
-    }
-
     result.push_back(std::move(info));
   }
   return result;
@@ -913,7 +870,9 @@ auto CompileModuleSpecSession(
   }
   for (mir::FunctionId func_id : input.functions) {
     context.RegisterModuleScopedFunction(
-        func_id, {.spec_slot_info = context.GetSpecSlotInfo()});
+        func_id, {.spec_slot_info = context.GetSpecSlotInfo(),
+                  .connection_notification_mask =
+                      context.GetConnectionNotificationMask()});
   }
 
   // Step 3: Declare all body functions
@@ -963,17 +922,18 @@ auto CompileModuleSpecSession(
 }
 
 auto ExtractRealizationData(
-    const mir::PlacementMap& placement, std::span<const mir::SlotDesc> slots,
+    const mir::ConstructionInput& construction,
+    std::span<const mir::SlotDesc> slots,
     std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
     std::span<const char> slot_trace_string_pool) -> RealizationData {
   RealizationData realization;
 
-  if (placement.instances.size() != placement.const_blocks.size()) {
+  if (construction.objects.size() != construction.const_blocks.size()) {
     throw common::InternalError(
         "ExtractRealizationData",
         std::format(
-            "placement instances/const_blocks size mismatch: {} vs {}",
-            placement.instances.size(), placement.const_blocks.size()));
+            "construction objects/const_blocks size mismatch: {} vs {}",
+            construction.objects.size(), construction.const_blocks.size()));
   }
 
   realization.slot_types.reserve(slots.size());
@@ -1024,32 +984,29 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // placement.instances[i], which is how ModuleIndex is assigned during
   // MIR construction. BuildLayout and wrapper generation depend on this.
   std::vector<LayoutModulePlan> module_plans;
-  std::vector<uint32_t> module_base_slots;
   {
     uint32_t module_idx = 0;
     for (const auto& element : input.design->elements) {
       const auto* mod = std::get_if<mir::Module>(&element);
       if (mod == nullptr) continue;
       const auto& body = input.design->module_bodies.at(mod->body_id.value);
-      const auto& placement =
-          mir::GetInstancePlacement(input.design->placement, module_idx);
+      const auto& obj = input.construction->objects.at(module_idx);
       module_plans.push_back(
           LayoutModulePlan{
               .body_processes = body.processes,
               .body_id = mod->body_id,
-              .design_state_base_slot = placement.design_state_base_slot,
-              .slot_count = placement.slot_count,
+              .design_state_base_slot = obj.design_state_base_slot,
+              .slot_count = obj.slot_count,
           });
-      module_base_slots.push_back(placement.design_state_base_slot);
       ++module_idx;
     }
-    if (module_idx != input.design->placement.instances.size()) {
+    if (module_idx != input.construction->objects.size()) {
       throw common::InternalError(
           "CompileDesignProcesses",
           std::format(
-              "module count {} from elements does not match placement "
-              "instance count {}",
-              module_idx, input.design->placement.instances.size()));
+              "module count {} from elements does not match construction "
+              "object count {}",
+              module_idx, input.construction->objects.size()));
     }
   }
 
@@ -1137,8 +1094,62 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto modidx_to_sched_indices = BuildModuleSchedIndices(*layout);
   auto views =
       BuildSpecCodegenViews(units, *input.design, modidx_to_sched_indices);
-  auto spec_slot_infos = BuildSpecSlotInfos(
-      units, *layout, module_base_slots, input.design->slots);
+  auto spec_slot_infos = BuildSpecSlotInfos(units, *layout, *input.design);
+
+  // Build per-instance local-slot connection trigger facts from the
+  // design-global connection trigger bitmap and module plans.
+  // This is orchestration-local: the projection from design-global to
+  // per-instance local-slot happens here, not on Layout.
+  std::vector<std::vector<bool>> instance_connection_triggers(
+      module_plans.size());
+  for (size_t mi = 0; mi < module_plans.size(); ++mi) {
+    const auto& plan = module_plans[mi];
+    instance_connection_triggers[mi].assign(plan.slot_count, false);
+    for (uint32_t s = 0; s < plan.slot_count; ++s) {
+      uint32_t global_slot = plan.design_state_base_slot + s;
+      if (global_slot >= layout->slot_has_connection_trigger.size()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "design-global slot {} out of range for connection trigger "
+                "bitmap (size={}, instance={}, local_slot={})",
+                global_slot, layout->slot_has_connection_trigger.size(), mi,
+                s));
+      }
+      if (layout->slot_has_connection_trigger[global_slot]) {
+        instance_connection_triggers[mi][s] = true;
+      }
+    }
+  }
+
+  // Compute connection-notification masks: conservative union across all
+  // instances of each body. Topology-derived codegen compilation decision.
+  // Separate from SpecSlotInfo because this is NOT a body semantic fact.
+  std::vector<ConnectionNotificationMask> connection_notification_masks(
+      units.size());
+  for (size_t u = 0; u < units.size(); ++u) {
+    auto slot_count = spec_slot_infos[u].SlotCount();
+    auto& mask = connection_notification_masks[u];
+    mask.required.assign(slot_count, false);
+    for (const auto& inst : units[u].instances) {
+      auto mi = inst.module_index.value;
+      const auto& inst_triggers = instance_connection_triggers.at(mi);
+      if (inst_triggers.size() != slot_count) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "instance {} connection_triggers size {} != "
+                "spec slot_count {}",
+                mi, inst_triggers.size(), slot_count));
+      }
+      for (uint32_t s = 0; s < slot_count; ++s) {
+        if (inst_triggers[s]) {
+          mask.required[s] = true;
+        }
+      }
+    }
+  }
+
   auto spec_inputs = BuildCompiledModuleSpecInputs(units, std::move(views));
 
   // Phase 2: Design-wide init-process monitor registration
@@ -1224,6 +1235,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   for (size_t si = 0; si < spec_inputs.size(); ++si) {
     const auto& spec_input = spec_inputs[si];
     context->SetSpecSlotInfo(&spec_slot_infos[si]);
+    context->SetConnectionNotificationMask(&connection_notification_masks[si]);
     auto product =
         CompileModuleSpecSession(*context, *input.design, spec_input);
     if (!product) return std::unexpected(product.error());
@@ -1274,6 +1286,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   // Clear per-specialization context state after the compilation loop.
   context->SetSpecSlotInfo(nullptr);
+  context->SetConnectionNotificationMask(nullptr);
 
   // Phase 5: Emit DPI export wrappers (after all callables are declared).
   // Both package and module export wrappers are emitted in one pass.
@@ -1395,7 +1408,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   auto realization = ExtractRealizationData(
-      input.design->placement, input.design->slots,
+      *input.construction, input.design->slots,
       input.design->slot_trace_provenance,
       input.design->slot_trace_string_pool);
 
@@ -2160,26 +2173,27 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
 
     std::vector<uint32_t> design_base_slots;
-    design_base_slots.reserve(input.design->placement.instances.size());
-    for (const auto& inst : input.design->placement.instances) {
-      design_base_slots.push_back(inst.design_state_base_slot);
+    design_base_slots.reserve(input.construction->objects.size());
+    for (const auto& obj : input.construction->objects) {
+      design_base_slots.push_back(obj.design_state_base_slot);
     }
 
     auto param_payloads = BuildParamPayloads(
         instance_body_group, design_base_slots,
-        input.design->placement.const_blocks, *layout, body_param_templates);
+        input.construction->const_blocks, *layout, body_param_templates);
 
     // Validate parallel structure invariants before building the
     // construction program. These checks catch topology mismatches at
     // compile time rather than letting them survive to runtime.
     {
       auto instance_count = instance_body_group.size();
-      if (instance_count != input.design->instance_table.entries.size()) {
+      if (instance_count != input.construction->instance_table.entries.size()) {
         throw common::InternalError(
             "CompileDesignProcesses",
             std::format(
                 "instance_body_group size {} != instance_table size {}",
-                instance_count, input.design->instance_table.entries.size()));
+                instance_count,
+                input.construction->instance_table.entries.size()));
       }
       if (instance_count != layout->instance_storage_bases.size()) {
         throw common::InternalError(
@@ -2230,7 +2244,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
     // strict ModuleIndex order. The runtime relies on this order for
     // instance_id and flat slot-base allocation.
     realization.construction_program = BuildConstructionProgram(
-        instance_body_group, *layout, input.design->instance_table,
+        instance_body_group, *layout, input.construction->instance_table,
         param_payloads);
 
     // Validate: construction program entries match lowering domain.

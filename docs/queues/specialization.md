@@ -19,7 +19,7 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] R2 -- Forwarding as connectivity, not storage redefinition
 - [x] R3 -- Object-local signal identity and coordination API
 - [x] R4 -- Constructor-to-runtime handoff preserves per-instance structure
-- [ ] R5 -- Observability/trace/snapshot on object-local coordinates
+- [x] R5 -- Observability/trace/snapshot on object-local coordinates
 - [ ] T1 -- Topology-independence validation (scaling gates)
 - [ ] F1 -- Parallel specialization compilation
   - [x] F1-design -- Parallel ownership model
@@ -37,14 +37,9 @@ C1 is prerequisite-free and can land independently. It is a constructor-time art
 
 F1 (parallel compilation) is independent of the R-series and can proceed in parallel.
 
-The R-series is a strict sequence: R2 -> R3 -> R4 -> R5.
+The R-series (R1-R5) is complete. All instance-owned state uses object-local coordinates end-to-end.
 
-- **R1 (instance object model, completed)** is the architectural anchor. It established the two-domain storage model, domain-aware slot resolution, and process-instance binding. All subsequent R-series items operate within this contract.
-- **R2 (forwarding)** eliminates the last place where connectivity redefines object storage shape. Self-contained: changes layout, codegen, and constructor forwarding paths without touching signal identity or coordination APIs.
-- **R3 (signal identity + coordination API)** removes the design-global signal namespace. signal_id_offset is the sole bridge between body-local and design-global coordinates; removing it immediately breaks every dirty/subscription caller, so signal identity and coordination API are one seam, not two.
-- **R4 (constructor handoff)** restructures the constructor-to-runtime boundary to preserve per-instance metadata. Depends on R3 because the flat arrays (RealizedSlotMeta, RealizedTriggerMeta, RealizedCombMeta) are indexed by the design-global coordinates that R3 eliminates.
-- **R5 (observability)** moves trace/snapshot to object-local coordinates. Last because its target coordinate system -- (instance, local_signal) -- does not exist until R3 defines object-local signal identity, and the trace alias fanout for forwarded signals is cleanest after R2 resolves forwarding.
-- **T1 (validation)** runs after C1 and whichever R-series items have landed.
+- **T1 (validation)** runs after C1 and the R-series.
 
 ## C1: Remove per-instance emitted constructor IR/globals
 
@@ -100,15 +95,14 @@ The constructor-to-runtime boundary now preserves per-instance structure for all
 - **ABI codegen.** Canonical GetRuntimeAbiStructType in runtime_abi_codegen.cpp (single source of truth). EmitLoadAbiInstancePtr and EmitInstanceOwnedByteAddress as canonical instance storage resolution helpers.
 - **Type unification.** SlotId moved to common::SlotId (common/slot_id.hpp), InstanceByteOffset moved to common::InstanceByteOffset (common/byte_offset.hpp). Both used across MIR, codegen, and runtime layers without aliases or compatibility shims.
 
-## R5: Observability/trace/snapshot on object-local coordinates
+## R5: Observability/trace/snapshot on object-local coordinates (completed)
 
-**Current state:** observable descriptors are built per-body with body-relative offsets (correct). The constructor relocates them to design-global SlotMeta entries. Trace and snapshot systems index by flat design-global slot*id. All runtime observability containers (UpdateSet, signal_subs*, TraceSelectionRegistry, SlotMetaRegistry, TraceSignalMetaRegistry) are flat mixed-domain vectors indexed by design-global slot_id. The local_signal_coord_base bridge on RuntimeInstance converts (instance, local_id) to flat slot_id at every engine entry point.
+Instance-owned observability uses (RuntimeInstance\*, LocalSignalId) identity end-to-end. ToFlatSlotId and local_signal_coord_base deleted.
 
-**Target:** instance-owned observability uses (RuntimeInstance\*, LocalSignalId) identity end-to-end. Runtime containers split by domain: GlobalSlotMetaRegistry / GlobalUpdateSet / global*signal_subs* for package/global, and per-instance RuntimeInstanceObservability (with BodyObservableLayout, LocalUpdateSet, local*signal_subs*) for instance-owned. Trace events carry domain-typed identity (GlobalValueChange / LocalValueChange), not flat slot_id. Hierarchical names composed at sink boundary, not pre-flattened. Observer/strobe/monitor use direct object-local addressing via this_ptr, no flat-base ABI argument.
-
-**Cuts:** (1) split update + subscription containers, wire mutation helpers; (2) split slot metadata, delete ToFlatSlotId and local_signal_coord_base; (3) split trace metadata + events + sinks, delete merged registry; (4) rewrite observer ABI/codegen; (5) delete alias residue and remaining flat artifacts.
-
-**Why last:** the target coordinate system -- (instance, local_signal) -- does not exist until R3 defines object-local signal identity. The observable descriptor templates are already body-shaped; the remaining work is the realized output coordinates and trace/snapshot consumers.
+- **Container split.** Per-instance RuntimeInstanceObservability with BodyObservableLayout, LocalUpdateSet, and instance-local subscriptions for instance-owned signals. Design-global UpdateSet and signal_subs narrowed to package/global only.
+- **Slot metadata split.** InstanceSlotMeta and BodyTraceMeta indexed by LocalSignalId for instance-owned signals. SlotMetaRegistry narrowed to design-global entries only.
+- **Domain-typed trace.** GlobalValueChange / LocalValueChange events in trace_event.hpp. Separate flush paths: FlushGlobalDirtySlotsToTrace / FlushLocalDirtySlotsToTrace. Hierarchical names composed at sink boundary via ComposeHierarchicalTraceName, not pre-flattened.
+- **Observer ABI.** ObserverContext carries this_ptr and InstanceId for direct object-local addressing. No flat-base ABI argument.
 
 ## T1: Topology-independence validation
 

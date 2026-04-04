@@ -24,12 +24,12 @@
 #include "lyra/lowering/hir_to_mir/process.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/module_body.hpp"
 #include "lyra/mir/package.hpp"
-#include "lyra/mir/placement.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -162,10 +162,6 @@ auto LowerDesign(
         "slot_trace_string_pool must be non-empty and start with '\\0'");
   }
   result.global_precision_power = input.global_precision_power;
-  result.module_def_ids = decls.module_def_ids;
-  if (input.instance_table != nullptr) {
-    result.instance_table = *input.instance_table;
-  }
 
   // DPI export wrapper descriptors are built after Phase 2 (body lowering)
   // because module-scoped exports need body-local function maps to resolve
@@ -231,8 +227,8 @@ auto LowerDesign(
     body_input.active_constant_arena = &hir_body.constant_arena;
 
     mir::Arena body_arena;
-    BodyLocalDecls body_decls =
-        CollectBodyLocalDecls(rep_mod, *input.symbol_table, body_arena);
+    BodyLocalDecls body_decls = CollectBodyLocalDecls(
+        rep_mod, *input.symbol_table, *input.type_arena, body_arena);
 
     body_results.push_back(LowerModule(
         hir_body, body_input, std::move(body_arena), mir_arena, decls,
@@ -378,13 +374,14 @@ auto LowerDesign(
 
   // Phase 2b: Emit one mir::Module per HIR module instance and build placement.
   // Walk design elements in original order to preserve instance ordering.
-  //
-  // Placement computes its own running base counter from the authoritative
-  // package slot count + specialization body sizes. This is the source of
-  // truth for per-instance base offsets. instance_slot_ranges is then derived
-  // from placement below.
-  uint32_t next_placement_base = decls.num_package_slots;
+  // Build ConstructionInput directly -- the single source of truth for
+  // per-object constructor-owned data.
+  mir::ConstructionInput construction;
+  if (input.instance_table != nullptr) {
+    construction.instance_table = *input.instance_table;
+  }
 
+  uint32_t next_placement_base = decls.num_package_slots;
   uint32_t module_index = 0;
   for (const auto& element : design.elements) {
     if (std::holds_alternative<hir::Module>(element)) {
@@ -404,13 +401,6 @@ auto LowerDesign(
 
       const auto& body = result.module_bodies.at(it->second.value);
       auto slot_count = static_cast<uint32_t>(body.slots.size());
-      result.placement.instances.push_back(
-          mir::InstancePlacement{
-              .instance_sym = mod.symbol,
-              .spec_id = spec_id,
-              .design_state_base_slot = next_placement_base,
-              .slot_count = slot_count,
-          });
 
       // Build InstanceConstBlock from transient design-global param inits.
       // Convert absolute slot IDs to body-local using the canonical
@@ -437,10 +427,19 @@ auto LowerDesign(
               });
         }
       }
-      result.placement.const_blocks.push_back(std::move(const_block));
+      construction.const_blocks.push_back(std::move(const_block));
+
+      construction.objects.push_back(
+          mir::ObjectRecord{
+              .body_group = it->second.value,
+              .path_index = module_index,
+              .design_state_base_slot = next_placement_base,
+              .slot_count = slot_count,
+              .spec_id = spec_id,
+              .instance_sym = mod.symbol,
+          });
 
       next_placement_base += slot_count;
-
       ++module_index;
     } else if (const auto* pkg = std::get_if<hir::Package>(&element)) {
       Result<mir::Package> pkg_result =
@@ -452,22 +451,13 @@ auto LowerDesign(
     }
   }
 
-  // Enforce placement/const-block parallelism invariant.
-  if (result.placement.instances.size() !=
-      result.placement.const_blocks.size()) {
+  // Enforce objects/const-blocks parallelism invariant.
+  if (construction.objects.size() != construction.const_blocks.size()) {
     throw common::InternalError(
         "LowerDesign",
         std::format(
-            "placement instances ({}) and const_blocks ({}) size mismatch",
-            result.placement.instances.size(),
-            result.placement.const_blocks.size()));
-  }
-
-  // Derive compatibility instance_slot_ranges from placement (source of truth).
-  result.instance_slot_ranges.reserve(result.placement.instances.size());
-  for (const auto& p : result.placement.instances) {
-    result.instance_slot_ranges.push_back(
-        {p.design_state_base_slot, p.slot_count});
+            "construction objects ({}) and const_blocks ({}) size mismatch",
+            construction.objects.size(), construction.const_blocks.size()));
   }
 
   // Compile port bindings into assembly-ready artifacts (no design mutation).
@@ -484,6 +474,7 @@ auto LowerDesign(
 
   return DesignLoweringResult{
       .design = std::move(result),
+      .construction = std::move(construction),
       .compiled_bindings = std::move(compiled_bindings),
       .body_origins = std::move(body_origins),
       .dpi_export_wrappers = std::move(dpi_export_wrappers),

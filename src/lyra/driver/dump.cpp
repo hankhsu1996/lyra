@@ -270,6 +270,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,
+      .construction = &mir_result->construction,
       .mir_arena = mir_result->design_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = &diag_ctx,

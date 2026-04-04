@@ -41,6 +41,7 @@ void EnterObserverSpecializationLocalContext(
     Context& context, mir::FunctionId func_id, llvm::Value* observer_ctx_ptr) {
   const auto& lowering = context.GetModuleFunctionLowering(func_id);
   context.SetSpecSlotInfo(lowering.spec_slot_info);
+  context.SetConnectionNotificationMask(lowering.connection_notification_mask);
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();

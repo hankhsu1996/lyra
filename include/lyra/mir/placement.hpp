@@ -3,28 +3,11 @@
 #include <cstdint>
 #include <vector>
 
-#include "lyra/common/integral_constant.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol_types.hpp"
+#include "lyra/mir/construction_input.hpp"
 
 namespace lyra::mir {
-
-// One constant-valued slot initialization within an InstanceConstBlock.
-// `body_local_slot` is in body-local slot space (0-based within the
-// specialization body). Consumers resolve to design-global slot IDs by
-// combining with the matching InstancePlacement::design_state_base_slot.
-struct ConstSlotInit {
-  uint32_t body_local_slot;
-  IntegralConstant value;
-};
-
-// Per-instance constant initialization data for value-only parameters.
-// Paired 1:1 with InstancePlacement entries (same index = same instance).
-// This is a realization artifact: specialization owns the code shape,
-// realization owns the per-instance constant data.
-struct InstanceConstBlock {
-  std::vector<ConstSlotInit> slot_inits;
-};
 
 // Transitional placement artifact for one module instance in DesignState.
 //
@@ -38,7 +21,7 @@ struct InstanceConstBlock {
 // - Design::instance_slot_ranges is derived compatibility data (until C3)
 struct InstancePlacement {
   SymbolId instance_sym;
-  common::ModuleSpecId spec_id;
+  common::ModuleSpecId spec_id = {};
   uint32_t design_state_base_slot = 0;
   uint32_t slot_count = 0;
 };

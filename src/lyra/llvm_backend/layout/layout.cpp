@@ -1286,6 +1286,54 @@ auto ComputeBodyStateSize(
   };
 }
 
+auto BuildBodyLayout(
+    std::span<const mir::SlotDesc> slot_descs, const BodyStorageLayout& storage)
+    -> BodyLayout {
+  BodyLayout layout;
+  layout.inline_offsets.reserve(slot_descs.size());
+  layout.appendix_offsets.resize(slot_descs.size(), std::nullopt);
+
+  uint64_t max_align = 1;
+  uint64_t offset = 0;
+
+  // Inline pass: assign body-relative byte offsets to each slot.
+  for (uint32_t i = 0; i < slot_descs.size(); ++i) {
+    uint64_t slot_size = 0;
+    uint64_t slot_align = 0;
+    if (slot_descs[i].storage_shape == mir::StorageShape::kOwnedContainer) {
+      slot_size = runtime::kOwnedStorageHandleByteSize;
+      slot_align = runtime::kOwnedStorageHandleAlignment;
+    } else {
+      slot_size = storage.slot_specs[i].TotalByteSize();
+      slot_align = storage.slot_specs[i].Alignment();
+    }
+    max_align = std::max(max_align, slot_align);
+    offset = AlignUp(offset, slot_align);
+    layout.inline_offsets.push_back(BodyByteOffset{offset});
+    offset += slot_size;
+  }
+
+  layout.inline_region_size = AlignUp(offset, max_align);
+
+  // Appendix pass: owned-container backing data.
+  offset = layout.inline_region_size;
+  for (uint32_t i = 0; i < slot_descs.size(); ++i) {
+    if (slot_descs[i].storage_shape != mir::StorageShape::kOwnedContainer) {
+      continue;
+    }
+    uint64_t backing_align = storage.slot_specs[i].Alignment();
+    max_align = std::max(max_align, backing_align);
+    offset = AlignUp(offset, backing_align);
+    layout.appendix_offsets[i] = BodyByteOffset{offset};
+    offset += storage.slot_specs[i].TotalByteSize();
+  }
+
+  layout.appendix_region_size =
+      AlignUp(offset, max_align) - layout.inline_region_size;
+
+  return layout;
+}
+
 // DesignLayout method implementations.
 
 auto DesignLayout::ContainsSlot(common::SlotId slot_id) const -> bool {
@@ -1859,6 +1907,8 @@ auto BuildLayout(
             body_id_val, layout.body_realization_infos.size());
         if (inserted) {
           BodyStateSizeInfo size;
+          BodyLayout body_layout;
+          std::vector<SlotStorageSpec> body_slot_specs;
           if (plan.slot_count > 0) {
             const auto& body = design.module_bodies.at(body_id_val);
             auto bsl_it = body_storage_layouts.find(body_id_val);
@@ -1870,6 +1920,9 @@ auto BuildLayout(
                       body_id_val));
             }
             size = ComputeBodyStateSize(std::span(body.slots), bsl_it->second);
+            body_layout =
+                BuildBodyLayout(std::span(body.slots), bsl_it->second);
+            body_slot_specs = bsl_it->second.slot_specs;
           }
           if (body_id_val >= body_timescales->size()) {
             throw common::InternalError(
@@ -1888,6 +1941,8 @@ auto BuildLayout(
               Layout::BodyRealizationInfo{
                   .body_id = plan.body_id,
                   .slot_count = plan.slot_count,
+                  .body_layout = std::move(body_layout),
+                  .slot_specs = std::move(body_slot_specs),
                   .process_schema_indices = {},
                   .meta = {},
                   .triggers = {},
@@ -1903,6 +1958,8 @@ auto BuildLayout(
                   .time_unit_power = ts.unit_power,
                   .time_precision_power = ts.precision_power,
               });
+          layout.body_representative_base_slots.push_back(
+              plan.design_state_base_slot);
         } else {
           // Validate all plans for the same body agree on slot_count.
           auto& existing = layout.body_realization_infos[it->second];

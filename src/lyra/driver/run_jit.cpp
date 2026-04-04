@@ -115,6 +115,7 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &compilation.mir.design,
+      .construction = &compilation.mir.construction,
       .mir_arena = compilation.mir.design_arena.get(),
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,

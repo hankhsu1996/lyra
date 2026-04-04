@@ -11,10 +11,12 @@
 #include <llvm/IR/Function.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/llvm_backend/layout/body_layout.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/runtime/construction_program_abi.hpp"
 
@@ -28,9 +30,6 @@ struct LoweringResult;
 // Stores stable IDs/values; variant is looked up from Layout when needed.
 struct SpecInstanceBinding {
   ModuleIndex module_index;
-  // Flat slot base sourced from InstancePlacement.design_state_base_slot.
-  // Used by the construction program for design-global observable relocation.
-  uint32_t flat_slot_base = 0;
 };
 
 // Specialization-owned MIR content: identity + behavioral IR references.
@@ -75,18 +74,23 @@ struct SpecSlotInfo {
   static constexpr uint32_t kInvalidBodyInfoIndex = UINT32_MAX;
   uint32_t body_realization_info_index = kInvalidBodyInfoIndex;
 
-  // Per-slot instance-relative offset for local storage.
+  // Per-slot body-relative byte offset for local storage.
   // Every body-local slot has a valid offset (no forwarded aliases).
-  // For kInlineValue: offset of the slot's value bytes from this_ptr.
-  // For kOwnedContainer: offset of the OwnedStorageHandle from this_ptr.
-  std::vector<common::InstanceByteOffset> inline_offsets;
+  // For kInlineValue: offset of the slot's value bytes from body base.
+  // For kOwnedContainer: offset of the OwnedStorageHandle from body base.
+  std::vector<BodyByteOffset> inline_offsets;
   // Per-slot storage shape.
   std::vector<mir::StorageShape> shapes;
   // Per-slot access classification.
   std::vector<SpecSlotAccessKind> access_kinds;
-  // Per-slot representative design-global slot index. Used to resolve
-  // compile-time metadata (e.g., element stride from ArrayStorageSpec).
-  std::vector<uint32_t> representative_design_slots;
+
+  // Access body-local slot storage spec through BodyRealizationInfo.
+  // Single source of truth -- no duplication.
+  [[nodiscard]] auto GetSlotSpec(uint32_t local_slot, const Layout& layout)
+      const -> const SlotStorageSpec& {
+    return layout.body_realization_infos.at(body_realization_info_index)
+        .slot_specs.at(local_slot);
+  }
 
   [[nodiscard]] auto SlotCount() const -> uint32_t {
     return static_cast<uint32_t>(shapes.size());
@@ -94,6 +98,28 @@ struct SpecSlotInfo {
   // Unchecked predicate. Callers must validate id < SlotCount() first.
   [[nodiscard]] auto IsOwnedContainer(uint32_t id) const -> bool {
     return shapes[id] == mir::StorageShape::kOwnedContainer;
+  }
+};
+
+// Topology-derived codegen compilation decision: per-body connection
+// notification mask. Separate from SpecSlotInfo because this is NOT a
+// body semantic fact -- it depends on design topology (which instances
+// have connection processes triggering on which slots).
+// Indexed parallel to spec compilation units / spec_slot_infos.
+struct ConnectionNotificationMask {
+  // Per body-local slot: true iff any instance of this body has a
+  // connection process that triggers on this slot. Conservative union.
+  std::vector<bool> required;
+
+  [[nodiscard]] auto IsRequired(uint32_t local_slot) const -> bool {
+    if (local_slot >= required.size()) {
+      throw common::InternalError(
+          "ConnectionNotificationMask::IsRequired",
+          std::format(
+              "local_slot {} out of range (size={})", local_slot,
+              required.size()));
+    }
+    return required[local_slot];
   }
 };
 
@@ -200,7 +226,8 @@ auto CompileModuleSpecSession(
 // not part of per-spec compilation. Declared here because RealizationData
 // (its return type) is defined in this header.
 auto ExtractRealizationData(
-    const mir::PlacementMap& placement, std::span<const mir::SlotDesc> slots,
+    const mir::ConstructionInput& construction,
+    std::span<const mir::SlotDesc> slots,
     std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
     std::span<const char> slot_trace_string_pool) -> RealizationData;
 

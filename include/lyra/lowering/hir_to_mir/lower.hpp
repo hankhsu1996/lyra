@@ -16,6 +16,7 @@
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/compiled_bindings.hpp"
+#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/instance.hpp"
 
@@ -54,6 +55,7 @@ struct LoweringStats {
 
 struct LoweringResult {
   mir::Design design;
+  mir::ConstructionInput construction;
   // Design-level arena for design-global MIR (package places, package
   // functions, init processes, connection processes). Body-local MIR
   // is in each ModuleBody's embedded arena.

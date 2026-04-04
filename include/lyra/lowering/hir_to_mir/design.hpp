@@ -8,6 +8,7 @@
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/compiled_bindings.hpp"
+#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -27,10 +28,11 @@ auto CollectDesignDeclarations(
 // state. No access to design-global slot counters or instance ordering.
 auto CollectBodyLocalDecls(
     const hir::Module& module, const SymbolTable& symbol_table,
-    mir::Arena& mir_arena) -> BodyLocalDecls;
+    const TypeArena& type_arena, mir::Arena& mir_arena) -> BodyLocalDecls;
 
 struct DesignLoweringResult {
   mir::Design design;
+  mir::ConstructionInput construction;
   mir::CompiledBindingPlan compiled_bindings;
   // Per-body origin entries, indexed by ModuleBodyId.
   // Body-local MIR origins stay body-local -- not merged into the

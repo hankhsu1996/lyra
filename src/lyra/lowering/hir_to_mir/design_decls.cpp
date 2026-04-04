@@ -64,7 +64,7 @@ auto ClassifySlotStorageShape(
 
 auto CollectBodyLocalDecls(
     const hir::Module& module, const SymbolTable& symbol_table,
-    mir::Arena& mir_arena) -> BodyLocalDecls {
+    const TypeArena& type_arena, mir::Arena& mir_arena) -> BodyLocalDecls {
   BodyLocalDecls body_decls;
   uint32_t next_body_slot = 0;
 
@@ -80,7 +80,9 @@ auto CollectBodyLocalDecls(
         .projections = {},
     };
     body_decls.places[var] = mir_arena.AddPlace(std::move(body_place));
-    body_decls.slots.push_back({sym.type, mir::SlotKind::kVariable});
+    body_decls.slots.push_back(
+        {sym.type, mir::SlotKind::kVariable,
+         ClassifySlotStorageShape(module, sym.type, type_arena)});
   }
 
   for (SymbolId net : module.nets) {
@@ -95,7 +97,9 @@ auto CollectBodyLocalDecls(
         .projections = {},
     };
     body_decls.places[net] = mir_arena.AddPlace(std::move(body_place));
-    body_decls.slots.push_back({sym.type, mir::SlotKind::kNet});
+    body_decls.slots.push_back(
+        {sym.type, mir::SlotKind::kNet,
+         ClassifySlotStorageShape(module, sym.type, type_arena)});
   }
 
   for (SymbolId param : module.param_slots) {
