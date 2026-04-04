@@ -4,6 +4,7 @@
 #include <optional>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/statement.hpp"
@@ -26,6 +27,20 @@ auto LowerOptionalChildStatement(
   return *result;
 }
 
+auto MapImmediateAssertionKind(slang::ast::AssertionKind kind)
+    -> std::optional<hir::ImmediateAssertionKind> {
+  switch (kind) {
+    case slang::ast::AssertionKind::Assert:
+      return hir::ImmediateAssertionKind::kAssert;
+    case slang::ast::AssertionKind::Assume:
+      return hir::ImmediateAssertionKind::kAssume;
+    case slang::ast::AssertionKind::CoverProperty:
+      return hir::ImmediateAssertionKind::kCover;
+    default:
+      return std::nullopt;
+  }
+}
+
 }  // namespace
 
 auto LowerImmediateAssertionStatement(
@@ -41,7 +56,8 @@ auto LowerImmediateAssertionStatement(
     return hir::kInvalidStatementId;
   }
 
-  if (assert_stmt.assertionKind != slang::ast::AssertionKind::Assert) {
+  auto kind = MapImmediateAssertionKind(assert_stmt.assertionKind);
+  if (!kind.has_value()) {
     env.ctx->sink->Error(
         env.span, std::format(
                       "immediate '{}' is unsupported; "
@@ -61,12 +77,18 @@ auto LowerImmediateAssertionStatement(
   auto fail_action = LowerOptionalChildStatement(assert_stmt.ifFalse, lowerer);
   if (fail_action.has_value() && !*fail_action) return hir::kInvalidStatementId;
 
+  if (*kind == hir::ImmediateAssertionKind::kCover && fail_action.has_value()) {
+    throw common::InternalError(
+        "LowerImmediateAssertionStatement",
+        "immediate cover must not carry fail_action");
+  }
+
   return env.ctx->hir_arena->AddStatement(
       hir::Statement{
           .kind = hir::StatementKind::kImmediateAssertion,
           .span = env.span,
           .data = hir::ImmediateAssertionStatementData{
-              .kind = hir::ImmediateAssertionKind::kAssert,
+              .kind = *kind,
               .condition = condition,
               .pass_action = pass_action,
               .fail_action = fail_action}});

@@ -139,6 +139,8 @@ auto LowerDesign(
     return std::unexpected(std::move(diag));
   }
 
+  mir::ImmediateCoverSiteRegistry cover_site_registry;
+
   mir::Design result;
   result.num_design_slots = decls.num_design_slots;
   result.slots = decls.slots;
@@ -233,7 +235,7 @@ auto LowerDesign(
 
     body_results.push_back(LowerModule(
         hir_body, body_input, std::move(body_arena), mir_arena, decls,
-        body_decls, rep_mod.body_id));
+        body_decls, rep_mod.body_id, &cover_site_registry));
   }
 
   // Phase 2: Assemble body results in stable group order.
@@ -259,6 +261,8 @@ auto LowerDesign(
     body_function_maps[body_id.value] = std::move(product.symbol_to_function);
     spec_to_body[spec_groups[g].spec_id] = body_id;
   }
+
+  result.immediate_cover_sites = cover_site_registry.TakeSites();
 
   // Build DPI export wrapper descriptors now that body-local function maps
   // are available. Module-scoped exports need these maps to resolve their

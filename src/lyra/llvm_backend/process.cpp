@@ -2182,7 +2182,7 @@ struct PlaceCollector {
             CollectFromOperand(eff.selected_arm, arena);
           }
           // StrobeEffect, TimeFormatEffect, MonitorControlEffect,
-          // RecordDecisionObservation: no operands
+          // RecordDecisionObservation, CoverHitEffect: no operands
         },
         effect_op);
   }

@@ -450,7 +450,7 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
       ValidateKeys(
           expect,
           {"variables", "time", "stdout", "compiler_output", "files", "error",
-           "mutations", "runtime_fatal"},
+           "mutations", "runtime_fatal", "cover_hits"},
           expect_context, path);
 
       // expect.variables: {var: value, ...}
@@ -539,6 +539,14 @@ auto LoadTestCasesFromYaml(const std::string& path) -> std::vector<TestCase> {
           }
         }
         test_case.expected_runtime_fatal = fe;
+      }
+
+      if (expect["cover_hits"]) {
+        std::vector<uint64_t> hits;
+        for (const auto& item : expect["cover_hits"]) {
+          hits.push_back(item.as<uint64_t>());
+        }
+        test_case.expected_cover_hits = std::move(hits);
       }
     }
 

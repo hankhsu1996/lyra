@@ -31,6 +31,7 @@ struct TestResult {
   std::map<std::string, TestValue> variables;
   uint64_t final_time = 0;
   std::vector<common::MutationEvent> mutation_events;
+  std::vector<uint64_t> cover_hits;
   TestTimings timings;
 };
 

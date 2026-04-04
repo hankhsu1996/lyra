@@ -704,6 +704,40 @@ class Engine {
     back_edge_site_meta_ = std::move(registry);
   }
 
+  // One-time init for immediate cover hit-count array.
+  void InitImmediateCoverSites(uint32_t num_sites) {
+    immediate_cover_counts_.assign(num_sites, 0);
+  }
+
+  // Record a hit for an immediate cover site. site_index is compiler-generated
+  // and runtime-sized from compiler metadata; mismatch is a compiler bug.
+  void RecordImmediateCoverHit(uint32_t site_index) {
+    if (site_index >= immediate_cover_counts_.size()) {
+      throw common::InternalError(
+          "Engine::RecordImmediateCoverHit",
+          "immediate cover site index out of range");
+    }
+    immediate_cover_counts_[site_index]++;
+  }
+
+  [[nodiscard]] auto NumImmediateCoverSites() const -> uint32_t {
+    return static_cast<uint32_t>(immediate_cover_counts_.size());
+  }
+
+  // Query hit count for an immediate cover site. No consumers yet;
+  // will be used by future reporting infrastructure and test harnesses.
+  // Strict bounds check: out-of-range is a compiler/runtime metadata
+  // mismatch.
+  [[nodiscard]] auto GetImmediateCoverHitCount(uint32_t site_index) const
+      -> uint64_t {
+    if (site_index >= immediate_cover_counts_.size()) {
+      throw common::InternalError(
+          "Engine::GetImmediateCoverHitCount",
+          "immediate cover site index out of range");
+    }
+    return immediate_cover_counts_[site_index];
+  }
+
   // One-time init for wait-site metadata registry.
   void InitWaitSiteMeta(WaitSiteRegistry registry) {
     wait_site_meta_ = std::move(registry);
@@ -1259,6 +1293,9 @@ class Engine {
 
   // Wait-site metadata registry for persistent wait installation.
   WaitSiteRegistry wait_site_meta_;
+
+  // Per-site hit counts for immediate cover statements.
+  std::vector<uint64_t> immediate_cover_counts_;
 
   // Trace signal metadata registry (empty until populated).
   TraceSignalMetaRegistry trace_signal_meta_;

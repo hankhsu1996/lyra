@@ -53,6 +53,20 @@ auto Context::GetLyraRecordDecisionObservation() -> llvm::Function* {
   return lyra_record_decision_observation_;
 }
 
+auto Context::GetLyraRecordImmediateCoverHit() -> llvm::Function* {
+  if (lyra_record_immediate_cover_hit_ == nullptr) {
+    // void LyraRecordImmediateCoverHit(void* engine, uint32_t site_index)
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(void_ty, {ptr_ty, i32_ty}, false);
+    lyra_record_immediate_cover_hit_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraRecordImmediateCoverHit",
+        llvm_module_.get());
+  }
+  return lyra_record_immediate_cover_hit_;
+}
+
 auto Context::GetLyraPrintValue() -> llvm::Function* {
   if (lyra_print_value_ == nullptr) {
     // void LyraPrintValue(void* engine, int32_t format, int32_t value_kind,

@@ -585,6 +585,17 @@ auto LowerEffectOp(
             return LowerRecordDecisionObservationDynamic(
                 context, resolver, obs);
           },
+          [&](const mir::CoverHitEffect& hit) -> Result<void> {
+            auto& builder = context.GetBuilder();
+            auto* engine_ptr = context.GetEnginePointer();
+            auto* site_val = llvm::ConstantInt::get(
+                llvm::Type::getInt32Ty(context.GetLlvmContext()),
+                hit.site_id.Index());
+            builder.CreateCall(
+                context.GetLyraRecordImmediateCoverHit(),
+                {engine_ptr, site_val});
+            return {};
+          },
       },
       effect_op);
 }

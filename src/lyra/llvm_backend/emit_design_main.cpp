@@ -1885,7 +1885,8 @@ auto BuildRuntimeAbi(
     uint32_t feature_flags, const std::string& signal_trace_path,
     llvm::Value* design_state, const ConstructorProcessMeta& process_meta,
     const ConstructorTriggerCombMeta& trigger_comb,
-    const ConstructorSlotTraceMeta& slot_trace) -> llvm::Value* {
+    const ConstructorSlotTraceMeta& slot_trace,
+    uint32_t num_immediate_cover_sites) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -1960,6 +1961,10 @@ auto BuildRuntimeAbi(
   store_field(29, slot_trace.instance_bundles);
   store_field(30, slot_trace.instance_bundle_count);
   store_field(31, llvm::ConstantInt::get(i32_ty, 0));
+
+  // A1b: Immediate cover site count.
+  store_field(32, llvm::ConstantInt::get(i32_ty, num_immediate_cover_sites));
+  store_field(33, llvm::ConstantInt::get(i32_ty, 0));
 
   return abi_alloca;
 }
@@ -2497,7 +2502,8 @@ auto EmitDesignMain(
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,
-        process_meta_for_abi, trigger_comb_for_abi, slot_trace_for_abi);
+        process_meta_for_abi, trigger_comb_for_abi, slot_trace_for_abi,
+        static_cast<uint32_t>(input.design->immediate_cover_sites.size()));
     abi_for_exit = abi_alloca;
 
     EmitRunSimulation(

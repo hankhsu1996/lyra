@@ -193,11 +193,12 @@ struct EventWaitStatementData {
 // Immediate assertion kind (LRM 16.3)
 enum class ImmediateAssertionKind : uint8_t {
   kAssert,
+  kAssume,
+  kCover,
 };
 
 // Immediate assertion statement (LRM 16.3)
 // Represents non-deferred procedural assert/assume/cover.
-// A1a: only kAssert is supported; assume/cover added in A1b.
 struct ImmediateAssertionStatementData {
   ImmediateAssertionKind kind = ImmediateAssertionKind::kAssert;
   ExpressionId condition;

@@ -478,7 +478,17 @@ void Dumper::Dump(StatementId id) {
 
     case StatementKind::kImmediateAssertion: {
       const auto& data = std::get<ImmediateAssertionStatementData>(stmt.data);
-      *out_ << "assert (";
+      switch (data.kind) {
+        case ImmediateAssertionKind::kAssert:
+          *out_ << "assert (";
+          break;
+        case ImmediateAssertionKind::kAssume:
+          *out_ << "assume (";
+          break;
+        case ImmediateAssertionKind::kCover:
+          *out_ << "cover (";
+          break;
+      }
       Dump(data.condition);
       *out_ << ")";
       if (data.pass_action) {

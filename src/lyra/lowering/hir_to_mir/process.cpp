@@ -126,6 +126,7 @@ auto LowerProcess(
       .return_type = input.builtin_types.void_type,
       .design_slots = decl_view.slots,
       .body_slots = decl_view.body_slots,
+      .cover_site_registry = decl_view.cover_site_registry,
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map, body_id);

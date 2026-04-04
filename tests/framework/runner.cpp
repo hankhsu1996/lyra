@@ -96,6 +96,20 @@ void RunTestCase(
         AssertOutput(
             result.compiler_output, test_case.expected_compiler_output.value());
       }
+
+      // Check expected cover hit counts
+      if (test_case.expected_cover_hits.has_value()) {
+        const auto& expected = *test_case.expected_cover_hits;
+        ASSERT_EQ(result.cover_hits.size(), expected.size())
+            << "[" << test_case.source_yaml
+            << "] Cover site count mismatch: expected " << expected.size()
+            << " sites, got " << result.cover_hits.size();
+        for (size_t i = 0; i < expected.size(); ++i) {
+          EXPECT_EQ(result.cover_hits[i], expected[i])
+              << "[" << test_case.source_yaml << "] Cover site " << i
+              << " hit count mismatch";
+        }
+      }
       break;
     }
 

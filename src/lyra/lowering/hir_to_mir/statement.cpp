@@ -1024,10 +1024,11 @@ auto EmitDefaultAssertionFail(MirBuilder& builder) -> Result<void> {
   return EmitBareSeverity(builder, Severity::kError);
 }
 
-// Immediate assertion lowering (A1a: plain non-deferred assert only).
+// Assert-like immediate assertion lowering (assert and assume).
 // Mirrors the plain non-qualified conditional lowering path: condition is
 // materialized inside the arm callback, matching LowerConditional() exactly.
-auto LowerImmediateAssertion(
+// assume is semantically identical to assert in simulation (LRM 16.3).
+auto LowerImmediateAssertLike(
     const hir::ImmediateAssertionStatementData& data, MirBuilder& builder)
     -> Result<void> {
   Result<void> callback_result;
@@ -1072,6 +1073,70 @@ auto LowerImmediateAssertion(
 
   builder.EmitDecision(spec);
   return callback_result;
+}
+
+// Immediate cover lowering (LRM 16.3).
+// cover(expr) records a hit when true, then executes optional pass action.
+// No fail path, no default error synthesis.
+auto LowerImmediateCover(
+    const hir::ImmediateAssertionStatementData& data, SourceSpan span,
+    MirBuilder& builder) -> Result<void> {
+  if (data.fail_action.has_value()) {
+    throw common::InternalError(
+        "LowerImmediateCover", "immediate cover must not carry fail_action");
+  }
+
+  auto site_id = builder.GetContext().AllocateCoverSite(span);
+
+  Result<void> callback_result;
+
+  std::vector<MirBuilder::DecisionArmBuilder> arms;
+  arms.push_back(
+      MirBuilder::DecisionArmBuilder{
+          .build_condition = [&callback_result, cond_id = data.condition](
+                                 MirBuilder& b) -> mir::Operand {
+            if (!callback_result) {
+              return mir::Operand::Use(mir::kInvalidPlaceId);
+            }
+            auto cond = MaterializeCondition(cond_id, b);
+            if (!cond) {
+              callback_result = std::unexpected(cond.error());
+              return mir::Operand::Use(mir::kInvalidPlaceId);
+            }
+            return *cond;
+          },
+          .build_body =
+              [&callback_result, &data, site_id](MirBuilder& b) {
+                if (!callback_result) return;
+                b.EmitEffect(mir::CoverHitEffect{.site_id = site_id});
+                if (data.pass_action.has_value()) {
+                  callback_result = LowerStatement(*data.pass_action, b);
+                }
+              },
+      });
+
+  MirBuilder::DecisionBuildSpec spec{
+      .qualifier = semantic::DecisionQualifier::kNone,
+      .id = std::nullopt,
+      .arms = std::move(arms),
+      .build_fallback_body = std::nullopt,
+  };
+
+  builder.EmitDecision(spec);
+  return callback_result;
+}
+
+// Dispatch immediate assertion lowering by kind.
+auto LowerImmediateAssertion(
+    const hir::ImmediateAssertionStatementData& data, SourceSpan span,
+    MirBuilder& builder) -> Result<void> {
+  switch (data.kind) {
+    case hir::ImmediateAssertionKind::kAssert:
+    case hir::ImmediateAssertionKind::kAssume:
+      return LowerImmediateAssertLike(data, builder);
+    case hir::ImmediateAssertionKind::kCover:
+      return LowerImmediateCover(data, span, builder);
+  }
 }
 
 // Unified case lowering for all qualifiers.
@@ -2336,7 +2401,7 @@ auto LowerStatement(hir::StatementId stmt_id, MirBuilder& builder)
           result = LowerEventWait(data, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::ImmediateAssertionStatementData>) {
-          result = LowerImmediateAssertion(data, builder);
+          result = LowerImmediateAssertion(data, stmt.span, builder);
         } else {
           throw common::InternalError(
               "LowerStatement", "unhandled statement kind");

@@ -11,6 +11,7 @@
 
 #include "lyra/common/opt_level.hpp"
 #include "lyra/llvm_backend/execution.hpp"
+#include "lyra/runtime/cover_hook.hpp"
 #include "lyra/runtime/output_sink.hpp"
 #include "tests/framework/dpi_test_support.hpp"
 #include "tests/framework/llvm_common.hpp"
@@ -61,6 +62,9 @@ auto RunJitBackend(
   auto t_backend = Clock::now();
   lowering::mir_to_llvm::JitCompileOptions jit_opts{
       .opt_level = OptLevel::kO0,
+      .enable_profiling = false,
+      .progress_reporter = nullptr,
+      .dpi_link_inputs = {},
       .dpi_object_inputs = std::move(dpi_object_inputs),
   };
   auto session = lowering::mir_to_llvm::CompileJitInProcess(
@@ -76,12 +80,18 @@ auto RunJitBackend(
 
   // Execute the compiled simulation.
   // OutputSinkScope captures JIT output and restores previous sink on exit.
+  // CoverHitCallbackScope captures per-site cover hit counts.
   auto t_exec = Clock::now();
   int exit_code = 0;
+  std::vector<uint64_t> cover_hits;
   {
     runtime::OutputSinkScope sink_scope(
         [&captured_output](std::string_view text) {
           captured_output.append(text);
+        });
+    runtime::CoverHitCallbackScope cover_scope(
+        [&cover_hits](std::vector<uint64_t> hits) {
+          cover_hits = std::move(hits);
         });
     exit_code = session->Run();
   }
@@ -101,6 +111,7 @@ auto RunJitBackend(
   result.compiler_output = std::move(prep_result->compiler_output);
   result.variables = std::move(parsed.variables);
   result.final_time = parsed.final_time;
+  result.cover_hits = std::move(cover_hits);
   result.timings.total =
       std::chrono::duration<double>(Clock::now() - t_total).count();
 

@@ -677,6 +677,9 @@ void CollectPlacesFromEffectOp(
             CollectPlaceFromOperand(r.selected_kind, places);
             CollectPlaceFromOperand(r.selected_arm, places);
           },
+          [&](const mir::CoverHitEffect&) {
+            // CoverHitEffect carries only a site ID, no operands
+          },
       },
       effect);
 }
