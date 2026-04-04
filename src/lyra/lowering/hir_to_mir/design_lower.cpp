@@ -8,6 +8,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/fwd.hpp"
@@ -201,10 +202,60 @@ auto LowerDesign(
 
   const auto& spec_map = *input.specialization_map;
 
+  // Build cross-instance kDesignGlobal places for module variables/nets/params.
+  // Separate from decls.design_places (which is package-only).
+  // Used for cross-instance hierarchical references in body lowering and
+  // connection compilation. Slot IDs continue from package slots.
+  PlaceMap cross_instance_places;
+  {
+    int next_cross_slot = static_cast<int>(decls.num_design_slots);
+    for (const auto* mod : hir_modules) {
+      for (SymbolId var : mod->variables) {
+        const Symbol& sym = (*input.symbol_table)[var];
+        cross_instance_places[var] = mir_arena.AddPlace(
+            mir::Place{
+                .root =
+                    {.kind = mir::PlaceRoot::Kind::kDesignGlobal,
+                     .id = next_cross_slot++,
+                     .type = sym.type},
+                .projections = {}});
+      }
+      for (SymbolId net : mod->nets) {
+        const Symbol& sym = (*input.symbol_table)[net];
+        cross_instance_places[net] = mir_arena.AddPlace(
+            mir::Place{
+                .root =
+                    {.kind = mir::PlaceRoot::Kind::kDesignGlobal,
+                     .id = next_cross_slot++,
+                     .type = sym.type},
+                .projections = {}});
+      }
+      for (SymbolId param : mod->param_slots) {
+        const Symbol& sym = (*input.symbol_table)[param];
+        cross_instance_places[param] = mir_arena.AddPlace(
+            mir::Place{
+                .root =
+                    {.kind = mir::PlaceRoot::Kind::kDesignGlobal,
+                     .id = next_cross_slot++,
+                     .type = sym.type},
+                .projections = {}});
+      }
+    }
+  }
+
   // Phase 1: Lower one ModuleBody per specialization group.
   // Each call produces an isolated MirBodyLoweringResult with body-local
   // MIR arena and body-local origins. No body-lowering path writes to the
   // design arena.
+  // Also retain body-local place maps for InstanceSlotResolver construction.
+  struct BodyLocalSlotEntry {
+    SymbolId sym;
+    common::LocalSlotId local_slot;
+    TypeId type;
+  };
+  std::unordered_map<uint32_t, std::vector<BodyLocalSlotEntry>>
+      body_local_slots_by_body;
+
   std::vector<Result<MirBodyLoweringResult>> body_results;
   body_results.reserve(spec_map.groups.size());
 
@@ -230,10 +281,25 @@ auto LowerDesign(
     BodyLocalDecls body_decls = CollectBodyLocalDecls(
         rep_mod, *input.symbol_table, *input.type_arena, body_arena);
 
+    // Capture body-local slot mappings for InstanceSlotResolver.
+    {
+      auto& entries = body_local_slots_by_body[rep_mod.body_id.value];
+      for (const auto& [sym, place_id] : body_decls.places) {
+        const auto& place = body_arena[place_id];
+        if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
+          entries.push_back(
+              {.sym = sym,
+               .local_slot =
+                   common::LocalSlotId{static_cast<uint32_t>(place.root.id)},
+               .type = place.root.type});
+        }
+      }
+    }
+
     body_results.push_back(LowerModule(
         hir_body, body_input, std::move(body_arena), mir_arena, decls,
         body_decls, rep_mod.body_id, &cover_site_registry,
-        &deferred_assertion_site_registry));
+        &deferred_assertion_site_registry, &cross_instance_places));
   }
 
   // Phase 2: Assemble body results in stable group order.
@@ -402,28 +468,18 @@ auto LowerDesign(
       const auto& body = result.module_bodies.at(it->second.value);
       auto slot_count = static_cast<uint32_t>(body.slots.size());
 
-      // Build InstanceConstBlock from transient design-global param inits.
-      // Convert absolute slot IDs to body-local using the canonical
-      // instance_slot_ranges as the conversion source of truth.
+      // Build InstanceConstBlock directly from HIR param values.
+      // Body-local slot indices: params start after variables + nets.
       mir::InstanceConstBlock const_block;
-      if (module_index < decls.instance_param_inits.size()) {
-        const auto& slot_range = decls.instance_slot_ranges.at(module_index);
-        uint32_t slot_begin = slot_range.slot_begin;
-        uint32_t slot_end = slot_begin + slot_range.slot_count;
-        for (const auto& entry : decls.instance_param_inits[module_index]) {
-          if (entry.slot_id < slot_begin || entry.slot_id >= slot_end) {
-            throw common::InternalError(
-                "LowerDesign",
-                std::format(
-                    "param init slot_id {} outside instance slot range "
-                    "[{}, {})",
-                    entry.slot_id, slot_begin, slot_end));
-          }
-          uint32_t body_local_slot = entry.slot_id - slot_begin;
+      {
+        uint32_t param_slot_base =
+            static_cast<uint32_t>(mod.variables.size() + mod.nets.size());
+        for (size_t pi = 0; pi < mod.param_init_values.size(); ++pi) {
           const_block.slot_inits.push_back(
               mir::ConstSlotInit{
-                  .body_local_slot = body_local_slot,
-                  .value = entry.value,
+                  .body_local_slot =
+                      param_slot_base + static_cast<uint32_t>(pi),
+                  .value = mod.param_init_values[pi],
               });
         }
       }
@@ -463,8 +519,8 @@ auto LowerDesign(
   // Compile port bindings into assembly-ready artifacts (no design mutation).
   mir::CompiledBindingPlan compiled_bindings;
   if (input.binding_plan != nullptr) {
-    auto binding_result =
-        CompileBindings(*input.binding_plan, decls, input, mir_arena);
+    auto binding_result = CompileBindings(
+        *input.binding_plan, decls, input, mir_arena, &cross_instance_places);
     if (!binding_result) return std::unexpected(binding_result.error());
     compiled_bindings = std::move(*binding_result);
   }

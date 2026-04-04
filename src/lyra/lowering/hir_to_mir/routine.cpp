@@ -125,6 +125,7 @@ auto LowerFunctionBody(
       .symbol_table = input.symbol_table,
       .body_places = decl_view.body_places,
       .design_places = decl_view.design_places,
+      .cross_instance_places = decl_view.cross_instance_places,
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,

@@ -225,7 +225,8 @@ auto LowerStrobeEffect(
       .symbol_table = original_ctx.symbol_table,
       .body_places = original_ctx.body_places,
       .design_places = original_ctx.design_places,
-      .local_places = {},  // Fresh local mapping (program has no SV locals)
+      .cross_instance_places = original_ctx.cross_instance_places,
+      .local_places = {},
       .design_place_cache = {},
       .next_local_id = 0,
       .next_temp_id = 0,
@@ -2156,7 +2157,7 @@ auto BuildIndexPlan(
     case hir::ExpressionKind::kHierarchicalRef: {
       const auto& href_data =
           std::get<hir::HierarchicalRefExpressionData>(expr.data);
-      auto place_id = ctx.LookupPlace(href_data.target);
+      auto place_id = ctx.ResolveHierarchicalRef(href_data.target);
       const auto& place = (*ctx.mir_arena)[place_id];
       if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
           place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {

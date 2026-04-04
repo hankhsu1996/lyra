@@ -31,8 +31,8 @@ using BuildSrcFn =
 // Returns a Process value (not registered in arena - assembly does that).
 auto CreateConnectionProcess(
     mir::PlaceId dst, BuildSrcFn build_src, const LoweringInput& input,
-    mir::Arena& mir_arena, const DesignDeclarations& decls)
-    -> Result<mir::Process>;
+    mir::Arena& mir_arena, const DesignDeclarations& decls,
+    const PlaceMap* cross_instance_places = nullptr) -> Result<mir::Process>;
 
 }  // namespace lyra::lowering::hir_to_mir
 
@@ -46,7 +46,8 @@ namespace lyra::lowering::hir_to_mir {
 // Does NOT mutate mir::Design -- assembly attachment is separate.
 auto CompileBindings(
     const ast_to_hir::DesignBindingPlan& plan, const DesignDeclarations& decls,
-    const LoweringInput& input, mir::Arena& mir_arena)
+    const LoweringInput& input, mir::Arena& mir_arena,
+    const PlaceMap* cross_instance_places = nullptr)
     -> Result<mir::CompiledBindingPlan>;
 
 }  // namespace lyra::lowering::hir_to_mir

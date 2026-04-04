@@ -2665,7 +2665,8 @@ auto LowerExpressionImpl(
           return LowerReplicate(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::HierarchicalRefExpressionData>) {
-          mir::PlaceId place_id = builder.GetContext().LookupPlace(data.target);
+          mir::PlaceId place_id =
+              builder.GetContext().ResolveHierarchicalRef(data.target);
           return mir::Operand::Use(place_id);
         } else if constexpr (std::is_same_v<T, hir::MathCallExpressionData>) {
           return LowerMathCall(data, expr, builder, cache);

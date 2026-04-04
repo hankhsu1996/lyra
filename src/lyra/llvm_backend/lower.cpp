@@ -966,8 +966,31 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   bool force_two_state = input.force_two_state;
 
+  // Temporary backend adapter: expand package-only design.slots to the
+  // full design-global flat table for old layout/metadata/emit consumers.
+  // design_lower.cpp produces clean package-only slots. This adapter is
+  // DELETION-TARGETED -- removed when layout/metadata/emit migrate to
+  // body-local and package-only paths (B2b, C1).
+  std::vector<mir::SlotDesc> expanded_slots = input.design->slots;
+  std::vector<mir::SlotTraceProvenance> expanded_provenance =
+      input.design->slot_trace_provenance;
+  std::vector<char> expanded_string_pool = input.design->slot_trace_string_pool;
+  {
+    for (const auto& obj : input.construction->objects) {
+      auto body_id = mir::ModuleBodyId{obj.body_group};
+      const auto& body = input.design->module_bodies.at(body_id.value);
+      for (const auto& slot : body.slots) {
+        expanded_slots.push_back(slot);
+        expanded_provenance.push_back(
+            {.local_name_str_off = 0,
+             .scope_kind = mir::SlotScopeKind::kInstance,
+             .scope_ref = obj.path_index});
+      }
+    }
+  }
+
   auto slot_info =
-      BuildSlotInfo(input.design->slots, *input.type_arena, force_two_state);
+      BuildSlotInfo(expanded_slots, *input.type_arena, force_two_state);
 
   // Preliminary layout: used by connection collection for observation
   // resolution (needs slot specs, not byte offsets).
@@ -1026,7 +1049,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // Connection edges use original slot IDs; no canonical-owner aliasing.
   auto connection_analysis = AnalyzeConnections(
       std::move(connection_collection.kernel_entries), module_plans,
-      *input.design, *input.mir_arena);
+      *input.design, *input.mir_arena,
+      static_cast<uint32_t>(expanded_slots.size()));
 
   // Build instance slot ranges for body-local appendix layout.
   uint32_t num_package_slots_for_layout = 0;
@@ -1035,8 +1059,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   if (!module_plans.empty()) {
     num_package_slots_for_layout = module_plans[0].design_state_base_slot;
   } else {
-    num_package_slots_for_layout =
-        static_cast<uint32_t>(input.design->slots.size());
+    num_package_slots_for_layout = static_cast<uint32_t>(expanded_slots.size());
   }
   for (const auto& plan : module_plans) {
     instance_ranges.push_back(
@@ -1408,9 +1431,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   auto realization = ExtractRealizationData(
-      *input.construction, input.design->slots,
-      input.design->slot_trace_provenance,
-      input.design->slot_trace_string_pool);
+      *input.construction, expanded_slots, expanded_provenance,
+      expanded_string_pool);
 
   // Build forward-path body compiled functions, parallel to
   // layout->body_realization_infos.

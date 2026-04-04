@@ -46,7 +46,7 @@ using SymbolToMirFunctionMap =
 // Immutable after construction; passed as const& to all lowering functions.
 //
 // Invariants (guaranteed on exit from CollectDesignDeclarations):
-//   - design_places is complete for all design variables (pkg + module)
+//   - design_places is complete for all package variables (package-only)
 //   - functions is complete for all package functions
 //   - All mir::FunctionIds in the map have frozen signatures in the arena
 //     (written by ReserveFunction at pre-allocation time)
@@ -54,13 +54,6 @@ using SymbolToMirFunctionMap =
 //   - No later phase may mutate any of the above
 // Map module instance symbol -> index into InstanceTable (for %m support)
 using InstanceIndexMap = std::unordered_map<SymbolId, uint32_t, SymbolIdHash>;
-
-// Per-instance slot range within the design slot table.
-// Recorded during CollectDesignDeclarations, parallel to module elements.
-struct InstanceSlotRange {
-  uint32_t slot_begin = 0;
-  uint32_t slot_count = 0;
-};
 
 // Per-module body-local declaration map.
 // Maps module-owned symbols to body-local PlaceIds (kModuleSlot, 0-based).
@@ -89,13 +82,6 @@ struct DesignDeclarations {
   // Reverse lookup: module instance symbol -> instance table index.
   // Built from LoweringInput::instance_table during CollectDesignDeclarations.
   InstanceIndexMap instance_indices;
-  // Per-module-instance slot ranges (parallel to module elements only).
-  // Recorded in BFS elaboration order.
-  std::vector<InstanceSlotRange> instance_slot_ranges;
-  // Per-module-instance def IDs (parallel to instance_slot_ranges).
-  std::vector<common::ModuleDefId> module_def_ids;
-  // Per-module-instance param init entries (parallel to instance_slot_ranges).
-  std::vector<std::vector<mir::ParamInitEntry>> instance_param_inits;
 
   // Compile-owned slot trace provenance (parallel to slots).
   std::vector<mir::SlotTraceProvenance> slot_trace_provenance;
@@ -123,7 +109,10 @@ struct DesignDeclarations {
 // consistent throughout the lowering layer.
 struct DeclView {
   const PlaceMap* body_places = nullptr;    // body-local (kModuleSlot)
-  const PlaceMap* design_places = nullptr;  // design-global (kDesignGlobal)
+  const PlaceMap* design_places = nullptr;  // package-global (kDesignGlobal)
+  // Cross-instance places for hierarchical refs. NOT part of LookupPlace.
+  // Accessed only through ResolveHierarchicalRef.
+  const PlaceMap* cross_instance_places = nullptr;
   const SymbolToMirFunctionMap* functions = nullptr;
   const std::vector<mir::SlotDesc>* slots = nullptr;       // design-global
   const std::vector<mir::SlotDesc>* body_slots = nullptr;  // body-local
@@ -179,7 +168,7 @@ struct Context {
   // storage, owned by this Context. Lookup order: local_places -> body_places
   // -> design_places.
   const PlaceMap* body_places = nullptr;
-  const PlaceMap* design_places = nullptr;
+  const PlaceMap* design_places = nullptr;  // package-only
   PlaceMap local_places;
 
   // Cache of body-local PlaceIds for design-global symbols.
@@ -214,6 +203,13 @@ struct Context {
   // Design-level DPI import declarations visible to this lowering scope.
   // Null when no design-level declaration view is available.
   const DesignDpiImports* dpi_imports = nullptr;
+
+  // Cross-instance place resolver for hierarchical references and
+  // connection compilation. NOT part of LookupPlace -- accessed only
+  // through dedicated ResolveHierarchicalRef(). Kept separate from
+  // generic place lookup to avoid contaminating body/package lowering
+  // with cross-instance addressing.
+  const PlaceMap* cross_instance_places = nullptr;
 
   // Optional sink for dynamically generated functions (e.g., observer
   // programs). If set, LowerStrobeEffect will push program FunctionIds here.
@@ -270,6 +266,12 @@ struct Context {
 
   // Throws InternalError if symbol not found (compiler bug, not user error).
   auto LookupPlace(SymbolId sym) const -> mir::PlaceId;
+
+  // Resolve a cross-instance hierarchical reference. Only checks
+  // cross_instance_places, not body/local/design-global places.
+  // Used for kHierarchicalRef expressions and connection compilation.
+  // Throws InternalError if the symbol is not found.
+  auto ResolveHierarchicalRef(SymbolId sym) const -> mir::PlaceId;
 
   // Resolve a PlaceId to its Place from the correct arena.
   // All PlaceIds in body MIR are body-arena-local, so this resolves

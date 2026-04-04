@@ -779,7 +779,7 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::HierarchicalRefExpressionData>) {
           return LvalueResult{
-              .place = builder.GetContext().LookupPlace(data.target),
+              .place = builder.GetContext().ResolveHierarchicalRef(data.target),
               .validity = MakeAlwaysValid(builder),
           };
         } else {
@@ -812,7 +812,7 @@ auto LowerPureLvaluePlaceImpl(hir::ExpressionId expr_id, const Context& ctx)
         } else if constexpr (std::is_same_v<
                                  T, hir::HierarchicalRefExpressionData>) {
           // Pure: hierarchical symbol lookup
-          return ctx.LookupPlace(data.target);
+          return ctx.ResolveHierarchicalRef(data.target);
 
         } else if constexpr (std::is_same_v<
                                  T, hir::MemberAccessExpressionData>) {

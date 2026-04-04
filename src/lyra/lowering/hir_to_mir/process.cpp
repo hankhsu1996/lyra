@@ -112,6 +112,7 @@ auto LowerProcess(
       .symbol_table = input.symbol_table,
       .body_places = decl_view.body_places,
       .design_places = decl_view.design_places,
+      .cross_instance_places = decl_view.cross_instance_places,
       .local_places = {},
       .design_place_cache = {},
       .next_local_id = 0,

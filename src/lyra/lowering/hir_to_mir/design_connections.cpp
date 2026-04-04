@@ -28,9 +28,11 @@ namespace lyra::lowering::hir_to_mir {
 
 auto MakeDesignContext(
     const LoweringInput& input, mir::Arena& mir_arena,
-    const DesignDeclarations& decls) -> Context {
-  // Connection processes are design-level: they only see design-global places.
-  // No body_places -- connections operate across instances.
+    const DesignDeclarations& decls, const PlaceMap* cross_instance_places)
+    -> Context {
+  // Connection processes are design-level: they see package-global places
+  // via design_places, and module cross-instance places via
+  // cross_instance_places.
   return Context{
       .mir_arena = &mir_arena,
       .hir_arena = input.hir_arena,
@@ -38,6 +40,7 @@ auto MakeDesignContext(
       .active_constant_arena = input.active_constant_arena,
       .symbol_table = input.symbol_table,
       .design_places = &decls.design_places,
+      .cross_instance_places = cross_instance_places,
       .local_places = {},
       .next_local_id = 0,
       .next_temp_id = 0,
@@ -54,9 +57,10 @@ auto MakeDesignContext(
 
 auto CreateConnectionProcess(
     mir::PlaceId dst, BuildSrcFn build_src, const LoweringInput& input,
-    mir::Arena& mir_arena, const DesignDeclarations& decls)
-    -> Result<mir::Process> {
-  Context ctx = MakeDesignContext(input, mir_arena, decls);
+    mir::Arena& mir_arena, const DesignDeclarations& decls,
+    const PlaceMap* cross_instance_places) -> Result<mir::Process> {
+  Context ctx =
+      MakeDesignContext(input, mir_arena, decls, cross_instance_places);
   MirBuilder builder(&mir_arena, &ctx, nullptr, hir::kInvalidModuleBodyId);
 
   BlockIndex entry_idx = builder.CreateBlock();
@@ -107,15 +111,16 @@ namespace {
 auto CompileDriveParentToChild(
     const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
     const DesignDeclarations& decls, const LoweringInput& input,
-    mir::Arena& mir_arena) -> Result<mir::CompiledDriveBinding> {
+    mir::Arena& mir_arena, const PlaceMap* cross_instance_places)
+    -> Result<mir::CompiledDriveBinding> {
   // Source is parent rvalue expression (arbitrary, may emit temps)
   auto build_src =
       [&binding](MirBuilder& builder, const Context&) -> Result<mir::Operand> {
     return LowerExpression(binding.parent_rvalue, builder);
   };
 
-  auto proc =
-      CreateConnectionProcess(child_place, build_src, input, mir_arena, decls);
+  auto proc = CreateConnectionProcess(
+      child_place, build_src, input, mir_arena, decls, cross_instance_places);
   if (!proc) {
     return std::unexpected(proc.error());
   }
@@ -134,9 +139,11 @@ auto CompileDriveParentToChild(
 auto CompileDriveChildToParent(
     const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
     const DesignDeclarations& decls, const LoweringInput& input,
-    mir::Arena& mir_arena) -> Result<mir::CompiledDriveBinding> {
+    mir::Arena& mir_arena, const PlaceMap* cross_instance_places)
+    -> Result<mir::CompiledDriveBinding> {
   // Lower parent lvalue -> place (pure by construction - no MirBuilder)
-  Context ctx = MakeDesignContext(input, mir_arena, decls);
+  Context ctx =
+      MakeDesignContext(input, mir_arena, decls, cross_instance_places);
   auto parent_lv = LowerPureLvaluePlace(binding.parent_lvalue, ctx);
   if (!parent_lv) {
     return std::unexpected(parent_lv.error());
@@ -156,8 +163,8 @@ auto CompileDriveChildToParent(
     return mir::Operand::Use(captured_child);
   };
 
-  auto proc =
-      CreateConnectionProcess(*parent_lv, build_src, input, mir_arena, decls);
+  auto proc = CreateConnectionProcess(
+      *parent_lv, build_src, input, mir_arena, decls, cross_instance_places);
   if (!proc) {
     return std::unexpected(proc.error());
   }
@@ -176,27 +183,44 @@ auto CompileDriveChildToParent(
 
 auto CompileBindings(
     const ast_to_hir::DesignBindingPlan& plan, const DesignDeclarations& decls,
-    const LoweringInput& input, mir::Arena& mir_arena)
-    -> Result<mir::CompiledBindingPlan> {
+    const LoweringInput& input, mir::Arena& mir_arena,
+    const PlaceMap* cross_instance_places) -> Result<mir::CompiledBindingPlan> {
   mir::CompiledBindingPlan result;
   if (plan.bindings.empty()) {
     return result;
   }
 
   for (const auto& binding : plan.bindings) {
-    mir::PlaceId child_place = decls.design_places.at(binding.child_port_sym);
+    // Child port sym is a module variable -- resolve from
+    // cross_instance_places, not from decls.design_places (package-only).
+    mir::PlaceId child_place;
+    if (cross_instance_places != nullptr) {
+      auto it = cross_instance_places->find(binding.child_port_sym);
+      if (it == cross_instance_places->end()) {
+        throw common::InternalError(
+            "CompileBindings",
+            std::format(
+                "child port sym {} not found in cross-instance places",
+                binding.child_port_sym.value));
+      }
+      child_place = it->second;
+    } else {
+      child_place = decls.design_places.at(binding.child_port_sym);
+    }
 
     switch (binding.kind) {
       case ast_to_hir::PortBinding::Kind::kDriveParentToChild: {
         auto compiled = CompileDriveParentToChild(
-            binding, child_place, decls, input, mir_arena);
+            binding, child_place, decls, input, mir_arena,
+            cross_instance_places);
         if (!compiled) return std::unexpected(compiled.error());
         result.drive_bindings.push_back(std::move(*compiled));
         break;
       }
       case ast_to_hir::PortBinding::Kind::kDriveChildToParent: {
         auto compiled = CompileDriveChildToParent(
-            binding, child_place, decls, input, mir_arena);
+            binding, child_place, decls, input, mir_arena,
+            cross_instance_places);
         if (!compiled) return std::unexpected(compiled.error());
         result.drive_bindings.push_back(std::move(*compiled));
         break;
