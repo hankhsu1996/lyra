@@ -82,26 +82,6 @@ auto MakeUnclassifiableDpiReturnDiagnostic(const slang::ast::Type& type)
       "DPI-C return type '{}' not yet supported", type.toString());
 }
 
-auto MakeUnsupportedIndirectDpiReturnDiagnostic(
-    const slang::ast::Type& type, hir::DpiAbiTypeClass abi_type)
-    -> std::string {
-  switch (abi_type) {
-    case hir::DpiAbiTypeClass::kLogicVecNarrow:
-    case hir::DpiAbiTypeClass::kLogicVecWide:
-    case hir::DpiAbiTypeClass::kBitVecWide:
-      return std::format(
-          "DPI-C return type '{}' requires indirect return modeling, "
-          "not yet supported",
-          type.toString());
-    default:
-      throw common::InternalError(
-          "MakeUnsupportedIndirectDpiReturnDiagnostic",
-          std::format(
-              "expected indirect-return ABI class, got {}",
-              static_cast<int>(abi_type)));
-  }
-}
-
 }  // namespace
 
 // Canonical DPI ABI type classifier over slang types.
@@ -216,13 +196,6 @@ auto TryLowerDpiImport(
   if (!return_class) {
     ctx->sink->Unsupported(
         span, MakeUnclassifiableDpiReturnDiagnostic(ret_type),
-        UnsupportedCategory::kType);
-    return DpiLoweringResult::Rejected();
-  }
-  if (!hir::IsValidDpiReturnType(*return_class)) {
-    ctx->sink->Unsupported(
-        span,
-        MakeUnsupportedIndirectDpiReturnDiagnostic(ret_type, *return_class),
         UnsupportedCategory::kType);
     return DpiLoweringResult::Rejected();
   }

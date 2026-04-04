@@ -615,3 +615,25 @@ cases:
       variables:
         r_low: 1
         r_high_x: 1
+
+  # -- indirect return: integer with X bits --
+
+  - name: dpi_integer_return_with_x
+    dpi_sources:
+      - dpi_helpers/indirect_return_ops.c
+    sv: |
+      module Test;
+        import "DPI-C" function integer return_integer_with_x();
+        int r_known, r_x;
+        initial begin
+          integer v;
+          v = return_integer_with_x();
+          r_known = (v[7:4] === 4'b1111) ? 1 : 0;
+          r_x = (v[3:0] === 4'bxxxx) ? 1 : 0;
+        end
+      endmodule
+    expect:
+      variables:
+        r_known: 1
+        r_x: 1
+

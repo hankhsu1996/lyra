@@ -15,6 +15,12 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+auto ClassifyDpiReturnKind(DpiAbiTypeClass abi_type) -> mir::DpiReturnKind {
+  if (abi_type == DpiAbiTypeClass::kVoid) return mir::DpiReturnKind::kVoid;
+  if (IsPackedVecDpiType(abi_type)) return mir::DpiReturnKind::kIndirect;
+  return mir::DpiReturnKind::kDirectValue;
+}
+
 // Map a DpiAbiTypeClass to its canonical C type spelling for headers.
 auto DpiAbiTypeToCString(DpiAbiTypeClass t) -> const char* {
   switch (t) {
@@ -73,28 +79,37 @@ auto RenderParam(const mir::DpiParamDesc& p) -> std::string {
 }
 
 // Render a full C function prototype line.
-// For context imports, prepends the hidden svScope parameter before user
-// params.
+// Hidden args are rendered in canonical order: scope (if context), then
+// result pointer (if indirect return), then user params.
 auto RenderPrototype(
     const std::string& c_name, const mir::DpiSignature& sig, bool is_context)
     -> std::string {
-  std::string ret = DpiAbiTypeToCString(sig.result.abi_type);
-  std::string params;
-  if (sig.params.empty() && !is_context) {
-    params = "void";
-  } else {
-    bool first = true;
-    if (is_context) {
-      params += "svScope scope";
-      first = false;
-    }
-    for (size_t i = 0; i < sig.params.size(); ++i) {
-      if (!first) params += ", ";
-      params += RenderParam(sig.params[i]);
-      first = false;
-    }
+  bool indirect_ret = sig.result.kind == mir::DpiReturnKind::kIndirect;
+  std::string ret_ty =
+      indirect_ret ? "void" : DpiAbiTypeToCString(sig.result.abi_type);
+
+  std::vector<std::string> params;
+
+  if (is_context) {
+    params.emplace_back("svScope scope");
   }
-  return std::format("{} {}({});", ret, c_name, params);
+  if (indirect_ret) {
+    params.push_back(
+        std::format("{} result", DpiAbiTypeToCString(sig.result.abi_type)));
+  }
+  for (const auto& p : sig.params) {
+    params.push_back(RenderParam(p));
+  }
+
+  if (params.empty()) {
+    return std::format("{} {}(void);", ret_ty, c_name);
+  }
+  std::string joined;
+  for (size_t i = 0; i < params.size(); ++i) {
+    if (i > 0) joined += ", ";
+    joined += params[i];
+  }
+  return std::format("{} {}({});", ret_ty, c_name, joined);
 }
 
 // Sortable entry for deterministic header output.
@@ -125,9 +140,7 @@ auto RenderDpiHeader(
     sig.result = {
         .sv_type = info.return_type_id,
         .abi_type = info.return_abi_type,
-        .kind = info.return_abi_type == DpiAbiTypeClass::kVoid
-                    ? mir::DpiReturnKind::kVoid
-                    : mir::DpiReturnKind::kDirectValue,
+        .kind = ClassifyDpiReturnKind(info.return_abi_type),
     };
     for (const auto& p : info.params) {
       sig.params.push_back({

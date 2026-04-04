@@ -764,16 +764,96 @@ auto CommitDpiOutputWritebacks(
 // Phase C.2: Handle return value
 // ---------------------------------------------------------------------------
 
+auto DecodeIndirectDpiReturn(
+    Context& context, const mir::DpiReturnDesc& result, llvm::Value* raw)
+    -> llvm::Value* {
+  auto& b = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  uint32_t width = GetSemanticWidth(result.sv_type, context.GetTypeArena());
+  auto* backing_ty = GetBackingLlvmType(llvm_ctx, width);
+
+  switch (result.abi_type) {
+    case DpiAbiTypeClass::kLogicVecNarrow:
+    case DpiAbiTypeClass::kLogicVecWide:
+      return DecodeDpiLogicVecStorage(b, raw, width, backing_ty);
+    case DpiAbiTypeClass::kBitVecWide:
+      return DecodeDpiBitVecStorage(b, raw, width, backing_ty);
+    default:
+      throw common::InternalError(
+          "DecodeIndirectDpiReturn", "unexpected indirect DPI return type");
+  }
+}
+
+// Normalize an internal callable return value into a logical four-state pair.
+// In 4-state mode the return is a {val, unk} struct. In --two-state mode
+// the return is a plain integer (no X/Z tracking). Both shapes must produce
+// a DpiFourStateValue for svLogicVecVal encoding at the DPI boundary.
+auto NormalizeToDpiFourStateReturn(
+    Context& context, llvm::Value* ret_val, uint32_t semantic_width)
+    -> DpiFourStateValue {
+  auto& b = context.GetBuilder();
+
+  if (ret_val->getType()->isStructTy()) {
+    auto* val = b.CreateExtractValue(ret_val, {0}, "dpi.ret.val");
+    auto* unk = b.CreateExtractValue(ret_val, {1}, "dpi.ret.unk");
+    return DpiFourStateValue{
+        .val = val, .unk = unk, .semantic_width = semantic_width};
+  }
+
+  if (!ret_val->getType()->isIntegerTy()) {
+    throw common::InternalError(
+        "NormalizeToDpiFourStateReturn",
+        "expected struct or integer return value for logical DPI indirect "
+        "return");
+  }
+
+  auto* unk = llvm::ConstantInt::get(ret_val->getType(), 0);
+  return DpiFourStateValue{
+      .val = ret_val, .unk = unk, .semantic_width = semantic_width};
+}
+
+auto EncodeIndirectDpiReturn(
+    Context& context, const mir::DpiReturnDesc& result, llvm::Value* ret_val)
+    -> llvm::Value* {
+  auto& b = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  uint32_t width = GetSemanticWidth(result.sv_type, context.GetTypeArena());
+
+  switch (result.abi_type) {
+    case DpiAbiTypeClass::kLogicVecNarrow:
+    case DpiAbiTypeClass::kLogicVecWide: {
+      DpiFourStateValue fsv =
+          NormalizeToDpiFourStateReturn(context, ret_val, width);
+      uint32_t wc = GetDpiLogicWordCount(width);
+      auto* arr_ty = GetDpiLogicVecStorageType(llvm_ctx, wc);
+      auto* word_ty = GetDpiLogicVecWordType(llvm_ctx);
+      return BuildDpiLogicVecStorage(b, fsv, arr_ty, word_ty);
+    }
+    case DpiAbiTypeClass::kBitVecWide: {
+      uint32_t wc = GetDpiLogicWordCount(width);
+      auto* arr_ty = GetDpiBitVecStorageType(llvm_ctx, wc);
+      return BuildDpiBitVecStorage(b, ret_val, width, arr_ty);
+    }
+    default:
+      throw common::InternalError(
+          "EncodeIndirectDpiReturn", "unexpected indirect DPI return type");
+  }
+}
+
 auto CommitDpiReturnValue(
-    Context& context, const mir::DpiCall& call, llvm::CallInst* call_inst)
-    -> Result<void> {
+    Context& context, const mir::DpiCall& call, llvm::CallInst* call_inst,
+    llvm::Value* indirect_ret_ptr) -> Result<void> {
   const auto& sig = call.callee.signature;
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
+  const auto& types = context.GetTypeArena();
 
-  bool is_void = sig.result.kind == mir::DpiReturnKind::kVoid;
-  if (is_void || !call.ret) {
+  if (sig.result.kind == mir::DpiReturnKind::kVoid) {
     return {};
+  }
+  if (!call.ret) {
+    throw common::InternalError(
+        "CommitDpiReturnValue", "non-void DPI call missing CallReturn");
   }
 
   auto tmp_ptr = context.GetPlacePointer(call.ret->tmp);
@@ -781,9 +861,20 @@ auto CommitDpiReturnValue(
   auto tmp_type = context.GetPlaceLlvmType(call.ret->tmp);
   if (!tmp_type) return std::unexpected(tmp_type.error());
 
-  if (sig.result.abi_type == DpiAbiTypeClass::kLogicScalar) {
-    uint32_t width =
-        GetSemanticWidth(sig.result.sv_type, context.GetTypeArena());
+  if (sig.result.kind == mir::DpiReturnKind::kIndirect) {
+    if (indirect_ret_ptr == nullptr) {
+      throw common::InternalError(
+          "CommitDpiReturnValue",
+          "kIndirect DPI return missing staged result pointer");
+    }
+    llvm::Type* storage_ty = GetLlvmDpiStorageType(
+        llvm_ctx, sig.result.abi_type, sig.result.sv_type, types);
+    llvm::Value* raw =
+        builder.CreateLoad(storage_ty, indirect_ret_ptr, "dpi.ret.raw");
+    llvm::Value* decoded = DecodeIndirectDpiReturn(context, sig.result, raw);
+    builder.CreateStore(decoded, *tmp_ptr);
+  } else if (sig.result.abi_type == DpiAbiTypeClass::kLogicScalar) {
+    uint32_t width = GetSemanticWidth(sig.result.sv_type, types);
     auto* packed =
         BuildLyraLogicScalarValue(builder, llvm_ctx, call_inst, width);
     builder.CreateStore(packed, *tmp_ptr);
@@ -870,10 +961,18 @@ auto BuildDpiImportFunctionType(
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& types = context.GetTypeArena();
 
+  bool indirect_ret = sig.result.kind == mir::DpiReturnKind::kIndirect;
+
   std::vector<llvm::Type*> param_types;
-  param_types.reserve(sig.params.size() + (is_context ? 1 : 0));
+  param_types.reserve(
+      sig.params.size() + (is_context ? 1 : 0) + (indirect_ret ? 1 : 0));
   if (is_context) {
     param_types.push_back(llvm::PointerType::getUnqual(llvm_ctx));
+  }
+  if (indirect_ret) {
+    llvm::Type* storage_ty = GetLlvmDpiStorageType(
+        llvm_ctx, sig.result.abi_type, sig.result.sv_type, types);
+    param_types.push_back(llvm::PointerType::getUnqual(storage_ty));
   }
   for (const auto& p : sig.params) {
     if (p.passing == mir::DpiPassingMode::kByPointer) {
@@ -884,7 +983,9 @@ auto BuildDpiImportFunctionType(
     }
   }
 
-  llvm::Type* ret_type = GetLlvmScalarDpiType(llvm_ctx, sig.result.abi_type);
+  llvm::Type* ret_type =
+      indirect_ret ? llvm::Type::getVoidTy(llvm_ctx)
+                   : GetLlvmScalarDpiType(llvm_ctx, sig.result.abi_type);
   return llvm::FunctionType::get(ret_type, param_types, false);
 }
 
@@ -989,6 +1090,8 @@ auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
   llvm::Function* fn =
       GetOrDeclareDpiImport(context, ref.c_name, sig, ref.is_context);
   auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  const auto& types = context.GetTypeArena();
 
   std::vector<llvm::Value*> user_abi_args;
   std::vector<DpiArgLoweringState> arg_states(call.args.size());
@@ -998,13 +1101,27 @@ auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
       PrepareDpiCallArgs(context, call, user_abi_args, arg_states);
   if (!prep_result) return std::unexpected(prep_result.error());
 
+  // Indirect return: allocate staged result storage.
+  llvm::Value* indirect_ret_ptr = nullptr;
+  if (sig.result.kind == mir::DpiReturnKind::kIndirect) {
+    llvm::Type* storage_ty = GetLlvmDpiStorageType(
+        llvm_ctx, sig.result.abi_type, sig.result.sv_type, types);
+    indirect_ret_ptr =
+        CreateDpiStagedAlloca(builder, storage_ty, "dpi.ret.staged");
+  }
+
   // --- Non-fallible region: push -> call -> pop ---
 
   // Context import prologue: push scope, prepend ABI arg.
   std::vector<llvm::Value*> abi_args;
   auto ctx_state = BeginContextImportCall(context, ref, abi_args);
 
-  // Append user args after optional scope arg.
+  // Indirect result pointer in canonical slot (after scope, before user args).
+  if (indirect_ret_ptr != nullptr) {
+    abi_args.push_back(indirect_ret_ptr);
+  }
+
+  // Append user args.
   abi_args.insert(abi_args.end(), user_abi_args.begin(), user_abi_args.end());
 
   // Phase B: emit foreign call.
@@ -1021,22 +1138,33 @@ auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
   if (!wb_result) return std::unexpected(wb_result.error());
 
   // Phase C.2: handle return value.
-  return CommitDpiReturnValue(context, call, call_inst);
+  return CommitDpiReturnValue(context, call, call_inst, indirect_ret_ptr);
 }
 
 namespace {
 
 // Build the LLVM function type for a DPI export wrapper from its DpiSignature.
 // By-value params use their scalar LLVM type, by-pointer params use ptr.
+// Only the hidden indirect-return pointer is newly typed via
+// GetLlvmDpiStorageType(). Existing user parameter ABI formation
+// remains unchanged.
 auto BuildExportWrapperType(
-    llvm::LLVMContext& ctx, const mir::DpiSignature& sig)
-    -> llvm::FunctionType* {
-  llvm::Type* ret_ty = (sig.result.kind == mir::DpiReturnKind::kVoid)
-                           ? llvm::Type::getVoidTy(ctx)
-                           : GetLlvmScalarDpiType(ctx, sig.result.abi_type);
+    llvm::LLVMContext& ctx, const mir::DpiSignature& sig,
+    const TypeArena& types) -> llvm::FunctionType* {
+  bool indirect_ret = sig.result.kind == mir::DpiReturnKind::kIndirect;
+
+  llvm::Type* ret_ty =
+      (indirect_ret || sig.result.kind == mir::DpiReturnKind::kVoid)
+          ? llvm::Type::getVoidTy(ctx)
+          : GetLlvmScalarDpiType(ctx, sig.result.abi_type);
 
   std::vector<llvm::Type*> param_types;
-  param_types.reserve(sig.params.size());
+  param_types.reserve(sig.params.size() + (indirect_ret ? 1 : 0));
+  if (indirect_ret) {
+    llvm::Type* storage_ty = GetLlvmDpiStorageType(
+        ctx, sig.result.abi_type, sig.result.sv_type, types);
+    param_types.push_back(llvm::PointerType::getUnqual(storage_ty));
+  }
   for (const auto& p : sig.params) {
     if (p.passing == mir::DpiPassingMode::kByPointer) {
       param_types.push_back(llvm::PointerType::getUnqual(ctx));
@@ -1186,13 +1314,14 @@ auto EncodeExportByPointerValue(
 void PrepareExportUserArgs(
     Context& context, const mir::DpiSignature& sig, llvm::Function* wrapper,
     llvm::Function* internal_fn, unsigned user_arg_base,
-    std::vector<llvm::Value*>& internal_args,
+    unsigned wrapper_arg_base, std::vector<llvm::Value*>& internal_args,
     std::vector<ExportByPointerState>& by_pointer_states) {
   auto& b = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
   for (size_t i = 0; i < sig.params.size(); ++i) {
-    llvm::Value* wrapper_arg = wrapper->getArg(static_cast<unsigned>(i));
+    llvm::Value* wrapper_arg =
+        wrapper->getArg(wrapper_arg_base + static_cast<unsigned>(i));
     const auto& param = sig.params[i];
     auto plan = PlanExportParam(param);
     unsigned internal_idx = static_cast<unsigned>(i) + user_arg_base;
@@ -1340,9 +1469,22 @@ void CommitExportByPointerWritebacks(
 }
 
 void EmitExportReturn(
-    Context& context, const mir::DpiSignature& sig, llvm::Value* ret_val) {
+    Context& context, const mir::DpiSignature& sig, llvm::Value* ret_val,
+    llvm::Value* indirect_ret_ptr) {
   auto& b = context.GetBuilder();
   if (sig.result.kind == mir::DpiReturnKind::kVoid) {
+    b.CreateRetVoid();
+    return;
+  }
+  if (sig.result.kind == mir::DpiReturnKind::kIndirect) {
+    if (indirect_ret_ptr == nullptr) {
+      throw common::InternalError(
+          "EmitExportReturn",
+          "kIndirect export return missing wrapper result pointer");
+    }
+    llvm::Value* encoded =
+        EncodeIndirectDpiReturn(context, sig.result, ret_val);
+    StoreForeignDpiStorage(context, indirect_ret_ptr, encoded);
     b.CreateRetVoid();
     return;
   }
@@ -1440,15 +1582,24 @@ auto EmitDpiExportWrappers(
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
 
+  const auto& types = context.GetTypeArena();
+
   for (const auto& desc : exports) {
     // Build wrapper function (same C ABI shape for both package and module).
-    auto* wrapper_ty = BuildExportWrapperType(llvm_ctx, desc.signature);
+    auto* wrapper_ty = BuildExportWrapperType(llvm_ctx, desc.signature, types);
     auto* wrapper = llvm::Function::Create(
         wrapper_ty, llvm::Function::ExternalLinkage, desc.c_name, &module);
     wrapper->setCallingConv(llvm::CallingConv::C);
 
     auto* entry_bb = llvm::BasicBlock::Create(llvm_ctx, "entry", wrapper);
     context.GetBuilder().SetInsertPoint(entry_bb);
+
+    // Consume hidden wrapper args in canonical order.
+    unsigned wrapper_arg_idx = 0;
+    llvm::Value* indirect_ret_ptr = nullptr;
+    if (desc.signature.result.kind == mir::DpiReturnKind::kIndirect) {
+      indirect_ret_ptr = wrapper->getArg(wrapper_arg_idx++);
+    }
 
     if (desc.target.scope_kind == mir::DpiExportScopeKind::kPackage) {
       // Package path: resolve binding + direct call to design-global callee.
@@ -1468,10 +1619,11 @@ auto EmitDpiExportWrappers(
       args.push_back(binding.engine_ptr);
       std::vector<ExportByPointerState> bp_states;
       PrepareExportUserArgs(
-          context, desc.signature, wrapper, internal_fn, 2, args, bp_states);
+          context, desc.signature, wrapper, internal_fn, 2, wrapper_arg_idx,
+          args, bp_states);
       auto* ret_val = context.GetBuilder().CreateCall(internal_fn, args);
       CommitExportByPointerWritebacks(context, bp_states);
-      EmitExportReturn(context, desc.signature, ret_val);
+      EmitExportReturn(context, desc.signature, ret_val, indirect_ret_ptr);
 
     } else {
       // Module path: resolve instance binding + direct call to module callee.
@@ -1494,10 +1646,11 @@ auto EmitDpiExportWrappers(
       args.push_back(binding.instance_id);
       std::vector<ExportByPointerState> bp_states;
       PrepareExportUserArgs(
-          context, desc.signature, wrapper, internal_fn, 5, args, bp_states);
+          context, desc.signature, wrapper, internal_fn, 5, wrapper_arg_idx,
+          args, bp_states);
       auto* ret_val = context.GetBuilder().CreateCall(internal_fn, args);
       CommitExportByPointerWritebacks(context, bp_states);
-      EmitExportReturn(context, desc.signature, ret_val);
+      EmitExportReturn(context, desc.signature, ret_val, indirect_ret_ptr);
     }
   }
 

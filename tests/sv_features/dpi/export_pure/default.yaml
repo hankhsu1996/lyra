@@ -221,23 +221,3 @@ cases:
       error:
         contains:
           - "my_fn"
-
-  # `integer` is a 4-state 32-bit predefined type, classified as
-  # kLogicVecNarrow. Packed-vector DPI returns require indirect return
-  # modeling (svLogicVecVal* out-param), which is not yet supported.
-  # This is the same rejection as the import-side reject_dpi_integer_return.
-  - name: reject_export_integer_return
-    sv: |
-      package dpi_pkg;
-        function integer get_int();
-          return 42;
-        endfunction
-        export "DPI-C" function get_int;
-      endpackage
-      module Test;
-        initial begin end
-      endmodule
-    expect:
-      error:
-        contains:
-          - "indirect return modeling"

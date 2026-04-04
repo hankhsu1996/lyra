@@ -118,3 +118,29 @@ cases:
     expect:
       variables:
         result: 66
+
+  # -- indirect return: integer with X bits --
+
+  - name: export_integer_return_with_x
+    dpi_sources:
+      - dpi_helpers/export_integer_xz.c
+    sv: |
+      package dpi_pkg;
+        function integer get_integer_with_x();
+          integer v;
+          v = 32'hF0;
+          v[3:0] = 4'bxxxx;
+          return v;
+        endfunction
+        export "DPI-C" function get_integer_with_x;
+      endpackage
+      module Test;
+        import "DPI-C" function int call_get_integer_with_x();
+        int result;
+        initial begin
+          result = call_get_integer_with_x();
+        end
+      endmodule
+    expect:
+      variables:
+        result: 1

@@ -71,16 +71,6 @@ auto ClassifyExportSignature(
         UnsupportedCategory::kType);
     return std::nullopt;
   }
-  if (!hir::IsValidDpiReturnType(*return_class)) {
-    ctx->sink->Unsupported(
-        span,
-        std::format(
-            "DPI-C export return type '{}' requires indirect return "
-            "modeling, not yet supported",
-            ret_type.toString()),
-        UnsupportedCategory::kType);
-    return std::nullopt;
-  }
   TypeId return_type_id = LowerType(ret_type, span, ctx);
   if (!return_type_id) {
     return std::nullopt;

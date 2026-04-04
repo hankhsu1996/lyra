@@ -82,9 +82,8 @@ enum class DpiAbiTypeClass : uint8_t {
 }
 
 // True if the ABI type class is valid for a DPI return type.
-// Packed vector returns require indirect return modeling, not yet supported.
 [[nodiscard]] inline auto IsValidDpiReturnType(DpiAbiTypeClass t) -> bool {
-  return IsNormalizedDpiType(t) && !IsPackedVecDpiType(t);
+  return IsNormalizedDpiType(t);
 }
 
 }  // namespace lyra

@@ -17,34 +17,27 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
   - [x] D2a -- Output/inout args, non-pure imports, packed 2-state direct-scalar <=64
   - [x] D2b -- DPI-own MIR call family (`DpiCall`), per-param descriptors, 3-phase LLVM lowering
   - [x] D2c -- `chandle` variable LLVM support (load/store/null literal)
-- [x] D3a -- 4-state scalar/vector marshaling (narrow <=64-bit, input/output/inout, scalar return)
-- [x] D3b -- Wide packed multiword transport (> 64-bit vectors, parameters only)
-- [x] D3c -- `chandle` in internal callable ABI (user-function parameter/return, not DPI-specific)
+- [x] D3 -- 4-state and wide packed marshaling
+  - [x] D3a -- 4-state scalar/vector marshaling (narrow <=64-bit, input/output/inout, scalar return)
+  - [x] D3b -- Wide packed multiword transport (> 64-bit vectors, parameters only)
+  - [x] D3c -- `chandle` in internal callable ABI (user-function parameter/return, not DPI-specific)
 - [x] D4 -- DPI export (package-scoped, scalar 2-state + real + string wrappers, header generation)
+  - [x] D4a -- Module-scoped DPI export (instance-bound wrapper dispatch)
+  - [x] D4b -- 4-state scalar and packed by-pointer export wrapper marshaling
+  - [x] D4c -- Indirect-return modeling for DPI return types requiring hidden result storage (integer); wide packed lowering (kLogicVecWide, kBitVecWide) exists in backend infrastructure but is not end-to-end reachable because slang rejects explicit packed-array DPI return types per IEEE 1800
+  - [ ] D4d -- AOT/LLI export end-to-end integration (currently JIT-only tested)
 - [x] D6a -- svdpi.h runtime library and linker surface
-- [x] D6b -- DPI scope registry and instance-bound export context
-- [x] D6c -- Context import functions (svGetScope in import bodies)
-- [x] D4a -- Module-scoped DPI export (instance-bound wrapper dispatch)
-- [x] D4b -- 4-state scalar and packed by-pointer export wrapper marshaling
-- [ ] D4c -- Packed-vector DPI return types (import and export, indirect return modeling)
-- [ ] D4d -- AOT/LLI export end-to-end integration (currently JIT-only tested)
-- [ ] D6d -- svdpi time query functions
-- [ ] D6e -- svGetCallerInfo import call-site metadata
-- [ ] D7a -- DPI import task suspension protocol
-- [ ] D7b -- DPI import task scheduler integration
-- [ ] D7c -- DPI export tasks (external C invocation of time-consuming SV tasks)
-- [ ] D8a -- Open-array query and pointer surface
-- [ ] D8b -- Open-array packed/scalar element access
-
-## D4c: Packed-vector DPI return types (import and export, indirect return modeling)
-
-Both import and export reject packed-vector return types. DpiReturnKind has only kVoid and kDirectValue. Packed vectors cannot be returned by value in C; the standard convention is an implicit output pointer parameter.
-
-This item adds an indirect return variant to DpiReturnKind, modifies import call lowering to pass a caller-allocated return buffer as an implicit first argument, and modifies export wrappers to write the return value into the caller-provided buffer.
-
-No infrastructure dependencies. Can land in parallel with the D6 series.
-
-Where to look: DpiReturnKind in call.hpp, import return handling in LowerDpiImportCall, export return encoding in EmitDpiExportWrappers, return type rejections in routine.cpp and design.cpp.
+  - [x] D6b -- DPI scope registry and instance-bound export context
+  - [x] D6c -- Context import functions (svGetScope in import bodies)
+  - [ ] D6d -- svdpi time query functions
+  - [ ] D6e -- svGetCallerInfo import call-site metadata
+- [ ] D7 -- DPI tasks
+  - [ ] D7a -- DPI import task suspension protocol
+  - [ ] D7b -- DPI import task scheduler integration
+  - [ ] D7c -- DPI export tasks (external C invocation of time-consuming SV tasks)
+- [ ] D8 -- Open arrays
+  - [ ] D8a -- Open-array query and pointer surface
+  - [ ] D8b -- Open-array packed/scalar element access
 
 ## D4d: AOT/LLI export end-to-end integration
 

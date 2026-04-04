@@ -35,6 +35,7 @@ enum class DpiPassingMode : uint8_t {
 enum class DpiReturnKind : uint8_t {
   kVoid,
   kDirectValue,
+  kIndirect,
 };
 
 // Per-parameter descriptor for a DPI-C import signature.
