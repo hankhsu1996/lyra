@@ -103,8 +103,13 @@ class NonSuspendingWalker
 
   void handle(const slang::ast::CallExpression& expr) {
     if (found_) return;
-    if (expr.getSubroutineKind() == slang::ast::SubroutineKind::Task) {
-      Reject(expr.sourceRange, "calls a task (may transitively suspend)");
+    // System tasks ($readmemh, $display, etc.) are always immediate.
+    // Only user-defined task calls may transitively suspend.
+    if (!expr.isSystemCall() &&
+        expr.getSubroutineKind() == slang::ast::SubroutineKind::Task) {
+      Reject(
+          expr.sourceRange,
+          "calls a user-defined task (may transitively suspend)");
       return;
     }
     visitDefault(expr);

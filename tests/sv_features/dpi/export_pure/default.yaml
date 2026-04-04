@@ -90,7 +90,7 @@ cases:
       error:
         contains:
           - "DPI-C export task not yet supported"
-          - "calls a task"
+          - "calls a user-defined task"
 
   - name: reject_export_task_with_event_wait
     sv: |
