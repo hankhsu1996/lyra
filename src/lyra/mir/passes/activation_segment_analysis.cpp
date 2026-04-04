@@ -244,6 +244,7 @@ void CollectStatementAccesses(
                     [](const TimeFormatEffect&) {},
                     [](const RecordDecisionObservation&) {},
                     [](const RecordDecisionObservationDynamic&) {},
+                    [](const CoverHitEffect&) {},
                 },
                 e.op);
           },
@@ -505,6 +506,7 @@ void AnalyzeStatementSemantics(
                     [](const TimeFormatEffect&) {},
                     [](const RecordDecisionObservation&) {},
                     [](const RecordDecisionObservationDynamic&) {},
+                    [](const CoverHitEffect&) {},
                 },
                 e.op);
           },

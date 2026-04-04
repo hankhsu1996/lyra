@@ -237,6 +237,7 @@ class Context {
   [[nodiscard]] auto GetLyraPrintLiteral() -> llvm::Function*;
   [[nodiscard]] auto GetLyraWarnRateLimited() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRecordDecisionObservation() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraRecordImmediateCoverHit() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintValue() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintEnd() -> llvm::Function*;
@@ -1113,6 +1114,9 @@ class Context {
 
   // Wait-site ID counter. Incremented by NextWaitSiteId().
   uint32_t next_wait_site_id_ = 0;
+
+  // Lazy-initialized runtime function for cover hit recording.
+  llvm::Function* lyra_record_immediate_cover_hit_ = nullptr;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

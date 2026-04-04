@@ -941,6 +941,8 @@ auto Dumper::FormatEffect(const EffectOp& op) const -> std::string {
                                  T, RecordDecisionObservationDynamic>) {
           return std::format(
               "record_decision_dynamic(id={})", effect_op.id.Index());
+        } else if constexpr (std::is_same_v<T, CoverHitEffect>) {
+          return std::format("cover_hit(site={})", effect_op.site_id.Index());
         } else {
           return "unknown_effect";
         }

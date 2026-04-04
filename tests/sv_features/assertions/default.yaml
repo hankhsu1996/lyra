@@ -204,19 +204,161 @@ cases:
       error:
         contains: ["deferred immediate assertions are unsupported"]
 
-  - name: assume_assertion_error
-    description: Immediate assume is unsupported in A1a
+  # A1b: Immediate assume (simulation-identical to assert)
+
+  - name: assume_true
+    description: Passing assume does not produce error
     sv: |
       module Test;
-        int x = 5;
+        int x;
         initial begin
-          assume (x > 0);
+          x = 1;
+          assume (1);
+          x = 2;
           $finish;
         end
       endmodule
     expect:
-      error:
-        contains: ["immediate 'Assume' is unsupported"]
+      variables:
+        x: 2
+
+  - name: assume_false
+    description: Failing assume with no else emits default error
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 1;
+          assume (0);
+          x = 2;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 2
+      stdout:
+        contains:
+          - "error"
+
+  - name: assume_pass_and_fail
+    description: Assume with pass and fail actions
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          assume (0) x = 10; else x = 20;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 20
+
+  # A1b: Immediate cover
+
+  - name: cover_true_hit_count
+    description: Cover with true condition records one hit and runs pass action
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          cover (1) x = 10;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 10
+      cover_hits: [1]
+
+  - name: cover_false_zero_hits
+    description: Cover with false condition records zero hits, no error
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 5;
+          cover (0) x = 10;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 5
+      cover_hits: [0]
+
+  - name: cover_no_action
+    description: Cover with no action block, true condition records hit
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 42;
+          cover (1);
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 42
+      cover_hits: [1]
+
+  - name: cover_in_loop
+    description: Cover in loop accumulates multiple hits on same site
+    sv: |
+      module Test;
+        int count;
+        initial begin
+          count = 0;
+          for (int i = 0; i < 5; i++) begin
+            cover (i > 2) count = count + 1;
+          end
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        count: 2
+      cover_hits: [2]
+
+  - name: cover_two_sites_distinct
+    description: Two cover statements get distinct per-site counters
+    sv: |
+      module Test;
+        initial begin
+          cover (1);
+          cover (0);
+          $finish;
+        end
+      endmodule
+    expect:
+      cover_hits: [1, 0]
+
+  - name: cover_false_no_error
+    description: Cover false must not emit default assertion error
+    sv: |
+      module Test;
+        int x;
+        initial begin
+          x = 0;
+          cover (0);
+          cover (0);
+          cover (0);
+          x = 99;
+          $finish;
+        end
+      endmodule
+    expect:
+      variables:
+        x: 99
+      cover_hits: [0, 0, 0]
+      stdout:
+        not_contains:
+          - "error"
+          - "Error"
 
   # disable_assertions tests
 

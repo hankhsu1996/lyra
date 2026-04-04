@@ -8,6 +8,7 @@
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/mir/cover_site.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instance.hpp"
 #include "lyra/mir/module.hpp"
@@ -133,6 +134,12 @@ struct Design {
   // Final hierarchical names and trace kinds are derived at metadata lowering.
   std::vector<SlotTraceProvenance> slot_trace_provenance;
   std::vector<char> slot_trace_string_pool;
+
+  // Per-site metadata for immediate cover statements. One entry per
+  // cover statement in the design, indexed by CoverSiteId. Populated
+  // during HIR-to-MIR lowering. Runtime hit-count array is sized from
+  // this table.
+  std::vector<ImmediateCoverSiteInfo> immediate_cover_sites;
 };
 
 inline auto GetModuleBody(const Design& design, const Module& mod)

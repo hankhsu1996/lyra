@@ -4,6 +4,7 @@
 #include <unordered_map>
 
 #include "lyra/common/constant_arena.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -11,6 +12,7 @@
 #include "lyra/lowering/hir_to_mir/dpi_registry.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/call.hpp"
+#include "lyra/mir/cover_site.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -133,6 +135,10 @@ struct DeclView {
   // Design-level DPI import declarations visible to this lowering scope.
   // Null when no design-level declaration view is available.
   const DesignDpiImports* dpi_imports = nullptr;
+  // Shared design-global registry for immediate cover site allocation.
+  // Null for lowering scopes that cannot contain cover statements
+  // (e.g., package init lowering).
+  mir::ImmediateCoverSiteRegistry* cover_site_registry = nullptr;
 };
 
 // Result of AllocLocal - provides both the PlaceId and the local slot index.
@@ -220,6 +226,20 @@ struct Context {
   // body_slots: indexed by kModuleSlot id (body-local).
   const std::vector<mir::SlotDesc>* design_slots = nullptr;
   const std::vector<mir::SlotDesc>* body_slots = nullptr;
+
+  // Shared design-global registry for immediate cover site allocation.
+  // Owned by the design lowering scope; all body/process contexts share
+  // the same registry to produce dense design-global site IDs. Null when
+  // cover sites are not being tracked (e.g., design-level init lowering).
+  mir::ImmediateCoverSiteRegistry* cover_site_registry = nullptr;
+
+  auto AllocateCoverSite(SourceSpan span) const -> mir::CoverSiteId {
+    if (cover_site_registry == nullptr) {
+      throw common::InternalError(
+          "Context::AllocateCoverSite", "cover site registry not initialized");
+    }
+    return cover_site_registry->Allocate(span);
+  }
 
   // Stats: count of MaterializeOperandToPlace calls (for --stats output).
   uint64_t materialize_count = 0;

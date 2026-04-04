@@ -9,7 +9,7 @@ Scope: `assert`, `assume`, `cover property`, `cover sequence`, `expect` are simu
 ## Progress
 
 - [ ] A1 -- Immediate assertion statements
-  - [ ] A1a -- Basic immediate assert: pass/fail behavior
+  - [x] A1a -- Basic immediate assert: pass/fail behavior
   - [ ] A1b -- Immediate assume and immediate cover
   - [ ] A1c -- Immediate assertion reporting: default failure actions and severity
 
@@ -53,10 +53,6 @@ Scope: `assert`, `assume`, `cover property`, `cover sequence`, `expect` are simu
 - [ ] A8 -- Assertion control tasks
 
 - [ ] A9 -- Assertion usage profiling and staged enablement
-
-## A1a: Basic immediate assert: pass/fail behavior
-
-Procedural `assert(expr) pass_stmt; else fail_stmt;` in Active region. This is the highest-impact first step -- most assertions in real RTL are immediate checks in procedural blocks. Slang parses these as `ImmediateAssertionStatement` with `assertionKind == Assert`, `isDeferred == false`, `isFinal == false`. Currently blocked at AST-to-HIR with "assertion statements are unsupported" error.
 
 ## A1b: Immediate assume and immediate cover
 

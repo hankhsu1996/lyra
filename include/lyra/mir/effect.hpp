@@ -158,6 +158,29 @@ struct RecordDecisionObservationDynamic {
   Operand selected_arm;   // i16: arm index (valid when kArm)
 };
 
+// Dense index for an immediate cover site. Allocated during HIR-to-MIR
+// lowering and carried through MIR to codegen. Used to index into the
+// runtime hit-count array.
+struct CoverSiteId {
+  uint32_t value = UINT32_MAX;
+
+  explicit operator bool() const {
+    return value != UINT32_MAX;
+  }
+  [[nodiscard]] auto Index() const -> uint32_t {
+    return value;
+  }
+  auto operator==(const CoverSiteId&) const -> bool = default;
+};
+
+// Record a hit for an immediate cover statement (LRM 16.3).
+// Emitted on the true arm of the cover condition. site_id is allocated
+// during HIR-to-MIR lowering (design-global) and lowered to a runtime
+// counter increment by the backend.
+struct CoverHitEffect {
+  CoverSiteId site_id;
+};
+
 // EffectOp is the variant of all effect operations.
 // Effect operations produce side effects but no value.
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
@@ -165,6 +188,6 @@ using EffectOp = std::variant<
     DisplayEffect, SeverityEffect, MemIOEffect, TimeFormatEffect,
     SystemTfEffect, StrobeEffect, MonitorEffect, MonitorControlEffect,
     FillPackedEffect, RecordDecisionObservation,
-    RecordDecisionObservationDynamic>;
+    RecordDecisionObservationDynamic, CoverHitEffect>;
 
 }  // namespace lyra::mir

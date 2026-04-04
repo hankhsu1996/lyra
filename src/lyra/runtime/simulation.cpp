@@ -20,6 +20,7 @@
 #include "lyra/common/format.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
+#include "lyra/runtime/cover_hook.hpp"
 #include "lyra/runtime/dpi_export_context.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/engine_types.hpp"
@@ -564,6 +565,11 @@ extern "C" void LyraRunSimulation(
               abi->wait_site_words, abi->wait_site_word_count));
     }
 
+    // A1b: Immediate cover site hit-count array.
+    if (abi->num_immediate_cover_sites > 0) {
+      engine.InitImmediateCoverSites(abi->num_immediate_cover_sites);
+    }
+
     // R5: Global-only trace signal metadata from constructor.
     // Instance-owned trace metadata lives in BodyObservableLayout::trace_meta.
     if (abi->trace_signal_meta_words != nullptr &&
@@ -652,6 +658,18 @@ extern "C" void LyraRunSimulation(
     if (abnormal || forced) {
       auto snapshot = engine.TakeSchedulerSnapshot();
       lyra::runtime::Engine::RenderSchedulerSnapshot(stderr, snapshot);
+    }
+  }
+
+  // Invoke cover hit callback if registered (test framework hook).
+  if (engine.NumImmediateCoverSites() > 0) {
+    auto callback = lyra::runtime::GetCoverHitCallback();
+    if (callback) {
+      std::vector<uint64_t> hits(engine.NumImmediateCoverSites());
+      for (uint32_t i = 0; i < engine.NumImmediateCoverSites(); ++i) {
+        hits[i] = engine.GetImmediateCoverHitCount(i);
+      }
+      callback(std::move(hits));
     }
   }
 
@@ -1042,7 +1060,7 @@ extern "C" auto LyraResolveInstancePtr(void* eng, uint32_t instance_id)
 extern "C" auto LyraIsTraceObservedLocal(void* eng, void* inst, uint32_t id)
     -> bool {
   if (eng == nullptr) return false;
-  return AsEngine(eng)->IsTraceObserved(MakeLocalRef(inst, id));
+  return Engine::IsTraceObserved(MakeLocalRef(inst, id));
 }
 extern "C" auto LyraIsTraceObservedGlobal(void* eng, uint32_t id) -> bool {
   if (eng == nullptr) return false;

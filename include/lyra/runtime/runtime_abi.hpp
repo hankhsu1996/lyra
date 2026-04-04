@@ -72,7 +72,8 @@ struct RuntimeInstance;
 //      and comb metadata are derived from bundles by the engine. Flat
 //      slot_meta/process_trigger/comb handoff fields now contain
 //      connection/design-global data only.
-inline constexpr uint32_t kRuntimeAbiVersion = 19;
+// v20: A1b immediate cover site count for runtime hit-count array sizing.
+inline constexpr uint32_t kRuntimeAbiVersion = 20;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -134,10 +135,14 @@ struct LyraRuntimeAbi {
   const lyra::runtime::InstanceMetadataBundle* instance_bundles;
   uint32_t num_instance_bundles;
   uint32_t pad_bundles;
+
+  // A1b: Number of immediate cover sites for runtime hit-count array sizing.
+  uint32_t num_immediate_cover_sites;
+  uint32_t pad_cover;
 };
 
 // Hard size/offset contract.
-static_assert(sizeof(LyraRuntimeAbi) == 232);
+static_assert(sizeof(LyraRuntimeAbi) == 240);
 static_assert(offsetof(LyraRuntimeAbi, version) == 0);
 static_assert(offsetof(LyraRuntimeAbi, num_connection_processes) == 188);
 static_assert(offsetof(LyraRuntimeAbi, design_state) == 192);
@@ -145,3 +150,4 @@ static_assert(offsetof(LyraRuntimeAbi, instance_ptrs) == 200);
 static_assert(offsetof(LyraRuntimeAbi, num_instances) == 208);
 static_assert(offsetof(LyraRuntimeAbi, instance_bundles) == 216);
 static_assert(offsetof(LyraRuntimeAbi, num_instance_bundles) == 224);
+static_assert(offsetof(LyraRuntimeAbi, num_immediate_cover_sites) == 232);
