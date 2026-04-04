@@ -1889,8 +1889,8 @@ auto BuildRuntimeAbi(
     llvm::Value* design_state, const ConstructorProcessMeta& process_meta,
     const ConstructorTriggerCombMeta& trigger_comb,
     const ConstructorSlotTraceMeta& slot_trace,
-    uint32_t num_immediate_cover_sites,
-    int8_t global_precision_power) -> llvm::Value* {
+    uint32_t num_immediate_cover_sites, int8_t global_precision_power)
+    -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
