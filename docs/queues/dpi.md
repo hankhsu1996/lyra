@@ -25,7 +25,7 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
   - [x] D4a -- Module-scoped DPI export (instance-bound wrapper dispatch)
   - [x] D4b -- 4-state scalar and packed by-pointer export wrapper marshaling
   - [x] D4c -- Indirect-return modeling for DPI return types requiring hidden result storage (integer); wide packed lowering (kLogicVecWide, kBitVecWide) exists in backend infrastructure but is not end-to-end reachable because slang rejects explicit packed-array DPI return types per IEEE 1800
-  - [ ] D4d -- AOT/LLI export end-to-end integration (currently JIT-only tested)
+  - [x] D4d -- AOT/LLI export end-to-end integration
 - [x] D6a -- svdpi.h runtime library and linker surface
   - [x] D6b -- DPI scope registry and instance-bound export context
   - [x] D6c -- Context import functions (svGetScope in import bodies)
@@ -38,14 +38,6 @@ For the stable architecture: see [dpi-design.md](../dpi-design.md).
 - [ ] D8 -- Open arrays
   - [ ] D8a -- Open-array query and pointer surface
   - [ ] D8b -- Open-array packed/scalar element access
-
-## D4d: AOT/LLI export end-to-end integration
-
-Export wrappers are emitted with ExternalLinkage for all backends, but only JIT has been tested end-to-end. AOT and LLI need verification that export symbols are linkable and callable from external C code.
-
-No infrastructure dependencies.
-
-Where to look: AOT LinkRequest in driver, LLI --dlopen path, test infrastructure for backend-specific DPI tests.
 
 ## D7a: DPI import task suspension protocol
 
