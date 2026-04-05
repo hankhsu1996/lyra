@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <span>
+#include <vector>
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/local_slot_id.hpp"
@@ -9,6 +9,7 @@
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/mir/child_binding_site_id.hpp"
 #include "lyra/mir/compiled_module_header.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
@@ -16,25 +17,26 @@
 
 namespace lyra::mir {
 
-// Compile-time identity of a construction program point where a child
-// may be created. One site can produce zero, one, or many realized
-// descendants at construction time (generate if/for/case).
-// Site identity is stable across instances of the same specialization.
-struct ChildBindingSiteId {
-  uint32_t value = 0;
-  auto operator==(const ChildBindingSiteId&) const -> bool = default;
-};
-
 // Compile-time child instantiation site within a parent body.
 //
 // child_spec is part of the pre-body compile contract and must be
 // available before parent body recipe compilation begins. This is
 // what allows parent-side connection compilation to look up the child's
 // CompiledModuleHeader without waiting for the child body to compile.
+//
+// id is the one canonical durable identity for this child, sufficient
+// for construction-time binding. It is (coord, child_ordinal) from the
+// parent's repertoire descriptor. All binding/resolution uses id.
+//
+// ChildBindingSiteId is a separate compile-time indexing aid for
+// body-local bookkeeping (indexing into child_sites vectors). It is
+// NOT the identity used by runtime/construction binding.
 struct ChildInstantiationSite {
   ChildBindingSiteId site;
-  SymbolId instance_sym;
+  DurableChildId id;
   common::ModuleSpecId child_spec = {};
+  // Retained for diagnostics/debugging only. Not used for binding.
+  SymbolId debug_instance_sym;
   common::OriginId origin = common::OriginId::Invalid();
 };
 
@@ -126,25 +128,18 @@ struct ConnectionRecipe {
 
 // The ONLY legal parent-side child-port resolution path.
 //
-// This is a connection-layer consumer of the header boundary, not a
-// second owner of header semantics. Header artifact ownership and
-// lookup live in compiled_module_header.hpp (HeaderDatabase, FindPort).
-//
-// Parent-side code must not read child CompiledModuleBody, call
-// FindPort directly, or inspect child slot layout through any other
-// API. This helper is the structural enforcement of the parent-child
-// dependency boundary.
+// Operates on canonical body/header abstractions. The body owns child_sites
+// with indexed lookup; the header DB owns port contracts. Parent-side code
+// must not read child CompiledModuleBody, call FindPort directly, or
+// inspect child slot layout through any other API.
 //
 // Frozen algorithmic path:
-//   1. site -> ChildInstantiationSite.child_spec (from child_sites)
-//   2. child_spec -> CompiledModuleHeader (via headers.GetHeader)
-//   3. child_port_sym -> PortEntry (via header.FindPort)
+//   1. site -> body.FindChildSite(site) -> ChildInstantiationSite
+//   2. child_spec -> headers.GetHeader(child_spec) -> CompiledModuleHeader
+//   3. child_port_sym -> header.FindPort(child_port_sym) -> PortEntry
 //   4. PortEntry -> ChildPortContract
-//
-// Implemented in B2 when connection compilation is migrated.
 auto GetChildPortContract(
-    ChildBindingSiteId site, SymbolId child_port_sym,
-    const HeaderDatabase& headers,
-    std::span<const ChildInstantiationSite> child_sites) -> ChildPortContract;
+    const CompiledModuleBody& body, const HeaderDatabase& headers,
+    ChildBindingSiteId site, SymbolId child_port_sym) -> ChildPortContract;
 
 }  // namespace lyra::mir

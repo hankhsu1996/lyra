@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <utility>
 #include <variant>
 
 #include <llvm/ADT/APInt.h>
@@ -191,6 +192,7 @@ auto GetOperandPackedWidth(Context& context, const mir::Operand& operand)
           [&](mir::TempId temp_id) -> TypeId {
             return context.GetTempType(temp_id.value);
           },
+          [](mir::ExternalRefId) -> TypeId { std::unreachable(); },
       },
       operand.payload);
   return PackedBitWidth(types[type_id], types);

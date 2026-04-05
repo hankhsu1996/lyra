@@ -38,7 +38,9 @@ auto TryKernelizeConnection(
   const auto* assign = std::get_if<mir::Assign>(&block.statements[0].data);
   if (assign == nullptr) return std::nullopt;
 
-  const auto& dest_place = arena[assign->dest];
+  auto dest_pid =
+      mir::RequireLocalDest(assign->dest, "ConnectionKernelCollection");
+  const auto& dest_place = arena[dest_pid];
   if (dest_place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal)
     return std::nullopt;
   if (!dest_place.projections.empty()) return std::nullopt;

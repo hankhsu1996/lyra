@@ -4,6 +4,7 @@
 #include <expected>
 #include <format>
 #include <type_traits>
+#include <utility>
 #include <variant>
 
 #include <llvm/IR/Constants.h>
@@ -113,6 +114,7 @@ auto LoadFourStateOperand(
             return context.ReadTempValue(temp_id.value).domain ==
                    ValueDomain::kFourState;
           },
+          [](mir::ExternalRefId) -> bool { std::unreachable(); },
       },
       operand.payload);
 

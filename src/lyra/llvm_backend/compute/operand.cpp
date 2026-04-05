@@ -230,6 +230,9 @@ auto LowerOperandRaw(
             const auto& tv = context.ReadTempValue(temp_id.value);
             return BuildRawValueFromTempValue(context.GetBuilder(), tv);
           },
+          [](mir::ExternalRefId) -> Result<llvm::Value*> {
+            std::unreachable();
+          },
       },
       operand.payload);
 }

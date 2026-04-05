@@ -1224,7 +1224,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
               common::Overloaded{
                   [&](const mir::Assign& a) -> mir::StatementData {
                     return mir::Assign{
-                        .dest = remap_place(a.dest, parent_body.arena),
+                        .dest = remap_place(
+                            mir::RequireLocalDest(
+                                a.dest, "CompileDesignProcesses"),
+                            parent_body.arena),
                         .rhs = remap_rhs(a.rhs, parent_body.arena)};
                   },
                   [&](const mir::DefineTemp& dt) -> mir::StatementData {

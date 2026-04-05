@@ -52,6 +52,9 @@ auto FormatTermOperand(const Operand& op) -> std::string {
       return std::format("$t{}", std::get<TempId>(op.payload).value);
     case Operand::Kind::kConst:
       return "const";
+    case Operand::Kind::kExternalRef:
+      return std::format(
+          "ext_ref({})", std::get<ExternalRefId>(op.payload).value);
     case Operand::Kind::kPoison:
       return "poison";
   }
@@ -303,16 +306,16 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
           using T = std::decay_t<decltype(i)>;
           if constexpr (std::is_same_v<T, Assign>) {
             *out_ << std::format(
-                "{} = {}\n", FormatPlace(i.dest), FormatRhs(i.rhs));
+                "{} = {}\n", FormatWriteTarget(i.dest), FormatRhs(i.rhs));
           } else if constexpr (std::is_same_v<T, GuardedAssign>) {
             *out_ << std::format(
-                "guarded_assign {} = {} if {}\n", FormatPlace(i.dest),
+                "guarded_assign {} = {} if {}\n", FormatWriteTarget(i.dest),
                 FormatRhs(i.rhs), FormatOperand(i.guard));
           } else if constexpr (std::is_same_v<T, Effect>) {
             *out_ << FormatEffect(i.op) << "\n";
           } else if constexpr (std::is_same_v<T, DeferredAssign>) {
             *out_ << std::format(
-                "{} <= {}\n", FormatPlace(i.dest), FormatRhs(i.rhs));
+                "{} <= {}\n", FormatWriteTarget(i.dest), FormatRhs(i.rhs));
           } else if constexpr (std::is_same_v<T, Call>) {
             // Format callee (user function or system TF)
             std::string callee_str = std::visit(
@@ -466,6 +469,9 @@ auto Dumper::FormatIndexOperand(const Operand& op) const -> std::string {
       TempId temp_id = std::get<TempId>(op.payload);
       return std::format("#t{}", temp_id.value);
     }
+    case Operand::Kind::kExternalRef:
+      return std::format(
+          "ext_ref({})", std::get<ExternalRefId>(op.payload).value);
     case Operand::Kind::kPoison:
       return "poison";
   }
@@ -528,6 +534,17 @@ auto Dumper::FormatPlace(PlaceId id) const -> std::string {
   return result;
 }
 
+auto Dumper::FormatWriteTarget(const WriteTarget& target) const -> std::string {
+  return std::visit(
+      common::Overloaded{
+          [this](PlaceId id) -> std::string { return FormatPlace(id); },
+          [](ExternalRefId id) -> std::string {
+            return std::format("ext_ref({})", id.value);
+          },
+      },
+      target);
+}
+
 auto Dumper::FormatOperand(const Operand& op) const -> std::string {
   switch (op.kind) {
     case Operand::Kind::kConst: {
@@ -581,6 +598,9 @@ auto Dumper::FormatOperand(const Operand& op) const -> std::string {
       TempId temp_id = std::get<TempId>(op.payload);
       return std::format("use(#t{})", temp_id.value);
     }
+    case Operand::Kind::kExternalRef:
+      return std::format(
+          "ext_ref({})", std::get<ExternalRefId>(op.payload).value);
     case Operand::Kind::kPoison:
       return "poison";
   }

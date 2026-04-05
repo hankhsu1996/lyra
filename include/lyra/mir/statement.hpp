@@ -4,7 +4,9 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/builtin.hpp"
 #include "lyra/mir/call.hpp"
@@ -15,10 +17,16 @@
 
 namespace lyra::mir {
 
+// Unified write target: either a local addressable Place or a non-local
+// external reference (recipe handle resolved at construction time).
+// All assignment statements use this instead of separate statement kinds
+// per destination carrier.
+using WriteTarget = std::variant<PlaceId, ExternalRefId>;
+
 // Assign: immediate write (dest := rhs).
 // RightHandSide can be Operand (simple value) or Rvalue (computation).
 struct Assign {
-  PlaceId dest;
+  WriteTarget dest;
   RightHandSide rhs;
 };
 
@@ -26,7 +34,7 @@ struct Assign {
 // Semantics: rhs is always evaluated; only the write is gated by guard.
 // For short-circuit semantics (rhs has side effects), use control flow.
 struct GuardedAssign {
-  PlaceId dest;
+  WriteTarget dest;
   RightHandSide rhs;
   Operand guard;  // 1-bit 2-state bool
 };
@@ -39,7 +47,7 @@ struct Effect {
 // DeferredAssign: scheduled write (dest := rhs in NBA region).
 // Semantics: enqueue write for commit in a later region (NBA semantics).
 struct DeferredAssign {
-  PlaceId dest;
+  WriteTarget dest;
   RightHandSide rhs;
 };
 
@@ -114,6 +122,41 @@ struct DpiCall {
   std::optional<CallReturn> ret;
 };
 
+// Write-target helpers. Centralize all WriteTarget dispatch so that
+// individual analysis/lowering files do not re-decide the abstraction split.
+
+[[nodiscard]] inline auto GetLocalPlace(const WriteTarget& t)
+    -> std::optional<PlaceId> {
+  if (const auto* p = std::get_if<PlaceId>(&t)) {
+    return *p;
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] inline auto IsExternalWrite(const WriteTarget& t) -> bool {
+  return std::holds_alternative<ExternalRefId>(t);
+}
+
+template <class FPlace, class FExt>
+auto VisitWriteTarget(const WriteTarget& t, FPlace&& on_place, FExt&& on_ext) {
+  if (const auto* p = std::get_if<PlaceId>(&t)) {
+    return std::forward<FPlace>(on_place)(*p);
+  }
+  return std::forward<FExt>(on_ext)(std::get<ExternalRefId>(t));
+}
+
+// Checked backend boundary helper. Asserts that a WriteTarget is a local
+// PlaceId. Throws InternalError if an ExternalRefId reaches backend code
+// that requires bound local targets. Use this instead of raw std::get.
+[[nodiscard]] inline auto RequireLocalDest(
+    const WriteTarget& t, const char* where) -> PlaceId {
+  if (const auto* p = std::get_if<PlaceId>(&t)) {
+    return *p;
+  }
+  throw common::InternalError(
+      where, "backend received Assign with ExternalRefId destination");
+}
+
 // Statement data variant.
 using StatementData = std::variant<
     Assign, GuardedAssign, Effect, DeferredAssign, Call, DpiCall, BuiltinCall,
@@ -126,5 +169,88 @@ struct Statement {
   StatementData data;
   common::OriginId origin = common::OriginId::Invalid();
 };
+
+// Generic operand walker. Visits every Operand reachable from a statement's
+// value-producing positions: RHS operands, guard operands, call input
+// arguments, and associative-array key/value operands. Does NOT visit
+// write targets (use ForEachWriteTarget for those). Use this for
+// centralized operand traversal rather than hand-maintained lists.
+template <class F>
+void ForEachOperand(const RightHandSide& rhs, F&& f) {
+  std::visit(
+      common::Overloaded{
+          [&](const Operand& op) { f(op); },
+          [&](const Rvalue& rv) {
+            for (const auto& op : rv.operands) {
+              f(op);
+            }
+          },
+      },
+      rhs);
+}
+
+template <class F>
+void ForEachOperand(const StatementData& stmt, F&& f) {
+  std::visit(
+      common::Overloaded{
+          [&](const Assign& a) { ForEachOperand(a.rhs, f); },
+          [&](const GuardedAssign& a) {
+            ForEachOperand(a.rhs, f);
+            f(a.guard);
+          },
+          [&](const DeferredAssign& a) { ForEachOperand(a.rhs, f); },
+          [&](const DefineTemp& dt) { ForEachOperand(dt.rhs, f); },
+          [&](const Call& c) {
+            for (const auto& op : c.in_args) {
+              f(op);
+            }
+          },
+          [&](const DpiCall& c) {
+            for (const auto& arg : c.args) {
+              if (arg.input_value) f(*arg.input_value);
+            }
+          },
+          [&](const BuiltinCall& c) {
+            for (const auto& op : c.args) {
+              f(op);
+            }
+          },
+          [&](const AssocOp& a) {
+            std::visit(
+                common::Overloaded{
+                    [&](const AssocGet& g) { f(g.key); },
+                    [&](const AssocSet& s) {
+                      f(s.key);
+                      f(s.value);
+                    },
+                    [&](const AssocExists& e) { f(e.key); },
+                    [](const AssocDelete&) {},
+                    [&](const AssocDeleteKey& d) { f(d.key); },
+                    [](const AssocNum&) {},
+                    [](const AssocIterFirst&) {},
+                    [](const AssocIterLast&) {},
+                    [](const AssocIterNext&) {},
+                    [](const AssocIterPrev&) {},
+                    [](const AssocSnapshot&) {},
+                },
+                a.data);
+          },
+          [](const Effect&) {},
+      },
+      stmt);
+}
+
+// Generic write-target walker. Visits every WriteTarget in a statement.
+template <class F>
+void ForEachWriteTarget(const StatementData& stmt, F&& f) {
+  std::visit(
+      common::Overloaded{
+          [&](const Assign& a) { f(a.dest); },
+          [&](const GuardedAssign& a) { f(a.dest); },
+          [&](const DeferredAssign& a) { f(a.dest); },
+          [](const auto&) {},
+      },
+      stmt);
+}
 
 }  // namespace lyra::mir

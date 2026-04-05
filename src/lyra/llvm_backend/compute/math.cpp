@@ -51,6 +51,7 @@ auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
           [&](mir::TempId temp_id) -> TypeId {
             return context.GetTempType(temp_id.value);
           },
+          [](mir::ExternalRefId) -> TypeId { std::unreachable(); },
       },
       operand.payload);
 }
@@ -89,6 +90,7 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
             return context.ReadTempValue(temp_id.value).domain ==
                    ValueDomain::kFourState;
           },
+          [](mir::ExternalRefId) -> bool { std::unreachable(); },
       },
       operand.payload);
 }

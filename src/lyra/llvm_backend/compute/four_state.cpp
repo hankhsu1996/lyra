@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -58,6 +59,7 @@ auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
             return context.ReadTempValue(temp_id.value).domain ==
                    ValueDomain::kFourState;
           },
+          [](mir::ExternalRefId) -> bool { std::unreachable(); },
       },
       operand.payload);
 }

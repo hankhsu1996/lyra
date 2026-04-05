@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -59,6 +60,7 @@ auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
           [&](mir::TempId temp_id) -> TypeId {
             return context.GetTempType(temp_id.value);
           },
+          [](mir::ExternalRefId) -> TypeId { std::unreachable(); },
       },
       operand.payload);
 }

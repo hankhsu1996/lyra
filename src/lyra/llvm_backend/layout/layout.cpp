@@ -700,11 +700,13 @@ auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
       std::visit(
           common::Overloaded{
               [&](const mir::Assign& a) {
-                places.insert(a.dest);
+                places.insert(
+                    mir::RequireLocalDest(a.dest, "LayoutCollection"));
                 CollectPlacesFromRhs(a.rhs, places);
               },
               [&](const mir::GuardedAssign& ga) {
-                places.insert(ga.dest);
+                places.insert(
+                    mir::RequireLocalDest(ga.dest, "LayoutCollection"));
                 CollectPlacesFromRhs(ga.rhs, places);
                 CollectPlaceFromOperand(ga.guard, places);
               },
@@ -712,7 +714,8 @@ auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
                 CollectPlacesFromEffectOp(e.op, places);
               },
               [&](const mir::DeferredAssign& da) {
-                places.insert(da.dest);
+                places.insert(
+                    mir::RequireLocalDest(da.dest, "LayoutCollection"));
                 CollectPlacesFromRhs(da.rhs, places);
               },
               [&](const mir::Call& call) {
@@ -1008,7 +1011,9 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
         if (const auto* rv = std::get_if<mir::Rvalue>(&assign->rhs)) {
           if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
         }
-        const auto& root = arena[assign->dest].root;
+        const auto* dest_pid = std::get_if<mir::PlaceId>(&assign->dest);
+        if (!dest_pid) return std::nullopt;
+        const auto& root = arena[*dest_pid].root;
         if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
           write_slots.insert(
               {.scope = mir::SignalRef::Scope::kModuleLocal,
@@ -1023,7 +1028,8 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
         if (const auto* rv = std::get_if<mir::Rvalue>(&ga->rhs)) {
           if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
         }
-        const auto& root = arena[ga->dest].root;
+        auto ga_dest = mir::RequireLocalDest(ga->dest, "LayoutCollection");
+        const auto& root = arena[ga_dest].root;
         if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
           write_slots.insert(
               {.scope = mir::SignalRef::Scope::kModuleLocal,

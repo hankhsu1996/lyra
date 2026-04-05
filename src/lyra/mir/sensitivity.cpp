@@ -253,7 +253,10 @@ void TransferStatement(
             // 2. Transfer: unconditional whole-signal write extends must-def.
             // Phase 1: only plain Assign to an unprojected signal root.
             // Projected, guarded, and deferred writes are conservative.
-            const auto& dest = arena[assign.dest];
+            // ExternalRefId targets have no local place -- skip must-def.
+            const auto* dest_pid = std::get_if<PlaceId>(&assign.dest);
+            if (!dest_pid) return;
+            const auto& dest = arena[*dest_pid];
             auto path = TryExtractWholeSignalPath(dest);
             if (path.has_value()) {
               must_def.Insert(*path);

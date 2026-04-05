@@ -1,5 +1,6 @@
 #pragma once
 
+#include <unordered_map>
 #include <vector>
 
 #include "lyra/common/module_identity.hpp"
@@ -11,6 +12,8 @@
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::mir {
+
+class CompiledSpecialization;
 
 // Specialization-scoped compiled body artifact.
 //
@@ -31,8 +34,29 @@ struct CompiledModuleBody {
   std::vector<ExternalAccessRecipe> external_refs;
   std::vector<ChildInstantiationSite> child_sites;
   std::vector<ConnectionRecipe> connection_recipes;
-  // construction_ops deferred to B2/B3 -- shape depends on
-  // NonLocalTargetRecipe which is not yet frozen.
+
+  // Indexed lookup into child_sites by ChildBindingSiteId.
+  // O(1) via site_index_. Returns nullptr if not found.
+  // Index is built during finalization (MakeCompiledSpecialization).
+  [[nodiscard]] auto FindChildSite(ChildBindingSiteId id) const
+      -> const ChildInstantiationSite*;
+
+  // Indexed lookup into external_refs by ExternalRefId.
+  // O(1) by vector position. Returns nullptr if ref_id is out of range.
+  [[nodiscard]] auto GetExternalAccessRecipe(ExternalRefId id) const
+      -> const ExternalAccessRecipe*;
+
+ private:
+  friend auto MakeCompiledSpecialization(
+      common::ModuleSpecId spec_id, CompiledModuleHeaderId header_id,
+      const HeaderDatabase& headers, CompiledModuleBody body)
+      -> CompiledSpecialization;
+
+  // Build the site index from child_sites. Called during finalization only.
+  void BuildChildSiteIndex();
+
+  // ChildBindingSiteId.value -> index into child_sites.
+  std::unordered_map<uint32_t, uint32_t> site_index_;
 };
 
 // Header and body are siblings, not nested.

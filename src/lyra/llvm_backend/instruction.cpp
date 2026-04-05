@@ -4,6 +4,7 @@
 #include <llvm/IR/DerivedTypes.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"

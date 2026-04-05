@@ -56,6 +56,13 @@ void VerifyLoweredMir(
             [&](const mir::Module& mod) {
               const auto& body = mir::GetModuleBody(design, mod);
               const auto& arena = body.arena;
+              // Module bodies use kBackendReady because they are still
+              // mir::ModuleBody (old type, cannot contain ExternalRefId).
+              // When Phase 2 migrates to CompiledModuleBody, this call site
+              // switches to VerifyPreBackendBody(compiled_body, ...).
+              mir::VerifyContext cx{
+                  nullptr, &type_arena,
+                  mir::VerifyContext::Phase::kBackendReady};
               std::string_view module_path =
                   instance_table.GetPathBySymbol(mod.instance_sym);
               for (size_t fi = 0; fi < body.functions.size(); ++fi) {
@@ -64,7 +71,7 @@ void VerifyLoweredMir(
                         ? std::format("element[{}]: function[{}]", ei, fi)
                         : std::format("{}: function[{}]", module_path, fi);
                 mir::VerifyFunction(
-                    arena[body.functions[fi]], arena, type_arena, label);
+                    arena[body.functions[fi]], arena, cx, label);
               }
               for (size_t pi = 0; pi < body.processes.size(); ++pi) {
                 const auto& proc = arena[body.processes[pi]];
@@ -75,16 +82,18 @@ void VerifyLoweredMir(
                                         : std::format(
                                               "{}: {}[{}]", module_path,
                                               ProcessKindStr(proc.kind), pi);
-                mir::VerifyProcess(proc, arena, type_arena, label);
+                mir::VerifyProcess(proc, arena, cx, label);
               }
             },
             [&](const mir::Package& pkg) {
+              mir::VerifyContext cx{
+                  nullptr, &type_arena,
+                  mir::VerifyContext::Phase::kBackendReady};
               for (size_t fi = 0; fi < pkg.functions.size(); ++fi) {
                 std::string label =
                     std::format("element[{}]: function[{}]", ei, fi);
                 mir::VerifyFunction(
-                    design_arena[pkg.functions[fi]], design_arena, type_arena,
-                    label);
+                    design_arena[pkg.functions[fi]], design_arena, cx, label);
               }
             },
         },

@@ -2257,16 +2257,22 @@ struct PlaceCollector {
             [&](const auto& data) {
               using T = std::decay_t<decltype(data)>;
               if constexpr (std::is_same_v<T, mir::Assign>) {
-                CollectFromPlace(data.dest, arena);
+                CollectFromPlace(
+                    mir::RequireLocalDest(data.dest, "ProcessPlaceCollection"),
+                    arena);
                 CollectFromRhs(data.rhs, arena);
               } else if constexpr (std::is_same_v<T, mir::GuardedAssign>) {
-                CollectFromPlace(data.dest, arena);
+                CollectFromPlace(
+                    mir::RequireLocalDest(data.dest, "ProcessPlaceCollection"),
+                    arena);
                 CollectFromRhs(data.rhs, arena);
                 CollectFromOperand(data.guard, arena);
               } else if constexpr (std::is_same_v<T, mir::Effect>) {
                 CollectFromEffect(data.op, arena);
               } else if constexpr (std::is_same_v<T, mir::DeferredAssign>) {
-                CollectFromPlace(data.dest, arena);
+                CollectFromPlace(
+                    mir::RequireLocalDest(data.dest, "ProcessPlaceCollection"),
+                    arena);
                 CollectFromRhs(data.rhs, arena);
               } else if constexpr (std::is_same_v<T, mir::Call>) {
                 // Scan input arguments

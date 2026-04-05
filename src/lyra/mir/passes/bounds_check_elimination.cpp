@@ -147,7 +147,9 @@ void PropagateProvenTrueTemps(
         }
 
         if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
-          auto dest_temp = ResolvePlaceToTempId(assign->dest, arena);
+          const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
+          if (!dest_pid) continue;
+          auto dest_temp = ResolvePlaceToTempId(*dest_pid, arena);
           if (!dest_temp) continue;
           if (IsTempProvenTrue(proven_true, *dest_temp)) continue;
           if (IsRhsProvenTrue(proven_true, assign->rhs, arena)) {

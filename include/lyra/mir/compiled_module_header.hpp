@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -53,14 +52,13 @@ struct CompiledModuleHeaderId {
 
 // Forward declarations for friend access.
 struct ChildBindingSiteId;
-struct ChildInstantiationSite;
 struct ChildPortContract;
+struct CompiledModuleBody;
 class HeaderDatabase;
 
 auto GetChildPortContract(
-    ChildBindingSiteId site, SymbolId child_port_sym,
-    const HeaderDatabase& headers,
-    std::span<const ChildInstantiationSite> child_sites) -> ChildPortContract;
+    const CompiledModuleBody& body, const HeaderDatabase& headers,
+    ChildBindingSiteId site, SymbolId child_port_sym) -> ChildPortContract;
 
 // Specialization-scoped lowered child contract artifact.
 //
@@ -95,9 +93,8 @@ class CompiledModuleHeader {
  private:
   friend class HeaderDatabase;
   friend auto GetChildPortContract(
-      ChildBindingSiteId site, SymbolId child_port_sym,
-      const HeaderDatabase& headers,
-      std::span<const ChildInstantiationSite> child_sites) -> ChildPortContract;
+      const CompiledModuleBody& body, const HeaderDatabase& headers,
+      ChildBindingSiteId site, SymbolId child_port_sym) -> ChildPortContract;
 
   // Symbol lookup primitive. Used by GetChildPortContract and HeaderDatabase.
   // Returns nullptr if the symbol is not a port of this module.
