@@ -1574,7 +1574,7 @@ auto EmitResolveModuleBinding(Context& context) -> ModuleBindingValues {
 auto EmitDpiExportWrappers(
     Context& context, const std::vector<mir::DpiExportWrapperDesc>& exports,
     const std::unordered_map<
-        mir::ModuleExportCalleeKey, llvm::Function*,
+        mir::ModuleExportCalleeKey, ModuleExportCalleeInfo,
         mir::ModuleExportCalleeKeyHash>& module_export_callees)
     -> Result<void> {
   if (exports.empty()) return {};
@@ -1608,6 +1608,22 @@ auto EmitDpiExportWrappers(
       // Package path: resolve binding + direct call to design-global callee.
       auto binding = EmitResolvePackageBinding(context);
       const auto& entry = context.GetDesignFunction(desc.target.package_symbol);
+
+      // Reject if callee accepts process ownership (either directly from
+      // process-owned effects or transitively via call graph propagation).
+      // DPI wrappers have no process context to provide.
+      const auto& callee_func = context.GetDesignArena()[entry.func_id];
+      if (callee_func.abi_contract.accepts_process_ownership) {
+        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+            callee_func.origin,
+            std::format(
+                "DPI export '{}' targets a function that requires process "
+                "execution context (e.g. contains unique/priority case); "
+                "this is not supported from DPI call paths",
+                desc.c_name),
+            UnsupportedCategory::kFeature));
+      }
+
       llvm::Function* internal_fn = entry.llvm_func;
       if (internal_fn == nullptr) {
         throw common::InternalError(
@@ -1648,7 +1664,21 @@ auto EmitDpiExportWrappers(
                 "module callee for DPI export '{}' not found in accumulator",
                 desc.c_name));
       }
-      llvm::Function* internal_fn = callee_it->second;
+      const auto& callee_info = callee_it->second;
+
+      // Reject if callee accepts process ownership (DPI wrappers have none).
+      if (callee_info.accepts_process_ownership) {
+        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+            common::OriginId::Invalid(),
+            std::format(
+                "DPI export '{}' targets a function that requires process "
+                "execution context (e.g. contains unique/priority case); "
+                "this is not supported from DPI call paths",
+                desc.c_name),
+            UnsupportedCategory::kFeature));
+      }
+
+      llvm::Function* internal_fn = callee_info.llvm_func;
 
       // Push per-wrapper-call context (D7a: suspension_disallowed for tasks).
       // Inherits design/engine/scope from the current simulation-lifetime head.

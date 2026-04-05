@@ -7,6 +7,7 @@
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/basic_block.hpp"
+#include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/semantic/decision.hpp"
@@ -82,6 +83,16 @@ inline auto IsObserverProgram(RuntimeProgramKind kind) -> bool {
          kind == RuntimeProgramKind::kMonitorCheck;
 }
 
+// ABI contract: what hidden context a callable accepts.
+// Formed at callable-definition policy level, not derived from body.
+// Orthogonal to BodyExecutionRequirement; verifier checks compatibility.
+struct CallableAbiContract {
+  // Module binding group: this_ptr + instance_ptr + instance_id.
+  bool needs_module_binding = false;
+  // Active caller process ownership may be threaded to this callable.
+  bool accepts_process_ownership = false;
+};
+
 struct FunctionParam {
   TypeId type;
   PassingKind kind = PassingKind::kValue;
@@ -130,6 +141,41 @@ struct Function {
 
   // Stats: materialize-to-place operations (for --stats output).
   uint64_t materialize_count = 0;
+
+  // Body execution requirement: computed once at metadata formation time
+  // from the effect ops in this function's body. Stored here as the single
+  // source of truth; consumers (verifier, call lowering) read this field
+  // rather than re-walking the body.
+  BodyExecutionRequirement body_requirement =
+      BodyExecutionRequirement::kGenericCallable;
+
+  // ABI contract: what hidden context this callable accepts.
+  // Formed from callable-definition policy, independent of body_requirement.
+  // The verifier checks that body_requirement is satisfiable by this contract.
+  CallableAbiContract abi_contract;
 };
+
+// Compute the body execution requirement for a function by walking all
+// effect ops in its blocks. Takes the max requirement across all effects.
+auto ComputeBodyExecutionRequirement(const Function& func)
+    -> BodyExecutionRequirement;
+
+// Seed the ABI contract for a callable from intrinsic body requirement.
+// Sets accepts_process_ownership = true iff this body directly contains
+// process-owned effects. Observer programs never accept (own ABI).
+// needs_module_binding is set separately by the backend.
+//
+// This is the seed step only. PropagateProcessOwnershipAbi() must run
+// after all bodies are set to propagate through the call graph: if A
+// calls B, and B accepts, then A must also accept (to carry process_id).
+auto BuildCallableAbiContract(const Function& func) -> CallableAbiContract;
+
+// Check if a function calls any callee that accepts process ownership.
+// Covers both local (FunctionId) and design-global (DesignFunctionRef) edges.
+// design_arena may be null if no cross-arena lookup is needed.
+class Arena;
+auto CallsCalleeAcceptingProcessOwnership(
+    const Function& func, const std::vector<Function>& local_functions,
+    const Arena* design_arena) -> bool;
 
 }  // namespace lyra::mir

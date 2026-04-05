@@ -78,10 +78,37 @@ class Arena final {
 
   // Fill in a previously reserved function's body. Preserves the frozen
   // signature and canonical_symbol from ReserveFunction.
+  // Computes intrinsic body_requirement from this function's own effects only.
+  // ABI contract is seeded here but may need propagation via
+  // PropagateProcessOwnershipAbi() after all bodies are set.
   void SetFunctionBody(FunctionId id, Function func) {
     func.signature = std::move(functions_[id.value].signature);
     func.canonical_symbol = functions_[id.value].canonical_symbol;
+    func.body_requirement = ComputeBodyExecutionRequirement(func);
+    func.abi_contract = BuildCallableAbiContract(func);
     functions_[id.value] = std::move(func);
+  }
+
+  // Propagate accepts_process_ownership through internal call graph.
+  // If function A calls function B (local or design-global), and B accepts
+  // process ownership, then A must also accept (to carry process_id).
+  // body_requirement is NOT mutated -- it stays intrinsic.
+  // design_arena: optional, for resolving DesignFunctionRef cross-arena edges.
+  // Pass nullptr for the design arena's own propagation (no cross-arena refs).
+  void PropagateProcessOwnershipAbi(const Arena* design_arena = nullptr) {
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      for (auto& func : functions_) {
+        if (func.abi_contract.accepts_process_ownership) continue;
+        if (IsObserverProgram(func.runtime_kind)) continue;
+        if (CallsCalleeAcceptingProcessOwnership(
+                func, functions_, design_arena)) {
+          func.abi_contract.accepts_process_ownership = true;
+          changed = true;
+        }
+      }
+    }
   }
 
   [[nodiscard]] auto operator[](PlaceId id) const -> const Place& {

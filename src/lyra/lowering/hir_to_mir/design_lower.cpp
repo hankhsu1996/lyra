@@ -475,6 +475,9 @@ auto LowerDesign(
     compiled_bindings = std::move(*binding_result);
   }
 
+  // Propagate process ownership through design-global call graph.
+  mir_arena.PropagateProcessOwnershipAbi();
+
   return DesignLoweringResult{
       .design = std::move(result),
       .compiled_bindings = std::move(compiled_bindings),

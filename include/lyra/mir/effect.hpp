@@ -209,4 +209,19 @@ using EffectOp = std::variant<
     RecordDecisionObservation, RecordDecisionObservationDynamic,
     CoverHitEffect>;
 
+// Body execution requirement: what a callable body needs to execute correctly.
+// Computed once from body contents at metadata formation time, stored on
+// mir::Function. Two consumers read the stored value (verifier, call lowering);
+// neither re-walks the body.
+enum class BodyExecutionRequirement : uint8_t {
+  kGenericCallable,  // Only needs design + engine
+  kProcessOwned,  // Requires active process ownership (e.g. decision tracking)
+};
+
+// Classify an effect's execution context requirement.
+// RecordDecisionObservation* requires active process ownership;
+// all other effects only need generic callable context.
+auto GetEffectExecutionRequirement(const EffectOp& op)
+    -> BodyExecutionRequirement;
+
 }  // namespace lyra::mir

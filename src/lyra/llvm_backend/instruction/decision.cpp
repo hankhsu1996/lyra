@@ -7,19 +7,26 @@
 #include <llvm/IR/Type.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 auto LowerRecordDecisionObservation(
-    Context& ctx, const mir::RecordDecisionObservation& obs) -> Result<void> {
+    Context& ctx, llvm::Value* process_id,
+    const mir::RecordDecisionObservation& obs) -> Result<void> {
+  if (process_id == nullptr) {
+    throw common::InternalError(
+        "LowerRecordDecisionObservation",
+        "null process_id for process-owned decision lowering");
+  }
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   builder.CreateCall(
       ctx.GetLyraRecordDecisionObservation(),
-      {ctx.GetEnginePointer(), ctx.GetCurrentProcessId(),
+      {ctx.GetEnginePointer(), process_id,
        llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), obs.id.Index()),
        llvm::ConstantInt::get(
            i8_ty, static_cast<uint8_t>(obs.match_class_const)),
@@ -31,8 +38,13 @@ auto LowerRecordDecisionObservation(
 }
 
 auto LowerRecordDecisionObservationDynamic(
-    Context& ctx, SlotAccessResolver& resolver,
+    Context& ctx, llvm::Value* process_id, SlotAccessResolver& resolver,
     const mir::RecordDecisionObservationDynamic& obs) -> Result<void> {
+  if (process_id == nullptr) {
+    throw common::InternalError(
+        "LowerRecordDecisionObservationDynamic",
+        "null process_id for process-owned decision lowering");
+  }
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
 
@@ -61,7 +73,7 @@ auto LowerRecordDecisionObservationDynamic(
 
   builder.CreateCall(
       ctx.GetLyraRecordDecisionObservation(),
-      {ctx.GetEnginePointer(), ctx.GetCurrentProcessId(),
+      {ctx.GetEnginePointer(), process_id,
        llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), obs.id.Index()),
        mc_v, sk_v, sa_v});
   return {};

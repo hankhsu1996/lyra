@@ -667,7 +667,8 @@ class Context {
   void SetEnginePointer(llvm::Value* engine_ptr);
   [[nodiscard]] auto GetEnginePointer() -> llvm::Value*;
 
-  // process_id: loaded from state->header.process_id, i32 identity
+  // process_id: loaded from state->header.process_id, i32 identity.
+  // Used only by process-entry setup (EmitProcessStateSetup).
   void SetCurrentProcessId(llvm::Value* process_id);
   [[nodiscard]] auto GetCurrentProcessId() -> llvm::Value*;
 
@@ -844,8 +845,8 @@ class Context {
   //                  instance_ptr*, instance_id_i32, args...)
   // For managed returns: out_ptr* prepended, return type becomes void.
   [[nodiscard]] auto BuildUserFunctionType(
-      const mir::FunctionSignature& sig, bool is_module_scoped)
-      -> Result<llvm::FunctionType*>;
+      const mir::FunctionSignature& sig, bool is_module_scoped,
+      bool accepts_process_ownership) -> Result<llvm::FunctionType*>;
 
   // Check if a function uses out-param calling convention (managed return).
   [[nodiscard]] auto FunctionUsesSret(mir::FunctionId func_id) const -> bool;

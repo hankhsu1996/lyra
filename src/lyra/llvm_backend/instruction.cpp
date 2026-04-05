@@ -26,15 +26,17 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
-auto LowerStatement(Context& context, const mir::Statement& statement)
-    -> Result<void> {
+auto LowerStatement(
+    Context& context, const mir::Statement& statement,
+    const ActiveExecutionMode& mode) -> Result<void> {
   CanonicalSlotAccess canonical(context);
-  return LowerStatement(context, canonical, statement);
+  return LowerStatement(context, canonical, statement, mode);
 }
 
 auto LowerStatement(
     Context& context, SlotAccessResolver& resolver,
-    const mir::Statement& statement) -> Result<void> {
+    const mir::Statement& statement, const ActiveExecutionMode& mode)
+    -> Result<void> {
   OriginScope origin_scope(context, statement.origin);
   StatementScope scope(context);
 
@@ -47,13 +49,13 @@ auto LowerStatement(
             return LowerGuardedAssign(context, resolver, guarded);
           },
           [&](const mir::Effect& effect) -> Result<void> {
-            return LowerEffectOp(context, resolver, effect.op);
+            return LowerEffectOp(context, resolver, effect.op, mode);
           },
           [&](const mir::DeferredAssign& deferred) -> Result<void> {
             return LowerDeferredAssign(context, resolver, deferred);
           },
           [&](const mir::Call& call) -> Result<void> {
-            return LowerCall(context, resolver, call);
+            return LowerCall(context, resolver, call, mode);
           },
           [&](const mir::DpiCall& dpi_call) -> Result<void> {
             return dpi::LowerDpiImportCall(context, dpi_call);

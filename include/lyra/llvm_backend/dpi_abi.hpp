@@ -62,10 +62,16 @@ auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
 // staged decode/writeback. Packed-vector returns rejected upstream (D4c).
 // Must be called after all internal functions are declared and defined
 // (both package Phase 3 and module Phase 4).
+// Resolved module export callee with contract info for DPI validation.
+struct ModuleExportCalleeInfo {
+  llvm::Function* llvm_func = nullptr;
+  bool accepts_process_ownership = false;
+};
+
 auto EmitDpiExportWrappers(
     Context& context, const std::vector<mir::DpiExportWrapperDesc>& exports,
     const std::unordered_map<
-        mir::ModuleExportCalleeKey, llvm::Function*,
+        mir::ModuleExportCalleeKey, ModuleExportCalleeInfo,
         mir::ModuleExportCalleeKeyHash>& module_export_callees) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm::dpi

@@ -281,3 +281,68 @@ cases:
       error:
         contains:
           - "my_fn"
+
+  - name: reject_export_function_with_unique_case
+    sv: |
+      package dpi_pkg;
+        function int decode(int sel);
+          unique case (sel)
+            0: return 10;
+            1: return 20;
+            default: return 99;
+          endcase
+        endfunction
+        export "DPI-C" function decode;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI export"
+          - "process execution context"
+
+  - name: reject_export_function_with_priority_case
+    sv: |
+      package dpi_pkg;
+        function int prio_fn(int sel);
+          priority case (sel)
+            0: return 10;
+            1: return 20;
+            default: return 99;
+          endcase
+        endfunction
+        export "DPI-C" function prio_fn;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI export"
+          - "process execution context"
+
+  - name: reject_export_transitive_unique_case
+    sv: |
+      package dpi_pkg;
+        function int inner(int sel);
+          unique case (sel)
+            0: return 10;
+            default: return 99;
+          endcase
+        endfunction
+        function int outer(int sel);
+          return inner(sel);
+        endfunction
+        export "DPI-C" function outer;
+      endpackage
+      module Test;
+        initial begin end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "DPI export"
+          - "process execution context"
