@@ -57,7 +57,7 @@ LLVM IR is not where language semantics live.
 
 | Must Do                                       | Must NOT Do                                           |
 | --------------------------------------------- | ----------------------------------------------------- |
-| Produce self-contained CompiledModuleSpec     | Reference design-global slot IDs                      |
+| Produce self-contained CompiledSpecialization | Reference design-global slot IDs                      |
 | Use specialization-constant offsets only      | Embed instance paths in code                          |
 | Classify parameters (structural vs value)     | Depend on instance count or ordering                  |
 | Export SpecLayout, metadata, process info     | Require design-global knowledge                       |

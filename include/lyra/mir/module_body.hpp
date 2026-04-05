@@ -11,7 +11,12 @@ namespace lyra::mir {
 enum class SlotKind : uint8_t;
 struct SlotDesc;
 
-// Specialization-owned behavioral MIR for a module body.
+// Implementation-detail body container, pending migration to
+// CompiledModuleBody (compiled_specialization.hpp) in B2.
+//
+// CompiledModuleBody is the ONLY public specialization-scoped body
+// artifact type going forward. New code must not depend on this type
+// as a public contract. Existing consumers will be migrated in B2.
 //
 // Owns all body-local MIR storage: processes, functions, places, and
 // slot descriptors. ProcessIds, FunctionIds, and body-local PlaceIds are

@@ -21,11 +21,9 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] R4 -- Constructor-to-runtime handoff preserves per-instance structure
 - [x] R5 -- Observability/trace/snapshot on object-local coordinates
 - [ ] B -- Recipe model: non-local access, connections, construction (see [compilation-model.md](../compilation-model.md))
-  - [ ] B-types -- Define external ref handle, connection recipe, child binding site as MIR types
-  - [ ] B-hier -- Hierarchical refs emit external ref handles; delete ResolveHierarchicalRef, cross_instance_places, kDesignGlobal hierarchical lowering
-  - [ ] B-conn -- Connections emit body-local recipes; delete InstanceSlotResolver endpoint resolution, backend flat-process reconstruction
-  - [ ] B-ctor -- Constructor binds recipes using materialized object graph; delete design-level topology resolution from lowering
-  - [ ] B-runtime -- Bound-handle model becomes sole non-local runtime path; delete flat cross-instance design-global arena for instance-owned state
+  - [ ] B1 -- Freeze compile-time contract boundary: CompiledModuleHeader/Body/Specialization types, core recipe types (ExternalRefId, ConnectionRecipe, ChildBindingSiteId), header-only dependency rule, documented descendant-path direction (NonLocalTargetRecipe deferred to B2)
+  - [ ] B2 -- Compile-time recipe lowering: hierarchical refs to external ref handles, connections to body-local recipes, parent-child port via CompiledModuleHeader; delete cross_instance_places, ResolveHierarchicalRef, InstanceSlotResolver, ConnectionEndpointRef, backend clone/remap
+  - [ ] B3 -- Construction/runtime binding and execution: constructor binds recipes through construction cursor, runtime executes bound handles and installed connections; delete flat cross-instance design-global arena for instance-owned state
 - [ ] T1 -- Topology-independence validation (scaling gates)
 - [ ] F1 -- Parallel specialization compilation
   - [x] F1-design -- Parallel ownership model
@@ -45,7 +43,7 @@ F1 (parallel compilation) is independent of the R-series and B-series and can pr
 
 The R-series (R1-R5) is complete. All instance-owned state uses object-local coordinates end-to-end.
 
-B-types is prerequisite-free. B-hier and B-conn depend on B-types but are independent of each other. B-ctor depends on B-hier and B-conn. B-runtime depends on B-ctor.
+B1 is prerequisite-free (investigation + type boundary). B2 depends on B1 (compile-time migration). B3 depends on B2 (construction/runtime migration).
 
 - **T1 (validation)** runs after C1, the R-series, and the B-series.
 
