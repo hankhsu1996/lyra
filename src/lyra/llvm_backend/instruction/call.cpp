@@ -38,12 +38,13 @@ struct ResolvedCallee {
   TypeId return_type;
   bool uses_sret = false;
   bool is_module_scoped = false;
+  bool accepts_process_ownership = false;
   mir::FunctionId func_id;  // For error messages
 };
 
 auto LowerUserCallImpl(
-    Context& context, const mir::Call& call, const ResolvedCallee& resolved)
-    -> Result<void> {
+    Context& context, const mir::Call& call, const ResolvedCallee& resolved,
+    const ActiveExecutionMode& mode) -> Result<void> {
   auto& builder = context.GetBuilder();
   llvm::Function* callee = resolved.llvm_func;
   TypeId return_type = resolved.return_type;
@@ -103,6 +104,19 @@ auto LowerUserCallImpl(
     args.push_back(context.GetThisPointer());
     args.push_back(context.GetInstancePointer());
     args.push_back(context.GetDynamicInstanceId());
+  }
+
+  // Process ownership threading: if callee accepts process ownership,
+  // the caller must be executing under active process ownership to forward it.
+  if (resolved.accepts_process_ownership) {
+    if (mode.process_id == nullptr) {
+      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
+          context.GetCurrentOrigin(),
+          "call to callable requiring active process ownership from "
+          "a non-process context (e.g. DPI export wrapper)",
+          UnsupportedCategory::kFeature));
+    }
+    args.push_back(mode.process_id);
   }
 
   // Build argument list: input values + output/inout destination pointers
@@ -240,14 +254,14 @@ auto LowerSystemTfCall(
 }  // namespace
 
 auto LowerCall(
-    Context& context, SlotAccessResolver& /*resolver*/, const mir::Call& call)
-    -> Result<void> {
-  // Calls are kMayWriteAny boundaries -- sync happens before them.
-  // Delegate to canonical version.
-  return LowerCall(context, call);
+    Context& context, SlotAccessResolver& /*resolver*/, const mir::Call& call,
+    const ActiveExecutionMode& mode) -> Result<void> {
+  return LowerCall(context, call, mode);
 }
 
-auto LowerCall(Context& context, const mir::Call& call) -> Result<void> {
+auto LowerCall(
+    Context& context, const mir::Call& call, const ActiveExecutionMode& mode)
+    -> Result<void> {
   return std::visit(
       common::Overloaded{
           [&](mir::FunctionId func_id) -> Result<void> {
@@ -259,9 +273,11 @@ auto LowerCall(Context& context, const mir::Call& call) -> Result<void> {
                 .return_type = func.signature.return_type,
                 .uses_sret = context.FunctionUsesSret(func_id),
                 .is_module_scoped = context.IsModuleScopedFunction(func_id),
+                .accepts_process_ownership =
+                    func.abi_contract.accepts_process_ownership,
                 .func_id = func_id,
             };
-            return LowerUserCallImpl(context, call, resolved);
+            return LowerUserCallImpl(context, call, resolved, mode);
           },
           [&](const mir::DesignFunctionRef& ref) -> Result<void> {
             const auto& entry = context.GetDesignFunction(ref.symbol);
@@ -273,9 +289,11 @@ auto LowerCall(Context& context, const mir::Call& call) -> Result<void> {
                 .uses_sret = func.signature.return_policy ==
                              mir::ReturnPolicy::kSretOutParam,
                 .is_module_scoped = false,
+                .accepts_process_ownership =
+                    func.abi_contract.accepts_process_ownership,
                 .func_id = entry.func_id,
             };
-            return LowerUserCallImpl(context, call, resolved);
+            return LowerUserCallImpl(context, call, resolved, mode);
           },
           [&](SystemTfOpcode opcode) -> Result<void> {
             return LowerSystemTfCall(context, call, opcode);

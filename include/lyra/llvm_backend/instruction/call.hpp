@@ -2,27 +2,20 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/execution_mode.hpp"
 #include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 class SlotAccessResolver;
 
-// Lower unified Call instruction.
-//
-// Dispatches based on callee type:
-// - FunctionId: User function call with staging temps
-// - SystemTfOpcode: System TF call (e.g., $value$plusargs)
-//
-// All outputs (return + writebacks) follow staging discipline:
-// 1. Results written to tmp places
-// 2. tmp values committed to dest places via CommitValue
-auto LowerCall(Context& context, const mir::Call& call) -> Result<void>;
-
-// Resolver-aware overload.
 auto LowerCall(
-    Context& context, SlotAccessResolver& resolver, const mir::Call& call)
+    Context& context, const mir::Call& call, const ActiveExecutionMode& mode)
     -> Result<void>;
+
+auto LowerCall(
+    Context& context, SlotAccessResolver& resolver, const mir::Call& call,
+    const ActiveExecutionMode& mode) -> Result<void>;
 
 // Lower $value$plusargs via unified Call.
 // Exposed for testing and internal use.

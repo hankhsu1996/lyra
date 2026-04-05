@@ -114,3 +114,87 @@ cases:
         not_contains:
           - "warning"
 
+  - name: unique_case_inside_function
+    description: unique case inside a function called from process
+    sv: |
+      module Test;
+        function automatic int decode(input int sel);
+          unique case (sel)
+            0: return 10;
+            1: return 20;
+            2: return 30;
+            default: return 99;
+          endcase
+        endfunction
+        initial begin
+          $display("result=%0d", decode(1));
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "result=20"
+
+  - name: unique_case_nested_function_chain
+    description: process -> wrapper -> classify (unique case) works via ABI propagation
+    sv: |
+      module Test;
+        function automatic int classify(input int x);
+          unique case (x)
+            0: return 100;
+            1: return 200;
+            default: return 999;
+          endcase
+        endfunction
+        function automatic int wrapper(input int x);
+          return classify(x) + 1;
+        endfunction
+        initial begin
+          $display("nested=%0d", wrapper(1));
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "nested=201"
+
+  - name: priority_case_inside_function
+    description: priority case inside a function called from process
+    sv: |
+      module Test;
+        function automatic int prio_decode(input int sel);
+          priority case (sel)
+            0: return 10;
+            1: return 20;
+            default: return 99;
+          endcase
+        endfunction
+        initial begin
+          $display("prio=%0d", prio_decode(1));
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "prio=20"
+
+  - name: unique0_case_inside_function
+    description: unique0 case inside a function called from process
+    sv: |
+      module Test;
+        function automatic int u0_decode(input int sel);
+          unique0 case (sel)
+            0: return 10;
+            1: return 20;
+          endcase
+          return 99;
+        endfunction
+        initial begin
+          $display("u0=%0d", u0_decode(1));
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "u0=20"
+

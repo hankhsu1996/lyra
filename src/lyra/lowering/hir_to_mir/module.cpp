@@ -161,6 +161,11 @@ auto LowerModule(
     body_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
   }
 
+  // Propagate process ownership through internal call graph.
+  // body_requirement stays intrinsic; only abi_contract is propagated.
+  // Pass design_arena for cross-arena DesignFunctionRef edge resolution.
+  body_arena.PropagateProcessOwnershipAbi(&design_arena);
+
   // Move body arena into the result body unit
   result.arena = std::move(body_arena);
 

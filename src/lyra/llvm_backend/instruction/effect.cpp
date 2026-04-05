@@ -541,14 +541,16 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
 
 }  // namespace
 
-auto LowerEffectOp(Context& context, const mir::EffectOp& effect_op)
-    -> Result<void> {
+auto LowerEffectOp(
+    Context& context, const mir::EffectOp& effect_op,
+    const ActiveExecutionMode& mode) -> Result<void> {
   CanonicalSlotAccess canonical(context);
-  return LowerEffectOp(context, canonical, effect_op);
+  return LowerEffectOp(context, canonical, effect_op, mode);
 }
 auto LowerEffectOp(
     Context& context, SlotAccessResolver& resolver,
-    const mir::EffectOp& effect_op) -> Result<void> {
+    const mir::EffectOp& effect_op, const ActiveExecutionMode& mode)
+    -> Result<void> {
   return std::visit(
       common::Overloaded{
           [&](const mir::DisplayEffect& display) -> Result<void> {
@@ -579,12 +581,29 @@ auto LowerEffectOp(
             return LowerFillPackedEffect(context, fill);
           },
           [&](const mir::RecordDecisionObservation& obs) -> Result<void> {
-            return LowerRecordDecisionObservation(context, obs);
+            if (mode.process_id == nullptr) {
+              return std::unexpected(
+                  context.GetDiagnosticContext().MakeUnsupported(
+                      context.GetCurrentOrigin(),
+                      "process-owned effect lowered without active process "
+                      "ownership",
+                      UnsupportedCategory::kFeature));
+            }
+            return LowerRecordDecisionObservation(
+                context, mode.process_id, obs);
           },
           [&](const mir::RecordDecisionObservationDynamic& obs)
               -> Result<void> {
+            if (mode.process_id == nullptr) {
+              return std::unexpected(
+                  context.GetDiagnosticContext().MakeUnsupported(
+                      context.GetCurrentOrigin(),
+                      "process-owned effect lowered without active process "
+                      "ownership",
+                      UnsupportedCategory::kFeature));
+            }
             return LowerRecordDecisionObservationDynamic(
-                context, resolver, obs);
+                context, mode.process_id, resolver, obs);
           },
           [&](const mir::CoverHitEffect& hit) -> Result<void> {
             auto& builder = context.GetBuilder();

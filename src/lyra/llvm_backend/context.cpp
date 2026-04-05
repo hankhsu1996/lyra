@@ -779,8 +779,8 @@ auto Context::GetMonitorSetupInfo(mir::FunctionId setup_program) const
 }
 
 auto Context::BuildUserFunctionType(
-    const mir::FunctionSignature& sig, bool is_module_scoped)
-    -> Result<llvm::FunctionType*> {
+    const mir::FunctionSignature& sig, bool is_module_scoped,
+    bool accepts_process_ownership) -> Result<llvm::FunctionType*> {
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
   auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
 
@@ -803,6 +803,11 @@ auto Context::BuildUserFunctionType(
     param_types.push_back(ptr_ty);  // this_ptr (module instance storage)
     param_types.push_back(ptr_ty);  // instance_ptr (RuntimeInstance*)
     param_types.push_back(i32_ty);  // instance_id
+  }
+
+  // Process ownership: caller's active process_id threaded explicitly
+  if (accepts_process_ownership) {
+    param_types.push_back(i32_ty);  // process_id
   }
 
   // Add parameter types from signature.

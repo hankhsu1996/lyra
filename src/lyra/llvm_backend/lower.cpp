@@ -1198,7 +1198,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // Captured after each CompileModuleSpecSession before user_functions_
   // is overwritten by the next session.
   std::unordered_map<
-      mir::ModuleExportCalleeKey, llvm::Function*,
+      mir::ModuleExportCalleeKey, dpi::ModuleExportCalleeInfo,
       mir::ModuleExportCalleeKeyHash>
       module_export_callees;
 
@@ -1221,8 +1221,16 @@ auto CompileDesignProcesses(const LoweringInput& input)
         }
         auto func_id = desc.target.module_target.function_id;
         if (context->HasUserFunction(func_id)) {
-          module_export_callees[desc.target.module_target] =
-              context->GetUserFunction(func_id);
+          // Read contract from the body arena (accessible via design, not
+          // via context->GetMirArena() which has been restored by ArenaScope).
+          const auto& body =
+              input.design->module_bodies.at(product->body_id.value);
+          const auto& callee = body.arena[func_id];
+          module_export_callees[desc.target.module_target] = {
+              .llvm_func = context->GetUserFunction(func_id),
+              .accepts_process_ownership =
+                  callee.abi_contract.accepts_process_ownership,
+          };
         }
       }
     }

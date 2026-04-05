@@ -1672,6 +1672,9 @@ auto GenerateProcessFunction(
     context.SetFramePointer(frame_ptr);
   }
 
+  // Process bodies always have active process ownership.
+  ActiveExecutionMode exec_mode{.process_id = context.GetCurrentProcessId()};
+
   const auto& proc_layout =
       context.GetLayout().processes[context.GetCurrentProcessIndex()];
   auto alloca_result = MaterializeAllocaStorage(context, *func, proc_layout);
@@ -1766,7 +1769,7 @@ auto GenerateProcessFunction(
     }
 
     for (const auto& instruction : block.statements) {
-      auto result = LowerStatement(context, instruction);
+      auto result = LowerStatement(context, instruction, exec_mode);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -1859,6 +1862,7 @@ auto GenerateSharedProcessFunction(
   builder.SetInsertPoint(entry_block);
 
   context.EmitProcessStateSetup(func->getArg(0));
+  ActiveExecutionMode exec_mode{.process_id = context.GetCurrentProcessId()};
 
   const auto& shared_proc_layout =
       context.GetLayout().processes[context.GetCurrentProcessIndex()];
@@ -1941,7 +1945,8 @@ auto GenerateSharedProcessFunction(
 
     for (uint32_t si = 0; si < block.statements.size(); ++si) {
       executor.ExecutePreStatement(bi, si);
-      auto result = LowerStatement(context, resolver, block.statements[si]);
+      auto result =
+          LowerStatement(context, resolver, block.statements[si], exec_mode);
       if (!result) return std::unexpected(result.error());
       executor.ExecutePostStatement(bi, si);
     }
@@ -2014,8 +2019,9 @@ auto DeclareMirFunction(
           llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty, ptr_ty}, false);
     }
   } else {
-    auto fn_type_or_err =
-        context.BuildUserFunctionType(func.signature, is_module_scoped);
+    auto fn_type_or_err = context.BuildUserFunctionType(
+        func.signature, is_module_scoped,
+        func.abi_contract.accepts_process_ownership);
     if (!fn_type_or_err) return std::unexpected(fn_type_or_err.error());
     fn_type = *fn_type_or_err;
   }
@@ -2322,8 +2328,10 @@ auto DefineMonitorCheckProgram(
     Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
     const Context::MonitorLayout& layout) -> Result<void> {
   // Observer programs are simulation-only (engine passed as explicit param).
+  // No process ownership for observer programs.
   ExecutionContractScope contract_scope(
       context, DesignStoreMode::kNotifySimulation);
+  ActiveExecutionMode exec_mode;
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& builder = context.GetBuilder();
@@ -2439,7 +2447,7 @@ auto DefineMonitorCheckProgram(
           continue;
         }
       }
-      auto result = LowerStatement(context, instruction);
+      auto result = LowerStatement(context, instruction, exec_mode);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -2874,6 +2882,17 @@ auto DefineMirFunction(
     context_arg_count = 3;
   }
 
+  // Process ownership: unpack hidden process_id param if contract accepts it.
+  // Stored in the function-local execution mode carrier, not ambient state.
+  ActiveExecutionMode exec_mode;
+  if (!is_observer && func.abi_contract.accepts_process_ownership) {
+    unsigned pid_offset = arg_offset + 2 + context_arg_count;
+    auto* process_id_arg = llvm_func->getArg(pid_offset);
+    process_id_arg->setName("process_id");
+    exec_mode.process_id = process_id_arg;
+    ++context_arg_count;
+  }
+
   // Collect all local/temp places referenced in the function
   PlaceCollector collector;
   collector.CollectFromFunction(func, arena);
@@ -3022,7 +3041,7 @@ auto DefineMirFunction(
 
     // Lower all instructions
     for (const auto& instruction : block.statements) {
-      auto result = LowerStatement(context, instruction);
+      auto result = LowerStatement(context, instruction, exec_mode);
       if (!result) return std::unexpected(result.error());
     }
 
