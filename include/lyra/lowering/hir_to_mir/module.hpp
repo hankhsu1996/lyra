@@ -35,7 +35,8 @@ auto LowerModule(
     mir::Arena body_arena, const mir::Arena& design_arena,
     const DesignDeclarations& decls, const BodyLocalDecls& body_decls,
     hir::ModuleBodyId body_id,
-    mir::ImmediateCoverSiteRegistry* cover_site_registry)
+    mir::ImmediateCoverSiteRegistry* cover_site_registry,
+    mir::DeferredAssertionSiteRegistry* deferred_assertion_site_registry)
     -> Result<MirBodyLoweringResult>;
 
 }  // namespace lyra::lowering::hir_to_mir

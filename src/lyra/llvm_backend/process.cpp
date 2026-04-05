@@ -2214,6 +2214,11 @@ struct PlaceCollector {
             CollectFromOperand(eff.match_class, arena);
             CollectFromOperand(eff.selected_kind, arena);
             CollectFromOperand(eff.selected_arm, arena);
+          } else if constexpr (std::is_same_v<
+                                   E, mir::EnqueueDeferredAssertionEffect>) {
+            mir::ForEachReadOperand(eff, [&](const mir::Operand& op) {
+              CollectFromOperand(op, arena);
+            });
           }
           // StrobeEffect, TimeFormatEffect, MonitorControlEffect,
           // RecordDecisionObservation, CoverHitEffect: no operands

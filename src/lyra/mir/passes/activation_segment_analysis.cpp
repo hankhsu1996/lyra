@@ -245,6 +245,12 @@ void CollectStatementAccesses(
                     [](const RecordDecisionObservation&) {},
                     [](const RecordDecisionObservationDynamic&) {},
                     [](const CoverHitEffect&) {},
+                    [&](const EnqueueDeferredAssertionEffect& da) {
+                      ForEachReadOperand(da, [&](const Operand& op) {
+                        CollectOperandReads(
+                            op, arena, block_index, stmt_index, accesses);
+                      });
+                    },
                 },
                 e.op);
           },
@@ -507,6 +513,10 @@ void AnalyzeStatementSemantics(
                     [](const RecordDecisionObservation&) {},
                     [](const RecordDecisionObservationDynamic&) {},
                     [](const CoverHitEffect&) {},
+                    // EnqueueDeferredAssertionEffect: capture_values are
+                    // read-only operands (tracked by CollectStatementAccesses).
+                    // No canonical state write. No semantic fact needed.
+                    [](const EnqueueDeferredAssertionEffect&) {},
                 },
                 e.op);
           },

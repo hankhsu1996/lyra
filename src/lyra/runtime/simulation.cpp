@@ -18,6 +18,7 @@
 
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/runtime/assertions.hpp"
 #include "lyra/runtime/back_edge_site_meta.hpp"
 #include "lyra/runtime/cover_hook.hpp"
 #include "lyra/runtime/dpi_export_context.hpp"
@@ -584,6 +585,14 @@ extern "C" void LyraRunSimulation(
     // A1b: Immediate cover site hit-count array.
     if (abi->num_immediate_cover_sites > 0) {
       engine.InitImmediateCoverSites(abi->num_immediate_cover_sites);
+    }
+
+    // A2: Deferred assertion site metadata table.
+    if (abi->num_deferred_assertion_sites > 0) {
+      engine.InitDeferredAssertionSites(
+          static_cast<const LyraDeferredAssertionSiteMeta*>(
+              abi->deferred_assertion_site_meta),
+          abi->num_deferred_assertion_sites);
     }
 
     // R5: Global-only trace signal metadata from constructor.

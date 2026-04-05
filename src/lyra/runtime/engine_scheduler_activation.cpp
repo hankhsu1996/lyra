@@ -193,6 +193,14 @@ void Engine::ExecuteActiveRegion() {
         TraceWake(entry);
       }
 
+      // Flush deferred assertion state on resume from wait/delay.
+      // Initial activation and kRepeat use resume_block=0;
+      // wait/delay resume uses the non-zero block set by LyraSuspendWait/Delay.
+      if (entry.resume_block != 0) {
+        FlushDeferredAssertionsForProcess(
+            ProcessId::FromIndex(entry.process_id));
+      }
+
       ProcessHandle handle{entry.process_id, entry.instance_id};
       if (!HasPostActivationReconciliation()) {
         ClearProcessSubscriptions(handle);
@@ -290,10 +298,10 @@ void Engine::ExecuteTimeSlot() {
     active_queue_.swap(next_delta_queue_);
   }
 
-  // Settle-complete: validate decision observations after all deltas converge.
-  // Only observations from the current timeslot epoch are checked.
+  // Settle-complete: mature deferred assertions then validate decisions.
   phase_.store(
       static_cast<uint32_t>(Phase::kSettleComplete), std::memory_order_release);
+  MatureAndExecuteObservedDeferredAssertions();
   RunSettleCompleteChecks();
 
   phase_.store(

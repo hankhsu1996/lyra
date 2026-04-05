@@ -761,6 +761,8 @@ void Engine::FlushAndPropagateConnections() {
 
           if (detailed) ++stats_.detailed.comb_executed;
           const auto& ck = comb_kernels_[entry.kernel_idx];
+          FlushDeferredAssertionsForProcess(
+              ProcessId::FromIndex(ck.process_index));
           ck.body(ck.frame, 0);
         }
       }
@@ -782,6 +784,8 @@ void Engine::FlushAndPropagateConnections() {
             if (detailed) ++stats_.detailed.comb_executed;
             const auto& ck =
                 comb_kernels_[comb_trigger_backing_[ci].kernel_idx];
+            FlushDeferredAssertionsForProcess(
+                ProcessId::FromIndex(ck.process_index));
             ck.body(ck.frame, 0);
           }
         }

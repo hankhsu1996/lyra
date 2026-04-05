@@ -214,6 +214,8 @@ class Engine {
     process_decision_tables_.resize(num_processes);
     decision_states_.resize(num_processes);
     decision_pending_flags_.resize(num_processes, 0);
+    deferred_assertion_states_.resize(num_processes);
+    deferred_pending_flags_.resize(num_processes, 0);
   }
 
   ~Engine() = default;
@@ -907,6 +909,17 @@ class Engine {
 
   // Decision settle-complete validation and diagnostics.
   void RunSettleCompleteChecks();
+
+ public:
+  // Deferred assertion runtime API (A2).
+  void InitDeferredAssertionSites(
+      const struct LyraDeferredAssertionSiteMeta* sites, uint32_t count);
+  void EnqueueDeferredAssertion(
+      uint32_t process_id, uint32_t site_id, uint8_t disposition);
+  void FlushDeferredAssertionsForProcess(ProcessId pid);
+  void MatureAndExecuteObservedDeferredAssertions();
+
+ private:
   void ValidateProcessDecisionChecks(ProcessId process_id);
   [[nodiscard]] auto BuildDecisionViolationMessage(
       ProcessId process_id, const DecisionMetaEntry& meta,
@@ -1490,6 +1503,25 @@ class Engine {
   // Per-(process, site, violation) diagnostic counter for rate limiting.
   std::unordered_map<DecisionDiagKey, uint32_t, DecisionDiagKeyHash>
       decision_diag_counts_;
+
+  // Deferred immediate assertion state (A2).
+  // Borrowed pointer to registered site metadata (valid for program lifetime).
+  const struct LyraDeferredAssertionSiteMeta* deferred_assertion_site_meta_ =
+      nullptr;
+  uint32_t num_deferred_assertion_sites_ = 0;
+
+  struct DeferredAssertionRecord {
+    uint32_t enqueue_generation = 0;
+    uint32_t site_id = 0;
+    uint8_t disposition = 0;
+  };
+  struct ProcessDeferredAssertionState {
+    uint32_t flush_generation = 0;
+    std::vector<DeferredAssertionRecord> pending;
+  };
+  std::vector<ProcessDeferredAssertionState> deferred_assertion_states_;
+  std::vector<uint8_t> deferred_pending_flags_;
+  std::vector<ProcessId> pending_deferred_processes_;
 };
 
 }  // namespace lyra::runtime

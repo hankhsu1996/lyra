@@ -9,6 +9,7 @@
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/cover_site.hpp"
+#include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/instance.hpp"
 #include "lyra/mir/module.hpp"
@@ -140,6 +141,12 @@ struct Design {
   // during HIR-to-MIR lowering. Runtime hit-count array is sized from
   // this table.
   std::vector<ImmediateCoverSiteInfo> immediate_cover_sites;
+
+  // Per-site metadata for deferred immediate assertion statements.
+  // One entry per deferred assertion site, indexed by DeferredAssertionSiteId.
+  // Populated during HIR-to-MIR lowering. Runtime site metadata table is
+  // built from this.
+  std::vector<DeferredAssertionSiteInfo> deferred_assertion_sites;
 };
 
 inline auto GetModuleBody(const Design& design, const Module& mod)

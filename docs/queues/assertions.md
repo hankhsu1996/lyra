@@ -8,14 +8,15 @@ Scope: `assert`, `assume`, `cover property`, `cover sequence`, `expect` are simu
 
 ## Progress
 
-- [ ] A1 -- Immediate assertion statements
+- [x] A1 -- Immediate assertion statements
   - [x] A1a -- Basic immediate assert: pass/fail behavior
   - [x] A1b -- Immediate assume and immediate cover
   - [x] A1c -- Immediate assertion reporting: default failure actions and severity
 
 - [ ] A2 -- Deferred immediate assertions
-  - [ ] A2a -- Deferred `#0` evaluation path
-  - [ ] A2b -- Per-process deferred assertion report queue and flush rules
+  - [x] A2a -- Deferred `#0` capture path for assert/assume/cover (no-action subset)
+  - [x] A2b -- Per-process deferred assertion pending-report state, lazy flush invalidation, settle-boundary maturity/execution
+  - [ ] A2e -- Deferred `#0` user action thunks (pass/fail action calls with by-value capture)
   - [ ] A2c -- Deferred `final` assertion path
   - [ ] A2d -- Deferred-final flush hook (after final blocks complete)
 
@@ -54,17 +55,9 @@ Scope: `assert`, `assume`, `cover property`, `cover sequence`, `expect` are simu
 
 - [ ] A9 -- Assertion usage profiling and staged enablement
 
-## A1b: Immediate assume and immediate cover
+## A2e: Deferred `#0` user action thunks
 
-Procedural `assume(expr)` and `cover(expr)`. Assume behaves like assert in simulation (LRM 16.3). Immediate cover has `statement_or_null` (no else clause) -- semantics are "record that condition was observed," not "check that it holds." Shares lowering surface with A1a but the reporting and action-block shapes differ.
-
-## A2a: Deferred `#0` evaluation path
-
-`assert #0 (expr)` defers check to later in the time step rather than evaluating inline. The condition is captured at the point of execution; the report is deferred. This adds scheduling-region semantics beyond ordinary procedural execution.
-
-## A2b: Per-process deferred assertion report queue and flush rules
-
-Deferred assertions maintain a per-process pending report queue (LRM 16.4.2). This is distinct runtime infrastructure from just having a Reactive region. Flush points: process resumes from event control/wait, always_comb/always_latch re-triggers, scope disabled, process ends. No coalescing -- every evaluation is independent.
+`assert #0 (...) pass_call; else fail_call;` and `cover #0 (...) pass_call;` require outlined deferred thunks with by-value capture. A2a/A2b landed the no-action subset (default fail report, cover hit). This item adds: DeferredThunkPlan extraction from validated call shape, outlined synthetic MIR function per site, CaptureLayout + blob packing in LLVM codegen, and thunk execution at drain time via ProcessFrame. LRM restricts deferred actions to a single subroutine call; slang enforces this at parse time. By-ref/const-ref actuals are re-materialized from the process frame at drain time, not captured into the blob.
 
 ## A2c: Deferred `final` assertion path
 

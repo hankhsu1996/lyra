@@ -616,6 +616,29 @@ auto LowerEffectOp(
                 {engine_ptr, site_val});
             return {};
           },
+          [&](const mir::EnqueueDeferredAssertionEffect& enq) -> Result<void> {
+            if (mode.process_id == nullptr) {
+              return std::unexpected(
+                  context.GetDiagnosticContext().MakeUnsupported(
+                      context.GetCurrentOrigin(),
+                      "deferred assertion enqueue requires active process "
+                      "ownership",
+                      UnsupportedCategory::kFeature));
+            }
+            auto& builder = context.GetBuilder();
+            auto& llvm_ctx = context.GetLlvmContext();
+            auto* engine_ptr = context.GetEnginePointer();
+            auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+            auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+            auto* site_val =
+                llvm::ConstantInt::get(i32_ty, enq.site_id.Index());
+            auto* disp_val = llvm::ConstantInt::get(
+                i8_ty, static_cast<uint8_t>(enq.disposition));
+            builder.CreateCall(
+                context.GetLyraEnqueueObservedDeferredAssertion(),
+                {engine_ptr, mode.process_id, site_val, disp_val});
+            return {};
+          },
       },
       effect_op);
 }

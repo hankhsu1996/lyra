@@ -18,7 +18,7 @@ namespace {
 
 // ABI struct field indices. Private to this file.
 // Must match the C++ LyraRuntimeAbi in runtime_abi.hpp.
-constexpr unsigned kAbiFieldCount = 35;
+constexpr unsigned kAbiFieldCount = 38;
 constexpr unsigned kAbiFieldInstancePtrs = 27;
 
 }  // namespace
@@ -29,10 +29,45 @@ auto GetRuntimeAbiStructType(llvm::LLVMContext& ctx) -> llvm::StructType* {
 
   auto* i8_ty = llvm::Type::getInt8Ty(ctx);
   std::array<llvm::Type*, kAbiFieldCount> fields = {
-      i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty, i32_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, ptr_ty,
-      ptr_ty, i32_ty, ptr_ty, i32_ty, i32_ty, i32_ty, i32_ty, i8_ty,
+      i32_ty,
+      ptr_ty,
+      i32_ty,
+      ptr_ty,
+      i32_ty,
+      ptr_ty,
+      i32_ty,
+      ptr_ty,
+      i32_ty,
+      ptr_ty,
+      i32_ty,
+      ptr_ty,
+      i32_ty,
+      ptr_ty,
+      i32_ty,
+      i32_ty,
+      ptr_ty,
+      i32_ty,
+      ptr_ty,
+      i32_ty,
+      ptr_ty,
+      i32_ty,
+      ptr_ty,
+      ptr_ty,
+      i32_ty,
+      i32_ty,
+      ptr_ty,
+      ptr_ty,
+      i32_ty,
+      ptr_ty,
+      i32_ty,
+      i32_ty,
+      i32_ty,
+      i32_ty,
+      i8_ty,
+      // A2: deferred assertion site metadata (ptr, i32 count, i32 pad)
+      ptr_ty,
+      i32_ty,
+      i32_ty,
   };
   return llvm::StructType::get(ctx, fields, false);
 }

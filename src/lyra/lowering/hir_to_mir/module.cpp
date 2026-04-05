@@ -29,7 +29,8 @@ auto LowerModule(
     mir::Arena body_arena, const mir::Arena& design_arena,
     const DesignDeclarations& decls, const BodyLocalDecls& body_decls,
     hir::ModuleBodyId body_id,
-    mir::ImmediateCoverSiteRegistry* cover_site_registry)
+    mir::ImmediateCoverSiteRegistry* cover_site_registry,
+    mir::DeferredAssertionSiteRegistry* deferred_assertion_site_registry)
     -> Result<MirBodyLoweringResult> {
   mir::ModuleBody result;
 
@@ -82,7 +83,8 @@ auto LowerModule(
       .design_arena = &design_arena,
       .design_functions = &decls.functions,
       .dpi_imports = &decls.dpi_imports,
-      .cover_site_registry = cover_site_registry};
+      .cover_site_registry = cover_site_registry,
+      .deferred_assertion_site_registry = deferred_assertion_site_registry};
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 

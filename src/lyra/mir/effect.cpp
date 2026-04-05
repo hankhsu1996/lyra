@@ -19,6 +19,9 @@ auto GetEffectExecutionRequirement(const EffectOp& op)
           [](const RecordDecisionObservationDynamic&) {
             return BodyExecutionRequirement::kProcessOwned;
           },
+          [](const EnqueueDeferredAssertionEffect&) {
+            return BodyExecutionRequirement::kProcessOwned;
+          },
           [](const auto&) {
             return BodyExecutionRequirement::kGenericCallable;
           },

@@ -680,6 +680,11 @@ void CollectPlacesFromEffectOp(
           [&](const mir::CoverHitEffect&) {
             // CoverHitEffect carries only a site ID, no operands
           },
+          [&](const mir::EnqueueDeferredAssertionEffect& e) {
+            mir::ForEachReadOperand(e, [&](const mir::Operand& op) {
+              CollectPlaceFromOperand(op, places);
+            });
+          },
       },
       effect);
 }

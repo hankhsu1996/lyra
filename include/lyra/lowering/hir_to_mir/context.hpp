@@ -13,6 +13,7 @@
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/cover_site.hpp"
+#include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
@@ -139,6 +140,10 @@ struct DeclView {
   // Null for lowering scopes that cannot contain cover statements
   // (e.g., package init lowering).
   mir::ImmediateCoverSiteRegistry* cover_site_registry = nullptr;
+  // Shared design-global registry for deferred assertion site allocation.
+  // Null for lowering scopes that cannot contain deferred assertions.
+  mir::DeferredAssertionSiteRegistry* deferred_assertion_site_registry =
+      nullptr;
 };
 
 // Result of AllocLocal - provides both the PlaceId and the local slot index.
@@ -232,6 +237,8 @@ struct Context {
   // the same registry to produce dense design-global site IDs. Null when
   // cover sites are not being tracked (e.g., design-level init lowering).
   mir::ImmediateCoverSiteRegistry* cover_site_registry = nullptr;
+  mir::DeferredAssertionSiteRegistry* deferred_assertion_site_registry =
+      nullptr;
 
   auto AllocateCoverSite(SourceSpan span) const -> mir::CoverSiteId {
     if (cover_site_registry == nullptr) {
@@ -239,6 +246,16 @@ struct Context {
           "Context::AllocateCoverSite", "cover site registry not initialized");
     }
     return cover_site_registry->Allocate(span);
+  }
+
+  auto AllocateDeferredAssertionSite(mir::DeferredAssertionSiteInfo info) const
+      -> mir::DeferredAssertionSiteId {
+    if (deferred_assertion_site_registry == nullptr) {
+      throw common::InternalError(
+          "Context::AllocateDeferredAssertionSite",
+          "deferred assertion site registry not initialized");
+    }
+    return deferred_assertion_site_registry->Allocate(std::move(info));
   }
 
   // Stats: count of MaterializeOperandToPlace calls (for --stats output).

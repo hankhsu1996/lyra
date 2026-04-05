@@ -1025,6 +1025,75 @@ auto LowerConditional(
   return callback_result;
 }
 
+// Structured result of deferred action shape validation.
+// Distinguishes absent action from a valid call action, preserving the
+// information Phase 3 needs to build thunk plans without re-traversal.
+struct DeferredActionShape {
+  // The call expression data if the action is a user function call.
+  // Null for system calls and absent actions.
+  const hir::CallExpressionData* call = nullptr;
+  // True if the action is a system call ($display, $error, etc.)
+  bool is_system_call = false;
+};
+
+// Validate a deferred assertion action block and extract its shape.
+// Returns nullopt if the action is absent (no action). Returns the
+// action shape if the action is a legal single subroutine call.
+// Returns an error diagnostic if the action shape is not representable.
+auto ValidateDeferredActionShape(
+    std::optional<hir::StatementId> action_id, const hir::Arena& hir_arena,
+    SourceSpan span, const char* action_label)
+    -> Result<std::optional<DeferredActionShape>> {
+  if (!action_id.has_value()) return std::nullopt;
+
+  const auto& stmt = hir_arena[*action_id];
+
+  // Unwrap a single-statement block.
+  const hir::Statement* inner = &stmt;
+  if (const auto* block = std::get_if<hir::BlockStatementData>(&stmt.data)) {
+    if (block->statements.size() != 1) {
+      return std::unexpected(
+          Diagnostic::Unsupported(
+              span,
+              std::format(
+                  "deferred assertion {} must be a single subroutine call",
+                  action_label),
+              UnsupportedCategory::kFeature));
+    }
+    inner = &hir_arena[block->statements[0]];
+  }
+
+  // Must be an expression statement.
+  const auto* expr_stmt =
+      std::get_if<hir::ExpressionStatementData>(&inner->data);
+  if (expr_stmt == nullptr) {
+    return std::unexpected(
+        Diagnostic::Unsupported(
+            span,
+            std::format(
+                "deferred assertion {} must be a single subroutine call",
+                action_label),
+            UnsupportedCategory::kFeature));
+  }
+
+  // The expression must be a call or system call.
+  const auto& expr = hir_arena[expr_stmt->expression];
+  if (const auto* call = std::get_if<hir::CallExpressionData>(&expr.data)) {
+    return DeferredActionShape{.call = call, .is_system_call = false};
+  }
+  if (std::holds_alternative<hir::SystemCallExpressionData>(expr.data)) {
+    return DeferredActionShape{.call = nullptr, .is_system_call = true};
+  }
+
+  return std::unexpected(
+      Diagnostic::Unsupported(
+          span,
+          std::format(
+              "deferred assertion {} must be a single subroutine call",
+              action_label),
+          UnsupportedCategory::kFeature));
+}
+
 // Emit the default fail effect for immediate assertions when no explicit
 // else action is provided. Uses assertion-specific report intent with origin.
 auto EmitDefaultImmediateAssertionFail(
@@ -1146,10 +1215,146 @@ auto LowerImmediateCover(
   return callback_result;
 }
 
-// Dispatch immediate assertion lowering by kind.
+// Map HIR assertion kind to MIR deferred assertion kind.
+auto MapDeferredAssertionKind(hir::ImmediateAssertionKind kind)
+    -> mir::DeferredAssertionKind {
+  switch (kind) {
+    case hir::ImmediateAssertionKind::kAssert:
+      return mir::DeferredAssertionKind::kAssert;
+    case hir::ImmediateAssertionKind::kAssume:
+      return mir::DeferredAssertionKind::kAssume;
+    case hir::ImmediateAssertionKind::kCover:
+      return mir::DeferredAssertionKind::kCover;
+  }
+}
+
+// Dedicated lowering entry point for observed deferred immediate assertions
+// (assert #0, assume #0, cover #0). Validates action shapes, allocates a
+// deferred assertion site, evaluates condition, and emits
+// EnqueueDeferredAssertionEffect in the appropriate branch arm.
+auto LowerObservedDeferredImmediateAssertion(
+    const hir::ImmediateAssertionStatementData& data, SourceSpan span,
+    MirBuilder& builder) -> Result<void> {
+  const auto& hir_arena = *builder.GetContext().hir_arena;
+  auto origin = builder.GetCurrentOrigin();
+  bool is_cover = data.kind == hir::ImmediateAssertionKind::kCover;
+
+  auto pass_shape = ValidateDeferredActionShape(
+      data.pass_action, hir_arena, span, "pass action");
+  if (!pass_shape) return std::unexpected(pass_shape.error());
+
+  auto fail_shape = ValidateDeferredActionShape(
+      data.fail_action, hir_arena, span, "fail action");
+  if (!fail_shape) return std::unexpected(fail_shape.error());
+
+  // User action thunks are not yet supported in this cut.
+  if (pass_shape->has_value()) {
+    return std::unexpected(
+        Diagnostic::Unsupported(
+            span, "deferred assertion user pass action not yet supported",
+            UnsupportedCategory::kFeature));
+  }
+  if (fail_shape->has_value()) {
+    return std::unexpected(
+        Diagnostic::Unsupported(
+            span, "deferred assertion user fail action not yet supported",
+            UnsupportedCategory::kFeature));
+  }
+
+  // Build site metadata with disposition-specific descriptors.
+  mir::DeferredAssertionSiteInfo site_info{
+      .span = span,
+      .origin = origin,
+      .kind = MapDeferredAssertionKind(data.kind),
+  };
+
+  if (is_cover) {
+    // Cover #0 without pass action: allocate a cover site for the hit path.
+    auto cover_site_id = builder.GetContext().AllocateCoverSite(span);
+    site_info.cover_hit =
+        mir::DeferredCoverHitAction{.cover_site_id = cover_site_id};
+  } else {
+    // Assert/assume #0 without user fail action: default fail report.
+    site_info.has_default_fail_report = true;
+  }
+
+  auto site_id =
+      builder.GetContext().AllocateDeferredAssertionSite(std::move(site_info));
+
+  // Emit condition evaluation + branch + enqueue effect.
+  Result<void> callback_result;
+
+  std::vector<MirBuilder::DecisionArmBuilder> arms;
+  arms.push_back(
+      MirBuilder::DecisionArmBuilder{
+          .build_condition = [&callback_result, cond_id = data.condition](
+                                 MirBuilder& b) -> mir::Operand {
+            if (!callback_result) {
+              return mir::Operand::Use(mir::kInvalidPlaceId);
+            }
+            auto cond = MaterializeCondition(cond_id, b);
+            if (!cond) {
+              callback_result = std::unexpected(cond.error());
+              return mir::Operand::Use(mir::kInvalidPlaceId);
+            }
+            return *cond;
+          },
+          .build_body =
+              [&callback_result, is_cover, site_id](MirBuilder& b) {
+                if (!callback_result) return;
+                if (is_cover) {
+                  // Cover #0: enqueue cover hit on true arm.
+                  b.EmitEffect(
+                      mir::EnqueueDeferredAssertionEffect{
+                          .site_id = site_id,
+                          .disposition =
+                              mir::DeferredAssertionDisposition::kCoverHit,
+                          .capture_values = {},
+                      });
+                }
+                // Assert/assume #0: true arm has no enqueue (pass action
+                // not supported yet in this cut).
+              },
+      });
+
+  auto fallback_body =
+      is_cover
+          ? std::nullopt
+          : std::optional<std::function<void(MirBuilder&)>>([&callback_result,
+                                                             site_id](
+                                                                MirBuilder& b) {
+              if (!callback_result) return;
+              // Assert/assume #0: enqueue default fail report on false arm.
+              b.EmitEffect(
+                  mir::EnqueueDeferredAssertionEffect{
+                      .site_id = site_id,
+                      .disposition =
+                          mir::DeferredAssertionDisposition::kDefaultFailReport,
+                      .capture_values = {},
+                  });
+            });
+
+  MirBuilder::DecisionBuildSpec spec{
+      .qualifier = semantic::DecisionQualifier::kNone,
+      .id = std::nullopt,
+      .arms = std::move(arms),
+      .build_fallback_body = std::move(fallback_body),
+  };
+
+  builder.EmitDecision(spec);
+  return callback_result;
+}
+
+// Dispatch immediate assertion lowering by kind and timing.
 auto LowerImmediateAssertion(
     const hir::ImmediateAssertionStatementData& data, SourceSpan span,
     MirBuilder& builder) -> Result<void> {
+  // Hard split: deferred assertions use a dedicated lowering path with
+  // different execution model. Do not fall through to simple immediate.
+  if (data.timing == hir::ImmediateAssertionTiming::kObservedDeferred) {
+    return LowerObservedDeferredImmediateAssertion(data, span, builder);
+  }
+
   switch (data.kind) {
     case hir::ImmediateAssertionKind::kAssert:
     case hir::ImmediateAssertionKind::kAssume:

@@ -249,6 +249,8 @@ class Context {
   [[nodiscard]] auto GetLyraEmitReport() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRecordDecisionObservation() -> llvm::Function*;
   [[nodiscard]] auto GetLyraRecordImmediateCoverHit() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraEnqueueObservedDeferredAssertion()
+      -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintValue() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintString() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPrintEnd() -> llvm::Function*;
@@ -1150,6 +1152,8 @@ class Context {
 
   // Lazy-initialized runtime function for cover hit recording.
   llvm::Function* lyra_record_immediate_cover_hit_ = nullptr;
+  // Lazy-initialized runtime function for deferred assertion enqueue.
+  llvm::Function* lyra_enqueue_observed_deferred_assertion_ = nullptr;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -135,6 +135,9 @@ auto LowerFunctionBody(
       .return_type = function.return_type,
       .design_slots = decl_view.slots,
       .body_slots = decl_view.body_slots,
+      .cover_site_registry = decl_view.cover_site_registry,
+      .deferred_assertion_site_registry =
+          decl_view.deferred_assertion_site_registry,
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map, body_id);
@@ -257,6 +260,9 @@ auto LowerTaskBody(
       .return_type = void_type,
       .design_slots = decl_view.slots,
       .body_slots = decl_view.body_slots,
+      .cover_site_registry = decl_view.cover_site_registry,
+      .deferred_assertion_site_registry =
+          decl_view.deferred_assertion_site_registry,
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map, body_id);
