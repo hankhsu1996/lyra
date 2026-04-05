@@ -48,10 +48,10 @@ auto LowerImmediateAssertionStatement(
     ScopeLowerer& lowerer) -> std::optional<hir::StatementId> {
   StatementLoweringEnv env(lowerer, assert_stmt.sourceRange);
 
-  if (assert_stmt.isDeferred || assert_stmt.isFinal) {
+  if (assert_stmt.isFinal) {
     env.ctx->sink->Error(
         env.span,
-        "deferred immediate assertions are unsupported; "
+        "deferred final immediate assertions are unsupported; "
         "pass --disable-assertions to skip");
     return hir::kInvalidStatementId;
   }
@@ -83,12 +83,17 @@ auto LowerImmediateAssertionStatement(
         "immediate cover must not carry fail_action");
   }
 
+  auto timing = assert_stmt.isDeferred
+                    ? hir::ImmediateAssertionTiming::kObservedDeferred
+                    : hir::ImmediateAssertionTiming::kSimple;
+
   return env.ctx->hir_arena->AddStatement(
       hir::Statement{
           .kind = hir::StatementKind::kImmediateAssertion,
           .span = env.span,
           .data = hir::ImmediateAssertionStatementData{
               .kind = *kind,
+              .timing = timing,
               .condition = condition,
               .pass_action = pass_action,
               .fail_action = fail_action}});

@@ -28,9 +28,11 @@
 #include "lyra/llvm_backend/inspection_plan.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/process.hpp"
+#include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/llvm_backend/runtime_abi_codegen.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
+#include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/realization/build_design_metadata.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
@@ -1882,6 +1884,73 @@ struct ConstructorEmissionResult {
   ConstructorSlotTraceMeta slot_trace;
 };
 
+// Emit a global constant array of LyraDeferredAssertionSiteMeta structs.
+// Returns the global pointer (or nullptr if no deferred sites).
+auto EmitDeferredAssertionSiteMetaGlobal(
+    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites)
+    -> llvm::Constant* {
+  if (sites.empty()) return nullptr;
+
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  auto* i16_ty = llvm::Type::getInt16Ty(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+
+  // Struct layout matches LyraDeferredAssertionSiteMeta:
+  // { i8 kind, i8 pad0, i16 pad1, i32 cover_site_id,
+  //   ptr origin_file, i32 origin_line, i32 origin_col }
+  auto* entry_ty = llvm::StructType::get(
+      llvm_ctx, {i8_ty, i8_ty, i16_ty, i32_ty, ptr_ty, i32_ty, i32_ty});
+
+  std::vector<llvm::Constant*> entries;
+  entries.reserve(sites.size());
+
+  for (const auto& site : sites) {
+    uint8_t kind_val = static_cast<uint8_t>(site.kind);
+    uint32_t cover_id = site.cover_hit.has_value()
+                            ? site.cover_hit->cover_site_id.Index()
+                            : UINT32_MAX;
+
+    // Resolve source location from canonical OriginId.
+    llvm::Constant* file_ptr = llvm::ConstantPointerNull::get(ptr_ty);
+    uint32_t line = 0;
+    uint32_t col = 0;
+    if (site.origin.IsValid()) {
+      auto loc = ResolveProcessOrigin(
+          site.origin, &context.GetDiagnosticContext(),
+          context.GetSourceManager());
+      if (loc.line > 0 && !loc.file.empty()) {
+        auto* str_const =
+            llvm::ConstantDataArray::getString(llvm_ctx, loc.file, true);
+        auto* str_global = new llvm::GlobalVariable(
+            context.GetModule(), str_const->getType(), true,
+            llvm::GlobalValue::PrivateLinkage, str_const);
+        file_ptr = llvm::ConstantExpr::getBitCast(str_global, ptr_ty);
+        line = loc.line;
+        col = loc.col;
+      }
+    }
+
+    entries.push_back(
+        llvm::ConstantStruct::get(
+            entry_ty, {llvm::ConstantInt::get(i8_ty, kind_val),
+                       llvm::ConstantInt::get(i8_ty, 0),
+                       llvm::ConstantInt::get(i16_ty, 0),
+                       llvm::ConstantInt::get(i32_ty, cover_id), file_ptr,
+                       llvm::ConstantInt::get(i32_ty, line),
+                       llvm::ConstantInt::get(i32_ty, col)}));
+  }
+
+  auto* array_ty = llvm::ArrayType::get(entry_ty, entries.size());
+  auto* global = new llvm::GlobalVariable(
+      context.GetModule(), array_ty, true, llvm::GlobalValue::PrivateLinkage,
+      llvm::ConstantArray::get(array_ty, entries),
+      "__lyra_deferred_assertion_site_meta");
+
+  return llvm::ConstantExpr::getBitCast(global, ptr_ty);
+}
+
 auto BuildRuntimeAbi(
     Context& context, const MetadataGlobals& meta_globals,
     const WaitSiteMetaResult& wait_site_meta, uint32_t num_connection,
@@ -1889,8 +1958,9 @@ auto BuildRuntimeAbi(
     llvm::Value* design_state, const ConstructorProcessMeta& process_meta,
     const ConstructorTriggerCombMeta& trigger_comb,
     const ConstructorSlotTraceMeta& slot_trace,
-    uint32_t num_immediate_cover_sites, int8_t global_precision_power)
-    -> llvm::Value* {
+    uint32_t num_immediate_cover_sites, int8_t global_precision_power,
+    llvm::Constant* deferred_site_meta_global,
+    uint32_t num_deferred_assertion_sites) -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -1973,6 +2043,13 @@ auto BuildRuntimeAbi(
   // D6d: Simulation-global precision power.
   auto* i8_ty = llvm::Type::getInt8Ty(context.GetLlvmContext());
   store_field(34, llvm::ConstantInt::get(i8_ty, global_precision_power));
+
+  // A2: Deferred assertion site metadata table.
+  store_field(
+      35, deferred_site_meta_global ? deferred_site_meta_global
+                                    : llvm::ConstantPointerNull::get(ptr_ty));
+  store_field(36, llvm::ConstantInt::get(i32_ty, num_deferred_assertion_sites));
+  store_field(37, llvm::ConstantInt::get(i32_ty, 0));
 
   return abi_alloca;
 }
@@ -2507,12 +2584,15 @@ auto EmitDesignMain(
       slot_trace_for_abi = ctor_result.slot_trace;
     }
 
+    auto* deferred_site_meta_global = EmitDeferredAssertionSiteMetaGlobal(
+        context, input.design->deferred_assertion_sites);
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,
         process_meta_for_abi, trigger_comb_for_abi, slot_trace_for_abi,
         static_cast<uint32_t>(input.design->immediate_cover_sites.size()),
-        input.design->global_precision_power);
+        input.design->global_precision_power, deferred_site_meta_global,
+        static_cast<uint32_t>(input.design->deferred_assertion_sites.size()));
     abi_for_exit = abi_alloca;
 
     EmitRunSimulation(

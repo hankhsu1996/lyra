@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/deferred_assertion_abi.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/severity.hpp"
@@ -200,14 +201,80 @@ struct CoverHitEffect {
   CoverSiteId site_id;
 };
 
+// Dense index for a deferred immediate assertion site. Allocated during
+// HIR-to-MIR lowering (design-global). Used to index into the runtime
+// site metadata table.
+struct DeferredAssertionSiteId {
+  uint32_t value = UINT32_MAX;
+
+  explicit operator bool() const {
+    return value != UINT32_MAX;
+  }
+  [[nodiscard]] auto Index() const -> uint32_t {
+    return value;
+  }
+  auto operator==(const DeferredAssertionSiteId&) const -> bool = default;
+};
+
+// Which disposition path a deferred assertion enqueue represents.
+// Values match DeferredAssertionDispositionAbi by construction (shared ABI).
+enum class DeferredAssertionDisposition : uint8_t {
+  kDefaultFailReport = 0,
+  kFailAction = 1,
+  kPassAction = 2,
+  kCoverHit = 3,
+};
+
+// Compile-time enforcement that MIR and ABI disposition values match.
+static_assert(
+    static_cast<uint8_t>(DeferredAssertionDisposition::kDefaultFailReport) ==
+    static_cast<uint8_t>(DeferredAssertionDispositionAbi::kDefaultFailReport));
+static_assert(
+    static_cast<uint8_t>(DeferredAssertionDisposition::kFailAction) ==
+    static_cast<uint8_t>(DeferredAssertionDispositionAbi::kFailAction));
+static_assert(
+    static_cast<uint8_t>(DeferredAssertionDisposition::kPassAction) ==
+    static_cast<uint8_t>(DeferredAssertionDispositionAbi::kPassAction));
+static_assert(
+    static_cast<uint8_t>(DeferredAssertionDisposition::kCoverHit) ==
+    static_cast<uint8_t>(DeferredAssertionDispositionAbi::kCoverHit));
+
+// Enqueue a pending observed deferred assertion record (LRM 16.4).
+// Emitted by deferred assertion lowering. Condition has already been
+// evaluated; this effect captures by-value arguments and enqueues a
+// pending record into per-process deferred state.
+//
+// At runtime, the record is stamped with the current flush generation
+// and matured at settle boundary.
+struct EnqueueDeferredAssertionEffect {
+  DeferredAssertionSiteId site_id;
+  DeferredAssertionDisposition disposition;
+  // By-value fields to evaluate now and pack into the captured blob,
+  // in exact CaptureLayout field order. LLVM lowering packs them
+  // sequentially. These operands are never stored into runtime records;
+  // they are fully evaluated during codegen into the packed blob.
+  // Runtime never sees MIR-like Operands.
+  std::vector<Operand> capture_values;
+};
+
+// Canonical traversal of read operands for EnqueueDeferredAssertionEffect.
+// All MIR passes that reason about effect operands must use this helper
+// instead of open-coding their own traversal.
+template <typename F>
+void ForEachReadOperand(const EnqueueDeferredAssertionEffect& e, const F& f) {
+  for (const auto& op : e.capture_values) {
+    f(op);
+  }
+}
+
 // EffectOp is the variant of all effect operations.
 // Effect operations produce side effects but no value.
 // Note: Builtin methods are now unified as Rvalue (kBuiltinCall), not Effect.
 using EffectOp = std::variant<
     DisplayEffect, ReportEffect, MemIOEffect, TimeFormatEffect, SystemTfEffect,
     StrobeEffect, MonitorEffect, MonitorControlEffect, FillPackedEffect,
-    RecordDecisionObservation, RecordDecisionObservationDynamic,
-    CoverHitEffect>;
+    RecordDecisionObservation, RecordDecisionObservationDynamic, CoverHitEffect,
+    EnqueueDeferredAssertionEffect>;
 
 // Body execution requirement: what a callable body needs to execute correctly.
 // Computed once from body contents at metadata formation time, stored on

@@ -197,10 +197,18 @@ enum class ImmediateAssertionKind : uint8_t {
   kCover,
 };
 
-// Immediate assertion statement (LRM 16.3)
-// Represents non-deferred procedural assert/assume/cover.
+// Immediate assertion timing (LRM 16.3, 16.4)
+enum class ImmediateAssertionTiming : uint8_t {
+  kSimple,
+  kObservedDeferred,  // assert #0 / assume #0 / cover #0
+  // kFinalDeferred later
+};
+
+// Immediate assertion statement (LRM 16.3, 16.4)
+// Represents procedural assert/assume/cover, both simple and deferred #0.
 struct ImmediateAssertionStatementData {
   ImmediateAssertionKind kind = ImmediateAssertionKind::kAssert;
+  ImmediateAssertionTiming timing = ImmediateAssertionTiming::kSimple;
   ExpressionId condition;
   std::optional<StatementId> pass_action;
   std::optional<StatementId> fail_action;

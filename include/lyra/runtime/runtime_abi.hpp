@@ -74,7 +74,8 @@ struct RuntimeInstance;
 //      connection/design-global data only.
 // v20: A1b immediate cover site count for runtime hit-count array sizing.
 // v21: D6d simulation-global precision power and per-body timescale metadata.
-inline constexpr uint32_t kRuntimeAbiVersion = 21;
+// v22: A2 deferred assertion site metadata table.
+inline constexpr uint32_t kRuntimeAbiVersion = 22;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -144,10 +145,17 @@ struct LyraRuntimeAbi {
   // D6d: Simulation-global precision power (e.g., -12 for 1ps).
   // Set from mir::Design::global_precision_power at emission time.
   int8_t global_precision_power;
+
+  // A2: Deferred assertion site metadata table.
+  // Points to LLVM-emitted global array of LyraDeferredAssertionSiteMeta.
+  // Null if no deferred assertion sites in the design.
+  const void* deferred_assertion_site_meta;
+  uint32_t num_deferred_assertion_sites;
+  uint32_t pad_deferred;
 };
 
 // Hard size/offset contract.
-static_assert(sizeof(LyraRuntimeAbi) == 248);
+static_assert(sizeof(LyraRuntimeAbi) == 264);
 static_assert(offsetof(LyraRuntimeAbi, version) == 0);
 static_assert(offsetof(LyraRuntimeAbi, num_connection_processes) == 188);
 static_assert(offsetof(LyraRuntimeAbi, design_state) == 192);
@@ -157,3 +165,5 @@ static_assert(offsetof(LyraRuntimeAbi, instance_bundles) == 216);
 static_assert(offsetof(LyraRuntimeAbi, num_instance_bundles) == 224);
 static_assert(offsetof(LyraRuntimeAbi, num_immediate_cover_sites) == 232);
 static_assert(offsetof(LyraRuntimeAbi, global_precision_power) == 240);
+static_assert(offsetof(LyraRuntimeAbi, deferred_assertion_site_meta) == 248);
+static_assert(offsetof(LyraRuntimeAbi, num_deferred_assertion_sites) == 256);

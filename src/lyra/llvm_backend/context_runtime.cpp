@@ -80,6 +80,24 @@ auto Context::GetLyraRecordImmediateCoverHit() -> llvm::Function* {
   return lyra_record_immediate_cover_hit_;
 }
 
+auto Context::GetLyraEnqueueObservedDeferredAssertion() -> llvm::Function* {
+  if (lyra_enqueue_observed_deferred_assertion_ == nullptr) {
+    // void LyraEnqueueObservedDeferredAssertion(
+    //     void* engine, uint32_t process_id, uint32_t site_id,
+    //     uint8_t disposition)
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        void_ty, {ptr_ty, i32_ty, i32_ty, i8_ty}, false);
+    lyra_enqueue_observed_deferred_assertion_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage,
+        "LyraEnqueueObservedDeferredAssertion", llvm_module_.get());
+  }
+  return lyra_enqueue_observed_deferred_assertion_;
+}
+
 auto Context::GetLyraPrintValue() -> llvm::Function* {
   if (lyra_print_value_ == nullptr) {
     // void LyraPrintValue(void* engine, int32_t format, int32_t value_kind,
