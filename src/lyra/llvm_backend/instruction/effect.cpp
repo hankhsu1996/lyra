@@ -19,6 +19,7 @@
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/instruction/decision.hpp"
 #include "lyra/llvm_backend/instruction/display.hpp"
@@ -32,6 +33,7 @@
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place_type.hpp"
+#include "lyra/runtime/deferred_assertion_thunk.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -627,16 +629,67 @@ auto LowerEffectOp(
             }
             auto& builder = context.GetBuilder();
             auto& llvm_ctx = context.GetLlvmContext();
+            const auto& types = context.GetTypeArena();
             auto* engine_ptr = context.GetEnginePointer();
+            auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
             auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
             auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
             auto* site_val =
                 llvm::ConstantInt::get(i32_ty, enq.site_id.Index());
             auto* disp_val = llvm::ConstantInt::get(
                 i8_ty, static_cast<uint8_t>(enq.disposition));
+
+            // Resolve instance_id from execution binding contract.
+            // Module-bound -> live dynamic instance id.
+            // Design-global -> kNoInstanceId sentinel.
+            llvm::Value* instance_id_val =
+                llvm::ConstantInt::get(i32_ty, runtime::kNoInstanceId);
+            if (context.GetDynamicInstanceId() != nullptr) {
+              instance_id_val = context.GetDynamicInstanceId();
+            }
+
+            // Validate payload consistency before packing.
+            if (enq.capture_values.size() !=
+                enq.payload_desc.field_types.size()) {
+              throw common::InternalError(
+                  "LowerEnqueueDeferredAssertionEffect",
+                  std::format(
+                      "capture/payload mismatch: {} values vs {} fields",
+                      enq.capture_values.size(),
+                      enq.payload_desc.field_types.size()));
+            }
+
+            // Pack by-value captures into typed payload struct.
+            llvm::Value* payload_ptr = llvm::ConstantPointerNull::get(
+                llvm::cast<llvm::PointerType>(ptr_ty));
+            llvm::Value* payload_size_val = llvm::ConstantInt::get(i32_ty, 0);
+            if (!enq.capture_values.empty()) {
+              // Build payload struct from the typed payload descriptor.
+              auto* payload_struct_ty = BuildDeferredPayloadStructType(
+                  llvm_ctx, enq.payload_desc, types, context.IsForceTwoState());
+
+              auto* alloca = builder.CreateAlloca(
+                  payload_struct_ty, nullptr, "deferred.payload");
+              for (size_t i = 0; i < enq.capture_values.size(); ++i) {
+                auto* field_ty =
+                    payload_struct_ty->getElementType(static_cast<unsigned>(i));
+                auto val = LowerOperandAsStorage(
+                    context, enq.capture_values[i], field_ty);
+                if (!val) return std::unexpected(val.error());
+                auto* field_ptr = builder.CreateStructGEP(
+                    payload_struct_ty, alloca, static_cast<unsigned>(i));
+                builder.CreateStore(*val, field_ptr);
+              }
+              payload_ptr = alloca;
+              auto& data_layout = context.GetModule().getDataLayout();
+              payload_size_val = llvm::ConstantInt::get(
+                  i32_ty, data_layout.getTypeAllocSize(payload_struct_ty));
+            }
+
             builder.CreateCall(
                 context.GetLyraEnqueueObservedDeferredAssertion(),
-                {engine_ptr, mode.decision_owner_id, site_val, disp_val});
+                {engine_ptr, mode.decision_owner_id, instance_id_val,
+                 site_val, disp_val, payload_ptr, payload_size_val});
             return {};
           },
       },

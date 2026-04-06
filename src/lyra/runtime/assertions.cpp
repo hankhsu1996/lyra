@@ -5,8 +5,10 @@
 
 #include "lyra/common/deferred_assertion_abi.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/runtime/deferred_assertion_thunk.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/reporting.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 
 extern "C" void LyraRecordImmediateCoverHit(void* engine, uint32_t site_index) {
   static_cast<lyra::runtime::Engine*>(engine)->RecordImmediateCoverHit(
@@ -21,9 +23,10 @@ extern "C" void LyraInitDeferredAssertionSites(
 }
 
 extern "C" void LyraEnqueueObservedDeferredAssertion(
-    void* engine, uint32_t process_id, uint32_t site_id, uint8_t disposition) {
+    void* engine, uint32_t process_id, uint32_t instance_id, uint32_t site_id,
+    uint8_t disposition, const void* payload_ptr, uint32_t payload_size) {
   static_cast<lyra::runtime::Engine*>(engine)->EnqueueDeferredAssertion(
-      process_id, site_id, disposition);
+      process_id, instance_id, site_id, disposition, payload_ptr, payload_size);
 }
 
 namespace lyra::runtime {
@@ -35,7 +38,8 @@ void Engine::InitDeferredAssertionSites(
 }
 
 void Engine::EnqueueDeferredAssertion(
-    uint32_t process_id, uint32_t site_id, uint8_t disposition) {
+    uint32_t process_id, uint32_t instance_id, uint32_t site_id,
+    uint8_t disposition, const void* payload_ptr, uint32_t payload_size) {
   if (process_id >= deferred_assertion_states_.size()) {
     throw common::InternalError(
         "Engine::EnqueueDeferredAssertion",
@@ -58,12 +62,18 @@ void Engine::EnqueueDeferredAssertion(
   }
 
   auto& state = deferred_assertion_states_[process_id];
-  state.pending.push_back(
-      DeferredAssertionRecord{
-          .enqueue_generation = state.flush_generation,
-          .site_id = site_id,
-          .disposition = disposition,
-      });
+  DeferredAssertionRecord rec{
+      .enqueue_generation = state.flush_generation,
+      .site_id = site_id,
+      .disposition = disposition,
+      .instance_id = instance_id,
+      .payload_size = payload_size,
+      .payload = {},
+  };
+  if (payload_ptr != nullptr && payload_size > 0) {
+    rec.payload.AssignCopy(payload_ptr, payload_size);
+  }
+  state.pending.push_back(std::move(rec));
 
   if (deferred_pending_flags_[process_id] == 0) {
     deferred_pending_flags_[process_id] = 1;
@@ -125,13 +135,44 @@ void Engine::MatureAndExecuteObservedDeferredAssertions() {
           break;
         }
         case Disp::kFailAction:
-          throw common::InternalError(
-              "Engine::MatureAndExecuteObservedDeferredAssertions",
-              "kFailAction reached runtime before thunk support");
-        case Disp::kPassAction:
-          throw common::InternalError(
-              "Engine::MatureAndExecuteObservedDeferredAssertions",
-              "kPassAction reached runtime before thunk support");
+        case Disp::kPassAction: {
+          DeferredAssertionThunkFn thunk =
+              (disp == Disp::kPassAction) ? site.pass_thunk : site.fail_thunk;
+          if (thunk == nullptr) {
+            throw common::InternalError(
+                "Engine::MatureAndExecuteObservedDeferredAssertions",
+                std::format(
+                    "thunk is null for disposition {}",
+                    static_cast<uint8_t>(disp)));
+          }
+
+          // Validate payload size against site metadata.
+          uint32_t expected = (disp == Disp::kPassAction)
+                                  ? site.pass_payload_size
+                                  : site.fail_payload_size;
+          if (rec.payload_size != expected) {
+            throw common::InternalError(
+                "Engine::MatureAndExecuteObservedDeferredAssertions",
+                std::format(
+                    "payload size mismatch: record={} site={}",
+                    rec.payload_size, expected));
+          }
+
+          // Build execution context with instance_id dispatch invariant.
+          DeferredAssertionExecContext ctx{};
+          if (rec.instance_id != kNoInstanceId) {
+            auto* inst = FindInstanceMut(InstanceId{rec.instance_id});
+            if (inst == nullptr) {
+              throw common::InternalError(
+                  "Engine::MatureAndExecuteObservedDeferredAssertions",
+                  std::format("instance_id {} not found", rec.instance_id));
+            }
+            ctx.instance = inst;
+          }
+
+          thunk(design_state_base_, this, &ctx, rec.payload.Data());
+          break;
+        }
         default:
           throw common::InternalError(
               "Engine::MatureAndExecuteObservedDeferredAssertions",

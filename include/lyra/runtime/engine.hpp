@@ -38,6 +38,7 @@
 #include "lyra/runtime/scheduler_snapshot.hpp"
 #include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/slot_meta.hpp"
+#include "lyra/runtime/small_byte_buffer.hpp"
 #include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_selection.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
@@ -926,7 +927,8 @@ class Engine {
   void InitDeferredAssertionSites(
       const struct LyraDeferredAssertionSiteMeta* sites, uint32_t count);
   void EnqueueDeferredAssertion(
-      uint32_t process_id, uint32_t site_id, uint8_t disposition);
+      uint32_t process_id, uint32_t instance_id, uint32_t site_id,
+      uint8_t disposition, const void* payload_ptr, uint32_t payload_size);
   void FlushDeferredAssertionsForProcess(ProcessId pid);
   void MatureAndExecuteObservedDeferredAssertions();
 
@@ -1567,6 +1569,9 @@ class Engine {
     uint32_t enqueue_generation = 0;
     uint32_t site_id = 0;
     uint8_t disposition = 0;
+    uint32_t instance_id = 0;
+    uint32_t payload_size = 0;
+    SmallByteBuffer payload;
   };
   struct ProcessDeferredAssertionState {
     uint32_t flush_generation = 0;

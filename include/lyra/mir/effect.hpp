@@ -246,11 +246,25 @@ static_assert(
 //
 // At runtime, the record is stamped with the current flush generation
 // and matured at settle boundary.
+// Typed payload descriptor for by-value capture in deferred assertion
+// actions. Carried on both the site metadata (DeferredThunkAction) and
+// the enqueue effect so the LLVM backend can build the payload struct
+// type without accessing site info.
+struct CapturePayloadDesc {
+  // Semantic by-value captured types, ordered by call-order position.
+  // The LLVM backend derives the storage type from each TypeId via
+  // ClassifyCallableValueAbi at emission time.
+  std::vector<TypeId> field_types;
+};
+
 struct EnqueueDeferredAssertionEffect {
   DeferredAssertionSiteId site_id;
   DeferredAssertionDisposition disposition;
+  // Typed payload descriptor matching capture_values. Used by the LLVM
+  // backend to build the payload struct type for packing.
+  CapturePayloadDesc payload_desc;
   // By-value fields to evaluate now and pack into the captured blob,
-  // in exact CaptureLayout field order. LLVM lowering packs them
+  // in exact payload_desc field order. LLVM lowering packs them
   // sequentially. These operands are never stored into runtime records;
   // they are fully evaluated during codegen into the packed blob.
   // Runtime never sees MIR-like Operands.

@@ -37,18 +37,8 @@ struct DeferredThunkUserCallee {
 // FunctionId in the LLVM backend context.
 struct DeferredThunkDisplayTaskCallee {};
 
-// Typed payload descriptor for by-value capture. The payload for each
-// site/disposition pair is an ordered list of semantic captured value types.
-// The actual byte layout (offsets, sizes, alignment) is derived by the
-// LLVM backend: it maps each TypeId through the callable ABI classifier to
-// determine the concrete LLVM storage type, then uses DataLayout for layout.
-// MIR does not represent or constrain the storage-level carrier type.
-struct CapturePayloadDesc {
-  // Semantic by-value captured types, ordered by call-order position.
-  // The LLVM backend derives the storage type from each TypeId via
-  // ClassifyCallableValueAbi at emission time.
-  std::vector<TypeId> field_types;
-};
+// CapturePayloadDesc is defined in effect.hpp (shared by both
+// EnqueueDeferredAssertionEffect and DeferredThunkAction).
 
 // Describes how one actual argument is sourced inside the thunk body.
 struct DeferredThunkActualBinding {

@@ -1514,6 +1514,17 @@ auto LowerObservedDeferredImmediateAssertion(
     fail_plan = std::move(*result);
   }
 
+  // Save payload descs before moving actions into site_info.
+  // After std::move, the action's payload vector is in a moved-from state.
+  mir::CapturePayloadDesc pass_payload_desc;
+  mir::CapturePayloadDesc fail_payload_desc;
+  if (pass_plan.has_value()) {
+    pass_payload_desc = pass_plan->action.payload;
+  }
+  if (fail_plan.has_value()) {
+    fail_payload_desc = fail_plan->action.payload;
+  }
+
   // Build site metadata with disposition-specific descriptors.
   mir::DeferredAssertionSiteInfo site_info{
       .span = span,
@@ -1566,7 +1577,8 @@ auto LowerObservedDeferredImmediateAssertion(
             return *cond;
           },
           .build_body =
-              [&callback_result, is_cover, site_id, &pass_plan](MirBuilder& b) {
+              [&callback_result, is_cover, site_id, &pass_plan,
+               &pass_payload_desc](MirBuilder& b) {
                 if (!callback_result) return;
                 if (is_cover) {
                   if (pass_plan.has_value()) {
@@ -1587,6 +1599,7 @@ auto LowerObservedDeferredImmediateAssertion(
                             .site_id = site_id,
                             .disposition =
                                 mir::DeferredAssertionDisposition::kPassAction,
+                            .payload_desc = pass_payload_desc,
                             .capture_values = std::move(captures),
                         });
                   } else {
@@ -1596,6 +1609,7 @@ auto LowerObservedDeferredImmediateAssertion(
                             .site_id = site_id,
                             .disposition =
                                 mir::DeferredAssertionDisposition::kCoverHit,
+                            .payload_desc = {},
                             .capture_values = {},
                         });
                   }
@@ -1616,6 +1630,7 @@ auto LowerObservedDeferredImmediateAssertion(
                           .site_id = site_id,
                           .disposition =
                               mir::DeferredAssertionDisposition::kPassAction,
+                          .payload_desc = pass_payload_desc,
                           .capture_values = std::move(captures),
                       });
                 }
@@ -1626,7 +1641,8 @@ auto LowerObservedDeferredImmediateAssertion(
       is_cover
           ? std::nullopt
           : std::optional<std::function<void(MirBuilder&)>>(
-                [&callback_result, site_id, &fail_plan](MirBuilder& b) {
+                [&callback_result, site_id, &fail_plan,
+                 &fail_payload_desc](MirBuilder& b) {
                   if (!callback_result) return;
                   if (fail_plan.has_value()) {
                     // Assert/assume #0 with user fail action: evaluate
@@ -1646,6 +1662,7 @@ auto LowerObservedDeferredImmediateAssertion(
                             .site_id = site_id,
                             .disposition =
                                 mir::DeferredAssertionDisposition::kFailAction,
+                            .payload_desc = fail_payload_desc,
                             .capture_values = std::move(captures),
                         });
                   } else {
@@ -1655,6 +1672,7 @@ auto LowerObservedDeferredImmediateAssertion(
                             .site_id = site_id,
                             .disposition = mir::DeferredAssertionDisposition::
                                 kDefaultFailReport,
+                            .payload_desc = {},
                             .capture_values = {},
                         });
                   }

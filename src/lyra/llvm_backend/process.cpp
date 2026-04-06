@@ -2822,6 +2822,21 @@ auto DefineDeferredAssertionThunk(
   auto* payload_arg = llvm_func->getArg(3);
   payload_arg->setName("payload");
 
+  // Validate payload field count matches kPayloadField bindings.
+  uint32_t expected_payload_fields = 0;
+  for (const auto& b : action.actual_bindings) {
+    if (b.source == mir::DeferredThunkActualBinding::Source::kPayloadField) {
+      ++expected_payload_fields;
+    }
+  }
+  if (action.payload.field_types.size() != expected_payload_fields) {
+    throw common::InternalError(
+        "DefineDeferredAssertionThunk",
+        std::format(
+            "payload field count {} != expected {}",
+            action.payload.field_types.size(), expected_payload_fields));
+  }
+
   // Build the LLVM payload struct type using the canonical helper.
   auto* payload_struct_ty = BuildDeferredPayloadStructType(
       llvm_ctx, action.payload, types, force_two_state);
@@ -2855,6 +2870,8 @@ auto DefineDeferredAssertionThunk(
   }
 
   const auto& target_func = context.GetMirArena()[user_callee->target];
+  bool target_is_module_scoped =
+      context.IsModuleScopedFunction(user_callee->target);
 
   // Validate binding count matches formal count.
   if (action.actual_bindings.size() != target_func.signature.params.size()) {
@@ -2871,7 +2888,7 @@ auto DefineDeferredAssertionThunk(
   call_args.push_back(design_arg);
   call_args.push_back(engine_arg);
 
-  if (target_func.abi_contract.needs_module_binding) {
+  if (target_is_module_scoped) {
     // Load RuntimeInstance* from exec context using canonical type.
     auto* exec_ctx_ty = BuildDeferredExecContextType(llvm_ctx);
     auto* instance_ptr_ptr = builder.CreateStructGEP(exec_ctx_ty, ctx_arg, 0);
@@ -2906,8 +2923,8 @@ auto DefineDeferredAssertionThunk(
     call_args.push_back(instance_id);
   }
 
-  if (target_func.abi_contract.accepts_process_ownership) {
-    // Deferred thunks execute outside process context.
+  if (target_func.abi_contract.accepts_decision_owner) {
+    // Deferred thunks execute outside decision owner context.
     // Pass 0 as a sentinel.
     call_args.push_back(llvm::ConstantInt::get(i32_ty, 0));
   }
