@@ -32,6 +32,12 @@ struct ModuleBody {
   // their kinds, and their types. This is NOT placement/layout metadata.
   std::vector<SlotDesc> slots;
 
+  // Total body-global decision site count. Set by module lowering after all
+  // functions, processes, and tasks are lowered. Defines the authoritative
+  // size of the body-wide decision metadata table. The LLVM backend validates
+  // that exactly this many sites are reconstructed from the stored records.
+  uint32_t total_decision_sites = 0;
+
   // Body-local MIR storage. All body-local PlaceIds, ProcessIds, and
   // FunctionIds are indices into this arena.
   Arena arena;

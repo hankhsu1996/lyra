@@ -14,19 +14,19 @@
 namespace lyra::lowering::mir_to_llvm {
 
 auto LowerRecordDecisionObservation(
-    Context& ctx, llvm::Value* process_id,
+    Context& ctx, llvm::Value* decision_owner_id,
     const mir::RecordDecisionObservation& obs) -> Result<void> {
-  if (process_id == nullptr) {
+  if (decision_owner_id == nullptr) {
     throw common::InternalError(
         "LowerRecordDecisionObservation",
-        "null process_id for process-owned decision lowering");
+        "null decision_owner_id for deferred-check lowering");
   }
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   builder.CreateCall(
       ctx.GetLyraRecordDecisionObservation(),
-      {ctx.GetEnginePointer(), process_id,
+      {ctx.GetEnginePointer(), decision_owner_id,
        llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), obs.id.Index()),
        llvm::ConstantInt::get(
            i8_ty, static_cast<uint8_t>(obs.match_class_const)),
@@ -38,12 +38,12 @@ auto LowerRecordDecisionObservation(
 }
 
 auto LowerRecordDecisionObservationDynamic(
-    Context& ctx, llvm::Value* process_id, SlotAccessResolver& resolver,
+    Context& ctx, llvm::Value* decision_owner_id, SlotAccessResolver& resolver,
     const mir::RecordDecisionObservationDynamic& obs) -> Result<void> {
-  if (process_id == nullptr) {
+  if (decision_owner_id == nullptr) {
     throw common::InternalError(
         "LowerRecordDecisionObservationDynamic",
-        "null process_id for process-owned decision lowering");
+        "null decision_owner_id for deferred-check lowering");
   }
   auto& builder = ctx.GetBuilder();
   auto& llvm_ctx = ctx.GetLlvmContext();
@@ -73,7 +73,7 @@ auto LowerRecordDecisionObservationDynamic(
 
   builder.CreateCall(
       ctx.GetLyraRecordDecisionObservation(),
-      {ctx.GetEnginePointer(), process_id,
+      {ctx.GetEnginePointer(), decision_owner_id,
        llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), obs.id.Index()),
        mc_v, sk_v, sa_v});
   return {};

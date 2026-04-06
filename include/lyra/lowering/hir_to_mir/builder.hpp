@@ -11,6 +11,7 @@
 #include "lyra/common/system_tf.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
+#include "lyra/lowering/hir_to_mir/decision_site_allocator.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/assoc_op.hpp"
@@ -54,9 +55,13 @@ struct LoopContext {
 
 class MirBuilder {
  public:
+  // decision_allocator: body-level decision site ID allocator. When non-null,
+  // AllocateDecisionSite uses body-global IDs from this allocator. When null,
+  // a builder-local allocator is used (package/design-global path).
   MirBuilder(
       mir::Arena* arena, Context* ctx, OriginMap* origin_map,
-      hir::ModuleBodyId body_id);
+      hir::ModuleBodyId body_id,
+      DecisionSiteAllocator* decision_allocator = nullptr);
 
   // Instruction emission.
   void EmitAssign(mir::PlaceId target, mir::Operand source);
@@ -398,12 +403,14 @@ class MirBuilder {
   hir::ModuleBodyId body_id_ = hir::kInvalidModuleBodyId;
   bool finished_ = false;
   BlockIndex exit_block_ = kInvalidBlockIndex;  // Single-exit form
-  std::vector<mir::Process::MirDecisionSite> process_decision_sites_;
+  std::vector<mir::Process::MirDecisionSiteRecord> decision_site_records_;
+  DecisionSiteAllocator* decision_allocator_ = nullptr;
+  DecisionSiteAllocator local_decision_allocator_;
 
  public:
-  // Move decision sites out after Finish(). Transfers ownership.
-  auto TakeDecisionSites() -> std::vector<mir::Process::MirDecisionSite> {
-    return std::move(process_decision_sites_);
+  // Move decision site records out after Finish(). Transfers ownership.
+  auto TakeDecisionSites() -> std::vector<mir::Process::MirDecisionSiteRecord> {
+    return std::move(decision_site_records_);
   }
 };
 

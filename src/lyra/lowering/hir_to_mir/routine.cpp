@@ -15,6 +15,7 @@
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
+#include "lyra/lowering/hir_to_mir/decision_site_allocator.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/statement.hpp"
 #include "lyra/lowering/origin_map.hpp"
@@ -112,7 +113,8 @@ auto BuildFunctionSignature(
 auto LowerFunctionBody(
     const hir::Function& function, const LoweringInput& input,
     mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map,
-    hir::ModuleBodyId body_id) -> Result<mir::Function> {
+    hir::ModuleBodyId body_id, DecisionSiteAllocator* decision_allocator)
+    -> Result<mir::Function> {
   Context ctx{
       .mir_arena = &mir_arena,
       .design_arena = decl_view.design_arena,
@@ -140,7 +142,7 @@ auto LowerFunctionBody(
           decl_view.deferred_assertion_site_registry,
   };
 
-  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id);
+  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id, decision_allocator);
   BlockIndex entry_idx = builder.CreateBlock();
   BlockIndex exit_idx = builder.CreateBlock();
   builder.SetExitBlock(exit_idx);
@@ -183,6 +185,7 @@ auto LowerFunctionBody(
   }
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
+  auto decision_sites = builder.TakeDecisionSites();
 
   // Signature and origins are set by caller (SetFunctionBody); placeholders
   // here
@@ -199,6 +202,7 @@ auto LowerFunctionBody(
       .param_origins = {},
       .origin = common::OriginId::Invalid(),
       .materialize_count = ctx.materialize_count,
+      .decision_sites = std::move(decision_sites),
   };
 }
 
@@ -235,8 +239,8 @@ auto BuildTaskSignature(
 
 auto LowerTaskBody(
     const hir::Task& task, const LoweringInput& input, mir::Arena& mir_arena,
-    const DeclView& decl_view, OriginMap* origin_map, hir::ModuleBodyId body_id)
-    -> Result<mir::Function> {
+    const DeclView& decl_view, OriginMap* origin_map, hir::ModuleBodyId body_id,
+    DecisionSiteAllocator* decision_allocator) -> Result<mir::Function> {
   TypeId void_type = input.builtin_types.void_type;
   Context ctx{
       .mir_arena = &mir_arena,
@@ -265,7 +269,7 @@ auto LowerTaskBody(
           decl_view.deferred_assertion_site_registry,
   };
 
-  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id);
+  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id, decision_allocator);
   BlockIndex entry_idx = builder.CreateBlock();
   BlockIndex exit_idx = builder.CreateBlock();
   builder.SetExitBlock(exit_idx);
@@ -292,6 +296,7 @@ auto LowerTaskBody(
   builder.EmitTerminate(std::nullopt);
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
+  auto decision_sites = builder.TakeDecisionSites();
 
   return mir::Function{
       .signature = {},
@@ -306,6 +311,7 @@ auto LowerTaskBody(
       .param_origins = {},
       .origin = common::OriginId::Invalid(),
       .materialize_count = ctx.materialize_count,
+      .decision_sites = std::move(decision_sites),
   };
 }
 

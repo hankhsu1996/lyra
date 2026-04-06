@@ -11,10 +11,10 @@ namespace lyra::lowering::mir_to_llvm {
 // threaded through statement/effect/call lowering for the active function.
 // NOT stored on Context -- this is a local fact, not ambient state.
 struct ActiveExecutionMode {
-  // Caller's active process_id, or null for non-process entry.
-  // Non-null when the callable received process_id via hidden param
-  // (user functions with accepts_process_ownership) or process entry setup.
-  llvm::Value* process_id = nullptr;
+  // Caller's active decision owner, or null for contexts without one.
+  // Non-null when the callable received the owner via hidden param
+  // (user functions with accepts_decision_owner) or process entry setup.
+  llvm::Value* decision_owner_id = nullptr;
 };
 
 }  // namespace lyra::lowering::mir_to_llvm

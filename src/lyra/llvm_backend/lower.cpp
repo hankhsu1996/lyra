@@ -1228,8 +1228,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
           const auto& callee = body.arena[func_id];
           module_export_callees[desc.target.module_target] = {
               .llvm_func = context->GetUserFunction(func_id),
-              .accepts_process_ownership =
-                  callee.abi_contract.accepts_process_ownership,
+              .accepts_decision_owner =
+                  callee.abi_contract.accepts_decision_owner,
           };
         }
       }
@@ -1501,35 +1501,91 @@ auto CompileDesignProcesses(const LoweringInput& input)
                 };
           });
 
-      // Decision site metadata per body-local process.
-      info.decision_metas.resize(num_entries);
-      info.decision_meta_files.resize(num_entries);
-      ForEachNonFinalProcess(
-          body, ordinal_map,
-          [&](uint32_t nonfinal_proc_ordinal, mir::ProcessId /*pid*/,
-              const mir::Process& proc) {
-            auto& per_proc = info.decision_metas[nonfinal_proc_ordinal];
-            auto& per_proc_files =
-                info.decision_meta_files[nonfinal_proc_ordinal];
-            per_proc.reserve(proc.decision_sites.size());
-            per_proc_files.reserve(proc.decision_sites.size());
-            for (const auto& site : proc.decision_sites) {
+      // Decision site metadata: body-wide table shared by all processes.
+      //
+      // Decision IDs are body-global, allocated from a shared
+      // DecisionSiteAllocator during MIR lowering. Each MirDecisionSiteRecord
+      // carries its explicit DecisionId. The table size comes from the
+      // authoritative body.total_decision_sites (set by the allocator), not
+      // from observed records. Every slot must be populated exactly once.
+      //
+      // First cut: every process in the body gets the same full body-wide
+      // table. A future refinement could narrow to the reachable callable
+      // graph per process.
+      {
+        uint32_t table_size = body.total_decision_sites;
+
+        std::vector<runtime::DecisionMetaEntry> body_wide_metas(table_size);
+        std::vector<std::string> body_wide_files(table_size);
+        std::vector<uint8_t> filled(table_size, 0);
+
+        auto place_record =
+            [&](const mir::Process::MirDecisionSiteRecord& rec) {
+              auto idx = rec.id.Index();
+              if (idx >= table_size) {
+                throw common::InternalError(
+                    "CompileDesignProcesses",
+                    std::format(
+                        "decision site id {} out of range in body {} "
+                        "(allocator total {})",
+                        idx, info.body_id.value, table_size));
+              }
+              if (filled[idx] != 0) {
+                throw common::InternalError(
+                    "CompileDesignProcesses",
+                    std::format(
+                        "decision site id {} duplicated in body {}", idx,
+                        info.body_id.value));
+              }
+              filled[idx] = 1;
+              const auto& site = rec.site;
               auto site_loc = ResolveProcessOrigin(
                   site.origin, input.diag_ctx, input.source_manager);
               uint32_t packed =
                   static_cast<uint8_t>(site.qualifier) |
                   (static_cast<uint8_t>(site.kind) << 8) |
                   (static_cast<uint8_t>(site.has_fallback ? 1 : 0) << 16);
-              per_proc.push_back(
-                  runtime::DecisionMetaEntry{
-                      .qualifier_kind_packed = packed,
-                      .arm_count = static_cast<uint32_t>(site.arm_count.raw),
-                      .line = site_loc.line,
-                      .col = site_loc.col,
-                  });
-              per_proc_files.push_back(site_loc.file);
-            }
-          });
+              body_wide_metas[idx] = runtime::DecisionMetaEntry{
+                  .qualifier_kind_packed = packed,
+                  .arm_count = static_cast<uint32_t>(site.arm_count.raw),
+                  .line = site_loc.line,
+                  .col = site_loc.col,
+              };
+              body_wide_files[idx] = site_loc.file;
+            };
+
+        for (mir::FunctionId fid : body.functions) {
+          for (const auto& rec : body.arena[fid].decision_sites) {
+            place_record(rec);
+          }
+        }
+        ForEachNonFinalProcess(
+            body, ordinal_map,
+            [&](uint32_t, mir::ProcessId, const mir::Process& proc) {
+              for (const auto& rec : proc.decision_sites) {
+                place_record(rec);
+              }
+            });
+
+        // Every slot in the allocator-defined ID space must be filled.
+        for (uint32_t i = 0; i < table_size; ++i) {
+          if (filled[i] == 0) {
+            throw common::InternalError(
+                "CompileDesignProcesses",
+                std::format(
+                    "decision site id {} missing in body {} "
+                    "(allocator total {})",
+                    i, info.body_id.value, table_size));
+          }
+        }
+
+        info.decision_metas.resize(num_entries);
+        info.decision_meta_files.resize(num_entries);
+        for (uint32_t p = 0; p < num_entries; ++p) {
+          info.decision_metas[p] = body_wide_metas;
+          info.decision_meta_files[p] = body_wide_files;
+        }
+      }
     }
 
     // Connection metadata template.

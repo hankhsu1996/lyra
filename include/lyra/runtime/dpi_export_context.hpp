@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/semantic/decision.hpp"
 #include "svdpi.h"
 
 // Runtime export-call context for DPI export wrappers.
@@ -31,23 +32,37 @@ struct DpiExportCallContext {
   void* engine = nullptr;
   svScope active_scope = nullptr;
   bool suspension_disallowed = false;
+  semantic::OptionalDecisionOwnerId decision_owner;
+};
+
+// Snapshot of mutable DPI context fields for save/restore across import calls.
+// Scope and owner move together so the foreign boundary is one atomic
+// operation.
+struct DpiContextSnapshot {
+  svScope active_scope = nullptr;
+  semantic::OptionalDecisionOwnerId decision_owner;
 };
 
 // Resolved binding for package-scoped DPI export wrappers.
-// Contains only simulation-lifetime base context.
+// Contains simulation-lifetime base context + decision owner from DPI context.
 struct DpiResolvedPackageBinding {
   void* design_state = nullptr;
   void* engine = nullptr;
+  uint32_t decision_owner_id_raw = UINT32_MAX;
+  bool has_decision_owner = false;
 };
 
 // Resolved binding for module-scoped DPI export wrappers (D4a).
-// Contains simulation-lifetime base context plus instance-binding triple.
+// Contains simulation-lifetime base context, instance-binding triple,
+// and decision owner from DPI context.
 struct DpiResolvedModuleBinding {
   void* design_state = nullptr;
   void* engine = nullptr;
   void* this_ptr = nullptr;
   void* instance_ptr = nullptr;
   uint32_t instance_id = 0;
+  uint32_t decision_owner_id_raw = UINT32_MAX;
+  bool has_decision_owner = false;
 };
 
 // RAII guard: installs context on construction, removes on destruction.
@@ -105,14 +120,17 @@ void LyraResolveModuleInstanceBinding(
 // Used by compiler-generated DPI call boundaries that must expose a
 // specific call-site scope through svGetScope() during foreign execution.
 // Do not call svSetScope() from compiler-generated IR.
+//
+// Push saves scope + decision owner into *out_prev, installs new values.
+// Pop restores from snapshot. Scope and owner move together atomically.
 
-// Sets active_scope to new_scope, returns previous scope for pop.
-// Does NOT validate new_scope (compiler-generated: scope is either a valid
-// RuntimeInstance* from instance_ptr or nullptr).
-auto LyraPushCurrentDpiScope(svScope new_scope) -> svScope;
+// Saves current scope + owner into *out_prev, installs new values.
+void LyraPushCurrentDpiScope(
+    lyra::runtime::DpiContextSnapshot* out_prev, svScope new_scope,
+    uint32_t owner_id_raw, bool has_owner);
 
-// Restores active_scope to prev_scope after context import returns.
-void LyraPopCurrentDpiScope(svScope prev_scope);
+// Restores scope + owner from snapshot after context import returns.
+void LyraPopCurrentDpiScope(const lyra::runtime::DpiContextSnapshot* prev);
 
 // Per-wrapper-call context push/pop for DPI export wrappers (D7a).
 // Pushes a nested frame that inherits design_state, engine, and
@@ -125,4 +143,12 @@ void LyraPopDpiExportCallContext();
 // Returns true if the current export-call context disallows suspension.
 // Used by suspension entrypoints as defense-in-depth guard.
 auto LyraIsDpiExportSuspensionDisallowed() -> bool;
+
+// Report missing decision owner for a DPI export that requires one, and
+// mark the simulation as fatally failed. Called from LLVM-generated wrapper
+// code when the runtime-resolved DPI context has no active decision owner
+// but the callee requires one. Not noreturn: the wrapper must still emit
+// an ABI-valid return after this call.
+void LyraReportMissingDecisionOwnerFatal(
+    void* engine_ptr, const char* export_name);
 }

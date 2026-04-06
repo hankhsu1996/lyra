@@ -105,7 +105,7 @@ cases:
     expect:
       compiler_output:
         contains:
-          - "call ptr @LyraPushCurrentDpiScope("
+          - "call void @LyraPushCurrentDpiScope("
           - "call i32 @ctx_fn(ptr"
           - "call void @LyraPopCurrentDpiScope("
 

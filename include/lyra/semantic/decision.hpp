@@ -113,4 +113,28 @@ inline auto NeedsNoMatchCheck(DecisionQualifier q, bool has_fallback) -> bool {
   return q == DecisionQualifier::kUnique || q == DecisionQualifier::kPriority;
 }
 
+// Deferred-check owner identity. Assigned during design realization (1:1 with
+// ProcessId in the first cut). Indexes engine decision storage and pending
+// queues. Distinct from ProcessId to decouple the decision pipeline from the
+// scheduler's process model.
+struct DecisionOwnerId {
+  uint32_t raw = 0;
+
+  static auto FromIndex(uint32_t v) -> DecisionOwnerId {
+    return DecisionOwnerId{v};
+  }
+  [[nodiscard]] auto Index() const -> uint32_t {
+    return raw;
+  }
+
+  friend auto operator==(DecisionOwnerId, DecisionOwnerId) -> bool = default;
+};
+
+// Optional decision owner. Used in runtime structs where owner presence is
+// conditional (e.g., DPI export call context).
+struct OptionalDecisionOwnerId {
+  DecisionOwnerId value;
+  bool has_value = false;
+};
+
 }  // namespace lyra::semantic

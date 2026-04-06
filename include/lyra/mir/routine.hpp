@@ -36,9 +36,7 @@ struct Process {
   // Stats: materialize-to-place operations (for --stats output).
   uint64_t materialize_count = 0;
 
-  // Decision site metadata, indexed by DecisionId::Index().
-  // Populated during MIR body building via AllocateDecisionSite().
-  // Lowered into ProcessBodyDecisionTable at LLVM emission.
+  // Decision site metadata (qualifier, kind, arm count, origin).
   struct MirDecisionSite {
     semantic::DecisionQualifier qualifier{};
     semantic::DecisionKind kind{};
@@ -47,7 +45,16 @@ struct Process {
     common::OriginId origin = common::OriginId::Invalid();
   };
 
-  std::vector<MirDecisionSite> decision_sites;
+  // Decision site record: pairs body-global DecisionId with metadata.
+  // Populated during MIR body building via AllocateDecisionSite().
+  // The DecisionId is body-global (unique across all processes and functions
+  // in the same module body), assigned by the DecisionSiteAllocator.
+  struct MirDecisionSiteRecord {
+    semantic::DecisionId id;
+    MirDecisionSite site;
+  };
+
+  std::vector<MirDecisionSiteRecord> decision_sites;
 };
 
 enum class PassingKind {
@@ -89,8 +96,8 @@ inline auto IsObserverProgram(RuntimeProgramKind kind) -> bool {
 struct CallableAbiContract {
   // Module binding group: this_ptr + instance_ptr + instance_id.
   bool needs_module_binding = false;
-  // Active caller process ownership may be threaded to this callable.
-  bool accepts_process_ownership = false;
+  // Active decision owner context may be threaded to this callable.
+  bool accepts_decision_owner = false;
 };
 
 struct FunctionParam {
@@ -142,6 +149,12 @@ struct Function {
   // Stats: materialize-to-place operations (for --stats output).
   uint64_t materialize_count = 0;
 
+  // Decision site metadata for this function body, indexed by body-global
+  // DecisionId offset. Stored here so the LLVM backend can include function-
+  // body sites in the owner's decision table alongside process-body sites.
+  // Decision site records with body-global IDs (same type as Process).
+  std::vector<Process::MirDecisionSiteRecord> decision_sites;
+
   // Body execution requirement: computed once at metadata formation time
   // from the effect ops in this function's body. Stored here as the single
   // source of truth; consumers (verifier, call lowering) read this field
@@ -161,20 +174,20 @@ auto ComputeBodyExecutionRequirement(const Function& func)
     -> BodyExecutionRequirement;
 
 // Seed the ABI contract for a callable from intrinsic body requirement.
-// Sets accepts_process_ownership = true iff this body directly contains
-// process-owned effects. Observer programs never accept (own ABI).
-// needs_module_binding is set separately by the backend.
+// Sets accepts_decision_owner = true iff this body directly contains
+// deferred-check-owner-required effects. Observer programs never accept (own
+// ABI). needs_module_binding is set separately by the backend.
 //
-// This is the seed step only. PropagateProcessOwnershipAbi() must run
+// This is the seed step only. PropagateDeferredOwnerAbi() must run
 // after all bodies are set to propagate through the call graph: if A
-// calls B, and B accepts, then A must also accept (to carry process_id).
+// calls B, and B accepts, then A must also accept (to carry decision_owner_id).
 auto BuildCallableAbiContract(const Function& func) -> CallableAbiContract;
 
-// Check if a function calls any callee that accepts process ownership.
+// Check if a function calls any callee that accepts a decision owner.
 // Covers both local (FunctionId) and design-global (DesignFunctionRef) edges.
 // design_arena may be null if no cross-arena lookup is needed.
 class Arena;
-auto CallsCalleeAcceptingProcessOwnership(
+auto CallsCalleeAcceptingDecisionOwner(
     const Function& func, const std::vector<Function>& local_functions,
     const Arena* design_arena) -> bool;
 

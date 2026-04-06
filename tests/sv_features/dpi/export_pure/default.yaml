@@ -282,7 +282,11 @@ cases:
         contains:
           - "my_fn"
 
-  - name: reject_export_function_with_unique_case
+  - name: accept_export_function_with_unique_case
+    description: >
+      DPI export of function with unique case compiles successfully. Legality
+      is checked at runtime: if no decision owner is available when called,
+      the simulation is marked fatal.
     sv: |
       package dpi_pkg;
         function int decode(int sel);
@@ -297,13 +301,11 @@ cases:
       module Test;
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "DPI export"
-          - "process execution context"
 
-  - name: reject_export_function_with_priority_case
+  - name: accept_export_function_with_priority_case
+    description: >
+      DPI export of function with priority case compiles successfully.
+      Runtime guard enforces owner availability.
     sv: |
       package dpi_pkg;
         function int prio_fn(int sel);
@@ -318,13 +320,11 @@ cases:
       module Test;
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "DPI export"
-          - "process execution context"
 
-  - name: reject_export_transitive_unique_case
+  - name: accept_export_transitive_unique_case
+    description: >
+      DPI export of function that transitively calls unique case compiles
+      successfully. Runtime guard enforces owner availability.
     sv: |
       package dpi_pkg;
         function int inner(int sel);
@@ -341,8 +341,3 @@ cases:
       module Test;
         initial begin end
       endmodule
-    expect:
-      error:
-        contains:
-          - "DPI export"
-          - "process execution context"

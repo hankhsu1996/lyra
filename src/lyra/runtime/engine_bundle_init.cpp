@@ -750,26 +750,45 @@ void Engine::InitModuleInstancesFromBundles(
         });
   }
 
-  // Step F: Register immutable decision metadata tables per process.
+  // Step F: Register immutable decision metadata tables per owner.
+  // First cut: 1:1 mapping from process to decision owner.
   for (const InstanceMetadataBundle& bundle : bundles) {
     const auto& dtables = bundle.body_desc->decision_tables;
     for (uint32_t local = 0; local < dtables.size(); ++local) {
-      const auto pid = ProcessId::FromIndex(bundle.module_proc_base + local);
-      if (pid.Index() >= process_decision_tables_.size()) continue;
+      const auto oid =
+          DecisionOwnerId::FromIndex(bundle.module_proc_base + local);
+      if (oid.Index() >= decision_owner_tables_.size()) {
+        throw common::InternalError(
+            "Engine::InitModuleInstancesFromBundles",
+            std::format(
+                "decision owner {} out of range (tables size {}, "
+                "bundle base {} local {})",
+                oid.Index(), decision_owner_tables_.size(),
+                bundle.module_proc_base, local));
+      }
+      if (oid.Index() >= decision_owner_states_.size()) {
+        throw common::InternalError(
+            "Engine::InitModuleInstancesFromBundles",
+            std::format(
+                "decision owner {} out of range (states size {}, "
+                "bundle base {} local {})",
+                oid.Index(), decision_owner_states_.size(),
+                bundle.module_proc_base, local));
+      }
       const auto& desc = dtables[local];
       if (desc.count > 0 && desc.metas == nullptr) {
         throw common::InternalError(
             "Engine::InitModuleInstancesFromBundles",
             std::format(
-                "decision table for pid {} has count {} but null metas",
-                pid.Index(), desc.count));
+                "decision table for owner {} has count {} but null metas",
+                oid.Index(), desc.count));
       }
-      process_decision_tables_[pid.Index()] = ProcessBodyDecisionTable{
+      decision_owner_tables_[oid.Index()] = DecisionOwnerTable{
           .count = DecisionSiteCount::FromCount(desc.count),
           .metas = desc.metas,
       };
       if (desc.count > 0) {
-        auto& state = decision_states_[pid.Index()];
+        auto& state = decision_owner_states_[oid.Index()];
         state.slots.resize(desc.count);
         state.dirty_seen.resize(desc.count, 0);
       }

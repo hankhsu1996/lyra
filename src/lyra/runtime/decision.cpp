@@ -6,18 +6,38 @@
 #include <span>
 #include <string>
 
+#include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/reporting.hpp"
 
 namespace lyra::runtime {
 
 void Engine::RecordDecisionObservation(
-    ProcessId process_id, DecisionId decision_id, MatchClass match_class,
+    DecisionOwnerId owner_id, DecisionId decision_id, MatchClass match_class,
     DecisionSelectedKind selected_kind, DecisionArmIndex selected_arm) {
-  if (process_id.Index() >= decision_states_.size()) return;
+  if (owner_id.Index() >= decision_owner_states_.size()) {
+    throw common::InternalError(
+        "Engine::RecordDecisionObservation",
+        std::format(
+            "owner_id {} out of range (states size {})", owner_id.Index(),
+            decision_owner_states_.size()));
+  }
+  if (owner_id.Index() >= decision_owner_pending_flags_.size()) {
+    throw common::InternalError(
+        "Engine::RecordDecisionObservation",
+        std::format(
+            "owner_id {} out of range (pending flags size {})",
+            owner_id.Index(), decision_owner_pending_flags_.size()));
+  }
 
-  auto& state = decision_states_[process_id.Index()];
-  if (decision_id.Index() >= state.slots.size()) return;
+  auto& state = decision_owner_states_[owner_id.Index()];
+  if (decision_id.Index() >= state.slots.size()) {
+    throw common::InternalError(
+        "Engine::RecordDecisionObservation",
+        std::format(
+            "decision_id {} out of range for owner {} (slots size {})",
+            decision_id.Index(), owner_id.Index(), state.slots.size()));
+  }
 
   auto& slot = state.slots[decision_id.Index()];
   slot.timeslot_epoch = current_timeslot_epoch_;
@@ -30,14 +50,19 @@ void Engine::RecordDecisionObservation(
     state.dirty_list.push_back(decision_id);
   }
 
-  if (decision_pending_flags_[process_id.Index()] == 0) {
-    decision_pending_flags_[process_id.Index()] = 1;
-    pending_decision_processes_.push_back(process_id);
+  if (decision_owner_pending_flags_[owner_id.Index()] == 0) {
+    decision_owner_pending_flags_[owner_id.Index()] = 1;
+    pending_decision_owners_.push_back(owner_id);
   }
 }
 
+auto Engine::FormatDecisionOwner(DecisionOwnerId owner_id) const
+    -> std::string {
+  return FormatProcess(owner_id.Index());
+}
+
 auto Engine::BuildDecisionViolationMessage(
-    ProcessId process_id, const DecisionMetaEntry& meta,
+    DecisionOwnerId owner_id, const DecisionMetaEntry& meta,
     DecisionViolation violation) const -> std::string {
   auto kind = DecisionMetaKind(meta);
   bool is_case = kind == DecisionKind::kCase;
@@ -64,14 +89,14 @@ auto Engine::BuildDecisionViolationMessage(
   }();
 
   const char* kind_str = is_case ? "case" : "if";
-  std::string proc_str = FormatProcess(process_id.Index());
+  std::string owner_str = FormatDecisionOwner(owner_id);
   return std::format(
-      "{} {} violation in {}: {}", qualifier_str, kind_str, proc_str,
+      "{} {} violation in {}: {}", qualifier_str, kind_str, owner_str,
       violation_str);
 }
 
 auto Engine::BuildDecisionViolationReport(
-    ProcessId process_id, const DecisionMetaEntry& meta,
+    DecisionOwnerId owner_id, const DecisionMetaEntry& meta,
     DecisionViolation violation) const -> ReportRequest {
   std::optional<ResolvedOrigin> origin;
   if (meta.file != nullptr && meta.line > 0) {
@@ -82,22 +107,50 @@ auto Engine::BuildDecisionViolationReport(
       .kind = ReportKind::kDecisionViolation,
       .severity = Severity::kWarning,
       .origin = origin,
-      .message = BuildDecisionViolationMessage(process_id, meta, violation),
+      .message = BuildDecisionViolationMessage(owner_id, meta, violation),
       .action = ReportAction::kContinue,
   };
 }
 
 void Engine::RunSettleCompleteChecks() {
-  for (ProcessId pid : pending_decision_processes_) {
-    ValidateProcessDecisionChecks(pid);
-    decision_pending_flags_[pid.Index()] = 0;
+  for (DecisionOwnerId owner_id : pending_decision_owners_) {
+    if (owner_id.Index() >= decision_owner_states_.size()) {
+      throw common::InternalError(
+          "Engine::RunSettleCompleteChecks",
+          std::format(
+              "pending owner_id {} out of range (states size {})",
+              owner_id.Index(), decision_owner_states_.size()));
+    }
+    if (owner_id.Index() >= decision_owner_pending_flags_.size()) {
+      throw common::InternalError(
+          "Engine::RunSettleCompleteChecks",
+          std::format(
+              "pending owner_id {} out of range (pending flags size {})",
+              owner_id.Index(), decision_owner_pending_flags_.size()));
+    }
+    ValidateDecisionOwnerChecks(owner_id);
+    decision_owner_pending_flags_[owner_id.Index()] = 0;
   }
-  pending_decision_processes_.clear();
+  pending_decision_owners_.clear();
 }
 
-void Engine::ValidateProcessDecisionChecks(ProcessId process_id) {
-  auto& state = decision_states_[process_id.Index()];
-  const auto& table = process_decision_tables_[process_id.Index()];
+void Engine::ValidateDecisionOwnerChecks(DecisionOwnerId owner_id) {
+  if (owner_id.Index() >= decision_owner_states_.size()) {
+    throw common::InternalError(
+        "Engine::ValidateDecisionOwnerChecks",
+        std::format(
+            "owner_id {} out of range (states size {})", owner_id.Index(),
+            decision_owner_states_.size()));
+  }
+  if (owner_id.Index() >= decision_owner_tables_.size()) {
+    throw common::InternalError(
+        "Engine::ValidateDecisionOwnerChecks",
+        std::format(
+            "owner_id {} out of range (tables size {})", owner_id.Index(),
+            decision_owner_tables_.size()));
+  }
+  auto& state = decision_owner_states_[owner_id.Index()];
+  const auto& table = decision_owner_tables_[owner_id.Index()];
   auto metas = (table.metas != nullptr)
                    ? std::span(table.metas, table.count.Index())
                    : std::span<const DecisionMetaEntry>{};
@@ -107,13 +160,19 @@ void Engine::ValidateProcessDecisionChecks(ProcessId process_id) {
 
     if (!(obs.timeslot_epoch == current_timeslot_epoch_)) continue;
 
-    if (did.Index() >= metas.size()) continue;
+    if (did.Index() >= metas.size()) {
+      throw common::InternalError(
+          "Engine::ValidateDecisionOwnerChecks",
+          std::format(
+              "decision_id {} out of range for owner {} (meta count {})",
+              did.Index(), owner_id.Index(), metas.size()));
+    }
     const auto& meta = metas[did.Index()];
 
     auto violation = ClassifyDecisionViolation(meta, obs);
     if (violation != DecisionViolation::kNone) {
       DecisionDiagKey key{
-          .process_id = process_id,
+          .owner_id = owner_id,
           .decision_id = did,
           .violation = violation,
       };
@@ -121,7 +180,7 @@ void Engine::ValidateProcessDecisionChecks(ProcessId process_id) {
       if (count < 10) {
         ++count;
         EmitReport(
-            this, BuildDecisionViolationReport(process_id, meta, violation));
+            this, BuildDecisionViolationReport(owner_id, meta, violation));
         if (count == 10) {
           std::optional<ResolvedOrigin> suppression_origin;
           if (meta.file != nullptr && meta.line > 0) {
@@ -135,7 +194,7 @@ void Engine::ValidateProcessDecisionChecks(ProcessId process_id) {
                         .origin = suppression_origin,
                         .message = std::format(
                             "further decision violations suppressed in {}",
-                            FormatProcess(process_id.Index())),
+                            FormatDecisionOwner(owner_id)),
                         .action = ReportAction::kContinue,
                     });
         }
@@ -150,16 +209,23 @@ void Engine::ValidateProcessDecisionChecks(ProcessId process_id) {
 }  // namespace lyra::runtime
 
 // Runtime ABI: called from LLVM-generated code with explicit caller context.
-// Raw integers only at this C boundary; converted to strong types immediately.
+// Raw integers only at this C boundary; converted to runtime-namespace strong
+// types immediately.
 extern "C" void LyraRecordDecisionObservation(
-    void* engine_ptr, uint32_t process_id_raw, uint32_t decision_id_raw,
+    void* engine_ptr, uint32_t owner_id_raw, uint32_t decision_id_raw,
     uint8_t match_class_raw, uint8_t selected_kind_raw,
     uint16_t selected_arm_raw) {
-  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  using lyra::runtime::DecisionArmIndex;
+  using lyra::runtime::DecisionId;
+  using lyra::runtime::DecisionOwnerId;
+  using lyra::runtime::DecisionSelectedKind;
+  using lyra::runtime::Engine;
+  using lyra::runtime::MatchClass;
+  auto* engine = static_cast<Engine*>(engine_ptr);
   engine->RecordDecisionObservation(
-      lyra::runtime::ProcessId::FromIndex(process_id_raw),
-      lyra::semantic::DecisionId::FromIndex(decision_id_raw),
-      static_cast<lyra::semantic::MatchClass>(match_class_raw),
-      static_cast<lyra::semantic::DecisionSelectedKind>(selected_kind_raw),
-      lyra::semantic::DecisionArmIndex{selected_arm_raw});
+      DecisionOwnerId::FromIndex(owner_id_raw),
+      DecisionId::FromIndex(decision_id_raw),
+      static_cast<MatchClass>(match_class_raw),
+      static_cast<DecisionSelectedKind>(selected_kind_raw),
+      DecisionArmIndex{selected_arm_raw});
 }

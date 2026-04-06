@@ -12,6 +12,8 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+class DecisionSiteAllocator;
+
 // Build a frozen FunctionSignature from HIR function metadata.
 // Must be called at pre-allocation time (Phase 1).
 // Computes return_policy based on return type characteristics.
@@ -22,7 +24,9 @@ auto BuildFunctionSignature(
 auto LowerFunctionBody(
     const hir::Function& function, const LoweringInput& input,
     mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map,
-    hir::ModuleBodyId body_id) -> Result<mir::Function>;
+    hir::ModuleBodyId body_id,
+    DecisionSiteAllocator* decision_allocator = nullptr)
+    -> Result<mir::Function>;
 
 // Build a frozen FunctionSignature for a task (void return, same param rules).
 // Tasks are lowered as mir::Function at the immediate callable level.
@@ -32,7 +36,8 @@ auto BuildTaskSignature(
 
 auto LowerTaskBody(
     const hir::Task& task, const LoweringInput& input, mir::Arena& mir_arena,
-    const DeclView& decl_view, OriginMap* origin_map, hir::ModuleBodyId body_id)
+    const DeclView& decl_view, OriginMap* origin_map, hir::ModuleBodyId body_id,
+    DecisionSiteAllocator* decision_allocator = nullptr)
     -> Result<mir::Function>;
 
 }  // namespace lyra::lowering::hir_to_mir

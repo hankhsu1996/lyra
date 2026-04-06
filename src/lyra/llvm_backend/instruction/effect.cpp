@@ -581,29 +581,29 @@ auto LowerEffectOp(
             return LowerFillPackedEffect(context, fill);
           },
           [&](const mir::RecordDecisionObservation& obs) -> Result<void> {
-            if (mode.process_id == nullptr) {
+            if (mode.decision_owner_id == nullptr) {
               return std::unexpected(
                   context.GetDiagnosticContext().MakeUnsupported(
                       context.GetCurrentOrigin(),
-                      "process-owned effect lowered without active process "
-                      "ownership",
+                      "deferred-check effect lowered without active "
+                      "decision owner",
                       UnsupportedCategory::kFeature));
             }
             return LowerRecordDecisionObservation(
-                context, mode.process_id, obs);
+                context, mode.decision_owner_id, obs);
           },
           [&](const mir::RecordDecisionObservationDynamic& obs)
               -> Result<void> {
-            if (mode.process_id == nullptr) {
+            if (mode.decision_owner_id == nullptr) {
               return std::unexpected(
                   context.GetDiagnosticContext().MakeUnsupported(
                       context.GetCurrentOrigin(),
-                      "process-owned effect lowered without active process "
-                      "ownership",
+                      "deferred-check effect lowered without active "
+                      "decision owner",
                       UnsupportedCategory::kFeature));
             }
             return LowerRecordDecisionObservationDynamic(
-                context, mode.process_id, resolver, obs);
+                context, mode.decision_owner_id, resolver, obs);
           },
           [&](const mir::CoverHitEffect& hit) -> Result<void> {
             auto& builder = context.GetBuilder();
@@ -617,7 +617,7 @@ auto LowerEffectOp(
             return {};
           },
           [&](const mir::EnqueueDeferredAssertionEffect& enq) -> Result<void> {
-            if (mode.process_id == nullptr) {
+            if (mode.decision_owner_id == nullptr) {
               return std::unexpected(
                   context.GetDiagnosticContext().MakeUnsupported(
                       context.GetCurrentOrigin(),
@@ -636,7 +636,7 @@ auto LowerEffectOp(
                 i8_ty, static_cast<uint8_t>(enq.disposition));
             builder.CreateCall(
                 context.GetLyraEnqueueObservedDeferredAssertion(),
-                {engine_ptr, mode.process_id, site_val, disp_val});
+                {engine_ptr, mode.decision_owner_id, site_val, disp_val});
             return {};
           },
       },

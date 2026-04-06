@@ -10,6 +10,8 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+class DecisionSiteAllocator;
+
 // Lower a process with design-level declarations.
 // decl_view provides read-only access to design places and functions.
 // hir_proc_id is the HIR process ID, used to record the origin mapping.
@@ -20,6 +22,8 @@ auto LowerProcess(
     const LoweringInput& input, mir::Arena& mir_arena,
     const DeclView& decl_view, OriginMap* origin_map,
     std::vector<mir::FunctionId>* generated_functions,
-    hir::ModuleBodyId body_id) -> Result<mir::ProcessId>;
+    hir::ModuleBodyId body_id,
+    DecisionSiteAllocator* decision_allocator = nullptr)
+    -> Result<mir::ProcessId>;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -520,19 +520,21 @@ auto Context::EmitOutcomePtr(llvm::Value* state_arg) -> llvm::Value* {
   return EmitHeaderFieldGep(*this, state_arg, F::kOutcome, "outcome_ptr");
 }
 
-auto Context::EmitLoadProcessId(llvm::Value* state_arg) -> llvm::Value* {
+auto Context::EmitLoadDecisionOwnerId(llvm::Value* state_arg) -> llvm::Value* {
   using F = lyra::runtime::ProcessFrameHeaderField;
+  // The process frame header field stays process-named (kProcessId); the
+  // codegen layer interprets it as the decision owner for process-backed paths.
   auto* ptr =
-      EmitHeaderFieldGep(*this, state_arg, F::kProcessId, "process_id_ptr");
+      EmitHeaderFieldGep(*this, state_arg, F::kProcessId, "decision_owner_ptr");
   return builder_.CreateLoad(
-      llvm::Type::getInt32Ty(*llvm_context_), ptr, "process_id");
+      llvm::Type::getInt32Ty(*llvm_context_), ptr, "decision_owner_id");
 }
 
 void Context::EmitProcessStateSetup(llvm::Value* state_arg) {
   SetStatePointer(state_arg);
   SetEnginePointer(EmitLoadEnginePtr(state_arg));
   SetDesignPointer(EmitLoadDesignPtr(state_arg));
-  SetCurrentProcessId(EmitLoadProcessId(state_arg));
+  SetCurrentDecisionOwnerId(EmitLoadDecisionOwnerId(state_arg));
 
   auto* frame_ptr = builder_.CreateStructGEP(
       GetProcessStateType(), state_arg, 1, "frame_ptr");
@@ -578,12 +580,12 @@ auto Context::GetEnginePointer() -> llvm::Value* {
   return engine_ptr_;
 }
 
-void Context::SetCurrentProcessId(llvm::Value* process_id) {
-  current_process_id_ = process_id;
+void Context::SetCurrentDecisionOwnerId(llvm::Value* decision_owner_id) {
+  current_decision_owner_id_ = decision_owner_id;
 }
 
-auto Context::GetCurrentProcessId() -> llvm::Value* {
-  return current_process_id_;
+auto Context::GetCurrentDecisionOwnerId() -> llvm::Value* {
+  return current_decision_owner_id_;
 }
 
 void Context::SetDesignStoreMode(DesignStoreMode mode) {
@@ -621,7 +623,7 @@ auto Context::SaveExecutionContractState() -> ExecutionContractState {
       .design_ptr = design_ptr_,
       .frame_ptr = frame_ptr_,
       .engine_ptr = engine_ptr_,
-      .current_process_id = current_process_id_,
+      .current_decision_owner_id = current_decision_owner_id_,
       .instance_ptr = instance_ptr_,
       .this_ptr = this_ptr_,
       .dynamic_instance_id = dynamic_instance_id_,
@@ -637,7 +639,7 @@ void Context::RestoreExecutionContractState(
   design_ptr_ = state.design_ptr;
   frame_ptr_ = state.frame_ptr;
   engine_ptr_ = state.engine_ptr;
-  current_process_id_ = state.current_process_id;
+  current_decision_owner_id_ = state.current_decision_owner_id;
   instance_ptr_ = state.instance_ptr;
   this_ptr_ = state.this_ptr;
   dynamic_instance_id_ = state.dynamic_instance_id;
@@ -653,7 +655,7 @@ ExecutionContractScope::ExecutionContractScope(
   ctx.SetDesignPointer(nullptr);
   ctx.SetFramePointer(nullptr);
   ctx.SetEnginePointer(nullptr);
-  ctx.SetCurrentProcessId(nullptr);
+  ctx.SetCurrentDecisionOwnerId(nullptr);
   ctx.SetThisPointer(nullptr);
   ctx.SetDynamicInstanceId(nullptr);
   // spec_slot_info is NOT reset: it is session-scoped (set by
@@ -780,7 +782,7 @@ auto Context::GetMonitorSetupInfo(mir::FunctionId setup_program) const
 
 auto Context::BuildUserFunctionType(
     const mir::FunctionSignature& sig, bool is_module_scoped,
-    bool accepts_process_ownership) -> Result<llvm::FunctionType*> {
+    bool accepts_decision_owner) -> Result<llvm::FunctionType*> {
   auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
   auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
 
@@ -805,9 +807,9 @@ auto Context::BuildUserFunctionType(
     param_types.push_back(i32_ty);  // instance_id
   }
 
-  // Process ownership: caller's active process_id threaded explicitly
-  if (accepts_process_ownership) {
-    param_types.push_back(i32_ty);  // process_id
+  // Decision owner: caller's active decision_owner_id threaded explicitly
+  if (accepts_decision_owner) {
+    param_types.push_back(i32_ty);  // decision_owner_id
   }
 
   // Add parameter types from signature.

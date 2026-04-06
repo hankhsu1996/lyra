@@ -38,7 +38,7 @@ struct ResolvedCallee {
   TypeId return_type;
   bool uses_sret = false;
   bool is_module_scoped = false;
-  bool accepts_process_ownership = false;
+  bool accepts_decision_owner = false;
   mir::FunctionId func_id;  // For error messages
 };
 
@@ -106,17 +106,17 @@ auto LowerUserCallImpl(
     args.push_back(context.GetDynamicInstanceId());
   }
 
-  // Process ownership threading: if callee accepts process ownership,
-  // the caller must be executing under active process ownership to forward it.
-  if (resolved.accepts_process_ownership) {
-    if (mode.process_id == nullptr) {
+  // Decision owner threading: if callee accepts a decision owner,
+  // the caller must have an active owner to forward it.
+  if (resolved.accepts_decision_owner) {
+    if (mode.decision_owner_id == nullptr) {
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
           context.GetCurrentOrigin(),
-          "call to callable requiring active process ownership from "
-          "a non-process context (e.g. DPI export wrapper)",
+          "call to callable requiring active decision owner from "
+          "a context without one",
           UnsupportedCategory::kFeature));
     }
-    args.push_back(mode.process_id);
+    args.push_back(mode.decision_owner_id);
   }
 
   // Build argument list: input values + output/inout destination pointers
@@ -273,8 +273,8 @@ auto LowerCall(
                 .return_type = func.signature.return_type,
                 .uses_sret = context.FunctionUsesSret(func_id),
                 .is_module_scoped = context.IsModuleScopedFunction(func_id),
-                .accepts_process_ownership =
-                    func.abi_contract.accepts_process_ownership,
+                .accepts_decision_owner =
+                    func.abi_contract.accepts_decision_owner,
                 .func_id = func_id,
             };
             return LowerUserCallImpl(context, call, resolved, mode);
@@ -289,8 +289,8 @@ auto LowerCall(
                 .uses_sret = func.signature.return_policy ==
                              mir::ReturnPolicy::kSretOutParam,
                 .is_module_scoped = false,
-                .accepts_process_ownership =
-                    func.abi_contract.accepts_process_ownership,
+                .accepts_decision_owner =
+                    func.abi_contract.accepts_decision_owner,
                 .func_id = entry.func_id,
             };
             return LowerUserCallImpl(context, call, resolved, mode);
