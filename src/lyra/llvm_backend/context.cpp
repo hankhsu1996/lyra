@@ -780,6 +780,20 @@ auto Context::GetMonitorSetupInfo(mir::FunctionId setup_program) const
   return &it->second;
 }
 
+void Context::RegisterDeferredThunkAction(
+    mir::FunctionId thunk_id, const mir::DeferredThunkAction* action) {
+  deferred_thunk_actions_.emplace(thunk_id, action);
+}
+
+auto Context::GetDeferredThunkAction(mir::FunctionId thunk_id) const
+    -> const mir::DeferredThunkAction* {
+  auto it = deferred_thunk_actions_.find(thunk_id);
+  if (it == deferred_thunk_actions_.end()) {
+    return nullptr;
+  }
+  return it->second;
+}
+
 auto Context::BuildUserFunctionType(
     const mir::FunctionSignature& sig, bool is_module_scoped,
     bool accepts_decision_owner) -> Result<llvm::FunctionType*> {

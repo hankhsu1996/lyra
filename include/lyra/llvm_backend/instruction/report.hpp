@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string_view>
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -10,9 +11,11 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/origin_id.hpp"
+#include "lyra/common/severity.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/runtime/reporting.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -85,6 +88,40 @@ inline void EmitAbiReportCall(
 
   builder.CreateCall(
       context.GetLyraEmitReport(), {context.GetEnginePointer(), payload});
+}
+
+// Canonical backend helper for emitting a fatal internal-error abort.
+// Builds a string message, emits a kFatalTermination report with kFinish
+// action, releases the string, and terminates with unreachable.
+// Caller must set the insert point before calling. After return, the
+// insert point is after unreachable (no valid successor).
+// Use for backend invariant violations that should never occur at runtime.
+inline void EmitInternalErrorAbort(Context& context, std::string_view message) {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+
+  auto* msg_data = builder.CreateGlobalStringPtr(
+      llvm::StringRef(message.data(), message.size()));
+  auto* msg_len =
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(llvm_ctx), message.size());
+  auto* msg_handle = builder.CreateCall(
+      context.GetLyraStringFromLiteral(), {msg_data, msg_len}, "err.msg");
+
+  LoweredOrigin no_origin{
+      .file_ptr =
+          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)),
+      .line_val = llvm::ConstantInt::get(i32_ty, 0),
+      .col_val = llvm::ConstantInt::get(i32_ty, 0),
+  };
+  EmitAbiReportCall(
+      context,
+      static_cast<uint8_t>(lyra::runtime::ReportKind::kFatalTermination),
+      static_cast<uint8_t>(lyra::Severity::kError), no_origin, msg_handle,
+      static_cast<uint8_t>(lyra::runtime::ReportAction::kFinish));
+  builder.CreateCall(context.GetLyraStringRelease(), {msg_handle});
+  builder.CreateUnreachable();
 }
 
 class SlotAccessResolver;

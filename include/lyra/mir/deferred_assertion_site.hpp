@@ -2,12 +2,14 @@
 
 #include <cstdint>
 #include <optional>
+#include <variant>
 #include <vector>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/mir/effect.hpp"
+#include "lyra/mir/signal_ref.hpp"
 
 namespace lyra::mir {
 
@@ -22,12 +24,73 @@ enum class DeferredAssertionKind : uint8_t {
   kCover,
 };
 
+// Callee descriptors for deferred action thunks, split by category.
+// User subroutine and display-like system tasks have different
+// payload/binding semantics and different LLVM emission paths.
+
+struct DeferredThunkUserCallee {
+  FunctionId target;
+};
+
+// Display-like system tasks: $display, $write, $error, $warning, $info.
+// Format ops and print kind are stored as a side record keyed by thunk
+// FunctionId in the LLVM backend context.
+struct DeferredThunkDisplayTaskCallee {};
+
+// Typed payload descriptor for by-value capture. The payload for each
+// site/disposition pair is an ordered list of semantic captured value types.
+// The actual byte layout (offsets, sizes, alignment) is derived by the
+// LLVM backend: it maps each TypeId through the callable ABI classifier to
+// determine the concrete LLVM storage type, then uses DataLayout for layout.
+// MIR does not represent or constrain the storage-level carrier type.
+struct CapturePayloadDesc {
+  // Semantic by-value captured types, ordered by call-order position.
+  // The LLVM backend derives the storage type from each TypeId via
+  // ClassifyCallableValueAbi at emission time.
+  std::vector<TypeId> field_types;
+};
+
+// Describes how one actual argument is sourced inside the thunk body.
+struct DeferredThunkActualBinding {
+  enum class Source : uint8_t {
+    kPayloadField,
+    kLiveRef,
+  };
+
+  Source source = Source::kPayloadField;
+
+  // Valid when source == kPayloadField: index into CapturePayloadDesc.
+  uint32_t payload_field_index = 0;
+
+  // Valid when source == kLiveRef: only signal-backed refs are supported
+  // in the first cut. Non-signal refs (e.g., refs to unpacked struct
+  // fields, array elements) are rejected during lowering.
+  std::optional<SignalRef> live_ref;
+};
+
+// Callee descriptor variant. Structurally prevents misuse: user-subroutine
+// thunks carry a target FunctionId, display-task thunks do not.
+using DeferredThunkCallee =
+    std::variant<DeferredThunkUserCallee, DeferredThunkDisplayTaskCallee>;
+
 // User-supplied action thunk descriptor. Describes an outlined deferred
 // thunk that executes the user's pass or fail action at drain time.
 // Structurally separate from built-in outcomes (default report, cover hit).
+//
+// The thunk MIR Function is a shell (reserves a FunctionId, carries the
+// RuntimeProgramKind). The real body is emitted directly in LLVM IR
+// during DefineMirFunction dispatch using the metadata here.
 struct DeferredThunkAction {
-  // Will hold thunk FunctionId + CaptureLayout once Phase 3 adds
-  // outlined deferred thunk generation. Stub for now.
+  FunctionId thunk;
+  CapturePayloadDesc payload;
+  DeferredThunkCallee callee;
+
+  // Ordered actual-binding map: one entry per formal, in call-order.
+  // Tells LLVM emission which actuals come from payload fields vs live refs.
+  // Invariant:
+  // - DeferredThunkUserCallee: bindings are kPayloadField or kLiveRef
+  // - DeferredThunkDisplayTaskCallee: all bindings are kPayloadField (no refs)
+  std::vector<DeferredThunkActualBinding> actual_bindings;
 };
 
 // Cover-hit built-in action. Bridges deferred cover #0 to the existing

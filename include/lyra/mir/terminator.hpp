@@ -14,6 +14,7 @@
 #include "lyra/common/termination_kind.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/signal_ref.hpp"
 
 namespace lyra::mir {
 
@@ -88,18 +89,6 @@ struct LateBoundIndex {
   std::optional<TypeId> element_type;
   uint32_t num_elements = 0;  // 0 for containers (dynamic size)
   bool is_container = false;
-};
-
-// Scoped signal reference that distinguishes module-local vs design-global.
-// Allows a single process to legally contain mixed-scope sensitivity while
-// keeping MIR clean and future-shareable.
-struct SignalRef {
-  enum class Scope : uint8_t { kModuleLocal, kDesignGlobal };
-  Scope scope;
-  uint32_t
-      id;  // body-local index (kModuleLocal) or global slot (kDesignGlobal)
-
-  auto operator==(const SignalRef&) const -> bool = default;
 };
 
 // A single trigger in a Wait terminator.
