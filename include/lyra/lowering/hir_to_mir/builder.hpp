@@ -66,6 +66,9 @@ class MirBuilder {
   // Instruction emission.
   void EmitAssign(mir::PlaceId target, mir::Operand source);
   void EmitAssign(mir::PlaceId target, mir::Rvalue value);
+  // B2: WriteTarget overloads for external ref support.
+  void EmitAssign(mir::WriteTarget target, mir::Operand source);
+  void EmitAssign(mir::WriteTarget target, mir::Rvalue value);
   void EmitEffect(mir::EffectOp op);
 
   // Allocate PlaceTemp from Rvalue and emit Assign to initialize.
@@ -166,9 +169,14 @@ class MirBuilder {
   // Semantics: if (guard) dest := rhs; else no-op
   void EmitGuardedAssign(
       mir::PlaceId dest, mir::RightHandSide rhs, mir::Operand guard);
+  // B2: WriteTarget overload for external ref support.
+  void EmitGuardedAssign(
+      mir::WriteTarget dest, mir::RightHandSide rhs, mir::Operand guard);
 
   // Emit DeferredAssign instruction: schedule dest := rhs for NBA region.
   void EmitDeferredAssign(mir::PlaceId dest, mir::RightHandSide rhs);
+  // B2: WriteTarget overload for external ref support.
+  void EmitDeferredAssign(mir::WriteTarget dest, mir::RightHandSide rhs);
 
   // Emit unified Call for system TF (expression form).
   // Allocates staging temps for return and writebacks.

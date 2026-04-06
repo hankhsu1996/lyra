@@ -9,6 +9,16 @@
 
 namespace lyra::mir {
 
+auto CompiledModuleHeader::Create(
+    common::ModuleSpecId spec_id, common::ModuleDefId def_id,
+    std::vector<PortEntry> ports) -> CompiledModuleHeader {
+  CompiledModuleHeader header;
+  header.spec_id_ = spec_id;
+  header.def_id_ = def_id;
+  header.ports_ = std::move(ports);
+  return header;
+}
+
 auto CompiledModuleHeader::FindPort(SymbolId sym) const -> const PortEntry* {
   auto it = std::ranges::find_if(
       ports_, [&](const PortEntry& e) { return e.sym == sym; });
@@ -54,6 +64,15 @@ auto HeaderDatabase::GetHeader(common::ModuleSpecId spec) const
             spec.fingerprint.value));
   }
   return headers_[it->second.value];
+}
+
+auto HeaderDatabase::FindPortEntry(
+    common::ModuleSpecId spec, SymbolId port_sym) const -> const PortEntry* {
+  auto it = spec_index_.find(spec);
+  if (it == spec_index_.end()) {
+    return nullptr;
+  }
+  return headers_[it->second.value].FindPort(port_sym);
 }
 
 auto GetChildPortContract(

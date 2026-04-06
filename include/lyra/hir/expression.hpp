@@ -6,6 +6,7 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/math_fn.hpp"
+#include "lyra/common/selection_step.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
@@ -263,8 +264,29 @@ struct ReplicateExpressionData {
   auto operator==(const ReplicateExpressionData&) const -> bool = default;
 };
 
+// One step in a hierarchical path traversal (downward after upward hops).
+// Carries the instance symbol for extraction provenance and optional
+// generate-scope selection coordinates.
+struct HierPathElement {
+  // Instance SymbolId at this step (extraction vehicle only, not canonical
+  // identity -- canonical identity comes from repertoire coords).
+  SymbolId instance_sym;
+  // Generate-scope selection (empty if not in a generate block).
+  std::vector<common::SelectionStepDesc> selection;
+
+  auto operator==(const HierPathElement&) const -> bool = default;
+};
+
 struct HierarchicalRefExpressionData {
   SymbolId target;  // Resolved variable in elaborated instance body
+  // Number of upward parent-hops from the referencing scope to the scope
+  // containing target. Mirrors slang's HierarchicalReference::upwardCount.
+  // 0 means same scope (possible for generate-scoped cross-references).
+  uint32_t upward_count = 0;
+  // Descendant path steps from the upward-resolved scope down to the target.
+  // Extracted from slang's HierarchicalReference::path. Empty when the path
+  // data is not available or for simple same-scope references.
+  std::vector<HierPathElement> path_elements;
 
   auto operator==(const HierarchicalRefExpressionData&) const -> bool = default;
 };

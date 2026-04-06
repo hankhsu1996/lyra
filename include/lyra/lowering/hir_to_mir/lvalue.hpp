@@ -8,6 +8,7 @@
 #include "lyra/hir/fwd.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -52,7 +53,9 @@ struct AssocWriteBack {
 };
 
 struct LvalueResult {
-  mir::PlaceId place;
+  // Destination for writes: either a local PlaceId or an ExternalRefId
+  // (for non-local hierarchical references during body lowering).
+  mir::WriteTarget dest;
   mir::Operand validity;  // 1-bit 2-state bool: kConst(1) or kUse(place)
   std::unique_ptr<AssocWriteBack> writeback;
 
@@ -60,6 +63,10 @@ struct LvalueResult {
   [[nodiscard]] auto IsAlwaysValid() const -> bool {
     return hir_to_mir::IsAlwaysValid(validity);
   }
+
+  // Extract PlaceId from dest. Throws InternalError if dest is ExternalRefId.
+  // Use for operations that require a local place (reads, projections).
+  [[nodiscard]] auto GetLocalPlace() const -> mir::PlaceId;
 };
 
 // Lower an HIR expression as an lvalue, returning the writable place and

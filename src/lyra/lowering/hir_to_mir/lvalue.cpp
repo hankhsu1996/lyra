@@ -35,6 +35,16 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+auto LvalueResult::GetLocalPlace() const -> mir::PlaceId {
+  const auto* place = std::get_if<mir::PlaceId>(&dest);
+  if (place == nullptr) {
+    throw common::InternalError(
+        "LvalueResult::GetLocalPlace",
+        "dest is ExternalRefId, not PlaceId -- cannot use as local place");
+  }
+  return *place;
+}
+
 namespace {
 
 // Make an integral constant with specified value and type.
@@ -246,7 +256,7 @@ auto LowerNameRefLvalue(
     -> Result<LvalueResult> {
   Context& ctx = builder.GetContext();
   return LvalueResult{
-      .place = ctx.LookupPlace(data.symbol),
+      .dest = mir::WriteTarget{ctx.LookupPlace(data.symbol)},
       .validity = MakeAlwaysValid(builder),
   };
 }
@@ -263,7 +273,8 @@ auto LowerElementAccessLvalue(
   if (!index_result) return std::unexpected(index_result.error());
   mir::Operand index_operand = std::move(*index_result);
 
-  const mir::Place& base_place = (*ctx.mir_arena)[base.place];
+  mir::PlaceId base_place_id = base.GetLocalPlace();
+  const mir::Place& base_place = (*ctx.mir_arena)[base_place_id];
   TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
   const Type& base_type = (*ctx.type_arena)[base_type_id];
 
@@ -273,13 +284,15 @@ auto LowerElementAccessLvalue(
     mir::PlaceId temp = ctx.AllocTemp(aa_info.element_type);
     builder.EmitAssocOp(
         mir::AssocOp{
-            .receiver = base.place,
+            .receiver = base_place_id,
             .data = mir::AssocGet{.dest = temp, .key = index_operand}});
     return LvalueResult{
-        .place = temp,
+        .dest = mir::WriteTarget{temp},
         .validity = base.validity,
         .writeback = std::make_unique<AssocWriteBack>(AssocWriteBack{
-            .aa_place = base.place, .key = index_operand, .temp_place = temp}),
+            .aa_place = base_place_id,
+            .key = index_operand,
+            .temp_place = temp}),
     };
   }
 
@@ -293,7 +306,7 @@ auto LowerElementAccessLvalue(
   // Compute validity against original index (before normalization).
   const hir::Expression& index_expr = (*ctx.hir_arena)[data.index];
   mir::Operand our_validity = EmitUnpackedIndexValidity(
-      index_operand, index_expr.type, base.place, base_type_id, builder);
+      index_operand, index_expr.type, base_place_id, base_type_id, builder);
 
   // Normalize index for addressing (after validity).
   index_operand = NormalizeUnpackedIndex(
@@ -304,12 +317,12 @@ auto LowerElementAccessLvalue(
       .info = mir::IndexProjection{.index = index_operand},
       .origin = origin,
   };
-  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place = ctx.DerivePlace(base_place_id, std::move(proj));
 
   mir::Operand total_validity =
       ComposeValidity(base.validity, our_validity, builder);
   return LvalueResult{
-      .place = result_place,
+      .dest = mir::WriteTarget{result_place},
       .validity = MaterializeValidity(total_validity, builder),
   };
 }
@@ -323,7 +336,8 @@ auto LowerMemberAccessLvalue(
   if (!base_result) return std::unexpected(base_result.error());
   LvalueResult base = std::move(*base_result);
 
-  const mir::Place& base_place = (*ctx.mir_arena)[base.place];
+  mir::PlaceId base_place_id = base.GetLocalPlace();
+  const mir::Place& base_place = (*ctx.mir_arena)[base_place_id];
   TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
   const Type& base_type = (*ctx.type_arena)[base_type_id];
   if (base_type.Kind() != TypeKind::kUnpackedStruct) {
@@ -336,12 +350,12 @@ auto LowerMemberAccessLvalue(
       .info = mir::FieldProjection{.field_index = data.field_index},
       .origin = origin,
   };
-  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place = ctx.DerivePlace(base_place_id, std::move(proj));
 
   // Field access is always valid - validity inherited from base.
   // Writeback propagated from base (for AA copy-in/copy-out).
   return LvalueResult{
-      .place = result_place,
+      .dest = mir::WriteTarget{result_place},
       .validity = base.validity,
       .writeback = std::move(base.writeback),
   };
@@ -356,7 +370,8 @@ auto LowerUnionMemberAccessLvalue(
   if (!base_result) return std::unexpected(base_result.error());
   LvalueResult base = std::move(*base_result);
 
-  const mir::Place& base_place = (*ctx.mir_arena)[base.place];
+  mir::PlaceId base_place_id = base.GetLocalPlace();
+  const mir::Place& base_place = (*ctx.mir_arena)[base_place_id];
   TypeId base_type_id = mir::TypeOfPlace(*ctx.type_arena, base_place);
   const Type& base_type = (*ctx.type_arena)[base_type_id];
   if (base_type.Kind() != TypeKind::kUnpackedUnion) {
@@ -371,11 +386,11 @@ auto LowerUnionMemberAccessLvalue(
               .member_index = static_cast<uint32_t>(data.member_index)},
       .origin = origin,
   };
-  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place = ctx.DerivePlace(base_place_id, std::move(proj));
 
   // Union member access is always valid - validity inherited from base
   return LvalueResult{
-      .place = result_place,
+      .dest = mir::WriteTarget{result_place},
       .validity = base.validity,
   };
 }
@@ -423,10 +438,11 @@ auto LowerPackedElementSelectLvalue(
           },
       .origin = origin,
   };
-  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place =
+      ctx.DerivePlace(base.GetLocalPlace(), std::move(proj));
 
   return LvalueResult{
-      .place = result_place,
+      .dest = mir::WriteTarget{result_place},
       .validity = MaterializeValidity(total_validity, builder),
   };
 }
@@ -593,10 +609,11 @@ auto LowerIndexedPartSelectLvalue(
           },
       .origin = origin,
   };
-  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place =
+      ctx.DerivePlace(base.GetLocalPlace(), std::move(proj));
 
   return LvalueResult{
-      .place = result_place,
+      .dest = mir::WriteTarget{result_place},
       .validity = MaterializeValidity(total_validity, builder),
   };
 }
@@ -626,12 +643,13 @@ auto LowerPackedFieldAccessLvalue(
           },
       .origin = origin,
   };
-  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place =
+      ctx.DerivePlace(base.GetLocalPlace(), std::move(proj));
 
   // Packed field access with constant offset is always valid
   // Just inherit base validity
   return LvalueResult{
-      .place = result_place,
+      .dest = mir::WriteTarget{result_place},
       .validity = base.validity,
   };
 }
@@ -696,11 +714,12 @@ auto LowerRangeSelectLvalue(
           },
       .origin = origin,
   };
-  mir::PlaceId result_place = ctx.DerivePlace(base.place, std::move(proj));
+  mir::PlaceId result_place =
+      ctx.DerivePlace(base.GetLocalPlace(), std::move(proj));
 
   // Range select with constant bounds is always valid - inherit base validity
   return LvalueResult{
-      .place = result_place,
+      .dest = mir::WriteTarget{result_place},
       .validity = base.validity,
   };
 }
@@ -778,8 +797,19 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
           return LowerRangeSelectLvalue(data, expr_id, expr, builder);
         } else if constexpr (std::is_same_v<
                                  T, hir::HierarchicalRefExpressionData>) {
+          auto& ctx = builder.GetContext();
+          // B2: When external_refs is set, return ExternalRefId for the dest.
+          if (ctx.external_refs != nullptr) {
+            auto ref = ctx.LowerHierarchicalRefToExternalRef(
+                data, expr.type, mir::ExternalAccessKind::kReadWrite);
+            return LvalueResult{
+                .dest = mir::WriteTarget{ref.ref_id},
+                .validity = MakeAlwaysValid(builder),
+            };
+          }
+          // Old path: design-level lowering.
           return LvalueResult{
-              .place = builder.GetContext().ResolveHierarchicalRef(data.target),
+              .dest = mir::WriteTarget{ctx.ResolveHierarchicalRef(data.target)},
               .validity = MakeAlwaysValid(builder),
           };
         } else {

@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/routine.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module_body.hpp"
 #include "lyra/mir/routine.hpp"
@@ -43,6 +44,11 @@ auto LowerModule(
   // Body-local origin storage. All origins produced during body lowering
   // are isolated here, not in a shared origin map.
   OriginMap body_origins;
+
+  // B2: External ref registry for body lowering.
+  // Shared across all processes/functions in this body.
+  std::vector<mir::ExternalAccessRecipe> external_refs;
+  std::vector<ProvisionalNonLocalTarget> provisional_targets;
 
   // Phase 1: Pre-allocate mir::FunctionIds and build symbol map.
   // Contains only body-local FunctionIds. Package functions are resolved
@@ -76,6 +82,13 @@ auto LowerModule(
   // Module body lowering uses body-local places (kModuleSlot) for module-owned
   // state. Design-global places are created lazily by LookupPlace with
   // explicit kDesignGlobal roots.
+  // B2: external_refs path is NOT activatable yet. Activation requires:
+  //   1. ProvisionalNonLocalTarget.target_slot populated (cross-body lookup)
+  //   2. Phase 3 canonicalization (provisional -> final NonLocalTargetRecipe)
+  //   3. Backend ExternalRefId resolution through bound recipes
+  //   4. ExternalAccessRecipe.origin populated
+  // Until all four are complete, external_refs MUST remain nullptr.
+  // Do NOT change nullptr to &external_refs without completing the above.
   DeclView decl_view{
       .body_places = &body_decls.places,
       .design_places = &decls.design_places,
@@ -88,13 +101,16 @@ auto LowerModule(
       .design_functions = &decls.functions,
       .dpi_imports = &decls.dpi_imports,
       .cover_site_registry = cover_site_registry,
-      .deferred_assertion_site_registry = deferred_assertion_site_registry};
+      .deferred_assertion_site_registry = deferred_assertion_site_registry,
+      .external_refs = nullptr,
+      .provisional_targets = nullptr};
 
   // Body-global decision site allocator: all processes, functions, and tasks
   // within this module body share one allocator so decision IDs are unique
   // across the body. This ensures function-body decision IDs do not collide
   // with process-body IDs in the owner's runtime table.
   DecisionSiteAllocator body_decision_allocator;
+
 
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
@@ -192,6 +208,7 @@ auto LowerModule(
       .body = std::move(result),
       .origins = std::move(body_origins).TakeEntries(),
       .symbol_to_function = std::move(symbol_to_mir_function),
+      .external_refs = std::move(external_refs),
   };
 }
 

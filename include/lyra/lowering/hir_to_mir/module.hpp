@@ -8,6 +8,7 @@
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/module_body.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -22,6 +23,8 @@ struct MirBodyLoweringResult {
   // that need to resolve body-owned symbols to body-local FunctionIds
   // (e.g., module-scoped DPI export target resolution).
   SymbolToMirFunctionMap symbol_to_function;
+  // B2: External access recipes collected during body lowering.
+  std::vector<mir::ExternalAccessRecipe> external_refs;
 };
 
 // Lower specialization-shared behavioral content for one spec group.

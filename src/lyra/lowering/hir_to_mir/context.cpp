@@ -179,6 +179,72 @@ auto Context::ResolveHierarchicalRef(SymbolId sym) const -> mir::PlaceId {
   return it->second;
 }
 
+auto Context::LowerHierarchicalRefToExternalRef(
+    const hir::HierarchicalRefExpressionData& data, TypeId type,
+    mir::ExternalAccessKind access) -> ExternalRefResult {
+  if (external_refs == nullptr) {
+    throw common::InternalError(
+        "LowerHierarchicalRefToExternalRef",
+        "external_refs not set (design-level lowering cannot use external "
+        "refs)");
+  }
+
+  // Build cache key from full provisional identity: access kind +
+  // target symbol + upward count + path steps (instance_sym + coord).
+  // Two different hierarchical paths to the same target symbol get
+  // different ExternalRefIds.
+  ExternalRefKey key{
+      .access_kind = access,
+      .target_sym = data.target,
+      .upward_count = data.upward_count,
+      .path_identity = {}};
+  key.path_identity.reserve(data.path_elements.size());
+  for (const auto& elem : data.path_elements) {
+    key.path_identity.emplace_back(elem.instance_sym, elem.selection);
+  }
+
+  auto it = external_ref_cache.find(key);
+  if (it != external_ref_cache.end()) {
+    return {.ref_id = it->second, .type = type};
+  }
+
+  // Build provisional non-local target from HIR path data.
+  // Coord comes from HIR HierPathElement.selection (extracted from slang
+  // repertoire during AST-to-HIR). target_slot is not yet resolved --
+  // it requires cross-body lookup that happens in Phase 3 canonicalization.
+  ProvisionalNonLocalTarget provisional{
+      .anchor = mir::NonLocalAnchor::kSelf,
+      .upward_count = data.upward_count,
+      .path = {},
+      .target_slot = {}};
+  for (const auto& elem : data.path_elements) {
+    provisional.path.push_back(
+        ProvisionalPathStep{
+            .instance_sym = elem.instance_sym, .coord = elem.selection});
+  }
+
+  // Allocate new ExternalRefId.
+  mir::ExternalRefId ref_id{static_cast<uint32_t>(external_refs->size())};
+  external_refs->push_back(
+      mir::ExternalAccessRecipe{
+          .ref_id = ref_id,
+          .type = type,
+          .access_kind = access,
+          .origin = common::OriginId::Invalid(),
+          .target = mir::NonLocalTargetRecipe{
+              .upward_count = data.upward_count,
+              .path = {},
+              .target_slot = {}}});
+
+  // Store provisional target (parallel to external_refs).
+  if (provisional_targets != nullptr) {
+    provisional_targets->push_back(std::move(provisional));
+  }
+
+  external_ref_cache.emplace(std::move(key), ref_id);
+  return {.ref_id = ref_id, .type = type};
+}
+
 namespace {
 
 auto ClassifyDpiReturnKind(DpiAbiTypeClass abi_type) -> mir::DpiReturnKind {

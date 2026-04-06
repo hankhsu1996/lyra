@@ -410,6 +410,7 @@ auto PrepareLlvmModule(
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
+      .child_coord_map = &hir_result.child_coord_map,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   if (!mir_result) {

@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <format>
 #include <optional>
@@ -13,6 +14,7 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -946,6 +948,68 @@ auto LowerExpression(
         return hir::kInvalidExpressionId;
       }
 
+      // Extract the generate-scope selection for a slang symbol by walking
+      // its parent scope chain up to the nearest module/instance body.
+      // Each GenerateBlock or GenerateBlockArray in the chain becomes a
+      // SelectionStepDesc. The result is in leaf-to-root order, reversed
+      // to produce root-to-leaf.
+      auto extract_selection = [](const slang::ast::Symbol& sym)
+          -> std::vector<common::SelectionStepDesc> {
+        std::vector<common::SelectionStepDesc> steps;
+        const slang::ast::Symbol* current = &sym;
+        while (current->getParentScope() != nullptr) {
+          const auto& parent = current->getParentScope()->asSymbol();
+          if (parent.kind == slang::ast::SymbolKind::GenerateBlock) {
+            const auto& block = parent.as<slang::ast::GenerateBlockSymbol>();
+            steps.push_back(
+                {common::SelectionStepKind::kBranch, block.constructIndex, 0});
+            current = &parent;
+          } else if (
+              parent.kind == slang::ast::SymbolKind::GenerateBlockArray) {
+            const auto& array =
+                parent.as<slang::ast::GenerateBlockArraySymbol>();
+            // Find which entry contains current.
+            uint32_t entry_idx = 0;
+            for (uint32_t i = 0; i < array.entries.size(); ++i) {
+              if (array.entries[i] == current) {
+                entry_idx = i;
+                break;
+              }
+            }
+            steps.push_back(
+                {common::SelectionStepKind::kArrayEntry, array.constructIndex,
+                 entry_idx});
+            current = &parent;
+          } else if (
+              parent.kind == slang::ast::SymbolKind::InstanceBody ||
+              parent.kind == slang::ast::SymbolKind::Package) {
+            break;
+          } else {
+            current = &parent;
+          }
+        }
+        std::ranges::reverse(steps);
+        return steps;
+      };
+
+      // Extract descendant path elements from slang's hierarchical
+      // reference path. Each element is an instance traversal step with
+      // its generate-scope selection extracted from the symbol's parent
+      // scope chain.
+      auto extract_path_elements =
+          [&](const slang::ast::HierarchicalReference& ref)
+          -> std::vector<hir::HierPathElement> {
+        std::vector<hir::HierPathElement> elements;
+        for (const auto& elem : ref.path) {
+          SymbolId step_sym = registrar.Lookup(*elem.symbol);
+          elements.push_back(
+              hir::HierPathElement{
+                  .instance_sym = step_sym,
+                  .selection = extract_selection(*elem.symbol)});
+        }
+        return elements;
+      };
+
       // Promoted params skip constant folding (same logic as NamedValue).
       {
         SymbolId promoted = registrar.Lookup(hier.symbol);
@@ -958,8 +1022,11 @@ auto LowerExpression(
                   .kind = hir::ExpressionKind::kHierarchicalRef,
                   .type = type,
                   .span = span,
-                  .data =
-                      hir::HierarchicalRefExpressionData{.target = promoted}});
+                  .data = hir::HierarchicalRefExpressionData{
+                      .target = promoted,
+                      .upward_count =
+                          static_cast<uint32_t>(hier.ref.upwardCount),
+                      .path_elements = extract_path_elements(hier.ref)}});
         }
       }
 
@@ -1000,7 +1067,12 @@ auto LowerExpression(
               .kind = hir::ExpressionKind::kHierarchicalRef,
               .type = type,
               .span = span,
-              .data = hir::HierarchicalRefExpressionData{.target = target},
+              .data =
+                  hir::HierarchicalRefExpressionData{
+                      .target = target,
+                      .upward_count =
+                          static_cast<uint32_t>(hier.ref.upwardCount),
+                      .path_elements = extract_path_elements(hier.ref)},
           });
     }
 

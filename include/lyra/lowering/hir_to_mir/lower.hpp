@@ -4,6 +4,7 @@
 #include <memory>
 #include <unordered_map>
 
+#include "lyra/common/child_coord_map.hpp"
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/module_identity.hpp"
@@ -36,8 +37,11 @@ struct LoweringInput {
   const ast_to_hir::DesignBindingPlan* binding_plan = nullptr;
   int8_t global_precision_power =
       -9;  // Finest timeprecision across all modules
-  const mir::InstanceTable* instance_table = nullptr;  // For %m support
+  const mir::InstanceTable* instance_table = nullptr;
   const common::SpecializationMap* specialization_map;
+  // Per-definition child instance name -> repertoire coord mapping.
+  // Used by design_lower for durable child-site identity.
+  const common::ChildCoordMap* child_coord_map = nullptr;
 };
 
 // Statistics collected during HIR->MIR lowering (for --stats output).

@@ -1,20 +1,27 @@
+#include <algorithm>
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <optional>
+#include <span>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/common/edge_kind.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/hir/design.hpp"
+#include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/module_body.hpp"
 #include "lyra/hir/package.hpp"
+#include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
 #include "lyra/lowering/hir_to_mir/design_internal.hpp"
@@ -25,6 +32,9 @@
 #include "lyra/lowering/hir_to_mir/process.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/compiled_module_header.hpp"
+#include "lyra/mir/compiled_specialization.hpp"
+#include "lyra/mir/connection_recipe.hpp"
 #include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
@@ -49,6 +59,114 @@ struct MirSpecGroup {
   uint32_t representative_module_index = 0;
   std::vector<uint32_t> member_module_indices;
 };
+
+// Lowering-only child-port contract lookup. Same algorithm as the
+// CompiledModuleBody-based GetChildPortContract, but takes child_sites
+// as a span. Used during assembly before CompiledModuleBody exists.
+// NOT a permanent API -- deleted when connection recipe assembly moves
+// to operate on a finalized CompiledModuleBody.
+auto LookupChildPortContract(
+    std::span<const mir::ChildInstantiationSite> child_sites,
+    const mir::HeaderDatabase& headers, mir::ChildBindingSiteId site,
+    SymbolId child_port_sym) -> mir::ChildPortContract {
+  const mir::ChildInstantiationSite* found = nullptr;
+  for (const auto& s : child_sites) {
+    if (s.site == site) {
+      found = &s;
+      break;
+    }
+  }
+  if (found == nullptr) {
+    throw common::InternalError(
+        "LookupChildPortContract",
+        std::format("child binding site {} not found", site.value));
+  }
+  const auto* port = headers.FindPortEntry(found->child_spec, child_port_sym);
+  if (port == nullptr) {
+    throw common::InternalError(
+        "LookupChildPortContract",
+        std::format(
+            "port sym {} not found in child header", child_port_sym.value));
+  }
+  return mir::ChildPortContract{
+      .slot = port->slot, .type = port->type, .dir = port->dir};
+}
+
+// Resolve a parent-side NameRef symbol to its body-local LocalSlotId.
+// Searches body_slots by SymbolId. Returns nullopt if not found.
+auto ResolveParentSourceToLocalSlot(
+    SymbolId sym, const std::vector<BodyLocalSlotEntry>& body_slots)
+    -> std::optional<common::LocalSlotId> {
+  for (const auto& entry : body_slots) {
+    if (entry.sym == sym) return entry.local_slot;
+  }
+  return std::nullopt;
+}
+
+// Canonicalize a per-instance SymbolId to the representative module's
+// equivalent by positional matching in variables/nets/param_slots.
+// Returns nullopt if the symbol is not found in the instance module.
+auto CanonicalizeSymToRepresentative(
+    SymbolId instance_sym, const hir::Module& instance_mod,
+    const hir::Module& representative_mod) -> std::optional<SymbolId> {
+  // If same module (representative), identity mapping.
+  if (instance_mod.symbol == representative_mod.symbol) return instance_sym;
+  // Search variables.
+  for (size_t i = 0; i < instance_mod.variables.size(); ++i) {
+    if (instance_mod.variables[i] == instance_sym &&
+        i < representative_mod.variables.size()) {
+      return representative_mod.variables[i];
+    }
+  }
+  // Search nets.
+  for (size_t i = 0; i < instance_mod.nets.size(); ++i) {
+    if (instance_mod.nets[i] == instance_sym &&
+        i < representative_mod.nets.size()) {
+      return representative_mod.nets[i];
+    }
+  }
+  // Search param_slots.
+  for (size_t i = 0; i < instance_mod.param_slots.size(); ++i) {
+    if (instance_mod.param_slots[i] == instance_sym &&
+        i < representative_mod.param_slots.size()) {
+      return representative_mod.param_slots[i];
+    }
+  }
+  return std::nullopt;
+}
+
+// Derive durable child-site identity from the parent repertoire.
+// Matches by child instance name and returns the repertoire coord +
+// definition-local child ordinal (position among same-name entries).
+struct DurableChildIdentity {
+  common::RepertoireCoord coord;
+  uint32_t child_ordinal;
+};
+
+auto BuildChildSiteIdentity(
+    std::string_view child_name, uint32_t name_occurrence,
+    const std::vector<common::ChildCoordEntry>* repertoire_entries)
+    -> DurableChildIdentity {
+  if (repertoire_entries == nullptr) {
+    return {.coord = {}, .child_ordinal = name_occurrence};
+  }
+  // Find the nth occurrence of this name in the repertoire.
+  // The ordinal is the encounter position among all child instances
+  // with this coord prefix (not the global site number).
+  uint32_t seen = 0;
+  uint32_t global_ordinal = 0;
+  for (const auto& entry : *repertoire_entries) {
+    if (entry.inst_name == child_name) {
+      if (seen == name_occurrence) {
+        return {.coord = entry.coord, .child_ordinal = global_ordinal};
+      }
+      ++seen;
+    }
+    ++global_ordinal;
+  }
+  // Not found in repertoire -- return empty coord with occurrence ordinal.
+  return {.coord = {}, .child_ordinal = name_occurrence};
+}
 
 // Build deterministic specialization groups from the SpecializationMap.
 // Group order follows SpecializationMap::groups (sorted by spec_id).
@@ -433,6 +551,71 @@ auto LowerDesign(
     }
   }
 
+  // B2 Phase 3a: Build CompiledModuleHeaders for each specialization group.
+  // Headers provide the child-facing contract (port -> LocalSlotId mapping)
+  // used by parent-side connection compilation.
+  //
+  // Port entries are built from declared port data (hir::Module::ports),
+  // not from the binding plan. This ensures headers reflect the source-level
+  // module interface regardless of which ports have bindings.
+  mir::HeaderDatabase header_database;
+  std::unordered_map<
+      common::ModuleSpecId, mir::CompiledModuleHeaderId,
+      common::ModuleSpecIdHash>
+      header_ids_by_spec;
+
+  for (const auto& group : spec_groups) {
+    uint32_t rep_idx = group.representative_module_index;
+    const hir::Module& rep_mod = *hir_modules[rep_idx];
+    const auto& body_slots_for_header =
+        body_local_slots_by_body.at(rep_mod.body_id.value);
+
+    // Build sym -> (LocalSlotId, TypeId) lookup from body-local slots.
+    std::unordered_map<SymbolId, common::LocalSlotId, SymbolIdHash> sym_to_slot;
+    std::unordered_map<SymbolId, TypeId, SymbolIdHash> sym_to_type;
+    for (const auto& entry : body_slots_for_header) {
+      sym_to_slot[entry.sym] = entry.local_slot;
+      sym_to_type[entry.sym] = entry.type;
+    }
+
+    // Build port entries from declared ports on the representative module.
+    std::vector<mir::PortEntry> port_entries;
+    for (const auto& port : rep_mod.ports) {
+      auto slot_it = sym_to_slot.find(port.sym);
+      if (slot_it == sym_to_slot.end()) continue;
+      auto type_it = sym_to_type.find(port.sym);
+      if (type_it == sym_to_type.end()) continue;
+      mir::PortDirection mir_dir;
+      switch (port.dir) {
+        case hir::HirPortDirection::kInput:
+          mir_dir = mir::PortDirection::kInput;
+          break;
+        case hir::HirPortDirection::kOutput:
+          mir_dir = mir::PortDirection::kOutput;
+          break;
+        case hir::HirPortDirection::kInOut:
+          mir_dir = mir::PortDirection::kInOut;
+          break;
+      }
+      port_entries.push_back(
+          mir::PortEntry{
+              .sym = port.sym,
+              .slot = slot_it->second,
+              .type = type_it->second,
+              .dir = mir_dir});
+    }
+
+    // Sort by slot value for deterministic ordering.
+    std::ranges::sort(port_entries, [](const auto& a, const auto& b) {
+      return a.slot.value < b.slot.value;
+    });
+
+    auto header = mir::CompiledModuleHeader::Create(
+        group.spec_id, group.spec_id.def_id, std::move(port_entries));
+    auto header_id = header_database.Add(std::move(header));
+    header_ids_by_spec[group.spec_id] = header_id;
+  }
+
   // Phase 2b: Emit one mir::Module per HIR module instance and build placement.
   // Walk design elements in original order to preserve instance ordering.
   // Build ConstructionInput directly -- the single source of truth for
@@ -557,6 +740,324 @@ auto LowerDesign(
     map_by_position(inst_mod.variables, rep_mod.variables);
     map_by_position(inst_mod.nets, rep_mod.nets);
     map_by_position(inst_mod.param_slots, rep_mod.param_slots);
+  }
+
+  // B2 Phase 3b: Build ChildInstantiationSites for each parent body.
+  // Uses construction.objects to determine parent-child relationships:
+  // binding plan's parent_instance_sym is the child instance's SymbolId.
+  // The parent is found by looking up the child instance's module_index
+  // and checking which parent body's scope contains it.
+  //
+  // instance_sym -> object_index map for child lookup.
+  std::unordered_map<SymbolId, uint32_t, SymbolIdHash> sym_to_object_index;
+  for (uint32_t i = 0; i < construction.objects.size(); ++i) {
+    sym_to_object_index[construction.objects[i].instance_sym] = i;
+  }
+
+  // Collect unique child instance syms per parent body_group.
+  // parent_instance_sym in bindings IS the child instance's SymbolId.
+  // We find the child's object, then find its parent by looking at the
+  // hierarchy (the parent is the object whose scope contains the child).
+  //
+  // For now, we use a heuristic: in the sorted BFS order, each child
+  // instance was added when scanning its parent's body. The binding plan
+  // groups bindings by parent_instance_sym (child instance). The parent
+  // of a child instance can be found from the instance_table hierarchical
+  // paths, but that's complex. Instead, we derive it from the binding
+  // plan: for each unique parent_instance_sym that has bindings, that's
+  // a child instance. We group them by the parent body that should own
+  // them. The parent body is identified by looking at which spec group
+  // contains the parent instance that is an ancestor of this child.
+  //
+  // For this phase, we build child_sites per spec group by scanning
+  // ALL bindings. The parent body for a binding is determined by which
+  // object owns the child: the child's object_index leads to its
+  // body_group, but that's the CHILD's body, not the parent's.
+  // Instead, we need to know which parent contains this child instance.
+  //
+  // The simplest approach: use the resolver's FindOwnerInstance. But the
+  // owner of child_port_sym is the child instance itself, not the parent.
+  // We need the parent of the child instance.
+  //
+  // Instance hierarchy is encoded in instance_table paths:
+  // "top" -> "top.u_child" -> "top.u_child.u_grandchild"
+  // The parent of "top.u_child" is "top".
+  //
+  // Build parent-child relationships from instance_table paths.
+  struct ChildSiteInfo {
+    SymbolId child_instance_sym;
+    uint32_t child_module_index = 0;
+    common::ModuleSpecId child_spec;
+  };
+  // parent_module_index -> list of child instances.
+  std::unordered_map<uint32_t, std::vector<ChildSiteInfo>> parent_to_children;
+
+  if (input.instance_table != nullptr) {
+    // Build instance_sym -> path for all instances.
+    std::unordered_map<SymbolId, std::string_view, SymbolIdHash> sym_to_path;
+    for (const auto& entry : input.instance_table->entries) {
+      sym_to_path[entry.instance_sym] = entry.full_path;
+    }
+
+    // Build path -> module_index for parent lookup.
+    std::unordered_map<std::string_view, uint32_t> path_to_module_index;
+    for (uint32_t i = 0; i < hir_modules.size(); ++i) {
+      auto it = sym_to_path.find(hir_modules[i]->symbol);
+      if (it != sym_to_path.end()) {
+        path_to_module_index[it->second] = i;
+      }
+    }
+
+    // For each module instance (child), find its parent by removing
+    // the last path component.
+    for (uint32_t ci = 0; ci < hir_modules.size(); ++ci) {
+      auto path_it = sym_to_path.find(hir_modules[ci]->symbol);
+      if (path_it == sym_to_path.end()) continue;
+      std::string_view child_path = path_it->second;
+      auto last_dot = child_path.rfind('.');
+      if (last_dot == std::string_view::npos) continue;  // Top-level
+      std::string_view parent_path = child_path.substr(0, last_dot);
+      auto parent_it = path_to_module_index.find(parent_path);
+      if (parent_it == path_to_module_index.end()) continue;
+      uint32_t parent_module_index = parent_it->second;
+      auto child_spec = spec_map.spec_id_by_instance[ci];
+      parent_to_children[parent_module_index].push_back(
+          ChildSiteInfo{
+              .child_instance_sym = hir_modules[ci]->symbol,
+              .child_module_index = ci,
+              .child_spec = child_spec});
+    }
+  }
+
+  // Now build child_sites for each spec group's representative.
+  // All instances in a spec group have structurally identical children.
+  // We use the representative's children and assign ChildBindingSiteIds.
+  //
+  // Store child_sites temporarily per body_group for later use.
+  std::unordered_map<uint32_t, std::vector<mir::ChildInstantiationSite>>
+      child_sites_by_body;
+
+  for (const auto& group : spec_groups) {
+    uint32_t rep_idx = group.representative_module_index;
+    auto body_id = spec_to_body.at(group.spec_id);
+
+    auto children_it = parent_to_children.find(rep_idx);
+    if (children_it == parent_to_children.end()) continue;
+
+    auto& sites = child_sites_by_body[body_id.value];
+    uint32_t next_site_id = 0;
+
+    // Get repertoire entries for this parent definition (ordered list of
+    // child instance {inst_name, coord} from the definition repertoire).
+    const hir::Module& rep_parent = *hir_modules[rep_idx];
+    const std::vector<common::ChildCoordEntry>* repertoire_entries = nullptr;
+    if (input.child_coord_map != nullptr) {
+      auto coord_it = input.child_coord_map->find(rep_parent.module_def_id);
+      if (coord_it != input.child_coord_map->end()) {
+        repertoire_entries = &coord_it->second;
+      }
+    }
+
+    // Track name occurrences for generate-scoped disambiguation.
+    std::unordered_map<std::string_view, uint32_t> name_occurrences;
+
+    for (const auto& child_info : children_it->second) {
+      mir::ChildBindingSiteId site{next_site_id++};
+      const auto& child_name =
+          (*input.symbol_table)[child_info.child_instance_sym].name;
+      uint32_t occurrence = name_occurrences[child_name]++;
+
+      auto id =
+          BuildChildSiteIdentity(child_name, occurrence, repertoire_entries);
+      mir::DurableChildId durable{
+          .coord = std::move(id.coord), .child_ordinal = id.child_ordinal};
+      sites.push_back(
+          mir::ChildInstantiationSite{
+              .site = site,
+              .id = durable,
+              .child_spec = child_info.child_spec,
+              .debug_instance_sym = child_info.child_instance_sym,
+              .origin = common::OriginId::Invalid()});
+    }
+  }
+
+  // B2 Phase 4: Build ConnectionRecipes alongside the old path.
+  // For each binding, create a ConnectionRecipe using the header database
+  // and child_sites. The new path runs in parallel with the old
+  // CompileBindings path; Phase 5 will delete the old path.
+  std::unordered_map<uint32_t, std::vector<mir::ConnectionRecipe>>
+      connection_recipes_by_body;
+
+  if (input.binding_plan != nullptr) {
+    // Build child_instance_sym -> (body_group, ChildBindingSiteId) map.
+    // Maps any child instance SymbolId (from any member of a spec group)
+    // to its parent body's child_sites entry. Non-representative children
+    // are mapped by finding their parent spec group's representative and
+    // matching by child position.
+    struct ChildSiteLookup {
+      uint32_t parent_body_group = 0;
+      mir::ChildBindingSiteId site;
+      uint32_t rep_child_module_index = 0;
+    };
+    std::unordered_map<SymbolId, ChildSiteLookup, SymbolIdHash>
+        child_sym_to_site;
+
+    // First: register representative children directly.
+    for (const auto& [body_group, sites] : child_sites_by_body) {
+      for (const auto& site : sites) {
+        // Find the child's module_index from parent_to_children.
+        uint32_t rep_child_idx = 0;
+        for (const auto& group : spec_groups) {
+          auto body_id = spec_to_body.at(group.spec_id);
+          if (body_id.value != body_group) continue;
+          auto children_it =
+              parent_to_children.find(group.representative_module_index);
+          if (children_it == parent_to_children.end()) continue;
+          for (const auto& ci : children_it->second) {
+            if (ci.child_instance_sym == site.debug_instance_sym) {
+              rep_child_idx = ci.child_module_index;
+              break;
+            }
+          }
+          break;
+        }
+        child_sym_to_site[site.debug_instance_sym] = ChildSiteLookup{
+            .parent_body_group = body_group,
+            .site = site.site,
+            .rep_child_module_index = rep_child_idx};
+      }
+    }
+
+    // Second: register non-representative children by positional mapping.
+    // For each spec group, map non-representative parent's children to
+    // the representative parent's child_sites by position.
+    for (const auto& group : spec_groups) {
+      auto body_id = spec_to_body.at(group.spec_id);
+      auto rep_children_it =
+          parent_to_children.find(group.representative_module_index);
+      if (rep_children_it == parent_to_children.end()) continue;
+      const auto& rep_children = rep_children_it->second;
+
+      for (uint32_t member_idx : group.member_module_indices) {
+        if (member_idx == group.representative_module_index) continue;
+        auto member_children_it = parent_to_children.find(member_idx);
+        if (member_children_it == parent_to_children.end()) continue;
+        const auto& member_children = member_children_it->second;
+
+        for (size_t ci = 0;
+             ci < member_children.size() && ci < rep_children.size(); ++ci) {
+          auto& sites = child_sites_by_body[body_id.value];
+          if (ci >= sites.size()) break;
+          child_sym_to_site[member_children[ci].child_instance_sym] =
+              ChildSiteLookup{
+                  .parent_body_group = body_id.value,
+                  .site = sites[ci].site,
+                  .rep_child_module_index =
+                      rep_children[ci].child_module_index};
+        }
+      }
+    }
+
+    for (const auto& binding : input.binding_plan->bindings) {
+      // parent_instance_sym is the child instance's SymbolId.
+      auto site_it = child_sym_to_site.find(binding.parent_instance_sym);
+      if (site_it == child_sym_to_site.end()) continue;
+
+      const auto& site_lookup = site_it->second;
+      const auto& sites = child_sites_by_body[site_lookup.parent_body_group];
+
+      // Canonicalize child_port_sym to representative's equivalent.
+      // The binding uses a per-instance SymbolId; the header uses the
+      // representative's SymbolId. Positional mapping resolves this.
+      SymbolId child_port_sym = binding.child_port_sym;
+      // Find which module this child belongs to.
+      uint32_t child_mod_idx = 0;
+      for (uint32_t mi = 0; mi < hir_modules.size(); ++mi) {
+        bool found = false;
+        for (SymbolId v : hir_modules[mi]->variables) {
+          if (v == child_port_sym) {
+            child_mod_idx = mi;
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+        for (SymbolId n : hir_modules[mi]->nets) {
+          if (n == child_port_sym) {
+            child_mod_idx = mi;
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+      auto rep_sym_opt = CanonicalizeSymToRepresentative(
+          child_port_sym, *hir_modules[child_mod_idx],
+          *hir_modules[site_lookup.rep_child_module_index]);
+      if (!rep_sym_opt) continue;
+      SymbolId rep_child_port_sym = *rep_sym_opt;
+
+      // Use canonical child-port lookup (lowering-only span overload).
+      auto contract = LookupChildPortContract(
+          std::span<const mir::ChildInstantiationSite>(sites), header_database,
+          site_lookup.site, rep_child_port_sym);
+
+      // Classify the connection source.
+      mir::ConnectionSourceRecipe source;
+      mir::TriggerRecipe trigger;
+      TypeId result_type = contract.type;
+
+      auto kind =
+          (binding.kind == ast_to_hir::PortBinding::Kind::kDriveParentToChild)
+              ? mir::PortConnection::Kind::kDriveParentToChild
+              : mir::PortConnection::Kind::kDriveChildToParent;
+
+      if (kind == mir::PortConnection::Kind::kDriveParentToChild) {
+        // Input: parent expression -> child port.
+        // Try to extract simple NameRef for LocalSlot source.
+        const hir::Expression& expr = (*input.hir_arena)[binding.parent_rvalue];
+        if (expr.kind == hir::ExpressionKind::kNameRef) {
+          const auto& name_data =
+              std::get<hir::NameRefExpressionData>(expr.data);
+          const auto& body_slots =
+              body_local_slots_by_body.at(site_lookup.parent_body_group);
+          auto slot_opt =
+              ResolveParentSourceToLocalSlot(name_data.symbol, body_slots);
+          if (!slot_opt) {
+            // Not a body-local variable -- skip for now (could be
+            // a design-global or hierarchical ref, which would use
+            // kExternalRef source).
+            continue;
+          }
+          source = mir::ConnectionSourceRecipe::FromLocalSlot(*slot_opt);
+          trigger = mir::TriggerRecipe::FromLocalSlot(
+              *slot_opt, common::EdgeKind::kAnyChange);
+        } else {
+          // Non-trivial expression: would use kFunction source.
+          // Skip for now (Phase 4 handles simple connections first).
+          continue;
+        }
+      } else {
+        // Output: child port -> parent place.
+        // The source is the child's port slot.
+        // For connection recipes, the "source" for child-to-parent is
+        // conceptually the child port. But from the parent's perspective,
+        // the child_slot comes from the child header.
+        source = mir::ConnectionSourceRecipe::FromLocalSlot(contract.slot);
+        trigger = mir::TriggerRecipe::FromLocalSlot(
+            contract.slot, common::EdgeKind::kAnyChange);
+      }
+
+      connection_recipes_by_body[site_lookup.parent_body_group].push_back(
+          mir::ConnectionRecipe{
+              .kind = kind,
+              .child_site = site_lookup.site,
+              .child_slot = contract.slot,
+              .source = source,
+              .trigger = trigger,
+              .result_type = result_type,
+              .origin = common::OriginId::Invalid()});
+    }
   }
 
   // Resolve port bindings to topology-owned endpoint artifacts.

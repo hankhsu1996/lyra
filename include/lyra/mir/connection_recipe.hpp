@@ -126,20 +126,4 @@ struct ConnectionRecipe {
   common::OriginId origin = common::OriginId::Invalid();
 };
 
-// The ONLY legal parent-side child-port resolution path.
-//
-// Operates on canonical body/header abstractions. The body owns child_sites
-// with indexed lookup; the header DB owns port contracts. Parent-side code
-// must not read child CompiledModuleBody, call FindPort directly, or
-// inspect child slot layout through any other API.
-//
-// Frozen algorithmic path:
-//   1. site -> body.FindChildSite(site) -> ChildInstantiationSite
-//   2. child_spec -> headers.GetHeader(child_spec) -> CompiledModuleHeader
-//   3. child_port_sym -> header.FindPort(child_port_sym) -> PortEntry
-//   4. PortEntry -> ChildPortContract
-auto GetChildPortContract(
-    const CompiledModuleBody& body, const HeaderDatabase& headers,
-    ChildBindingSiteId site, SymbolId child_port_sym) -> ChildPortContract;
-
 }  // namespace lyra::mir

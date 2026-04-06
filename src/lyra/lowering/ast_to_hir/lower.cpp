@@ -74,6 +74,7 @@ auto LowerAstToHir(
       .binding_plan = std::move(design_result.binding_plan),
       .specialization_map = std::move(design_result.specialization_map),
       .instance_table = std::move(design_result.instance_table),
+      .child_coord_map = std::move(design_result.child_coord_map),
       .global_precision_power = global_precision,
       .body_timescales = std::move(design_result.body_timescales),
   };

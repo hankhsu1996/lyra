@@ -111,8 +111,11 @@ auto LowerAssignment(
   if (!value_result) return std::unexpected(value_result.error());
   mir::Operand value = *value_result;
 
+  // B2: Use WriteTarget for assignment destination.
+  mir::WriteTarget dest = target.dest;
+
   if (target.IsAlwaysValid()) {
-    builder.EmitAssign(target.place, std::move(value));
+    builder.EmitAssign(dest, std::move(value));
     return {};
   }
 
@@ -135,7 +138,7 @@ auto LowerAssignment(
   // Thread value through: it may be a UseTemp from before the guard blocks
   // (e.g., if LowerExpression created blocks for a ternary expression).
   value = builder.ThreadValueToCurrentBlock(std::move(value));
-  builder.EmitAssign(target.place, std::move(value));
+  builder.EmitAssign(dest, std::move(value));
   builder.EmitJump(merge_bb);
 
   builder.SetCurrentBlock(merge_bb);
@@ -451,7 +454,7 @@ auto LowerSFormatEffect(
   Result<LvalueResult> target_result = LowerLvalue(*data.output, builder);
   if (!target_result) return std::unexpected(target_result.error());
   LvalueResult target = std::move(*target_result);
-  builder.EmitAssign(target.place, mir::Operand::Use(tmp));
+  builder.EmitAssign(target.dest, mir::Operand::Use(tmp));
   return {};
 }
 
@@ -756,7 +759,7 @@ auto LowerMemIOEffect(const hir::MemIOData& data, MirBuilder& builder)
   mir::MemIOEffect effect{
       .is_read = data.is_read,
       .is_hex = data.is_hex,
-      .target = target.place,
+      .target = target.GetLocalPlace(),
       .target_type = target_expr.type,
       .filename =
           mir::TypedOperand{

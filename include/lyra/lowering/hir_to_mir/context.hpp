@@ -5,16 +5,20 @@
 
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/local_slot_id.hpp"
 #include "lyra/common/module_identity.hpp"
+#include "lyra/common/selection_step.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/hir/expression.hpp"
 #include "lyra/lowering/hir_to_mir/dpi_registry.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/cover_site.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/design.hpp"
+#include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 
@@ -104,6 +108,28 @@ struct DesignDeclarations {
   std::vector<ExportDiagnostic> export_diagnostics;
 };
 
+// Provisional path step for non-local target resolution during lowering.
+// Carries the instance SymbolId (for diagnostics) and the canonical
+// repertoire coordinate (for durable identity).
+struct ProvisionalPathStep {
+  SymbolId instance_sym;
+  common::RepertoireCoord coord;
+  auto operator==(const ProvisionalPathStep&) const -> bool = default;
+};
+
+// Provisional non-local target built during HIR->MIR lowering.
+// Contains the upward navigation + descendant path + final target slot.
+// Stored alongside ExternalAccessRecipe as provenance for Phase 3
+// canonicalization. Phase 2 uses SymbolId-keyed caching; Phase 3 will
+// refine to full recipe key.
+struct ProvisionalNonLocalTarget {
+  mir::NonLocalAnchor anchor = mir::NonLocalAnchor::kSelf;
+  uint32_t upward_count = 0;
+  std::vector<ProvisionalPathStep> path;
+  common::LocalSlotId target_slot;
+  auto operator==(const ProvisionalNonLocalTarget&) const -> bool = default;
+};
+
 // Read-only view into declaration artifacts for lower-level helpers
 // (LowerProcess, LowerFunctionBody). Ensures the frozen boundary is
 // consistent throughout the lowering layer.
@@ -133,6 +159,12 @@ struct DeclView {
   // Null for lowering scopes that cannot contain deferred assertions.
   mir::DeferredAssertionSiteRegistry* deferred_assertion_site_registry =
       nullptr;
+  // B2: External ref registry for body lowering. When non-null, hierarchical
+  // refs produce ExternalRefId operands. Null for design-level lowering.
+  std::vector<mir::ExternalAccessRecipe>* external_refs = nullptr;
+  // B2: Provisional non-local targets (parallel to external_refs).
+  // Populated during lowering, consumed during Phase 3 canonicalization.
+  std::vector<ProvisionalNonLocalTarget>* provisional_targets = nullptr;
 };
 
 // Result of AllocLocal - provides both the PlaceId and the local slot index.
@@ -257,6 +289,40 @@ struct Context {
   // Stats: count of MaterializeOperandToPlace calls (for --stats output).
   uint64_t materialize_count = 0;
 
+  // B2: External ref registry for body lowering.
+  // When non-null, LowerHierarchicalRefToExternalRef emits ExternalRefId
+  // operands instead of resolving to kDesignGlobal PlaceIds.
+  // Null for design-level lowering (init processes, connection processes).
+  std::vector<mir::ExternalAccessRecipe>* external_refs = nullptr;
+  // B2: Provisional non-local targets (parallel to external_refs).
+  std::vector<ProvisionalNonLocalTarget>* provisional_targets = nullptr;
+  // Cache by full provisional recipe identity (access_kind + target +
+  // upward_count + path + target_sym). Two different paths to the same
+  // symbol get different ExternalRefIds.
+  struct ExternalRefKey {
+    mir::ExternalAccessKind access_kind;
+    SymbolId target_sym;
+    uint32_t upward_count;
+    // Flattened path identity: vector of (instance_sym, coord) pairs.
+    // Using SymbolId for path steps is sufficient for single-pass dedup.
+    std::vector<std::pair<SymbolId, common::RepertoireCoord>> path_identity;
+    auto operator==(const ExternalRefKey&) const -> bool = default;
+  };
+  struct ExternalRefKeyHash {
+    auto operator()(const ExternalRefKey& key) const noexcept -> size_t {
+      size_t h = std::hash<uint8_t>{}(static_cast<uint8_t>(key.access_kind));
+      h ^= std::hash<uint32_t>{}(key.target_sym.value) << 1;
+      h ^= std::hash<uint32_t>{}(key.upward_count) << 2;
+      for (const auto& [sym, coord] : key.path_identity) {
+        h ^= std::hash<uint32_t>{}(sym.value) << 3;
+        h ^= std::hash<size_t>{}(coord.size()) << 4;
+      }
+      return h;
+    }
+  };
+  std::unordered_map<ExternalRefKey, mir::ExternalRefId, ExternalRefKeyHash>
+      external_ref_cache;
+
   auto AllocLocal(SymbolId sym, TypeId type) -> LocalAllocation;
   auto AllocTemp(TypeId type) -> mir::PlaceId;
 
@@ -272,6 +338,21 @@ struct Context {
   // Used for kHierarchicalRef expressions and connection compilation.
   // Throws InternalError if the symbol is not found.
   auto ResolveHierarchicalRef(SymbolId sym) const -> mir::PlaceId;
+
+  // B2: Result of lowering a hierarchical ref to an external ref.
+  struct ExternalRefResult {
+    mir::ExternalRefId ref_id;
+    TypeId type;
+  };
+
+  // B2: Lower a hierarchical reference to an ExternalRefId.
+  // Allocates a new ExternalAccessRecipe (and provisional target) if not
+  // cached for this symbol. Requires external_refs to be non-null (body
+  // lowering only).
+  // access: the kind of access being performed (read, write, or read-write).
+  auto LowerHierarchicalRefToExternalRef(
+      const hir::HierarchicalRefExpressionData& data, TypeId type,
+      mir::ExternalAccessKind access) -> ExternalRefResult;
 
   // Resolve a PlaceId to its Place from the correct arena.
   // All PlaceIds in body MIR are body-arena-local, so this resolves

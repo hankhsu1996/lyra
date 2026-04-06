@@ -442,12 +442,13 @@ auto LowerIncrementDecrement(
   }
 
   // 3. Read old value with OOB handling using GuardedUse
+  mir::PlaceId target_place = target.GetLocalPlace();
   mir::Operand read_val;
   if (target.IsAlwaysValid()) {
-    read_val = mir::Operand::Use(target.place);
+    read_val = mir::Operand::Use(target_place);
   } else {
     // OOB/X/Z index: GuardedUse returns X (4-state) or 0 (2-state)
-    read_val = builder.EmitGuardedUse(target.validity, target.place, expr.type);
+    read_val = builder.EmitGuardedUse(target.validity, target_place, expr.type);
   }
   mir::PlaceId old_value = ctx.AllocTemp(expr.type);
   builder.EmitAssign(old_value, read_val);
@@ -470,11 +471,12 @@ auto LowerIncrementDecrement(
       builder.EmitPlaceTemp(expr.type, std::move(compute_rvalue));
 
   // 5. Write back to target with guarded assign for OOB safety
+  mir::WriteTarget dest = target.dest;
   if (target.IsAlwaysValid()) {
-    builder.EmitAssign(target.place, mir::Operand::Use(new_value));
+    builder.EmitAssign(dest, mir::Operand::Use(new_value));
   } else {
     builder.EmitGuardedAssign(
-        target.place, mir::Operand::Use(new_value), target.validity);
+        dest, mir::Operand::Use(new_value), target.validity);
   }
 
   // Writeback for AA compound access (aa[k]++)
@@ -515,12 +517,13 @@ auto LowerCompoundAssignment(
   mir::Operand rhs = *rhs_result;
 
   // 3. Read old value with OOB handling using GuardedUse
+  mir::PlaceId target_place = target.GetLocalPlace();
   mir::Operand read_val;
   if (target.IsAlwaysValid()) {
-    read_val = mir::Operand::Use(target.place);
+    read_val = mir::Operand::Use(target_place);
   } else {
     // OOB/X/Z index: GuardedUse returns X (4-state) or 0 (2-state)
-    read_val = builder.EmitGuardedUse(target.validity, target.place, expr.type);
+    read_val = builder.EmitGuardedUse(target.validity, target_place, expr.type);
   }
   mir::PlaceId old_value = ctx.AllocTemp(expr.type);
   builder.EmitAssign(old_value, read_val);
@@ -556,11 +559,12 @@ auto LowerCompoundAssignment(
       builder.EmitPlaceTemp(expr.type, std::move(compute_rvalue));
 
   // 6. Write back to target with guarded assign for OOB safety
+  mir::WriteTarget dest = target.dest;
   if (target.IsAlwaysValid()) {
-    builder.EmitAssign(target.place, mir::Operand::Use(new_value));
+    builder.EmitAssign(dest, mir::Operand::Use(new_value));
   } else {
     builder.EmitGuardedAssign(
-        target.place, mir::Operand::Use(new_value), target.validity);
+        dest, mir::Operand::Use(new_value), target.validity);
   }
 
   // Writeback for AA compound access (aa[k] += v)
@@ -859,7 +863,7 @@ auto LowerSystemCall(
     // Emit unified Call - returns success boolean via staging temp
     return builder.EmitSystemTfCallExpr(
         SystemTfOpcode::kValuePlusargs, {format_op}, expr.type,
-        {{output_lv.place, output_type, mir::PassMode::kOut}});
+        {{output_lv.GetLocalPlace(), output_type, mir::PassMode::kOut}});
   }
 
   // $fopen -> FopenRvalueInfo with semantic fields for string coercion
@@ -966,7 +970,7 @@ auto LowerSystemCall(
     // Emit unified Call - returns char count via staging temp
     return builder.EmitSystemTfCallExpr(
         SystemTfOpcode::kFgets, {*desc_result}, expr.type,
-        {{output_lv.place, output_type, mir::PassMode::kOut}});
+        {{output_lv.GetLocalPlace(), output_type, mir::PassMode::kOut}});
   }
 
   // $fread -> unified Call with SystemTfOpcode (reads binary file)
@@ -1034,7 +1038,8 @@ auto LowerSystemCall(
     return builder.EmitSystemTfCallExpr(
         SystemTfOpcode::kFread,
         {*desc_result, width_op, is_mem_op, start_op, count_op}, expr.type,
-        {{target_lv.place, target_type, mir::PassMode::kOut, wb_kind}});
+        {{target_lv.GetLocalPlace(), target_type, mir::PassMode::kOut,
+          wb_kind}});
   }
 
   // $fscanf -> unified Call with SystemTfOpcode (formatted file input)
@@ -1055,7 +1060,8 @@ auto LowerSystemCall(
       if (!output_lv_result) return std::unexpected(output_lv_result.error());
       const hir::Expression& out_expr = (*ctx.hir_arena)[output];
       writebacks.emplace_back(
-          output_lv_result->place, out_expr.type, mir::PassMode::kOut);
+          output_lv_result->GetLocalPlace(), out_expr.type,
+          mir::PassMode::kOut);
     }
 
     // Emit unified Call with:
@@ -1251,7 +1257,7 @@ auto LowerAssignment(
       if (!value_result) return std::unexpected(value_result.error());
       builder.EmitAssocOp(
           mir::AssocOp{
-              .receiver = base_lv->place,
+              .receiver = base_lv->GetLocalPlace(),
               .data =
                   mir::AssocSet{.key = *key_result, .value = *value_result}});
       return *value_result;
@@ -1269,9 +1275,12 @@ auto LowerAssignment(
   if (!value_result) return std::unexpected(value_result.error());
   mir::Operand value = *value_result;
 
+  // B2: Use WriteTarget for assignment destination.
+  mir::WriteTarget dest = target.dest;
+
   if (data.is_non_blocking) {
     if (target.IsAlwaysValid()) {
-      builder.EmitDeferredAssign(target.place, value);
+      builder.EmitDeferredAssign(dest, value);
     } else {
       // Guard NBA: only schedule if validity is true (OOB = no-op)
       mir::Operand cond = builder.MaterializeForBranch(target.validity);
@@ -1281,16 +1290,16 @@ auto LowerAssignment(
 
       builder.SetCurrentBlock(store_bb);
       value = builder.ThreadValueToCurrentBlock(std::move(value));
-      builder.EmitDeferredAssign(target.place, value);
+      builder.EmitDeferredAssign(dest, value);
       builder.EmitJump(merge_bb);
 
       builder.SetCurrentBlock(merge_bb);
     }
   } else if (target.IsAlwaysValid()) {
-    builder.EmitAssign(target.place, value);
+    builder.EmitAssign(dest, value);
   } else {
     // Guarded assign: only write if guard is true (OOB/X/Z = no-op)
-    builder.EmitGuardedAssign(target.place, value, target.validity);
+    builder.EmitGuardedAssign(dest, value, target.validity);
   }
 
   // Writeback for AA compound access (aa[k].field = v)
@@ -1451,15 +1460,15 @@ auto LowerDpiCall(
       case ParameterDirection::kOutput: {
         Result<LvalueResult> lv = LowerLvalue(arg_id, builder);
         if (!lv) return std::unexpected(lv.error());
-        binding.writeback_dest = lv->place;
+        binding.writeback_dest = lv->GetLocalPlace();
         break;
       }
       case ParameterDirection::kInOut: {
         Result<LvalueResult> lv = LowerLvalue(arg_id, builder);
         if (!lv) return std::unexpected(lv.error());
         RethreadDpiBindingsIfBlockChanged(builder, before, bindings);
-        binding.input_value = BuildDpiInoutCopyIn(lv->place, builder);
-        binding.writeback_dest = lv->place;
+        binding.input_value = BuildDpiInoutCopyIn(lv->GetLocalPlace(), builder);
+        binding.writeback_dest = lv->GetLocalPlace();
         break;
       }
       case ParameterDirection::kRef:
@@ -1521,8 +1530,8 @@ auto LowerCall(
                                  ? mir::PassMode::kOut
                                  : mir::PassMode::kInOut;
         writebacks.push_back({
-            .tmp = lv_result->place,
-            .dest = lv_result->place,
+            .tmp = lv_result->GetLocalPlace(),
+            .dest = lv_result->GetLocalPlace(),
             .type = param.type,
             .mode = mode,
             .arg_index = static_cast<int32_t>(i),
@@ -1623,7 +1632,7 @@ auto LowerBuiltinMethodCall(
         mir::PlaceId dest = ctx.AllocTemp(expr.type);
         builder.EmitAssocOp(
             mir::AssocOp{
-                .receiver = lv_result->place,
+                .receiver = lv_result->GetLocalPlace(),
                 .data = mir::AssocNum{.dest = dest}});
         return mir::Operand::Use(dest);
       }
@@ -1659,7 +1668,7 @@ auto LowerBuiltinMethodCall(
                                       ? mir::BuiltinMethod::kQueuePopBack
                                       : mir::BuiltinMethod::kQueuePopFront;
 
-      return builder.EmitBuiltinCall(method, lv.place, {}, expr.type);
+      return builder.EmitBuiltinCall(method, lv.GetLocalPlace(), {}, expr.type);
     }
 
     case hir::BuiltinMethod::kPushBack:
@@ -1687,7 +1696,7 @@ auto LowerBuiltinMethodCall(
                                       : mir::BuiltinMethod::kQueuePushFront;
 
       return builder.EmitBuiltinCall(
-          method, lv.place, std::move(operands), expr.type);
+          method, lv.GetLocalPlace(), std::move(operands), expr.type);
     }
 
     case hir::BuiltinMethod::kInsert: {
@@ -1710,8 +1719,8 @@ auto LowerBuiltinMethodCall(
       }
 
       return builder.EmitBuiltinCall(
-          mir::BuiltinMethod::kQueueInsert, lv.place, std::move(operands),
-          expr.type);
+          mir::BuiltinMethod::kQueueInsert, lv.GetLocalPlace(),
+          std::move(operands), expr.type);
     }
 
     case hir::BuiltinMethod::kDelete: {
@@ -1723,14 +1732,15 @@ auto LowerBuiltinMethodCall(
         if (data.args.empty()) {
           builder.EmitAssocOp(
               mir::AssocOp{
-                  .receiver = lv_result->place, .data = mir::AssocDelete{}});
+                  .receiver = lv_result->GetLocalPlace(),
+                  .data = mir::AssocDelete{}});
         } else {
           Result<mir::Operand> key_result =
               LowerExpressionImpl(data.args[0], builder, cache);
           if (!key_result) return std::unexpected(key_result.error());
           builder.EmitAssocOp(
               mir::AssocOp{
-                  .receiver = lv_result->place,
+                  .receiver = lv_result->GetLocalPlace(),
                   .data = mir::AssocDeleteKey{.key = *key_result}});
         }
         return mir::Operand::Poison();
@@ -1765,7 +1775,7 @@ auto LowerBuiltinMethodCall(
       }
 
       return builder.EmitBuiltinCall(
-          method, lv.place, std::move(operands), expr.type);
+          method, lv.GetLocalPlace(), std::move(operands), expr.type);
     }
 
     case hir::BuiltinMethod::kAssocExists: {
@@ -1782,7 +1792,7 @@ auto LowerBuiltinMethodCall(
       mir::PlaceId dest = ctx.AllocTemp(expr.type);
       builder.EmitAssocOp(
           mir::AssocOp{
-              .receiver = lv_result->place,
+              .receiver = lv_result->GetLocalPlace(),
               .data = mir::AssocExists{.dest = dest, .key = operands[0]}});
       return mir::Operand::Use(dest);
     }
@@ -1798,15 +1808,15 @@ auto LowerBuiltinMethodCall(
       if (data.method == hir::BuiltinMethod::kAssocFirst) {
         builder.EmitAssocOp(
             mir::AssocOp{
-                .receiver = lv_result->place,
+                .receiver = lv_result->GetLocalPlace(),
                 .data = mir::AssocIterFirst{
-                    .dest_found = dest, .out_key = key_lv->place}});
+                    .dest_found = dest, .out_key = key_lv->GetLocalPlace()}});
       } else {
         builder.EmitAssocOp(
             mir::AssocOp{
-                .receiver = lv_result->place,
+                .receiver = lv_result->GetLocalPlace(),
                 .data = mir::AssocIterLast{
-                    .dest_found = dest, .out_key = key_lv->place}});
+                    .dest_found = dest, .out_key = key_lv->GetLocalPlace()}});
       }
       return mir::Operand::Use(dest);
     }
@@ -1821,15 +1831,15 @@ auto LowerBuiltinMethodCall(
       if (data.method == hir::BuiltinMethod::kAssocNext) {
         builder.EmitAssocOp(
             mir::AssocOp{
-                .receiver = lv_result->place,
+                .receiver = lv_result->GetLocalPlace(),
                 .data = mir::AssocIterNext{
-                    .dest_found = dest, .key_place = key_lv->place}});
+                    .dest_found = dest, .key_place = key_lv->GetLocalPlace()}});
       } else {
         builder.EmitAssocOp(
             mir::AssocOp{
-                .receiver = lv_result->place,
+                .receiver = lv_result->GetLocalPlace(),
                 .data = mir::AssocIterPrev{
-                    .dest_found = dest, .key_place = key_lv->place}});
+                    .dest_found = dest, .key_place = key_lv->GetLocalPlace()}});
       }
       return mir::Operand::Use(dest);
     }
@@ -1840,7 +1850,7 @@ auto LowerBuiltinMethodCall(
       mir::PlaceId dest = ctx.AllocTemp(expr.type);
       builder.EmitAssocOp(
           mir::AssocOp{
-              .receiver = lv_result->place,
+              .receiver = lv_result->GetLocalPlace(),
               .data = mir::AssocSnapshot{.dest_keys = dest}});
       return mir::Operand::Use(dest);
     }
@@ -2623,7 +2633,7 @@ auto LowerExpressionImpl(
           Result<LvalueResult> lv_result = LowerLvalue(expr_id, builder);
           if (!lv_result) return std::unexpected(lv_result.error());
           LvalueResult lv = std::move(*lv_result);
-          return mir::Operand::Use(lv.place);
+          return mir::Operand::Use(lv.GetLocalPlace());
         } else if constexpr (std::is_same_v<
                                  T, hir::UnionMemberAccessExpressionData>) {
           // Union member access - always valid (member index is compile-time)
@@ -2631,7 +2641,7 @@ auto LowerExpressionImpl(
           Result<LvalueResult> lv_result = LowerLvalue(expr_id, builder);
           if (!lv_result) return std::unexpected(lv_result.error());
           LvalueResult lv = std::move(*lv_result);
-          return mir::Operand::Use(lv.place);
+          return mir::Operand::Use(lv.GetLocalPlace());
         } else if constexpr (std::is_same_v<
                                  T, hir::StructLiteralExpressionData>) {
           return LowerStructLiteral(data, expr, builder, cache);
@@ -2665,8 +2675,16 @@ auto LowerExpressionImpl(
           return LowerReplicate(data, expr, builder, cache);
         } else if constexpr (std::is_same_v<
                                  T, hir::HierarchicalRefExpressionData>) {
-          mir::PlaceId place_id =
-              builder.GetContext().ResolveHierarchicalRef(data.target);
+          auto& ctx = builder.GetContext();
+          // B2: When external_refs is set, emit ExternalRefId instead of
+          // resolving to kDesignGlobal PlaceId.
+          if (ctx.external_refs != nullptr) {
+            auto ref = ctx.LowerHierarchicalRefToExternalRef(
+                data, expr.type, mir::ExternalAccessKind::kRead);
+            return mir::Operand::ExternalRef(ref.ref_id);
+          }
+          // Old path: design-level lowering.
+          mir::PlaceId place_id = ctx.ResolveHierarchicalRef(data.target);
           return mir::Operand::Use(place_id);
         } else if constexpr (std::is_same_v<T, hir::MathCallExpressionData>) {
           return LowerMathCall(data, expr, builder, cache);

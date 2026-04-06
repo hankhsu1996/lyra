@@ -8,6 +8,7 @@
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/mir/child_binding_site_id.hpp"
 
 namespace lyra::mir {
 
@@ -51,7 +52,6 @@ struct CompiledModuleHeaderId {
 };
 
 // Forward declarations for friend access.
-struct ChildBindingSiteId;
 struct ChildPortContract;
 struct CompiledModuleBody;
 class HeaderDatabase;
@@ -89,6 +89,13 @@ class CompiledModuleHeader {
   [[nodiscard]] auto PortCount() const -> size_t {
     return ports_.size();
   }
+
+  // Factory to construct a header with the given ports.
+  // Ports must be sorted by slot.value. Caller is responsible for
+  // ensuring uniqueness (one entry per port symbol).
+  static auto Create(
+      common::ModuleSpecId spec_id, common::ModuleDefId def_id,
+      std::vector<PortEntry> ports) -> CompiledModuleHeader;
 
  private:
   friend class HeaderDatabase;
@@ -142,6 +149,12 @@ class HeaderDatabase {
   // Uses internal ModuleSpecId -> handle index for lookup.
   [[nodiscard]] auto GetHeader(common::ModuleSpecId spec) const
       -> const CompiledModuleHeader&;
+
+  // Look up a port's lowered contract by spec and port symbol.
+  // Returns nullopt if the spec has no port with that symbol.
+  // This is the header-database-level lookup for connection recipe building.
+  [[nodiscard]] auto FindPortEntry(
+      common::ModuleSpecId spec, SymbolId port_sym) const -> const PortEntry*;
 
  private:
   // Append-only header store. Index == CompiledModuleHeaderId.value.

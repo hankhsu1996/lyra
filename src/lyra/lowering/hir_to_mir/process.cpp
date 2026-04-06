@@ -132,6 +132,8 @@ auto LowerProcess(
       .cover_site_registry = decl_view.cover_site_registry,
       .deferred_assertion_site_registry =
           decl_view.deferred_assertion_site_registry,
+      .external_refs = decl_view.external_refs,
+      .provisional_targets = decl_view.provisional_targets,
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map, body_id, decision_allocator);
