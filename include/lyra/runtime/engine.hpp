@@ -721,6 +721,12 @@ class Engine {
   // convergence. Also used for initial value propagation before Run().
   void FlushAndPropagateConnections();
 
+  // Frontier promotion helpers for FlushAndPropagateConnections.
+  // Retire old current frontier (clear pending), promote next frontier
+  // (swap next->pending, clear dedup), swap frontier vectors.
+  void PromoteLocalFrontier();
+  void PromoteGlobalFrontier();
+
   // One-time init for process metadata registry.
   // R4: When pending module meta words exist (from bundle init), merges
   // connection-only registry with module process meta into one combined
@@ -1259,6 +1265,19 @@ class Engine {
   std::vector<const RuntimeInstance*> const_instance_ptrs_;
   std::span<const RuntimeInstance* const> const_instances_;  // read-only view
   InstanceIdTraceResolver instance_trace_resolver_;
+  // Reverse lookup: instance_id.value -> index in instances_[].
+  // Built by SetInstances(). Sentinel UINT32_MAX for unoccupied slots.
+  // Dense table indexed by instance_id.value. Uniqueness is enforced at
+  // SetInstances() time; sparsity is bounded to prevent pathological
+  // allocation (max_id <= 4 * count + 1024).
+  std::vector<uint32_t> instance_to_idx_;
+
+  // Canonical accessor for the reverse lookup. Validates bounds and sentinel.
+  // Internal to the engine -- not exposed as a public API.
+  [[nodiscard]] auto GetInstanceIndex(InstanceId id) const -> uint32_t;
+  [[nodiscard]] auto GetInstanceIndex(const RuntimeInstance& inst) const
+      -> uint32_t;
+
   UpdateSet update_set_;
 
   // Connection batch: fast-path for kernelized connection processes.
@@ -1283,9 +1302,26 @@ class Engine {
     void* frame;
     uint32_t process_index;
     uint32_t flags;
+    // Index into instances_[] for the owning module instance.
+    // Always valid -- comb kernels are always module processes with a bound
+    // RuntimeInstance (enforced at init time).
+    uint32_t instance_idx;
     static constexpr uint32_t kSelfEdge = 1U;
   };
   std::vector<CombKernel> comb_kernels_;
+
+  // Canonical comb-kernel construction. Populates instance_idx from the
+  // process frame header via GetInstanceIndex(). Requires instance_to_idx_
+  // to be built (i.e., after SetInstances()).
+  auto BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
+      -> CombKernel;
+
+  // Frontier invariant verifier. Checks that current_instances exactly
+  // matches the set of instances with non-empty pending, with no
+  // duplicates, leaks, or stale membership bits. Called at iteration
+  // boundaries inside FlushAndPropagateConnections.
+  void VerifyLocalFrontierConsistency() const;
+
   // Structured trigger entries with byte-range observation.
   struct CombTriggerEntry {
     uint32_t kernel_idx;
@@ -1423,32 +1459,44 @@ class Engine {
   };
 
   struct FixpointWorkspace {
-    // Global domain
+    // Global frontier
     std::vector<GlobalSignalId> pending_globals;
     std::vector<GlobalSignalId> next_globals;
-    std::vector<uint8_t> global_pending_seen;  // sized to global_slot_count_
+    std::vector<uint8_t> global_pending_seen;
 
-    // Local domain -- one per instance with local signals
+    // Local domain -- backing storage indexed by instance position
     std::vector<LocalPendingSet> locals;
+
+    // Sparse instance frontiers. Only instances in current_instances are
+    // consumed each iteration; only instances in next_instances receive
+    // new work. Convergence is current_instances.empty().
+    std::vector<uint32_t> current_instances;
+    std::vector<uint32_t> next_instances;
+    std::vector<uint8_t> in_next;  // bitvec: 1 iff in next_instances
+
+    // Per-iteration comb-touched tracking. Records which instances had
+    // a comb kernel executed, so local comb-write collection scans only
+    // those instances. Reset each iteration.
+    std::vector<uint32_t> comb_touched;
+    std::vector<uint8_t> comb_touched_seen;
+    // Pre-comb delta size, indexed by instance_idx. Valid only for
+    // entries in comb_touched. Recorded exactly once per instance per
+    // iteration, before the first comb execution for that instance.
+    std::vector<uint32_t> delta_pre;
 
     // Comb write capture (split by domain)
     std::vector<GlobalSignalId> comb_writes_global;
     struct LocalCombWrite {
-      uint32_t instance_idx;  // index into locals[]
+      uint32_t instance_idx;
       LocalSignalId signal;
     };
     std::vector<LocalCombWrite> comb_writes_local;
 
-    // Self-edge snapshot (global signals only; local comb self-edges
-    // use a separate per-instance structure).
+    // Self-edge snapshot (global signals only)
     std::vector<uint32_t> global_snapshot_index;
     std::vector<uint8_t> snapshot_buf;
     std::vector<CombSnapshot> snapshots;
     std::vector<GlobalSignalId> snapshotted_slots;
-
-    // Per-instance local delta size before comb eval, used to detect
-    // newly-dirty local signals written by comb kernels.
-    std::vector<uint32_t> local_delta_pre;
   };
   FixpointWorkspace fp_work_;
 
