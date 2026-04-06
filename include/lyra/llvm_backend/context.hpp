@@ -384,6 +384,8 @@ class Context {
   [[nodiscard]] auto GetLyraResolveModuleInstanceBinding() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPushDpiExportCallContext() -> llvm::Function*;
   [[nodiscard]] auto GetLyraPopDpiExportCallContext() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraReportMissingDecisionOwnerFatal()
+      -> llvm::Function*;
 
   struct ElemOpsInfo {
     int32_t elem_size = 0;
@@ -1062,6 +1064,7 @@ class Context {
   llvm::Function* lyra_resolve_module_instance_binding_ = nullptr;
   llvm::Function* lyra_push_dpi_export_call_context_ = nullptr;
   llvm::Function* lyra_pop_dpi_export_call_context_ = nullptr;
+  llvm::Function* lyra_report_missing_decision_owner_fatal_ = nullptr;
 
   // Maps PlaceRootKey to its LLVM alloca storage.
   // Storage is per-root, NOT per-PlaceId. Multiple PlaceIds with the same root

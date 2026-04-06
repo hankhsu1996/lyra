@@ -143,4 +143,12 @@ void LyraPopDpiExportCallContext();
 // Returns true if the current export-call context disallows suspension.
 // Used by suspension entrypoints as defense-in-depth guard.
 auto LyraIsDpiExportSuspensionDisallowed() -> bool;
+
+// Report missing decision owner for a DPI export that requires one, and
+// mark the simulation as fatally failed. Called from LLVM-generated wrapper
+// code when the runtime-resolved DPI context has no active decision owner
+// but the callee requires one. Not noreturn: the wrapper must still emit
+// an ABI-valid return after this call.
+void LyraReportMissingDecisionOwnerFatal(
+    void* engine_ptr, const char* export_name);
 }

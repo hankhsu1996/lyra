@@ -2335,7 +2335,7 @@ auto DefineMonitorCheckProgram(
     Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
     const Context::MonitorLayout& layout) -> Result<void> {
   // Observer programs are simulation-only (engine passed as explicit param).
-  // No process ownership for observer programs.
+  // No decision owner for observer programs.
   ExecutionContractScope contract_scope(
       context, DesignStoreMode::kNotifySimulation);
   ActiveExecutionMode exec_mode;

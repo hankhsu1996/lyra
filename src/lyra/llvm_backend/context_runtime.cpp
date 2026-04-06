@@ -1927,4 +1927,19 @@ auto Context::GetLyraPopDpiExportCallContext() -> llvm::Function* {
   return lyra_pop_dpi_export_call_context_;
 }
 
+auto Context::GetLyraReportMissingDecisionOwnerFatal() -> llvm::Function* {
+  if (lyra_report_missing_decision_owner_fatal_ == nullptr) {
+    // void LyraReportMissingDecisionOwnerFatal(void* engine, const char* name)
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty}, false);
+    lyra_report_missing_decision_owner_fatal_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage,
+        "LyraReportMissingDecisionOwnerFatal", llvm_module_.get());
+    lyra_report_missing_decision_owner_fatal_->setCallingConv(
+        llvm::CallingConv::C);
+  }
+  return lyra_report_missing_decision_owner_fatal_;
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

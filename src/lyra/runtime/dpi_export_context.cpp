@@ -2,9 +2,11 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <format>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
+#include "lyra/runtime/reporting.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
 
 namespace {
@@ -126,7 +128,7 @@ extern "C" void LyraPushCurrentDpiScope(
   ctx->decision_owner =
       has_owner
           ? lyra::semantic::
-                OptionalDecisionOwnerId{lyra::semantic::DecisionOwnerId::FromIndex(owner_id_raw), true}
+                OptionalDecisionOwnerId{.value = lyra::semantic::DecisionOwnerId::FromIndex(owner_id_raw), .has_value = true}
           : lyra::semantic::OptionalDecisionOwnerId{};
 }
 
@@ -176,4 +178,21 @@ extern "C" void LyraPopDpiExportCallContext() {
 
 extern "C" auto LyraIsDpiExportSuspensionDisallowed() -> bool {
   return g_context_head != nullptr && g_context_head->suspension_disallowed;
+}
+
+extern "C" void LyraReportMissingDecisionOwnerFatal(
+    void* engine_ptr, const char* export_name) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  lyra::runtime::EmitReport(
+      engine,
+      lyra::runtime::ReportRequest{
+          .kind = lyra::runtime::ReportKind::kFatalTermination,
+          .severity = lyra::Severity::kError,
+          .origin = std::nullopt,
+          .message = std::format(
+              "DPI export '{}' requires an active decision owner context; "
+              "no owner is available in the current DPI call context",
+              export_name),
+          .action = lyra::runtime::ReportAction::kFinish,
+      });
 }

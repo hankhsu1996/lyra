@@ -1557,6 +1557,8 @@ void EmitExportReturn(
 struct PackageBindingValues {
   llvm::Value* design_ptr;
   llvm::Value* engine_ptr;
+  llvm::Value* decision_owner_id_raw;
+  llvm::Value* has_decision_owner;
 };
 
 auto EmitResolvePackageBinding(Context& context) -> PackageBindingValues {
@@ -1579,6 +1581,14 @@ auto EmitResolvePackageBinding(Context& context) -> PackageBindingValues {
           ptr_ty, b.CreateStructGEP(binding_ty, alloca, 0), "pkg.design"),
       .engine_ptr = b.CreateLoad(
           ptr_ty, b.CreateStructGEP(binding_ty, alloca, 1), "pkg.engine"),
+      .decision_owner_id_raw = b.CreateLoad(
+          i32_ty, b.CreateStructGEP(binding_ty, alloca, 2),
+          "pkg.decision_owner"),
+      .has_decision_owner = b.CreateTrunc(
+          b.CreateLoad(
+              i8_ty, b.CreateStructGEP(binding_ty, alloca, 3),
+              "pkg.has_owner.i8"),
+          llvm::Type::getInt1Ty(llvm_ctx), "pkg.has_owner"),
   };
 }
 
@@ -1590,6 +1600,8 @@ struct ModuleBindingValues {
   llvm::Value* this_ptr;
   llvm::Value* instance_ptr;
   llvm::Value* instance_id;
+  llvm::Value* decision_owner_id_raw;
+  llvm::Value* has_decision_owner;
 };
 
 auto EmitResolveModuleBinding(Context& context) -> ModuleBindingValues {
@@ -1619,7 +1631,48 @@ auto EmitResolveModuleBinding(Context& context) -> ModuleBindingValues {
           ptr_ty, b.CreateStructGEP(binding_ty, alloca, 3), "mod.instance"),
       .instance_id = b.CreateLoad(
           i32_ty, b.CreateStructGEP(binding_ty, alloca, 4), "mod.id"),
+      .decision_owner_id_raw = b.CreateLoad(
+          i32_ty, b.CreateStructGEP(binding_ty, alloca, 5),
+          "mod.decision_owner"),
+      .has_decision_owner = b.CreateTrunc(
+          b.CreateLoad(
+              i8_ty, b.CreateStructGEP(binding_ty, alloca, 6),
+              "mod.has_owner.i8"),
+          llvm::Type::getInt1Ty(llvm_ctx), "mod.has_owner"),
   };
+}
+
+// Emit the runtime decision-owner guard for a DPI export wrapper.
+// If the callee accepts a decision owner but the DPI context may not have
+// one, emits a runtime branch: missing -> report + fatal + pop + ABI return,
+// present -> continue to call block. Returns the "owner present" basic block
+// that the caller should set as the insert point before building args.
+// If the callee does not need an owner, returns nullptr (no guard emitted).
+auto EmitDecisionOwnerGuard(
+    Context& context, llvm::Function* wrapper, llvm::Value* has_owner,
+    llvm::Value* engine_ptr, const std::string& export_name)
+    -> llvm::BasicBlock* {
+  auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+
+  auto* missing_bb =
+      llvm::BasicBlock::Create(llvm_ctx, "dpi.owner.missing", wrapper);
+  auto* call_bb = llvm::BasicBlock::Create(llvm_ctx, "dpi.owner.ok", wrapper);
+  builder.CreateCondBr(has_owner, call_bb, missing_bb);
+
+  builder.SetInsertPoint(missing_bb);
+  auto* name_str = builder.CreateGlobalStringPtr(export_name);
+  builder.CreateCall(
+      context.GetLyraReportMissingDecisionOwnerFatal(), {engine_ptr, name_str});
+  builder.CreateCall(context.GetLyraPopDpiExportCallContext());
+  if (wrapper->getReturnType()->isVoidTy()) {
+    builder.CreateRetVoid();
+  } else {
+    builder.CreateRet(llvm::Constant::getNullValue(wrapper->getReturnType()));
+  }
+
+  builder.SetInsertPoint(call_bb);
+  return call_bb;
 }
 
 auto EmitDpiExportWrappers(
@@ -1660,20 +1713,7 @@ auto EmitDpiExportWrappers(
       auto binding = EmitResolvePackageBinding(context);
       const auto& entry = context.GetDesignFunction(desc.target.package_symbol);
 
-      // Reject if callee accepts a decision owner (either directly from
-      // deferred-check-owner-required effects or transitively via call graph
-      // propagation). DPI wrappers have no decision owner to provide.
       const auto& callee_func = context.GetDesignArena()[entry.func_id];
-      if (callee_func.abi_contract.accepts_decision_owner) {
-        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-            callee_func.origin,
-            std::format(
-                "DPI export '{}' targets a function that requires an active "
-                "decision owner context (e.g. contains unique/priority case); "
-                "this is not supported from DPI call paths",
-                desc.c_name),
-            UnsupportedCategory::kFeature));
-      }
 
       llvm::Function* internal_fn = entry.llvm_func;
       if (internal_fn == nullptr) {
@@ -1685,19 +1725,27 @@ auto EmitDpiExportWrappers(
       }
 
       // Push per-wrapper-call context (D7a: suspension_disallowed for tasks).
-      // Inherits design/engine/scope from the current simulation-lifetime head.
       auto& builder = context.GetBuilder();
       builder.CreateCall(
           context.GetLyraPushDpiExportCallContext(),
           {builder.getInt1(is_task)});
 
+      if (callee_func.abi_contract.accepts_decision_owner) {
+        EmitDecisionOwnerGuard(
+            context, wrapper, binding.has_decision_owner, binding.engine_ptr,
+            desc.c_name);
+      }
+
       std::vector<llvm::Value*> args;
       args.push_back(binding.design_ptr);
       args.push_back(binding.engine_ptr);
+      if (callee_func.abi_contract.accepts_decision_owner) {
+        args.push_back(binding.decision_owner_id_raw);
+      }
       std::vector<ExportByPointerState> bp_states;
       PrepareExportUserArgs(
-          context, desc.signature, wrapper, internal_fn, 2, wrapper_arg_idx,
-          args, bp_states);
+          context, desc.signature, wrapper, internal_fn,
+          static_cast<unsigned>(args.size()), wrapper_arg_idx, args, bp_states);
       auto* ret_val = builder.CreateCall(internal_fn, args);
       CommitExportByPointerWritebacks(context, bp_states);
 
@@ -1716,27 +1764,19 @@ auto EmitDpiExportWrappers(
                 desc.c_name));
       }
       const auto& callee_info = callee_it->second;
-
-      // Reject if callee accepts a decision owner (DPI wrappers have none).
-      if (callee_info.accepts_decision_owner) {
-        return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-            common::OriginId::Invalid(),
-            std::format(
-                "DPI export '{}' targets a function that requires an active "
-                "decision owner context (e.g. contains unique/priority case); "
-                "this is not supported from DPI call paths",
-                desc.c_name),
-            UnsupportedCategory::kFeature));
-      }
-
       llvm::Function* internal_fn = callee_info.llvm_func;
 
       // Push per-wrapper-call context (D7a: suspension_disallowed for tasks).
-      // Inherits design/engine/scope from the current simulation-lifetime head.
       auto& builder = context.GetBuilder();
       builder.CreateCall(
           context.GetLyraPushDpiExportCallContext(),
           {builder.getInt1(is_task)});
+
+      if (callee_info.accepts_decision_owner) {
+        EmitDecisionOwnerGuard(
+            context, wrapper, binding.has_decision_owner, binding.engine_ptr,
+            desc.c_name);
+      }
 
       std::vector<llvm::Value*> args;
       args.push_back(binding.design_ptr);
@@ -1744,10 +1784,13 @@ auto EmitDpiExportWrappers(
       args.push_back(binding.this_ptr);
       args.push_back(binding.instance_ptr);
       args.push_back(binding.instance_id);
+      if (callee_info.accepts_decision_owner) {
+        args.push_back(binding.decision_owner_id_raw);
+      }
       std::vector<ExportByPointerState> bp_states;
       PrepareExportUserArgs(
-          context, desc.signature, wrapper, internal_fn, 5, wrapper_arg_idx,
-          args, bp_states);
+          context, desc.signature, wrapper, internal_fn,
+          static_cast<unsigned>(args.size()), wrapper_arg_idx, args, bp_states);
       auto* ret_val = builder.CreateCall(internal_fn, args);
       CommitExportByPointerWritebacks(context, bp_states);
 
