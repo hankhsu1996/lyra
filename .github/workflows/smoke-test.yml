@@ -7,8 +7,35 @@ on:
     branches: [main]
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      src: ${{ steps.filter.outputs.src }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            src:
+              - 'src/**'
+              - 'include/**'
+              - 'tests/**'
+              - 'examples/**'
+              - 'tools/smoke/**'
+              - 'BUILD.bazel'
+              - 'MODULE.bazel'
+              - '.bazelrc'
+              - '.github/workflows/smoke-test.yml'
+
   smoke:
     name: Smoke Test
+    needs: changes
+    if: ${{ needs.changes.outputs.src == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
