@@ -316,7 +316,7 @@ auto CommitManagedImmediate(
 auto LowerAssign(
     Context& context, SlotAccessResolver& resolver, const mir::Assign& assign)
     -> Result<void> {
-  auto dest = mir::RequireLocalDest(assign.dest, "LowerAssign");
+  auto dest = context.ResolveWriteDest(assign.dest);
   // Managed destination: evaluate RHS via resolver-aware path.
   // Bit-range projections use non-lossy PackedRValue transport directly.
   // Non-bit-range managed writes use raw path (stores to local alloca).
@@ -426,7 +426,7 @@ auto LowerAssign(
 auto LowerGuardedAssign(
     Context& context, SlotAccessResolver& resolver,
     const mir::GuardedAssign& guarded) -> Result<void> {
-  auto dest = mir::RequireLocalDest(guarded.dest, "LowerGuardedAssign");
+  auto dest = context.ResolveWriteDest(guarded.dest);
   auto& builder = context.GetBuilder();
 
   // RHS evaluated BEFORE branch (per SystemVerilog spec).

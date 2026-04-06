@@ -189,7 +189,7 @@ auto EmitDeferredStoreCore(
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
-  auto dest = mir::RequireLocalDest(deferred.dest, "EmitDeferredStoreCore");
+  auto dest = context.ResolveWriteDest(deferred.dest);
   auto raw_or_err = LowerRhsRaw(context, deferred.rhs, dest);
   if (!raw_or_err) return std::unexpected(raw_or_err.error());
 
@@ -235,8 +235,7 @@ auto EmitDeferredStoreCore(
 auto LowerDeferredAssignBitRange(
     Context& context, const mir::DeferredAssign& deferred,
     const SignalCoordExpr& signal_id) -> Result<void> {
-  auto dest =
-      mir::RequireLocalDest(deferred.dest, "LowerDeferredAssignBitRange");
+  auto dest = context.ResolveWriteDest(deferred.dest);
   auto path = ExtractPackedAccessPath(context, dest);
   if (!path) return std::unexpected(path.error());
 
@@ -262,8 +261,7 @@ auto LowerDeferredAssignBitRange(
 auto LowerDeferredAssignWithOobGuard(
     Context& context, const mir::DeferredAssign& deferred,
     const StoreShape& shape, const SignalCoordExpr& signal_id) -> Result<void> {
-  auto dest =
-      mir::RequireLocalDest(deferred.dest, "LowerDeferredAssignWithOobGuard");
+  auto dest = context.ResolveWriteDest(deferred.dest);
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& arena = context.GetMirArena();
@@ -340,7 +338,7 @@ auto LowerDeferredAssignWithOobGuard(
 auto LowerDeferredAssignDirect(
     Context& context, const mir::DeferredAssign& deferred,
     const StoreShape& shape, const SignalCoordExpr& signal_id) -> Result<void> {
-  auto dest = mir::RequireLocalDest(deferred.dest, "LowerDeferredAssignDirect");
+  auto dest = context.ResolveWriteDest(deferred.dest);
   auto write_ptr_or_err = context.GetPlacePointer(dest);
   if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
@@ -354,7 +352,7 @@ auto LowerDeferredAssignDirect(
 
 auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     -> Result<void> {
-  auto dest = mir::RequireLocalDest(deferred.dest, "LowerDeferredAssign");
+  auto dest = context.ResolveWriteDest(deferred.dest);
   const auto& arena = context.GetMirArena();
 
   // Use canonical signal_id (after alias resolution) for notification

@@ -700,13 +700,15 @@ auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
       std::visit(
           common::Overloaded{
               [&](const mir::Assign& a) {
-                places.insert(
-                    mir::RequireLocalDest(a.dest, "LayoutCollection"));
+                if (auto* p = std::get_if<mir::PlaceId>(&a.dest)) {
+                  places.insert(*p);
+                }
                 CollectPlacesFromRhs(a.rhs, places);
               },
               [&](const mir::GuardedAssign& ga) {
-                places.insert(
-                    mir::RequireLocalDest(ga.dest, "LayoutCollection"));
+                if (auto* p = std::get_if<mir::PlaceId>(&ga.dest)) {
+                  places.insert(*p);
+                }
                 CollectPlacesFromRhs(ga.rhs, places);
                 CollectPlaceFromOperand(ga.guard, places);
               },
@@ -714,8 +716,9 @@ auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
                 CollectPlacesFromEffectOp(e.op, places);
               },
               [&](const mir::DeferredAssign& da) {
-                places.insert(
-                    mir::RequireLocalDest(da.dest, "LayoutCollection"));
+                if (auto* p = std::get_if<mir::PlaceId>(&da.dest)) {
+                  places.insert(*p);
+                }
                 CollectPlacesFromRhs(da.rhs, places);
               },
               [&](const mir::Call& call) {
@@ -1028,7 +1031,9 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
         if (const auto* rv = std::get_if<mir::Rvalue>(&ga->rhs)) {
           if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
         }
-        auto ga_dest = mir::RequireLocalDest(ga->dest, "LayoutCollection");
+        const auto* ga_dest_ptr = std::get_if<mir::PlaceId>(&ga->dest);
+        if (ga_dest_ptr == nullptr) continue;
+        auto ga_dest = *ga_dest_ptr;
         const auto& root = arena[ga_dest].root;
         if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
           write_slots.insert(

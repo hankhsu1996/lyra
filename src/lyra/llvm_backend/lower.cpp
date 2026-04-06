@@ -1223,11 +1223,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
           new_stmt.data = std::visit(
               common::Overloaded{
                   [&](const mir::Assign& a) -> mir::StatementData {
+                    auto dest_place =
+                        mir::RequireLocalDest(a.dest, "CompileDesignProcesses");
                     return mir::Assign{
-                        .dest = remap_place(
-                            mir::RequireLocalDest(
-                                a.dest, "CompileDesignProcesses"),
-                            parent_body.arena),
+                        .dest = remap_place(dest_place, parent_body.arena),
                         .rhs = remap_rhs(a.rhs, parent_body.arena)};
                   },
                   [&](const mir::DefineTemp& dt) -> mir::StatementData {

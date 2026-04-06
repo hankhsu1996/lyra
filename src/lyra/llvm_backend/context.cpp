@@ -442,6 +442,33 @@ auto Context::GetDynamicInstanceId() const -> llvm::Value* {
   return dynamic_instance_id_;
 }
 
+auto Context::ResolveExternalRef(mir::ExternalRefId ref_id) const
+    -> mir::PlaceId {
+  if (resolved_external_ref_places_ == nullptr) {
+    throw common::InternalError(
+        "ResolveExternalRef",
+        std::format(
+            "external ref {} used outside body scope (no resolved table)",
+            ref_id.value));
+  }
+  if (ref_id.value >= resolved_external_ref_places_->size()) {
+    throw common::InternalError(
+        "ResolveExternalRef",
+        std::format(
+            "external ref {} out of range (table size {})", ref_id.value,
+            resolved_external_ref_places_->size()));
+  }
+  return (*resolved_external_ref_places_)[ref_id.value];
+}
+
+auto Context::ResolveWriteDest(const mir::WriteTarget& dest) const
+    -> mir::PlaceId {
+  if (const auto* place = std::get_if<mir::PlaceId>(&dest)) {
+    return *place;
+  }
+  return ResolveExternalRef(std::get<mir::ExternalRefId>(dest));
+}
+
 void Context::SetSpecSlotInfo(const SpecSlotInfo* info) {
   spec_slot_info_ = info;
 }

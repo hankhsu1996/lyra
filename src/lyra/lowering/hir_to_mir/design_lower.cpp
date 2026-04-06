@@ -433,6 +433,7 @@ auto LowerDesign(
 
     mir::ModuleBodyId body_id{
         static_cast<uint32_t>(result.module_bodies.size())};
+    product.body.external_refs = std::move(product.external_refs);
     result.module_bodies.push_back(std::move(product.body));
     body_origins.push_back(std::move(product.origins));
     body_function_maps[body_id.value] = std::move(product.symbol_to_function);

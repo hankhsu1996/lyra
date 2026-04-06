@@ -82,13 +82,13 @@ auto LowerModule(
   // Module body lowering uses body-local places (kModuleSlot) for module-owned
   // state. Design-global places are created lazily by LookupPlace with
   // explicit kDesignGlobal roots.
-  // B2: external_refs path is NOT activatable yet. Activation requires:
-  //   1. ProvisionalNonLocalTarget.target_slot populated (cross-body lookup)
-  //   2. Phase 3 canonicalization (provisional -> final NonLocalTargetRecipe)
-  //   3. Backend ExternalRefId resolution through bound recipes
-  //   4. ExternalAccessRecipe.origin populated
-  // Until all four are complete, external_refs MUST remain nullptr.
-  // Do NOT change nullptr to &external_refs without completing the above.
+  // B2: external_refs path is NOT activatable yet. The transitional
+  // backend resolution (kDesignGlobal PlaceIds) does not work in body
+  // context because body processes use kSpecializationLocal addressing
+  // and the layout does not carry cross-instance slot offsets.
+  // Activation requires a proper construction-time binding path that
+  // injects resolved pointers into the process frame, not kDesignGlobal
+  // places resolved through design-global layout offsets.
   DeclView decl_view{
       .body_places = &body_decls.places,
       .design_places = &decls.design_places,

@@ -4,6 +4,7 @@
 
 #include "lyra/common/type.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::mir {
@@ -46,6 +47,9 @@ struct ModuleBody {
   // Body-local MIR storage. All body-local PlaceIds, ProcessIds, and
   // FunctionIds are indices into this arena.
   Arena arena;
+
+  // B2: External access recipes for this body.
+  std::vector<ExternalAccessRecipe> external_refs;
 };
 
 }  // namespace lyra::mir

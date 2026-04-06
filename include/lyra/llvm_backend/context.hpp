@@ -485,6 +485,22 @@ class Context {
   void SetConnectionNotificationMask(const ConnectionNotificationMask* mask) {
     connection_notification_mask_ = mask;
   }
+  // B2 transitional: set resolved external ref places for current body scope.
+  void SetResolvedExternalRefPlaces(const std::vector<mir::PlaceId>* places) {
+    resolved_external_ref_places_ = places;
+  }
+
+  // B2 transitional: canonical resolution for ExternalRefId -> PlaceId.
+  // Single source of truth for all backend paths (operand, assign, deferred).
+  // Throws InternalError if the ref is unresolved. No default/sentinel.
+  [[nodiscard]] auto ResolveExternalRef(mir::ExternalRefId ref_id) const
+      -> mir::PlaceId;
+
+  // B2 transitional: resolve WriteTarget to local PlaceId.
+  // PlaceId targets pass through. ExternalRefId targets resolve through
+  // ResolveExternalRef. Single canonical path for all write lowering.
+  [[nodiscard]] auto ResolveWriteDest(const mir::WriteTarget& dest) const
+      -> mir::PlaceId;
   [[nodiscard]] auto GetConnectionNotificationMask() const
       -> const ConnectionNotificationMask* {
     return connection_notification_mask_;
@@ -1150,6 +1166,11 @@ class Context {
   llvm::Value* dynamic_instance_id_ = nullptr;
   const SpecSlotInfo* spec_slot_info_ = nullptr;
   const ConnectionNotificationMask* connection_notification_mask_ = nullptr;
+
+  // B2 transitional: resolved kDesignGlobal PlaceIds for external refs.
+  // Parallel to the current body's external_refs vector.
+  // Set per body scope; null when not in body context.
+  const std::vector<mir::PlaceId>* resolved_external_ref_places_ = nullptr;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();
