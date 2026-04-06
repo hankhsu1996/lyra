@@ -12,11 +12,13 @@ using semantic::DecisionArmCount;
 using semantic::DecisionArmIndex;
 using semantic::DecisionId;
 using semantic::DecisionKind;
+using semantic::DecisionOwnerId;
 using semantic::DecisionQualifier;
 using semantic::DecisionSelectedKind;
 using semantic::DecisionSiteCount;
 using semantic::DecisionViolation;
 using semantic::MatchClass;
+using semantic::OptionalDecisionOwnerId;
 using semantic::TimeslotEpoch;
 
 // Immutable per-site metadata. Emitted once per process body as an LLVM
@@ -52,9 +54,9 @@ struct DecisionTableDescriptor {
   uint32_t count;
 };
 
-// Per-process immutable table pointer. Stored on Engine, indexed by process_id.
+// Per-owner immutable table pointer. Stored on Engine, indexed by owner_id.
 // Points into emitted LLVM globals; valid for the lifetime of the program.
-struct ProcessBodyDecisionTable {
+struct DecisionOwnerTable {
   DecisionSiteCount count;
   const DecisionMetaEntry* metas = nullptr;
 };
@@ -68,9 +70,9 @@ struct DecisionObservation {
   DecisionArmIndex selected_arm;
 };
 
-// Per-process mutable decision state. Sized from the immutable table count
+// Per-owner mutable decision state. Sized from the immutable table count
 // during registration, not lazily.
-struct ProcessDecisionState {
+struct DecisionOwnerState {
   std::vector<DecisionObservation> slots;
   std::vector<uint8_t> dirty_seen;
   std::vector<DecisionId> dirty_list;
@@ -108,10 +110,10 @@ struct ProcessId {
   friend auto operator==(ProcessId, ProcessId) -> bool = default;
 };
 
-// Rate-limiting key for decision diagnostics. Keyed by (process, site,
+// Rate-limiting key for decision diagnostics. Keyed by (owner, site,
 // violation) so overlap and no-match share separate rate-limit buckets.
 struct DecisionDiagKey {
-  ProcessId process_id;
+  DecisionOwnerId owner_id;
   DecisionId decision_id;
   DecisionViolation violation{};
 
@@ -120,7 +122,7 @@ struct DecisionDiagKey {
 
 struct DecisionDiagKeyHash {
   auto operator()(const DecisionDiagKey& k) const -> size_t {
-    size_t h = std::hash<uint32_t>{}(k.process_id.Index());
+    size_t h = std::hash<uint32_t>{}(k.owner_id.Index());
     h ^= std::hash<uint32_t>{}(k.decision_id.Index()) + 0x9e3779b9 + (h << 6) +
          (h >> 2);
     h ^= std::hash<uint32_t>{}(static_cast<uint32_t>(k.violation)) +

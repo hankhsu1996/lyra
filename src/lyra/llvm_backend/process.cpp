@@ -1672,8 +1672,9 @@ auto GenerateProcessFunction(
     context.SetFramePointer(frame_ptr);
   }
 
-  // Process bodies always have active process ownership.
-  ActiveExecutionMode exec_mode{.process_id = context.GetCurrentProcessId()};
+  // Process bodies always have an active decision owner.
+  ActiveExecutionMode exec_mode{
+      .decision_owner_id = context.GetCurrentDecisionOwnerId()};
 
   const auto& proc_layout =
       context.GetLayout().processes[context.GetCurrentProcessIndex()];
@@ -1862,7 +1863,8 @@ auto GenerateSharedProcessFunction(
   builder.SetInsertPoint(entry_block);
 
   context.EmitProcessStateSetup(func->getArg(0));
-  ActiveExecutionMode exec_mode{.process_id = context.GetCurrentProcessId()};
+  ActiveExecutionMode exec_mode{
+      .decision_owner_id = context.GetCurrentDecisionOwnerId()};
 
   const auto& shared_proc_layout =
       context.GetLayout().processes[context.GetCurrentProcessIndex()];
@@ -2021,7 +2023,7 @@ auto DeclareMirFunction(
   } else {
     auto fn_type_or_err = context.BuildUserFunctionType(
         func.signature, is_module_scoped,
-        func.abi_contract.accepts_process_ownership);
+        func.abi_contract.accepts_decision_owner);
     if (!fn_type_or_err) return std::unexpected(fn_type_or_err.error());
     fn_type = *fn_type_or_err;
   }
@@ -2887,14 +2889,14 @@ auto DefineMirFunction(
     context_arg_count = 3;
   }
 
-  // Process ownership: unpack hidden process_id param if contract accepts it.
-  // Stored in the function-local execution mode carrier, not ambient state.
+  // Decision owner: unpack hidden decision_owner_id param if contract accepts
+  // it. Stored in the function-local execution mode carrier, not ambient state.
   ActiveExecutionMode exec_mode;
-  if (!is_observer && func.abi_contract.accepts_process_ownership) {
-    unsigned pid_offset = arg_offset + 2 + context_arg_count;
-    auto* process_id_arg = llvm_func->getArg(pid_offset);
-    process_id_arg->setName("process_id");
-    exec_mode.process_id = process_id_arg;
+  if (!is_observer && func.abi_contract.accepts_decision_owner) {
+    unsigned owner_offset = arg_offset + 2 + context_arg_count;
+    auto* owner_arg = llvm_func->getArg(owner_offset);
+    owner_arg->setName("decision_owner_id");
+    exec_mode.decision_owner_id = owner_arg;
     ++context_arg_count;
   }
 

@@ -211,9 +211,9 @@ class Engine {
     if (detailed_stats_enabled_) {
       per_process_stats_.resize(num_processes);
     }
-    process_decision_tables_.resize(num_processes);
-    decision_states_.resize(num_processes);
-    decision_pending_flags_.resize(num_processes, 0);
+    decision_owner_tables_.resize(num_processes);
+    decision_owner_states_.resize(num_processes);
+    decision_owner_pending_flags_.resize(num_processes, 0);
     deferred_assertion_states_.resize(num_processes);
     deferred_pending_flags_.resize(num_processes, 0);
   }
@@ -864,6 +864,11 @@ class Engine {
   // Format process identity for diagnostics (normal code path).
   [[nodiscard]] auto FormatProcess(uint32_t process_id) const -> std::string;
 
+  // Format decision owner identity for diagnostics.
+  // First cut: delegates to FormatProcess (1:1 owner-to-process mapping).
+  [[nodiscard]] auto FormatDecisionOwner(DecisionOwnerId owner_id) const
+      -> std::string;
+
   // Async-signal-safe dump of scheduler status to fd.
   // Prints: phase, sim_time, activation_seq, current/last process.
   void DumpSchedulerStatusAsyncSignalSafe(int fd) const;
@@ -876,10 +881,10 @@ class Engine {
   // Handle a trap raised by generated code (loop budget exceeded, etc.).
   void HandleTrap(uint32_t process_id, const TrapPayload& payload);
 
-  // Record a decision observation for an explicit process.
+  // Record a decision observation for an explicit owner.
   // Called from LyraRecordDecisionObservation (extern "C" ABI boundary).
   void RecordDecisionObservation(
-      ProcessId process_id, DecisionId decision_id, MatchClass match_class,
+      DecisionOwnerId owner_id, DecisionId decision_id, MatchClass match_class,
       DecisionSelectedKind selected_kind, DecisionArmIndex selected_arm);
 
   // Scheduler phase for signal-safe status dump.
@@ -920,12 +925,12 @@ class Engine {
   void MatureAndExecuteObservedDeferredAssertions();
 
  private:
-  void ValidateProcessDecisionChecks(ProcessId process_id);
+  void ValidateDecisionOwnerChecks(DecisionOwnerId owner_id);
   [[nodiscard]] auto BuildDecisionViolationMessage(
-      ProcessId process_id, const DecisionMetaEntry& meta,
+      DecisionOwnerId owner_id, const DecisionMetaEntry& meta,
       DecisionViolation violation) const -> std::string;
   [[nodiscard]] auto BuildDecisionViolationReport(
-      ProcessId process_id, const DecisionMetaEntry& meta,
+      DecisionOwnerId owner_id, const DecisionMetaEntry& meta,
       DecisionViolation violation) const -> ReportRequest;
 
   // Subscription lifecycle
@@ -1487,20 +1492,20 @@ class Engine {
   };
   std::vector<ScopeTimeMetadata> instance_time_metadata_;
 
-  // Immutable per-process decision metadata tables. Indexed by process_id.
+  // Immutable per-owner decision metadata tables. Indexed by owner_id.
   // Populated during InitModuleInstancesFromBundles from body descriptor data.
   // Points into emitted LLVM globals; valid for program lifetime.
-  std::vector<ProcessBodyDecisionTable> process_decision_tables_;
-  // Per-process mutable decision observation state. Indexed by process_id.
+  std::vector<DecisionOwnerTable> decision_owner_tables_;
+  // Per-owner mutable decision observation state. Indexed by owner_id.
   // Sized from the immutable table count during registration.
-  std::vector<ProcessDecisionState> decision_states_;
-  // Dedup flag for pending_decision_processes_ (indexed by process_id).
-  std::vector<uint8_t> decision_pending_flags_;
-  // Process IDs with pending decision checks this timeslot.
-  std::vector<ProcessId> pending_decision_processes_;
+  std::vector<DecisionOwnerState> decision_owner_states_;
+  // Dedup flag for pending_decision_owners_ (indexed by owner_id).
+  std::vector<uint8_t> decision_owner_pending_flags_;
+  // Owner IDs with pending decision checks this timeslot.
+  std::vector<DecisionOwnerId> pending_decision_owners_;
   // Monotonic timeslot epoch for observation staleness detection.
   TimeslotEpoch current_timeslot_epoch_;
-  // Per-(process, site, violation) diagnostic counter for rate limiting.
+  // Per-(owner, site, violation) diagnostic counter for rate limiting.
   std::unordered_map<DecisionDiagKey, uint32_t, DecisionDiagKeyHash>
       decision_diag_counts_;
 

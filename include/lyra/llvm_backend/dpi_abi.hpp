@@ -11,6 +11,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/dpi_types.hpp"
+#include "lyra/llvm_backend/execution_mode.hpp"
 #include "lyra/mir/call.hpp"
 #include "lyra/mir/statement.hpp"
 
@@ -50,7 +51,8 @@ auto GetOrDeclareDpiImport(
 // Lower a complete DPI import call: marshal and coerce arguments to C ABI
 // types, emit call with C calling convention, coerce return value back to
 // internal representation, and handle return staging.
-auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
+auto LowerDpiImportCall(
+    Context& context, const mir::DpiCall& call, const ActiveExecutionMode& mode)
     -> Result<void>;
 
 // Emit public C-ABI wrapper functions for DPI exports.
@@ -65,7 +67,7 @@ auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
 // Resolved module export callee with contract info for DPI validation.
 struct ModuleExportCalleeInfo {
   llvm::Function* llvm_func = nullptr;
-  bool accepts_process_ownership = false;
+  bool accepts_decision_owner = false;
 };
 
 auto EmitDpiExportWrappers(

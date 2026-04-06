@@ -13,6 +13,7 @@
 #include "lyra/hir/module_body.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
+#include "lyra/lowering/hir_to_mir/decision_site_allocator.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/process.hpp"
 #include "lyra/lowering/hir_to_mir/routine.hpp"
@@ -85,11 +86,19 @@ auto LowerModule(
       .dpi_imports = &decls.dpi_imports,
       .cover_site_registry = cover_site_registry,
       .deferred_assertion_site_registry = deferred_assertion_site_registry};
+
+  // Body-global decision site allocator: all processes, functions, and tasks
+  // within this module body share one allocator so decision IDs are unique
+  // across the body. This ensures function-body decision IDs do not collide
+  // with process-body IDs in the owner's runtime table.
+  DecisionSiteAllocator body_decision_allocator;
+
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
     Result<mir::Function> mir_func_result = LowerFunctionBody(
-        hir_func, input, body_arena, decl_view, &body_origins, body_id);
+        hir_func, input, body_arena, decl_view, &body_origins, body_id,
+        &body_decision_allocator);
     if (!mir_func_result) {
       return std::unexpected(mir_func_result.error());
     }
@@ -116,7 +125,7 @@ auto LowerModule(
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
     Result<mir::ProcessId> mir_proc_result = LowerProcess(
         proc_id, hir_process, input, body_arena, decl_view, &body_origins,
-        &generated_functions, body_id);
+        &generated_functions, body_id, &body_decision_allocator);
     if (!mir_proc_result) {
       return std::unexpected(mir_proc_result.error());
     }
@@ -147,7 +156,8 @@ auto LowerModule(
   for (auto [hir_task_id, mir_func_id] : task_pairs) {
     const hir::Task& hir_task = (*input.hir_arena)[hir_task_id];
     Result<mir::Function> mir_func_result = LowerTaskBody(
-        hir_task, input, body_arena, decl_view, &body_origins, body_id);
+        hir_task, input, body_arena, decl_view, &body_origins, body_id,
+        &body_decision_allocator);
     if (!mir_func_result) {
       return std::unexpected(mir_func_result.error());
     }
@@ -163,10 +173,14 @@ auto LowerModule(
     body_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
   }
 
-  // Propagate process ownership through internal call graph.
+  // Record the body-global decision site count. The LLVM backend validates
+  // that exactly this many sites are reconstructed from the stored records.
+  result.total_decision_sites = body_decision_allocator.TotalAllocated();
+
+  // Propagate decision owner acceptance through internal call graph.
   // body_requirement stays intrinsic; only abi_contract is propagated.
   // Pass design_arena for cross-arena DesignFunctionRef edge resolution.
-  body_arena.PropagateProcessOwnershipAbi(&design_arena);
+  body_arena.PropagateDeferredOwnerAbi(&design_arena);
 
   // Move body arena into the result body unit
   result.arena = std::move(body_arena);

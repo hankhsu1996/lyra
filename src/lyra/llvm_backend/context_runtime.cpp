@@ -1841,8 +1841,15 @@ auto Context::GetLyraFailMissingDpiExportCallContext() -> llvm::Function* {
 
 auto Context::GetLyraPushCurrentDpiScope() -> llvm::Function* {
   if (lyra_push_current_dpi_scope_ == nullptr) {
+    // void LyraPushCurrentDpiScope(
+    //     DpiContextSnapshot* out_prev, svScope new_scope,
+    //     uint32_t owner_id_raw, bool has_owner)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
-    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* i1_ty = llvm::Type::getInt1Ty(*llvm_context_);
+    auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        void_ty, {ptr_ty, ptr_ty, i32_ty, i1_ty}, false);
     lyra_push_current_dpi_scope_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage, "LyraPushCurrentDpiScope",
         llvm_module_.get());
@@ -1853,6 +1860,7 @@ auto Context::GetLyraPushCurrentDpiScope() -> llvm::Function* {
 
 auto Context::GetLyraPopCurrentDpiScope() -> llvm::Function* {
   if (lyra_pop_current_dpi_scope_ == nullptr) {
+    // void LyraPopCurrentDpiScope(const DpiContextSnapshot* prev)
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(void_ty, {ptr_ty}, false);

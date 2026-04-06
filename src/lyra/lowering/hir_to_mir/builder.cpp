@@ -101,13 +101,14 @@ void CheckWriteableSlot(
 
 MirBuilder::MirBuilder(
     mir::Arena* arena, Context* ctx, OriginMap* origin_map,
-    hir::ModuleBodyId body_id)
+    hir::ModuleBodyId body_id, DecisionSiteAllocator* decision_allocator)
     : arena_(arena),
       ctx_(ctx),
       origin_map_(origin_map),
       current_block_(kInvalidBlockIndex),
       blocks_{},
-      body_id_(body_id) {
+      body_id_(body_id),
+      decision_allocator_(decision_allocator) {
   if (arena_ == nullptr || ctx_ == nullptr) {
     throw common::InternalError("MirBuilder", "arena and ctx must not be null");
   }
@@ -770,15 +771,21 @@ auto MirBuilder::AllocateDecisionSite(
     semantic::DecisionQualifier qualifier, semantic::DecisionKind kind,
     bool has_fallback, semantic::DecisionArmCount arm_count,
     common::OriginId origin) -> semantic::DecisionId {
-  auto id = semantic::DecisionId::FromIndex(
-      static_cast<uint32_t>(process_decision_sites_.size()));
-  process_decision_sites_.push_back(
-      mir::Process::MirDecisionSite{
-          .qualifier = qualifier,
-          .kind = kind,
-          .has_fallback = has_fallback,
-          .arm_count = arm_count,
-          .origin = origin,
+  auto& allocator = (decision_allocator_ != nullptr)
+                        ? *decision_allocator_
+                        : local_decision_allocator_;
+  auto id = allocator.Allocate();
+  decision_site_records_.push_back(
+      mir::Process::MirDecisionSiteRecord{
+          .id = id,
+          .site =
+              mir::Process::MirDecisionSite{
+                  .qualifier = qualifier,
+                  .kind = kind,
+                  .has_fallback = has_fallback,
+                  .arm_count = arm_count,
+                  .origin = origin,
+              },
       });
   return id;
 }

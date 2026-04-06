@@ -301,7 +301,7 @@ cases:
       error:
         contains:
           - "DPI export"
-          - "process execution context"
+          - "decision owner context"
 
   - name: reject_export_function_with_priority_case
     sv: |
@@ -322,7 +322,7 @@ cases:
       error:
         contains:
           - "DPI export"
-          - "process execution context"
+          - "decision owner context"
 
   - name: reject_export_transitive_unique_case
     sv: |
@@ -345,4 +345,4 @@ cases:
       error:
         contains:
           - "DPI export"
-          - "process execution context"
+          - "decision owner context"

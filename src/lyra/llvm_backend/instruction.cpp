@@ -58,7 +58,7 @@ auto LowerStatement(
             return LowerCall(context, resolver, call, mode);
           },
           [&](const mir::DpiCall& dpi_call) -> Result<void> {
-            return dpi::LowerDpiImportCall(context, dpi_call);
+            return dpi::LowerDpiImportCall(context, dpi_call, mode);
           },
           [&](const mir::BuiltinCall& call) -> Result<void> {
             return LowerBuiltinCall(context, resolver, call);

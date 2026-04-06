@@ -12,6 +12,7 @@
 #include "lyra/hir/routine.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
+#include "lyra/lowering/hir_to_mir/decision_site_allocator.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/statement.hpp"
 #include "lyra/lowering/origin_map.hpp"
@@ -100,7 +101,8 @@ auto LowerProcess(
     const LoweringInput& input, mir::Arena& mir_arena,
     const DeclView& decl_view, OriginMap* origin_map,
     std::vector<mir::FunctionId>* generated_functions,
-    hir::ModuleBodyId body_id) -> Result<mir::ProcessId> {
+    hir::ModuleBodyId body_id, DecisionSiteAllocator* decision_allocator)
+    -> Result<mir::ProcessId> {
   Context ctx{
       .mir_arena = &mir_arena,
       .design_arena = decl_view.design_arena,
@@ -131,7 +133,7 @@ auto LowerProcess(
           decl_view.deferred_assertion_site_registry,
   };
 
-  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id);
+  MirBuilder builder(&mir_arena, &ctx, origin_map, body_id, decision_allocator);
 
   BlockIndex entry_idx = builder.CreateBlock();
   builder.SetCurrentBlock(entry_idx);

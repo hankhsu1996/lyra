@@ -72,6 +72,10 @@ extern "C" void LyraResolvePackageExportBinding(
   }
   out->design_state = ctx->design_state;
   out->engine = ctx->engine;
+  out->decision_owner_id_raw = ctx->decision_owner.has_value
+                                   ? ctx->decision_owner.value.Index()
+                                   : UINT32_MAX;
+  out->has_decision_owner = ctx->decision_owner.has_value;
 }
 
 // NOLINTBEGIN(cppcoreguidelines-pro-type-const-cast)
@@ -93,6 +97,10 @@ extern "C" void LyraResolveModuleInstanceBinding(
   out->this_ptr = inst->storage.inline_base;
   out->instance_ptr = inst;
   out->instance_id = inst->instance_id.value;
+  out->decision_owner_id_raw = ctx->decision_owner.has_value
+                                   ? ctx->decision_owner.value.Index()
+                                   : UINT32_MAX;
+  out->has_decision_owner = ctx->decision_owner.has_value;
 }
 
 // NOLINTEND(cppcoreguidelines-pro-type-const-cast)
@@ -105,22 +113,31 @@ extern "C" [[noreturn]] auto LyraFailMissingModuleExportScope() -> void {
   std::abort();
 }
 
-extern "C" auto LyraPushCurrentDpiScope(svScope new_scope) -> svScope {
+extern "C" void LyraPushCurrentDpiScope(
+    lyra::runtime::DpiContextSnapshot* out_prev, svScope new_scope,
+    uint32_t owner_id_raw, bool has_owner) {
   auto* ctx = LyraGetDpiExportCallContextMut();
   if (ctx == nullptr) {
     LyraFailMissingDpiExportCallContext();
   }
-  svScope prev = ctx->active_scope;
+  out_prev->active_scope = ctx->active_scope;
+  out_prev->decision_owner = ctx->decision_owner;
   ctx->active_scope = new_scope;
-  return prev;
+  ctx->decision_owner =
+      has_owner
+          ? lyra::semantic::
+                OptionalDecisionOwnerId{lyra::semantic::DecisionOwnerId::FromIndex(owner_id_raw), true}
+          : lyra::semantic::OptionalDecisionOwnerId{};
 }
 
-extern "C" auto LyraPopCurrentDpiScope(svScope prev_scope) -> void {
+extern "C" void LyraPopCurrentDpiScope(
+    const lyra::runtime::DpiContextSnapshot* prev) {
   auto* ctx = LyraGetDpiExportCallContextMut();
   if (ctx == nullptr) {
     LyraFailMissingDpiExportCallContext();
   }
-  ctx->active_scope = prev_scope;
+  ctx->active_scope = prev->active_scope;
+  ctx->decision_owner = prev->decision_owner;
 }
 
 extern "C" void LyraPushDpiExportCallContext(bool suspension_disallowed) {
@@ -129,8 +146,8 @@ extern "C" void LyraPushDpiExportCallContext(bool suspension_disallowed) {
         "LyraPushDpiExportCallContext",
         "push without active simulation context");
   }
-  // Inherit design_state, engine, and active_scope from current head.
-  // Only suspension_disallowed is set per-call.
+  // Inherit design_state, engine, active_scope, and decision_owner from
+  // current head. Only suspension_disallowed is set per-call.
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   auto* frame = new lyra::runtime::DpiExportCallContext{
       .prev = g_context_head,
@@ -138,6 +155,7 @@ extern "C" void LyraPushDpiExportCallContext(bool suspension_disallowed) {
       .engine = g_context_head->engine,
       .active_scope = g_context_head->active_scope,
       .suspension_disallowed = suspension_disallowed,
+      .decision_owner = g_context_head->decision_owner,
   };
   g_context_head = frame;
 }

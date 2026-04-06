@@ -24,6 +24,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/mir/dpi_verify.hpp"
+#include "lyra/runtime/dpi_export_context.hpp"
 
 namespace lyra::lowering::mir_to_llvm::dpi {
 
@@ -1024,6 +1025,36 @@ auto GetOrDeclareDpiImport(
 // call site.
 // In Lyra runtime, RuntimeInstance* is the canonical svScope handle.
 // Module-scoped lowering already carries that exact pointer in instance_ptr.
+// Canonical LLVM type for runtime::DpiContextSnapshot.
+// Layout: { ptr active_scope, { i32 owner_value, i8 owner_has_value } }
+// Validated by static_assert against the C++ struct.
+auto BuildDpiContextSnapshotType(llvm::LLVMContext& ctx) -> llvm::StructType* {
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  auto* optional_owner_ty = llvm::StructType::get(i32_ty, i8_ty);
+  return llvm::StructType::get(ptr_ty, optional_owner_ty);
+}
+
+// Exact layout contract for DpiContextSnapshot. A field/padding change in the
+// runtime struct must fail here immediately, not silently produce a mismatch.
+static_assert(
+    sizeof(lyra::runtime::DpiContextSnapshot) == 16,
+    "DpiContextSnapshot layout changed; update "
+    "BuildDpiContextSnapshotType");
+static_assert(
+    alignof(lyra::runtime::DpiContextSnapshot) == 8,
+    "DpiContextSnapshot alignment changed; update "
+    "BuildDpiContextSnapshotType");
+static_assert(
+    sizeof(lyra::semantic::OptionalDecisionOwnerId) == 8,
+    "OptionalDecisionOwnerId layout changed; update "
+    "BuildDpiContextSnapshotType");
+static_assert(
+    sizeof(lyra::semantic::DecisionOwnerId) == 4,
+    "DecisionOwnerId layout changed; update "
+    "BuildDpiContextSnapshotType");
+
 // All other contexts (package scope, compilation-unit scope) get null.
 auto ResolveDpiCallerScope(Context& context) -> llvm::Value* {
   if (llvm::Value* inst = context.GetInstancePointer()) {
@@ -1036,32 +1067,46 @@ auto ResolveDpiCallerScope(Context& context) -> llvm::Value* {
 // State for the push/call/pop region of a context import call.
 struct DpiContextCallState {
   llvm::Value* caller_scope = nullptr;
-  llvm::Value* prev_scope = nullptr;
+  llvm::Value* prev_snapshot = nullptr;  // DpiContextSnapshot* alloca
 };
 
-// Emit push: resolve caller scope, push it into runtime context,
-// prepend it to abi_args. Returns state for EndContextImportCall.
-//
-// Must remain infallible.
-// No type validation, no ABI classification, no temporary allocation logic.
-// Only: resolve caller scope, emit push call, prepend ABI arg.
+// Emit push: resolve caller scope + decision owner, push both into runtime
+// context via DpiContextSnapshot, prepend scope to abi_args.
+// Returns state for EndContextImportCall.
 auto BeginContextImportCall(
     Context& context, const mir::DpiImportRef& ref,
-    std::vector<llvm::Value*>& abi_args) -> DpiContextCallState {
+    const ActiveExecutionMode& mode, std::vector<llvm::Value*>& abi_args)
+    -> DpiContextCallState {
   DpiContextCallState st;
   if (!ref.is_context) return st;
 
   auto& builder = context.GetBuilder();
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
-  // Single source of truth: both ABI arg and runtime push use this value.
   st.caller_scope = ResolveDpiCallerScope(context);
 
-  // Runtime query obligation: push caller scope into active context.
+  // Decision owner propagation: if the calling function has an active owner,
+  // pass it through the foreign boundary. Otherwise pass sentinel.
+  llvm::Value* owner_raw = nullptr;
+  llvm::Value* has_owner = nullptr;
+  if (mode.decision_owner_id != nullptr) {
+    owner_raw = mode.decision_owner_id;
+    has_owner = llvm::ConstantInt::getTrue(llvm_ctx);
+  } else {
+    owner_raw = llvm::ConstantInt::get(i32_ty, UINT32_MAX);
+    has_owner = llvm::ConstantInt::getFalse(llvm_ctx);
+  }
+
+  auto* snapshot_ty = BuildDpiContextSnapshotType(llvm_ctx);
+  auto* prev_alloca =
+      builder.CreateAlloca(snapshot_ty, nullptr, "dpi.prev.snapshot");
+
   auto* push_fn = context.GetLyraPushCurrentDpiScope();
-  auto* push_call =
-      builder.CreateCall(push_fn, {st.caller_scope}, "dpi.prev.scope");
-  static_cast<llvm::CallInst*>(push_call)->setCallingConv(llvm::CallingConv::C);
-  st.prev_scope = push_call;
+  auto* push_call = builder.CreateCall(
+      push_fn, {prev_alloca, st.caller_scope, owner_raw, has_owner});
+  push_call->setCallingConv(llvm::CallingConv::C);
+  st.prev_snapshot = prev_alloca;
 
   // C ABI obligation: prepend caller scope as hidden first parameter.
   abi_args.push_back(st.caller_scope);
@@ -1069,17 +1114,18 @@ auto BeginContextImportCall(
   return st;
 }
 
-// Emit pop: restore previous scope after foreign call returns.
+// Emit pop: restore previous scope + owner from snapshot.
 void EndContextImportCall(Context& context, const DpiContextCallState& st) {
-  if (st.prev_scope == nullptr) return;
+  if (st.prev_snapshot == nullptr) return;
 
   auto& builder = context.GetBuilder();
   auto* pop_fn = context.GetLyraPopCurrentDpiScope();
-  auto* pop_call = builder.CreateCall(pop_fn, {st.prev_scope});
+  auto* pop_call = builder.CreateCall(pop_fn, {st.prev_snapshot});
   pop_call->setCallingConv(llvm::CallingConv::C);
 }
 
-auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
+auto LowerDpiImportCall(
+    Context& context, const mir::DpiCall& call, const ActiveExecutionMode& mode)
     -> Result<void> {
   const auto& ref = call.callee;
   const auto& sig = ref.signature;
@@ -1114,7 +1160,7 @@ auto LowerDpiImportCall(Context& context, const mir::DpiCall& call)
 
   // Context import prologue: push scope, prepend ABI arg.
   std::vector<llvm::Value*> abi_args;
-  auto ctx_state = BeginContextImportCall(context, ref, abi_args);
+  auto ctx_state = BeginContextImportCall(context, ref, mode, abi_args);
 
   // Indirect result pointer in canonical slot (after scope, before user args).
   if (indirect_ret_ptr != nullptr) {
@@ -1518,8 +1564,11 @@ auto EmitResolvePackageBinding(Context& context) -> PackageBindingValues {
   auto& b = context.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
 
-  // DpiResolvedPackageBinding: { ptr design_state, ptr engine }
-  auto* binding_ty = llvm::StructType::get(ptr_ty, ptr_ty);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  // DpiResolvedPackageBinding: { ptr design_state, ptr engine,
+  //   i32 decision_owner_id_raw, i8 has_decision_owner }
+  auto* binding_ty = llvm::StructType::get(ptr_ty, ptr_ty, i32_ty, i8_ty);
   auto* alloca = b.CreateAlloca(binding_ty, nullptr, "pkg.binding");
   auto* resolve_fn = context.GetLyraResolvePackageExportBinding();
   auto* call = b.CreateCall(resolve_fn, {alloca});
@@ -1549,9 +1598,11 @@ auto EmitResolveModuleBinding(Context& context) -> ModuleBindingValues {
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
-  // DpiResolvedModuleBinding: { ptr, ptr, ptr, ptr, i32 }
-  auto* binding_ty =
-      llvm::StructType::get(ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty);
+  auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
+  // DpiResolvedModuleBinding: { ptr, ptr, ptr, ptr, i32,
+  //   i32 decision_owner_id_raw, i8 has_decision_owner }
+  auto* binding_ty = llvm::StructType::get(
+      ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i8_ty);
   auto* alloca = b.CreateAlloca(binding_ty, nullptr, "mod.binding");
   auto* resolve_fn = context.GetLyraResolveModuleInstanceBinding();
   auto* call = b.CreateCall(resolve_fn, {alloca});
@@ -1609,16 +1660,16 @@ auto EmitDpiExportWrappers(
       auto binding = EmitResolvePackageBinding(context);
       const auto& entry = context.GetDesignFunction(desc.target.package_symbol);
 
-      // Reject if callee accepts process ownership (either directly from
-      // process-owned effects or transitively via call graph propagation).
-      // DPI wrappers have no process context to provide.
+      // Reject if callee accepts a decision owner (either directly from
+      // deferred-check-owner-required effects or transitively via call graph
+      // propagation). DPI wrappers have no decision owner to provide.
       const auto& callee_func = context.GetDesignArena()[entry.func_id];
-      if (callee_func.abi_contract.accepts_process_ownership) {
+      if (callee_func.abi_contract.accepts_decision_owner) {
         return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
             callee_func.origin,
             std::format(
-                "DPI export '{}' targets a function that requires process "
-                "execution context (e.g. contains unique/priority case); "
+                "DPI export '{}' targets a function that requires an active "
+                "decision owner context (e.g. contains unique/priority case); "
                 "this is not supported from DPI call paths",
                 desc.c_name),
             UnsupportedCategory::kFeature));
@@ -1666,13 +1717,13 @@ auto EmitDpiExportWrappers(
       }
       const auto& callee_info = callee_it->second;
 
-      // Reject if callee accepts process ownership (DPI wrappers have none).
-      if (callee_info.accepts_process_ownership) {
+      // Reject if callee accepts a decision owner (DPI wrappers have none).
+      if (callee_info.accepts_decision_owner) {
         return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
             common::OriginId::Invalid(),
             std::format(
-                "DPI export '{}' targets a function that requires process "
-                "execution context (e.g. contains unique/priority case); "
+                "DPI export '{}' targets a function that requires an active "
+                "decision owner context (e.g. contains unique/priority case); "
                 "this is not supported from DPI call paths",
                 desc.c_name),
             UnsupportedCategory::kFeature));

@@ -14,13 +14,13 @@ auto GetEffectExecutionRequirement(const EffectOp& op)
   return std::visit(
       common::Overloaded{
           [](const RecordDecisionObservation&) {
-            return BodyExecutionRequirement::kProcessOwned;
+            return BodyExecutionRequirement::kDeferredCheckOwnerRequired;
           },
           [](const RecordDecisionObservationDynamic&) {
-            return BodyExecutionRequirement::kProcessOwned;
+            return BodyExecutionRequirement::kDeferredCheckOwnerRequired;
           },
           [](const EnqueueDeferredAssertionEffect&) {
-            return BodyExecutionRequirement::kProcessOwned;
+            return BodyExecutionRequirement::kDeferredCheckOwnerRequired;
           },
           [](const auto&) {
             return BodyExecutionRequirement::kGenericCallable;
@@ -36,8 +36,8 @@ auto ComputeBodyExecutionRequirement(const Function& func)
       const auto* effect = std::get_if<Effect>(&stmt.data);
       if (effect == nullptr) continue;
       if (GetEffectExecutionRequirement(effect->op) ==
-          BodyExecutionRequirement::kProcessOwned) {
-        return BodyExecutionRequirement::kProcessOwned;
+          BodyExecutionRequirement::kDeferredCheckOwnerRequired) {
+        return BodyExecutionRequirement::kDeferredCheckOwnerRequired;
       }
     }
   }
@@ -49,16 +49,17 @@ auto BuildCallableAbiContract(const Function& func) -> CallableAbiContract {
   if (IsObserverProgram(func.runtime_kind)) {
     return contract;
   }
-  // Seed: accept process ownership iff this body directly contains
-  // process-owned effects. PropagateProcessOwnershipAbi() extends
-  // this to callees that transitively need it.
-  if (func.body_requirement == BodyExecutionRequirement::kProcessOwned) {
-    contract.accepts_process_ownership = true;
+  // Seed: accept decision owner iff this body directly contains
+  // deferred-check-owner-required effects. PropagateDeferredOwnerAbi()
+  // extends this to callees that transitively need it.
+  if (func.body_requirement ==
+      BodyExecutionRequirement::kDeferredCheckOwnerRequired) {
+    contract.accepts_decision_owner = true;
   }
   return contract;
 }
 
-auto CallsCalleeAcceptingProcessOwnership(
+auto CallsCalleeAcceptingDecisionOwner(
     const Function& func, const std::vector<Function>& local_functions,
     const Arena* design_arena) -> bool {
   for (const auto& block : func.blocks) {
@@ -71,7 +72,7 @@ auto CallsCalleeAcceptingProcessOwnership(
       if (local_id != nullptr) {
         if (local_id->value < local_functions.size() &&
             local_functions[local_id->value]
-                .abi_contract.accepts_process_ownership) {
+                .abi_contract.accepts_decision_owner) {
           return true;
         }
         continue;
@@ -87,7 +88,7 @@ auto CallsCalleeAcceptingProcessOwnership(
           for (uint32_t i = 0; i < design_arena->FunctionCount(); ++i) {
             const auto& design_func = (*design_arena)[FunctionId{i}];
             if (design_func.canonical_symbol == ref->symbol &&
-                design_func.abi_contract.accepts_process_ownership) {
+                design_func.abi_contract.accepts_decision_owner) {
               return true;
             }
           }

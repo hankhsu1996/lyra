@@ -126,7 +126,7 @@ struct ExecutionContractState {
   llvm::Value* design_ptr = nullptr;
   llvm::Value* frame_ptr = nullptr;
   llvm::Value* engine_ptr = nullptr;
-  llvm::Value* current_process_id = nullptr;
+  llvm::Value* current_decision_owner_id = nullptr;
   llvm::Value* instance_ptr = nullptr;
   llvm::Value* this_ptr = nullptr;
   llvm::Value* dynamic_instance_id = nullptr;
@@ -645,7 +645,7 @@ class Context {
   // pass raw field indices or choose LLVM result types for header fields.
   auto EmitLoadEnginePtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadDesignPtr(llvm::Value* state_arg) -> llvm::Value*;
-  auto EmitLoadProcessId(llvm::Value* state_arg) -> llvm::Value*;
+  auto EmitLoadDecisionOwnerId(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadInstancePtr(llvm::Value* state_arg) -> llvm::Value*;
   auto EmitLoadInstanceInlineBase(llvm::Value* instance_ptr) -> llvm::Value*;
   auto EmitLoadInstanceId(llvm::Value* instance_ptr) -> llvm::Value*;
@@ -669,10 +669,11 @@ class Context {
   void SetEnginePointer(llvm::Value* engine_ptr);
   [[nodiscard]] auto GetEnginePointer() -> llvm::Value*;
 
-  // process_id: loaded from state->header.process_id, i32 identity.
-  // Used only by process-entry setup (EmitProcessStateSetup).
-  void SetCurrentProcessId(llvm::Value* process_id);
-  [[nodiscard]] auto GetCurrentProcessId() -> llvm::Value*;
+  // decision_owner_id: loaded from state->header.process_id, i32 identity.
+  // The process frame field stays process-named; the codegen layer interprets
+  // it as the decision owner for the process-backed owner path.
+  void SetCurrentDecisionOwnerId(llvm::Value* decision_owner_id);
+  [[nodiscard]] auto GetCurrentDecisionOwnerId() -> llvm::Value*;
 
   // Design-slot store mode for the current process body.
   // Controls whether stores emit compare+dirty-mark (kNotify) or plain
@@ -848,7 +849,7 @@ class Context {
   // For managed returns: out_ptr* prepended, return type becomes void.
   [[nodiscard]] auto BuildUserFunctionType(
       const mir::FunctionSignature& sig, bool is_module_scoped,
-      bool accepts_process_ownership) -> Result<llvm::FunctionType*>;
+      bool accepts_decision_owner) -> Result<llvm::FunctionType*>;
 
   // Check if a function uses out-param calling convention (managed return).
   [[nodiscard]] auto FunctionUsesSret(mir::FunctionId func_id) const -> bool;
@@ -1087,7 +1088,7 @@ class Context {
   llvm::Value* design_ptr_ = nullptr;
   llvm::Value* frame_ptr_ = nullptr;
   llvm::Value* engine_ptr_ = nullptr;
-  llvm::Value* current_process_id_ = nullptr;
+  llvm::Value* current_decision_owner_id_ = nullptr;
   DesignStoreMode design_store_mode_ = DesignStoreMode::kNotifySimulation;
   NotificationPolicy notification_policy_ = NotificationPolicy::kImmediate;
 

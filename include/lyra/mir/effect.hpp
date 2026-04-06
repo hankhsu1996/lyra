@@ -281,12 +281,12 @@ using EffectOp = std::variant<
 // mir::Function. Two consumers read the stored value (verifier, call lowering);
 // neither re-walks the body.
 enum class BodyExecutionRequirement : uint8_t {
-  kGenericCallable,  // Only needs design + engine
-  kProcessOwned,  // Requires active process ownership (e.g. decision tracking)
+  kGenericCallable,             // Only needs design + engine
+  kDeferredCheckOwnerRequired,  // Requires active decision owner context
 };
 
 // Classify an effect's execution context requirement.
-// RecordDecisionObservation* requires active process ownership;
+// RecordDecisionObservation* requires an active decision owner;
 // all other effects only need generic callable context.
 auto GetEffectExecutionRequirement(const EffectOp& op)
     -> BodyExecutionRequirement;
