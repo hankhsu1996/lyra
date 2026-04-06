@@ -1055,6 +1055,48 @@ static_assert(
     "DecisionOwnerId layout changed; update "
     "BuildDpiContextSnapshotType");
 
+// Canonical LLVM type for runtime::DpiResolvedPackageBinding.
+// Layout: { ptr design_state, ptr engine, i32 decision_owner_id_raw,
+//           i8 has_decision_owner }
+auto BuildDpiResolvedPackageBindingType(llvm::LLVMContext& ctx)
+    -> llvm::StructType* {
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  return llvm::StructType::get(ptr_ty, ptr_ty, i32_ty, i8_ty);
+}
+
+static_assert(
+    sizeof(lyra::runtime::DpiResolvedPackageBinding) == 24,
+    "DpiResolvedPackageBinding layout changed; update "
+    "BuildDpiResolvedPackageBindingType");
+static_assert(
+    alignof(lyra::runtime::DpiResolvedPackageBinding) == 8,
+    "DpiResolvedPackageBinding alignment changed; update "
+    "BuildDpiResolvedPackageBindingType");
+
+// Canonical LLVM type for runtime::DpiResolvedModuleBinding.
+// Layout: { ptr design_state, ptr engine, ptr this_ptr, ptr instance_ptr,
+//           i32 instance_id, i32 decision_owner_id_raw,
+//           i8 has_decision_owner }
+auto BuildDpiResolvedModuleBindingType(llvm::LLVMContext& ctx)
+    -> llvm::StructType* {
+  auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+  auto* i8_ty = llvm::Type::getInt8Ty(ctx);
+  return llvm::StructType::get(
+      ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i8_ty);
+}
+
+static_assert(
+    sizeof(lyra::runtime::DpiResolvedModuleBinding) == 48,
+    "DpiResolvedModuleBinding layout changed; update "
+    "BuildDpiResolvedModuleBindingType");
+static_assert(
+    alignof(lyra::runtime::DpiResolvedModuleBinding) == 8,
+    "DpiResolvedModuleBinding alignment changed; update "
+    "BuildDpiResolvedModuleBindingType");
+
 // All other contexts (package scope, compilation-unit scope) get null.
 auto ResolveDpiCallerScope(Context& context) -> llvm::Value* {
   if (llvm::Value* inst = context.GetInstancePointer()) {
@@ -1565,12 +1607,10 @@ auto EmitResolvePackageBinding(Context& context) -> PackageBindingValues {
   auto& llvm_ctx = context.GetLlvmContext();
   auto& b = context.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
-
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
-  // DpiResolvedPackageBinding: { ptr design_state, ptr engine,
-  //   i32 decision_owner_id_raw, i8 has_decision_owner }
-  auto* binding_ty = llvm::StructType::get(ptr_ty, ptr_ty, i32_ty, i8_ty);
+
+  auto* binding_ty = BuildDpiResolvedPackageBindingType(llvm_ctx);
   auto* alloca = b.CreateAlloca(binding_ty, nullptr, "pkg.binding");
   auto* resolve_fn = context.GetLyraResolvePackageExportBinding();
   auto* call = b.CreateCall(resolve_fn, {alloca});
@@ -1609,12 +1649,9 @@ auto EmitResolveModuleBinding(Context& context) -> ModuleBindingValues {
   auto& b = context.GetBuilder();
   auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
-  // DpiResolvedModuleBinding: { ptr, ptr, ptr, ptr, i32,
-  //   i32 decision_owner_id_raw, i8 has_decision_owner }
-  auto* binding_ty = llvm::StructType::get(
-      ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, i32_ty, i8_ty);
+
+  auto* binding_ty = BuildDpiResolvedModuleBindingType(llvm_ctx);
   auto* alloca = b.CreateAlloca(binding_ty, nullptr, "mod.binding");
   auto* resolve_fn = context.GetLyraResolveModuleInstanceBinding();
   auto* call = b.CreateCall(resolve_fn, {alloca});
