@@ -688,8 +688,8 @@ auto LowerEffectOp(
 
             builder.CreateCall(
                 context.GetLyraEnqueueObservedDeferredAssertion(),
-                {engine_ptr, mode.decision_owner_id, instance_id_val,
-                 site_val, disp_val, payload_ptr, payload_size_val});
+                {engine_ptr, mode.decision_owner_id, instance_id_val, site_val,
+                 disp_val, payload_ptr, payload_size_val});
             return {};
           },
       },
