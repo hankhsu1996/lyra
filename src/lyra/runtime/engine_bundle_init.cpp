@@ -534,20 +534,8 @@ void Engine::InitModuleInstancesFromBundles(
       }
 
       auto* state_ptr = proc_states[proc_idx];
-      if (state_ptr == nullptr) {
-        throw common::InternalError(
-            "InitModuleInstancesFromBundles",
-            std::format("null proc state for comb proc_idx {}", proc_idx));
-      }
-      const auto* header = static_cast<const ProcessFrameHeader*>(state_ptr);
       auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
-      comb_kernels_.push_back(
-          CombKernel{
-              .body = header->body,
-              .frame = proc_states[proc_idx],
-              .process_index = proc_idx,
-              .flags = flags,
-          });
+      comb_kernels_.push_back(BuildCombKernel(proc_idx, state_ptr, flags));
 
       comb_kernel_flags_[proc_idx] = 1;
       bool kernel_self_edge = (flags & CombKernel::kSelfEdge) != 0;

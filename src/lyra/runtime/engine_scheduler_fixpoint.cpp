@@ -283,16 +283,10 @@ void Engine::InitCombKernels(
 
     const auto* header =
         static_cast<const ProcessFrameHeader*>(proc_states[proc_idx]);
-    auto body = header->body;
 
     auto comb_idx = static_cast<uint32_t>(comb_kernels_.size());
     comb_kernels_.push_back(
-        CombKernel{
-            .body = body,
-            .frame = proc_states[proc_idx],
-            .process_index = proc_idx,
-            .flags = flags,
-        });
+        BuildCombKernel(proc_idx, proc_states[proc_idx], flags));
 
     comb_kernel_flags_[proc_idx] = 1;
 
@@ -450,6 +444,96 @@ void Engine::SeedCombKernelDirtyMarks() {
   }
 }
 
+auto Engine::BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
+    -> CombKernel {
+  if (frame == nullptr) {
+    throw common::InternalError(
+        "Engine::BuildCombKernel",
+        std::format("null proc state for comb proc_idx {}", proc_idx));
+  }
+  const auto* header = static_cast<const ProcessFrameHeader*>(frame);
+  if (header->instance == nullptr) {
+    throw common::InternalError(
+        "Engine::BuildCombKernel",
+        std::format(
+            "comb kernel proc_idx {} has null instance pointer", proc_idx));
+  }
+  return CombKernel{
+      .body = header->body,
+      .frame = frame,
+      .process_index = proc_idx,
+      .flags = flags,
+      .instance_idx = GetInstanceIndex(*header->instance),
+  };
+}
+
+void Engine::VerifyLocalFrontierConsistency() const {
+  std::vector<uint8_t> in_current(fp_work_.locals.size(), 0);
+
+  for (uint32_t idx : fp_work_.current_instances) {
+    if (idx >= fp_work_.locals.size()) {
+      throw common::InternalError(
+          "Engine::VerifyLocalFrontierConsistency",
+          std::format(
+              "current frontier index {} out of range {}", idx,
+              fp_work_.locals.size()));
+    }
+    if (fp_work_.locals[idx].pending.empty()) {
+      throw common::InternalError(
+          "Engine::VerifyLocalFrontierConsistency",
+          std::format("current frontier index {} has empty pending", idx));
+    }
+    if (in_current[idx] != 0) {
+      throw common::InternalError(
+          "Engine::VerifyLocalFrontierConsistency",
+          std::format("duplicate current frontier index {}", idx));
+    }
+    in_current[idx] = 1;
+    if (fp_work_.in_next[idx] != 0) {
+      throw common::InternalError(
+          "Engine::VerifyLocalFrontierConsistency",
+          std::format("current frontier index {} still marked in_next", idx));
+    }
+  }
+
+  for (size_t i = 0; i < fp_work_.locals.size(); ++i) {
+    if (!fp_work_.locals[i].pending.empty() && in_current[i] == 0) {
+      throw common::InternalError(
+          "Engine::VerifyLocalFrontierConsistency",
+          std::format("pending leaked outside current frontier at {}", i));
+    }
+  }
+}
+
+void Engine::PromoteLocalFrontier() {
+  // Retire old current frontier: clear consumed pending.
+  for (uint32_t idx : fp_work_.current_instances) {
+    fp_work_.locals[idx].pending.clear();
+  }
+
+  // Promote next frontier: swap next->pending, clear dedup, clear membership.
+  for (uint32_t idx : fp_work_.next_instances) {
+    auto& lps = fp_work_.locals[idx];
+    std::swap(lps.pending, lps.next);
+    lps.next.clear();
+    for (LocalSignalId lid : lps.pending) {
+      lps.seen[lid.value] = 0;
+    }
+    fp_work_.in_next[idx] = 0;
+  }
+
+  std::swap(fp_work_.current_instances, fp_work_.next_instances);
+  fp_work_.next_instances.clear();
+}
+
+void Engine::PromoteGlobalFrontier() {
+  for (GlobalSignalId gid : fp_work_.next_globals) {
+    fp_work_.global_pending_seen[gid.value] = 0;
+  }
+  std::swap(fp_work_.pending_globals, fp_work_.next_globals);
+  fp_work_.next_globals.clear();
+}
+
 void Engine::FlushAndPropagateConnections() {
   // Check whether there is any work to do across both domains.
   bool has_global_dirty = !update_set_.DeltaDirtySlots().empty();
@@ -487,8 +571,9 @@ void Engine::FlushAndPropagateConnections() {
   constexpr uint32_t kMaxIterations = 100;
   const bool detailed = detailed_stats_enabled_;
   uint32_t iterations_used = 0;
+  auto num_instances = static_cast<uint32_t>(instances_.size());
 
-  // Ensure workspace is sized.
+  // Ensure workspace is sized (lazy init, once per engine lifetime).
   if (fp_work_.global_pending_seen.size() < global_slot_count_) {
     fp_work_.global_pending_seen.resize(global_slot_count_, 0);
   }
@@ -496,8 +581,6 @@ void Engine::FlushAndPropagateConnections() {
       fp_work_.global_snapshot_index.size() < global_slot_count_) {
     fp_work_.global_snapshot_index.assign(global_slot_count_, UINT32_MAX);
   }
-
-  // Build per-instance local pending sets if not already sized.
   if (fp_work_.locals.size() != instances_.size()) {
     fp_work_.locals.resize(instances_.size());
     for (size_t i = 0; i < instances_.size(); ++i) {
@@ -509,18 +592,22 @@ void Engine::FlushAndPropagateConnections() {
       }
     }
   }
+  if (fp_work_.in_next.size() < num_instances) {
+    fp_work_.in_next.assign(num_instances, 0);
+  }
+  if (fp_work_.comb_touched_seen.size() < num_instances) {
+    fp_work_.comb_touched_seen.assign(num_instances, 0);
+  }
+  if (fp_work_.delta_pre.size() < num_instances) {
+    fp_work_.delta_pre.resize(num_instances, 0);
+  }
 
-  // Seed work lists from delta dirty slots.
-  // Global slots go to global pending. Instance-owned slots must not
-  // appear in update_set_ -- all instance-owned dirty marks enter
-  // through local_updates.
+  // Seed global frontier from delta dirty slots.
   fp_work_.pending_globals.clear();
   for (uint32_t s : update_set_.DeltaDirtySlots()) {
     if (s < global_slot_count_) {
       fp_work_.pending_globals.push_back(GlobalSignalId{s});
     } else {
-      // Instance-owned slot in update_set_ is a producer bug.
-      // All instance-owned dirty marks must enter through local_updates.
       throw common::InternalError(
           "Engine::FlushAndPropagateConnections",
           std::format(
@@ -529,7 +616,13 @@ void Engine::FlushAndPropagateConnections() {
               s, global_slot_count_));
     }
   }
-  for (size_t i = 0; i < instances_.size(); ++i) {
+
+  // Seed local frontier from delta dirty signals. This is the one
+  // full-instance sweep per call (not per iteration). Guarantees:
+  // pending is non-empty iff instance is in current_instances;
+  // all non-seeded instances have empty pending.
+  fp_work_.current_instances.clear();
+  for (uint32_t i = 0; i < num_instances; ++i) {
     auto& obs = instances_[i]->observability;
     auto& lps = fp_work_.locals[i];
     lps.pending.clear();
@@ -537,13 +630,10 @@ void Engine::FlushAndPropagateConnections() {
     for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
       lps.pending.push_back(lid);
     }
+    if (!lps.pending.empty()) {
+      fp_work_.current_instances.push_back(i);
+    }
   }
-
-  // Helper: check if any local pending set has work.
-  auto any_local_pending = [&]() -> bool {
-    return std::ranges::any_of(
-        fp_work_.locals, [](const auto& lps) { return !lps.pending.empty(); });
-  };
 
   // Helper: enqueue into global next with dedup.
   auto enqueue_global = [&](GlobalSignalId gid) {
@@ -558,57 +648,76 @@ void Engine::FlushAndPropagateConnections() {
   };
 
   // Helper: enqueue into local next with dedup.
-  auto enqueue_local = [&](size_t inst_idx, LocalSignalId lid) {
+  // When a signal is enqueued, ensures instance is in next_instances.
+  auto enqueue_local = [&](uint32_t inst_idx, LocalSignalId lid) {
     if (detailed) ++stats_.detailed.prop_enqueue_attempts;
     auto& lps = fp_work_.locals[inst_idx];
     if (lid.value < lps.seen.size() && lps.seen[lid.value] == 0) {
       lps.seen[lid.value] = 1;
       lps.next.push_back(lid);
+      if (fp_work_.in_next[inst_idx] == 0) {
+        fp_work_.in_next[inst_idx] = 1;
+        fp_work_.next_instances.push_back(inst_idx);
+      }
     } else {
       if (detailed) ++stats_.detailed.prop_enqueue_deduped;
     }
   };
 
-  // Helper: find instance index for a RuntimeInstance*.
-  // Connection targets carry RuntimeInstance* resolved at build time.
-  auto find_instance_idx = [&](const RuntimeInstance* inst) -> size_t {
-    // Linear scan is acceptable -- instance count is small (typically < 100).
-    for (size_t i = 0; i < instances_.size(); ++i) {
-      if (instances_[i] == inst) return i;
-    }
-    throw common::InternalError(
-        "FlushAndPropagateConnections",
-        "connection target instance not found in instance list");
+  // Helper: connection destination enqueue (handles global/local dispatch).
+  auto enqueue_conn_dst = [&](const ConnectionTarget& dst) {
+    std::visit(
+        [&](const auto& t) {
+          using T = std::decay_t<decltype(t)>;
+          if constexpr (std::is_same_v<T, GlobalConnectionTarget>) {
+            MarkSlotDirty(t.signal.value);
+            enqueue_global(t.signal);
+          } else {
+            auto* local_inst =
+                instance_trace_resolver_.FindInstanceMut(t.instance_id);
+            local_inst->observability.local_updates.MarkSlotDirty(t.signal);
+            enqueue_local(GetInstanceIndex(*local_inst), t.signal);
+          }
+        },
+        dst);
+  };
+
+  // Helper: mark a comb kernel's owning instance as touched this iteration.
+  // Records delta_pre exactly once per instance, before first comb execution.
+  auto mark_comb_touched = [&](uint32_t inst_idx) {
+    if (fp_work_.comb_touched_seen[inst_idx] != 0) return;
+    fp_work_.comb_touched_seen[inst_idx] = 1;
+    fp_work_.comb_touched.push_back(inst_idx);
+    auto& obs = instances_[inst_idx]->observability;
+    fp_work_.delta_pre[inst_idx] =
+        (obs.local_signal_count > 0)
+            ? static_cast<uint32_t>(
+                  obs.local_updates.DeltaDirtySignals().size())
+            : 0;
   };
 
   for (uint32_t iter = 0; iter < kMaxIterations; ++iter) {
-    if (fp_work_.pending_globals.empty() && !any_local_pending()) break;
+    if (fp_work_.pending_globals.empty() &&
+        fp_work_.current_instances.empty()) {
+      break;
+    }
+    VerifyLocalFrontierConsistency();
     ++iterations_used;
     fp_work_.next_globals.clear();
-    for (auto& lps : fp_work_.locals) lps.next.clear();
-
-    // Reset seen bits for current work list entries.
-    for (GlobalSignalId gid : fp_work_.pending_globals) {
-      fp_work_.global_pending_seen[gid.value] = 0;
-    }
-    for (auto& lps : fp_work_.locals) {
-      for (LocalSignalId lid : lps.pending) {
-        lps.seen[lid.value] = 0;
-      }
-    }
 
     if (detailed) {
       auto total_pending =
           static_cast<uint32_t>(fp_work_.pending_globals.size());
-      for (const auto& lps : fp_work_.locals) {
-        total_pending += static_cast<uint32_t>(lps.pending.size());
+      for (uint32_t idx : fp_work_.current_instances) {
+        total_pending +=
+            static_cast<uint32_t>(fp_work_.locals[idx].pending.size());
       }
       stats_.detailed.prop_pending_slots += total_pending;
     }
 
     // Phase 1: connection propagation.
     if (has_conns) {
-      // Global triggers.
+      // 1a. Global triggers.
       for (GlobalSignalId gid : fp_work_.pending_globals) {
         if (gid.value >= global_conn_trigger_map_.size()) continue;
         if (detailed) ++stats_.detailed.prop_conn_trigger_lookups;
@@ -624,29 +733,14 @@ void Engine::FlushAndPropagateConnections() {
           if (std::memcmp(dst, src, conn.byte_size) != 0) {
             if (detailed) ++stats_.detailed.conn_memcpy_executed;
             std::memcpy(dst, src, conn.byte_size);
-            // Enqueue destination into appropriate domain.
-            std::visit(
-                [&](const auto& t) {
-                  using T = std::decay_t<decltype(t)>;
-                  if constexpr (std::is_same_v<T, GlobalConnectionTarget>) {
-                    MarkSlotDirty(t.signal.value);
-                    enqueue_global(t.signal);
-                  } else {
-                    auto* local_inst =
-                        instance_trace_resolver_.FindInstanceMut(t.instance_id);
-                    local_inst->observability.local_updates.MarkSlotDirty(
-                        t.signal);
-                    enqueue_local(find_instance_idx(local_inst), t.signal);
-                  }
-                },
-                conn.dst);
+            enqueue_conn_dst(conn.dst);
           }
         }
       }
 
-      // Local triggers.
-      for (auto& lps : fp_work_.locals) {
-        if (lps.pending.empty()) continue;
+      // 1b. Local triggers (current frontier only).
+      for (uint32_t idx : fp_work_.current_instances) {
+        auto& lps = fp_work_.locals[idx];
         auto& obs = lps.instance->observability;
         for (LocalSignalId lid : lps.pending) {
           if (lid.value >= obs.local_conn_trigger_map.size()) continue;
@@ -663,22 +757,7 @@ void Engine::FlushAndPropagateConnections() {
             if (std::memcmp(dst, src, conn.byte_size) != 0) {
               if (detailed) ++stats_.detailed.conn_memcpy_executed;
               std::memcpy(dst, src, conn.byte_size);
-              std::visit(
-                  [&](const auto& t) {
-                    using T = std::decay_t<decltype(t)>;
-                    if constexpr (std::is_same_v<T, GlobalConnectionTarget>) {
-                      MarkSlotDirty(t.signal.value);
-                      enqueue_global(t.signal);
-                    } else {
-                      auto* local_inst =
-                          instance_trace_resolver_.FindInstanceMut(
-                              t.instance_id);
-                      local_inst->observability.local_updates.MarkSlotDirty(
-                          t.signal);
-                      enqueue_local(find_instance_idx(local_inst), t.signal);
-                    }
-                  },
-                  conn.dst);
+              enqueue_conn_dst(conn.dst);
             }
           }
         }
@@ -721,25 +800,10 @@ void Engine::FlushAndPropagateConnections() {
       // Install capture for global comb writes.
       fp_work_.comb_writes_global.clear();
       fp_work_.comb_writes_local.clear();
-      comb_write_capture_ = nullptr;  // We'll use domain-split capture.
-
-      // Use a temporary flat capture vector for global comb writes
-      // since MarkSlotDirty pushes to comb_write_capture_.
       std::vector<uint32_t> flat_comb_writes;
       comb_write_capture_ = &flat_comb_writes;
 
-      // Record per-instance local delta sizes before comb eval.
-      fp_work_.local_delta_pre.clear();
-      for (auto* inst : instances_) {
-        auto& obs = inst->observability;
-        fp_work_.local_delta_pre.push_back(
-            obs.local_signal_count > 0
-                ? static_cast<uint32_t>(
-                      obs.local_updates.DeltaDirtySignals().size())
-                : 0);
-      }
-
-      // Evaluate comb kernels from global pending.
+      // 2a. Evaluate comb kernels from global pending.
       for (GlobalSignalId gid : fp_work_.pending_globals) {
         if (gid.value >= global_comb_trigger_map_.size()) continue;
         if (detailed) ++stats_.detailed.prop_comb_trigger_lookups;
@@ -761,15 +825,16 @@ void Engine::FlushAndPropagateConnections() {
 
           if (detailed) ++stats_.detailed.comb_executed;
           const auto& ck = comb_kernels_[entry.kernel_idx];
+          mark_comb_touched(ck.instance_idx);
           FlushDeferredAssertionsForProcess(
               ProcessId::FromIndex(ck.process_index));
           ck.body(ck.frame, 0);
         }
       }
 
-      // Evaluate comb kernels from local pending.
-      for (auto& lps : fp_work_.locals) {
-        if (lps.pending.empty()) continue;
+      // 2b. Evaluate comb kernels from local pending (current frontier only).
+      for (uint32_t idx : fp_work_.current_instances) {
+        auto& lps = fp_work_.locals[idx];
         auto& obs = lps.instance->observability;
         for (LocalSignalId lid : lps.pending) {
           if (lid.value >= obs.local_comb_trigger_map.size()) continue;
@@ -778,12 +843,12 @@ void Engine::FlushAndPropagateConnections() {
           if (ccount == 0) continue;
           if (detailed) ++stats_.detailed.prop_comb_trigger_hits;
 
-          // Local slots: no range filtering (conservative).
           for (uint32_t ci = cstart; ci < cstart + ccount; ++ci) {
             if (detailed) ++stats_.detailed.comb_considered;
             if (detailed) ++stats_.detailed.comb_executed;
             const auto& ck =
                 comb_kernels_[comb_trigger_backing_[ci].kernel_idx];
+            mark_comb_touched(ck.instance_idx);
             FlushDeferredAssertionsForProcess(
                 ProcessId::FromIndex(ck.process_index));
             ck.body(ck.frame, 0);
@@ -793,25 +858,24 @@ void Engine::FlushAndPropagateConnections() {
 
       comb_write_capture_ = nullptr;
 
-      // Classify flat comb writes into global domain.
+      // 2c. Classify flat comb writes into global domain.
       for (uint32_t s : flat_comb_writes) {
         if (s < global_slot_count_) {
           fp_work_.comb_writes_global.push_back(GlobalSignalId{s});
         }
-        // Instance-owned flat writes are also captured below via local delta.
       }
 
-      // Collect local comb writes by scanning instance delta changes.
-      for (size_t i = 0; i < instances_.size(); ++i) {
-        auto& obs = instances_[i]->observability;
+      // 2d. Collect local comb writes (scan comb_touched only).
+      for (uint32_t tidx : fp_work_.comb_touched) {
+        auto& obs = instances_[tidx]->observability;
         if (obs.local_signal_count == 0) continue;
         auto delta = obs.local_updates.DeltaDirtySignals();
-        auto pre_size = fp_work_.local_delta_pre[i];
+        auto pre_size = fp_work_.delta_pre[tidx];
         if (delta.size() <= pre_size) continue;
         for (size_t j = pre_size; j < delta.size(); ++j) {
           fp_work_.comb_writes_local.push_back(
               FixpointWorkspace::LocalCombWrite{
-                  .instance_idx = static_cast<uint32_t>(i),
+                  .instance_idx = tidx,
                   .signal = delta[j],
               });
         }
@@ -850,18 +914,22 @@ void Engine::FlushAndPropagateConnections() {
           fp_work_.global_snapshot_index[gid.value] = UINT32_MAX;
         }
       }
+
+      // 2e. Reset comb_touched for next iteration.
+      for (uint32_t tidx : fp_work_.comb_touched) {
+        fp_work_.comb_touched_seen[tidx] = 0;
+      }
+      fp_work_.comb_touched.clear();
     }
 
-    // Swap pending/next.
-    std::swap(fp_work_.pending_globals, fp_work_.next_globals);
-    fp_work_.next_globals.clear();
-    for (auto& lps : fp_work_.locals) {
-      std::swap(lps.pending, lps.next);
-      lps.next.clear();
-    }
+    // Phase 3: Promote frontiers.
+    PromoteLocalFrontier();
+    PromoteGlobalFrontier();
+    VerifyLocalFrontierConsistency();
   }
 
-  if (!fp_work_.pending_globals.empty() || any_local_pending()) {
+  if (!fp_work_.pending_globals.empty() ||
+      !fp_work_.current_instances.empty()) {
     throw common::InternalError(
         "Engine::FlushAndPropagateConnections",
         std::format(
