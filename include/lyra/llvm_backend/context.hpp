@@ -23,6 +23,7 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/terminator.hpp"
@@ -844,6 +845,14 @@ class Context {
   [[nodiscard]] auto GetMonitorSetupInfo(mir::FunctionId setup_program) const
       -> const MonitorSetupInfo*;
 
+  // Deferred assertion thunk metadata (codegen artifact).
+  // Keyed by thunk FunctionId. Registered during design-wide lowering
+  // from DeferredAssertionSiteInfo thunk actions.
+  void RegisterDeferredThunkAction(
+      mir::FunctionId thunk_id, const mir::DeferredThunkAction* action);
+  [[nodiscard]] auto GetDeferredThunkAction(mir::FunctionId thunk_id) const
+      -> const mir::DeferredThunkAction*;
+
   // Build LLVM function type from MIR function signature.
   // Package-scoped: (DesignState*, Engine*, args...)
   // Module-scoped:  (DesignState*, Engine*, this_ptr*,
@@ -1142,6 +1151,10 @@ class Context {
   // Just stores check_program reference; layout is looked up from
   // monitor_layouts_.
   absl::flat_hash_map<mir::FunctionId, MonitorSetupInfo> monitor_setup_infos_;
+
+  // Deferred assertion thunk metadata (borrowed pointers into site info).
+  absl::flat_hash_map<mir::FunctionId, const mir::DeferredThunkAction*>
+      deferred_thunk_actions_;
 
   // SSA temp bindings: temp_id -> TempValue (explicit semantic contract).
   // Temps defined by block params (split PHI nodes) or statements.

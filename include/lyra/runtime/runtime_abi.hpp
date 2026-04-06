@@ -75,7 +75,8 @@ struct RuntimeInstance;
 // v20: A1b immediate cover site count for runtime hit-count array sizing.
 // v21: D6d simulation-global precision power and per-body timescale metadata.
 // v22: A2 deferred assertion site metadata table.
-inline constexpr uint32_t kRuntimeAbiVersion = 22;
+// v23: A2e deferred assertion thunk pointers + payload sizes in site metadata.
+inline constexpr uint32_t kRuntimeAbiVersion = 23;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion

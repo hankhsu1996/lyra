@@ -1,0 +1,70 @@
+feature: deferred_assertion_thunks
+description: Tests for deferred assertion user action thunks (A2e)
+
+cases:
+  - name: deferred_assert_fail_action_basic
+    description: Deferred #0 assertion with user fail action calls the function
+    sv: |
+      module Test;
+        function void report_fail(int val);
+          $display("FAIL_ACTION: %0d", val);
+        endfunction
+
+        initial begin
+          int x = 42;
+          assert #0 (0) else report_fail(x);
+          $display("AFTER_ASSERT");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "AFTER_ASSERT"
+          - "FAIL_ACTION: 42"
+
+  - name: deferred_assert_pass_no_fail
+    description: Deferred #0 assertion that passes does not call fail action
+    sv: |
+      module Test;
+        function void report_fail(int val);
+          $display("FAIL_ACTION: %0d", val);
+        endfunction
+
+        initial begin
+          int x = 1;
+          assert #0 (x > 0) else report_fail(x);
+          $display("PASS");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "PASS"
+        not_contains:
+          - "FAIL_ACTION"
+
+  - name: deferred_assert_encounter_time_eval
+    description: By-value actuals are evaluated at encounter time, not drain time
+    sv: |
+      module Test;
+        function void report_fail(int val);
+          $display("FAIL_VAL: %0d", val);
+        endfunction
+
+        initial begin
+          int x = 10;
+          assert #0 (0) else report_fail(x);
+          x = 99;
+          $display("AFTER");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "FAIL_VAL: 10"
+          - "AFTER"
+        not_contains:
+          - "FAIL_VAL: 99"

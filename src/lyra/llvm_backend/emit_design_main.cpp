@@ -24,6 +24,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/design_metadata_lowering.hpp"
 #include "lyra/llvm_backend/inspection_plan.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
@@ -1899,9 +1900,12 @@ auto EmitDeferredAssertionSiteMetaGlobal(
 
   // Struct layout matches LyraDeferredAssertionSiteMeta:
   // { i8 kind, i8 pad0, i16 pad1, i32 cover_site_id,
-  //   ptr origin_file, i32 origin_line, i32 origin_col }
+  //   ptr origin_file, i32 origin_line, i32 origin_col,
+  //   ptr pass_thunk, ptr fail_thunk, i32 pass_payload_size,
+  //   i32 fail_payload_size }
   auto* entry_ty = llvm::StructType::get(
-      llvm_ctx, {i8_ty, i8_ty, i16_ty, i32_ty, ptr_ty, i32_ty, i32_ty});
+      llvm_ctx, {i8_ty, i8_ty, i16_ty, i32_ty, ptr_ty, i32_ty, i32_ty, ptr_ty,
+                 ptr_ty, i32_ty, i32_ty});
 
   std::vector<llvm::Constant*> entries;
   entries.reserve(sites.size());
@@ -1932,14 +1936,47 @@ auto EmitDeferredAssertionSiteMetaGlobal(
       }
     }
 
+    // Resolve thunk function pointers and payload sizes.
+    llvm::Constant* pass_thunk_ptr = llvm::ConstantPointerNull::get(ptr_ty);
+    llvm::Constant* fail_thunk_ptr = llvm::ConstantPointerNull::get(ptr_ty);
+    uint32_t pass_payload_size = 0;
+    uint32_t fail_payload_size = 0;
+
+    if (site.pass_action.has_value()) {
+      auto* fn = context.GetUserFunction(site.pass_action->thunk);
+      if (fn != nullptr) {
+        pass_thunk_ptr = fn;
+      }
+      auto* payload_ty = BuildDeferredPayloadStructType(
+          llvm_ctx, site.pass_action->payload, context.GetTypeArena(),
+          context.IsForceTwoState());
+      pass_payload_size = static_cast<uint32_t>(
+          context.GetModule().getDataLayout().getTypeAllocSize(payload_ty));
+    }
+
+    if (site.fail_action.has_value()) {
+      auto* fn = context.GetUserFunction(site.fail_action->thunk);
+      if (fn != nullptr) {
+        fail_thunk_ptr = fn;
+      }
+      auto* payload_ty = BuildDeferredPayloadStructType(
+          llvm_ctx, site.fail_action->payload, context.GetTypeArena(),
+          context.IsForceTwoState());
+      fail_payload_size = static_cast<uint32_t>(
+          context.GetModule().getDataLayout().getTypeAllocSize(payload_ty));
+    }
+
     entries.push_back(
         llvm::ConstantStruct::get(
-            entry_ty, {llvm::ConstantInt::get(i8_ty, kind_val),
-                       llvm::ConstantInt::get(i8_ty, 0),
-                       llvm::ConstantInt::get(i16_ty, 0),
-                       llvm::ConstantInt::get(i32_ty, cover_id), file_ptr,
-                       llvm::ConstantInt::get(i32_ty, line),
-                       llvm::ConstantInt::get(i32_ty, col)}));
+            entry_ty,
+            {llvm::ConstantInt::get(i8_ty, kind_val),
+             llvm::ConstantInt::get(i8_ty, 0),
+             llvm::ConstantInt::get(i16_ty, 0),
+             llvm::ConstantInt::get(i32_ty, cover_id), file_ptr,
+             llvm::ConstantInt::get(i32_ty, line),
+             llvm::ConstantInt::get(i32_ty, col), pass_thunk_ptr,
+             fail_thunk_ptr, llvm::ConstantInt::get(i32_ty, pass_payload_size),
+             llvm::ConstantInt::get(i32_ty, fail_payload_size)}));
   }
 
   auto* array_ty = llvm::ArrayType::get(entry_ty, entries.size());

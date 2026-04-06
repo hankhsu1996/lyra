@@ -16,7 +16,9 @@ Scope: `assert`, `assume`, `cover property`, `cover sequence`, `expect` are simu
 - [ ] A2 -- Deferred immediate assertions
   - [x] A2a -- Deferred `#0` capture path for assert/assume/cover (no-action subset)
   - [x] A2b -- Per-process deferred assertion pending-report state, lazy flush invalidation, settle-boundary maturity/execution
-  - [ ] A2e -- Deferred `#0` user action thunks (pass/fail action calls with by-value capture)
+  - [x] A2e -- Deferred `#0` user-subroutine action thunks with by-value capture
+  - [ ] A2f -- Deferred `#0` live ref/const-ref thunk bindings
+  - [ ] A2g -- Deferred `#0` display-like system-task action thunks
   - [ ] A2c -- Deferred `final` assertion path
   - [ ] A2d -- Deferred-final flush hook (after final blocks complete)
 
@@ -55,9 +57,17 @@ Scope: `assert`, `assume`, `cover property`, `cover sequence`, `expect` are simu
 
 - [ ] A9 -- Assertion usage profiling and staged enablement
 
-## A2e: Deferred `#0` user action thunks
+## A2e: Deferred `#0` user-subroutine action thunks with by-value capture
 
-`assert #0 (...) pass_call; else fail_call;` and `cover #0 (...) pass_call;` require outlined deferred thunks with by-value capture. A2a/A2b landed the no-action subset (default fail report, cover hit). This item adds: DeferredThunkPlan extraction from validated call shape, outlined synthetic MIR function per site, CaptureLayout + blob packing in LLVM codegen, and thunk execution at drain time via ProcessFrame. LRM restricts deferred actions to a single subroutine call; slang enforces this at parse time. By-ref/const-ref actuals are re-materialized from the process frame at drain time, not captured into the blob.
+Outlined deferred thunks for user subroutine calls in `assert #0 (...) else fail_call;` and `cover #0 (...) pass_call;`. By-value actuals are captured into a typed payload at encounter time and the thunk is dispatched at drain time via the site metadata table. Covers: thunk plan extraction from validated call shape, synthetic MIR function shell per site, typed payload packing via LLVM struct type in codegen, runtime thunk dispatch with instance recovery and payload size validation, DeferredAssertionExecContext carrying RuntimeInstance\* for module binding. Explicit exclusions: no ref/const-ref live bindings (A2f), no display-like system-task actions (A2g), no method-call actions, no managed-type actuals (string, queue, dynamic array).
+
+## A2f: Deferred `#0` live ref/const-ref thunk bindings
+
+By-ref and const-ref actuals in deferred assertion actions are not captured into the payload. Instead, lowering records them as live bindings (DeferredThunkActualBinding::kLiveRef with SignalRef). At drain time, the thunk codegen re-materializes them from the DeferredAssertionExecContext -- module-scoped signals via instance pointer + specialization-local offset, design-global objects via design state + global offset. Scope/binding coherence must be enforced: module-scoped ref targets require a valid instance context, and design-global sites with instance-scoped ref targets must be rejected during lowering. First-cut scope: signal-backed refs only; non-signal lvalue targets (unpacked struct fields, array elements) are not yet supported. This is separate from A2e because it adds a distinct binding and runtime-addressing model beyond by-value capture.
+
+## A2g: Deferred `#0` display-like system-task action thunks
+
+`$display`, `$write`, `$error`, `$warning`, `$info` as deferred assertion actions (`assert #0 (...) else $error(...);`) need a dedicated thunk codegen path. System tasks have no formal parameter table or function signature, so they cannot go through the user-subroutine thunk path. Requires a dedicated LLVM-only thunk body emitter (e.g. EmitDeferredDisplayThunkBody) that takes payload-decoded values and emits runtime print calls directly. All arguments are by-value (no ref semantics). `$fatal` remains out of scope unless explicitly planned -- it requires fatal termination semantics beyond display.
 
 ## A2c: Deferred `final` assertion path
 
