@@ -17,6 +17,7 @@ Start here for an overview of Lyra's design and constraints.
 - [mir-design.md](mir-design.md) - execution semantics and control flow
 - [type-system.md](type-system.md) - type representation and interning
 - [string-types.md](string-types.md) - string handling
+- [assertions.md](assertions.md) - assertion architecture
 - [parameterized-modules.md](parameterized-modules.md) - parameters and specialization
 - [module-hierarchy.md](module-hierarchy.md) - hierarchy support and port connections
 
