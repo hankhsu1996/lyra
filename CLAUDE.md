@@ -4,31 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Documentation
 
-| Document                           | Purpose                                             |
-| ---------------------------------- | --------------------------------------------------- |
-| `docs/philosophy.md`               | North star, priorities, tradeoffs                   |
-| `docs/natural-model.md`            | Canonical definition of the natural model           |
-| `docs/architecture-principles.md`  | Natural model, architectural north stars, rules     |
-| `docs/compilation-model.md`        | Specialization-based compilation data model         |
-| `docs/design-principles.md`        | Implementation guidelines, coding patterns          |
-| `docs/architecture.md`             | Component relationships, data flow                  |
-| `docs/pipeline-contract.md`        | Layer responsibilities, boundaries, correctness     |
-| `docs/hir-design.md`               | HIR layer design (language semantics)               |
-| `docs/mir-design.md`               | MIR layer design (execution semantics)              |
-| `docs/llvm-backend.md`             | MIR -> LLVM lowering strategy                       |
-| `docs/runtime.md`                  | Simulation engine, scheduling, backend-agnostic API |
-| `docs/change-propagation.md`       | Dirty tracking, subscriptions, wakeup filtering     |
-| `docs/type-system.md`              | Type interning, type kinds, 4-state representation  |
-| `docs/parameterized-modules.md`    | Module parameters, specialization, param classes    |
-| `docs/module-hierarchy.md`         | Module hierarchy, port connections, realization     |
-| `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands         |
-| `docs/state-layout.md`             | Byte-level state layout, container semantics        |
-| `docs/string-types.md`             | String type handling, slang interaction             |
-| `docs/error-handling.md`           | Error types, when to use each                       |
-| `docs/execution-modes.md`          | AOT vs JIT, shared pipeline, CLI semantics          |
-| `docs/profiling.md`                | Callgrind profiling workflow, methodology           |
-| `docs/parallel-compilation.md`     | Parallel specialization compilation (F1) design     |
-| `docs/documentation-guidelines.md` | Documentation guidelines                            |
+| Document                           | Purpose                                                  |
+| ---------------------------------- | -------------------------------------------------------- |
+| `docs/philosophy.md`               | North star, priorities, tradeoffs                        |
+| `docs/natural-model.md`            | Canonical definition of the natural model                |
+| `docs/architecture-principles.md`  | Natural model, architectural north stars, rules          |
+| `docs/compilation-model.md`        | Specialization-based compilation data model              |
+| `docs/design-principles.md`        | Implementation guidelines, coding patterns               |
+| `docs/architecture.md`             | Component relationships, data flow                       |
+| `docs/pipeline-contract.md`        | Layer responsibilities, boundaries, correctness          |
+| `docs/hir-design.md`               | HIR layer design (language semantics)                    |
+| `docs/mir-design.md`               | MIR layer design (execution semantics)                   |
+| `docs/llvm-backend.md`             | MIR -> LLVM lowering strategy                            |
+| `docs/runtime.md`                  | Simulation engine, scheduling, backend-agnostic API      |
+| `docs/change-propagation.md`       | Dirty tracking, subscriptions, wakeup filtering          |
+| `docs/type-system.md`              | Type interning, type kinds, 4-state representation       |
+| `docs/parameterized-modules.md`    | Module parameters, specialization, param classes         |
+| `docs/module-hierarchy.md`         | Module hierarchy, port connections, realization          |
+| `docs/cli-design.md`               | CLI tool design, lyra.toml config, commands              |
+| `docs/state-layout.md`             | Byte-level state layout, container semantics             |
+| `docs/string-types.md`             | String type handling, slang interaction                  |
+| `docs/error-handling.md`           | Error types, when to use each                            |
+| `docs/execution-modes.md`          | AOT vs JIT, shared pipeline, CLI semantics               |
+| `docs/profiling.md`                | Callgrind profiling workflow, methodology                |
+| `docs/parallel-compilation.md`     | Parallel specialization compilation (F1) design          |
+| `docs/assertions.md`               | Assertion architecture (immediate, deferred, concurrent) |
+| `docs/documentation-guidelines.md` | Documentation guidelines                                 |
 
 **When writing or editing documentation, follow `docs/documentation-guidelines.md`.** Key rules: concise over complete, capture decisions not implementation, ASCII only, integrate don't append.
 
