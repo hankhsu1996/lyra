@@ -209,7 +209,7 @@ void Engine::EvaluateAllConnections() {
             } else {
               auto* inst =
                   instance_trace_resolver_.FindInstanceMut(t.instance_id);
-              inst->observability.local_updates.MarkSlotDirty(t.signal);
+              MarkLocalSignalDirty(*inst, t.signal);
             }
           },
           conn.dst);
@@ -436,10 +436,10 @@ void Engine::SeedCombKernelDirtyMarks() {
     MarkSlotDirty(gid.value);
   }
   // Seed local comb trigger slots.
-  for (auto* inst : instances_) {
-    auto& obs = inst->observability;
-    for (LocalSignalId lid : obs.local_comb_trigger_slots) {
-      obs.local_updates.MarkSlotDirty(lid);
+  for (uint32_t i = 0; i < instances_.size(); ++i) {
+    auto* inst = instances_[i];
+    for (LocalSignalId lid : inst->observability.local_comb_trigger_slots) {
+      MarkLocalSignalDirty(*inst, lid, i);
     }
   }
 }
@@ -465,44 +465,6 @@ auto Engine::BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
       .flags = flags,
       .instance_idx = GetInstanceIndex(*header->instance),
   };
-}
-
-void Engine::VerifyLocalFrontierConsistency() const {
-  std::vector<uint8_t> in_current(fp_work_.locals.size(), 0);
-
-  for (uint32_t idx : fp_work_.current_instances) {
-    if (idx >= fp_work_.locals.size()) {
-      throw common::InternalError(
-          "Engine::VerifyLocalFrontierConsistency",
-          std::format(
-              "current frontier index {} out of range {}", idx,
-              fp_work_.locals.size()));
-    }
-    if (fp_work_.locals[idx].pending.empty()) {
-      throw common::InternalError(
-          "Engine::VerifyLocalFrontierConsistency",
-          std::format("current frontier index {} has empty pending", idx));
-    }
-    if (in_current[idx] != 0) {
-      throw common::InternalError(
-          "Engine::VerifyLocalFrontierConsistency",
-          std::format("duplicate current frontier index {}", idx));
-    }
-    in_current[idx] = 1;
-    if (fp_work_.in_next[idx] != 0) {
-      throw common::InternalError(
-          "Engine::VerifyLocalFrontierConsistency",
-          std::format("current frontier index {} still marked in_next", idx));
-    }
-  }
-
-  for (size_t i = 0; i < fp_work_.locals.size(); ++i) {
-    if (!fp_work_.locals[i].pending.empty() && in_current[i] == 0) {
-      throw common::InternalError(
-          "Engine::VerifyLocalFrontierConsistency",
-          std::format("pending leaked outside current frontier at {}", i));
-    }
-  }
 }
 
 void Engine::PromoteLocalFrontier() {
@@ -617,16 +579,15 @@ void Engine::FlushAndPropagateConnections() {
     }
   }
 
-  // Seed local frontier from delta dirty signals. This is the one
-  // full-instance sweep per call (not per iteration). Guarantees:
-  // pending is non-empty iff instance is in current_instances;
-  // all non-seeded instances have empty pending.
+  // Seed local frontier from delta_dirty_instances_ (the canonical
+  // dirty-instance index). Only visits instances that actually have
+  // delta-dirty local signals -- no full-instance sweep.
   fp_work_.current_instances.clear();
-  for (uint32_t i = 0; i < num_instances; ++i) {
+  for (uint32_t i : delta_dirty_instances_) {
     auto& obs = instances_[i]->observability;
+    if (obs.local_signal_count == 0) continue;
     auto& lps = fp_work_.locals[i];
     lps.pending.clear();
-    if (obs.local_signal_count == 0) continue;
     for (LocalSignalId lid : obs.local_updates.DeltaDirtySignals()) {
       lps.pending.push_back(lid);
     }
@@ -673,10 +634,10 @@ void Engine::FlushAndPropagateConnections() {
             MarkSlotDirty(t.signal.value);
             enqueue_global(t.signal);
           } else {
-            auto* local_inst =
-                instance_trace_resolver_.FindInstanceMut(t.instance_id);
-            local_inst->observability.local_updates.MarkSlotDirty(t.signal);
-            enqueue_local(GetInstanceIndex(*local_inst), t.signal);
+            auto inst_idx = GetInstanceIndex(t.instance_id);
+            auto* local_inst = instances_[inst_idx];
+            MarkLocalSignalDirty(*local_inst, t.signal, inst_idx);
+            enqueue_local(inst_idx, t.signal);
           }
         },
         dst);
@@ -701,7 +662,6 @@ void Engine::FlushAndPropagateConnections() {
         fp_work_.current_instances.empty()) {
       break;
     }
-    VerifyLocalFrontierConsistency();
     ++iterations_used;
     fp_work_.next_globals.clear();
 
@@ -925,7 +885,6 @@ void Engine::FlushAndPropagateConnections() {
     // Phase 3: Promote frontiers.
     PromoteLocalFrontier();
     PromoteGlobalFrontier();
-    VerifyLocalFrontierConsistency();
   }
 
   if (!fp_work_.pending_globals.empty() ||

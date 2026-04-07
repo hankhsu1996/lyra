@@ -195,8 +195,10 @@ void FlushGlobalDirtySlotsToTrace(
 }
 
 void FlushLocalDirtySlotsToTrace(
-    trace::TraceManager& trace, std::span<RuntimeInstance* const> instances) {
-  for (auto* inst : instances) {
+    trace::TraceManager& trace, std::span<RuntimeInstance* const> instances,
+    std::span<const uint32_t> dirty_indices) {
+  for (uint32_t idx : dirty_indices) {
+    auto* inst = instances[idx];
     if (inst == nullptr) {
       throw common::InternalError(
           "FlushLocalDirtySlotsToTrace", "null instance in instance list");

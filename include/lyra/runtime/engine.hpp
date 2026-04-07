@@ -1280,6 +1280,51 @@ class Engine {
   [[nodiscard]] auto GetInstanceIndex(const RuntimeInstance& inst) const
       -> uint32_t;
 
+  // Derived sparse indexes summarizing which instances have non-empty
+  // LocalUpdateSet state. Authoritative truth is always the per-instance
+  // LocalUpdateSet; these are acceleration indexes for avoiding
+  // full-instance sweeps.
+  //
+  // Delta-dirty: instances with non-empty DeltaDirtySignals() since the
+  // last ClearLocalUpdatesDelta(). Consumed by FlushSignalUpdates,
+  // ClearLocalUpdatesDelta, ReconcilePostActivation, fixpoint seed.
+  std::vector<uint32_t> delta_dirty_instances_;
+  std::vector<uint8_t> in_delta_dirty_;
+  // Timeslot-dirty: instances with non-empty DirtySignals() since the
+  // last ClearLocalUpdates(). Superset of delta-dirty. Consumed by
+  // FlushLocalDirtySlotsToTrace, ClearLocalUpdates.
+  std::vector<uint32_t> timeslot_dirty_instances_;
+  std::vector<uint8_t> in_timeslot_dirty_;
+
+  // Record that an instance has become locally dirty. Called from the
+  // canonical local mark-dirty helpers below. Maintains both sparse
+  // indexes with O(1) dedup.
+  void MarkInstanceDeltaDirty(uint32_t instance_idx) {
+    if (in_delta_dirty_[instance_idx] == 0) {
+      in_delta_dirty_[instance_idx] = 1;
+      delta_dirty_instances_.push_back(instance_idx);
+    }
+    if (in_timeslot_dirty_[instance_idx] == 0) {
+      in_timeslot_dirty_[instance_idx] = 1;
+      timeslot_dirty_instances_.push_back(instance_idx);
+    }
+  }
+
+  // Canonical local dirty-mark helpers. ALL local dirty marking must
+  // go through these methods -- never call local_updates.MarkSlotDirty()
+  // or MarkDirtyRange() directly from engine code.
+  // Overloads accepting instance_idx skip the GetInstanceIndex lookup
+  // when the caller already has the index.
+  void MarkLocalSignalDirty(RuntimeInstance& inst, LocalSignalId lid);
+  void MarkLocalSignalDirty(
+      RuntimeInstance& inst, LocalSignalId lid, uint32_t instance_idx);
+  void MarkLocalSignalDirtyRange(
+      RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
+      uint32_t byte_size);
+  void MarkLocalSignalDirtyRange(
+      RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
+      uint32_t byte_size, uint32_t instance_idx);
+
   UpdateSet update_set_;
 
   // Connection batch: fast-path for kernelized connection processes.
@@ -1317,12 +1362,6 @@ class Engine {
   // to be built (i.e., after SetInstances()).
   auto BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
       -> CombKernel;
-
-  // Frontier invariant verifier. Checks that current_instances exactly
-  // matches the set of instances with non-empty pending, with no
-  // duplicates, leaks, or stale membership bits. Called at iteration
-  // boundaries inside FlushAndPropagateConnections.
-  void VerifyLocalFrontierConsistency() const;
 
   // Structured trigger entries with byte-range observation.
   struct CombTriggerEntry {

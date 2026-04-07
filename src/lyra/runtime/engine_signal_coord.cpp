@@ -8,18 +8,47 @@
 
 namespace lyra::runtime {
 
+// --- Canonical local dirty-mark helpers ---
+// All local dirty marking routes through these two methods. They
+// update the per-instance LocalUpdateSet (authoritative truth) and
+// the engine-level dirty-instance sparse indexes (derived acceleration).
+
+void Engine::MarkLocalSignalDirty(RuntimeInstance& inst, LocalSignalId lid) {
+  MarkLocalSignalDirty(inst, lid, GetInstanceIndex(inst));
+}
+
+void Engine::MarkLocalSignalDirty(
+    RuntimeInstance& inst, LocalSignalId lid, uint32_t instance_idx) {
+  inst.observability.local_updates.MarkSlotDirty(lid);
+  MarkInstanceDeltaDirty(instance_idx);
+}
+
+void Engine::MarkLocalSignalDirtyRange(
+    RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
+    uint32_t byte_size) {
+  MarkLocalSignalDirtyRange(
+      inst, lid, byte_off, byte_size, GetInstanceIndex(inst));
+}
+
+void Engine::MarkLocalSignalDirtyRange(
+    RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
+    uint32_t byte_size, uint32_t instance_idx) {
+  inst.observability.local_updates.MarkDirtyRange(lid, byte_off, byte_size);
+  MarkInstanceDeltaDirty(instance_idx);
+}
+
 // --- Instance-owned local paths (source of truth: per-instance containers) ---
 
 void Engine::MarkDirty(ObjectSignalRef signal) {
   if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
-  signal.instance->observability.local_updates.MarkSlotDirty(signal.local);
+  MarkLocalSignalDirty(*signal.instance, signal.local);
 }
 
 void Engine::MarkDirtyRange(
     ObjectSignalRef signal, uint32_t byte_off, uint32_t byte_size) {
   if (detailed_stats_enabled_) ++stats_.detailed.dirty_mark_calls;
-  signal.instance->observability.local_updates.MarkDirtyRange(
-      signal.local, byte_off, byte_size);
+  MarkLocalSignalDirtyRange(
+      *signal.instance, signal.local, byte_off, byte_size);
 }
 
 void Engine::ScheduleNba(
@@ -106,6 +135,7 @@ void Engine::SetInstances(std::span<const RuntimeInstance* const> instances) {
 
   // Build reverse-lookup table: instance_id.value -> index in instances_[].
   // Dense table with sparsity bound to prevent pathological allocation.
+  instance_to_idx_.clear();
   if (!instances_.empty()) {
     uint32_t max_id = 0;
     for (auto* inst : instances_) {
@@ -132,6 +162,15 @@ void Engine::SetInstances(std::span<const RuntimeInstance* const> instances) {
       instance_to_idx_[raw] = i;
     }
   }
+
+  // Initialize dirty-instance sparse indexes.
+  auto n = instances_.size();
+  in_delta_dirty_.assign(n, 0);
+  in_timeslot_dirty_.assign(n, 0);
+  delta_dirty_instances_.clear();
+  delta_dirty_instances_.reserve(n);
+  timeslot_dirty_instances_.clear();
+  timeslot_dirty_instances_.reserve(n);
 }
 
 void InstanceIdTraceResolver::Build(
@@ -181,19 +220,24 @@ auto Engine::GetInstanceIndex(const RuntimeInstance& inst) const -> uint32_t {
 }
 
 void Engine::ClearLocalUpdatesDelta() {
-  for (auto* inst : instances_) {
-    if (inst->observability.local_signal_count > 0) {
-      inst->observability.local_updates.ClearDelta();
-    }
+  for (uint32_t idx : delta_dirty_instances_) {
+    instances_[idx]->observability.local_updates.ClearDelta();
+    in_delta_dirty_[idx] = 0;
   }
+  delta_dirty_instances_.clear();
 }
 
 void Engine::ClearLocalUpdates() {
-  for (auto* inst : instances_) {
-    if (inst->observability.local_signal_count > 0) {
-      inst->observability.local_updates.Clear();
-    }
+  // Full timeslot clear dominates delta clear. Clear() calls ClearDelta()
+  // internally on each instance, so we only need to iterate the timeslot
+  // set. Both sparse indexes are reset as a consequence.
+  for (uint32_t idx : timeslot_dirty_instances_) {
+    instances_[idx]->observability.local_updates.Clear();
+    in_timeslot_dirty_[idx] = 0;
+    in_delta_dirty_[idx] = 0;
   }
+  timeslot_dirty_instances_.clear();
+  delta_dirty_instances_.clear();
 }
 
 }  // namespace lyra::runtime

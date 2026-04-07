@@ -49,6 +49,7 @@ void FlushGlobalDirtySlotsToTrace(
 //
 // Does NOT clear local update sets; caller is responsible.
 void FlushLocalDirtySlotsToTrace(
-    trace::TraceManager& trace, std::span<RuntimeInstance* const> instances);
+    trace::TraceManager& trace, std::span<RuntimeInstance* const> instances,
+    std::span<const uint32_t> dirty_indices);
 
 }  // namespace lyra::runtime
