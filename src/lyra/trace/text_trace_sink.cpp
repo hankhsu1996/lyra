@@ -17,27 +17,19 @@
 namespace lyra::trace {
 
 TextTraceSink::TextTraceSink(const runtime::TraceSignalMetaRegistry* meta)
-    : meta_(meta), output_(nullptr), owns_file_(false) {
+    : meta_(meta) {
 }
 
 TextTraceSink::TextTraceSink(
     const runtime::TraceSignalMetaRegistry* meta, const std::string& path)
-    : meta_(meta),
-      output_(
-          std::fopen(
-              path.c_str(), "w")),  // NOLINT(cppcoreguidelines-owning-memory)
-      owns_file_(true) {
+    : meta_(meta), output_(std::fopen(path.c_str(), "w")) {
   if (output_ == nullptr) {
     throw common::InternalError(
         "TextTraceSink", std::format("cannot open '{}' for writing", path));
   }
 }
 
-TextTraceSink::~TextTraceSink() {
-  if (owns_file_ && output_ != nullptr) {
-    std::fclose(output_);  // NOLINT(cppcoreguidelines-owning-memory)
-  }
-}
+TextTraceSink::~TextTraceSink() = default;
 
 void TextTraceSink::OnEvent(const TraceEvent& event) {
   std::visit(
@@ -140,8 +132,8 @@ void TextTraceSink::HandleGlobalValueChange(const GlobalValueChange& vc) {
   auto line = std::format(
       "t={} d={} {} = {}\n", current_time_, current_delta_, name, value_str);
 
-  if (output_ != nullptr) {
-    std::fwrite(line.data(), 1, line.size(), output_);
+  if (output_) {
+    std::fwrite(line.data(), 1, line.size(), output_.get());
   } else {
     runtime::WriteOutput(line);
   }
@@ -184,8 +176,8 @@ void TextTraceSink::HandleLocalValueChange(const LocalValueChange& vc) {
   auto line = std::format(
       "t={} d={} {} = {}\n", current_time_, current_delta_, name, value_str);
 
-  if (output_ != nullptr) {
-    std::fwrite(line.data(), 1, line.size(), output_);
+  if (output_) {
+    std::fwrite(line.data(), 1, line.size(), output_.get());
   } else {
     runtime::WriteOutput(line);
   }

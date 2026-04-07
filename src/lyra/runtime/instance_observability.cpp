@@ -61,8 +61,7 @@ auto BodyObservableLayout::TraceLocalName(LocalSignalId signal) const
         std::format(
             "name offset {} out of range {}", off, trace_name_pool.size()));
   }
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-  const char* begin = trace_name_pool.data() + off;
+  const char* begin = &trace_name_pool[off];
   auto remaining = trace_name_pool.size() - off;
   const auto* end =
       static_cast<const char*>(std::memchr(begin, '\0', remaining));

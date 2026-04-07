@@ -131,7 +131,7 @@ auto ArenaAddr(
   if (off > arena.size() || size > arena.size() - off) {
     throw common::InternalError(caller, "access exceeds arena");
   }
-  return arena.data() + static_cast<size_t>(off);
+  return &arena[static_cast<size_t>(off)];
 }
 
 // Recursively apply one recipe op to arena storage.

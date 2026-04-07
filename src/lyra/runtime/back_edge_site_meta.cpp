@@ -1,7 +1,9 @@
 #include "lyra/runtime/back_edge_site_meta.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <format>
+#include <span>
 #include <string>
 
 #include "lyra/common/internal_error.hpp"
@@ -12,18 +14,18 @@ BackEdgeSiteRegistry::BackEdgeSiteRegistry(
     const uint32_t* words, uint32_t count, const char* pool,
     uint32_t pool_size) {
   if (pool != nullptr && pool_size > 0) {
-    string_pool_.assign(pool, pool + pool_size);
+    auto pool_span = std::span(pool, pool_size);
+    string_pool_.assign(pool_span.begin(), pool_span.end());
   }
 
+  auto word_span = std::span(
+      words, static_cast<size_t>(count) * back_edge_site_abi::kStride);
   sites_.reserve(count);
   for (uint32_t i = 0; i < count; ++i) {
     auto base = static_cast<size_t>(i) * back_edge_site_abi::kStride;
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    uint32_t file_off = words[base + back_edge_site_abi::kFieldFileStrOff];
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    uint32_t line = words[base + back_edge_site_abi::kFieldLine];
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    uint32_t col = words[base + back_edge_site_abi::kFieldCol];
+    uint32_t file_off = word_span[base + back_edge_site_abi::kFieldFileStrOff];
+    uint32_t line = word_span[base + back_edge_site_abi::kFieldLine];
+    uint32_t col = word_span[base + back_edge_site_abi::kFieldCol];
 
     sites_.push_back(
         BackEdgeSiteMeta{
@@ -60,7 +62,7 @@ auto BackEdgeSiteRegistry::PoolString(uint32_t offset) const -> const char* {
   if (string_pool_.empty() || offset >= string_pool_.size()) {
     return "";
   }
-  return string_pool_.data() + offset;  // NOLINT
+  return &string_pool_[offset];
 }
 
 auto BackEdgeSiteRegistry::Format(uint32_t site_id) const -> std::string {
@@ -74,7 +76,7 @@ auto BackEdgeSiteRegistry::Format(uint32_t site_id) const -> std::string {
   }
 
   const char* file = PoolString(site.loc.file_str_off);
-  if (file[0] == '\0') {
+  if (*file == '\0') {
     return std::format("line {}", site.loc.line);
   }
   return std::format("{}:{}:{}", file, site.loc.line, site.loc.col);

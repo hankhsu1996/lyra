@@ -6,7 +6,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "lyra/common/byte_offset.hpp"
@@ -20,7 +19,6 @@
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_meta_abi.hpp"
-#include "lyra/runtime/process_trigger_registry.hpp"
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/slot_meta.hpp"
 #include "lyra/runtime/string.hpp"
@@ -57,14 +55,14 @@ auto ComposeHierarchicalTraceName(
 
 // Storage-facing facts for one relocated observable entry.
 struct ObservableStorageFact {
-  common::SlotId slot_id;
-  common::SlotId owner_slot_id;
-  SlotStorageDomain domain;
-  InstanceId instance_id;
-  common::InstanceByteOffset instance_rel_off;
-  uint32_t total_bytes;
-  SlotStorageKind storage_kind;
-  PackedPlanes planes;
+  common::SlotId slot_id = {};
+  common::SlotId owner_slot_id = {};
+  SlotStorageDomain domain = {};
+  InstanceId instance_id = {};
+  common::InstanceByteOffset instance_rel_off = {};
+  uint32_t total_bytes = 0;
+  SlotStorageKind storage_kind = {};
+  PackedPlanes planes = {};
 };
 
 // Trace-facing facts for one relocated observable entry.

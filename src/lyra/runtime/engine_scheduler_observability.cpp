@@ -20,7 +20,6 @@
 #include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/scheduler_snapshot.hpp"
 #include "lyra/runtime/slot_meta.hpp"
-#include "lyra/runtime/suspend_record.hpp"
 #include "lyra/runtime/trace_signal_meta.hpp"
 
 namespace lyra::runtime {

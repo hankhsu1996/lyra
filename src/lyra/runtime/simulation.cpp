@@ -656,6 +656,7 @@ extern "C" void LyraRunSimulation(
   lyra::runtime::DpiExportCallContext export_ctx{
       .design_state = abi->design_state,
       .engine = &engine,
+      .decision_owner = {},
   };
   lyra::runtime::ScopedDpiExportCallContext export_scope(export_ctx);
 
@@ -899,10 +900,12 @@ extern "C" void LyraApply4StatePatches8(
     void* base, const uint64_t* offsets, const uint8_t* masks, uint64_t count) {
   if (count == 0 || base == nullptr || offsets == nullptr || masks == nullptr)
     return;
+  auto offset_span = std::span(offsets, count);
+  auto mask_span = std::span(masks, count);
   auto* base_bytes = static_cast<uint8_t*>(base);
   for (uint64_t i = 0; i < count; ++i) {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    std::memcpy(base_bytes + offsets[i], &masks[i], sizeof(uint8_t));
+    std::memcpy(base_bytes + offset_span[i], &mask_span[i], sizeof(uint8_t));
   }
 }
 
@@ -911,10 +914,12 @@ extern "C" void LyraApply4StatePatches16(
     uint64_t count) {
   if (count == 0 || base == nullptr || offsets == nullptr || masks == nullptr)
     return;
+  auto offset_span = std::span(offsets, count);
+  auto mask_span = std::span(masks, count);
   auto* base_bytes = static_cast<uint8_t*>(base);
   for (uint64_t i = 0; i < count; ++i) {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    std::memcpy(base_bytes + offsets[i], &masks[i], sizeof(uint16_t));
+    std::memcpy(base_bytes + offset_span[i], &mask_span[i], sizeof(uint16_t));
   }
 }
 
@@ -923,10 +928,12 @@ extern "C" void LyraApply4StatePatches32(
     uint64_t count) {
   if (count == 0 || base == nullptr || offsets == nullptr || masks == nullptr)
     return;
+  auto offset_span = std::span(offsets, count);
+  auto mask_span = std::span(masks, count);
   auto* base_bytes = static_cast<uint8_t*>(base);
   for (uint64_t i = 0; i < count; ++i) {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    std::memcpy(base_bytes + offsets[i], &masks[i], sizeof(uint32_t));
+    std::memcpy(base_bytes + offset_span[i], &mask_span[i], sizeof(uint32_t));
   }
 }
 
@@ -935,10 +942,12 @@ extern "C" void LyraApply4StatePatches64(
     uint64_t count) {
   if (count == 0 || base == nullptr || offsets == nullptr || masks == nullptr)
     return;
+  auto offset_span = std::span(offsets, count);
+  auto mask_span = std::span(masks, count);
   auto* base_bytes = static_cast<uint8_t*>(base);
   for (uint64_t i = 0; i < count; ++i) {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    std::memcpy(base_bytes + offsets[i], &masks[i], sizeof(uint64_t));
+    std::memcpy(base_bytes + offset_span[i], &mask_span[i], sizeof(uint64_t));
   }
 }
 

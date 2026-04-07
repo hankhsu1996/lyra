@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <utility>
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -210,7 +211,7 @@ auto LowerArrayQueryRvalue(
   if (auto* const_dim = llvm::dyn_cast<llvm::ConstantInt>(dim_value)) {
     auto dim = static_cast<int32_t>(const_dim->getSExtValue());
 
-    if (dim < 1 || dim > static_cast<int32_t>(info.total_dims)) {
+    if (dim < 1 || std::cmp_greater(dim, info.total_dims)) {
       auto x = MakeXResult(is_four_state, llvm_ctx);
       result_val = x.value;
       result_unk = x.unknown;

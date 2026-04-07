@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <format>
-#include <span>
 #include <vector>
 
 #include "lyra/common/edge_kind.hpp"
@@ -98,8 +97,8 @@ auto BuildProcessTriggerRegistry(
 
   // Collect groupable entries keyed by domain-aware trigger key.
   struct GroupableEntry {
-    ProcessTriggerKey key;
-    uint32_t scheduled_process_index;
+    ProcessTriggerKey key = {};
+    uint32_t scheduled_process_index = 0;
   };
   std::vector<GroupableEntry> groupable;
   groupable.reserve(registry.descriptors.size());
@@ -168,7 +167,6 @@ void Engine::InitProcessTriggerRegistry(
   // Body-local entries carry kFlagBodyLocal in the word table. Re-read
   // the flags from the word table to apply instance-based relocation.
   auto proc_states = std::span(states, num_processes_);
-  uint32_t slot_count = slot_meta_registry_.Size();
   if (!words.empty()) {
     uint32_t num_entries = words[0];
     for (uint32_t i = 0; i < num_entries && i < descriptors.size(); ++i) {

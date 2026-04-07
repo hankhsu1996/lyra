@@ -1,9 +1,6 @@
 #include <cstdint>
 #include <format>
-#include <span>
 #include <string>
-#include <utility>
-#include <variant>
 
 #include "lyra/common/diagnostic/print.hpp"
 #include "lyra/common/internal_error.hpp"
@@ -129,8 +126,9 @@ void Engine::RunOneActivation(const WakeupEntry& entry) {
   uint32_t limit = LyraGetIterationLimit();
   LyraResetIterationLimit(limit > 0 ? limit : UINT32_MAX);
 
-  ProcessHandle handle{entry.process_id, entry.instance_id};
-  ResumePoint resume{entry.resume_block, 0};
+  ProcessHandle handle{
+      .process_id = entry.process_id, .instance_id = entry.instance_id};
+  ResumePoint resume{.block_index = entry.resume_block, .instruction_index = 0};
   process_dispatch_.fn(process_dispatch_.ctx, *this, handle, resume);
 
   // End activation context.

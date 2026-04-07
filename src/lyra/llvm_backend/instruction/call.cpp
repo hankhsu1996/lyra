@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <format>
+#include <utility>
 #include <vector>
 
 #include <llvm/IR/Function.h>
@@ -163,7 +164,7 @@ auto LowerUserCallImpl(
       // Find the writeback entry for this parameter
       const mir::CallWriteback* wb = nullptr;
       for (const auto& w : call.writebacks) {
-        if (static_cast<size_t>(w.arg_index) == param_idx) {
+        if (std::cmp_equal(w.arg_index, param_idx)) {
           wb = &w;
           break;
         }

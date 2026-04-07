@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -15,16 +15,18 @@
 namespace lyra::runtime {
 
 // --- Entry helpers ---
+// Union-based SBO with raw new/delete for type-erased value storage.
+// NOLINTBEGIN(cppcoreguidelines-pro-type-union-access,cppcoreguidelines-owning-memory,cppcoreguidelines-pro-bounds-array-to-pointer-decay)
 
-auto AssocMap::Entry::data() -> uint8_t* {
+auto AssocMap::Entry::Data() -> uint8_t* {
   return on_heap ? heap_data : inline_data;
 }
 
-auto AssocMap::Entry::data() const -> const uint8_t* {
+auto AssocMap::Entry::Data() const -> const uint8_t* {
   return on_heap ? heap_data : inline_data;
 }
 
-void AssocMap::AllocEntry(Entry& e) {
+void AssocMap::AllocEntry(Entry& e) const {
   if (val_ops_.value_size <= kInlineSize) {
     e.on_heap = false;
   } else {
@@ -33,8 +35,8 @@ void AssocMap::AllocEntry(Entry& e) {
   }
 }
 
-void AssocMap::DestroyEntry(Entry& e) {
-  val_ops_.destroy(e.data(), val_ops_.ctx);
+void AssocMap::DestroyEntry(Entry& e) const {
+  val_ops_.destroy(e.Data(), val_ops_.ctx);
   if (e.on_heap) {
     delete[] e.heap_data;
     e.on_heap = false;
@@ -43,8 +45,10 @@ void AssocMap::DestroyEntry(Entry& e) {
 
 void AssocMap::CopyInitEntry(Entry& dst, const Entry& src) {
   AllocEntry(dst);
-  val_ops_.copy_init(dst.data(), src.data(), val_ops_.ctx);
+  val_ops_.copy_init(dst.Data(), src.Data(), val_ops_.ctx);
 }
+
+// NOLINTEND(cppcoreguidelines-pro-type-union-access,cppcoreguidelines-owning-memory,cppcoreguidelines-pro-bounds-array-to-pointer-decay)
 
 // --- AssocMap ---
 
@@ -63,7 +67,7 @@ AssocMap::~AssocMap() {
 auto AssocMap::Get(const CanonKeyPayload& key, void* out_buf) -> bool {
   auto it = entries_.find(key);
   if (it != entries_.end()) {
-    val_ops_.copy_init(out_buf, it->second.data(), val_ops_.ctx);
+    val_ops_.copy_init(out_buf, it->second.Data(), val_ops_.ctx);
     return true;
   }
   val_ops_.default_init(out_buf, val_ops_.ctx);
@@ -73,11 +77,11 @@ auto AssocMap::Get(const CanonKeyPayload& key, void* out_buf) -> bool {
 void AssocMap::Set(const CanonKeyPayload& key, const void* value_buf) {
   auto it = entries_.find(key);
   if (it != entries_.end()) {
-    val_ops_.copy_assign(it->second.data(), value_buf, val_ops_.ctx);
+    val_ops_.copy_assign(it->second.Data(), value_buf, val_ops_.ctx);
   } else {
     Entry e{};
     AllocEntry(e);
-    val_ops_.copy_init(e.data(), value_buf, val_ops_.ctx);
+    val_ops_.copy_init(e.Data(), value_buf, val_ops_.ctx);
     entries_.emplace(key, std::move(e));
   }
 }
@@ -140,6 +144,7 @@ auto AssocMap::SnapshotKeys() const -> std::vector<CanonKeyPayload> {
 }
 
 auto AssocMap::Clone() const -> AssocMap* {
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   auto* copy = new AssocMap(key_spec_, val_ops_);
   for (const auto& [key, entry] : entries_) {
     Entry e{};
@@ -152,6 +157,9 @@ auto AssocMap::Clone() const -> AssocMap* {
 }  // namespace lyra::runtime
 
 // --- ValueOps factories ---
+// Type-erased C ABI callbacks: reinterpret_cast for size-in-pointer encoding,
+// pointer arithmetic for plane offsets, raw new/delete for C-owned handles.
+// NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast,cppcoreguidelines-pro-bounds-pointer-arithmetic)
 
 namespace {
 
@@ -259,7 +267,7 @@ auto MakeValueOps(LyraAssocElemKind kind, uint32_t elem_size)
     case kLyraAssocElemPod:
       return lyra::runtime::ValueOps{
           .value_size = elem_size,
-          .value_align = std::min(elem_size, 8u),
+          .value_align = std::min(elem_size, 8U),
           .default_init = PodDefaultInit,
           .copy_init = PodCopyInit,
           .copy_assign = PodCopyAssign,
@@ -304,7 +312,7 @@ auto MakeValueOps(LyraAssocElemKind kind, uint32_t elem_size)
       uint32_t encoded = (value_plane_size << 16) | elem_size;
       return lyra::runtime::ValueOps{
           .value_size = elem_size,
-          .value_align = std::min(elem_size, 8u),
+          .value_align = std::min(elem_size, 8U),
           .default_init = Pod4StateDefaultInit,
           .copy_init = PodCopyInit,
           .copy_assign = PodCopyAssign,
@@ -353,9 +361,13 @@ void WriteKeyToOutput(
   }
 }
 
+// NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast,cppcoreguidelines-pro-bounds-pointer-arithmetic)
+
 }  // namespace
 
 // --- Extern "C" ABI ---
+// Raw new/delete for C-owned handles, pointer arithmetic for snapshot access.
+// NOLINTBEGIN(cppcoreguidelines-owning-memory)
 
 auto LyraAssocNew(
     uint32_t key_kind, uint32_t key_bw, uint32_t key_signed,
@@ -380,9 +392,9 @@ auto LyraAssocClone(void* aa) -> void* {
   return static_cast<lyra::runtime::AssocMap*>(aa)->Clone();
 }
 
-int32_t LyraAssocGet(
+auto LyraAssocGet(
     void* aa, void* key_a, void* key_b, uint32_t key_c, void* out_value,
-    void* had_xz) {
+    void* had_xz) -> int32_t {
   if (aa == nullptr) {
     // Null AA = miss. Caller must provide zeroed or uninitialized buffer.
     // We can't default-init without ValueOps. Return 0 (miss).
@@ -398,9 +410,9 @@ int32_t LyraAssocGet(
   return map->Get(result.payload, out_value) ? 1 : 0;
 }
 
-int32_t LyraAssocSet(
+auto LyraAssocSet(
     void* aa, void* key_a, void* key_b, uint32_t key_c, void* value,
-    void* had_xz) {
+    void* had_xz) -> int32_t {
   if (aa == nullptr) return 0;
   auto* map = static_cast<lyra::runtime::AssocMap*>(aa);
   auto result = CanonFromAbi(map, key_a, key_b, key_c);
@@ -412,8 +424,9 @@ int32_t LyraAssocSet(
   return 1;
 }
 
-int32_t LyraAssocExists(
-    void* aa, void* key_a, void* key_b, uint32_t key_c, void* had_xz) {
+auto LyraAssocExists(
+    void* aa, void* key_a, void* key_b, uint32_t key_c, void* had_xz)
+    -> int32_t {
   if (aa == nullptr) return 0;
   auto* map = static_cast<lyra::runtime::AssocMap*>(aa);
   auto result = CanonFromAbi(map, key_a, key_b, key_c);
@@ -424,8 +437,9 @@ int32_t LyraAssocExists(
   return map->Exists(result.payload) ? 1 : 0;
 }
 
-int32_t LyraAssocDeleteKey(
-    void* aa, void* key_a, void* key_b, uint32_t key_c, void* had_xz) {
+auto LyraAssocDeleteKey(
+    void* aa, void* key_a, void* key_b, uint32_t key_c, void* had_xz)
+    -> int32_t {
   if (aa == nullptr) return 0;
   auto* map = static_cast<lyra::runtime::AssocMap*>(aa);
   auto result = CanonFromAbi(map, key_a, key_b, key_c);
@@ -447,7 +461,7 @@ auto LyraAssocSize(void* aa) -> int64_t {
   return static_cast<lyra::runtime::AssocMap*>(aa)->Size();
 }
 
-int32_t LyraAssocFirst(void* aa, void* out_key) {
+auto LyraAssocFirst(void* aa, void* out_key) -> int32_t {
   if (aa == nullptr) return 0;
   auto* map = static_cast<lyra::runtime::AssocMap*>(aa);
   auto key = map->First();
@@ -456,7 +470,7 @@ int32_t LyraAssocFirst(void* aa, void* out_key) {
   return 1;
 }
 
-int32_t LyraAssocLast(void* aa, void* out_key) {
+auto LyraAssocLast(void* aa, void* out_key) -> int32_t {
   if (aa == nullptr) return 0;
   auto* map = static_cast<lyra::runtime::AssocMap*>(aa);
   auto key = map->Last();
@@ -465,7 +479,7 @@ int32_t LyraAssocLast(void* aa, void* out_key) {
   return 1;
 }
 
-int32_t LyraAssocNext(void* aa, void* key_inout) {
+auto LyraAssocNext(void* aa, void* key_inout) -> int32_t {
   if (aa == nullptr) return 0;
   auto* map = static_cast<lyra::runtime::AssocMap*>(aa);
   const auto& spec = map->GetKeySpec();
@@ -481,7 +495,8 @@ int32_t LyraAssocNext(void* aa, void* key_inout) {
   } else {
     uint32_t num_words = (spec.bit_width + 63) / 64;
     auto* words = static_cast<uint64_t*>(key_inout);
-    current.int_words.assign(words, words + num_words);
+    auto word_span = std::span(words, num_words);
+    current.int_words.assign(word_span.begin(), word_span.end());
   }
 
   auto next = map->Next(current);
@@ -491,7 +506,7 @@ int32_t LyraAssocNext(void* aa, void* key_inout) {
   return 1;
 }
 
-int32_t LyraAssocPrev(void* aa, void* key_inout) {
+auto LyraAssocPrev(void* aa, void* key_inout) -> int32_t {
   if (aa == nullptr) return 0;
   auto* map = static_cast<lyra::runtime::AssocMap*>(aa);
   const auto& spec = map->GetKeySpec();
@@ -506,7 +521,8 @@ int32_t LyraAssocPrev(void* aa, void* key_inout) {
   } else {
     uint32_t num_words = (spec.bit_width + 63) / 64;
     auto* words = static_cast<uint64_t*>(key_inout);
-    current.int_words.assign(words, words + num_words);
+    auto word_span = std::span(words, num_words);
+    current.int_words.assign(word_span.begin(), word_span.end());
   }
 
   auto prev = map->Prev(current);
@@ -518,10 +534,11 @@ int32_t LyraAssocPrev(void* aa, void* key_inout) {
 
 auto LyraAssocSnapshotCreate(void* aa) -> void* {
   if (aa == nullptr) {
-    return new AssocSnapshot{{}, {}};
+    return new AssocSnapshot{.keys = {}, .key_spec = {}};
   }
   auto* map = static_cast<lyra::runtime::AssocMap*>(aa);
-  return new AssocSnapshot{map->SnapshotKeys(), map->GetKeySpec()};
+  return new AssocSnapshot{
+      .keys = map->SnapshotKeys(), .key_spec = map->GetKeySpec()};
 }
 
 auto LyraAssocSnapshotSize(void* snap) -> int64_t {
@@ -547,3 +564,5 @@ void LyraAssocDestroyElem(void* elem) {
   auto* handle = *static_cast<void**>(elem);
   LyraAssocRelease(handle);
 }
+
+// NOLINTEND(cppcoreguidelines-owning-memory)

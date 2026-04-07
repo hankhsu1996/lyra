@@ -1,6 +1,5 @@
 #include "lyra/mir/compiled_specialization.hpp"
 
-#include <algorithm>
 #include <format>
 #include <unordered_set>
 

@@ -57,7 +57,7 @@ struct LvalueResult {
   // (for non-local hierarchical references during body lowering).
   mir::WriteTarget dest;
   mir::Operand validity;  // 1-bit 2-state bool: kConst(1) or kUse(place)
-  std::unique_ptr<AssocWriteBack> writeback;
+  std::unique_ptr<AssocWriteBack> writeback = nullptr;
 
   // Check if this lvalue is always valid (no runtime guarding needed).
   [[nodiscard]] auto IsAlwaysValid() const -> bool {

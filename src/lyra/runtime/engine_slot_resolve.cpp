@@ -1,5 +1,3 @@
-#include <variant>
-
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"
 #include "lyra/runtime/instance_observability.hpp"
@@ -83,8 +81,8 @@ void Engine::ValidateInstanceOwnedSlotMeta() const {
     }
 
     // GetInstance throws InternalError if the instance_id is invalid or
-    // missing.
-    GetInstance(meta.owner_instance_id);
+    // missing. Call is for validation only.
+    (void)GetInstance(meta.owner_instance_id);
   }
 }
 

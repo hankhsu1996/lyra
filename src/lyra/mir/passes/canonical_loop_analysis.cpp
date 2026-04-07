@@ -6,7 +6,6 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
 #include "lyra/mir/place.hpp"
@@ -83,7 +82,7 @@ auto FindRvalueForTemp(const BasicBlock& block, int temp_id, const Arena& arena)
     }
     if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
       const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
-      if (!dest_pid) continue;
+      if (dest_pid == nullptr) continue;
       auto dest_temp = ResolvePlaceToTempId(*dest_pid, arena);
       if (dest_temp && *dest_temp == temp_id) {
         return std::get_if<Rvalue>(&assign->rhs);
@@ -113,7 +112,7 @@ auto ResolveOneUseCopy(
     }
     if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
       const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
-      if (!dest_pid) continue;
+      if (dest_pid == nullptr) continue;
       auto dest_tid = ResolvePlaceToTempId(*dest_pid, arena);
       if (dest_tid && *dest_tid == *temp_id) {
         const auto* rhs_op = std::get_if<Operand>(&assign->rhs);
@@ -141,7 +140,7 @@ auto IsIvModifiedInBody(
     for (const auto& stmt : blocks[bi].statements) {
       if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
         if (const auto* pid = std::get_if<PlaceId>(&assign->dest);
-            pid && *pid == iv)
+            pid != nullptr && *pid == iv)
           return true;
       }
       if (const auto* ga = std::get_if<GuardedAssign>(&stmt.data)) {
@@ -232,7 +231,7 @@ auto RecognizeLoop(
     const auto* assign = std::get_if<Assign>(&stmt.data);
     if (assign == nullptr) continue;
     const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
-    if (!dest_pid || *dest_pid != *iv_place) continue;
+    if (dest_pid == nullptr || *dest_pid != *iv_place) continue;
     const auto* rhs_op = std::get_if<Operand>(&assign->rhs);
     init_value = rhs_op != nullptr ? GetConstantInt(*rhs_op) : std::nullopt;
   }
@@ -244,7 +243,7 @@ auto RecognizeLoop(
     const auto* assign = std::get_if<Assign>(&stmt.data);
     if (assign == nullptr) continue;
     const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
-    if (!dest_pid || *dest_pid != *iv_place) continue;
+    if (dest_pid == nullptr || *dest_pid != *iv_place) continue;
 
     const Rvalue* step_rv = std::get_if<Rvalue>(&assign->rhs);
 

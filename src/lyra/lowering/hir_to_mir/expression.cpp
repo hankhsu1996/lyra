@@ -17,12 +17,10 @@
 
 #include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/common/dpi_types.hpp"
 #include "lyra/common/format.hpp"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/math_fn.hpp"
-#include "lyra/common/overloaded.hpp"
 #include "lyra/common/system_function.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
@@ -163,7 +161,7 @@ void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
   switch (type.Kind()) {
     case TypeKind::kUnpackedStruct: {
       const auto& info = type.AsUnpackedStruct();
-      for (int i = 0; i < static_cast<int>(info.fields.size()); ++i) {
+      for (int i = 0; std::cmp_less(i, info.fields.size()); ++i) {
         if (!IsIntrinsicallyFourState(info.fields[i].type, types)) continue;
         mir::PlaceId field_place = ctx.DerivePlace(
             place,
@@ -176,8 +174,7 @@ void EmitOOBDefault(mir::PlaceId place, TypeId type_id, MirBuilder& builder) {
       const auto& info = type.AsUnpackedArray();
       if (!IsIntrinsicallyFourState(info.element_type, types)) break;
       TypeId offset_type = ctx.GetOffsetType();
-      for (int64_t idx = 0; idx < static_cast<int64_t>(info.range.Size());
-           ++idx) {
+      for (int64_t idx = 0; std::cmp_less(idx, info.range.Size()); ++idx) {
         mir::Operand idx_op = mir::Operand::Const(
             Constant{
                 .type = offset_type,
@@ -1472,8 +1469,10 @@ auto LowerDpiCall(
         break;
       }
       case ParameterDirection::kRef:
+      case ParameterDirection::kConstRef:
         throw common::InternalError(
-            "LowerDpiCall", "ref direction should have been rejected upstream");
+            "LowerDpiCall",
+            "ref/const-ref direction should have been rejected upstream");
     }
     bindings.push_back(std::move(binding));
   }

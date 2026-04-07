@@ -32,7 +32,10 @@ void InstallSignalDumpHandler(Engine* engine) {
 }
 
 void RemoveSignalDumpHandler() {
-  signal(SIGUSR1, SIG_DFL);  // NOLINT
+  struct sigaction sa{};
+  sa.sa_handler = SIG_DFL;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGUSR1, &sa, nullptr);
   g_engine.store(nullptr, std::memory_order_relaxed);
 }
 

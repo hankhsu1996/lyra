@@ -136,7 +136,7 @@ class ProfilingPlugin : public llvm::orc::ObjectLinkingLayer::Plugin {
     }
 
     // PrePrune: count raw graph stats before dead-stripping.
-    config.PrePrunePasses.push_back(
+    config.PrePrunePasses.emplace_back(
         [this](llvm::jitlink::LinkGraph& g) -> llvm::Error {
           std::lock_guard lock(progress_->mutex);
           progress_->section_count += static_cast<int>(g.sections_size());
@@ -153,14 +153,14 @@ class ProfilingPlugin : public llvm::orc::ObjectLinkingLayer::Plugin {
           return llvm::Error::success();
         });
 
-    config.PostAllocationPasses.push_back(
+    config.PostAllocationPasses.emplace_back(
         [this](llvm::jitlink::LinkGraph&) -> llvm::Error {
           std::lock_guard lock(progress_->mutex);
           progress_->alloc_done = Clock::now();
           return llvm::Error::success();
         });
 
-    config.PostFixupPasses.push_back(
+    config.PostFixupPasses.emplace_back(
         [this](llvm::jitlink::LinkGraph& g) -> llvm::Error {
           std::lock_guard lock(progress_->mutex);
           progress_->fixup_done = Clock::now();
@@ -441,8 +441,8 @@ auto CompileJitImpl(
   // Object files participate in bidirectional symbol resolution within
   // the same JITDylib, enabling both import (JIT calls C) and export
   // (C calls JIT) patterns.
-  for (size_t i = 0; i < options.dpi_object_inputs.size(); ++i) {
-    auto obj_path = options.dpi_object_inputs[i].string();
+  for (const auto& dpi_input : options.dpi_object_inputs) {
+    auto obj_path = dpi_input.string();
     auto buf = llvm::MemoryBuffer::getFile(obj_path);
     if (!buf) {
       return std::unexpected(

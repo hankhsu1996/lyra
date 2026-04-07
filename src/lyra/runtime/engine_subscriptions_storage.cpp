@@ -1,10 +1,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <string_view>
-#include <utility>
-#include <vector>
 
 #include <fmt/core.h>
 
