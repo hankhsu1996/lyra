@@ -33,8 +33,7 @@ auto LowerModule(
     hir::ModuleBodyId body_id,
     mir::ImmediateCoverSiteRegistry* cover_site_registry,
     mir::DeferredAssertionSiteRegistry* deferred_assertion_site_registry,
-    const PlaceMap* cross_instance_places)
-    -> Result<MirBodyLoweringResult> {
+    const PlaceMap* cross_instance_places) -> Result<MirBodyLoweringResult> {
   mir::ModuleBody result;
 
   // Body-local slot descriptors come from specialization-local collection,
