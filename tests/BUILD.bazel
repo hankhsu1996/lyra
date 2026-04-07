@@ -5,17 +5,44 @@
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 cc_library(
-    name = "test_framework",
-    srcs = glob(["framework/*.cpp"]),
-    hdrs = glob(["framework/*.hpp"]),
+    name = "test_core",
+    srcs = glob(
+        ["framework/*.cpp"],
+        exclude = [
+            "framework/runner.cpp",
+            "framework/assertions.cpp",
+        ],
+    ),
+    hdrs = glob(
+        ["framework/*.hpp"],
+        exclude = [
+            "framework/runner.hpp",
+            "framework/assertions.hpp",
+        ],
+    ),
     deps = [
         "//:frontend",
         "//:llvm_backend",
         "//:lowering",
         "//:realization",
-        "@googletest//:gtest",
         "@slang",
         "@yaml-cpp",
+    ],
+)
+
+cc_library(
+    name = "test_assertions",
+    srcs = [
+        "framework/assertions.cpp",
+        "framework/runner.cpp",
+    ],
+    hdrs = [
+        "framework/assertions.hpp",
+        "framework/runner.hpp",
+    ],
+    deps = [
+        ":test_core",
+        "@googletest//:gtest",
     ],
 )
 
@@ -36,7 +63,7 @@ cc_test(
     ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
     shard_count = 4,
     deps = [
-        ":test_framework",
+        ":test_assertions",
         "@googletest//:gtest",
     ],
 )
@@ -52,7 +79,7 @@ cc_test(
     ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
     shard_count = 4,
     deps = [
-        ":test_framework",
+        ":test_assertions",
         "@googletest//:gtest",
     ],
 )
@@ -69,7 +96,7 @@ cc_test(
     ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
     shard_count = 4,
     deps = [
-        ":test_framework",
+        ":test_assertions",
         "@googletest//:gtest",
     ],
 )
@@ -85,7 +112,7 @@ cc_test(
         "//third_party/systemverilog:svdpi.h",
     ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
     deps = [
-        ":test_framework",
+        ":test_assertions",
         "@googletest//:gtest",
     ],
 )
@@ -156,7 +183,7 @@ cc_test(
         "//third_party/systemverilog:svdpi.h",
     ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
     deps = [
-        ":test_framework",
+        ":test_assertions",
         "@googletest//:gtest",
     ],
 )

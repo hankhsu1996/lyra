@@ -1,7 +1,6 @@
 #ifndef TESTS_FRAMEWORK_TEST_DISCOVERY_HPP
 #define TESTS_FRAMEWORK_TEST_DISCOVERY_HPP
 
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -21,21 +20,28 @@ struct CommandLineArgs {
   bool two_state = false;   // Force two-state mode (--test_file only)
 };
 
-// Result of resolving args to test configuration
-struct TestConfiguration {
-  BackendKind backend;
-  bool force_two_state = false;
-  std::vector<std::filesystem::path> yaml_paths;
-  std::filesystem::path yaml_directory;  // Base path for relative calculations
+// Explicit sharding specification. Callers resolve from CLI/env and pass in.
+struct ShardSpec {
+  bool enabled = false;
+  int shard_count = 1;
+  int shard_index = 0;
 };
 
-// Get test configuration based on parsed args
-auto GetTestConfiguration(const CommandLineArgs& args) -> TestConfiguration;
+// Fully resolved, ordered manifest of runnable test cases.
+struct Manifest {
+  BackendKind backend;
+  bool force_two_state = false;
+  std::vector<TestCase> cases;
+};
 
-// Load test cases from YAML files, prefixing names with category
-auto LoadTestCases(
-    const std::vector<std::filesystem::path>& yaml_paths,
-    const std::filesystem::path& yaml_directory) -> std::vector<TestCase>;
+// Resolve sharding from CLI args and Bazel environment variables.
+// CLI args take precedence over env vars. Returns disabled spec if neither set.
+auto ResolveShardSpec(const CommandLineArgs& args) -> ShardSpec;
+
+// Single canonical discovery entrypoint. Resolves suite or test_file,
+// loads all cases, applies sharding if specified. Does not read environment.
+auto BuildManifest(const CommandLineArgs& args, const ShardSpec& shard = {})
+    -> Manifest;
 
 }  // namespace lyra::test
 

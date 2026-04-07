@@ -80,57 +80,24 @@ auto main(int argc, char** argv) -> int {
   // Initialize gtest before registration
   testing::InitGoogleTest(&remaining_argc, remaining.data());
 
-  // Load test configuration and cases
+  // Build manifest: resolves suite/test_file, loads cases, applies sharding.
+  // Sharding is resolved here from CLI args + Bazel env vars, then passed
+  // explicitly to BuildManifest (which does not read environment itself).
   try {
-    auto configuration = lyra::test::GetTestConfiguration(args);
+    auto shard = lyra::test::ResolveShardSpec(args);
+    auto manifest = lyra::test::BuildManifest(args, shard);
 
-    // Sharding: CLI args take precedence, then Bazel env vars.
-    // Bazel sets TEST_TOTAL_SHARDS and TEST_SHARD_INDEX when shard_count
-    // is specified on the cc_test target.
-    auto shard_count_str = args.shard_count;
-    auto shard_index_str = args.shard_index;
-    if (shard_count_str.empty()) {
-      const char* env_total = std::getenv("TEST_TOTAL_SHARDS");
-      const char* env_index = std::getenv("TEST_SHARD_INDEX");
-      if (env_total != nullptr) shard_count_str = env_total;
-      if (env_index != nullptr) shard_index_str = env_index;
-    }
+    lyra::test::g_test_cases = std::move(manifest.cases);
+    lyra::test::g_backend = manifest.backend;
+    lyra::test::g_force_two_state = manifest.force_two_state;
 
-    if (!shard_count_str.empty()) {
-      auto shard_count = std::stoi(shard_count_str);
-      auto shard_index =
-          shard_index_str.empty() ? 0 : std::stoi(shard_index_str);
-      if (shard_count < 1) {
-        throw std::runtime_error("--shard_count must be >= 1");
-      }
-      if (shard_index < 0 || shard_index >= shard_count) {
-        throw std::runtime_error(
-            std::format(
-                "--shard_index={} out of range [0, {})", shard_index,
-                shard_count));
-      }
-      auto& paths = configuration.yaml_paths;
-      std::vector<std::filesystem::path> filtered;
-      for (size_t i = 0; i < paths.size(); ++i) {
-        if (static_cast<int>(i % shard_count) == shard_index) {
-          filtered.push_back(std::move(paths[i]));
-        }
-      }
-      paths = std::move(filtered);
-
-      // Disable gtest's internal sharding. Bazel sets GTEST_TOTAL_SHARDS
-      // and GTEST_SHARD_INDEX alongside TEST_TOTAL_SHARDS/TEST_SHARD_INDEX.
-      // Without clearing these, gtest applies a second layer of sharding
-      // on top of the framework's YAML-path sharding, causing test cases
-      // to be silently dropped when a shard has few YAML files.
-      unsetenv("GTEST_TOTAL_SHARDS");
-      unsetenv("GTEST_SHARD_INDEX");
-    }
-
-    lyra::test::g_test_cases = lyra::test::LoadTestCases(
-        configuration.yaml_paths, configuration.yaml_directory);
-    lyra::test::g_backend = configuration.backend;
-    lyra::test::g_force_two_state = configuration.force_two_state;
+    // Disable gtest's internal sharding. Bazel sets GTEST_TOTAL_SHARDS
+    // and GTEST_SHARD_INDEX alongside TEST_TOTAL_SHARDS/TEST_SHARD_INDEX.
+    // Without clearing these, gtest applies a second layer of sharding
+    // on top of the framework's case-level sharding, causing test cases
+    // to be silently dropped.
+    unsetenv("GTEST_TOTAL_SHARDS");
+    unsetenv("GTEST_SHARD_INDEX");
 
     // Register tests dynamically with the configured backend
     lyra::test::RegisterTests();

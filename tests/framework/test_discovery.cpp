@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
-#include <exception>
 #include <filesystem>
 #include <format>
 #include <iterator>
@@ -84,7 +83,13 @@ auto GetRunfilesPaths() -> RunfilesPaths {
   };
 }
 
-}  // namespace
+// Result of resolving args to test configuration
+struct TestConfiguration {
+  BackendKind backend;
+  bool force_two_state = false;
+  std::vector<std::filesystem::path> yaml_paths;
+  std::filesystem::path yaml_directory;
+};
 
 auto GetTestConfiguration(const CommandLineArgs& args) -> TestConfiguration {
   auto paths = GetRunfilesPaths();
@@ -183,6 +188,64 @@ auto LoadTestCases(
   }
 
   return all_cases;
+}
+
+}  // namespace
+
+auto ResolveShardSpec(const CommandLineArgs& args) -> ShardSpec {
+  auto shard_count_str = args.shard_count;
+  auto shard_index_str = args.shard_index;
+
+  // Fall back to Bazel environment variables
+  if (shard_count_str.empty()) {
+    const char* env_total = std::getenv("TEST_TOTAL_SHARDS");
+    const char* env_index = std::getenv("TEST_SHARD_INDEX");
+    if (env_total != nullptr) shard_count_str = env_total;
+    if (env_index != nullptr) shard_index_str = env_index;
+  }
+
+  if (shard_count_str.empty()) {
+    return {};
+  }
+
+  return ShardSpec{
+      .enabled = true,
+      .shard_count = std::stoi(shard_count_str),
+      .shard_index = shard_index_str.empty() ? 0 : std::stoi(shard_index_str),
+  };
+}
+
+auto BuildManifest(const CommandLineArgs& args, const ShardSpec& shard)
+    -> Manifest {
+  auto configuration = GetTestConfiguration(args);
+  auto cases =
+      LoadTestCases(configuration.yaml_paths, configuration.yaml_directory);
+
+  if (shard.enabled) {
+    if (shard.shard_count < 1) {
+      throw std::runtime_error("shard_count must be >= 1");
+    }
+    if (shard.shard_index < 0 || shard.shard_index >= shard.shard_count) {
+      throw std::runtime_error(
+          std::format(
+              "shard_index={} out of range [0, {})", shard.shard_index,
+              shard.shard_count));
+    }
+
+    std::vector<TestCase> filtered;
+    for (size_t i = 0; i < cases.size(); ++i) {
+      if (static_cast<int>(i % shard.shard_count) == shard.shard_index) {
+        filtered.push_back(std::move(cases[i]));
+      }
+    }
+    cases = std::move(filtered);
+  }
+
+  return Manifest{
+      .backend = configuration.backend,
+      .force_two_state = configuration.force_two_state,
+      .cases = std::move(cases),
+  };
 }
 
 }  // namespace lyra::test
