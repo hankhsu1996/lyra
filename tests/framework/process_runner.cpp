@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <expected>
+#include <fcntl.h>
 #include <filesystem>
 #include <format>
 #include <poll.h>
@@ -53,17 +54,6 @@ auto WaitPidBlocking(pid_t pid, int* status) -> std::expected<void, int> {
     if (w < 0 && errno == EINTR) continue;
     return std::unexpected(errno);
   }
-}
-
-// Read from a single pipe fd into a string. Closes fd when done.
-auto DrainSinglePipe(int fd, std::string& output) -> void {
-  std::array<char, 1024> buf{};
-  while (true) {
-    auto n = read(fd, buf.data(), buf.size());
-    if (n <= 0) break;
-    output.append(buf.data(), static_cast<size_t>(n));
-  }
-  close(fd);
 }
 
 // Compute poll timeout in ms from deadline. Returns -1 if no timeout.
@@ -300,19 +290,33 @@ auto RunChildProcess(
   return outcome;
 }
 
-auto RunInFork(std::function<void()> action) -> ProcessOutcome {
-  std::array<int, 2> pipe_fds{};
-  if (pipe(pipe_fds.data()) != 0) {
+auto RunInFork(
+    std::function<void(int result_fd)> action, std::chrono::seconds timeout)
+    -> ProcessOutcome {
+  // Create pipes: result pipe (child writes result data) and stderr pipe
+  std::array<int, 2> result_pipe{};
+  std::array<int, 2> stderr_pipe{};
+  if (pipe(result_pipe.data()) != 0) {
     return {
         .termination = TerminationKind::kSpawnFailed,
         .stdout_text = {},
-        .stderr_text = "pipe() failed"};
+        .stderr_text = "failed to create result pipe"};
+  }
+  if (pipe(stderr_pipe.data()) != 0) {
+    close(result_pipe[0]);
+    close(result_pipe[1]);
+    return {
+        .termination = TerminationKind::kSpawnFailed,
+        .stdout_text = {},
+        .stderr_text = "failed to create stderr pipe"};
   }
 
   pid_t pid = fork();
   if (pid < 0) {
-    close(pipe_fds[0]);
-    close(pipe_fds[1]);
+    close(result_pipe[0]);
+    close(result_pipe[1]);
+    close(stderr_pipe[0]);
+    close(stderr_pipe[1]);
     return {
         .termination = TerminationKind::kSpawnFailed,
         .stdout_text = {},
@@ -320,23 +324,122 @@ auto RunInFork(std::function<void()> action) -> ProcessOutcome {
   }
 
   if (pid == 0) {
-    // Child: redirect stderr to pipe write end, run action, exit.
-    close(pipe_fds[0]);
-    dup2(pipe_fds[1], STDERR_FILENO);
-    close(pipe_fds[1]);
-    action();
+    // Child: redirect stderr to pipe, stdout to /dev/null, run action, exit.
+    close(result_pipe[0]);
+    close(stderr_pipe[0]);
+    dup2(stderr_pipe[1], STDERR_FILENO);
+    close(stderr_pipe[1]);
+    // Redirect stdout to /dev/null so stray prints cannot corrupt the
+    // parent's progress output. The structured result goes via result_fd.
+    int devnull = open("/dev/null", O_WRONLY);  // NOLINT(misc-include-cleaner)
+    if (devnull >= 0) {
+      dup2(devnull, STDOUT_FILENO);
+      close(devnull);
+    }
+    action(result_pipe[1]);
+    close(result_pipe[1]);
     _exit(0);
   }
 
-  // Parent: read stderr from child, then wait.
-  close(pipe_fds[1]);
-  ProcessOutcome outcome;
-  DrainSinglePipe(pipe_fds[0], outcome.stderr_text);
+  // Parent: close write ends, run integrated event loop
+  close(result_pipe[1]);
+  close(stderr_pipe[1]);
 
+  ProcessOutcome outcome;
   int status = 0;
-  auto wait_result = WaitPidBlocking(pid, &status);
-  if (!wait_result) {
-    outcome.termination = TerminationKind::kWaitFailed;
+  bool child_reaped = false;
+  bool timed_out = false;
+  bool has_timeout = (timeout != std::chrono::seconds{0});
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+
+  std::array<struct pollfd, 2> fds{};
+  fds[0] = {.fd = result_pipe[0], .events = POLLIN, .revents = 0};
+  fds[1] = {.fd = stderr_pipe[0], .events = POLLIN, .revents = 0};
+  int open_fds = 2;
+  int result_fd = result_pipe[0];
+
+  std::array<char, 4096> buffer{};
+
+  while (open_fds > 0 || !child_reaped) {
+    int poll_timeout_ms = ComputePollTimeoutMs(deadline, has_timeout);
+    int ready = poll(fds.data(), fds.size(), poll_timeout_ms);
+    if (ready < 0 && errno != EINTR) {
+      kill(pid, SIGKILL);
+      int discard = 0;
+      (void)WaitPidBlocking(pid, &discard);
+      outcome.termination = TerminationKind::kWaitFailed;
+      outcome.stderr_text =
+          std::format("poll failed: {}", std::strerror(errno));
+      for (auto& fd : fds) {
+        if (fd.fd >= 0) {
+          close(fd.fd);
+          fd.fd = -1;
+        }
+      }
+      return outcome;
+    }
+
+    // Drain readable pipe data
+    for (auto& fd : fds) {
+      if (fd.fd >= 0 && (fd.revents & (POLLIN | POLLHUP)) != 0) {
+        ssize_t n = read(fd.fd, buffer.data(), buffer.size());
+        if (n > 0) {
+          auto& target =
+              (fd.fd == result_fd) ? outcome.stdout_text : outcome.stderr_text;
+          target.append(buffer.data(), static_cast<size_t>(n));
+        } else {
+          close(fd.fd);
+          fd.fd = -1;
+          --open_fds;
+        }
+      }
+    }
+
+    // Check child liveness (non-blocking, EINTR-safe)
+    if (!child_reaped) {
+      auto wait_result = WaitPidNoHang(pid, &status);
+      if (!wait_result) {
+        outcome.termination = TerminationKind::kWaitFailed;
+        outcome.stderr_text = std::format(
+            "waitpid failed: {}", std::strerror(wait_result.error()));
+        for (auto& fd : fds) {
+          if (fd.fd >= 0) {
+            close(fd.fd);
+            fd.fd = -1;
+          }
+        }
+        return outcome;
+      }
+      if (*wait_result == pid) {
+        child_reaped = true;
+      }
+    }
+
+    // Check deadline
+    if (!child_reaped && has_timeout &&
+        std::chrono::steady_clock::now() >= deadline) {
+      kill(pid, SIGKILL);
+      timed_out = true;
+      auto reap_result = WaitPidBlocking(pid, &status);
+      if (!reap_result) {
+        outcome.termination = TerminationKind::kWaitFailed;
+        outcome.stderr_text = std::format(
+            "waitpid after SIGKILL failed: {}",
+            std::strerror(reap_result.error()));
+        for (auto& fd : fds) {
+          if (fd.fd >= 0) {
+            close(fd.fd);
+            fd.fd = -1;
+          }
+        }
+        return outcome;
+      }
+      child_reaped = true;
+    }
+  }
+
+  if (timed_out) {
+    outcome.termination = TerminationKind::kTimedOut;
     return outcome;
   }
 

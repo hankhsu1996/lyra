@@ -50,6 +50,9 @@ struct SimulationArtifacts {
   uint64_t final_time = 0;
   std::vector<common::MutationEvent> mutation_events;
   std::vector<uint64_t> cover_hits;
+  // File contents produced by the simulation (e.g., $fwrite output).
+  // Captured before child exit so they survive the fork boundary.
+  std::map<std::string, std::string> produced_files;
   TestTimings timings;
 };
 

@@ -21,8 +21,8 @@
 namespace lyra::test {
 
 auto RunLliBackend(
-    const TestCase& test_case, const std::filesystem::path& work_directory)
-    -> CaseExecutionResult {
+    const TestCase& test_case, const std::filesystem::path& work_directory,
+    std::chrono::seconds timeout) -> CaseExecutionResult {
   using Clock = std::chrono::steady_clock;
   auto t_total = Clock::now();
   CaseExecutionResult result;
@@ -88,7 +88,7 @@ auto RunLliBackend(
     lli_args.push_back(std::format("--dlopen={}", dpi.string()));
   }
   lli_args.push_back(ir_path.string());
-  auto proc = RunChildProcess("lli", lli_args);
+  auto proc = RunChildProcess("lli", lli_args, {}, timeout);
   result.artifacts.timings.execute =
       std::chrono::duration<double>(Clock::now() - t_exec).count();
 

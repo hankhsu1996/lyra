@@ -23,8 +23,8 @@
 namespace lyra::test {
 
 auto RunAotBackend(
-    const TestCase& test_case, const std::filesystem::path& work_directory)
-    -> CaseExecutionResult {
+    const TestCase& test_case, const std::filesystem::path& work_directory,
+    std::chrono::seconds timeout) -> CaseExecutionResult {
   using Clock = std::chrono::steady_clock;
   auto t_total = Clock::now();
   CaseExecutionResult result;
@@ -112,7 +112,7 @@ auto RunAotBackend(
 
   std::vector<std::string> no_args;
   EnvOverrides env = {{"LD_LIBRARY_PATH", ld_path}};
-  auto proc = RunChildProcess(link_result->exe_path, no_args, env);
+  auto proc = RunChildProcess(link_result->exe_path, no_args, env, timeout);
   result.artifacts.timings.execute =
       std::chrono::duration<double>(Clock::now() - t_exec).count();
 

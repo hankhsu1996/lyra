@@ -1,132 +1,133 @@
+// Warm-parent test orchestrator.
+//
+// Loads manifest once, then runs each case via RunCase() which selects
+// the isolation policy by backend:
+//   JIT: fork per case (crash isolation + whole-case timeout)
+//   AOT/LLI: direct execution (subprocess timeout only, no fork overhead)
+// Evaluates expectations and prints per-case progress.
+
+#include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <format>
-#include <gtest/gtest.h>
+#include <fstream>
 #include <iostream>
 #include <span>
-#include <utility>
-#include <vector>
+#include <string>
 
 #include "tests/framework/arg_parse.hpp"
-#include "tests/framework/runner.hpp"
-#include "tests/framework/suite.hpp"
-#include "tests/framework/test_case.hpp"
+#include "tests/framework/case_runner.hpp"
+#include "tests/framework/expectation_eval.hpp"
 #include "tests/framework/test_discovery.hpp"
-#include "tests/framework/timing_collector.hpp"
+#include "tests/framework/test_result.hpp"
 
-namespace lyra::test {
 namespace {
 
-// Global storage for test cases - avoids copies in lambda captures
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-std::vector<TestCase> g_test_cases;
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-BackendKind g_backend;
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-bool g_force_two_state = false;
-
-// Test fixture that references globally stored test case
-class SvFeatureTest : public testing::Test {
- public:
-  SvFeatureTest(
-      const TestCase* test_case, BackendKind backend, bool force_two_state)
-      : test_case_(test_case),
-        backend_(backend),
-        force_two_state_(force_two_state) {
-  }
-
-  void TestBody() override {
-    RunTestCase(*test_case_, backend_, force_two_state_);
-  }
-
- private:
-  const TestCase* test_case_;
-  BackendKind backend_;
-  bool force_two_state_;
-};
-
-// Register tests dynamically using indices into global storage
-void RegisterTests() {
-  for (size_t i = 0; i < g_test_cases.size(); ++i) {
-    const auto& test_case = g_test_cases[i];
-    testing::RegisterTest(
-        "SvFeatures", test_case.name.c_str(), nullptr, nullptr,
-        test_case.source_yaml.c_str(), static_cast<int>(i),
-        [i]() -> testing::Test* {
-          // NOLINTNEXTLINE(cppcoreguidelines-owning-memory) - gtest owns ptr
-          return new SvFeatureTest(
-              &g_test_cases[i], g_backend, g_force_two_state);
-        });
-  }
-}
+constexpr int kDefaultTimeoutSeconds = 30;
 
 }  // namespace
-}  // namespace lyra::test
 
 auto main(int argc, char** argv) -> int {
-  // Parse our flags, forward the rest to gtest
   auto [args, remaining] =
       lyra::test::ParseArgs(std::span<char*>(argv, static_cast<size_t>(argc)));
 
-  // Null-terminate for gtest (expects argv-style array)
-  remaining.push_back(nullptr);
-  int remaining_argc = static_cast<int>(remaining.size() - 1);
-
-  // Enable timing collection if requested
-  if (args.timing) {
-    lyra::test::SetTimingEnabled(true);
+  // Reject flags that do not belong to the supervisor.
+  if (!args.test_file.empty()) {
+    std::cerr << "supervisor: --test_file is not supported; use --suite\n";
+    return 1;
   }
-
-  // Initialize gtest before registration
-  testing::InitGoogleTest(&remaining_argc, remaining.data());
-
-  // Build manifest: resolves suite/test_file, loads cases, applies sharding.
-  // Sharding is resolved here from CLI args + Bazel env vars, then passed
-  // explicitly to BuildManifest (which does not read environment itself).
-  try {
-    auto shard = lyra::test::ResolveShardSpec(args);
-    auto manifest = lyra::test::BuildManifest(args, shard);
-
-    lyra::test::g_test_cases = std::move(manifest.cases);
-    lyra::test::g_backend = manifest.backend;
-    lyra::test::g_force_two_state = manifest.force_two_state;
-
-    // Disable gtest's internal sharding. Bazel sets GTEST_TOTAL_SHARDS
-    // and GTEST_SHARD_INDEX alongside TEST_TOTAL_SHARDS/TEST_SHARD_INDEX.
-    // Without clearing these, gtest applies a second layer of sharding
-    // on top of the framework's case-level sharding, causing test cases
-    // to be silently dropped.
-    unsetenv("GTEST_TOTAL_SHARDS");
-    unsetenv("GTEST_SHARD_INDEX");
-
-    // Register tests dynamically with the configured backend
-    lyra::test::RegisterTests();
-
-    // Invariant: gtest must have registered exactly as many tests as the
-    // framework loaded. total_test_count() includes all registered tests
-    // regardless of --gtest_filter, so this check is valid even when
-    // intentional filtering is applied via BUILD.bazel args.
-    auto* unit_test = testing::UnitTest::GetInstance();
-    auto registered = static_cast<size_t>(unit_test->total_test_count());
-    auto expected = lyra::test::g_test_cases.size();
-    if (registered != expected) {
-      std::cerr << std::format(
-          "Test registration mismatch: gtest has {} tests but framework "
-          "loaded {} cases. This indicates a bug in test discovery or "
-          "registration, not in filtering.\n",
-          registered, expected);
-      return 1;
-    }
-  } catch (const std::exception& e) {
-    std::cerr << "Error loading test cases: " << e.what() << "\n";
+  if (!args.backend.empty()) {
+    std::cerr << "supervisor: --backend is not supported; use --suite\n";
     return 1;
   }
 
-  int test_result = RUN_ALL_TESTS();
+  int timeout_seconds =
+      args.timeout_seconds > 0 ? args.timeout_seconds : kDefaultTimeoutSeconds;
 
-  if (args.timing) {
-    lyra::test::GetTimingCollector().PrintSummary();
+  auto shard = lyra::test::ResolveShardSpec(args);
+
+  // Advertise sharding support to Bazel.
+  const char* shard_status_file = std::getenv("TEST_SHARD_STATUS_FILE");
+  if (shard_status_file != nullptr) {
+    std::ofstream(shard_status_file).put('\0');
   }
 
-  return test_result;
+  lyra::test::Manifest manifest;
+  try {
+    manifest = lyra::test::BuildManifest(args, shard);
+  } catch (const std::exception& e) {
+    std::cerr << std::format("supervisor: {}\n", e.what());
+    return 1;
+  }
+
+  auto timeout = std::chrono::seconds{timeout_seconds};
+  int passed = 0;
+  int failed = 0;
+  int crashed = 0;
+  int timed_out = 0;
+  int total = static_cast<int>(manifest.cases.size());
+
+  std::cout << std::format("[==========] Running {} tests.\n", total);
+
+  for (const auto& tc : manifest.cases) {
+    // Validate test contract before forking.
+    auto contract_error =
+        lyra::test::ValidateTestContract(tc, manifest.backend);
+    if (!contract_error.empty()) {
+      ++failed;
+      std::cout << std::format(
+          "[ INVALID  ] {} ({})\n", tc.name, contract_error);
+      continue;
+    }
+
+    auto t_start = std::chrono::steady_clock::now();
+
+    auto result = lyra::test::RunCase(
+        tc, manifest.backend, manifest.force_two_state, timeout);
+
+    auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - t_start);
+
+    auto verdict = lyra::test::EvaluateExpectations(tc, result);
+
+    if (verdict.passed) {
+      ++passed;
+      std::cout << std::format(
+          "[       OK ] {} ({:.1f}s)\n", tc.name, elapsed.count());
+    } else if (
+        result.execution.outcome == lyra::test::ExecutionOutcome::kTimedOut) {
+      ++timed_out;
+      std::cout << std::format(
+          "[ TIMEOUT  ] {} ({}s)\n", tc.name, timeout_seconds);
+    } else if (
+        result.execution.outcome == lyra::test::ExecutionOutcome::kCrashed &&
+        !tc.expected_runtime_fatal.has_value()) {
+      ++crashed;
+      std::cout << std::format(
+          "[  CRASH   ] {} (signal={})\n", tc.name,
+          result.execution.signal_number);
+    } else {
+      ++failed;
+      std::cout << std::format("[  FAILED  ] {}\n", tc.name);
+      if (!verdict.failure_message.empty()) {
+        std::cout << "  " << verdict.failure_message << "\n";
+      }
+    }
+  }
+
+  std::cout << std::format(
+      "[==========] {} tests ran.\n"
+      "[  PASSED  ] {} tests.\n",
+      total, passed);
+  if (failed > 0) {
+    std::cout << std::format("[  FAILED  ] {} tests.\n", failed);
+  }
+  if (crashed > 0) {
+    std::cout << std::format("[  CRASH   ] {} tests.\n", crashed);
+  }
+  if (timed_out > 0) {
+    std::cout << std::format("[ TIMEOUT  ] {} tests.\n", timed_out);
+  }
+
+  return (failed + crashed + timed_out > 0) ? 1 : 0;
 }

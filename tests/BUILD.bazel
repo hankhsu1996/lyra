@@ -1,25 +1,17 @@
 # Test infrastructure for Lyra
 #
 # Suite-based test framework using YAML test specs in sv_features/
+#
+# Architecture:
+#   cc_test (warm parent) -> forks one child per case -> isolated execution
+#   Parent loads manifest once, child runs ExecuteTestCase in copy-on-write fork
 
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 cc_library(
     name = "test_core",
-    srcs = glob(
-        ["framework/*.cpp"],
-        exclude = [
-            "framework/runner.cpp",
-            "framework/assertions.cpp",
-        ],
-    ),
-    hdrs = glob(
-        ["framework/*.hpp"],
-        exclude = [
-            "framework/runner.hpp",
-            "framework/assertions.hpp",
-        ],
-    ),
+    srcs = glob(["framework/*.cpp"]),
+    hdrs = glob(["framework/*.hpp"]),
     deps = [
         "//:frontend",
         "//:llvm_backend",
@@ -30,42 +22,21 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "test_assertions",
-    srcs = [
-        "framework/assertions.cpp",
-        "framework/runner.cpp",
-    ],
-    hdrs = [
-        "framework/assertions.hpp",
-        "framework/runner.hpp",
-    ],
-    deps = [
-        ":test_core",
-        "@googletest//:gtest",
-    ],
-)
-
-# Test exclusion policy:
-# JIT and AOT targets must not diverge through per-target gtest_filter rules.
-# If a case is unsupported, express that in YAML expectations or skip metadata,
-# not by target-local test filtering.
+# Shared data dependencies for suite tests.
+_SUITE_DATA = [
+    "suites.yaml",
+    "//:liblyra_runtime.so",
+    "//third_party/systemverilog:svdpi.h",
+] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"])
 
 cc_test(
     name = "jit_dev_tests",
     srcs = ["main.cpp"],
-    args = [
-        "--suite=jit_dev",
-    ],
-    data = [
-        "suites.yaml",
-        "//third_party/systemverilog:svdpi.h",
-    ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
+    args = ["--suite=jit_dev"],
+    data = _SUITE_DATA,
+    linkopts = ["-Wl,--export-dynamic"],  # Export symbols for ORC JIT
     shard_count = 4,
-    deps = [
-        ":test_assertions",
-        "@googletest//:gtest",
-    ],
+    deps = [":test_core"],
 )
 
 # JIT two-state suite - regression tests for --two-state mode
@@ -73,15 +44,10 @@ cc_test(
     name = "jit_two_state_tests",
     srcs = ["main.cpp"],
     args = ["--suite=jit_two_state"],
-    data = [
-        "suites.yaml",
-        "//third_party/systemverilog:svdpi.h",
-    ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
+    data = _SUITE_DATA,
+    linkopts = ["-Wl,--export-dynamic"],
     shard_count = 4,
-    deps = [
-        ":test_assertions",
-        "@googletest//:gtest",
-    ],
+    deps = [":test_core"],
 )
 
 # AOT development suite - full AOT pipeline (compile > link > execute)
@@ -89,16 +55,10 @@ cc_test(
     name = "aot_dev_tests",
     srcs = ["main.cpp"],
     args = ["--suite=aot_dev"],
-    data = [
-        "suites.yaml",
-        "//:liblyra_runtime.so",
-        "//third_party/systemverilog:svdpi.h",
-    ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
+    data = _SUITE_DATA,
+    linkopts = ["-Wl,--export-dynamic"],
     shard_count = 4,
-    deps = [
-        ":test_assertions",
-        "@googletest//:gtest",
-    ],
+    deps = [":test_core"],
 )
 
 # AOT smoke suite - small, stable subset for fast PR gating
@@ -106,15 +66,9 @@ cc_test(
     name = "aot_smoke_tests",
     srcs = ["main.cpp"],
     args = ["--suite=aot_smoke"],
-    data = [
-        "suites.yaml",
-        "//:liblyra_runtime.so",
-        "//third_party/systemverilog:svdpi.h",
-    ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
-    deps = [
-        ":test_assertions",
-        "@googletest//:gtest",
-    ],
+    data = _SUITE_DATA,
+    linkopts = ["-Wl,--export-dynamic"],
+    deps = [":test_core"],
 )
 
 # Unit tests for trace infrastructure (no LLVM/slang dependency)
@@ -177,15 +131,9 @@ cc_test(
     name = "lli_dev_tests",
     srcs = ["main.cpp"],
     args = ["--suite=lli_dev"],
-    data = [
-        "suites.yaml",
-        "//:liblyra_runtime.so",
-        "//third_party/systemverilog:svdpi.h",
-    ] + glob(["sv_features/**/*.yaml"]) + glob(["sv_features/**/*.c"]),
-    deps = [
-        ":test_assertions",
-        "@googletest//:gtest",
-    ],
+    data = _SUITE_DATA,
+    linkopts = ["-Wl,--export-dynamic"],
+    deps = [":test_core"],
 )
 
 cc_test(

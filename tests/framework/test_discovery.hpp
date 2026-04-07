@@ -16,8 +16,12 @@ struct CommandLineArgs {
   std::string test_file;
   std::string shard_count;  // Framework-level sharding (0 = disabled)
   std::string shard_index;  // 0-based shard index
-  bool timing = false;      // Print per-phase timing summary
-  bool two_state = false;   // Force two-state mode (--test_file only)
+  // Timeout in seconds (0 = no timeout). Semantics are backend-dependent:
+  //   JIT: whole-case timeout (fork-isolated, covers frontend+execution)
+  //   AOT/LLI: simulation subprocess timeout only (frontend/lowering/link
+  //     are not covered; runs direct for performance)
+  int timeout_seconds = 0;
+  bool two_state = false;  // Force two-state mode (--test_file only)
 };
 
 // Explicit sharding specification. Callers resolve from CLI/env and pass in.

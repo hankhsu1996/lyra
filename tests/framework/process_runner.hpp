@@ -47,13 +47,21 @@ auto RunChildProcess(
     const EnvOverrides& env_overrides = {},
     std::chrono::seconds timeout = std::chrono::seconds{0}) -> ProcessOutcome;
 
-// Fork the current process and run `action` in the child. Captures child
-// stderr via pipe. Returns structured termination info.
+// Fork a child from the current (warmed) process to run an action in
+// isolation. The child calls `action()`, which writes its result to
+// `result_fd`. The parent captures pipe output, enforces timeout, and
+// classifies termination.
 //
-// Temporary: only needed for the GTest parity harness (expected_runtime_fatal
-// JIT tests that must crash in a subprocess to avoid killing the test runner).
-// Remove when the old cc_test suite targets are deleted.
-auto RunInFork(std::function<void()> action) -> ProcessOutcome;
+// Returns a ProcessOutcome where:
+//   stdout_text = data written to result_fd by the child
+//   stderr_text = child's stderr output
+//   termination = how the child ended
+//
+// This is the canonical per-case isolation primitive for the warm-parent
+// forkserver architecture. The parent process survives child crashes.
+auto RunInFork(
+    std::function<void(int result_fd)> action,
+    std::chrono::seconds timeout = std::chrono::seconds{0}) -> ProcessOutcome;
 
 // Map a ProcessOutcome from subprocess-backed execution into an
 // ExecutionResult. `label` identifies the subprocess for error messages
