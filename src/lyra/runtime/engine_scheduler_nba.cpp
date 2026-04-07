@@ -217,8 +217,8 @@ void Engine::ExecuteNbaRegion() {
             } else {
               auto* inst =
                   instance_trace_resolver_.FindInstanceMut(notify.instance_id);
-              inst->observability.local_updates.MarkDirtyRange(
-                  notify.signal, byte_off, byte_size);
+              MarkLocalSignalDirtyRange(
+                  *inst, notify.signal, byte_off, byte_size);
             }
           },
           entry.notify_signal);

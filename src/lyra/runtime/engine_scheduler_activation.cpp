@@ -353,7 +353,8 @@ void Engine::FlushDirtySlots() {
           trace_manager_, slot_meta_registry_, design_state_base_,
           const_instances_, update_set_, trace_selection_, global_slot_count_);
     }
-    FlushLocalDirtySlotsToTrace(trace_manager_, instances_);
+    FlushLocalDirtySlotsToTrace(
+        trace_manager_, instances_, timeslot_dirty_instances_);
   }
   update_set_.Clear();
   ClearLocalUpdates();

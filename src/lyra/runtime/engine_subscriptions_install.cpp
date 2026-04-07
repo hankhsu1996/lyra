@@ -924,16 +924,8 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
       // RefreshInstalledSnapshots filter these out harmlessly.
       // R5: check both global and local dirty state. Instance-owned
       // signals go to local_updates, not update_set_.
-      bool has_any_dirty = !update_set_.DeltaDirtySlots().empty();
-      if (!has_any_dirty) {
-        for (auto* inst : instances_) {
-          if (inst->observability.local_signal_count > 0 &&
-              !inst->observability.local_updates.DeltaDirtySignals().empty()) {
-            has_any_dirty = true;
-            break;
-          }
-        }
-      }
+      bool has_any_dirty = !update_set_.DeltaDirtySlots().empty() ||
+                           !delta_dirty_instances_.empty();
       if (!has_any_dirty) {
         break;
       }
