@@ -23,24 +23,25 @@ namespace lyra::test {
 
 auto RunJitBackend(
     const TestCase& test_case, const std::filesystem::path& work_directory,
-    bool force_two_state) -> TestResult {
+    bool force_two_state) -> CaseExecutionResult {
   using Clock = std::chrono::steady_clock;
   auto t_total = Clock::now();
-  TestResult result;
+  CaseExecutionResult result;
 
   // Prepare LLVM module (AST -> HIR -> MIR -> LLVM)
   auto prep_result =
       PrepareLlvmModule(test_case, work_directory, force_two_state);
   if (!prep_result) {
-    result.error_message = prep_result.error();
+    result.execution.outcome = ExecutionOutcome::kFrontendError;
+    result.execution.error_message = prep_result.error();
     return result;
   }
 
   // Copy frontend timings
-  result.timings.parse = prep_result->parse_seconds;
-  result.timings.hir_lower = prep_result->hir_lower_seconds;
-  result.timings.mir_lower = prep_result->mir_lower_seconds;
-  result.timings.llvm_lower = prep_result->llvm_lower_seconds;
+  result.artifacts.timings.parse = prep_result->parse_seconds;
+  result.artifacts.timings.hir_lower = prep_result->hir_lower_seconds;
+  result.artifacts.timings.mir_lower = prep_result->mir_lower_seconds;
+  result.artifacts.timings.llvm_lower = prep_result->llvm_lower_seconds;
 
   // Compile DPI companion C sources into object files.
   // Object files are loaded directly into the JIT's symbol space,
@@ -50,7 +51,8 @@ auto RunJitBackend(
     auto dpi =
         CompileDpiSourcesToObjects(test_case.dpi_sources, work_directory);
     if (!dpi.Ok()) {
-      result.error_message = dpi.error;
+      result.execution.outcome = ExecutionOutcome::kBackendSetupError;
+      result.execution.error_message = dpi.error;
       return result;
     }
     dpi_object_inputs = std::move(dpi.link_inputs);
@@ -69,11 +71,12 @@ auto RunJitBackend(
   };
   auto session = lowering::mir_to_llvm::CompileJitInProcess(
       prep_result->llvm_result, jit_opts);
-  result.timings.backend =
+  result.artifacts.timings.backend =
       std::chrono::duration<double>(Clock::now() - t_backend).count();
 
   if (!session) {
-    result.error_message =
+    result.execution.outcome = ExecutionOutcome::kBackendSetupError;
+    result.execution.error_message =
         std::format("JIT compilation failed: {}", session.error());
     return result;
   }
@@ -95,28 +98,30 @@ auto RunJitBackend(
         });
     exit_code = session->Run();
   }
-  result.timings.execute =
+  result.artifacts.timings.execute =
       std::chrono::duration<double>(Clock::now() - t_exec).count();
 
   if (exit_code != 0) {
-    result.error_message =
+    result.execution.outcome = ExecutionOutcome::kExecutionFailed;
+    result.execution.error_message =
         std::format("JIT execution returned non-zero: {}", exit_code);
+    result.execution.exit_code = exit_code;
     return result;
   }
 
   // Parse output to extract variables and time
   auto parsed = ParseLyraVarOutput(captured_output);
-  result.success = true;
-  result.captured_output = std::move(parsed.clean);
-  result.compiler_output = std::move(prep_result->compiler_output);
-  result.variables = std::move(parsed.variables);
-  result.final_time = parsed.final_time;
-  result.cover_hits = std::move(cover_hits);
-  result.timings.total =
+  result.execution.outcome = ExecutionOutcome::kSuccess;
+  result.artifacts.captured_output = std::move(parsed.clean);
+  result.artifacts.compiler_output = std::move(prep_result->compiler_output);
+  result.artifacts.variables = std::move(parsed.variables);
+  result.artifacts.final_time = parsed.final_time;
+  result.artifacts.cover_hits = std::move(cover_hits);
+  result.artifacts.timings.total =
       std::chrono::duration<double>(Clock::now() - t_total).count();
 
   if (IsTimingEnabled()) {
-    GetTimingCollector().Record(test_case.name, result.timings);
+    GetTimingCollector().Record(test_case.name, result.artifacts.timings);
   }
 
   return result;

@@ -49,10 +49,16 @@ auto ParseArgs(std::span<char*> argv)
     std::string_view next_arg = (i + 1 < argv.size()) ? argv[i + 1] : "";
     bool consumed_next = false;
 
-    if (arg == "--timing") {
-      args.timing = true;
-    } else if (arg == "--two-state") {
+    std::string timeout_str;
+
+    if (arg == "--two-state") {
       args.two_state = true;
+    } else if (TryParseFlag(
+                   arg, next_arg, "timeout", timeout_str, consumed_next)) {
+      args.timeout_seconds = std::stoi(timeout_str);
+      if (consumed_next) {
+        ++i;
+      }
     } else if (
         TryParseFlag(arg, next_arg, "suite", args.suite, consumed_next) ||
         TryParseFlag(arg, next_arg, "backend", args.backend, consumed_next) ||

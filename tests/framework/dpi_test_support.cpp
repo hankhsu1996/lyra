@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "lyra/llvm_backend/toolchain.hpp"
-#include "tests/framework/llvm_common.hpp"
+#include "tests/framework/process_runner.hpp"
 
 namespace lyra::test {
 
@@ -93,11 +93,10 @@ auto CompileDpiSources(
         src_abs.string(),
     };
 
-    auto sub = RunSubprocess(toolchain->cc_path, args);
-    if (sub.exit_code != 0) {
-      result.error = std::format(
-          "DPI C compilation failed for '{}' -> '{}' (exit code {}): {}",
-          src_abs.string(), out_path.string(), sub.exit_code, sub.stderr_text);
+    auto proc = RunChildProcess(toolchain->cc_path, args);
+    if (proc.termination != TerminationKind::kExitedNormally) {
+      result.error =
+          FormatToolFailure("DPI C compilation", src_abs, out_path, proc);
       return result;
     }
     result.link_inputs.push_back(out_path);
@@ -142,11 +141,10 @@ auto CompileDpiSourcesToObjects(
         src_abs.string(),
     };
 
-    auto sub = RunSubprocess(toolchain->cc_path, args);
-    if (sub.exit_code != 0) {
-      result.error = std::format(
-          "DPI C compilation failed for '{}' -> '{}' (exit code {}): {}",
-          src_abs.string(), out_path.string(), sub.exit_code, sub.stderr_text);
+    auto proc = RunChildProcess(toolchain->cc_path, args);
+    if (proc.termination != TerminationKind::kExitedNormally) {
+      result.error =
+          FormatToolFailure("DPI C compilation", src_abs, out_path, proc);
       return result;
     }
     result.link_inputs.push_back(out_path);

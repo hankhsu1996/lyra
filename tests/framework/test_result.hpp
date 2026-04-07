@@ -22,17 +22,44 @@ struct TestTimings {
   double total = 0.0;
 };
 
-// Result from running a test backend
-struct TestResult {
-  bool success = false;
+// High-level classification of test execution outcome.
+enum class ExecutionOutcome {
+  kSuccess,            // Simulation ran and exited normally
+  kFrontendError,      // AST/HIR/MIR/LLVM lowering failed
+  kBackendSetupError,  // DPI compile, object emit, link, JIT compile
+  kExecutionFailed,    // Clean nonzero exit from simulation
+  kCrashed,            // Signal-terminated (e.g., SIGSEGV, SIGABRT)
+  kTimedOut,           // Deadline exceeded
+  kInfraError,         // Pipe/spawn/wait/filesystem failure
+};
+
+// Execution classification and error context.
+struct ExecutionResult {
+  ExecutionOutcome outcome = ExecutionOutcome::kInfraError;
   std::string error_message;
+  std::string stderr_text;
+  int exit_code = 0;
+  int signal_number = 0;
+};
+
+// Simulation payload (only meaningful when outcome == kSuccess).
+struct SimulationArtifacts {
   std::string captured_output;
   std::string compiler_output;
   std::map<std::string, TestValue> variables;
   uint64_t final_time = 0;
   std::vector<common::MutationEvent> mutation_events;
   std::vector<uint64_t> cover_hits;
+  // File contents produced by the simulation (e.g., $fwrite output).
+  // Captured before child exit so they survive the fork boundary.
+  std::map<std::string, std::string> produced_files;
   TestTimings timings;
+};
+
+// Combined result from executing one test case.
+struct CaseExecutionResult {
+  ExecutionResult execution;
+  SimulationArtifacts artifacts;
 };
 
 }  // namespace lyra::test

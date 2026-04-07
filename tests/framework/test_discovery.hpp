@@ -1,7 +1,6 @@
 #ifndef TESTS_FRAMEWORK_TEST_DISCOVERY_HPP
 #define TESTS_FRAMEWORK_TEST_DISCOVERY_HPP
 
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -17,25 +16,36 @@ struct CommandLineArgs {
   std::string test_file;
   std::string shard_count;  // Framework-level sharding (0 = disabled)
   std::string shard_index;  // 0-based shard index
-  bool timing = false;      // Print per-phase timing summary
-  bool two_state = false;   // Force two-state mode (--test_file only)
+  // Timeout in seconds (0 = no timeout). Semantics are backend-dependent:
+  //   JIT: whole-case timeout (fork-isolated, covers frontend+execution)
+  //   AOT/LLI: simulation subprocess timeout only (frontend/lowering/link
+  //     are not covered; runs direct for performance)
+  int timeout_seconds = 0;
+  bool two_state = false;  // Force two-state mode (--test_file only)
 };
 
-// Result of resolving args to test configuration
-struct TestConfiguration {
+// Explicit sharding specification. Callers resolve from CLI/env and pass in.
+struct ShardSpec {
+  bool enabled = false;
+  int shard_count = 1;
+  int shard_index = 0;
+};
+
+// Fully resolved, ordered manifest of runnable test cases.
+struct Manifest {
   BackendKind backend;
   bool force_two_state = false;
-  std::vector<std::filesystem::path> yaml_paths;
-  std::filesystem::path yaml_directory;  // Base path for relative calculations
+  std::vector<TestCase> cases;
 };
 
-// Get test configuration based on parsed args
-auto GetTestConfiguration(const CommandLineArgs& args) -> TestConfiguration;
+// Resolve sharding from CLI args and Bazel environment variables.
+// CLI args take precedence over env vars. Returns disabled spec if neither set.
+auto ResolveShardSpec(const CommandLineArgs& args) -> ShardSpec;
 
-// Load test cases from YAML files, prefixing names with category
-auto LoadTestCases(
-    const std::vector<std::filesystem::path>& yaml_paths,
-    const std::filesystem::path& yaml_directory) -> std::vector<TestCase>;
+// Single canonical discovery entrypoint. Resolves suite or test_file,
+// loads all cases, applies sharding if specified. Does not read environment.
+auto BuildManifest(const CommandLineArgs& args, const ShardSpec& shard = {})
+    -> Manifest;
 
 }  // namespace lyra::test
 
