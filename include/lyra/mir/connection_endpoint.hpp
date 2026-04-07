@@ -28,8 +28,9 @@ struct ResolvedObservation {
 };
 
 // Compiled expression connection for non-NameRef port expressions.
-// Produced by CompileExprConnections, cloned to design-level process
-// by the backend. Simple NameRef connections use BoundConnection instead.
+// Produced from kFunction-sourced connection recipes, cloned to
+// design-level process by the backend. Simple NameRef connections
+// use BoundConnection instead.
 struct CompiledConnectionExpr {
   PortConnection::Kind kind = PortConnection::Kind::kDriveParentToChild;
   ModuleBodyId parent_body_id;

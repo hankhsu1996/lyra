@@ -118,33 +118,20 @@ class InstanceSlotResolver {
   std::unordered_map<SymbolId, ReverseLookup, SymbolIdHash> reverse_;
 };
 
-// Data needed by CompileExprConnections for expression compilation.
-struct ExprCompilationData {
-  std::vector<mir::ModuleBody>* module_bodies = nullptr;
-  const std::vector<mir::ObjectRecord>* objects = nullptr;
-  const std::vector<const hir::Module*>* hir_modules = nullptr;
-  const std::unordered_map<uint32_t, std::vector<BodyLocalSlotEntry>>*
-      body_local_slots = nullptr;
-  const std::unordered_map<uint32_t, uint32_t>* body_to_representative =
-      nullptr;
-};
+// Recursively find any NameRef symbol in an expression tree.
+auto FindAnyNameRef(hir::ExpressionId expr_id, const hir::Arena& arena)
+    -> std::optional<SymbolId>;
 
-}  // namespace lyra::lowering::hir_to_mir
+// Build per-instance places for expression lowering in a body-local context.
+auto BuildPerInstancePlaces(
+    const hir::Module& inst_mod, const hir::Module& rep_mod,
+    const std::vector<BodyLocalSlotEntry>& body_slots,
+    const SymbolTable& symbol_table, mir::Arena& body_arena) -> PlaceMap;
 
-namespace lyra::lowering::ast_to_hir {
-struct DesignBindingPlan;
-}  // namespace lyra::lowering::ast_to_hir
-
-namespace lyra::lowering::hir_to_mir {
-
-// Compile complex expression port connections (non-NameRef expressions).
-// Simple NameRef connections are handled by the recipe-based BoundConnection
-// path. This function only produces CompiledConnectionExpr for expressions
-// that require body-local function compilation.
-auto CompileExprConnections(
-    const ast_to_hir::DesignBindingPlan& plan,
-    const InstanceSlotResolver& resolver, const LoweringInput& input,
-    const DesignDeclarations& decls, ExprCompilationData& expr_data)
-    -> Result<std::vector<mir::CompiledConnectionExpr>>;
+// Compile a parent expression as a body-local function.
+auto LowerExprAsBodyFunction(
+    hir::ExpressionId expr_id, TypeId result_type, const LoweringInput& input,
+    const DesignDeclarations& decls, mir::Arena& body_arena,
+    const PlaceMap& per_instance_places) -> Result<mir::FunctionId>;
 
 }  // namespace lyra::lowering::hir_to_mir

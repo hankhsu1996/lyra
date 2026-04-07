@@ -34,6 +34,7 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Extract the referenced SymbolId from a simple NameRef expression.
+// Internal helper -- not exposed through the header.
 auto TryExtractNameRefSymbol(hir::ExpressionId expr_id, const hir::Arena& arena)
     -> std::optional<SymbolId> {
   const auto& expr = arena[expr_id];
@@ -44,8 +45,9 @@ auto TryExtractNameRefSymbol(hir::ExpressionId expr_id, const hir::Arena& arena)
   return data.symbol;
 }
 
+}  // namespace
+
 // Recursively find any NameRef symbol in an expression tree.
-// Used to identify the parent module for non-kernelizable expressions.
 auto FindAnyNameRef(hir::ExpressionId expr_id, const hir::Arena& arena)
     -> std::optional<SymbolId> {
   const auto& expr = arena[expr_id];
@@ -185,77 +187,6 @@ auto LowerExprAsBodyFunction(
   };
 
   return body_arena.AddFunction(std::move(func));
-}
-
-}  // namespace
-
-auto CompileExprConnections(
-    const ast_to_hir::DesignBindingPlan& plan,
-    const InstanceSlotResolver& resolver, const LoweringInput& input,
-    const DesignDeclarations& decls, ExprCompilationData& expr_data)
-    -> Result<std::vector<mir::CompiledConnectionExpr>> {
-  std::vector<mir::CompiledConnectionExpr> result;
-  if (plan.bindings.empty()) return result;
-
-  const auto& hir_arena = *input.hir_arena;
-
-  for (const auto& binding : plan.bindings) {
-    if (binding.kind != ast_to_hir::PortBinding::Kind::kDriveParentToChild) {
-      continue;
-    }
-    // Only non-NameRef expressions need compiled functions.
-    auto parent_sym = TryExtractNameRefSymbol(binding.parent_rvalue, hir_arena);
-    if (parent_sym) continue;
-
-    auto child_endpoint = resolver.ResolveByVariable(binding.child_port_sym);
-
-    auto any_ref = FindAnyNameRef(binding.parent_rvalue, hir_arena);
-    if (!any_ref) {
-      throw common::InternalError(
-          "CompileExprConnections",
-          "non-kernelizable expression has no variable references");
-    }
-
-    auto parent_endpoint = resolver.ResolveByVariable(*any_ref);
-    auto parent_oi = parent_endpoint.object_index;
-    const auto& parent_obj = expr_data.objects->at(parent_oi.value);
-    uint32_t body_group = parent_obj.body_group;
-
-    uint32_t rep_path = expr_data.body_to_representative->at(body_group);
-    const auto& rep_mod = *expr_data.hir_modules->at(rep_path);
-    const auto& inst_mod = *expr_data.hir_modules->at(parent_obj.path_index);
-    auto& parent_body = expr_data.module_bodies->at(body_group);
-    const auto& body_slots = expr_data.body_local_slots->at(body_group);
-
-    auto per_instance_places = BuildPerInstancePlaces(
-        inst_mod, rep_mod, body_slots, *input.symbol_table, parent_body.arena);
-
-    const Symbol& child_sym = (*input.symbol_table)[binding.child_port_sym];
-
-    auto func_result = LowerExprAsBodyFunction(
-        binding.parent_rvalue, child_sym.type, input, decls, parent_body.arena,
-        per_instance_places);
-    if (!func_result) return std::unexpected(func_result.error());
-
-    parent_body.functions.push_back(*func_result);
-
-    result.push_back(
-        mir::CompiledConnectionExpr{
-            .kind = mir::PortConnection::Kind::kDriveParentToChild,
-            .parent_body_id = mir::ModuleBodyId{body_group},
-            .expr_function = *func_result,
-            .parent_object_index = parent_oi,
-            .child_object_index = child_endpoint.object_index,
-            .child_local_slot = child_endpoint.local_slot,
-            .result_type = child_sym.type,
-            .trigger = parent_endpoint,
-            .trigger_edge = common::EdgeKind::kAnyChange,
-            .child_port_sym = binding.child_port_sym,
-            .parent_instance_sym = binding.parent_instance_sym,
-        });
-  }
-
-  return result;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

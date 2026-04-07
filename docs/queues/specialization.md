@@ -21,9 +21,9 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [x] R4 -- Constructor-to-runtime handoff preserves per-instance structure
 - [x] R5 -- Observability/trace/snapshot on object-local coordinates
 - [ ] B -- Recipe model: non-local access, connections, construction (see [compilation-model.md](../compilation-model.md))
-  - [ ] B1 -- Freeze compile-time contract boundary: CompiledModuleHeader/Body/Specialization types, core recipe types (ExternalRefId, ConnectionRecipe, ChildBindingSiteId), header-only dependency rule, documented descendant-path direction (NonLocalTargetRecipe deferred to B2)
-  - [ ] B2 -- Compile-time recipe lowering: hierarchical refs to external ref handles, connections to body-local recipes, parent-child port via CompiledModuleHeader; delete cross_instance_places, ResolveHierarchicalRef, InstanceSlotResolver, CompiledConnectionExpr, backend clone/remap
-  - [ ] B3 -- Construction/runtime binding and execution: constructor binds recipes through construction cursor, runtime executes bound handles and installed connections; delete flat cross-instance design-global arena for instance-owned state
+  - [x] B1 -- Freeze compile-time contract boundary: CompiledModuleHeader/Body/Specialization types, core recipe types (ExternalRefId, ConnectionRecipe, ChildBindingSiteId), header-only dependency rule, documented descendant-path direction (NonLocalTargetRecipe deferred to B2)
+  - [x] B2 -- Compile-time recipe lowering: hierarchical refs to external ref handles, connections to body-local recipes (simple and expression), parent-child port via CompiledModuleHeader; delete ResolvedBindingPlan, ResolvedKernelBinding, backend kernel adapter
+  - [ ] B3 -- Construction/runtime binding: delete cross_instance_places, ResolveHierarchicalRef, InstanceSlotResolver, CompiledConnectionExpr, design-level compilation of connection/init processes, flat cross-instance design-global arena
 - [ ] T1 -- Topology-independence validation (scaling gates)
 - [ ] F1 -- Parallel specialization compilation
   - [x] F1-design -- Parallel ownership model
