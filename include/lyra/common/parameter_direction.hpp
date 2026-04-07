@@ -10,7 +10,8 @@ enum class ParameterDirection {
   kInput,   // Input only (pass by value semantics)
   kOutput,  // Output only (callee writes, caller receives)
   kInOut,  // Bidirectional (caller passes initialized value, callee may modify)
-  kRef,    // Reference (alias to caller's variable) - not yet supported
+  kRef,    // Reference (alias to caller's variable)
+  kConstRef,  // Const reference (read-only alias to caller's variable)
 };
 
 }  // namespace lyra

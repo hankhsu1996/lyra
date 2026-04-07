@@ -2025,11 +2025,13 @@ auto DeclareMirFunction(
           llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty, ptr_ty}, false);
     }
   } else if (is_deferred_thunk) {
-    // Deferred assertion thunk: (design*, engine*, exec_ctx*, payload*)
+    // Deferred assertion thunk:
+    // (design*, engine*, exec_ctx*, payload*, ref_bindings*, ref_count)
     auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
     auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
     fn_type = llvm::FunctionType::get(
-        void_ty, {ptr_ty, ptr_ty, ptr_ty, ptr_ty}, false);
+        void_ty, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, false);
   } else {
     auto fn_type_or_err = context.BuildUserFunctionType(
         func.signature, is_module_scoped,
@@ -2822,11 +2824,20 @@ auto DefineDeferredAssertionThunk(
   auto* payload_arg = llvm_func->getArg(3);
   payload_arg->setName("payload");
 
+  auto* ref_bindings_arg = llvm_func->getArg(4);
+  ref_bindings_arg->setName("ref_bindings");
+
+  auto* ref_count_arg = llvm_func->getArg(5);
+  ref_count_arg->setName("ref_count");
+
   // Validate payload field count matches kPayloadField bindings.
   uint32_t expected_payload_fields = 0;
+  uint32_t expected_live_refs = 0;
   for (const auto& b : action.actual_bindings) {
     if (b.source == mir::DeferredThunkActualBinding::Source::kPayloadField) {
       ++expected_payload_fields;
+    } else if (b.source == mir::DeferredThunkActualBinding::Source::kLiveRef) {
+      ++expected_live_refs;
     }
   }
   if (action.payload.field_types.size() != expected_payload_fields) {
@@ -2929,24 +2940,61 @@ auto DefineDeferredAssertionThunk(
     call_args.push_back(llvm::ConstantInt::get(i32_ty, 0));
   }
 
-  // Append by-value actuals from payload in binding order.
+  // Validate that the runtime ref_count matches the expected kLiveRef count.
+  // Always checked -- zero is not a special case for ABI validation.
+  {
+    auto* expected_val = llvm::ConstantInt::get(i32_ty, expected_live_refs);
+    auto* mismatch = builder.CreateICmpNE(ref_count_arg, expected_val);
+    auto* ok_bb =
+        llvm::BasicBlock::Create(llvm_ctx, "thunk.refcount.ok", llvm_func);
+    auto* trap_bb =
+        llvm::BasicBlock::Create(llvm_ctx, "thunk.refcount.trap", llvm_func);
+    builder.CreateCondBr(mismatch, trap_bb, ok_bb);
+
+    builder.SetInsertPoint(trap_bb);
+    EmitInternalErrorAbort(context, "deferred thunk ref_count mismatch");
+
+    builder.SetInsertPoint(ok_bb);
+  }
+
+  // Append actuals in formal order, walking bindings and formals in lockstep.
+  uint32_t live_ref_index = 0;
   for (size_t i = 0; i < action.actual_bindings.size(); ++i) {
     const auto& binding = action.actual_bindings[i];
-    if (binding.source !=
-        mir::DeferredThunkActualBinding::Source::kPayloadField) {
-      throw common::InternalError(
-          "DefineDeferredAssertionThunk",
-          "only kPayloadField bindings supported in first cut");
+    const auto& formal = target_func.signature.params[i];
+
+    switch (binding.source) {
+      case mir::DeferredThunkActualBinding::Source::kPayloadField: {
+        if (binding.payload_field_index >=
+            static_cast<uint32_t>(payload_values.size())) {
+          throw common::InternalError(
+              "DefineDeferredAssertionThunk",
+              std::format(
+                  "payload_field_index {} out of range (payload has {} "
+                  "fields)",
+                  binding.payload_field_index, payload_values.size()));
+        }
+        call_args.push_back(payload_values[binding.payload_field_index]);
+        break;
+      }
+      case mir::DeferredThunkActualBinding::Source::kLiveRef: {
+        // Load ref binding addr from the ref_bindings array.
+        // DeferredAssertionRefBindingAbi is { void* addr } -- a
+        // pointer array at the LLVM level.
+        auto* raw_ptr = builder.CreateLoad(
+            ptr_ty,
+            builder.CreateGEP(
+                ptr_ty, ref_bindings_arg,
+                llvm::ConstantInt::get(i32_ty, live_ref_index)),
+            "ref_addr");
+
+        auto* ref_actual = lowering::mir_to_llvm::FormRefCallActual(
+            builder, raw_ptr, formal.kind);
+        call_args.push_back(ref_actual);
+        ++live_ref_index;
+        break;
+      }
     }
-    if (binding.payload_field_index >=
-        static_cast<uint32_t>(payload_values.size())) {
-      throw common::InternalError(
-          "DefineDeferredAssertionThunk",
-          std::format(
-              "payload_field_index {} out of range (payload has {} fields)",
-              binding.payload_field_index, payload_values.size()));
-    }
-    call_args.push_back(payload_values[binding.payload_field_index]);
   }
 
   builder.CreateCall(target_fn, call_args);
@@ -3218,6 +3266,12 @@ auto DefineMirFunction(
           }
           break;
         }
+        case mir::PassingKind::kRef:
+        case mir::PassingKind::kConstRef:
+          // Ref parameter: arg_val is pointer to caller's storage.
+          // Alias the local directly -- reads/writes go through the
+          // caller's storage. No copy, no writeback.
+          context.SetPlaceAlias(it->second, arg_val);
       }
     }
   }

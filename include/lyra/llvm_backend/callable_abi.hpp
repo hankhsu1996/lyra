@@ -17,8 +17,14 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Type.h>
 
+namespace llvm {
+class IRBuilderBase;
+class Value;
+}  // namespace llvm
+
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/mir/routine.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -64,5 +70,16 @@ auto ClassifyCallableValueAbi(
 auto GetCallableAbiLlvmType(
     llvm::LLVMContext& ctx, TypeId type_id, const TypeArena& types,
     bool force_two_state) -> llvm::Type*;
+
+// Form the LLVM call actual for a ref/const-ref formal from a raw void*
+// pointer (e.g., from a DeferredAssertionRefBindingAbi::addr). Produces
+// the same IR representation that normal call lowering would use for a ref
+// formal (pointer to storage). Used by deferred thunk emission now, and
+// by general ref-call lowering later.
+//
+// `kind` must be kRef or kConstRef; asserts on other values.
+auto FormRefCallActual(
+    llvm::IRBuilderBase& builder, llvm::Value* raw_ptr, mir::PassingKind kind)
+    -> llvm::Value*;
 
 }  // namespace lyra::lowering::mir_to_llvm

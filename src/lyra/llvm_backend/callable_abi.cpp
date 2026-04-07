@@ -3,6 +3,7 @@
 #include <format>
 
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/IRBuilder.h>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
@@ -92,6 +93,21 @@ auto GetCallableAbiLlvmType(
   auto info = ClassifyCallableValueAbi(ctx, type_id, types, force_two_state);
   if (!info) return nullptr;
   return info->llvm_type;
+}
+
+auto FormRefCallActual(
+    llvm::IRBuilderBase& /*builder*/, llvm::Value* raw_ptr,
+    mir::PassingKind kind) -> llvm::Value* {
+  if (kind != mir::PassingKind::kRef && kind != mir::PassingKind::kConstRef) {
+    throw common::InternalError(
+        "FormRefCallActual",
+        std::format(
+            "expected kRef or kConstRef, got {}", static_cast<int>(kind)));
+  }
+  // Ref formals are passed as opaque pointers at the LLVM ABI level
+  // (same as out/inout). The callee receives a pointer to the caller's
+  // storage. With LLVM opaque pointers, no bitcast is needed.
+  return raw_ptr;
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "lyra/common/deferred_assertion_abi.hpp"
+
 namespace lyra::runtime {
 
 struct RuntimeInstance;
@@ -29,6 +31,7 @@ struct DeferredAssertionExecContext {
 // and dispatch code. Do not open-code raw function pointer types.
 using DeferredAssertionThunkFn = void (*)(
     void* design_state, void* engine, const DeferredAssertionExecContext* ctx,
-    const void* payload);
+    const void* payload, const DeferredAssertionRefBindingAbi* ref_bindings,
+    uint32_t ref_count);
 
 }  // namespace lyra::runtime

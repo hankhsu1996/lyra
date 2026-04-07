@@ -129,6 +129,13 @@ auto LowerUserCallImpl(
        ++param_idx) {
     const auto& param = resolved.signature->params[param_idx];
 
+    if (param.kind == mir::PassingKind::kRef ||
+        param.kind == mir::PassingKind::kConstRef) {
+      throw common::InternalError(
+          "LowerUserCall",
+          "ref/const ref parameters should have been rejected in lowering");
+    }
+
     if (param.kind == mir::PassingKind::kValue) {
       // Direct value argument: classified by the generic callable ABI.
       if (in_arg_idx >= call.in_args.size()) {

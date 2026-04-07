@@ -55,9 +55,9 @@ auto ConvertProcessKind(slang::ast::ProceduralBlockKind kind)
       "routine lowering", "unknown procedural block kind");
 }
 
-auto ConvertParameterDirection(slang::ast::ArgumentDirection dir)
+auto ConvertParameterDirection(const slang::ast::FormalArgumentSymbol& arg)
     -> ParameterDirection {
-  switch (dir) {
+  switch (arg.direction) {
     case slang::ast::ArgumentDirection::In:
       return ParameterDirection::kInput;
     case slang::ast::ArgumentDirection::Out:
@@ -65,6 +65,9 @@ auto ConvertParameterDirection(slang::ast::ArgumentDirection dir)
     case slang::ast::ArgumentDirection::InOut:
       return ParameterDirection::kInOut;
     case slang::ast::ArgumentDirection::Ref:
+      if (arg.flags.has(slang::ast::VariableFlags::Const)) {
+        return ParameterDirection::kConstRef;
+      }
       return ParameterDirection::kRef;
   }
   throw common::InternalError("routine lowering", "unknown argument direction");
@@ -248,7 +251,7 @@ auto TryLowerDpiImport(
         .span = arg_span,
         .type_id = arg_type_id,
         .dpi_type = *arg_class,
-        .direction = ConvertParameterDirection(arg->direction),
+        .direction = ConvertParameterDirection(*arg),
     });
   }
 
@@ -371,14 +374,6 @@ auto LowerFunction(
     return hir::kInvalidFunctionId;
   }
 
-  // Check for unsupported parameter directions (ref not yet supported)
-  for (const slang::ast::FormalArgumentSymbol* arg : func.getArguments()) {
-    if (arg->direction == slang::ast::ArgumentDirection::Ref) {
-      ctx->sink->Error(span, "ref parameters not yet supported");
-      return hir::kInvalidFunctionId;
-    }
-  }
-
   // Register symbol if not already pre-registered
   if (!symbol) {
     symbol = registrar.Register(func, SymbolKind::kFunction, return_type);
@@ -406,7 +401,7 @@ auto LowerFunction(
       }
       SymbolId arg_sym = registrar.Register(
           *arg, SymbolKind::kParameter, arg_type, StorageClass::kLocalStorage);
-      ParameterDirection dir = ConvertParameterDirection(arg->direction);
+      ParameterDirection dir = ConvertParameterDirection(*arg);
       parameters.push_back({.symbol = arg_sym, .direction = dir});
     }
 
@@ -446,14 +441,6 @@ auto LowerTask(const slang::ast::SubroutineSymbol& task, ScopeLowerer& lowerer)
 
   SourceSpan span = ctx->SpanOf(GetSourceRange(task));
 
-  // Check for unsupported parameter directions (ref not yet supported)
-  for (const slang::ast::FormalArgumentSymbol* arg : task.getArguments()) {
-    if (arg->direction == slang::ast::ArgumentDirection::Ref) {
-      ctx->sink->Error(span, "ref parameters not yet supported");
-      return hir::kInvalidTaskId;
-    }
-  }
-
   SymbolId symbol = registrar.Register(task, SymbolKind::kTask, kInvalidTypeId);
 
   std::vector<hir::FunctionParam> parameters;
@@ -468,7 +455,7 @@ auto LowerTask(const slang::ast::SubroutineSymbol& task, ScopeLowerer& lowerer)
       }
       SymbolId arg_sym = registrar.Register(
           *arg, SymbolKind::kParameter, arg_type, StorageClass::kLocalStorage);
-      ParameterDirection dir = ConvertParameterDirection(arg->direction);
+      ParameterDirection dir = ConvertParameterDirection(*arg);
       parameters.push_back({.symbol = arg_sym, .direction = dir});
     }
 

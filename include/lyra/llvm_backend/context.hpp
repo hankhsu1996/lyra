@@ -853,6 +853,16 @@ class Context {
   [[nodiscard]] auto GetDeferredThunkAction(mir::FunctionId thunk_id) const
       -> const mir::DeferredThunkAction*;
 
+  // Deferred assertion site info (borrowed pointer into design sites).
+  // Keyed by site ID. Used by enqueue codegen to derive ref binding
+  // metadata from the site action + target signature in lockstep.
+  void RegisterDeferredAssertionSiteInfo(
+      mir::DeferredAssertionSiteId site_id,
+      const mir::DeferredAssertionSiteInfo* info);
+  [[nodiscard]] auto GetDeferredAssertionSiteInfo(
+      mir::DeferredAssertionSiteId site_id) const
+      -> const mir::DeferredAssertionSiteInfo*;
+
   // Build LLVM function type from MIR function signature.
   // Package-scoped: (DesignState*, Engine*, args...)
   // Module-scoped:  (DesignState*, Engine*, this_ptr*,
@@ -1155,6 +1165,10 @@ class Context {
   // Deferred assertion thunk metadata (borrowed pointers into site info).
   absl::flat_hash_map<mir::FunctionId, const mir::DeferredThunkAction*>
       deferred_thunk_actions_;
+
+  // Deferred assertion site info (borrowed pointers into design sites).
+  absl::flat_hash_map<uint32_t, const mir::DeferredAssertionSiteInfo*>
+      deferred_assertion_sites_;
 
   // SSA temp bindings: temp_id -> TempValue (explicit semantic contract).
   // Temps defined by block params (split PHI nodes) or statements.

@@ -1,0 +1,258 @@
+feature: deferred_assert_actions
+description: Deferred immediate assertion user-supplied pass/fail actions
+
+cases:
+  - name: deferred_assert_fail_action_basic
+    description: Deferred #0 assertion with user fail action calls the function
+    sv: |
+      module Test;
+        function void report_fail(int val);
+          $display("FAIL_ACTION: %0d", val);
+        endfunction
+
+        initial begin
+          int x = 42;
+          assert #0 (0) else report_fail(x);
+          $display("AFTER_ASSERT");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "AFTER_ASSERT"
+          - "FAIL_ACTION: 42"
+
+  - name: deferred_assert_pass_no_fail
+    description: Deferred #0 assertion that passes does not call fail action
+    sv: |
+      module Test;
+        function void report_fail(int val);
+          $display("FAIL_ACTION: %0d", val);
+        endfunction
+
+        initial begin
+          int x = 1;
+          assert #0 (x > 0) else report_fail(x);
+          $display("PASS");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "PASS"
+        not_contains:
+          - "FAIL_ACTION"
+
+  - name: deferred_assert_encounter_time_eval
+    description: By-value actuals are evaluated at encounter time, not drain time
+    sv: |
+      module Test;
+        function void report_fail(int val);
+          $display("FAIL_VAL: %0d", val);
+        endfunction
+
+        initial begin
+          int x = 10;
+          assert #0 (0) else report_fail(x);
+          x = 99;
+          $display("AFTER");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "FAIL_VAL: 10"
+          - "AFTER"
+        not_contains:
+          - "FAIL_VAL: 99"
+
+  - name: deferred_assert_ref_sees_execution_time_value
+    description: >
+      ref actual in deferred #0 action observes the variable's value at
+      execution time (Reactive region), not encounter time. This is the
+      key LRM 16.4 behavioral distinction from by-value capture.
+    sv: |
+      module Test;
+        int x;
+
+        function automatic void report_ref(ref int val);
+          $display("REF_VAL: %0d", val);
+        endfunction
+
+        initial begin
+          x = 10;
+          assert #0 (0) else report_ref(x);
+          x = 99;
+          $display("AFTER");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "REF_VAL: 99"
+          - "AFTER"
+        not_contains:
+          - "REF_VAL: 10"
+
+  - name: deferred_assert_const_ref_reads_current_value
+    description: >
+      const ref actual in deferred #0 action also observes execution-time
+      value. const ref differs from ref only in mutability, not timing.
+    sv: |
+      module Test;
+        int x;
+
+        function automatic void report_cref(const ref int val);
+          $display("CREF_VAL: %0d", val);
+        endfunction
+
+        initial begin
+          x = 10;
+          assert #0 (0) else report_cref(x);
+          x = 77;
+          $display("AFTER");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "CREF_VAL: 77"
+          - "AFTER"
+        not_contains:
+          - "CREF_VAL: 10"
+
+  - name: deferred_assert_mixed_ref_and_value
+    description: >
+      Mixed ref and by-value actuals in the same deferred action. The
+      by-value actual captures encounter-time literal; the ref actual
+      observes execution-time value. Uses a literal for the by-value
+      param to avoid the module-scoped actlocal shadow capture issue.
+    sv: |
+      module Test;
+        int x;
+
+        function automatic void report_mixed(int captured, ref int live);
+          $display("CAPTURED: %0d LIVE: %0d", captured, live);
+        endfunction
+
+        initial begin
+          x = 10;
+          assert #0 (0) else report_mixed(42, x);
+          x = 55;
+          $display("AFTER");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "CAPTURED: 42 LIVE: 55"
+          - "AFTER"
+
+  - name: deferred_assert_ref_array_element
+    description: >
+      Deferred ref actual to an unpacked array element. The ref binding
+      uses a projected place (IndexProjection). Verifies the canonical
+      ResolveDeferredRefActualAsPlace handles ElementAccess.
+    sv: |
+      module Test;
+        int arr[3];
+
+        function automatic void report_elem(ref int val);
+          $display("ELEM_VAL: %0d", val);
+        endfunction
+
+        initial begin
+          arr[0] = 10;
+          arr[1] = 20;
+          arr[2] = 30;
+          assert #0 (0) else report_elem(arr[1]);
+          arr[1] = 77;
+          $display("AFTER");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "ELEM_VAL: 77"
+          - "AFTER"
+        not_contains:
+          - "ELEM_VAL: 20"
+
+  - name: deferred_assert_ref_reject_automatic
+    description: >
+      Reject automatic (process-local) variable as deferred ref actual.
+      LRM 16.4 explicitly bans this.
+    sv: |
+      module Test;
+        function automatic void report_ref(ref int val);
+          $display("REF: %0d", val);
+        endfunction
+
+        initial begin
+          int local_var = 10;
+          assert #0 (0) else report_ref(local_var);
+          $display("AFTER");
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "automatic variable"
+
+  - name: deferred_assert_ref_reject_type_mismatch
+    description: >
+      Reject deferred ref actual with type mismatch (shortint actual
+      for int formal). LRM 13.5.2 requires exact type equivalence.
+    sv: |
+      module Test;
+        shortint s;
+
+        function automatic void report_ref(ref int val);
+          $display("REF: %0d", val);
+        endfunction
+
+        initial begin
+          s = 10;
+          assert #0 (0) else report_ref(s);
+          $display("AFTER");
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "ref"
+
+  - name: deferred_assert_ref_reject_dynamic_index
+    description: >
+      Reject deferred ref actual with non-constant array index.
+      Dynamic indices require bounds-check MIR emission which violates
+      the pure-resolution contract of deferred ref actual binding.
+    sv: |
+      module Test;
+        int arr[4];
+
+        function automatic void report_ref(ref int val);
+          $display("REF: %0d", val);
+        endfunction
+
+        initial begin
+          int idx = 2;
+          arr[0] = 10;
+          assert #0 (0) else report_ref(arr[idx]);
+          $display("AFTER");
+          $finish;
+        end
+      endmodule
+    expect:
+      error:
+        contains:
+          - "compile-time constant"

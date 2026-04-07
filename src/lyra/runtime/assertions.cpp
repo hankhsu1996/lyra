@@ -24,9 +24,11 @@ extern "C" void LyraInitDeferredAssertionSites(
 
 extern "C" void LyraEnqueueObservedDeferredAssertion(
     void* engine, uint32_t process_id, uint32_t instance_id, uint32_t site_id,
-    uint8_t disposition, const void* payload_ptr, uint32_t payload_size) {
+    uint8_t disposition, const void* payload_ptr, uint32_t payload_size,
+    const lyra::DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count) {
   static_cast<lyra::runtime::Engine*>(engine)->EnqueueDeferredAssertion(
-      process_id, instance_id, site_id, disposition, payload_ptr, payload_size);
+      process_id, instance_id, site_id, disposition, payload_ptr, payload_size,
+      ref_ptr, ref_count);
 }
 
 namespace lyra::runtime {
@@ -39,7 +41,8 @@ void Engine::InitDeferredAssertionSites(
 
 void Engine::EnqueueDeferredAssertion(
     uint32_t process_id, uint32_t instance_id, uint32_t site_id,
-    uint8_t disposition, const void* payload_ptr, uint32_t payload_size) {
+    uint8_t disposition, const void* payload_ptr, uint32_t payload_size,
+    const DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count) {
   if (process_id >= deferred_assertion_states_.size()) {
     throw common::InternalError(
         "Engine::EnqueueDeferredAssertion",
@@ -72,6 +75,9 @@ void Engine::EnqueueDeferredAssertion(
   };
   if (payload_ptr != nullptr && payload_size > 0) {
     rec.payload.AssignCopy(payload_ptr, payload_size);
+  }
+  if (ref_ptr != nullptr && ref_count > 0) {
+    rec.ref_bindings.assign(ref_ptr, ref_ptr + ref_count);
   }
   state.pending.push_back(std::move(rec));
 
@@ -170,7 +176,10 @@ void Engine::MatureAndExecuteObservedDeferredAssertions() {
             ctx.instance = inst;
           }
 
-          thunk(design_state_base_, this, &ctx, rec.payload.Data());
+          thunk(
+              design_state_base_, this, &ctx, rec.payload.Data(),
+              rec.ref_bindings.data(),
+              static_cast<uint32_t>(rec.ref_bindings.size()));
           break;
         }
         default:

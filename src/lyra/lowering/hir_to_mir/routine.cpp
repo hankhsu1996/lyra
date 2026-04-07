@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type.hpp"
@@ -100,9 +99,11 @@ auto BuildFunctionSignature(
         kind = mir::PassingKind::kInOut;
         break;
       case ParameterDirection::kRef:
-        // Should have been rejected at HIR lowering
-        throw common::InternalError(
-            "BuildFunctionSignature", "ref parameters not supported");
+        kind = mir::PassingKind::kRef;
+        break;
+      case ParameterDirection::kConstRef:
+        kind = mir::PassingKind::kConstRef;
+        break;
     }
     sig.params.push_back({.type = sym.type, .kind = kind});
   }
@@ -228,8 +229,11 @@ auto BuildTaskSignature(
         kind = mir::PassingKind::kInOut;
         break;
       case ParameterDirection::kRef:
-        throw common::InternalError(
-            "BuildTaskSignature", "ref parameters not supported");
+        kind = mir::PassingKind::kRef;
+        break;
+      case ParameterDirection::kConstRef:
+        kind = mir::PassingKind::kConstRef;
+        break;
     }
     sig.params.push_back({.type = sym.type, .kind = kind});
   }
