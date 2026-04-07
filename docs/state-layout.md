@@ -1,5 +1,7 @@
 # State Layout
 
+> Before editing, see [documentation-guidelines.md](documentation-guidelines.md). Architecture docs describe the target, not history. No "current state," migration plans, or queue references.
+
 Byte-level storage layout for simulation state. Decouples state layout from compile-time LLVM struct types.
 
 For the natural model, see [natural-model.md](natural-model.md). For the compilation model, see [compilation-model.md](compilation-model.md). For architectural motivation, see [architecture-principles.md](architecture-principles.md).
@@ -7,12 +9,6 @@ For the natural model, see [natural-model.md](natural-model.md). For the compila
 ## Target Model
 
 The target follows from the natural model: an instance is an object that owns its state. Member access is object pointer + local offset. Each instance has its own storage region. Design-global coordination (scheduler, event queues) exists as an outer layer, not as the defining representation of instance state.
-
-## Current Implementation
-
-The current implementation uses a single contiguous byte arena for the entire design. All instance state is carved from this one allocation. Instance boundaries are logical (slot ranges into the flat array), not physical (separate allocations). Runtime metadata (SlotMeta, trace coordinates, dirty tracking) uses arena-absolute byte offsets and design-global slot IDs as primary coordinates. This is a transitional implementation, not the target model.
-
-The remaining migration is tracked in the [specialization queue](queues/specialization.md).
 
 ## Byte-Level Layout (Orthogonal to Object-Local vs Design-Global)
 
@@ -29,9 +25,7 @@ Requirements:
 
 ## Instance Storage
 
-**Target:** each module instance occupies its own storage region, addressed via `this_base`. Within that region, fields are accessed by offset.
-
-**Current state:** shared-body codegen already accesses owned-local slots via `this_base + instance_relative_offset`. However, forwarded slots bypass `this_base` and use `design_ptr + arena_absolute_offset` instead. The `this_base` pointer itself currently points into the single design-global arena, not into a per-instance allocation.
+Each module instance occupies its own storage region, addressed via `this_base`. Within that region, fields are accessed by offset.
 
 ### Offset Categories
 

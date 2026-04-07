@@ -76,6 +76,7 @@ auto LowerAstToHir(
       .instance_table = std::move(design_result.instance_table),
       .global_precision_power = global_precision,
       .body_timescales = std::move(design_result.body_timescales),
+      .child_coord_map = std::move(design_result.child_coord_map),
   };
 }
 

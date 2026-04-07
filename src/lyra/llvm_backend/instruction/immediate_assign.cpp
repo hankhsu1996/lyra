@@ -15,7 +15,6 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
-#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction/assign_core.hpp"
@@ -213,9 +212,8 @@ auto LowerManagedStructLiteral(
 auto LowerRvalueAssign(
     Context& context, mir::PlaceId target, const mir::Rvalue& rvalue)
     -> Result<void> {
-  const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  TypeId result_type = mir::TypeOfPlace(types, arena[target]);
+  TypeId result_type = mir::TypeOfPlace(types, context.LookupPlace(target));
   const Type& type = types[result_type];
 
   // Aggregate literal special case: some write shapes cannot be represented
@@ -307,21 +305,21 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
 auto CommitManagedImmediate(
     Context& context, SlotAccessResolver& resolver, mir::PlaceId dest,
     llvm::Value* value, OwnershipPolicy policy) -> Result<void> {
-  const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  TypeId type_id = mir::TypeOfPlace(types, arena[dest]);
+  TypeId type_id = mir::TypeOfPlace(types, context.LookupPlace(dest));
   return resolver.CommitSlotValue(dest, value, type_id, policy);
 }
 
 auto LowerAssign(
     Context& context, SlotAccessResolver& resolver, const mir::Assign& assign)
     -> Result<void> {
+  auto dest = context.ResolveWriteDest(assign.dest);
   // Managed destination: evaluate RHS via resolver-aware path.
   // Bit-range projections use non-lossy PackedRValue transport directly.
   // Non-bit-range managed writes use raw path (stores to local alloca).
-  if (resolver.ManagesPlace(assign.dest)) {
-    if (context.HasBitRangeProjection(assign.dest)) {
-      auto path = ExtractPackedAccessPath(context, assign.dest);
+  if (resolver.ManagesPlace(dest)) {
+    if (context.HasBitRangeProjection(dest)) {
+      auto path = ExtractPackedAccessPath(context, dest);
       if (!path) return std::unexpected(path.error());
       auto subview = ResolvePackedSubview(context, *path);
       if (!subview) return std::unexpected(subview.error());
@@ -329,14 +327,12 @@ auto LowerAssign(
           context, resolver, assign.rhs, subview->semantic_bit_width,
           subview->result_type);
       if (!packed) return std::unexpected(packed.error());
-      return StoreBitRange(context, assign.dest, *packed);
+      return StoreBitRange(context, dest, *packed);
     }
-    auto rhs_raw_or_err =
-        LowerRhsRaw(context, resolver, assign.rhs, assign.dest);
+    auto rhs_raw_or_err = LowerRhsRaw(context, resolver, assign.rhs, dest);
     if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
     return CommitManagedImmediate(
-        context, resolver, assign.dest, *rhs_raw_or_err,
-        OwnershipPolicy::kMove);
+        context, resolver, dest, *rhs_raw_or_err, OwnershipPolicy::kMove);
   }
 
   // Non-managed destination: evaluate RHS with resolver-aware reads,
@@ -344,8 +340,8 @@ auto LowerAssign(
   //
   // Projected writes (bit-range) are canonical-only in v1.
   // Uses non-lossy PackedRValue transport (not LowerRhsRaw).
-  if (context.HasBitRangeProjection(assign.dest)) {
-    auto path = ExtractPackedAccessPath(context, assign.dest);
+  if (context.HasBitRangeProjection(dest)) {
+    auto path = ExtractPackedAccessPath(context, dest);
     if (!path) return std::unexpected(path.error());
     auto subview = ResolvePackedSubview(context, *path);
     if (!subview) return std::unexpected(subview.error());
@@ -353,7 +349,7 @@ auto LowerAssign(
         context, resolver, assign.rhs, subview->semantic_bit_width,
         subview->result_type);
     if (!packed) return std::unexpected(packed.error());
-    return StoreBitRange(context, assign.dest, *packed);
+    return StoreBitRange(context, dest, *packed);
   }
 
   // Check write plan: field-by-field struct/array and union memcpy
@@ -362,9 +358,8 @@ auto LowerAssign(
   // operand identity. AssignPlace reads operands via canonical
   // LowerOperandRaw, which is correct because these complex types
   // are never v1-eligible managed slots (only plain scalars are managed).
-  const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  TypeId type_id = mir::TypeOfPlace(types, arena[assign.dest]);
+  TypeId type_id = mir::TypeOfPlace(types, context.LookupPlace(dest));
   auto plan = BuildWritePlan(type_id, types);
   if (plan.op == WriteOp::kCommitFieldByFieldStruct ||
       plan.op == WriteOp::kCommitFieldByFieldArray ||
@@ -372,10 +367,10 @@ auto LowerAssign(
     return std::visit(
         common::Overloaded{
             [&](const mir::Operand& operand) -> Result<void> {
-              return AssignPlace(context, assign.dest, operand);
+              return AssignPlace(context, dest, operand);
             },
             [&](const mir::Rvalue& rvalue) -> Result<void> {
-              return LowerRvalueAssign(context, assign.dest, rvalue);
+              return LowerRvalueAssign(context, dest, rvalue);
             },
         },
         assign.rhs);
@@ -400,14 +395,14 @@ auto LowerAssign(
         },
         assign.rhs);
     return DispatchWrite(
-        context, assign.dest,
+        context, dest,
         PackedRValueSource{.rvalue = *packed, .type_id = type_id}, type_id,
         policy);
   }
 
   // All other types: evaluate RHS with resolver-aware operand reads,
   // commit as raw value through canonical write path.
-  auto rhs_raw_or_err = LowerRhsRaw(context, resolver, assign.rhs, assign.dest);
+  auto rhs_raw_or_err = LowerRhsRaw(context, resolver, assign.rhs, dest);
   if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
   // Determine ownership: Rvalue sources produce temporaries (kMove).
   // Operand sources from temps are kMove, all others are kClone.
@@ -421,27 +416,27 @@ auto LowerAssign(
           },
       },
       assign.rhs);
-  return CommitValue(context, assign.dest, *rhs_raw_or_err, type_id, policy);
+  return CommitValue(context, dest, *rhs_raw_or_err, type_id, policy);
 }
 
 auto LowerGuardedAssign(
     Context& context, SlotAccessResolver& resolver,
     const mir::GuardedAssign& guarded) -> Result<void> {
+  auto dest = context.ResolveWriteDest(guarded.dest);
   auto& builder = context.GetBuilder();
 
   // RHS evaluated BEFORE branch (per SystemVerilog spec).
   // For packed targets (bit-range or whole-value), use non-lossy
   // PackedRValue transport. For all other targets, use raw value transport.
-  bool is_bit_range = context.HasBitRangeProjection(guarded.dest);
-  const auto& arena = context.GetMirArena();
+  bool is_bit_range = context.HasBitRangeProjection(dest);
   const auto& types = context.GetTypeArena();
-  TypeId dest_type_id = mir::TypeOfPlace(types, arena[guarded.dest]);
+  TypeId dest_type_id = mir::TypeOfPlace(types, context.LookupPlace(dest));
   bool is_packed_dest = is_bit_range || IsPacked(types[dest_type_id]);
   std::optional<PackedRValue> packed_rhs;
   llvm::Value* rhs_raw = nullptr;
 
   if (is_bit_range) {
-    auto path = ExtractPackedAccessPath(context, guarded.dest);
+    auto path = ExtractPackedAccessPath(context, dest);
     if (!path) return std::unexpected(path.error());
     auto subview = ResolvePackedSubview(context, *path);
     if (!subview) return std::unexpected(subview.error());
@@ -457,8 +452,7 @@ auto LowerGuardedAssign(
     if (!packed) return std::unexpected(packed.error());
     packed_rhs = *packed;
   } else {
-    auto rhs_raw_or_err =
-        LowerRhsRaw(context, resolver, guarded.rhs, guarded.dest);
+    auto rhs_raw_or_err = LowerRhsRaw(context, resolver, guarded.rhs, dest);
     if (!rhs_raw_or_err) return std::unexpected(rhs_raw_or_err.error());
     rhs_raw = *rhs_raw_or_err;
   }
@@ -484,26 +478,26 @@ auto LowerGuardedAssign(
   builder.SetInsertPoint(do_write_bb);
 
   if (is_bit_range) {
-    auto result = StoreBitRange(context, guarded.dest, *packed_rhs);
+    auto result = StoreBitRange(context, dest, *packed_rhs);
     if (!result) return result;
   } else if (is_packed_dest) {
     // Non-lossy packed path through DispatchWrite.
     auto result = DispatchWrite(
-        context, guarded.dest,
+        context, dest,
         PackedRValueSource{.rvalue = *packed_rhs, .type_id = dest_type_id},
         dest_type_id, OwnershipPolicy::kClone);
     if (!result) return result;
-  } else if (resolver.ManagesPlace(guarded.dest)) {
+  } else if (resolver.ManagesPlace(dest)) {
     // Managed destination: single managed write path.
     // INVARIANT: GuardedAssign always uses kClone, never kMove.
     auto result = CommitManagedImmediate(
-        context, resolver, guarded.dest, rhs_raw, OwnershipPolicy::kClone);
+        context, resolver, dest, rhs_raw, OwnershipPolicy::kClone);
     if (!result) return result;
   } else {
     // Non-managed, non-packed: canonical CommitValue(raw).
     // INVARIANT: GuardedAssign always uses kClone (see above).
     auto result = CommitValue(
-        context, guarded.dest, rhs_raw, dest_type_id, OwnershipPolicy::kClone);
+        context, dest, rhs_raw, dest_type_id, OwnershipPolicy::kClone);
     if (!result) return result;
   }
   builder.CreateBr(skip_bb);

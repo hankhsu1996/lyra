@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <variant>
 
 #include <llvm/ADT/APInt.h>
 #include <llvm/IR/Constants.h>
@@ -14,18 +13,15 @@
 #include <llvm/IR/Value.h>
 #include <llvm/Support/ErrorHandling.h>
 
-#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
+#include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
-#include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -178,21 +174,8 @@ auto SignExtendToStorage(
 
 auto GetOperandPackedWidth(Context& context, const mir::Operand& operand)
     -> uint32_t {
-  const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-
-  TypeId type_id = std::visit(
-      common::Overloaded{
-          [&](const Constant& c) -> TypeId { return c.type; },
-          [&](mir::PlaceId place_id) -> TypeId {
-            const auto& place = arena[place_id];
-            return mir::TypeOfPlace(types, place);
-          },
-          [&](mir::TempId temp_id) -> TypeId {
-            return context.GetTempType(temp_id.value);
-          },
-      },
-      operand.payload);
+  TypeId type_id = GetOperandTypeId(context, operand);
   return PackedBitWidth(types[type_id], types);
 }
 

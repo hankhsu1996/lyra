@@ -73,9 +73,14 @@ struct ConnectionAnalysisResult {
 // Analyze connections for a design. Produces connection edges using original
 // slot IDs (no forwarding canonicalization) and per-slot relay-candidate
 // classification for future routing optimization.
+// expanded_num_slots: total design-global slot count (package + expanded
+// module instances). Temporary adapter for B2a transition where design.slots
+// is package-only but connection kernel entries use full-range slot IDs.
+// Pass 0 to use design.slots.size() (pre-B2a behavior).
 auto AnalyzeConnections(
     std::vector<ConnectionKernelEntry> kernel_entries,
     std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena) -> ConnectionAnalysisResult;
+    const mir::Arena& design_arena, uint32_t expanded_num_slots = 0)
+    -> ConnectionAnalysisResult;
 
 }  // namespace lyra::lowering::mir_to_llvm

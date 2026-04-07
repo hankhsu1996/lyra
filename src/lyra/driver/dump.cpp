@@ -115,6 +115,7 @@ auto DumpMir(const CompilationInput& input) -> int {
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
+      .child_coord_map = &hir_result.child_coord_map,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
@@ -184,6 +185,7 @@ auto DumpDpiHeader(const CompilationInput& input) -> int {
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
+      .child_coord_map = &hir_result.child_coord_map,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
@@ -251,6 +253,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
+      .child_coord_map = &hir_result.child_coord_map,
   };
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
   {
@@ -270,6 +273,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,
+      .construction = &mir_result->construction,
       .mir_arena = mir_result->design_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = &diag_ctx,
@@ -285,6 +289,8 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .collect_forwarding_analysis =
           output.IsEnabled(OutputCategory::kAnalysis),
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
+      .bound_connections = &mir_result->bound_connections,
+      .expr_connections = &mir_result->expr_connections,
   };
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;
   {

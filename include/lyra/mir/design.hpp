@@ -11,11 +11,9 @@
 #include "lyra/mir/cover_site.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/handle.hpp"
-#include "lyra/mir/instance.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/module_body.hpp"
 #include "lyra/mir/package.hpp"
-#include "lyra/mir/placement.hpp"
 #include "lyra/mir/port_connection.hpp"
 
 namespace lyra::mir {
@@ -96,39 +94,10 @@ struct Design {
   // Set from compilation context, used by $timeformat defaults.
   int8_t global_precision_power = -9;
 
-  // Source of truth for all port connections.
-  // Written ONLY by realization::AssembleBindings.
+  // Connection data is in BoundConnection + expr_connections on the
+  // lowering result, not here. These fields are empty.
   std::vector<PortConnection> port_connections;
-
-  // Wiring processes (separate from module processes).
-  // These implement kDriveParentToChild and kDriveChildToParent semantics.
-  // Written ONLY by realization::AssembleBindings.
   std::vector<ProcessId> connection_processes;
-
-  // Instance table for %m support.
-  // Index = instance_id, same order as all_instances during elaboration.
-  InstanceTable instance_table;
-
-  // Placement: source of truth for per-instance module placement in
-  // DesignState. Covers module-instance storage only (not package/global
-  // slots). Built from specialization bodies + instance records via running
-  // base counter. Indexed by module-instance index (module-only elements in BFS
-  // elaboration order), NOT parallel to Design::elements (which also
-  // contains packages).
-  PlacementMap placement;
-
-  // DERIVED compatibility data: instance slot ranges derived from placement.
-  // `placement` is the source of truth. New code should use placement helpers
-  // (GetInstancePlacement, GetInstanceBaseSlot), not these tables.
-  // These remain only for transitional compatibility with
-  // layout/codegen/runtime.
-  struct InstanceSlotRange {
-    uint32_t slot_begin = 0;
-    uint32_t slot_count = 0;
-  };
-  std::vector<InstanceSlotRange> instance_slot_ranges;
-  // Per-module-instance def IDs (parallel to instance_slot_ranges).
-  std::vector<common::ModuleDefId> module_def_ids;
 
   // Compile-owned slot trace provenance table (parallel to slots).
   // Each entry stores the local symbol name and scope ownership for one slot.

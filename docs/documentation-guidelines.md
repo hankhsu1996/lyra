@@ -48,6 +48,18 @@ For documents describing system boundaries or layer responsibilities:
 - Include "what must NOT appear" sections - boundaries matter as much as contents
 - Use guiding questions to clarify scope
 - Prefer tables for taxonomies and exclusion lists
+- **Architecture docs describe the target architecture, not history.** No "current state," "migration," "transitional," or queue references. The architecture is what we are building. Working queues track how we get there -- they reference the architecture docs, not the other way around.
+
+## Architecture vs Working Docs
+
+Architecture docs (`architecture-principles.md`, `compilation-model.md`, `natural-model.md`, `pipeline-contract.md`, `state-layout.md`, `runtime.md`, `module-hierarchy.md`, etc.) define the system we are building. They must not contain:
+
+- "Current state" sections describing what exists today
+- References to working queues (`queues/*.md`)
+- Migration plans or transitional implementation notes
+- Temporal language ("not yet," "remaining gaps," "will be replaced")
+
+Working queues (`queues/*.md`) and investigation docs (`investigations/*.md`) track progress and reference the architecture docs as their source of truth. The dependency is one-way: queues depend on architecture, never the reverse.
 
 ## Anti-Patterns
 

@@ -72,6 +72,7 @@ auto Compile(
   }
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &compilation.mir.design,
+      .construction = &compilation.mir.construction,
       .mir_arena = compilation.mir.design_arena.get(),
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
@@ -89,6 +90,8 @@ auto Compile(
           output.IsEnabled(OutputCategory::kAnalysis),
       .main_abi = lowering::mir_to_llvm::MainAbi::kArgvForwarding,
       .dpi_export_wrappers = &compilation.mir.dpi_export_wrappers,
+      .bound_connections = &compilation.mir.bound_connections,
+      .expr_connections = &compilation.mir.expr_connections,
   };
 
   std::expected<lowering::mir_to_llvm::LoweringResult, Diagnostic> llvm_result;

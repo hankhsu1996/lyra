@@ -2,8 +2,9 @@
 
 #include <vector>
 
-#include "lyra/common/type.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/connection_recipe.hpp"
+#include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 
 namespace lyra::mir {
@@ -11,7 +12,12 @@ namespace lyra::mir {
 enum class SlotKind : uint8_t;
 struct SlotDesc;
 
-// Specialization-owned behavioral MIR for a module body.
+// Implementation-detail body container, pending migration to
+// CompiledModuleBody (compiled_specialization.hpp) in B2.
+//
+// CompiledModuleBody is the ONLY public specialization-scoped body
+// artifact type going forward. New code must not depend on this type
+// as a public contract. Existing consumers will be migrated in B2.
 //
 // Owns all body-local MIR storage: processes, functions, places, and
 // slot descriptors. ProcessIds, FunctionIds, and body-local PlaceIds are
@@ -41,6 +47,20 @@ struct ModuleBody {
   // Body-local MIR storage. All body-local PlaceIds, ProcessIds, and
   // FunctionIds are indices into this arena.
   Arena arena;
+
+  // B2: External access recipes for this body.
+  std::vector<ExternalAccessRecipe> external_refs;
+
+  // B2: Resolved external ref bindings (parallel to external_refs).
+  // Durable identity facts: {target_object_index, target_local_slot, type}.
+  // Backend computes addresses from ConstructionInput at codegen time.
+  std::vector<ResolvedExternalRefBinding> resolved_external_ref_bindings;
+
+  // B2: Child instantiation sites for this body.
+  std::vector<ChildInstantiationSite> child_sites;
+
+  // B2: Connection recipes for this body.
+  std::vector<ConnectionRecipe> connection_recipes;
 };
 
 }  // namespace lyra::mir

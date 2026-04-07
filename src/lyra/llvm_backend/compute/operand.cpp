@@ -20,7 +20,6 @@
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/context.hpp"
-#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
@@ -29,6 +28,7 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -230,6 +230,10 @@ auto LowerOperandRaw(
             const auto& tv = context.ReadTempValue(temp_id.value);
             return BuildRawValueFromTempValue(context.GetBuilder(), tv);
           },
+          [&context](mir::ExternalRefId ref_id) -> Result<llvm::Value*> {
+            auto place_id = context.ResolveExternalRef(ref_id);
+            return context.LoadPlaceValue(place_id);
+          },
       },
       operand.payload);
 }
@@ -261,6 +265,88 @@ auto BuildRawValueFromTempValue(llvm::IRBuilder<>& builder, const TempValue& tv)
   }
   // kTwoState: return scalar directly. This is the domain-aware raw shape.
   return tv.value;
+}
+
+auto ResolveOperandPlace(Context& context, const mir::Operand& operand)
+    -> std::optional<mir::PlaceId> {
+  return std::visit(
+      common::Overloaded{
+          [](const Constant&) -> std::optional<mir::PlaceId> {
+            return std::nullopt;
+          },
+          [](mir::PlaceId place_id) -> std::optional<mir::PlaceId> {
+            return place_id;
+          },
+          [](mir::TempId) -> std::optional<mir::PlaceId> {
+            return std::nullopt;
+          },
+          [&](mir::ExternalRefId ref_id) -> std::optional<mir::PlaceId> {
+            return context.ResolveExternalRef(ref_id);
+          },
+      },
+      operand.payload);
+}
+
+auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
+  const auto& types = context.GetTypeArena();
+  // Place-backed operands (PlaceId, ExternalRefId): derive from Place.
+  auto place = ResolveOperandPlace(context, operand);
+  if (place.has_value()) {
+    return mir::TypeOfPlace(types, context.LookupPlace(*place));
+  }
+  // Non-place operands.
+  return std::visit(
+      common::Overloaded{
+          [](const Constant& c) -> TypeId { return c.type; },
+          [&](mir::TempId temp_id) -> TypeId {
+            return context.GetTempType(temp_id.value);
+          },
+          [](mir::PlaceId) -> TypeId {
+            throw common::InternalError(
+                "GetOperandTypeId",
+                "PlaceId not handled by ResolveOperandPlace");
+          },
+          [](mir::ExternalRefId) -> TypeId {
+            throw common::InternalError(
+                "GetOperandTypeId",
+                "ExternalRefId not handled by ResolveOperandPlace");
+          },
+      },
+      operand.payload);
+}
+
+auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
+  const auto& types = context.GetTypeArena();
+  // Place-backed operands: derive from type.
+  auto place = ResolveOperandPlace(context, operand);
+  if (place.has_value()) {
+    TypeId type_id = mir::TypeOfPlace(types, context.LookupPlace(*place));
+    const Type& type = types[type_id];
+    return IsPacked(type) && context.IsPackedFourState(type);
+  }
+  // Non-place operands.
+  return std::visit(
+      common::Overloaded{
+          [&](const Constant& c) -> bool {
+            const Type& type = types[c.type];
+            return IsPacked(type) && context.IsPackedFourState(type);
+          },
+          [&](mir::TempId temp_id) -> bool {
+            return context.ReadTempValue(temp_id.value).domain ==
+                   ValueDomain::kFourState;
+          },
+          [](mir::PlaceId) -> bool {
+            throw common::InternalError(
+                "IsOperandFourState",
+                "PlaceId not handled by ResolveOperandPlace");
+          },
+          [](mir::ExternalRefId) -> bool {
+            throw common::InternalError(
+                "IsOperandFourState",
+                "ExternalRefId not handled by ResolveOperandPlace");
+          },
+      },
+      operand.payload);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

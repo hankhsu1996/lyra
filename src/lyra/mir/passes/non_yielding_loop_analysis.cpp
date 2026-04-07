@@ -117,9 +117,11 @@ auto CollectWrittenRoots(
   for (const auto& stmt : block.statements) {
     std::optional<PlaceId> dest;
     if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
-      dest = assign->dest;
+      if (const auto* pid = std::get_if<PlaceId>(&assign->dest)) {
+        dest = *pid;
+      }
     } else if (const auto* ga = std::get_if<GuardedAssign>(&stmt.data)) {
-      dest = ga->dest;
+      dest = RequireLocalDest(ga->dest, "NonYieldingLoopAnalysis");
     }
     if (!dest) continue;
 

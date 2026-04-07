@@ -3,6 +3,7 @@
 #include <slang/ast/Compilation.h>
 
 #include "lyra/common/body_timescale.hpp"
+#include "lyra/common/child_coord_map.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
@@ -19,6 +20,10 @@ struct DesignLoweringResult {
   common::SpecializationMap specialization_map;
   mir::InstanceTable instance_table;
   std::vector<common::BodyTimeScale> body_timescales;
+  // Per-definition child instance name -> repertoire coord mapping.
+  // Built from DefinitionRepertoireDesc during AST-to-HIR. Consumed by
+  // design_lower.cpp for durable child-site identity.
+  common::ChildCoordMap child_coord_map;
 };
 
 auto LowerDesign(

@@ -11,6 +11,7 @@
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/rhs.hpp"
 #include "lyra/mir/rvalue.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::mir {
 
@@ -34,6 +35,8 @@ class Dumper {
       -> std::string;
   [[nodiscard]] auto FormatIndexOperand(const Operand& op) const -> std::string;
   [[nodiscard]] auto FormatPlace(PlaceId id) const -> std::string;
+  [[nodiscard]] auto FormatWriteTarget(const WriteTarget& target) const
+      -> std::string;
   [[nodiscard]] auto FormatOperand(const Operand& op) const -> std::string;
   [[nodiscard]] auto FormatRvalue(const Rvalue& rv) const -> std::string;
   [[nodiscard]] auto FormatRhs(const RightHandSide& rhs) const -> std::string;

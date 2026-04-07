@@ -1,8 +1,10 @@
 # The Natural Model
 
+> Before editing, see [documentation-guidelines.md](documentation-guidelines.md). Architecture docs describe the target, not history. No "current state," migration plans, or queue references.
+
 Canonical definition of Lyra's foundational mental model. All other docs reference this; none duplicate it.
 
-For how this model drives design decisions, see [architecture-principles.md](architecture-principles.md). For the compilation data model, see [compilation-model.md](compilation-model.md). For the migration from current state to this model, see [queues/specialization.md](queues/specialization.md).
+For how this model drives design decisions, see [architecture-principles.md](architecture-principles.md). For the compilation data model, see [compilation-model.md](compilation-model.md).
 
 ## Core Definitions
 
@@ -63,6 +65,36 @@ These facts build each instance. They do not change compiled code.
 - Design-wide metadata registries (for trace, debug, profiling)
 
 The rule: design-global systems coordinate instances but do not define what an instance is. An instance's state representation, member layout, and access patterns are object-local concerns. The engine may internally use flat arrays or global indices for efficiency, but that is an implementation detail of the outer layer, not the core model.
+
+## Self-Local vs Non-Local Access
+
+Member access within the natural model falls into two categories with fundamentally different resolution timing.
+
+**Self-local access** is a process reading or writing a member of its own instance. This is `this->member` -- object pointer + local offset. The offset is a compile-time constant from SpecLayout. Self-local access is fully resolved during specialization compilation.
+
+**Non-local access** is a process reading or writing a member of a different instance (parent, child, ancestor, or any other instance in the hierarchy). This includes hierarchical references (`child.signal`, `ancestor.value`) and port connection sources/targets.
+
+Non-local access cannot be resolved during specialization compilation because the target instance does not yet exist. The target is created during construction, and its identity (which object, at what address) is a construction-time fact. Specialization compilation must represent non-local access as an **externally-bound handle** -- a typed reference that the body code can use, but that only acquires a concrete target when construction binds it.
+
+The mental model is closure capture: the body code captures a typed external reference slot. The constructor fills it with a concrete binding when the instance and its neighbors are materialized. The body code never names the target directly.
+
+This applies uniformly to all non-local access patterns:
+
+- Hierarchical reads/writes to ancestors or descendants
+- Port connection sources and targets
+- Cross-instance trigger subscriptions
+
+The distinction is not "compile-time vs runtime." It is "self-local (compile-time resolved) vs non-local (construction-time bound)."
+
+## Generate-Created Structure
+
+Generate constructs create descendants during construction. A parent body may contain generate blocks that conditionally or iteratively create children, but the final set of descendants is a construction-time fact, not a compile-time fact.
+
+Because generate-created descendants are realized during construction, any model that requires specialization compilation to know the final descendant object set is invalid. Compiled body code must not assume a specific number of children, a specific ordering of descendants, or a specific hierarchy shape below it.
+
+The specialization compiles all possible artifacts from all generate branches (see [compilation-model.md](compilation-model.md) "Specialization as Artifact Library"). The constructor selects which subset to install for each instance. The compiled code is indifferent to which selection was made.
+
+This means: non-local access to generate-created descendants must use the same externally-bound handle model as all other non-local access. The body code references a typed handle. The constructor, which knows which descendants actually exist, binds it.
 
 ## What Connectivity Must Not Do
 

@@ -39,6 +39,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/activation_local.hpp"
 #include "lyra/llvm_backend/callable_abi.hpp"
+#include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
@@ -750,8 +751,17 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
     }
     return std::nullopt;
   };
-  auto slot_id = common::SlotId{static_cast<uint32_t>(place.root.id)};
-  const auto& spec = context.GetDesignSlotStorageSpec(slot_id);
+  const SlotStorageSpec* slot_spec_ptr = nullptr;
+  if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot &&
+      context.GetSpecSlotInfo() != nullptr) {
+    auto local_slot = static_cast<uint32_t>(place.root.id);
+    slot_spec_ptr = &context.GetSpecSlotInfo()->GetSlotSpec(
+        local_slot, context.GetLayout());
+  } else {
+    auto slot_id = common::SlotId{static_cast<uint32_t>(place.root.id)};
+    slot_spec_ptr = &context.GetDesignSlotStorageSpec(slot_id);
+  }
+  const auto& spec = *slot_spec_ptr;
   const auto& spec_arena = context.GetDesignStorageSpecArena();
   auto range = ResolveByteRange(spec, spec_arena, place, resolver);
   if (range.kind == RangeKind::kPrecise) {
@@ -2247,16 +2257,22 @@ struct PlaceCollector {
             [&](const auto& data) {
               using T = std::decay_t<decltype(data)>;
               if constexpr (std::is_same_v<T, mir::Assign>) {
-                CollectFromPlace(data.dest, arena);
+                if (const auto* p = std::get_if<mir::PlaceId>(&data.dest)) {
+                  CollectFromPlace(*p, arena);
+                }
                 CollectFromRhs(data.rhs, arena);
               } else if constexpr (std::is_same_v<T, mir::GuardedAssign>) {
-                CollectFromPlace(data.dest, arena);
+                if (const auto* p = std::get_if<mir::PlaceId>(&data.dest)) {
+                  CollectFromPlace(*p, arena);
+                }
                 CollectFromRhs(data.rhs, arena);
                 CollectFromOperand(data.guard, arena);
               } else if constexpr (std::is_same_v<T, mir::Effect>) {
                 CollectFromEffect(data.op, arena);
               } else if constexpr (std::is_same_v<T, mir::DeferredAssign>) {
-                CollectFromPlace(data.dest, arena);
+                if (const auto* p = std::get_if<mir::PlaceId>(&data.dest)) {
+                  CollectFromPlace(*p, arena);
+                }
                 CollectFromRhs(data.rhs, arena);
               } else if constexpr (std::is_same_v<T, mir::Call>) {
                 // Scan input arguments
@@ -3112,6 +3128,8 @@ auto DefineMirFunction(
   if (!is_observer && is_module_scoped) {
     const auto& lowering = context.GetModuleFunctionLowering(func_id);
     context.SetSpecSlotInfo(lowering.spec_slot_info);
+    context.SetConnectionNotificationMask(
+        lowering.connection_notification_mask);
 
     auto* this_arg = llvm_func->getArg(arg_offset + 2);
     this_arg->setName("this_ptr");

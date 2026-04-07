@@ -6,6 +6,7 @@
 #include <slang/ast/Compilation.h>
 
 #include "lyra/common/body_timescale.hpp"
+#include "lyra/common/child_coord_map.hpp"
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/module_identity.hpp"
@@ -38,10 +39,11 @@ struct LoweringResult {
   std::unique_ptr<SourceMapper> source_mapper;
   DesignBindingPlan binding_plan;
   common::SpecializationMap specialization_map;
-  mir::InstanceTable instance_table;  // For %m support
+  mir::InstanceTable instance_table;
   // Finest timeprecision across all modules
   int8_t global_precision_power = -9;
   std::vector<common::BodyTimeScale> body_timescales;
+  common::ChildCoordMap child_coord_map;
 };
 
 auto LowerAstToHir(

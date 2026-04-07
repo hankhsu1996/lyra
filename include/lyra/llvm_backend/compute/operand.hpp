@@ -43,4 +43,16 @@ auto LowerOperandAsStorage(
 auto LowerConstant(Context& context, const Constant& constant)
     -> Result<llvm::Value*>;
 
+// Canonical operand-to-place resolution.
+// PlaceId -> returns the PlaceId directly.
+// ExternalRefId -> resolves via Context::ResolveExternalRef.
+// TempId / Constant -> returns nullopt (no place backing).
+auto ResolveOperandPlace(Context& context, const mir::Operand& operand)
+    -> std::optional<mir::PlaceId>;
+
+// Canonical operand type helpers. Handle PlaceId, TempId, ExternalRefId,
+// and Constant uniformly.
+auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId;
+auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool;
+
 }  // namespace lyra::lowering::mir_to_llvm

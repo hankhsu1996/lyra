@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <string>
 #include <variant>
 
 #include <llvm/IR/Constants.h>
@@ -55,9 +54,8 @@ struct StoreShape {
 auto ClassifyDeferredStore(Context& context, mir::PlaceId dest)
     -> Result<StoreShape> {
   const auto& types = context.GetTypeArena();
-  const auto& arena = context.GetMirArena();
 
-  TypeId dst_ty = mir::TypeOfPlace(types, arena[dest]);
+  TypeId dst_ty = mir::TypeOfPlace(types, context.LookupPlace(dest));
   const Type& type = types[dst_ty];
 
   auto storage_ty_result = context.GetPlaceLlvmType(dest);
@@ -189,7 +187,8 @@ auto EmitDeferredStoreCore(
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
-  auto raw_or_err = LowerRhsRaw(context, deferred.rhs, deferred.dest);
+  auto dest = context.ResolveWriteDest(deferred.dest);
+  auto raw_or_err = LowerRhsRaw(context, deferred.rhs, dest);
   if (!raw_or_err) return std::unexpected(raw_or_err.error());
 
   llvm::Value* source_value = CoerceValueToShape(context, *raw_or_err, shape);
@@ -234,7 +233,8 @@ auto EmitDeferredStoreCore(
 auto LowerDeferredAssignBitRange(
     Context& context, const mir::DeferredAssign& deferred,
     const SignalCoordExpr& signal_id) -> Result<void> {
-  auto path = ExtractPackedAccessPath(context, deferred.dest);
+  auto dest = context.ResolveWriteDest(deferred.dest);
+  auto path = ExtractPackedAccessPath(context, dest);
   if (!path) return std::unexpected(path.error());
 
   auto subview = ResolvePackedSubview(context, *path);
@@ -246,7 +246,7 @@ auto LowerDeferredAssignBitRange(
 
   PackedNbaPolicy nba_policy{
       .engine_ptr = context.GetEnginePointer(),
-      .notify_base_ptr = context.GetStorageRootPointer(deferred.dest),
+      .notify_base_ptr = context.GetStorageRootPointer(dest),
       .signal_id = signal_id,
   };
 
@@ -259,11 +259,11 @@ auto LowerDeferredAssignBitRange(
 auto LowerDeferredAssignWithOobGuard(
     Context& context, const mir::DeferredAssign& deferred,
     const StoreShape& shape, const SignalCoordExpr& signal_id) -> Result<void> {
+  auto dest = context.ResolveWriteDest(deferred.dest);
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  const auto& place = arena[deferred.dest];
+  const auto& place = context.LookupPlace(dest);
 
   // Walk projections to find the first IndexProjection and compute the array
   // type AT that projection site. This handles cases like s.field[i] where the
@@ -316,10 +316,10 @@ auto LowerDeferredAssignWithOobGuard(
 
   // Schedule block: compute pointers and emit via shared core
   builder.SetInsertPoint(schedule_bb);
-  auto write_ptr_or_err = context.GetPlacePointer(deferred.dest);
+  auto write_ptr_or_err = context.GetPlacePointer(dest);
   if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
-  llvm::Value* notify_base_ptr = context.GetStorageRootPointer(deferred.dest);
+  llvm::Value* notify_base_ptr = context.GetStorageRootPointer(dest);
 
   auto result = EmitDeferredStoreCore(
       context, deferred, shape, write_ptr, notify_base_ptr, signal_id);
@@ -335,10 +335,11 @@ auto LowerDeferredAssignWithOobGuard(
 auto LowerDeferredAssignDirect(
     Context& context, const mir::DeferredAssign& deferred,
     const StoreShape& shape, const SignalCoordExpr& signal_id) -> Result<void> {
-  auto write_ptr_or_err = context.GetPlacePointer(deferred.dest);
+  auto dest = context.ResolveWriteDest(deferred.dest);
+  auto write_ptr_or_err = context.GetPlacePointer(dest);
   if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
-  llvm::Value* notify_base_ptr = context.GetStorageRootPointer(deferred.dest);
+  llvm::Value* notify_base_ptr = context.GetStorageRootPointer(dest);
 
   return EmitDeferredStoreCore(
       context, deferred, shape, write_ptr, notify_base_ptr, signal_id);
@@ -348,24 +349,24 @@ auto LowerDeferredAssignDirect(
 
 auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     -> Result<void> {
-  const auto& arena = context.GetMirArena();
+  auto dest = context.ResolveWriteDest(deferred.dest);
 
   // Use canonical signal_id (after alias resolution) for notification
   // NBA is only valid for design places (GetSignalCoordForNba throws if not)
-  SignalCoordExpr signal_id = GetSignalCoordForNba(context, deferred.dest);
+  SignalCoordExpr signal_id = GetSignalCoordForNba(context, dest);
 
   // Case 1: BitRangeProjection - partial bit-range writes (keep separate)
-  if (context.HasBitRangeProjection(deferred.dest)) {
+  if (context.HasBitRangeProjection(dest)) {
     return LowerDeferredAssignBitRange(context, deferred, signal_id);
   }
 
   // Classify destination once via MIR type
-  auto shape_or_err = ClassifyDeferredStore(context, deferred.dest);
+  auto shape_or_err = ClassifyDeferredStore(context, dest);
   if (!shape_or_err) return std::unexpected(shape_or_err.error());
   StoreShape shape = *shape_or_err;
 
   // Case 2: IndexProjection - array element write with OOB guard
-  if (HasIndexProjection(arena[deferred.dest])) {
+  if (HasIndexProjection(context.LookupPlace(dest))) {
     return LowerDeferredAssignWithOobGuard(context, deferred, shape, signal_id);
   }
 

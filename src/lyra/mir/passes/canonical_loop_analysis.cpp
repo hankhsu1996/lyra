@@ -82,7 +82,9 @@ auto FindRvalueForTemp(const BasicBlock& block, int temp_id, const Arena& arena)
       continue;
     }
     if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
-      auto dest_temp = ResolvePlaceToTempId(assign->dest, arena);
+      const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
+      if (!dest_pid) continue;
+      auto dest_temp = ResolvePlaceToTempId(*dest_pid, arena);
       if (dest_temp && *dest_temp == temp_id) {
         return std::get_if<Rvalue>(&assign->rhs);
       }
@@ -110,7 +112,9 @@ auto ResolveOneUseCopy(
       continue;
     }
     if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
-      auto dest_tid = ResolvePlaceToTempId(assign->dest, arena);
+      const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
+      if (!dest_pid) continue;
+      auto dest_tid = ResolvePlaceToTempId(*dest_pid, arena);
       if (dest_tid && *dest_tid == *temp_id) {
         const auto* rhs_op = std::get_if<Operand>(&assign->rhs);
         if (rhs_op != nullptr) return GetUsePlaceId(*rhs_op);
@@ -136,10 +140,13 @@ auto IsIvModifiedInBody(
   for (uint32_t bi = header + 1; bi < latch; ++bi) {
     for (const auto& stmt : blocks[bi].statements) {
       if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
-        if (assign->dest == iv) return true;
+        if (const auto* pid = std::get_if<PlaceId>(&assign->dest);
+            pid && *pid == iv)
+          return true;
       }
       if (const auto* ga = std::get_if<GuardedAssign>(&stmt.data)) {
-        if (ga->dest == iv) return true;
+        if (RequireLocalDest(ga->dest, "CanonicalLoopAnalysis") == iv)
+          return true;
       }
     }
   }
@@ -223,7 +230,9 @@ auto RecognizeLoop(
   std::optional<int64_t> init_value;
   for (const auto& stmt : preheader.statements) {
     const auto* assign = std::get_if<Assign>(&stmt.data);
-    if (assign == nullptr || assign->dest != *iv_place) continue;
+    if (assign == nullptr) continue;
+    const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
+    if (!dest_pid || *dest_pid != *iv_place) continue;
     const auto* rhs_op = std::get_if<Operand>(&assign->rhs);
     init_value = rhs_op != nullptr ? GetConstantInt(*rhs_op) : std::nullopt;
   }
@@ -233,7 +242,9 @@ auto RecognizeLoop(
   bool has_unit_step = false;
   for (const auto& stmt : latch.statements) {
     const auto* assign = std::get_if<Assign>(&stmt.data);
-    if (assign == nullptr || assign->dest != *iv_place) continue;
+    if (assign == nullptr) continue;
+    const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
+    if (!dest_pid || *dest_pid != *iv_place) continue;
 
     const Rvalue* step_rv = std::get_if<Rvalue>(&assign->rhs);
 

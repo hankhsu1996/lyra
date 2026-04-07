@@ -1,10 +1,14 @@
 # Module Hierarchy
 
+> Before editing, see [documentation-guidelines.md](documentation-guidelines.md). Architecture docs describe the target, not history. No "current state," migration plans, or queue references.
+
 How Lyra handles hierarchical module instantiation and port connections.
 
 Port connections and hierarchical references are resolved during **design realization**, not during specialization compilation. Compiled specializations address state via `this_base + offset`; design realization binds instances to concrete memory locations and builds connectivity tables.
 
-See [compilation-model.md](compilation-model.md) for the realization model.
+See [compilation-model.md](compilation-model.md) for the target model: non-local access uses external-ref handles, connections use recipes, and both are bound at construction time. See [natural-model.md](natural-model.md) for the self-local vs non-local access distinction.
+
+**Note:** The implementation descriptions below predate the recipe model defined in [compilation-model.md](compilation-model.md).
 
 ## Port Connections
 

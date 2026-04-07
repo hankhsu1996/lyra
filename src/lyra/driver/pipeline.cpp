@@ -10,7 +10,6 @@
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
-#include "lyra/realization/assemble_bindings.hpp"
 
 namespace lyra::driver {
 
@@ -62,6 +61,7 @@ auto CompileToMir(const CompilationInput& input, CompilationOutput& output)
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
+      .child_coord_map = &hir_result.child_coord_map,
   };
 
   std::expected<lowering::hir_to_mir::LoweringResult, Diagnostic> mir_result;
@@ -77,11 +77,6 @@ auto CompileToMir(const CompilationInput& input, CompilationOutput& output)
         CompilationError::FromDiagnostics(
             std::move(error_sink), std::move(hir_result.source_manager)));
   }
-
-  // Realization: attach compiled bindings to design (no HIR dependency).
-  realization::AssembleBindings(
-      std::move(mir_result->compiled_bindings), *mir_result->design_arena,
-      mir_result->design);
 
   return CompilationResult{
       .hir = std::move(hir_result),

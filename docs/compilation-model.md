@@ -1,5 +1,7 @@
 # Compilation Model
 
+> Before editing, see [documentation-guidelines.md](documentation-guidelines.md). Architecture docs describe the target, not history. No "current state," migration plans, or queue references.
+
 The concrete data model for specialization-based compilation. Defines the types, identity rules, and invariants that all pipeline stages must respect.
 
 For architectural motivation, see [architecture-principles.md](architecture-principles.md).
@@ -35,7 +37,7 @@ ModuleSpecId = (ModuleDefId, BehaviorFingerprint)
 | `ModuleDefId`         | Source-level module definition identity                      |
 | `BehaviorFingerprint` | Hash of all inputs that affect the compiled artifact's shape |
 
-A specialization produces a self-contained, cacheable artifact: `CompiledModuleSpec`.
+A specialization produces a self-contained, cacheable artifact: `CompiledSpecialization`.
 
 ### The Natural Correspondence
 
@@ -256,9 +258,39 @@ A generate block requires specialization only when it changes compile-owned fact
 
 The key distinction: generate does not control **what is compiled**. The specialization compiles all artifacts from all branches. Generate controls **what is installed** -- which artifacts the constructor selects for a particular instance.
 
-## Compiled Artifact: CompiledModuleSpec
+Because generate-created descendants are realized during construction, any model that requires specialization compilation to know the final descendant object set is invalid. The compiled artifact library must be complete and correct regardless of which generate branches are selected for any particular instance. No compiled artifact may encode an assumption about which descendants exist, how many exist, or what their object identities are.
+
+## Compiled Artifact Structure
 
 A compiled specialization is a self-contained artifact library. It contains compiled code for all artifacts the definition can produce -- not just the artifacts selected by one particular instance.
+
+Three compile-time artifact layers:
+
+| Artifact                 | Description                                                     |
+| ------------------------ | --------------------------------------------------------------- |
+| `CompiledModuleHeader`   | Specialization-scoped lowered child contract (ports, types)     |
+| `CompiledModuleBody`     | Specialization-scoped body artifact (processes, slots, recipes) |
+| `CompiledSpecialization` | Container holding header + body as siblings                     |
+
+`CompiledModuleHeader` is the child-facing lowered contract artifact for a specialization, not merely the source-level module header syntax. It is the deterministic source of truth for the lowered port contract: each port symbol appears exactly once, sorted by `LocalSlotId` for deterministic iteration and hashing. Parent-side port resolution must go through the header artifact, not source declaration order or child body decls. Headers are produced from module declarations/elaboration before body compilation begins.
+
+`HeaderDatabase` is a separately owned compile-time artifact store for module headers. It is not nested under `CompiledSpecialization`. The database owns all headers, enforces one-header-per-specialization uniqueness, and provides stable append-only handles (`CompiledModuleHeaderId`). `CompiledSpecialization` references its header by handle; the database must outlive all specialization instances that reference its headers. The header handle in a `CompiledSpecialization` must resolve to a header whose `spec_id` matches the specialization's own `spec_id` (enforced at construction time).
+
+`CompiledModuleBody` contains specialization-scoped templates and recipes only. No per-instance resolved bindings, realized descendant lists, or final topology-derived metadata.
+
+### Parent-Child Dependency Rule
+
+Parent compilation depends only on the child's `CompiledModuleHeader` for the child specialization, never the child body. Parent-side code may not read child `CompiledModuleBody`. Parent-side code may not inspect child slot layout through any path other than `GetChildPortContract`.
+
+This is what enables full specialization parallelism: all module bodies compile in parallel against pre-existing header artifacts.
+
+### Connection Recipe Invariants
+
+`child_slot` in a `ConnectionRecipe` is the child specialization's lowered `LocalSlotId` obtained from `CompiledModuleHeader` via `GetChildPortContract`. It is not a source-level declaration ordinal and must not be computed from source port order or child body declaration tables.
+
+Parent-side connection source classification is limited to exactly three compile-time artifact categories: local slot (direct copy), body-local function (expression), and external reference handle. These are semantic and body-local, never topology-dependent. No ad hoc intermediate source categories may be added.
+
+### Contents
 
 | Component           | Description                                                               |
 | ------------------- | ------------------------------------------------------------------------- |
@@ -267,11 +299,44 @@ A compiled specialization is a self-contained artifact library. It contains comp
 | Code artifacts      | LLVM IR (or machine code) for all process/kernel artifacts in the library |
 | InstanceConstSchema | Types and positions of value-only parameters in the const block           |
 | Metadata            | Source origins, process meta (names, kinds), read/write sets              |
-| SpecHash            | Deterministic hash over all semantically relevant outputs                 |
+| SpecHash            | Deterministic hash over all semantically relevant output                  |
 
 ### Scope Rule
 
-All contents of `CompiledModuleSpec` are **specialization-scoped**. No design-global numbering is allowed inside specialization artifacts.
+All contents are **specialization-scoped**. No design-global numbering is allowed inside specialization artifacts.
+
+## Non-Local Access and Connections
+
+Hierarchical references and connections are the **same architectural class of problem**: both require a body to access state owned by a different instance. They must use the same ownership model. Any design that "fixes" one path while leaving the other on design-global flat slots is architecturally invalid.
+
+The ownership contract for all non-local access:
+
+- **Specialization compilation** emits a typed, externally-bound handle. The handle carries the type and access direction but not the target identity. The compiled artifact does not know which instance the handle will point to.
+- **Construction** binds the handle using the realized object graph. Only at this point does the target become concrete.
+- **Runtime** executes against the bound result. The binding mechanism (pointer, offset, descriptor, or other encoding) is a runtime implementation choice, not an architectural constraint.
+
+### Non-local access handles
+
+Each non-local access in a body becomes an external reference in the compiled artifact. The minimum required information is a body-local ordinal, the target type, and the access direction (read/write/rw). Compiled code accesses external refs through a per-instance indirection whose shape is specialization-scoped but whose contents are construction-time facts.
+
+This is the closure-capture model: the body captures typed references to external state. The constructor closes over the actual targets.
+
+### Connection recipes
+
+A connection is a recipe in the body's artifact library. It describes a data-flow rule using body-local identities only. The minimum required information is:
+
+- The direction (parent-to-child or child-to-parent)
+- The source: a parent-local slot (direct copy) or a body-local compiled function (expression)
+- The target: a child binding site ordinal + a slot within the child body
+- The trigger: which parent-local signal(s) should wake the connection
+
+The child binding site is a body-local ordinal for "which child instantiation site in this body," not a final object index. The constructor resolves it to the actual child instance when that child is created. The child port's local slot identity comes from the child specialization's `CompiledModuleHeader`, not from child body internals.
+
+### Descendant identity
+
+Non-local access to descendants (including descendants created through generate scopes) uses a durable Lyra-owned path built from slang hierarchical path elements, repertoire durable generate identity (`SelectionStepDesc` / `RepertoireCoord`), child-site step, and final child-local slot.
+
+The durable path must not contain final object identity, flat slot IDs, or slang pointer identity. It is a navigation recipe resolved at construction time when the actual object graph exists.
 
 ## Identity Rules
 
@@ -318,7 +383,7 @@ Realization takes compiled specializations + the elaborated design graph and mat
 
 - Instance graph (which instances exist, which specialization each uses)
 - Connectivity graph (port wiring, continuous assigns between instances)
-- `CompiledModuleSpec` for each required `ModuleSpecId`
+- `CompiledSpecialization` for each required `ModuleSpecId`
 
 ### Outputs
 
@@ -346,6 +411,19 @@ Realization may:
 - Create runtime lookup structures
 - Build per-instance descriptors that reference shared compiled code
 
+### Construction Instruction Model
+
+The constructor executes typed operations for each instance:
+
+| Operation         | Effect                                                                          |
+| ----------------- | ------------------------------------------------------------------------------- |
+| CreateChild       | Allocate instance storage, apply storage recipe, install per-instance constants |
+| BindExternalRef   | Bind an external reference handle to a concrete (instance, local_slot) pair     |
+| InstallConnection | Wire a connection recipe to concrete source/target storage, register trigger    |
+| InstallProcess    | Register a process artifact for execution on this instance                      |
+
+Generate-controlled structure is expressed by the constructor choosing which operations to execute. The artifact library is the same regardless; only the selection differs.
+
 ### Instance-Independence of Compiled Artifacts
 
 **Target property:** Changing instance counts, generate expansion, or topology should not materially change the LLVM codegen or object emission workload. The intended compile-time scaling property:
@@ -355,15 +433,13 @@ Realization may:
 
 The boundary rule: per-instance binding should not appear in LLVM function or global identity. Heavy LLVM codegen shape -- function count, global count, and optimization work -- should be determined by the number of unique specializations, not the number of instances. Instance-specific constants (base byte offset, instance ID, signal ID offset, per-instance slot offset tables) belong in runtime-owned data materialized at construction time.
 
-**Current state:** Per-instance code is eliminated. Shared-body code paths are in place. Body descriptor packages carry body-shaped templates with body-relative offsets. However, the compiled object still contains per-instance emitted IR (path strings, param payloads, constructor calls) and a design-global slot byte offset oracle. The runtime state model still uses a single design-global arena rather than per-instance object-local storage. See the [specialization queue](queues/specialization.md) for the remaining migration.
-
 ### Incrementality
 
 If only wiring or instance graph changes but module bodies do not, compiled specializations are reused and only realization tables are rebuilt.
 
 ## Specialization-Local Optimizations
 
-Within a `CompiledModuleSpec`, behavior may be transformed for performance as long as semantics are preserved. All such optimizations are specialization-local and must not require cross-module flattening.
+Within a `CompiledSpecialization`, behavior may be transformed for performance as long as semantics are preserved. All such optimizations are specialization-local and must not require cross-module flattening.
 
 | Optimization               | Description                                                        |
 | -------------------------- | ------------------------------------------------------------------ |
@@ -395,20 +471,54 @@ These invariants must be enforced automatically:
 | Realization reuse              | Wiring-only changes reuse compiled specializations                         |
 | Parallel build safety          | Multiple specializations compile concurrently without shared mutable state |
 
+## Worked Examples
+
+Each example shows what is compile-owned, construction-owned, and runtime-owned.
+
+### Local access: `always_comb y = x + 1`
+
+- **Compile-owned:** Slot layout (`x` at offset A, `y` at offset B). Process code using `this_base + offset`.
+- **Construction-owned:** Instance storage allocation.
+- **Runtime-owned:** Mutable values of `x` and `y`. Pure object-local access.
+
+### Hierarchical reference: `always_comb result = c.x`
+
+- **Compile-owned:** External ref handle (type, read access). Process code that reads through the handle and writes to local `result`. Does not know which object `c.x` refers to.
+- **Construction-owned:** Binding of the handle to child `c`'s slot for `x`. Created when `c` is materialized.
+- **Runtime-owned:** Mutable values. Process reads through the bound handle into child's storage.
+
+### Generate-created child: `if (USE_FAST) begin : fast ... end`
+
+- **Compile-owned:** Artifact library has both branches. Each branch's process has its own external ref handle. Both compiled.
+- **Construction-owned:** Which branch is selected. Which child is created. Which process is installed. Binding of the selected ref to the created child.
+- **Runtime-owned:** Only the installed process executes. The other branch's artifacts are unused.
+
+### Connections: `.a(p)` and `.a(p & en)`
+
+- **Compile-owned:** Two connection recipes. Recipe 1: direct source (parent slot `p`), target (child site 0, slot `a`). Recipe 2: expression source (body-local function), same target shape. All identities body-local.
+- **Construction-owned:** Resolution of child sites to actual child instances. Wiring of source/target storage. Trigger registration.
+- **Runtime-owned:** On change to `p`: recipe 1 copies, recipe 2 evaluates function. Both write to child's local slot.
+
 ## Terminology
 
-| Term                | Definition                                                                     |
-| ------------------- | ------------------------------------------------------------------------------ |
-| Module Definition   | Source-level `module M; ... endmodule`                                         |
-| Specialization      | `(ModuleDefId, BehaviorFingerprint)` -- compiled artifact library              |
-| Instance            | Object that owns its state, accessed via `this_base`                           |
-| BehaviorFingerprint | Hash of compile-owned inputs that affect the compiled artifact                 |
-| SpecLayout          | Specialization-scoped mapping from slot to offset                              |
-| Design Realization  | Materializing the executable runtime image from specializations + design graph |
-| InstanceConstBlock  | Per-instance storage for value-only parameters                                 |
-| Kernelization       | Transforming a process into an inline-callable kernel                          |
-| Elaboration-time    | Properties resolved during elaboration (containers, topology, processes)       |
-| Compile-owned       | Type/behavior facts requiring specialization (packed widths, code shape)       |
-| Constructor-owned   | Type facts resolved at realization (unpacked dimensions, container sizing)     |
-| Container           | Unpacked array with elaboration-resolved size and layout metadata              |
-| Instance storage    | Per-instance byte-level storage region, allocated at construction              |
+| Term                   | Definition                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------- |
+| Module Definition      | Source-level `module M; ... endmodule`                                           |
+| Specialization         | `(ModuleDefId, BehaviorFingerprint)` -- compiled artifact library                |
+| Artifact Library       | Complete set of compiled artifacts a specialization can produce                  |
+| Instance               | Object that owns its state, accessed via `this_base`                             |
+| BehaviorFingerprint    | Hash of compile-owned inputs that affect the compiled artifact                   |
+| SpecLayout             | Specialization-scoped mapping from slot to offset                                |
+| Design Realization     | Materializing the executable runtime image from specializations + design graph   |
+| CompiledModuleHeader   | Specialization-scoped lowered child contract. Ports, types, directions.          |
+| CompiledModuleBody     | Specialization-scoped body artifact. Processes, slots, recipes.                  |
+| CompiledSpecialization | Container holding header + body as siblings.                                     |
+| External Reference     | Typed handle in body code for non-local access. Bound at construction time.      |
+| Connection Recipe      | Compiled connection rule using body-local identities. Installed at construction. |
+| Child Binding Site     | Body-local ordinal for a child instantiation site. Not a final object index.     |
+| LocalSlotId            | Body-local slot ordinal (0-based within a body)                                  |
+| Bound Handle           | Construction-resolved concrete reference for non-local access                    |
+| InstanceConstBlock     | Per-instance storage for value-only parameters                                   |
+| Compile-owned          | Type/behavior facts requiring specialization (packed widths, code shape)         |
+| Constructor-owned      | Type facts resolved at realization (unpacked dimensions, container sizing)       |
+| Container              | Unpacked array with elaboration-resolved size and layout metadata                |

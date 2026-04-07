@@ -152,19 +152,23 @@ void CollectStatementAccesses(
   std::visit(
       common::Overloaded{
           [&](const Assign& a) {
-            CollectWriteAccess(
-                a.dest, arena, block_index, stmt_index, accesses);
+            if (const auto* pid = std::get_if<PlaceId>(&a.dest)) {
+              CollectWriteAccess(
+                  *pid, arena, block_index, stmt_index, accesses);
+            }
             CollectRhsReads(a.rhs, arena, block_index, stmt_index, accesses);
           },
           [&](const GuardedAssign& ga) {
             CollectWriteAccess(
-                ga.dest, arena, block_index, stmt_index, accesses);
+                RequireLocalDest(ga.dest, "ActivationSegmentAnalysis"), arena,
+                block_index, stmt_index, accesses);
             CollectRhsReads(ga.rhs, arena, block_index, stmt_index, accesses);
             CollectOperandReads(
                 ga.guard, arena, block_index, stmt_index, accesses);
           },
           [&](const DeferredAssign& da) {
-            const auto& place = arena[da.dest];
+            auto dest = RequireLocalDest(da.dest, "ActivationSegmentAnalysis");
+            const auto& place = arena[dest];
             auto info = ExtractModuleSlotInfo(place);
             if (info) {
               accesses.push_back(

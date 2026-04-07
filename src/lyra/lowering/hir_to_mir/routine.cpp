@@ -134,6 +134,7 @@ auto LowerFunctionBody(
       .symbol_to_mir_function = decl_view.functions,
       .design_functions = decl_view.design_functions,
       .dpi_imports = decl_view.dpi_imports,
+      .cross_instance_places = decl_view.cross_instance_places,
       .return_slot = std::nullopt,
       .return_type = function.return_type,
       .design_slots = decl_view.slots,
@@ -141,6 +142,8 @@ auto LowerFunctionBody(
       .cover_site_registry = decl_view.cover_site_registry,
       .deferred_assertion_site_registry =
           decl_view.deferred_assertion_site_registry,
+      .external_refs = decl_view.external_refs,
+      .provisional_targets = decl_view.provisional_targets,
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map, body_id, decision_allocator);

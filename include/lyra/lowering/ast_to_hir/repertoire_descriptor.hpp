@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/common/selection_step.hpp"
 #include "lyra/lowering/ast_to_hir/compile_owned_type_desc.hpp"
 
 namespace slang::ast {
@@ -13,29 +14,20 @@ class InstanceBodySymbol;
 
 namespace lyra::lowering::ast_to_hir {
 
+// Temporary re-export of common selection step types into this namespace.
+// Existing consumers use the ast_to_hir-qualified names. New MIR-layer code
+// should include lyra/common/selection_step.hpp directly. Once existing
+// consumers are migrated, remove these re-exports.
+using common::RepertoireCoord;
+using common::SelectionStepDesc;
+using common::SelectionStepKind;
+
 enum class RepertoireArtifactKind : uint8_t {
   kDecl,
   kProcess,
   kChildInstance,
   kContinuousAssign,
 };
-
-enum class SelectionStepKind : uint8_t {
-  kBranch,
-  kArrayEntry,
-};
-
-// One constructor-selection step inside the definition.
-// construct_index is local to the parent coordinate prefix.
-struct SelectionStepDesc {
-  SelectionStepKind kind;
-  uint32_t construct_index;
-  uint32_t alt_index;
-
-  auto operator==(const SelectionStepDesc& other) const -> bool = default;
-};
-
-using RepertoireCoord = std::vector<SelectionStepDesc>;
 
 enum class ProcessKindDesc : uint8_t {
   kInitial,

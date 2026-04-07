@@ -7,6 +7,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -18,6 +19,7 @@
 #include "lyra/mir/assoc_op.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/call.hpp"
+#include "lyra/mir/compiled_specialization.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
@@ -29,6 +31,21 @@
 #include "lyra/mir/terminator.hpp"
 
 namespace lyra::mir {
+
+auto RequireExternalRefRecipe(
+    const CompiledModuleBody& body, ExternalRefId id, const char* where)
+    -> const ExternalAccessRecipe& {
+  const auto* recipe = body.GetExternalAccessRecipe(id);
+  if (recipe == nullptr || !(recipe->ref_id == id)) {
+    throw common::InternalError(
+        where, std::format("invalid ExternalRefId {}", id.value));
+  }
+  if (recipe->type.value == 0) {
+    throw common::InternalError(
+        where, std::format("ExternalRefId {} has invalid type", id.value));
+  }
+  return *recipe;
+}
 
 namespace {
 
@@ -323,17 +340,19 @@ auto IsSelectorType(const Type& type) -> bool {
   }
 }
 
-// Get the TypeId for an operand (for type checking edge args)
+// Get the TypeId for an operand (for type checking edge args).
+// Phase-aware: in kPreBackend, ExternalRefId resolves through the body's
+// external_refs table. In kBackendReady, ExternalRefId is illegal.
 auto GetOperandType(
     const Operand& op, [[maybe_unused]] const std::vector<BasicBlock>& blocks,
-    const Arena& arena, const TypeArena& types,
+    const Arena& arena, const VerifyContext& cx,
     const std::unordered_map<int, TempDefinition>& defined_temps) -> TypeId {
   return std::visit(
       common::Overloaded{
           [&](const Constant& c) -> TypeId { return c.type; },
           [&](PlaceId place_id) -> TypeId {
             const auto& place = arena[place_id];
-            return TypeOfPlace(types, place);
+            return TypeOfPlace(*cx.types, place);
           },
           [&](TempId temp_id) -> TypeId {
             // Look up in defined_temps map
@@ -343,6 +362,15 @@ auto GetOperandType(
             }
             // Temp not found - this will be caught by VerifyUseTempDefined
             return TypeId{0};
+          },
+          [&](ExternalRefId id) -> TypeId {
+            if (cx.phase == VerifyContext::Phase::kPreBackend) {
+              const auto& recipe =
+                  RequireExternalRefRecipe(*cx.body, id, "GetOperandType");
+              return recipe.type;
+            }
+            throw common::InternalError(
+                "MIR verify", "ExternalRefId in backend-ready MIR");
           },
       },
       op.payload);
@@ -364,16 +392,16 @@ void VerifyNotPoison(
 // Verify operand type is valid for a branch/dispatch condition.
 void VerifyConditionType(
     const Operand& op, const std::vector<BasicBlock>& blocks,
-    const Arena& arena, const TypeArena& types,
+    const Arena& arena, const VerifyContext& cx,
     const std::unordered_map<int, TempDefinition>& defined_temps,
     size_t block_idx, std::string_view context, std::string_view routine_kind) {
   // Skip Poison operands - they'll be caught by VerifyNotPoison
   if (op.kind == Operand::Kind::kPoison) return;
 
-  TypeId type_id = GetOperandType(op, blocks, arena, types, defined_temps);
+  TypeId type_id = GetOperandType(op, blocks, arena, cx, defined_temps);
   if (!type_id) return;  // Invalid type - will be caught elsewhere
 
-  const Type& type = types[type_id];
+  const Type& type = (*cx.types)[type_id];
   if (!IsConditionType(type)) {
     throw common::InternalError(
         "MIR verify",
@@ -388,12 +416,12 @@ void VerifyConditionType(
 void VerifyOperandHasType(
     const Operand& op, TypeId expected_type,
     const std::vector<BasicBlock>& blocks, const Arena& arena,
-    const TypeArena& types,
+    const VerifyContext& cx,
     const std::unordered_map<int, TempDefinition>& defined_temps,
     size_t block_idx, std::string_view context, std::string_view routine_kind) {
   if (op.kind == Operand::Kind::kPoison) return;
 
-  TypeId actual_type = GetOperandType(op, blocks, arena, types, defined_temps);
+  TypeId actual_type = GetOperandType(op, blocks, arena, cx, defined_temps);
   if (!actual_type) return;
 
   if (actual_type != expected_type) {
@@ -410,16 +438,16 @@ void VerifyOperandHasType(
 // Verify operand type is valid for a switch selector.
 void VerifySelectorType(
     const Operand& op, const std::vector<BasicBlock>& blocks,
-    const Arena& arena, const TypeArena& types,
+    const Arena& arena, const VerifyContext& cx,
     const std::unordered_map<int, TempDefinition>& defined_temps,
     size_t block_idx, std::string_view context, std::string_view routine_kind) {
   // Skip Poison operands - they'll be caught by VerifyNotPoison
   if (op.kind == Operand::Kind::kPoison) return;
 
-  TypeId type_id = GetOperandType(op, blocks, arena, types, defined_temps);
+  TypeId type_id = GetOperandType(op, blocks, arena, cx, defined_temps);
   if (!type_id) return;  // Invalid type - will be caught elsewhere
 
-  const Type& type = types[type_id];
+  const Type& type = (*cx.types)[type_id];
   if (!IsSelectorType(type)) {
     throw common::InternalError(
         "MIR verify",
@@ -456,7 +484,7 @@ void VerifyEdgeArgKind(
 void VerifyEdgeArgs(
     const std::vector<Operand>& args, size_t target_block_idx,
     const std::vector<BasicBlock>& blocks, const Arena& arena,
-    const TypeArena& types,
+    const VerifyContext& cx,
     const std::unordered_map<int, TempDefinition>& defined_temps,
     std::string_view edge_desc, size_t src_block_idx,
     std::string_view routine_kind) {
@@ -478,8 +506,7 @@ void VerifyEdgeArgs(
         args[i], i, src_block_idx, target_block_idx, edge_desc, routine_kind);
 
     // Verify type matches
-    TypeId arg_type =
-        GetOperandType(args[i], blocks, arena, types, defined_temps);
+    TypeId arg_type = GetOperandType(args[i], blocks, arena, cx, defined_temps);
     TypeId param_type = params[i].type;
     if (arg_type != param_type) {
       throw common::InternalError(
@@ -573,11 +600,13 @@ void VerifyRhsDefBeforeUse(
 
 // Verify PlaceRoot::kTemp in all places referenced by a statement.
 // Also enforces ownership: all PlaceIds and FunctionIds must resolve
-// within the owning arena.
+// within the owning arena. For WriteTarget fields, verifies the local
+// PlaceId if present; additionally validates ExternalRefId in pre-backend
+// mode.
 void VerifyStatementOwnership(
     const Statement& stmt, const Arena& arena,
-    const std::vector<TempMetadata>& temp_metadata, size_t block_idx,
-    size_t stmt_idx, std::string_view routine_kind) {
+    const std::vector<TempMetadata>& temp_metadata, const VerifyContext& cx,
+    size_t block_idx, size_t stmt_idx, std::string_view routine_kind) {
   auto verify_place = [&](PlaceId place_id, std::string_view ctx) {
     if (place_id.value >= arena.PlaceCount()) {
       throw common::InternalError(
@@ -614,14 +643,25 @@ void VerifyStatementOwnership(
         rhs);
   };
 
+  auto verify_write_target = [&](const WriteTarget& target,
+                                 std::string_view ctx) {
+    if (const auto* pid = std::get_if<PlaceId>(&target)) {
+      verify_place(*pid, ctx);
+    } else if (cx.phase == VerifyContext::Phase::kPreBackend) {
+      // Validate ExternalRefId resolves in pre-backend mode
+      auto ext_id = std::get<ExternalRefId>(target);
+      RequireExternalRefRecipe(*cx.body, ext_id, "VerifyStatementOwnership");
+    }
+  };
+
   std::visit(
       common::Overloaded{
           [&](const Assign& assign) {
-            verify_place(assign.dest, "Assign.dest");
+            verify_write_target(assign.dest, "Assign.dest");
             verify_rhs_places(assign.rhs, "Assign.rhs");
           },
           [&](const GuardedAssign& ga) {
-            verify_place(ga.dest, "GuardedAssign.dest");
+            verify_write_target(ga.dest, "GuardedAssign.dest");
             verify_rhs_places(ga.rhs, "GuardedAssign.rhs");
             verify_operand_place(ga.guard, "GuardedAssign.guard");
           },
@@ -629,7 +669,7 @@ void VerifyStatementOwnership(
             // Effects may contain operands but no PlaceRoot::kTemp
           },
           [&](const DeferredAssign& da) {
-            verify_place(da.dest, "DeferredAssign.dest");
+            verify_write_target(da.dest, "DeferredAssign.dest");
             verify_rhs_places(da.rhs, "DeferredAssign.rhs");
           },
           [&](const Call& call) {
@@ -860,7 +900,7 @@ void VerifyIntraBlockDefOrder(
 // Verify block params and edge args for a routine's blocks
 void VerifyBlockParamsAndEdgeArgs(
     const std::vector<BasicBlock>& blocks, const Arena& arena,
-    const TypeArena& types, const std::vector<TempMetadata>& temp_metadata,
+    const VerifyContext& cx, const std::vector<TempMetadata>& temp_metadata,
     std::string_view routine_kind) {
   // Collect all defined temp_ids from block params AND DefineTemp statements.
   // This also checks for duplicate definitions and cross-checks temp_metadata.
@@ -878,7 +918,7 @@ void VerifyBlockParamsAndEdgeArgs(
     // Verify PlaceRoot::kTemp in all statements
     for (size_t j = 0; j < block.statements.size(); ++j) {
       VerifyStatementOwnership(
-          block.statements[j], arena, temp_metadata, i, j, routine_kind);
+          block.statements[j], arena, temp_metadata, cx, i, j, routine_kind);
     }
 
     // Verify decision-specific MIR invariants per statement.
@@ -898,15 +938,15 @@ void VerifyBlockParamsAndEdgeArgs(
                       routine_kind, i, j, rv->operands.size()));
             }
             VerifyConditionType(
-                rv->operands[0], blocks, arena, types, defined_temps, i,
+                rv->operands[0], blocks, arena, cx, defined_temps, i,
                 "Select.condition", routine_kind);
             VerifyOperandHasType(
-                rv->operands[1], sel->result_type, blocks, arena, types,
+                rv->operands[1], sel->result_type, blocks, arena, cx,
                 defined_temps, i, "Select.true_value", routine_kind);
             VerifyOperandHasType(
-                rv->operands[2], sel->result_type, blocks, arena, types,
+                rv->operands[2], sel->result_type, blocks, arena, cx,
                 defined_temps, i, "Select.false_value", routine_kind);
-            const Type& result_ty = types[sel->result_type];
+            const Type& result_ty = (*cx.types)[sel->result_type];
             if (result_ty.Kind() != TypeKind::kIntegral ||
                 result_ty.AsIntegral().is_four_state) {
               throw common::InternalError(
@@ -940,10 +980,9 @@ void VerifyBlockParamsAndEdgeArgs(
         if (const auto* dyn =
                 std::get_if<RecordDecisionObservationDynamic>(&eff->op)) {
           auto verify_is_i8 = [&](const Operand& op, std::string_view ctx) {
-            TypeId tid =
-                GetOperandType(op, blocks, arena, types, defined_temps);
+            TypeId tid = GetOperandType(op, blocks, arena, cx, defined_temps);
             if (!tid) return;
-            const Type& ty = types[tid];
+            const Type& ty = (*cx.types)[tid];
             if (ty.Kind() != TypeKind::kIntegral ||
                 ty.AsIntegral().bit_width != 8 ||
                 ty.AsIntegral().is_four_state) {
@@ -955,10 +994,9 @@ void VerifyBlockParamsAndEdgeArgs(
             }
           };
           auto verify_is_i16 = [&](const Operand& op, std::string_view ctx) {
-            TypeId tid =
-                GetOperandType(op, blocks, arena, types, defined_temps);
+            TypeId tid = GetOperandType(op, blocks, arena, cx, defined_temps);
             if (!tid) return;
-            const Type& ty = types[tid];
+            const Type& ty = (*cx.types)[tid];
             if (ty.Kind() != TypeKind::kIntegral ||
                 ty.AsIntegral().bit_width != 16 ||
                 ty.AsIntegral().is_four_state) {
@@ -990,7 +1028,7 @@ void VerifyBlockParamsAndEdgeArgs(
         common::Overloaded{
             [&](const Jump& jump) {
               VerifyEdgeArgs(
-                  jump.args, jump.target.value, blocks, arena, types,
+                  jump.args, jump.target.value, blocks, arena, cx,
                   defined_temps, "Jump", i, routine_kind);
               for (size_t j = 0; j < jump.args.size(); ++j) {
                 VerifyUseTempDefined(
@@ -1007,14 +1045,14 @@ void VerifyBlockParamsAndEdgeArgs(
                   branch.condition, defined_temps, temp_metadata, i,
                   "Branch.condition", routine_kind);
               VerifyConditionType(
-                  branch.condition, blocks, arena, types, defined_temps, i,
+                  branch.condition, blocks, arena, cx, defined_temps, i,
                   "Branch.condition", routine_kind);
               VerifyEdgeArgs(
-                  branch.then_args, branch.then_target.value, blocks, arena,
-                  types, defined_temps, "Branch.then", i, routine_kind);
+                  branch.then_args, branch.then_target.value, blocks, arena, cx,
+                  defined_temps, "Branch.then", i, routine_kind);
               VerifyEdgeArgs(
-                  branch.else_args, branch.else_target.value, blocks, arena,
-                  types, defined_temps, "Branch.else", i, routine_kind);
+                  branch.else_args, branch.else_target.value, blocks, arena, cx,
+                  defined_temps, "Branch.else", i, routine_kind);
               for (size_t j = 0; j < branch.then_args.size(); ++j) {
                 VerifyUseTempDefined(
                     branch.then_args[j], defined_temps, temp_metadata, i,
@@ -1034,7 +1072,7 @@ void VerifyBlockParamsAndEdgeArgs(
                   sw.selector, defined_temps, temp_metadata, i,
                   "Switch.selector", routine_kind);
               VerifySelectorType(
-                  sw.selector, blocks, arena, types, defined_temps, i,
+                  sw.selector, blocks, arena, cx, defined_temps, i,
                   "Switch.selector", routine_kind);
             },
             [](const auto&) {
@@ -1049,27 +1087,123 @@ void VerifyBlockParamsAndEdgeArgs(
 }  // namespace
 
 void VerifyFunction(
-    const Function& func, const Arena& arena, const TypeArena& types,
+    const Function& func, const Arena& arena, const VerifyContext& cx,
     std::string_view label) {
   VerifyParamLocalSlots(func);
 
-  const Type& ret_type = types[func.signature.return_type];
+  const Type& ret_type = (*cx.types)[func.signature.return_type];
   bool is_void = ret_type.Kind() == TypeKind::kVoid;
   VerifyReturnInvariants(func.blocks, is_void, label);
 
   // Verify block params, edge args, temp_metadata consistency, and
   // def-before-use
   VerifyBlockParamsAndEdgeArgs(
-      func.blocks, arena, types, func.temp_metadata, label);
+      func.blocks, arena, cx, func.temp_metadata, label);
 }
 
 void VerifyProcess(
-    const Process& proc, const Arena& arena, const TypeArena& types,
+    const Process& proc, const Arena& arena, const VerifyContext& cx,
     std::string_view label) {
   VerifyReturnInvariants(proc.blocks, true, label);
 
   VerifyBlockParamsAndEdgeArgs(
-      proc.blocks, arena, types, proc.temp_metadata, label);
+      proc.blocks, arena, cx, proc.temp_metadata, label);
+}
+
+void VerifyPreBackendBody(
+    const CompiledModuleBody& body, const TypeArena& types,
+    std::string_view label) {
+  VerifyContext cx{&body, &types, VerifyContext::Phase::kPreBackend};
+
+  // Verify external_refs table integrity.
+  for (uint32_t i = 0; i < body.external_refs.size(); ++i) {
+    RequireExternalRefRecipe(body, ExternalRefId{i}, "VerifyPreBackendBody");
+  }
+
+  // Walk all processes and functions through the common verifier.
+  for (size_t i = 0; i < body.processes.size(); ++i) {
+    VerifyProcess(
+        body.arena[body.processes[i]], body.arena, cx,
+        std::format("{}:proc[{}]", label, i));
+  }
+  for (size_t i = 0; i < body.functions.size(); ++i) {
+    VerifyFunction(
+        body.arena[body.functions[i]], body.arena, cx,
+        std::format("{}:func[{}]", label, i));
+  }
+
+  // Verify all ExternalRefId operands and write targets reference valid
+  // entries. Uses the generic walkers for complete coverage.
+  auto check_blocks = [&](const std::vector<BasicBlock>& blocks,
+                          std::string_view routine_label) {
+    for (size_t bi = 0; bi < blocks.size(); ++bi) {
+      auto block_ctx = std::format("{}:block[{}]", routine_label, bi);
+      for (const auto& stmt : blocks[bi].statements) {
+        ForEachOperand(stmt.data, [&](const Operand& op) {
+          if (op.kind == Operand::Kind::kExternalRef) {
+            auto id = std::get<ExternalRefId>(op.payload);
+            RequireExternalRefRecipe(body, id, "VerifyPreBackendBody");
+          }
+        });
+        ForEachWriteTarget(stmt.data, [&](const WriteTarget& t) {
+          if (const auto* ext = std::get_if<ExternalRefId>(&t)) {
+            RequireExternalRefRecipe(body, *ext, "VerifyPreBackendBody");
+          }
+        });
+      }
+    }
+  };
+
+  for (size_t i = 0; i < body.processes.size(); ++i) {
+    const auto& proc = body.arena[body.processes[i]];
+    check_blocks(proc.blocks, std::format("{}:proc[{}]", label, i));
+  }
+  for (size_t i = 0; i < body.functions.size(); ++i) {
+    const auto& func = body.arena[body.functions[i]];
+    check_blocks(func.blocks, std::format("{}:func[{}]", label, i));
+  }
+}
+
+void VerifyBackendReadyBody(
+    const CompiledModuleBody& body, std::string_view label) {
+  // Backend-ready MIR must contain no ExternalRefId in any operand or
+  // write target. Uses the generic walkers for complete coverage.
+  auto check_blocks = [&](const std::vector<BasicBlock>& blocks,
+                          std::string_view routine_label) {
+    for (size_t bi = 0; bi < blocks.size(); ++bi) {
+      for (const auto& stmt : blocks[bi].statements) {
+        ForEachOperand(stmt.data, [&](const Operand& op) {
+          if (op.kind == Operand::Kind::kExternalRef) {
+            throw common::InternalError(
+                "VerifyBackendReadyBody",
+                std::format(
+                    "{}: {}:block[{}]: ExternalRefId operand in "
+                    "backend-ready MIR",
+                    label, routine_label, bi));
+          }
+        });
+        ForEachWriteTarget(stmt.data, [&](const WriteTarget& t) {
+          if (IsExternalWrite(t)) {
+            throw common::InternalError(
+                "VerifyBackendReadyBody",
+                std::format(
+                    "{}: {}:block[{}]: ExternalRefId write target in "
+                    "backend-ready MIR",
+                    label, routine_label, bi));
+          }
+        });
+      }
+    }
+  };
+
+  for (size_t i = 0; i < body.processes.size(); ++i) {
+    const auto& proc = body.arena[body.processes[i]];
+    check_blocks(proc.blocks, std::format("proc[{}]", i));
+  }
+  for (size_t i = 0; i < body.functions.size(); ++i) {
+    const auto& func = body.arena[body.functions[i]];
+    check_blocks(func.blocks, std::format("func[{}]", i));
+  }
 }
 
 }  // namespace lyra::mir

@@ -31,7 +31,6 @@
 #include "lyra/llvm_backend/storage_boundary.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -40,7 +39,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
-  return ComputePlacePointer((*arena_)[place_id], place_id);
+  return ComputePlacePointer(LookupPlace(place_id), place_id);
 }
 
 auto Context::ComputePlacePointer(
@@ -189,7 +188,7 @@ auto Context::ComputePlacePointer(
 }
 
 auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
-  mir::Place resolved = (*arena_)[place_id];
+  mir::Place resolved = LookupPlace(place_id);
 
   // Compute pointer from the place
   auto ptr_or_err = ComputePlacePointer(resolved, place_id);
@@ -219,8 +218,16 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
       }
       return std::nullopt;
     };
-    auto slot_id = common::SlotId{static_cast<uint32_t>(resolved.root.id)};
-    const auto& spec = GetDesignSlotStorageSpec(slot_id);
+    const SlotStorageSpec* slot_spec_ptr = nullptr;
+    if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot &&
+        GetSpecSlotInfo() != nullptr) {
+      auto local_slot = static_cast<uint32_t>(resolved.root.id);
+      slot_spec_ptr = &GetSpecSlotInfo()->GetSlotSpec(local_slot, GetLayout());
+    } else {
+      auto slot_id = common::SlotId{static_cast<uint32_t>(resolved.root.id)};
+      slot_spec_ptr = &GetDesignSlotStorageSpec(slot_id);
+    }
+    const auto& spec = *slot_spec_ptr;
     const auto& spec_arena = GetDesignStorageSpecArena();
     auto range = ResolveByteRange(spec, spec_arena, resolved, resolver);
     if (range.kind == RangeKind::kPrecise) {
@@ -249,7 +256,7 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
 
 auto Context::ResolveMutationSignalRef(mir::PlaceId place_id) const
     -> std::optional<mir::SignalRef> {
-  const mir::Place& resolved = (*arena_)[place_id];
+  const mir::Place& resolved = LookupPlace(place_id);
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
     return mir::SignalRef{
         .scope = mir::SignalRef::Scope::kModuleLocal,
@@ -523,11 +530,11 @@ auto Context::GetSignalSlotPointer(const mir::SignalRef& sig) -> llvm::Value* {
 }
 
 auto Context::GetStorageRootPointer(mir::PlaceId place_id) -> llvm::Value* {
-  return GetSlotRootPointer((*arena_)[place_id].root);
+  return GetSlotRootPointer(LookupPlace(place_id).root);
 }
 
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
 
   TypeId type_id = mir::TypeOfPlace(types_, place);
   const Type& type = types_[type_id];
@@ -578,7 +585,7 @@ auto Context::GetPlaceLlvmType4State(uint32_t bit_width) -> llvm::StructType* {
 }
 
 auto Context::HasBitRangeProjection(mir::PlaceId place_id) const -> bool {
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
   return !place.projections.empty() &&
          std::holds_alternative<mir::BitRangeProjection>(
              place.projections.back().info);
@@ -586,12 +593,12 @@ auto Context::HasBitRangeProjection(mir::PlaceId place_id) const -> bool {
 
 auto Context::GetBitRangeProjection(mir::PlaceId place_id) const
     -> const mir::BitRangeProjection& {
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
   return std::get<mir::BitRangeProjection>(place.projections.back().info);
 }
 
 auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> Result<llvm::Type*> {
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
 
   // The base type is root.type after applying all non-BitRange projections.
   // BitRange is always the last projection, so just use root.type for the
@@ -652,7 +659,7 @@ auto Context::LoadPlaceValue(mir::PlaceId place_id) -> Result<llvm::Value*> {
   auto ptr_result = GetPlacePointer(place_id);
   if (!ptr_result) return std::unexpected(ptr_result.error());
 
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
   TypeId type_id = mir::TypeOfPlace(types_, place);
   const Type& type = types_[type_id];
 
@@ -679,7 +686,7 @@ auto Context::LoadPlaceBaseValue(mir::PlaceId place_id)
   auto ptr_result = GetPlacePointer(place_id);
   if (!ptr_result) return std::unexpected(ptr_result.error());
 
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
   TypeId base_type_id = mir::TypeOfPlaceBase(types_, place);
   const Type& type = types_[base_type_id];
 
@@ -698,7 +705,7 @@ auto Context::LoadPlaceBaseValue(mir::PlaceId place_id)
 
 auto Context::ComposeBitRange(mir::PlaceId place_id)
     -> Result<ComposedBitRange> {
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
 
   // Invariant: BitRangeProjections must form a contiguous suffix.
   // Once we see a BitRange, no non-BitRange projections may follow.
@@ -775,79 +782,75 @@ auto Context::GetCurrentBodyRealizationInfo() const
   return info;
 }
 
-auto Context::RequiresStaticDirtyPropagation(const mir::SignalRef& sig) const
-    -> bool {
-  const auto& layout = GetLayout();
-
+auto Context::RequiresBehavioralDirtyPropagation(
+    const mir::SignalRef& sig) const -> bool {
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
-    const auto& spec = *GetSpecSlotInfo();
     const auto& body_info = GetCurrentBodyRealizationInfo();
     auto local_slot = static_cast<uint32_t>(sig.id);
-
     if (local_slot >= body_info.slot_has_behavioral_trigger.size()) {
       throw common::InternalError(
-          "Context::RequiresStaticDirtyPropagation",
+          "Context::RequiresBehavioralDirtyPropagation",
           std::format(
               "module-local slot {} out of range for body {} "
               "(behavioral trigger bitmap size={})",
-              local_slot, spec.body_id.value,
+              local_slot, GetSpecSlotInfo()->body_id.value,
               body_info.slot_has_behavioral_trigger.size()));
     }
-    bool behavioral = body_info.slot_has_behavioral_trigger[local_slot];
-
-    if (local_slot >= spec.representative_design_slots.size()) {
-      throw common::InternalError(
-          "Context::RequiresStaticDirtyPropagation",
-          std::format(
-              "module-local slot {} out of range for body {} "
-              "(representative_design_slots size={})",
-              local_slot, spec.body_id.value,
-              spec.representative_design_slots.size()));
-    }
-    auto global_slot = spec.representative_design_slots[local_slot];
-
-    if (global_slot >= layout.slot_has_connection_trigger.size()) {
-      throw common::InternalError(
-          "Context::RequiresStaticDirtyPropagation",
-          std::format(
-              "slot {} out of range for connection trigger bitmap (size={})",
-              global_slot, layout.slot_has_connection_trigger.size()));
-    }
-    bool connection = layout.slot_has_connection_trigger[global_slot];
-
-    return behavioral || connection;
+    return body_info.slot_has_behavioral_trigger[local_slot];
   }
-
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
+    const auto& layout = GetLayout();
     auto slot = static_cast<uint32_t>(sig.id);
+    if (slot >= layout.slot_has_design_behavioral_trigger.size()) {
+      throw common::InternalError(
+          "Context::RequiresBehavioralDirtyPropagation",
+          std::format(
+              "slot {} out of range for design behavioral trigger bitmap "
+              "(size={})",
+              slot, layout.slot_has_design_behavioral_trigger.size()));
+    }
+    return layout.slot_has_design_behavioral_trigger[slot];
+  }
+  throw common::InternalError(
+      "Context::RequiresBehavioralDirtyPropagation",
+      std::format("unknown signal scope {}", static_cast<int>(sig.scope)));
+}
 
+auto Context::RequiresConnectionNotification(const mir::SignalRef& sig) const
+    -> bool {
+  if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
+    if (connection_notification_mask_ == nullptr) {
+      throw common::InternalError(
+          "Context::RequiresConnectionNotification",
+          "module-local signal queried without connection notification mask");
+    }
+    auto local_slot = static_cast<uint32_t>(sig.id);
+    return connection_notification_mask_->IsRequired(local_slot);
+  }
+  if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
+    const auto& layout = GetLayout();
+    auto slot = static_cast<uint32_t>(sig.id);
     if (slot >= layout.slot_has_connection_trigger.size()) {
       throw common::InternalError(
-          "Context::RequiresStaticDirtyPropagation",
+          "Context::RequiresConnectionNotification",
           std::format(
               "slot {} out of range for connection trigger bitmap (size={})",
               slot, layout.slot_has_connection_trigger.size()));
     }
-    bool connection = layout.slot_has_connection_trigger[slot];
-
-    if (slot >= layout.slot_has_design_behavioral_trigger.size()) {
-      throw common::InternalError(
-          "Context::RequiresStaticDirtyPropagation",
-          std::format(
-              "slot {} out of range for "
-              "design behavioral trigger bitmap (size={})",
-              slot, layout.slot_has_design_behavioral_trigger.size()));
-    }
-    bool design_behavior = layout.slot_has_design_behavioral_trigger[slot];
-
-    return connection || design_behavior;
+    return layout.slot_has_connection_trigger[slot];
   }
-
-  // Unknown scope: conservative default.
-  return true;
+  throw common::InternalError(
+      "Context::RequiresConnectionNotification",
+      std::format("unknown signal scope {}", static_cast<int>(sig.scope)));
 }
 
-auto Context::GetResolvedSignalSlot(const mir::SignalRef& sig) const
+auto Context::RequiresStaticDirtyPropagation(const mir::SignalRef& sig) const
+    -> bool {
+  return RequiresBehavioralDirtyPropagation(sig) ||
+         RequiresConnectionNotification(sig);
+}
+
+auto Context::GetLegacyRuntimeSignalSlot(const mir::SignalRef& sig) const
     -> uint32_t {
   const auto& layout = GetLayout();
   uint32_t owner_slot = 0;
@@ -855,31 +858,24 @@ auto Context::GetResolvedSignalSlot(const mir::SignalRef& sig) const
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
     if (GetSpecSlotInfo() == nullptr) {
       throw common::InternalError(
-          "Context::GetResolvedSignalSlot",
+          "Context::GetLegacyRuntimeSignalSlot",
           "module-local signal queried without active "
           "specialization context");
     }
     const auto& spec = *GetSpecSlotInfo();
     auto local_slot = static_cast<uint32_t>(sig.id);
-    if (local_slot >= spec.representative_design_slots.size()) {
-      throw common::InternalError(
-          "Context::GetResolvedSignalSlot",
-          std::format(
-              "module-local slot {} out of range "
-              "(representative_design_slots size={})",
-              local_slot, spec.representative_design_slots.size()));
-    }
-    owner_slot = spec.representative_design_slots[local_slot];
+    owner_slot = layout_.ResolveLegacyRepresentativeDesignSlot(
+        spec.body_realization_info_index, local_slot);
   } else if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
     owner_slot = static_cast<uint32_t>(sig.id);
   } else {
     throw common::InternalError(
-        "Context::GetResolvedSignalSlot", "unknown signal scope");
+        "Context::GetLegacyRuntimeSignalSlot", "unknown signal scope");
   }
 
   if (owner_slot >= layout.design.slots.size()) {
     throw common::InternalError(
-        "Context::GetResolvedSignalSlot",
+        "Context::GetLegacyRuntimeSignalSlot",
         std::format(
             "owner slot {} out of range (design has {} slots)", owner_slot,
             layout.design.slots.size()));
@@ -907,7 +903,7 @@ auto Context::EmitIsTraceObservedOwnerSlot(uint32_t owner_slot)
 }
 
 auto Context::EmitIsTraceObserved(const mir::SignalRef& sig) -> llvm::Value* {
-  return EmitIsTraceObservedOwnerSlot(GetResolvedSignalSlot(sig));
+  return EmitIsTraceObservedOwnerSlot(GetLegacyRuntimeSignalSlot(sig));
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

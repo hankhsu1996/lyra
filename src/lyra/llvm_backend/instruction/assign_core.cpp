@@ -5,7 +5,6 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 
-#include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
@@ -36,9 +35,9 @@ auto LowerRhsRaw(
             // Raw representation boundary: if target is 4-state but raw
             // is scalar (kTwoState domain temp), pack with zero unknown
             // to match target storage shape.
-            const auto& arena = context.GetMirArena();
             const auto& types = context.GetTypeArena();
-            TypeId target_type = mir::TypeOfPlace(types, arena[target]);
+            TypeId target_type =
+                mir::TypeOfPlace(types, context.LookupPlace(target));
             if (!raw->getType()->isStructTy() && IsPacked(types[target_type]) &&
                 context.IsPackedFourState(types[target_type])) {
               auto storage_type_or_err = context.GetPlaceLlvmType(target);
@@ -55,9 +54,9 @@ auto LowerRhsRaw(
             return raw;
           },
           [&](const mir::Rvalue& rvalue) -> Result<llvm::Value*> {
-            const auto& arena = context.GetMirArena();
             const auto& types = context.GetTypeArena();
-            TypeId result_type = mir::TypeOfPlace(types, arena[target]);
+            TypeId result_type =
+                mir::TypeOfPlace(types, context.LookupPlace(target));
             auto rv_result =
                 LowerRvalue(context, resolver, rvalue, result_type);
             if (!rv_result) return std::unexpected(rv_result.error());

@@ -47,8 +47,8 @@ auto ProcessKindStr(mir::ProcessKind kind) -> std::string_view {
 // by ownership domain: body routines use body.arena, design-global
 // routines use the design arena.
 void VerifyLoweredMir(
-    const mir::Design& design, const mir::Arena& design_arena,
-    const TypeArena& type_arena) {
+    const mir::Design& design, const mir::InstanceTable& instance_table,
+    const mir::Arena& design_arena, const TypeArena& type_arena) {
   for (size_t ei = 0; ei < design.elements.size(); ++ei) {
     const auto& element = design.elements[ei];
     std::visit(
@@ -56,15 +56,22 @@ void VerifyLoweredMir(
             [&](const mir::Module& mod) {
               const auto& body = mir::GetModuleBody(design, mod);
               const auto& arena = body.arena;
+              // Module bodies use kBackendReady because they are still
+              // mir::ModuleBody (old type, cannot contain ExternalRefId).
+              // When Phase 2 migrates to CompiledModuleBody, this call site
+              // switches to VerifyPreBackendBody(compiled_body, ...).
+              mir::VerifyContext cx{
+                  nullptr, &type_arena,
+                  mir::VerifyContext::Phase::kBackendReady};
               std::string_view module_path =
-                  design.instance_table.GetPathBySymbol(mod.instance_sym);
+                  instance_table.GetPathBySymbol(mod.instance_sym);
               for (size_t fi = 0; fi < body.functions.size(); ++fi) {
                 std::string label =
                     module_path.empty()
                         ? std::format("element[{}]: function[{}]", ei, fi)
                         : std::format("{}: function[{}]", module_path, fi);
                 mir::VerifyFunction(
-                    arena[body.functions[fi]], arena, type_arena, label);
+                    arena[body.functions[fi]], arena, cx, label);
               }
               for (size_t pi = 0; pi < body.processes.size(); ++pi) {
                 const auto& proc = arena[body.processes[pi]];
@@ -75,16 +82,18 @@ void VerifyLoweredMir(
                                         : std::format(
                                               "{}: {}[{}]", module_path,
                                               ProcessKindStr(proc.kind), pi);
-                mir::VerifyProcess(proc, arena, type_arena, label);
+                mir::VerifyProcess(proc, arena, cx, label);
               }
             },
             [&](const mir::Package& pkg) {
+              mir::VerifyContext cx{
+                  nullptr, &type_arena,
+                  mir::VerifyContext::Phase::kBackendReady};
               for (size_t fi = 0; fi < pkg.functions.size(); ++fi) {
                 std::string label =
                     std::format("element[{}]: function[{}]", ei, fi);
                 mir::VerifyFunction(
-                    design_arena[pkg.functions[fi]], design_arena, type_arena,
-                    label);
+                    design_arena[pkg.functions[fi]], design_arena, cx, label);
               }
             },
         },
@@ -162,28 +171,34 @@ auto LowerHirToMir(const LoweringInput& input) -> Result<LoweringResult> {
       LowerDesign(*input.design, full_input, *design_arena, &design_origins);
   if (!design_result) return std::unexpected(design_result.error());
   mir::Design design = std::move(design_result->design);
-  auto compiled_bindings = std::move(design_result->compiled_bindings);
+  mir::ConstructionInput construction = std::move(design_result->construction);
+  auto bound_connections = std::move(design_result->bound_connections);
+  auto expr_connections = std::move(design_result->expr_connections);
   auto body_origins = std::move(design_result->body_origins);
   auto dpi_export_wrappers = std::move(design_result->dpi_export_wrappers);
 
   // Pre-optimization verification: lowered MIR must be structurally valid
-  VerifyLoweredMir(design, *design_arena, *input.type_arena);
+  VerifyLoweredMir(
+      design, construction.instance_table, *design_arena, *input.type_arena);
 
   // MIR optimization stage: routine-local transforms on verified MIR
   mir::RunMirOptimizations(design, *design_arena);
 
   // Post-optimization verification: optimized MIR must remain valid
-  VerifyLoweredMir(design, *design_arena, *input.type_arena);
+  VerifyLoweredMir(
+      design, construction.instance_table, *design_arena, *input.type_arena);
 
   LoweringStats stats = ComputeMirStats(design, *design_arena);
 
   return LoweringResult{
       .design = std::move(design),
+      .construction = std::move(construction),
       .design_arena = std::move(design_arena),
       .design_origins = std::move(design_origins),
       .body_origins = std::move(body_origins),
       .stats = stats,
-      .compiled_bindings = std::move(compiled_bindings),
+      .bound_connections = std::move(bound_connections),
+      .expr_connections = std::move(expr_connections),
       .dpi_export_wrappers = std::move(dpi_export_wrappers),
       .dpi_header = std::move(design_result->dpi_header),
   };

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <utility>
@@ -6,37 +7,142 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/local_slot_id.hpp"
+#include "lyra/hir/arena.hpp"
+#include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
+#include "lyra/hir/module.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design_internal.hpp"
 #include "lyra/lowering/hir_to_mir/expression.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
-#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/basic_block.hpp"
-#include "lyra/mir/compiled_bindings.hpp"
+#include "lyra/mir/connection_endpoint.hpp"
+#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/module_body.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
-#include "lyra/mir/sensitivity.hpp"
 #include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-auto MakeDesignContext(
-    const LoweringInput& input, mir::Arena& mir_arena,
-    const DesignDeclarations& decls) -> Context {
-  // Connection processes are design-level: they only see design-global places.
-  // No body_places -- connections operate across instances.
-  return Context{
-      .mir_arena = &mir_arena,
+namespace {
+
+// Extract the referenced SymbolId from a simple NameRef expression.
+// Internal helper -- not exposed through the header.
+auto TryExtractNameRefSymbol(hir::ExpressionId expr_id, const hir::Arena& arena)
+    -> std::optional<SymbolId> {
+  const auto& expr = arena[expr_id];
+  if (expr.kind != hir::ExpressionKind::kNameRef) {
+    return std::nullopt;
+  }
+  const auto& data = std::get<hir::NameRefExpressionData>(expr.data);
+  return data.symbol;
+}
+
+}  // namespace
+
+// Recursively find any NameRef symbol in an expression tree.
+auto FindAnyNameRef(hir::ExpressionId expr_id, const hir::Arena& arena)
+    -> std::optional<SymbolId> {
+  const auto& expr = arena[expr_id];
+  if (expr.kind == hir::ExpressionKind::kNameRef) {
+    return std::get<hir::NameRefExpressionData>(expr.data).symbol;
+  }
+  // Walk children for common expression kinds.
+  return std::visit(
+      [&](const auto& data) -> std::optional<SymbolId> {
+        using T = std::decay_t<decltype(data)>;
+        if constexpr (std::is_same_v<T, hir::UnaryExpressionData>) {
+          return FindAnyNameRef(data.operand, arena);
+        } else if constexpr (std::is_same_v<T, hir::BinaryExpressionData>) {
+          auto lhs = FindAnyNameRef(data.lhs, arena);
+          if (lhs) return lhs;
+          return FindAnyNameRef(data.rhs, arena);
+        } else if constexpr (std::is_same_v<T, hir::CastExpressionData>) {
+          return FindAnyNameRef(data.operand, arena);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::ConditionalExpressionData>) {
+          auto c = FindAnyNameRef(data.condition, arena);
+          if (c) return c;
+          auto t = FindAnyNameRef(data.then_expr, arena);
+          if (t) return t;
+          return FindAnyNameRef(data.else_expr, arena);
+        } else if constexpr (std::is_same_v<T, hir::BitCastExpressionData>) {
+          return FindAnyNameRef(data.operand, arena);
+        } else {
+          return std::nullopt;
+        }
+      },
+      expr.data);
+}
+
+// Build a per-instance PlaceMap for expression lowering in a body-local
+// context. Maps per-instance variable symbols to kModuleSlot places, deriving
+// LocalSlotId from canonical body-local slot data (not manual ordering).
+auto BuildPerInstancePlaces(
+    const hir::Module& inst_mod, const hir::Module& rep_mod,
+    const std::vector<BodyLocalSlotEntry>& body_slots,
+    const SymbolTable& symbol_table, mir::Arena& body_arena) -> PlaceMap {
+  // Build representative symbol -> LocalSlotId from canonical body-local data.
+  std::unordered_map<SymbolId, common::LocalSlotId, SymbolIdHash>
+      rep_sym_to_slot;
+  std::unordered_map<SymbolId, TypeId, SymbolIdHash> rep_sym_to_type;
+  for (const auto& entry : body_slots) {
+    rep_sym_to_slot[entry.sym] = entry.local_slot;
+    rep_sym_to_type[entry.sym] = entry.type;
+  }
+
+  PlaceMap places;
+
+  auto map_by_position = [&](const std::vector<SymbolId>& inst_syms,
+                             const std::vector<SymbolId>& rep_syms) {
+    for (size_t i = 0; i < inst_syms.size(); ++i) {
+      auto slot_it = rep_sym_to_slot.find(rep_syms[i]);
+      if (slot_it == rep_sym_to_slot.end()) continue;
+      auto type_it = rep_sym_to_type.find(rep_syms[i]);
+      auto place_id = body_arena.AddPlace(
+          mir::Place{
+              .root =
+                  mir::PlaceRoot{
+                      .kind = mir::PlaceRoot::Kind::kModuleSlot,
+                      .id = static_cast<int>(slot_it->second.value),
+                      .type = type_it->second,
+                  },
+              .projections = {}});
+      places[inst_syms[i]] = place_id;
+    }
+  };
+
+  map_by_position(inst_mod.variables, rep_mod.variables);
+  map_by_position(inst_mod.nets, rep_mod.nets);
+  map_by_position(inst_mod.param_slots, rep_mod.param_slots);
+
+  return places;
+}
+
+// Lower a parent expression as a body-local function in the parent body.
+// The function reads parent values through kModuleSlot and returns the
+// computed value. The child endpoint is NOT part of the function body --
+// it's metadata on the CompiledConnectionExpr.
+auto LowerExprAsBodyFunction(
+    hir::ExpressionId expr_id, TypeId result_type, const LoweringInput& input,
+    const DesignDeclarations& decls, mir::Arena& body_arena,
+    const PlaceMap& per_instance_places) -> Result<mir::FunctionId> {
+  // Set up a hybrid context: design-level HIR arena (has the expression)
+  // + body-local MIR arena (for emitting instructions) + body-local places.
+  Context ctx{
+      .mir_arena = &body_arena,
       .hir_arena = input.hir_arena,
       .type_arena = input.type_arena,
       .active_constant_arena = input.active_constant_arena,
       .symbol_table = input.symbol_table,
+      .body_places = &per_instance_places,
       .design_places = &decls.design_places,
       .local_places = {},
       .next_local_id = 0,
@@ -45,166 +151,42 @@ auto MakeDesignContext(
       .temp_types = {},
       .temp_metadata = {},
       .builtin_types = input.builtin_types,
-      .symbol_to_mir_function = &decls.functions,
       .return_slot = std::nullopt,
-      .return_type = input.builtin_types.void_type,
+      .return_type = result_type,
       .design_slots = &decls.slots,
   };
-}
 
-auto CreateConnectionProcess(
-    mir::PlaceId dst, BuildSrcFn build_src, const LoweringInput& input,
-    mir::Arena& mir_arena, const DesignDeclarations& decls)
-    -> Result<mir::Process> {
-  Context ctx = MakeDesignContext(input, mir_arena, decls);
-  MirBuilder builder(&mir_arena, &ctx, nullptr, hir::kInvalidModuleBodyId);
+  MirBuilder builder(&body_arena, &ctx, nullptr, hir::kInvalidModuleBodyId);
 
   BlockIndex entry_idx = builder.CreateBlock();
   builder.SetCurrentBlock(entry_idx);
 
-  // Build source operand INSIDE this builder (captures any temps/emissions)
-  auto src_result = build_src(builder, ctx);
-  if (!src_result) {
-    return std::unexpected(src_result.error());
+  auto expr_result = LowerExpression(expr_id, builder);
+  if (!expr_result) {
+    return std::unexpected(expr_result.error());
   }
 
-  builder.EmitAssign(dst, *src_result);
-  builder.EmitRepeat();
+  builder.EmitReturn(*expr_result);
 
   std::vector<mir::BasicBlock> blocks = builder.Finish();
 
-  // Collect sensitivity and replace Repeat with Wait
-  mir::Process temp_process{
-      .kind = mir::ProcessKind::kLooping,
-      .entry = mir::BasicBlockId{entry_idx.value},
-      .blocks = blocks,
-      .temp_metadata = {},
-  };
-  auto triggers = mir::CollectSensitivity(temp_process, mir_arena);
-
-  for (auto& block : blocks) {
-    if (std::holds_alternative<mir::Repeat>(block.terminator.data)) {
-      block.terminator.data = mir::Wait{
-          .triggers = std::move(triggers),
-          .resume = mir::BasicBlockId{entry_idx.value},
-      };
-      break;
-    }
-  }
-
-  return mir::Process{
-      .kind = mir::ProcessKind::kLooping,
+  mir::Function func{
+      .signature =
+          mir::FunctionSignature{
+              .return_type = result_type,
+              .params = {},
+              .return_policy = mir::ReturnPolicy::kDirect,
+          },
       .entry = mir::BasicBlockId{entry_idx.value},
       .blocks = std::move(blocks),
+      .local_types = std::move(ctx.local_types),
+      .temp_types = std::move(ctx.temp_types),
       .temp_metadata = std::move(ctx.temp_metadata),
-  };
-}
-
-namespace {
-
-// Compile kDriveParentToChild binding: parent rvalue -> child place via
-// process.
-auto CompileDriveParentToChild(
-    const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
-    const DesignDeclarations& decls, const LoweringInput& input,
-    mir::Arena& mir_arena) -> Result<mir::CompiledDriveBinding> {
-  // Source is parent rvalue expression (arbitrary, may emit temps)
-  auto build_src =
-      [&binding](MirBuilder& builder, const Context&) -> Result<mir::Operand> {
-    return LowerExpression(binding.parent_rvalue, builder);
+      .param_local_slots = {},
+      .param_origins = {},
   };
 
-  auto proc =
-      CreateConnectionProcess(child_place, build_src, input, mir_arena, decls);
-  if (!proc) {
-    return std::unexpected(proc.error());
-  }
-
-  return mir::CompiledDriveBinding{
-      .kind = mir::PortConnection::Kind::kDriveParentToChild,
-      .child_port_sym = binding.child_port_sym,
-      .parent_instance_sym = binding.parent_instance_sym,
-      .child_place = child_place,
-      .parent_place = {},
-      .body = {.process = std::move(*proc)},
-  };
-}
-
-// Compile kDriveChildToParent binding: child place -> parent place via process.
-auto CompileDriveChildToParent(
-    const ast_to_hir::PortBinding& binding, mir::PlaceId child_place,
-    const DesignDeclarations& decls, const LoweringInput& input,
-    mir::Arena& mir_arena) -> Result<mir::CompiledDriveBinding> {
-  // Lower parent lvalue -> place (pure by construction - no MirBuilder)
-  Context ctx = MakeDesignContext(input, mir_arena, decls);
-  auto parent_lv = LowerPureLvaluePlace(binding.parent_lvalue, ctx);
-  if (!parent_lv) {
-    return std::unexpected(parent_lv.error());
-  }
-
-  // Validate parent place resolves to kDesignGlobal (may have projections)
-  const mir::Place& parent_place = mir_arena[*parent_lv];
-  if (parent_place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
-    throw common::InternalError(
-        "CompileDriveChildToParent", "output target must be a design slot");
-  }
-
-  // Source is explicit read from child place (value, not handle)
-  mir::PlaceId captured_child = child_place;
-  auto build_src = [captured_child](
-                       MirBuilder&, const Context&) -> Result<mir::Operand> {
-    return mir::Operand::Use(captured_child);
-  };
-
-  auto proc =
-      CreateConnectionProcess(*parent_lv, build_src, input, mir_arena, decls);
-  if (!proc) {
-    return std::unexpected(proc.error());
-  }
-
-  return mir::CompiledDriveBinding{
-      .kind = mir::PortConnection::Kind::kDriveChildToParent,
-      .child_port_sym = binding.child_port_sym,
-      .parent_instance_sym = binding.parent_instance_sym,
-      .child_place = child_place,
-      .parent_place = *parent_lv,
-      .body = {.process = std::move(*proc)},
-  };
-}
-
-}  // namespace
-
-auto CompileBindings(
-    const ast_to_hir::DesignBindingPlan& plan, const DesignDeclarations& decls,
-    const LoweringInput& input, mir::Arena& mir_arena)
-    -> Result<mir::CompiledBindingPlan> {
-  mir::CompiledBindingPlan result;
-  if (plan.bindings.empty()) {
-    return result;
-  }
-
-  for (const auto& binding : plan.bindings) {
-    mir::PlaceId child_place = decls.design_places.at(binding.child_port_sym);
-
-    switch (binding.kind) {
-      case ast_to_hir::PortBinding::Kind::kDriveParentToChild: {
-        auto compiled = CompileDriveParentToChild(
-            binding, child_place, decls, input, mir_arena);
-        if (!compiled) return std::unexpected(compiled.error());
-        result.drive_bindings.push_back(std::move(*compiled));
-        break;
-      }
-      case ast_to_hir::PortBinding::Kind::kDriveChildToParent: {
-        auto compiled = CompileDriveChildToParent(
-            binding, child_place, decls, input, mir_arena);
-        if (!compiled) return std::unexpected(compiled.error());
-        result.drive_bindings.push_back(std::move(*compiled));
-        break;
-      }
-    }
-  }
-
-  return result;
+  return body_arena.AddFunction(std::move(func));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

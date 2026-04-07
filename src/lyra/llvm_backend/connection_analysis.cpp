@@ -119,8 +119,11 @@ auto IsTrivialRelayCandidate(const SlotUsageSummary& summary) -> bool {
 auto AnalyzeConnections(
     std::vector<ConnectionKernelEntry> kernel_entries,
     std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena) -> ConnectionAnalysisResult {
-  auto num_slots = static_cast<uint32_t>(design.slots.size());
+    const mir::Arena& design_arena, uint32_t expanded_num_slots)
+    -> ConnectionAnalysisResult {
+  auto num_slots = expanded_num_slots > 0
+                       ? expanded_num_slots
+                       : static_cast<uint32_t>(design.slots.size());
 
   auto trigger_summary =
       CollectTriggerSlotSummary(module_plans, design, design_arena);

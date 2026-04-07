@@ -29,6 +29,7 @@
 #include "lyra/hir/rvalue.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/hir/system_call.hpp"
+#include "lyra/lowering/hir_to_mir/bound_hierarchy.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/expression.hpp"
@@ -111,8 +112,11 @@ auto LowerAssignment(
   if (!value_result) return std::unexpected(value_result.error());
   mir::Operand value = *value_result;
 
+  // B2: Use WriteTarget for assignment destination.
+  mir::WriteTarget dest = target.dest;
+
   if (target.IsAlwaysValid()) {
-    builder.EmitAssign(target.place, std::move(value));
+    builder.EmitAssign(dest, std::move(value));
     return {};
   }
 
@@ -135,7 +139,7 @@ auto LowerAssignment(
   // Thread value through: it may be a UseTemp from before the guard blocks
   // (e.g., if LowerExpression created blocks for a ternary expression).
   value = builder.ThreadValueToCurrentBlock(std::move(value));
-  builder.EmitAssign(target.place, std::move(value));
+  builder.EmitAssign(dest, std::move(value));
   builder.EmitJump(merge_bb);
 
   builder.SetCurrentBlock(merge_bb);
@@ -225,7 +229,7 @@ auto LowerStrobeEffect(
       .symbol_table = original_ctx.symbol_table,
       .body_places = original_ctx.body_places,
       .design_places = original_ctx.design_places,
-      .local_places = {},  // Fresh local mapping (program has no SV locals)
+      .local_places = {},
       .design_place_cache = {},
       .next_local_id = 0,
       .next_temp_id = 0,
@@ -234,8 +238,10 @@ auto LowerStrobeEffect(
       .temp_metadata = {},
       .builtin_types = original_ctx.builtin_types,
       .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
+      .cross_instance_places = original_ctx.cross_instance_places,
       .return_slot = std::nullopt,
       .return_type = original_ctx.builtin_types.void_type,
+      .external_ref_cache = {},
   };
 
   // Create builder for the program function
@@ -450,7 +456,7 @@ auto LowerSFormatEffect(
   Result<LvalueResult> target_result = LowerLvalue(*data.output, builder);
   if (!target_result) return std::unexpected(target_result.error());
   LvalueResult target = std::move(*target_result);
-  builder.EmitAssign(target.place, mir::Operand::Use(tmp));
+  builder.EmitAssign(target.dest, mir::Operand::Use(tmp));
   return {};
 }
 
@@ -540,6 +546,7 @@ auto LowerMonitorCheckProgram(
       .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
       .return_slot = std::nullopt,
       .return_type = original_ctx.builtin_types.void_type,
+      .external_ref_cache = {},
   };
 
   MirBuilder program_builder(
@@ -623,6 +630,7 @@ auto LowerMonitorSetupProgram(
       .symbol_to_mir_function = original_ctx.symbol_to_mir_function,
       .return_slot = std::nullopt,
       .return_type = original_ctx.builtin_types.void_type,
+      .external_ref_cache = {},
   };
 
   MirBuilder program_builder(
@@ -755,7 +763,7 @@ auto LowerMemIOEffect(const hir::MemIOData& data, MirBuilder& builder)
   mir::MemIOEffect effect{
       .is_read = data.is_read,
       .is_hex = data.is_hex,
-      .target = target.place,
+      .target = target.GetLocalPlace(),
       .target_type = target_expr.type,
       .filename =
           mir::TypedOperand{
@@ -2156,7 +2164,7 @@ auto BuildIndexPlan(
     case hir::ExpressionKind::kHierarchicalRef: {
       const auto& href_data =
           std::get<hir::HierarchicalRefExpressionData>(expr.data);
-      auto place_id = ctx.LookupPlace(href_data.target);
+      auto place_id = ctx.ResolveHierarchicalRef(href_data.target);
       const auto& place = (*ctx.mir_arena)[place_id];
       if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
           place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
@@ -2876,11 +2884,42 @@ auto LowerEventWait(
       auto signal_result = LowerExpression(hir_trigger.signal, builder);
       if (!signal_result) return std::unexpected(signal_result.error());
       mir::Operand signal_op = std::move(*signal_result);
-      if (signal_op.kind != mir::Operand::Kind::kUse) {
+      if (signal_op.kind == mir::Operand::Kind::kExternalRef) {
+        // B2: Resolve external ref trigger via canonical pre-binding helper.
+        auto ref_id = std::get<mir::ExternalRefId>(signal_op.payload);
+        if (ctx.provisional_targets == nullptr ||
+            ctx.cross_instance_places == nullptr ||
+            ctx.design_arena == nullptr) {
+          throw common::InternalError(
+              "LowerEventWait",
+              "external ref trigger requires provisional targets and "
+              "cross_instance_places");
+        }
+        if (ctx.external_refs == nullptr ||
+            ref_id.value >= ctx.external_refs->size()) {
+          throw common::InternalError(
+              "LowerEventWait",
+              "external ref trigger missing external_refs metadata");
+        }
+        TypeId trigger_type = (*ctx.external_refs)[ref_id.value].type;
+        auto global_slot = ResolvePreBindingExternalRefDesignGlobalSlot(
+            ref_id, *ctx.provisional_targets, *ctx.cross_instance_places,
+            *ctx.design_arena);
+        place_id = ctx.mir_arena->AddPlace(
+            mir::Place{
+                .root =
+                    mir::PlaceRoot{
+                        .kind = mir::PlaceRoot::Kind::kDesignGlobal,
+                        .id = static_cast<int>(global_slot),
+                        .type = trigger_type},
+                .projections = {}});
+      } else if (signal_op.kind == mir::Operand::Kind::kUse) {
+        place_id = std::get<mir::PlaceId>(signal_op.payload);
+      } else {
         throw common::InternalError(
-            "LowerEventWait", "event trigger signal must be a design variable");
+            "LowerEventWait",
+            "event trigger signal must be a design variable or external ref");
       }
-      place_id = std::get<mir::PlaceId>(signal_op.payload);
     }
 
     const auto& place = (*ctx.mir_arena)[place_id];

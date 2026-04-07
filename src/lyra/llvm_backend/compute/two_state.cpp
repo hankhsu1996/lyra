@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <variant>
 #include <vector>
 
 #include <llvm/ADT/APInt.h>
@@ -14,13 +13,10 @@
 #include <llvm/IR/Value.h>
 #include <llvm/Support/ErrorHandling.h>
 
-#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/overloaded.hpp"
 #include "lyra/common/runtime_query_kind.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/compute/four_state.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/ops.hpp"
@@ -33,30 +29,11 @@
 #include "lyra/mir/index_lowering_policy.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
-#include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
-
-auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
-  const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
-
-  return std::visit(
-      common::Overloaded{
-          [&](const Constant& c) -> TypeId { return c.type; },
-          [&](mir::PlaceId place_id) -> TypeId {
-            const auto& place = arena[place_id];
-            return mir::TypeOfPlace(types, place);
-          },
-          [&](mir::TempId temp_id) -> TypeId {
-            return context.GetTempType(temp_id.value);
-          },
-      },
-      operand.payload);
-}
 
 auto IsStringOperand(Context& context, const mir::Operand& operand) -> bool {
   TypeId type_id = GetOperandTypeId(context, operand);

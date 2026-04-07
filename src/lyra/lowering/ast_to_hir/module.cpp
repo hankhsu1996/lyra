@@ -9,6 +9,7 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
+#include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -284,6 +285,31 @@ auto CollectModuleInstance(
     }
   }
 
+  // Extract declared ports with directions from slang's port list.
+  std::vector<hir::PortDecl> ports;
+  for (const auto* port_sym : instance.body.getPortList()) {
+    if (port_sym->kind != slang::ast::SymbolKind::Port) continue;
+    const auto& port = port_sym->as<slang::ast::PortSymbol>();
+    if (port.internalSymbol == nullptr) continue;
+    SymbolId port_backing_sym = registrar.Lookup(*port.internalSymbol);
+    if (!port_backing_sym) continue;
+    hir::HirPortDirection dir;
+    switch (port.direction) {
+      case slang::ast::ArgumentDirection::In:
+        dir = hir::HirPortDirection::kInput;
+        break;
+      case slang::ast::ArgumentDirection::Out:
+        dir = hir::HirPortDirection::kOutput;
+        break;
+      case slang::ast::ArgumentDirection::InOut:
+        dir = hir::HirPortDirection::kInOut;
+        break;
+      default:
+        continue;
+    }
+    ports.push_back(hir::PortDecl{.sym = port_backing_sym, .dir = dir});
+  }
+
   return hir::Module{
       .symbol = symbol,
       .span = span,
@@ -293,6 +319,7 @@ auto CollectModuleInstance(
       .param_init_values = std::move(param_init_values),
       .module_def_id = module_def_id,
       .body_id = body_id,
+      .ports = std::move(ports),
   };
 }
 

@@ -1,5 +1,7 @@
 # Architecture
 
+> Before editing, see [documentation-guidelines.md](documentation-guidelines.md). Architecture docs describe the target, not history. No "current state," migration plans, or queue references.
+
 ## Tool Structure
 
 LYRA is the platform. The primary user-facing binary is:
@@ -47,22 +49,18 @@ HIR and MIR are internal to specialization compilation. They contain no instance
 
 ### Design Realization
 
-**Target:** constructs the runtime object graph from compiled specializations + elaborated design topology:
+Constructs the runtime object graph from compiled specializations + elaborated design topology:
 
 - Instance construction (per-instance storage from body-shaped SpecLayout)
 - Connectivity wiring (port bindings, connection descriptors)
 - Per-instance constant blocks (value-only parameters)
 - Debug tables (instance paths for `%m`)
 
-**Current state:** realization produces a design-global arena with per-instance slot ranges, not per-instance objects. Constructor output dissolves instance identity into flat process frames and design-global metadata tables. Per-instance emitted IR (path strings, param payloads) still exists in the compiled object. See the [specialization queue](queues/specialization.md) for the remaining migration.
-
 Realization does not recompile specialization code. See [compilation-model.md](compilation-model.md).
 
 ### Execution
 
-**Target:** event-driven simulation engine. Processes run as behavior on instance objects with object-local state access. See [runtime.md](runtime.md).
-
-**Current state:** shared-body processes already access owned-local slots via `this_base + offset`, which is close to the target. However, forwarded slots use design-global addressing, signal identity requires design-global renumbering, dirty tracking uses design-global slot IDs, and every process has access to the full design arena via `design_ptr`.
+Event-driven simulation engine. Processes run as behavior on instance objects with object-local state access. See [runtime.md](runtime.md).
 
 ## Project Structure
 

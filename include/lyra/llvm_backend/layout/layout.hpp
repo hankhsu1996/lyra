@@ -18,6 +18,7 @@
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/llvm_backend/kernel_types.hpp"
+#include "lyra/llvm_backend/layout/body_layout.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
 #include "lyra/llvm_backend/layout/storage_types.hpp"
 #include "lyra/mir/arena.hpp"
@@ -462,6 +463,12 @@ struct Layout {
   struct BodyRealizationInfo {
     mir::ModuleBodyId body_id;
     uint32_t slot_count = 0;
+    // Body-local byte layout. Per-slot offsets in BodyByteOffset domain.
+    // Sole authority for body-local addressing in spec compilation.
+    BodyLayout body_layout;
+    // Body-local slot storage specs (absorbed from BodyStorageLayout).
+    // Parallel to body_layout.inline_offsets (indexed by body-local slot).
+    std::vector<SlotStorageSpec> slot_specs;
     // Per-process schema indices, indexed by dense non-final body-local
     // process ordinal. Every ordinal in [0, size) is present and valid.
     // This ordering matches the body's non-final process list and the
@@ -513,6 +520,40 @@ struct Layout {
     int8_t time_precision_power;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
+
+  // Transitional design-global bridge: per-body representative base slot.
+  // Indexed parallel to body_realization_infos.
+  // Used ONLY by legacy codegen paths that still require design-global slot
+  // lookup (connection trigger classification, signal resolution).
+  // Will be deleted when codegen moves fully to body-local identity (B2b).
+  // Do NOT use in new code -- use body-local BodyLayout/slot_specs instead.
+  std::vector<uint32_t> body_representative_base_slots;
+
+  // Transitional: resolve a body-local slot to a representative
+  // design-global slot index. ONLY for runtime signal identity at the
+  // codegen->runtime boundary (trace observation, packed store
+  // notifications). Must NOT be used for spec compilation decisions.
+  // Will be deleted when runtime signal identity moves fully to
+  // object-local coordinates.
+  [[nodiscard]] auto ResolveLegacyRepresentativeDesignSlot(
+      uint32_t body_info_index, uint32_t local_slot) const -> uint32_t {
+    if (body_info_index >= body_representative_base_slots.size()) {
+      throw common::InternalError(
+          "ResolveLegacyRepresentativeDesignSlot",
+          std::format(
+              "body_info_index {} out of range (size={})", body_info_index,
+              body_representative_base_slots.size()));
+    }
+    if (local_slot >= body_realization_infos.at(body_info_index).slot_count) {
+      throw common::InternalError(
+          "ResolveLegacyRepresentativeDesignSlot",
+          std::format(
+              "local_slot {} out of range for body {} (slot_count={})",
+              local_slot, body_realization_infos[body_info_index].body_id.value,
+              body_realization_infos[body_info_index].slot_count));
+    }
+    return body_representative_base_slots[body_info_index] + local_slot;
+  }
 
   // Per-connection codegen trigger fact. Intentionally reduced payload
   // from ProcessTriggerFact (process.hpp): only the fields needed for
@@ -698,6 +739,12 @@ auto BuildBodyStorageLayout(
 auto ComputeBodyStateSize(
     std::span<const mir::SlotDesc> slot_descs, const BodyStorageLayout& storage)
     -> BodyStateSizeInfo;
+
+// Build body-local byte layout from body-owned storage layout.
+// Produces per-slot BodyByteOffset for both inline and appendix regions.
+auto BuildBodyLayout(
+    std::span<const mir::SlotDesc> slot_descs, const BodyStorageLayout& storage)
+    -> BodyLayout;
 
 // Per-module-instance layout-planning entry.
 // Borrowed view into MIR data; valid only for the synchronous BuildLayout call.

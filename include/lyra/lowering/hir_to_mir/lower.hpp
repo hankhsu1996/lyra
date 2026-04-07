@@ -4,6 +4,7 @@
 #include <memory>
 #include <unordered_map>
 
+#include "lyra/common/child_coord_map.hpp"
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/module_identity.hpp"
@@ -15,7 +16,8 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/compiled_bindings.hpp"
+#include "lyra/mir/connection_endpoint.hpp"
+#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/instance.hpp"
 
@@ -35,8 +37,11 @@ struct LoweringInput {
   const ast_to_hir::DesignBindingPlan* binding_plan = nullptr;
   int8_t global_precision_power =
       -9;  // Finest timeprecision across all modules
-  const mir::InstanceTable* instance_table = nullptr;  // For %m support
+  const mir::InstanceTable* instance_table = nullptr;
   const common::SpecializationMap* specialization_map;
+  // Per-definition child instance name -> repertoire coord mapping.
+  // Used by design_lower for durable child-site identity.
+  const common::ChildCoordMap* child_coord_map = nullptr;
 };
 
 // Statistics collected during HIR->MIR lowering (for --stats output).
@@ -54,6 +59,7 @@ struct LoweringStats {
 
 struct LoweringResult {
   mir::Design design;
+  mir::ConstructionInput construction;
   // Design-level arena for design-global MIR (package places, package
   // functions, init processes, connection processes). Body-local MIR
   // is in each ModuleBody's embedded arena.
@@ -64,7 +70,8 @@ struct LoweringResult {
   // stay body-local -- not merged into design_origins.
   std::vector<std::vector<OriginEntry>> body_origins;
   LoweringStats stats;
-  mir::CompiledBindingPlan compiled_bindings;
+  std::vector<mir::BoundConnection> bound_connections;
+  std::vector<mir::CompiledConnectionExpr> expr_connections;
   // DPI export wrapper descriptors for LLVM backend emission.
   // Deterministically sorted by c_name.
   std::vector<mir::DpiExportWrapperDesc> dpi_export_wrappers;

@@ -30,9 +30,9 @@
 #include <llvm/TargetParser/SubtargetFeature.h>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/overloaded.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/connection_analysis.hpp"
-#include "lyra/llvm_backend/connection_kernel_collection.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/init_descriptor_utils.hpp"
@@ -42,11 +42,15 @@
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/llvm_backend/runtime_abi_codegen.hpp"
 #include "lyra/llvm_backend/storage_construction_recipe_builder.hpp"
+#include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
-#include "lyra/mir/placement.hpp"
+#include "lyra/mir/operand.hpp"
+#include "lyra/mir/place.hpp"
+#include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
+#include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 
@@ -613,12 +617,8 @@ auto BuildSpecCompilationUnits(const mir::Design& design)
     if (mod == nullptr) continue;
 
     auto body_id = mod->body_id;
-    const auto& placement =
-        mir::GetInstancePlacement(design.placement, module_idx);
-
     SpecInstanceBinding binding{
         .module_index = ModuleIndex{module_idx},
-        .flat_slot_base = placement.design_state_base_slot,
     };
 
     auto [it, inserted] = body_to_unit.try_emplace(body_id.value, units.size());
@@ -754,8 +754,7 @@ auto BuildCompiledModuleSpecInputs(
 
 auto BuildSpecSlotInfos(
     const std::vector<SpecCompilationUnit>& units, const Layout& layout,
-    const std::vector<uint32_t>& module_base_slots,
-    std::span<const mir::SlotDesc> design_slots) -> std::vector<SpecSlotInfo> {
+    const mir::Design& design) -> std::vector<SpecSlotInfo> {
   // Build body-id-to-index table once for O(1) lookup per unit.
   std::unordered_map<uint32_t, uint32_t> body_info_index_by_body_id_value;
   for (uint32_t i = 0; i < layout.body_realization_infos.size(); ++i) {
@@ -766,12 +765,9 @@ auto BuildSpecSlotInfos(
   std::vector<SpecSlotInfo> result;
   result.reserve(units.size());
   for (const auto& unit : units) {
-    if (unit.instances.empty()) {
-      throw common::InternalError(
-          "BuildSpecSlotInfos", "specialization unit has no instances");
-    }
     SpecSlotInfo info;
     info.body_id = unit.body_id;
+    uint32_t body_info_idx = 0;
     {
       auto it = body_info_index_by_body_id_value.find(unit.body_id.value);
       if (it == body_info_index_by_body_id_value.end()) {
@@ -780,66 +776,31 @@ auto BuildSpecSlotInfos(
             std::format(
                 "no BodyRealizationInfo for body {}", unit.body_id.value));
       }
-      info.body_realization_info_index = it->second;
+      body_info_idx = it->second;
+      info.body_realization_info_index = body_info_idx;
     }
-    auto rep_idx = unit.instances[0].module_index;
-    uint32_t rep_base_slot = module_base_slots[rep_idx.value];
-    auto slot_count = layout.GetInstanceSlotCount(rep_idx);
+
+    // Build SpecSlotInfo from body-local layout data only.
+    // No design-global slot table, no representative instance, no
+    // flat_slot_base. Specialization grouping guarantees all instances
+    // of the same body have identical slot specs.
+    const auto& body_info = layout.body_realization_infos[body_info_idx];
+    const auto& body_layout = body_info.body_layout;
+    const auto& body = design.module_bodies.at(unit.body_id.value);
+    auto slot_count = body_info.slot_count;
+
     info.inline_offsets.reserve(slot_count);
     info.shapes.reserve(slot_count);
     info.access_kinds.reserve(slot_count);
-    info.representative_design_slots.reserve(slot_count);
-    const auto& base_info = layout.GetInstanceStorageBase(rep_idx);
-    InstanceSlotRange rep_range{
-        .base_slot = rep_base_slot,
-        .slot_count = slot_count,
-        .body_id = unit.body_id,
-    };
     for (uint32_t s = 0; s < slot_count; ++s) {
-      uint32_t design_slot_row = rep_base_slot + s;
-      auto slot_id = layout.design.slots[design_slot_row];
-      auto rel = layout.design.GetInstanceOffset(
-          design_slot_row, base_info, rep_range);
-      info.inline_offsets.push_back(rel);
-      auto shape = design_slots[design_slot_row].storage_shape;
+      info.inline_offsets.push_back(body_layout.inline_offsets[s]);
+      auto shape = body.slots[s].storage_shape;
       info.shapes.push_back(shape);
       bool is_container = shape == mir::StorageShape::kOwnedContainer;
       info.access_kinds.push_back(
           is_container ? SpecSlotAccessKind::kOwnedContainer
                        : SpecSlotAccessKind::kOwnedInline);
-      info.representative_design_slots.push_back(slot_id.value);
     }
-
-    // Verify all instances in this specialization agree on slot count and
-    // storage shape.
-    for (size_t i = 1; i < unit.instances.size(); ++i) {
-      auto inst_slot_count =
-          layout.GetInstanceSlotCount(unit.instances[i].module_index);
-      if (inst_slot_count != slot_count) {
-        throw common::InternalError(
-            "BuildSpecSlotInfos",
-            std::format(
-                "slot count mismatch: representative has {} but instance {} "
-                "has {}",
-                slot_count, unit.instances[i].module_index.value,
-                inst_slot_count));
-      }
-      uint32_t inst_base =
-          module_base_slots[unit.instances[i].module_index.value];
-      for (uint32_t s = 0; s < slot_count; ++s) {
-        auto inst_shape = design_slots[inst_base + s].storage_shape;
-        if (inst_shape != info.shapes[s]) {
-          throw common::InternalError(
-              "BuildSpecSlotInfos",
-              std::format(
-                  "storage shape mismatch at body-local slot {}: "
-                  "representative={} instance={}",
-                  s, static_cast<int>(info.shapes[s]),
-                  static_cast<int>(inst_shape)));
-        }
-      }
-    }
-
     result.push_back(std::move(info));
   }
   return result;
@@ -879,7 +840,8 @@ auto CompareCombSlotsByFinalObservableOrder(
 
 auto CompileModuleSpecSession(
     Context& context, const mir::Design& design,
-    const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec> {
+    const CompiledModuleSpecInput& input,
+    const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec> {
   // Set the body arena and origin scope for this compilation session.
   const auto& body = design.module_bodies.at(input.body_id.value);
   Context::ArenaScope arena_scope(context, &body.arena);
@@ -891,6 +853,17 @@ auto CompileModuleSpecSession(
     origin_scope.emplace(*context.GetOriginLookup(), input.body_id);
   }
 
+  // Install all specialization-local state via RAII scope.
+  std::optional<Context::ExternalRefResolutionEnv> ext_ref_env;
+  if (!body.resolved_external_ref_bindings.empty()) {
+    ext_ref_env = Context::ExternalRefResolutionEnv{
+        .bindings = &body.resolved_external_ref_bindings,
+        .construction = construction};
+  }
+  Context::SpecLocalScope spec_scope(
+      context, input.spec_slot_info, input.connection_notification_mask,
+      std::move(ext_ref_env));
+
   // Clear per-spec state: body-local FunctionIds are 0-based per body,
   // so registrations from a previous spec session would collide.
   context.ClearModuleScopedFunctions();
@@ -901,11 +874,6 @@ auto CompileModuleSpecSession(
   }
 
   // Step 2: Register module-scoped function lowering metadata.
-  // All body functions share the same spec slot info. Observer ABI vs
-  // regular ABI is determined by mir::IsObserverProgram(runtime_kind) at
-  // declare/define time, not by metadata here.
-  // spec_slot_info is set on context by CompileDesignProcesses before
-  // entering this function. It must be non-null for module-scoped access.
   if (context.GetSpecSlotInfo() == nullptr) {
     throw common::InternalError(
         "CompileModuleSpecSession",
@@ -913,7 +881,9 @@ auto CompileModuleSpecSession(
   }
   for (mir::FunctionId func_id : input.functions) {
     context.RegisterModuleScopedFunction(
-        func_id, {.spec_slot_info = context.GetSpecSlotInfo()});
+        func_id, {.spec_slot_info = context.GetSpecSlotInfo(),
+                  .connection_notification_mask =
+                      context.GetConnectionNotificationMask()});
   }
 
   // Step 3: Declare all body functions
@@ -963,17 +933,18 @@ auto CompileModuleSpecSession(
 }
 
 auto ExtractRealizationData(
-    const mir::PlacementMap& placement, std::span<const mir::SlotDesc> slots,
+    const mir::ConstructionInput& construction,
+    std::span<const mir::SlotDesc> slots,
     std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
     std::span<const char> slot_trace_string_pool) -> RealizationData {
   RealizationData realization;
 
-  if (placement.instances.size() != placement.const_blocks.size()) {
+  if (construction.objects.size() != construction.const_blocks.size()) {
     throw common::InternalError(
         "ExtractRealizationData",
         std::format(
-            "placement instances/const_blocks size mismatch: {} vs {}",
-            placement.instances.size(), placement.const_blocks.size()));
+            "construction objects/const_blocks size mismatch: {} vs {}",
+            construction.objects.size(), construction.const_blocks.size()));
   }
 
   realization.slot_types.reserve(slots.size());
@@ -1006,8 +977,31 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   bool force_two_state = input.force_two_state;
 
+  // Temporary backend adapter: expand package-only design.slots to the
+  // full design-global flat table for old layout/metadata/emit consumers.
+  // design_lower.cpp produces clean package-only slots. This adapter is
+  // DELETION-TARGETED -- removed when layout/metadata/emit migrate to
+  // body-local and package-only paths (B2b, C1).
+  std::vector<mir::SlotDesc> expanded_slots = input.design->slots;
+  std::vector<mir::SlotTraceProvenance> expanded_provenance =
+      input.design->slot_trace_provenance;
+  std::vector<char> expanded_string_pool = input.design->slot_trace_string_pool;
+  {
+    for (const auto& obj : input.construction->objects) {
+      auto body_id = mir::ModuleBodyId{obj.body_group};
+      const auto& body = input.design->module_bodies.at(body_id.value);
+      for (const auto& slot : body.slots) {
+        expanded_slots.push_back(slot);
+        expanded_provenance.push_back(
+            {.local_name_str_off = 0,
+             .scope_kind = mir::SlotScopeKind::kInstance,
+             .scope_ref = obj.path_index});
+      }
+    }
+  }
+
   auto slot_info =
-      BuildSlotInfo(input.design->slots, *input.type_arena, force_two_state);
+      BuildSlotInfo(expanded_slots, *input.type_arena, force_two_state);
 
   // Preliminary layout: used by connection collection for observation
   // resolution (needs slot specs, not byte offsets).
@@ -1024,52 +1018,299 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // placement.instances[i], which is how ModuleIndex is assigned during
   // MIR construction. BuildLayout and wrapper generation depend on this.
   std::vector<LayoutModulePlan> module_plans;
-  std::vector<uint32_t> module_base_slots;
   {
     uint32_t module_idx = 0;
     for (const auto& element : input.design->elements) {
       const auto* mod = std::get_if<mir::Module>(&element);
       if (mod == nullptr) continue;
       const auto& body = input.design->module_bodies.at(mod->body_id.value);
-      const auto& placement =
-          mir::GetInstancePlacement(input.design->placement, module_idx);
+      const auto& obj = input.construction->objects.at(module_idx);
       module_plans.push_back(
           LayoutModulePlan{
               .body_processes = body.processes,
               .body_id = mod->body_id,
-              .design_state_base_slot = placement.design_state_base_slot,
-              .slot_count = placement.slot_count,
+              .design_state_base_slot = obj.design_state_base_slot,
+              .slot_count = obj.slot_count,
           });
-      module_base_slots.push_back(placement.design_state_base_slot);
       ++module_idx;
     }
-    if (module_idx != input.design->placement.instances.size()) {
+    if (module_idx != input.construction->objects.size()) {
       throw common::InternalError(
           "CompileDesignProcesses",
           std::format(
-              "module count {} from elements does not match placement "
-              "instance count {}",
-              module_idx, input.design->placement.instances.size()));
+              "module count {} from elements does not match construction "
+              "object count {}",
+              module_idx, input.construction->objects.size()));
     }
   }
 
-  // Connection-kernel collection uses pre-forwarding layout for trigger
-  // observation resolution. Only slot_storage_specs, storage_spec_arena,
-  // and slot_to_index are consumed.
-  // No later phase may re-collect connection kernels.
-  auto connection_collection = CollectConnectionKernels(
-      input.design->connection_processes, *input.mir_arena,
-      SlotSpecView{
-          .slot_to_index = pre_layout.slot_to_index,
-          .slot_storage_specs = pre_layout.slot_storage_specs,
-          .storage_spec_arena = pre_layout.storage_spec_arena,
-      });
+  // Convert connection artifacts to flat-slot entries for layout.
+  // Kernel connections from BoundConnection, complex expressions from
+  // CompiledConnectionExpr (transitional).
+  //
+  // Kernel bindings -> ConnectionKernelEntry with flat SlotIds.
+  // Expr bindings -> synthetic MIR processes with kDesignGlobal places
+  //   (cloned from body-local functions with kModuleSlot -> kDesignGlobal
+  //   remapping). These go to non_kernelized_connection_processes.
+  std::vector<ConnectionKernelEntry> connection_kernel_entries;
+  std::vector<mir::ProcessId> non_kernelized_connection_processes;
+
+  auto to_flat_slot = [&](const mir::BoundEndpoint& ref) -> common::SlotId {
+    const auto& obj = input.construction->objects.at(ref.object_index.value);
+    return common::SlotId{obj.design_state_base_slot + ref.local_slot.value};
+  };
+
+  // Build kernel entries from bound_connections (recipe path).
+  // BoundConnection does not carry trigger_observation by design:
+  // the recipe-based path resolves only slot-based triggers, which
+  // never require byte-level observation metadata. This is a structural
+  // invariant of IsFullyBindableRecipe, not an omission.
+  if (input.bound_connections != nullptr) {
+    for (const auto& bc : *input.bound_connections) {
+      bool is_p2c = bc.kind == mir::PortConnection::Kind::kDriveParentToChild;
+      connection_kernel_entries.push_back(
+          ConnectionKernelEntry{
+              .process_id = {},
+              .src_slot =
+                  to_flat_slot(is_p2c ? bc.parent_source : bc.child_target),
+              .dst_slot =
+                  to_flat_slot(is_p2c ? bc.child_target : bc.parent_source),
+              .trigger_slot = to_flat_slot(bc.trigger),
+              .trigger_edge = bc.trigger_edge,
+              .trigger_observation = std::nullopt,
+          });
+    }
+  }
+
+  // Clone expr_connections as design-level processes.
+  // Remaps kModuleSlot -> kDesignGlobal using parent base slot.
+  if (input.expr_connections != nullptr) {
+    for (const auto& expr : *input.expr_connections) {
+      const auto& parent_obj =
+          input.construction->objects.at(expr.parent_object_index.value);
+      uint32_t parent_base = parent_obj.design_state_base_slot;
+      uint32_t child_flat = to_flat_slot(
+                                mir::BoundEndpoint{
+                                    .object_index = expr.child_object_index,
+                                    .local_slot = expr.child_local_slot})
+                                .value;
+      const auto& parent_body =
+          input.design->module_bodies.at(expr.parent_body_id.value);
+      const auto& func = parent_body.arena[expr.expr_function];
+
+      auto remap_place = [&](mir::PlaceId pid,
+                             const mir::Arena& src) -> mir::PlaceId {
+        const auto& place = src[pid];
+        mir::Place new_place = place;
+        if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
+          new_place.root.kind = mir::PlaceRoot::Kind::kDesignGlobal;
+          new_place.root.id = static_cast<int>(parent_base) + place.root.id;
+        }
+        return const_cast<mir::Arena&>(*input.mir_arena)
+            .AddPlace(std::move(new_place));
+      };
+      auto remap_operand = [&](const mir::Operand& op,
+                               const mir::Arena& src) -> mir::Operand {
+        if (op.kind == mir::Operand::Kind::kUse)
+          return mir::Operand::Use(
+              remap_place(std::get<mir::PlaceId>(op.payload), src));
+        return op;
+      };
+      auto remap_rhs = [&](const mir::RightHandSide& rhs,
+                           const mir::Arena& src) -> mir::RightHandSide {
+        return std::visit(
+            common::Overloaded{
+                [&](const mir::Operand& op) -> mir::RightHandSide {
+                  return remap_operand(op, src);
+                },
+                [&](const mir::Rvalue& rv) -> mir::RightHandSide {
+                  mir::Rvalue new_rv;
+                  new_rv.info = rv.info;
+                  new_rv.operands.reserve(rv.operands.size());
+                  for (const auto& op : rv.operands)
+                    new_rv.operands.push_back(remap_operand(op, src));
+                  if (auto* gu =
+                          std::get_if<mir::GuardedUseRvalueInfo>(&new_rv.info))
+                    gu->place = remap_place(gu->place, src);
+                  if (auto* bc =
+                          std::get_if<mir::BuiltinCallRvalueInfo>(&new_rv.info))
+                    if (bc->receiver)
+                      bc->receiver = remap_place(*bc->receiver, src);
+                  return new_rv;
+                },
+            },
+            rhs);
+      };
+
+      mir::PlaceId child_place =
+          const_cast<mir::Arena&>(*input.mir_arena)
+              .AddPlace(
+                  mir::Place{
+                      .root =
+                          mir::PlaceRoot{
+                              .kind = mir::PlaceRoot::Kind::kDesignGlobal,
+                              .id = static_cast<int>(child_flat),
+                              .type = expr.result_type},
+                      .projections = {}});
+
+      std::vector<uint32_t> trigger_slots;
+      auto collect_trigger = [&](const mir::Operand& op,
+                                 const mir::Arena& src) {
+        if (op.kind != mir::Operand::Kind::kUse) return;
+        const auto& place = src[std::get<mir::PlaceId>(op.payload)];
+        if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot)
+          trigger_slots.push_back(parent_base + place.root.id);
+      };
+      auto collect_rhs_triggers = [&](const mir::RightHandSide& rhs) {
+        std::visit(
+            common::Overloaded{
+                [&](const mir::Operand& op) {
+                  collect_trigger(op, parent_body.arena);
+                },
+                [&](const mir::Rvalue& rv) {
+                  for (const auto& op : rv.operands)
+                    collect_trigger(op, parent_body.arena);
+                },
+            },
+            rhs);
+      };
+      for (const auto& block : func.blocks) {
+        for (const auto& stmt : block.statements)
+          std::visit(
+              common::Overloaded{
+                  [&](const mir::Assign& a) { collect_rhs_triggers(a.rhs); },
+                  [&](const mir::DefineTemp& dt) {
+                    collect_rhs_triggers(dt.rhs);
+                  },
+                  [](const auto&) {},
+              },
+              stmt.data);
+        std::visit(
+            common::Overloaded{
+                [&](const mir::Branch& b) {
+                  collect_trigger(b.condition, parent_body.arena);
+                },
+                [&](const mir::Jump& j) {
+                  for (const auto& a : j.args)
+                    collect_trigger(a, parent_body.arena);
+                },
+                [](const auto&) {},
+            },
+            block.terminator.data);
+      }
+
+      std::vector<mir::BasicBlock> process_blocks;
+      mir::BasicBlockId entry_id = func.entry;
+      for (const auto& block : func.blocks) {
+        mir::BasicBlock new_block;
+        new_block.params = block.params;
+        for (const auto& stmt : block.statements) {
+          mir::Statement new_stmt;
+          new_stmt.origin = stmt.origin;
+          new_stmt.data = std::visit(
+              common::Overloaded{
+                  [&](const mir::Assign& a) -> mir::StatementData {
+                    return mir::Assign{
+                        .dest = remap_place(
+                            mir::RequireLocalDest(a.dest, "ExprConnections"),
+                            parent_body.arena),
+                        .rhs = remap_rhs(a.rhs, parent_body.arena)};
+                  },
+                  [&](const mir::DefineTemp& dt) -> mir::StatementData {
+                    return mir::DefineTemp{
+                        .temp_id = dt.temp_id,
+                        .type = dt.type,
+                        .rhs = remap_rhs(dt.rhs, parent_body.arena)};
+                  },
+                  [&](const auto& other) -> mir::StatementData {
+                    return other;
+                  },
+              },
+              stmt.data);
+          new_block.statements.push_back(std::move(new_stmt));
+        }
+        if (const auto* ret =
+                std::get_if<mir::Return>(&block.terminator.data)) {
+          if (ret->value) {
+            new_block.statements.push_back(
+                mir::Statement{
+                    .data = mir::Assign{
+                        .dest = child_place,
+                        .rhs = remap_operand(*ret->value, parent_body.arena)}});
+          }
+          std::vector<mir::WaitTrigger> triggers;
+          std::ranges::sort(trigger_slots);
+          auto last = std::ranges::unique(trigger_slots);
+          trigger_slots.erase(last.begin(), last.end());
+          for (uint32_t slot : trigger_slots)
+            triggers.push_back(
+                mir::WaitTrigger{
+                    .signal =
+                        mir::SignalRef{
+                            .scope = mir::SignalRef::Scope::kDesignGlobal,
+                            .id = slot},
+                    .edge = common::EdgeKind::kAnyChange,
+                    .observed_place = std::nullopt,
+                    .late_bound = std::nullopt});
+          new_block.terminator.data =
+              mir::Wait{.triggers = std::move(triggers), .resume = entry_id};
+        } else {
+          new_block.terminator.origin = block.terminator.origin;
+          new_block.terminator.data = std::visit(
+              common::Overloaded{
+                  [&](const mir::Jump& j) -> mir::TerminatorData {
+                    std::vector<mir::Operand> args;
+                    for (const auto& a : j.args)
+                      args.push_back(remap_operand(a, parent_body.arena));
+                    return mir::Jump{
+                        .target = j.target, .args = std::move(args)};
+                  },
+                  [&](const mir::Branch& b) -> mir::TerminatorData {
+                    auto cond = remap_operand(b.condition, parent_body.arena);
+                    std::vector<mir::Operand> then_args;
+                    for (const auto& a : b.then_args)
+                      then_args.push_back(remap_operand(a, parent_body.arena));
+                    std::vector<mir::Operand> else_args;
+                    for (const auto& a : b.else_args)
+                      else_args.push_back(remap_operand(a, parent_body.arena));
+                    return mir::Branch{
+                        .condition = cond,
+                        .then_target = b.then_target,
+                        .then_args = std::move(then_args),
+                        .else_target = b.else_target,
+                        .else_args = std::move(else_args)};
+                  },
+                  [&](const mir::Switch& s) -> mir::TerminatorData {
+                    return mir::Switch{
+                        .selector =
+                            remap_operand(s.selector, parent_body.arena),
+                        .targets = s.targets};
+                  },
+                  [&](const auto& other) -> mir::TerminatorData {
+                    return other;
+                  },
+              },
+              block.terminator.data);
+        }
+        process_blocks.push_back(std::move(new_block));
+      }
+      auto pid = const_cast<mir::Arena&>(*input.mir_arena)
+                     .AddProcess(
+                         mir::Process{
+                             .kind = mir::ProcessKind::kLooping,
+                             .entry = entry_id,
+                             .blocks = std::move(process_blocks),
+                             .temp_metadata = func.temp_metadata,
+                             .decision_sites = {}});
+      non_kernelized_connection_processes.push_back(pid);
+    }
+  }
 
   // Connection analysis: classify slot usage and relay candidates.
   // Connection edges use original slot IDs; no canonical-owner aliasing.
   auto connection_analysis = AnalyzeConnections(
-      std::move(connection_collection.kernel_entries), module_plans,
-      *input.design, *input.mir_arena);
+      std::move(connection_kernel_entries), module_plans, *input.design,
+      *input.mir_arena, static_cast<uint32_t>(expanded_slots.size()));
 
   // Build instance slot ranges for body-local appendix layout.
   uint32_t num_package_slots_for_layout = 0;
@@ -1078,8 +1319,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   if (!module_plans.empty()) {
     num_package_slots_for_layout = module_plans[0].design_state_base_slot;
   } else {
-    num_package_slots_for_layout =
-        static_cast<uint32_t>(input.design->slots.size());
+    num_package_slots_for_layout = static_cast<uint32_t>(expanded_slots.size());
   }
   for (const auto& plan : module_plans) {
     instance_ranges.push_back(
@@ -1111,7 +1351,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto layout = std::make_unique<Layout>(BuildLayout(
       input.design->init_processes,
       std::move(connection_analysis.connection_edges),
-      std::move(connection_collection.non_kernelized_processes), module_plans,
+      std::move(non_kernelized_connection_processes), module_plans,
       *input.design, *input.mir_arena, *input.type_arena,
       std::move(design_layout), body_storage_layouts, input.body_timescales,
       *llvm_ctx, module->getDataLayout(), force_two_state));
@@ -1137,8 +1377,62 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto modidx_to_sched_indices = BuildModuleSchedIndices(*layout);
   auto views =
       BuildSpecCodegenViews(units, *input.design, modidx_to_sched_indices);
-  auto spec_slot_infos = BuildSpecSlotInfos(
-      units, *layout, module_base_slots, input.design->slots);
+  auto spec_slot_infos = BuildSpecSlotInfos(units, *layout, *input.design);
+
+  // Build per-instance local-slot connection trigger facts from the
+  // design-global connection trigger bitmap and module plans.
+  // This is orchestration-local: the projection from design-global to
+  // per-instance local-slot happens here, not on Layout.
+  std::vector<std::vector<bool>> instance_connection_triggers(
+      module_plans.size());
+  for (size_t mi = 0; mi < module_plans.size(); ++mi) {
+    const auto& plan = module_plans[mi];
+    instance_connection_triggers[mi].assign(plan.slot_count, false);
+    for (uint32_t s = 0; s < plan.slot_count; ++s) {
+      uint32_t global_slot = plan.design_state_base_slot + s;
+      if (global_slot >= layout->slot_has_connection_trigger.size()) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "design-global slot {} out of range for connection trigger "
+                "bitmap (size={}, instance={}, local_slot={})",
+                global_slot, layout->slot_has_connection_trigger.size(), mi,
+                s));
+      }
+      if (layout->slot_has_connection_trigger[global_slot]) {
+        instance_connection_triggers[mi][s] = true;
+      }
+    }
+  }
+
+  // Compute connection-notification masks: conservative union across all
+  // instances of each body. Topology-derived codegen compilation decision.
+  // Separate from SpecSlotInfo because this is NOT a body semantic fact.
+  std::vector<ConnectionNotificationMask> connection_notification_masks(
+      units.size());
+  for (size_t u = 0; u < units.size(); ++u) {
+    auto slot_count = spec_slot_infos[u].SlotCount();
+    auto& mask = connection_notification_masks[u];
+    mask.required.assign(slot_count, false);
+    for (const auto& inst : units[u].instances) {
+      auto mi = inst.module_index.value;
+      const auto& inst_triggers = instance_connection_triggers.at(mi);
+      if (inst_triggers.size() != slot_count) {
+        throw common::InternalError(
+            "CompileDesignProcesses",
+            std::format(
+                "instance {} connection_triggers size {} != "
+                "spec slot_count {}",
+                mi, inst_triggers.size(), slot_count));
+      }
+      for (uint32_t s = 0; s < slot_count; ++s) {
+        if (inst_triggers[s]) {
+          mask.required[s] = true;
+        }
+      }
+    }
+  }
+
   auto spec_inputs = BuildCompiledModuleSpecInputs(units, std::move(views));
 
   // Phase 2: Design-wide init-process monitor registration
@@ -1222,10 +1516,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
       module_export_callees;
 
   for (size_t si = 0; si < spec_inputs.size(); ++si) {
-    const auto& spec_input = spec_inputs[si];
-    context->SetSpecSlotInfo(&spec_slot_infos[si]);
-    auto product =
-        CompileModuleSpecSession(*context, *input.design, spec_input);
+    auto& spec_input = spec_inputs[si];
+    spec_input.spec_slot_info = &spec_slot_infos[si];
+    spec_input.connection_notification_mask =
+        &connection_notification_masks[si];
+    auto product = CompileModuleSpecSession(
+        *context, *input.design, spec_input, input.construction);
     if (!product) return std::unexpected(product.error());
 
     // Capture module export callees from this session's user_functions_
@@ -1272,10 +1568,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
         std::make_move_iterator(product->wait_sites.end()));
   }
 
-  // Clear per-specialization context state after the compilation loop.
-  context->SetSpecSlotInfo(nullptr);
-
   // Phase 5: Emit DPI export wrappers (after all callables are declared).
+  // spec_slot_info and connection_notification_mask are already cleared
+  // by SpecLocalScope destruction at the end of each spec session.
   // Both package and module export wrappers are emitted in one pass.
   if (input.dpi_export_wrappers != nullptr &&
       !input.dpi_export_wrappers->empty()) {
@@ -1395,9 +1690,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   auto realization = ExtractRealizationData(
-      input.design->placement, input.design->slots,
-      input.design->slot_trace_provenance,
-      input.design->slot_trace_string_pool);
+      *input.construction, expanded_slots, expanded_provenance,
+      expanded_string_pool);
 
   // Build forward-path body compiled functions, parallel to
   // layout->body_realization_infos.
@@ -2160,26 +2454,27 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
 
     std::vector<uint32_t> design_base_slots;
-    design_base_slots.reserve(input.design->placement.instances.size());
-    for (const auto& inst : input.design->placement.instances) {
-      design_base_slots.push_back(inst.design_state_base_slot);
+    design_base_slots.reserve(input.construction->objects.size());
+    for (const auto& obj : input.construction->objects) {
+      design_base_slots.push_back(obj.design_state_base_slot);
     }
 
     auto param_payloads = BuildParamPayloads(
         instance_body_group, design_base_slots,
-        input.design->placement.const_blocks, *layout, body_param_templates);
+        input.construction->const_blocks, *layout, body_param_templates);
 
     // Validate parallel structure invariants before building the
     // construction program. These checks catch topology mismatches at
     // compile time rather than letting them survive to runtime.
     {
       auto instance_count = instance_body_group.size();
-      if (instance_count != input.design->instance_table.entries.size()) {
+      if (instance_count != input.construction->instance_table.entries.size()) {
         throw common::InternalError(
             "CompileDesignProcesses",
             std::format(
                 "instance_body_group size {} != instance_table size {}",
-                instance_count, input.design->instance_table.entries.size()));
+                instance_count,
+                input.construction->instance_table.entries.size()));
       }
       if (instance_count != layout->instance_storage_bases.size()) {
         throw common::InternalError(
@@ -2230,7 +2525,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
     // strict ModuleIndex order. The runtime relies on this order for
     // instance_id and flat slot-base allocation.
     realization.construction_program = BuildConstructionProgram(
-        instance_body_group, *layout, input.design->instance_table,
+        instance_body_group, *layout, input.construction->instance_table,
         param_payloads);
 
     // Validate: construction program entries match lowering domain.

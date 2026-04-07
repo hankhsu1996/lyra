@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <variant>
 #include <vector>
 
 #include <llvm/ADT/APInt.h>
@@ -15,12 +14,9 @@
 #include <llvm/IR/Value.h>
 #include <llvm/Support/ErrorHandling.h>
 
-#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
-#include "lyra/common/overloaded.hpp"
 #include "lyra/common/runtime_query_kind.hpp"
-#include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/compute/ops.hpp"
@@ -31,36 +27,11 @@
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
-#include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
 namespace {
-
-auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
-  const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
-
-  return std::visit(
-      common::Overloaded{
-          [&](const Constant& c) {
-            const Type& type = types[c.type];
-            return IsPacked(type) && context.IsPackedFourState(type);
-          },
-          [&](mir::PlaceId place_id) {
-            const auto& place = arena[place_id];
-            TypeId type_id = mir::TypeOfPlace(types, place);
-            const Type& type = types[type_id];
-            return IsPacked(type) && context.IsPackedFourState(type);
-          },
-          [&](mir::TempId temp_id) -> bool {
-            return context.ReadTempValue(temp_id.value).domain ==
-                   ValueDomain::kFourState;
-          },
-      },
-      operand.payload);
-}
 
 // Returns {value, unknown} at the operand's own loaded width.
 // Handles both kFourState (struct) and kTwoState (scalar) domain uniformly

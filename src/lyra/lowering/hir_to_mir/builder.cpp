@@ -297,6 +297,23 @@ void MirBuilder::EmitAssign(mir::PlaceId target, mir::Rvalue value) {
   EmitInst(mir::Assign{.dest = target, .rhs = std::move(value)});
 }
 
+void MirBuilder::EmitAssign(mir::WriteTarget target, mir::Operand source) {
+  if (const auto* p = std::get_if<mir::PlaceId>(&target)) {
+    EmitAssign(*p, std::move(source));
+  } else {
+    EmitInst(mir::Assign{.dest = target, .rhs = std::move(source)});
+  }
+}
+
+void MirBuilder::EmitAssign(mir::WriteTarget target, mir::Rvalue value) {
+  if (const auto* p = std::get_if<mir::PlaceId>(&target)) {
+    EmitAssign(*p, std::move(value));
+  } else {
+    VerifyRvalueInvariants(value);
+    EmitInst(mir::Assign{.dest = target, .rhs = std::move(value)});
+  }
+}
+
 void MirBuilder::EmitEffect(mir::EffectOp op) {
   EmitInst(mir::Effect{.op = std::move(op)});
 }
@@ -649,6 +666,26 @@ void MirBuilder::EmitGuardedAssign(
 void MirBuilder::EmitDeferredAssign(mir::PlaceId dest, mir::RightHandSide rhs) {
   CheckWriteableSlot(dest, *arena_, *ctx_);
   EmitInst(mir::DeferredAssign{.dest = dest, .rhs = std::move(rhs)});
+}
+
+void MirBuilder::EmitGuardedAssign(
+    mir::WriteTarget dest, mir::RightHandSide rhs, mir::Operand guard) {
+  if (const auto* p = std::get_if<mir::PlaceId>(&dest)) {
+    EmitGuardedAssign(*p, std::move(rhs), std::move(guard));
+  } else {
+    EmitInst(
+        mir::GuardedAssign{
+            .dest = dest, .rhs = std::move(rhs), .guard = std::move(guard)});
+  }
+}
+
+void MirBuilder::EmitDeferredAssign(
+    mir::WriteTarget dest, mir::RightHandSide rhs) {
+  if (const auto* p = std::get_if<mir::PlaceId>(&dest)) {
+    EmitDeferredAssign(*p, std::move(rhs));
+  } else {
+    EmitInst(mir::DeferredAssign{.dest = dest, .rhs = std::move(rhs)});
+  }
 }
 
 void MirBuilder::EmitIf(

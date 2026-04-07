@@ -25,6 +25,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/syntax/AllSyntax.h>
 
+#include "lyra/common/child_coord_map.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/symbol.hpp"
@@ -42,6 +43,7 @@
 #include "lyra/lowering/ast_to_hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/param_transmission.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
+#include "lyra/lowering/ast_to_hir/repertoire_descriptor.hpp"
 #include "lyra/lowering/ast_to_hir/routine.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
 #include "lyra/lowering/ast_to_hir/specialization.hpp"
@@ -709,6 +711,34 @@ auto LowerDesign(
   // No parameter classification -- grouping is self-contained.
   common::SpecializationMap spec_map = BuildSpecializationMap(all_instances);
 
+  // Build per-definition child-coord map from repertoire descriptors.
+  // One entry per unique definition. Each entry maps child instance names
+  // to their durable repertoire coordinates within the parent definition.
+  common::ChildCoordMap child_coord_map;
+  {
+    std::unordered_map<const slang::ast::DefinitionSymbol*, common::ModuleDefId>
+        seen_defs;
+    for (size_t i = 0; i < all_instances.size(); ++i) {
+      const auto& def = all_instances[i]->body.getDefinition();
+      auto def_id = spec_map.spec_id_by_instance[i].def_id;
+      auto [it, inserted] = seen_defs.try_emplace(&def, def_id);
+      if (!inserted) continue;
+      auto desc = BuildDefinitionRepertoireDesc(all_instances[i]->body);
+      std::vector<common::ChildCoordEntry> entries;
+      for (const auto& artifact : desc.artifacts) {
+        if (artifact.kind != RepertoireArtifactKind::kChildInstance) continue;
+        const auto& child_desc =
+            std::get<ChildInstanceArtifactDesc>(artifact.payload);
+        entries.push_back(
+            common::ChildCoordEntry{
+                .inst_name = child_desc.inst_name, .coord = artifact.coord});
+      }
+      if (!entries.empty()) {
+        child_coord_map[def_id] = std::move(entries);
+      }
+    }
+  }
+
   // Derive per-instance parameter transmission from within-group variance.
   ParamTransmissionTable transmission =
       DeriveParamTransmission(spec_map, all_instances);
@@ -931,6 +961,7 @@ auto LowerDesign(
       .specialization_map = std::move(spec_map),
       .instance_table = std::move(instance_table),
       .body_timescales = std::move(body_timescale_table),
+      .child_coord_map = std::move(child_coord_map),
   };
 }
 

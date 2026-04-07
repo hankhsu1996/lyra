@@ -18,6 +18,8 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/connection_endpoint.hpp"
+#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -90,6 +92,7 @@ enum class MainAbi {
 
 struct LoweringInput {
   const mir::Design* design = nullptr;
+  const mir::ConstructionInput* construction = nullptr;
   const mir::Arena* mir_arena = nullptr;
   const TypeArena* type_arena = nullptr;
   const lowering::DiagnosticContext* diag_ctx = nullptr;
@@ -112,6 +115,11 @@ struct LoweringInput {
   // DPI export wrapper descriptors for wrapper emission.
   // Owned by the MIR lowering result; passed by pointer (nullable).
   const std::vector<mir::DpiExportWrapperDesc>* dpi_export_wrappers = nullptr;
+  // Recipe-based bound connections from HIR-to-MIR lowering.
+  // Backend converts to flat ConnectionKernelEntry for layout.
+  const std::vector<mir::BoundConnection>* bound_connections = nullptr;
+  // Compiled expression connections (non-NameRef port expressions).
+  const std::vector<mir::CompiledConnectionExpr>* expr_connections = nullptr;
 };
 
 struct LoweringResult {

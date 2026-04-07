@@ -38,7 +38,6 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
-#include "lyra/realization/assemble_bindings.hpp"
 #include "lyra/runtime/artifact_names.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "tests/framework/runner_common.hpp"
@@ -261,6 +260,7 @@ auto PrepareLlvmModule(
       .global_precision_power = hir_result.global_precision_power,
       .instance_table = &hir_result.instance_table,
       .specialization_map = &hir_result.specialization_map,
+      .child_coord_map = &hir_result.child_coord_map,
   };
   auto mir_result = lowering::hir_to_mir::LowerHirToMir(mir_input);
   if (!mir_result) {
@@ -272,11 +272,6 @@ auto PrepareLlvmModule(
   if (test_case.dump_dpi_header && !mir_result->dpi_header.empty()) {
     compiler_output += mir_result->dpi_header;
   }
-
-  // Realization: attach compiled bindings to design.
-  realization::AssembleBindings(
-      std::move(mir_result->compiled_bindings), *mir_result->design_arena,
-      mir_result->design);
 
   double mir_lower_seconds =
       std::chrono::duration<double>(Clock::now() - t_mir).count();
@@ -340,6 +335,7 @@ auto PrepareLlvmModule(
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,
+      .construction = &mir_result->construction,
       .mir_arena = mir_result->design_arena.get(),
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = diag_ctx.get(),
@@ -354,6 +350,8 @@ auto PrepareLlvmModule(
       .body_timescales = &hir_result.body_timescales,
       .force_two_state = force_two_state,
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
+      .bound_connections = &mir_result->bound_connections,
+      .expr_connections = &mir_result->expr_connections,
   };
 
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);

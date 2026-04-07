@@ -121,41 +121,10 @@ auto CollectProcessStats(
   }
   size_t num_init = process_refs.size();
 
+  // Connection processes are no longer in design MIR (resolved to
+  // endpoint-based bindings). Report kernel binding count directly.
   size_t num_kernelized = 0;
-  for (mir::ProcessId pid : design.connection_processes) {
-    const auto& process = design_arena[pid];
-    bool kernelizable = false;
-    if (process.blocks.size() == 1) {
-      const auto& block = process.blocks[0];
-      if (block.statements.size() == 1) {
-        const auto* assign =
-            std::get_if<mir::Assign>(&block.statements[0].data);
-        const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
-        if (assign != nullptr && wait != nullptr &&
-            wait->triggers.size() == 1 &&
-            !wait->triggers[0].late_bound.has_value()) {
-          const auto& dest = design_arena[assign->dest];
-          const auto* rhs_op = std::get_if<mir::Operand>(&assign->rhs);
-          if (dest.root.kind == mir::PlaceRoot::Kind::kDesignGlobal &&
-              dest.projections.empty() && rhs_op != nullptr &&
-              rhs_op->kind == mir::Operand::Kind::kUse) {
-            auto src_pid = std::get<mir::PlaceId>(rhs_op->payload);
-            const auto& src = design_arena[src_pid];
-            if (src.root.kind == mir::PlaceRoot::Kind::kDesignGlobal &&
-                src.projections.empty()) {
-              kernelizable = true;
-            }
-          }
-        }
-      }
-    }
-    if (kernelizable) {
-      ++num_kernelized;
-    } else {
-      process_refs.push_back({pid, &design_arena});
-    }
-  }
-  size_t num_connection = design.connection_processes.size();
+  size_t num_connection = 0;
 
   for (const auto& element : design.elements) {
     if (!std::holds_alternative<mir::Module>(element)) {
