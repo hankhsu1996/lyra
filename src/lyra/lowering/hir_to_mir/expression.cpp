@@ -2688,7 +2688,8 @@ auto LowerExpressionImpl(
                 data, expr.type, mir::ExternalAccessKind::kRead);
             return mir::Operand::ExternalRef(ref.ref_id);
           }
-          // Old path or design-global target: resolve via cross_instance_places.
+          // Old path or design-global target: resolve via
+          // cross_instance_places.
           mir::PlaceId place_id = ctx.ResolveHierarchicalRef(data.target);
           return mir::Operand::Use(place_id);
         } else if constexpr (std::is_same_v<T, hir::MathCallExpressionData>) {
