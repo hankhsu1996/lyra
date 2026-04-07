@@ -238,8 +238,8 @@ auto CompileBindings(
           }
 
           auto parent_endpoint = resolver.ResolveByVariable(*any_ref);
-          uint32_t parent_oi = parent_endpoint.object_index;
-          const auto& parent_obj = expr_data.objects->at(parent_oi);
+          auto parent_oi = parent_endpoint.object_index;
+          const auto& parent_obj = expr_data.objects->at(parent_oi.value);
           uint32_t body_group = parent_obj.body_group;
 
           // Find representative module for this body.

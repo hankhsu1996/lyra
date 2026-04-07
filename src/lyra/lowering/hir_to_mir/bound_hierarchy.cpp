@@ -13,6 +13,8 @@
 #include "lyra/hir/module.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design_internal.hpp"
+#include "lyra/mir/connection_endpoint.hpp"
+#include "lyra/mir/connection_recipe.hpp"
 #include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/place.hpp"
@@ -52,12 +54,34 @@ auto BoundHierarchyIndex::ResolveChildObject(
   return child_it->second;
 }
 
+auto BoundHierarchyIndex::ResolveChildByDurableId(
+    uint32_t parent_body_group, const mir::DurableChildId& child_id) const
+    -> uint32_t {
+  auto parent_it = durable_children_of.find(parent_body_group);
+  if (parent_it == durable_children_of.end()) {
+    throw common::InternalError(
+        "BoundHierarchyIndex::ResolveChildByDurableId",
+        std::format(
+            "parent body group {} has no durable children", parent_body_group));
+  }
+  auto child_it = parent_it->second.find(child_id);
+  if (child_it == parent_it->second.end()) {
+    throw common::InternalError(
+        "BoundHierarchyIndex::ResolveChildByDurableId",
+        std::format(
+            "DurableChildId(ordinal={}) not found under parent body group {}",
+            child_id.child_ordinal, parent_body_group));
+  }
+  return child_it->second;
+}
+
 auto BuildBoundHierarchyIndex(
     const mir::ConstructionInput& construction,
     const std::unordered_map<uint32_t, std::vector<ChildSiteInfo>>&
         parent_to_children,
-    const std::unordered_map<uint32_t, uint32_t>& body_to_representative)
-    -> BoundHierarchyIndex {
+    const std::unordered_map<uint32_t, uint32_t>& body_to_representative,
+    const std::unordered_map<uint32_t, mir::DurableChildId>&
+        oi_to_durable_child) -> BoundHierarchyIndex {
   BoundHierarchyIndex idx;
   idx.parent_of.assign(construction.objects.size(), UINT32_MAX);
   idx.rep_object_for_body = body_to_representative;
@@ -69,6 +93,16 @@ auto BuildBoundHierarchyIndex(
           child.child_module_index;
     }
   }
+
+  // Build durable_children_of: body_group -> {DurableChildId -> child_oi}.
+  // Groups representative children by their parent's body_group.
+  for (const auto& [child_oi, durable_id] : oi_to_durable_child) {
+    uint32_t parent_oi = idx.parent_of[child_oi];
+    if (parent_oi == UINT32_MAX) continue;
+    uint32_t parent_bg = construction.objects[parent_oi].body_group;
+    idx.durable_children_of[parent_bg][durable_id] = child_oi;
+  }
+
   return idx;
 }
 
@@ -204,50 +238,191 @@ void FinalizeExternalRefTargetSlots(
   }
 }
 
-void BuildResolvedExternalRefBindings(
-    mir::Design& design,
-    const std::unordered_map<uint32_t, std::vector<ProvisionalNonLocalTarget>>&
-        provisionals_by_body,
-    const BoundHierarchyIndex& topo,
-    const mir::ConstructionInput& construction) {
-  // Count objects per body group for multi-instance guard.
+void EnforceExternalRefSingleInstanceGuard(
+    const mir::Design& design, const mir::ConstructionInput& construction) {
   std::unordered_map<uint32_t, uint32_t> objects_per_body;
   for (const auto& obj : construction.objects) {
     ++objects_per_body[obj.body_group];
   }
-
   for (uint32_t body_idx = 0; body_idx < design.module_bodies.size();
        ++body_idx) {
-    auto& body = design.module_bodies[body_idx];
-    if (body.external_refs.empty()) continue;
-
-    // Multi-instance guard.
+    if (design.module_bodies[body_idx].external_refs.empty()) continue;
     if (objects_per_body[body_idx] > 1) {
       throw common::InternalError(
-          "BuildResolvedExternalRefBindings",
+          "EnforceExternalRefSingleInstanceGuard",
           std::format(
               "body group {} has {} instances but active external refs -- "
               "multi-instance spec with external refs not yet supported",
               body_idx, objects_per_body[body_idx]));
     }
+  }
+}
+
+void CanonicalizeExternalRefPaths(
+    mir::Design& design,
+    const std::unordered_map<uint32_t, std::vector<ProvisionalNonLocalTarget>>&
+        provisionals_by_body,
+    const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction,
+    const std::unordered_map<uint32_t, mir::DurableChildId>&
+        oi_to_durable_child) {
+  for (uint32_t body_idx = 0; body_idx < design.module_bodies.size();
+       ++body_idx) {
+    auto& body = design.module_bodies[body_idx];
+    if (body.external_refs.empty()) continue;
 
     auto prov_it = provisionals_by_body.find(body_idx);
-    if (prov_it == provisionals_by_body.end()) continue;
+    if (prov_it == provisionals_by_body.end()) {
+      throw common::InternalError(
+          "CanonicalizeExternalRefPaths",
+          std::format(
+              "body {} has external_refs but no provisionals", body_idx));
+    }
     const auto& provisionals = prov_it->second;
+    if (provisionals.size() != body.external_refs.size()) {
+      throw common::InternalError(
+          "CanonicalizeExternalRefPaths",
+          std::format(
+              "body {} provisionals ({}) != external_refs ({})", body_idx,
+              provisionals.size(), body.external_refs.size()));
+    }
+
+    uint32_t rep_oi = topo.rep_object_for_body.at(body_idx);
+
+    for (size_t i = 0; i < body.external_refs.size(); ++i) {
+      const auto& prov = provisionals[i];
+      auto& recipe = body.external_refs[i].target;
+
+      // Walk the path, resolving child_oi through topology then mapping
+      // to DurableChildId via oi_to_durable_child. No debug_instance_sym.
+      uint32_t oi = topo.WalkUp(rep_oi, prov.upward_count);
+      std::vector<mir::DescendantPathStep> path;
+
+      for (const auto& step : prov.path) {
+        switch (step.kind) {
+          case ProvisionalPathStepKind::kChildInstance: {
+            uint32_t child_oi = topo.ResolveChildObject(oi, step.sym);
+            auto it = oi_to_durable_child.find(child_oi);
+            if (it == oi_to_durable_child.end()) {
+              throw common::InternalError(
+                  "CanonicalizeExternalRefPaths",
+                  std::format(
+                      "child oi {} has no DurableChildId mapping "
+                      "(parent oi {})",
+                      child_oi, oi));
+            }
+            path.push_back(mir::DescendantPathStep{.child = it->second});
+            oi = child_oi;
+            break;
+          }
+          case ProvisionalPathStepKind::kGenerateScope:
+            // Generate scopes stay within the same object. The scope
+            // context is already encoded in the child's DurableChildId.coord.
+            break;
+        }
+      }
+
+      recipe.path = std::move(path);
+    }
+  }
+}
+
+auto WalkCanonicalPath(
+    const mir::NonLocalTargetRecipe& recipe, uint32_t current_oi,
+    const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction)
+    -> uint32_t {
+  uint32_t oi = topo.WalkUp(current_oi, recipe.upward_count);
+  for (const auto& step : recipe.path) {
+    uint32_t parent_bg = construction.objects[oi].body_group;
+    oi = topo.ResolveChildByDurableId(parent_bg, step.child);
+  }
+  return oi;
+}
+
+void BuildResolvedExternalRefBindings(
+    mir::Design& design, const BoundHierarchyIndex& topo,
+    const mir::ConstructionInput& construction) {
+  // Guard already enforced by EnforceExternalRefSingleInstanceGuard
+  // before this pass runs.
+  for (uint32_t body_idx = 0; body_idx < design.module_bodies.size();
+       ++body_idx) {
+    auto& body = design.module_bodies[body_idx];
+    if (body.external_refs.empty()) continue;
 
     uint32_t rep_oi = topo.rep_object_for_body.at(body_idx);
     auto& bindings = body.resolved_external_ref_bindings;
     bindings.reserve(body.external_refs.size());
 
     for (size_t i = 0; i < body.external_refs.size(); ++i) {
-      uint32_t target_oi = WalkProvisionalPath(provisionals[i], rep_oi, topo);
+      const auto& recipe = body.external_refs[i].target;
+      uint32_t target_oi =
+          WalkCanonicalPath(recipe, rep_oi, topo, construction);
       bindings.push_back(
           mir::ResolvedExternalRefBinding{
               .target_object = common::ObjectIndex{target_oi},
-              .target_local_slot = body.external_refs[i].target.target_slot,
+              .target_local_slot = recipe.target_slot,
               .type = body.external_refs[i].type});
     }
   }
+}
+
+auto IsFullyBindableRecipe(const mir::ConnectionRecipe& recipe) -> bool {
+  // Only kDriveParentToChild with slot source and trigger is fully bindable.
+  // kDriveChildToParent recipes store the child's port in source/trigger
+  // but don't capture the parent's destination variable, so they can't
+  // be bound to concrete endpoints yet.
+  return recipe.kind == mir::PortConnection::Kind::kDriveParentToChild &&
+         recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kLocalSlot &&
+         recipe.trigger.kind == mir::TriggerRecipe::Kind::kLocalSlot;
+}
+
+auto BindConnectionRecipe(
+    const mir::ConnectionRecipe& recipe, uint32_t recipe_index,
+    const mir::ModuleBody& parent_body, mir::ModuleBodyId parent_body_id,
+    common::ObjectIndex parent_object_index, const BoundHierarchyIndex& topo,
+    const mir::ConstructionInput& construction) -> mir::BoundConnection {
+  if (!IsFullyBindableRecipe(recipe)) {
+    throw common::InternalError(
+        "BindConnectionRecipe",
+        std::format(
+            "recipe {} is not fully bindable (source kind={}, trigger "
+            "kind={}, connection kind={})",
+            recipe_index, static_cast<uint8_t>(recipe.source.kind),
+            static_cast<uint8_t>(recipe.trigger.kind),
+            static_cast<uint8_t>(recipe.kind)));
+  }
+  // Resolve child site to concrete object.
+  if (recipe.child_site.value >= parent_body.child_sites.size()) {
+    throw common::InternalError(
+        "BindConnectionRecipe",
+        std::format(
+            "child_site {} out of range ({} sites)", recipe.child_site.value,
+            parent_body.child_sites.size()));
+  }
+  const auto& site = parent_body.child_sites[recipe.child_site.value];
+  uint32_t parent_bg =
+      construction.objects[parent_object_index.value].body_group;
+  uint32_t child_oi = topo.ResolveChildByDurableId(parent_bg, site.id);
+
+  common::ObjectIndex child_obj{child_oi};
+
+  return mir::BoundConnection{
+      .recipe_index = recipe_index,
+      .kind = recipe.kind,
+      .parent_body_id = parent_body_id,
+      .parent_object_index = parent_object_index,
+      .child_target =
+          mir::BoundEndpoint{
+              .object_index = child_obj, .local_slot = recipe.child_slot},
+      .parent_source =
+          mir::BoundEndpoint{
+              .object_index = parent_object_index,
+              .local_slot = recipe.source.local_slot},
+      .trigger =
+          mir::BoundEndpoint{
+              .object_index = parent_object_index,
+              .local_slot = recipe.trigger.local_slot},
+      .trigger_edge = recipe.trigger.edge,
+      .result_type = recipe.result_type};
 }
 
 auto ResolvePreBindingExternalRefDesignGlobalSlot(

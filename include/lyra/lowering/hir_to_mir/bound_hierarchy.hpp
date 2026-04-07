@@ -18,8 +18,11 @@ struct Module;
 
 namespace lyra::mir {
 class Arena;
+struct BoundConnection;
+struct ConnectionRecipe;
 struct ConstructionInput;
 struct Design;
+struct ModuleBody;
 }  // namespace lyra::mir
 
 namespace lyra::lowering::hir_to_mir {
@@ -45,12 +48,23 @@ struct BoundHierarchyIndex {
   // body_group -> representative object_index
   std::unordered_map<uint32_t, uint32_t> rep_object_for_body;
   // parent_oi -> {child_instance_sym -> child_oi}
+  // Used by provisional path walking (FinalizeExternalRefTargetSlots).
   std::unordered_map<
       uint32_t, std::unordered_map<SymbolId, uint32_t, SymbolIdHash>>
       children_of;
+  // parent_body_group -> {DurableChildId -> child_oi}
+  // Used by canonical path walking (WalkCanonicalPath).
+  // Keyed by body_group (not oi) because DurableChildId is body-level identity.
+  std::unordered_map<
+      uint32_t, std::unordered_map<
+                    mir::DurableChildId, uint32_t, mir::DurableChildIdHash>>
+      durable_children_of;
 
   auto WalkUp(uint32_t oi, uint32_t count) const -> uint32_t;
   auto ResolveChildObject(uint32_t parent_oi, SymbolId child_instance_sym) const
+      -> uint32_t;
+  auto ResolveChildByDurableId(
+      uint32_t parent_body_group, const mir::DurableChildId& child_id) const
       -> uint32_t;
 };
 
@@ -58,8 +72,9 @@ auto BuildBoundHierarchyIndex(
     const mir::ConstructionInput& construction,
     const std::unordered_map<uint32_t, std::vector<ChildSiteInfo>>&
         parent_to_children,
-    const std::unordered_map<uint32_t, uint32_t>& body_to_representative)
-    -> BoundHierarchyIndex;
+    const std::unordered_map<uint32_t, uint32_t>& body_to_representative,
+    const std::unordered_map<uint32_t, mir::DurableChildId>&
+        oi_to_durable_child) -> BoundHierarchyIndex;
 
 // Resolve a parent-side NameRef symbol to its body-local LocalSlotId.
 // Searches body_slots by SymbolId. Returns nullopt if not found.
@@ -97,17 +112,58 @@ void FinalizeExternalRefTargetSlots(
     const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction,
     std::span<const hir::Module* const> hir_modules);
 
-// Build per-body resolved external ref bindings and store on each body.
-// Produces durable binding facts (object_index + local_slot + type), not
-// arena-local PlaceIds. Backend materializes Places on-demand.
-// Single-instance specs only: throws if a body with external refs has
-// multiple objects (multi-instance resolution requires per-instance binding).
-void BuildResolvedExternalRefBindings(
+// Validate that no body with active external refs has multiple instances.
+// Must be called before any pass that relies on representative-derived
+// durable-child mappings. Throws InternalError on violation.
+void EnforceExternalRefSingleInstanceGuard(
+    const mir::Design& design, const mir::ConstructionInput& construction);
+
+// Populate external_refs[i].target.path with final DescendantPathStep entries
+// by resolving topology-walked child object indices to DurableChildIds.
+// Uses oi_to_durable_child (topology identity -> canonical identity), NOT
+// debug_instance_sym. After this, target.path is authoritative and
+// provisionals_by_body should not be read for path navigation.
+// Requires: child_sites already propagated into bodies, target_slot filled.
+// Hard-fails if any body has external_refs without matching provisionals.
+void CanonicalizeExternalRefPaths(
     mir::Design& design,
     const std::unordered_map<uint32_t, std::vector<ProvisionalNonLocalTarget>>&
         provisionals_by_body,
-    const BoundHierarchyIndex& topo,
+    const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction,
+    const std::unordered_map<uint32_t, mir::DurableChildId>&
+        oi_to_durable_child);
+
+// Walk a finalized NonLocalTargetRecipe path to find the target object index.
+// Uses the canonical DescendantPathStep entries (DurableChildId) to resolve
+// through the topology. Requires CanonicalizeExternalRefPaths to have run.
+auto WalkCanonicalPath(
+    const mir::NonLocalTargetRecipe& recipe, uint32_t current_oi,
+    const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction)
+    -> uint32_t;
+
+// Build per-body resolved external ref bindings and store on each body.
+// Consumes the finalized canonical recipe (target.path + target.target_slot),
+// NOT provisionals. Requires CanonicalizeExternalRefPaths to have run.
+// Single-instance specs only: throws if a body with external refs has
+// multiple objects (multi-instance resolution requires per-instance binding).
+void BuildResolvedExternalRefBindings(
+    mir::Design& design, const BoundHierarchyIndex& topo,
     const mir::ConstructionInput& construction);
+
+// Check whether a ConnectionRecipe is in the fully-bindable subset:
+// source and trigger are both kLocalSlot. Recipes with kExternalRef
+// or kFunction source/trigger are not yet supported by BindConnectionRecipe.
+auto IsFullyBindableRecipe(const mir::ConnectionRecipe& recipe) -> bool;
+
+// Resolve a fully-bindable ConnectionRecipe against the construction topology.
+// Requires: IsFullyBindableRecipe(recipe) == true (caller must filter).
+// Looks up child_site -> DurableChildId -> object_index, then computes
+// all BoundEndpoints from the recipe's body-local slots + construction data.
+auto BindConnectionRecipe(
+    const mir::ConnectionRecipe& recipe, uint32_t recipe_index,
+    const mir::ModuleBody& parent_body, mir::ModuleBodyId parent_body_id,
+    common::ObjectIndex parent_object_index, const BoundHierarchyIndex& topo,
+    const mir::ConstructionInput& construction) -> mir::BoundConnection;
 
 // Pre-binding resolution: resolve an ExternalRefId to its design-global slot
 // using provisional targets + cross_instance_places. Single source of truth

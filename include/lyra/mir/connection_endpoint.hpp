@@ -6,6 +6,7 @@
 
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/local_slot_id.hpp"
+#include "lyra/common/object_index.hpp"
 #include "lyra/common/symbol_types.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/handle.hpp"
@@ -13,11 +14,11 @@
 
 namespace lyra::mir {
 
-// Topology-owned connection endpoint: identifies a specific slot on a
-// specific object. Shared identity type for both kernelized and
-// non-kernelized connection paths.
-struct ConnectionEndpointRef {
-  uint32_t object_index = 0;
+// Bound location: a specific slot on a specific object in the
+// construction topology. Shared identity type for external ref
+// bindings, connection endpoints, and resolution artifacts.
+struct BoundEndpoint {
+  common::ObjectIndex object_index;
   common::LocalSlotId local_slot;
 };
 
@@ -33,9 +34,9 @@ struct ResolvedObservation {
 // from src endpoint to dst endpoint on trigger.
 struct ResolvedKernelBinding {
   PortConnection::Kind kind = PortConnection::Kind::kDriveParentToChild;
-  ConnectionEndpointRef src;
-  ConnectionEndpointRef dst;
-  ConnectionEndpointRef trigger;
+  BoundEndpoint src;
+  BoundEndpoint dst;
+  BoundEndpoint trigger;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
   std::optional<ResolvedObservation> trigger_observation;
   TypeId value_type;
@@ -53,11 +54,11 @@ struct CompiledConnectionExpr {
   PortConnection::Kind kind = PortConnection::Kind::kDriveParentToChild;
   ModuleBodyId parent_body_id;
   FunctionId expr_function;
-  uint32_t parent_object_index = 0;
-  uint32_t child_object_index = 0;
+  common::ObjectIndex parent_object_index;
+  common::ObjectIndex child_object_index;
   common::LocalSlotId child_local_slot;
   TypeId result_type;
-  ConnectionEndpointRef trigger;
+  BoundEndpoint trigger;
   common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
   SymbolId child_port_sym;
   SymbolId parent_instance_sym;
@@ -68,6 +69,26 @@ struct CompiledConnectionExpr {
 struct ResolvedBindingPlan {
   std::vector<ResolvedKernelBinding> kernel_bindings;
   std::vector<CompiledConnectionExpr> expr_bindings;
+};
+
+// A fully-bindable ConnectionRecipe resolved against the construction
+// topology. All endpoints are concrete (ObjectIndex + LocalSlotId).
+// Produced by BindConnectionRecipe for the subset of recipes where
+// source and trigger are both kLocalSlot. Recipes with kExternalRef
+// or kFunction source/trigger are not represented here.
+//
+// Produced in design_lower, consumed by the backend to emit kernel
+// entries. Parallel to the kernel_bindings subset of ResolvedBindingPlan.
+struct BoundConnection {
+  uint32_t recipe_index = 0;
+  PortConnection::Kind kind = PortConnection::Kind::kDriveParentToChild;
+  ModuleBodyId parent_body_id;
+  common::ObjectIndex parent_object_index;
+  BoundEndpoint child_target;
+  BoundEndpoint parent_source;
+  BoundEndpoint trigger;
+  common::EdgeKind trigger_edge = common::EdgeKind::kAnyChange;
+  TypeId result_type;
 };
 
 }  // namespace lyra::mir

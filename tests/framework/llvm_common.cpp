@@ -501,6 +501,7 @@ auto PrepareLlvmModule(
       .force_two_state = force_two_state,
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
       .resolved_bindings = &mir_result->resolved_bindings,
+      .bound_connections = &mir_result->bound_connections,
   };
 
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);

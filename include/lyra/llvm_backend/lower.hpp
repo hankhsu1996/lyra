@@ -118,6 +118,8 @@ struct LoweringInput {
   // Endpoint-based resolved bindings from HIR-to-MIR lowering.
   // Backend adapter converts to flat ConnectionKernelEntry for layout.
   const mir::ResolvedBindingPlan* resolved_bindings = nullptr;
+  // Recipe-based bound connections (new path, parallel to resolved_bindings).
+  const std::vector<mir::BoundConnection>* bound_connections = nullptr;
 };
 
 struct LoweringResult {

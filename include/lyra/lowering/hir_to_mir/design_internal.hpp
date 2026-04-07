@@ -37,8 +37,7 @@ struct BodyLocalSlotEntry {
 class InstanceSlotResolver {
  public:
   void Insert(
-      SymbolId instance_sym, SymbolId variable_sym,
-      mir::ConnectionEndpointRef ref) {
+      SymbolId instance_sym, SymbolId variable_sym, mir::BoundEndpoint ref) {
     ResolverKey key{instance_sym, variable_sym};
     auto [it, inserted] = map_.emplace(key, ref);
     if (!inserted) {
@@ -54,7 +53,7 @@ class InstanceSlotResolver {
   }
 
   auto Resolve(SymbolId instance_sym, SymbolId variable_sym) const
-      -> mir::ConnectionEndpointRef {
+      -> mir::BoundEndpoint {
     ResolverKey key{instance_sym, variable_sym};
     auto it = map_.find(key);
     if (it == map_.end()) {
@@ -69,8 +68,7 @@ class InstanceSlotResolver {
 
   // Resolve by variable symbol alone (for finding parent instance from
   // expression variable references). Validated unique at insertion time.
-  auto ResolveByVariable(SymbolId variable_sym) const
-      -> mir::ConnectionEndpointRef {
+  auto ResolveByVariable(SymbolId variable_sym) const -> mir::BoundEndpoint {
     auto it = reverse_.find(variable_sym);
     if (it == reverse_.end()) {
       throw common::InternalError(
@@ -107,11 +105,10 @@ class InstanceSlotResolver {
 
   struct ReverseLookup {
     SymbolId instance_sym;
-    mir::ConnectionEndpointRef ref;
+    mir::BoundEndpoint ref;
   };
 
-  std::unordered_map<ResolverKey, mir::ConnectionEndpointRef, ResolverKeyHash>
-      map_;
+  std::unordered_map<ResolverKey, mir::BoundEndpoint, ResolverKeyHash> map_;
   std::unordered_map<SymbolId, ReverseLookup, SymbolIdHash> reverse_;
 };
 

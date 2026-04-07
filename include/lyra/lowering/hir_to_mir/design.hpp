@@ -34,6 +34,10 @@ struct DesignLoweringResult {
   mir::Design design;
   mir::ConstructionInput construction;
   mir::ResolvedBindingPlan resolved_bindings;
+  // Recipe-based bound connections (parallel to resolved_bindings).
+  // Produced by BindConnectionRecipe from body connection_recipes.
+  // Only contains simple (kLocalSlot-sourced) connections for now.
+  std::vector<mir::BoundConnection> bound_connections;
   // Per-body origin entries, indexed by ModuleBodyId.
   // Body-local MIR origins stay body-local -- not merged into the
   // design-global origin map.

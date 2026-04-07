@@ -661,7 +661,7 @@ auto LowerDesign(
   }
 
   // Build InstanceSlotResolver from canonical body-local slot data.
-  // Maps (instance_sym, variable_sym) -> ConnectionEndpointRef.
+  // Maps (instance_sym, variable_sym) -> BoundEndpoint.
   // LocalSlotId is derived from body_local_slots_by_body, not from manual
   // ordering assumptions. This ensures the resolver stays consistent if
   // CollectBodyLocalDecls ordering changes.
@@ -697,8 +697,8 @@ auto LowerDesign(
         if (it == rep_sym_to_slot.end()) continue;
         resolver.Insert(
             obj.instance_sym, inst_syms[i],
-            mir::ConnectionEndpointRef{
-                .object_index = static_cast<uint32_t>(oi),
+            mir::BoundEndpoint{
+                .object_index = common::ObjectIndex{static_cast<uint32_t>(oi)},
                 .local_slot = it->second});
       }
     };
@@ -794,9 +794,13 @@ auto LowerDesign(
   // All instances in a spec group have structurally identical children.
   // We use the representative's children and assign ChildBindingSiteIds.
   //
-  // Store child_sites temporarily per body_group for later use.
+  // Also builds oi_to_durable_child at the same moment each DurableChildId
+  // is created for a specific child object. This is the canonical bridge
+  // from topology object identity to durable repertoire identity, used by
+  // BoundHierarchyIndex and CanonicalizeExternalRefPaths.
   std::unordered_map<uint32_t, std::vector<mir::ChildInstantiationSite>>
       child_sites_by_body;
+  std::unordered_map<uint32_t, mir::DurableChildId> oi_to_durable_child;
 
   for (const auto& group : spec_groups) {
     uint32_t rep_idx = group.representative_module_index;
@@ -832,6 +836,18 @@ auto LowerDesign(
           BuildChildSiteIdentity(child_name, occurrence, repertoire_entries);
       mir::DurableChildId durable{
           .coord = std::move(id.coord), .child_ordinal = id.child_ordinal};
+
+      // Record oi -> DurableChildId at creation site. Each child object
+      // must map to exactly one durable identity.
+      uint32_t child_oi = child_info.child_module_index;
+      auto [ins_it, inserted] = oi_to_durable_child.emplace(child_oi, durable);
+      if (!inserted) {
+        throw common::InternalError(
+            "LowerDesign",
+            std::format(
+                "child oi {} already has a DurableChildId mapping", child_oi));
+      }
+
       sites.push_back(
           mir::ChildInstantiationSite{
               .site = site,
@@ -1030,8 +1046,19 @@ auto LowerDesign(
   }
 
   // B2: Build topology index and resolve external refs.
+  // Enforce single-instance guard before any pass that relies on
+  // representative-derived durable-child mappings.
+  EnforceExternalRefSingleInstanceGuard(result, construction);
+
+  // Ordering: FinalizeExternalRefTargetSlots fills target_slot (needs
+  // provisionals for target_sym). CanonicalizeExternalRefPaths fills
+  // target.path with DurableChildId entries (needs provisionals for
+  // topology walk, but resolves through oi_to_durable_child, not
+  // debug_instance_sym). BuildResolvedExternalRefBindings creates
+  // durable binding facts from the canonical recipe (no provisionals).
   auto topo = BuildBoundHierarchyIndex(
-      construction, parent_to_children, body_to_representative);
+      construction, parent_to_children, body_to_representative,
+      oi_to_durable_child);
 
   FinalizeExternalRefTargetSlots(
       result, provisionals_by_body, body_local_slots_by_body, topo,
@@ -1039,8 +1066,12 @@ auto LowerDesign(
       std::span<const hir::Module* const>(
           hir_modules.data(), hir_modules.size()));
 
-  BuildResolvedExternalRefBindings(
-      result, provisionals_by_body, topo, construction);
+  CanonicalizeExternalRefPaths(
+      result, provisionals_by_body, topo, construction, oi_to_durable_child);
+
+  // After canonicalization, provisionals_by_body is scratch-only.
+  // BuildResolvedExternalRefBindings consumes the canonical recipe.
+  BuildResolvedExternalRefBindings(result, topo, construction);
 
   // Resolve port bindings to topology-owned endpoint artifacts.
   // Simple connections (NameRef) -> ResolvedKernelBinding.
@@ -1064,10 +1095,29 @@ auto LowerDesign(
   // Propagate decision owner acceptance through design-global call graph.
   mir_arena.PropagateDeferredOwnerAbi();
 
+  // B2 Phase 6: Bind fully-bindable connection recipes against topology.
+  std::vector<mir::BoundConnection> bound_connections;
+  for (uint32_t body_idx = 0; body_idx < result.module_bodies.size();
+       ++body_idx) {
+    const auto& body = result.module_bodies[body_idx];
+    if (body.connection_recipes.empty()) continue;
+    auto rep_it = topo.rep_object_for_body.find(body_idx);
+    if (rep_it == topo.rep_object_for_body.end()) continue;
+    common::ObjectIndex rep_oi{rep_it->second};
+    for (uint32_t r = 0; r < body.connection_recipes.size(); ++r) {
+      const auto& recipe = body.connection_recipes[r];
+      if (!IsFullyBindableRecipe(recipe)) continue;
+      bound_connections.push_back(BindConnectionRecipe(
+          recipe, r, body, mir::ModuleBodyId{body_idx}, rep_oi, topo,
+          construction));
+    }
+  }
+
   return DesignLoweringResult{
       .design = std::move(result),
       .construction = std::move(construction),
       .resolved_bindings = std::move(resolved_bindings),
+      .bound_connections = std::move(bound_connections),
       .body_origins = std::move(body_origins),
       .dpi_export_wrappers = std::move(dpi_export_wrappers),
       .dpi_header = (!decls.dpi_exports.Empty() || !decls.dpi_imports.Empty())
