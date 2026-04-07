@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <optional>
 #include <span>
 #include <string_view>
 #include <unordered_map>
@@ -59,38 +58,6 @@ struct MirSpecGroup {
   uint32_t representative_module_index = 0;
   std::vector<uint32_t> member_module_indices;
 };
-
-// Lowering-only child-port contract lookup. Same algorithm as the
-// CompiledModuleBody-based GetChildPortContract, but takes child_sites
-// as a span. Used during assembly before CompiledModuleBody exists.
-// NOT a permanent API -- deleted when connection recipe assembly moves
-// to operate on a finalized CompiledModuleBody.
-auto LookupChildPortContract(
-    std::span<const mir::ChildInstantiationSite> child_sites,
-    const mir::HeaderDatabase& headers, mir::ChildBindingSiteId site,
-    SymbolId child_port_sym) -> mir::ChildPortContract {
-  const mir::ChildInstantiationSite* found = nullptr;
-  for (const auto& s : child_sites) {
-    if (s.site == site) {
-      found = &s;
-      break;
-    }
-  }
-  if (found == nullptr) {
-    throw common::InternalError(
-        "LookupChildPortContract",
-        std::format("child binding site {} not found", site.value));
-  }
-  const auto* port = headers.FindPortEntry(found->child_spec, child_port_sym);
-  if (port == nullptr) {
-    throw common::InternalError(
-        "LookupChildPortContract",
-        std::format(
-            "port sym {} not found in child header", child_port_sym.value));
-  }
-  return mir::ChildPortContract{
-      .slot = port->slot, .type = port->type, .dir = port->dir};
-}
 
 // Derive durable child-site identity from the parent repertoire.
 // Matches by child instance name and returns the repertoire coord +
@@ -769,18 +736,28 @@ auto LowerDesign(
       }
     }
 
-    // For each module instance (child), find its parent by removing
-    // the last path component.
+    // For each module instance (child), find its parent by stripping
+    // path components until a module instance is found. This handles
+    // children inside generate blocks (e.g., "Top.gen_blk[0].child"
+    // has parent "Top", skipping the generate scope).
     for (uint32_t ci = 0; ci < hir_modules.size(); ++ci) {
       auto path_it = sym_to_path.find(hir_modules[ci]->symbol);
       if (path_it == sym_to_path.end()) continue;
-      std::string_view child_path = path_it->second;
-      auto last_dot = child_path.rfind('.');
-      if (last_dot == std::string_view::npos) continue;  // Top-level
-      std::string_view parent_path = child_path.substr(0, last_dot);
-      auto parent_it = path_to_module_index.find(parent_path);
-      if (parent_it == path_to_module_index.end()) continue;
-      uint32_t parent_module_index = parent_it->second;
+      std::string_view remaining = path_it->second;
+      uint32_t parent_module_index = 0;
+      bool found_parent = false;
+      while (!remaining.empty()) {
+        auto last_dot = remaining.rfind('.');
+        if (last_dot == std::string_view::npos) break;
+        remaining = remaining.substr(0, last_dot);
+        auto parent_it = path_to_module_index.find(remaining);
+        if (parent_it != path_to_module_index.end()) {
+          parent_module_index = parent_it->second;
+          found_parent = true;
+          break;
+        }
+      }
+      if (!found_parent) continue;
       auto child_spec = spec_map.spec_id_by_instance[ci];
       parent_to_children[parent_module_index].push_back(
           ChildSiteInfo{
@@ -936,100 +913,64 @@ auto LowerDesign(
     }
 
     for (const auto& binding : input.binding_plan->bindings) {
-      // parent_instance_sym is the child instance's SymbolId.
-      auto site_it = child_sym_to_site.find(binding.parent_instance_sym);
+      // Step 1: Classify child port. Must be resolver-addressable
+      // (body-local). Non-body-local ports are unsupported.
+      if (!resolver.Contains(binding.child_port_sym)) continue;
+
+      // Step 2: Find child instance and site from port variable.
+      SymbolId child_instance_sym =
+          resolver.FindOwnerInstance(binding.child_port_sym);
+      auto site_it = child_sym_to_site.find(child_instance_sym);
       if (site_it == child_sym_to_site.end()) continue;
-
       const auto& site_lookup = site_it->second;
-      const auto& sites = child_sites_by_body[site_lookup.parent_body_group];
 
-      // Canonicalize child_port_sym to representative's equivalent.
-      // The binding uses a per-instance SymbolId; the header uses the
-      // representative's SymbolId. Positional mapping resolves this.
-      SymbolId child_port_sym = binding.child_port_sym;
-      // Find which module this child belongs to.
-      uint32_t child_mod_idx = 0;
-      for (uint32_t mi = 0; mi < hir_modules.size(); ++mi) {
-        bool found = false;
-        for (SymbolId v : hir_modules[mi]->variables) {
-          if (v == child_port_sym) {
-            child_mod_idx = mi;
-            found = true;
-            break;
-          }
-        }
-        if (found) break;
-        for (SymbolId n : hir_modules[mi]->nets) {
-          if (n == child_port_sym) {
-            child_mod_idx = mi;
-            found = true;
-            break;
-          }
-        }
-        if (found) break;
-      }
-      auto rep_sym_opt = CanonicalizeSymToRepresentative(
-          child_port_sym, *hir_modules[child_mod_idx],
-          *hir_modules[site_lookup.rep_child_module_index]);
-      if (!rep_sym_opt) continue;
-      SymbolId rep_child_port_sym = *rep_sym_opt;
-
-      // Use canonical child-port lookup (lowering-only span overload).
-      auto contract = LookupChildPortContract(
-          std::span<const mir::ChildInstantiationSite>(sites), header_database,
-          site_lookup.site, rep_child_port_sym);
-
-      // Classify the connection source.
-      mir::ConnectionSourceRecipe source;
-      mir::TriggerRecipe trigger;
-      TypeId result_type = contract.type;
+      // Step 3: Get child port slot (guaranteed by Contains check).
+      auto child_endpoint = resolver.ResolveByVariable(binding.child_port_sym);
+      common::LocalSlotId child_slot = child_endpoint.local_slot;
+      TypeId result_type = (*input.symbol_table)[binding.child_port_sym].type;
 
       auto kind =
           (binding.kind == ast_to_hir::PortBinding::Kind::kDriveParentToChild)
               ? mir::PortConnection::Kind::kDriveParentToChild
               : mir::PortConnection::Kind::kDriveChildToParent;
 
+      // Step 4: Resolve parent-side expression.
+      // Only simple NameRef with resolver-addressable (body-local)
+      // symbols are in the supported subset. Non-NameRef (complex
+      // expressions) and non-body-local NameRef (design-global,
+      // hierarchical) are unsupported and left to the old path.
+      mir::ConnectionSourceRecipe source;
+      mir::TriggerRecipe trigger;
+
       if (kind == mir::PortConnection::Kind::kDriveParentToChild) {
-        // Input: parent expression -> child port.
-        // Try to extract simple NameRef for LocalSlot source.
         const hir::Expression& expr = (*input.hir_arena)[binding.parent_rvalue];
-        if (expr.kind == hir::ExpressionKind::kNameRef) {
-          const auto& name_data =
-              std::get<hir::NameRefExpressionData>(expr.data);
-          const auto& body_slots =
-              body_local_slots_by_body.at(site_lookup.parent_body_group);
-          auto slot_opt =
-              ResolveParentSourceToLocalSlot(name_data.symbol, body_slots);
-          if (!slot_opt) {
-            // Not a body-local variable -- skip for now (could be
-            // a design-global or hierarchical ref, which would use
-            // kExternalRef source).
-            continue;
-          }
-          source = mir::ConnectionSourceRecipe::FromLocalSlot(*slot_opt);
-          trigger = mir::TriggerRecipe::FromLocalSlot(
-              *slot_opt, common::EdgeKind::kAnyChange);
-        } else {
-          // Non-trivial expression: would use kFunction source.
-          // Skip for now (Phase 4 handles simple connections first).
-          continue;
-        }
-      } else {
-        // Output: child port -> parent place.
-        // The source is the child's port slot.
-        // For connection recipes, the "source" for child-to-parent is
-        // conceptually the child port. But from the parent's perspective,
-        // the child_slot comes from the child header.
-        source = mir::ConnectionSourceRecipe::FromLocalSlot(contract.slot);
+        if (expr.kind != hir::ExpressionKind::kNameRef) continue;
+        const auto& name_data = std::get<hir::NameRefExpressionData>(expr.data);
+        if (!resolver.Contains(name_data.symbol)) continue;
+        auto parent_endpoint = resolver.ResolveByVariable(name_data.symbol);
+        source = mir::ConnectionSourceRecipe::FromLocalSlot(
+            parent_endpoint.local_slot);
         trigger = mir::TriggerRecipe::FromLocalSlot(
-            contract.slot, common::EdgeKind::kAnyChange);
+            parent_endpoint.local_slot, common::EdgeKind::kAnyChange);
+      } else {
+        const hir::Expression& lvalue_expr =
+            (*input.hir_arena)[binding.parent_lvalue];
+        if (lvalue_expr.kind != hir::ExpressionKind::kNameRef) continue;
+        const auto& lvalue_data =
+            std::get<hir::NameRefExpressionData>(lvalue_expr.data);
+        if (!resolver.Contains(lvalue_data.symbol)) continue;
+        auto parent_endpoint = resolver.ResolveByVariable(lvalue_data.symbol);
+        source = mir::ConnectionSourceRecipe::FromLocalSlot(
+            parent_endpoint.local_slot);
+        trigger = mir::TriggerRecipe::FromChildSlot(
+            child_slot, common::EdgeKind::kAnyChange);
       }
 
       connection_recipes_by_body[site_lookup.parent_body_group].push_back(
           mir::ConnectionRecipe{
               .kind = kind,
               .child_site = site_lookup.site,
-              .child_slot = contract.slot,
+              .child_slot = child_slot,
               .source = source,
               .trigger = trigger,
               .result_type = result_type,
@@ -1095,21 +1036,18 @@ auto LowerDesign(
   // Propagate decision owner acceptance through design-global call graph.
   mir_arena.PropagateDeferredOwnerAbi();
 
-  // B2 Phase 6: Bind fully-bindable connection recipes against topology.
+  // Bind connection recipes against topology for all instances.
   std::vector<mir::BoundConnection> bound_connections;
-  for (uint32_t body_idx = 0; body_idx < result.module_bodies.size();
-       ++body_idx) {
+  for (uint32_t oi = 0; oi < construction.objects.size(); ++oi) {
+    uint32_t body_idx = construction.objects[oi].body_group;
     const auto& body = result.module_bodies[body_idx];
     if (body.connection_recipes.empty()) continue;
-    auto rep_it = topo.rep_object_for_body.find(body_idx);
-    if (rep_it == topo.rep_object_for_body.end()) continue;
-    common::ObjectIndex rep_oi{rep_it->second};
     for (uint32_t r = 0; r < body.connection_recipes.size(); ++r) {
       const auto& recipe = body.connection_recipes[r];
       if (!IsFullyBindableRecipe(recipe)) continue;
       bound_connections.push_back(BindConnectionRecipe(
-          recipe, r, body, mir::ModuleBodyId{body_idx}, rep_oi, topo,
-          construction));
+          recipe, r, body, mir::ModuleBodyId{body_idx}, common::ObjectIndex{oi},
+          topo, construction));
     }
   }
 

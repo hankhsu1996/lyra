@@ -1060,68 +1060,80 @@ auto CompileDesignProcesses(const LoweringInput& input)
     return common::SlotId{obj.design_state_base_slot + ref.local_slot.value};
   };
 
-  if (input.resolved_bindings != nullptr) {
-    for (const auto& kb : input.resolved_bindings->kernel_bindings) {
+  // Build kernel entries from bound_connections (new recipe path).
+  if (input.bound_connections != nullptr) {
+    for (const auto& bc : *input.bound_connections) {
+      bool is_p2c = bc.kind == mir::PortConnection::Kind::kDriveParentToChild;
       connection_kernel_entries.push_back(
           ConnectionKernelEntry{
               .process_id = {},
-              .src_slot = to_flat_slot(kb.src),
-              .dst_slot = to_flat_slot(kb.dst),
-              .trigger_slot = to_flat_slot(kb.trigger),
-              .trigger_edge = kb.trigger_edge,
-              .trigger_observation =
-                  kb.trigger_observation
-                      ? std::optional<ResolvedObservation>(ResolvedObservation{
-                            .byte_offset = kb.trigger_observation->byte_offset,
-                            .byte_size = kb.trigger_observation->byte_size,
-                            .bit_index = kb.trigger_observation->bit_index})
-                      : std::nullopt,
+              .src_slot =
+                  to_flat_slot(is_p2c ? bc.parent_source : bc.child_target),
+              .dst_slot =
+                  to_flat_slot(is_p2c ? bc.child_target : bc.parent_source),
+              .trigger_slot = to_flat_slot(bc.trigger),
+              .trigger_edge = bc.trigger_edge,
+              .trigger_observation = std::nullopt,
           });
     }
+  }
 
-    // Dual-path assertion: every BoundConnection (new recipe path)
-    // matches exactly one kernel_binding (old endpoint path).
-    // bound_connections is a subset (representative-only, simple
-    // kDriveParentToChild with kLocalSlot source/trigger). The old
-    // path may have additional entries for non-representative instances
-    // or kDriveChildToParent connections. The assertion is injective:
-    // each new entry matches one old entry, no two new entries match
-    // the same old entry.
-    if (input.bound_connections != nullptr &&
-        !input.bound_connections->empty()) {
-      std::vector<bool> kb_matched(
-          input.resolved_bindings->kernel_bindings.size(), false);
-      for (const auto& bc : *input.bound_connections) {
-        auto bc_src = to_flat_slot(bc.parent_source);
-        auto bc_dst = to_flat_slot(bc.child_target);
-        auto bc_trigger = to_flat_slot(bc.trigger);
-        bool found = false;
-        for (size_t k = 0; k < input.resolved_bindings->kernel_bindings.size();
-             ++k) {
-          if (kb_matched[k]) continue;
-          const auto& kb = input.resolved_bindings->kernel_bindings[k];
-          if (to_flat_slot(kb.src) == bc_src &&
-              to_flat_slot(kb.dst) == bc_dst &&
-              to_flat_slot(kb.trigger) == bc_trigger &&
-              kb.trigger_edge == bc.trigger_edge && kb.kind == bc.kind &&
-              kb.value_type == bc.result_type) {
-            kb_matched[k] = true;
-            found = true;
-            break;
+  // Bijective dual-path assertion: bound_connections must match
+  // kernel_bindings exactly (same count, each entry matches 1:1).
+  if (input.resolved_bindings != nullptr &&
+      input.bound_connections != nullptr) {
+    const auto& kbs = input.resolved_bindings->kernel_bindings;
+    const auto& bcs = *input.bound_connections;
+    if (bcs.size() != kbs.size()) {
+      throw common::InternalError(
+          "DualPathAssertion",
+          std::format(
+              "bound_connections ({}) != kernel_bindings ({})", bcs.size(),
+              kbs.size()));
+    }
+    std::vector<bool> kb_matched(kbs.size(), false);
+    for (const auto& bc : bcs) {
+      bool is_p2c = bc.kind == mir::PortConnection::Kind::kDriveParentToChild;
+      auto bc_src = to_flat_slot(is_p2c ? bc.parent_source : bc.child_target);
+      auto bc_dst = to_flat_slot(is_p2c ? bc.child_target : bc.parent_source);
+      auto bc_trigger = to_flat_slot(bc.trigger);
+      bool found = false;
+      for (size_t k = 0; k < kbs.size(); ++k) {
+        if (kb_matched[k]) continue;
+        const auto& kb = kbs[k];
+        if (to_flat_slot(kb.src) == bc_src && to_flat_slot(kb.dst) == bc_dst &&
+            to_flat_slot(kb.trigger) == bc_trigger &&
+            kb.trigger_edge == bc.trigger_edge && kb.kind == bc.kind &&
+            kb.value_type == bc.result_type) {
+          // The new path does not carry trigger_observation. Verify
+          // the matched old-path entry has none, so the new path's
+          // nullopt is correct and not a silent data loss.
+          if (kb.trigger_observation.has_value()) {
+            throw common::InternalError(
+                "DualPathAssertion",
+                std::format(
+                    "matched kernel binding has trigger_observation but "
+                    "BoundConnection does not carry it (src={}, dst={})",
+                    bc_src.value, bc_dst.value));
           }
-        }
-        if (!found) {
-          throw common::InternalError(
-              "DualPathAssertion",
-              std::format(
-                  "BoundConnection(src={}, dst={}, trigger={}, kind={}, "
-                  "type={}) has no matching kernel binding",
-                  bc_src.value, bc_dst.value, bc_trigger.value,
-                  static_cast<uint8_t>(bc.kind), bc.result_type.value));
+          kb_matched[k] = true;
+          found = true;
+          break;
         }
       }
+      if (!found) {
+        throw common::InternalError(
+            "DualPathAssertion",
+            std::format(
+                "BoundConnection(src={}, dst={}, trigger={}, kind={}, "
+                "type={}) has no matching kernel binding",
+                bc_src.value, bc_dst.value, bc_trigger.value,
+                static_cast<uint8_t>(bc.kind), bc.result_type.value));
+      }
     }
+  }
 
+  if (input.resolved_bindings != nullptr) {
     // Clone expr_bindings as flat-slot MIR processes in the design arena.
     // Remaps kModuleSlot -> kDesignGlobal using parent base slot.
     for (const auto& expr : input.resolved_bindings->expr_bindings) {

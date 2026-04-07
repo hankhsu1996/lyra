@@ -84,9 +84,14 @@ struct ConnectionSourceRecipe {
 // bound state.
 struct TriggerRecipe {
   enum class Kind : uint8_t {
+    // Parent body-local slot. Trigger fires on this parent slot's change.
     kLocalSlot,
     kExternalRef,
     kFunction,
+    // Child body-local slot. Trigger fires on this child slot's change.
+    // Used by kDriveChildToParent connections where the trigger is the
+    // child's output port, which is child-local, not parent-local.
+    kChildSlot,
   };
 
   Kind kind = Kind::kLocalSlot;
@@ -98,6 +103,11 @@ struct TriggerRecipe {
   static auto FromLocalSlot(common::LocalSlotId slot, common::EdgeKind e)
       -> TriggerRecipe {
     return {.kind = Kind::kLocalSlot, .local_slot = slot, .edge = e};
+  }
+
+  static auto FromChildSlot(common::LocalSlotId slot, common::EdgeKind e)
+      -> TriggerRecipe {
+    return {.kind = Kind::kChildSlot, .local_slot = slot, .edge = e};
   }
 
   static auto FromExternalRef(ExternalRefId ref, common::EdgeKind e)

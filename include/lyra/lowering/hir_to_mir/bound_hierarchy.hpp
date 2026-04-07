@@ -151,14 +151,15 @@ void BuildResolvedExternalRefBindings(
     const mir::ConstructionInput& construction);
 
 // Check whether a ConnectionRecipe is in the fully-bindable subset:
-// source and trigger are both kLocalSlot. Recipes with kExternalRef
-// or kFunction source/trigger are not yet supported by BindConnectionRecipe.
+// source is kLocalSlot and trigger is slot-based (kLocalSlot or kChildSlot).
+// Recipes with kExternalRef or kFunction source/trigger are not yet supported.
 auto IsFullyBindableRecipe(const mir::ConnectionRecipe& recipe) -> bool;
 
 // Resolve a fully-bindable ConnectionRecipe against the construction topology.
 // Requires: IsFullyBindableRecipe(recipe) == true (caller must filter).
-// Looks up child_site -> DurableChildId -> object_index, then computes
-// all BoundEndpoints from the recipe's body-local slots + construction data.
+// Resolves all abstract locations to concrete BoundEndpoints and preserves
+// the recipe's trigger edge semantics. The binder does not derive or
+// override any semantic fields from the recipe.
 auto BindConnectionRecipe(
     const mir::ConnectionRecipe& recipe, uint32_t recipe_index,
     const mir::ModuleBody& parent_body, mir::ModuleBodyId parent_body_id,

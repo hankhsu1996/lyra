@@ -66,6 +66,12 @@ class InstanceSlotResolver {
     return it->second;
   }
 
+  // Check whether a variable symbol is resolver-addressable (body-local
+  // and registered). Non-throwing classification probe.
+  [[nodiscard]] auto Contains(SymbolId variable_sym) const -> bool {
+    return reverse_.find(variable_sym) != reverse_.end();
+  }
+
   // Resolve by variable symbol alone (for finding parent instance from
   // expression variable references). Validated unique at insertion time.
   auto ResolveByVariable(SymbolId variable_sym) const -> mir::BoundEndpoint {

@@ -366,13 +366,14 @@ void BuildResolvedExternalRefBindings(
 }
 
 auto IsFullyBindableRecipe(const mir::ConnectionRecipe& recipe) -> bool {
-  // Only kDriveParentToChild with slot source and trigger is fully bindable.
-  // kDriveChildToParent recipes store the child's port in source/trigger
-  // but don't capture the parent's destination variable, so they can't
-  // be bound to concrete endpoints yet.
-  return recipe.kind == mir::PortConnection::Kind::kDriveParentToChild &&
-         recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kLocalSlot &&
-         recipe.trigger.kind == mir::TriggerRecipe::Kind::kLocalSlot;
+  // Fully bindable: kLocalSlot source AND slot-based trigger
+  // (kLocalSlot for parent-local, kChildSlot for child-local).
+  // The binder resolves both to concrete BoundEndpoints and preserves
+  // the recipe's trigger edge semantics. Recipes with kExternalRef or
+  // kFunction source/trigger are not yet supported.
+  return recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kLocalSlot &&
+         (recipe.trigger.kind == mir::TriggerRecipe::Kind::kLocalSlot ||
+          recipe.trigger.kind == mir::TriggerRecipe::Kind::kChildSlot);
 }
 
 auto BindConnectionRecipe(
@@ -405,22 +406,31 @@ auto BindConnectionRecipe(
 
   common::ObjectIndex child_obj{child_oi};
 
+  // Resolve source: always parent-side. For kDriveParentToChild this is
+  // the data source; for kDriveChildToParent this is the parent destination.
+  mir::BoundEndpoint parent_ep{
+      .object_index = parent_object_index,
+      .local_slot = recipe.source.local_slot};
+  mir::BoundEndpoint child_ep{
+      .object_index = child_obj, .local_slot = recipe.child_slot};
+
+  // Resolve trigger from recipe. The trigger kind determines which
+  // object owns the slot: kLocalSlot -> parent, kChildSlot -> child.
+  mir::BoundEndpoint trigger_ep =
+      (recipe.trigger.kind == mir::TriggerRecipe::Kind::kLocalSlot)
+          ? mir::BoundEndpoint{.object_index = parent_object_index,
+                               .local_slot = recipe.trigger.local_slot}
+          : mir::BoundEndpoint{.object_index = child_obj,
+                               .local_slot = recipe.trigger.local_slot};
+
   return mir::BoundConnection{
       .recipe_index = recipe_index,
       .kind = recipe.kind,
       .parent_body_id = parent_body_id,
       .parent_object_index = parent_object_index,
-      .child_target =
-          mir::BoundEndpoint{
-              .object_index = child_obj, .local_slot = recipe.child_slot},
-      .parent_source =
-          mir::BoundEndpoint{
-              .object_index = parent_object_index,
-              .local_slot = recipe.source.local_slot},
-      .trigger =
-          mir::BoundEndpoint{
-              .object_index = parent_object_index,
-              .local_slot = recipe.trigger.local_slot},
+      .child_target = child_ep,
+      .parent_source = parent_ep,
+      .trigger = trigger_ep,
       .trigger_edge = recipe.trigger.edge,
       .result_type = recipe.result_type};
 }
