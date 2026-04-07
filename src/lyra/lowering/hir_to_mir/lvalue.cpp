@@ -799,7 +799,11 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
                                  T, hir::HierarchicalRefExpressionData>) {
           auto& ctx = builder.GetContext();
           // B2: When external_refs is set, return ExternalRefId for the dest.
-          if (ctx.external_refs != nullptr) {
+          // Fall through if target is in cross_instance_places (design-global).
+          if (ctx.external_refs != nullptr &&
+              (ctx.cross_instance_places == nullptr ||
+               ctx.cross_instance_places->find(data.target) ==
+                   ctx.cross_instance_places->end())) {
             auto ref = ctx.LowerHierarchicalRefToExternalRef(
                 data, expr.type, mir::ExternalAccessKind::kReadWrite);
             return LvalueResult{
@@ -807,7 +811,7 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
                 .validity = MakeAlwaysValid(builder),
             };
           }
-          // Old path: design-level lowering.
+          // Old path or design-global target.
           return LvalueResult{
               .dest = mir::WriteTarget{ctx.ResolveHierarchicalRef(data.target)},
               .validity = MakeAlwaysValid(builder),

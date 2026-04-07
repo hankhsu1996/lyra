@@ -833,6 +833,22 @@ auto LowerDesign(
               .debug_instance_sym = child_info.child_instance_sym,
               .origin = common::OriginId::Invalid()});
     }
+
+    // Register non-representative parents' children with the same
+    // DurableChildIds by positional mapping. Each member of the spec
+    // group has structurally identical children.
+    for (uint32_t member_idx : group.member_module_indices) {
+      if (member_idx == rep_idx) continue;
+      auto member_children_it = parent_to_children.find(member_idx);
+      if (member_children_it == parent_to_children.end()) continue;
+      const auto& rep_children = children_it->second;
+      const auto& member_children = member_children_it->second;
+      for (size_t ci = 0; ci < member_children.size() && ci < rep_children.size();
+           ++ci) {
+        uint32_t member_child_oi = member_children[ci].child_module_index;
+        oi_to_durable_child.emplace(member_child_oi, sites[ci].id);
+      }
+    }
   }
 
   // B2 Phase 4: Build ConnectionRecipes alongside the old path.

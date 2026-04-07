@@ -2677,13 +2677,18 @@ auto LowerExpressionImpl(
                                  T, hir::HierarchicalRefExpressionData>) {
           auto& ctx = builder.GetContext();
           // B2: When external_refs is set, emit ExternalRefId instead of
-          // resolving to kDesignGlobal PlaceId.
-          if (ctx.external_refs != nullptr) {
+          // resolving to kDesignGlobal PlaceId. Fall through to old path
+          // if cross_instance_places has the target (design-global target
+          // that isn't body-local in the target body).
+          if (ctx.external_refs != nullptr &&
+              (ctx.cross_instance_places == nullptr ||
+               ctx.cross_instance_places->find(data.target) ==
+                   ctx.cross_instance_places->end())) {
             auto ref = ctx.LowerHierarchicalRefToExternalRef(
                 data, expr.type, mir::ExternalAccessKind::kRead);
             return mir::Operand::ExternalRef(ref.ref_id);
           }
-          // Old path: design-level lowering.
+          // Old path or design-global target: resolve via cross_instance_places.
           mir::PlaceId place_id = ctx.ResolveHierarchicalRef(data.target);
           return mir::Operand::Use(place_id);
         } else if constexpr (std::is_same_v<T, hir::MathCallExpressionData>) {
