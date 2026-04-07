@@ -2,11 +2,11 @@
 #include <cstring>
 #include <format>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/bit_target_mapping.hpp"
 #include "lyra/common/edge_kind.hpp"
-#include "lyra/common/index_plan.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/dyn_array_data.hpp"
 #include "lyra/runtime/engine.hpp"
@@ -182,7 +182,7 @@ void Engine::RebindSubscription(uint32_t edge_target_id) {
       static_cast<int64_t>(index_val - mapping.index_base) * mapping.index_step;
 
   if (logical_offset < 0 ||
-      static_cast<uint64_t>(logical_offset) >= mapping.total_bits) {
+      std::cmp_greater_equal(logical_offset, mapping.total_bits)) {
     set_inactive();
     return;
   }

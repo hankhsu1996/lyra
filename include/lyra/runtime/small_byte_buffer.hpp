@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 
 namespace lyra::runtime {
@@ -13,12 +14,10 @@ class SmallByteBuffer {
   uint32_t size_ = 0;
   bool on_heap_ = false;
 
-  // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays)
   union Storage {
-    uint8_t inline_buf[kInlineCap];
+    std::array<uint8_t, kInlineCap> inline_buf;
     uint8_t* heap;
   };
-  // NOLINTEND(cppcoreguidelines-avoid-c-arrays)
   Storage storage_{};
 
  public:

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <format>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -33,17 +34,23 @@ auto HashPatchContent(
   constexpr uint64_t kFnvBasis = 0xcbf29ce484222325ULL;
   uint64_t hash = kFnvBasis;
 
-  // Hash offsets
-  auto* offset_bytes = reinterpret_cast<const uint8_t*>(offsets);
-  for (size_t i = 0; i < count * sizeof(uint64_t); ++i) {
-    hash ^= offset_bytes[i];
+  // Hash offsets as raw bytes. reinterpret_cast to uint8_t* (not
+  // std::as_bytes) because the FNV-1a loop XORs each byte into a uint64_t
+  // accumulator, and std::byte requires explicit std::to_integer at each site.
+  // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
+  auto offset_bytes = std::span(
+      reinterpret_cast<const uint8_t*>(offsets), count * sizeof(uint64_t));
+  // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
+  for (auto byte : offset_bytes) {
+    hash ^= byte;
     hash *= kFnvPrime;
   }
 
   // Hash masks
-  auto* mask_bytes = static_cast<const uint8_t*>(masks);
-  for (size_t i = 0; i < count * mask_size; ++i) {
-    hash ^= mask_bytes[i];
+  auto mask_bytes =
+      std::span(static_cast<const uint8_t*>(masks), count * mask_size);
+  for (auto byte : mask_bytes) {
+    hash ^= byte;
     hash *= kFnvPrime;
   }
 
@@ -107,7 +114,7 @@ template <typename MaskT>
 void EmitPatchCall(
     Context& ctx, llvm::Value* base_ptr,
     const std::vector<std::pair<uint64_t, MaskT>>& patches,
-    const std::string& name_prefix, const char* helper_name) {
+    const char* helper_name) {
   if (patches.empty()) return;
 
   auto& builder = ctx.GetBuilder();
@@ -128,8 +135,6 @@ void EmitPatchCall(
   }
 
   // Compute content hash for deterministic naming and deduplication.
-  // NOTE: We don't include name_prefix in the global name - this allows
-  // identical patch tables across different frames to share the same globals.
   uint64_t content_hash = HashPatchContent(
       offset_data.data(), mask_data.data(), count, sizeof(MaskT));
 
@@ -183,20 +188,11 @@ void EmitPatchCall(
 }  // namespace
 
 void EmitApply4StatePatches(
-    Context& ctx, llvm::Value* base_ptr, const FourStatePatchTable& patches,
-    const std::string& name_prefix) {
-  EmitPatchCall(
-      ctx, base_ptr, patches.patches_8, name_prefix + ".8",
-      "LyraApply4StatePatches8");
-  EmitPatchCall(
-      ctx, base_ptr, patches.patches_16, name_prefix + ".16",
-      "LyraApply4StatePatches16");
-  EmitPatchCall(
-      ctx, base_ptr, patches.patches_32, name_prefix + ".32",
-      "LyraApply4StatePatches32");
-  EmitPatchCall(
-      ctx, base_ptr, patches.patches_64, name_prefix + ".64",
-      "LyraApply4StatePatches64");
+    Context& ctx, llvm::Value* base_ptr, const FourStatePatchTable& patches) {
+  EmitPatchCall(ctx, base_ptr, patches.patches_8, "LyraApply4StatePatches8");
+  EmitPatchCall(ctx, base_ptr, patches.patches_16, "LyraApply4StatePatches16");
+  EmitPatchCall(ctx, base_ptr, patches.patches_32, "LyraApply4StatePatches32");
+  EmitPatchCall(ctx, base_ptr, patches.patches_64, "LyraApply4StatePatches64");
 }
 
 }  // namespace lyra::lowering::mir_to_llvm

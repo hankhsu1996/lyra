@@ -172,7 +172,7 @@ auto EmitUnpackedIndexValidity(
           // Sign-extend based on index type if signed.
           const Type& idx_type = (*ctx.type_arena)[constant.type];
           uint32_t bw = PackedBitWidth(idx_type, *ctx.type_arena);
-          int64_t idx_val = static_cast<int64_t>(raw);
+          auto idx_val = static_cast<int64_t>(raw);
           if (bw > 0 && bw < 64 && IsPacked(idx_type) &&
               IsPackedSigned(idx_type, *ctx.type_arena)) {
             uint64_t sign_bit = 1ULL << (bw - 1);

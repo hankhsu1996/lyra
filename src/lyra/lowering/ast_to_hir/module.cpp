@@ -231,6 +231,7 @@ auto LowerModuleBody(
               .functions = std::move(functions),
               .tasks = std::move(tasks),
               .dpi_imports = std::move(dpi_imports),
+              .dpi_exports = {},
               .arena = std::move(body_arena),
               .constant_arena = std::move(body_constant_arena),
           },
@@ -293,7 +294,7 @@ auto CollectModuleInstance(
     if (port.internalSymbol == nullptr) continue;
     SymbolId port_backing_sym = registrar.Lookup(*port.internalSymbol);
     if (!port_backing_sym) continue;
-    hir::HirPortDirection dir;
+    hir::HirPortDirection dir{};
     switch (port.direction) {
       case slang::ast::ArgumentDirection::In:
         dir = hir::HirPortDirection::kInput;

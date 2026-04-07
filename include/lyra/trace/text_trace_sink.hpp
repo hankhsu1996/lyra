@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <string>
 
 #include "lyra/runtime/trace_signal_meta.hpp"
@@ -62,10 +63,19 @@ class TextTraceSink : public TraceSink {
   void HandleGlobalValueChange(const struct GlobalValueChange& vc);
   void HandleLocalValueChange(const struct LocalValueChange& vc);
 
+  // NOLINTBEGIN(cppcoreguidelines-owning-memory)
+  // fclose is the only correct way to release a FILE* opened by fopen.
+  // Ownership is managed by the enclosing unique_ptr.
+  struct FileCloser {
+    void operator()(FILE* f) const {
+      std::fclose(f);
+    }
+  };
+  // NOLINTEND(cppcoreguidelines-owning-memory)
+
   const runtime::TraceSignalMetaRegistry* meta_;
   const InstanceTraceResolver* resolver_ = nullptr;
-  FILE* output_;
-  bool owns_file_;
+  std::unique_ptr<FILE, FileCloser> output_;
   uint64_t current_time_ = 0;
   uint32_t current_delta_ = 0;
 };

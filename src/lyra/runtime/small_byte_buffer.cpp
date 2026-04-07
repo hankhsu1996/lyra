@@ -4,7 +4,7 @@
 
 namespace lyra::runtime {
 
-// NOLINTBEGIN(cppcoreguidelines-pro-type-union-access)
+// NOLINTBEGIN(cppcoreguidelines-pro-type-union-access,cppcoreguidelines-owning-memory)
 
 SmallByteBuffer::~SmallByteBuffer() {
   if (on_heap_) {
@@ -17,7 +17,8 @@ SmallByteBuffer::SmallByteBuffer(SmallByteBuffer&& other) noexcept
   if (on_heap_) {
     storage_.heap = other.storage_.heap;
   } else {
-    std::memcpy(storage_.inline_buf, other.storage_.inline_buf, size_);
+    std::memcpy(
+        storage_.inline_buf.data(), other.storage_.inline_buf.data(), size_);
   }
   other.size_ = 0;
   other.on_heap_ = false;
@@ -36,7 +37,8 @@ auto SmallByteBuffer::operator=(SmallByteBuffer&& other) noexcept
   if (on_heap_) {
     storage_.heap = other.storage_.heap;
   } else {
-    std::memcpy(storage_.inline_buf, other.storage_.inline_buf, size_);
+    std::memcpy(
+        storage_.inline_buf.data(), other.storage_.inline_buf.data(), size_);
   }
   other.size_ = 0;
   other.on_heap_ = false;
@@ -51,7 +53,7 @@ void SmallByteBuffer::AssignCopy(const void* src, uint32_t size) {
 
   size_ = size;
   if (size <= kInlineCap) {
-    std::memcpy(storage_.inline_buf, src, size);
+    std::memcpy(storage_.inline_buf.data(), src, size);
   } else {
     storage_.heap = new uint8_t[size];
     std::memcpy(storage_.heap, src, size);
@@ -68,13 +70,13 @@ void SmallByteBuffer::Clear() noexcept {
 }
 
 auto SmallByteBuffer::Data() const -> const uint8_t* {
-  return on_heap_ ? storage_.heap : storage_.inline_buf;
+  return on_heap_ ? storage_.heap : storage_.inline_buf.data();
 }
 
 auto SmallByteBuffer::Data() -> uint8_t* {
-  return on_heap_ ? storage_.heap : storage_.inline_buf;
+  return on_heap_ ? storage_.heap : storage_.inline_buf.data();
 }
 
-// NOLINTEND(cppcoreguidelines-pro-type-union-access)
+// NOLINTEND(cppcoreguidelines-pro-type-union-access,cppcoreguidelines-owning-memory)
 
 }  // namespace lyra::runtime

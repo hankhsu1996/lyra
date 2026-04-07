@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unistd.h>
@@ -33,15 +34,16 @@ auto KindName(ProcessKind kind) -> std::string_view {
   return "unknown";
 }
 
-// Async-signal-safe: write a NUL-terminated C string to fd.
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-pro-bounds-array-to-pointer-decay)
+// Async-signal-safe utilities: must use only raw POSIX I/O, C arrays,
+// and pointer arithmetic. No std:: containers or heap allocation.
+
 void WriteStr(int fd, const char* s) {
   if (s == nullptr) return;
   auto len = strlen(s);
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
   static_cast<void>(write(fd, s, len));
 }
 
-// Async-signal-safe: write a uint32 in decimal to fd.
 void WriteU32(int fd, uint32_t val) {
   char buf[16];
   int pos = 15;
@@ -54,9 +56,10 @@ void WriteU32(int fd, uint32_t val) {
       val /= 10;
     }
   }
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
   static_cast<void>(write(fd, buf + pos, 15 - pos));
 }
+
+// NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-pro-bounds-array-to-pointer-decay)
 
 }  // namespace
 
@@ -64,23 +67,22 @@ ProcessMetaRegistry::ProcessMetaRegistry(
     const uint32_t* words, uint32_t count, const char* pool,
     uint32_t pool_size) {
   if (pool != nullptr && pool_size > 0) {
-    string_pool_.assign(pool, pool + pool_size);
+    auto pool_span = std::span(pool, pool_size);
+    string_pool_.assign(pool_span.begin(), pool_span.end());
   }
 
+  auto word_span =
+      std::span(words, static_cast<size_t>(count) * process_meta_abi::kStride);
   metas_.reserve(count);
-  auto total_words = static_cast<size_t>(count) * process_meta_abi::kStride;
   for (uint32_t i = 0; i < count; ++i) {
     auto base = static_cast<size_t>(i) * process_meta_abi::kStride;
-    if (base + process_meta_abi::kStride > total_words) {
-      throw common::InternalError(
-          "ProcessMetaRegistry", "word table truncated");
-    }
 
-    uint32_t inst_off = words[base + process_meta_abi::kFieldInstancePathOff];
-    uint32_t kind_packed = words[base + process_meta_abi::kFieldKindPacked];
-    uint32_t file_off = words[base + process_meta_abi::kFieldFileStrOff];
-    uint32_t line = words[base + process_meta_abi::kFieldLine];
-    uint32_t col = words[base + process_meta_abi::kFieldCol];
+    uint32_t inst_off =
+        word_span[base + process_meta_abi::kFieldInstancePathOff];
+    uint32_t kind_packed = word_span[base + process_meta_abi::kFieldKindPacked];
+    uint32_t file_off = word_span[base + process_meta_abi::kFieldFileStrOff];
+    uint32_t line = word_span[base + process_meta_abi::kFieldLine];
+    uint32_t col = word_span[base + process_meta_abi::kFieldCol];
 
     auto kind = static_cast<ProcessKind>(kind_packed & 0xFF);
 
@@ -124,7 +126,7 @@ auto ProcessMetaRegistry::PoolString(uint32_t offset) const -> const char* {
   if (string_pool_.empty() || offset >= string_pool_.size()) {
     return "";
   }
-  return string_pool_.data() + offset;
+  return &string_pool_[offset];
 }
 
 auto ProcessMetaRegistry::Format(uint32_t process_id) const -> std::string {
@@ -136,13 +138,13 @@ auto ProcessMetaRegistry::Format(uint32_t process_id) const -> std::string {
   std::string result = std::format("{} process", KindName(meta.kind));
 
   const char* inst = PoolString(meta.instance_path_str_off);
-  if (inst[0] != '\0') {
+  if (*inst != '\0') {
     result += std::format(" in {}", inst);
   }
 
   if (meta.loc.line > 0) {
     const char* file = PoolString(meta.loc.file_str_off);
-    if (file[0] != '\0') {
+    if (*file != '\0') {
       result += std::format(" ({}:{}:{})", file, meta.loc.line, meta.loc.col);
     }
   }
@@ -185,14 +187,14 @@ void ProcessMetaRegistry::WriteAsyncSignalSafe(
   WriteStr(fd, " process");
 
   const char* inst = PoolString(meta.instance_path_str_off);
-  if (inst[0] != '\0') {
+  if (*inst != '\0') {
     WriteStr(fd, " in ");
     WriteStr(fd, inst);
   }
 
   if (meta.loc.line > 0) {
     const char* file = PoolString(meta.loc.file_str_off);
-    if (file[0] != '\0') {
+    if (*file != '\0') {
       WriteStr(fd, " (");
       WriteStr(fd, file);
       WriteStr(fd, ":");

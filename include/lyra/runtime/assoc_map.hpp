@@ -28,6 +28,8 @@ class AssocMap {
 
   AssocMap(const AssocMap&) = delete;
   auto operator=(const AssocMap&) -> AssocMap& = delete;
+  AssocMap(AssocMap&&) = delete;
+  auto operator=(AssocMap&&) -> AssocMap& = delete;
 
   // Contract: out_buf MUST point to uninitialized storage.
   // On hit: copy_init(out_buf, entry). On miss: default_init(out_buf).
@@ -67,19 +69,21 @@ class AssocMap {
   ValueOps val_ops_;
 
   struct Entry {
+    // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays)
     alignas(8) union {
       uint8_t inline_data[kInlineSize];
       uint8_t* heap_data;
     };
+    // NOLINTEND(cppcoreguidelines-avoid-c-arrays)
     bool on_heap;
-    auto data() -> uint8_t*;
-    auto data() const -> const uint8_t*;
+    [[nodiscard]] auto Data() -> uint8_t*;
+    [[nodiscard]] auto Data() const -> const uint8_t*;
   };
   using Map = std::map<CanonKeyPayload, Entry, CanonKeyLess>;
   Map entries_;
 
-  void AllocEntry(Entry& e);
-  void DestroyEntry(Entry& e);
+  void AllocEntry(Entry& e) const;
+  void DestroyEntry(Entry& e) const;
   void CopyInitEntry(Entry& dst, const Entry& src);
 };
 
@@ -104,23 +108,25 @@ auto LyraAssocNew(
 void LyraAssocRelease(void* aa);
 auto LyraAssocClone(void* aa) -> void*;
 
-int32_t LyraAssocGet(
+auto LyraAssocGet(
     void* aa, void* key_a, void* key_b, uint32_t key_c, void* out_value,
-    void* had_xz);
-int32_t LyraAssocSet(
+    void* had_xz) -> int32_t;
+auto LyraAssocSet(
     void* aa, void* key_a, void* key_b, uint32_t key_c, void* value,
-    void* had_xz);
-int32_t LyraAssocExists(
-    void* aa, void* key_a, void* key_b, uint32_t key_c, void* had_xz);
-int32_t LyraAssocDeleteKey(
-    void* aa, void* key_a, void* key_b, uint32_t key_c, void* had_xz);
+    void* had_xz) -> int32_t;
+auto LyraAssocExists(
+    void* aa, void* key_a, void* key_b, uint32_t key_c, void* had_xz)
+    -> int32_t;
+auto LyraAssocDeleteKey(
+    void* aa, void* key_a, void* key_b, uint32_t key_c, void* had_xz)
+    -> int32_t;
 void LyraAssocDeleteAll(void* aa);
 auto LyraAssocSize(void* aa) -> int64_t;
 
-int32_t LyraAssocFirst(void* aa, void* out_key);
-int32_t LyraAssocLast(void* aa, void* out_key);
-int32_t LyraAssocNext(void* aa, void* key_inout);
-int32_t LyraAssocPrev(void* aa, void* key_inout);
+auto LyraAssocFirst(void* aa, void* out_key) -> int32_t;
+auto LyraAssocLast(void* aa, void* out_key) -> int32_t;
+auto LyraAssocNext(void* aa, void* key_inout) -> int32_t;
+auto LyraAssocPrev(void* aa, void* key_inout) -> int32_t;
 
 auto LyraAssocSnapshotCreate(void* aa) -> void*;
 auto LyraAssocSnapshotSize(void* snap) -> int64_t;

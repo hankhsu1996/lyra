@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
-#include <ranges>
 #include <span>
 #include <vector>
 
@@ -498,9 +497,9 @@ void Engine::InstallTriggers(
   // this function because no removals occur between subscription
   // creation and rebind hookup below.
   struct CreatedSub {
-    SignalId signal_id;
-    SubKind kind;
-    uint32_t index;
+    SignalId signal_id = {};
+    SubKind kind = {};
+    uint32_t index = 0;
     uint8_t edge_group = 0;
     EdgeBucket edge_bucket = EdgeBucket::kPosedge;
     bool is_local = false;

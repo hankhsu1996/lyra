@@ -8,7 +8,6 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_utils.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -207,14 +206,14 @@ auto GetKeySpecConstants(TypeId key_type, const TypeArena& types)
     return {
         .kind = 0,
         .bit_width = integral.bit_width,
-        .is_signed = integral.is_signed ? 1u : 0u};
+        .is_signed = integral.is_signed ? 1U : 0U};
   }
   if (type.Kind() == TypeKind::kIntegral) {
     const auto& integral = type.AsIntegral();
     return {
         .kind = 0,
         .bit_width = integral.bit_width,
-        .is_signed = integral.is_signed ? 1u : 0u};
+        .is_signed = integral.is_signed ? 1U : 0U};
   }
   throw common::InternalError(
       "GetKeySpecConstants", "unsupported key type kind");

@@ -12,6 +12,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "lyra/common/binary_pack.hpp"
@@ -525,7 +526,7 @@ auto FreadImpl(
     size_t count = (max_count < 0) ? static_cast<size_t>(element_count)
                                    : static_cast<size_t>(max_count);
 
-    if (start_idx >= static_cast<size_t>(element_count)) {
+    if (std::cmp_greater_equal(start_idx, element_count)) {
       return 0;
     }
 
@@ -536,7 +537,7 @@ auto FreadImpl(
       int32_t bytes_read = engine->GetFileManager().FreadBytes(
           descriptor, buffer.data(), bytes_per_elem);
 
-      if (static_cast<size_t>(bytes_read) < bytes_per_elem) {
+      if (std::cmp_less(bytes_read, bytes_per_elem)) {
         break;
       }
 

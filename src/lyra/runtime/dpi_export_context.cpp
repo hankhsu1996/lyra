@@ -2,7 +2,6 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <format>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/runtime/engine.hpp"

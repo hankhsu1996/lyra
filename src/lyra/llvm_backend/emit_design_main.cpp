@@ -108,7 +108,7 @@ auto EmitWaitSiteMetaTable(
 
 void InitializeProcessState(
     Context& context, llvm::Value* process_state, llvm::Value* design_state,
-    const ProcessLayout& proc_layout, size_t process_index) {
+    const ProcessLayout& proc_layout) {
   auto& builder = context.GetBuilder();
   auto* state_type = proc_layout.state_type;
   bool force_two_state = context.IsForceTwoState();
@@ -122,9 +122,7 @@ void InitializeProcessState(
   auto* frame_ptr = builder.CreateStructGEP(state_type, process_state, 1);
   const auto& frame_layout = proc_layout.frame;
 
-  std::string frame_prefix = std::format("frame.{}", process_index);
-  EmitApply4StatePatches(
-      context, frame_ptr, frame_layout.four_state_patches, frame_prefix);
+  EmitApply4StatePatches(context, frame_ptr, frame_layout.four_state_patches);
 
   const auto& types = context.GetTypeArena();
   for (uint32_t i = 0; i < frame_layout.root_types.size(); ++i) {
@@ -223,8 +221,7 @@ void EmitInitProcesses(
     auto* process_state = builder.CreateAlloca(
         proc_layout.state_type, nullptr, std::format("init_state_{}", i));
 
-    InitializeProcessState(
-        context, process_state, design_state, proc_layout, i);
+    InitializeProcessState(context, process_state, design_state, proc_layout);
 
     builder.CreateCall(
         context.GetLyraRunProcessSync(), {process_funcs[i], process_state});
@@ -311,9 +308,8 @@ auto EmitPerSchemaFrameInitFunctions(Context& context, const Layout& layout)
 
     // Apply scalar 4-state patches.
     if (!proc_layout.frame.four_state_patches.IsEmpty()) {
-      std::string prefix = fn_name;
       EmitApply4StatePatches(
-          context, frame_ptr, proc_layout.frame.four_state_patches, prefix);
+          context, frame_ptr, proc_layout.frame.four_state_patches);
     }
 
     // Apply composite 4-state initialization.
@@ -1911,7 +1907,7 @@ auto EmitDeferredAssertionSiteMetaGlobal(
   entries.reserve(sites.size());
 
   for (const auto& site : sites) {
-    uint8_t kind_val = static_cast<uint8_t>(site.kind);
+    auto kind_val = static_cast<uint8_t>(site.kind);
     uint32_t cover_id = site.cover_hit.has_value()
                             ? site.cover_hit->cover_site_id.Index()
                             : UINT32_MAX;
@@ -2083,8 +2079,9 @@ auto BuildRuntimeAbi(
 
   // A2: Deferred assertion site metadata table.
   store_field(
-      35, deferred_site_meta_global ? deferred_site_meta_global
-                                    : llvm::ConstantPointerNull::get(ptr_ty));
+      35, deferred_site_meta_global != nullptr
+              ? deferred_site_meta_global
+              : llvm::ConstantPointerNull::get(ptr_ty));
   store_field(36, llvm::ConstantInt::get(i32_ty, num_deferred_assertion_sites));
   store_field(37, llvm::ConstantInt::get(i32_ty, 0));
 

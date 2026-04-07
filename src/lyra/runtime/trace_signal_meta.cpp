@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <format>
+#include <span>
 #include <string_view>
 
 #include "lyra/common/internal_error.hpp"
@@ -24,7 +25,8 @@ TraceSignalMetaRegistry::TraceSignalMetaRegistry(
   }
 
   if (pool != nullptr && pool_size > 0) {
-    string_pool_.assign(pool, pool + pool_size);
+    auto pool_span = std::span(pool, pool_size);
+    string_pool_.assign(pool_span.begin(), pool_span.end());
   }
 
   if (word_count == 0) return;
@@ -37,17 +39,21 @@ TraceSignalMetaRegistry::TraceSignalMetaRegistry(
             trace_signal_meta_abi::kStride));
   }
 
+  auto word_span = std::span(words, word_count);
   auto count = word_count / trace_signal_meta_abi::kStride;
   metas_.reserve(count);
 
   for (uint32_t i = 0; i < count; ++i) {
     auto base = static_cast<size_t>(i) * trace_signal_meta_abi::kStride;
 
-    uint32_t name_off = words[base + trace_signal_meta_abi::kFieldNameStrOff];
-    uint32_t bit_width = words[base + trace_signal_meta_abi::kFieldBitWidth];
-    uint32_t kind_raw = words[base + trace_signal_meta_abi::kFieldTraceKind];
+    uint32_t name_off =
+        word_span[base + trace_signal_meta_abi::kFieldNameStrOff];
+    uint32_t bit_width =
+        word_span[base + trace_signal_meta_abi::kFieldBitWidth];
+    uint32_t kind_raw =
+        word_span[base + trace_signal_meta_abi::kFieldTraceKind];
     uint32_t storage_owner =
-        words[base + trace_signal_meta_abi::kFieldStorageOwnerSlotId];
+        word_span[base + trace_signal_meta_abi::kFieldStorageOwnerSlotId];
 
     if (name_off >= string_pool_.size()) {
       throw common::InternalError(
@@ -232,7 +238,7 @@ auto TraceSignalMetaRegistry::PoolString(uint32_t offset) const -> const char* {
             "offset {} out of range (pool size {})", offset,
             string_pool_.size()));
   }
-  return string_pool_.data() + offset;
+  return &string_pool_[offset];
 }
 
 }  // namespace lyra::runtime

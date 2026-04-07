@@ -22,7 +22,6 @@
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
 #include "lyra/mir/statement.hpp"
-#include "lyra/mir/terminator.hpp"
 
 namespace lyra::mir::passes {
 
@@ -148,7 +147,7 @@ void PropagateProvenTrueTemps(
 
         if (const auto* assign = std::get_if<Assign>(&stmt.data)) {
           const auto* dest_pid = std::get_if<PlaceId>(&assign->dest);
-          if (!dest_pid) continue;
+          if (dest_pid == nullptr) continue;
           auto dest_temp = ResolvePlaceToTempId(*dest_pid, arena);
           if (!dest_temp) continue;
           if (IsTempProvenTrue(proven_true, *dest_temp)) continue;
