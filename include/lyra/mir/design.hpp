@@ -94,9 +94,8 @@ struct Design {
   // Set from compilation context, used by $timeformat defaults.
   int8_t global_precision_power = -9;
 
-  // DEPRECATED: connection data is now in ResolvedBindingPlan.
-  // These fields are empty after B2a. Retained for struct layout stability
-  // during migration; will be removed in follow-up.
+  // Connection data is in BoundConnection + expr_connections on the
+  // lowering result, not here. These fields are empty.
   std::vector<PortConnection> port_connections;
   std::vector<ProcessId> connection_processes;
 

@@ -115,11 +115,11 @@ struct LoweringInput {
   // DPI export wrapper descriptors for wrapper emission.
   // Owned by the MIR lowering result; passed by pointer (nullable).
   const std::vector<mir::DpiExportWrapperDesc>* dpi_export_wrappers = nullptr;
-  // Endpoint-based resolved bindings from HIR-to-MIR lowering.
-  // Backend adapter converts to flat ConnectionKernelEntry for layout.
-  const mir::ResolvedBindingPlan* resolved_bindings = nullptr;
-  // Recipe-based bound connections (new path, parallel to resolved_bindings).
+  // Recipe-based bound connections from HIR-to-MIR lowering.
+  // Backend converts to flat ConnectionKernelEntry for layout.
   const std::vector<mir::BoundConnection>* bound_connections = nullptr;
+  // Compiled expression connections (non-NameRef port expressions).
+  const std::vector<mir::CompiledConnectionExpr>* expr_connections = nullptr;
 };
 
 struct LoweringResult {

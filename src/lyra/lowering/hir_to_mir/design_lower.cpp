@@ -838,7 +838,7 @@ auto LowerDesign(
   // B2 Phase 4: Build ConnectionRecipes alongside the old path.
   // For each binding, create a ConnectionRecipe using the header database
   // and child_sites. The new path runs in parallel with the old
-  // CompileBindings path; Phase 5 will delete the old path.
+  // recipe path (currently only handles kLocalSlot sources).
   std::unordered_map<uint32_t, std::vector<mir::ConnectionRecipe>>
       connection_recipes_by_body;
 
@@ -1014,11 +1014,9 @@ auto LowerDesign(
   // BuildResolvedExternalRefBindings consumes the canonical recipe.
   BuildResolvedExternalRefBindings(result, topo, construction);
 
-  // Resolve port bindings to topology-owned endpoint artifacts.
-  // Simple connections (NameRef) -> ResolvedKernelBinding.
-  // Complex expressions -> CompiledConnectionExpr (body-local function).
-  // ResolvedBindingPlan is the sole connection representation.
-  mir::ResolvedBindingPlan resolved_bindings;
+  // Compile complex expression port connections (non-NameRef).
+  // Simple NameRef connections are handled by BoundConnection below.
+  std::vector<mir::CompiledConnectionExpr> expr_connections;
   if (input.binding_plan != nullptr) {
     ExprCompilationData expr_data{
         .module_bodies = &result.module_bodies,
@@ -1027,10 +1025,10 @@ auto LowerDesign(
         .body_local_slots = &body_local_slots_by_body,
         .body_to_representative = &body_to_representative,
     };
-    auto binding_result =
-        CompileBindings(*input.binding_plan, resolver, input, decls, expr_data);
-    if (!binding_result) return std::unexpected(binding_result.error());
-    resolved_bindings = std::move(*binding_result);
+    auto expr_result = CompileExprConnections(
+        *input.binding_plan, resolver, input, decls, expr_data);
+    if (!expr_result) return std::unexpected(expr_result.error());
+    expr_connections = std::move(*expr_result);
   }
 
   // Propagate decision owner acceptance through design-global call graph.
@@ -1054,8 +1052,8 @@ auto LowerDesign(
   return DesignLoweringResult{
       .design = std::move(result),
       .construction = std::move(construction),
-      .resolved_bindings = std::move(resolved_bindings),
       .bound_connections = std::move(bound_connections),
+      .expr_connections = std::move(expr_connections),
       .body_origins = std::move(body_origins),
       .dpi_export_wrappers = std::move(dpi_export_wrappers),
       .dpi_header = (!decls.dpi_exports.Empty() || !decls.dpi_imports.Empty())

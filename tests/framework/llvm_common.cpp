@@ -500,8 +500,8 @@ auto PrepareLlvmModule(
       .body_timescales = &hir_result.body_timescales,
       .force_two_state = force_two_state,
       .dpi_export_wrappers = &mir_result->dpi_export_wrappers,
-      .resolved_bindings = &mir_result->resolved_bindings,
       .bound_connections = &mir_result->bound_connections,
+      .expr_connections = &mir_result->expr_connections,
   };
 
   auto llvm_result = lowering::mir_to_llvm::LowerMirToLlvm(llvm_input);

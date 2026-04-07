@@ -118,15 +118,13 @@ class InstanceSlotResolver {
   std::unordered_map<SymbolId, ReverseLookup, SymbolIdHash> reverse_;
 };
 
-// Data needed by CompileBindings for non-kernelizable expression compilation.
-// Provides mutable access to body arenas for adding connection functions.
+// Data needed by CompileExprConnections for expression compilation.
 struct ExprCompilationData {
   std::vector<mir::ModuleBody>* module_bodies = nullptr;
   const std::vector<mir::ObjectRecord>* objects = nullptr;
   const std::vector<const hir::Module*>* hir_modules = nullptr;
   const std::unordered_map<uint32_t, std::vector<BodyLocalSlotEntry>>*
       body_local_slots = nullptr;
-  // body_group -> representative module path_index
   const std::unordered_map<uint32_t, uint32_t>* body_to_representative =
       nullptr;
 };
@@ -139,13 +137,14 @@ struct DesignBindingPlan;
 
 namespace lyra::lowering::hir_to_mir {
 
-// Resolve port bindings into topology-owned endpoint artifacts.
-// Simple connections (NameRef) become ResolvedKernelBinding.
-// Complex expressions become CompiledConnectionExpr with body-local functions.
-auto CompileBindings(
+// Compile complex expression port connections (non-NameRef expressions).
+// Simple NameRef connections are handled by the recipe-based BoundConnection
+// path. This function only produces CompiledConnectionExpr for expressions
+// that require body-local function compilation.
+auto CompileExprConnections(
     const ast_to_hir::DesignBindingPlan& plan,
     const InstanceSlotResolver& resolver, const LoweringInput& input,
     const DesignDeclarations& decls, ExprCompilationData& expr_data)
-    -> Result<mir::ResolvedBindingPlan>;
+    -> Result<std::vector<mir::CompiledConnectionExpr>>;
 
 }  // namespace lyra::lowering::hir_to_mir
