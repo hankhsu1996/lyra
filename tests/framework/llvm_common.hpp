@@ -7,8 +7,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <utility>
-#include <vector>
 
 #include "lyra/llvm_backend/lower.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
@@ -22,22 +20,6 @@ namespace lyra::test {
 // Find a runtime library by name in runfiles or sibling path.
 auto FindRuntimeLibrary(std::string_view lib_name)
     -> std::optional<std::filesystem::path>;
-
-// Result of spawning a subprocess with captured stdout/stderr.
-struct SubprocessResult {
-  int exit_code = -1;
-  std::string stdout_text;
-  std::string stderr_text;
-};
-
-// Environment variable override for subprocess execution.
-using EnvOverrides = std::vector<std::pair<std::string, std::string>>;
-
-// Spawn a subprocess, capturing stdout and stderr concurrently.
-// Optional env_overrides set/replace environment variables for the child.
-auto RunSubprocess(
-    const std::filesystem::path& exe, std::span<const std::string> args,
-    const EnvOverrides& env_overrides = {}) -> SubprocessResult;
 
 // Link a test executable against the shared runtime library.
 // Test-only path: uses dynamic linking for fast iteration (no rpath, no
@@ -66,7 +48,8 @@ struct LlvmPreparationResult {
   lowering::mir_to_llvm::LoweringResult llvm_result;
 
   // Compiler observability output (e.g., specialization map dump).
-  // Separate from simulation output; routed to TestResult::compiler_output.
+  // Separate from simulation output; routed to
+  // SimulationArtifacts::compiler_output.
   std::string compiler_output;
 
   // Frontend phase timings (seconds).

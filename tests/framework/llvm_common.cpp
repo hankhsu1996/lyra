@@ -1,23 +1,15 @@
 #include "tests/framework/llvm_common.hpp"
 
-#include <array>
-#include <cerrno>
 #include <chrono>
 #include <cstdlib>
-#include <cstring>
 #include <expected>
 #include <filesystem>
 #include <format>
 #include <memory>
-#include <poll.h>
-#include <span>
-#include <spawn.h>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <sys/wait.h>
 #include <type_traits>
-#include <unistd.h>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -176,151 +168,6 @@ auto FindRuntimeLibrary(std::string_view lib_name)
   return std::nullopt;
 }
 
-auto RunSubprocess(
-    const std::filesystem::path& exe, std::span<const std::string> args,
-    const EnvOverrides& env_overrides) -> SubprocessResult {
-  // Create pipes for stdout and stderr
-  std::array<int, 2> stdout_pipe{};
-  std::array<int, 2> stderr_pipe{};
-  if (pipe(stdout_pipe.data()) != 0) {
-    return {
-        .exit_code = -1,
-        .stdout_text = {},
-        .stderr_text = "failed to create stdout pipe"};
-  }
-  if (pipe(stderr_pipe.data()) != 0) {
-    close(stdout_pipe[0]);
-    close(stdout_pipe[1]);
-    return {
-        .exit_code = -1,
-        .stdout_text = {},
-        .stderr_text = "failed to create stderr pipe"};
-  }
-
-  posix_spawn_file_actions_t actions{};
-  posix_spawn_file_actions_init(&actions);
-  posix_spawn_file_actions_adddup2(&actions, stdout_pipe[1], STDOUT_FILENO);
-  posix_spawn_file_actions_adddup2(&actions, stderr_pipe[1], STDERR_FILENO);
-  posix_spawn_file_actions_addclose(&actions, stdout_pipe[0]);
-  posix_spawn_file_actions_addclose(&actions, stdout_pipe[1]);
-  posix_spawn_file_actions_addclose(&actions, stderr_pipe[0]);
-  posix_spawn_file_actions_addclose(&actions, stderr_pipe[1]);
-
-  // Build argv: [exe, args..., nullptr]
-  std::string exe_str = exe.string();
-  std::vector<char*> argv;
-  argv.reserve(args.size() + 2);
-  argv.push_back(exe_str.data());
-  // Store string copies so pointers remain valid
-  std::vector<std::string> arg_copies(args.begin(), args.end());
-  for (auto& arg : arg_copies) {
-    argv.push_back(arg.data());
-  }
-  argv.push_back(nullptr);
-
-  // Build environment (with overrides if any)
-  // env_storage must outlive posix_spawnp; BuildEnviron returns pointers into
-  // its own env_strings vector, but those are local -- so we need the vector
-  // alive. However BuildEnviron returns vector<char*> pointing into local
-  // strings that get destroyed. We need to keep both alive.
-  // Simpler: if no overrides, use environ directly.
-  std::vector<std::string> env_owned;
-  std::vector<char*> env_ptrs;
-  char** envp = environ;  // NOLINT(misc-include-cleaner)
-  if (!env_overrides.empty()) {
-    // Copy current environ
-    // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    for (char** e = environ; *e != nullptr;
-         ++e) {  // NOLINT(misc-include-cleaner)
-      env_owned.emplace_back(*e);
-    }
-    // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-    for (const auto& [key, value] : env_overrides) {
-      auto prefix = key + "=";
-      bool replaced = false;
-      for (auto& entry : env_owned) {
-        if (entry.starts_with(prefix)) {
-          entry = prefix + value;
-          replaced = true;
-          break;
-        }
-      }
-      if (!replaced) {
-        env_owned.push_back(prefix + value);
-      }
-    }
-    env_ptrs.reserve(env_owned.size() + 1);
-    for (auto& s : env_owned) {
-      env_ptrs.push_back(s.data());
-    }
-    env_ptrs.push_back(nullptr);
-    envp = env_ptrs.data();
-  }
-
-  pid_t pid = 0;
-  int spawn_result =
-      posix_spawnp(&pid, exe_str.c_str(), &actions, nullptr, argv.data(), envp);
-  posix_spawn_file_actions_destroy(&actions);
-
-  // Close write ends in parent
-  close(stdout_pipe[1]);
-  close(stderr_pipe[1]);
-
-  if (spawn_result != 0) {
-    close(stdout_pipe[0]);
-    close(stderr_pipe[0]);
-    return {
-        .exit_code = -1,
-        .stdout_text = {},
-        .stderr_text = std::format(
-            "posix_spawnp failed: {}", std::strerror(spawn_result))};
-  }
-
-  // Read stdout and stderr concurrently using poll
-  std::string stdout_text;
-  std::string stderr_text;
-  std::array<struct pollfd, 2> fds{};
-  fds[0] = {.fd = stdout_pipe[0], .events = POLLIN, .revents = 0};
-  fds[1] = {.fd = stderr_pipe[0], .events = POLLIN, .revents = 0};
-  int open_fds = 2;
-
-  std::array<char, 4096> buffer{};
-  while (open_fds > 0) {
-    int ready = poll(fds.data(), fds.size(), -1);
-    if (ready < 0) {
-      break;
-    }
-    for (auto& fd : fds) {
-      if (fd.fd < 0) {
-        continue;
-      }
-      if ((fd.revents & (POLLIN | POLLHUP)) != 0) {
-        ssize_t n = read(fd.fd, buffer.data(), buffer.size());
-        if (n > 0) {
-          auto& target = (fd.fd == stdout_pipe[0]) ? stdout_text : stderr_text;
-          target.append(buffer.data(), static_cast<size_t>(n));
-        } else {
-          close(fd.fd);
-          fd.fd = -1;
-          --open_fds;
-        }
-      }
-    }
-  }
-
-  int status = 0;
-  if (waitpid(pid, &status, 0) == -1) {
-    return {
-        .exit_code = -1, .stdout_text = {}, .stderr_text = "waitpid failed"};
-  }
-
-  int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-  return {
-      .exit_code = exit_code,
-      .stdout_text = std::move(stdout_text),
-      .stderr_text = std::move(stderr_text)};
-}
-
 auto PrepareLlvmModule(
     const TestCase& test_case, const std::filesystem::path& work_directory,
     bool force_two_state) -> std::expected<LlvmPreparationResult, std::string> {
@@ -359,7 +206,8 @@ auto PrepareLlvmModule(
   double hir_lower_seconds =
       std::chrono::duration<double>(Clock::now() - t_hir).count();
 
-  // Build specialization map dump (routed to TestResult::compiler_output)
+  // Build specialization map dump (routed to
+  // SimulationArtifacts::compiler_output)
   std::string compiler_output;
   if (test_case.dump_specialization_map) {
     const auto& spec_map = hir_result.specialization_map;
@@ -373,7 +221,8 @@ auto PrepareLlvmModule(
     }
   }
 
-  // Build artifact inventory dump (routed to TestResult::compiler_output)
+  // Build artifact inventory dump (routed to
+  // SimulationArtifacts::compiler_output)
   if (test_case.dump_repertoire) {
     const auto& root = parse_result.compilation->getRoot();
     for (const auto* inst : root.topInstances) {
@@ -384,7 +233,8 @@ auto PrepareLlvmModule(
     }
   }
 
-  // Build repertoire descriptor dump (routed to TestResult::compiler_output)
+  // Build repertoire descriptor dump (routed to
+  // SimulationArtifacts::compiler_output)
   if (test_case.dump_repertoire_desc) {
     const auto& root = parse_result.compilation->getRoot();
     for (const auto* inst : root.topInstances) {

@@ -234,4 +234,78 @@ void AssertVariables(
   }
 }
 
+void AssertTestResult(
+    const TestCase& test_case, const CaseExecutionResult& result) {
+  // Expected runtime-fatal: assert the case crashed with expected stderr
+  if (test_case.expected_runtime_fatal.has_value()) {
+    ASSERT_EQ(result.execution.outcome, ExecutionOutcome::kCrashed)
+        << "[" << test_case.source_yaml
+        << "] Expected signal-terminated child (abort), got outcome "
+        << static_cast<int>(result.execution.outcome)
+        << " (error: " << result.execution.error_message << ")";
+    for (const auto& expected :
+         test_case.expected_runtime_fatal->stderr_contains) {
+      EXPECT_NE(result.execution.stderr_text.find(expected), std::string::npos)
+          << "[" << test_case.source_yaml
+          << "] Expected stderr to contain: " << expected
+          << "\nActual stderr: " << result.execution.stderr_text;
+    }
+    return;
+  }
+
+  // Expected compilation/setup error: assert a classified error outcome
+  if (test_case.expected_error.has_value()) {
+    bool is_expected_error =
+        result.execution.outcome == ExecutionOutcome::kFrontendError ||
+        result.execution.outcome == ExecutionOutcome::kBackendSetupError ||
+        result.execution.outcome == ExecutionOutcome::kExecutionFailed;
+    ASSERT_TRUE(is_expected_error)
+        << "[" << test_case.source_yaml
+        << "] Expected classified error outcome, got "
+        << static_cast<int>(result.execution.outcome) << " ("
+        << result.execution.error_message << ")";
+    AssertOutput(result.execution.error_message, *test_case.expected_error);
+    return;
+  }
+
+  // Normal case: assert success
+  ASSERT_EQ(result.execution.outcome, ExecutionOutcome::kSuccess)
+      << "[" << test_case.source_yaml << "] " << result.execution.error_message;
+
+  if (!test_case.expected_values.empty()) {
+    AssertVariables(
+        result.artifacts.variables, test_case.expected_values,
+        test_case.source_yaml);
+  }
+
+  if (test_case.expected_time.has_value()) {
+    EXPECT_EQ(result.artifacts.final_time, *test_case.expected_time)
+        << "[" << test_case.source_yaml << "] Time mismatch";
+  }
+
+  if (test_case.expected_stdout.has_value()) {
+    AssertOutput(
+        result.artifacts.captured_output, test_case.expected_stdout.value());
+  }
+
+  if (test_case.expected_compiler_output.has_value()) {
+    AssertOutput(
+        result.artifacts.compiler_output,
+        test_case.expected_compiler_output.value());
+  }
+
+  if (test_case.expected_cover_hits.has_value()) {
+    const auto& expected = *test_case.expected_cover_hits;
+    ASSERT_EQ(result.artifacts.cover_hits.size(), expected.size())
+        << "[" << test_case.source_yaml
+        << "] Cover site count mismatch: expected " << expected.size()
+        << " sites, got " << result.artifacts.cover_hits.size();
+    for (size_t i = 0; i < expected.size(); ++i) {
+      EXPECT_EQ(result.artifacts.cover_hits[i], expected[i])
+          << "[" << test_case.source_yaml << "] Cover site " << i
+          << " hit count mismatch";
+    }
+  }
+}
+
 }  // namespace lyra::test

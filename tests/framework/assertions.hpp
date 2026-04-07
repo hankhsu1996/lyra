@@ -6,6 +6,7 @@
 #include <string>
 
 #include "tests/framework/test_case.hpp"
+#include "tests/framework/test_result.hpp"
 #include "tests/framework/test_value.hpp"
 
 namespace lyra::test {
@@ -26,6 +27,12 @@ void AssertVariables(
     const std::map<std::string, TestValue>& actual,
     const std::map<std::string, ExpectedValue>& expected,
     const std::string& test_name);
+
+// Assert that a CaseExecutionResult matches the expectations in a TestCase.
+// Handles expected_runtime_fatal, expected_error, and normal success checks.
+// Uses GTest ASSERT/EXPECT macros for all comparisons.
+void AssertTestResult(
+    const TestCase& test_case, const CaseExecutionResult& result);
 
 }  // namespace lyra::test
 
