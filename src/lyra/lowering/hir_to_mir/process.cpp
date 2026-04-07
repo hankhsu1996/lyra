@@ -10,6 +10,7 @@
 #include "lyra/common/origin_id.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/routine.hpp"
+#include "lyra/lowering/hir_to_mir/bound_hierarchy.hpp"
 #include "lyra/lowering/hir_to_mir/builder.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/decision_site_allocator.hpp"
@@ -112,7 +113,6 @@ auto LowerProcess(
       .symbol_table = input.symbol_table,
       .body_places = decl_view.body_places,
       .design_places = decl_view.design_places,
-      .cross_instance_places = decl_view.cross_instance_places,
       .local_places = {},
       .design_place_cache = {},
       .next_local_id = 0,
@@ -124,6 +124,7 @@ auto LowerProcess(
       .symbol_to_mir_function = decl_view.functions,
       .design_functions = decl_view.design_functions,
       .dpi_imports = decl_view.dpi_imports,
+      .cross_instance_places = decl_view.cross_instance_places,
       .generated_functions = generated_functions,
       .return_slot = std::nullopt,
       .return_type = input.builtin_types.void_type,
@@ -134,6 +135,7 @@ auto LowerProcess(
           decl_view.deferred_assertion_site_registry,
       .external_refs = decl_view.external_refs,
       .provisional_targets = decl_view.provisional_targets,
+      .external_ref_cache = {},
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map, body_id, decision_allocator);
@@ -166,7 +168,34 @@ auto LowerProcess(
         .materialize_count = 0,
         .decision_sites = {},
     };
-    auto triggers = mir::CollectSensitivity(temp_process, mir_arena);
+    // Build sensitivity env for external ref resolution.
+    // At body-lowering time, resolved_external_ref_bindings don't exist yet.
+    // Use cross_instance_places to pre-resolve ExternalRefId -> design-global
+    // slot for sensitivity collection.
+    //
+    // provisional_targets are 1:1 with ExternalRefId: each ExternalRefId.value
+    // indexes into provisional_targets, and target_sym is the complete
+    // sensitivity identity (each elaborated symbol maps to exactly one
+    // design-global slot in cross_instance_places).
+    std::optional<mir::SensitivityExternalRefEnv> ext_ref_env;
+    std::vector<std::optional<uint32_t>> pre_resolved_slots;
+    if (ctx.external_refs != nullptr && ctx.provisional_targets != nullptr &&
+        ctx.cross_instance_places != nullptr && ctx.design_arena != nullptr &&
+        !ctx.external_refs->empty()) {
+      pre_resolved_slots.reserve(ctx.provisional_targets->size());
+      for (uint32_t ri = 0; ri < ctx.provisional_targets->size(); ++ri) {
+        // Throws if target_sym not found -- every body-process ExternalRefId
+        // must resolve to a design-global slot for sensitivity.
+        pre_resolved_slots.emplace_back(
+            ResolvePreBindingExternalRefDesignGlobalSlot(
+                mir::ExternalRefId{ri}, *ctx.provisional_targets,
+                *ctx.cross_instance_places, *ctx.design_arena));
+      }
+      ext_ref_env.emplace(
+          mir::PreBindingSensitivityEnv{.resolved_slots = pre_resolved_slots});
+    }
+    auto triggers =
+        mir::CollectSensitivity(temp_process, mir_arena, ext_ref_env);
 
     // Find the block with Repeat terminator and replace
     for (auto& block : blocks) {

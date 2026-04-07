@@ -25,6 +25,10 @@ struct MirBodyLoweringResult {
   SymbolToMirFunctionMap symbol_to_function;
   // B2: External access recipes collected during body lowering.
   std::vector<mir::ExternalAccessRecipe> external_refs;
+  // B2: Provisional non-local targets (parallel to external_refs).
+  // Consumed by FinalizeExternalRefTargetSlots and
+  // BuildResolvedExternalRefPlaces in design_lower.cpp post-passes.
+  std::vector<ProvisionalNonLocalTarget> provisional_targets;
 };
 
 // Lower specialization-shared behavioral content for one spec group.

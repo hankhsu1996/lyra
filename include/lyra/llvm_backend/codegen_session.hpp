@@ -11,7 +11,6 @@
 #include <llvm/IR/Function.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/llvm_backend/layout/body_layout.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/llvm_backend/process.hpp"
@@ -132,6 +131,10 @@ struct CompiledModuleSpecInput {
   std::vector<mir::ProcessId> processes;
   std::vector<mir::FunctionId> functions;
   SpecCodegenView view;
+  // Specialization-local state. Owned by CompileDesignProcesses,
+  // consumed by CompileModuleSpecSession via SpecLocalScope.
+  const SpecSlotInfo* spec_slot_info = nullptr;
+  const ConnectionNotificationMask* connection_notification_mask = nullptr;
 };
 
 // Process codegen product of compiling one specialization body.

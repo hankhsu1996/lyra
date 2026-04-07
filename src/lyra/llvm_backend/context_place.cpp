@@ -31,7 +31,6 @@
 #include "lyra/llvm_backend/storage_boundary.hpp"
 #include "lyra/llvm_backend/value_repr.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/mir/arena.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -40,7 +39,7 @@
 namespace lyra::lowering::mir_to_llvm {
 
 auto Context::GetPlacePointer(mir::PlaceId place_id) -> Result<llvm::Value*> {
-  return ComputePlacePointer((*arena_)[place_id], place_id);
+  return ComputePlacePointer(LookupPlace(place_id), place_id);
 }
 
 auto Context::ComputePlacePointer(
@@ -189,7 +188,7 @@ auto Context::ComputePlacePointer(
 }
 
 auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
-  mir::Place resolved = (*arena_)[place_id];
+  mir::Place resolved = LookupPlace(place_id);
 
   // Compute pointer from the place
   auto ptr_or_err = ComputePlacePointer(resolved, place_id);
@@ -257,7 +256,7 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
 
 auto Context::ResolveMutationSignalRef(mir::PlaceId place_id) const
     -> std::optional<mir::SignalRef> {
-  const mir::Place& resolved = (*arena_)[place_id];
+  const mir::Place& resolved = LookupPlace(place_id);
   if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
     return mir::SignalRef{
         .scope = mir::SignalRef::Scope::kModuleLocal,
@@ -531,11 +530,11 @@ auto Context::GetSignalSlotPointer(const mir::SignalRef& sig) -> llvm::Value* {
 }
 
 auto Context::GetStorageRootPointer(mir::PlaceId place_id) -> llvm::Value* {
-  return GetSlotRootPointer((*arena_)[place_id].root);
+  return GetSlotRootPointer(LookupPlace(place_id).root);
 }
 
 auto Context::GetPlaceLlvmType(mir::PlaceId place_id) -> Result<llvm::Type*> {
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
 
   TypeId type_id = mir::TypeOfPlace(types_, place);
   const Type& type = types_[type_id];
@@ -586,7 +585,7 @@ auto Context::GetPlaceLlvmType4State(uint32_t bit_width) -> llvm::StructType* {
 }
 
 auto Context::HasBitRangeProjection(mir::PlaceId place_id) const -> bool {
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
   return !place.projections.empty() &&
          std::holds_alternative<mir::BitRangeProjection>(
              place.projections.back().info);
@@ -594,12 +593,12 @@ auto Context::HasBitRangeProjection(mir::PlaceId place_id) const -> bool {
 
 auto Context::GetBitRangeProjection(mir::PlaceId place_id) const
     -> const mir::BitRangeProjection& {
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
   return std::get<mir::BitRangeProjection>(place.projections.back().info);
 }
 
 auto Context::GetPlaceBaseType(mir::PlaceId place_id) -> Result<llvm::Type*> {
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
 
   // The base type is root.type after applying all non-BitRange projections.
   // BitRange is always the last projection, so just use root.type for the
@@ -660,7 +659,7 @@ auto Context::LoadPlaceValue(mir::PlaceId place_id) -> Result<llvm::Value*> {
   auto ptr_result = GetPlacePointer(place_id);
   if (!ptr_result) return std::unexpected(ptr_result.error());
 
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
   TypeId type_id = mir::TypeOfPlace(types_, place);
   const Type& type = types_[type_id];
 
@@ -687,7 +686,7 @@ auto Context::LoadPlaceBaseValue(mir::PlaceId place_id)
   auto ptr_result = GetPlacePointer(place_id);
   if (!ptr_result) return std::unexpected(ptr_result.error());
 
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
   TypeId base_type_id = mir::TypeOfPlaceBase(types_, place);
   const Type& type = types_[base_type_id];
 
@@ -706,7 +705,7 @@ auto Context::LoadPlaceBaseValue(mir::PlaceId place_id)
 
 auto Context::ComposeBitRange(mir::PlaceId place_id)
     -> Result<ComposedBitRange> {
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
 
   // Invariant: BitRangeProjections must form a contiguous suffix.
   // Once we see a BitRange, no non-BitRange projections may follow.

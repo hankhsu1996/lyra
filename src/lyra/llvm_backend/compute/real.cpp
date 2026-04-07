@@ -2,7 +2,6 @@
 
 #include <expected>
 #include <format>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -14,7 +13,6 @@
 #include <llvm/IR/Value.h>
 #include <llvm/Support/ErrorHandling.h>
 
-#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/overloaded.hpp"
@@ -24,10 +22,8 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
-#include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -36,25 +32,6 @@ namespace {
 
 auto IsRealKind(TypeKind kind) -> bool {
   return kind == TypeKind::kReal || kind == TypeKind::kShortReal;
-}
-
-auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
-  const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
-
-  return std::visit(
-      common::Overloaded{
-          [&](const Constant& c) -> TypeId { return c.type; },
-          [&](mir::PlaceId place_id) -> TypeId {
-            const auto& place = arena[place_id];
-            return mir::TypeOfPlace(types, place);
-          },
-          [&](mir::TempId temp_id) -> TypeId {
-            return context.GetTempType(temp_id.value);
-          },
-          [](mir::ExternalRefId) -> TypeId { std::unreachable(); },
-      },
-      operand.payload);
 }
 
 auto GetOperandFloatType(Context& context, const mir::Operand& operand)

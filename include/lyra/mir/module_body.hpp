@@ -2,8 +2,8 @@
 
 #include <vector>
 
-#include "lyra/common/type.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/connection_recipe.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 
@@ -50,6 +50,17 @@ struct ModuleBody {
 
   // B2: External access recipes for this body.
   std::vector<ExternalAccessRecipe> external_refs;
+
+  // B2: Resolved external ref bindings (parallel to external_refs).
+  // Durable identity facts: {target_object_index, target_local_slot, type}.
+  // Backend computes addresses from ConstructionInput at codegen time.
+  std::vector<ResolvedExternalRefBinding> resolved_external_ref_bindings;
+
+  // B2: Child instantiation sites for this body.
+  std::vector<ChildInstantiationSite> child_sites;
+
+  // B2: Connection recipes for this body.
+  std::vector<ConnectionRecipe> connection_recipes;
 };
 
 }  // namespace lyra::mir

@@ -267,10 +267,16 @@ struct ReplicateExpressionData {
 // One step in a hierarchical path traversal (downward after upward hops).
 // Carries the instance symbol for extraction provenance and optional
 // generate-scope selection coordinates.
+enum class HierPathStepKind : uint8_t {
+  kChildInstance,
+  kGenerateScope,
+};
+
 struct HierPathElement {
-  // Instance SymbolId at this step (extraction vehicle only, not canonical
-  // identity -- canonical identity comes from repertoire coords).
-  SymbolId instance_sym;
+  HierPathStepKind kind = HierPathStepKind::kChildInstance;
+  // SymbolId at this step (instance sym for kChildInstance,
+  // generate block sym for kGenerateScope).
+  SymbolId sym;
   // Generate-scope selection (empty if not in a generate block).
   std::vector<common::SelectionStepDesc> selection;
 

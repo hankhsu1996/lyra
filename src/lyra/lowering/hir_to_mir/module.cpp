@@ -82,18 +82,11 @@ auto LowerModule(
   // Module body lowering uses body-local places (kModuleSlot) for module-owned
   // state. Design-global places are created lazily by LookupPlace with
   // explicit kDesignGlobal roots.
-  // B2: external_refs path is NOT activatable yet. The transitional
-  // backend resolution (kDesignGlobal PlaceIds) does not work in body
-  // context because body processes use kSpecializationLocal addressing
-  // and the layout does not carry cross-instance slot offsets.
-  // Activation requires a proper construction-time binding path that
-  // injects resolved pointers into the process frame, not kDesignGlobal
-  // places resolved through design-global layout offsets.
   DeclView decl_view{
       .body_places = &body_decls.places,
       .design_places = &decls.design_places,
       .cross_instance_places =
-          cross_instance_places,  // for ResolveHierarchicalRef only
+          cross_instance_places,  // for ResolveHierarchicalRef fallback
       .functions = &symbol_to_mir_function,
       .slots = &decls.slots,
       .body_slots = &result.slots,
@@ -102,16 +95,14 @@ auto LowerModule(
       .dpi_imports = &decls.dpi_imports,
       .cover_site_registry = cover_site_registry,
       .deferred_assertion_site_registry = deferred_assertion_site_registry,
-      .external_refs = nullptr,
-      .provisional_targets = nullptr};
+      .external_refs = &external_refs,
+      .provisional_targets = &provisional_targets};
 
   // Body-global decision site allocator: all processes, functions, and tasks
   // within this module body share one allocator so decision IDs are unique
   // across the body. This ensures function-body decision IDs do not collide
   // with process-body IDs in the owner's runtime table.
   DecisionSiteAllocator body_decision_allocator;
-
-
   for (auto [hir_func_id, mir_func_id] : function_pairs) {
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
@@ -209,6 +200,7 @@ auto LowerModule(
       .origins = std::move(body_origins).TakeEntries(),
       .symbol_to_function = std::move(symbol_to_mir_function),
       .external_refs = std::move(external_refs),
+      .provisional_targets = std::move(provisional_targets),
   };
 }
 

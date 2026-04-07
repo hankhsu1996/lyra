@@ -15,7 +15,6 @@
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/compute/compute.hpp"
-#include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/instruction/assign_core.hpp"
@@ -213,9 +212,8 @@ auto LowerManagedStructLiteral(
 auto LowerRvalueAssign(
     Context& context, mir::PlaceId target, const mir::Rvalue& rvalue)
     -> Result<void> {
-  const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  TypeId result_type = mir::TypeOfPlace(types, arena[target]);
+  TypeId result_type = mir::TypeOfPlace(types, context.LookupPlace(target));
   const Type& type = types[result_type];
 
   // Aggregate literal special case: some write shapes cannot be represented
@@ -307,9 +305,8 @@ auto LowerGuardedAssign(Context& context, const mir::GuardedAssign& guarded)
 auto CommitManagedImmediate(
     Context& context, SlotAccessResolver& resolver, mir::PlaceId dest,
     llvm::Value* value, OwnershipPolicy policy) -> Result<void> {
-  const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  TypeId type_id = mir::TypeOfPlace(types, arena[dest]);
+  TypeId type_id = mir::TypeOfPlace(types, context.LookupPlace(dest));
   return resolver.CommitSlotValue(dest, value, type_id, policy);
 }
 
@@ -361,9 +358,8 @@ auto LowerAssign(
   // operand identity. AssignPlace reads operands via canonical
   // LowerOperandRaw, which is correct because these complex types
   // are never v1-eligible managed slots (only plain scalars are managed).
-  const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  TypeId type_id = mir::TypeOfPlace(types, arena[dest]);
+  TypeId type_id = mir::TypeOfPlace(types, context.LookupPlace(dest));
   auto plan = BuildWritePlan(type_id, types);
   if (plan.op == WriteOp::kCommitFieldByFieldStruct ||
       plan.op == WriteOp::kCommitFieldByFieldArray ||
@@ -433,9 +429,8 @@ auto LowerGuardedAssign(
   // For packed targets (bit-range or whole-value), use non-lossy
   // PackedRValue transport. For all other targets, use raw value transport.
   bool is_bit_range = context.HasBitRangeProjection(dest);
-  const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  TypeId dest_type_id = mir::TypeOfPlace(types, arena[dest]);
+  TypeId dest_type_id = mir::TypeOfPlace(types, context.LookupPlace(dest));
   bool is_packed_dest = is_bit_range || IsPacked(types[dest_type_id]);
   std::optional<PackedRValue> packed_rhs;
   llvm::Value* rhs_raw = nullptr;

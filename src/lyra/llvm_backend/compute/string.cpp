@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -13,9 +12,7 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
-#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
-#include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
@@ -24,10 +21,8 @@
 #include "lyra/llvm_backend/format_lowering.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/operator.hpp"
-#include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -43,26 +38,6 @@ auto CreateEmptyString(Context& context) -> llvm::Value* {
   auto* empty_len = llvm::ConstantInt::get(i64_ty, 0);
   return builder.CreateCall(
       context.GetLyraStringFromLiteral(), {empty_data, empty_len}, "str.empty");
-}
-
-// Get the TypeId for an operand
-auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
-  const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
-
-  return std::visit(
-      common::Overloaded{
-          [&](const Constant& c) -> TypeId { return c.type; },
-          [&](mir::PlaceId place_id) -> TypeId {
-            const auto& place = arena[place_id];
-            return mir::TypeOfPlace(types, place);
-          },
-          [&](mir::TempId temp_id) -> TypeId {
-            return context.GetTempType(temp_id.value);
-          },
-          [](mir::ExternalRefId) -> TypeId { std::unreachable(); },
-      },
-      operand.payload);
 }
 
 // Value kind enum matching RuntimeFormatValueKind in runtime

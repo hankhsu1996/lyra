@@ -331,7 +331,7 @@ void Context::InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id) {
 // GetDesignFieldIndex removed -- DesignState is byte arena, not struct.
 
 auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
-  const auto& place = (*arena_)[place_id];
+  const auto& place = LookupPlace(place_id);
   PlaceRootKey key{.kind = place.root.kind, .id = place.root.id};
   const auto& frame = layout_.processes[current_process_index_].frame;
   auto it = frame.root_to_field.find(key);
@@ -442,27 +442,83 @@ auto Context::GetDynamicInstanceId() const -> llvm::Value* {
   return dynamic_instance_id_;
 }
 
-auto Context::ResolveExternalRef(mir::ExternalRefId ref_id) const
-    -> mir::PlaceId {
-  if (resolved_external_ref_places_ == nullptr) {
-    throw common::InternalError(
-        "ResolveExternalRef",
-        std::format(
-            "external ref {} used outside body scope (no resolved table)",
-            ref_id.value));
+void Context::SetExternalRefResolutionEnv(
+    std::optional<ExternalRefResolutionEnv> env) {
+  ext_ref_env_ = std::move(env);
+  materialized_ext_ref_places_.clear();
+  ext_ref_scratch_arena_ = mir::Arena{};
+  if (ext_ref_env_.has_value() && ext_ref_env_->bindings != nullptr) {
+    if (arena_ == nullptr) {
+      throw common::InternalError(
+          "SetExternalRefResolutionEnv",
+          "body arena must be installed before external ref bindings");
+    }
+    ext_ref_place_base_ = static_cast<uint32_t>(arena_->PlaceCount());
+    materialized_ext_ref_places_.resize(ext_ref_env_->bindings->size());
+  } else {
+    ext_ref_place_base_.reset();
   }
-  if (ref_id.value >= resolved_external_ref_places_->size()) {
-    throw common::InternalError(
-        "ResolveExternalRef",
-        std::format(
-            "external ref {} out of range (table size {})", ref_id.value,
-            resolved_external_ref_places_->size()));
-  }
-  return (*resolved_external_ref_places_)[ref_id.value];
 }
 
-auto Context::ResolveWriteDest(const mir::WriteTarget& dest) const
-    -> mir::PlaceId {
+auto Context::LookupPlace(mir::PlaceId place_id) const -> const mir::Place& {
+  if (arena_ == nullptr) {
+    throw common::InternalError("LookupPlace", "no active MIR arena");
+  }
+  if (!ext_ref_place_base_.has_value() ||
+      place_id.value < *ext_ref_place_base_) {
+    return (*arena_)[place_id];
+  }
+  return ext_ref_scratch_arena_[mir::PlaceId{
+      place_id.value - *ext_ref_place_base_}];
+}
+
+auto Context::ResolveExternalRef(mir::ExternalRefId ref_id) -> mir::PlaceId {
+  if (!ext_ref_env_.has_value() || ext_ref_env_->bindings == nullptr) {
+    throw common::InternalError(
+        "ResolveExternalRef",
+        "env not installed -- kSpecializationLocal scope missing "
+        "SetExternalRefResolutionEnv");
+  }
+  const auto& env = *ext_ref_env_;
+  if (ref_id.value >= env.bindings->size()) {
+    throw common::InternalError(
+        "ResolveExternalRef",
+        std::format(
+            "external ref {} out of range (bindings size {})", ref_id.value,
+            env.bindings->size()));
+  }
+  if (!ext_ref_place_base_.has_value()) {
+    throw common::InternalError(
+        "ResolveExternalRef", "scratch place base not set");
+  }
+  // Check cache.
+  auto& cached = materialized_ext_ref_places_[ref_id.value];
+  if (cached) return *cached;
+
+  const auto& binding = (*env.bindings)[ref_id.value];
+  if (env.construction == nullptr) {
+    throw common::InternalError(
+        "ResolveExternalRef", "construction not set in env");
+  }
+  const auto& obj = env.construction->objects.at(binding.target_object.value);
+  auto global_slot =
+      obj.design_state_base_slot + binding.target_local_slot.value;
+  mir::Place place{
+      .root =
+          mir::PlaceRoot{
+              .kind = mir::PlaceRoot::Kind::kDesignGlobal,
+              .id = static_cast<int>(global_slot),
+              .type = binding.type,
+          },
+      .projections = {},
+  };
+  auto local_id = ext_ref_scratch_arena_.AddPlace(std::move(place));
+  auto place_id = mir::PlaceId{*ext_ref_place_base_ + local_id.value};
+  cached = place_id;
+  return place_id;
+}
+
+auto Context::ResolveWriteDest(const mir::WriteTarget& dest) -> mir::PlaceId {
   if (const auto* place = std::get_if<mir::PlaceId>(&dest)) {
     return *place;
   }

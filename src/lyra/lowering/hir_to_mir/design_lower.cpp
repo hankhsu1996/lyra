@@ -22,6 +22,7 @@
 #include "lyra/hir/module_body.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/lowering/ast_to_hir/port_binding.hpp"
+#include "lyra/lowering/hir_to_mir/bound_hierarchy.hpp"
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/design.hpp"
 #include "lyra/lowering/hir_to_mir/design_internal.hpp"
@@ -33,7 +34,6 @@
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/compiled_module_header.hpp"
-#include "lyra/mir/compiled_specialization.hpp"
 #include "lyra/mir/connection_recipe.hpp"
 #include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/design.hpp"
@@ -90,49 +90,6 @@ auto LookupChildPortContract(
   }
   return mir::ChildPortContract{
       .slot = port->slot, .type = port->type, .dir = port->dir};
-}
-
-// Resolve a parent-side NameRef symbol to its body-local LocalSlotId.
-// Searches body_slots by SymbolId. Returns nullopt if not found.
-auto ResolveParentSourceToLocalSlot(
-    SymbolId sym, const std::vector<BodyLocalSlotEntry>& body_slots)
-    -> std::optional<common::LocalSlotId> {
-  for (const auto& entry : body_slots) {
-    if (entry.sym == sym) return entry.local_slot;
-  }
-  return std::nullopt;
-}
-
-// Canonicalize a per-instance SymbolId to the representative module's
-// equivalent by positional matching in variables/nets/param_slots.
-// Returns nullopt if the symbol is not found in the instance module.
-auto CanonicalizeSymToRepresentative(
-    SymbolId instance_sym, const hir::Module& instance_mod,
-    const hir::Module& representative_mod) -> std::optional<SymbolId> {
-  // If same module (representative), identity mapping.
-  if (instance_mod.symbol == representative_mod.symbol) return instance_sym;
-  // Search variables.
-  for (size_t i = 0; i < instance_mod.variables.size(); ++i) {
-    if (instance_mod.variables[i] == instance_sym &&
-        i < representative_mod.variables.size()) {
-      return representative_mod.variables[i];
-    }
-  }
-  // Search nets.
-  for (size_t i = 0; i < instance_mod.nets.size(); ++i) {
-    if (instance_mod.nets[i] == instance_sym &&
-        i < representative_mod.nets.size()) {
-      return representative_mod.nets[i];
-    }
-  }
-  // Search param_slots.
-  for (size_t i = 0; i < instance_mod.param_slots.size(); ++i) {
-    if (instance_mod.param_slots[i] == instance_sym &&
-        i < representative_mod.param_slots.size()) {
-      return representative_mod.param_slots[i];
-    }
-  }
-  return std::nullopt;
 }
 
 // Derive durable child-site identity from the parent repertoire.
@@ -425,6 +382,10 @@ auto LowerDesign(
   // target resolution. Keyed by ModuleBodyId.
   std::unordered_map<uint32_t, SymbolToMirFunctionMap> body_function_maps;
 
+  // B2: Extract provisional targets before body moves consume the results.
+  std::unordered_map<uint32_t, std::vector<ProvisionalNonLocalTarget>>
+      provisionals_by_body;
+
   for (size_t g = 0; g < body_results.size(); ++g) {
     if (!body_results[g]) {
       return std::unexpected(body_results[g].error());
@@ -433,6 +394,10 @@ auto LowerDesign(
 
     mir::ModuleBodyId body_id{
         static_cast<uint32_t>(result.module_bodies.size())};
+    if (!product.provisional_targets.empty()) {
+      provisionals_by_body[body_id.value] =
+          std::move(product.provisional_targets);
+    }
     product.body.external_refs = std::move(product.external_refs);
     result.module_bodies.push_back(std::move(product.body));
     body_origins.push_back(std::move(product.origins));
@@ -586,7 +551,7 @@ auto LowerDesign(
       if (slot_it == sym_to_slot.end()) continue;
       auto type_it = sym_to_type.find(port.sym);
       if (type_it == sym_to_type.end()) continue;
-      mir::PortDirection mir_dir;
+      mir::PortDirection mir_dir{};
       switch (port.dir) {
         case hir::HirPortDirection::kInput:
           mir_dir = mir::PortDirection::kInput;
@@ -651,7 +616,7 @@ auto LowerDesign(
       // Body-local slot indices: params start after variables + nets.
       mir::InstanceConstBlock const_block;
       {
-        uint32_t param_slot_base =
+        auto param_slot_base =
             static_cast<uint32_t>(mod.variables.size() + mod.nets.size());
         for (size_t pi = 0; pi < mod.param_init_values.size(); ++pi) {
           const_block.slot_inits.push_back(
@@ -785,11 +750,6 @@ auto LowerDesign(
   // The parent of "top.u_child" is "top".
   //
   // Build parent-child relationships from instance_table paths.
-  struct ChildSiteInfo {
-    SymbolId child_instance_sym;
-    uint32_t child_module_index = 0;
-    common::ModuleSpecId child_spec;
-  };
   // parent_module_index -> list of child instances.
   std::unordered_map<uint32_t, std::vector<ChildSiteInfo>> parent_to_children;
 
@@ -1060,6 +1020,27 @@ auto LowerDesign(
               .origin = common::OriginId::Invalid()});
     }
   }
+
+  // B2: Propagate child_sites and connection_recipes into bodies.
+  for (auto& [body_id_val, sites] : child_sites_by_body) {
+    result.module_bodies[body_id_val].child_sites = std::move(sites);
+  }
+  for (auto& [body_id_val, recipes] : connection_recipes_by_body) {
+    result.module_bodies[body_id_val].connection_recipes = std::move(recipes);
+  }
+
+  // B2: Build topology index and resolve external refs.
+  auto topo = BuildBoundHierarchyIndex(
+      construction, parent_to_children, body_to_representative);
+
+  FinalizeExternalRefTargetSlots(
+      result, provisionals_by_body, body_local_slots_by_body, topo,
+      construction,
+      std::span<const hir::Module* const>(
+          hir_modules.data(), hir_modules.size()));
+
+  BuildResolvedExternalRefBindings(
+      result, provisionals_by_body, topo, construction);
 
   // Resolve port bindings to topology-owned endpoint artifacts.
   // Simple connections (NameRef) -> ResolvedKernelBinding.

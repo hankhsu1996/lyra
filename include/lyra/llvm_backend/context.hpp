@@ -23,7 +23,9 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
+#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
+#include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/terminator.hpp"
@@ -207,6 +209,12 @@ class Context {
   [[nodiscard]] auto GetDesignArena() const -> const mir::Arena& {
     return *design_arena_;
   }
+
+  // B2: Canonical Place lookup. Routes body arena PlaceIds normally;
+  // routes scratch-arena PlaceIds (from ResolveExternalRef) via offset.
+  // All place consumers must use this instead of raw arena access.
+  [[nodiscard]] auto LookupPlace(mir::PlaceId place_id) const
+      -> const mir::Place&;
 
   // Scoped arena guard: sets the arena on construction, restores on
   // destruction. Only way to switch arenas -- no public setter exposed.
@@ -485,21 +493,54 @@ class Context {
   void SetConnectionNotificationMask(const ConnectionNotificationMask* mask) {
     connection_notification_mask_ = mask;
   }
-  // B2 transitional: set resolved external ref places for current body scope.
-  void SetResolvedExternalRefPlaces(const std::vector<mir::PlaceId>* places) {
-    resolved_external_ref_places_ = places;
-  }
+  // B2: External ref resolution environment. Installed as a unit by
+  // SpecLocalScope; cleared on scope exit. All fields must be consistent.
+  struct ExternalRefResolutionEnv {
+    const std::vector<mir::ResolvedExternalRefBinding>* bindings = nullptr;
+    const mir::ConstructionInput* construction = nullptr;
+  };
+  void SetExternalRefResolutionEnv(std::optional<ExternalRefResolutionEnv> env);
 
-  // B2 transitional: canonical resolution for ExternalRefId -> PlaceId.
-  // Single source of truth for all backend paths (operand, assign, deferred).
-  // Throws InternalError if the ref is unresolved. No default/sentinel.
-  [[nodiscard]] auto ResolveExternalRef(mir::ExternalRefId ref_id) const
+  // RAII guard for specialization-local scope state.
+  // Owns spec_slot_info, connection_notification_mask, and external ref
+  // bindings. Clears all three on destruction.
+  class SpecLocalScope {
+   public:
+    SpecLocalScope(
+        Context& ctx, const SpecSlotInfo* spec_slot_info,
+        const ConnectionNotificationMask* notif_mask,
+        std::optional<ExternalRefResolutionEnv> ext_ref_env)
+        : ctx_(ctx) {
+      ctx_.SetSpecSlotInfo(spec_slot_info);
+      ctx_.SetConnectionNotificationMask(notif_mask);
+      ctx_.SetExternalRefResolutionEnv(std::move(ext_ref_env));
+    }
+
+    ~SpecLocalScope() {
+      ctx_.SetExternalRefResolutionEnv(std::nullopt);
+      ctx_.SetConnectionNotificationMask(nullptr);
+      ctx_.SetSpecSlotInfo(nullptr);
+    }
+
+    SpecLocalScope(const SpecLocalScope&) = delete;
+    auto operator=(const SpecLocalScope&) -> SpecLocalScope& = delete;
+    SpecLocalScope(SpecLocalScope&&) = delete;
+    auto operator=(SpecLocalScope&&) -> SpecLocalScope& = delete;
+
+   private:
+    Context& ctx_;
+  };
+
+  // B2: Resolve ExternalRefId to a design-global slot pointer.
+  // Materializes a kDesignGlobal Place from binding facts in the backend
+  // scratch arena. Cached per scope. GetPlacePointer transparently resolves
+  // PlaceIds from this arena.
+  [[nodiscard]] auto ResolveExternalRef(mir::ExternalRefId ref_id)
       -> mir::PlaceId;
 
-  // B2 transitional: resolve WriteTarget to local PlaceId.
-  // PlaceId targets pass through. ExternalRefId targets resolve through
-  // ResolveExternalRef. Single canonical path for all write lowering.
-  [[nodiscard]] auto ResolveWriteDest(const mir::WriteTarget& dest) const
+  // B2: Resolve WriteTarget to PlaceId.
+  // PlaceId targets pass through. ExternalRefId resolved via bindings.
+  [[nodiscard]] auto ResolveWriteDest(const mir::WriteTarget& dest)
       -> mir::PlaceId;
   [[nodiscard]] auto GetConnectionNotificationMask() const
       -> const ConnectionNotificationMask* {
@@ -1167,10 +1208,12 @@ class Context {
   const SpecSlotInfo* spec_slot_info_ = nullptr;
   const ConnectionNotificationMask* connection_notification_mask_ = nullptr;
 
-  // B2 transitional: resolved kDesignGlobal PlaceIds for external refs.
-  // Parallel to the current body's external_refs vector.
-  // Set per body scope; null when not in body context.
-  const std::vector<mir::PlaceId>* resolved_external_ref_places_ = nullptr;
+  // B2: External ref resolution state. Single env object replaces separate
+  // fields to prevent parallel-state inconsistency.
+  std::optional<ExternalRefResolutionEnv> ext_ref_env_;
+  std::vector<std::optional<mir::PlaceId>> materialized_ext_ref_places_;
+  std::optional<uint32_t> ext_ref_place_base_;
+  mir::Arena ext_ref_scratch_arena_;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();

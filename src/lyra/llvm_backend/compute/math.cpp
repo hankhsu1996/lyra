@@ -14,19 +14,15 @@
 #include <llvm/IR/Value.h>
 #include <llvm/Support/Casting.h>
 
-#include "lyra/common/constant.hpp"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/math_fn.hpp"
-#include "lyra/common/overloaded.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
-#include "lyra/mir/place_type.hpp"
 #include "lyra/mir/rvalue.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -35,25 +31,6 @@ namespace {
 
 auto IsRealKind(TypeKind kind) -> bool {
   return kind == TypeKind::kReal || kind == TypeKind::kShortReal;
-}
-
-auto GetOperandTypeId(Context& context, const mir::Operand& operand) -> TypeId {
-  const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
-
-  return std::visit(
-      common::Overloaded{
-          [&](const Constant& c) -> TypeId { return c.type; },
-          [&](mir::PlaceId place_id) -> TypeId {
-            const auto& place = arena[place_id];
-            return mir::TypeOfPlace(types, place);
-          },
-          [&](mir::TempId temp_id) -> TypeId {
-            return context.GetTempType(temp_id.value);
-          },
-          [](mir::ExternalRefId) -> TypeId { std::unreachable(); },
-      },
-      operand.payload);
 }
 
 auto GetOperandFloatType(Context& context, const mir::Operand& operand)
@@ -68,31 +45,6 @@ auto GetOperandFloatType(Context& context, const mir::Operand& operand)
     return llvm::Type::getFloatTy(context.GetLlvmContext());
   }
   return llvm::Type::getDoubleTy(context.GetLlvmContext());
-}
-
-auto IsOperandFourState(Context& context, const mir::Operand& operand) -> bool {
-  const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
-
-  return std::visit(
-      common::Overloaded{
-          [&](const Constant& c) {
-            const Type& type = types[c.type];
-            return IsPacked(type) && context.IsPackedFourState(type);
-          },
-          [&](mir::PlaceId place_id) {
-            const auto& place = arena[place_id];
-            TypeId type_id = mir::TypeOfPlace(types, place);
-            const Type& type = types[type_id];
-            return IsPacked(type) && context.IsPackedFourState(type);
-          },
-          [&](mir::TempId temp_id) -> bool {
-            return context.ReadTempValue(temp_id.value).domain ==
-                   ValueDomain::kFourState;
-          },
-          [](mir::ExternalRefId) -> bool { std::unreachable(); },
-      },
-      operand.payload);
 }
 
 auto LowerMathIntegralClog2(

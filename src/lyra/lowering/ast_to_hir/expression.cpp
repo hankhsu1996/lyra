@@ -1000,12 +1000,46 @@ auto LowerExpression(
           [&](const slang::ast::HierarchicalReference& ref)
           -> std::vector<hir::HierPathElement> {
         std::vector<hir::HierPathElement> elements;
-        for (const auto& elem : ref.path) {
-          SymbolId step_sym = registrar.Lookup(*elem.symbol);
+        // The slang path includes all symbols from reference scope to
+        // target. Exclude:
+        //   - The last element: target variable/net (carried by target_sym)
+        //   - The first element when upwardCount > 0: scope name at the
+        //     resolution root (e.g., "Top" in "Top.var"), not a child
+        //     instance traversal
+        // Skip the first element when it is the resolution root scope:
+        //   - upwardCount > 0: first element is the named scope reached
+        //     by upward navigation (e.g., "Test" in "Test.var" from child)
+        //   - upwardCount == 0 with explicit scope name: first element is
+        //     the enclosing scope itself (e.g., "Test" in "Test.a.value"
+        //     from Test's own initial block)
+        // Detect the second case: if first element is an Instance whose
+        // parent is the root compilation unit, it's the enclosing module.
+        size_t start = 0;
+        if (!ref.path.empty()) {
+          if (ref.upwardCount > 0) {
+            start = 1;
+          } else if (
+              ref.path[0].symbol->kind == slang::ast::SymbolKind::Instance &&
+              ref.path[0].symbol->getParentScope() != nullptr &&
+              ref.path[0].symbol->getParentScope()->asSymbol().kind ==
+                  slang::ast::SymbolKind::Root) {
+            start = 1;
+          }
+        }
+        if (ref.path.size() <= start + 1) return elements;
+        for (size_t i = start; i + 1 < ref.path.size(); ++i) {
+          const auto& sym = *ref.path[i].symbol;
+          SymbolId step_sym = registrar.Lookup(sym);
+          // Classify: InstanceSymbol -> kChildInstance, everything else
+          // (GenerateBlock, GenerateBlockArray) -> kGenerateScope.
+          auto kind = sym.kind == slang::ast::SymbolKind::Instance
+                          ? hir::HierPathStepKind::kChildInstance
+                          : hir::HierPathStepKind::kGenerateScope;
           elements.push_back(
               hir::HierPathElement{
-                  .instance_sym = step_sym,
-                  .selection = extract_selection(*elem.symbol)});
+                  .kind = kind,
+                  .sym = step_sym,
+                  .selection = extract_selection(sym)});
         }
         return elements;
       };

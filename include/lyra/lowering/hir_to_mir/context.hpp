@@ -6,7 +6,6 @@
 #include "lyra/common/constant_arena.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/local_slot_id.hpp"
-#include "lyra/common/module_identity.hpp"
 #include "lyra/common/selection_step.hpp"
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -108,11 +107,20 @@ struct DesignDeclarations {
   std::vector<ExportDiagnostic> export_diagnostics;
 };
 
+// Kind of a provisional path step in a hierarchical reference.
+enum class ProvisionalPathStepKind : uint8_t {
+  // Traversal into a child module instance. Changes object_index during
+  // topology walk.
+  kChildInstance,
+  // Traversal into a generate scope (genblk, for-generate, if-generate).
+  // Stays within the same object. Does not change object_index.
+  kGenerateScope,
+};
+
 // Provisional path step for non-local target resolution during lowering.
-// Carries the instance SymbolId (for diagnostics) and the canonical
-// repertoire coordinate (for durable identity).
 struct ProvisionalPathStep {
-  SymbolId instance_sym;
+  ProvisionalPathStepKind kind = ProvisionalPathStepKind::kChildInstance;
+  SymbolId sym;
   common::RepertoireCoord coord;
   auto operator==(const ProvisionalPathStep&) const -> bool = default;
 };
@@ -127,6 +135,9 @@ struct ProvisionalNonLocalTarget {
   uint32_t upward_count = 0;
   std::vector<ProvisionalPathStep> path;
   common::LocalSlotId target_slot;
+  // Target variable symbol for post-pass resolution. Required for
+  // FinalizeExternalRefTargetSlots to look up the target's LocalSlotId.
+  SymbolId target_sym;
   auto operator==(const ProvisionalNonLocalTarget&) const -> bool = default;
 };
 
@@ -299,13 +310,17 @@ struct Context {
   // Cache by full provisional recipe identity (access_kind + target +
   // upward_count + path + target_sym). Two different paths to the same
   // symbol get different ExternalRefIds.
+  struct ExternalRefPathIdentityStep {
+    hir::HierPathStepKind kind;
+    SymbolId sym;
+    common::RepertoireCoord selection;
+    auto operator==(const ExternalRefPathIdentityStep&) const -> bool = default;
+  };
   struct ExternalRefKey {
     mir::ExternalAccessKind access_kind;
     SymbolId target_sym;
     uint32_t upward_count;
-    // Flattened path identity: vector of (instance_sym, coord) pairs.
-    // Using SymbolId for path steps is sufficient for single-pass dedup.
-    std::vector<std::pair<SymbolId, common::RepertoireCoord>> path_identity;
+    std::vector<ExternalRefPathIdentityStep> path_identity;
     auto operator==(const ExternalRefKey&) const -> bool = default;
   };
   struct ExternalRefKeyHash {
@@ -313,9 +328,15 @@ struct Context {
       size_t h = std::hash<uint8_t>{}(static_cast<uint8_t>(key.access_kind));
       h ^= std::hash<uint32_t>{}(key.target_sym.value) << 1;
       h ^= std::hash<uint32_t>{}(key.upward_count) << 2;
-      for (const auto& [sym, coord] : key.path_identity) {
-        h ^= std::hash<uint32_t>{}(sym.value) << 3;
-        h ^= std::hash<size_t>{}(coord.size()) << 4;
+      for (const auto& step : key.path_identity) {
+        h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(step.kind)) << 3;
+        h ^= std::hash<uint32_t>{}(step.sym.value) << 4;
+        // Hash full selection content, not just size.
+        for (const auto& sel : step.selection) {
+          h ^= std::hash<uint32_t>{}(static_cast<uint32_t>(sel.kind)) << 5;
+          h ^= std::hash<uint32_t>{}(sel.construct_index) << 6;
+          h ^= std::hash<uint32_t>{}(sel.alt_index) << 7;
+        }
       }
       return h;
     }

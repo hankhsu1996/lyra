@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <string>
 #include <variant>
 
 #include <llvm/IR/Constants.h>
@@ -55,9 +54,8 @@ struct StoreShape {
 auto ClassifyDeferredStore(Context& context, mir::PlaceId dest)
     -> Result<StoreShape> {
   const auto& types = context.GetTypeArena();
-  const auto& arena = context.GetMirArena();
 
-  TypeId dst_ty = mir::TypeOfPlace(types, arena[dest]);
+  TypeId dst_ty = mir::TypeOfPlace(types, context.LookupPlace(dest));
   const Type& type = types[dst_ty];
 
   auto storage_ty_result = context.GetPlaceLlvmType(dest);
@@ -264,9 +262,8 @@ auto LowerDeferredAssignWithOobGuard(
   auto dest = context.ResolveWriteDest(deferred.dest);
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
-  const auto& arena = context.GetMirArena();
   const auto& types = context.GetTypeArena();
-  const auto& place = arena[dest];
+  const auto& place = context.LookupPlace(dest);
 
   // Walk projections to find the first IndexProjection and compute the array
   // type AT that projection site. This handles cases like s.field[i] where the
@@ -353,7 +350,6 @@ auto LowerDeferredAssignDirect(
 auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     -> Result<void> {
   auto dest = context.ResolveWriteDest(deferred.dest);
-  const auto& arena = context.GetMirArena();
 
   // Use canonical signal_id (after alias resolution) for notification
   // NBA is only valid for design places (GetSignalCoordForNba throws if not)
@@ -370,7 +366,7 @@ auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
   StoreShape shape = *shape_or_err;
 
   // Case 2: IndexProjection - array element write with OOB guard
-  if (HasIndexProjection(arena[dest])) {
+  if (HasIndexProjection(context.LookupPlace(dest))) {
     return LowerDeferredAssignWithOobGuard(context, deferred, shape, signal_id);
   }
 

@@ -48,11 +48,9 @@
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/place.hpp"
-#include "lyra/mir/placement.hpp"
 #include "lyra/mir/rhs.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/rvalue.hpp"
-#include "lyra/mir/sensitivity.hpp"
 #include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 
@@ -842,7 +840,8 @@ auto CompareCombSlotsByFinalObservableOrder(
 
 auto CompileModuleSpecSession(
     Context& context, const mir::Design& design,
-    const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec> {
+    const CompiledModuleSpecInput& input,
+    const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec> {
   // Set the body arena and origin scope for this compilation session.
   const auto& body = design.module_bodies.at(input.body_id.value);
   Context::ArenaScope arena_scope(context, &body.arena);
@@ -854,6 +853,17 @@ auto CompileModuleSpecSession(
     origin_scope.emplace(*context.GetOriginLookup(), input.body_id);
   }
 
+  // Install all specialization-local state via RAII scope.
+  std::optional<Context::ExternalRefResolutionEnv> ext_ref_env;
+  if (!body.resolved_external_ref_bindings.empty()) {
+    ext_ref_env = Context::ExternalRefResolutionEnv{
+        .bindings = &body.resolved_external_ref_bindings,
+        .construction = construction};
+  }
+  Context::SpecLocalScope spec_scope(
+      context, input.spec_slot_info, input.connection_notification_mask,
+      std::move(ext_ref_env));
+
   // Clear per-spec state: body-local FunctionIds are 0-based per body,
   // so registrations from a previous spec session would collide.
   context.ClearModuleScopedFunctions();
@@ -864,11 +874,6 @@ auto CompileModuleSpecSession(
   }
 
   // Step 2: Register module-scoped function lowering metadata.
-  // All body functions share the same spec slot info. Observer ABI vs
-  // regular ABI is determined by mir::IsObserverProgram(runtime_kind) at
-  // declare/define time, not by metadata here.
-  // spec_slot_info is set on context by CompileDesignProcesses before
-  // entering this function. It must be non-null for module-scoped access.
   if (context.GetSpecSlotInfo() == nullptr) {
     throw common::InternalError(
         "CompileModuleSpecSession",
@@ -1266,7 +1271,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
                         mir::SignalRef{
                             .scope = mir::SignalRef::Scope::kDesignGlobal,
                             .id = slot},
-                    .edge = common::EdgeKind::kAnyChange});
+                    .edge = common::EdgeKind::kAnyChange,
+                    .observed_place = std::nullopt,
+                    .late_bound = std::nullopt});
           }
           new_block.terminator.data = mir::Wait{
               .triggers = std::move(triggers),
@@ -1322,6 +1329,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
           .entry = entry_id,
           .blocks = std::move(process_blocks),
           .temp_metadata = func.temp_metadata,
+          .decision_sites = {},
       };
       auto pid = const_cast<mir::Arena&>(*input.mir_arena)
                      .AddProcess(std::move(process));
@@ -1539,11 +1547,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
       module_export_callees;
 
   for (size_t si = 0; si < spec_inputs.size(); ++si) {
-    const auto& spec_input = spec_inputs[si];
-    context->SetSpecSlotInfo(&spec_slot_infos[si]);
-    context->SetConnectionNotificationMask(&connection_notification_masks[si]);
-    auto product =
-        CompileModuleSpecSession(*context, *input.design, spec_input);
+    auto& spec_input = spec_inputs[si];
+    spec_input.spec_slot_info = &spec_slot_infos[si];
+    spec_input.connection_notification_mask =
+        &connection_notification_masks[si];
+    auto product = CompileModuleSpecSession(
+        *context, *input.design, spec_input, input.construction);
     if (!product) return std::unexpected(product.error());
 
     // Capture module export callees from this session's user_functions_
@@ -1590,11 +1599,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
         std::make_move_iterator(product->wait_sites.end()));
   }
 
-  // Clear per-specialization context state after the compilation loop.
-  context->SetSpecSlotInfo(nullptr);
-  context->SetConnectionNotificationMask(nullptr);
-
   // Phase 5: Emit DPI export wrappers (after all callables are declared).
+  // spec_slot_info and connection_notification_mask are already cleared
+  // by SpecLocalScope destruction at the end of each spec session.
   // Both package and module export wrappers are emitted in one pass.
   if (input.dpi_export_wrappers != nullptr &&
       !input.dpi_export_wrappers->empty()) {

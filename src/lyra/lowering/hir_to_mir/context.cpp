@@ -200,7 +200,9 @@ auto Context::LowerHierarchicalRefToExternalRef(
       .path_identity = {}};
   key.path_identity.reserve(data.path_elements.size());
   for (const auto& elem : data.path_elements) {
-    key.path_identity.emplace_back(elem.instance_sym, elem.selection);
+    key.path_identity.push_back(
+        ExternalRefPathIdentityStep{
+            .kind = elem.kind, .sym = elem.sym, .selection = elem.selection});
   }
 
   auto it = external_ref_cache.find(key);
@@ -209,18 +211,20 @@ auto Context::LowerHierarchicalRefToExternalRef(
   }
 
   // Build provisional non-local target from HIR path data.
-  // Coord comes from HIR HierPathElement.selection (extracted from slang
-  // repertoire during AST-to-HIR). target_slot is not yet resolved --
-  // it requires cross-body lookup that happens in Phase 3 canonicalization.
   ProvisionalNonLocalTarget provisional{
       .anchor = mir::NonLocalAnchor::kSelf,
       .upward_count = data.upward_count,
       .path = {},
-      .target_slot = {}};
+      .target_slot = {},
+      .target_sym = data.target};
   for (const auto& elem : data.path_elements) {
     provisional.path.push_back(
         ProvisionalPathStep{
-            .instance_sym = elem.instance_sym, .coord = elem.selection});
+            .kind = elem.kind == hir::HierPathStepKind::kChildInstance
+                        ? ProvisionalPathStepKind::kChildInstance
+                        : ProvisionalPathStepKind::kGenerateScope,
+            .sym = elem.sym,
+            .coord = elem.selection});
   }
 
   // Allocate new ExternalRefId.
