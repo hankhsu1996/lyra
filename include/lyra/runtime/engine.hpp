@@ -1311,13 +1311,19 @@ class Engine {
   }
 
   // Canonical local dirty-mark helpers. ALL local dirty marking must
-  // go through these two methods -- never call
-  // local_updates.MarkSlotDirty() or MarkDirtyRange() directly from
-  // engine code.
+  // go through these methods -- never call local_updates.MarkSlotDirty()
+  // or MarkDirtyRange() directly from engine code.
+  // Overloads accepting instance_idx skip the GetInstanceIndex lookup
+  // when the caller already has the index.
   void MarkLocalSignalDirty(RuntimeInstance& inst, LocalSignalId lid);
+  void MarkLocalSignalDirty(
+      RuntimeInstance& inst, LocalSignalId lid, uint32_t instance_idx);
   void MarkLocalSignalDirtyRange(
       RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
       uint32_t byte_size);
+  void MarkLocalSignalDirtyRange(
+      RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
+      uint32_t byte_size, uint32_t instance_idx);
 
   UpdateSet update_set_;
 

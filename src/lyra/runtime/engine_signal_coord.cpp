@@ -14,15 +14,27 @@ namespace lyra::runtime {
 // the engine-level dirty-instance sparse indexes (derived acceleration).
 
 void Engine::MarkLocalSignalDirty(RuntimeInstance& inst, LocalSignalId lid) {
+  MarkLocalSignalDirty(inst, lid, GetInstanceIndex(inst));
+}
+
+void Engine::MarkLocalSignalDirty(
+    RuntimeInstance& inst, LocalSignalId lid, uint32_t instance_idx) {
   inst.observability.local_updates.MarkSlotDirty(lid);
-  MarkInstanceDeltaDirty(GetInstanceIndex(inst));
+  MarkInstanceDeltaDirty(instance_idx);
 }
 
 void Engine::MarkLocalSignalDirtyRange(
     RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
     uint32_t byte_size) {
+  MarkLocalSignalDirtyRange(
+      inst, lid, byte_off, byte_size, GetInstanceIndex(inst));
+}
+
+void Engine::MarkLocalSignalDirtyRange(
+    RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
+    uint32_t byte_size, uint32_t instance_idx) {
   inst.observability.local_updates.MarkDirtyRange(lid, byte_off, byte_size);
-  MarkInstanceDeltaDirty(GetInstanceIndex(inst));
+  MarkInstanceDeltaDirty(instance_idx);
 }
 
 // --- Instance-owned local paths (source of truth: per-instance containers) ---

@@ -436,9 +436,10 @@ void Engine::SeedCombKernelDirtyMarks() {
     MarkSlotDirty(gid.value);
   }
   // Seed local comb trigger slots.
-  for (auto* inst : instances_) {
+  for (uint32_t i = 0; i < instances_.size(); ++i) {
+    auto* inst = instances_[i];
     for (LocalSignalId lid : inst->observability.local_comb_trigger_slots) {
-      MarkLocalSignalDirty(*inst, lid);
+      MarkLocalSignalDirty(*inst, lid, i);
     }
   }
 }
@@ -633,10 +634,10 @@ void Engine::FlushAndPropagateConnections() {
             MarkSlotDirty(t.signal.value);
             enqueue_global(t.signal);
           } else {
-            auto* local_inst =
-                instance_trace_resolver_.FindInstanceMut(t.instance_id);
-            MarkLocalSignalDirty(*local_inst, t.signal);
-            enqueue_local(GetInstanceIndex(*local_inst), t.signal);
+            auto inst_idx = GetInstanceIndex(t.instance_id);
+            auto* local_inst = instances_[inst_idx];
+            MarkLocalSignalDirty(*local_inst, t.signal, inst_idx);
+            enqueue_local(inst_idx, t.signal);
           }
         },
         dst);

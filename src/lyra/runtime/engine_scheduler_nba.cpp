@@ -208,20 +208,22 @@ void Engine::ExecuteNbaRegion() {
     // Dirty-mark dispatch: single-range for full-overwrite and masked-merge,
     // precise two-range for canonical packed two-plane.
     // R5: Typed NBA dirty dispatch. No reverse-engineering from flat slot_id.
+    // Resolve local instance + index once (may be called twice for two-plane).
+    RuntimeInstance* nba_local_inst = nullptr;
+    uint32_t nba_local_idx = 0;
+    if (const auto* local = std::get_if<NbaNotifyLocal>(&entry.notify_signal)) {
+      nba_local_idx = GetInstanceIndex(local->instance_id);
+      nba_local_inst = instances_[nba_local_idx];
+    }
     auto nba_dirty = [&](uint32_t byte_off, uint32_t byte_size) {
-      std::visit(
-          [&](const auto& notify) {
-            using T = std::decay_t<decltype(notify)>;
-            if constexpr (std::is_same_v<T, NbaNotifyGlobal>) {
-              MarkDirtyRange(notify.signal.value, byte_off, byte_size);
-            } else {
-              auto* inst =
-                  instance_trace_resolver_.FindInstanceMut(notify.instance_id);
-              MarkLocalSignalDirtyRange(
-                  *inst, notify.signal, byte_off, byte_size);
-            }
-          },
-          entry.notify_signal);
+      if (nba_local_inst != nullptr) {
+        const auto& local = std::get<NbaNotifyLocal>(entry.notify_signal);
+        MarkLocalSignalDirtyRange(
+            *nba_local_inst, local.signal, byte_off, byte_size, nba_local_idx);
+      } else {
+        const auto& global = std::get<NbaNotifyGlobal>(entry.notify_signal);
+        MarkDirtyRange(global.signal.value, byte_off, byte_size);
+      }
     };
     if (std::holds_alternative<NbaCanonicalPackedTwoPlane>(entry.payload)) {
       if (result.val_changed) {
