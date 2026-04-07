@@ -49,9 +49,9 @@ When a process encounters `assert #0 (cond) pass_call; else fail_call;`:
 
 4. **Action execution happens in the Reactive region.** The action subroutine call executes in the Reactive region, consuming the previously captured by-value arguments and any live reference bindings.
 
-5. **Reference actuals observe live state at execution time.** `ref` and `const ref` formals bind to the underlying variable. Their values are read when the deferred action executes in the Reactive region, not when it was scheduled.
+5. **`ref`/`const ref` actuals are not captured by value.** They remain bound to the underlying variable, and reads/writes observe the current value in the Reactive region.
 
-6. **Action blocks are restricted to a single subroutine call.** No output or inout arguments are permitted. The LRM prohibits binding `ref` to automatic variables in deferred assertion actions.
+6. **Action blocks are restricted to a single subroutine call.** No output or inout arguments are permitted. Deferred assertion actions shall reject automatic or dynamic variables as actuals to `ref` or `const ref` formals. This is a deferred-assertion-specific legality rule (LRM 16.4), stricter than ordinary subroutine ref passing (13.5.2).
 
 7. **Flush semantics are process-associated.** If a process re-triggers (combinational sensitivity re-evaluation, resumption from wait), previously enqueued deferred assertions for that process are invalidated. Only assertions from the most recent activation survive to maturity.
 
@@ -83,7 +83,8 @@ This split is the central architectural constraint for deferred assertion action
 result = evaluate(cond)
 if result requires deferred action:
     payload = evaluate_and_capture(by_value_actuals)
-    enqueue(site_id, disposition, payload)
+    ref_bindings = bind_live_ref_actuals()
+    enqueue(site_id, disposition, payload, ref_bindings)
 
 -- Maturity (Observed or Postponed) --
 for each pending record that survived flush:
@@ -91,8 +92,7 @@ for each pending record that survived flush:
 
 -- Execution (Reactive or Postponed) --
 for each mature record:
-    ctx = resolve_live_context(site.ref_bindings)
-    site.action_routine(record.payload, ctx)
+    site.action_routine(record.payload, record.ref_bindings)
 ```
 
 This is conceptual only -- not a specification of internal structure.
@@ -110,63 +110,57 @@ Each deferred assertion site in the source produces a fixed, known action shape 
 This information is site-static. It does not vary across executions of the same assertion. The architecture treats each site as a specialization point:
 
 - **Each site has its own outlined action routine(s).** The action call body is extracted into a standalone routine during compilation, not interpreted at runtime.
-- **Each site has a fixed capture layout.** The byte layout of captured by-value actuals is determined at compile time and is invariant for the site.
+- **Each site has a fixed capture layout.** The typed layout of captured by-value actuals is determined at compile time and is invariant for the site.
 - **Runtime dispatch is by site and disposition.** The runtime looks up site metadata and invokes the pre-compiled action routine. It does not parse, plan, or interpret assertion semantics.
 
 ### Outlined Routines, Not Deferred Calls
 
 The action routine is a distinct compiled artifact, not a copy of the original call lowering path executed later:
 
-- Its **inputs** are the captured by-value payload plus any execution-time context needed for reference access.
-- Its **body** contains the single subroutine call with arguments wired to the appropriate sources (captured values for by-value, live bindings for by-ref).
+- Its **inputs** are the captured by-value payload plus any directly bound live ref/const-ref bindings.
+- Its **body** contains the single subroutine call with arguments wired from the payload (by-value) and the bound references (by-ref).
 - Its **lifetime** is independent of the originating process's frame. Captured values are owned by the deferred record, not borrowed from the process.
 
-The outlined routine does not depend on the originating process frame being live at execution time. By-value data has already been copied out. Reference bindings are resolved against live state when the routine executes.
+The outlined routine does not depend on the originating process frame being live at execution time. By-value data has already been copied out. Reference bindings are bound to live storage at encounter time and dereferenced at execution time.
 
 ### Capture Payload
 
-The capture payload is a fixed-size byte region whose layout is determined per site at compile time. At encounter time, compiler-generated code evaluates each by-value actual and stores the result into the payload. At execution time, the outlined routine loads values from the payload at known offsets.
+Each site/disposition pair has a statically known payload type for by-value actuals. Encounter-time lowering writes directly into that typed payload. The thunk casts the erased payload pointer back to its site-local type and consumes it directly. No runtime schema walking or dynamic field decoding is involved.
 
-- **Fixed layout per site.** Field count, types, sizes, and offsets are compile-time constants.
 - **Owned storage.** The payload is part of the deferred assertion record. It does not alias the originating process frame.
 - **Evaluated eagerly.** All by-value fields are fully evaluated at encounter time. No deferred expression evaluation occurs.
 
 ### Reference Bindings
 
-For `ref` and `const ref` formals, the deferred action observes the variable's value at execution time. The execution context for reference resolution depends on where the referenced variable lives:
-
-| Variable location    | Resolution at execution time                   |
-| -------------------- | ---------------------------------------------- |
-| Module-scoped signal | Instance pointer + specialization-local offset |
-| Design-global        | Design state pointer + global offset           |
-
-Process-local (automatic) variables cannot appear as `ref` actuals in deferred assertion actions -- the LRM prohibits this, and slang enforces it at parse time.
+`ref` and `const ref` actuals are bound to live storage at encounter time and used directly at deferred execution time, observing the current value of the underlying variable in the Reactive/Postponed region. There is no late symbolic re-resolution. Legal ref-actual shapes follow the general rules of 13.5.2; deferred assertions additionally reject automatic or dynamic variables as `ref`/`const ref` actuals (LRM 16.4). `const ref` uses the same binding model as `ref` -- only mutability differs.
 
 ### Typed Payload and Erased Thunk Model
+
+**By-value arguments use typed copied payload; `ref`/`const ref` arguments use typed bound live storage.**
 
 The key insight that makes this architecture static and cheap: each site/disposition pair has its own payload shape, and the runtime never interprets payload contents.
 
 **Each site/disposition has a fixed payload shape.** A single assertion site with both pass and fail actions may have two different payload shapes -- the pass thunk and fail thunk capture different arguments. The layout is fully determined at compile time per (site, disposition) pair.
 
-**Execution crosses an erased ABI boundary.** The runtime stores a uniform record: site ID, disposition, and a pointer to the payload region. It does not know the payload's internal structure. All thunks share a single erased entry signature -- context plus opaque payload pointer.
+**Execution crosses an erased ABI boundary.** The runtime stores a uniform record: site ID, disposition, payload pointer, and any bound ref pointers. It does not know the payload's internal structure. All thunks share a single erased entry signature.
 
-**The site thunk reinterprets the payload as its own static shape.** Inside the thunk, the opaque payload pointer is treated as a pointer to the site-specific layout. Fields are accessed at compile-time-known offsets. The thunk then performs the final subroutine call with arguments wired from the payload (by-value) and the execution context (by-ref).
+**The site thunk reinterprets the payload as its own typed shape.** Inside the thunk, the opaque payload pointer is cast to the site-specific payload type. The thunk then performs the final subroutine call with arguments wired from the typed payload (by-value) and the stored ref bindings (by-ref).
 
 ```
 -- Compile time --
-site 7 / fail payload shape:  { x: int32, msg_id: int8 }
-site 7 / pass payload shape:  { x: int32 }
+site 7 / fail payload type:  { x: int32, msg_id: int8 }
+site 7 / fail ref bindings:  { r0: int32* }
 
 -- Runtime record --
-{ site_id: 7, disposition: fail, payload_ptr: ... }
+{ site_id: 7, disposition: fail, payload_ptr: ..., ref_bindings: [r0] }
 
 -- Dispatch --
 thunk = site_table[record.site_id].thunk[record.disposition]
-thunk(ctx, record.payload_ptr)
+thunk(record.payload_ptr, record.ref_bindings)
 
 -- Inside site 7 / fail thunk --
-p = payload_ptr as site_7_fail_layout*
-call fail_fn(p.x, p.msg_id, ctx.ref_bindings...)
+p = payload_ptr as site_7_fail_payload*
+call fail_fn(p.x, p.msg_id, *record.ref_bindings.r0)
 ```
 
 This means:
@@ -193,15 +187,15 @@ The architecture separates assertion-specific semantics from the execution subst
 
 - Deciding what disposition applies (pass vs fail, based on condition evaluation)
 - Deciding what to capture (by-value actuals evaluated at encounter time)
-- Deciding what execution context the action needs (reference bindings, module scope)
-- Assembling the deferred record with captured payload and site identity
+- Deciding what ref bindings to store (which formals bind to which live variables)
+- Assembling the deferred record with captured payload, ref bindings, and site identity
 
 **Execution substrate** (runtime layer):
 
 - Storing pending deferred records
 - Managing per-process flush/invalidation state
 - Scheduling maturity at the correct region boundary
-- Invoking pre-compiled routines with the appropriate context
+- Invoking pre-compiled routines with stored payload and ref bindings
 
 The substrate is potentially shareable with other deferred-execution mechanisms (e.g., concurrent assertion pass actions, which also execute in the Reactive region). The assertion-specific semantics are not -- they encode LRM rules about what is evaluated when and what access model the deferred action has.
 
@@ -214,7 +208,7 @@ The LRM defines observable behavior: when assertion results are determined, when
 - **Flush invalidation** may use generation counters, lazy pruning, or eager deletion -- as long as invalidated assertions never execute their actions.
 - **Payload storage** may use inline buffers, arena allocation, or any allocation strategy -- as long as captured values are correct and outlive the deferred record.
 - **Maturity scheduling** may batch, reorder, or coalesce within a single maturity boundary -- as long as all mature actions execute before the next region begins.
-- **Reference resolution** may cache, re-derive, or pre-bind pointers -- as long as the observed value matches what a direct read would produce at execution time.
+- **Reference bindings** may be stored in any implementation-defined typed form, as long as execution observes the current value of the originally bound underlying variable and deferred legality restrictions are enforced.
 - **Region surrogate** -- before full Observed/Reactive region support, a settle-boundary surrogate may combine maturity and execution into a single step, as long as the observable ordering is preserved.
 
 Preserve LRM-observable semantics, allow internal optimization.

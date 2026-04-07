@@ -17,7 +17,7 @@ Scope: `assert`, `assume`, `cover property`, `cover sequence`, `expect` are simu
   - [x] A2a -- Deferred `#0` capture path for assert/assume/cover (no-action subset)
   - [x] A2b -- Per-process deferred assertion pending-report state, lazy flush invalidation, settle-boundary maturity/execution
   - [x] A2e -- Deferred `#0` user-subroutine action thunks with by-value capture
-  - [ ] A2f -- Deferred `#0` live ref/const-ref thunk bindings
+  - [x] A2f -- Deferred `#0` live ref/const-ref thunk bindings
   - [ ] A2g -- Deferred `#0` display-like system-task action thunks
   - [ ] A2c -- Deferred `final` assertion path
   - [ ] A2d -- Deferred-final flush hook (after final blocks complete)
@@ -56,14 +56,6 @@ Scope: `assert`, `assume`, `cover property`, `cover sequence`, `expect` are simu
 - [ ] A8 -- Assertion control tasks
 
 - [ ] A9 -- Assertion usage profiling and staged enablement
-
-## A2e: Deferred `#0` user-subroutine action thunks with by-value capture
-
-Outlined deferred thunks for user subroutine calls in `assert #0 (...) else fail_call;` and `cover #0 (...) pass_call;`. By-value actuals are captured into a typed payload at encounter time and the thunk is dispatched at drain time via the site metadata table. Covers: thunk plan extraction from validated call shape, synthetic MIR function shell per site, typed payload packing via LLVM struct type in codegen, runtime thunk dispatch with instance recovery and payload size validation, DeferredAssertionExecContext carrying RuntimeInstance\* for module binding. Explicit exclusions: no ref/const-ref live bindings (A2f), no display-like system-task actions (A2g), no method-call actions, no managed-type actuals (string, queue, dynamic array).
-
-## A2f: Deferred `#0` live ref/const-ref thunk bindings
-
-By-ref and const-ref actuals in deferred assertion actions are not captured into the payload. Instead, lowering records them as live bindings (DeferredThunkActualBinding::kLiveRef with SignalRef). At drain time, the thunk codegen re-materializes them from the DeferredAssertionExecContext -- module-scoped signals via instance pointer + specialization-local offset, design-global objects via design state + global offset. Scope/binding coherence must be enforced: module-scoped ref targets require a valid instance context, and design-global sites with instance-scoped ref targets must be rejected during lowering. First-cut scope: signal-backed refs only; non-signal lvalue targets (unpacked struct fields, array elements) are not yet supported. This is separate from A2e because it adds a distinct binding and runtime-addressing model beyond by-value capture.
 
 ## A2g: Deferred `#0` display-like system-task action thunks
 

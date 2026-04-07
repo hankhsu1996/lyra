@@ -87,9 +87,11 @@ auto LowerUserCall(
     const auto* formal = formal_args[i];
     const slang::ast::Expression* to_lower = arg_expr;
 
-    // For output/inout params, slang wraps in Assignment - extract left side
+    // For output/inout/ref params, slang wraps in Assignment - extract left
+    // side
     if (formal->direction == slang::ast::ArgumentDirection::Out ||
-        formal->direction == slang::ast::ArgumentDirection::InOut) {
+        formal->direction == slang::ast::ArgumentDirection::InOut ||
+        formal->direction == slang::ast::ArgumentDirection::Ref) {
       if (arg_expr->kind == slang::ast::ExpressionKind::Assignment) {
         const auto& assign = arg_expr->as<slang::ast::AssignmentExpression>();
         to_lower = &assign.left();

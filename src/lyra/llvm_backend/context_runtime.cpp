@@ -85,13 +85,15 @@ auto Context::GetLyraEnqueueObservedDeferredAssertion() -> llvm::Function* {
     // void LyraEnqueueObservedDeferredAssertion(
     //     void* engine, uint32_t process_id, uint32_t instance_id,
     //     uint32_t site_id, uint8_t disposition,
-    //     const void* payload_ptr, uint32_t payload_size)
+    //     const void* payload_ptr, uint32_t payload_size,
+    //     const DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count)
     auto* void_ty = llvm::Type::getVoidTy(*llvm_context_);
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
     auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
     auto* i8_ty = llvm::Type::getInt8Ty(*llvm_context_);
     auto* fn_type = llvm::FunctionType::get(
-        void_ty, {ptr_ty, i32_ty, i32_ty, i32_ty, i8_ty, ptr_ty, i32_ty},
+        void_ty,
+        {ptr_ty, i32_ty, i32_ty, i32_ty, i8_ty, ptr_ty, i32_ty, ptr_ty, i32_ty},
         false);
     lyra_enqueue_observed_deferred_assertion_ = llvm::Function::Create(
         fn_type, llvm::Function::ExternalLinkage,

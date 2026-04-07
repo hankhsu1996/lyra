@@ -1529,6 +1529,14 @@ auto LowerCall(
         });
         break;
       }
+      case mir::PassingKind::kRef:
+      case mir::PassingKind::kConstRef:
+        return std::unexpected(
+            Diagnostic::Unsupported(
+                expr.span,
+                "ref/const ref parameters not yet supported in non-deferred "
+                "calls",
+                UnsupportedCategory::kFeature));
     }
   }
 

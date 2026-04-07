@@ -58,9 +58,11 @@ struct Process {
 };
 
 enum class PassingKind {
-  kValue,  // Input by value
-  kOut,    // Output only (callee writes to caller's storage)
-  kInOut,  // Bidirectional (callee reads and may modify)
+  kValue,     // Input by value
+  kOut,       // Output only (callee writes to caller's storage)
+  kInOut,     // Bidirectional (callee reads and may modify)
+  kRef,       // Reference (alias to caller's variable)
+  kConstRef,  // Const reference (read-only alias to caller's variable)
 };
 
 // Return policy - how function returns are handled at the ABI level.

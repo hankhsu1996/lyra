@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/common/deferred_assertion_abi.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/mutation_event.hpp"
@@ -928,7 +929,8 @@ class Engine {
       const struct LyraDeferredAssertionSiteMeta* sites, uint32_t count);
   void EnqueueDeferredAssertion(
       uint32_t process_id, uint32_t instance_id, uint32_t site_id,
-      uint8_t disposition, const void* payload_ptr, uint32_t payload_size);
+      uint8_t disposition, const void* payload_ptr, uint32_t payload_size,
+      const DeferredAssertionRefBindingAbi* ref_ptr, uint32_t ref_count);
   void FlushDeferredAssertionsForProcess(ProcessId pid);
   void MatureAndExecuteObservedDeferredAssertions();
 
@@ -1611,6 +1613,10 @@ class Engine {
     uint32_t instance_id = 0;
     uint32_t payload_size = 0;
     SmallByteBuffer payload;
+    // ref_bindings[i] corresponds 1:1 to the ith kLiveRef entry in the
+    // site's DeferredThunkAction::actual_bindings. Runtime preserves order
+    // and never interprets entries.
+    std::vector<DeferredAssertionRefBindingAbi> ref_bindings;
   };
   struct ProcessDeferredAssertionState {
     uint32_t flush_generation = 0;

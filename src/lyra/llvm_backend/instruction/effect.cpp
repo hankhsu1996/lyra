@@ -30,6 +30,7 @@
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
+#include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/place_type.hpp"
@@ -681,15 +682,81 @@ auto LowerEffectOp(
                 builder.CreateStore(*val, field_ptr);
               }
               payload_ptr = alloca;
-              auto& data_layout = context.GetModule().getDataLayout();
+              const auto& data_layout = context.GetModule().getDataLayout();
               payload_size_val = llvm::ConstantInt::get(
                   i32_ty, data_layout.getTypeAllocSize(payload_struct_ty));
+            }
+
+            // A2f: build ref binding array from site action + target
+            // signature. No parallel ref plan -- derive everything from
+            // the canonical actual_bindings on the site action.
+            llvm::Value* ref_array_ptr = llvm::ConstantPointerNull::get(ptr_ty);
+            llvm::Value* ref_count_val = llvm::ConstantInt::get(i32_ty, 0);
+
+            const auto* site_info =
+                context.GetDeferredAssertionSiteInfo(enq.site_id);
+            const mir::DeferredThunkAction* action = nullptr;
+            if (site_info != nullptr) {
+              if (enq.disposition ==
+                      mir::DeferredAssertionDisposition::kPassAction &&
+                  site_info->pass_action.has_value()) {
+                action = &*site_info->pass_action;
+              } else if (
+                  enq.disposition ==
+                      mir::DeferredAssertionDisposition::kFailAction &&
+                  site_info->fail_action.has_value()) {
+                action = &*site_info->fail_action;
+              }
+            }
+
+            if (action != nullptr) {
+              // Count kLiveRef bindings.
+              uint32_t ref_count = 0;
+              for (const auto& b : action->actual_bindings) {
+                if (b.source ==
+                    mir::DeferredThunkActualBinding::Source::kLiveRef) {
+                  ++ref_count;
+                }
+              }
+
+              if (ref_count > 0) {
+                // DeferredAssertionRefBindingAbi is { void* addr }.
+                // At the LLVM level, this is an array of pointers.
+                auto* array_ty = llvm::ArrayType::get(ptr_ty, ref_count);
+                auto* ref_alloca =
+                    builder.CreateAlloca(array_ty, nullptr, "deferred.refs");
+
+                uint32_t ri = 0;
+                for (const auto& binding : action->actual_bindings) {
+                  if (binding.source !=
+                      mir::DeferredThunkActualBinding::Source::kLiveRef) {
+                    continue;
+                  }
+
+                  auto place_ptr = context.GetPlacePointer(binding.ref_place);
+                  if (!place_ptr) return std::unexpected(place_ptr.error());
+
+                  auto* slot_ptr = builder.CreateGEP(
+                      array_ty, ref_alloca,
+                      {llvm::ConstantInt::get(i32_ty, 0),
+                       llvm::ConstantInt::get(i32_ty, ri)});
+                  builder.CreateStore(*place_ptr, slot_ptr);
+                  ++ri;
+                }
+
+                ref_array_ptr = builder.CreateGEP(
+                    array_ty, ref_alloca,
+                    {llvm::ConstantInt::get(i32_ty, 0),
+                     llvm::ConstantInt::get(i32_ty, 0)});
+                ref_count_val = llvm::ConstantInt::get(i32_ty, ref_count);
+              }
             }
 
             builder.CreateCall(
                 context.GetLyraEnqueueObservedDeferredAssertion(),
                 {engine_ptr, mode.decision_owner_id, instance_id_val, site_val,
-                 disp_val, payload_ptr, payload_size_val});
+                 disp_val, payload_ptr, payload_size_val, ref_array_ptr,
+                 ref_count_val});
             return {};
           },
       },

@@ -1146,10 +1146,15 @@ auto CompileDesignProcesses(const LoweringInput& input)
     RegisterMonitorInfo(*context, *input.mir_arena, proc_id);
   }
 
-  // Phase 2b: Register deferred assertion thunk metadata for LLVM emission.
-  // Thunk metadata lives in site info; register by thunk FunctionId so
-  // DefineMirFunction can look it up during body compilation.
-  for (const auto& site : input.design->deferred_assertion_sites) {
+  // Phase 2b: Register deferred assertion site info and thunk metadata.
+  // Site info is registered by site ID for enqueue codegen to derive
+  // ref binding metadata. Thunk metadata is registered by thunk FunctionId
+  // so DefineMirFunction can look it up during body compilation.
+  for (uint32_t si = 0; si < input.design->deferred_assertion_sites.size();
+       ++si) {
+    const auto& site = input.design->deferred_assertion_sites[si];
+    context->RegisterDeferredAssertionSiteInfo(
+        mir::DeferredAssertionSiteId{si}, &site);
     if (site.pass_action.has_value()) {
       context->RegisterDeferredThunkAction(
           site.pass_action->thunk, &*site.pass_action);

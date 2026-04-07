@@ -794,6 +794,32 @@ auto Context::GetDeferredThunkAction(mir::FunctionId thunk_id) const
   return it->second;
 }
 
+void Context::RegisterDeferredAssertionSiteInfo(
+    mir::DeferredAssertionSiteId site_id,
+    const mir::DeferredAssertionSiteInfo* info) {
+  if (info == nullptr) {
+    throw common::InternalError(
+        "RegisterDeferredAssertionSiteInfo",
+        std::format("null info for site {}", site_id.Index()));
+  }
+  auto [it, inserted] =
+      deferred_assertion_sites_.emplace(site_id.Index(), info);
+  if (!inserted) {
+    throw common::InternalError(
+        "RegisterDeferredAssertionSiteInfo",
+        std::format("duplicate registration for site {}", site_id.Index()));
+  }
+}
+
+auto Context::GetDeferredAssertionSiteInfo(mir::DeferredAssertionSiteId site_id)
+    const -> const mir::DeferredAssertionSiteInfo* {
+  auto it = deferred_assertion_sites_.find(site_id.Index());
+  if (it == deferred_assertion_sites_.end()) {
+    return nullptr;
+  }
+  return it->second;
+}
+
 auto Context::BuildUserFunctionType(
     const mir::FunctionSignature& sig, bool is_module_scoped,
     bool accepts_decision_owner) -> Result<llvm::FunctionType*> {
@@ -832,7 +858,9 @@ auto Context::BuildUserFunctionType(
   // pointer-to-destination directly.
   for (const auto& param : sig.params) {
     if (param.kind == mir::PassingKind::kOut ||
-        param.kind == mir::PassingKind::kInOut) {
+        param.kind == mir::PassingKind::kInOut ||
+        param.kind == mir::PassingKind::kRef ||
+        param.kind == mir::PassingKind::kConstRef) {
       param_types.push_back(ptr_ty);
     } else {
       auto abi_info = ClassifyCallableValueAbi(

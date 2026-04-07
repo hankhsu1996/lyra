@@ -9,7 +9,7 @@
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/mir/effect.hpp"
-#include "lyra/mir/signal_ref.hpp"
+#include "lyra/mir/handle.hpp"
 
 namespace lyra::mir {
 
@@ -41,6 +41,8 @@ struct DeferredThunkDisplayTaskCallee {};
 // EnqueueDeferredAssertionEffect and DeferredThunkAction).
 
 // Describes how one actual argument is sourced inside the thunk body.
+// Constness (ref vs const ref) is derived from the formal's PassingKind
+// in the target signature, not duplicated here.
 struct DeferredThunkActualBinding {
   enum class Source : uint8_t {
     kPayloadField,
@@ -52,10 +54,10 @@ struct DeferredThunkActualBinding {
   // Valid when source == kPayloadField: index into CapturePayloadDesc.
   uint32_t payload_field_index = 0;
 
-  // Valid when source == kLiveRef: only signal-backed refs are supported
-  // in the first cut. Non-signal refs (e.g., refs to unpacked struct
-  // fields, array elements) are rejected during lowering.
-  std::optional<SignalRef> live_ref;
+  // Valid when source == kLiveRef: the canonical place representing the
+  // bound live storage. Deferred legality ensures this is non-automatic,
+  // non-dynamic storage that remains valid at deferred execution time.
+  PlaceId ref_place{};
 };
 
 // Callee descriptor variant. Structurally prevents misuse: user-subroutine
