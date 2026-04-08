@@ -27,8 +27,8 @@ enum class DeferredAssertionKind : uint8_t {
 // ---------------------------------------------------------------------------
 // Semantic deferred assertion action types.
 // These model the LRM "pending assertion report" concept without ABI details.
-// Realization (thunk IDs, payload layout, ref-slot numbering) is separate;
-// see deferred_assertion_realization.hpp.
+// Backend derivation (thunk emission, payload layout, ref-slot numbering)
+// is handled by the LLVM backend from these semantic types.
 // ---------------------------------------------------------------------------
 
 // Semantic passing mode for a deferred action actual argument.
@@ -63,26 +63,11 @@ struct DeferredCoverHitAction {
 using DeferredAssertionAction =
     std::variant<DeferredUserCallAction, DeferredCoverHitAction>;
 
-// Strong key type for looking up realization objects by (site, disposition).
-// Used in MIR storage and LLVM backend maps.
-struct DeferredAssertionActionKey {
-  DeferredAssertionSiteId site_id;
-  DeferredAssertionDisposition disposition;
-
-  auto operator==(const DeferredAssertionActionKey&) const -> bool = default;
-
-  template <typename H>
-  friend auto AbslHashValue(H h, const DeferredAssertionActionKey& k) -> H {
-    return H::combine(
-        std::move(h), k.site_id.value, static_cast<uint8_t>(k.disposition));
-  }
-};
-
 // Per-site metadata for a deferred immediate assertion statement.
 // Canonical schema: one entry per deferred assertion site in the design,
 // indexed by DeferredAssertionSiteId. Semantic-only: no thunk IDs,
-// payload layout, or ref-slot numbering. Realization details are in a
-// separate DeferredUserCallRealization registry.
+// payload layout, or ref-slot numbering. Backend derives all lowering
+// details from the semantic action data.
 //
 // Invariants (enforced at allocation time):
 // - kAssert/kAssume: pass_action must not hold DeferredCoverHitAction

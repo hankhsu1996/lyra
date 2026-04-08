@@ -2062,8 +2062,6 @@ auto DeclareMirFunction(
   // Regular functions use signature-derived types.
   bool is_module_scoped = context.IsModuleScopedFunction(func_id);
   bool is_observer = mir::IsObserverProgram(func.runtime_kind);
-  bool is_deferred_thunk =
-      mir::UsesDeferredAssertionThunkAbi(func.runtime_kind);
 
   if (is_observer) {
     auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
@@ -2077,14 +2075,6 @@ auto DeclareMirFunction(
       fn_type =
           llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty, ptr_ty}, false);
     }
-  } else if (is_deferred_thunk) {
-    // Deferred assertion thunk:
-    // (design*, engine*, exec_ctx*, payload*, ref_bindings*, ref_count)
-    auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
-    auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
-    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-    fn_type = llvm::FunctionType::get(
-        void_ty, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, false);
   } else {
     auto fn_type_or_err = context.BuildUserFunctionType(
         func.signature, is_module_scoped,
@@ -2854,9 +2844,10 @@ auto EmitMonitorSetupEpilogue(
 //
 // First cut: user subroutine calls with all by-value actuals only.
 auto DefineDeferredAssertionThunk(
-    Context& context, [[maybe_unused]] mir::FunctionId func_id,
-    llvm::Function* llvm_func, const mir::DeferredUserCallRealization& plan)
-    -> Result<void> {
+    Context& context, llvm::Function* llvm_func,
+    const mir::DeferredUserCallAction& action) -> Result<void> {
+  auto plan = DeriveDeferredCallPlan(action);
+
   auto& llvm_ctx = context.GetLlvmContext();
   auto& builder = context.GetBuilder();
   const auto& types = context.GetTypeArena();
@@ -2887,26 +2878,9 @@ auto DefineDeferredAssertionThunk(
   auto* ref_count_arg = llvm_func->getArg(5);
   ref_count_arg->setName("ref_count");
 
-  // Validate payload field count matches kPayloadField bindings.
-  uint32_t expected_payload_fields = 0;
-  uint32_t expected_live_refs = 0;
-  for (const auto& p : plan.actual_plan) {
-    if (p.source == mir::DeferredActualPlan::Source::kPayloadField) {
-      ++expected_payload_fields;
-    } else if (p.source == mir::DeferredActualPlan::Source::kLiveRef) {
-      ++expected_live_refs;
-    }
-  }
-  if (plan.payload.field_types.size() != expected_payload_fields) {
-    throw common::InternalError(
-        "DefineDeferredAssertionThunk",
-        std::format(
-            "payload field count {} != expected {}",
-            plan.payload.field_types.size(), expected_payload_fields));
-  }
-
+  // Decode payload fields.
   auto* payload_struct_ty = BuildDeferredPayloadStructType(
-      llvm_ctx, plan.payload, types, force_two_state);
+      llvm_ctx, plan.payload.field_types, types, force_two_state);
 
   std::vector<llvm::Value*> payload_values;
   payload_values.reserve(plan.payload.field_types.size());
@@ -2918,7 +2892,7 @@ auto DefineDeferredAssertionThunk(
     payload_values.push_back(field_val);
   }
 
-  // Resolve target callee LLVM function.
+  // Resolve target callee.
   llvm::Function* target_fn = context.GetUserFunction(plan.callee);
   if (target_fn == nullptr) {
     throw common::InternalError(
@@ -2929,12 +2903,11 @@ auto DefineDeferredAssertionThunk(
   const auto& target_func = context.GetMirArena()[plan.callee];
   bool target_is_module_scoped = context.IsModuleScopedFunction(plan.callee);
 
-  // Validate binding count matches formal count.
-  if (plan.actual_plan.size() != target_func.signature.params.size()) {
+  if (plan.actuals.size() != target_func.signature.params.size()) {
     throw common::InternalError(
         "DefineDeferredAssertionThunk",
         std::format(
-            "binding count {} != formal count {}", plan.actual_plan.size(),
+            "binding count {} != formal count {}", plan.actuals.size(),
             target_func.signature.params.size()));
   }
 
@@ -2975,9 +2948,9 @@ auto DefineDeferredAssertionThunk(
     call_args.push_back(llvm::ConstantInt::get(i32_ty, 0));
   }
 
-  // Validate runtime ref_count matches expected kLiveRef count.
+  // Validate runtime ref_count.
   {
-    auto* expected_val = llvm::ConstantInt::get(i32_ty, expected_live_refs);
+    auto* expected_val = llvm::ConstantInt::get(i32_ty, plan.ref_count);
     auto* mismatch = builder.CreateICmpNE(ref_count_arg, expected_val);
     auto* ok_bb =
         llvm::BasicBlock::Create(llvm_ctx, "thunk.refcount.ok", llvm_func);
@@ -2991,38 +2964,28 @@ auto DefineDeferredAssertionThunk(
     builder.SetInsertPoint(ok_bb);
   }
 
-  // Append actuals in formal order.
-  uint32_t live_ref_index = 0;
-  for (size_t i = 0; i < plan.actual_plan.size(); ++i) {
-    const auto& actual = plan.actual_plan[i];
+  // Assemble call args in formal order using derived plan.
+  for (size_t i = 0; i < plan.actuals.size(); ++i) {
+    const auto& actual = plan.actuals[i];
     const auto& formal = target_func.signature.params[i];
 
-    switch (actual.source) {
-      case mir::DeferredActualPlan::Source::kPayloadField: {
-        if (actual.payload_field_index >=
-            static_cast<uint32_t>(payload_values.size())) {
-          throw common::InternalError(
-              "DefineDeferredAssertionThunk",
-              std::format(
-                  "payload_field_index {} out of range (payload has {} "
-                  "fields)",
-                  actual.payload_field_index, payload_values.size()));
-        }
-        call_args.push_back(payload_values[actual.payload_field_index]);
+    switch (actual.kind) {
+      case DeferredBindingKind::kPayloadField:
+        call_args.push_back(payload_values[actual.payload_index]);
         break;
-      }
-      case mir::DeferredActualPlan::Source::kLiveRef: {
+
+      case DeferredBindingKind::kLiveRef:
+      case DeferredBindingKind::kConstLiveRef: {
         auto* raw_ptr = builder.CreateLoad(
             ptr_ty,
             builder.CreateGEP(
                 ptr_ty, ref_bindings_arg,
-                llvm::ConstantInt::get(i32_ty, live_ref_index)),
+                llvm::ConstantInt::get(i32_ty, actual.ref_index)),
             "ref_addr");
 
         auto* ref_actual = lowering::mir_to_llvm::FormRefCallActual(
             builder, raw_ptr, formal.kind);
         call_args.push_back(ref_actual);
-        ++live_ref_index;
         break;
       }
     }
@@ -3032,6 +2995,66 @@ auto DefineDeferredAssertionThunk(
   builder.CreateRetVoid();
 
   return {};
+}
+
+auto CompileDeferredAssertionArtifacts(
+    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites)
+    -> Result<std::vector<DeferredSiteCompiledArtifact>> {
+  std::vector<DeferredSiteCompiledArtifact> artifacts(sites.size());
+
+  auto& llvm_ctx = context.GetLlvmContext();
+  auto& module = context.GetModule();
+  const auto& data_layout = module.getDataLayout();
+  const auto& types = context.GetTypeArena();
+  bool force_two_state = context.IsForceTwoState();
+  auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
+  auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+  auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+  // Thunk ABI: (design*, engine*, exec_ctx*, payload*, ref_bindings*,
+  // ref_count)
+  auto* fn_type = llvm::FunctionType::get(
+      void_ty, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, false);
+
+  // Single pipeline per site: declare, define, compute payload size.
+  auto compile_thunk = [&](uint32_t si, const char* suffix,
+                           const mir::DeferredUserCallAction& action)
+      -> Result<std::pair<llvm::Function*, uint32_t>> {
+    auto name = std::format("__lyra_deferred_thunk_s{}_{}", si, suffix);
+    auto* fn = llvm::Function::Create(
+        fn_type, llvm::Function::InternalLinkage, name, &module);
+
+    auto result = DefineDeferredAssertionThunk(context, fn, action);
+    if (!result) return std::unexpected(result.error());
+
+    auto plan = DeriveDeferredCallPlan(action);
+    auto* payload_ty = BuildDeferredPayloadStructType(
+        llvm_ctx, plan.payload.field_types, types, force_two_state);
+    auto payload_size =
+        static_cast<uint32_t>(data_layout.getTypeAllocSize(payload_ty));
+
+    return std::pair{fn, payload_size};
+  };
+
+  for (uint32_t si = 0; si < sites.size(); ++si) {
+    const auto& site = sites[si];
+
+    if (const auto* pass_action = GetDeferredPassUserCallAction(site)) {
+      auto result = compile_thunk(si, "pass", *pass_action);
+      if (!result) return std::unexpected(result.error());
+      artifacts[si].pass_thunk = result->first;
+      artifacts[si].pass_payload_size = result->second;
+    }
+
+    if (const auto* fail_action = GetDeferredFailUserCallAction(site)) {
+      auto result = compile_thunk(si, "fail", *fail_action);
+      if (!result) return std::unexpected(result.error());
+      artifacts[si].fail_thunk = result->first;
+      artifacts[si].fail_payload_size = result->second;
+    }
+  }
+
+  return artifacts;
 }
 
 auto DefineMirFunction(
@@ -3051,19 +3074,6 @@ auto DefineMirFunction(
           UnsupportedCategory::kFeature));
     }
     return DefineMonitorCheckProgram(context, func_id, llvm_func, *layout);
-  }
-
-  // Deferred assertion thunk: dedicated LLVM-only definition path.
-  // The MIR function body is empty; the real body is emitted here using
-  // thunk metadata from the site registry.
-  if (mir::UsesDeferredAssertionThunkAbi(func.runtime_kind)) {
-    const auto* plan = context.GetDeferredRealizationByThunk(func_id);
-    if (plan == nullptr) {
-      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          func.origin, "deferred assertion thunk missing realization",
-          UnsupportedCategory::kFeature));
-    }
-    return DefineDeferredAssertionThunk(context, func_id, llvm_func, *plan);
   }
 
   auto& llvm_ctx = context.GetLlvmContext();

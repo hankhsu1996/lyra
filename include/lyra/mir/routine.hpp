@@ -77,28 +77,20 @@ enum class ReturnPolicy {
 // kNone: regular function (signature-derived ABI).
 // kStrobe / kMonitorSetup / kMonitorCheck: observer programs that always use
 //   the observer ABI (DesignState*, Engine*, ObserverContext*[, prev_buf*]).
-// kDeferredAssertionThunk: deferred assertion action thunk using the thunk ABI
-//   (DesignState*, Engine*, DeferredAssertionExecContext*, payload*).
 // IsObserverProgram() is the canonical predicate for the observer-ABI class.
+// Deferred assertion thunks are backend-only artifacts (not MIR functions).
 enum class RuntimeProgramKind {
   kNone,
   kStrobe,
   kMonitorCheck,
   kMonitorSetup,
-  kDeferredAssertionThunk,
 };
 
 // True for runtime program kinds that use the observer program ABI.
-// Does NOT include kDeferredAssertionThunk (different ABI).
 inline auto IsObserverProgram(RuntimeProgramKind kind) -> bool {
   return kind == RuntimeProgramKind::kStrobe ||
          kind == RuntimeProgramKind::kMonitorSetup ||
          kind == RuntimeProgramKind::kMonitorCheck;
-}
-
-// True for runtime program kinds that use the deferred assertion thunk ABI.
-inline auto UsesDeferredAssertionThunkAbi(RuntimeProgramKind kind) -> bool {
-  return kind == RuntimeProgramKind::kDeferredAssertionThunk;
 }
 
 // ABI contract: what hidden context a callable accepts.

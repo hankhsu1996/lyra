@@ -145,8 +145,6 @@ auto LowerFunctionBody(
       .cover_site_registry = decl_view.cover_site_registry,
       .deferred_assertion_site_registry =
           decl_view.deferred_assertion_site_registry,
-      .deferred_assertion_realizations =
-          decl_view.deferred_assertion_realizations,
       .external_refs = decl_view.external_refs,
       .provisional_targets = decl_view.provisional_targets,
       .external_ref_cache = {},
@@ -283,8 +281,6 @@ auto LowerTaskBody(
       .cover_site_registry = decl_view.cover_site_registry,
       .deferred_assertion_site_registry =
           decl_view.deferred_assertion_site_registry,
-      .deferred_assertion_realizations =
-          decl_view.deferred_assertion_realizations,
       .external_ref_cache = {},
   };
 

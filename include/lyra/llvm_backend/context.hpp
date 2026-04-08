@@ -24,7 +24,6 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/construction_input.hpp"
-#include "lyra/mir/deferred_assertion_realization.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
@@ -982,18 +981,6 @@ class Context {
   [[nodiscard]] auto GetMonitorSetupInfo(mir::FunctionId setup_program) const
       -> const MonitorSetupInfo*;
 
-  // Deferred assertion realization metadata (codegen artifact).
-  // Registered during design-wide lowering. Two lookup paths:
-  //   by thunk FunctionId (for thunk body emission)
-  //   by (site_id, disposition) key (for enqueue codegen, metadata emission)
-  void RegisterDeferredRealization(
-      mir::DeferredAssertionActionKey key,
-      const mir::DeferredUserCallRealization* realization);
-  [[nodiscard]] auto GetDeferredRealizationByThunk(mir::FunctionId thunk_id)
-      const -> const mir::DeferredUserCallRealization*;
-  [[nodiscard]] auto GetDeferredRealization(mir::DeferredAssertionActionKey key)
-      const -> const mir::DeferredUserCallRealization*;
-
   // Deferred assertion site info (borrowed pointer into design sites).
   // Keyed by site ID. Used by enqueue codegen to derive ref binding
   // metadata from the site action + target signature in lockstep.
@@ -1308,13 +1295,6 @@ class Context {
   // Just stores check_program reference; layout is looked up from
   // monitor_layouts_.
   absl::flat_hash_map<mir::FunctionId, MonitorSetupInfo> monitor_setup_infos_;
-
-  // Deferred assertion realization metadata (borrowed pointers into design).
-  absl::flat_hash_map<mir::FunctionId, const mir::DeferredUserCallRealization*>
-      deferred_realizations_by_thunk_;
-  absl::flat_hash_map<
-      mir::DeferredAssertionActionKey, const mir::DeferredUserCallRealization*>
-      deferred_realizations_by_key_;
 
   // Deferred assertion site info (borrowed pointers into design sites).
   absl::flat_hash_map<uint32_t, const mir::DeferredAssertionSiteInfo*>

@@ -1884,9 +1884,18 @@ struct ConstructorEmissionResult {
 // Emit a global constant array of LyraDeferredAssertionSiteMeta structs.
 // Returns the global pointer (or nullptr if no deferred sites).
 auto EmitDeferredAssertionSiteMetaGlobal(
-    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites)
+    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites,
+    std::span<const DeferredSiteCompiledArtifact> artifacts)
     -> llvm::Constant* {
   if (sites.empty()) return nullptr;
+
+  if (artifacts.size() != sites.size()) {
+    throw common::InternalError(
+        "EmitDeferredAssertionSiteMetaGlobal",
+        std::format(
+            "artifact/site size mismatch: {} artifacts for {} sites",
+            artifacts.size(), sites.size()));
+  }
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
@@ -1908,7 +1917,7 @@ auto EmitDeferredAssertionSiteMetaGlobal(
 
   for (uint32_t si = 0; si < sites.size(); ++si) {
     const auto& site = sites[si];
-    auto site_id = mir::DeferredAssertionSiteId{si};
+    const auto& artifact = artifacts[si];
     auto kind_val = static_cast<uint8_t>(site.kind);
 
     // Derive cover_site_id from semantic action variant.
@@ -1941,45 +1950,52 @@ auto EmitDeferredAssertionSiteMetaGlobal(
       }
     }
 
-    // Resolve thunk function pointers and payload sizes from realizations.
-    llvm::Constant* pass_thunk_ptr = llvm::ConstantPointerNull::get(ptr_ty);
-    llvm::Constant* fail_thunk_ptr = llvm::ConstantPointerNull::get(ptr_ty);
-    uint32_t pass_payload_size = 0;
-    uint32_t fail_payload_size = 0;
+    // Validate semantic/artifact lockstep: compiled artifacts must match
+    // semantic site data exactly.
+    const bool need_pass_thunk = GetDeferredPassUserCallAction(site) != nullptr;
+    const bool need_fail_thunk = GetDeferredFailUserCallAction(site) != nullptr;
 
-    const auto* pass_r = context.GetDeferredRealization(
-        mir::DeferredAssertionActionKey{
-            .site_id = site_id,
-            .disposition = mir::DeferredAssertionDisposition::kPassAction,
-        });
-    if (pass_r != nullptr) {
-      auto* fn = context.GetUserFunction(pass_r->thunk);
-      if (fn != nullptr) {
-        pass_thunk_ptr = fn;
-      }
-      auto* payload_ty = BuildDeferredPayloadStructType(
-          llvm_ctx, pass_r->payload, context.GetTypeArena(),
-          context.IsForceTwoState());
-      pass_payload_size = static_cast<uint32_t>(
-          context.GetModule().getDataLayout().getTypeAllocSize(payload_ty));
+    if (need_pass_thunk != (artifact.pass_thunk != nullptr)) {
+      throw common::InternalError(
+          "EmitDeferredAssertionSiteMetaGlobal",
+          std::format(
+              "site {} pass artifact mismatch: semantic action {}, "
+              "compiled thunk {}",
+              si, need_pass_thunk, artifact.pass_thunk != nullptr));
+    }
+    if (need_fail_thunk != (artifact.fail_thunk != nullptr)) {
+      throw common::InternalError(
+          "EmitDeferredAssertionSiteMetaGlobal",
+          std::format(
+              "site {} fail artifact mismatch: semantic action {}, "
+              "compiled thunk {}",
+              si, need_fail_thunk, artifact.fail_thunk != nullptr));
+    }
+    if (!need_pass_thunk && artifact.pass_payload_size != 0) {
+      throw common::InternalError(
+          "EmitDeferredAssertionSiteMetaGlobal",
+          std::format(
+              "site {} built-in pass path has non-zero payload size {}", si,
+              artifact.pass_payload_size));
+    }
+    if (!need_fail_thunk && artifact.fail_payload_size != 0) {
+      throw common::InternalError(
+          "EmitDeferredAssertionSiteMetaGlobal",
+          std::format(
+              "site {} built-in fail path has non-zero payload size {}", si,
+              artifact.fail_payload_size));
     }
 
-    const auto* fail_r = context.GetDeferredRealization(
-        mir::DeferredAssertionActionKey{
-            .site_id = site_id,
-            .disposition = mir::DeferredAssertionDisposition::kFailAction,
-        });
-    if (fail_r != nullptr) {
-      auto* fn = context.GetUserFunction(fail_r->thunk);
-      if (fn != nullptr) {
-        fail_thunk_ptr = fn;
-      }
-      auto* payload_ty = BuildDeferredPayloadStructType(
-          llvm_ctx, fail_r->payload, context.GetTypeArena(),
-          context.IsForceTwoState());
-      fail_payload_size = static_cast<uint32_t>(
-          context.GetModule().getDataLayout().getTypeAllocSize(payload_ty));
-    }
+    // Thunk pointers and payload sizes come directly from the compiled
+    // artifact. No re-derivation, no scanning.
+    llvm::Constant* pass_thunk_ptr =
+        artifact.pass_thunk != nullptr
+            ? static_cast<llvm::Constant*>(artifact.pass_thunk)
+            : llvm::ConstantPointerNull::get(ptr_ty);
+    llvm::Constant* fail_thunk_ptr =
+        artifact.fail_thunk != nullptr
+            ? static_cast<llvm::Constant*>(artifact.fail_thunk)
+            : llvm::ConstantPointerNull::get(ptr_ty);
 
     entries.push_back(
         llvm::ConstantStruct::get(
@@ -1990,8 +2006,9 @@ auto EmitDeferredAssertionSiteMetaGlobal(
              llvm::ConstantInt::get(i32_ty, cover_id), file_ptr,
              llvm::ConstantInt::get(i32_ty, line),
              llvm::ConstantInt::get(i32_ty, col), pass_thunk_ptr,
-             fail_thunk_ptr, llvm::ConstantInt::get(i32_ty, pass_payload_size),
-             llvm::ConstantInt::get(i32_ty, fail_payload_size)}));
+             fail_thunk_ptr,
+             llvm::ConstantInt::get(i32_ty, artifact.pass_payload_size),
+             llvm::ConstantInt::get(i32_ty, artifact.fail_payload_size)}));
   }
 
   auto* array_ty = llvm::ArrayType::get(entry_ty, entries.size());
@@ -2638,7 +2655,8 @@ auto EmitDesignMain(
     }
 
     auto* deferred_site_meta_global = EmitDeferredAssertionSiteMetaGlobal(
-        context, input.design->deferred_assertion_sites);
+        context, input.design->deferred_assertion_sites,
+        session.deferred_site_artifacts);
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,

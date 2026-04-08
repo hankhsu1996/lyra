@@ -5,12 +5,10 @@
 #include <variant>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "lyra/common/integral_constant.hpp"
 #include "lyra/common/module_identity.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/cover_site.hpp"
-#include "lyra/mir/deferred_assertion_realization.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
@@ -116,13 +114,9 @@ struct Design {
   // Per-site metadata for deferred immediate assertion statements.
   // One entry per deferred assertion site, indexed by DeferredAssertionSiteId.
   // Populated during HIR-to-MIR lowering. Runtime site metadata table is
-  // built from this.
+  // built from this. Semantic only: no thunk IDs, payload layout, or
+  // backend-specific data.
   std::vector<DeferredAssertionSiteInfo> deferred_assertion_sites;
-
-  // Realization plans for user-call deferred assertion thunks.
-  // Populated during HIR-to-MIR lowering. Consumed by LLVM backend.
-  absl::flat_hash_map<DeferredAssertionActionKey, DeferredUserCallRealization>
-      deferred_assertion_realizations;
 };
 
 inline auto GetModuleBody(const Design& design, const Module& mod)
