@@ -88,7 +88,7 @@ auto LowerModule(
       .body_places = &body_decls.places,
       .design_places = &decls.design_places,
       .cross_instance_places =
-          cross_instance_places,  // for ResolveHierarchicalRef fallback
+          cross_instance_places,  // V3d residual: design-level paths only
       .functions = &symbol_to_mir_function,
       .slots = &decls.slots,
       .body_slots = &result.slots,

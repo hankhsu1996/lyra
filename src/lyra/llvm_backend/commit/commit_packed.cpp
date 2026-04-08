@@ -51,6 +51,12 @@ void CommitPackedValue(
   auto policy = BuildStorePolicyFromContext(
       ctx, wt.canonical_signal_id,
       wt.mutation_signal ? &*wt.mutation_signal : nullptr);
+  // Honor WriteTarget's static propagation override. External ref targets
+  // force unconditional propagation because design-level contract bitmaps
+  // may not cover instance-owned slots.
+  if (wt.requires_static_dirty_propagation) {
+    policy.requires_static_dirty_propagation = true;
+  }
 
   auto result = StorePackedValue(ctx, view, rvalue, policy);
   if (!result) {

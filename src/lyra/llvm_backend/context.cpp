@@ -515,6 +515,54 @@ auto Context::ResolveExternalRefRoot(mir::ExternalRefId ref_id) const
   };
 }
 
+auto Context::GetExternalRefBinding(mir::ExternalRefId ref_id) const
+    -> const mir::ResolvedExternalRefBinding& {
+  if (!ext_ref_env_.has_value() || ext_ref_env_->bindings == nullptr) {
+    throw common::InternalError(
+        "GetExternalRefBinding",
+        "env not installed -- missing SetExternalRefResolutionEnv");
+  }
+  const auto& bindings = *ext_ref_env_->bindings;
+  if (ref_id.value >= bindings.size()) {
+    throw common::InternalError(
+        "GetExternalRefBinding",
+        std::format(
+            "external ref {} out of range (bindings size {})", ref_id.value,
+            bindings.size()));
+  }
+  return bindings[ref_id.value];
+}
+
+auto Context::GetConstruction() const -> const mir::ConstructionInput& {
+  if (!ext_ref_env_.has_value() || ext_ref_env_->construction == nullptr) {
+    throw common::InternalError(
+        "GetConstruction", "construction not set in env");
+  }
+  return *ext_ref_env_->construction;
+}
+
+auto Context::NormalizeExternalRefSignalIdentity(
+    mir::ExternalRefId ref_id) const -> mir::SignalRef {
+  const auto& binding = GetExternalRefBinding(ref_id);
+  if (binding.IsPackageOrGlobal()) {
+    return mir::SignalRef{
+        .scope = mir::SignalRef::Scope::kDesignGlobal,
+        .id = binding.GlobalSlotId()};
+  }
+  const auto& objects = GetConstruction().objects;
+  if (binding.target_object.value >= objects.size()) {
+    throw common::InternalError(
+        "NormalizeExternalRefSignalIdentity",
+        std::format(
+            "target_object {} out of range (objects size {})",
+            binding.target_object.value, objects.size()));
+  }
+  const auto& obj = objects[binding.target_object.value];
+  return mir::SignalRef{
+      .scope = mir::SignalRef::Scope::kDesignGlobal,
+      .id = obj.design_state_base_slot + binding.target_local_slot.value};
+}
+
 auto Context::GetExternalRefType(mir::ExternalRefId ref_id) const -> TypeId {
   return ResolveExternalRefRoot(ref_id).type;
 }

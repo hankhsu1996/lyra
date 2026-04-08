@@ -551,6 +551,22 @@ class Context {
   [[nodiscard]] auto ResolveExternalRefRoot(mir::ExternalRefId ref_id) const
       -> ResolvedExternalRefRoot;
 
+  // Access the resolved binding for an external ref.
+  [[nodiscard]] auto GetExternalRefBinding(mir::ExternalRefId ref_id) const
+      -> const mir::ResolvedExternalRefBinding&;
+
+  // Access the construction input (objects, instance table).
+  [[nodiscard]] auto GetConstruction() const -> const mir::ConstructionInput&;
+
+  // Normalize an ExternalRefId to topology-resolved signal identity.
+  // Uses ResolvedExternalRefBinding (target_object + target_local_slot)
+  // to compute the design-global slot via topology facts. EmitSignalCoord
+  // then reclassifies instance-owned signals to local runtime identity.
+  // This is the canonical normalization for sensitivity, trigger,
+  // index-plan, and write-path signal identity.
+  [[nodiscard]] auto NormalizeExternalRefSignalIdentity(
+      mir::ExternalRefId ref_id) const -> mir::SignalRef;
+
   // Get the type of an external ref from its resolved root.
   [[nodiscard]] auto GetExternalRefType(mir::ExternalRefId ref_id) const
       -> TypeId;

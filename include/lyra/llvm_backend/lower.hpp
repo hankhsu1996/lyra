@@ -93,7 +93,7 @@ enum class MainAbi {
 struct LoweringInput {
   const mir::Design* design = nullptr;
   const mir::ConstructionInput* construction = nullptr;
-  const mir::Arena* mir_arena = nullptr;
+  mir::Arena* mir_arena = nullptr;
   const TypeArena* type_arena = nullptr;
   const lowering::DiagnosticContext* diag_ctx = nullptr;
   const SourceManager* source_manager = nullptr;

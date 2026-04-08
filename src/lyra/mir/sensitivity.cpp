@@ -1,13 +1,10 @@
 #include "lyra/mir/sensitivity.hpp"
 
 #include <cstdint>
-#include <optional>
 #include <unordered_map>
-#include <variant>
 #include <vector>
 
 #include "lyra/common/edge_kind.hpp"
-#include "lyra/common/overloaded.hpp"
 #include "lyra/mir/access_path.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/assoc_op.hpp"
@@ -46,6 +43,9 @@ struct ObservationSet {
   std::unordered_map<
       SignalKey, std::vector<std::optional<PlaceId>>, SignalKeyHash>
       entries;
+  // Unresolved non-local targets. Converted to WaitTrigger entries with
+  // unresolved_external_ref set at the end of CollectSensitivity.
+  std::vector<ExternalRefId> pending_external_refs;
 
   void Add(
       SignalRef::Scope scope, uint32_t id, std::optional<PlaceId> place_id) {
@@ -106,8 +106,7 @@ auto HasStaticObservation(const Place& place) -> bool {
 
 void CollectReadsFromOperand(
     const Operand& op, const Arena& arena, const MustDefSet& must_def,
-    ObservationSet& obs,
-    const std::optional<SensitivityExternalRefEnv>& ext_ref_env = {});
+    ObservationSet& obs);
 
 void CollectReadsFromPlace(
     PlaceId place_id, const Place& place, const Arena& arena,
@@ -154,90 +153,30 @@ void CollectReadsFromPlace(
   }
 }
 
-// Resolve ExternalRefId to the same canonical SignalRef form used by
-// ordinary place-root reads. Both PlaceId and ExternalRefId reads converge
-// on the same signal-owner path before triggers are emitted.
-auto ResolveExternalRefSignal(
-    ExternalRefId ref_id, const SensitivityExternalRefEnv& env) -> SignalRef {
-  return std::visit(
-      common::Overloaded{
-          [&](const PreBindingSensitivityEnv& pre) -> SignalRef {
-            if (ref_id.value >= pre.resolved_slots.size()) {
-              throw common::InternalError(
-                  "ResolveExternalRefSignal",
-                  std::format(
-                      "external ref {} out of range (pre-resolved size {})",
-                      ref_id.value, pre.resolved_slots.size()));
-            }
-            const auto& slot = pre.resolved_slots[ref_id.value];
-            if (!slot.has_value()) {
-              throw common::InternalError(
-                  "ResolveExternalRefSignal",
-                  std::format(
-                      "external ref {} has no pre-resolved sensitivity slot",
-                      ref_id.value));
-            }
-            return SignalRef{
-                .scope = SignalRef::Scope::kDesignGlobal, .id = *slot};
-          },
-          [&](const PostBindingSensitivityEnv& post) -> SignalRef {
-            if (post.bindings == nullptr || post.construction == nullptr) {
-              throw common::InternalError(
-                  "ResolveExternalRefSignal",
-                  "post-binding env has null bindings or construction");
-            }
-            if (ref_id.value >= post.bindings->size()) {
-              throw common::InternalError(
-                  "ResolveExternalRefSignal",
-                  std::format(
-                      "external ref {} out of range (bindings size {})",
-                      ref_id.value, post.bindings->size()));
-            }
-            const auto& binding = (*post.bindings)[ref_id.value];
-            const auto& obj =
-                post.construction->objects.at(binding.target_object.value);
-            auto global_slot =
-                obj.design_state_base_slot + binding.target_local_slot.value;
-            return SignalRef{
-                .scope = SignalRef::Scope::kDesignGlobal, .id = global_slot};
-          },
-      },
-      env);
-}
-
 void CollectReadsFromOperand(
     const Operand& op, const Arena& arena, const MustDefSet& must_def,
-    ObservationSet& obs,
-    const std::optional<SensitivityExternalRefEnv>& ext_ref_env) {
+    ObservationSet& obs) {
   if (op.kind == Operand::Kind::kUse) {
     auto place_id = std::get<PlaceId>(op.payload);
     CollectReadsFromPlace(place_id, arena[place_id], arena, must_def, obs);
     return;
   }
   if (op.kind == Operand::Kind::kExternalRef) {
-    if (!ext_ref_env.has_value()) {
-      throw common::InternalError(
-          "CollectReadsFromOperand",
-          "ExternalRefId in process MIR requires sensitivity resolution env");
-    }
     auto ref_id = std::get<ExternalRefId>(op.payload);
-    auto signal = ResolveExternalRefSignal(ref_id, *ext_ref_env);
-    obs.Add(signal.scope, signal.id, std::nullopt);
+    obs.pending_external_refs.push_back(ref_id);
     return;
   }
 }
 
 void CollectReadsFromRhs(
     const RightHandSide& rhs, const Arena& arena, const MustDefSet& must_def,
-    ObservationSet& obs,
-    const std::optional<SensitivityExternalRefEnv>& ext_ref_env = {});
+    ObservationSet& obs);
 
 void CollectReadsFromRvalue(
     const Rvalue& rvalue, const Arena& arena, const MustDefSet& must_def,
-    ObservationSet& obs,
-    const std::optional<SensitivityExternalRefEnv>& ext_ref_env = {}) {
+    ObservationSet& obs) {
   for (const auto& op : rvalue.operands) {
-    CollectReadsFromOperand(op, arena, must_def, obs, ext_ref_env);
+    CollectReadsFromOperand(op, arena, must_def, obs);
   }
 
   std::visit(
@@ -289,15 +228,14 @@ void CollectReadsFromRvalue(
 
 void CollectReadsFromRhs(
     const RightHandSide& rhs, const Arena& arena, const MustDefSet& must_def,
-    ObservationSet& obs,
-    const std::optional<SensitivityExternalRefEnv>& ext_ref_env) {
+    ObservationSet& obs) {
   std::visit(
       common::Overloaded{
           [&](const Operand& op) {
-            CollectReadsFromOperand(op, arena, must_def, obs, ext_ref_env);
+            CollectReadsFromOperand(op, arena, must_def, obs);
           },
           [&](const Rvalue& rv) {
-            CollectReadsFromRvalue(rv, arena, must_def, obs, ext_ref_env);
+            CollectReadsFromRvalue(rv, arena, must_def, obs);
           },
       },
       rhs);
@@ -307,13 +245,12 @@ void CollectReadsFromRhs(
 // Order: reads first (against current must_def), then writes update must_def.
 void TransferStatement(
     const Statement& stmt, const Arena& arena, MustDefSet& must_def,
-    ObservationSet& obs,
-    const std::optional<SensitivityExternalRefEnv>& ext_ref_env = {}) {
+    ObservationSet& obs) {
   std::visit(
       common::Overloaded{
           [&](const Assign& assign) {
             // 1. Collect reads from RHS
-            CollectReadsFromRhs(assign.rhs, arena, must_def, obs, ext_ref_env);
+            CollectReadsFromRhs(assign.rhs, arena, must_def, obs);
             // 2. Transfer: unconditional whole-signal write extends must-def.
             // Phase 1: only plain Assign to an unprojected signal root.
             // Projected, guarded, and deferred writes are conservative.
@@ -327,17 +264,16 @@ void TransferStatement(
             }
           },
           [&](const GuardedAssign& ga) {
-            CollectReadsFromRhs(ga.rhs, arena, must_def, obs, ext_ref_env);
-            CollectReadsFromOperand(
-                ga.guard, arena, must_def, obs, ext_ref_env);
+            CollectReadsFromRhs(ga.rhs, arena, must_def, obs);
+            CollectReadsFromOperand(ga.guard, arena, must_def, obs);
           },
           [](const Effect&) {},
           [&](const DeferredAssign& da) {
-            CollectReadsFromRhs(da.rhs, arena, must_def, obs, ext_ref_env);
+            CollectReadsFromRhs(da.rhs, arena, must_def, obs);
           },
           [&](const Call& call) {
             for (const auto& arg : call.in_args) {
-              CollectReadsFromOperand(arg, arena, must_def, obs, ext_ref_env);
+              CollectReadsFromOperand(arg, arena, must_def, obs);
             }
             // Conservative: calls may have side effects, do not extend must-def
           },
@@ -345,31 +281,29 @@ void TransferStatement(
             for (const auto& binding : dpi_call.args) {
               if (binding.input_value) {
                 CollectReadsFromOperand(
-                    *binding.input_value, arena, must_def, obs, ext_ref_env);
+                    *binding.input_value, arena, must_def, obs);
               }
             }
             // Conservative: DPI calls may have side effects
           },
           [&](const BuiltinCall& bcall) {
             for (const auto& arg : bcall.args) {
-              CollectReadsFromOperand(arg, arena, must_def, obs, ext_ref_env);
+              CollectReadsFromOperand(arg, arena, must_def, obs);
             }
             // Conservative: builtin calls do not extend must-def
           },
           [&](const DefineTemp& dt) {
-            CollectReadsFromRhs(dt.rhs, arena, must_def, obs, ext_ref_env);
+            CollectReadsFromRhs(dt.rhs, arena, must_def, obs);
             // Temps are not signals, no must-def effect
           },
           [&](const AssocOp& aop) {
             std::visit(
                 [&](const auto& op) {
                   if constexpr (requires { op.key; }) {
-                    CollectReadsFromOperand(
-                        op.key, arena, must_def, obs, ext_ref_env);
+                    CollectReadsFromOperand(op.key, arena, must_def, obs);
                   }
                   if constexpr (requires { op.value; }) {
-                    CollectReadsFromOperand(
-                        op.value, arena, must_def, obs, ext_ref_env);
+                    CollectReadsFromOperand(op.value, arena, must_def, obs);
                   }
                 },
                 aop.data);
@@ -382,10 +316,9 @@ void TransferStatement(
 // Collect reads from a terminator (conditions, selectors, edge args).
 void CollectReadsFromTerminator(
     const Terminator& term, const Arena& arena, const MustDefSet& must_def,
-    ObservationSet& obs,
-    const std::optional<SensitivityExternalRefEnv>& ext_ref_env = {}) {
+    ObservationSet& obs) {
   auto collect = [&](const Operand& op) {
-    CollectReadsFromOperand(op, arena, must_def, obs, ext_ref_env);
+    CollectReadsFromOperand(op, arena, must_def, obs);
   };
   ForEachLocalOperand(term, collect);
   ForEachSuccessor(term, [&](const TerminatorSuccessor& succ) {
@@ -411,9 +344,7 @@ void ComputeRPO(
 
 }  // namespace
 
-auto CollectSensitivity(
-    const Process& process, const Arena& arena,
-    const std::optional<SensitivityExternalRefEnv>& ext_ref_env)
+auto CollectSensitivity(const Process& process, const Arena& arena)
     -> std::vector<WaitTrigger> {
   const auto& blocks = process.blocks;
   if (blocks.empty()) return {};
@@ -475,12 +406,12 @@ auto CollectSensitivity(
       // Transfer: walk statements with running must-def, collecting reads.
       MustDefSet state = block_in[block_idx];
       for (const auto& stmt : blocks[block_idx].statements) {
-        TransferStatement(stmt, arena, state, obs, ext_ref_env);
+        TransferStatement(stmt, arena, state, obs);
       }
 
       // Collect reads from the terminator with the final block state.
       CollectReadsFromTerminator(
-          blocks[block_idx].terminator, arena, state, obs, ext_ref_env);
+          blocks[block_idx].terminator, arena, state, obs);
 
       // Update out state and check for convergence.
       if (!(state == block_out[block_idx])) {
@@ -497,8 +428,20 @@ auto CollectSensitivity(
           {.signal = SignalRef{.scope = key.scope, .id = key.id},
            .edge = common::EdgeKind::kAnyChange,
            .observed_place = place,
-           .late_bound = std::nullopt});
+           .late_bound = std::nullopt,
+           .unresolved_external_ref = std::nullopt});
     }
+  }
+  // Produce unresolved triggers for non-local external refs.
+  // These will be resolved at backend normalization (FillTriggerArray)
+  // using ResolvedExternalRefBinding.
+  for (const auto& ref_id : obs.pending_external_refs) {
+    triggers.push_back(
+        {.signal = {},
+         .edge = common::EdgeKind::kAnyChange,
+         .observed_place = std::nullopt,
+         .late_bound = std::nullopt,
+         .unresolved_external_ref = ref_id});
   }
   return triggers;
 }

@@ -166,15 +166,4 @@ auto BindConnectionRecipe(
     common::ObjectIndex parent_object_index, const BoundHierarchyIndex& topo,
     const mir::ConstructionInput& construction) -> mir::BoundConnection;
 
-// Pre-binding resolution: resolve an ExternalRefId to its design-global slot
-// using provisional targets + cross_instance_places. Single source of truth
-// for the "target_sym maps to exactly one design-global slot" rule.
-// Throws InternalError if the target is not found or is not kDesignGlobal.
-auto ResolvePreBindingExternalRefDesignGlobalSlot(
-    mir::ExternalRefId ref_id,
-    const std::vector<ProvisionalNonLocalTarget>& provisional_targets,
-    const std::unordered_map<SymbolId, mir::PlaceId, SymbolIdHash>&
-        cross_instance_places,
-    const mir::Arena& design_arena) -> uint32_t;
-
 }  // namespace lyra::lowering::hir_to_mir
