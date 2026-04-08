@@ -33,6 +33,9 @@ auto LowerModule(
     hir::ModuleBodyId body_id,
     mir::ImmediateCoverSiteRegistry* cover_site_registry,
     mir::DeferredAssertionSiteRegistry* deferred_assertion_site_registry,
+    absl::flat_hash_map<
+        mir::DeferredAssertionActionKey, mir::DeferredUserCallRealization>*
+        deferred_assertion_realizations,
     const PlaceMap* cross_instance_places) -> Result<MirBodyLoweringResult> {
   mir::ModuleBody result;
 
@@ -94,6 +97,7 @@ auto LowerModule(
       .dpi_imports = &decls.dpi_imports,
       .cover_site_registry = cover_site_registry,
       .deferred_assertion_site_registry = deferred_assertion_site_registry,
+      .deferred_assertion_realizations = deferred_assertion_realizations,
       .external_refs = &external_refs,
       .provisional_targets = &provisional_targets};
 

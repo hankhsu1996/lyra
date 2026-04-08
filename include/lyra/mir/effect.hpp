@@ -12,6 +12,7 @@
 #include "lyra/common/severity.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
+#include "lyra/mir/capture_payload.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/semantic/decision.hpp"
@@ -246,29 +247,14 @@ static_assert(
 //
 // At runtime, the record is stamped with the current flush generation
 // and matured at settle boundary.
-// Typed payload descriptor for by-value capture in deferred assertion
-// actions. Carried on both the site metadata (DeferredThunkAction) and
-// the enqueue effect so the LLVM backend can build the payload struct
-// type without accessing site info.
-struct CapturePayloadDesc {
-  // Semantic by-value captured types, ordered by call-order position.
-  // The LLVM backend derives the storage type from each TypeId via
-  // ClassifyCallableValueAbi at emission time.
-  std::vector<TypeId> field_types;
-};
-
 struct EnqueueDeferredAssertionEffect {
   DeferredAssertionSiteId site_id;
   DeferredAssertionDisposition disposition;
-  // Typed payload descriptor matching capture_values. Used by the LLVM
-  // backend to build the payload struct type for packing.
-  CapturePayloadDesc payload_desc;
-  // By-value fields to evaluate now and pack into the captured blob,
-  // in exact payload_desc field order. LLVM lowering packs them
-  // sequentially. These operands are never stored into runtime records;
-  // they are fully evaluated during codegen into the packed blob.
-  // Runtime never sees MIR-like Operands.
-  std::vector<Operand> capture_values;
+  // Evaluated snapshot values for by-value actuals, in semantic actual
+  // order (skipping ref actuals). Ordering matches the payload field
+  // order in the corresponding DeferredUserCallRealization. Empty for
+  // dispositions with no thunk (kDefaultFailReport, kCoverHit).
+  std::vector<Operand> snapshot_values;
 };
 
 // Canonical traversal of read operands for EnqueueDeferredAssertionEffect.
@@ -276,7 +262,7 @@ struct EnqueueDeferredAssertionEffect {
 // instead of open-coding their own traversal.
 template <typename F>
 void ForEachReadOperand(const EnqueueDeferredAssertionEffect& e, const F& f) {
-  for (const auto& op : e.capture_values) {
+  for (const auto& op : e.snapshot_values) {
     f(op);
   }
 }

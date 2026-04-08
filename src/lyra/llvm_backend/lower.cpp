@@ -1485,22 +1485,17 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   // Phase 2b: Register deferred assertion site info and thunk metadata.
-  // Site info is registered by site ID for enqueue codegen to derive
-  // ref binding metadata. Thunk metadata is registered by thunk FunctionId
-  // so DefineMirFunction can look it up during body compilation.
+  // Register semantic site info by site ID (for metadata emission).
   for (uint32_t si = 0; si < input.design->deferred_assertion_sites.size();
        ++si) {
     const auto& site = input.design->deferred_assertion_sites[si];
     context->RegisterDeferredAssertionSiteInfo(
         mir::DeferredAssertionSiteId{si}, &site);
-    if (site.pass_action.has_value()) {
-      context->RegisterDeferredThunkAction(
-          site.pass_action->thunk, &*site.pass_action);
-    }
-    if (site.fail_action.has_value()) {
-      context->RegisterDeferredThunkAction(
-          site.fail_action->thunk, &*site.fail_action);
-    }
+  }
+  // Register user-call realizations (for thunk body and enqueue codegen).
+  for (const auto& [key, realization] :
+       input.design->deferred_assertion_realizations) {
+    context->RegisterDeferredRealization(key, &realization);
   }
 
   // Phase 3: Design-global function declare/define only (packages + generated)

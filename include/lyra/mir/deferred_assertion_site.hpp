@@ -24,111 +24,89 @@ enum class DeferredAssertionKind : uint8_t {
   kCover,
 };
 
-// Callee descriptors for deferred action thunks, split by category.
-// User subroutine and display-like system tasks have different
-// payload/binding semantics and different LLVM emission paths.
+// ---------------------------------------------------------------------------
+// Semantic deferred assertion action types.
+// These model the LRM "pending assertion report" concept without ABI details.
+// Realization (thunk IDs, payload layout, ref-slot numbering) is separate;
+// see deferred_assertion_realization.hpp.
+// ---------------------------------------------------------------------------
 
-struct DeferredThunkUserCallee {
-  FunctionId target;
+// Semantic passing mode for a deferred action actual argument.
+enum class DeferredActualKind : uint8_t {
+  kSnapshotValue,  // by-value, captured at encounter time
+  kLiveRef,        // ref formal, address captured, dereferenced at execution
+  kConstLiveRef,   // const ref formal, same timing as LiveRef
 };
 
-// Display-like system tasks: $display, $write, $error, $warning, $info.
-// Format ops and print kind are stored as a side record keyed by thunk
-// FunctionId in the LLVM backend context.
-struct DeferredThunkDisplayTaskCallee {};
-
-// CapturePayloadDesc is defined in effect.hpp (shared by both
-// EnqueueDeferredAssertionEffect and DeferredThunkAction).
-
-// Describes how one actual argument is sourced inside the thunk body.
-// Constness (ref vs const ref) is derived from the formal's PassingKind
-// in the target signature, not duplicated here.
-struct DeferredThunkActualBinding {
-  enum class Source : uint8_t {
-    kPayloadField,
-    kLiveRef,
-  };
-
-  Source source = Source::kPayloadField;
-
-  // Valid when source == kPayloadField: index into CapturePayloadDesc.
-  uint32_t payload_field_index = 0;
-
-  // Valid when source == kLiveRef: the canonical place representing the
-  // bound live storage. Deferred legality ensures this is non-automatic,
-  // non-dynamic storage that remains valid at deferred execution time.
-  PlaceId ref_place{};
+// One semantic actual in a deferred assertion action.
+// No payload layout or ref-slot numbering -- those are realization details.
+struct DeferredAssertionActual {
+  DeferredActualKind kind = DeferredActualKind::kSnapshotValue;
+  TypeId type;          // semantic type of the formal parameter
+  PlaceId ref_place{};  // valid only for kLiveRef/kConstLiveRef
 };
 
-// Callee descriptor variant. Structurally prevents misuse: user-subroutine
-// thunks carry a target FunctionId, display-task thunks do not.
-using DeferredThunkCallee =
-    std::variant<DeferredThunkUserCallee, DeferredThunkDisplayTaskCallee>;
-
-// User-supplied action thunk descriptor. Describes an outlined deferred
-// thunk that executes the user's pass or fail action at drain time.
-// Structurally separate from built-in outcomes (default report, cover hit).
-//
-// The thunk MIR Function is a shell (reserves a FunctionId, carries the
-// RuntimeProgramKind). The real body is emitted directly in LLVM IR
-// during DefineMirFunction dispatch using the metadata here.
-struct DeferredThunkAction {
-  FunctionId thunk;
-  CapturePayloadDesc payload;
-  DeferredThunkCallee callee;
-
-  // Ordered actual-binding map: one entry per formal, in call-order.
-  // Tells LLVM emission which actuals come from payload fields vs live refs.
-  // Invariant:
-  // - DeferredThunkUserCallee: bindings are kPayloadField or kLiveRef
-  // - DeferredThunkDisplayTaskCallee: all bindings are kPayloadField (no refs)
-  std::vector<DeferredThunkActualBinding> actual_bindings;
+// User subroutine call action: assert #0 (...) else foo(a, b, c);
+struct DeferredUserCallAction {
+  FunctionId callee;
+  std::vector<DeferredAssertionActual> actuals;  // ordered by formal position
 };
 
-// Cover-hit built-in action. Bridges deferred cover #0 to the existing
-// immediate-cover runtime counter path.
+// Built-in cover-hit action: cover #0 (...) with no user pass action.
 struct DeferredCoverHitAction {
   CoverSiteId cover_site_id;
 };
 
+// Semantic deferred assertion action. Tagged variant makes invalid states
+// unrepresentable: user-call actions always carry a callee and actuals,
+// cover-hit actions always carry a cover site ID, neither has spare fields.
+using DeferredAssertionAction =
+    std::variant<DeferredUserCallAction, DeferredCoverHitAction>;
+
+// Strong key type for looking up realization objects by (site, disposition).
+// Used in MIR storage and LLVM backend maps.
+struct DeferredAssertionActionKey {
+  DeferredAssertionSiteId site_id;
+  DeferredAssertionDisposition disposition;
+
+  auto operator==(const DeferredAssertionActionKey&) const -> bool = default;
+
+  template <typename H>
+  friend auto AbslHashValue(H h, const DeferredAssertionActionKey& k) -> H {
+    return H::combine(
+        std::move(h), k.site_id.value, static_cast<uint8_t>(k.disposition));
+  }
+};
+
 // Per-site metadata for a deferred immediate assertion statement.
 // Canonical schema: one entry per deferred assertion site in the design,
-// indexed by DeferredAssertionSiteId. This type is the single source of
-// truth for deferred-site metadata and lowers directly into the runtime
-// site metadata table. Do not create parallel metadata structures.
-//
-// Disposition-oriented: each disposition path that the site can produce
-// has its own typed action descriptor. The presence of a descriptor
-// determines whether that disposition is possible for this site.
+// indexed by DeferredAssertionSiteId. Semantic-only: no thunk IDs,
+// payload layout, or ref-slot numbering. Realization details are in a
+// separate DeferredUserCallRealization registry.
 //
 // Invariants (enforced at allocation time):
-// - kAssert/kAssume: no cover_hit
+// - kAssert/kAssume: pass_action must not hold DeferredCoverHitAction
 // - kCover: no fail_action, no has_default_fail_report
-// - cover_hit and pass_action are mutually exclusive
 // - has_default_fail_report and fail_action are mutually exclusive
+// - kCover must have pass_action
+// - kAssert/kAssume must have exactly one fail path
 struct DeferredAssertionSiteInfo {
   SourceSpan span;
   common::OriginId origin;
   DeferredAssertionKind kind = DeferredAssertionKind::kAssert;
 
   // Default failure report. Present for assert/assume sites that have no
-  // user-supplied fail action. Report is constructed from origin + kind
-  // at drain time via existing report machinery.
+  // user-supplied fail action.
   bool has_default_fail_report = false;
 
-  // User-supplied fail action thunk. Present when the user writes
-  // `assert #0 (...) else <call>;`. Mutually exclusive with
+  // Semantic fail action (user call only). Mutually exclusive with
   // has_default_fail_report.
-  std::optional<DeferredThunkAction> fail_action;
+  std::optional<DeferredAssertionAction> fail_action;
 
-  // User-supplied pass action thunk. Present when the user writes
-  // `assert #0 (...) <call>;` or `cover #0 (...) <call>;`.
-  // Mutually exclusive with cover_hit.
-  std::optional<DeferredThunkAction> pass_action;
-
-  // Cover-hit built-in action. Present for `cover #0` sites without a
-  // user pass action. Mutually exclusive with pass_action.
-  std::optional<DeferredCoverHitAction> cover_hit;
+  // Semantic pass action. For cover sites, may be DeferredUserCallAction
+  // or DeferredCoverHitAction. For assert/assume, DeferredUserCallAction
+  // only (if present).
+  std::optional<DeferredAssertionAction> pass_action;
 };
 
 // Validate site metadata invariants. Throws InternalError on violation.
@@ -136,11 +114,16 @@ inline void ValidateDeferredAssertionSiteInfo(
     const DeferredAssertionSiteInfo& info) {
   bool is_cover = info.kind == DeferredAssertionKind::kCover;
 
-  // kAssert/kAssume must not have cover_hit
-  if (!is_cover && info.cover_hit.has_value()) {
+  auto has_cover_hit_pass = [&] {
+    return info.pass_action.has_value() &&
+           std::holds_alternative<DeferredCoverHitAction>(*info.pass_action);
+  };
+
+  // kAssert/kAssume must not have cover-hit pass action
+  if (!is_cover && has_cover_hit_pass()) {
     throw common::InternalError(
         "ValidateDeferredAssertionSiteInfo",
-        "assert/assume site must not have cover_hit");
+        "assert/assume site must not have cover_hit pass action");
   }
 
   // kCover must not have fail_action or default fail report
@@ -162,11 +145,12 @@ inline void ValidateDeferredAssertionSiteInfo(
         "default fail report and user fail action are mutually exclusive");
   }
 
-  // cover_hit and pass_action are mutually exclusive
-  if (info.cover_hit.has_value() && info.pass_action.has_value()) {
+  // Fail actions must be user-call (cover-hit as fail makes no sense)
+  if (info.fail_action.has_value() &&
+      !std::holds_alternative<DeferredUserCallAction>(*info.fail_action)) {
     throw common::InternalError(
         "ValidateDeferredAssertionSiteInfo",
-        "cover_hit and pass_action are mutually exclusive");
+        "fail action must be a user call action");
   }
 
   // Completeness: assert/assume must have exactly one fail path
@@ -182,9 +166,7 @@ inline void ValidateDeferredAssertionSiteInfo(
 
   // Completeness: cover must have exactly one success path
   if (is_cover) {
-    bool has_success_path =
-        info.cover_hit.has_value() || info.pass_action.has_value();
-    if (!has_success_path) {
+    if (!info.pass_action.has_value()) {
       throw common::InternalError(
           "ValidateDeferredAssertionSiteInfo",
           "cover site must have exactly one success path");
