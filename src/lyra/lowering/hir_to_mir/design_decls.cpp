@@ -10,6 +10,7 @@
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/symbol.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/dpi.hpp"
 #include "lyra/hir/fwd.hpp"
@@ -70,6 +71,17 @@ auto CollectBodyLocalDecls(
 
   for (SymbolId var : module.variables) {
     const Symbol& sym = symbol_table[var];
+
+    // Named events are synchronization primitives with no byte-level
+    // storage. Allocate a dedicated EventId instead of a slot.
+    if (type_arena[sym.type].Kind() == TypeKind::kEvent) {
+      auto event_id =
+          mir::EventId{static_cast<uint32_t>(body_decls.event_descs.size())};
+      body_decls.events[var] = event_id;
+      body_decls.event_descs.push_back(mir::EventDesc{.type = sym.type});
+      continue;
+    }
+
     mir::Place body_place{
         .root =
             mir::PlaceRoot{

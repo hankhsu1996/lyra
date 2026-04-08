@@ -291,6 +291,8 @@ class Context {
   [[nodiscard]] auto GetLyraSuspendRepeat() -> llvm::Function*;
   [[nodiscard]] auto GetLyraAllocTriggers() -> llvm::Function*;
   [[nodiscard]] auto GetLyraFreeTriggers() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraSuspendWaitEvent() -> llvm::Function*;
+  [[nodiscard]] auto GetLyraTriggerEvent() -> llvm::Function*;
   [[nodiscard]] auto GetLyraResolveSlotPtr() -> llvm::Function*;
   // R5: Resolve RuntimeInstance* from InstanceId at runtime.
   [[nodiscard]] auto GetLyraResolveInstancePtr() -> llvm::Function*;
@@ -1112,6 +1114,8 @@ class Context {
   llvm::Function* lyra_suspend_repeat_ = nullptr;
   llvm::Function* lyra_alloc_triggers_ = nullptr;
   llvm::Function* lyra_free_triggers_ = nullptr;
+  llvm::Function* lyra_suspend_wait_event_ = nullptr;
+  llvm::Function* lyra_trigger_event_ = nullptr;
   llvm::Function* lyra_resolve_slot_ptr_ = nullptr;
   llvm::Function* lyra_resolve_instance_ptr_ = nullptr;
   // R3 typed coordination helpers.

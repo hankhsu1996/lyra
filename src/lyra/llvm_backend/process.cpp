@@ -96,6 +96,8 @@ void ValidateInitProcessContract(const mir::Process& process) {
             suspension_name = "Delay";
           } else if constexpr (std::is_same_v<T, mir::Wait>) {
             suspension_name = "Wait";
+          } else if constexpr (std::is_same_v<T, mir::WaitEvent>) {
+            suspension_name = "WaitEvent";
           } else if constexpr (std::is_same_v<T, mir::Repeat>) {
             suspension_name = "Repeat";
           }
@@ -1595,6 +1597,15 @@ auto LowerTerminator(
             LowerRepeat(context, exit_block);
             return {};
           },
+          [&](const mir::WaitEvent& we) -> Result<void> {
+            auto& builder = context.GetBuilder();
+            builder.CreateCall(
+                context.GetLyraSuspendWaitEvent(),
+                {context.GetStatePointer(), builder.getInt32(we.resume.value),
+                 builder.getInt32(we.event.value)});
+            builder.CreateBr(exit_block);
+            return {};
+          },
           [&](const auto&) -> Result<void> {
             return std::unexpected(
                 context.GetDiagnosticContext().MakeUnsupported(
@@ -1751,6 +1762,8 @@ auto GenerateProcessFunction(
             if constexpr (std::is_same_v<T, mir::Delay>) {
               resume_targets.push_back(term.resume.value);
             } else if constexpr (std::is_same_v<T, mir::Wait>) {
+              resume_targets.push_back(term.resume.value);
+            } else if constexpr (std::is_same_v<T, mir::WaitEvent>) {
               resume_targets.push_back(term.resume.value);
             }
           },
@@ -1949,6 +1962,8 @@ auto GenerateSharedProcessFunction(
           if constexpr (std::is_same_v<T, mir::Delay>) {
             resume_targets.push_back(term.resume.value);
           } else if constexpr (std::is_same_v<T, mir::Wait>) {
+            resume_targets.push_back(term.resume.value);
+          } else if constexpr (std::is_same_v<T, mir::WaitEvent>) {
             resume_targets.push_back(term.resume.value);
           }
         },

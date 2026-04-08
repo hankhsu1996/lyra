@@ -376,6 +376,8 @@ auto WaitKindLabel(ProcessWaitKind kind) -> std::string_view {
       return "suspended(multi)";
     case ProcessWaitKind::kSuspendedRepeat:
       return "suspended(repeat)";
+    case ProcessWaitKind::kSuspendedEvent:
+      return "suspended(event)";
     case ProcessWaitKind::kSuspendedUnknown:
       return "suspended(unknown)";
     case ProcessWaitKind::kFinished:
@@ -512,6 +514,9 @@ auto Engine::TakeSchedulerSnapshot() const -> SchedulerSnapshot {
           break;
         case SuspendTag::kRepeat:
           kind = ProcessWaitKind::kSuspendedRepeat;
+          break;
+        case SuspendTag::kWaitEvent:
+          kind = ProcessWaitKind::kSuspendedEvent;
           break;
       }
     } else if (in_delay[pid]) {

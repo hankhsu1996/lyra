@@ -39,6 +39,7 @@ auto LowerModule(
   // Body-local slot descriptors come from specialization-local collection,
   // not from design-global declaration state.
   result.slots = body_decls.slots;
+  result.events = body_decls.event_descs;
 
   // Body-local origin storage. All origins produced during body lowering
   // are isolated here, not in a shared origin map.
@@ -84,6 +85,7 @@ auto LowerModule(
   DeclView decl_view{
       .body_places = &body_decls.places,
       .design_places = &decls.design_places,
+      .body_events = &body_decls.events,
       .cross_instance_places =
           cross_instance_places,  // V3d residual: design-level paths only
       .functions = &symbol_to_mir_function,

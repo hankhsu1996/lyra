@@ -115,6 +115,7 @@ auto LowerProcess(
       .design_places = decl_view.design_places,
       .local_places = {},
       .design_place_cache = {},
+      .body_events = decl_view.body_events,
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},

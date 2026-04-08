@@ -144,6 +144,14 @@ auto LowerStatement(
           [&](const mir::AssocOp& op) -> Result<void> {
             return LowerAssocOp(context, resolver, op);
           },
+          [&](const mir::TriggerEvent& te) -> Result<void> {
+            auto& builder = context.GetBuilder();
+            builder.CreateCall(
+                context.GetLyraTriggerEvent(),
+                {context.GetEnginePointer(), context.GetDynamicInstanceId(),
+                 builder.getInt32(te.event.value)});
+            return {};
+          },
       },
       statement.data);
 }

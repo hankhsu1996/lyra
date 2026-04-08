@@ -157,10 +157,15 @@ auto VisitWriteTarget(const WriteTarget& t, FPlace&& on_place, FExt&& on_ext) {
       where, "backend received Assign with ExternalRefId destination");
 }
 
+// Named event trigger (wakes all processes waiting on the event).
+struct TriggerEvent {
+  EventId event;
+};
+
 // Statement data variant.
 using StatementData = std::variant<
     Assign, GuardedAssign, Effect, DeferredAssign, Call, DpiCall, BuiltinCall,
-    DefineTemp, AssocOp>;
+    DefineTemp, AssocOp, TriggerEvent>;
 
 // A statement that does not affect control flow.
 // - Assign, GuardedAssign, DeferredAssign write to a Place
@@ -236,6 +241,7 @@ void ForEachOperand(const StatementData& stmt, F&& f) {
                 a.data);
           },
           [](const Effect&) {},
+          [](const TriggerEvent&) {},
       },
       stmt);
 }

@@ -67,6 +67,25 @@ class LoopGuard {
   MirBuilder& builder_;
 };
 
+// Canonical event resolver: extract EventId from an HIR event expression.
+// Single entry point for all event operations (wait, trigger).
+//
+// L8a scope: only simple named references (`event e; @e; -> e;`) are
+// supported. Hierarchical event references, .triggered, and other
+// event expression forms will be added in L8b/L8c and must extend this
+// resolver rather than creating parallel resolution paths.
+auto ResolveEventRef(hir::ExpressionId expr_id, MirBuilder& builder)
+    -> mir::EventId {
+  const auto& expr = (*builder.GetContext().hir_arena)[expr_id];
+  const auto* name_ref = std::get_if<hir::NameRefExpressionData>(&expr.data);
+  if (name_ref == nullptr) {
+    throw common::InternalError(
+        "ResolveEventRef",
+        "unsupported event expression form (L8a supports named refs only)");
+  }
+  return builder.GetContext().LookupEvent(name_ref->symbol);
+}
+
 auto LowerBlock(const hir::BlockStatementData& data, MirBuilder& builder)
     -> Result<void> {
   for (hir::StatementId stmt_id : data.statements) {
@@ -231,6 +250,7 @@ auto LowerStrobeEffect(
       .design_places = original_ctx.design_places,
       .local_places = {},
       .design_place_cache = {},
+      .body_events = original_ctx.body_events,
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
@@ -537,6 +557,7 @@ auto LowerMonitorCheckProgram(
       .design_places = original_ctx.design_places,
       .local_places = {},
       .design_place_cache = {},
+      .body_events = original_ctx.body_events,
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
@@ -621,6 +642,7 @@ auto LowerMonitorSetupProgram(
       .design_places = original_ctx.design_places,
       .local_places = {},
       .design_place_cache = {},
+      .body_events = original_ctx.body_events,
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
@@ -3152,6 +3174,16 @@ auto LowerStatement(hir::StatementId stmt_id, MirBuilder& builder)
           builder.SetCurrentBlock(resume_bb);
         } else if constexpr (std::is_same_v<T, hir::EventWaitStatementData>) {
           result = LowerEventWait(data, builder);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::NamedEventWaitStatementData>) {
+          auto event_id = ResolveEventRef(data.event_expr, builder);
+          auto resume_bb = builder.CreateBlock();
+          builder.EmitWaitEvent(event_id, resume_bb);
+          builder.SetCurrentBlock(resume_bb);
+        } else if constexpr (std::is_same_v<
+                                 T, hir::EventTriggerStatementData>) {
+          auto event_id = ResolveEventRef(data.target, builder);
+          builder.EmitTriggerEvent(event_id);
         } else if constexpr (std::is_same_v<
                                  T, hir::ImmediateAssertionStatementData>) {
           result = LowerImmediateAssertion(data, stmt.span, builder);

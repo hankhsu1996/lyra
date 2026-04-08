@@ -11,6 +11,7 @@ namespace lyra::mir {
 
 enum class SlotKind : uint8_t;
 struct SlotDesc;
+struct EventDesc;
 
 // Implementation-detail body container, pending migration to
 // CompiledModuleBody (compiled_specialization.hpp) in B2.
@@ -37,6 +38,9 @@ struct ModuleBody {
   // This is the body's required storage interface: what slots exist,
   // their kinds, and their types. This is NOT placement/layout metadata.
   std::vector<SlotDesc> slots;
+
+  // Body-local named event descriptors. Indexed by body-local EventId.
+  std::vector<EventDesc> events;
 
   // Total body-global decision site count. Set by module lowering after all
   // functions, processes, and tasks are lowered. Defines the authoritative

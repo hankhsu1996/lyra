@@ -18,6 +18,7 @@ auto IsSegmentExitBlock(const mir::BasicBlock& block) -> bool {
       [](const auto& t) -> bool {
         using T = std::decay_t<decltype(t)>;
         return std::is_same_v<T, mir::Delay> || std::is_same_v<T, mir::Wait> ||
+               std::is_same_v<T, mir::WaitEvent> ||
                std::is_same_v<T, mir::Return> ||
                std::is_same_v<T, mir::Finish> || std::is_same_v<T, mir::Repeat>;
       },

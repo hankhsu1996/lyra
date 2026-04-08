@@ -28,8 +28,8 @@ auto IsSegmentExitTerminator(const Terminator& term) -> bool {
       [](const auto& t) -> bool {
         using T = std::decay_t<decltype(t)>;
         return std::is_same_v<T, Delay> || std::is_same_v<T, Wait> ||
-               std::is_same_v<T, Return> || std::is_same_v<T, Finish> ||
-               std::is_same_v<T, Repeat>;
+               std::is_same_v<T, WaitEvent> || std::is_same_v<T, Return> ||
+               std::is_same_v<T, Finish> || std::is_same_v<T, Repeat>;
       },
       term.data);
 }
@@ -49,6 +49,7 @@ void ForEachIntraSegmentSuccessor(const Terminator& term, auto&& func) {
           },
           [](const Delay&) {},
           [](const Wait&) {},
+          [](const WaitEvent&) {},
           [](const Return&) {},
           [](const Finish&) {},
           [](const Repeat&) {},
@@ -342,6 +343,7 @@ void CollectStatementAccesses(
             CollectRhsReads(dt.rhs, arena, block_index, stmt_index, accesses);
           },
           [&](const AssocOp&) {},
+          [](const TriggerEvent&) {},
       },
       stmt.data);
 }
@@ -576,6 +578,9 @@ void AnalyzeStatementSemantics(
                     .conservative_unknown = false,
                 });
           },
+          // TriggerEvent: scheduler-side event trigger, no canonical
+          // state interaction.
+          [](const TriggerEvent&) {},
       },
       stmt.data);
 }
@@ -609,6 +614,7 @@ auto CollectResumeEntryBlocks(const Process& process) -> std::vector<uint32_t> {
         common::Overloaded{
             [&](const Delay& d) { entries.push_back(d.resume.value); },
             [&](const Wait& w) { entries.push_back(w.resume.value); },
+            [&](const WaitEvent& we) { entries.push_back(we.resume.value); },
             [](const auto&) {},
         },
         block.terminator.data);

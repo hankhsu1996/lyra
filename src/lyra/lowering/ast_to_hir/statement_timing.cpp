@@ -14,7 +14,9 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
 #include "lyra/common/source_span.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
@@ -408,9 +410,35 @@ auto LowerSignalEvent(
 
   const auto& sig_event = timed.timing.as<slang::ast::SignalEventControl>();
 
+  // Early AST-boundary check for named event edge rejection.
+  // slang rejects edge specifiers on event-typed expressions during
+  // elaboration (ExprMustBeIntegral), which prevents our lowering from
+  // running. This check fires when lowering is reached (e.g., if slang
+  // error checking is relaxed or future slang versions change behavior).
+  // The driver and test framework also check slang diagnostics for
+  // event+edge and surface a targeted message at the frontend level.
+  if (sig_event.expr.type->isEvent() &&
+      sig_event.edge != slang::ast::EdgeKind::None) {
+    ctx->sink->Error(span, "edge specifiers not applicable to named events");
+    return hir::kInvalidStatementId;
+  }
+
   hir::ExpressionId signal_expr = lower_expr(sig_event.expr);
   if (!signal_expr) {
     return hir::kInvalidStatementId;
+  }
+
+  // Dispatch on Lyra type: events go to the named-event wait path,
+  // signals go to the standard signal-subscription path.
+  TypeId expr_type = (*ctx->hir_arena)[signal_expr].type;
+  if ((*ctx->type_arena)[expr_type].Kind() == TypeKind::kEvent) {
+    hir::StatementId wait_stmt = ctx->hir_arena->AddStatement(
+        hir::Statement{
+            .kind = hir::StatementKind::kNamedEventWait,
+            .span = span,
+            .data = hir::NamedEventWaitStatementData{.event_expr = signal_expr},
+        });
+    return AppendTimedBody(wait_stmt, timed.stmt, span, lowerer);
   }
 
   hir::EventEdgeKind edge = MapEdgeKind(sig_event.edge);

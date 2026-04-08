@@ -309,6 +309,7 @@ void TransferStatement(
                 aop.data);
             // Conservative: assoc ops do not extend must-def
           },
+          [](const TriggerEvent&) {},
       },
       stmt.data);
 }

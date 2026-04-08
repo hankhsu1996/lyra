@@ -73,6 +73,7 @@ enum class TypeKind {
   kAssociativeArray,
   kEnum,
   kChandle,
+  kEvent,
 };
 
 inline auto ToString(TypeKind kind) -> std::string {
@@ -107,6 +108,8 @@ inline auto ToString(TypeKind kind) -> std::string {
       return "enum";
     case TypeKind::kChandle:
       return "chandle";
+    case TypeKind::kEvent:
+      return "event";
   }
   return "unknown";
 }
@@ -584,6 +587,8 @@ inline auto ToString(const Type& type) -> std::string {
     }
     case TypeKind::kChandle:
       return "chandle";
+    case TypeKind::kEvent:
+      return "event";
   }
   return "unknown";
 }

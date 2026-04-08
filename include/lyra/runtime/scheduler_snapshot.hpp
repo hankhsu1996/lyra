@@ -20,6 +20,7 @@ enum class ProcessWaitKind : uint8_t {
   kSuspendedChange,
   kSuspendedMulti,
   kSuspendedRepeat,
+  kSuspendedEvent,
   kSuspendedUnknown,
   kFinished,
 };

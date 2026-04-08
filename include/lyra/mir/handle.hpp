@@ -76,6 +76,23 @@ struct PlaceId {
 
 constexpr PlaceId kInvalidPlaceId{UINT32_MAX};
 
+struct EventId {
+  uint32_t value = UINT32_MAX;
+
+  auto operator==(const EventId&) const -> bool = default;
+  auto operator<=>(const EventId&) const = default;
+  explicit operator bool() const {
+    return value != UINT32_MAX;
+  }
+
+  template <typename H>
+  friend auto AbslHashValue(H h, EventId id) -> H {
+    return H::combine(std::move(h), id.value);
+  }
+};
+
+constexpr EventId kInvalidEventId{UINT32_MAX};
+
 struct ModuleBodyId {
   uint32_t value = UINT32_MAX;
 

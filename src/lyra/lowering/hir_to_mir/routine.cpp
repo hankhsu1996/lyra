@@ -72,6 +72,11 @@ auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     // Direct return: chandle is an opaque pointer (fits in a register)
     case TypeKind::kChandle:
       return mir::ReturnPolicy::kDirect;
+
+    case TypeKind::kEvent:
+      throw common::InternalError(
+          "ComputeReturnPolicy",
+          "event type cannot be returned from functions");
   }
   return mir::ReturnPolicy::kDirect;
 }

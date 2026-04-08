@@ -29,6 +29,8 @@ enum class StatementKind {
   kReturn,
   kDelay,
   kEventWait,
+  kNamedEventWait,
+  kEventTrigger,
   kImmediateAssertion,
 };
 
@@ -190,6 +192,18 @@ struct EventWaitStatementData {
   auto operator==(const EventWaitStatementData&) const -> bool = default;
 };
 
+struct NamedEventWaitStatementData {
+  ExpressionId event_expr;
+
+  auto operator==(const NamedEventWaitStatementData&) const -> bool = default;
+};
+
+struct EventTriggerStatementData {
+  ExpressionId target;
+
+  auto operator==(const EventTriggerStatementData&) const -> bool = default;
+};
+
 // Immediate assertion kind (LRM 16.3)
 enum class ImmediateAssertionKind : uint8_t {
   kAssert,
@@ -223,8 +237,8 @@ using StatementData = std::variant<
     CaseStatementData, ForLoopStatementData, WhileLoopStatementData,
     DoWhileLoopStatementData, RepeatLoopStatementData, BreakStatementData,
     ContinueStatementData, TerminateStatementData, ReturnStatementData,
-    DelayStatementData, EventWaitStatementData,
-    ImmediateAssertionStatementData>;
+    DelayStatementData, EventWaitStatementData, NamedEventWaitStatementData,
+    EventTriggerStatementData, ImmediateAssertionStatementData>;
 
 struct Statement {
   StatementKind kind;

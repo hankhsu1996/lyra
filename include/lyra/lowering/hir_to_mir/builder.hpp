@@ -300,6 +300,8 @@ class MirBuilder {
   void EmitRepeat();
   void EmitDelay(uint64_t ticks, BlockIndex resume);
   void EmitWait(std::vector<mir::WaitTrigger> triggers, BlockIndex resume);
+  void EmitWaitEvent(mir::EventId event, BlockIndex resume);
+  void EmitTriggerEvent(mir::EventId event);
   void EmitTerminate(std::optional<mir::Finish> info = std::nullopt);
 
   // Emit implicit return for function epilogue.

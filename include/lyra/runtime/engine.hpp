@@ -27,6 +27,7 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/engine_types.hpp"
+#include "lyra/runtime/event_registry.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
 #include "lyra/runtime/instance_metadata.hpp"
@@ -779,6 +780,27 @@ class Engine {
     wait_site_meta_ = std::move(registry);
   }
 
+  // Add a waiter to a named event object. Called by activation
+  // post-processing when a process suspends with kWaitEvent.
+  // key: (instance_id, local_event_id) uniquely identifying the runtime
+  // event object within this design.
+  void AddEventWaiter(EventObjectKey key, EventWaiter waiter) {
+    event_registry_.AddWaiter(key, waiter);
+  }
+
+  // Consume all waiters for a named event object and enqueue them for
+  // wakeup. Called by LyraTriggerEvent ABI function.
+  // key: (instance_id, local_event_id) uniquely identifying the runtime
+  // event object within this design.
+  void TriggerEvent(EventObjectKey key) {
+    auto waiters = event_registry_.ConsumeWaiters(key);
+    for (const auto& w : waiters) {
+      EnqueueProcessWakeup(
+          w.process_id, w.instance_id, w.resume_block, key.local_event_id,
+          WakeCause::kEvent);
+    }
+  }
+
   // One-time init for global trace signal metadata registry. Must be called
   // exactly once. Engine owns both the registry and the global selection mask.
   // The non-owning pointer passed to TraceManager remains valid for Engine's
@@ -1419,6 +1441,9 @@ class Engine {
 
   // Wait-site metadata registry for persistent wait installation.
   WaitSiteRegistry wait_site_meta_;
+
+  // Named event registry for event-based synchronization.
+  EventRegistry event_registry_;
 
   // Per-site hit counts for immediate cover statements.
   std::vector<uint64_t> immediate_cover_counts_;

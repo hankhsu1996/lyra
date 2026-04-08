@@ -98,6 +98,10 @@ void LyraSuspendWaitWithLateBound(
     const void* plan_ops, uint32_t num_plan_ops, const void* dep_slots,
     uint32_t num_dep_slots, uint32_t wait_site_id);
 void LyraSuspendRepeat(void* state);
+void LyraSuspendWaitEvent(
+    void* state, uint32_t resume_block, uint32_t event_id);
+void LyraTriggerEvent(
+    void* engine_ptr, uint32_t instance_id, uint32_t local_event_id);
 
 // Strobe observer program type: uses canonical StrobeProgramFn from
 // observer.hpp.

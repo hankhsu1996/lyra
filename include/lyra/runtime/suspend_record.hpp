@@ -17,6 +17,7 @@ enum class SuspendTag : uint8_t {
   kDelay = 1,
   kWait = 2,
   kRepeat = 3,
+  kWaitEvent = 4,
 };
 
 // Trigger install kind: explicit per-trigger classification written by codegen.
@@ -211,6 +212,7 @@ struct SuspendRecord {
   uint32_t num_dep_slots = 0;
   DepSignalRecord* dep_slots_ptr = nullptr;
   std::array<WaitTriggerRecord, kInlineTriggerCapacity> inline_triggers = {};
+  uint32_t event_id = 0;  // For kWaitEvent
 };
 
 // Layout invariants (relative ordering and alignment, not absolute offsets)

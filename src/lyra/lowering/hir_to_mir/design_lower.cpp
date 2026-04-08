@@ -188,6 +188,8 @@ auto LowerDesign(
   mir::Design result;
   result.num_design_slots = decls.num_design_slots;
   result.slots = decls.slots;
+  // max_body_local_events is populated after all module bodies are lowered
+  // (see Phase 2 below).
   result.slot_trace_provenance = decls.slot_trace_provenance;
   result.slot_trace_string_pool = decls.slot_trace_string_pool;
 
@@ -371,6 +373,13 @@ auto LowerDesign(
     body_function_maps[body_id.value] = std::move(product.symbol_to_function);
     spec_to_body[spec_groups[g].spec_id] = body_id;
   }
+
+  // Track max body-local event count (for ABI reserved field).
+  size_t max_events = 0;
+  for (const auto& body : result.module_bodies) {
+    max_events = std::max(max_events, body.events.size());
+  }
+  result.max_body_local_events = max_events;
 
   result.immediate_cover_sites = cover_site_registry.TakeSites();
   result.deferred_assertion_sites =

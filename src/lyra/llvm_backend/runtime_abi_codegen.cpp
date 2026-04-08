@@ -18,7 +18,7 @@ namespace {
 
 // ABI struct field indices. Private to this file.
 // Must match the C++ LyraRuntimeAbi in runtime_abi.hpp.
-constexpr unsigned kAbiFieldCount = 38;
+constexpr unsigned kAbiFieldCount = 40;
 constexpr unsigned kAbiFieldInstancePtrs = 27;
 
 }  // namespace
@@ -66,6 +66,9 @@ auto GetRuntimeAbiStructType(llvm::LLVMContext& ctx) -> llvm::StructType* {
       i8_ty,
       // A2: deferred assertion site metadata (ptr, i32 count, i32 pad)
       ptr_ty,
+      i32_ty,
+      i32_ty,
+      // L8a: named event count (i32 count, i32 pad)
       i32_ty,
       i32_ty,
   };

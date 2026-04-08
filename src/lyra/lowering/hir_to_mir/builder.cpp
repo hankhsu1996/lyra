@@ -1286,6 +1286,18 @@ void MirBuilder::EmitWait(
       });
 }
 
+void MirBuilder::EmitWaitEvent(mir::EventId event, BlockIndex resume) {
+  EmitTerm(
+      mir::WaitEvent{
+          .event = event,
+          .resume = mir::BasicBlockId{resume.value},
+      });
+}
+
+void MirBuilder::EmitTriggerEvent(mir::EventId event) {
+  EmitInst(mir::TriggerEvent{.event = event});
+}
+
 void MirBuilder::EmitTerminate(std::optional<mir::Finish> info) {
   if (info) {
     EmitTerm(*std::move(info));
@@ -1386,6 +1398,8 @@ void RemapTerminatorTargets(
         } else if constexpr (std::is_same_v<T, mir::Delay>) {
           RemapTarget(t.resume, block_map);
         } else if constexpr (std::is_same_v<T, mir::Wait>) {
+          RemapTarget(t.resume, block_map);
+        } else if constexpr (std::is_same_v<T, mir::WaitEvent>) {
           RemapTarget(t.resume, block_map);
         }
         // Return, Finish, Repeat have no targets

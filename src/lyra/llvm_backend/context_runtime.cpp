@@ -530,6 +530,32 @@ auto Context::GetLyraFreeTriggers() -> llvm::Function* {
   return lyra_free_triggers_;
 }
 
+auto Context::GetLyraSuspendWaitEvent() -> llvm::Function* {
+  if (lyra_suspend_wait_event_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty, i32_ty}, false);
+    lyra_suspend_wait_event_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraSuspendWaitEvent",
+        llvm_module_.get());
+  }
+  return lyra_suspend_wait_event_;
+}
+
+auto Context::GetLyraTriggerEvent() -> llvm::Function* {
+  if (lyra_trigger_event_ == nullptr) {
+    auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);
+    auto* i32_ty = llvm::Type::getInt32Ty(*llvm_context_);
+    auto* fn_type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*llvm_context_), {ptr_ty, i32_ty, i32_ty}, false);
+    lyra_trigger_event_ = llvm::Function::Create(
+        fn_type, llvm::Function::ExternalLinkage, "LyraTriggerEvent",
+        llvm_module_.get());
+  }
+  return lyra_trigger_event_;
+}
+
 auto Context::GetLyraResolveSlotPtr() -> llvm::Function* {
   if (lyra_resolve_slot_ptr_ == nullptr) {
     auto* ptr_ty = llvm::PointerType::getUnqual(*llvm_context_);

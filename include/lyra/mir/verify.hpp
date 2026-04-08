@@ -26,6 +26,10 @@ struct VerifyContext {
   const CompiledModuleBody* body = nullptr;
   const TypeArena* types = nullptr;
   Phase phase = Phase::kBackendReady;
+
+  // Body-local named event count. Used to validate EventId operands
+  // in WaitEvent/TriggerEvent. 0 when event info is unavailable.
+  uint32_t num_events = 0;
 };
 
 // Canonical external-ref recipe resolver. Validates ref_id is in range,

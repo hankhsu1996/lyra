@@ -133,6 +133,12 @@ struct Wait {
   BasicBlockId resume = {};           // Block to resume after trigger fires
 };
 
+// Named event wait suspension (requires scheduler).
+struct WaitEvent {
+  EventId event;
+  BasicBlockId resume = {};
+};
+
 // Return terminator - ends execution of a function or process.
 // For functions: value must be present (functions always return a value).
 // For processes: value is empty (processes don't return values).
@@ -163,8 +169,8 @@ struct Finish {
 struct Repeat {};
 
 // Terminator data variant.
-using TerminatorData =
-    std::variant<Jump, Branch, Switch, Delay, Wait, Return, Finish, Repeat>;
+using TerminatorData = std::variant<
+    Jump, Branch, Switch, Delay, Wait, WaitEvent, Return, Finish, Repeat>;
 
 // A block terminator that determines control flow.
 struct Terminator {
@@ -205,6 +211,9 @@ void ForEachSuccessor(const Terminator& term, const F& func) {
           [&](const Wait& w) {
             func(TerminatorSuccessor{.target = w.resume, .args = {}});
           },
+          [&](const WaitEvent& we) {
+            func(TerminatorSuccessor{.target = we.resume, .args = {}});
+          },
           [](const Return&) {},
           [](const Finish&) {},
           [](const Repeat&) {},
@@ -222,6 +231,7 @@ void ForEachLocalOperand(const Terminator& term, const F& func) {
           [&](const Switch& s) { func(s.selector); },
           [](const Delay&) {},
           [](const Wait&) {},
+          [](const WaitEvent&) {},
           [&](const Return& r) {
             if (r.value) func(*r.value);
           },

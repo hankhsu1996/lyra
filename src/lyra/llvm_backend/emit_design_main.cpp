@@ -2029,7 +2029,8 @@ auto BuildRuntimeAbi(
     const ConstructorSlotTraceMeta& slot_trace,
     uint32_t num_immediate_cover_sites, int8_t global_precision_power,
     llvm::Constant* deferred_site_meta_global,
-    uint32_t num_deferred_assertion_sites) -> llvm::Value* {
+    uint32_t num_deferred_assertion_sites, uint32_t num_events)
+    -> llvm::Value* {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(ctx);
@@ -2120,6 +2121,10 @@ auto BuildRuntimeAbi(
               : llvm::ConstantPointerNull::get(ptr_ty));
   store_field(36, llvm::ConstantInt::get(i32_ty, num_deferred_assertion_sites));
   store_field(37, llvm::ConstantInt::get(i32_ty, 0));
+
+  // L8a: Named event count.
+  store_field(38, llvm::ConstantInt::get(i32_ty, num_events));
+  store_field(39, llvm::ConstantInt::get(i32_ty, 0));
 
   return abi_alloca;
 }
@@ -2663,7 +2668,8 @@ auto EmitDesignMain(
         process_meta_for_abi, trigger_comb_for_abi, slot_trace_for_abi,
         static_cast<uint32_t>(input.design->immediate_cover_sites.size()),
         input.design->global_precision_power, deferred_site_meta_global,
-        static_cast<uint32_t>(input.design->deferred_assertion_sites.size()));
+        static_cast<uint32_t>(input.design->deferred_assertion_sites.size()),
+        static_cast<uint32_t>(input.design->max_body_local_events));
     abi_for_exit = abi_alloca;
 
     EmitRunSimulation(

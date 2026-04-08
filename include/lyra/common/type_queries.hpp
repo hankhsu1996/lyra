@@ -153,6 +153,15 @@ inline auto ComputePackedFillShape(
       "target must be packed (integral or packed array)");
 }
 
+// Check if a type kind represents a value-storage object.
+// Returns false for types that have no data payload and cannot occupy storage
+// slots (e.g., event). Used as the canonical boundary to exclude non-value
+// declarations from slot allocation, type descriptor interning, and any other
+// path that assumes a type has a byte-level representation.
+inline auto HasValueStorage(TypeKind kind) -> bool {
+  return kind != TypeKind::kVoid && kind != TypeKind::kEvent;
+}
+
 // Check if a type kind is "managed" (requires lifecycle operations).
 // Managed types: string, dynamic array, queue.
 inline auto IsManagedKind(TypeKind kind) -> bool {
@@ -206,6 +215,7 @@ inline auto TypeContainsString(TypeId type_id, const TypeArena& arena) -> bool {
 
 // Re-export in common namespace for explicit qualification
 namespace lyra::common {
+using lyra::HasValueStorage;
 using lyra::IsManagedKind;
 using lyra::TypeContainsManaged;
 using lyra::TypeContainsString;

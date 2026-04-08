@@ -8,10 +8,13 @@
 #include <slang/ast/statements/MiscStatements.h>
 
 #include "lyra/common/diagnostic/diagnostic_sink.hpp"
+#include "lyra/common/type.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/statement.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
+#include "lyra/lowering/ast_to_hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement_assert.hpp"
 #include "lyra/lowering/ast_to_hir/statement_control_flow.hpp"
@@ -119,6 +122,36 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
           "concurrent assertion statements are unsupported; "
           "pass --disable-assertions to skip");
       return hir::kInvalidStatementId;
+    }
+
+    case StatementKind::EventTrigger: {
+      const auto& trigger_stmt = stmt.as<slang::ast::EventTriggerStatement>();
+      SourceSpan span = ctx->SpanOf(stmt.sourceRange);
+
+      if (trigger_stmt.isNonBlocking) {
+        ctx->sink->Error(
+            span, "nonblocking event trigger (->>) not yet supported");
+        return hir::kInvalidStatementId;
+      }
+
+      auto target = LowerScopedExpression(
+          trigger_stmt.target, *ctx, lowerer.Registrar(), lowerer.Frame());
+      if (!target) {
+        return hir::kInvalidStatementId;
+      }
+
+      TypeId target_type = (*ctx->hir_arena)[target].type;
+      if ((*ctx->type_arena)[target_type].Kind() != TypeKind::kEvent) {
+        ctx->sink->Error(span, "event trigger target must be an event type");
+        return hir::kInvalidStatementId;
+      }
+
+      return ctx->hir_arena->AddStatement(
+          hir::Statement{
+              .kind = hir::StatementKind::kEventTrigger,
+              .span = span,
+              .data = hir::EventTriggerStatementData{.target = target},
+          });
     }
 
     default:
