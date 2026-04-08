@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "lyra/common/local_slot_id.hpp"
@@ -112,10 +113,28 @@ struct ExternalAccessRecipe {
 // Contains only semantic identity (object + slot + type), not layout data.
 // Backend computes design-global address from ConstructionInput at codegen
 // time.
+//
+// Two kinds of bindings:
+//   Instance-owned: target_object + target_local_slot identify the storage.
+//     Backend resolves via obj.design_state_base_slot + local_slot.
+//   Package/global: global_slot directly identifies a design-global slot.
+//     Currently unused (package globals use design_places, not ExternalRefId).
+//     Reserved for future NonLocalAnchor::kPackage support.
 struct ResolvedExternalRefBinding {
   common::ObjectIndex target_object;
   common::LocalSlotId target_local_slot;
   TypeId type;
+  // Set for package/global targets (no target_object traversal needed).
+  // nullopt for instance-owned targets.
+  std::optional<uint32_t> global_slot;
+
+  [[nodiscard]] auto IsPackageOrGlobal() const -> bool {
+    return global_slot.has_value();
+  }
+
+  [[nodiscard]] auto GlobalSlotId() const -> uint32_t {
+    return *global_slot;
+  }
 };
 
 }  // namespace lyra::mir

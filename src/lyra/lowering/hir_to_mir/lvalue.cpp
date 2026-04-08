@@ -798,22 +798,15 @@ auto LowerLvalue(hir::ExpressionId expr_id, MirBuilder& builder)
         } else if constexpr (std::is_same_v<
                                  T, hir::HierarchicalRefExpressionData>) {
           auto& ctx = builder.GetContext();
-          // B2: When external_refs is set, return ExternalRefId for the dest.
-          // Fall through if target is in cross_instance_places (design-global).
-          if (ctx.external_refs != nullptr &&
-              (ctx.cross_instance_places == nullptr ||
-               ctx.cross_instance_places->find(data.target) ==
-                   ctx.cross_instance_places->end())) {
-            auto ref = ctx.LowerHierarchicalRefToExternalRef(
-                data, expr.type, mir::ExternalAccessKind::kReadWrite);
-            return LvalueResult{
-                .dest = mir::WriteTarget{ref.ref_id},
-                .validity = MakeAlwaysValid(builder),
-            };
+          if (ctx.external_refs == nullptr) {
+            throw common::InternalError(
+                "LowerLvalue/HierarchicalRef",
+                "hierarchical body write requires external-ref context");
           }
-          // Old path or design-global target.
+          auto ref = ctx.LowerHierarchicalRefToExternalRef(
+              data, expr.type, mir::ExternalAccessKind::kReadWrite);
           return LvalueResult{
-              .dest = mir::WriteTarget{ctx.ResolveHierarchicalRef(data.target)},
+              .dest = mir::WriteTarget{ref.ref_id},
               .validity = MakeAlwaysValid(builder),
           };
         } else {
@@ -845,8 +838,14 @@ auto LowerPureLvaluePlaceImpl(hir::ExpressionId expr_id, const Context& ctx)
 
         } else if constexpr (std::is_same_v<
                                  T, hir::HierarchicalRefExpressionData>) {
-          // Pure: hierarchical symbol lookup
-          return ctx.ResolveHierarchicalRef(data.target);
+          // Hierarchical non-local targets cannot be lowered as pure PlaceId.
+          // They must go through ExternalRefId + late normalization.
+          return std::unexpected(
+              Diagnostic::Unsupported(
+                  expr.span,
+                  "hierarchical reference in pure-place context "
+                  "(index-plan uses ExternalRefId transport instead)",
+                  UnsupportedCategory::kFeature));
 
         } else if constexpr (std::is_same_v<
                                  T, hir::MemberAccessExpressionData>) {

@@ -170,34 +170,10 @@ auto LowerProcess(
         .materialize_count = 0,
         .decision_sites = {},
     };
-    // Build sensitivity env for external ref resolution.
-    // At body-lowering time, resolved_external_ref_bindings don't exist yet.
-    // Use cross_instance_places to pre-resolve ExternalRefId -> design-global
-    // slot for sensitivity collection.
-    //
-    // provisional_targets are 1:1 with ExternalRefId: each ExternalRefId.value
-    // indexes into provisional_targets, and target_sym is the complete
-    // sensitivity identity (each elaborated symbol maps to exactly one
-    // design-global slot in cross_instance_places).
-    std::optional<mir::SensitivityExternalRefEnv> ext_ref_env;
-    std::vector<std::optional<uint32_t>> pre_resolved_slots;
-    if (ctx.external_refs != nullptr && ctx.provisional_targets != nullptr &&
-        ctx.cross_instance_places != nullptr && ctx.design_arena != nullptr &&
-        !ctx.external_refs->empty()) {
-      pre_resolved_slots.reserve(ctx.provisional_targets->size());
-      for (uint32_t ri = 0; ri < ctx.provisional_targets->size(); ++ri) {
-        // Throws if target_sym not found -- every body-process ExternalRefId
-        // must resolve to a design-global slot for sensitivity.
-        pre_resolved_slots.emplace_back(
-            ResolvePreBindingExternalRefDesignGlobalSlot(
-                mir::ExternalRefId{ri}, *ctx.provisional_targets,
-                *ctx.cross_instance_places, *ctx.design_arena));
-      }
-      ext_ref_env.emplace(
-          mir::PreBindingSensitivityEnv{.resolved_slots = pre_resolved_slots});
-    }
-    auto triggers =
-        mir::CollectSensitivity(temp_process, mir_arena, ext_ref_env);
+    // Sensitivity collection produces WaitTrigger entries with
+    // unresolved_external_ref set for ExternalRefId operands. These are
+    // resolved at backend normalization using ResolvedExternalRefBinding.
+    auto triggers = mir::CollectSensitivity(temp_process, mir_arena);
 
     // Find the block with Repeat terminator and replace
     for (auto& block : blocks) {

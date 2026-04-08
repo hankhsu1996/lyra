@@ -1062,6 +1062,10 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
   for (const auto& trigger : wait_term->triggers) {
     if (trigger.edge != common::EdgeKind::kAnyChange) return std::nullopt;
     if (trigger.late_bound.has_value()) return std::nullopt;
+    // Unresolved external refs cannot be analyzed at layout time (no
+    // topology binding available). Fall back to Wait-based lowering
+    // where FillTriggerArray will normalize them.
+    if (trigger.unresolved_external_ref.has_value()) return std::nullopt;
     triggers.push_back({
         .signal = trigger.signal,
         .observed_place = trigger.observed_place,

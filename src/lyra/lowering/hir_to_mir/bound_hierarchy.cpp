@@ -435,37 +435,4 @@ auto BindConnectionRecipe(
       .result_type = recipe.result_type};
 }
 
-auto ResolvePreBindingExternalRefDesignGlobalSlot(
-    mir::ExternalRefId ref_id,
-    const std::vector<ProvisionalNonLocalTarget>& provisional_targets,
-    const std::unordered_map<SymbolId, mir::PlaceId, SymbolIdHash>&
-        cross_instance_places,
-    const mir::Arena& design_arena) -> uint32_t {
-  if (ref_id.value >= provisional_targets.size()) {
-    throw common::InternalError(
-        "ResolvePreBindingExternalRefDesignGlobalSlot",
-        std::format(
-            "external ref {} out of range (provisional size {})", ref_id.value,
-            provisional_targets.size()));
-  }
-  const auto& prov = provisional_targets[ref_id.value];
-  auto ci_it = cross_instance_places.find(prov.target_sym);
-  if (ci_it == cross_instance_places.end()) {
-    throw common::InternalError(
-        "ResolvePreBindingExternalRefDesignGlobalSlot",
-        std::format(
-            "target sym {} not found in cross_instance_places",
-            prov.target_sym.value));
-  }
-  const auto& place = design_arena[ci_it->second];
-  if (place.root.kind != mir::PlaceRoot::Kind::kDesignGlobal) {
-    throw common::InternalError(
-        "ResolvePreBindingExternalRefDesignGlobalSlot",
-        std::format(
-            "resolved place for sym {} is not kDesignGlobal",
-            prov.target_sym.value));
-  }
-  return static_cast<uint32_t>(place.root.id);
-}
-
 }  // namespace lyra::lowering::hir_to_mir

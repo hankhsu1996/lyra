@@ -2160,8 +2160,8 @@ auto PlaceRootScope(mir::PlaceRoot::Kind kind) -> mir::ScopedSlotRef::Scope {
 
 auto BuildIndexPlan(
     hir::ExpressionId expr_id, Context& ctx,
-    std::vector<mir::ScopedPlanOp>& plan, std::vector<mir::ScopedSlotRef>& deps)
-    -> bool {
+    std::vector<mir::ScopedPlanOp>& plan, std::vector<mir::ScopedSlotRef>& deps,
+    std::vector<mir::PendingIndexPlanExternalRef>& pending_ext_refs) -> bool {
   const auto& expr = (*ctx.hir_arena)[expr_id];
 
   switch (expr.kind) {
@@ -2202,30 +2202,36 @@ auto BuildIndexPlan(
     case hir::ExpressionKind::kHierarchicalRef: {
       const auto& href_data =
           std::get<hir::HierarchicalRefExpressionData>(expr.data);
-      auto place_id = ctx.ResolveHierarchicalRef(href_data.target);
-      const auto& place = (*ctx.mir_arena)[place_id];
-      if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot ||
-          place.root.kind == mir::PlaceRoot::Kind::kDesignGlobal) {
-        auto slot_id = static_cast<uint32_t>(place.root.id);
-        auto scope = PlaceRootScope(place.root.kind);
-        const Type& idx_type = (*ctx.type_arena)[expr.type];
-        uint32_t bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
-        bool is_signed = IsPackedSigned(idx_type, *ctx.type_arena);
-        uint32_t byte_size = (bit_width + 7) / 8;
-        plan.push_back(
-            {.op = runtime::IndexPlanOp::MakeReadSlot(
-                 slot_id, 0, static_cast<uint8_t>(byte_size),
-                 static_cast<uint8_t>(bit_width), is_signed),
-             .slot_scope = scope});
-        deps.push_back({.scope = scope, .id = slot_id});
-        return true;
+      if (ctx.external_refs == nullptr) {
+        throw common::InternalError(
+            "BuildIndexPlan/HierarchicalRef",
+            "hierarchical index-plan requires external-ref context");
       }
-      return false;
+      auto ref = ctx.LowerHierarchicalRefToExternalRef(
+          href_data, expr.type, mir::ExternalAccessKind::kRead);
+      const Type& idx_type = (*ctx.type_arena)[expr.type];
+      uint32_t bit_width = PackedBitWidth(idx_type, *ctx.type_arena);
+      bool is_signed = IsPackedSigned(idx_type, *ctx.type_arena);
+      uint32_t byte_size = (bit_width + 7) / 8;
+      auto op_idx = static_cast<uint32_t>(plan.size());
+      plan.push_back(
+          {.op = runtime::IndexPlanOp::MakeReadSlot(
+               0, 0, static_cast<uint8_t>(byte_size),
+               static_cast<uint8_t>(bit_width), is_signed),
+           .slot_scope = mir::ScopedSlotRef::Scope::kDesignGlobal});
+      auto dep_idx = static_cast<uint32_t>(deps.size());
+      deps.push_back(
+          {.scope = mir::ScopedSlotRef::Scope::kDesignGlobal, .id = 0});
+      pending_ext_refs.push_back(
+          {.ref_id = ref.ref_id, .op_index = op_idx, .dep_index = dep_idx});
+      return true;
     }
     case hir::ExpressionKind::kBinaryOp: {
       const auto& bin_data = std::get<hir::BinaryExpressionData>(expr.data);
-      if (!BuildIndexPlan(bin_data.lhs, ctx, plan, deps)) return false;
-      if (!BuildIndexPlan(bin_data.rhs, ctx, plan, deps)) return false;
+      if (!BuildIndexPlan(bin_data.lhs, ctx, plan, deps, pending_ext_refs))
+        return false;
+      if (!BuildIndexPlan(bin_data.rhs, ctx, plan, deps, pending_ext_refs))
+        return false;
       auto op_kind = runtime::IndexPlanOp::Kind::kConst;
       switch (bin_data.op) {
         case hir::BinaryOp::kAdd:
@@ -2280,14 +2286,18 @@ auto BuildIndexPlan(
       const auto& unary_data = std::get<hir::UnaryExpressionData>(expr.data);
       if (unary_data.op == hir::UnaryOp::kMinus) {
         plan.push_back({.op = runtime::IndexPlanOp::MakeConst(0)});
-        if (!BuildIndexPlan(unary_data.operand, ctx, plan, deps)) return false;
+        if (!BuildIndexPlan(
+                unary_data.operand, ctx, plan, deps, pending_ext_refs))
+          return false;
         plan.push_back(
             {.op = runtime::IndexPlanOp::MakeBinaryOp(
                  runtime::IndexPlanOp::Kind::kSub)});
         return true;
       }
       if (unary_data.op == hir::UnaryOp::kBitwiseNot) {
-        if (!BuildIndexPlan(unary_data.operand, ctx, plan, deps)) return false;
+        if (!BuildIndexPlan(
+                unary_data.operand, ctx, plan, deps, pending_ext_refs))
+          return false;
         plan.push_back({.op = runtime::IndexPlanOp::MakeConst(-1)});
         plan.push_back(
             {.op = runtime::IndexPlanOp::MakeBinaryOp(
@@ -2298,7 +2308,8 @@ auto BuildIndexPlan(
     }
     case hir::ExpressionKind::kCast: {
       const auto& cast_data = std::get<hir::CastExpressionData>(expr.data);
-      return BuildIndexPlan(cast_data.operand, ctx, plan, deps);
+      return BuildIndexPlan(
+          cast_data.operand, ctx, plan, deps, pending_ext_refs);
     }
     default:
       return false;
@@ -2423,7 +2434,8 @@ auto LowerEventWait(
         // Build index plan from the HIR index expression.
         std::vector<mir::ScopedPlanOp> plan;
         std::vector<mir::ScopedSlotRef> deps;
-        bool plan_ok = BuildIndexPlan(index_id, ctx, plan, deps);
+        std::vector<mir::PendingIndexPlanExternalRef> pending_ext;
+        bool plan_ok = BuildIndexPlan(index_id, ctx, plan, deps, pending_ext);
 
         if (!plan_ok && !deps.empty()) {
           throw common::InternalError(
@@ -2450,7 +2462,8 @@ auto LowerEventWait(
               .plan = std::move(plan),
               .dep_slots = std::move(deps),
               .mapping = mapping,
-              .element_type = {}};
+              .element_type = {},
+              .pending_external_refs = std::move(pending_ext)};
         } else {
           // Local-only index: no rebinding needed.
           // dep_slots empty signals codegen to use dynamic path but skip
@@ -2645,7 +2658,9 @@ auto LowerEventWait(
         // (same as bus[i]). For descending (-:), plan evaluates to i-(w-1).
         std::vector<mir::ScopedPlanOp> plan;
         std::vector<mir::ScopedSlotRef> deps;
-        bool plan_ok = BuildIndexPlan(ips_data.index, ctx, plan, deps);
+        std::vector<mir::PendingIndexPlanExternalRef> pending_ext;
+        bool plan_ok =
+            BuildIndexPlan(ips_data.index, ctx, plan, deps, pending_ext);
 
         if (plan_ok && !ips_data.ascending && ips_data.width > 1) {
           // Append: MakeConst(width-1), MakeBinaryOp(kSub)
@@ -2681,7 +2696,8 @@ auto LowerEventWait(
               .plan = std::move(plan),
               .dep_slots = std::move(deps),
               .mapping = mapping,
-              .element_type = {}};
+              .element_type = {},
+              .pending_external_refs = std::move(pending_ext)};
         } else {
           late_bound_info = mir::LateBoundIndex{
               .plan = {},
@@ -2754,7 +2770,9 @@ auto LowerEventWait(
 
         std::vector<mir::ScopedPlanOp> plan;
         std::vector<mir::ScopedSlotRef> deps;
-        bool plan_ok = BuildIndexPlan(elem_data.index, ctx, plan, deps);
+        std::vector<mir::PendingIndexPlanExternalRef> pending_ext;
+        bool plan_ok =
+            BuildIndexPlan(elem_data.index, ctx, plan, deps, pending_ext);
 
         if (!plan_ok && !deps.empty()) {
           throw common::InternalError(
@@ -2782,7 +2800,8 @@ auto LowerEventWait(
               .mapping = mapping,
               .element_type = elem_type_id,
               .num_elements = 0,
-              .is_container = true};
+              .is_container = true,
+              .pending_external_refs = std::move(pending_ext)};
         } else {
           late_bound_info = mir::LateBoundIndex{
               .plan = {},
@@ -2831,7 +2850,9 @@ auto LowerEventWait(
 
         std::vector<mir::ScopedPlanOp> plan;
         std::vector<mir::ScopedSlotRef> deps;
-        bool plan_ok = BuildIndexPlan(elem_data.index, ctx, plan, deps);
+        std::vector<mir::PendingIndexPlanExternalRef> pending_ext;
+        bool plan_ok =
+            BuildIndexPlan(elem_data.index, ctx, plan, deps, pending_ext);
 
         if (!plan_ok && !deps.empty()) {
           throw common::InternalError(
@@ -2858,7 +2879,8 @@ auto LowerEventWait(
               .dep_slots = std::move(deps),
               .mapping = mapping,
               .element_type = arr_info.element_type,
-              .num_elements = arr_info.range.Size()};
+              .num_elements = arr_info.range.Size(),
+              .pending_external_refs = std::move(pending_ext)};
         } else {
           late_bound_info = mir::LateBoundIndex{
               .plan = {},
@@ -2923,34 +2945,34 @@ auto LowerEventWait(
       if (!signal_result) return std::unexpected(signal_result.error());
       mir::Operand signal_op = std::move(*signal_result);
       if (signal_op.kind == mir::Operand::Kind::kExternalRef) {
-        // B2: Resolve external ref trigger via canonical pre-binding helper.
+        // Carry unresolved external ref trigger. Resolved at backend
+        // normalization (FillTriggerArray) using ResolvedExternalRefBinding.
         auto ref_id = std::get<mir::ExternalRefId>(signal_op.payload);
-        if (ctx.provisional_targets == nullptr ||
-            ctx.cross_instance_places == nullptr ||
-            ctx.design_arena == nullptr) {
-          throw common::InternalError(
-              "LowerEventWait",
-              "external ref trigger requires provisional targets and "
-              "cross_instance_places");
+        common::EdgeKind edge = common::EdgeKind::kAnyChange;
+        switch (hir_trigger.edge) {
+          case hir::EventEdgeKind::kNone:
+            edge = common::EdgeKind::kAnyChange;
+            break;
+          case hir::EventEdgeKind::kPosedge:
+            edge = common::EdgeKind::kPosedge;
+            break;
+          case hir::EventEdgeKind::kNegedge:
+            edge = common::EdgeKind::kNegedge;
+            break;
+          case hir::EventEdgeKind::kBothEdges:
+            triggers.push_back(
+                {.signal = {},
+                 .edge = common::EdgeKind::kPosedge,
+                 .unresolved_external_ref = ref_id});
+            triggers.push_back(
+                {.signal = {},
+                 .edge = common::EdgeKind::kNegedge,
+                 .unresolved_external_ref = ref_id});
+            continue;
         }
-        if (ctx.external_refs == nullptr ||
-            ref_id.value >= ctx.external_refs->size()) {
-          throw common::InternalError(
-              "LowerEventWait",
-              "external ref trigger missing external_refs metadata");
-        }
-        TypeId trigger_type = (*ctx.external_refs)[ref_id.value].type;
-        auto global_slot = ResolvePreBindingExternalRefDesignGlobalSlot(
-            ref_id, *ctx.provisional_targets, *ctx.cross_instance_places,
-            *ctx.design_arena);
-        place_id = ctx.mir_arena->AddPlace(
-            mir::Place{
-                .root =
-                    mir::PlaceRoot{
-                        .kind = mir::PlaceRoot::Kind::kDesignGlobal,
-                        .id = static_cast<int>(global_slot),
-                        .type = trigger_type},
-                .projections = {}});
+        triggers.push_back(
+            {.signal = {}, .edge = edge, .unresolved_external_ref = ref_id});
+        continue;
       } else if (signal_op.kind == mir::Operand::Kind::kUse) {
         place_id = std::get<mir::PlaceId>(signal_op.payload);
       } else {

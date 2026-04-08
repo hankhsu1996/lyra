@@ -147,8 +147,8 @@ struct ProvisionalNonLocalTarget {
 struct DeclView {
   const PlaceMap* body_places = nullptr;    // body-local (kModuleSlot)
   const PlaceMap* design_places = nullptr;  // package-global (kDesignGlobal)
-  // Cross-instance places for hierarchical refs. NOT part of LookupPlace.
-  // Accessed only through ResolveHierarchicalRef.
+  // Cross-instance places. NOT part of LookupPlace in body lowering.
+  // V3d residual: used by design-level LookupPlace fallback only.
   const PlaceMap* cross_instance_places = nullptr;
   const SymbolToMirFunctionMap* functions = nullptr;
   const std::vector<mir::SlotDesc>* slots = nullptr;       // design-global
@@ -252,11 +252,9 @@ struct Context {
   // Null when no design-level declaration view is available.
   const DesignDpiImports* dpi_imports = nullptr;
 
-  // Cross-instance place resolver for hierarchical references and
-  // connection compilation. NOT part of LookupPlace -- accessed only
-  // through dedicated ResolveHierarchicalRef(). Kept separate from
-  // generic place lookup to avoid contaminating body/package lowering
-  // with cross-instance addressing.
+  // Cross-instance place map. V3d residual: used by design-level
+  // LookupPlace fallback and connection compilation only. Not accessed
+  // by body-lowering hierarchical read/write or sensitivity paths.
   const PlaceMap* cross_instance_places = nullptr;
 
   // Optional sink for dynamically generated functions (e.g., observer
@@ -380,12 +378,6 @@ struct Context {
 
   // Throws InternalError if symbol not found (compiler bug, not user error).
   auto LookupPlace(SymbolId sym) const -> mir::PlaceId;
-
-  // Resolve a cross-instance hierarchical reference. Only checks
-  // cross_instance_places, not body/local/design-global places.
-  // Used for kHierarchicalRef expressions and connection compilation.
-  // Throws InternalError if the symbol is not found.
-  auto ResolveHierarchicalRef(SymbolId sym) const -> mir::PlaceId;
 
   // B2: Result of lowering a hierarchical ref to an external ref.
   struct ExternalRefResult {

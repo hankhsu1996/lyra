@@ -76,6 +76,10 @@
 
 namespace lyra::lowering::mir_to_llvm {
 
+// Forward declaration for ExtractProcessTriggerEntry.
+auto ExtractProcessTriggerEntry(Context& context, const mir::Process& process)
+    -> std::optional<ProcessTriggerEntry>;
+
 namespace {
 
 // Validate that a process meets the init execution contract:
@@ -1049,12 +1053,22 @@ auto TriggerKindFromEdge(common::EdgeKind edge) -> runtime::TriggerInstallKind {
 void FillTriggerArray(
     Context& context, llvm::Value* base_ptr, llvm::Type* trigger_type,
     llvm::Type* array_type, const std::vector<mir::WaitTrigger>& triggers) {
+  // Normalize unresolved external ref triggers to topology-resolved identity.
+  auto resolved_triggers = triggers;
+  for (auto& trigger : resolved_triggers) {
+    if (trigger.unresolved_external_ref.has_value()) {
+      trigger.signal = context.NormalizeExternalRefSignalIdentity(
+          *trigger.unresolved_external_ref);
+      trigger.unresolved_external_ref = std::nullopt;
+    }
+  }
+
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
-  for (uint32_t i = 0; i < triggers.size(); ++i) {
+  for (uint32_t i = 0; i < resolved_triggers.size(); ++i) {
     auto* elem_ptr = builder.CreateConstGEP2_32(array_type, base_ptr, 0, i);
 
     // Write signal_id (field 0).
@@ -1062,21 +1076,23 @@ void FillTriggerArray(
     // base addition). Global signals emit GlobalSignalId. The domain
     // is recorded in the flags field (kTriggerLocalSignal).
     auto* signal_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 0);
-    auto signal_expr = context.EmitSignalCoord(triggers[i].signal);
+    auto signal_expr = context.EmitSignalCoord(resolved_triggers[i].signal);
     bool is_local_signal = signal_expr.IsLocal();
     builder.CreateStore(signal_expr.Emit(builder), signal_ptr);
 
     // Write edge (field 1)
     auto* edge_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 1);
     builder.CreateStore(
-        llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(triggers[i].edge)),
+        llvm::ConstantInt::get(
+            i8_ty, static_cast<uint8_t>(resolved_triggers[i].edge)),
         edge_ptr);
 
     // Write kind (field 3) -- determined by trigger classification.
-    bool is_container =
-        triggers[i].late_bound && triggers[i].late_bound->is_container;
-    auto install_kind = is_container ? runtime::TriggerInstallKind::kContainer
-                                     : TriggerKindFromEdge(triggers[i].edge);
+    bool is_container = resolved_triggers[i].late_bound &&
+                        resolved_triggers[i].late_bound->is_container;
+    auto install_kind = is_container
+                            ? runtime::TriggerInstallKind::kContainer
+                            : TriggerKindFromEdge(resolved_triggers[i].edge);
     auto* kind_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 3);
     builder.CreateStore(
         llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(install_kind)),
@@ -1085,24 +1101,28 @@ void FillTriggerArray(
     if (is_container) {
       // Container element: emit dynamic container target.
       // container_elem_stride and flags are set by EmitDynamicContainerTarget.
-      EmitDynamicContainerTarget(context, elem_ptr, trigger_type, triggers[i]);
-    } else if (triggers[i].late_bound && triggers[i].late_bound->element_type) {
+      EmitDynamicContainerTarget(
+          context, elem_ptr, trigger_type, resolved_triggers[i]);
+    } else if (
+        resolved_triggers[i].late_bound &&
+        resolved_triggers[i].late_bound->element_type) {
       // Dynamic unpacked array element.
       // container_elem_stride = 0 (non-container), flags set by Emit*.
       auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
       builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
       EmitDynamicUnpackedBitTarget(
-          context, elem_ptr, trigger_type, triggers[i]);
-    } else if (triggers[i].late_bound) {
+          context, elem_ptr, trigger_type, resolved_triggers[i]);
+    } else if (resolved_triggers[i].late_bound) {
       // Dynamic bit-select.
       // container_elem_stride = 0 (non-container), flags set by Emit*.
       auto* stride_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 7);
       builder.CreateStore(llvm::ConstantInt::get(i32_ty, 0), stride_ptr);
-      EmitDynamicBitTarget(context, elem_ptr, trigger_type, triggers[i]);
+      EmitDynamicBitTarget(
+          context, elem_ptr, trigger_type, resolved_triggers[i]);
     } else {
       // Static path: resolve observation range at compile time.
       // Always active, container_elem_stride = 0.
-      auto range = ResolveObservationRange(context, triggers[i]);
+      auto range = ResolveObservationRange(context, resolved_triggers[i]);
       auto* bit_idx_ptr = builder.CreateStructGEP(trigger_type, elem_ptr, 2);
       builder.CreateStore(
           llvm::ConstantInt::get(i8_ty, range.bit_index), bit_idx_ptr);
@@ -1289,6 +1309,16 @@ auto EmitLateBoundData(
     builder.CreateStore(
         llvm::ConstantInt::get(i32_ty, container_elem_stride), f8);
 
+    // Normalize pending external refs for this late-bound entry.
+    // Build a lookup from op_index -> resolved SignalRef.
+    std::unordered_map<uint32_t, mir::SignalRef> resolved_ext_ops;
+    std::unordered_map<uint32_t, mir::SignalRef> resolved_ext_deps;
+    for (const auto& pending : lb.pending_external_refs) {
+      auto sig = context.NormalizeExternalRefSignalIdentity(pending.ref_id);
+      resolved_ext_ops[pending.op_index] = sig;
+      resolved_ext_deps[pending.dep_index] = sig;
+    }
+
     // Fill plan ops. Module-local reads emit body-local signal_id with
     // kIndexPlanLocalSignal flag; runtime resolves via the instance.
     if (plan_ops_alloca != nullptr) {
@@ -1297,6 +1327,11 @@ auto EmitLateBoundData(
       for (uint32_t p = 0; p < lb.plan.size(); ++p) {
         const auto& scoped_op = lb.plan[p];
         auto op = scoped_op.op;
+        // Patch placeholder slot_id from resolved external ref if applicable.
+        auto ext_it = resolved_ext_ops.find(p);
+        if (ext_it != resolved_ext_ops.end()) {
+          op.slot_id = ext_it->second.id;
+        }
         auto* op_ptr = builder.CreateConstGEP2_32(
             plan_array_type, plan_ops_alloca, 0, plan_offset + p);
 
@@ -1344,11 +1379,19 @@ auto EmitLateBoundData(
           llvm::ArrayType::get(dep_record_type, total_dep_slots);
       for (uint32_t d = 0; d < lb.dep_slots.size(); ++d) {
         const auto& ref = lb.dep_slots[d];
-        auto mir_scope = (ref.scope == mir::ScopedSlotRef::Scope::kModuleLocal)
-                             ? mir::SignalRef::Scope::kModuleLocal
-                             : mir::SignalRef::Scope::kDesignGlobal;
-        auto signal_expr = context.EmitSignalCoord(
-            mir::SignalRef{.scope = mir_scope, .id = ref.id});
+        // Check if this dep was a placeholder for an external ref.
+        auto dep_ext_it = resolved_ext_deps.find(d);
+        mir::SignalRef dep_sig;
+        if (dep_ext_it != resolved_ext_deps.end()) {
+          dep_sig = dep_ext_it->second;
+        } else {
+          auto mir_scope =
+              (ref.scope == mir::ScopedSlotRef::Scope::kModuleLocal)
+                  ? mir::SignalRef::Scope::kModuleLocal
+                  : mir::SignalRef::Scope::kDesignGlobal;
+          dep_sig = mir::SignalRef{.scope = mir_scope, .id = ref.id};
+        }
+        auto signal_expr = context.EmitSignalCoord(dep_sig);
         // Use the resolved domain, not the original MIR scope.
         // EmitSignalCoord reclassifies instance-owned design-global
         // signals to local with the correct target instance.
@@ -1820,7 +1863,7 @@ auto GenerateProcessFunction(
   return ProcessCodegenResult{
       .function = func,
       .wait_sites = std::move(wait_sites),
-      .process_trigger = ExtractProcessTriggerEntry(process)};
+      .process_trigger = ExtractProcessTriggerEntry(context, process)};
 }
 
 auto GenerateSharedProcessFunction(
@@ -2000,7 +2043,7 @@ auto GenerateSharedProcessFunction(
   return ProcessCodegenResult{
       .function = func,
       .wait_sites = std::move(wait_sites),
-      .process_trigger = ExtractProcessTriggerEntry(process)};
+      .process_trigger = ExtractProcessTriggerEntry(context, process)};
 }
 
 auto DeclareMirFunction(
@@ -3398,7 +3441,7 @@ auto DefineMirFunction(
   return {};
 }
 
-auto ExtractProcessTriggerEntry(const mir::Process& process)
+auto ExtractProcessTriggerEntry(Context& context, const mir::Process& process)
     -> std::optional<ProcessTriggerEntry> {
   ProcessTriggerEntry entry;
   bool found_wait = false;
@@ -3418,8 +3461,13 @@ auto ExtractProcessTriggerEntry(const mir::Process& process)
           has_rebindable = true;
         }
       }
+      mir::SignalRef signal = t.signal;
+      if (t.unresolved_external_ref.has_value()) {
+        signal = context.NormalizeExternalRefSignalIdentity(
+            *t.unresolved_external_ref);
+      }
       entry.triggers.push_back({
-          .signal = t.signal,
+          .signal = signal,
           .edge = t.edge,
           .has_observed_place = t.observed_place.has_value(),
       });

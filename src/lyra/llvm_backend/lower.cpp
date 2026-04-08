@@ -509,10 +509,30 @@ auto BuildBodyBehavioralDirtyTriggerBitmaps(
 // Connection processes (kernelized and non-kernelized) are
 // connection-owned; their triggers belong in slot_has_connection_trigger.
 // Result is keyed by canonical storage-owner slot identity.
+// Resolve an unresolved external ref to a topology-resolved design-global
+// slot. Same algorithm as Context::NormalizeExternalRefSignalIdentity but
+// callable without a Context (pre-codegen layout phase).
+auto ResolveExternalRefToDesignGlobalSlot(
+    mir::ExternalRefId ref_id,
+    const std::vector<mir::ResolvedExternalRefBinding>& bindings,
+    const mir::ConstructionInput& construction) -> std::optional<uint32_t> {
+  if (ref_id.value >= bindings.size()) return std::nullopt;
+  const auto& binding = bindings[ref_id.value];
+  if (binding.IsPackageOrGlobal()) {
+    return binding.GlobalSlotId();
+  }
+  if (binding.target_object.value >= construction.objects.size()) {
+    return std::nullopt;
+  }
+  const auto& obj = construction.objects[binding.target_object.value];
+  return obj.design_state_base_slot + binding.target_local_slot.value;
+}
+
 auto BuildDesignGlobalBehavioralTriggerBitmap(
     std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
     const mir::Arena& design_arena, const DesignLayout& design_layout,
-    const BodyBehavioralTriggerBitmaps& body_bitmaps) -> std::vector<bool> {
+    const BodyBehavioralTriggerBitmaps& body_bitmaps,
+    const mir::ConstructionInput* construction) -> std::vector<bool> {
   auto num_slots = design_layout.slots.size();
   std::vector<bool> bitmap(num_slots, false);
 
@@ -552,8 +572,10 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
   }
 
   // Body processes: data lives in per-body arenas.
-  // Only kDesignGlobal triggers contribute; kModuleLocal triggers are
-  // owned by the body-relative behavioral contract.
+  // kDesignGlobal triggers contribute directly. kModuleLocal triggers are
+  // owned by the body-relative behavioral contract. Unresolved external
+  // ref triggers are normalized to topology-resolved design-global slots
+  // using ResolvedExternalRefBinding.
   for (const auto& plan : module_plans) {
     const auto& body = design.module_bodies.at(plan.body_id.value);
     for (const auto& proc_id : plan.body_processes) {
@@ -563,6 +585,16 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
         const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
         if (wait == nullptr) continue;
         for (const auto& trigger : wait->triggers) {
+          if (trigger.unresolved_external_ref.has_value() &&
+              construction != nullptr) {
+            auto slot = ResolveExternalRefToDesignGlobalSlot(
+                *trigger.unresolved_external_ref,
+                body.resolved_external_ref_bindings, *construction);
+            if (slot.has_value()) {
+              mark_global_slot(common::SlotId{*slot});
+            }
+            continue;
+          }
           if (trigger.signal.scope != mir::SignalRef::Scope::kDesignGlobal) {
             continue;
           }
@@ -1143,8 +1175,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
           new_place.root.kind = mir::PlaceRoot::Kind::kDesignGlobal;
           new_place.root.id = static_cast<int>(parent_base) + place.root.id;
         }
-        return const_cast<mir::Arena&>(*input.mir_arena)
-            .AddPlace(std::move(new_place));
+        return (*input.mir_arena).AddPlace(std::move(new_place));
       };
       auto remap_operand = [&](const mir::Operand& op,
                                const mir::Arena& src) -> mir::Operand {
@@ -1180,7 +1211,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       };
 
       mir::PlaceId child_place =
-          const_cast<mir::Arena&>(*input.mir_arena)
+          (*input.mir_arena)
               .AddPlace(
                   mir::Place{
                       .root =
@@ -1288,7 +1319,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
                             .id = slot},
                     .edge = common::EdgeKind::kAnyChange,
                     .observed_place = std::nullopt,
-                    .late_bound = std::nullopt});
+                    .late_bound = std::nullopt,
+                    .unresolved_external_ref = std::nullopt});
           new_block.terminator.data =
               mir::Wait{.triggers = std::move(triggers), .resume = entry_id};
         } else {
@@ -1331,7 +1363,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
         }
         process_blocks.push_back(std::move(new_block));
       }
-      auto pid = const_cast<mir::Arena&>(*input.mir_arena)
+      auto pid = (*input.mir_arena)
                      .AddProcess(
                          mir::Process{
                              .kind = mir::ProcessKind::kLooping,
@@ -1409,7 +1441,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   layout->slot_has_design_behavioral_trigger =
       BuildDesignGlobalBehavioralTriggerBitmap(
           module_plans, *input.design, *input.mir_arena, layout->design,
-          body_bitmaps);
+          body_bitmaps, input.construction);
 
   auto context = std::make_unique<Context>(
       *input.mir_arena, *input.type_arena, *layout, std::move(llvm_ctx),

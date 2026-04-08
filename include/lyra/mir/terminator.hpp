@@ -12,6 +12,7 @@
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/termination_kind.hpp"
+#include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/mir/signal_ref.hpp"
@@ -74,6 +75,16 @@ struct ScopedPlanOp {
   ScopedSlotRef::Scope slot_scope = ScopedSlotRef::Scope::kDesignGlobal;
 };
 
+// Pending external ref for index-plan late normalization.
+// Carries unresolved ExternalRefId with indices into the plan/dep vectors
+// where placeholder entries were written. Resolved at EmitLateBoundData
+// using ResolvedExternalRefBinding; never reaches runtime.
+struct PendingIndexPlanExternalRef {
+  ExternalRefId ref_id;
+  uint32_t op_index = 0;
+  uint32_t dep_index = 0;
+};
+
 // Late-bound index metadata for dynamic-index edge triggers.
 // Carries the expression plan (bytecode) to evaluate the index at runtime,
 // the set of design-state slots the expression depends on (for rebind
@@ -89,6 +100,10 @@ struct LateBoundIndex {
   std::optional<TypeId> element_type;
   uint32_t num_elements = 0;  // 0 for containers (dynamic size)
   bool is_container = false;
+  // Transient: unresolved non-local targets for index-plan read slots.
+  // Resolved at EmitLateBoundData using ResolvedExternalRefBinding.
+  // Never reaches runtime metadata.
+  std::vector<PendingIndexPlanExternalRef> pending_external_refs;
 };
 
 // A single trigger in a Wait terminator.
@@ -105,6 +120,11 @@ struct WaitTrigger {
   // When set, codegen emits dynamic byte_offset/bit_index computation and
   // runtime creates a rebind subscription on the index variable's slot.
   std::optional<LateBoundIndex> late_bound;
+  // Transient: unresolved non-local target. Set by sensitivity collection
+  // for ExternalRefId operands. Resolved to proper SignalRef at backend
+  // normalization (FillTriggerArray) using ResolvedExternalRefBinding.
+  // Never reaches runtime. nullopt for all resolved (local/global) triggers.
+  std::optional<ExternalRefId> unresolved_external_ref;
 };
 
 // Event wait suspension (requires scheduler).
