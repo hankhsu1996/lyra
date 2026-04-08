@@ -78,6 +78,22 @@ jobs:
             ls -la /tmp/diag/lyra-cached /tmp/diag/lyra-fresh | tee -a /tmp/diag/comparison.txt
           fi
 
+      # Locate the runtime .a once. Both compiler copies use the same
+      # runtime library -- the variable under test is the compiler binary,
+      # not the runtime. LYRA_RUNTIME_PATH is needed because the copied
+      # binaries are outside the bazel-bin runfiles tree.
+      - name: "Locate runtime library"
+        run: |
+          RUNTIME_A=$(find bazel-bin -name liblyra_runtime_static.a -type f | head -1)
+          if [[ -z "$RUNTIME_A" ]]; then
+            echo "ERROR: liblyra_runtime_static.a not found in bazel-bin" >&2
+            exit 1
+          fi
+          RUNTIME_A=$(realpath "$RUNTIME_A")
+          echo "LYRA_RUNTIME_PATH=$RUNTIME_A" >> "$GITHUB_ENV"
+          echo "runtime .a: $RUNTIME_A"
+          cp "$RUNTIME_A" /tmp/diag/liblyra_runtime_static.a
+
       # Run both compilers on delta-converge with target dump.
       # IR dump is best-effort; the executable and .o are the primary evidence.
       - name: "Compile with cached lyra"
