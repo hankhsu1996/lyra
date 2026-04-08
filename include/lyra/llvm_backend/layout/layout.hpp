@@ -626,9 +626,12 @@ struct Layout {
   std::vector<bool> slot_has_connection_trigger;
 
   // Design-global behavioral dirty-propagation contract.
-  // True iff any true design-global behavioral wait trigger
-  // (init process, design-scoped process) references that slot.
-  // NOT a fallback for body-local behavioral triggers.
+  // True iff any behavioral wait trigger references that slot:
+  //   - init processes (design-global triggers)
+  //   - body processes with design-global waits
+  //   - body-local behavioral triggers projected onto design-global slots
+  // The projection ensures cross-body writers (e.g., connection processes)
+  // see body-local behavioral dependents (e.g., comb kernels).
   // Keyed by canonical storage-owner slot identity.
   // Indexed by design-global slot_id [0, design.slots.size()).
   std::vector<bool> slot_has_design_behavioral_trigger;

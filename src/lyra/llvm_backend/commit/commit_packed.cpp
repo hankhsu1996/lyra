@@ -1,11 +1,8 @@
-#include <cstdint>
-
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Type.h>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/common/type_queries.hpp"
 #include "lyra/llvm_backend/commit.hpp"
 #include "lyra/llvm_backend/commit/access.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -44,7 +41,9 @@ void CommitPackedValue(
 
   // Design target: route through PSV with store plan.
   auto view = BuildWholeValueStorageView(ctx, wt.ptr, type_id, true);
-  auto policy = BuildStorePolicyFromContext(ctx, wt.canonical_signal_id);
+  auto policy = BuildStorePolicyFromContext(
+      ctx, wt.canonical_signal_id,
+      wt.mutation_signal ? &*wt.mutation_signal : nullptr);
 
   auto result = StorePackedValue(ctx, view, rvalue, policy);
   if (!result) {
