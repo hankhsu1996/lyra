@@ -15,6 +15,7 @@ import json
 import os
 import re
 import resource
+import signal
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,46 @@ FIXTURES_ROOT = REPO_ROOT / "tools" / "bench" / "fixtures"
 CONFIG_PATH = REPO_ROOT / "tools" / "bench" / "config.toml"
 
 BACKENDS = ["aot", "aot-two-state", "jit", "verilator"]
+
+# Directory for crash artifacts (executable, runtime .a, stderr).
+# Created on first SIGILL; uploaded by CI as artifact.
+CRASH_ARTIFACT_DIR = REPO_ROOT / "crash-artifacts"
+
+
+def _is_signal_death(returncode: int, sig: int) -> bool:
+    """True if subprocess died from the given signal."""
+    return returncode == -sig
+
+
+def preserve_crash_artifacts(
+    fixture_name: str, backend: str,
+    binary_path: str | None,
+    output_dir: str | None,
+    stderr_text: str,
+) -> None:
+    """Copy crash-relevant files to CRASH_ARTIFACT_DIR for CI upload."""
+    dest = CRASH_ARTIFACT_DIR / f"{fixture_name}_{backend}"
+    dest.mkdir(parents=True, exist_ok=True)
+
+    if binary_path and Path(binary_path).exists():
+        shutil.copy2(binary_path, dest / Path(binary_path).name)
+
+    # Copy the runtime static library used for linking.
+    runtime_a = REPO_ROOT / "bazel-bin" / "liblyra_runtime_static.a"
+    if runtime_a.exists():
+        shutil.copy2(runtime_a, dest / runtime_a.name)
+
+    # Copy emitted .o files from output dir if available.
+    if output_dir:
+        for obj in Path(output_dir).glob("*.o"):
+            shutil.copy2(obj, dest / obj.name)
+
+    if stderr_text:
+        (dest / "stderr.txt").write_text(stderr_text)
+
+    print(
+        f"  crash artifacts saved to {dest.relative_to(REPO_ROOT)}",
+        file=sys.stderr)
 
 
 @dataclass(frozen=True)
@@ -310,7 +351,10 @@ def find_binary(output_dir: str) -> str | None:
     return str(regular_files[0])
 
 
-def time_binary(binary_path: str) -> tuple[float, str]:
+def time_binary(
+    binary_path: str,
+) -> tuple[float, str, str, int]:
+    """Run binary; return (elapsed, error_msg, stderr_text, returncode)."""
     t0 = time.monotonic()
     proc = subprocess.run(
         [binary_path], capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
@@ -318,8 +362,8 @@ def time_binary(binary_path: str) -> tuple[float, str]:
     elapsed = time.monotonic() - t0
     if proc.returncode != 0:
         err = _first_error(proc.stderr) or f"sim exit code {proc.returncode}"
-        return elapsed, err
-    return elapsed, ""
+        return elapsed, err, proc.stderr, proc.returncode
+    return elapsed, "", proc.stderr, 0
 
 
 def build_define_args(
@@ -443,10 +487,19 @@ def run_lyra_aot(
 
         result.binary_kb = round(Path(binary).stat().st_size / 1024)
 
-        sim_time, sim_err = time_binary(binary)
+        sim_time, sim_err, sim_stderr, sim_rc = time_binary(binary)
         result.sim_s = sim_time
         if sim_err:
             result.error = sim_err
+
+        # Preserve artifacts on SIGILL for post-mortem analysis.
+        if _is_signal_death(sim_rc, signal.SIGILL):
+            print(
+                f"  SIGILL detected for {fixture.name}/{backend_name}",
+                file=sys.stderr)
+            preserve_crash_artifacts(
+                fixture.name, backend_name, binary, output_dir,
+                sim_stderr)
 
         result.wall_s = result.compile_s + result.sim_s
 

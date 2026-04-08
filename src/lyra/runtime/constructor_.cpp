@@ -667,9 +667,19 @@ void Constructor::AddInstance(
   auto instance_index = static_cast<uint32_t>(staged_instances_.size());
   staged_instances_.push_back(std::move(instance));
 
-  for (const auto& entry : body_.entries) {
+  for (uint32_t ei = 0; ei < body_.entries.size(); ++ei) {
+    const auto& entry = body_.entries[ei];
     SharedBodyFn body_fn{};
     std::memcpy(&body_fn, &entry.shared_body_fn, sizeof(body_fn));
+
+    if (body_fn == nullptr) {
+      throw common::InternalError(
+          "RuntimeConstructor::AddInstance",
+          std::format(
+              "body entry {} has null shared_body_fn "
+              "(emitted function pointer is zero)",
+              ei));
+    }
 
     staged_.push_back(
         StagedProcess{
@@ -979,7 +989,7 @@ auto Constructor::Finalize() -> ConstructionResult {
           "Constructor::Finalize",
           std::format("R4 bundle {} has unresolved body template", i));
     }
-    if (bundle.instance_id != InstanceId{static_cast<uint32_t>(i)}) {
+    if (bundle.instance_id != InstanceId{i}) {
       throw common::InternalError(
           "Constructor::Finalize",
           std::format(

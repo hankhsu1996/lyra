@@ -1,0 +1,91 @@
+name: SIGILL Diagnosis
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'Commit SHA to test (default: HEAD)'
+        required: false
+        default: ''
+
+jobs:
+  # 2-way test on delta-converge (smallest crashing fixture):
+  #   A: remote cache + remote exec  (matches normal CI)
+  #   B: no cache + remote exec      (forces fresh remote compilation)
+  # If A fails but B passes: poisoned cached artifact.
+  # If both fail: fresh remote compilation produces bad code.
+  # If both pass: issue was transient or commit-specific.
+  diagnose:
+    name: "delta-converge (${{ matrix.label }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "cache+rbe"
+            extra_flags: ""
+          - label: "no-cache+rbe"
+            extra_flags: "--noremote_accept_cached"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Install LLVM 20
+        run: |
+          wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key
+          sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg /tmp/llvm.key
+          . /etc/lsb-release
+          echo "deb http://apt.llvm.org/${DISTRIB_CODENAME}/ llvm-toolchain-${DISTRIB_CODENAME}-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y clang-20 llvm-20
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
+          sudo update-alternatives --set clang++ /usr/bin/clang++-20
+          sudo update-alternatives --set clang /usr/bin/clang-20
+
+      - name: Build lyra
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          FLAGS="--config=rbe ${{ matrix.extra_flags }}"
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            FLAGS="$FLAGS --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel build //:lyra $FLAGS
+
+      - name: Compile delta-converge AOT
+        run: |
+          FIXTURE=tools/bench/fixtures/simulation-engine/delta-converge
+          mkdir -p /tmp/aot-out
+          ./bazel-bin/lyra -C "$FIXTURE" compile -o /tmp/aot-out
+
+      - name: Run delta-converge AOT
+        env:
+          LYRA_DUMP_COMB_META: "1"
+        run: |
+          set -o pipefail
+          /tmp/aot-out/Top 2>&1 | tee /tmp/aot-out/run-output.txt
+          echo "PASS"
+
+      - name: Collect artifacts on failure
+        if: failure()
+        run: |
+          # Copy the runtime .a that was actually used for linking.
+          cp bazel-bin/lyra.runfiles/_main/liblyra_runtime_static.a /tmp/aot-out/ 2>/dev/null || true
+          cp bazel-bin/liblyra_runtime_static.a /tmp/aot-out/ 2>/dev/null || true
+
+      - name: Upload artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: "diag-${{ matrix.label }}"
+          path: /tmp/aot-out/
+          if-no-files-found: ignore
