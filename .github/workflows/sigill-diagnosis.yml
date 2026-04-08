@@ -84,9 +84,10 @@ jobs:
       # binaries are outside the bazel-bin runfiles tree.
       - name: "Locate runtime library"
         run: |
-          RUNTIME_A=$(find bazel-bin -name liblyra_runtime_static.a -type f | head -1)
-          if [[ -z "$RUNTIME_A" ]]; then
-            echo "ERROR: liblyra_runtime_static.a not found in bazel-bin" >&2
+          # The .a is in runfiles (may be a symlink), not directly in bazel-bin.
+          RUNTIME_A="bazel-bin/lyra.runfiles/_main/liblyra_runtime_static.a"
+          if [[ ! -e "$RUNTIME_A" ]]; then
+            echo "ERROR: $RUNTIME_A not found" >&2
             exit 1
           fi
           RUNTIME_A=$(realpath "$RUNTIME_A")
