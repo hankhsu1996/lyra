@@ -61,8 +61,10 @@ void VerifyLoweredMir(
               // When Phase 2 migrates to CompiledModuleBody, this call site
               // switches to VerifyPreBackendBody(compiled_body, ...).
               mir::VerifyContext cx{
-                  nullptr, &type_arena,
-                  mir::VerifyContext::Phase::kBackendReady};
+                  .types = &type_arena,
+                  .phase = mir::VerifyContext::Phase::kBackendReady,
+                  .num_events = static_cast<uint32_t>(body.events.size()),
+              };
               std::string_view module_path =
                   instance_table.GetPathBySymbol(mod.instance_sym);
               for (size_t fi = 0; fi < body.functions.size(); ++fi) {
@@ -87,8 +89,9 @@ void VerifyLoweredMir(
             },
             [&](const mir::Package& pkg) {
               mir::VerifyContext cx{
-                  nullptr, &type_arena,
-                  mir::VerifyContext::Phase::kBackendReady};
+                  .types = &type_arena,
+                  .phase = mir::VerifyContext::Phase::kBackendReady,
+              };
               for (size_t fi = 0; fi < pkg.functions.size(); ++fi) {
                 std::string label =
                     std::format("element[{}]: function[{}]", ei, fi);

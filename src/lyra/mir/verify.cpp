@@ -784,6 +784,17 @@ void VerifyStatementOwnership(
                 },
                 aop.data);
           },
+          [&](const TriggerEvent& te) {
+            if (cx.num_events > 0 && te.event.value >= cx.num_events) {
+              throw common::InternalError(
+                  "MIR verify",
+                  std::format(
+                      "{}: block {} stmt {}: TriggerEvent.event {} out of "
+                      "range (body has {} events)",
+                      routine_kind, block_idx, stmt_idx, te.event.value,
+                      cx.num_events));
+            }
+          },
       },
       stmt.data);
 }
@@ -891,6 +902,7 @@ void VerifyIntraBlockDefOrder(
                   },
                   aop.data);
             },
+            [](const TriggerEvent&) {},
         },
         stmt.data);
   }
@@ -1074,9 +1086,27 @@ void VerifyBlockParamsAndEdgeArgs(
                   sw.selector, blocks, arena, cx, defined_temps, i,
                   "Switch.selector", routine_kind);
             },
+            [&](const WaitEvent& we) {
+              if (cx.num_events > 0 && we.event.value >= cx.num_events) {
+                throw common::InternalError(
+                    "MIR verify",
+                    std::format(
+                        "{}: block {}: WaitEvent.event {} out of range "
+                        "(body has {} events)",
+                        routine_kind, i, we.event.value, cx.num_events));
+              }
+              if (we.resume.value >= blocks.size()) {
+                throw common::InternalError(
+                    "MIR verify",
+                    std::format(
+                        "{}: block {}: WaitEvent.resume {} out of range "
+                        "(routine has {} blocks)",
+                        routine_kind, i, we.resume.value, blocks.size()));
+              }
+            },
             [](const auto&) {
-              // Other terminators don't have operands that need temp
-              // verification
+              // Delay, Wait, Return, Finish, Repeat: no operands needing
+              // temp verification.
             },
         },
         block.terminator.data);
@@ -1112,7 +1142,11 @@ void VerifyProcess(
 void VerifyPreBackendBody(
     const CompiledModuleBody& body, const TypeArena& types,
     std::string_view label) {
-  VerifyContext cx{&body, &types, VerifyContext::Phase::kPreBackend};
+  VerifyContext cx{
+      .body = &body,
+      .types = &types,
+      .phase = VerifyContext::Phase::kPreBackend,
+  };
 
   // Verify external_refs table integrity.
   for (uint32_t i = 0; i < body.external_refs.size(); ++i) {

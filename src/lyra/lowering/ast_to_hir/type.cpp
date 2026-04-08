@@ -70,6 +70,10 @@ auto LowerType(const slang::ast::Type& type, SourceSpan source, Context* ctx)
     return ctx->type_arena->Intern(TypeKind::kChandle, std::monostate{});
   }
 
+  if (canonical.kind == slang::ast::SymbolKind::EventType) {
+    return ctx->type_arena->Intern(TypeKind::kEvent, std::monostate{});
+  }
+
   // Check isPackedArray BEFORE isIntegral - packed arrays are integral in slang
   // but we want them as a distinct type kind with their own range/direction.
   if (canonical.isPackedArray()) {

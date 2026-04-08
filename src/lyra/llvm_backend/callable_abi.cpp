@@ -72,11 +72,12 @@ auto ClassifyCallableValueAbi(
       return std::nullopt;
 
     case TypeKind::kVoid:
+    case TypeKind::kEvent:
       throw common::InternalError(
           "ClassifyCallableValueAbi",
           std::format(
-              "void type {} must not reach callable value classification",
-              type_id.value));
+              "{} type {} must not reach callable value classification",
+              ToString(type.Kind()), type_id.value));
   }
 
   throw common::InternalError(

@@ -76,7 +76,8 @@ struct RuntimeInstance;
 // v21: D6d simulation-global precision power and per-body timescale metadata.
 // v22: A2 deferred assertion site metadata table.
 // v23: A2e deferred assertion thunk pointers + payload sizes in site metadata.
-inline constexpr uint32_t kRuntimeAbiVersion = 23;
+// v24: L8a named event count for runtime event registry sizing.
+inline constexpr uint32_t kRuntimeAbiVersion = 24;
 
 struct LyraRuntimeAbi {
   uint32_t version;  // = kRuntimeAbiVersion
@@ -153,10 +154,16 @@ struct LyraRuntimeAbi {
   const void* deferred_assertion_site_meta;
   uint32_t num_deferred_assertion_sites;
   uint32_t pad_deferred;
+
+  // L8a: Maximum body-local named event count across all module bodies.
+  // Reserved/debug field; the runtime event registry uses lazy
+  // EventObjectKey keying and does not need pre-sizing from this value.
+  uint32_t num_events;
+  uint32_t pad_events;
 };
 
 // Hard size/offset contract.
-static_assert(sizeof(LyraRuntimeAbi) == 264);
+static_assert(sizeof(LyraRuntimeAbi) == 272);
 static_assert(offsetof(LyraRuntimeAbi, version) == 0);
 static_assert(offsetof(LyraRuntimeAbi, num_connection_processes) == 188);
 static_assert(offsetof(LyraRuntimeAbi, design_state) == 192);
@@ -168,3 +175,4 @@ static_assert(offsetof(LyraRuntimeAbi, num_immediate_cover_sites) == 232);
 static_assert(offsetof(LyraRuntimeAbi, global_precision_power) == 240);
 static_assert(offsetof(LyraRuntimeAbi, deferred_assertion_site_meta) == 248);
 static_assert(offsetof(LyraRuntimeAbi, num_deferred_assertion_sites) == 256);
+static_assert(offsetof(LyraRuntimeAbi, num_events) == 264);

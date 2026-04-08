@@ -17,6 +17,7 @@ enum class WakeCause : uint8_t {
   kDelayZero,
   kInitial,
   kRepeat,
+  kEvent,
 };
 
 constexpr auto HasTriggerSlot(WakeCause c) -> bool {
@@ -29,6 +30,7 @@ constexpr auto HasTriggerSlot(WakeCause c) -> bool {
     case WakeCause::kDelayZero:
     case WakeCause::kInitial:
     case WakeCause::kRepeat:
+    case WakeCause::kEvent:
       return false;
   }
   return false;

@@ -54,6 +54,11 @@ auto FinalTime() -> uint64_t& {
   return value;
 }
 
+// Legacy post-activation dispatch: reads SuspendRecord and installs
+// waiter/delay state. Called by DescriptorProcessDispatch when
+// HasPostActivationReconciliation() is false. The new-path equivalent
+// is Engine::ReconcilePostActivation. Exactly one of these two runs
+// per activation -- never both.
 void HandleSuspendRecord(
     lyra::runtime::Engine& eng, lyra::runtime::ProcessHandle handle,
     lyra::runtime::SuspendRecord* suspend) {
@@ -99,6 +104,19 @@ void HandleSuspendRecord(
     case lyra::runtime::SuspendTag::kRepeat:
       eng.ScheduleNextDelta(
           handle, lyra::runtime::ResumePoint{.block_index = 0});
+      break;
+
+    case lyra::runtime::SuspendTag::kWaitEvent:
+      eng.AddEventWaiter(
+          lyra::runtime::EventObjectKey{
+              .instance_id = handle.instance_id.value,
+              .local_event_id = suspend->event_id,
+          },
+          lyra::runtime::EventWaiter{
+              .process_id = handle.process_id,
+              .instance_id = handle.instance_id.value,
+              .resume_block = suspend->resume_block,
+          });
       break;
   }
 }
@@ -258,6 +276,24 @@ extern "C" void LyraSuspendRepeat(void* state) {
   ReleaseTriggerOverflow(suspend);  // Clean up any previous wait
   suspend->tag = lyra::runtime::SuspendTag::kRepeat;
   suspend->resume_block = 0;
+}
+
+extern "C" void LyraSuspendWaitEvent(
+    void* state, uint32_t resume_block, uint32_t event_id) {
+  FailIfSuspensionDisallowed("LyraSuspendWaitEvent");
+  auto* suspend = static_cast<lyra::runtime::SuspendRecord*>(state);
+  ReleaseTriggerOverflow(suspend);
+  suspend->tag = lyra::runtime::SuspendTag::kWaitEvent;
+  suspend->resume_block = resume_block;
+  suspend->event_id = event_id;
+}
+
+extern "C" void LyraTriggerEvent(
+    void* engine_ptr, uint32_t instance_id, uint32_t local_event_id) {
+  auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
+  engine->TriggerEvent(
+      lyra::runtime::EventObjectKey{
+          .instance_id = instance_id, .local_event_id = local_event_id});
 }
 
 extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
@@ -586,6 +622,10 @@ extern "C" void LyraRunSimulation(
     if (abi->num_immediate_cover_sites > 0) {
       engine.InitImmediateCoverSites(abi->num_immediate_cover_sites);
     }
+
+    // L8a: Named event registry.
+    // EventRegistry uses lazy (instance_id, local_event_id) keying;
+    // no pre-sizing needed. num_events ABI field reserved for future use.
 
     // A2: Deferred assertion site metadata table.
     if (abi->num_deferred_assertion_sites > 0) {

@@ -244,6 +244,10 @@ auto ResolveImpl(
     case TypeKind::kVoid:
       throw common::InternalError(
           "ResolveStorageSpec", "void type cannot have storage");
+
+    case TypeKind::kEvent:
+      throw common::InternalError(
+          "ResolveStorageSpec", "event type has no value-storage semantics");
   }
 
   throw common::InternalError("ResolveStorageSpec", "unreachable");

@@ -50,6 +50,10 @@ struct SlotTraceProvenance {
   uint32_t scope_ref = 0;
 };
 
+struct EventDesc {
+  TypeId type;
+};
+
 struct SlotDesc {
   TypeId type;
   SlotKind kind = SlotKind::kVariable;
@@ -117,6 +121,12 @@ struct Design {
   // built from this. Semantic only: no thunk IDs, payload layout, or
   // backend-specific data.
   std::vector<DeferredAssertionSiteInfo> deferred_assertion_sites;
+
+  // Maximum body-local event count across all module bodies.
+  // Emitted into the runtime ABI as a reserved/debug field. The runtime
+  // event registry uses lazy EventObjectKey keying and does not need
+  // pre-sizing from this value.
+  size_t max_body_local_events = 0;
 };
 
 inline auto GetModuleBody(const Design& design, const Module& mod)

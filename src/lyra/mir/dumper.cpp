@@ -109,6 +109,9 @@ auto FormatTerminator(const Terminator& term) -> std::string {
           return std::format("delay #{} -> bb{}", t.ticks, t.resume.value);
         } else if constexpr (std::is_same_v<T, Wait>) {
           return "wait";
+        } else if constexpr (std::is_same_v<T, WaitEvent>) {
+          return std::format(
+              "wait_event(event={}) -> bb{}", t.event.value, t.resume.value);
         } else if constexpr (std::is_same_v<T, Return>) {
           return "return";
         } else if constexpr (std::is_same_v<T, Finish>) {
@@ -421,6 +424,8 @@ void Dumper::DumpBlock(const BasicBlock& bb, uint32_t index) {
             *out_ << std::format("#t{} = {}\n", i.temp_id, FormatRhs(i.rhs));
           } else if constexpr (std::is_same_v<T, AssocOp>) {
             *out_ << std::format("assoc_op {}\n", FormatPlace(i.receiver));
+          } else if constexpr (std::is_same_v<T, TriggerEvent>) {
+            *out_ << std::format("trigger_event(event={})\n", i.event.value);
           }
         },
         stmt.data);

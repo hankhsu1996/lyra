@@ -20,7 +20,9 @@ Features tracked elsewhere:
 - [ ] L5 -- Default argument values and named argument binding
 - [ ] L6 -- `final` blocks
 - [ ] L7 -- Bit vector system functions (`$isunknown`, `$countones`, `$onehot`, `$onehot0`)
-- [ ] L8 -- `->` event triggers
+- [x] L8a -- Named event core (`event e`, `-> e`, `@e`)
+- [ ] L8b -- `.triggered` semantics (`@(e.triggered)`, `wait(e.triggered)`)
+- [ ] L8c -- Nonblocking event trigger (`->> e`)
 - [ ] L9 -- `inout` ports and tri-state nets
 - [ ] L10 -- Struct/union return types
 - [ ] L11 -- `real`/`shortreal` return types for user-defined functions
@@ -62,9 +64,13 @@ LRM 9.2.3. Procedural block that executes once at end of simulation. Used by ibe
 
 LRM 20.9. `$countbits`, `$countones`, `$onehot`, `$onehot0`, `$isunknown`. Expression-level functions, no scheduling complexity. `$isunknown` is the highest priority -- used by ibex `ASSERT_KNOWN` macros.
 
-## L8: `->` event triggers
+## L8b: `.triggered` semantics
 
-LRM 15.5.1. Named event trigger operator `-> event_name`. Used to explicitly trigger named events that other processes wait on with `@(event_name)`. Requires named event variable support and trigger-to-wakeup plumbing in the scheduler.
+LRM 15.5.3. `@(e.triggered)` and `wait(e.triggered)`. Unlike `@e` (edge-sensitive, can miss a prior trigger), `.triggered` is a time-step-scoped latch: set to 1 by `->` or `->>`, cleared on time advance, readable as a level-sensitive condition. This means a `wait(e.triggered)` that executes after `-> e` in the same time step passes through without suspending. Requires per-event state that tracks whether a trigger occurred this time step, and a time-advance hook to clear it. Critically, `.triggered` is time-step scoped, not delta-scoped -- it remains set across all delta cycles within the same time step and only clears on time advance. This is the fundamental semantic difference from `@e`. Separate from L8a because the latch semantics interact with the scheduler's time-step boundary, which is a different concern from the core trigger/wait plumbing.
+
+## L8c: Nonblocking event trigger
+
+LRM 15.5.2. `->> e` schedules the trigger in the NBA region instead of firing immediately in the Active region. This is a region-scheduling problem, not an event-declaration problem. The runtime already has Active, Inactive, and NBA queues; `->>` needs to defer the wakeup to the NBA region, analogous to how nonblocking assignments defer their commits. Separate from L8a because mixing immediate and deferred trigger semantics in one change risks getting the region ordering wrong.
 
 ## L9: `inout` ports and tri-state nets
 

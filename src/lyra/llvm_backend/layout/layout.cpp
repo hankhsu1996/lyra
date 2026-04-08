@@ -302,10 +302,11 @@ auto GetLlvmTypeForTypeId(
       return llvm::PointerType::getUnqual(ctx);
 
     case TypeKind::kVoid:
+    case TypeKind::kEvent:
       throw common::InternalError(
           "GetLlvmTypeForTypeId",
           std::format(
-              "unsupported type kind: {}", static_cast<int>(type.Kind())));
+              "{} type has no value-storage semantics", ToString(type.Kind())));
   }
 
   // Unreachable - all cases handled above
@@ -792,6 +793,7 @@ auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
                     },
                     aop.data);
               },
+              [](const mir::TriggerEvent&) {},
           },
           instr.data);
     }
@@ -863,7 +865,8 @@ auto CollectProcessRoots(
 auto ProcessHasSuspension(const mir::Process& process) -> bool {
   return std::ranges::any_of(process.blocks, [](const auto& block) {
     return std::holds_alternative<mir::Delay>(block.terminator.data) ||
-           std::holds_alternative<mir::Wait>(block.terminator.data);
+           std::holds_alternative<mir::Wait>(block.terminator.data) ||
+           std::holds_alternative<mir::WaitEvent>(block.terminator.data);
   });
 }
 
@@ -887,6 +890,7 @@ auto IsStatementPure(const mir::Statement& stmt) -> bool {
           [](const mir::DpiCall&) { return false; },
           [](const mir::BuiltinCall&) { return false; },
           [](const mir::AssocOp&) { return false; },
+          [](const mir::TriggerEvent&) { return false; },
       },
       stmt.data);
 }
@@ -899,6 +903,7 @@ auto IsTerminatorPureCF(const mir::Terminator& term) -> bool {
           [](const mir::Branch&) { return true; },
           [](const mir::Switch&) { return true; },
           [](const mir::Wait&) { return true; },
+          [](const mir::WaitEvent&) { return true; },
           [](const mir::Delay&) { return false; },
           [](const mir::Return&) { return false; },
           [](const mir::Finish&) { return false; },

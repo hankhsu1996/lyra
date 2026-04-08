@@ -13,6 +13,7 @@ Correctness, code quality, and tooling gaps that are not performance issues.
 - [ ] I1: canonical storage contract enforcement (authority collapse, domain-typed APIs, policy checker)
 - [ ] I2: test expectations overlay (case-level xfail/skip/quarantine metadata)
 - [ ] I3: four-state query layer cleanup (intrinsic rename, wrapper removal, audit)
+- [ ] I4: test framework variable inspection uses canonical slot metadata
 
 ## I1: Canonical storage contract enforcement
 
@@ -29,3 +30,7 @@ Test cases should stay in their feature YAML files. CI exclusion and expected-fa
 Target direction: centralized expectations overlay with per-case metadata: status (unsupported / xfail / quarantine / skip), reason, issue ID, scope. Framework reads the overlay at test registration and applies GTEST_SKIP or xfail. Ratchet checks prevent stale entries.
 
 Current workaround: gtest_filter exclusion in BUILD.bazel. This is not the target structure.
+
+## I4: Test framework variable inspection uses canonical slot metadata
+
+The test framework's variable inspection helper re-derives slot indices by replaying HIR declaration iteration with hand-maintained counters and type-based filters. This duplicates the compiler's slot allocation logic and breaks when new non-storage types are added (e.g., event types required adding a filter). The long-term clean shape: tests and debug tooling should consume the same canonical slot-origin metadata that the compiler and runtime use, not re-derive slot indices from HIR declaration order.

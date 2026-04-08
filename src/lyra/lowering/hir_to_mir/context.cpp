@@ -104,6 +104,14 @@ auto Context::AllocValueTemp(TypeId type) -> int {
 }
 
 auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
+  // Fail-closed: event symbols must never reach place/value lowering.
+  // They are resolved via LookupEvent() on a separate path.
+  if (body_events != nullptr && body_events->contains(sym)) {
+    throw common::InternalError(
+        "LookupPlace",
+        std::format("symbol {} is a named event and has no place", sym.value));
+  }
+
   // Lookup order: local -> body -> design-global
   auto it = local_places.find(sym);
   if (it != local_places.end()) {
@@ -150,6 +158,43 @@ auto Context::LookupPlace(SymbolId sym) const -> mir::PlaceId {
   throw common::InternalError(
       "HIR to MIR lowering",
       std::format("symbol {} not found in place mapping", sym.value));
+}
+
+auto Context::LookupEvent(SymbolId sym) const -> mir::EventId {
+  if (body_events != nullptr) {
+    auto it = body_events->find(sym);
+    if (it != body_events->end()) {
+      return it->second;
+    }
+  }
+  throw common::InternalError(
+      "LookupEvent", std::format("symbol {} is not a named event", sym.value));
+}
+
+auto Context::ResolveHierarchicalRef(SymbolId sym) const -> mir::PlaceId {
+  if (cross_instance_places == nullptr) {
+    throw common::InternalError(
+        "ResolveHierarchicalRef",
+        "cross-instance reference without cross_instance_places set");
+  }
+  auto it = cross_instance_places->find(sym);
+  if (it == cross_instance_places->end()) {
+    throw common::InternalError(
+        "ResolveHierarchicalRef",
+        std::format("symbol {} not found in cross-instance places", sym.value));
+  }
+  // During body lowering: create body-local Place with kDesignGlobal root.
+  if (design_arena != nullptr) {
+    auto cache_it = design_place_cache.find(sym);
+    if (cache_it != design_place_cache.end()) {
+      return cache_it->second;
+    }
+    const mir::Place& place = (*design_arena)[it->second];
+    mir::PlaceId body_place_id = mir_arena->AddPlace(mir::Place(place));
+    design_place_cache[sym] = body_place_id;
+    return body_place_id;
+  }
+  return it->second;
 }
 
 auto Context::LowerHierarchicalRefToExternalRef(

@@ -60,11 +60,17 @@ using InstanceIndexMap = std::unordered_map<SymbolId, uint32_t, SymbolIdHash>;
 
 // Per-module body-local declaration map.
 // Maps module-owned symbols to body-local PlaceIds (kModuleSlot, 0-based).
+using EventMap = std::unordered_map<SymbolId, mir::EventId, SymbolIdHash>;
+
 struct BodyLocalDecls {
   PlaceMap places;
   // Body-local slot descriptors (type + kind), indexed by kModuleSlot id.
   // Built directly as source of truth - not derived from design-global slots.
   std::vector<mir::SlotDesc> slots;
+  // Named event declarations: SymbolId -> body-local EventId.
+  EventMap events;
+  // Body-local event descriptors, indexed by EventId.
+  std::vector<mir::EventDesc> event_descs;
 };
 
 struct DesignDeclarations {
@@ -147,6 +153,7 @@ struct ProvisionalNonLocalTarget {
 struct DeclView {
   const PlaceMap* body_places = nullptr;    // body-local (kModuleSlot)
   const PlaceMap* design_places = nullptr;  // package-global (kDesignGlobal)
+  const EventMap* body_events = nullptr;    // body-local named events
   // Cross-instance places. NOT part of LookupPlace in body lowering.
   // V3d residual: used by design-level LookupPlace fallback only.
   const PlaceMap* cross_instance_places = nullptr;
@@ -218,6 +225,9 @@ struct Context {
   // Avoids creating duplicate body-local Places for the same design-global
   // symbol within one body. Only used during body lowering.
   mutable PlaceMap design_place_cache;
+
+  // Named event map: body-local event declarations (SymbolId -> EventId).
+  const EventMap* body_events = nullptr;
 
   int next_local_id = 0;
   int next_temp_id = 0;
@@ -351,6 +361,16 @@ struct Context {
 
   // Throws InternalError if symbol not found (compiler bug, not user error).
   auto LookupPlace(SymbolId sym) const -> mir::PlaceId;
+
+  // Resolve a named event symbol to its EventId.
+  // Throws InternalError if the symbol is not a named event.
+  auto LookupEvent(SymbolId sym) const -> mir::EventId;
+
+  // Resolve a cross-instance hierarchical reference. Only checks
+  // cross_instance_places, not body/local/design-global places.
+  // Used for kHierarchicalRef expressions and connection compilation.
+  // Throws InternalError if the symbol is not found.
+  auto ResolveHierarchicalRef(SymbolId sym) const -> mir::PlaceId;
 
   // B2: Result of lowering a hierarchical ref to an external ref.
   struct ExternalRefResult {

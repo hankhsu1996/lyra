@@ -25,6 +25,7 @@
 #include "lyra/common/source_span.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/common/type_queries.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/package.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -91,31 +92,43 @@ auto BuildTrackedVariables(
     return variables;
   }
 
+  uint32_t slot_index = 0;
   for (size_t i = 0; i < hir_module->variables.size(); ++i) {
     const auto& sym = (*mir_input.symbol_table)[hir_module->variables[i]];
     const Type& type = (*hir_result.type_arena)[sym.type];
+
+    // Non-value-storage types (e.g., event) are not allocated slots.
+    if (!HasValueStorage(type.Kind())) {
+      continue;
+    }
 
     // Handle real types
     if (type.Kind() == TypeKind::kReal) {
       variables.push_back(
           {.name = sym.name,
-           .slot_id = common::SlotId{static_cast<uint32_t>(base_slot_id + i)}});
+           .slot_id = common::SlotId{
+               static_cast<uint32_t>(base_slot_id + slot_index)}});
+      ++slot_index;
       continue;
     }
 
     // Handle string types (no variable inspection yet)
     if (type.Kind() == TypeKind::kString) {
+      ++slot_index;
       continue;
     }
 
     // Handle packed integral types
     if (!IsPacked(type)) {
+      ++slot_index;
       continue;
     }
 
     variables.push_back(
         {.name = sym.name,
-         .slot_id = common::SlotId{static_cast<uint32_t>(base_slot_id + i)}});
+         .slot_id =
+             common::SlotId{static_cast<uint32_t>(base_slot_id + slot_index)}});
+    ++slot_index;
   }
   return variables;
 }

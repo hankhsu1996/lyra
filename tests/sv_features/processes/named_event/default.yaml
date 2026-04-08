@@ -1,0 +1,236 @@
+feature: named_event
+description: Tests for named event declarations, triggers, and waits (LRM 6.17, 15.5.1)
+
+cases:
+  - name: event_declaration
+    description: event variable declaration compiles without error
+    sv: |
+      module Test;
+        event e;
+        initial begin
+          $display("event declared");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "event declared"
+
+  - name: basic_trigger_wait
+    description: one process waits @e, another triggers -> e, waiter resumes
+    sv: |
+      module Test;
+        event e;
+
+        initial begin
+          @e;
+          $display("received");
+          $finish;
+        end
+
+        initial begin
+          #1;
+          -> e;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "received"
+
+  - name: multiple_waiters
+    description: three processes wait on same event, single trigger wakes all
+    sv: |
+      module Test;
+        event e;
+        int count = 0;
+
+        initial begin @e; count = count + 1; end
+        initial begin @e; count = count + 1; end
+        initial begin @e; count = count + 1; end
+
+        initial begin
+          #1;
+          -> e;
+          #1;
+          $display("count=%0d", count);
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "count=3"
+
+  - name: one_shot_semantics
+    description: waiter list is consumed by trigger; second trigger without new @e does not re-wake
+    sv: |
+      module Test;
+        event e;
+        int count = 0;
+
+        initial begin
+          @e;
+          count = count + 1;
+        end
+
+        initial begin
+          #1;
+          -> e;
+          #1;
+          -> e;
+          #1;
+          $display("count=%0d", count);
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "count=1"
+
+  - name: repeated_cycles
+    description: sequential @e waits work across multiple trigger cycles
+    sv: |
+      module Test;
+        event e;
+        int count = 0;
+
+        initial begin
+          @e;
+          count = count + 1;
+          @e;
+          count = count + 1;
+          @e;
+          count = count + 1;
+          $display("count=%0d", count);
+          $finish;
+        end
+
+        initial begin
+          #1; -> e;
+          #1; -> e;
+          #1; -> e;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "count=3"
+
+  - name: trigger_no_waiters
+    description: triggering with no waiters is a no-op (no crash)
+    sv: |
+      module Test;
+        event e;
+        initial begin
+          -> e;
+          $display("ok");
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "ok"
+
+  - name: two_events_no_cross_wake
+    description: two different events in the same module do not cross-wake
+    sv: |
+      module Test;
+        event a, b;
+        int which = 0;
+
+        initial begin
+          @a;
+          which = 1;
+          $display("which=%0d", which);
+          $finish;
+        end
+
+        initial begin
+          @b;
+          which = 2;
+        end
+
+        initial begin
+          #1;
+          -> a;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "which=1"
+
+  - name: missed_prior_trigger
+    description: trigger at t=1 before @e is reached at t=2; @e blocks until second trigger at t=3
+    sv: |
+      module Test;
+        event e;
+
+        initial begin
+          #2;
+          @e;
+          $display("t=%0t", $time);
+          $finish;
+        end
+
+        initial begin
+          #1;
+          -> e;
+          #2;
+          -> e;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "t=3"
+
+  - name: same_time_next_delta_wakeup
+    description: trigger at t=5 wakes waiter in the same time slot (next delta)
+    sv: |
+      module Test;
+        event e;
+
+        initial begin
+          @e;
+          $display("t=%0t", $time);
+          $finish;
+        end
+
+        initial begin
+          #5;
+          -> e;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "t=5"
+
+  - name: nonblocking_trigger_rejected
+    description: ->> e emits targeted diagnostic
+    sv: |
+      module Test;
+        event e;
+        initial ->> e;
+      endmodule
+    expect:
+      error:
+        contains:
+          - "nonblocking event trigger"
+
+  - name: edge_on_event_rejected
+    description: edge specifiers on event type rejected (slang elaboration)
+    sv: |
+      module Test;
+        event e;
+        initial @(posedge e) $finish;
+      endmodule
+    expect:
+      error:
+        contains:
+          - "is not integral"

@@ -15,6 +15,7 @@
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/Type.h>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/lowering/ast_to_hir/compile_owned_type_desc.hpp"
@@ -304,6 +305,14 @@ auto BuildDescInternal(const slang::ast::InstanceBodySymbol& body)
     // Inventory decl handles are guaranteed to be ValueSymbol-backed
     // (variable/net declarations only).
     const auto& value_sym = handle.symbol->as<slang::ast::ValueSymbol>();
+
+    // Non-value-storage types (e.g., event) have no type descriptor.
+    // Filter at the AST boundary before entering the Lyra type path.
+    // This is the AST-facing equivalent of HasValueStorage(TypeKind).
+    if (value_sym.getType().isEvent()) {
+      continue;
+    }
+
     auto type_id = InternCompileOwnedType(value_sym.getType(), desc.type_store);
 
     debug_view.decl_names[{coord, ordinal}] = std::string(handle.symbol->name);
