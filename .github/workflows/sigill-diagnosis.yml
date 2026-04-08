@@ -9,23 +9,12 @@ on:
         default: ''
 
 jobs:
-  # 2-way test on delta-converge (smallest crashing fixture):
-  #   A: remote cache + remote exec  (matches normal CI)
-  #   B: no cache + remote exec      (forces fresh remote compilation)
-  # If A fails but B passes: poisoned cached artifact.
-  # If both fail: fresh remote compilation produces bad code.
-  # If both pass: issue was transient or commit-specific.
+  # Differential analysis: bad cached lyra vs fresh good lyra.
+  # Same commit, same runner, same fixture, same flags.
+  # Compares emitted IR, object, executable, and target CPU selection.
   diagnose:
-    name: "delta-converge (${{ matrix.label }})"
+    name: Compiler artifact differential
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: "cache+rbe"
-            extra_flags: ""
-          - label: "no-cache+rbe"
-            extra_flags: "--noremote_accept_cached"
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -51,41 +40,138 @@ jobs:
           sudo update-alternatives --set clang++ /usr/bin/clang++-20
           sudo update-alternatives --set clang /usr/bin/clang-20
 
-      - name: Build lyra
+      # Build lyra from remote cache (the potentially bad compiler).
+      - name: "Build lyra (cached)"
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          FLAGS="--config=rbe ${{ matrix.extra_flags }}"
+          FLAGS="--config=rbe"
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
             FLAGS="$FLAGS --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
           fi
           bazel build -c opt //:lyra $FLAGS
+          mkdir -p /tmp/diag
+          cp bazel-bin/lyra /tmp/diag/lyra-cached
+          sha256sum /tmp/diag/lyra-cached | tee /tmp/diag/cached-sha256.txt
 
-      - name: Compile delta-converge AOT
+      # Build lyra fresh (known good compiler).
+      - name: "Build lyra (fresh)"
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          FLAGS="--config=rbe --noremote_accept_cached"
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            FLAGS="$FLAGS --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel build -c opt //:lyra $FLAGS
+          cp bazel-bin/lyra /tmp/diag/lyra-fresh
+          sha256sum /tmp/diag/lyra-fresh | tee /tmp/diag/fresh-sha256.txt
+
+      # Compare compiler binaries.
+      - name: "Compare lyra binaries"
+        run: |
+          echo "=== Binary comparison ===" | tee /tmp/diag/comparison.txt
+          if cmp -s /tmp/diag/lyra-cached /tmp/diag/lyra-fresh; then
+            echo "IDENTICAL: cached and fresh lyra are byte-identical" | tee -a /tmp/diag/comparison.txt
+          else
+            echo "DIFFERENT: cached and fresh lyra differ" | tee -a /tmp/diag/comparison.txt
+            ls -la /tmp/diag/lyra-cached /tmp/diag/lyra-fresh | tee -a /tmp/diag/comparison.txt
+          fi
+
+      # Run both compilers on delta-converge with target dump.
+      # IR dump is best-effort; the executable and .o are the primary evidence.
+      - name: "Compile with cached lyra"
+        env:
+          LYRA_DUMP_TARGET: "1"
         run: |
           FIXTURE=tools/bench/fixtures/simulation-engine/delta-converge
-          mkdir -p /tmp/aot-out
-          ./bazel-bin/lyra -C "$FIXTURE" compile -o /tmp/aot-out
+          mkdir -p /tmp/diag/cached
+          /tmp/diag/lyra-cached -C "$FIXTURE" dump llvm > /tmp/diag/cached/design.ll 2>/tmp/diag/cached/dump-stderr.txt || echo "(dump llvm failed)" > /tmp/diag/cached/design.ll
+          /tmp/diag/lyra-cached -C "$FIXTURE" compile -o /tmp/diag/cached 2>/tmp/diag/cached/compile-stderr.txt || true
 
-      - name: Run delta-converge AOT
+      - name: "Compile with fresh lyra"
         env:
-          LYRA_DUMP_COMB_META: "1"
+          LYRA_DUMP_TARGET: "1"
         run: |
-          set -o pipefail
-          /tmp/aot-out/Top 2>&1 | tee /tmp/aot-out/run-output.txt
-          echo "PASS"
+          FIXTURE=tools/bench/fixtures/simulation-engine/delta-converge
+          mkdir -p /tmp/diag/fresh
+          /tmp/diag/lyra-fresh -C "$FIXTURE" dump llvm > /tmp/diag/fresh/design.ll 2>/tmp/diag/fresh/dump-stderr.txt || echo "(dump llvm failed)" > /tmp/diag/fresh/design.ll
+          /tmp/diag/lyra-fresh -C "$FIXTURE" compile -o /tmp/diag/fresh 2>/tmp/diag/fresh/compile-stderr.txt || true
 
-      - name: Collect artifacts on failure
-        if: failure()
+      # Diff emitted IR.
+      - name: "Diff LLVM IR"
         run: |
-          # Copy the runtime .a that was actually used for linking.
-          cp bazel-bin/lyra.runfiles/_main/liblyra_runtime_static.a /tmp/aot-out/ 2>/dev/null || true
-          cp bazel-bin/liblyra_runtime_static.a /tmp/aot-out/ 2>/dev/null || true
+          echo "=== LLVM IR diff ===" | tee -a /tmp/diag/comparison.txt
+          if diff -u /tmp/diag/cached/design.ll /tmp/diag/fresh/design.ll > /tmp/diag/ir-diff.txt 2>&1; then
+            echo "IDENTICAL IR" | tee -a /tmp/diag/comparison.txt
+          else
+            echo "DIFFERENT IR (first 100 lines of diff):" | tee -a /tmp/diag/comparison.txt
+            head -100 /tmp/diag/ir-diff.txt | tee -a /tmp/diag/comparison.txt
+          fi
 
-      - name: Upload artifacts
-        if: failure()
+      # Diff target selection output.
+      - name: "Diff target selection"
+        run: |
+          echo "=== Target selection ===" | tee -a /tmp/diag/comparison.txt
+          echo "--- cached ---" | tee -a /tmp/diag/comparison.txt
+          grep -A10 "LYRA TARGET SELECTION" /tmp/diag/cached/compile-stderr.txt 2>/dev/null | tee -a /tmp/diag/comparison.txt || echo "(not found)"
+          echo "--- fresh ---" | tee -a /tmp/diag/comparison.txt
+          grep -A10 "LYRA TARGET SELECTION" /tmp/diag/fresh/compile-stderr.txt 2>/dev/null | tee -a /tmp/diag/comparison.txt || echo "(not found)"
+
+      # Run both AOT executables. Record signal vs normal exit.
+      - name: "Run cached AOT"
+        run: |
+          set +e
+          /tmp/diag/cached/Top > /tmp/diag/cached/run-stdout.txt 2>/tmp/diag/cached/run-stderr.txt
+          RC=$?
+          echo $RC > /tmp/diag/cached/exit-code.txt
+          if [[ $RC -gt 128 ]]; then
+            SIG=$((RC - 128))
+            echo "cached: killed by signal $SIG ($(kill -l $SIG 2>/dev/null || echo unknown))" | tee -a /tmp/diag/comparison.txt
+          else
+            echo "cached: normal exit $RC" | tee -a /tmp/diag/comparison.txt
+          fi
+
+      - name: "Run fresh AOT"
+        run: |
+          set +e
+          /tmp/diag/fresh/Top > /tmp/diag/fresh/run-stdout.txt 2>/tmp/diag/fresh/run-stderr.txt
+          RC=$?
+          echo $RC > /tmp/diag/fresh/exit-code.txt
+          if [[ $RC -gt 128 ]]; then
+            SIG=$((RC - 128))
+            echo "fresh: killed by signal $SIG ($(kill -l $SIG 2>/dev/null || echo unknown))" | tee -a /tmp/diag/comparison.txt
+          else
+            echo "fresh: normal exit $RC" | tee -a /tmp/diag/comparison.txt
+          fi
+          echo "fresh exit: $(cat /tmp/diag/fresh/exit-code.txt)"
+
+      # Disassemble main() from both executables, count AVX-512.
+      - name: "Disassemble and compare"
+        if: always()
+        run: |
+          for variant in cached fresh; do
+            BIN="/tmp/diag/$variant/Top"
+            if [[ -x "$BIN" ]]; then
+              MAIN_ADDR=$(nm "$BIN" 2>/dev/null | awk '/ main$/{print $1}')
+              if [[ -n "$MAIN_ADDR" ]]; then
+                START=$((16#$MAIN_ADDR))
+                END=$((START + 256))
+                objdump -d --start-address="0x$MAIN_ADDR" --stop-address="$(printf '0x%x' $END)" "$BIN" > "/tmp/diag/$variant/main-disasm.txt" 2>/dev/null
+              fi
+              ZMM=$(objdump -d "$BIN" 2>/dev/null | grep -c "zmm" || true)
+              echo "$variant: $ZMM zmm (AVX-512) instructions" | tee -a /tmp/diag/comparison.txt
+            fi
+          done
+          echo "=== Results ===" | tee -a /tmp/diag/comparison.txt
+          echo "cached exit: $(cat /tmp/diag/cached/exit-code.txt 2>/dev/null)" | tee -a /tmp/diag/comparison.txt
+          echo "fresh exit:  $(cat /tmp/diag/fresh/exit-code.txt 2>/dev/null)" | tee -a /tmp/diag/comparison.txt
+
+      # Upload everything for offline analysis.
+      - name: Upload diagnosis artifacts
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: "diag-${{ matrix.label }}"
-          path: /tmp/aot-out/
-          if-no-files-found: ignore
+          name: sigill-differential
+          path: /tmp/diag/
+          if-no-files-found: warn

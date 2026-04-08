@@ -582,7 +582,7 @@ def run_verilator(
             return result
 
         result.binary_kb = round(Path(binary).stat().st_size / 1024)
-        sim_time, sim_err = time_binary(binary)
+        sim_time, sim_err, _, _ = time_binary(binary)
         result.sim_s = sim_time
         if sim_err:
             result.error = sim_err
