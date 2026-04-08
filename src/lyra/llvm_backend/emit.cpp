@@ -1,5 +1,7 @@
 #include "lyra/llvm_backend/emit.hpp"
 
+#include <cstdio>
+#include <cstdlib>
 #include <format>
 #include <memory>
 #include <mutex>
@@ -71,6 +73,23 @@ auto CreateHostTargetMachine(OptLevel opt_level)
     throw common::InternalError(
         "CreateHostTargetMachine",
         std::format("failed to lookup target for '{}': {}", triple, error));
+  }
+
+  // Diagnostic: log exact target selection when LYRA_DUMP_TARGET is set.
+  // Captures the CPU name, feature string, and triple that LLVM will
+  // use for AOT code generation. Critical for diagnosing cross-machine
+  // cache artifacts that target the wrong CPU.
+  if (std::getenv("LYRA_DUMP_TARGET") != nullptr) {
+    auto msg = std::format(
+        "=== LYRA TARGET SELECTION ===\n"
+        "  triple:   {}\n"
+        "  cpu:      {}\n"
+        "  features: {}\n"
+        "  opt:      {}\n"
+        "  reloc:    PIC\n"
+        "=== END TARGET SELECTION ===\n",
+        triple, cpu, features, opt_level == OptLevel::kO2 ? "O2" : "O0");
+    fputs(msg.c_str(), stderr);
   }
 
   std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
