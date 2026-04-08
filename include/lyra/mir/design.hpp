@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "lyra/common/integral_constant.hpp"
-#include "lyra/common/module_identity.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/cover_site.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
@@ -14,7 +13,6 @@
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/module_body.hpp"
 #include "lyra/mir/package.hpp"
-#include "lyra/mir/port_connection.hpp"
 
 namespace lyra::mir {
 
@@ -94,9 +92,12 @@ struct Design {
   // Set from compilation context, used by $timeformat defaults.
   int8_t global_precision_power = -9;
 
-  // Connection data is in BoundConnection + expr_connections on the
-  // lowering result, not here. These fields are empty.
-  std::vector<PortConnection> port_connections;
+  // Design-global connection processes with simulation scheduling semantics.
+  // Each process is a compile-owned looping coroutine that drives a port
+  // connection expression at design scope. Produced by design lowering from
+  // kFunction-sourced connection recipes. All places use kDesignGlobal roots.
+  // Consumed by the LLVM backend as a first-class process bucket alongside
+  // init_processes and module body processes.
   std::vector<ProcessId> connection_processes;
 
   // Compile-owned slot trace provenance table (parallel to slots).

@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <unordered_map>
 
 #include "lyra/common/child_coord_map.hpp"
 #include "lyra/common/constant_arena.hpp"
@@ -38,7 +37,7 @@ struct LoweringInput {
   int8_t global_precision_power =
       -9;  // Finest timeprecision across all modules
   const mir::InstanceTable* instance_table = nullptr;
-  const common::SpecializationMap* specialization_map;
+  const common::SpecializationMap* specialization_map = nullptr;
   // Per-definition child instance name -> repertoire coord mapping.
   // Used by design_lower for durable child-site identity.
   const common::ChildCoordMap* child_coord_map = nullptr;
@@ -71,7 +70,6 @@ struct LoweringResult {
   std::vector<std::vector<OriginEntry>> body_origins;
   LoweringStats stats;
   std::vector<mir::BoundConnection> bound_connections;
-  std::vector<mir::CompiledConnectionExpr> expr_connections;
   // DPI export wrapper descriptors for LLVM backend emission.
   // Deterministically sorted by c_name.
   std::vector<mir::DpiExportWrapperDesc> dpi_export_wrappers;

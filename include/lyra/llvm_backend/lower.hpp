@@ -118,8 +118,6 @@ struct LoweringInput {
   // Recipe-based bound connections from HIR-to-MIR lowering.
   // Backend converts to flat ConnectionKernelEntry for layout.
   const std::vector<mir::BoundConnection>* bound_connections = nullptr;
-  // Compiled expression connections (non-NameRef port expressions).
-  const std::vector<mir::CompiledConnectionExpr>* expr_connections = nullptr;
 };
 
 struct LoweringResult {
