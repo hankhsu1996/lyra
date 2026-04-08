@@ -66,6 +66,7 @@ auto ComputeReturnPolicy(TypeId return_type, const TypeArena& types)
     case TypeKind::kString:
     case TypeKind::kDynamicArray:
     case TypeKind::kQueue:
+    case TypeKind::kAssociativeArray:
       return mir::ReturnPolicy::kDirect;
 
     // Direct return: chandle is an opaque pointer (fits in a register)
@@ -126,10 +127,12 @@ auto LowerFunctionBody(
       .body_places = decl_view.body_places,
       .design_places = decl_view.design_places,
       .local_places = {},
+      .design_place_cache = {},
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
       .temp_types = {},
+      .temp_metadata = {},
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = decl_view.functions,
       .design_functions = decl_view.design_functions,
@@ -142,8 +145,11 @@ auto LowerFunctionBody(
       .cover_site_registry = decl_view.cover_site_registry,
       .deferred_assertion_site_registry =
           decl_view.deferred_assertion_site_registry,
+      .deferred_assertion_realizations =
+          decl_view.deferred_assertion_realizations,
       .external_refs = decl_view.external_refs,
       .provisional_targets = decl_view.provisional_targets,
+      .external_ref_cache = {},
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map, body_id, decision_allocator);
@@ -207,6 +213,7 @@ auto LowerFunctionBody(
       .origin = common::OriginId::Invalid(),
       .materialize_count = ctx.materialize_count,
       .decision_sites = std::move(decision_sites),
+      .abi_contract = {},
   };
 }
 
@@ -259,10 +266,12 @@ auto LowerTaskBody(
       .body_places = decl_view.body_places,
       .design_places = decl_view.design_places,
       .local_places = {},
+      .design_place_cache = {},
       .next_local_id = 0,
       .next_temp_id = 0,
       .local_types = {},
       .temp_types = {},
+      .temp_metadata = {},
       .builtin_types = input.builtin_types,
       .symbol_to_mir_function = decl_view.functions,
       .design_functions = decl_view.design_functions,
@@ -274,6 +283,9 @@ auto LowerTaskBody(
       .cover_site_registry = decl_view.cover_site_registry,
       .deferred_assertion_site_registry =
           decl_view.deferred_assertion_site_registry,
+      .deferred_assertion_realizations =
+          decl_view.deferred_assertion_realizations,
+      .external_ref_cache = {},
   };
 
   MirBuilder builder(&mir_arena, &ctx, origin_map, body_id, decision_allocator);
@@ -319,6 +331,7 @@ auto LowerTaskBody(
       .origin = common::OriginId::Invalid(),
       .materialize_count = ctx.materialize_count,
       .decision_sites = std::move(decision_sites),
+      .abi_contract = {},
   };
 }
 

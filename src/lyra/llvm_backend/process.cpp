@@ -2812,7 +2812,7 @@ auto EmitMonitorSetupEpilogue(
 // First cut: user subroutine calls with all by-value actuals only.
 auto DefineDeferredAssertionThunk(
     Context& context, [[maybe_unused]] mir::FunctionId func_id,
-    llvm::Function* llvm_func, const mir::DeferredThunkAction& action)
+    llvm::Function* llvm_func, const mir::DeferredUserCallRealization& plan)
     -> Result<void> {
   auto& llvm_ctx = context.GetLlvmContext();
   auto& builder = context.GetBuilder();
@@ -2821,11 +2821,9 @@ auto DefineDeferredAssertionThunk(
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
   bool force_two_state = context.IsForceTwoState();
 
-  // Create entry block.
   auto* entry_bb = llvm::BasicBlock::Create(llvm_ctx, "entry", llvm_func);
   builder.SetInsertPoint(entry_bb);
 
-  // Name and extract thunk arguments.
   auto* design_arg = llvm_func->getArg(0);
   design_arg->setName("design");
   context.SetDesignPointer(design_arg);
@@ -2849,29 +2847,27 @@ auto DefineDeferredAssertionThunk(
   // Validate payload field count matches kPayloadField bindings.
   uint32_t expected_payload_fields = 0;
   uint32_t expected_live_refs = 0;
-  for (const auto& b : action.actual_bindings) {
-    if (b.source == mir::DeferredThunkActualBinding::Source::kPayloadField) {
+  for (const auto& p : plan.actual_plan) {
+    if (p.source == mir::DeferredActualPlan::Source::kPayloadField) {
       ++expected_payload_fields;
-    } else if (b.source == mir::DeferredThunkActualBinding::Source::kLiveRef) {
+    } else if (p.source == mir::DeferredActualPlan::Source::kLiveRef) {
       ++expected_live_refs;
     }
   }
-  if (action.payload.field_types.size() != expected_payload_fields) {
+  if (plan.payload.field_types.size() != expected_payload_fields) {
     throw common::InternalError(
         "DefineDeferredAssertionThunk",
         std::format(
             "payload field count {} != expected {}",
-            action.payload.field_types.size(), expected_payload_fields));
+            plan.payload.field_types.size(), expected_payload_fields));
   }
 
-  // Build the LLVM payload struct type using the canonical helper.
   auto* payload_struct_ty = BuildDeferredPayloadStructType(
-      llvm_ctx, action.payload, types, force_two_state);
+      llvm_ctx, plan.payload, types, force_two_state);
 
-  // Load captured values from the payload struct.
   std::vector<llvm::Value*> payload_values;
-  payload_values.reserve(action.payload.field_types.size());
-  for (uint32_t i = 0; i < action.payload.field_types.size(); ++i) {
+  payload_values.reserve(plan.payload.field_types.size());
+  for (uint32_t i = 0; i < plan.payload.field_types.size(); ++i) {
     auto* field_ptr =
         builder.CreateStructGEP(payload_struct_ty, payload_arg, i);
     auto* field_val =
@@ -2879,52 +2875,36 @@ auto DefineDeferredAssertionThunk(
     payload_values.push_back(field_val);
   }
 
-  // Dispatch by callee kind.
-  const auto* user_callee =
-      std::get_if<mir::DeferredThunkUserCallee>(&action.callee);
-  if (user_callee == nullptr) {
-    throw common::InternalError(
-        "DefineDeferredAssertionThunk",
-        "only user subroutine callees supported in first cut");
-  }
-
   // Resolve target callee LLVM function.
-  llvm::Function* target_fn = context.GetUserFunction(user_callee->target);
+  llvm::Function* target_fn = context.GetUserFunction(plan.callee);
   if (target_fn == nullptr) {
     throw common::InternalError(
         "DefineDeferredAssertionThunk",
-        std::format("target function {} not found", user_callee->target.value));
+        std::format("target function {} not found", plan.callee.value));
   }
 
-  const auto& target_func = context.GetMirArena()[user_callee->target];
-  bool target_is_module_scoped =
-      context.IsModuleScopedFunction(user_callee->target);
+  const auto& target_func = context.GetMirArena()[plan.callee];
+  bool target_is_module_scoped = context.IsModuleScopedFunction(plan.callee);
 
   // Validate binding count matches formal count.
-  if (action.actual_bindings.size() != target_func.signature.params.size()) {
+  if (plan.actual_plan.size() != target_func.signature.params.size()) {
     throw common::InternalError(
         "DefineDeferredAssertionThunk",
         std::format(
-            "binding count {} != formal count {}",
-            action.actual_bindings.size(),
+            "binding count {} != formal count {}", plan.actual_plan.size(),
             target_func.signature.params.size()));
   }
 
-  // Build call arguments.
   std::vector<llvm::Value*> call_args;
   call_args.push_back(design_arg);
   call_args.push_back(engine_arg);
 
   if (target_is_module_scoped) {
-    // Load RuntimeInstance* from exec context using canonical type.
     auto* exec_ctx_ty = BuildDeferredExecContextType(llvm_ctx);
     auto* instance_ptr_ptr = builder.CreateStructGEP(exec_ctx_ty, ctx_arg, 0);
     auto* instance_ptr =
         builder.CreateLoad(ptr_ty, instance_ptr_ptr, "instance_ptr");
 
-    // Guard: null instance_ptr means a module-bound thunk was dispatched
-    // with a design-global context. Trap explicitly rather than crash on
-    // a bad GEP.
     auto* is_null = builder.CreateICmpEQ(
         instance_ptr,
         llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
@@ -2940,8 +2920,6 @@ auto DefineDeferredAssertionThunk(
 
     builder.SetInsertPoint(ok_bb);
 
-    // Derive this_ptr from instance_ptr via RuntimeInstance::storage.
-    // This matches EmitSharedBodyBindingSetup: this_ptr = inline_base.
     auto* this_ptr = context.EmitLoadInstanceInlineBase(instance_ptr);
     auto* instance_id = context.EmitLoadInstanceId(instance_ptr);
 
@@ -2951,13 +2929,10 @@ auto DefineDeferredAssertionThunk(
   }
 
   if (target_func.abi_contract.accepts_decision_owner) {
-    // Deferred thunks execute outside decision owner context.
-    // Pass 0 as a sentinel.
     call_args.push_back(llvm::ConstantInt::get(i32_ty, 0));
   }
 
-  // Validate that the runtime ref_count matches the expected kLiveRef count.
-  // Always checked -- zero is not a special case for ABI validation.
+  // Validate runtime ref_count matches expected kLiveRef count.
   {
     auto* expected_val = llvm::ConstantInt::get(i32_ty, expected_live_refs);
     auto* mismatch = builder.CreateICmpNE(ref_count_arg, expected_val);
@@ -2973,30 +2948,27 @@ auto DefineDeferredAssertionThunk(
     builder.SetInsertPoint(ok_bb);
   }
 
-  // Append actuals in formal order, walking bindings and formals in lockstep.
+  // Append actuals in formal order.
   uint32_t live_ref_index = 0;
-  for (size_t i = 0; i < action.actual_bindings.size(); ++i) {
-    const auto& binding = action.actual_bindings[i];
+  for (size_t i = 0; i < plan.actual_plan.size(); ++i) {
+    const auto& actual = plan.actual_plan[i];
     const auto& formal = target_func.signature.params[i];
 
-    switch (binding.source) {
-      case mir::DeferredThunkActualBinding::Source::kPayloadField: {
-        if (binding.payload_field_index >=
+    switch (actual.source) {
+      case mir::DeferredActualPlan::Source::kPayloadField: {
+        if (actual.payload_field_index >=
             static_cast<uint32_t>(payload_values.size())) {
           throw common::InternalError(
               "DefineDeferredAssertionThunk",
               std::format(
                   "payload_field_index {} out of range (payload has {} "
                   "fields)",
-                  binding.payload_field_index, payload_values.size()));
+                  actual.payload_field_index, payload_values.size()));
         }
-        call_args.push_back(payload_values[binding.payload_field_index]);
+        call_args.push_back(payload_values[actual.payload_field_index]);
         break;
       }
-      case mir::DeferredThunkActualBinding::Source::kLiveRef: {
-        // Load ref binding addr from the ref_bindings array.
-        // DeferredAssertionRefBindingAbi is { void* addr } -- a
-        // pointer array at the LLVM level.
+      case mir::DeferredActualPlan::Source::kLiveRef: {
         auto* raw_ptr = builder.CreateLoad(
             ptr_ty,
             builder.CreateGEP(
@@ -3042,13 +3014,13 @@ auto DefineMirFunction(
   // The MIR function body is empty; the real body is emitted here using
   // thunk metadata from the site registry.
   if (mir::UsesDeferredAssertionThunkAbi(func.runtime_kind)) {
-    const auto* action = context.GetDeferredThunkAction(func_id);
-    if (action == nullptr) {
+    const auto* plan = context.GetDeferredRealizationByThunk(func_id);
+    if (plan == nullptr) {
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          func.origin, "deferred assertion thunk missing metadata",
+          func.origin, "deferred assertion thunk missing realization",
           UnsupportedCategory::kFeature));
     }
-    return DefineDeferredAssertionThunk(context, func_id, llvm_func, *action);
+    return DefineDeferredAssertionThunk(context, func_id, llvm_func, *plan);
   }
 
   auto& llvm_ctx = context.GetLlvmContext();

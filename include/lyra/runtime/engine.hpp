@@ -1614,8 +1614,8 @@ class Engine {
     uint32_t payload_size = 0;
     SmallByteBuffer payload;
     // ref_bindings[i] corresponds 1:1 to the ith kLiveRef entry in the
-    // site's DeferredThunkAction::actual_bindings. Runtime preserves order
-    // and never interprets entries.
+    // site's realization actual_plan. Runtime preserves order and never
+    // interprets entries.
     std::vector<DeferredAssertionRefBindingAbi> ref_bindings;
   };
   struct ProcessDeferredAssertionState {

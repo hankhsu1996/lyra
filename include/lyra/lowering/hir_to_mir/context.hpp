@@ -170,6 +170,11 @@ struct DeclView {
   // Null for lowering scopes that cannot contain deferred assertions.
   mir::DeferredAssertionSiteRegistry* deferred_assertion_site_registry =
       nullptr;
+  // Shared design-global registry for deferred assertion realization plans.
+  // Null for lowering scopes that cannot contain deferred assertions.
+  absl::flat_hash_map<
+      mir::DeferredAssertionActionKey, mir::DeferredUserCallRealization>*
+      deferred_assertion_realizations = nullptr;
   // B2: External ref registry for body lowering. When non-null, hierarchical
   // refs produce ExternalRefId operands. Null for design-level lowering.
   std::vector<mir::ExternalAccessRecipe>* external_refs = nullptr;
@@ -278,6 +283,9 @@ struct Context {
   mir::ImmediateCoverSiteRegistry* cover_site_registry = nullptr;
   mir::DeferredAssertionSiteRegistry* deferred_assertion_site_registry =
       nullptr;
+  absl::flat_hash_map<
+      mir::DeferredAssertionActionKey, mir::DeferredUserCallRealization>*
+      deferred_assertion_realizations = nullptr;
 
   auto AllocateCoverSite(SourceSpan span) const -> mir::CoverSiteId {
     if (cover_site_registry == nullptr) {
@@ -295,6 +303,25 @@ struct Context {
           "deferred assertion site registry not initialized");
     }
     return deferred_assertion_site_registry->Allocate(std::move(info));
+  }
+
+  void RegisterDeferredAssertionRealization(
+      mir::DeferredAssertionActionKey key,
+      mir::DeferredUserCallRealization realization) {
+    if (deferred_assertion_realizations == nullptr) {
+      throw common::InternalError(
+          "Context::RegisterDeferredAssertionRealization",
+          "deferred assertion realization registry not initialized");
+    }
+    auto [it, inserted] =
+        deferred_assertion_realizations->emplace(key, std::move(realization));
+    if (!inserted) {
+      throw common::InternalError(
+          "Context::RegisterDeferredAssertionRealization",
+          std::format(
+              "duplicate realization for site {} disposition {}",
+              key.site_id.Index(), static_cast<unsigned>(key.disposition)));
+    }
   }
 
   // Stats: count of MaterializeOperandToPlace calls (for --stats output).

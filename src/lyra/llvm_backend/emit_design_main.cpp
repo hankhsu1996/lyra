@@ -1906,11 +1906,20 @@ auto EmitDeferredAssertionSiteMetaGlobal(
   std::vector<llvm::Constant*> entries;
   entries.reserve(sites.size());
 
-  for (const auto& site : sites) {
+  for (uint32_t si = 0; si < sites.size(); ++si) {
+    const auto& site = sites[si];
+    auto site_id = mir::DeferredAssertionSiteId{si};
     auto kind_val = static_cast<uint8_t>(site.kind);
-    uint32_t cover_id = site.cover_hit.has_value()
-                            ? site.cover_hit->cover_site_id.Index()
-                            : UINT32_MAX;
+
+    // Derive cover_site_id from semantic action variant.
+    uint32_t cover_id = UINT32_MAX;
+    if (site.pass_action.has_value()) {
+      const auto* cover_hit =
+          std::get_if<mir::DeferredCoverHitAction>(&*site.pass_action);
+      if (cover_hit != nullptr) {
+        cover_id = cover_hit->cover_site_id.Index();
+      }
+    }
 
     // Resolve source location from canonical OriginId.
     llvm::Constant* file_ptr = llvm::ConstantPointerNull::get(ptr_ty);
@@ -1932,31 +1941,41 @@ auto EmitDeferredAssertionSiteMetaGlobal(
       }
     }
 
-    // Resolve thunk function pointers and payload sizes.
+    // Resolve thunk function pointers and payload sizes from realizations.
     llvm::Constant* pass_thunk_ptr = llvm::ConstantPointerNull::get(ptr_ty);
     llvm::Constant* fail_thunk_ptr = llvm::ConstantPointerNull::get(ptr_ty);
     uint32_t pass_payload_size = 0;
     uint32_t fail_payload_size = 0;
 
-    if (site.pass_action.has_value()) {
-      auto* fn = context.GetUserFunction(site.pass_action->thunk);
+    const auto* pass_r = context.GetDeferredRealization(
+        mir::DeferredAssertionActionKey{
+            .site_id = site_id,
+            .disposition = mir::DeferredAssertionDisposition::kPassAction,
+        });
+    if (pass_r != nullptr) {
+      auto* fn = context.GetUserFunction(pass_r->thunk);
       if (fn != nullptr) {
         pass_thunk_ptr = fn;
       }
       auto* payload_ty = BuildDeferredPayloadStructType(
-          llvm_ctx, site.pass_action->payload, context.GetTypeArena(),
+          llvm_ctx, pass_r->payload, context.GetTypeArena(),
           context.IsForceTwoState());
       pass_payload_size = static_cast<uint32_t>(
           context.GetModule().getDataLayout().getTypeAllocSize(payload_ty));
     }
 
-    if (site.fail_action.has_value()) {
-      auto* fn = context.GetUserFunction(site.fail_action->thunk);
+    const auto* fail_r = context.GetDeferredRealization(
+        mir::DeferredAssertionActionKey{
+            .site_id = site_id,
+            .disposition = mir::DeferredAssertionDisposition::kFailAction,
+        });
+    if (fail_r != nullptr) {
+      auto* fn = context.GetUserFunction(fail_r->thunk);
       if (fn != nullptr) {
         fail_thunk_ptr = fn;
       }
       auto* payload_ty = BuildDeferredPayloadStructType(
-          llvm_ctx, site.fail_action->payload, context.GetTypeArena(),
+          llvm_ctx, fail_r->payload, context.GetTypeArena(),
           context.IsForceTwoState());
       fail_payload_size = static_cast<uint32_t>(
           context.GetModule().getDataLayout().getTypeAllocSize(payload_ty));

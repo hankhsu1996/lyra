@@ -649,33 +649,43 @@ auto LowerEffectOp(
               instance_id_val = context.GetDynamicInstanceId();
             }
 
+            // Look up realization for this disposition (nullptr for
+            // kDefaultFailReport and kCoverHit -- no thunk-backed action).
+            const auto* realization = context.GetDeferredRealization(
+                mir::DeferredAssertionActionKey{
+                    .site_id = enq.site_id,
+                    .disposition = enq.disposition,
+                });
+
             // Validate payload consistency before packing.
-            if (enq.capture_values.size() !=
-                enq.payload_desc.field_types.size()) {
-              throw common::InternalError(
-                  "LowerEnqueueDeferredAssertionEffect",
-                  std::format(
-                      "capture/payload mismatch: {} values vs {} fields",
-                      enq.capture_values.size(),
-                      enq.payload_desc.field_types.size()));
+            if (realization != nullptr) {
+              if (enq.snapshot_values.size() !=
+                  realization->payload.field_types.size()) {
+                throw common::InternalError(
+                    "LowerEnqueueDeferredAssertionEffect",
+                    std::format(
+                        "capture/payload mismatch: {} values vs {} fields",
+                        enq.snapshot_values.size(),
+                        realization->payload.field_types.size()));
+              }
             }
 
             // Pack by-value captures into typed payload struct.
             llvm::Value* payload_ptr = llvm::ConstantPointerNull::get(
                 llvm::cast<llvm::PointerType>(ptr_ty));
             llvm::Value* payload_size_val = llvm::ConstantInt::get(i32_ty, 0);
-            if (!enq.capture_values.empty()) {
-              // Build payload struct from the typed payload descriptor.
+            if (realization != nullptr && !enq.snapshot_values.empty()) {
               auto* payload_struct_ty = BuildDeferredPayloadStructType(
-                  llvm_ctx, enq.payload_desc, types, context.IsForceTwoState());
+                  llvm_ctx, realization->payload, types,
+                  context.IsForceTwoState());
 
               auto* alloca = builder.CreateAlloca(
                   payload_struct_ty, nullptr, "deferred.payload");
-              for (size_t i = 0; i < enq.capture_values.size(); ++i) {
+              for (size_t i = 0; i < enq.snapshot_values.size(); ++i) {
                 auto* field_ty =
                     payload_struct_ty->getElementType(static_cast<unsigned>(i));
                 auto val = LowerOperandAsStorage(
-                    context, enq.capture_values[i], field_ty);
+                    context, enq.snapshot_values[i], field_ty);
                 if (!val) return std::unexpected(val.error());
                 auto* field_ptr = builder.CreateStructGEP(
                     payload_struct_ty, alloca, static_cast<unsigned>(i));
@@ -687,53 +697,31 @@ auto LowerEffectOp(
                   i32_ty, data_layout.getTypeAllocSize(payload_struct_ty));
             }
 
-            // A2f: build ref binding array from site action + target
-            // signature. No parallel ref plan -- derive everything from
-            // the canonical actual_bindings on the site action.
+            // Build ref binding array from realization actual plan.
             llvm::Value* ref_array_ptr = llvm::ConstantPointerNull::get(ptr_ty);
             llvm::Value* ref_count_val = llvm::ConstantInt::get(i32_ty, 0);
 
-            const auto* site_info =
-                context.GetDeferredAssertionSiteInfo(enq.site_id);
-            const mir::DeferredThunkAction* action = nullptr;
-            if (site_info != nullptr) {
-              if (enq.disposition ==
-                      mir::DeferredAssertionDisposition::kPassAction &&
-                  site_info->pass_action.has_value()) {
-                action = &*site_info->pass_action;
-              } else if (
-                  enq.disposition ==
-                      mir::DeferredAssertionDisposition::kFailAction &&
-                  site_info->fail_action.has_value()) {
-                action = &*site_info->fail_action;
-              }
-            }
-
-            if (action != nullptr) {
-              // Count kLiveRef bindings.
+            if (realization != nullptr) {
               uint32_t ref_count = 0;
-              for (const auto& b : action->actual_bindings) {
-                if (b.source ==
-                    mir::DeferredThunkActualBinding::Source::kLiveRef) {
+              for (const auto& p : realization->actual_plan) {
+                if (p.source == mir::DeferredActualPlan::Source::kLiveRef) {
                   ++ref_count;
                 }
               }
 
               if (ref_count > 0) {
-                // DeferredAssertionRefBindingAbi is { void* addr }.
-                // At the LLVM level, this is an array of pointers.
                 auto* array_ty = llvm::ArrayType::get(ptr_ty, ref_count);
                 auto* ref_alloca =
                     builder.CreateAlloca(array_ty, nullptr, "deferred.refs");
 
                 uint32_t ri = 0;
-                for (const auto& binding : action->actual_bindings) {
-                  if (binding.source !=
-                      mir::DeferredThunkActualBinding::Source::kLiveRef) {
+                for (const auto& plan : realization->actual_plan) {
+                  if (plan.source !=
+                      mir::DeferredActualPlan::Source::kLiveRef) {
                     continue;
                   }
 
-                  auto place_ptr = context.GetPlacePointer(binding.ref_place);
+                  auto place_ptr = context.GetPlacePointer(plan.ref_place);
                   if (!place_ptr) return std::unexpected(place_ptr.error());
 
                   auto* slot_ptr = builder.CreateGEP(

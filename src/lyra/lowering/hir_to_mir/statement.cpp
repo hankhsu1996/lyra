@@ -1336,38 +1336,40 @@ struct DeferredCapturedValuePlan {
   TypeId captured_type;
 };
 
-// Result of building a deferred thunk plan. Contains both the thunk
-// metadata and the per-field capture plans for by-value actuals.
-struct DeferredThunkPlan {
-  mir::DeferredThunkAction action;
-  // By-value capture plans in payload field order. Each must be lowered
-  // at encounter time in the decision arm body.
-  std::vector<DeferredCapturedValuePlan> captures;
+// Named build result from BuildDeferredAssertionAction.
+// snapshot_captures is the filtered projection of action.actuals for
+// kSnapshotValue entries, in exactly the same order. This invariant is
+// validated before building EnqueueDeferredAssertionEffect.
+struct DeferredAssertionActionBuildResult {
+  mir::DeferredUserCallAction action;
+  std::vector<DeferredCapturedValuePlan> snapshot_captures;
 };
 
-// Build a DeferredThunkAction for a user subroutine call in a deferred
-// assertion action. Creates a synthetic MIR function shell (empty body;
-// the real body is emitted in LLVM backend) and populates the capture
-// payload descriptor and actual binding map.
+auto CountSnapshotActuals(
+    const std::vector<mir::DeferredAssertionActual>& actuals) -> size_t {
+  return static_cast<size_t>(
+      std::count_if(actuals.begin(), actuals.end(), [](const auto& a) {
+        return a.kind == mir::DeferredActualKind::kSnapshotValue;
+      }));
+}
+
+// Build a semantic DeferredUserCallAction for a user subroutine call in
+// a deferred assertion action. Pure semantic: no payload layout, no thunk
+// allocation, no ref-slot numbering.
 //
-// Restrictions:
+// Restrictions (LRM 16.4):
 // - Return type must be void
 // - No managed types for by-value formals
-// - No method calls
-// - kValue formals -> captured into payload
-// - out/inout formals -> rejected (slang enforces for deferred actions)
-// - ref/const-ref formals -> live ref binding (PlaceId stored in binding)
-//   Deferred-specific legality: reject automatic and dynamic root objects
-auto BuildDeferredUserCallThunkPlan(
+// - No out/inout formals
+// - Ref/const-ref formals must bind non-automatic, non-dynamic storage
+auto BuildDeferredAssertionAction(
     const hir::CallExpressionData& call_data, SourceSpan span,
-    MirBuilder& builder) -> Result<DeferredThunkPlan> {
+    MirBuilder& builder) -> Result<DeferredAssertionActionBuildResult> {
   Context& ctx = builder.GetContext();
   const auto& types = *ctx.type_arena;
 
-  // Resolve callee target and signature.
   mir::Callee callee = ctx.ResolveCallTarget(call_data.callee);
 
-  // Must be a concrete function, not a system task.
   auto* func_id_ptr = std::get_if<mir::FunctionId>(&callee);
   auto* design_ref_ptr = std::get_if<mir::DesignFunctionRef>(&callee);
   if (func_id_ptr == nullptr && design_ref_ptr == nullptr) {
@@ -1379,7 +1381,6 @@ auto BuildDeferredUserCallThunkPlan(
 
   const mir::FunctionSignature& sig = ctx.ResolveCallSignature(callee);
 
-  // Return type must be void.
   if (sig.return_type != ctx.builtin_types.void_type) {
     return std::unexpected(
         Diagnostic::Unsupported(
@@ -1387,26 +1388,22 @@ auto BuildDeferredUserCallThunkPlan(
             UnsupportedCategory::kFeature));
   }
 
-  // Build capture payload, actual bindings, and capture plans.
-  mir::CapturePayloadDesc payload;
-  std::vector<mir::DeferredThunkActualBinding> bindings;
-  std::vector<DeferredCapturedValuePlan> captures;
-  uint32_t payload_field_index = 0;
-
   if (sig.params.size() != call_data.arguments.size()) {
     throw common::InternalError(
-        "BuildDeferredUserCallThunkPlan",
+        "BuildDeferredAssertionAction",
         std::format(
             "param count {} != argument count {}", sig.params.size(),
             call_data.arguments.size()));
   }
+
+  std::vector<mir::DeferredAssertionActual> actuals;
+  std::vector<DeferredCapturedValuePlan> snapshot_captures;
 
   for (size_t i = 0; i < sig.params.size(); ++i) {
     const auto& param = sig.params[i];
 
     switch (param.kind) {
       case mir::PassingKind::kValue: {
-        // By-value: capture into payload.
         if (IsManagedType(param.type, types)) {
           return std::unexpected(
               Diagnostic::Unsupported(
@@ -1417,26 +1414,21 @@ auto BuildDeferredUserCallThunkPlan(
                       i),
                   UnsupportedCategory::kFeature));
         }
-
-        payload.field_types.push_back(param.type);
-        captures.push_back(
+        actuals.push_back(
+            mir::DeferredAssertionActual{
+                .kind = mir::DeferredActualKind::kSnapshotValue,
+                .type = param.type,
+            });
+        snapshot_captures.push_back(
             DeferredCapturedValuePlan{
                 .expr_id = call_data.arguments[i],
                 .captured_type = param.type,
             });
-        bindings.push_back(
-            mir::DeferredThunkActualBinding{
-                .source =
-                    mir::DeferredThunkActualBinding::Source::kPayloadField,
-                .payload_field_index = payload_field_index,
-            });
-        ++payload_field_index;
         break;
       }
 
       case mir::PassingKind::kRef:
       case mir::PassingKind::kConstRef: {
-        // Ref/const-ref: resolve to stable place, then validate legality.
         auto place_result = ResolveDeferredRefActualAsPlace(
             call_data.arguments[i], ctx, builder);
         if (!place_result) return std::unexpected(place_result.error());
@@ -1458,9 +1450,13 @@ auto BuildDeferredUserCallThunkPlan(
                   UnsupportedCategory::kFeature));
         }
 
-        bindings.push_back(
-            mir::DeferredThunkActualBinding{
-                .source = mir::DeferredThunkActualBinding::Source::kLiveRef,
+        auto actual_kind = (param.kind == mir::PassingKind::kRef)
+                               ? mir::DeferredActualKind::kLiveRef
+                               : mir::DeferredActualKind::kConstLiveRef;
+        actuals.push_back(
+            mir::DeferredAssertionActual{
+                .kind = actual_kind,
+                .type = param.type,
                 .ref_place = place,
             });
         break;
@@ -1468,16 +1464,13 @@ auto BuildDeferredUserCallThunkPlan(
 
       case mir::PassingKind::kOut:
       case mir::PassingKind::kInOut:
-        // out/inout are illegal in deferred assertion actions.
-        // slang enforces this at parse time; reaching here is a bug.
         throw common::InternalError(
-            "BuildDeferredUserCallThunkPlan",
+            "BuildDeferredAssertionAction",
             std::format(
                 "out/inout parameter {} in deferred assertion action", i));
     }
   }
 
-  // Resolve the target FunctionId for the thunk metadata.
   mir::FunctionId target_func_id;
   if (func_id_ptr != nullptr) {
     target_func_id = *func_id_ptr;
@@ -1485,8 +1478,50 @@ auto BuildDeferredUserCallThunkPlan(
     target_func_id = ctx.ResolveCallee(design_ref_ptr->symbol);
   }
 
-  // Create a synthetic MIR function shell for the thunk.
-  // The body is empty -- it will be emitted directly in LLVM IR.
+  return DeferredAssertionActionBuildResult{
+      .action =
+          mir::DeferredUserCallAction{
+              .callee = target_func_id,
+              .actuals = std::move(actuals),
+          },
+      .snapshot_captures = std::move(snapshot_captures),
+  };
+}
+
+// Derive a DeferredUserCallRealization from a finished semantic action.
+// Assigns payload field order for snapshot actuals, ref-binding order
+// for live refs, and allocates a thunk function shell.
+auto BuildDeferredAssertionRealization(
+    const mir::DeferredUserCallAction& action, MirBuilder& builder)
+    -> mir::DeferredUserCallRealization {
+  Context& ctx = builder.GetContext();
+
+  mir::CapturePayloadDesc payload;
+  std::vector<mir::DeferredActualPlan> actual_plan;
+  uint32_t payload_field_index = 0;
+
+  for (const auto& actual : action.actuals) {
+    switch (actual.kind) {
+      case mir::DeferredActualKind::kSnapshotValue:
+        payload.field_types.push_back(actual.type);
+        actual_plan.push_back(
+            mir::DeferredActualPlan{
+                .source = mir::DeferredActualPlan::Source::kPayloadField,
+                .payload_field_index = payload_field_index,
+            });
+        ++payload_field_index;
+        break;
+      case mir::DeferredActualKind::kLiveRef:
+      case mir::DeferredActualKind::kConstLiveRef:
+        actual_plan.push_back(
+            mir::DeferredActualPlan{
+                .source = mir::DeferredActualPlan::Source::kLiveRef,
+                .ref_place = actual.ref_place,
+            });
+        break;
+    }
+  }
+
   mir::Function thunk_shell{
       .signature =
           {
@@ -1510,15 +1545,11 @@ auto BuildDeferredUserCallThunkPlan(
     ctx.generated_functions->push_back(thunk_id);
   }
 
-  return DeferredThunkPlan{
-      .action =
-          mir::DeferredThunkAction{
-              .thunk = thunk_id,
-              .payload = std::move(payload),
-              .callee = mir::DeferredThunkUserCallee{.target = target_func_id},
-              .actual_bindings = std::move(bindings),
-          },
-      .captures = std::move(captures),
+  return mir::DeferredUserCallRealization{
+      .thunk = thunk_id,
+      .callee = action.callee,
+      .payload = std::move(payload),
+      .actual_plan = std::move(actual_plan),
   };
 }
 
@@ -1691,36 +1722,51 @@ auto LowerObservedDeferredImmediateAssertion(
             UnsupportedCategory::kFeature));
   }
 
-  // Build thunk plans for user-supplied pass/fail actions.
-  std::optional<DeferredThunkPlan> pass_plan;
-  std::optional<DeferredThunkPlan> fail_plan;
+  // Build semantic actions for user-supplied pass/fail actions.
+  std::optional<DeferredAssertionActionBuildResult> pass_result;
+  std::optional<DeferredAssertionActionBuildResult> fail_result;
 
   if (pass_shape->has_value() && (*pass_shape)->call != nullptr) {
     auto result =
-        BuildDeferredUserCallThunkPlan(*(*pass_shape)->call, span, builder);
+        BuildDeferredAssertionAction(*(*pass_shape)->call, span, builder);
     if (!result) return std::unexpected(result.error());
-    pass_plan = std::move(*result);
+    pass_result = std::move(*result);
   }
 
   if (fail_shape->has_value() && (*fail_shape)->call != nullptr) {
     auto result =
-        BuildDeferredUserCallThunkPlan(*(*fail_shape)->call, span, builder);
+        BuildDeferredAssertionAction(*(*fail_shape)->call, span, builder);
     if (!result) return std::unexpected(result.error());
-    fail_plan = std::move(*result);
+    fail_result = std::move(*result);
   }
 
-  // Save payload descs before moving actions into site_info.
-  // After std::move, the action's payload vector is in a moved-from state.
-  mir::CapturePayloadDesc pass_payload_desc;
-  mir::CapturePayloadDesc fail_payload_desc;
-  if (pass_plan.has_value()) {
-    pass_payload_desc = pass_plan->action.payload;
+  // Validate snapshot ordering invariant before any emission.
+  auto validate_snapshot_projection =
+      [](const DeferredAssertionActionBuildResult& r) {
+        if (r.snapshot_captures.size() !=
+            CountSnapshotActuals(r.action.actuals)) {
+          throw common::InternalError(
+              "LowerObservedDeferredImmediateAssertion",
+              "snapshot capture count mismatch with semantic actuals");
+        }
+      };
+  if (pass_result.has_value()) validate_snapshot_projection(*pass_result);
+  if (fail_result.has_value()) validate_snapshot_projection(*fail_result);
+
+  // Build realizations from finished semantic actions BEFORE moving
+  // actions into site_info (move invalidates the action).
+  std::optional<mir::DeferredUserCallRealization> pass_realization;
+  std::optional<mir::DeferredUserCallRealization> fail_realization;
+  if (pass_result.has_value()) {
+    pass_realization =
+        BuildDeferredAssertionRealization(pass_result->action, builder);
   }
-  if (fail_plan.has_value()) {
-    fail_payload_desc = fail_plan->action.payload;
+  if (fail_result.has_value()) {
+    fail_realization =
+        BuildDeferredAssertionRealization(fail_result->action, builder);
   }
 
-  // Build site metadata with disposition-specific descriptors.
+  // Build site metadata with semantic action descriptors.
   mir::DeferredAssertionSiteInfo site_info{
       .span = span,
       .origin = origin,
@@ -1728,30 +1774,73 @@ auto LowerObservedDeferredImmediateAssertion(
       .has_default_fail_report = false,
       .fail_action = std::nullopt,
       .pass_action = std::nullopt,
-      .cover_hit = std::nullopt,
   };
 
   if (is_cover) {
-    if (pass_plan.has_value()) {
-      site_info.pass_action = std::move(pass_plan->action);
+    if (pass_result.has_value()) {
+      site_info.pass_action = std::move(pass_result->action);
     } else {
       auto cover_site_id = builder.GetContext().AllocateCoverSite(span);
-      site_info.cover_hit =
+      site_info.pass_action =
           mir::DeferredCoverHitAction{.cover_site_id = cover_site_id};
     }
   } else {
-    if (fail_plan.has_value()) {
-      site_info.fail_action = std::move(fail_plan->action);
+    if (fail_result.has_value()) {
+      site_info.fail_action = std::move(fail_result->action);
     } else {
       site_info.has_default_fail_report = true;
     }
-    if (pass_plan.has_value()) {
-      site_info.pass_action = std::move(pass_plan->action);
+    if (pass_result.has_value()) {
+      site_info.pass_action = std::move(pass_result->action);
     }
   }
 
   auto site_id =
       builder.GetContext().AllocateDeferredAssertionSite(std::move(site_info));
+
+  // Register realizations under site_id (now that site_id is allocated).
+  if (pass_realization.has_value()) {
+    builder.GetContext().RegisterDeferredAssertionRealization(
+        mir::DeferredAssertionActionKey{
+            .site_id = site_id,
+            .disposition = mir::DeferredAssertionDisposition::kPassAction,
+        },
+        std::move(*pass_realization));
+  }
+  if (fail_realization.has_value()) {
+    builder.GetContext().RegisterDeferredAssertionRealization(
+        mir::DeferredAssertionActionKey{
+            .site_id = site_id,
+            .disposition = mir::DeferredAssertionDisposition::kFailAction,
+        },
+        std::move(*fail_realization));
+  }
+
+  // Helper: lower snapshot captures and emit enqueue effect.
+  auto emit_enqueue =
+      [](Result<void>& cb_result, MirBuilder& b,
+         mir::DeferredAssertionSiteId sid,
+         mir::DeferredAssertionDisposition disposition,
+         const std::vector<DeferredCapturedValuePlan>* captures) {
+        std::vector<mir::Operand> snapshot_values;
+        if (captures != nullptr) {
+          for (const auto& cap : *captures) {
+            auto val =
+                LowerDeferredCapturedValue(cap.expr_id, cap.captured_type, b);
+            if (!val) {
+              cb_result = std::unexpected(val.error());
+              return;
+            }
+            snapshot_values.push_back(*val);
+          }
+        }
+        b.EmitEffect(
+            mir::EnqueueDeferredAssertionEffect{
+                .site_id = sid,
+                .disposition = disposition,
+                .snapshot_values = std::move(snapshot_values),
+            });
+      };
 
   // Emit condition evaluation + branch + enqueue effect.
   Result<void> callback_result;
@@ -1772,58 +1861,25 @@ auto LowerObservedDeferredImmediateAssertion(
             return *cond;
           },
           .build_body =
-              [&callback_result, is_cover, site_id, &pass_plan,
-               &pass_payload_desc](MirBuilder& b) {
+              [&callback_result, &emit_enqueue, is_cover, site_id,
+               &pass_result](MirBuilder& b) {
                 if (!callback_result) return;
                 if (is_cover) {
-                  if (pass_plan.has_value()) {
-                    std::vector<mir::Operand> captures;
-                    for (const auto& cap : pass_plan->captures) {
-                      auto val = LowerDeferredCapturedValue(
-                          cap.expr_id, cap.captured_type, b);
-                      if (!val) {
-                        callback_result = std::unexpected(val.error());
-                        return;
-                      }
-                      captures.push_back(*val);
-                    }
-                    b.EmitEffect(
-                        mir::EnqueueDeferredAssertionEffect{
-                            .site_id = site_id,
-                            .disposition =
-                                mir::DeferredAssertionDisposition::kPassAction,
-                            .payload_desc = pass_payload_desc,
-                            .capture_values = std::move(captures),
-                        });
+                  if (pass_result.has_value()) {
+                    emit_enqueue(
+                        callback_result, b, site_id,
+                        mir::DeferredAssertionDisposition::kPassAction,
+                        &pass_result->snapshot_captures);
                   } else {
-                    b.EmitEffect(
-                        mir::EnqueueDeferredAssertionEffect{
-                            .site_id = site_id,
-                            .disposition =
-                                mir::DeferredAssertionDisposition::kCoverHit,
-                            .payload_desc = {},
-                            .capture_values = {},
-                        });
+                    emit_enqueue(
+                        callback_result, b, site_id,
+                        mir::DeferredAssertionDisposition::kCoverHit, nullptr);
                   }
-                } else if (pass_plan.has_value()) {
-                  std::vector<mir::Operand> captures;
-                  for (const auto& cap : pass_plan->captures) {
-                    auto val = LowerDeferredCapturedValue(
-                        cap.expr_id, cap.captured_type, b);
-                    if (!val) {
-                      callback_result = std::unexpected(val.error());
-                      return;
-                    }
-                    captures.push_back(*val);
-                  }
-                  b.EmitEffect(
-                      mir::EnqueueDeferredAssertionEffect{
-                          .site_id = site_id,
-                          .disposition =
-                              mir::DeferredAssertionDisposition::kPassAction,
-                          .payload_desc = pass_payload_desc,
-                          .capture_values = std::move(captures),
-                      });
+                } else if (pass_result.has_value()) {
+                  emit_enqueue(
+                      callback_result, b, site_id,
+                      mir::DeferredAssertionDisposition::kPassAction,
+                      &pass_result->snapshot_captures);
                 }
               },
       });
@@ -1832,37 +1888,19 @@ auto LowerObservedDeferredImmediateAssertion(
       is_cover
           ? std::nullopt
           : std::optional<std::function<void(MirBuilder&)>>(
-                [&callback_result, site_id, &fail_plan,
-                 &fail_payload_desc](MirBuilder& b) {
+                [&callback_result, &emit_enqueue, site_id,
+                 &fail_result](MirBuilder& b) {
                   if (!callback_result) return;
-                  if (fail_plan.has_value()) {
-                    std::vector<mir::Operand> captures;
-                    for (const auto& cap : fail_plan->captures) {
-                      auto val = LowerDeferredCapturedValue(
-                          cap.expr_id, cap.captured_type, b);
-                      if (!val) {
-                        callback_result = std::unexpected(val.error());
-                        return;
-                      }
-                      captures.push_back(*val);
-                    }
-                    b.EmitEffect(
-                        mir::EnqueueDeferredAssertionEffect{
-                            .site_id = site_id,
-                            .disposition =
-                                mir::DeferredAssertionDisposition::kFailAction,
-                            .payload_desc = fail_payload_desc,
-                            .capture_values = std::move(captures),
-                        });
+                  if (fail_result.has_value()) {
+                    emit_enqueue(
+                        callback_result, b, site_id,
+                        mir::DeferredAssertionDisposition::kFailAction,
+                        &fail_result->snapshot_captures);
                   } else {
-                    b.EmitEffect(
-                        mir::EnqueueDeferredAssertionEffect{
-                            .site_id = site_id,
-                            .disposition = mir::DeferredAssertionDisposition::
-                                kDefaultFailReport,
-                            .payload_desc = {},
-                            .capture_values = {},
-                        });
+                    emit_enqueue(
+                        callback_result, b, site_id,
+                        mir::DeferredAssertionDisposition::kDefaultFailReport,
+                        nullptr);
                   }
                 });
 

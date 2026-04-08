@@ -184,6 +184,9 @@ auto LowerDesign(
 
   mir::ImmediateCoverSiteRegistry cover_site_registry;
   mir::DeferredAssertionSiteRegistry deferred_assertion_site_registry;
+  absl::flat_hash_map<
+      mir::DeferredAssertionActionKey, mir::DeferredUserCallRealization>
+      deferred_assertion_realizations;
 
   mir::Design result;
   result.num_design_slots = decls.num_design_slots;
@@ -336,7 +339,8 @@ auto LowerDesign(
     body_results.push_back(LowerModule(
         hir_body, body_input, std::move(body_arena), mir_arena, decls,
         body_decls, rep_mod.body_id, &cover_site_registry,
-        &deferred_assertion_site_registry, &cross_instance_places));
+        &deferred_assertion_site_registry, &deferred_assertion_realizations,
+        &cross_instance_places));
   }
 
   // Phase 2: Assemble body results in stable group order.
@@ -375,6 +379,8 @@ auto LowerDesign(
   result.immediate_cover_sites = cover_site_registry.TakeSites();
   result.deferred_assertion_sites =
       deferred_assertion_site_registry.TakeSites();
+  result.deferred_assertion_realizations =
+      std::move(deferred_assertion_realizations);
 
   // Build DPI export wrapper descriptors now that body-local function maps
   // are available. Module-scoped exports need these maps to resolve their
