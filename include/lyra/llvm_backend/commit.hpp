@@ -10,6 +10,7 @@
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -30,7 +31,7 @@ auto CommitValue(
 // For non-design targets (process locals): direct LLVM store, outside
 // the packed-store policy architecture.
 void CommitPackedValue(
-    Context& ctx, mir::PlaceId target, const PackedRValue& rvalue,
+    Context& ctx, const mir::WriteTarget& target, const PackedRValue& rvalue,
     TypeId type_id);
 
 // Notify queue/container mutation (handle unchanged, content changed).
@@ -46,6 +47,8 @@ void CommitNotifyMutationIfDesignSlot(Context& ctx, mir::PlaceId target);
 // @(*)); edge-sensitive events (posedge/negedge) on aggregates are NOT
 // supported.
 void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target);
+void CommitNotifyAggregateIfDesignSlot(
+    Context& ctx, const mir::WriteTarget& target);
 
 // NBA-specific signal_id extraction.
 // NBA always targets design slots, so fail-fast is correct behavior.
@@ -64,15 +67,11 @@ void CommitMoveCleanupIfTemp(
 // with string-containing struct (not yet supported).
 // Caller ensures NeedsFieldByField(struct_type_id, types) is true.
 auto CommitStructFieldByField(
-    Context& ctx, mir::PlaceId target, mir::PlaceId source,
+    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source,
     TypeId struct_type_id, OwnershipPolicy policy) -> Result<void>;
 
-// Array element-by-element assignment for arrays containing managed elements.
-// Handles design-slot detection internally, returning error if design slot
-// with managed-containing array (not yet supported).
-// Caller ensures NeedsFieldByField(array_type_id, types) is true.
 auto CommitArrayFieldByField(
-    Context& ctx, mir::PlaceId target, mir::PlaceId source,
+    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source,
     TypeId array_type_id, OwnershipPolicy policy) -> Result<void>;
 
 // Resolve design signal ID for a target place (after alias resolution).

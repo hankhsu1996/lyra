@@ -445,84 +445,115 @@ auto Context::GetDynamicInstanceId() const -> llvm::Value* {
 void Context::SetExternalRefResolutionEnv(
     std::optional<ExternalRefResolutionEnv> env) {
   ext_ref_env_ = std::move(env);
-  materialized_ext_ref_places_.clear();
-  ext_ref_scratch_arena_ = mir::Arena{};
-  if (ext_ref_env_.has_value() && ext_ref_env_->bindings != nullptr) {
-    if (arena_ == nullptr) {
-      throw common::InternalError(
-          "SetExternalRefResolutionEnv",
-          "body arena must be installed before external ref bindings");
-    }
-    ext_ref_place_base_ = static_cast<uint32_t>(arena_->PlaceCount());
-    materialized_ext_ref_places_.resize(ext_ref_env_->bindings->size());
-  } else {
-    ext_ref_place_base_.reset();
-  }
 }
 
 auto Context::LookupPlace(mir::PlaceId place_id) const -> const mir::Place& {
   if (arena_ == nullptr) {
     throw common::InternalError("LookupPlace", "no active MIR arena");
   }
-  if (!ext_ref_place_base_.has_value() ||
-      place_id.value < *ext_ref_place_base_) {
-    return (*arena_)[place_id];
-  }
-  return ext_ref_scratch_arena_[mir::PlaceId{
-      place_id.value - *ext_ref_place_base_}];
+  return (*arena_)[place_id];
 }
 
-auto Context::ResolveExternalRef(mir::ExternalRefId ref_id) -> mir::PlaceId {
+// V3: Direct external-ref helpers -- consume resolved binding directly
+// for operand loads, type queries, signal coordinates, and write-path
+// root resolution. All external-ref resolution flows through
+// ResolveExternalRefRoot.
+
+auto Context::ResolveExternalRefRoot(mir::ExternalRefId ref_id) const
+    -> ResolvedExternalRefRoot {
   if (!ext_ref_env_.has_value() || ext_ref_env_->bindings == nullptr) {
     throw common::InternalError(
-        "ResolveExternalRef",
+        "ResolveExternalRefRoot",
         "env not installed -- kSpecializationLocal scope missing "
         "SetExternalRefResolutionEnv");
   }
-  const auto& env = *ext_ref_env_;
-  if (ref_id.value >= env.bindings->size()) {
+  const auto& bindings = *ext_ref_env_->bindings;
+  if (ref_id.value >= bindings.size()) {
     throw common::InternalError(
-        "ResolveExternalRef",
+        "ResolveExternalRefRoot",
         std::format(
             "external ref {} out of range (bindings size {})", ref_id.value,
-            env.bindings->size()));
+            bindings.size()));
   }
-  if (!ext_ref_place_base_.has_value()) {
+  const auto& binding = bindings[ref_id.value];
+  if (ext_ref_env_->construction == nullptr) {
     throw common::InternalError(
-        "ResolveExternalRef", "scratch place base not set");
+        "ResolveExternalRefRoot", "construction not set in env");
   }
-  // Check cache.
-  auto& cached = materialized_ext_ref_places_[ref_id.value];
-  if (cached) return *cached;
-
-  const auto& binding = (*env.bindings)[ref_id.value];
-  if (env.construction == nullptr) {
+  const auto& objects = ext_ref_env_->construction->objects;
+  if (binding.target_object.value >= objects.size()) {
     throw common::InternalError(
-        "ResolveExternalRef", "construction not set in env");
+        "ResolveExternalRefRoot",
+        std::format(
+            "target_object {} out of range (objects size {})",
+            binding.target_object.value, objects.size()));
   }
-  const auto& obj = env.construction->objects.at(binding.target_object.value);
-  auto global_slot =
-      obj.design_state_base_slot + binding.target_local_slot.value;
-  mir::Place place{
-      .root =
-          mir::PlaceRoot{
-              .kind = mir::PlaceRoot::Kind::kDesignGlobal,
-              .id = static_cast<int>(global_slot),
-              .type = binding.type,
-          },
-      .projections = {},
+  const auto& obj = objects[binding.target_object.value];
+  if (binding.target_local_slot.value >= obj.slot_count) {
+    throw common::InternalError(
+        "ResolveExternalRefRoot",
+        std::format(
+            "target_local_slot {} out of range for object {} "
+            "(slot_count {})",
+            binding.target_local_slot.value, binding.target_object.value,
+            obj.slot_count));
+  }
+  uint32_t base = obj.design_state_base_slot;
+  uint32_t local = binding.target_local_slot.value;
+  if (local > UINT32_MAX - base) {
+    throw common::InternalError(
+        "ResolveExternalRefRoot",
+        std::format(
+            "design_state_base_slot {} + target_local_slot {} overflows "
+            "uint32_t",
+            base, local));
+  }
+  auto global_slot = base + local;
+  return ResolvedExternalRefRoot{
+      .global_slot = global_slot,
+      .type = binding.type,
   };
-  auto local_id = ext_ref_scratch_arena_.AddPlace(std::move(place));
-  auto place_id = mir::PlaceId{*ext_ref_place_base_ + local_id.value};
-  cached = place_id;
-  return place_id;
 }
 
-auto Context::ResolveWriteDest(const mir::WriteTarget& dest) -> mir::PlaceId {
-  if (const auto* place = std::get_if<mir::PlaceId>(&dest)) {
-    return *place;
+auto Context::GetExternalRefType(mir::ExternalRefId ref_id) const -> TypeId {
+  return ResolveExternalRefRoot(ref_id).type;
+}
+
+auto Context::EmitExternalRefAddress(mir::ExternalRefId ref_id)
+    -> llvm::Value* {
+  auto root = ResolveExternalRefRoot(ref_id);
+  return GetDesignGlobalSlotPointer(root.global_slot);
+}
+
+auto Context::LoadExternalRef(mir::ExternalRefId ref_id)
+    -> Result<llvm::Value*> {
+  auto root = ResolveExternalRefRoot(ref_id);
+  auto* ptr = GetDesignGlobalSlotPointer(root.global_slot);
+  const Type& type = types_[root.type];
+
+  // Canonical 4-state load for design-global slots (same logic as
+  // LoadPlaceValue for kDesignGlobal roots).
+  if (auto canonical = TryLoadCanonicalFourStateValue(ptr, type)) {
+    return *canonical;
   }
-  return ResolveExternalRef(std::get<mir::ExternalRefId>(dest));
+
+  auto* llvm_type = GetLlvmTypeForTypeId(
+      *llvm_context_, root.type, types_, IsForceTwoState());
+  return builder_.CreateLoad(llvm_type, ptr, "ext_ref_load");
+}
+
+auto Context::EmitExternalRefSignalCoord(mir::ExternalRefId ref_id) const
+    -> SignalCoordExpr {
+  auto root = ResolveExternalRefRoot(ref_id);
+  return SignalCoordExpr::Global(root.global_slot);
+}
+
+auto Context::GetWriteDestPointer(const mir::WriteTarget& dest)
+    -> Result<llvm::Value*> {
+  if (const auto* place = std::get_if<mir::PlaceId>(&dest)) {
+    return GetPlacePointer(*place);
+  }
+  return EmitExternalRefAddress(std::get<mir::ExternalRefId>(dest));
 }
 
 void Context::SetSpecSlotInfo(const SpecSlotInfo* info) {

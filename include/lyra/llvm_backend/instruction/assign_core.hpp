@@ -14,6 +14,7 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/mir/place.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 class SlotAccessResolver;
@@ -48,14 +49,26 @@ inline auto HasIndexProjection(const mir::Place& place) -> bool {
 // Evaluate RightHandSide to a raw LLVM value.
 // Handles both Operand and Rvalue sources. For 4-state packed types,
 // packs the result into the canonical {val, unk} struct.
+// Resolve destination type from a WriteTarget (PlaceId or ExternalRefId).
+auto ResolveDestType(Context& context, const mir::WriteTarget& dest) -> TypeId;
+
+// Canonical core is TypeId-based; PlaceId overloads derive TypeId and forward.
+auto LowerRhsRaw(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::RightHandSide& rhs, TypeId target_type) -> Result<llvm::Value*>;
+
+// PlaceId overloads: derive TypeId from Place and forward.
 auto LowerRhsRaw(
     Context& context, const mir::RightHandSide& rhs, mir::PlaceId target)
     -> Result<llvm::Value*>;
-
-// Resolver-aware overload.
 auto LowerRhsRaw(
     Context& context, SlotAccessResolver& resolver,
     const mir::RightHandSide& rhs, mir::PlaceId target) -> Result<llvm::Value*>;
+
+// No-resolver TypeId overload.
+auto LowerRhsRaw(
+    Context& context, const mir::RightHandSide& rhs, TypeId target_type)
+    -> Result<llvm::Value*>;
 
 // Evaluate RightHandSide to a non-lossy PackedRValue.
 // This is the sole transport boundary for packed-store entry points.

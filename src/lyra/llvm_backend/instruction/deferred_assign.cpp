@@ -16,6 +16,7 @@
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
 #include "lyra/llvm_backend/instruction/assign_core.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/place.hpp"
@@ -47,30 +48,19 @@ struct StoreShape {
   uint32_t byte_size = 0;            // For aggregates: from DataLayout
 };
 
-// Classify destination for deferred store via MIR TypeOfPlace.
+// Canonical deferred store classification by TypeId.
 // Uses MIR type for semantic classification; LLVM type only for mechanical
 // emission. Includes backstop: if MIR says scalar but LLVM disagrees, fall back
 // to AggregateBytes (safe, always works).
-auto ClassifyDeferredStore(Context& context, mir::PlaceId dest)
-    -> Result<StoreShape> {
+auto ClassifyDeferredStoreByType(Context& context, TypeId type_id)
+    -> StoreShape {
   const auto& types = context.GetTypeArena();
-
-  TypeId dst_ty = mir::TypeOfPlace(types, context.LookupPlace(dest));
-  const Type& type = types[dst_ty];
-
-  auto storage_ty_result = context.GetPlaceLlvmType(dest);
-  if (!storage_ty_result) return std::unexpected(storage_ty_result.error());
-  llvm::Type* storage_ty = *storage_ty_result;
-
+  const Type& type = types[type_id];
+  auto* storage_ty = GetLlvmTypeForTypeId(
+      context.GetLlvmContext(), type_id, types, context.IsForceTwoState());
   const auto& dl = context.GetModule().getDataLayout();
 
-  // Classification: packed types (including kIntegral) are scalar; else
-  // aggregate. IsPacked returns true only for kIntegral, kPackedArray,
-  // kPackedStruct, kEnum. All unpacked types (kUnpackedStruct, kUnpackedArray,
-  // kUnpackedUnion, kReal, kShortReal, kString, kDynamicArray, kQueue) go to
-  // aggregate path.
   bool is_scalar_mir = IsPacked(type);
-
   if (is_scalar_mir) {
     bool is_four_state = context.IsPackedFourState(type);
     uint32_t bit_width = (type.Kind() == TypeKind::kIntegral)
@@ -78,9 +68,7 @@ auto ClassifyDeferredStore(Context& context, mir::PlaceId dest)
                              : PackedBitWidth(type, types);
 
     if (is_four_state) {
-      // BACKSTOP: Validate storage_ty is canonical 4-state struct
       if (!IsFourStateScalarStruct(storage_ty)) {
-        // MIR says scalar but LLVM disagrees -> fall back to AggregateBytes
         auto byte_size = static_cast<uint32_t>(dl.getTypeStoreSize(storage_ty));
         return StoreShape{
             .kind = StoreKind::kAggregateBytes,
@@ -92,9 +80,7 @@ auto ClassifyDeferredStore(Context& context, mir::PlaceId dest)
           .storage_ty = storage_ty,
           .bit_width = bit_width};
     }
-    // BACKSTOP: Validate storage_ty is integer
     if (!storage_ty->isIntegerTy()) {
-      // MIR says scalar but LLVM disagrees -> fall back to AggregateBytes
       auto byte_size = static_cast<uint32_t>(dl.getTypeStoreSize(storage_ty));
       return StoreShape{
           .kind = StoreKind::kAggregateBytes,
@@ -107,12 +93,19 @@ auto ClassifyDeferredStore(Context& context, mir::PlaceId dest)
         .bit_width = bit_width};
   }
 
-  // Everything else: aggregate (arrays, unpacked structs, real, etc.)
   auto byte_size = static_cast<uint32_t>(dl.getTypeStoreSize(storage_ty));
   return StoreShape{
       .kind = StoreKind::kAggregateBytes,
       .storage_ty = storage_ty,
       .byte_size = byte_size};
+}
+
+// PlaceId overload: derives TypeId from Place and forwards.
+auto ClassifyDeferredStore(Context& context, mir::PlaceId dest)
+    -> Result<StoreShape> {
+  const auto& types = context.GetTypeArena();
+  TypeId dst_ty = mir::TypeOfPlace(types, context.LookupPlace(dest));
+  return ClassifyDeferredStoreByType(context, dst_ty);
 }
 
 // Coerce raw RHS value to match store shape.
@@ -177,30 +170,25 @@ auto CoerceValueToShape(
   return nullptr;
 }
 
-// Shared core for deferred store emission (used by Direct and WithOobGuard).
+// Canonical deferred store core parameterized by TypeId.
 // Handles value/mask construction uniformly via StoreShape classification.
 auto EmitDeferredStoreCore(
     Context& context, const mir::DeferredAssign& deferred,
     const StoreShape& shape, llvm::Value* write_ptr,
-    llvm::Value* notify_base_ptr, const SignalCoordExpr& signal_id)
-    -> Result<void> {
+    llvm::Value* notify_base_ptr, const SignalCoordExpr& signal_id,
+    TypeId target_type) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
 
-  auto dest = context.ResolveWriteDest(deferred.dest);
-  auto raw_or_err = LowerRhsRaw(context, deferred.rhs, dest);
+  auto raw_or_err = LowerRhsRaw(context, deferred.rhs, target_type);
   if (!raw_or_err) return std::unexpected(raw_or_err.error());
 
   llvm::Value* source_value = CoerceValueToShape(context, *raw_or_err, shape);
-
-  // Store value to alloca for runtime call
   auto* val_alloca = builder.CreateAlloca(shape.storage_ty, nullptr, "nba.val");
   builder.CreateStore(source_value, val_alloca);
 
-  // Full overwrite: pass null mask_ptr to runtime
   auto* null_ptr =
       llvm::ConstantPointerNull::get(llvm::PointerType::get(llvm_ctx, 0));
-
   uint32_t byte_size =
       (shape.kind == StoreKind::kAggregateBytes)
           ? shape.byte_size
@@ -223,7 +211,6 @@ auto EmitDeferredStoreCore(
          null_ptr, llvm::ConstantInt::get(i32_ty, byte_size),
          signal_id.Emit(builder)});
   }
-
   return {};
 }
 
@@ -232,8 +219,7 @@ auto EmitDeferredStoreCore(
 // this function is a thin routing wrapper.
 auto LowerDeferredAssignBitRange(
     Context& context, const mir::DeferredAssign& deferred,
-    const SignalCoordExpr& signal_id) -> Result<void> {
-  auto dest = context.ResolveWriteDest(deferred.dest);
+    const SignalCoordExpr& signal_id, mir::PlaceId dest) -> Result<void> {
   auto path = ExtractPackedAccessPath(context, dest);
   if (!path) return std::unexpected(path.error());
 
@@ -258,8 +244,8 @@ auto LowerDeferredAssignBitRange(
 // Uses StoreShape classification and EmitDeferredStoreCore.
 auto LowerDeferredAssignWithOobGuard(
     Context& context, const mir::DeferredAssign& deferred,
-    const StoreShape& shape, const SignalCoordExpr& signal_id) -> Result<void> {
-  auto dest = context.ResolveWriteDest(deferred.dest);
+    const StoreShape& shape, const SignalCoordExpr& signal_id,
+    mir::PlaceId dest) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   const auto& types = context.GetTypeArena();
@@ -321,8 +307,10 @@ auto LowerDeferredAssignWithOobGuard(
   llvm::Value* write_ptr = *write_ptr_or_err;
   llvm::Value* notify_base_ptr = context.GetStorageRootPointer(dest);
 
+  TypeId dest_type = mir::TypeOfPlace(types, context.LookupPlace(dest));
   auto result = EmitDeferredStoreCore(
-      context, deferred, shape, write_ptr, notify_base_ptr, signal_id);
+      context, deferred, shape, write_ptr, notify_base_ptr, signal_id,
+      dest_type);
   if (!result) return result;
   builder.CreateBr(skip_bb);
 
@@ -334,44 +322,71 @@ auto LowerDeferredAssignWithOobGuard(
 // handling). Uses StoreShape classification and EmitDeferredStoreCore.
 auto LowerDeferredAssignDirect(
     Context& context, const mir::DeferredAssign& deferred,
-    const StoreShape& shape, const SignalCoordExpr& signal_id) -> Result<void> {
-  auto dest = context.ResolveWriteDest(deferred.dest);
+    const StoreShape& shape, const SignalCoordExpr& signal_id,
+    mir::PlaceId dest) -> Result<void> {
   auto write_ptr_or_err = context.GetPlacePointer(dest);
   if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
   llvm::Value* write_ptr = *write_ptr_or_err;
   llvm::Value* notify_base_ptr = context.GetStorageRootPointer(dest);
 
+  const auto& types = context.GetTypeArena();
+  TypeId dest_type = mir::TypeOfPlace(types, context.LookupPlace(dest));
   return EmitDeferredStoreCore(
-      context, deferred, shape, write_ptr, notify_base_ptr, signal_id);
+      context, deferred, shape, write_ptr, notify_base_ptr, signal_id,
+      dest_type);
 }
 
 }  // namespace
 
 auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     -> Result<void> {
-  auto dest = context.ResolveWriteDest(deferred.dest);
+  const auto& dest = deferred.dest;
+  auto* dest_place = std::get_if<mir::PlaceId>(&dest);
 
-  // Use canonical signal_id (after alias resolution) for notification
-  // NBA is only valid for design places (GetSignalCoordForNba throws if not)
-  SignalCoordExpr signal_id = GetSignalCoordForNba(context, dest);
+  // Resolve destination type and signal coord from WriteTarget.
+  TypeId dest_type = detail::ResolveDestType(context, dest);
 
-  // Case 1: BitRangeProjection - partial bit-range writes (keep separate)
-  if (context.HasBitRangeProjection(dest)) {
-    return LowerDeferredAssignBitRange(context, deferred, signal_id);
+  // Signal coord: for PlaceId use existing resolver, for ExternalRefId use
+  // direct helper.
+  SignalCoordExpr signal_id = dest_place != nullptr
+                                  ? GetSignalCoordForNba(context, *dest_place)
+                                  : context.EmitExternalRefSignalCoord(
+                                        std::get<mir::ExternalRefId>(dest));
+
+  // Case 1: BitRangeProjection (PlaceId-only, external refs have no
+  // projections).
+  if (dest_place != nullptr && context.HasBitRangeProjection(*dest_place)) {
+    return LowerDeferredAssignBitRange(
+        context, deferred, signal_id, *dest_place);
   }
 
-  // Classify destination once via MIR type
-  auto shape_or_err = ClassifyDeferredStore(context, dest);
-  if (!shape_or_err) return std::unexpected(shape_or_err.error());
-  StoreShape shape = *shape_or_err;
+  // Classify destination once via MIR type.
+  StoreShape shape = ClassifyDeferredStoreByType(context, dest_type);
 
-  // Case 2: IndexProjection - array element write with OOB guard
-  if (HasIndexProjection(context.LookupPlace(dest))) {
-    return LowerDeferredAssignWithOobGuard(context, deferred, shape, signal_id);
+  // Case 2: IndexProjection (PlaceId-only).
+  if (dest_place != nullptr &&
+      HasIndexProjection(context.LookupPlace(*dest_place))) {
+    return LowerDeferredAssignWithOobGuard(
+        context, deferred, shape, signal_id, *dest_place);
   }
 
-  // Case 3: Simple full-width write
-  return LowerDeferredAssignDirect(context, deferred, shape, signal_id);
+  // Case 3: Simple full-width write. Works for both PlaceId and ExternalRefId.
+  // Resolve write pointer and notify base from WriteTarget.
+  llvm::Value* write_ptr = nullptr;
+  llvm::Value* notify_base_ptr = nullptr;
+  if (dest_place != nullptr) {
+    auto write_ptr_or_err = context.GetPlacePointer(*dest_place);
+    if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
+    write_ptr = *write_ptr_or_err;
+    notify_base_ptr = context.GetStorageRootPointer(*dest_place);
+  } else {
+    auto ref_id = std::get<mir::ExternalRefId>(dest);
+    write_ptr = context.EmitExternalRefAddress(ref_id);
+    notify_base_ptr = write_ptr;
+  }
+  return EmitDeferredStoreCore(
+      context, deferred, shape, write_ptr, notify_base_ptr, signal_id,
+      dest_type);
 }
 
 auto LowerDeferredAssign(

@@ -129,11 +129,8 @@ auto TransferManagedStructFields(
 }  // namespace detail
 
 auto CommitStructFieldByField(
-    Context& ctx, mir::PlaceId target, mir::PlaceId source,
+    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source,
     TypeId struct_type_id, OwnershipPolicy policy) -> Result<void> {
-  // CONTRACT: kMove is only valid from temps (no aliasing possible).
-  // MoveAssign nulls the source per-field, so kMove from a non-temp would
-  // corrupt shared state.
   if (policy == OwnershipPolicy::kMove) {
     const auto& arena = ctx.GetMirArena();
     const auto& src_place = arena[source];
@@ -143,26 +140,18 @@ auto CommitStructFieldByField(
     }
   }
 
-  // Get target pointer
-  auto target_ptr_or_err = ctx.GetPlacePointer(target);
-  if (!target_ptr_or_err) return std::unexpected(target_ptr_or_err.error());
-  llvm::Value* target_ptr = *target_ptr_or_err;
+  auto target_wt = commit::Access::GetWriteTarget(ctx, target);
+  if (!target_wt) return std::unexpected(target_wt.error());
 
-  // Get source pointer
   auto source_ptr_or_err = ctx.GetPlacePointer(source);
   if (!source_ptr_or_err) return std::unexpected(source_ptr_or_err.error());
   llvm::Value* source_ptr = *source_ptr_or_err;
 
   auto result = AssignStructFieldByField(
-      ctx, source_ptr, target_ptr, struct_type_id, policy);
+      ctx, source_ptr, target_wt->ptr, struct_type_id, policy);
   if (!result) return result;
 
-  // Notify if design slot (after stores complete)
   CommitNotifyAggregateIfDesignSlot(ctx, target);
-
-  // Note: Source cleanup for kMove is handled per-field via MoveAssign.
-  // No CommitMoveCleanupIfTemp needed here - MoveAssign nulls src per-field.
-
   return {};
 }
 

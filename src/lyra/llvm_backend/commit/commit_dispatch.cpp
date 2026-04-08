@@ -20,7 +20,9 @@ namespace lyra::lowering::mir_to_llvm {
 auto CommitValue(
     Context& ctx, mir::PlaceId target, llvm::Value* raw_value, TypeId type_id,
     OwnershipPolicy policy) -> Result<void> {
-  return DispatchWrite(ctx, target, RawValueSource{raw_value}, type_id, policy);
+  return DispatchWrite(
+      ctx, mir::WriteTarget{target}, RawValueSource{raw_value}, type_id,
+      policy);
 }
 
 void CommitMoveCleanupIfTemp(

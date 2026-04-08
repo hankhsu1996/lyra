@@ -11,6 +11,7 @@
 #include "lyra/llvm_backend/packed_storage_view.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -79,15 +80,17 @@ using WriteSource =
 
 // Source-aware write dispatcher. Builds a plan and executes it.
 // This is the canonical dispatch boundary. All write paths route here.
+// Accepts mir::WriteTarget (PlaceId | ExternalRefId) -- root resolution
+// is handled internally via commit::Access::GetWriteTarget.
 auto DispatchWrite(
-    Context& ctx, mir::PlaceId target, const WriteSource& source,
+    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
     TypeId type_id, OwnershipPolicy policy) -> Result<void>;
 
 // Execute a pre-built write plan against a source.
 // Separated from DispatchWrite so callers (e.g. LowerRvalueAssign) can
 // inspect the plan before execution for special-case routing.
 auto ExecuteWritePlan(
-    Context& ctx, mir::PlaceId target, const WriteSource& source,
+    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
     const WritePlan& plan, OwnershipPolicy policy) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

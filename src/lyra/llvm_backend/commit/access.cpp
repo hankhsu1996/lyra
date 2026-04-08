@@ -14,6 +14,14 @@ auto Access::GetWriteTarget(Context& ctx, mir::PlaceId target)
   return ctx.GetWriteTarget(target);
 }
 
+auto Access::GetWriteTarget(Context& ctx, const mir::WriteTarget& target)
+    -> Result<WriteTarget> {
+  if (const auto* place = std::get_if<mir::PlaceId>(&target)) {
+    return ctx.GetWriteTarget(*place);
+  }
+  return ctx.GetWriteTarget(std::get<mir::ExternalRefId>(target));
+}
+
 auto Access::GetMutationTargetSignalCoord(Context& ctx, mir::PlaceId target)
     -> std::optional<SignalCoordExpr> {
   return ctx.GetMutationTargetSignalCoord(target);

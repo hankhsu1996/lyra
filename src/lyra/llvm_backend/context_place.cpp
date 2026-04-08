@@ -254,6 +254,25 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
   };
 }
 
+auto Context::GetWriteTarget(mir::ExternalRefId ref_id) -> Result<WriteTarget> {
+  auto root = ResolveExternalRefRoot(ref_id);
+  auto* ptr = GetDesignGlobalSlotPointer(root.global_slot);
+  auto signal_coord = SignalCoordExpr::Global(root.global_slot);
+  mir::SignalRef mutation_sig{
+      .scope = mir::SignalRef::Scope::kDesignGlobal,
+      .id = root.global_slot,
+  };
+  bool static_propagation = RequiresStaticDirtyPropagation(mutation_sig);
+  return WriteTarget{
+      .ptr = ptr,
+      .canonical_signal_id = signal_coord,
+      .dirty_off = 0,
+      .dirty_size = 0,
+      .mutation_signal = mutation_sig,
+      .requires_static_dirty_propagation = static_propagation,
+  };
+}
+
 auto Context::ResolveMutationSignalRef(mir::PlaceId place_id) const
     -> std::optional<mir::SignalRef> {
   const mir::Place& resolved = LookupPlace(place_id);

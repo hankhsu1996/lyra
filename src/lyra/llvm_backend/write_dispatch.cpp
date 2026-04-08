@@ -55,7 +55,7 @@ auto RequireOperandPlace(const WriteSource& source, const char* caller)
 // Emit helpers -- one per WriteOp. No re-classification inside.
 
 auto EmitManagedScalarWrite(
-    Context& ctx, mir::PlaceId target, const WriteSource& source,
+    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
     TypeId type_id, OwnershipPolicy policy) -> Result<void> {
   auto raw = ResolveRawValue(ctx, source);
   if (!raw) return std::unexpected(raw.error());
@@ -87,7 +87,7 @@ auto EmitManagedScalarWrite(
 }
 
 auto EmitPointerScalarWrite(
-    Context& ctx, mir::PlaceId target, const WriteSource& source)
+    Context& ctx, const mir::WriteTarget& target, const WriteSource& source)
     -> Result<void> {
   auto raw = ResolveRawValue(ctx, source);
   if (!raw) return std::unexpected(raw.error());
@@ -100,21 +100,49 @@ auto EmitPointerScalarWrite(
 }
 
 auto EmitPlainAggregateStore(
-    Context& ctx, mir::PlaceId target, const WriteSource& source)
+    Context& ctx, const mir::WriteTarget& target, const WriteSource& source)
     -> Result<void> {
   auto raw = ResolveRawValue(ctx, source);
   if (!raw) return std::unexpected(raw.error());
 
-  auto ptr = ctx.GetPlacePointer(target);
-  if (!ptr) return std::unexpected(ptr.error());
+  auto wt = commit::Access::GetWriteTarget(ctx, target);
+  if (!wt) return std::unexpected(wt.error());
 
-  ctx.GetBuilder().CreateStore(*raw, *ptr);
-  CommitNotifyAggregateIfDesignSlot(ctx, target);
+  ctx.GetBuilder().CreateStore(*raw, wt->ptr);
+
+  // Notify if design slot.
+  if (wt->canonical_signal_id.has_value() &&
+      ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit) {
+    auto& builder = ctx.GetBuilder();
+    auto emit_notify = [&]() {
+      if (wt->canonical_signal_id->IsLocal()) {
+        builder.CreateCall(
+            ctx.GetLyraNotifySignalLocal(),
+            {ctx.GetEnginePointer(),
+             wt->canonical_signal_id->GetInstancePointer(
+                 ctx.GetInstancePointer()),
+             wt->ptr, wt->canonical_signal_id->Emit(builder)});
+      } else {
+        builder.CreateCall(
+            ctx.GetLyraNotifySignalGlobal(),
+            {ctx.GetEnginePointer(), wt->ptr,
+             wt->canonical_signal_id->Emit(builder)});
+      }
+    };
+    bool static_hit = wt->requires_static_dirty_propagation;
+    if (static_hit) {
+      emit_notify();
+    } else if (wt->mutation_signal.has_value()) {
+      ctx.EmitTraceBranch(
+          *wt->mutation_signal, "notify.aggregate", "notify.skip", emit_notify,
+          []() {});
+    }
+  }
   return {};
 }
 
 auto EmitPackedOrFloatWrite(
-    Context& ctx, mir::PlaceId target, const WriteSource& source,
+    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
     TypeId type_id) -> Result<void> {
   // Non-lossy packed path: PackedRValueSource carries preserved
   // 2-state/4-state semantics directly to CommitPackedValue.
@@ -159,25 +187,30 @@ auto EmitPackedOrFloatWrite(
 }
 
 auto EmitFieldByFieldStructWrite(
-    Context& ctx, mir::PlaceId target, mir::PlaceId source_place,
+    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source_place,
     TypeId type_id, OwnershipPolicy policy) -> Result<void> {
   return CommitStructFieldByField(ctx, target, source_place, type_id, policy);
 }
 
 auto EmitFieldByFieldArrayWrite(
-    Context& ctx, mir::PlaceId target, mir::PlaceId source_place,
+    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source_place,
     TypeId type_id, OwnershipPolicy policy) -> Result<void> {
   return CommitArrayFieldByField(ctx, target, source_place, type_id, policy);
 }
 
 auto EmitUnionMemcpyWrite(
-    Context& ctx, mir::PlaceId target, mir::PlaceId source_place,
+    Context& ctx, const mir::WriteTarget& target, mir::PlaceId source_place,
     TypeId type_id) -> Result<void> {
   auto& builder = ctx.GetBuilder();
   const auto& types = ctx.GetTypeArena();
 
-  auto target_ptr = ctx.GetPlacePointer(target);
-  if (!target_ptr) return std::unexpected(target_ptr.error());
+  auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
+  if (!wt_or_err) {
+    throw common::InternalError(
+        "EmitUnionMemcpyWrite", "failed to resolve WriteTarget");
+  }
+  const auto& wt = *wt_or_err;
+  llvm::Value* target_ptr = wt.ptr;
 
   auto info = GetUnionStorageInfo(ctx, type_id);
   if (!info) return std::unexpected(info.error());
@@ -192,14 +225,6 @@ auto EmitUnionMemcpyWrite(
   auto source_ptr = ctx.GetPlacePointer(source_place);
   if (!source_ptr) return std::unexpected(source_ptr.error());
 
-  // Determine if post-hoc notification is needed.
-  auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
-  if (!wt_or_err) {
-    throw common::InternalError(
-        "EmitUnionMemcpyWrite", "failed to resolve WriteTarget");
-  }
-  const auto& wt = *wt_or_err;
-
   bool is_design_notify =
       wt.canonical_signal_id.has_value() &&
       ctx.GetDesignStoreMode() != DesignStoreMode::kDirectInit;
@@ -213,14 +238,14 @@ auto EmitUnionMemcpyWrite(
     auto* snapshot =
         entry_builder.CreateAlloca(buf_ty, nullptr, "union.snapshot");
     builder.CreateMemCpy(
-        snapshot, llvm::Align(1), *target_ptr, llvm::Align(info->align),
+        snapshot, llvm::Align(1), target_ptr, llvm::Align(info->align),
         info->size);
 
     builder.CreateMemCpy(
-        *target_ptr, llvm::Align(info->align), *source_ptr,
+        target_ptr, llvm::Align(info->align), *source_ptr,
         llvm::Align(info->align), info->size);
 
-    auto view = BuildRawBytesStorageView(*target_ptr, info->size);
+    auto view = BuildRawBytesStorageView(target_ptr, info->size);
     auto policy = BuildStorePolicyFromContext(
         ctx, wt.canonical_signal_id,
         wt.mutation_signal ? &*wt.mutation_signal : nullptr);
@@ -233,7 +258,7 @@ auto EmitUnionMemcpyWrite(
 
   auto emit_plain_memcpy = [&]() {
     builder.CreateMemCpy(
-        *target_ptr, llvm::Align(info->align), *source_ptr,
+        target_ptr, llvm::Align(info->align), *source_ptr,
         llvm::Align(info->align), info->size);
   };
 
@@ -254,7 +279,7 @@ auto EmitUnionMemcpyWrite(
 }  // namespace
 
 auto ExecuteWritePlan(
-    Context& ctx, mir::PlaceId target, const WriteSource& source,
+    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
     const WritePlan& plan, OwnershipPolicy policy) -> Result<void> {
   switch (plan.op) {
     case WriteOp::kCommitManagedScalar:
@@ -319,7 +344,7 @@ auto ExecuteWritePlan(
 }
 
 auto DispatchWrite(
-    Context& ctx, mir::PlaceId target, const WriteSource& source,
+    Context& ctx, const mir::WriteTarget& target, const WriteSource& source,
     TypeId type_id, OwnershipPolicy policy) -> Result<void> {
   auto plan = BuildWritePlan(type_id, ctx.GetTypeArena());
   return ExecuteWritePlan(ctx, target, source, plan, policy);

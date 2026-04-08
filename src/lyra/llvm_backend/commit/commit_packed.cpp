@@ -20,7 +20,7 @@ void CommitPlainField(Context& ctx, llvm::Value* ptr, llvm::Value* value) {
 }  // namespace detail
 
 void CommitPackedValue(
-    Context& ctx, mir::PlaceId target, const PackedRValue& rvalue,
+    Context& ctx, const mir::WriteTarget& target, const PackedRValue& rvalue,
     TypeId type_id) {
   auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
   if (!wt_or_err) {
@@ -33,8 +33,15 @@ void CommitPackedValue(
   // This path is outside the packed-store policy architecture. Process locals
   // have no canonical storage, no dirty tracking, no unknown-plane semantics.
   if (!wt.canonical_signal_id.has_value()) {
+    // Non-design path only reachable for PlaceId targets (process-local).
+    auto* place_id = std::get_if<mir::PlaceId>(&target);
+    if (place_id == nullptr) {
+      throw common::InternalError(
+          "CommitPackedValue",
+          "non-design target from ExternalRefId (should be unreachable)");
+    }
     auto* raw = ConvertPackedRValueToLegacyLlvmValue(
-        ctx, rvalue, ctx.GetPlaceLlvmType(target).value());
+        ctx, rvalue, ctx.GetPlaceLlvmType(*place_id).value());
     ctx.GetBuilder().CreateStore(raw, wt.ptr);
     return;
   }

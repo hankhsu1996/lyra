@@ -45,7 +45,7 @@ auto LowerConstant(Context& context, const Constant& constant)
 
 // Canonical operand-to-place resolution.
 // PlaceId -> returns the PlaceId directly.
-// ExternalRefId -> resolves via Context::ResolveExternalRef.
+// ExternalRefId -> returns nullopt (resolved via direct helpers, not Place).
 // TempId / Constant -> returns nullopt (no place backing).
 auto ResolveOperandPlace(Context& context, const mir::Operand& operand)
     -> std::optional<mir::PlaceId>;

@@ -23,7 +23,11 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [ ] B -- Recipe model: non-local access, connections, construction (see [compilation-model.md](../compilation-model.md))
   - [x] B1 -- Freeze compile-time contract boundary: CompiledModuleHeader/Body/Specialization types, core recipe types (ExternalRefId, ConnectionRecipe, ChildBindingSiteId), header-only dependency rule, documented descendant-path direction (NonLocalTargetRecipe deferred to B2)
   - [x] B2 -- Compile-time recipe lowering: hierarchical refs to external ref handles, connections to body-local recipes (simple and expression), parent-child port via CompiledModuleHeader; delete ResolvedBindingPlan, ResolvedKernelBinding, backend kernel adapter
-  - [ ] B3 -- Construction/runtime binding: delete cross_instance_places, ResolveHierarchicalRef, InstanceSlotResolver, CompiledConnectionExpr, design-level compilation of connection/init processes, flat cross-instance design-global arena
+  - [ ] V3a -- Remove backend non-local access bridge: stop rebuilding non-local reads/writes as synthetic global-place accesses; make backend non-local access consume resolved target object + target local slot directly
+  - [ ] V3b -- Remove body-lowering hierarchical read/write fallback: lower hierarchical reads and writes uniformly to external-ref handles; delete the old direct hierarchical-place fallback and the no-longer-needed helper/index used only for connection binding
+  - [ ] V3c -- Remove flat/global lowering-time hierarchical sensitivity and index fallback: stop requiring hierarchical sensitivity, waits, and indexed non-local paths to resolve through body-lowering global-slot lookup; move these paths onto the same late-bound non-local binding model used by the final object-local design
+  - [ ] V3d -- Remove body-lowering cross-instance global-place lookup: delete body-lowering dependence on cross-instance symbol-to-global lookup once all remaining hierarchical lowering paths no longer require early global-slot resolution
+  - [ ] V4 -- Remove flat/global runtime transport for instance-owned state: replace the remaining mixed local/global metadata and scheduling encodings with object-local runtime forms, remove design-level connection/init transport, and complete object-local connection execution
 - [ ] T1 -- Topology-independence validation (scaling gates)
 - [ ] F1 -- Parallel specialization compilation
   - [x] F1-design -- Parallel ownership model
@@ -43,9 +47,15 @@ F1 (parallel compilation) is independent of the R-series and B-series and can pr
 
 The R-series (R1-R5) is complete. All instance-owned state uses object-local coordinates end-to-end.
 
-B1 is prerequisite-free (investigation + type boundary). B2 depends on B1 (compile-time migration). B3 depends on B2 (construction/runtime migration).
+B1 is prerequisite-free (investigation + type boundary). B2 depends on B1 (compile-time migration). V3a depends on B2 (backend bridge). V3b depends on V3a (body-lowering read/write). V3c depends on V3b (sensitivity/index-plan transport). V3d depends on V3c (cross-instance lookup deletion). V4 depends on V3d (runtime transport).
 
-- **T1 (validation)** runs after C1, the R-series, and the B-series.
+### Current migration boundary
+
+- Backend non-local read/write bridge is already separable from the remaining lowering/runtime work.
+- Body-lowering hierarchical read/write fallback is separable from sensitivity/index-plan transport migration.
+- Flat/global runtime transport for instance-owned state remains a later migration surface.
+
+- **T1 (validation)** runs after C1, the R-series, V3a-V3d, and V4.
 
 ## C1: Remove per-instance emitted constructor IR/globals
 
@@ -89,7 +99,7 @@ Signal identity for instance-owned signals is now object-local. The design-globa
 - **Engine API.** Typed overloads: MarkDirty(ObjectSignalRef), MarkDirty(GlobalSignalId), ScheduleNba, IsTraceObserved. Flat-slot conversion is engine-internal via ToFlatSlotId.
 - **Dense coordination.** Engine owns base assignment via AssignDenseCoordinationBases (scans slot meta, validates contiguous local-id ordering). Module-scoped user function ABI extended to carry instance_ptr.
 - **Constructor.** Trigger and comb realization pass body-local slot ids with kFlagBodyLocal / kCombTriggerFlagBodyLocal. Engine init does the relocation. Observable/slot-meta relocation remains (R5 scope).
-- **Remaining follow-up.** 3 EmitTemporaryFlatSignalCoord call sites in process.cpp (trigger table signal_id, plan-op slot_id, dep_slots) still produce flat slot ids for WaitTriggerRecord/IndexPlanOp formats. These formats are consumed by the existing flat trigger installation path. Migrating them requires changing the trigger/dep-slot word formats, which is beyond R3 scope.
+- **Remaining follow-up.** 3 EmitTemporaryFlatSignalCoord call sites in process.cpp (trigger table signal_id, plan-op slot_id, dep_slots) still produce flat slot ids for WaitTriggerRecord/IndexPlanOp formats. These formats are consumed by the existing flat trigger installation path. This turned out to be a larger migration surface than originally scoped under R3; the remaining flat trigger/plan transport is now tracked by V3c (sensitivity/index-plan transport) and V4 (runtime transport).
 
 ## R4: Constructor-to-runtime handoff preserves per-instance structure (completed)
 

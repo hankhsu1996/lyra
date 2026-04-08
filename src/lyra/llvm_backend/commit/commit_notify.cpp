@@ -120,4 +120,40 @@ void CommitNotifyAggregateIfDesignSlot(Context& ctx, mir::PlaceId target) {
   }
 }
 
+void CommitNotifyAggregateIfDesignSlot(
+    Context& ctx, const mir::WriteTarget& target) {
+  if (ctx.GetDesignStoreMode() == DesignStoreMode::kDirectInit) return;
+
+  auto wt_or_err = commit::Access::GetWriteTarget(ctx, target);
+  if (!wt_or_err) return;
+  const auto& wt = *wt_or_err;
+  if (!wt.canonical_signal_id.has_value()) return;
+
+  bool static_hit = wt.requires_static_dirty_propagation;
+  auto& builder = ctx.GetBuilder();
+
+  auto emit_notify = [&]() {
+    if (wt.canonical_signal_id->IsLocal()) {
+      builder.CreateCall(
+          ctx.GetLyraNotifySignalLocal(),
+          {ctx.GetEnginePointer(),
+           wt.canonical_signal_id->GetInstancePointer(ctx.GetInstancePointer()),
+           wt.ptr, wt.canonical_signal_id->Emit(builder)});
+    } else {
+      builder.CreateCall(
+          ctx.GetLyraNotifySignalGlobal(),
+          {ctx.GetEnginePointer(), wt.ptr,
+           wt.canonical_signal_id->Emit(builder)});
+    }
+  };
+
+  if (static_hit) {
+    emit_notify();
+  } else if (wt.mutation_signal.has_value()) {
+    ctx.EmitTraceBranch(
+        *wt.mutation_signal, "notify.aggregate", "notify.skip", emit_notify,
+        []() {});
+  }
+}
+
 }  // namespace lyra::lowering::mir_to_llvm

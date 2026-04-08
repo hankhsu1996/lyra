@@ -8,6 +8,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/llvm_backend/commit/signal_id_expr.hpp"
 #include "lyra/mir/handle.hpp"
+#include "lyra/mir/statement.hpp"
 #include "lyra/mir/terminator.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -46,11 +47,12 @@ namespace commit {
 // Only commit module code should use this class.
 class Access {
  public:
-  // Get unified write target (pointer + signal_id) from a place.
-  // All fields derived from the same alias-resolved place, ensuring
-  // consistency.
+  // Get unified write target (pointer + signal_id) from a place or
+  // external ref. All fields derived from the same resolved root.
   [[nodiscard]] static auto GetWriteTarget(Context& ctx, mir::PlaceId target)
       -> Result<WriteTarget>;
+  [[nodiscard]] static auto GetWriteTarget(
+      Context& ctx, const mir::WriteTarget& target) -> Result<WriteTarget>;
 
   // Get the mutation-target signal_id for a place's root.
   // Resolves forwarded aliases to the storage owner for dirty-mark identity.
