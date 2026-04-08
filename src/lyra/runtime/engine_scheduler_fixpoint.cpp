@@ -452,6 +452,14 @@ auto Engine::BuildCombKernel(uint32_t proc_idx, void* frame, uint32_t flags)
         std::format("null proc state for comb proc_idx {}", proc_idx));
   }
   const auto* header = static_cast<const ProcessFrameHeader*>(frame);
+  if (header->body == nullptr) {
+    throw common::InternalError(
+        "Engine::BuildCombKernel",
+        std::format(
+            "comb kernel proc_idx {} has null body function pointer "
+            "(shared_body_fn not set by constructor)",
+            proc_idx));
+  }
   if (header->instance == nullptr) {
     throw common::InternalError(
         "Engine::BuildCombKernel",

@@ -12,11 +12,14 @@ Usage:
 import argparse
 import functools
 import resource
+import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+CRASH_ARTIFACT_DIR = REPO_ROOT / "crash-artifacts"
 
 # Explicit manifest of designs to smoke-test. Each entry is a path relative
 # to REPO_ROOT containing a lyra.toml.
@@ -31,6 +34,11 @@ DESIGNS = [
 DEFAULT_TIMEOUT_SECS = 60
 DEFAULT_MEMORY_MB = 2048
 TAIL_LINES = 10
+
+
+def _is_signal_death(returncode: int, sig: int) -> bool:
+    """True if subprocess died from the given signal."""
+    return returncode == -sig
 
 
 def find_lyra_binary(explicit_path: str | None) -> Path:
@@ -81,9 +89,76 @@ def format_failure(result: subprocess.CompletedProcess[str]) -> str:
     return "\n".join(parts)
 
 
+def diagnose_aot_failure(
+    lyra: Path,
+    design_path: Path,
+    design_rel: str,
+    timeout_secs: int,
+) -> None:
+    """On failure, re-run via AOT compile + direct exec to capture signal info.
+
+    Preserves the binary and runtime .a in crash-artifacts/ for CI upload.
+    """
+    artifact_dir = CRASH_ARTIFACT_DIR / design_rel.replace("/", "_")
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    output_dir = artifact_dir / "aot_out"
+    output_dir.mkdir(exist_ok=True)
+
+    compile_cmd = [
+        str(lyra), "-C", str(design_path), "compile", "-o", str(output_dir),
+    ]
+    try:
+        compile_result = subprocess.run(
+            compile_cmd, capture_output=True, text=True, timeout=timeout_secs,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return
+
+    if compile_result.returncode != 0:
+        (artifact_dir / "compile_stderr.txt").write_text(compile_result.stderr)
+        return
+
+    # Find the compiled binary.
+    binaries = [
+        f for f in output_dir.iterdir()
+        if f.is_file() and not f.is_symlink() and f.stat().st_mode & 0o111
+    ]
+    if len(binaries) != 1:
+        return
+    binary = binaries[0]
+
+    # Run the binary directly to get the raw exit signal.
+    try:
+        run_result = subprocess.run(
+            [str(binary)], capture_output=True, text=True, timeout=timeout_secs,
+        )
+    except subprocess.TimeoutExpired:
+        return
+
+    (artifact_dir / "run_stderr.txt").write_text(run_result.stderr)
+    (artifact_dir / "run_stdout.txt").write_text(run_result.stdout)
+    (artifact_dir / "exit_code.txt").write_text(str(run_result.returncode))
+
+    if _is_signal_death(run_result.returncode, signal.SIGILL):
+        print(f"    SIGILL confirmed via direct AOT execution", file=sys.stderr)
+
+    # Copy the runtime static library.
+    runtime_a = lyra.parent / "lyra.runfiles" / "_main" / "liblyra_runtime_static.a"
+    if not runtime_a.exists():
+        runtime_a = lyra.parent / "liblyra_runtime_static.a"
+    if runtime_a.exists():
+        shutil.copy2(runtime_a, artifact_dir / runtime_a.name)
+
+    print(
+        f"    artifacts saved to {artifact_dir.relative_to(REPO_ROOT)}",
+        file=sys.stderr)
+
+
 def run_design(
     lyra: Path,
     design_path: Path,
+    design_rel: str,
     timeout_secs: int,
     memory_mb: int,
 ) -> tuple[bool, str]:
@@ -109,6 +184,14 @@ def run_design(
 
     if result.returncode != 0:
         cmd_str = " ".join(cmd)
+        # Only do the expensive AOT diagnostic rerun for crash-like failures
+        # (signal death or empty stderr suggesting sudden termination).
+        looks_like_crash = (
+            result.returncode < 0
+            or (result.returncode != 0 and len(result.stderr.strip()) == 0)
+        )
+        if looks_like_crash:
+            diagnose_aot_failure(lyra, design_path, design_rel, timeout_secs)
         return False, f"{format_failure(result)}\n  command: {cmd_str}"
 
     return True, "ok"
@@ -143,7 +226,8 @@ def main() -> None:
         sys.stdout.write(f"  {name} ... ")
         sys.stdout.flush()
 
-        ok, msg = run_design(lyra, design_path, args.timeout, args.memory_mb)
+        ok, msg = run_design(
+            lyra, design_path, design_rel, args.timeout, args.memory_mb)
         if ok:
             print("PASS")
         else:

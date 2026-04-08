@@ -516,6 +516,20 @@ void Engine::InitModuleInstancesFromBundles(
     const auto& comb = bundle.body_desc->comb;
     if (comb.kernels.empty()) continue;
 
+    // Validate comb descriptor span consistency before dereferencing.
+    for (const auto& kernel : comb.kernels) {
+      uint32_t end = kernel.trigger_start + kernel.trigger_count;
+      if (end < kernel.trigger_start || end > comb.entries.size()) {
+        throw common::InternalError(
+            "InitModuleInstancesFromBundles",
+            std::format(
+                "comb kernel proc_within_body {} has trigger range "
+                "[{}, {}) out of bounds (entries.size={})",
+                kernel.proc_within_body, kernel.trigger_start, end,
+                comb.entries.size()));
+      }
+    }
+
     for (const auto& kernel : comb.kernels) {
       uint32_t proc_idx = bundle.module_proc_base + kernel.proc_within_body;
       if (proc_idx >= num_processes_) {
@@ -623,6 +637,42 @@ void Engine::InitModuleInstancesFromBundles(
       }
     }
   }
+
+  // Debug dump: print comb metadata snapshot when env var is set.
+  // Captures function pointer addresses, trigger counts, and span
+  // bounds to aid CI artifact comparison between passing/failing builds.
+  // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
+  if (std::getenv("LYRA_DUMP_COMB_META") != nullptr) {
+    auto msg = std::format(
+        "=== COMB META DUMP ({} kernels, {} triggers) ===\n",
+        comb_kernels_.size(), comb_entries.size());
+    for (size_t ki = 0; ki < comb_kernels_.size() && ki < 8; ++ki) {
+      const auto& ck = comb_kernels_[ki];
+      msg += std::format(
+          "  kernel[{}]: body={} frame={} proc={} inst_idx={} "
+          "flags={:#x}\n",
+          ki, reinterpret_cast<const void*>(ck.body), ck.frame,
+          ck.process_index, ck.instance_idx, ck.flags);
+    }
+    for (const auto& bundle : bundles) {
+      const auto& comb = bundle.body_desc->comb;
+      if (comb.kernels.empty()) continue;
+      msg += std::format(
+          "  body instance_id={}: {} kernels, {} entries\n", bundle.instance_id,
+          comb.kernels.size(), comb.entries.size());
+      for (size_t ki = 0; ki < comb.kernels.size() && ki < 4; ++ki) {
+        const auto& k = comb.kernels[ki];
+        msg += std::format(
+            "    desc[{}]: proc_within_body={} trigger=[{},+{}) "
+            "self_edge={}\n",
+            ki, k.proc_within_body, k.trigger_start, k.trigger_count,
+            k.has_self_edge);
+      }
+    }
+    msg += "=== END COMB META DUMP ===\n";
+    fputs(msg.c_str(), stderr);
+  }
+  // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
 
   if (!comb_entries.empty()) {
     fp_work_.global_pending_seen.resize(global_slot_count_, 0);

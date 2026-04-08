@@ -75,3 +75,11 @@ jobs:
 
       - name: Run smoke tests
         run: python3 tools/smoke/run_smoke.py --timeout 60 --memory-mb 2048
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-crash-artifacts
+          path: crash-artifacts/
+          if-no-files-found: ignore
