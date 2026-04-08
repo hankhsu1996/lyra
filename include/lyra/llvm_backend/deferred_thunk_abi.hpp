@@ -1,10 +1,16 @@
 #pragma once
 
+#include <cstdint>
+#include <span>
+#include <vector>
+
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 
+#include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
+#include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -13,13 +19,68 @@ namespace lyra::lowering::mir_to_llvm {
 // Single source of truth -- use everywhere the ABI is declared or decoded.
 auto BuildDeferredExecContextType(llvm::LLVMContext& ctx) -> llvm::StructType*;
 
-// Build the LLVM struct type for a deferred assertion payload from its
-// semantic CapturePayloadDesc. Each field_type is mapped through the
-// callable ABI classifier to determine the concrete LLVM storage type.
+// Build the LLVM struct type for a deferred assertion payload from semantic
+// field types. Each TypeId is mapped through the callable ABI classifier
+// to determine the concrete LLVM storage type.
 // Single source of truth -- used by thunk definition (decode) and
 // enqueue emission (pack).
 auto BuildDeferredPayloadStructType(
-    llvm::LLVMContext& llvm_ctx, const mir::CapturePayloadDesc& payload,
+    llvm::LLVMContext& llvm_ctx, std::span<const TypeId> field_types,
     const TypeArena& types, bool force_two_state) -> llvm::StructType*;
+
+// Site-first helpers for extracting user-call actions from semantic site data.
+// Returns nullptr if the action is absent or is a built-in type (CoverHit,
+// default fail report).
+
+auto GetDeferredPassUserCallAction(const mir::DeferredAssertionSiteInfo& site)
+    -> const mir::DeferredUserCallAction*;
+
+auto GetDeferredFailUserCallAction(const mir::DeferredAssertionSiteInfo& site)
+    -> const mir::DeferredUserCallAction*;
+
+// Backend-local derived types for deferred assertion call plan derivation.
+// These are temporary backend data, never stored in Design or Context.
+
+struct DeferredPayloadLayout {
+  std::vector<TypeId> field_types;
+};
+
+enum class DeferredBindingKind : uint8_t {
+  kPayloadField,
+  kLiveRef,
+  kConstLiveRef,
+};
+
+struct DeferredDerivedActual {
+  DeferredBindingKind kind;
+  uint32_t payload_index = 0;
+  uint32_t ref_index = 0;
+  mir::PlaceId ref_place{};
+};
+
+struct DeferredDerivedCallPlan {
+  mir::FunctionId callee;
+  DeferredPayloadLayout payload;
+  std::vector<DeferredDerivedActual> actuals;
+  uint32_t ref_count = 0;
+};
+
+// Single canonical derivation from semantic DeferredUserCallAction to
+// backend call plan. All backend consumers (enqueue, thunk body, metadata)
+// must use this function as the only source of payload layout and ref
+// binding order.
+auto DeriveDeferredCallPlan(const mir::DeferredUserCallAction& action)
+    -> DeferredDerivedCallPlan;
+
+// Per-site compiled artifact for deferred assertion thunks.
+// Positional: element [i] corresponds to deferred_assertion_sites[i].
+// Produced by CompileDeferredAssertionArtifacts in a single pipeline that
+// declares, defines, and computes payload sizes for all thunks.
+struct DeferredSiteCompiledArtifact {
+  llvm::Function* pass_thunk = nullptr;
+  llvm::Function* fail_thunk = nullptr;
+  uint32_t pass_payload_size = 0;
+  uint32_t fail_payload_size = 0;
+};
 
 }  // namespace lyra::lowering::mir_to_llvm

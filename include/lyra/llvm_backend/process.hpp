@@ -10,6 +10,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/edge_kind.hpp"
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/mir/routine.hpp"
 #include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/wait_site.hpp"
@@ -95,6 +96,12 @@ auto DeclareMirFunction(
 auto DefineMirFunction(
     Context& context, mir::FunctionId func_id, llvm::Function* func)
     -> Result<void>;
+
+// Single pipeline: declare, define, and compute payload sizes for all
+// deferred assertion thunks. Returns positional artifacts parallel to sites.
+auto CompileDeferredAssertionArtifacts(
+    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites)
+    -> Result<std::vector<DeferredSiteCompiledArtifact>>;
 
 // Extract raw canonical process-trigger facts from a MIR process.
 // Walks blocks for Wait terminators and captures trigger facts

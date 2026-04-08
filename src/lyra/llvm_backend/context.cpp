@@ -942,45 +942,6 @@ auto Context::GetMonitorSetupInfo(mir::FunctionId setup_program) const
   return &it->second;
 }
 
-void Context::RegisterDeferredRealization(
-    mir::DeferredAssertionActionKey key,
-    const mir::DeferredUserCallRealization* realization) {
-  if (deferred_realizations_by_thunk_.contains(realization->thunk)) {
-    throw common::InternalError(
-        "RegisterDeferredRealization",
-        std::format(
-            "duplicate thunk registration for function {}",
-            realization->thunk.value));
-  }
-  if (deferred_realizations_by_key_.contains(key)) {
-    throw common::InternalError(
-        "RegisterDeferredRealization",
-        std::format(
-            "duplicate key registration for site {} disposition {}",
-            key.site_id.Index(), static_cast<unsigned>(key.disposition)));
-  }
-  deferred_realizations_by_thunk_.emplace(realization->thunk, realization);
-  deferred_realizations_by_key_.emplace(key, realization);
-}
-
-auto Context::GetDeferredRealizationByThunk(mir::FunctionId thunk_id) const
-    -> const mir::DeferredUserCallRealization* {
-  auto it = deferred_realizations_by_thunk_.find(thunk_id);
-  if (it == deferred_realizations_by_thunk_.end()) {
-    return nullptr;
-  }
-  return it->second;
-}
-
-auto Context::GetDeferredRealization(mir::DeferredAssertionActionKey key) const
-    -> const mir::DeferredUserCallRealization* {
-  auto it = deferred_realizations_by_key_.find(key);
-  if (it == deferred_realizations_by_key_.end()) {
-    return nullptr;
-  }
-  return it->second;
-}
-
 void Context::RegisterDeferredAssertionSiteInfo(
     mir::DeferredAssertionSiteId site_id,
     const mir::DeferredAssertionSiteInfo* info) {

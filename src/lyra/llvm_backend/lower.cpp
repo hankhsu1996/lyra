@@ -1516,18 +1516,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
     RegisterMonitorInfo(*context, *input.mir_arena, proc_id);
   }
 
-  // Phase 2b: Register deferred assertion site info and thunk metadata.
-  // Register semantic site info by site ID (for metadata emission).
+  // Phase 2b: Register deferred assertion site info (for enqueue codegen).
   for (uint32_t si = 0; si < input.design->deferred_assertion_sites.size();
        ++si) {
     const auto& site = input.design->deferred_assertion_sites[si];
     context->RegisterDeferredAssertionSiteInfo(
         mir::DeferredAssertionSiteId{si}, &site);
-  }
-  // Register user-call realizations (for thunk body and enqueue codegen).
-  for (const auto& [key, realization] :
-       input.design->deferred_assertion_realizations) {
-    context->RegisterDeferredRealization(key, &realization);
   }
 
   // Phase 3: Design-global function declare/define only (packages + generated)
@@ -1651,6 +1645,25 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   // ArenaScope in CompileModuleSpecSession restores design arena automatically.
+
+  // Phase 5a: Compile deferred assertion thunks (single pipeline).
+  // Must happen after all user functions are declared (Phase 3+4), so callee
+  // lookups work. Declares, defines, and computes payload sizes in one pass.
+  auto deferred_artifacts = CompileDeferredAssertionArtifacts(
+      *context, input.design->deferred_assertion_sites);
+  if (!deferred_artifacts) {
+    return std::unexpected(deferred_artifacts.error());
+  }
+  if (deferred_artifacts->size() !=
+      input.design->deferred_assertion_sites.size()) {
+    throw common::InternalError(
+        "CompileDesignProcesses",
+        std::format(
+            "CompileDeferredAssertionArtifacts returned {} artifacts "
+            "for {} sites",
+            deferred_artifacts->size(),
+            input.design->deferred_assertion_sites.size()));
+  }
 
   // Phase 5: Descriptor data collection and standalone entrypoints.
   // Module processes get descriptor data instead of per-instance wrappers.
@@ -2695,6 +2708,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .slot_info = std::move(slot_info),
       .num_init_processes = num_init,
       .body_compiled_funcs = std::move(body_funcs),
+      .deferred_site_artifacts = std::move(*deferred_artifacts),
   };
 }
 

@@ -1488,71 +1488,6 @@ auto BuildDeferredAssertionAction(
   };
 }
 
-// Derive a DeferredUserCallRealization from a finished semantic action.
-// Assigns payload field order for snapshot actuals, ref-binding order
-// for live refs, and allocates a thunk function shell.
-auto BuildDeferredAssertionRealization(
-    const mir::DeferredUserCallAction& action, MirBuilder& builder)
-    -> mir::DeferredUserCallRealization {
-  Context& ctx = builder.GetContext();
-
-  mir::CapturePayloadDesc payload;
-  std::vector<mir::DeferredActualPlan> actual_plan;
-  uint32_t payload_field_index = 0;
-
-  for (const auto& actual : action.actuals) {
-    switch (actual.kind) {
-      case mir::DeferredActualKind::kSnapshotValue:
-        payload.field_types.push_back(actual.type);
-        actual_plan.push_back(
-            mir::DeferredActualPlan{
-                .source = mir::DeferredActualPlan::Source::kPayloadField,
-                .payload_field_index = payload_field_index,
-            });
-        ++payload_field_index;
-        break;
-      case mir::DeferredActualKind::kLiveRef:
-      case mir::DeferredActualKind::kConstLiveRef:
-        actual_plan.push_back(
-            mir::DeferredActualPlan{
-                .source = mir::DeferredActualPlan::Source::kLiveRef,
-                .ref_place = actual.ref_place,
-            });
-        break;
-    }
-  }
-
-  mir::Function thunk_shell{
-      .signature =
-          {
-              .return_type = ctx.builtin_types.void_type,
-              .params = {},
-          },
-      .runtime_kind = mir::RuntimeProgramKind::kDeferredAssertionThunk,
-      .canonical_symbol = kInvalidSymbolId,
-      .entry = mir::BasicBlockId{0},
-      .blocks = {},
-      .local_types = {},
-      .temp_types = {},
-      .temp_metadata = {},
-      .param_local_slots = {},
-      .param_origins = {},
-      .abi_contract = {},
-  };
-  mir::FunctionId thunk_id = ctx.mir_arena->AddFunction(std::move(thunk_shell));
-
-  if (ctx.generated_functions != nullptr) {
-    ctx.generated_functions->push_back(thunk_id);
-  }
-
-  return mir::DeferredUserCallRealization{
-      .thunk = thunk_id,
-      .callee = action.callee,
-      .payload = std::move(payload),
-      .actual_plan = std::move(actual_plan),
-  };
-}
-
 // Emit the default fail effect for immediate assertions when no explicit
 // else action is provided. Uses assertion-specific report intent with origin.
 auto EmitDefaultImmediateAssertionFail(
@@ -1753,19 +1688,6 @@ auto LowerObservedDeferredImmediateAssertion(
   if (pass_result.has_value()) validate_snapshot_projection(*pass_result);
   if (fail_result.has_value()) validate_snapshot_projection(*fail_result);
 
-  // Build realizations from finished semantic actions BEFORE moving
-  // actions into site_info (move invalidates the action).
-  std::optional<mir::DeferredUserCallRealization> pass_realization;
-  std::optional<mir::DeferredUserCallRealization> fail_realization;
-  if (pass_result.has_value()) {
-    pass_realization =
-        BuildDeferredAssertionRealization(pass_result->action, builder);
-  }
-  if (fail_result.has_value()) {
-    fail_realization =
-        BuildDeferredAssertionRealization(fail_result->action, builder);
-  }
-
   // Build site metadata with semantic action descriptors.
   mir::DeferredAssertionSiteInfo site_info{
       .span = span,
@@ -1797,24 +1719,6 @@ auto LowerObservedDeferredImmediateAssertion(
 
   auto site_id =
       builder.GetContext().AllocateDeferredAssertionSite(std::move(site_info));
-
-  // Register realizations under site_id (now that site_id is allocated).
-  if (pass_realization.has_value()) {
-    builder.GetContext().RegisterDeferredAssertionRealization(
-        mir::DeferredAssertionActionKey{
-            .site_id = site_id,
-            .disposition = mir::DeferredAssertionDisposition::kPassAction,
-        },
-        std::move(*pass_realization));
-  }
-  if (fail_realization.has_value()) {
-    builder.GetContext().RegisterDeferredAssertionRealization(
-        mir::DeferredAssertionActionKey{
-            .site_id = site_id,
-            .disposition = mir::DeferredAssertionDisposition::kFailAction,
-        },
-        std::move(*fail_realization));
-  }
 
   // Helper: lower snapshot captures and emit enqueue effect.
   auto emit_enqueue =

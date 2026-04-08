@@ -12,7 +12,6 @@
 #include "lyra/common/severity.hpp"
 #include "lyra/common/system_tf.hpp"
 #include "lyra/common/type.hpp"
-#include "lyra/mir/capture_payload.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
 #include "lyra/semantic/decision.hpp"
@@ -251,9 +250,9 @@ struct EnqueueDeferredAssertionEffect {
   DeferredAssertionSiteId site_id;
   DeferredAssertionDisposition disposition;
   // Evaluated snapshot values for by-value actuals, in semantic actual
-  // order (skipping ref actuals). Ordering matches the payload field
-  // order in the corresponding DeferredUserCallRealization. Empty for
-  // dispositions with no thunk (kDefaultFailReport, kCoverHit).
+  // order (skipping ref actuals). Backend derives payload field order
+  // from the semantic action. Empty for dispositions with no thunk
+  // (kDefaultFailReport, kCoverHit).
   std::vector<Operand> snapshot_values;
 };
 

@@ -11,6 +11,7 @@
 #include <llvm/IR/Function.h>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
+#include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/llvm_backend/process.hpp"
@@ -209,6 +210,12 @@ struct CodegenSession {
     std::vector<llvm::Function*> functions;
   };
   std::vector<BodyCompiledFuncs> body_compiled_funcs;
+
+  // Per-site compiled deferred assertion thunk artifacts.
+  // Positional: element [i] corresponds to deferred_assertion_sites[i].
+  // Produced by CompileDeferredAssertionArtifacts, consumed by metadata
+  // emission. Single-pipeline compilation product.
+  std::vector<DeferredSiteCompiledArtifact> deferred_site_artifacts;
 };
 
 // Backend phase: compile all design processes into LLVM IR.
