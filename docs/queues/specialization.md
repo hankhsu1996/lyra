@@ -23,7 +23,8 @@ For the stable architecture: see [compilation-model.md](../compilation-model.md)
 - [ ] B -- Recipe model: non-local access, connections, construction (see [compilation-model.md](../compilation-model.md))
   - [x] B1 -- Freeze compile-time contract boundary: CompiledModuleHeader/Body/Specialization types, core recipe types (ExternalRefId, ConnectionRecipe, ChildBindingSiteId), header-only dependency rule, documented descendant-path direction (NonLocalTargetRecipe deferred to B2)
   - [x] B2 -- Compile-time recipe lowering: hierarchical refs to external ref handles, connections to body-local recipes (simple and expression), parent-child port via CompiledModuleHeader; delete ResolvedBindingPlan, ResolvedKernelBinding, backend kernel adapter
-  - [ ] B3 -- Construction/runtime binding: delete cross_instance_places, ResolveHierarchicalRef, InstanceSlotResolver, CompiledConnectionExpr, design-level compilation of connection/init processes, flat cross-instance design-global arena
+  - [ ] V3 -- Delete compile-time cross-instance lowering bridge: delete cross_instance_places, ResolveHierarchicalRef, InstanceSlotResolver; stop rebuilding non-local access as design-global Place; make external ref codegen consume resolved (target_object, target_local_slot, type) directly
+  - [ ] V4 -- Remove design-global runtime binding/process transport and complete object-local connection/init model: delete CompiledConnectionExpr and design-level connection/init process arrays; re-express expression connections as object-local runtime callable form; remove flat instance-owned slot transport (bundle*flat_bases, flattened SlotMetaRegistry, next_slot_base*); migrate remaining consumers to existing object-local runtime paths
 - [ ] T1 -- Topology-independence validation (scaling gates)
 - [ ] F1 -- Parallel specialization compilation
   - [x] F1-design -- Parallel ownership model
@@ -43,9 +44,9 @@ F1 (parallel compilation) is independent of the R-series and B-series and can pr
 
 The R-series (R1-R5) is complete. All instance-owned state uses object-local coordinates end-to-end.
 
-B1 is prerequisite-free (investigation + type boundary). B2 depends on B1 (compile-time migration). B3 depends on B2 (construction/runtime migration).
+B1 is prerequisite-free (investigation + type boundary). B2 depends on B1 (compile-time migration). V3 depends on B2 (compile-time bridge deletion). V4 depends on V3 (runtime/constructor migration).
 
-- **T1 (validation)** runs after C1, the R-series, and the B-series.
+- **T1 (validation)** runs after C1, the R-series, V3, and V4.
 
 ## C1: Remove per-instance emitted constructor IR/globals
 

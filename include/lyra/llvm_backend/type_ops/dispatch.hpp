@@ -4,6 +4,7 @@
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/operand.hpp"
+#include "lyra/mir/statement.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
 
@@ -20,7 +21,7 @@ auto DetermineOwnership(Context& context, const mir::Operand& source)
 // Returns error Diagnostic for unsupported cases (e.g., design slot +
 // string struct).
 auto AssignPlace(
-    Context& context, mir::PlaceId target, const mir::Operand& source)
-    -> Result<void>;
+    Context& context, const mir::WriteTarget& target,
+    const mir::Operand& source) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm

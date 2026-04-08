@@ -3,6 +3,7 @@
 #include <variant>
 
 #include "lyra/llvm_backend/context.hpp"
+#include "lyra/llvm_backend/instruction/assign_core.hpp"
 #include "lyra/llvm_backend/ownership.hpp"
 #include "lyra/llvm_backend/write_plan.hpp"
 #include "lyra/mir/arena.hpp"
@@ -34,11 +35,9 @@ auto DetermineOwnership(Context& context, const mir::Operand& source)
 // delegates to DispatchWrite with OperandSource. Does not own semantic
 // write-shape decisions.
 auto AssignPlace(
-    Context& context, mir::PlaceId target, const mir::Operand& source)
-    -> Result<void> {
-  const auto& arena = context.GetMirArena();
-  const auto& types = context.GetTypeArena();
-  TypeId type_id = mir::TypeOfPlace(types, arena[target]);
+    Context& context, const mir::WriteTarget& target,
+    const mir::Operand& source) -> Result<void> {
+  TypeId type_id = detail::ResolveDestType(context, target);
   OwnershipPolicy policy = DetermineOwnership(context, source);
   return DispatchWrite(
       context, target, OperandSource{&source}, type_id, policy);

@@ -210,8 +210,7 @@ class Context {
     return *design_arena_;
   }
 
-  // B2: Canonical Place lookup. Routes body arena PlaceIds normally;
-  // routes scratch-arena PlaceIds (from ResolveExternalRef) via offset.
+  // Canonical Place lookup from the body arena.
   // All place consumers must use this instead of raw arena access.
   [[nodiscard]] auto LookupPlace(mir::PlaceId place_id) const
       -> const mir::Place&;
@@ -531,17 +530,52 @@ class Context {
     Context& ctx_;
   };
 
-  // B2: Resolve ExternalRefId to a design-global slot pointer.
-  // Materializes a kDesignGlobal Place from binding facts in the backend
-  // scratch arena. Cached per scope. GetPlacePointer transparently resolves
-  // PlaceIds from this arena.
-  [[nodiscard]] auto ResolveExternalRef(mir::ExternalRefId ref_id)
-      -> mir::PlaceId;
+  // V3: Direct external-ref helpers. Consume ResolvedExternalRefBinding
+  // directly for reads (operand loads, type queries) and writes
+  // (immediate/deferred assign). No synthetic PlaceId, no scratch arena.
 
-  // B2: Resolve WriteTarget to PlaceId.
-  // PlaceId targets pass through. ExternalRefId resolved via bindings.
-  [[nodiscard]] auto ResolveWriteDest(const mir::WriteTarget& dest)
-      -> mir::PlaceId;
+  // Resolved external-ref root: carries the design-global slot ID and type
+  // as a single result. All external-ref address/type/signal-coord helpers
+  // derive from this.
+  struct ResolvedExternalRefRoot {
+    uint32_t global_slot = 0;
+    TypeId type = {};
+  };
+
+  // Canonical external-ref resolution: binding -> design-global slot + type.
+  // Used by all external-ref helpers (read and write paths).
+  // All invariant checks (env installed, bindings present, target_object in
+  // range, local_slot within target object's domain, no overflow) are
+  // enforced here.
+  [[nodiscard]] auto ResolveExternalRefRoot(mir::ExternalRefId ref_id) const
+      -> ResolvedExternalRefRoot;
+
+  // Get the type of an external ref from its resolved root.
+  [[nodiscard]] auto GetExternalRefType(mir::ExternalRefId ref_id) const
+      -> TypeId;
+
+  // Emit LLVM IR computing a pointer to the external ref's storage.
+  // Backend-internal address arithmetic via ResolveExternalRefRoot ->
+  // GetDesignGlobalSlotPointer. Not a rebuilt Place.
+  [[nodiscard]] auto EmitExternalRefAddress(mir::ExternalRefId ref_id)
+      -> llvm::Value*;
+
+  // Load the value at an external ref's storage. Uses canonical 4-state
+  // load for design-global slots when applicable.
+  [[nodiscard]] auto LoadExternalRef(mir::ExternalRefId ref_id)
+      -> Result<llvm::Value*>;
+
+  // Compute the typed signal coordinate for an external ref's storage.
+  // Always returns SignalCoordExpr::Global(global_slot).
+  [[nodiscard]] auto EmitExternalRefSignalCoord(mir::ExternalRefId ref_id) const
+      -> SignalCoordExpr;
+
+  // Resolve a WriteTarget to a storage pointer.
+  // PlaceId: delegates to GetPlacePointer.
+  // ExternalRefId: delegates to EmitExternalRefAddress.
+  [[nodiscard]] auto GetWriteDestPointer(const mir::WriteTarget& dest)
+      -> Result<llvm::Value*>;
+
   [[nodiscard]] auto GetConnectionNotificationMask() const
       -> const ConnectionNotificationMask* {
     return connection_notification_mask_;
@@ -1002,10 +1036,11 @@ class Context {
       -> uint32_t;
 
   // Commit-module-only methods (accessed via friend class commit::Access)
-  // Get unified write target (pointer + signal_id) from a place.
-  // All fields derived from the same alias-resolved place, ensuring
-  // consistency.
+  // Get unified write target (pointer + signal_id) from a place or
+  // external ref. All fields derived from the same resolved root.
   [[nodiscard]] auto GetWriteTarget(mir::PlaceId place_id)
+      -> Result<WriteTarget>;
+  [[nodiscard]] auto GetWriteTarget(mir::ExternalRefId ref_id)
       -> Result<WriteTarget>;
 
   // Get the mutation-target signal_id for a place's root.
@@ -1208,12 +1243,9 @@ class Context {
   const SpecSlotInfo* spec_slot_info_ = nullptr;
   const ConnectionNotificationMask* connection_notification_mask_ = nullptr;
 
-  // B2: External ref resolution state. Single env object replaces separate
-  // fields to prevent parallel-state inconsistency.
+  // External ref resolution state. Env carries bindings + construction
+  // for ResolveExternalRefRoot.
   std::optional<ExternalRefResolutionEnv> ext_ref_env_;
-  std::vector<std::optional<mir::PlaceId>> materialized_ext_ref_places_;
-  std::optional<uint32_t> ext_ref_place_base_;
-  mir::Arena ext_ref_scratch_arena_;
 
   // Current origin for error reporting
   common::OriginId current_origin_ = common::OriginId::Invalid();

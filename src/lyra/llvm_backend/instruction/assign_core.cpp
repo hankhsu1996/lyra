@@ -10,11 +10,29 @@
 #include "lyra/llvm_backend/compute/compute.hpp"
 #include "lyra/llvm_backend/compute/four_state_ops.hpp"
 #include "lyra/llvm_backend/compute/operand.hpp"
+#include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/slot_access.hpp"
 #include "lyra/mir/place_type.hpp"
 
 namespace lyra::lowering::mir_to_llvm::detail {
 
+auto ResolveDestType(Context& context, const mir::WriteTarget& dest) -> TypeId {
+  if (const auto* place = std::get_if<mir::PlaceId>(&dest)) {
+    return mir::TypeOfPlace(
+        context.GetTypeArena(), context.LookupPlace(*place));
+  }
+  return context.GetExternalRefType(std::get<mir::ExternalRefId>(dest));
+}
+
+// No-resolver TypeId overload.
+auto LowerRhsRaw(
+    Context& context, const mir::RightHandSide& rhs, TypeId target_type)
+    -> Result<llvm::Value*> {
+  CanonicalSlotAccess canonical(context);
+  return LowerRhsRaw(context, canonical, rhs, target_type);
+}
+
+// No-resolver PlaceId overload.
 auto LowerRhsRaw(
     Context& context, const mir::RightHandSide& rhs, mir::PlaceId target)
     -> Result<llvm::Value*> {
@@ -22,29 +40,32 @@ auto LowerRhsRaw(
   return LowerRhsRaw(context, canonical, rhs, target);
 }
 
+// PlaceId overload: derives TypeId from Place and forwards.
 auto LowerRhsRaw(
     Context& context, SlotAccessResolver& resolver,
     const mir::RightHandSide& rhs, mir::PlaceId target)
     -> Result<llvm::Value*> {
+  const auto& types = context.GetTypeArena();
+  TypeId target_type = mir::TypeOfPlace(types, context.LookupPlace(target));
+  return LowerRhsRaw(context, resolver, rhs, target_type);
+}
+
+auto LowerRhsRaw(
+    Context& context, SlotAccessResolver& resolver,
+    const mir::RightHandSide& rhs, TypeId target_type) -> Result<llvm::Value*> {
   return std::visit(
       common::Overloaded{
           [&](const mir::Operand& operand) -> Result<llvm::Value*> {
             auto raw_or_err = LowerOperandRaw(context, resolver, operand);
             if (!raw_or_err) return std::unexpected(raw_or_err.error());
             llvm::Value* raw = *raw_or_err;
-            // Raw representation boundary: if target is 4-state but raw
-            // is scalar (kTwoState domain temp), pack with zero unknown
-            // to match target storage shape.
             const auto& types = context.GetTypeArena();
-            TypeId target_type =
-                mir::TypeOfPlace(types, context.LookupPlace(target));
             if (!raw->getType()->isStructTy() && IsPacked(types[target_type]) &&
                 context.IsPackedFourState(types[target_type])) {
-              auto storage_type_or_err = context.GetPlaceLlvmType(target);
-              if (!storage_type_or_err)
-                return std::unexpected(storage_type_or_err.error());
-              auto* struct_type =
-                  llvm::cast<llvm::StructType>(*storage_type_or_err);
+              auto* llvm_type = GetLlvmTypeForTypeId(
+                  context.GetLlvmContext(), target_type, types,
+                  context.IsForceTwoState());
+              auto* struct_type = llvm::cast<llvm::StructType>(llvm_type);
               auto* elem_type = struct_type->getElementType(0);
               auto& builder = context.GetBuilder();
               auto* value = builder.CreateZExtOrTrunc(raw, elem_type);
@@ -55,19 +76,15 @@ auto LowerRhsRaw(
           },
           [&](const mir::Rvalue& rvalue) -> Result<llvm::Value*> {
             const auto& types = context.GetTypeArena();
-            TypeId result_type =
-                mir::TypeOfPlace(types, context.LookupPlace(target));
             auto rv_result =
-                LowerRvalue(context, resolver, rvalue, result_type);
+                LowerRvalue(context, resolver, rvalue, target_type);
             if (!rv_result) return std::unexpected(rv_result.error());
-            // For 4-state, pack into struct
-            if (IsPacked(types[result_type]) &&
-                context.IsPackedFourState(types[result_type])) {
-              auto storage_type_or_err = context.GetPlaceLlvmType(target);
-              if (!storage_type_or_err)
-                return std::unexpected(storage_type_or_err.error());
-              auto* struct_type =
-                  llvm::cast<llvm::StructType>(*storage_type_or_err);
+            if (IsPacked(types[target_type]) &&
+                context.IsPackedFourState(types[target_type])) {
+              auto* llvm_type = GetLlvmTypeForTypeId(
+                  context.GetLlvmContext(), target_type, types,
+                  context.IsForceTwoState());
+              auto* struct_type = llvm::cast<llvm::StructType>(llvm_type);
               auto* elem_type = struct_type->getElementType(0);
               auto& builder = context.GetBuilder();
               llvm::Value* value =
