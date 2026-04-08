@@ -59,7 +59,7 @@ jobs:
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
             FLAGS="$FLAGS --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
           fi
-          bazel build //:lyra $FLAGS
+          bazel build -c opt //:lyra $FLAGS
 
       - name: Compile delta-converge AOT
         run: |
