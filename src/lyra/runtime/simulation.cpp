@@ -1085,7 +1085,7 @@ extern "C" auto LyraResolveInstancePtr(void* eng, uint32_t instance_id)
 extern "C" auto LyraIsTraceObservedLocal(void* eng, void* inst, uint32_t id)
     -> bool {
   if (eng == nullptr) return false;
-  return Engine::IsTraceObserved(MakeLocalRef(inst, id));
+  return AsEngine(eng)->IsTraceObserved(MakeLocalRef(inst, id));
 }
 extern "C" auto LyraIsTraceObservedGlobal(void* eng, uint32_t id) -> bool {
   if (eng == nullptr) return false;

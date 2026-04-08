@@ -587,7 +587,7 @@ class Engine {
       GlobalSignalId notify_signal, void* write_ptr,
       const void* notify_base_ptr, const void* value_ptr, const void* unk_ptr,
       uint32_t region_byte_size, uint32_t second_region_offset);
-  [[nodiscard]] static auto IsTraceObserved(ObjectSignalRef signal) -> bool;
+  [[nodiscard]] auto IsTraceObserved(ObjectSignalRef signal) const -> bool;
   [[nodiscard]] auto IsTraceObserved(GlobalSignalId signal) const -> bool;
 
   [[nodiscard]] auto GetSlotMetaRegistry() const -> const SlotMetaRegistry& {

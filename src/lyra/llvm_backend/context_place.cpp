@@ -796,7 +796,20 @@ auto Context::RequiresBehavioralDirtyPropagation(
               local_slot, GetSpecSlotInfo()->body_id.value,
               body_info.slot_has_behavioral_trigger.size()));
     }
-    return body_info.slot_has_behavioral_trigger[local_slot];
+    bool behavioral = body_info.slot_has_behavioral_trigger[local_slot];
+    if (behavioral) return true;
+
+    // Check design-global behavioral triggers projected from other bodies.
+    // Covers cross-body dependents like hierarchical sensitivity
+    // (e.g., always_ff @(posedge child.clk) in a parent module).
+    const auto& spec = *GetSpecSlotInfo();
+    auto global_slot = layout_.ResolveLegacyRepresentativeDesignSlot(
+        spec.body_realization_info_index, local_slot);
+    if (global_slot < layout_.slot_has_design_behavioral_trigger.size()) {
+      if (layout_.slot_has_design_behavioral_trigger[global_slot]) return true;
+    }
+
+    return false;
   }
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
     const auto& layout = GetLayout();

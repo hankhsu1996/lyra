@@ -73,7 +73,8 @@ void Engine::ScheduleNbaCanonicalPacked(
       second_region_offset, notify);
 }
 
-auto Engine::IsTraceObserved(ObjectSignalRef signal) -> bool {
+auto Engine::IsTraceObserved(ObjectSignalRef signal) const -> bool {
+  if (!trace_manager_.IsEnabled()) return false;
   auto& obs = signal.instance->observability;
   if (signal.local.value >= obs.trace_select.size()) return false;
   return obs.trace_select[signal.local.value] != 0;
@@ -109,6 +110,7 @@ void Engine::ScheduleNbaCanonicalPacked(
 }
 
 auto Engine::IsTraceObserved(GlobalSignalId signal) const -> bool {
+  if (!trace_manager_.IsEnabled()) return false;
   return trace_selection_.IsSelected(signal.value);
 }
 
