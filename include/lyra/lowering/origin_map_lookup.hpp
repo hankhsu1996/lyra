@@ -2,6 +2,7 @@
 
 #include <format>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "lyra/common/internal_error.hpp"
@@ -38,6 +39,57 @@ inline auto ResolveHirArena(
   }
   return design.module_bodies[body_id.value].arena;
 }
+
+// Body-local origin resolver. Resolves OriginIds from a single body's
+// origin entries. Satisfies the OriginLookup concept for DiagnosticContext.
+// Used during per-body codegen and post-session metadata assembly where
+// the active body is known statically.
+class BodyLocalOriginResolver {
+ public:
+  BodyLocalOriginResolver(
+      std::span<const OriginEntry> entries, const hir::Design* design,
+      const hir::Arena* global_arena)
+      : entries_(entries), design_(design), global_arena_(global_arena) {
+  }
+
+  [[nodiscard]] auto ResolveToSpan(common::OriginId id) const
+      -> std::optional<SourceSpan> {
+    if (id.value >= entries_.size()) return std::nullopt;
+    const auto& entry = entries_[id.value];
+    const hir::Arena& arena =
+        ResolveHirArena(*design_, *global_arena_, entry.body_id);
+    return std::visit(
+        common::Overloaded{
+            [&arena](hir::StatementId stmt_id) -> std::optional<SourceSpan> {
+              return arena[stmt_id].span;
+            },
+            [&arena](hir::ExpressionId expr_id) -> std::optional<SourceSpan> {
+              return arena[expr_id].span;
+            },
+            [&arena](hir::FunctionId func_id) -> std::optional<SourceSpan> {
+              return arena[func_id].span;
+            },
+            [&arena](hir::ProcessId proc_id) -> std::optional<SourceSpan> {
+              return arena[proc_id].span;
+            },
+            [&arena](hir::TaskId task_id) -> std::optional<SourceSpan> {
+              return arena[task_id].span;
+            },
+            [&arena](FunctionParamRef ref) -> std::optional<SourceSpan> {
+              return arena[ref.func].span;
+            },
+            [&arena](TaskParamRef ref) -> std::optional<SourceSpan> {
+              return arena[ref.task].span;
+            },
+        },
+        entry.hir_source);
+  }
+
+ private:
+  std::span<const OriginEntry> entries_;
+  const hir::Design* design_;
+  const hir::Arena* global_arena_;
+};
 
 // Generic source-resolution adapter. Resolves OriginId to SourceSpan
 // through body-aware arena lookup. Used by DiagnosticContext for error

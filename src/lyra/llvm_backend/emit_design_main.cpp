@@ -1887,7 +1887,9 @@ struct ConstructorEmissionResult {
 // Returns the global pointer (or nullptr if no deferred sites).
 auto EmitDeferredAssertionSiteMetaGlobal(
     Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites,
-    std::span<const DeferredSiteCompiledArtifact> artifacts)
+    std::span<const DeferredSiteCompiledArtifact> artifacts,
+    const std::vector<std::vector<lowering::OriginEntry>>* body_origins,
+    const hir::Design* hir_design, const hir::Arena* hir_global_arena)
     -> llvm::Constant* {
   if (sites.empty()) return nullptr;
 
@@ -1933,13 +1935,27 @@ auto EmitDeferredAssertionSiteMetaGlobal(
     }
 
     // Resolve source location from canonical OriginId.
+    // Sites are body-local; resolve from the owning body's origin table
+    // instead of the design-global OriginMapLookup (which has no active
+    // BodyScope at this point).
     llvm::Constant* file_ptr = llvm::ConstantPointerNull::get(ptr_ty);
     uint32_t line = 0;
     uint32_t col = 0;
     if (site.origin.IsValid()) {
+      std::optional<lowering::BodyLocalOriginResolver> site_resolver;
+      std::optional<lowering::DiagnosticContext> site_diag;
+      const lowering::DiagnosticContext* site_diag_ptr =
+          &context.GetDiagnosticContext();
+      if (body_origins != nullptr && hir_design != nullptr &&
+          hir_global_arena != nullptr &&
+          site.body_id.value < body_origins->size()) {
+        site_resolver.emplace(
+            (*body_origins)[site.body_id.value], hir_design, hir_global_arena);
+        site_diag.emplace(*site_resolver);
+        site_diag_ptr = &*site_diag;
+      }
       auto loc = ResolveProcessOrigin(
-          site.origin, &context.GetDiagnosticContext(),
-          context.GetSourceManager());
+          site.origin, site_diag_ptr, context.GetSourceManager());
       if (loc.line > 0 && !loc.file.empty()) {
         auto* str_const =
             llvm::ConstantDataArray::getString(llvm_ctx, loc.file, true);
@@ -2186,6 +2202,9 @@ auto BuildEmitDesignMainInput(const lowering::mir_to_llvm::LoweringInput& input)
       .design_arena = input.mir_arena,
       .diag_ctx = input.diag_ctx,
       .source_manager = input.source_manager,
+      .body_origins = input.body_origins,
+      .hir_design = input.hir_design,
+      .hir_global_arena = input.hir_global_arena,
       .hooks = input.hooks,
       .main_abi = input.main_abi,
       .fs_base_dir = input.fs_base_dir,
@@ -2663,7 +2682,8 @@ auto EmitDesignMain(
 
     auto* deferred_site_meta_global = EmitDeferredAssertionSiteMetaGlobal(
         context, input.design->deferred_assertion_sites,
-        session.deferred_site_artifacts);
+        session.deferred_site_artifacts, input.body_origins, input.hir_design,
+        input.hir_global_arena);
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,

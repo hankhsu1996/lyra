@@ -98,6 +98,13 @@ struct LoweringInput {
   const lowering::DiagnosticContext* diag_ctx = nullptr;
   const SourceManager* source_manager = nullptr;
   lowering::OriginMapLookup* origin_lookup = nullptr;
+  // Per-body origin entries for body-local diagnostic resolution.
+  // Indexed by ModuleBodyId::value. Nullable (diagnostics degrade gracefully).
+  const std::vector<std::vector<lowering::OriginEntry>>* body_origins = nullptr;
+  // HIR design and global arena for body-local origin span resolution.
+  // Required when body_origins is non-null.
+  const hir::Design* hir_design = nullptr;
+  const hir::Arena* hir_global_arena = nullptr;
   SimulationHooks* hooks = nullptr;   // Optional instrumentation (nullable)
   std::string fs_base_dir;            // Base directory for file I/O (absolute)
   std::vector<std::string> plusargs;  // Command-line plusargs for $plusargs

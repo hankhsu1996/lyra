@@ -29,6 +29,9 @@ struct EmitDesignMainInput {
   const mir::Arena* design_arena = nullptr;
   const DiagnosticContext* diag_ctx = nullptr;
   const SourceManager* source_manager = nullptr;
+  const std::vector<std::vector<OriginEntry>>* body_origins = nullptr;
+  const hir::Design* hir_design = nullptr;
+  const hir::Arena* hir_global_arena = nullptr;
   SimulationHooks* hooks = nullptr;
   MainAbi main_abi = MainAbi::kEmbeddedPlusargs;
   std::string fs_base_dir;

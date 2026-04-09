@@ -235,6 +235,27 @@ class Context {
     Context& ctx_;
     const mir::Arena* saved_;
   };
+  // Scoped diagnostic context guard: temporarily replaces diag_ctx_ for one
+  // compilation session. Restores previous context on destruction.
+  class DiagnosticScope {
+   public:
+    DiagnosticScope(Context& ctx, const lowering::DiagnosticContext* diag_ctx)
+        : ctx_(ctx), saved_(ctx.diag_ctx_) {
+      ctx_.diag_ctx_ = diag_ctx;
+    }
+    ~DiagnosticScope() {
+      ctx_.diag_ctx_ = saved_;
+    }
+    DiagnosticScope(const DiagnosticScope&) = delete;
+    auto operator=(const DiagnosticScope&) -> DiagnosticScope& = delete;
+    DiagnosticScope(DiagnosticScope&&) = delete;
+    auto operator=(DiagnosticScope&&) -> DiagnosticScope& = delete;
+
+   private:
+    Context& ctx_;
+    const lowering::DiagnosticContext* saved_;
+  };
+
   [[nodiscard]] auto GetTypeArena() const -> const TypeArena& {
     return types_;
   }

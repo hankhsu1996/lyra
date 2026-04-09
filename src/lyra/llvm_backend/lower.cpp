@@ -910,16 +910,24 @@ auto CompareCombSlotsByFinalObservableOrder(
 auto CompileModuleSpecSession(
     Context& context, const mir::Design& design,
     const CompiledModuleSpecInput& input,
-    const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec> {
-  // Set the body arena and origin scope for this compilation session.
+    const mir::ConstructionInput* construction,
+    std::span<const lowering::OriginEntry> body_origins,
+    const hir::Design* hir_design, const hir::Arena* hir_global_arena)
+    -> Result<CompiledModuleSpec> {
+  // Set the body arena for this compilation session.
   const auto& body = design.module_bodies.at(input.body_id.value);
   Context::ArenaScope arena_scope(context, &body.arena);
 
-  // Establish body-scoped origin resolution so OriginId lookups during
-  // per-statement codegen resolve against the correct body's origin map.
-  std::optional<lowering::OriginMapLookup::BodyScope> origin_scope;
-  if (context.GetOriginLookup() != nullptr) {
-    origin_scope.emplace(*context.GetOriginLookup(), input.body_id);
+  // Establish body-local diagnostic resolution so OriginId lookups during
+  // per-statement codegen resolve against the current body's origin table
+  // directly, without design-global scope switching.
+  std::optional<lowering::BodyLocalOriginResolver> body_resolver;
+  std::optional<lowering::DiagnosticContext> body_diag_ctx;
+  std::optional<Context::DiagnosticScope> diag_scope;
+  if (hir_design != nullptr && hir_global_arena != nullptr) {
+    body_resolver.emplace(body_origins, hir_design, hir_global_arena);
+    body_diag_ctx.emplace(*body_resolver);
+    diag_scope.emplace(context, &*body_diag_ctx);
   }
 
   // Install all specialization-local state via RAII scope.
@@ -1623,8 +1631,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
     spec_input.spec_slot_info = &spec_slot_infos[si];
     spec_input.connection_notification_mask =
         &connection_notification_masks[si];
+    std::span<const lowering::OriginEntry> session_origins;
+    if (input.body_origins != nullptr &&
+        spec_input.body_id.value < input.body_origins->size()) {
+      session_origins = (*input.body_origins)[spec_input.body_id.value];
+    }
     auto product = CompileModuleSpecSession(
-        *context, *input.design, spec_input, input.construction);
+        *context, *input.design, spec_input, input.construction,
+        session_origins, input.hir_design, input.hir_global_arena);
     if (!product) return std::unexpected(product.error());
 
     // Capture module export callees from this session's user_functions_
@@ -1898,10 +1912,31 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
 
     // Body metadata templates.
+    // Per-body codegen sessions are already finished; the shared
+    // OriginMapLookup has no active BodyScope, so body-local OriginIds
+    // would silently fail to resolve through the design-global path.
+    // Each iteration builds a body-local resolver from the owning body's
+    // origin table.
     for (auto& info : layout->body_realization_infos) {
       const auto& body = input.design->module_bodies.at(info.body_id.value);
       const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
       info.meta.pool.push_back('\0');
+
+      // Body-local diagnostic resolver for this body's origin entries.
+      std::span<const lowering::OriginEntry> body_origin_entries;
+      if (input.body_origins != nullptr &&
+          info.body_id.value < input.body_origins->size()) {
+        body_origin_entries = (*input.body_origins)[info.body_id.value];
+      }
+      std::optional<lowering::BodyLocalOriginResolver> body_resolver;
+      std::optional<lowering::DiagnosticContext> body_diag_ctx;
+      if (input.hir_design != nullptr && input.hir_global_arena != nullptr) {
+        body_resolver.emplace(
+            body_origin_entries, input.hir_design, input.hir_global_arena);
+        body_diag_ctx.emplace(*body_resolver);
+      }
+      const lowering::DiagnosticContext* diag =
+          body_diag_ctx.has_value() ? &*body_diag_ctx : input.diag_ctx;
 
       auto add_pool_string = [&](const std::string& s) -> uint32_t {
         if (s.empty()) return 0;
@@ -1928,8 +1963,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
           [&](uint32_t nonfinal_proc_ordinal, mir::ProcessId /*pid*/,
               const mir::Process& proc) {
             auto kind = MapProcessKind(proc.kind);
-            auto loc = ResolveProcessOrigin(
-                proc.origin, input.diag_ctx, input.source_manager);
+            auto loc =
+                ResolveProcessOrigin(proc.origin, diag, input.source_manager);
 
             uint32_t file_off = add_pool_string(loc.file);
             info.meta.entries[nonfinal_proc_ordinal] =
@@ -1979,8 +2014,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
               }
               filled[idx] = 1;
               const auto& site = rec.site;
-              auto site_loc = ResolveProcessOrigin(
-                  site.origin, input.diag_ctx, input.source_manager);
+              auto site_loc =
+                  ResolveProcessOrigin(site.origin, diag, input.source_manager);
               uint32_t packed =
                   static_cast<uint8_t>(site.qualifier) |
                   (static_cast<uint8_t>(site.kind) << 8) |
@@ -2043,16 +2078,34 @@ auto CompileDesignProcesses(const LoweringInput& input)
     for (size_t ci = layout->num_init_processes;
          ci < layout->num_module_process_base; ++ci) {
       const auto& sp = layout->scheduled_processes[ci];
+      bool is_body_local =
+          sp.module_index && sp.module_index.value < module_body_ids.size();
       const mir::Arena& proc_arena =
-          (sp.module_index && sp.module_index.value < module_body_ids.size())
-              ? input.design->module_bodies
-                    .at(module_body_ids[sp.module_index.value].value)
-                    .arena
-              : *input.mir_arena;
+          is_body_local ? input.design->module_bodies
+                              .at(module_body_ids[sp.module_index.value].value)
+                              .arena
+                        : *input.mir_arena;
       const auto& proc = proc_arena[sp.process_id];
       auto kind = MapProcessKind(proc.kind);
+
+      // Connection processes may be body-local or design-global.
+      // Resolve origins from the correct source.
+      std::optional<lowering::BodyLocalOriginResolver> conn_resolver;
+      std::optional<lowering::DiagnosticContext> conn_diag;
+      const lowering::DiagnosticContext* conn_diag_ptr = input.diag_ctx;
+      if (is_body_local && input.body_origins != nullptr &&
+          input.hir_design != nullptr && input.hir_global_arena != nullptr) {
+        auto conn_body_id = module_body_ids[sp.module_index.value];
+        if (conn_body_id.value < input.body_origins->size()) {
+          conn_resolver.emplace(
+              (*input.body_origins)[conn_body_id.value], input.hir_design,
+              input.hir_global_arena);
+          conn_diag.emplace(*conn_resolver);
+          conn_diag_ptr = &*conn_diag;
+        }
+      }
       auto loc = ResolveProcessOrigin(
-          proc.origin, input.diag_ctx, input.source_manager);
+          proc.origin, conn_diag_ptr, input.source_manager);
 
       uint32_t file_off = add_conn_pool_string(loc.file);
       layout->connection_templates.meta.entries.push_back(
