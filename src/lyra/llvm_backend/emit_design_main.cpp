@@ -1889,8 +1889,7 @@ struct ConstructorEmissionResult {
 auto EmitDeferredAssertionSiteMetaGlobal(
     Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites,
     std::span<const DeferredSiteCompiledArtifact> artifacts,
-    const std::vector<std::vector<lowering::OriginEntry>>* body_origins,
-    const hir::Design* hir_design, const hir::Arena* hir_global_arena)
+    const lowering::BodyOriginProvenance* origin_provenance)
     -> llvm::Constant* {
   if (sites.empty()) return nullptr;
 
@@ -1947,13 +1946,14 @@ auto EmitDeferredAssertionSiteMetaGlobal(
       std::optional<lowering::DiagnosticContext> site_diag;
       const lowering::DiagnosticContext* site_diag_ptr =
           &context.GetDiagnosticContext();
-      if (body_origins != nullptr && hir_design != nullptr &&
-          hir_global_arena != nullptr &&
-          site.body_id.value < body_origins->size()) {
-        site_resolver.emplace(
-            (*body_origins)[site.body_id.value], hir_design, hir_global_arena);
-        site_diag.emplace(*site_resolver);
-        site_diag_ptr = &*site_diag;
+      if (origin_provenance != nullptr &&
+          site.body_id.value < origin_provenance->bodies.size()) {
+        const auto& prov = origin_provenance->bodies[site.body_id.value];
+        if (prov.arena != nullptr) {
+          site_resolver.emplace(prov.origins, *prov.arena);
+          site_diag.emplace(*site_resolver);
+          site_diag_ptr = &*site_diag;
+        }
       }
       auto loc = ResolveProcessOrigin(
           site.origin, site_diag_ptr, context.GetSourceManager());
@@ -2203,9 +2203,7 @@ auto BuildEmitDesignMainInput(const lowering::mir_to_llvm::LoweringInput& input)
       .design_arena = input.mir_arena,
       .diag_ctx = input.diag_ctx,
       .source_manager = input.source_manager,
-      .body_origins = input.body_origins,
-      .hir_design = input.hir_design,
-      .hir_global_arena = input.hir_global_arena,
+      .origin_provenance = input.origin_provenance,
       .hooks = input.hooks,
       .main_abi = input.main_abi,
       .fs_base_dir = input.fs_base_dir,
@@ -2683,8 +2681,7 @@ auto EmitDesignMain(
 
     auto* deferred_site_meta_global = EmitDeferredAssertionSiteMetaGlobal(
         context, input.design->deferred_assertion_sites,
-        session.deferred_site_artifacts, input.body_origins, input.hir_design,
-        input.hir_global_arena);
+        session.deferred_site_artifacts, input.origin_provenance);
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,

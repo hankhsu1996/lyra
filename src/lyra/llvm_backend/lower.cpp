@@ -912,8 +912,7 @@ auto CompileModuleSpecSession(
     Context& context, const mir::Design& design,
     const CompiledModuleSpecInput& input,
     const mir::ConstructionInput* construction,
-    std::span<const lowering::OriginEntry> body_origins,
-    const hir::Design* hir_design, const hir::Arena* hir_global_arena)
+    const lowering::BodyOriginProvenance* origin_provenance)
     -> Result<CompiledModuleSpec> {
   // Set the body arena for this compilation session.
   const auto& body = design.module_bodies.at(input.body_id.value);
@@ -925,10 +924,14 @@ auto CompileModuleSpecSession(
   std::optional<lowering::BodyLocalOriginResolver> body_resolver;
   std::optional<lowering::DiagnosticContext> body_diag_ctx;
   std::optional<Context::DiagnosticScope> diag_scope;
-  if (hir_design != nullptr && hir_global_arena != nullptr) {
-    body_resolver.emplace(body_origins, hir_design, hir_global_arena);
-    body_diag_ctx.emplace(*body_resolver);
-    diag_scope.emplace(context, &*body_diag_ctx);
+  if (origin_provenance != nullptr &&
+      input.body_id.value < origin_provenance->bodies.size()) {
+    const auto& prov = origin_provenance->bodies[input.body_id.value];
+    if (prov.arena != nullptr) {
+      body_resolver.emplace(prov.origins, *prov.arena);
+      body_diag_ctx.emplace(*body_resolver);
+      diag_scope.emplace(context, &*body_diag_ctx);
+    }
   }
 
   // Install all specialization-local state via RAII scope.
@@ -1631,14 +1634,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
     spec_input.spec_slot_info = &spec_slot_infos[si];
     spec_input.connection_notification_mask =
         &connection_notification_masks[si];
-    std::span<const lowering::OriginEntry> session_origins;
-    if (input.body_origins != nullptr &&
-        spec_input.body_id.value < input.body_origins->size()) {
-      session_origins = (*input.body_origins)[spec_input.body_id.value];
-    }
     auto product = CompileModuleSpecSession(
         *context, *input.design, spec_input, input.construction,
-        session_origins, input.hir_design, input.hir_global_arena);
+        input.origin_provenance);
     if (!product) return std::unexpected(product.error());
 
     // Capture module export callees from this session's user_functions_
@@ -1923,17 +1921,15 @@ auto CompileDesignProcesses(const LoweringInput& input)
       info.meta.pool.push_back('\0');
 
       // Body-local diagnostic resolver for this body's origin entries.
-      std::span<const lowering::OriginEntry> body_origin_entries;
-      if (input.body_origins != nullptr &&
-          info.body_id.value < input.body_origins->size()) {
-        body_origin_entries = (*input.body_origins)[info.body_id.value];
-      }
       std::optional<lowering::BodyLocalOriginResolver> body_resolver;
       std::optional<lowering::DiagnosticContext> body_diag_ctx;
-      if (input.hir_design != nullptr && input.hir_global_arena != nullptr) {
-        body_resolver.emplace(
-            body_origin_entries, input.hir_design, input.hir_global_arena);
-        body_diag_ctx.emplace(*body_resolver);
+      if (input.origin_provenance != nullptr &&
+          info.body_id.value < input.origin_provenance->bodies.size()) {
+        const auto& prov = input.origin_provenance->bodies[info.body_id.value];
+        if (prov.arena != nullptr) {
+          body_resolver.emplace(prov.origins, *prov.arena);
+          body_diag_ctx.emplace(*body_resolver);
+        }
       }
       const lowering::DiagnosticContext* diag =
           body_diag_ctx.has_value() ? &*body_diag_ctx : input.diag_ctx;
@@ -2093,15 +2089,16 @@ auto CompileDesignProcesses(const LoweringInput& input)
       std::optional<lowering::BodyLocalOriginResolver> conn_resolver;
       std::optional<lowering::DiagnosticContext> conn_diag;
       const lowering::DiagnosticContext* conn_diag_ptr = input.diag_ctx;
-      if (is_body_local && input.body_origins != nullptr &&
-          input.hir_design != nullptr && input.hir_global_arena != nullptr) {
+      if (is_body_local && input.origin_provenance != nullptr) {
         auto conn_body_id = module_body_ids[sp.module_index.value];
-        if (conn_body_id.value < input.body_origins->size()) {
-          conn_resolver.emplace(
-              (*input.body_origins)[conn_body_id.value], input.hir_design,
-              input.hir_global_arena);
-          conn_diag.emplace(*conn_resolver);
-          conn_diag_ptr = &*conn_diag;
+        if (conn_body_id.value < input.origin_provenance->bodies.size()) {
+          const auto& prov =
+              input.origin_provenance->bodies[conn_body_id.value];
+          if (prov.arena != nullptr) {
+            conn_resolver.emplace(prov.origins, *prov.arena);
+            conn_diag.emplace(*conn_resolver);
+            conn_diag_ptr = &*conn_diag;
+          }
         }
       }
       auto loc = ResolveProcessOrigin(

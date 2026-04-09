@@ -12,13 +12,11 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/type_arena.hpp"
-#include "lyra/hir/arena.hpp"
-#include "lyra/hir/design.hpp"
 #include "lyra/llvm_backend/inspection_plan.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/lowering/origin_map.hpp"
+#include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/connection_endpoint.hpp"
 #include "lyra/mir/construction_input.hpp"
@@ -99,13 +97,9 @@ struct LoweringInput {
   const TypeArena* type_arena = nullptr;
   const lowering::DiagnosticContext* diag_ctx = nullptr;
   const SourceManager* source_manager = nullptr;
-  // Per-body origin entries for body-local diagnostic resolution.
+  // Per-body origin provenance for body-local diagnostic resolution.
   // Indexed by ModuleBodyId::value. Nullable (diagnostics degrade gracefully).
-  const std::vector<std::vector<lowering::OriginEntry>>* body_origins = nullptr;
-  // HIR design and global arena for body-local origin span resolution.
-  // Required when body_origins is non-null.
-  const hir::Design* hir_design = nullptr;
-  const hir::Arena* hir_global_arena = nullptr;
+  const lowering::BodyOriginProvenance* origin_provenance = nullptr;
   SimulationHooks* hooks = nullptr;   // Optional instrumentation (nullable)
   std::string fs_base_dir;            // Base directory for file I/O (absolute)
   std::vector<std::string> plusargs;  // Command-line plusargs for $plusargs

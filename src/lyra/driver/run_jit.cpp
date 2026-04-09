@@ -113,6 +113,9 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDumpSuspended);
   }
 
+  auto origin_provenance = lowering::BuildBodyOriginProvenance(
+      compilation.mir.body_origins, compilation.hir.design);
+
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &compilation.mir.design,
       .construction = &compilation.mir.construction,
@@ -120,9 +123,7 @@ auto RunJit(const ValidatedCompilationInput& input) -> int {
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),
-      .body_origins = &compilation.mir.body_origins,
-      .hir_design = &compilation.hir.design,
-      .hir_global_arena = compilation.hir.hir_arena.get(),
+      .origin_provenance = &origin_provenance,
       .fs_base_dir = input.input.fs_base_dir.string(),
       .plusargs = input.input.plusargs,
       .feature_flags = feature_flags,

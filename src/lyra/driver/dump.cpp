@@ -271,6 +271,9 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       hir_result.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
+  auto origin_provenance = lowering::BuildBodyOriginProvenance(
+      mir_result->body_origins, hir_result.design);
+
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,
       .construction = &mir_result->construction,
@@ -278,9 +281,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = hir_result.source_manager.get(),
-      .body_origins = &mir_result->body_origins,
-      .hir_design = &hir_result.design,
-      .hir_global_arena = hir_result.hir_arena.get(),
+      .origin_provenance = &origin_provenance,
       .fs_base_dir = input.fs_base_dir.string(),
       .plusargs = {},
       .feature_flags = 0,

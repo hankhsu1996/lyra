@@ -38,46 +38,73 @@ inline auto ResolveHirArena(
   return design.module_bodies[body_id.value].arena;
 }
 
+// Pre-resolved per-body origin provenance for backend span resolution.
+// Built at the lowering/backend boundary from body-local origin entries
+// and their corresponding HIR arenas. The backend never needs raw
+// hir::Design -- this table provides everything needed to construct
+// body-local origin resolvers.
+struct BodyOriginProvenance {
+  struct Entry {
+    std::span<const OriginEntry> origins;
+    const hir::Arena* arena = nullptr;
+  };
+  std::vector<Entry> bodies;  // indexed by ModuleBodyId::value
+};
+
+// Build provenance table from body-local origins and HIR design.
+// Each body entry pairs its origin vector with the corresponding
+// HIR body arena for direct span resolution.
+inline auto BuildBodyOriginProvenance(
+    const std::vector<std::vector<OriginEntry>>& body_origins,
+    const hir::Design& design) -> BodyOriginProvenance {
+  BodyOriginProvenance result;
+  result.bodies.reserve(body_origins.size());
+  for (size_t i = 0; i < body_origins.size(); ++i) {
+    const hir::Arena* arena =
+        (i < design.module_bodies.size())
+            ? &design.module_bodies[i].arena
+            : nullptr;
+    result.bodies.push_back({.origins = body_origins[i], .arena = arena});
+  }
+  return result;
+}
+
 // Body-local origin resolver. Resolves OriginIds from a single body's
-// origin entries. Satisfies the OriginLookup concept for DiagnosticContext.
-// Used during per-body codegen and post-session metadata assembly where
-// the active body is known statically.
+// origin entries against that body's HIR arena. Satisfies the OriginLookup
+// concept for DiagnosticContext.
 class BodyLocalOriginResolver {
  public:
   BodyLocalOriginResolver(
-      std::span<const OriginEntry> entries, const hir::Design* design,
-      const hir::Arena* global_arena)
-      : entries_(entries), design_(design), global_arena_(global_arena) {
+      std::span<const OriginEntry> entries, const hir::Arena& arena)
+      : entries_(entries), arena_(&arena) {
   }
 
   [[nodiscard]] auto ResolveToSpan(common::OriginId id) const
       -> std::optional<SourceSpan> {
     if (id.value >= entries_.size()) return std::nullopt;
     const auto& entry = entries_[id.value];
-    const hir::Arena& arena =
-        ResolveHirArena(*design_, *global_arena_, entry.body_id);
     return std::visit(
         common::Overloaded{
-            [&arena](hir::StatementId stmt_id) -> std::optional<SourceSpan> {
-              return arena[stmt_id].span;
+            [this](hir::StatementId stmt_id) -> std::optional<SourceSpan> {
+              return (*arena_)[stmt_id].span;
             },
-            [&arena](hir::ExpressionId expr_id) -> std::optional<SourceSpan> {
-              return arena[expr_id].span;
+            [this](hir::ExpressionId expr_id) -> std::optional<SourceSpan> {
+              return (*arena_)[expr_id].span;
             },
-            [&arena](hir::FunctionId func_id) -> std::optional<SourceSpan> {
-              return arena[func_id].span;
+            [this](hir::FunctionId func_id) -> std::optional<SourceSpan> {
+              return (*arena_)[func_id].span;
             },
-            [&arena](hir::ProcessId proc_id) -> std::optional<SourceSpan> {
-              return arena[proc_id].span;
+            [this](hir::ProcessId proc_id) -> std::optional<SourceSpan> {
+              return (*arena_)[proc_id].span;
             },
-            [&arena](hir::TaskId task_id) -> std::optional<SourceSpan> {
-              return arena[task_id].span;
+            [this](hir::TaskId task_id) -> std::optional<SourceSpan> {
+              return (*arena_)[task_id].span;
             },
-            [&arena](FunctionParamRef ref) -> std::optional<SourceSpan> {
-              return arena[ref.func].span;
+            [this](FunctionParamRef ref) -> std::optional<SourceSpan> {
+              return (*arena_)[ref.func].span;
             },
-            [&arena](TaskParamRef ref) -> std::optional<SourceSpan> {
-              return arena[ref.task].span;
+            [this](TaskParamRef ref) -> std::optional<SourceSpan> {
+              return (*arena_)[ref.task].span;
             },
         },
         entry.hir_source);
@@ -85,8 +112,7 @@ class BodyLocalOriginResolver {
 
  private:
   std::span<const OriginEntry> entries_;
-  const hir::Design* design_;
-  const hir::Arena* global_arena_;
+  const hir::Arena* arena_;
 };
 
 // Design-global origin resolver. Resolves OriginIds from the design-global

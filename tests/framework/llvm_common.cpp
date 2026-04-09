@@ -346,6 +346,9 @@ auto PrepareLlvmModule(
     feature_flags |= runtime::ToUint32(runtime::FeatureFlag::kDumpSlotMeta);
   }
 
+  auto origin_provenance = lowering::BuildBodyOriginProvenance(
+      mir_result->body_origins, hir_result.design);
+
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,
       .construction = &mir_result->construction,
@@ -353,9 +356,7 @@ auto PrepareLlvmModule(
       .type_arena = hir_result.type_arena.get(),
       .diag_ctx = diag_ctx.get(),
       .source_manager = hir_result.source_manager.get(),
-      .body_origins = &mir_result->body_origins,
-      .hir_design = &hir_result.design,
-      .hir_global_arena = hir_result.hir_arena.get(),
+      .origin_provenance = &origin_provenance,
       .hooks = g_hooks_holder->hooks.get(),
       .fs_base_dir = fs_base_dir,
       .plusargs = test_case.plusargs,
