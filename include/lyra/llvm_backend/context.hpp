@@ -34,10 +34,6 @@ namespace lyra {
 class SourceManager;
 }
 
-namespace lyra::lowering {
-class OriginMapLookup;
-}
-
 namespace lyra::mir {
 struct ScopedSlotRef;
 }  // namespace lyra::mir
@@ -187,7 +183,6 @@ class Context {
       std::unique_ptr<llvm::Module> module,
       const lowering::DiagnosticContext* diag_ctx,
       const SourceManager* source_manager = nullptr,
-      lowering::OriginMapLookup* origin_lookup = nullptr,
       bool force_two_state = false);
 
   [[nodiscard]] auto GetLlvmContext() -> llvm::LLVMContext& {
@@ -924,11 +919,6 @@ class Context {
     return source_manager_;
   }
 
-  // Access origin lookup for body-scoped OriginId resolution.
-  [[nodiscard]] auto GetOriginLookup() const -> lowering::OriginMapLookup* {
-    return origin_lookup_;
-  }
-
   // Register an owned string temp that needs release at end of statement
   void RegisterOwnedTemp(llvm::Value* handle);
 
@@ -1288,9 +1278,6 @@ class Context {
 
   // Source manager for resolving SourceSpan -> file/line/col
   const SourceManager* source_manager_ = nullptr;
-
-  // Origin lookup for body-scoped OriginId resolution (mutable for BodyScope)
-  lowering::OriginMapLookup* origin_lookup_ = nullptr;
 
   // Owned string temps that need release at end of current statement
   std::vector<llvm::Value*> owned_temps_;

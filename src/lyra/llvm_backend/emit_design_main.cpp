@@ -33,6 +33,7 @@
 #include "lyra/llvm_backend/runtime_abi_codegen.hpp"
 #include "lyra/llvm_backend/type_ops/default_init.hpp"
 #include "lyra/llvm_backend/type_ops/four_state_init.hpp"
+#include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/realization/build_design_metadata.hpp"

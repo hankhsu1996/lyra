@@ -46,8 +46,7 @@ Context::Context(
     std::unique_ptr<llvm::LLVMContext> llvm_ctx,
     std::unique_ptr<llvm::Module> module,
     const lowering::DiagnosticContext* diag_ctx,
-    const SourceManager* source_manager,
-    lowering::OriginMapLookup* origin_lookup, bool force_two_state)
+    const SourceManager* source_manager, bool force_two_state)
     : arena_(&arena),
       design_arena_(&arena),
       types_(types),
@@ -57,8 +56,7 @@ Context::Context(
       llvm_module_(std::move(module)),
       builder_(*llvm_context_),
       diag_ctx_(diag_ctx),
-      source_manager_(source_manager),
-      origin_lookup_(origin_lookup) {
+      source_manager_(source_manager) {
 }
 
 auto Context::GetElemOpsForType(TypeId elem_type) -> Result<ElemOpsInfo> {

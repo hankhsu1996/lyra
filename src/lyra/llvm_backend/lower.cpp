@@ -42,6 +42,7 @@
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/llvm_backend/runtime_abi_codegen.hpp"
 #include "lyra/llvm_backend/storage_construction_recipe_builder.hpp"
+#include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/basic_block.hpp"
 #include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
@@ -1483,8 +1484,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   auto context = std::make_unique<Context>(
       *input.mir_arena, *input.type_arena, *layout, std::move(llvm_ctx),
-      std::move(module), input.diag_ctx, input.source_manager,
-      input.origin_lookup, force_two_state);
+      std::move(module), input.diag_ctx, input.source_manager, force_two_state);
 
   // Phase 1: Build specialization inputs (units + layouts + codegen views)
   auto units = BuildSpecCompilationUnits(*input.design);

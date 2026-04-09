@@ -12,11 +12,13 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/hir/arena.hpp"
+#include "lyra/hir/design.hpp"
 #include "lyra/llvm_backend/inspection_plan.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
-#include "lyra/lowering/origin_map_lookup.hpp"
+#include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/connection_endpoint.hpp"
 #include "lyra/mir/construction_input.hpp"
@@ -97,7 +99,6 @@ struct LoweringInput {
   const TypeArena* type_arena = nullptr;
   const lowering::DiagnosticContext* diag_ctx = nullptr;
   const SourceManager* source_manager = nullptr;
-  lowering::OriginMapLookup* origin_lookup = nullptr;
   // Per-body origin entries for body-local diagnostic resolution.
   // Indexed by ModuleBodyId::value. Nullable (diagnostics degrade gracefully).
   const std::vector<std::vector<lowering::OriginEntry>>* body_origins = nullptr;

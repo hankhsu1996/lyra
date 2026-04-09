@@ -125,8 +125,8 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
 
   // Create diagnostic context for LLVM backend error reporting
   lowering::OriginMapLookup origin_lookup(
-      &compilation.mir.design_origins, &compilation.mir.body_origins,
-      &compilation.hir.design, compilation.hir.hir_arena.get());
+      &compilation.mir.design_origins, &compilation.hir.design,
+      compilation.hir.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
@@ -136,7 +136,6 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
       .type_arena = compilation.hir.type_arena.get(),
       .diag_ctx = &diag_ctx,
       .source_manager = compilation.hir.source_manager.get(),
-      .origin_lookup = &origin_lookup,
       .body_origins = &compilation.mir.body_origins,
       .hir_design = &compilation.hir.design,
       .hir_global_arena = compilation.hir.hir_arena.get(),

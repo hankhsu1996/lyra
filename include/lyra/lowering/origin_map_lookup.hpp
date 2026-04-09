@@ -3,7 +3,6 @@
 #include <format>
 #include <optional>
 #include <span>
-#include <vector>
 
 #include "lyra/common/internal_error.hpp"
 #include "lyra/common/origin_id.hpp"
@@ -13,7 +12,6 @@
 #include "lyra/hir/design.hpp"
 #include "lyra/hir/fwd.hpp"
 #include "lyra/lowering/origin_map.hpp"
-#include "lyra/mir/handle.hpp"
 
 namespace lyra::lowering {
 
@@ -91,59 +89,25 @@ class BodyLocalOriginResolver {
   const hir::Arena* global_arena_;
 };
 
-// Generic source-resolution adapter. Resolves OriginId to SourceSpan
-// through body-aware arena lookup. Used by DiagnosticContext for error
-// reporting.
+// Design-global origin resolver. Resolves OriginIds from the design-global
+// origin map (package init processes, generated functions). Satisfies the
+// OriginLookup concept for DiagnosticContext.
 //
-// Supports two resolution scopes:
-// - Design-global: resolves from design_origins (for package/init MIR)
-// - Body-local: resolves from per-body origin entries (for body MIR)
-//
-// Use BodyScope guard for per-body resolution scope.
+// Body-local origins are resolved separately via BodyLocalOriginResolver,
+// which is installed per-session through Context::DiagnosticScope.
 class OriginMapLookup {
  public:
   OriginMapLookup(
-      const OriginMap* design_origins,
-      const std::vector<std::vector<OriginEntry>>* body_origins,
-      const hir::Design* design, const hir::Arena* global_arena)
+      const OriginMap* design_origins, const hir::Design* design,
+      const hir::Arena* global_arena)
       : design_origins_(design_origins),
-        body_origins_(body_origins),
         design_(design),
         global_arena_(global_arena) {
   }
 
-  // Scoped body resolution guard: sets body scope on construction,
-  // restores previous scope on destruction.
-  class BodyScope {
-   public:
-    BodyScope(OriginMapLookup& lookup, mir::ModuleBodyId body_id)
-        : lookup_(lookup), saved_(lookup.current_body_id_) {
-      lookup_.current_body_id_ = body_id.value;
-    }
-    ~BodyScope() {
-      lookup_.current_body_id_ = saved_;
-    }
-    BodyScope(const BodyScope&) = delete;
-    auto operator=(const BodyScope&) -> BodyScope& = delete;
-
-   private:
-    OriginMapLookup& lookup_;
-    std::optional<uint32_t> saved_;
-  };
-
   [[nodiscard]] auto ResolveToSpan(common::OriginId id) const
       -> std::optional<SourceSpan> {
-    std::optional<OriginEntry> entry;
-    if (current_body_id_.has_value()) {
-      uint32_t body_idx = *current_body_id_;
-      if (body_origins_ != nullptr && body_idx < body_origins_->size() &&
-          id.value < (*body_origins_)[body_idx].size()) {
-        entry = (*body_origins_)[body_idx][id.value];
-      }
-    } else {
-      entry = design_origins_->Resolve(id);
-    }
-
+    auto entry = design_origins_->Resolve(id);
     if (!entry) {
       return std::nullopt;
     }
@@ -180,10 +144,8 @@ class OriginMapLookup {
 
  private:
   const OriginMap* design_origins_;
-  const std::vector<std::vector<OriginEntry>>* body_origins_;
   const hir::Design* design_;
   const hir::Arena* global_arena_;
-  std::optional<uint32_t> current_body_id_;
 };
 
 }  // namespace lyra::lowering
