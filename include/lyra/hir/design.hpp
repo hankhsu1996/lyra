@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/common/symbol_types.hpp"
+#include "lyra/hir/callable_signature.hpp"
 #include "lyra/hir/dpi.hpp"
 #include "lyra/hir/module.hpp"
 #include "lyra/hir/module_body.hpp"
@@ -31,6 +32,12 @@ struct Design {
   // Preclassified DPI export signatures for MIR-time signature construction.
   // Populated at AST-to-HIR time alongside lean DpiExportDecl records.
   DpiExportSignatureCache dpi_export_signatures;
+
+  // Persistent callable signature table. Populated during AST-to-HIR
+  // lowering for every callable symbol (functions, tasks, DPI imports).
+  // Queried by deferred assertion lowering and any other HIR consumer
+  // that needs callable metadata.
+  HirCallableSignatureTable callable_signatures;
 };
 
 }  // namespace lyra::hir

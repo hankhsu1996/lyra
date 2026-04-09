@@ -36,6 +36,7 @@
 #include "lyra/hir/dpi.hpp"
 #include "lyra/hir/expression.hpp"
 #include "lyra/hir/fwd.hpp"
+#include "lyra/lowering/ast_to_hir/callable_registration.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/generate.hpp"
@@ -267,12 +268,11 @@ void RegisterModuleDeclarations(
   }
 
   for (const auto* sub : members.functions) {
-    const auto& ret_type = sub->getReturnType();
-    // Let LowerType determine if the return type is supported
-    TypeId return_type = LowerType(ret_type, span, ctx);
-    if (return_type) {
-      registrar.Register(*sub, SymbolKind::kFunction, return_type);
-    }
+    RegisterCallableSymbol(*sub, SymbolKind::kFunction, *ctx, registrar, span);
+  }
+
+  for (const auto* sub : members.tasks) {
+    RegisterCallableSymbol(*sub, SymbolKind::kTask, *ctx, registrar, span);
   }
 }
 
@@ -956,6 +956,7 @@ auto LowerDesign(
               .elements = std::move(elements),
               .module_bodies = std::move(module_bodies),
               .dpi_export_signatures = std::move(export_sig_cache),
+              .callable_signatures = {},
           },
       .binding_plan = std::move(binding_plan),
       .specialization_map = std::move(spec_map),

@@ -51,7 +51,7 @@ ScopeLowerer::ScopeLowerer(
 
 ScopeLowerer::ScopeLowerer(
     Context& ctx, SymbolRegistrar& registrar, LoweringFrame frame)
-    : ctx_(ctx), registrar_(registrar), frame_(frame) {
+    : ctx_(&ctx), registrar_(&registrar), frame_(frame) {
 }
 
 auto ScopeLowerer::ScaleDelayTicks(uint64_t literal_ticks) const -> uint64_t {

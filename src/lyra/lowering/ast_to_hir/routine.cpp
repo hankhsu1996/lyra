@@ -21,6 +21,7 @@
 #include "lyra/hir/fwd.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/hir/statement.hpp"
+#include "lyra/lowering/ast_to_hir/callable_registration.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/source_utils.hpp"
@@ -281,7 +282,7 @@ auto TryLowerDpiImport(
   // DPI registry and call resolution are added; D1 Step 2 reuses kFunction
   // only to keep name binding alive until then.
   SymbolId symbol =
-      registrar.Register(sub, SymbolKind::kFunction, return_type_id);
+      RegisterCallableSymbol(sub, SymbolKind::kFunction, *ctx, registrar, span);
 
   std::vector<hir::DpiParam> params;
   params.reserve(pending_params.size());
@@ -376,7 +377,8 @@ auto LowerFunction(
 
   // Register symbol if not already pre-registered
   if (!symbol) {
-    symbol = registrar.Register(func, SymbolKind::kFunction, return_type);
+    symbol = RegisterCallableSymbol(
+        func, SymbolKind::kFunction, *ctx, registrar, span);
   }
 
   std::vector<hir::FunctionParam> parameters;
@@ -441,7 +443,8 @@ auto LowerTask(const slang::ast::SubroutineSymbol& task, ScopeLowerer& lowerer)
 
   SourceSpan span = ctx->SpanOf(GetSourceRange(task));
 
-  SymbolId symbol = registrar.Register(task, SymbolKind::kTask, kInvalidTypeId);
+  SymbolId symbol =
+      RegisterCallableSymbol(task, SymbolKind::kTask, *ctx, registrar, span);
 
   std::vector<hir::FunctionParam> parameters;
   std::optional<hir::StatementId> body_result;

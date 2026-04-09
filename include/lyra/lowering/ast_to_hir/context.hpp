@@ -15,6 +15,7 @@
 #include "lyra/common/symbol.hpp"
 #include "lyra/common/type_arena.hpp"
 #include "lyra/hir/arena.hpp"
+#include "lyra/hir/callable_signature.hpp"
 #include "lyra/lowering/ast_to_hir/options.hpp"
 #include "lyra/lowering/ast_to_hir/source_mapper.hpp"
 
@@ -132,6 +133,10 @@ struct Context {
   // Active constant domain: design-global during Phase 0, overridden to
   // body-local constant arena during Phase 1 body lowering.
   ConstantArena* active_constant_arena = nullptr;
+  // Compile-global callable signature table. Populated during Phase 0
+  // (symbol pre-registration) and Phase 1 (function/task lowering).
+  // Queried by deferred assertion lowering and other HIR consumers.
+  hir::HirCallableSignatureTable* callable_signatures = nullptr;
   SymbolTable* symbol_table = nullptr;
   ScopeTable* scope_table = nullptr;
   SourceMapper* source_mapper = nullptr;

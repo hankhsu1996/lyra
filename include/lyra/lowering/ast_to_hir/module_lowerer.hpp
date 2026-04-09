@@ -33,15 +33,15 @@ class ScopeLowerer {
 
   /// Access the compilation-wide context (arenas, diagnostics, etc.)
   [[nodiscard]] auto Ctx() -> Context& {
-    return ctx_;
+    return *ctx_;
   }
   [[nodiscard]] auto Ctx() const -> const Context& {
-    return ctx_;
+    return *ctx_;
   }
 
   /// Access the symbol registrar
   [[nodiscard]] auto Registrar() -> SymbolRegistrar& {
-    return registrar_;
+    return *registrar_;
   }
 
   /// Scale an integer delay literal from scope timeunit to global precision.
@@ -62,8 +62,8 @@ class ScopeLowerer {
   /// Private constructor with pre-computed frame
   ScopeLowerer(Context& ctx, SymbolRegistrar& registrar, LoweringFrame frame);
 
-  Context& ctx_;
-  SymbolRegistrar& registrar_;
+  Context* ctx_;
+  SymbolRegistrar* registrar_;
   LoweringFrame frame_;
 };
 

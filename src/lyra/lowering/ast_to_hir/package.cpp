@@ -15,6 +15,7 @@
 #include "lyra/hir/package.hpp"
 #include "lyra/hir/routine.hpp"
 #include "lyra/hir/statement.hpp"
+#include "lyra/lowering/ast_to_hir/callable_registration.hpp"
 #include "lyra/lowering/ast_to_hir/context.hpp"
 #include "lyra/lowering/ast_to_hir/expression.hpp"
 #include "lyra/lowering/ast_to_hir/module_lowerer.hpp"
@@ -74,14 +75,12 @@ auto LowerPackage(
                   span, "package task '{}' not yet supported", member.name);
               break;
             }
-            const auto& ret_type = sub.getReturnType();
             SourceSpan func_span = ctx->SpanOf(GetSourceRange(sub));
-
-            TypeId return_type = LowerType(ret_type, func_span, ctx);
-            if (!return_type) {
+            SymbolId func_sym = RegisterCallableSymbol(
+                sub, SymbolKind::kFunction, *ctx, registrar, func_span);
+            if (!func_sym) {
               break;
             }
-            registrar.Register(sub, SymbolKind::kFunction, return_type);
             function_refs.push_back(&sub);
             break;
           }

@@ -53,11 +53,19 @@ auto LowerAstToHir(
 
   SymbolRegistrar registrar(&ctx);
 
+  // Callable signature table accumulates during lowering, then moves into
+  // the returned Design as persistent semantic state.
+  hir::HirCallableSignatureTable callable_signatures;
+  ctx.callable_signatures = &callable_signatures;
+
   DesignLoweringResult design_result;
   {
     ScopeGuard scope_guard(registrar, ScopeKind::kRoot);
     design_result = LowerDesign(compilation, registrar, &ctx);
   }
+
+  design_result.design.callable_signatures = std::move(callable_signatures);
+  ctx.callable_signatures = nullptr;
 
   auto global_precision =
       static_cast<int8_t>(ComputeGlobalPrecision(compilation));
