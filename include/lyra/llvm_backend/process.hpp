@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -12,7 +13,6 @@
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/mir/routine.hpp"
-#include "lyra/mir/terminator.hpp"
 #include "lyra/runtime/wait_site.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -100,7 +100,8 @@ auto DefineMirFunction(
 // Single pipeline: declare, define, and compute payload sizes for all
 // deferred assertion thunks. Returns positional artifacts parallel to sites.
 auto CompileDeferredAssertionArtifacts(
-    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites)
+    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites,
+    std::span<const DeferredSiteCalleeInfo> callee_info)
     -> Result<std::vector<DeferredSiteCompiledArtifact>>;
 
 // Extract raw canonical process-trigger facts from a MIR process.

@@ -204,8 +204,10 @@ auto LowerAndNormalizeActionBranch(
   // Step 2: lower the child statement.
   auto result = LowerStatement(*slang_action, lowerer);
   if (!result.has_value()) {
-    // Branch is present but failed to lower -- invalid, not absent.
-    return {.kind = LoweredActionBranchKind::kInvalid};
+    // LowerStatement returns nullopt for Empty statements (no-op).
+    // slang emits Empty as ifTrue for bare `assert #0 (cond);` with
+    // no user action. Treat as absent, not as a lowering error.
+    return {.kind = LoweredActionBranchKind::kAbsent};
   }
   if (!*result) {
     return {.kind = LoweredActionBranchKind::kInvalid};

@@ -1031,6 +1031,36 @@ auto ExtractRealizationData(
   return realization;
 }
 
+// Capture deferred-action callee backend metadata from the current body
+// session's user_functions_ / module_function_lowering_ before the next
+// session overwrites them. Same per-session capture pattern as DPI exports.
+// Uses site.body_id (stamped during design lowering) for exact ownership
+// matching -- no heuristic FunctionId.value comparison.
+void CaptureDeferredCalleeInfo(
+    Context& context, mir::ModuleBodyId body_id,
+    const std::vector<mir::DeferredAssertionSiteInfo>& sites,
+    std::vector<DeferredSiteCalleeInfo>& out) {
+  auto capture_callee = [&](const mir::DeferredUserCallAction* action)
+      -> std::optional<DeferredCalleeBackendInfo> {
+    if (action == nullptr) return std::nullopt;
+    return DeferredCalleeBackendInfo{
+        .llvm_func = context.GetUserFunction(action->callee),
+        .is_module_scoped = context.IsModuleScopedFunction(action->callee),
+    };
+  };
+
+  for (uint32_t di = 0; di < sites.size(); ++di) {
+    const auto& site = sites[di];
+    if (site.body_id != body_id) continue;
+    if (auto info = capture_callee(GetDeferredPassUserCallAction(site))) {
+      out[di].pass_callee = *info;
+    }
+    if (auto info = capture_callee(GetDeferredFailUserCallAction(site))) {
+      out[di].fail_callee = *info;
+    }
+  }
+}
+
 auto CompileDesignProcesses(const LoweringInput& input)
     -> Result<CodegenSession> {
   if (input.body_timescales == nullptr) {
@@ -1580,6 +1610,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
       mir::ModuleExportCalleeKeyHash>
       module_export_callees;
 
+  // Capture deferred-action callee backend metadata during each body session
+  // (when user_functions_ and module_function_lowering_ are valid for the
+  // owning body). Consumed by post-session thunk compilation. Parallel to
+  // design.deferred_assertion_sites.
+  const auto& deferred_sites = input.design->deferred_assertion_sites;
+  std::vector<DeferredSiteCalleeInfo> deferred_site_callee_info(
+      deferred_sites.size());
+
   for (size_t si = 0; si < spec_inputs.size(); ++si) {
     auto& spec_input = spec_inputs[si];
     spec_input.spec_slot_info = &spec_slot_infos[si];
@@ -1615,6 +1653,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
       }
     }
 
+    // Capture deferred-action callee backend info before next session
+    // overwrites user_functions_ / module_function_lowering_.
+    CaptureDeferredCalleeInfo(
+        *context, product->body_id, deferred_sites, deferred_site_callee_info);
+
     body_to_process_triggers.try_emplace(
         product->body_id.value, std::move(product->process_triggers));
 
@@ -1647,10 +1690,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // ArenaScope in CompileModuleSpecSession restores design arena automatically.
 
   // Phase 5a: Compile deferred assertion thunks (single pipeline).
-  // Must happen after all user functions are declared (Phase 3+4), so callee
-  // lookups work. Declares, defines, and computes payload sizes in one pass.
+  // Callee backend info was captured per-session above. Thunk compilation
+  // consumes only the captured artifacts, not ambient context maps.
   auto deferred_artifacts = CompileDeferredAssertionArtifacts(
-      *context, input.design->deferred_assertion_sites);
+      *context, deferred_sites, deferred_site_callee_info);
   if (!deferred_artifacts) {
     return std::unexpected(deferred_artifacts.error());
   }

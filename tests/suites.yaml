@@ -13,6 +13,7 @@ suites:
   jit_dev:
     backend: jit
     include_regex:
+      - assertions/
       - control_flow/
       - datatypes/
       - directives/
@@ -36,6 +37,7 @@ suites:
   aot_dev:
     backend: aot
     include_regex:
+      - assertions/
       - control_flow/
       - datatypes/
       - directives/
@@ -97,6 +99,7 @@ suites:
   lli_dev:
     backend: lli
     include_regex:
+      - assertions/
       - control_flow/
       - datatypes/
       - directives/
@@ -125,6 +128,7 @@ suites:
     backend: jit
     two_state: true
     include_regex:
+      - assertions/
       - control_flow/
       - datatypes/
       - directives/

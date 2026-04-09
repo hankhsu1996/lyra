@@ -6,6 +6,7 @@
 #include <expected>
 #include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -1383,7 +1384,7 @@ auto EmitLateBoundData(
         const auto& ref = lb.dep_slots[d];
         // Check if this dep was a placeholder for an external ref.
         auto dep_ext_it = resolved_ext_deps.find(d);
-        mir::SignalRef dep_sig;
+        mir::SignalRef dep_sig{};
         if (dep_ext_it != resolved_ext_deps.end()) {
           dep_sig = dep_ext_it->second;
         } else {
@@ -2880,7 +2881,8 @@ auto EmitMonitorSetupEpilogue(
 // First cut: user subroutine calls with all by-value actuals only.
 auto DefineDeferredAssertionThunk(
     Context& context, llvm::Function* llvm_func,
-    const mir::DeferredUserCallAction& action) -> Result<void> {
+    const mir::DeferredUserCallAction& action,
+    const DeferredCalleeBackendInfo& callee_backend) -> Result<void> {
   auto plan = DeriveDeferredCallPlan(action);
 
   auto& llvm_ctx = context.GetLlvmContext();
@@ -2927,18 +2929,12 @@ auto DefineDeferredAssertionThunk(
     payload_values.push_back(field_val);
   }
 
-  // Resolve target callee.
-  llvm::Function* target_fn = context.GetUserFunction(plan.callee);
-  if (target_fn == nullptr) {
-    throw common::InternalError(
-        "DefineDeferredAssertionThunk",
-        std::format("target function {} not found", plan.callee.value));
-  }
-
-  // Callee metadata comes from the action (captured at site-creation time
-  // when the body arena was active), not from context.GetMirArena() which
-  // points to the design arena at thunk compilation time.
-  bool target_is_module_scoped = context.IsModuleScopedFunction(plan.callee);
+  // Callee backend metadata was captured during body session (when
+  // user_functions_ and module_function_lowering_ were valid for the owning
+  // body). At thunk compilation time the ambient context maps may hold
+  // stale/wrong entries from a different body session.
+  llvm::Function* target_fn = callee_backend.llvm_func;
+  bool target_is_module_scoped = callee_backend.is_module_scoped;
 
   std::vector<llvm::Value*> call_args;
   call_args.push_back(design_arg);
@@ -3029,7 +3025,8 @@ auto DefineDeferredAssertionThunk(
 }
 
 auto CompileDeferredAssertionArtifacts(
-    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites)
+    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites,
+    std::span<const DeferredSiteCalleeInfo> callee_info)
     -> Result<std::vector<DeferredSiteCompiledArtifact>> {
   std::vector<DeferredSiteCompiledArtifact> artifacts(sites.size());
 
@@ -3049,13 +3046,15 @@ auto CompileDeferredAssertionArtifacts(
 
   // Single pipeline per site: declare, define, compute payload size.
   auto compile_thunk = [&](uint32_t si, const char* suffix,
-                           const mir::DeferredUserCallAction& action)
+                           const mir::DeferredUserCallAction& action,
+                           const DeferredCalleeBackendInfo& callee_backend)
       -> Result<std::pair<llvm::Function*, uint32_t>> {
     auto name = std::format("__lyra_deferred_thunk_s{}_{}", si, suffix);
     auto* fn = llvm::Function::Create(
         fn_type, llvm::Function::InternalLinkage, name, &module);
 
-    auto result = DefineDeferredAssertionThunk(context, fn, action);
+    auto result =
+        DefineDeferredAssertionThunk(context, fn, action, callee_backend);
     if (!result) return std::unexpected(result.error());
 
     auto plan = DeriveDeferredCallPlan(action);
@@ -3070,15 +3069,33 @@ auto CompileDeferredAssertionArtifacts(
   for (uint32_t si = 0; si < sites.size(); ++si) {
     const auto& site = sites[si];
 
+    const auto& site_callee = callee_info[si];
+
     if (const auto* pass_action = GetDeferredPassUserCallAction(site)) {
-      auto result = compile_thunk(si, "pass", *pass_action);
+      if (!site_callee.pass_callee.has_value()) {
+        throw common::InternalError(
+            "CompileDeferredAssertionArtifacts",
+            std::format(
+                "site {} has pass user-call action but no captured callee",
+                si));
+      }
+      auto result =
+          compile_thunk(si, "pass", *pass_action, *site_callee.pass_callee);
       if (!result) return std::unexpected(result.error());
       artifacts[si].pass_thunk = result->first;
       artifacts[si].pass_payload_size = result->second;
     }
 
     if (const auto* fail_action = GetDeferredFailUserCallAction(site)) {
-      auto result = compile_thunk(si, "fail", *fail_action);
+      if (!site_callee.fail_callee.has_value()) {
+        throw common::InternalError(
+            "CompileDeferredAssertionArtifacts",
+            std::format(
+                "site {} has fail user-call action but no captured callee",
+                si));
+      }
+      auto result =
+          compile_thunk(si, "fail", *fail_action, *site_callee.fail_callee);
       if (!result) return std::unexpected(result.error());
       artifacts[si].fail_thunk = result->first;
       artifacts[si].fail_payload_size = result->second;

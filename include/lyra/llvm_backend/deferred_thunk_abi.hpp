@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -52,7 +53,7 @@ enum class DeferredBindingKind : uint8_t {
 };
 
 struct DeferredDerivedActual {
-  DeferredBindingKind kind;
+  DeferredBindingKind kind = DeferredBindingKind::kPayloadField;
   uint32_t payload_index = 0;
   uint32_t ref_index = 0;
   mir::PlaceId ref_place{};
@@ -71,6 +72,24 @@ struct DeferredDerivedCallPlan {
 // binding order.
 auto DeriveDeferredCallPlan(const mir::DeferredUserCallAction& action)
     -> DeferredDerivedCallPlan;
+
+// Backend-resolved callee metadata for a single deferred user-call action.
+// Captured during body session (when user_functions_ and
+// module_function_lowering_ are valid for the owning body), consumed by
+// post-session thunk compilation. Eliminates post-session ambient lookup
+// of body-local FunctionIds.
+struct DeferredCalleeBackendInfo {
+  llvm::Function* llvm_func = nullptr;
+  bool is_module_scoped = false;
+};
+
+// Per-site captured callee backend info, parallel to
+// design.deferred_assertion_sites. Populated during body sessions,
+// consumed by CompileDeferredAssertionArtifacts.
+struct DeferredSiteCalleeInfo {
+  std::optional<DeferredCalleeBackendInfo> pass_callee;
+  std::optional<DeferredCalleeBackendInfo> fail_callee;
+};
 
 // Per-site compiled artifact for deferred assertion thunks.
 // Positional: element [i] corresponds to deferred_assertion_sites[i].

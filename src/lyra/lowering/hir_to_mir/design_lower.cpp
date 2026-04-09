@@ -298,9 +298,19 @@ auto LowerDesign(
   std::vector<Result<MirBodyLoweringResult>> body_results;
   body_results.reserve(spec_map.groups.size());
 
+  // Track deferred assertion site ranges per body. Each body's lowering
+  // allocates a contiguous range of site IDs from the shared registry.
+  // Used in Phase 2 to stamp body ownership on sites.
+  std::vector<std::pair<uint32_t, uint32_t>> deferred_site_ranges;
+
   auto spec_groups =
       BuildMirSpecGroups(spec_map, static_cast<uint32_t>(hir_modules.size()));
-  for (const auto& group : spec_groups) {
+  // Phase 1 loop index g becomes the MIR ModuleBodyId for this body
+  // (Phase 2 assembles module_bodies by sequential push_back in the
+  // same group order). All per-body maps built here are keyed by g
+  // (i.e. the future mir::ModuleBodyId.value), not by hir::ModuleBodyId.
+  for (size_t g = 0; g < spec_groups.size(); ++g) {
+    const auto& group = spec_groups[g];
     uint32_t rep_idx = group.representative_module_index;
     if (rep_idx >= hir_modules.size()) {
       throw common::InternalError(
@@ -321,8 +331,9 @@ auto LowerDesign(
         rep_mod, *input.symbol_table, *input.type_arena, body_arena);
 
     // Capture body-local slot mappings for InstanceSlotResolver.
+    // Keyed by MIR body group index (== future mir::ModuleBodyId.value).
     {
-      auto& entries = body_local_slots_by_body[rep_mod.body_id.value];
+      auto& entries = body_local_slots_by_body[static_cast<uint32_t>(g)];
       for (const auto& [sym, place_id] : body_decls.places) {
         const auto& place = body_arena[place_id];
         if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
@@ -335,10 +346,13 @@ auto LowerDesign(
       }
     }
 
+    uint32_t site_base = deferred_assertion_site_registry.Size();
     body_results.push_back(LowerModule(
         hir_body, body_input, std::move(body_arena), mir_arena, decls,
         body_decls, rep_mod.body_id, &cover_site_registry,
         &deferred_assertion_site_registry, &cross_instance_places));
+    deferred_site_ranges.emplace_back(
+        site_base, deferred_assertion_site_registry.Size());
   }
 
   // Phase 2: Assemble body results in stable group order.
@@ -384,6 +398,21 @@ auto LowerDesign(
   result.immediate_cover_sites = cover_site_registry.TakeSites();
   result.deferred_assertion_sites =
       deferred_assertion_site_registry.TakeSites();
+
+  // Stamp body ownership on deferred assertion sites using the ranges
+  // tracked during Phase 1 and the body IDs assigned above in Phase 2.
+  // Ordering invariant: deferred_site_ranges[g] corresponds to
+  // body_results[g] which becomes result.module_bodies[g], so
+  // mir::ModuleBodyId{g} is the correct owner. This depends on the
+  // Phase 1 and Phase 2 loops iterating spec_groups in the same order
+  // and assembling module_bodies by sequential push_back.
+  for (size_t g = 0; g < deferred_site_ranges.size(); ++g) {
+    auto [base, end] = deferred_site_ranges[g];
+    mir::ModuleBodyId body_id{static_cast<uint32_t>(g)};
+    for (uint32_t i = base; i < end; ++i) {
+      result.deferred_assertion_sites[i].body_id = body_id;
+    }
+  }
 
   // Build DPI export wrapper descriptors now that body-local function maps
   // are available. Module-scoped exports need these maps to resolve their
@@ -509,8 +538,9 @@ auto LowerDesign(
   for (const auto& group : spec_groups) {
     uint32_t rep_idx = group.representative_module_index;
     const hir::Module& rep_mod = *hir_modules[rep_idx];
+    auto mir_body_id = spec_to_body.at(group.spec_id);
     const auto& body_slots_for_header =
-        body_local_slots_by_body.at(rep_mod.body_id.value);
+        body_local_slots_by_body.at(mir_body_id.value);
 
     // Build sym -> (LocalSlotId, TypeId) lookup from body-local slots.
     std::unordered_map<SymbolId, common::LocalSlotId, SymbolIdHash> sym_to_slot;
