@@ -1415,21 +1415,32 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
   }
 
+  // Compute design-global slot count from package slots + instance slots.
+  // No flat expanded_slots table needed: module_plans carry per-instance
+  // slot counts, and package slots are design.slots.
+  uint32_t num_package_slots_for_layout = 0;
+  uint32_t total_design_slot_count = 0;
+  if (!module_plans.empty()) {
+    num_package_slots_for_layout = module_plans[0].design_state_base_slot;
+    total_design_slot_count = num_package_slots_for_layout;
+    for (const auto& plan : module_plans) {
+      total_design_slot_count += plan.slot_count;
+    }
+  } else {
+    num_package_slots_for_layout =
+        static_cast<uint32_t>(input.design->slots.size());
+    total_design_slot_count = num_package_slots_for_layout;
+  }
+
   // Connection analysis: classify slot usage and relay candidates.
   // Connection edges use original slot IDs; no canonical-owner aliasing.
   auto connection_analysis = AnalyzeConnections(
       std::move(connection_kernel_entries), module_plans, *input.design,
-      *input.mir_arena, static_cast<uint32_t>(expanded_slots.size()));
+      *input.mir_arena, total_design_slot_count);
 
   // Build instance slot ranges for body-local appendix layout.
-  uint32_t num_package_slots_for_layout = 0;
   std::vector<InstanceSlotRange> instance_ranges;
   instance_ranges.reserve(module_plans.size());
-  if (!module_plans.empty()) {
-    num_package_slots_for_layout = module_plans[0].design_state_base_slot;
-  } else {
-    num_package_slots_for_layout = static_cast<uint32_t>(expanded_slots.size());
-  }
   for (const auto& plan : module_plans) {
     instance_ranges.push_back(
         InstanceSlotRange{
@@ -2512,8 +2523,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
         const ObservableDescriptorShapeFields sf =
             BuildObservableDescriptorShapeFields(shape);
 
-        auto local_name = read_trace_pool(
-            realization.slot_trace_provenance[gsi].local_name_str_off);
+        // Body-local slots have no design-level trace provenance name
+        // (local_name_str_off is 0 in the expanded adapter). Read the
+        // empty name directly -- no design-global provenance lookup.
+        auto local_name = read_trace_pool(0);
         uint32_t name_off = append_to_pool(tmpl, local_name);
 
         // Every body-local slot has body-relative storage (R2 invariant).
@@ -2574,6 +2587,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
           layout->design.GetStorageBaseForRange(base_slot, info.slot_count);
       if (!init_owned_base.has_value()) continue;
 
+      const auto& init_body =
+          input.design->module_bodies.at(info.body_id.value);
       std::vector<ParamSlotTemplateEntry> param_entries;
 
       for (uint32_t i = 0; i < info.slot_count; ++i) {
@@ -2583,7 +2598,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
             layout->design.slot_byte_offsets[gsi] - init_owned_base->value;
         const auto& spec = layout->design.slot_storage_specs[gsi];
 
-        if (realization.slot_kinds[gsi] == mir::SlotKind::kParamConst) {
+        if (init_body.slots[i].kind == mir::SlotKind::kParamConst) {
           param_entries.push_back(
               ParamSlotTemplateEntry{
                   .body_local_slot = i,
