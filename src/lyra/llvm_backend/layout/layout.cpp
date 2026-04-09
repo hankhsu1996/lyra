@@ -1732,7 +1732,7 @@ auto BuildLayout(
   layout.num_module_process_base = layout.scheduled_processes.size();
   for (uint32_t mi = 0; mi < module_plans.size(); ++mi) {
     const auto& plan = module_plans[mi];
-    const auto& body_arena = design.module_bodies.at(plan.body_id.value).arena;
+    const auto& body_arena = plan.body->arena;
     for (mir::ProcessId proc_id : plan.body_processes) {
       const auto& process = body_arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
@@ -1745,9 +1745,7 @@ auto BuildLayout(
   // init/connection processes use design_arena, body processes use body arena.
   auto resolve_arena = [&](const ScheduledProcess& sp) -> const mir::Arena& {
     if (sp.module_index.value < module_plans.size()) {
-      return design.module_bodies
-          .at(module_plans[sp.module_index.value].body_id.value)
-          .arena;
+      return module_plans[sp.module_index.value].body->arena;
     }
     return design_arena;
   };
@@ -1756,12 +1754,13 @@ auto BuildLayout(
 
   // Build canonical non-final ordinal maps per body. These are the single
   // source of truth for mapping ProcessId <-> dense non-final ordinal.
-  absl::flat_hash_map<mir::ModuleBodyId, BodyProcessOrdinalMap>
+  // Keyed by body pointer: instances of the same body share a map entry.
+  absl::flat_hash_map<const mir::ModuleBody*, BodyProcessOrdinalMap>
       body_ordinal_maps;
   for (const auto& plan : module_plans) {
-    if (body_ordinal_maps.contains(plan.body_id)) continue;
-    const auto& body = design.module_bodies.at(plan.body_id.value);
-    body_ordinal_maps.emplace(plan.body_id, BuildBodyProcessOrdinalMap(body));
+    if (body_ordinal_maps.contains(plan.body)) continue;
+    body_ordinal_maps.emplace(
+        plan.body, BuildBodyProcessOrdinalMap(*plan.body));
   }
 
   // Counters for semantic naming per category.
@@ -1786,14 +1785,16 @@ auto BuildLayout(
       ++conn_counter;
     } else {
       uint32_t mi = sp.module_index.value;
-      auto body_id = module_plans[mi].body_id;
-      const auto& ordinal_map = body_ordinal_maps.at(body_id);
+      const auto* body_ptr = module_plans[mi].body;
+      auto body_idx =
+          static_cast<uint32_t>(body_ptr - design.module_bodies.data());
+      const auto& ordinal_map = body_ordinal_maps.at(body_ptr);
       uint32_t nonfinal_proc_ordinal =
           GetNonFinalOrdinal(ordinal_map, sp.process_id);
       frame_name =
-          std::format("Body{}Frame{}", body_id.value, nonfinal_proc_ordinal);
+          std::format("Body{}Frame{}", body_idx, nonfinal_proc_ordinal);
       state_name =
-          std::format("Body{}State{}", body_id.value, nonfinal_proc_ordinal);
+          std::format("Body{}State{}", body_idx, nonfinal_proc_ordinal);
     }
 
     ProcessLayout proc_layout;
@@ -1922,14 +1923,15 @@ auto BuildLayout(
       } else {
         // Module process: deduplicate by (body_id, nonfinal_proc_ordinal).
         uint32_t mi = sp.module_index.value;
-        auto body_id = module_plans[mi].body_id;
-        const auto& ordinal_map = body_ordinal_maps.at(body_id);
+        const auto* body_ptr = module_plans[mi].body;
+        auto body_idx =
+            static_cast<uint32_t>(body_ptr - design.module_bodies.data());
+        const auto& ordinal_map = body_ordinal_maps.at(body_ptr);
         uint32_t nonfinal_proc_ordinal =
             GetNonFinalOrdinal(ordinal_map, sp.process_id);
 
         SchemaKey key{
-            .body_id = body_id.value,
-            .proc_within_body = nonfinal_proc_ordinal};
+            .body_id = body_idx, .proc_within_body = nonfinal_proc_ordinal};
         auto it = module_schema_map.find(key);
         if (it != module_schema_map.end()) {
           // Existing schema: assert all constructor-relevant properties
@@ -1956,11 +1958,11 @@ auto BuildLayout(
           const auto& rep_sp =
               layout.scheduled_processes[existing.representative_process_index];
           uint32_t rep_mi = rep_sp.module_index.value;
-          auto rep_body_id = module_plans[rep_mi].body_id;
-          const auto& rep_ordinal_map = body_ordinal_maps.at(rep_body_id);
+          const auto* rep_body_ptr = module_plans[rep_mi].body;
+          const auto& rep_ordinal_map = body_ordinal_maps.at(rep_body_ptr);
           uint32_t rep_nonfinal_proc_ordinal =
               GetNonFinalOrdinal(rep_ordinal_map, rep_sp.process_id);
-          if (rep_body_id != body_id ||
+          if (rep_body_ptr != body_ptr ||
               rep_nonfinal_proc_ordinal != nonfinal_proc_ordinal) {
             throw common::InternalError(
                 "BuildLayout",
@@ -1991,7 +1993,8 @@ auto BuildLayout(
       // including those with zero non-final processes).
       std::unordered_map<uint32_t, size_t> body_id_to_info_index;
       for (const auto& plan : module_plans) {
-        auto body_id_val = plan.body_id.value;
+        auto body_id_val =
+            static_cast<uint32_t>(plan.body - design.module_bodies.data());
         auto [it, inserted] = body_id_to_info_index.try_emplace(
             body_id_val, layout.body_realization_infos.size());
         if (inserted) {
@@ -1999,7 +2002,7 @@ auto BuildLayout(
           BodyLayout body_layout;
           std::vector<SlotStorageSpec> body_slot_specs;
           if (plan.slot_count > 0) {
-            const auto& body = design.module_bodies.at(body_id_val);
+            const auto& body = *plan.body;
             auto bsl_it = body_storage_layouts.find(body_id_val);
             if (bsl_it == body_storage_layouts.end()) {
               throw common::InternalError(
@@ -2028,7 +2031,7 @@ auto BuildLayout(
           }
           layout.body_realization_infos.push_back(
               Layout::BodyRealizationInfo{
-                  .body_id = plan.body_id,
+                  .body_id = mir::ModuleBodyId{body_id_val},
                   .slot_count = plan.slot_count,
                   .body_layout = std::move(body_layout),
                   .slot_specs = std::move(body_slot_specs),
@@ -2068,7 +2071,8 @@ auto BuildLayout(
       // Invariant: every ordinal in [0, nonfinal_count) is present
       // exactly once and matches the canonical BodyProcessOrdinalMap.
       for (auto& info : layout.body_realization_infos) {
-        const auto& ordinal_map = body_ordinal_maps.at(info.body_id);
+        const auto* info_body_ptr = &design.module_bodies[info.body_id.value];
+        const auto& ordinal_map = body_ordinal_maps.at(info_body_ptr);
         auto nonfinal_count =
             static_cast<uint32_t>(ordinal_map.nonfinal_processes.size());
 
@@ -2141,7 +2145,8 @@ auto BuildLayout(
     for (size_t mi = 0; mi < num_instances; ++mi) {
       const auto& plan = module_plans[mi];
       layout.instance_slot_counts[mi] = plan.slot_count;
-      layout.instance_body_ids[mi] = plan.body_id;
+      layout.instance_body_ids[mi] = mir::ModuleBodyId{
+          static_cast<uint32_t>(plan.body - design.module_bodies.data())};
 
       InstanceStorageBase base;
       if (plan.slot_count > 0) {

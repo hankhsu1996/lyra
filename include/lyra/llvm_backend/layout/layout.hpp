@@ -714,7 +714,6 @@ auto IsScalarPatchable(
 struct InstanceSlotRange {
   uint32_t base_slot = 0;
   uint32_t slot_count = 0;
-  mir::ModuleBodyId body_id;
   std::span<const mir::SlotDesc> body_slots;
 };
 
@@ -783,10 +782,11 @@ auto BuildBodyLayout(
 
 // Per-module-instance layout-planning entry.
 // Borrowed view into MIR data; valid only for the synchronous BuildLayout call.
-// Do not store beyond the call scope.
+// Do not store beyond the call scope. body is a direct pointer into
+// mir::Design::module_bodies; stable as long as the vector is not resized.
 struct LayoutModulePlan {
   std::span<const mir::ProcessId> body_processes;
-  mir::ModuleBodyId body_id;
+  const mir::ModuleBody* body = nullptr;
   uint32_t design_state_base_slot = 0;
   uint32_t slot_count = 0;
 };

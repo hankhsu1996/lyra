@@ -440,11 +440,12 @@ auto BuildBodyBehavioralDirtyTriggerBitmaps(
   BodyBehavioralTriggerBitmaps result;
 
   for (const auto& plan : module_plans) {
-    auto body_id_val = plan.body_id.value;
+    auto body_id_val =
+        static_cast<uint32_t>(plan.body - design.module_bodies.data());
     if (result.by_body_id_value.contains(body_id_val)) continue;
 
     std::vector<bool> bitmap(plan.slot_count, false);
-    const auto& body = design.module_bodies.at(body_id_val);
+    const auto& body = *plan.body;
 
     for (const auto& proc_id : plan.body_processes) {
       const auto& process = body.arena[proc_id];
@@ -578,7 +579,7 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
   // ref triggers are normalized to topology-resolved design-global slots
   // using ResolvedExternalRefBinding.
   for (const auto& plan : module_plans) {
-    const auto& body = design.module_bodies.at(plan.body_id.value);
+    const auto& body = *plan.body;
     for (const auto& proc_id : plan.body_processes) {
       const auto& process = body.arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
@@ -624,7 +625,9 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
   // materialized body-local slot owns its own storage (no forwarding or
   // aliasing) and DesignLayout assigns SlotId{i} to row i.
   for (const auto& plan : module_plans) {
-    auto it = body_bitmaps.by_body_id_value.find(plan.body_id.value);
+    auto plan_body_id_val =
+        static_cast<uint32_t>(plan.body - design.module_bodies.data());
+    auto it = body_bitmaps.by_body_id_value.find(plan_body_id_val);
     if (it == body_bitmaps.by_body_id_value.end()) continue;
     const auto& body_bitmap = it->second;
     for (uint32_t local_slot = 0; local_slot < body_bitmap.size();
@@ -637,7 +640,7 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
             std::format(
                 "body {} local_slot {} maps to design_slot_row {} "
                 "out of range ({} slots)",
-                plan.body_id.value, local_slot, design_slot_row,
+                plan_body_id_val, local_slot, design_slot_row,
                 design_layout.slots.size()));
       }
       auto canonical_slot = design_layout.slots[design_slot_row];
@@ -1076,7 +1079,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       module_plans.push_back(
           LayoutModulePlan{
               .body_processes = body.processes,
-              .body_id = mod->body_id,
+              .body = &body,
               .design_state_base_slot = obj.design_state_base_slot,
               .slot_count = obj.slot_count,
           });
@@ -1375,13 +1378,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
   std::vector<InstanceSlotRange> instance_ranges;
   instance_ranges.reserve(module_plans.size());
   for (const auto& plan : module_plans) {
-    const auto& plan_body = input.design->module_bodies.at(plan.body_id.value);
     instance_ranges.push_back(
         InstanceSlotRange{
             .base_slot = plan.design_state_base_slot,
             .slot_count = plan.slot_count,
-            .body_id = plan.body_id,
-            .body_slots = plan_body.slots,
+            .body_slots = plan.body->slots,
         });
   }
 
@@ -1690,9 +1691,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
     // Module body processes use body arena (resolved via module_index).
     const mir::Arena& proc_arena =
         (bp.module_index.value < module_plans.size())
-            ? input.design->module_bodies
-                  .at(module_plans[bp.module_index.value].body_id.value)
-                  .arena
+            ? module_plans[bp.module_index.value].body->arena
             : *input.mir_arena;
     const auto& mir_process = proc_arena[bp.process_id];
 
@@ -2232,8 +2231,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
     // Used for observation resolution and canonical sort ordering.
     std::unordered_map<uint32_t, uint32_t> body_base_slots;
     for (const auto& plan : module_plans) {
-      body_base_slots.try_emplace(
-          plan.body_id.value, plan.design_state_base_slot);
+      auto body_id_val =
+          static_cast<uint32_t>(plan.body - input.design->module_bodies.data());
+      body_base_slots.try_emplace(body_id_val, plan.design_state_base_slot);
     }
 
     for (auto& info : layout->body_realization_infos) {
