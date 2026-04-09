@@ -106,18 +106,17 @@ void HandleSuspendRecord(
           handle, lyra::runtime::ResumePoint{.block_index = 0});
       break;
 
-    case lyra::runtime::SuspendTag::kWaitEvent:
-      eng.AddEventWaiter(
-          lyra::runtime::EventObjectKey{
-              .instance_id = handle.instance_id.value,
-              .local_event_id = suspend->event_id,
-          },
+    case lyra::runtime::SuspendTag::kWaitEvent: {
+      auto& inst = eng.GetInstanceMut(handle.instance_id);
+      lyra::runtime::Engine::AddInstanceEventWaiter(
+          inst, suspend->event_id,
           lyra::runtime::EventWaiter{
               .process_id = handle.process_id,
               .instance_id = handle.instance_id.value,
               .resume_block = suspend->resume_block,
           });
       break;
+    }
   }
 }
 
@@ -291,9 +290,8 @@ extern "C" void LyraSuspendWaitEvent(
 extern "C" void LyraTriggerEvent(
     void* engine_ptr, uint32_t instance_id, uint32_t local_event_id) {
   auto* engine = static_cast<lyra::runtime::Engine*>(engine_ptr);
-  engine->TriggerEvent(
-      lyra::runtime::EventObjectKey{
-          .instance_id = instance_id, .local_event_id = local_event_id});
+  auto& inst = engine->GetInstanceMut(lyra::runtime::InstanceId{instance_id});
+  engine->TriggerInstanceEvent(inst, local_event_id);
 }
 
 extern "C" void LyraRunProcessSync(LyraProcessFunc process, void* state) {
@@ -409,7 +407,7 @@ void DescriptorProcessDispatch(
 
 void SetupAndRunSimulation(
     lyra::runtime::Engine& engine, std::span<void*> states,
-    uint32_t num_processes) {
+    uint32_t num_processes, uint32_t num_connection) {
   // Store engine pointer in each process state header
   for (auto* state : states) {
     auto* header = static_cast<StateHeader*>(state);
@@ -437,9 +435,24 @@ void SetupAndRunSimulation(
   }
 
   for (uint32_t i = 0; i < num_processes; ++i) {
+    auto* header = static_cast<StateHeader*>(states[i]);
+
+    lyra::runtime::InstanceId instance_id{0};
+    if (i >= num_connection) {
+      if (header->instance == nullptr) {
+        throw lyra::common::InternalError(
+            "SetupAndRunSimulation",
+            std::format(
+                "module process {} has null owning instance in "
+                "ProcessFrameHeader",
+                i));
+      }
+      instance_id = header->instance->instance_id;
+    }
+
     engine.ScheduleInitial(
         lyra::runtime::ProcessHandle{
-            .process_id = i, .instance_id = lyra::runtime::InstanceId{0}});
+            .process_id = i, .instance_id = instance_id});
   }
 
   // Propagate initial values through connections and comb kernels before Run().
@@ -623,9 +636,9 @@ extern "C" void LyraRunSimulation(
       engine.InitImmediateCoverSites(abi->num_immediate_cover_sites);
     }
 
-    // L8a: Named event registry.
-    // EventRegistry uses lazy (instance_id, local_event_id) keying;
-    // no pre-sizing needed. num_events ABI field reserved for future use.
+    // L8a: Per-instance event state is initialized in
+    // InitModuleInstancesFromBundles via BodyRealizationDesc::event_count.
+    // num_events ABI field is a reserved global max for diagnostics.
 
     // A2: Deferred assertion site metadata table.
     if (abi->num_deferred_assertion_sites > 0) {
@@ -700,7 +713,7 @@ extern "C" void LyraRunSimulation(
   };
   lyra::runtime::ScopedDpiExportCallContext export_scope(export_ctx);
 
-  SetupAndRunSimulation(engine, states, num_processes);
+  SetupAndRunSimulation(engine, states, num_processes, num_connection);
 
   lyra::runtime::RemoveSignalDumpHandler();
 

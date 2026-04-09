@@ -938,19 +938,18 @@ void Engine::ReconcilePostActivation(ProcessHandle handle) {
       ScheduleNextDelta(handle, ResumePoint{.block_index = 0});
       break;
 
-    case SuspendTag::kWaitEvent:
+    case SuspendTag::kWaitEvent: {
       ResetInstalledWait(handle);
-      AddEventWaiter(
-          EventObjectKey{
-              .instance_id = handle.instance_id.value,
-              .local_event_id = suspend->event_id,
-          },
+      auto& inst = GetInstanceMut(handle.instance_id);
+      AddInstanceEventWaiter(
+          inst, suspend->event_id,
           EventWaiter{
               .process_id = handle.process_id,
               .instance_id = handle.instance_id.value,
               .resume_block = suspend->resume_block,
           });
       break;
+    }
   }
 }
 

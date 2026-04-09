@@ -518,6 +518,8 @@ struct Layout {
     // Must be explicitly initialized from the body timescale table.
     int8_t time_unit_power;
     int8_t time_precision_power;
+    // L8a: Body-local named event count. Set from MIR body events.
+    uint32_t event_count = 0;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
 

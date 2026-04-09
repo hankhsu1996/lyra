@@ -156,8 +156,8 @@ struct LyraRuntimeAbi {
   uint32_t pad_deferred;
 
   // L8a: Maximum body-local named event count across all module bodies.
-  // Reserved/debug field; the runtime event registry uses lazy
-  // EventObjectKey keying and does not need pre-sizing from this value.
+  // Reserved/debug field. Per-body event counts flow through
+  // BodyRealizationDesc; this global max is for diagnostics only.
   uint32_t num_events;
   uint32_t pad_events;
 };
