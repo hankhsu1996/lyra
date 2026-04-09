@@ -349,8 +349,8 @@ auto LowerDesign(
     uint32_t site_base = deferred_assertion_site_registry.Size();
     body_results.push_back(LowerModule(
         hir_body, body_input, std::move(body_arena), mir_arena, decls,
-        body_decls, rep_mod.body_id, &cover_site_registry,
-        &deferred_assertion_site_registry, &cross_instance_places));
+        body_decls, &cover_site_registry, &deferred_assertion_site_registry,
+        &cross_instance_places));
     deferred_site_ranges.emplace_back(
         site_base, deferred_assertion_site_registry.Size());
   }
