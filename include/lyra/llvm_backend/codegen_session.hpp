@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -16,7 +15,6 @@
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/llvm_backend/process.hpp"
 #include "lyra/mir/arena.hpp"
-#include "lyra/mir/construction_input.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/runtime/construction_program_abi.hpp"
 
@@ -162,19 +160,11 @@ struct ConstructionProgramData {
 };
 
 // Design-derived inputs for the realization/assembly phase, extracted during
-// CompileDesignProcesses. This is a partial bundle -- only the fields that
-// assembly and metadata lowering currently consume. Not the full realization
-// model. Indexed forms are explicit so each helper can take narrow views.
+// CompileDesignProcesses. Carries the pure-data construction program built
+// by lowering, serialized to LLVM globals by emission, and replayed by the
+// runtime constructor. Entries are in strict ModuleIndex order. Runtime
+// relies on this order for instance_id and flat slot-base allocation.
 struct RealizationData {
-  // Compact slot trace provenance from mir::Design (parallel to design slots).
-  // Used only by inspection_plan for arbitrary-slot-id lookup.
-  std::vector<mir::SlotTraceProvenance> slot_trace_provenance;
-  std::vector<char> slot_trace_string_pool;
-
-  // Pure-data construction program. Built by lowering, serialized to LLVM
-  // globals by emission, replayed by the runtime constructor. Entries are in
-  // strict ModuleIndex order. Runtime relies on this order for instance_id
-  // and flat slot-base allocation.
   ConstructionProgramData construction_program;
 };
 
@@ -225,15 +215,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
 auto CompileModuleSpecSession(
     Context& context, const mir::Arena& arena,
     const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec>;
-
-// Extract design-derived realization data from narrow inputs.
-// Setup helper: called from CompileDesignProcesses during orchestration,
-// not part of per-spec compilation. Declared here because RealizationData
-// (its return type) is defined in this header.
-auto ExtractRealizationData(
-    const mir::ConstructionInput& construction,
-    std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
-    std::span<const char> slot_trace_string_pool) -> RealizationData;
 
 // Backend phase: extract LLVM ownership from a completed session.
 auto FinalizeModule(CodegenSession session, LoweringReport report)

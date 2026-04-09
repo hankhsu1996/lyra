@@ -1012,28 +1012,6 @@ auto CompileModuleSpecSession(
   return product;
 }
 
-auto ExtractRealizationData(
-    const mir::ConstructionInput& construction,
-    std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
-    std::span<const char> slot_trace_string_pool) -> RealizationData {
-  RealizationData realization;
-
-  if (construction.objects.size() != construction.const_blocks.size()) {
-    throw common::InternalError(
-        "ExtractRealizationData",
-        std::format(
-            "construction objects/const_blocks size mismatch: {} vs {}",
-            construction.objects.size(), construction.const_blocks.size()));
-  }
-
-  realization.slot_trace_provenance.assign(
-      slot_trace_provenance.begin(), slot_trace_provenance.end());
-  realization.slot_trace_string_pool.assign(
-      slot_trace_string_pool.begin(), slot_trace_string_pool.end());
-
-  return realization;
-}
-
 // Capture deferred-action callee backend metadata from the current body
 // session's user_functions_ / module_function_lowering_ before the next
 // session overwrites them. Same per-session capture pattern as DPI exports.
@@ -1080,25 +1058,16 @@ auto CompileDesignProcesses(const LoweringInput& input)
   bool force_two_state = input.force_two_state;
 
   // Temporary backend adapter: expand package-only design.slots to the
-  // full design-global flat table for old layout/metadata/emit consumers.
+  // full design-global flat table for the remaining BuildSlotInfo consumer.
   // design_lower.cpp produces clean package-only slots. This adapter is
-  // DELETION-TARGETED -- removed when layout/metadata/emit migrate to
-  // body-local and package-only paths (B2b, C1).
+  // DELETION-TARGETED -- removed when BuildSlotInfo migrates to per-body
+  // + package inputs.
   std::vector<mir::SlotDesc> expanded_slots = input.design->slots;
-  std::vector<mir::SlotTraceProvenance> expanded_provenance =
-      input.design->slot_trace_provenance;
-  std::vector<char> expanded_string_pool = input.design->slot_trace_string_pool;
-  {
-    for (const auto& obj : input.construction->objects) {
-      auto body_id = mir::ModuleBodyId{obj.body_group};
-      const auto& body = input.design->module_bodies.at(body_id.value);
-      for (const auto& slot : body.slots) {
-        expanded_slots.push_back(slot);
-        expanded_provenance.push_back(
-            {.local_name_str_off = 0,
-             .scope_kind = mir::SlotScopeKind::kInstance,
-             .scope_ref = obj.path_index});
-      }
+  for (const auto& obj : input.construction->objects) {
+    auto body_id = mir::ModuleBodyId{obj.body_group};
+    const auto& body = input.design->module_bodies.at(body_id.value);
+    for (const auto& slot : body.slots) {
+      expanded_slots.push_back(slot);
     }
   }
 
@@ -1829,8 +1798,16 @@ auto CompileDesignProcesses(const LoweringInput& input)
     process_funcs.push_back(nullptr);
   }
 
-  auto realization = ExtractRealizationData(
-      *input.construction, expanded_provenance, expanded_string_pool);
+  if (input.construction->objects.size() !=
+      input.construction->const_blocks.size()) {
+    throw common::InternalError(
+        "CompileDesignProcesses",
+        std::format(
+            "construction objects/const_blocks size mismatch: {} vs {}",
+            input.construction->objects.size(),
+            input.construction->const_blocks.size()));
+  }
+  RealizationData realization;
 
   // Build forward-path body compiled functions, parallel to
   // layout->body_realization_infos.
