@@ -223,6 +223,123 @@ cases:
         contains:
           - "nonblocking event trigger"
 
+  - name: zero_event_body
+    description: module with no events initializes cleanly
+    sv: |
+      module Test;
+        int x = 42;
+        initial begin
+          $display("x=%0d", x);
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "x=42"
+
+  - name: many_events_targeted_wake
+    description: body with many events only wakes the exact targeted slot
+    sv: |
+      module Test;
+        event a, b, c, d, e;
+        int which = 0;
+
+        initial begin @a; which = 1; end
+        initial begin @b; which = 2; end
+        initial begin @c; which = 3; end
+        initial begin @d; which = 4; end
+        initial begin @e; which = 5; end
+
+        initial begin
+          #1;
+          -> c;
+          #1;
+          $display("which=%0d", which);
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "which=3"
+
+  - name: cross_instance_isolation
+    description: same body-local event in two instances does not cross-wake
+    sv: |
+      module Inner;
+        event e;
+        int woke = 0;
+
+        initial begin
+          @e;
+          woke = woke + 1;
+        end
+
+        initial begin
+          #1;
+          -> e;
+        end
+      endmodule
+
+      module Test;
+        Inner a();
+        Inner b();
+
+        initial begin
+          #2;
+          $display("a=%0d b=%0d", a.woke, b.woke);
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "a=1 b=1"
+
+  - name: cross_instance_asymmetric
+    description: trigger in one instance does not wake waiter in another
+    sv: |
+      module Waiter;
+        event e;
+        int woke = 0;
+
+        initial begin
+          @e;
+          woke = 1;
+        end
+      endmodule
+
+      module Trigger;
+        event e;
+        int woke = 0;
+
+        initial begin
+          @e;
+          woke = 1;
+        end
+
+        initial begin
+          #1;
+          -> e;
+        end
+      endmodule
+
+      module Test;
+        Waiter w();
+        Trigger t();
+
+        initial begin
+          #2;
+          $display("w=%0d t=%0d", w.woke, t.woke);
+          $finish;
+        end
+      endmodule
+    expect:
+      stdout:
+        contains:
+          - "w=0 t=1"
+
   - name: edge_on_event_rejected
     description: edge specifiers on event type rejected (slang elaboration)
     sv: |

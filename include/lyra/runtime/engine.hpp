@@ -27,9 +27,9 @@
 #include "lyra/runtime/engine_scheduler.hpp"
 #include "lyra/runtime/engine_subscriptions.hpp"
 #include "lyra/runtime/engine_types.hpp"
-#include "lyra/runtime/event_registry.hpp"
 #include "lyra/runtime/feature_flags.hpp"
 #include "lyra/runtime/file_manager.hpp"
+#include "lyra/runtime/instance_event_state.hpp"
 #include "lyra/runtime/instance_metadata.hpp"
 #include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/observer.hpp"
@@ -37,6 +37,7 @@
 #include "lyra/runtime/process_meta.hpp"
 #include "lyra/runtime/process_trigger_registry.hpp"
 #include "lyra/runtime/reporting.hpp"
+#include "lyra/runtime/runtime_instance.hpp"
 #include "lyra/runtime/scheduler_snapshot.hpp"
 #include "lyra/runtime/signal_coord.hpp"
 #include "lyra/runtime/slot_meta.hpp"
@@ -780,23 +781,22 @@ class Engine {
     wait_site_meta_ = std::move(registry);
   }
 
-  // Add a waiter to a named event object. Called by activation
-  // post-processing when a process suspends with kWaitEvent.
-  // key: (instance_id, local_event_id) uniquely identifying the runtime
-  // event object within this design.
-  void AddEventWaiter(EventObjectKey key, EventWaiter waiter) {
-    event_registry_.AddWaiter(key, waiter);
+  // Register a waiter on a named event owned by the given instance.
+  // Called by activation post-processing when a process suspends with
+  // kWaitEvent. Shared by both HandleSuspendRecord and
+  // ReconcilePostActivation to keep event-wait installation in one place.
+  static void AddInstanceEventWaiter(
+      RuntimeInstance& inst, uint32_t local_event_id, EventWaiter waiter) {
+    inst.event_state.AddWaiter(local_event_id, std::move(waiter));
   }
 
-  // Consume all waiters for a named event object and enqueue them for
-  // wakeup. Called by LyraTriggerEvent ABI function.
-  // key: (instance_id, local_event_id) uniquely identifying the runtime
-  // event object within this design.
-  void TriggerEvent(EventObjectKey key) {
-    auto waiters = event_registry_.ConsumeWaiters(key);
+  // Consume all waiters for a named event on the given instance and
+  // enqueue them for wakeup. Called by LyraTriggerEvent ABI function.
+  void TriggerInstanceEvent(RuntimeInstance& inst, uint32_t local_event_id) {
+    auto waiters = inst.event_state.ConsumeWaiters(local_event_id);
     for (const auto& w : waiters) {
       EnqueueProcessWakeup(
-          w.process_id, w.instance_id, w.resume_block, key.local_event_id,
+          w.process_id, w.instance_id, w.resume_block, local_event_id,
           WakeCause::kEvent);
     }
   }
@@ -1441,9 +1441,6 @@ class Engine {
 
   // Wait-site metadata registry for persistent wait installation.
   WaitSiteRegistry wait_site_meta_;
-
-  // Named event registry for event-based synchronization.
-  EventRegistry event_registry_;
 
   // Per-site hit counts for immediate cover statements.
   std::vector<uint64_t> immediate_cover_counts_;

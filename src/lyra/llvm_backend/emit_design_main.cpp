@@ -1047,10 +1047,11 @@ auto EmitBodyRealizationDescs(
   // BodyRealizationDesc ABI:
   //   {u32 num_processes, u32 slot_count,
   //    u64 inline_state_size_bytes, u64 appendix_state_size_bytes,
-  //    u64 total_state_size_bytes, i8 time_unit_power, i8 time_precision_power}
+  //    u64 total_state_size_bytes, i8 time_unit_power, i8 time_precision_power,
+  //    [2 x i8 pad], u32 event_count}
   auto* i8_ty = llvm::Type::getInt8Ty(ctx);
   auto* header_type = llvm::StructType::get(
-      ctx, {i32_ty, i32_ty, i64_ty, i64_ty, i64_ty, i8_ty, i8_ty});
+      ctx, {i32_ty, i32_ty, i64_ty, i64_ty, i64_ty, i8_ty, i8_ty, i32_ty});
   // BodyProcessEntry ABI: {ptr shared_body_fn, u32 schema_index, u32 pad}
   auto* entry_type = llvm::StructType::get(ctx, {ptr_ty, i32_ty, i32_ty});
 
@@ -1088,7 +1089,8 @@ auto EmitBodyRealizationDescs(
          llvm::ConstantInt::get(i64_ty, info.appendix_state_size_bytes),
          llvm::ConstantInt::get(i64_ty, info.total_state_size_bytes),
          llvm::ConstantInt::get(i8_ty, info.time_unit_power),
-         llvm::ConstantInt::get(i8_ty, info.time_precision_power)});
+         llvm::ConstantInt::get(i8_ty, info.time_precision_power),
+         llvm::ConstantInt::get(i32_ty, info.event_count)});
     auto* header_global = new llvm::GlobalVariable(
         mod, header_type, true, llvm::GlobalValue::InternalLinkage, header_val,
         header_name);

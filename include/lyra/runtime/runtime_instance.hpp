@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "lyra/runtime/instance_event_state.hpp"
 #include "lyra/runtime/instance_observability.hpp"
 #include "lyra/runtime/process_frame.hpp"
 #include "lyra/runtime/signal_coord.hpp"
@@ -66,6 +67,11 @@ struct RuntimeInstance {
   // Populated by Engine::InitModuleInstancesFromBundles. Not part of the
   // binary contract with codegen (not accessed via GEP, no LLVM struct type).
   RuntimeInstanceObservability observability;
+
+  // L8a: Per-instance named event runtime state.
+  // Populated by Engine::InitModuleInstancesFromBundles from body-local
+  // event count. Not part of the binary contract with codegen.
+  RuntimeInstanceEventState event_state;
 };
 
 // Strongly typed field indices for RuntimeInstanceStorage.

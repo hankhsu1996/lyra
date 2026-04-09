@@ -57,6 +57,9 @@ struct BodyRealizationDesc {
   // Set from compile-time scope timescale during body descriptor emission.
   int8_t time_unit_power = 0;
   int8_t time_precision_power = 0;
+  // L8a: Body-local named event count. Used by InitModuleInstancesFromBundles
+  // to size per-instance event state.
+  uint32_t event_count = 0;
 };
 
 static_assert(sizeof(BodyRealizationDesc) == 40);
@@ -67,6 +70,7 @@ static_assert(offsetof(BodyRealizationDesc, appendix_state_size_bytes) == 16);
 static_assert(offsetof(BodyRealizationDesc, total_state_size_bytes) == 24);
 static_assert(offsetof(BodyRealizationDesc, time_unit_power) == 32);
 static_assert(offsetof(BodyRealizationDesc, time_precision_power) == 33);
+static_assert(offsetof(BodyRealizationDesc, event_count) == 36);
 static_assert(std::is_trivially_copyable_v<BodyRealizationDesc>);
 static_assert(std::is_standard_layout_v<BodyRealizationDesc>);
 

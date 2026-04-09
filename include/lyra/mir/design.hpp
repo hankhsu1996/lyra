@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "lyra/common/integral_constant.hpp"
-#include "lyra/common/module_identity.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/mir/cover_site.hpp"
 #include "lyra/mir/deferred_assertion_site.hpp"
@@ -123,9 +122,9 @@ struct Design {
   std::vector<DeferredAssertionSiteInfo> deferred_assertion_sites;
 
   // Maximum body-local event count across all module bodies.
-  // Emitted into the runtime ABI as a reserved/debug field. The runtime
-  // event registry uses lazy EventObjectKey keying and does not need
-  // pre-sizing from this value.
+  // Emitted into the runtime ABI as a reserved/debug field. Per-body
+  // event counts flow through BodyRealizationDesc; this global max
+  // is for diagnostics only.
   size_t max_body_local_events = 0;
 };
 

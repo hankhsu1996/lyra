@@ -411,6 +411,9 @@ void Engine::InitModuleInstancesFromBundles(
               "bundle instance_id {} has null instance pointer",
               bundle.instance_id));
     }
+    // L8a: Initialize per-instance event state from body descriptor.
+    bundle.instance->event_state.Init(bundle.body_desc->desc->event_count);
+
     auto& layout = get_or_create_layout(bundle, body_layout_map);
     auto local_count = static_cast<uint32_t>(layout.slot_meta.size());
     bundle.instance->observability.layout = &layout;

@@ -1977,6 +1977,8 @@ auto BuildLayout(
                   .decision_meta_files = {},
                   .time_unit_power = ts.unit_power,
                   .time_precision_power = ts.precision_power,
+                  .event_count = static_cast<uint32_t>(
+                      design.module_bodies.at(body_id_val).events.size()),
               });
           layout.body_representative_base_slots.push_back(
               plan.design_state_base_slot);
