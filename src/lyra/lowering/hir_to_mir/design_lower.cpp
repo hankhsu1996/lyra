@@ -227,7 +227,7 @@ auto LowerDesign(
         const hir::Process& proc = (*input.hir_arena)[hir_proc_id];
         Result<mir::ProcessId> mir_proc_result = LowerProcess(
             hir_proc_id, proc, input, mir_arena, init_view, origin_map,
-            &result.generated_functions, hir::kInvalidModuleBodyId);
+            &result.generated_functions);
         if (!mir_proc_result) {
           return std::unexpected(mir_proc_result.error());
         }

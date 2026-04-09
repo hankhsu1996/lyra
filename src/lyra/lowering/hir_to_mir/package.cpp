@@ -35,9 +35,8 @@ auto LowerPackage(
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
     mir::FunctionId mir_func_id = decls.functions.at(hir_func.symbol);
 
-    Result<mir::Function> mir_func_result = LowerFunctionBody(
-        hir_func, input, mir_arena, decl_view, origin_map,
-        hir::kInvalidModuleBodyId);
+    Result<mir::Function> mir_func_result =
+        LowerFunctionBody(hir_func, input, mir_arena, decl_view, origin_map);
     if (!mir_func_result) {
       return std::unexpected(mir_func_result.error());
     }
@@ -45,16 +44,14 @@ auto LowerPackage(
 
     // Record function and parameter origins (caller has both IDs)
     if (origin_map != nullptr) {
-      mir_func.origin = origin_map->Record(
-          mir_func_id, hir_func_id, hir::kInvalidModuleBodyId);
+      mir_func.origin = origin_map->Record(mir_func_id, hir_func_id);
 
       // Record per-parameter origins for prologue error reporting
       mir_func.param_origins.reserve(hir_func.parameters.size());
       for (uint32_t i = 0; i < hir_func.parameters.size(); ++i) {
         PrologueParamRef mir_ref{.func = mir_func_id, .param_index = i};
         FunctionParamRef hir_ref{.func = hir_func_id, .param_index = i};
-        mir_func.param_origins.push_back(
-            origin_map->Record(mir_ref, hir_ref, hir::kInvalidModuleBodyId));
+        mir_func.param_origins.push_back(origin_map->Record(mir_ref, hir_ref));
       }
     }
 

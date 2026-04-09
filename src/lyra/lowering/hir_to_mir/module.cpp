@@ -108,7 +108,7 @@ auto LowerModule(
     const hir::Function& hir_func = (*input.hir_arena)[hir_func_id];
 
     Result<mir::Function> mir_func_result = LowerFunctionBody(
-        hir_func, input, body_arena, decl_view, &body_origins, body_id,
+        hir_func, input, body_arena, decl_view, &body_origins,
         &body_decision_allocator);
     if (!mir_func_result) {
       return std::unexpected(mir_func_result.error());
@@ -116,14 +116,13 @@ auto LowerModule(
     mir::Function mir_func = std::move(*mir_func_result);
 
     // Record function and parameter origins
-    mir_func.origin = body_origins.Record(mir_func_id, hir_func_id, body_id);
+    mir_func.origin = body_origins.Record(mir_func_id, hir_func_id);
 
     mir_func.param_origins.reserve(hir_func.parameters.size());
     for (uint32_t i = 0; i < hir_func.parameters.size(); ++i) {
       PrologueParamRef mir_ref{.func = mir_func_id, .param_index = i};
       FunctionParamRef hir_ref{.func = hir_func_id, .param_index = i};
-      mir_func.param_origins.push_back(
-          body_origins.Record(mir_ref, hir_ref, body_id));
+      mir_func.param_origins.push_back(body_origins.Record(mir_ref, hir_ref));
     }
 
     body_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
@@ -136,7 +135,7 @@ auto LowerModule(
     const hir::Process& hir_process = (*input.hir_arena)[proc_id];
     Result<mir::ProcessId> mir_proc_result = LowerProcess(
         proc_id, hir_process, input, body_arena, decl_view, &body_origins,
-        &generated_functions, body_id, &body_decision_allocator);
+        &generated_functions, &body_decision_allocator);
     if (!mir_proc_result) {
       return std::unexpected(mir_proc_result.error());
     }
@@ -167,19 +166,18 @@ auto LowerModule(
   for (auto [hir_task_id, mir_func_id] : task_pairs) {
     const hir::Task& hir_task = (*input.hir_arena)[hir_task_id];
     Result<mir::Function> mir_func_result = LowerTaskBody(
-        hir_task, input, body_arena, decl_view, &body_origins, body_id,
+        hir_task, input, body_arena, decl_view, &body_origins,
         &body_decision_allocator);
     if (!mir_func_result) {
       return std::unexpected(mir_func_result.error());
     }
     mir::Function mir_func = std::move(*mir_func_result);
-    mir_func.origin = body_origins.Record(mir_func_id, hir_task_id, body_id);
+    mir_func.origin = body_origins.Record(mir_func_id, hir_task_id);
     mir_func.param_origins.reserve(hir_task.parameters.size());
     for (uint32_t i = 0; i < hir_task.parameters.size(); ++i) {
       PrologueParamRef mir_ref{.func = mir_func_id, .param_index = i};
       TaskParamRef hir_ref{.task = hir_task_id, .param_index = i};
-      mir_func.param_origins.push_back(
-          body_origins.Record(mir_ref, hir_ref, body_id));
+      mir_func.param_origins.push_back(body_origins.Record(mir_ref, hir_ref));
     }
     body_arena.SetFunctionBody(mir_func_id, std::move(mir_func));
   }

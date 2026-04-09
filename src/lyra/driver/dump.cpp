@@ -267,8 +267,7 @@ auto DumpLlvm(const CompilationInput& input) -> int {
   }
 
   lowering::OriginMapLookup origin_lookup(
-      &mir_result->design_origins, &hir_result.design,
-      hir_result.hir_arena.get());
+      &mir_result->design_origins, hir_result.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   auto origin_provenance = lowering::BuildBodyOriginProvenance(

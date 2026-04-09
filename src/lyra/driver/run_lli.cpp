@@ -125,8 +125,7 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
 
   // Create diagnostic context for LLVM backend error reporting
   lowering::OriginMapLookup origin_lookup(
-      &compilation.mir.design_origins, &compilation.hir.design,
-      compilation.hir.hir_arena.get());
+      &compilation.mir.design_origins, compilation.hir.hir_arena.get());
   lowering::DiagnosticContext diag_ctx(origin_lookup);
 
   auto origin_provenance = lowering::BuildBodyOriginProvenance(

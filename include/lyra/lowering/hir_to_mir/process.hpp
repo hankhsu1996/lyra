@@ -22,7 +22,6 @@ auto LowerProcess(
     const LoweringInput& input, mir::Arena& mir_arena,
     const DeclView& decl_view, OriginMap* origin_map,
     std::vector<mir::FunctionId>* generated_functions,
-    hir::ModuleBodyId body_id,
     DecisionSiteAllocator* decision_allocator = nullptr)
     -> Result<mir::ProcessId>;
 

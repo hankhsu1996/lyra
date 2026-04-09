@@ -13,7 +13,6 @@
 #include "lyra/common/overloaded.hpp"
 #include "lyra/common/source_span.hpp"
 #include "lyra/hir/routine.hpp"
-#include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
@@ -29,8 +28,7 @@ namespace {
 
 auto ResolveHirKind(
     const mir::Process& process, const lowering::OriginMap& origin_map,
-    const hir::Design& hir_design, const hir::Arena& global_hir_arena)
-    -> std::optional<hir::ProcessKind> {
+    const hir::Arena& global_hir_arena) -> std::optional<hir::ProcessKind> {
   if (process.origin == common::OriginId::Invalid()) {
     return std::nullopt;
   }
@@ -42,15 +40,13 @@ auto ResolveHirKind(
   if (proc_id == nullptr) {
     return std::nullopt;
   }
-  const hir::Arena& arena =
-      lowering::ResolveHirArena(hir_design, global_hir_arena, entry->body_id);
-  return arena[*proc_id].kind;
+  return global_hir_arena[*proc_id].kind;
 }
 
 auto ResolveSourceLocation(
     const mir::Process& process, const lowering::OriginMap& origin_map,
-    const hir::Design& hir_design, const hir::Arena& global_hir_arena,
-    const SourceManager& source_manager) -> std::string {
+    const hir::Arena& global_hir_arena, const SourceManager& source_manager)
+    -> std::string {
   if (process.origin == common::OriginId::Invalid()) {
     return "";
   }
@@ -58,12 +54,11 @@ auto ResolveSourceLocation(
   if (!entry) {
     return "";
   }
-  const hir::Arena& arena =
-      lowering::ResolveHirArena(hir_design, global_hir_arena, entry->body_id);
   return std::visit(
       common::Overloaded{
           [&](hir::ProcessId proc_id) -> std::string {
-            return FormatSourceLocation(arena[proc_id].span, source_manager);
+            return FormatSourceLocation(
+                global_hir_arena[proc_id].span, source_manager);
           },
           [](const auto&) -> std::string { return ""; },
       },
@@ -159,10 +154,9 @@ auto CollectProcessStats(
   for (size_t i = 0; i < process_refs.size(); ++i) {
     const auto& process = (*process_refs[i].arena)[process_refs[i].id];
 
-    auto hir_kind =
-        ResolveHirKind(process, design_origins, hir_design, global_hir_arena);
+    auto hir_kind = ResolveHirKind(process, design_origins, global_hir_arena);
     auto source_loc = ResolveSourceLocation(
-        process, design_origins, hir_design, global_hir_arena, source_manager);
+        process, design_origins, global_hir_arena, source_manager);
 
     uint32_t mir_stmts = 0;
     for (const auto& block : process.blocks) {

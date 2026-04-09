@@ -24,7 +24,6 @@ auto BuildFunctionSignature(
 auto LowerFunctionBody(
     const hir::Function& function, const LoweringInput& input,
     mir::Arena& mir_arena, const DeclView& decl_view, OriginMap* origin_map,
-    hir::ModuleBodyId body_id,
     DecisionSiteAllocator* decision_allocator = nullptr)
     -> Result<mir::Function>;
 
@@ -36,7 +35,7 @@ auto BuildTaskSignature(
 
 auto LowerTaskBody(
     const hir::Task& task, const LoweringInput& input, mir::Arena& mir_arena,
-    const DeclView& decl_view, OriginMap* origin_map, hir::ModuleBodyId body_id,
+    const DeclView& decl_view, OriginMap* origin_map,
     DecisionSiteAllocator* decision_allocator = nullptr)
     -> Result<mir::Function>;
 

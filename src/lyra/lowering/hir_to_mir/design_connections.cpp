@@ -156,7 +156,7 @@ auto LowerExprAsBodyFunction(
       .design_slots = &decls.slots,
   };
 
-  MirBuilder builder(&body_arena, &ctx, nullptr, hir::kInvalidModuleBodyId);
+  MirBuilder builder(&body_arena, &ctx, nullptr);
 
   BlockIndex entry_idx = builder.CreateBlock();
   builder.SetCurrentBlock(entry_idx);
