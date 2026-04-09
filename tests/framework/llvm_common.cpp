@@ -66,9 +66,8 @@ class TestSimulationHooks : public lowering::mir_to_llvm::SimulationHooks {
   }
 
   void EmitPostSimulationReports(
-      lowering::mir_to_llvm::Context& context,
-      const std::vector<lowering::mir_to_llvm::SlotInfo>& /*slots*/,
-      llvm::Value* /*design_state*/, llvm::Value* /*abi_ptr*/) override {
+      lowering::mir_to_llvm::Context& context, llvm::Value* /*design_state*/,
+      llvm::Value* /*abi_ptr*/) override {
     if (emit_time_report_) {
       lowering::mir_to_llvm::EmitTimeReport(context);
     }

@@ -2145,9 +2145,8 @@ void EmitRunSimulation(
 
 void EmitMainExit(
     Context& context, llvm::Value* design_state,
-    const std::vector<SlotInfo>& slot_info, const EmitDesignMainInput& input,
-    llvm::BasicBlock* exit_block, llvm::Value* abi_alloca,
-    const ConstructorEmissionResult& ctor_result,
+    const EmitDesignMainInput& input, llvm::BasicBlock* exit_block,
+    llvm::Value* abi_alloca, const ConstructorEmissionResult& ctor_result,
     const InspectionPlan& inspection_plan) {
   auto& builder = context.GetBuilder();
   auto& ctx = context.GetLlvmContext();
@@ -2161,12 +2160,11 @@ void EmitMainExit(
   // Backend-owned variable inspection from typed placement descriptors.
   if (!inspection_plan.IsEmpty()) {
     EmitVariableInspection(
-        context, inspection_plan, slot_info, design_state, abi_alloca);
+        context, inspection_plan, *input.design, design_state, abi_alloca);
   }
 
   if (input.hooks != nullptr) {
-    input.hooks->EmitPostSimulationReports(
-        context, slot_info, design_state, abi_alloca);
+    input.hooks->EmitPostSimulationReports(context, design_state, abi_alloca);
   }
 
   if (ctor_result.result_handle != nullptr) {
@@ -2524,7 +2522,6 @@ auto EmitDesignMain(
   ForwardingAnalysisReport forwarding_report;
   auto& context = *session.context;
   const auto& layout = *session.layout;
-  const auto& slot_info = session.slot_info;
   const auto& process_funcs = session.process_funcs;
   size_t num_init = session.num_init_processes;
   const auto& realization = session.realization;
@@ -2608,14 +2605,13 @@ auto EmitDesignMain(
     EmitRuntimeInit(context, main_func, input);
 
     if (input.hooks != nullptr) {
-      input.hooks->OnAfterInitializeDesignState(
-          context, slot_info, design_state);
+      input.hooks->OnAfterInitializeDesignState(context, design_state);
     }
 
     EmitInitProcesses(context, design_state, layout, process_funcs, num_init);
 
     if (input.hooks != nullptr) {
-      input.hooks->OnBeforeRunSimulation(context, slot_info, design_state);
+      input.hooks->OnBeforeRunSimulation(context, design_state);
     }
 
     auto plusargs = BuildPlusargs(context, main_func, input);
@@ -2684,14 +2680,13 @@ auto EmitDesignMain(
     EmitRuntimeInit(context, main_func, input);
 
     if (input.hooks != nullptr) {
-      input.hooks->OnAfterInitializeDesignState(
-          context, slot_info, design_state);
+      input.hooks->OnAfterInitializeDesignState(context, design_state);
     }
 
     EmitInitProcesses(context, design_state, layout, process_funcs, num_init);
 
     if (input.hooks != nullptr) {
-      input.hooks->OnBeforeRunSimulation(context, slot_info, design_state);
+      input.hooks->OnBeforeRunSimulation(context, design_state);
     }
   }
 
@@ -2707,8 +2702,8 @@ auto EmitDesignMain(
   }
 
   EmitMainExit(
-      context, design_state, slot_info, input, exit_block, abi_for_exit,
-      ctor_result, inspection_plan);
+      context, design_state, input, exit_block, abi_for_exit, ctor_result,
+      inspection_plan);
 
   return LoweringReport{
       .forwarding_analysis = std::move(forwarding_report),

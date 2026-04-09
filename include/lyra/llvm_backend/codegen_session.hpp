@@ -183,7 +183,6 @@ struct CodegenSession {
   RealizationData realization;
   std::vector<llvm::Function*> process_funcs;
   std::vector<WaitSiteEntry> wait_sites;
-  std::vector<SlotInfo> slot_info;
   size_t num_init_processes = 0;
   // Per-body compiled process functions for body
   // realization descriptor emission. Parallel to

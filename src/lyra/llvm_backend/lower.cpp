@@ -1057,29 +1057,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
 
   bool force_two_state = input.force_two_state;
 
-  // Temporary backend adapter: expand package-only design.slots to the
-  // full design-global flat table for the remaining BuildSlotInfo consumer.
-  // design_lower.cpp produces clean package-only slots. This adapter is
-  // DELETION-TARGETED -- removed when BuildSlotInfo migrates to per-body
-  // + package inputs.
-  std::vector<mir::SlotDesc> expanded_slots = input.design->slots;
-  for (const auto& obj : input.construction->objects) {
-    auto body_id = mir::ModuleBodyId{obj.body_group};
-    const auto& body = input.design->module_bodies.at(body_id.value);
-    for (const auto& slot : body.slots) {
-      expanded_slots.push_back(slot);
-    }
-  }
-
-  auto slot_info =
-      BuildSlotInfo(expanded_slots, *input.type_arena, force_two_state);
-
-  // Preliminary layout: used by connection collection for observation
-  // resolution (needs slot specs, not byte offsets).
-  auto pre_layout = BuildDesignLayout(
-      slot_info, *input.type_arena, module->getDataLayout(), force_two_state, 0,
-      {});
-
   // Extract narrow layout-planning inputs from design.
   // module_plans and module_base_slots are produced once and consumed by
   // BuildLayout and wrapper generation respectively.
@@ -1377,20 +1354,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   // Compute design-global slot count from package slots + instance slots.
-  // No flat expanded_slots table needed: module_plans carry per-instance
-  // slot counts, and package slots are design.slots.
-  uint32_t num_package_slots_for_layout = 0;
-  uint32_t total_design_slot_count = 0;
-  if (!module_plans.empty()) {
-    num_package_slots_for_layout = module_plans[0].design_state_base_slot;
-    total_design_slot_count = num_package_slots_for_layout;
-    for (const auto& plan : module_plans) {
-      total_design_slot_count += plan.slot_count;
-    }
-  } else {
-    num_package_slots_for_layout =
-        static_cast<uint32_t>(input.design->slots.size());
-    total_design_slot_count = num_package_slots_for_layout;
+  // module_plans carry per-instance slot counts; design.slots is
+  // package-only.
+  auto total_design_slot_count =
+      static_cast<uint32_t>(input.design->slots.size());
+  for (const auto& plan : module_plans) {
+    total_design_slot_count += plan.slot_count;
   }
 
   // Connection analysis: classify slot usage and relay candidates.
@@ -1400,21 +1369,26 @@ auto CompileDesignProcesses(const LoweringInput& input)
       *input.mir_arena, total_design_slot_count);
 
   // Build instance slot ranges for body-local appendix layout.
+  // Each range carries a view into its owning body's slots vector so
+  // BuildDesignLayout can stamp per-instance byte offsets without a
+  // prebuilt flat slot table.
   std::vector<InstanceSlotRange> instance_ranges;
   instance_ranges.reserve(module_plans.size());
   for (const auto& plan : module_plans) {
+    const auto& plan_body = input.design->module_bodies.at(plan.body_id.value);
     instance_ranges.push_back(
         InstanceSlotRange{
             .base_slot = plan.design_state_base_slot,
             .slot_count = plan.slot_count,
             .body_id = plan.body_id,
+            .body_slots = plan_body.slots,
         });
   }
 
   // Build final layout: every body-local slot owns storage.
   auto design_layout = BuildDesignLayout(
-      slot_info, *input.type_arena, module->getDataLayout(), force_two_state,
-      num_package_slots_for_layout, instance_ranges);
+      input.design->slots, *input.type_arena, module->getDataLayout(),
+      force_two_state, instance_ranges);
 
   // Build body-owned storage layouts from body-local MIR inputs.
   // Iterates the body inventory directly. No design-global forwarding,
@@ -2783,7 +2757,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .realization = std::move(realization),
       .process_funcs = std::move(process_funcs),
       .wait_sites = std::move(all_wait_sites),
-      .slot_info = std::move(slot_info),
       .num_init_processes = num_init,
       .body_compiled_funcs = std::move(body_funcs),
       .deferred_site_artifacts = std::move(*deferred_artifacts),
@@ -2801,12 +2774,15 @@ auto FinalizeModule(CodegenSession session, LoweringReport report)
 }
 
 void EmitVariableInspection(
-    Context& context, const InspectionPlan& plan,
-    const std::vector<SlotInfo>& slots, llvm::Value* design_state,
-    llvm::Value* abi_ptr) {
+    Context& context, const InspectionPlan& plan, const mir::Design& design,
+    llvm::Value* design_state, llvm::Value* abi_ptr) {
   if (plan.IsEmpty()) {
     return;
   }
+
+  const auto& layout = context.GetLayout();
+  const auto& types = context.GetTypeArena();
+  bool force_two_state = context.IsForceTwoState();
 
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -2814,9 +2790,25 @@ void EmitVariableInspection(
   auto* i1_ty = llvm::Type::getInt1Ty(llvm_ctx);
   auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
 
+  // Per-slot type classification: resolve the slot's TypeId from either
+  // the package slot table or the owning body, then classify. Tracked
+  // variables are a small set, so per-slot lookup is cheap.
+  auto classify_slot = [&](common::SlotId slot_id) -> SlotTypeInfo {
+    uint32_t gsi = slot_id.value;
+    if (gsi < layout.num_package_slots) {
+      return ClassifySlotTypeInfo(
+          design.slots[gsi].type, types, force_two_state);
+    }
+    auto owner = ResolveInstanceOwnedFlatSlot(layout, gsi);
+    auto body_id = layout.instance_body_ids[owner.instance_id.value];
+    const auto& body = design.module_bodies.at(body_id.value);
+    return ClassifySlotTypeInfo(
+        body.slots[owner.local_signal_id.value].type, types, force_two_state);
+  };
+
   auto emit_register = [&](llvm::Value* slot_ptr, std::string_view name,
                            common::SlotId slot_id) {
-    const auto& type_info = slots[slot_id.value].type_info;
+    const auto type_info = classify_slot(slot_id);
     auto* name_ptr = builder.CreateGlobalStringPtr(name);
     auto* kind_val =
         llvm::ConstantInt::get(i32_ty, static_cast<int32_t>(type_info.kind));

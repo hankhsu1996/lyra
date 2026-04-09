@@ -1096,9 +1096,8 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
 }
 
 auto BuildDesignLayout(
-    const std::vector<SlotInfo>& slots, const TypeArena& types,
+    std::span<const mir::SlotDesc> package_slots, const TypeArena& types,
     const llvm::DataLayout& dl, bool force_two_state,
-    uint32_t num_package_slots,
     std::span<const InstanceSlotRange> instance_ranges) -> DesignLayout {
   DesignLayout layout;
 
@@ -1112,18 +1111,48 @@ auto BuildDesignLayout(
       .pointer_alignment = pointer_align,
   };
 
-  // Resolve storage spec for each slot. Every slot owns its own storage.
-  for (size_t i = 0; i < slots.size(); ++i) {
-    const auto& slot = slots[i];
-    layout.slots.push_back(slot.slot_id);
-    layout.slot_to_index[slot.slot_id] = static_cast<uint32_t>(i);
-    layout.slot_storage_specs.push_back(ResolveStorageSpec(
-        slot.type_id, types, storage_mode, target_abi,
-        layout.storage_spec_arena));
+  // Compute total flat slot count from package + per-instance sizes.
+  uint32_t total_slots = static_cast<uint32_t>(package_slots.size());
+  for (const auto& range : instance_ranges) {
+    total_slots += range.slot_count;
   }
 
-  // Initialize owned data offset vector (nullopt for all slots initially).
-  layout.owned_data_offsets.resize(slots.size(), std::nullopt);
+  // Gather a flat storage_shape view for the invariant-check pass at the
+  // end. This is the only place that needs random-access ordering across
+  // both groups; layout stamping itself uses range-scoped iteration.
+  std::vector<mir::StorageShape> slot_shapes;
+  slot_shapes.reserve(total_slots);
+
+  // Resolve storage spec for each slot in flat order (package then per
+  // instance). Every slot owns its own storage.
+  auto ingest_slot = [&](const mir::SlotDesc& desc, uint32_t global_idx) {
+    layout.slots.push_back(common::SlotId{global_idx});
+    layout.slot_to_index[common::SlotId{global_idx}] = global_idx;
+    layout.slot_storage_specs.push_back(ResolveStorageSpec(
+        desc.type, types, storage_mode, target_abi, layout.storage_spec_arena));
+    slot_shapes.push_back(desc.storage_shape);
+  };
+
+  for (size_t i = 0; i < package_slots.size(); ++i) {
+    ingest_slot(package_slots[i], static_cast<uint32_t>(i));
+  }
+  for (const auto& range : instance_ranges) {
+    if (range.body_slots.size() != range.slot_count) {
+      throw common::InternalError(
+          "BuildDesignLayout",
+          std::format(
+              "instance range slot_count {} != body_slots.size() {}",
+              range.slot_count, range.body_slots.size()));
+    }
+    for (uint32_t i = 0; i < range.slot_count; ++i) {
+      ingest_slot(range.body_slots[i], range.base_slot + i);
+    }
+  }
+
+  layout.owned_data_offsets.resize(total_slots, std::nullopt);
+  layout.slot_byte_offsets.resize(total_slots, 0);
+
+  uint64_t max_align = 1;
 
   // Byte offset assignment: inline slots + owned-container appendix.
   //
@@ -1132,15 +1161,11 @@ auto BuildDesignLayout(
   // that owned-container offsets are body-relative and repeatable.
   // Layout order: [pkg inline + pkg appendix][inst0 inline + inst0 appendix]...
   //
-  // When instance_ranges is empty (preliminary layout), all slots
+  // When instance_ranges is empty (preliminary layout), all package slots
   // are laid out sequentially with appendix at the end.
-  layout.slot_byte_offsets.resize(slots.size(), 0);
-
-  uint64_t max_align = 1;
-
-  // Helper: assign inline byte offsets for a contiguous slot range,
+  //
+  // Helper: assign inline byte offsets for a contiguous global slot range,
   // then assign appendix offsets for owned containers in that range.
-  // Every slot in the range gets storage (no forwarding skip).
   auto assign_group_offsets = [&](uint32_t begin, uint32_t end,
                                   uint64_t group_start) -> uint64_t {
     uint64_t offset = group_start;
@@ -1149,7 +1174,7 @@ auto BuildDesignLayout(
     for (uint32_t i = begin; i < end; ++i) {
       uint64_t slot_size = 0;
       uint64_t slot_align = 0;
-      if (slots[i].storage_shape == mir::StorageShape::kOwnedContainer) {
+      if (slot_shapes[i] == mir::StorageShape::kOwnedContainer) {
         slot_size = runtime::kOwnedStorageHandleByteSize;
         slot_align = runtime::kOwnedStorageHandleAlignment;
       } else {
@@ -1166,7 +1191,7 @@ auto BuildDesignLayout(
     // Appendix pass: owned-container backing data.
     offset = AlignUp(offset, max_align);
     for (uint32_t i = begin; i < end; ++i) {
-      if (slots[i].storage_shape != mir::StorageShape::kOwnedContainer) {
+      if (slot_shapes[i] != mir::StorageShape::kOwnedContainer) {
         continue;
       }
       const auto& spec = layout.slot_storage_specs[i];
@@ -1189,13 +1214,13 @@ auto BuildDesignLayout(
   };
 
   if (instance_ranges.empty()) {
-    // Preliminary layout: all slots in one group, appendix at end.
-    auto total = static_cast<uint32_t>(slots.size());
-    uint64_t end_offset = assign_group_offsets(0, total, 0);
+    // Preliminary layout: package slots in one group, appendix at end.
+    uint64_t end_offset = assign_group_offsets(0, total_slots, 0);
     layout.inline_region_size = end_offset;
     layout.arena_size = std::max(uint64_t{1}, end_offset);
   } else {
     uint64_t running = 0;
+    auto num_package_slots = static_cast<uint32_t>(package_slots.size());
 
     // Package group.
     if (num_package_slots > 0) {
@@ -1215,9 +1240,8 @@ auto BuildDesignLayout(
 
   // Verify invariants: kInlineValue slots must have nullopt owned offset,
   // kOwnedContainer slots must have engaged owned offset.
-  for (size_t i = 0; i < slots.size(); ++i) {
-    bool is_container =
-        slots[i].storage_shape == mir::StorageShape::kOwnedContainer;
+  for (size_t i = 0; i < total_slots; ++i) {
+    bool is_container = slot_shapes[i] == mir::StorageShape::kOwnedContainer;
     if (is_container && !layout.owned_data_offsets[i].has_value()) {
       throw common::InternalError(
           "BuildDesignLayout",
@@ -1231,8 +1255,8 @@ auto BuildDesignLayout(
   }
 
   // Build storage binding table. Every slot owns storage.
-  layout.slot_storage_bindings.reserve(slots.size());
-  for (size_t i = 0; i < slots.size(); ++i) {
+  layout.slot_storage_bindings.reserve(total_slots);
+  for (size_t i = 0; i < total_slots; ++i) {
     layout.slot_storage_bindings.push_back(
         OwnedLocalStorage{ArenaByteOffset{layout.slot_byte_offsets[i]}});
   }
@@ -1540,63 +1564,43 @@ auto IsScalarPatchable(
   return width <= 64;
 }
 
-auto BuildSlotInfo(
-    std::span<const mir::SlotDesc> slots_in, const TypeArena& types,
-    bool force_two_state) -> std::vector<SlotInfo> {
-  std::vector<SlotInfo> slots;
-  slots.reserve(slots_in.size());
-
-  for (size_t i = 0; i < slots_in.size(); ++i) {
-    TypeId type_id = slots_in[i].type;
-    const Type& type = types[type_id];
-
-    SlotTypeInfo type_info{};
-    if (type.Kind() == TypeKind::kReal) {
-      type_info = {
-          .kind = VarTypeKind::kReal,
-          .width = 64,
-          .is_signed = true,
-          .is_four_state = false,
-      };
-    } else if (type.Kind() == TypeKind::kString) {
-      type_info = {
-          .kind = VarTypeKind::kString,
-          .width = 0,
-          .is_signed = false,
-          .is_four_state = false,
-      };
-    } else if (IsPacked(type)) {
-      uint32_t width = PackedBitWidth(type, types);
-      bool is_signed = IsPackedSigned(type, types);
-      bool is_four_state =
-          IsLayoutPackedFourState(type, types, force_two_state);
-      type_info = {
-          .kind = VarTypeKind::kIntegral,
-          .width = width > 0 ? width : 32,
-          .is_signed = is_signed,
-          .is_four_state = is_four_state,
-      };
-    } else {
-      // Unsupported type - use placeholder for SlotTypeInfo
-      // The actual TypeId is preserved for LLVM type derivation
-      type_info = {
-          .kind = VarTypeKind::kIntegral,
-          .width = 32,
-          .is_signed = false,
-          .is_four_state = false,
-      };
-    }
-
-    slots.push_back(
-        SlotInfo{
-            .slot_id = common::SlotId{static_cast<uint32_t>(i)},
-            .type_id = type_id,
-            .type_info = type_info,
-            .storage_shape = slots_in[i].storage_shape,
-        });
+auto ClassifySlotTypeInfo(
+    TypeId type_id, const TypeArena& types, bool force_two_state)
+    -> SlotTypeInfo {
+  const Type& type = types[type_id];
+  if (type.Kind() == TypeKind::kReal) {
+    return {
+        .kind = VarTypeKind::kReal,
+        .width = 64,
+        .is_signed = true,
+        .is_four_state = false,
+    };
   }
-
-  return slots;
+  if (type.Kind() == TypeKind::kString) {
+    return {
+        .kind = VarTypeKind::kString,
+        .width = 0,
+        .is_signed = false,
+        .is_four_state = false,
+    };
+  }
+  if (IsPacked(type)) {
+    uint32_t width = PackedBitWidth(type, types);
+    return {
+        .kind = VarTypeKind::kIntegral,
+        .width = width > 0 ? width : 32,
+        .is_signed = IsPackedSigned(type, types),
+        .is_four_state = IsLayoutPackedFourState(type, types, force_two_state),
+    };
+  }
+  // Unsupported type: placeholder metadata. The actual TypeId is preserved
+  // upstream for LLVM type derivation.
+  return {
+      .kind = VarTypeKind::kIntegral,
+      .width = 32,
+      .is_signed = false,
+      .is_four_state = false,
+  };
 }
 
 auto Layout::GetInstanceStorageBase(ModuleIndex idx) const
@@ -2131,11 +2135,13 @@ auto BuildLayout(
     size_t num_instances = module_plans.size();
     layout.instance_storage_bases.resize(num_instances);
     layout.instance_slot_counts.resize(num_instances);
+    layout.instance_body_ids.resize(num_instances);
     layout.instance_storage_sizes.resize(num_instances);
 
     for (size_t mi = 0; mi < num_instances; ++mi) {
       const auto& plan = module_plans[mi];
       layout.instance_slot_counts[mi] = plan.slot_count;
+      layout.instance_body_ids[mi] = plan.body_id;
 
       InstanceStorageBase base;
       if (plan.slot_count > 0) {
