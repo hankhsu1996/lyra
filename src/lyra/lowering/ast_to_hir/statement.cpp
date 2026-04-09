@@ -167,24 +167,27 @@ auto LowerStatement(const slang::ast::Statement& stmt, ScopeLowerer& lowerer)
 
 namespace {
 
-// Extract the HIR CallExpressionData from a lowered action StatementId.
-auto ExtractCallFromLoweredAction(
-    hir::StatementId action_id, const hir::Arena& arena)
-    -> const hir::CallExpressionData* {
+// Extract the call ExpressionId from a lowered action StatementId.
+// Returns kInvalidExpressionId if the statement shape doesn't match.
+auto ExtractCallExprIdFromLoweredAction(
+    hir::StatementId action_id, const hir::Arena& arena) -> hir::ExpressionId {
   const auto& stmt = arena[action_id];
   const hir::Statement* inner = &stmt;
 
   if (const auto* block = std::get_if<hir::BlockStatementData>(&stmt.data)) {
-    if (block->statements.size() != 1) return nullptr;
+    if (block->statements.size() != 1) return hir::kInvalidExpressionId;
     inner = &arena[block->statements[0]];
   }
 
   const auto* expr_stmt =
       std::get_if<hir::ExpressionStatementData>(&inner->data);
-  if (expr_stmt == nullptr) return nullptr;
+  if (expr_stmt == nullptr) return hir::kInvalidExpressionId;
 
   const auto& expr = arena[expr_stmt->expression];
-  return std::get_if<hir::CallExpressionData>(&expr.data);
+  if (std::get_if<hir::CallExpressionData>(&expr.data) == nullptr) {
+    return hir::kInvalidExpressionId;
+  }
+  return expr_stmt->expression;
 }
 
 }  // namespace
@@ -264,9 +267,10 @@ auto LowerAndNormalizeActionBranch(
     return {.kind = LoweredActionBranchKind::kInvalid, .statement_id = stmt_id};
   }
 
-  // Step 4: extract HIR call data.
-  const auto* hir_call = ExtractCallFromLoweredAction(stmt_id, arena);
-  if (hir_call == nullptr) {
+  // Step 4: extract HIR call expression ID (not pointer -- the arena
+  // may reallocate when subsequent branches are lowered).
+  auto call_expr_id = ExtractCallExprIdFromLoweredAction(stmt_id, arena);
+  if (!call_expr_id) {
     throw common::InternalError(
         "LowerAndNormalizeActionBranch",
         std::format(
@@ -278,7 +282,7 @@ auto LowerAndNormalizeActionBranch(
   return {
       .kind = LoweredActionBranchKind::kValidSingleCall,
       .statement_id = stmt_id,
-      .hir_call = hir_call};
+      .call_expr_id = call_expr_id};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

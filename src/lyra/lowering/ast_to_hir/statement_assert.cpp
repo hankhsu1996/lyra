@@ -276,7 +276,17 @@ auto TryBuildBranchAction(
       break;
   }
 
-  SymbolId callee_symbol = branch.hir_call->callee;
+  // Look up the call expression from the arena by ID (not cached pointer,
+  // because the arena may have reallocated since the branch was lowered).
+  const auto& call_expr = arena[branch.call_expr_id];
+  const auto* hir_call = std::get_if<hir::CallExpressionData>(&call_expr.data);
+  if (hir_call == nullptr) {
+    throw common::InternalError(
+        "TryBuildBranchAction",
+        "call_expr_id does not point to CallExpressionData");
+  }
+
+  SymbolId callee_symbol = hir_call->callee;
   if (!callee_symbol) {
     ctx.sink->Error(span, "undefined callee in deferred assertion action");
     return {.status = DeferredBranchStatus::kInvalid, .action = std::nullopt};
@@ -292,8 +302,8 @@ auto TryBuildBranchAction(
     return {.status = DeferredBranchStatus::kInvalid, .action = std::nullopt};
   }
 
-  auto action = BuildHirDeferredAction(
-      callee_symbol, *sig, *branch.hir_call, arena, ctx, span);
+  auto action =
+      BuildHirDeferredAction(callee_symbol, *sig, *hir_call, arena, ctx, span);
   if (!action) {
     return {.status = DeferredBranchStatus::kInvalid, .action = std::nullopt};
   }

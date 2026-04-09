@@ -50,6 +50,10 @@ struct DeferredAssertionActual {
 struct DeferredUserCallAction {
   FunctionId callee;
   std::vector<DeferredAssertionActual> actuals;  // ordered by formal position
+  // Callee ABI metadata captured at site creation time (when the body
+  // arena is still active). Consumed by thunk compilation, which runs
+  // after the body arena scope has ended.
+  bool accepts_decision_owner = false;
 };
 
 // Built-in cover-hit action: cover #0 (...) with no user pass action.

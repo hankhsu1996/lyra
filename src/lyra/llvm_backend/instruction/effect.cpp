@@ -730,7 +730,7 @@ auto LowerEffectOp(
                   auto* field_ty = payload_struct_ty->getElementType(
                       static_cast<unsigned>(i));
                   auto val = LowerOperandAsStorage(
-                      context, enq.snapshot_values[i], field_ty);
+                      context, resolver, enq.snapshot_values[i], field_ty);
                   if (!val) return std::unexpected(val.error());
                   auto* field_ptr = builder.CreateStructGEP(
                       payload_struct_ty, alloca, static_cast<unsigned>(i));

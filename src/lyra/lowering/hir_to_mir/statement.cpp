@@ -1423,11 +1423,18 @@ auto LowerDeferredActionToMir(
     if (!result) return std::unexpected(result.error());
   }
 
+  // Capture callee ABI metadata now while the body arena is still active.
+  // Thunk compilation runs after the body arena scope has ended, so it
+  // cannot look up the MIR function from the ambient context arena.
+  const auto& callee_func = (*ctx.mir_arena)[callee];
+  bool accepts_decision_owner = callee_func.abi_contract.accepts_decision_owner;
+
   return DeferredAssertionActionBuildResult{
       .action =
           mir::DeferredUserCallAction{
               .callee = callee,
               .actuals = std::move(actuals),
+              .accepts_decision_owner = accepts_decision_owner,
           },
       .snapshot_captures = std::move(snapshot_captures),
   };

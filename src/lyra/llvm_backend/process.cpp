@@ -2935,16 +2935,10 @@ auto DefineDeferredAssertionThunk(
         std::format("target function {} not found", plan.callee.value));
   }
 
-  const auto& target_func = context.GetMirArena()[plan.callee];
+  // Callee metadata comes from the action (captured at site-creation time
+  // when the body arena was active), not from context.GetMirArena() which
+  // points to the design arena at thunk compilation time.
   bool target_is_module_scoped = context.IsModuleScopedFunction(plan.callee);
-
-  if (plan.actuals.size() != target_func.signature.params.size()) {
-    throw common::InternalError(
-        "DefineDeferredAssertionThunk",
-        std::format(
-            "binding count {} != formal count {}", plan.actuals.size(),
-            target_func.signature.params.size()));
-  }
 
   std::vector<llvm::Value*> call_args;
   call_args.push_back(design_arg);
@@ -2979,7 +2973,7 @@ auto DefineDeferredAssertionThunk(
     call_args.push_back(instance_id);
   }
 
-  if (target_func.abi_contract.accepts_decision_owner) {
+  if (action.accepts_decision_owner) {
     call_args.push_back(llvm::ConstantInt::get(i32_ty, 0));
   }
 
@@ -3000,10 +2994,9 @@ auto DefineDeferredAssertionThunk(
   }
 
   // Assemble call args in formal order using derived plan.
-  for (size_t i = 0; i < plan.actuals.size(); ++i) {
-    const auto& actual = plan.actuals[i];
-    const auto& formal = target_func.signature.params[i];
-
+  // Passing kind is derived from the binding kind (captured at site-creation
+  // time), not from body-arena function formals.
+  for (const auto& actual : plan.actuals) {
     switch (actual.kind) {
       case DeferredBindingKind::kPayloadField:
         call_args.push_back(payload_values[actual.payload_index]);
@@ -3018,8 +3011,11 @@ auto DefineDeferredAssertionThunk(
                 llvm::ConstantInt::get(i32_ty, actual.ref_index)),
             "ref_addr");
 
+        auto passing_kind = actual.kind == DeferredBindingKind::kLiveRef
+                                ? mir::PassingKind::kRef
+                                : mir::PassingKind::kConstRef;
         auto* ref_actual = lowering::mir_to_llvm::FormRefCallActual(
-            builder, raw_ptr, formal.kind);
+            builder, raw_ptr, passing_kind);
         call_args.push_back(ref_actual);
         break;
       }

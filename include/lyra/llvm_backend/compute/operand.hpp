@@ -39,6 +39,10 @@ auto LowerOperandAsStorage(
     Context& context, const mir::Operand& operand, llvm::Type* target_type)
     -> Result<llvm::Value*>;
 
+auto LowerOperandAsStorage(
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
+    llvm::Type* target_type) -> Result<llvm::Value*>;
+
 // Lower a MIR constant to an LLVM Value
 auto LowerConstant(Context& context, const Constant& constant)
     -> Result<llvm::Value*>;

@@ -55,13 +55,9 @@ auto LowerOperand(Context& context, const mir::Operand& operand)
   return LowerOperand(context, canonical, operand);
 }
 
-auto LowerOperandAsStorage(
-    Context& context, const mir::Operand& operand, llvm::Type* target_type)
-    -> Result<llvm::Value*> {
-  auto val_or_err = LowerOperandRaw(context, operand);
-  if (!val_or_err) return std::unexpected(val_or_err.error());
-  llvm::Value* val = *val_or_err;
-
+auto CoerceToStorageType(
+    Context& context, llvm::Value* val, llvm::Type* target_type)
+    -> llvm::Value* {
   if (val->getType() == target_type) {
     return val;
   }
@@ -104,6 +100,22 @@ auto LowerOperandAsStorage(
   throw common::InternalError(
       "LowerOperandAsStorage",
       "unsupported storage coercion: source and target types incompatible");
+}
+
+auto LowerOperandAsStorage(
+    Context& context, const mir::Operand& operand, llvm::Type* target_type)
+    -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, operand);
+  if (!val_or_err) return std::unexpected(val_or_err.error());
+  return CoerceToStorageType(context, *val_or_err, target_type);
+}
+
+auto LowerOperandAsStorage(
+    Context& context, SlotAccessResolver& resolver, const mir::Operand& operand,
+    llvm::Type* target_type) -> Result<llvm::Value*> {
+  auto val_or_err = LowerOperandRaw(context, resolver, operand);
+  if (!val_or_err) return std::unexpected(val_or_err.error());
+  return CoerceToStorageType(context, *val_or_err, target_type);
 }
 
 auto LowerConstant(Context& context, const Constant& constant)
