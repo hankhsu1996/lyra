@@ -68,8 +68,6 @@ enum class SpecSlotAccessKind : uint8_t {
 };
 
 struct SpecSlotInfo {
-  // Body identity for this specialization.
-  mir::ModuleBodyId body_id;
   // Stable index into Layout::body_realization_infos for this body.
   static constexpr uint32_t kInvalidBodyInfoIndex = UINT32_MAX;
   uint32_t body_realization_info_index = kInvalidBodyInfoIndex;

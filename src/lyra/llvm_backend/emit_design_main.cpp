@@ -255,23 +255,6 @@ auto EmitPerSchemaFrameInitFunctions(Context& context, const Layout& layout)
     const auto& schema = layout.state_schemas[si];
     if (!schema.needs_4state_init) continue;
 
-    // Validate schema identity metadata consistency.
-    if (schema.body_id.has_value()) {
-      if (!schema.proc_within_body.has_value() ||
-          schema.conn_index.has_value()) {
-        throw common::InternalError(
-            "EmitPerSchemaFrameInitFunctions",
-            "module schema has inconsistent identity fields");
-      }
-    } else {
-      if (schema.proc_within_body.has_value() ||
-          !schema.conn_index.has_value()) {
-        throw common::InternalError(
-            "EmitPerSchemaFrameInitFunctions",
-            "connection schema has inconsistent identity fields");
-      }
-    }
-
     if (schema.representative_process_index >= layout.processes.size()) {
       throw common::InternalError(
           "EmitPerSchemaFrameInitFunctions",
@@ -280,10 +263,9 @@ auto EmitPerSchemaFrameInitFunctions(Context& context, const Layout& layout)
 
     // Generate function name from schema identity.
     std::string fn_name;
-    if (schema.body_id) {
-      fn_name = std::format(
-          "schema_{}_{}_frame_init", schema.body_id->value,
-          *schema.proc_within_body);
+    if (schema.proc_within_body.has_value()) {
+      fn_name =
+          std::format("schema_s{}_{}_frame_init", si, *schema.proc_within_body);
     } else {
       fn_name = std::format("conn_{}_frame_init", *schema.conn_index);
     }

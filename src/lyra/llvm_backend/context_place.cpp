@@ -780,9 +780,7 @@ auto Context::GetCurrentBodyRealizationInfo() const
   if (idx == SpecSlotInfo::kInvalidBodyInfoIndex) {
     throw common::InternalError(
         "Context::GetCurrentBodyRealizationInfo",
-        std::format(
-            "body_realization_info_index not set for body {}",
-            spec_slot_info_->body_id.value));
+        "body_realization_info_index not set");
   }
   if (idx >= layout_.body_realization_infos.size()) {
     throw common::InternalError(
@@ -791,16 +789,7 @@ auto Context::GetCurrentBodyRealizationInfo() const
             "body_realization_info_index {} out of range (size={})", idx,
             layout_.body_realization_infos.size()));
   }
-  const auto& info = layout_.body_realization_infos[idx];
-  if (info.body_id != spec_slot_info_->body_id) {
-    throw common::InternalError(
-        "Context::GetCurrentBodyRealizationInfo",
-        std::format(
-            "body identity mismatch: SpecSlotInfo body={}, "
-            "BodyRealizationInfo body={}",
-            spec_slot_info_->body_id.value, info.body_id.value));
-  }
-  return info;
+  return layout_.body_realization_infos[idx];
 }
 
 auto Context::RequiresBehavioralDirtyPropagation(
@@ -812,10 +801,9 @@ auto Context::RequiresBehavioralDirtyPropagation(
       throw common::InternalError(
           "Context::RequiresBehavioralDirtyPropagation",
           std::format(
-              "module-local slot {} out of range for body {} "
+              "module-local slot {} out of range "
               "(behavioral trigger bitmap size={})",
-              local_slot, GetSpecSlotInfo()->body_id.value,
-              body_info.slot_has_behavioral_trigger.size()));
+              local_slot, body_info.slot_has_behavioral_trigger.size()));
     }
     bool behavioral = body_info.slot_has_behavioral_trigger[local_slot];
     if (behavioral) return true;

@@ -470,14 +470,10 @@ struct Layout {
     // Used only as a codegen anchor to access frame layout for emission.
     // Never used to derive schema identity or grouping.
     size_t representative_process_index = 0;
-    // Schema identity components for naming emission and debug assertions.
+    // Schema naming components. Module schemas carry a body-local process
+    // ordinal; connection schemas carry a connection-process index.
     // Not the source of truth for grouping (grouping is structural).
-    std::optional<mir::ModuleBodyId> body_id;
-    // Dense non-final body-local process ordinal.
     std::optional<uint32_t> proc_within_body;
-    // For connection schemas: the connection-process semantic index
-    // used for naming. This is the canonical naming component for
-    // connection schemas.
     std::optional<uint32_t> conn_index;
   };
 

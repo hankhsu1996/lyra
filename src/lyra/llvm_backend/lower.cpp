@@ -836,7 +836,6 @@ auto BuildSpecSlotInfos(
   result.reserve(units.size());
   for (const auto& unit : units) {
     SpecSlotInfo info;
-    info.body_id = unit.body_id;
     uint32_t body_info_idx = 0;
     {
       auto it = body_info_index_by_body_id_value.find(unit.body_id.value);

@@ -1910,7 +1910,6 @@ auto BuildLayout(
             .state_align = props.state_align,
             .needs_4state_init = props.needs_4state_init,
             .representative_process_index = i,
-            .body_id = std::nullopt,
             .proc_within_body = std::nullopt,
             .conn_index = conn_counter,
         });
@@ -1942,8 +1941,7 @@ auto BuildLayout(
                 "BuildLayout",
                 "grouped module processes disagree on schema properties");
           }
-          if (existing.body_id != body_id ||
-              existing.proc_within_body != nonfinal_proc_ordinal ||
+          if (existing.proc_within_body != nonfinal_proc_ordinal ||
               existing.conn_index != std::nullopt) {
             throw common::InternalError(
                 "BuildLayout",
@@ -1971,7 +1969,6 @@ auto BuildLayout(
               .state_align = props.state_align,
               .needs_4state_init = props.needs_4state_init,
               .representative_process_index = i,
-              .body_id = body_id,
               .proc_within_body = nonfinal_proc_ordinal,
               .conn_index = std::nullopt,
           });
