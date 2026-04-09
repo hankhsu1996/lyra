@@ -166,11 +166,8 @@ struct ConstructionProgramData {
 // assembly and metadata lowering currently consume. Not the full realization
 // model. Indexed forms are explicit so each helper can take narrow views.
 struct RealizationData {
-  // Indexed by slot_id.value.
-  std::vector<TypeId> slot_types;
-  std::vector<mir::SlotKind> slot_kinds;
-
-  // Compact slot trace provenance from mir::Design (parallel to slot_types).
+  // Compact slot trace provenance from mir::Design (parallel to design slots).
+  // Used only by inspection_plan for arbitrary-slot-id lookup.
   std::vector<mir::SlotTraceProvenance> slot_trace_provenance;
   std::vector<char> slot_trace_string_pool;
 
@@ -235,7 +232,6 @@ auto CompileModuleSpecSession(
 // (its return type) is defined in this header.
 auto ExtractRealizationData(
     const mir::ConstructionInput& construction,
-    std::span<const mir::SlotDesc> slots,
     std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
     std::span<const char> slot_trace_string_pool) -> RealizationData;
 

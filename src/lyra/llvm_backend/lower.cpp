@@ -1014,7 +1014,6 @@ auto CompileModuleSpecSession(
 
 auto ExtractRealizationData(
     const mir::ConstructionInput& construction,
-    std::span<const mir::SlotDesc> slots,
     std::span<const mir::SlotTraceProvenance> slot_trace_provenance,
     std::span<const char> slot_trace_string_pool) -> RealizationData {
   RealizationData realization;
@@ -1025,13 +1024,6 @@ auto ExtractRealizationData(
         std::format(
             "construction objects/const_blocks size mismatch: {} vs {}",
             construction.objects.size(), construction.const_blocks.size()));
-  }
-
-  realization.slot_types.reserve(slots.size());
-  realization.slot_kinds.reserve(slots.size());
-  for (const auto& slot : slots) {
-    realization.slot_types.push_back(slot.type);
-    realization.slot_kinds.push_back(slot.kind);
   }
 
   realization.slot_trace_provenance.assign(
@@ -1838,8 +1830,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   auto realization = ExtractRealizationData(
-      *input.construction, expanded_slots, expanded_provenance,
-      expanded_string_pool);
+      *input.construction, expanded_provenance, expanded_string_pool);
 
   // Build forward-path body compiled functions, parallel to
   // layout->body_realization_infos.
@@ -2446,8 +2437,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
     // Source: design layout (byte offsets, storage specs, ownership),
     // slot trace provenance (local names), type arena (bit widths).
     // Uses the same body_base_slots map already computed for comb templates.
-    auto read_trace_pool = [&](uint32_t offset) -> std::string_view {
-      const auto& pool = realization.slot_trace_string_pool;
+    auto read_pkg_trace_pool = [&](uint32_t offset) -> std::string_view {
+      const auto& pool = input.design->slot_trace_string_pool;
       if (offset >= pool.size()) {
         throw common::InternalError(
             "CompileDesignProcesses",
@@ -2501,6 +2492,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
       auto owned_base =
           layout->design.GetStorageBaseForRange(base_slot, info.slot_count);
 
+      const auto& obs_body = input.design->module_bodies.at(info.body_id.value);
+
       // Body-local observable identity: each slot in the body's contiguous
       // range [base_slot, base_slot + slot_count) has a canonical body-local
       // signal id = (gsi - base_slot). This identity is determined by the
@@ -2519,14 +2512,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
         const ObservableOwnerSlotId owner =
             ObservableOwnerSlotId::Create(layout->design.slots[gsi].value);
         const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-            owner, layout->design, realization, *input.type_arena);
+            owner, layout->design, obs_body.slots[i].type,
+            obs_body.slots[i].kind, *input.type_arena);
         const ObservableDescriptorShapeFields sf =
             BuildObservableDescriptorShapeFields(shape);
 
-        // Body-local slots have no design-level trace provenance name
-        // (local_name_str_off is 0 in the expanded adapter). Read the
-        // empty name directly -- no design-global provenance lookup.
-        auto local_name = read_trace_pool(0);
+        // Body-local slots have no design-level trace provenance name.
+        // Empty name -- no design-global provenance lookup needed.
+        std::string_view local_name;
         uint32_t name_off = append_to_pool(tmpl, local_name);
 
         // Every body-local slot has body-relative storage (R2 invariant).
@@ -2775,18 +2768,20 @@ auto CompileDesignProcesses(const LoweringInput& input)
       for (uint32_t gsi = 0; gsi < num_pkg; ++gsi) {
         if (gsi >= layout->design.slots.size()) break;
 
+        const auto& pkg_slot = input.design->slots[gsi];
         const ObservableOwnerSlotId owner =
             ObservableOwnerSlotId::Create(layout->design.slots[gsi].value);
         const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-            owner, layout->design, realization, *input.type_arena);
+            owner, layout->design, pkg_slot.type, pkg_slot.kind,
+            *input.type_arena);
         const ObservableDescriptorShapeFields sf =
             BuildObservableDescriptorShapeFields(shape);
 
-        const auto& prov = realization.slot_trace_provenance[gsi];
-        auto local_name = read_trace_pool(prov.local_name_str_off);
+        const auto& prov = input.design->slot_trace_provenance[gsi];
+        auto local_name = read_pkg_trace_pool(prov.local_name_str_off);
         std::string qualified_name;
         if (prov.scope_kind == mir::SlotScopeKind::kPackage) {
-          auto pkg_name = read_trace_pool(prov.scope_ref);
+          auto pkg_name = read_pkg_trace_pool(prov.scope_ref);
           qualified_name = std::format("{}.{}", pkg_name, local_name);
         } else {
           qualified_name = std::string(local_name);
