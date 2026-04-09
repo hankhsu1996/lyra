@@ -378,9 +378,9 @@ auto IsFullyBindableRecipe(const mir::ConnectionRecipe& recipe) -> bool {
 
 auto BindConnectionRecipe(
     const mir::ConnectionRecipe& recipe, uint32_t recipe_index,
-    const mir::ModuleBody& parent_body, mir::ModuleBodyId parent_body_id,
-    common::ObjectIndex parent_object_index, const BoundHierarchyIndex& topo,
-    const mir::ConstructionInput& construction) -> mir::BoundConnection {
+    const mir::ModuleBody& parent_body, common::ObjectIndex parent_object_index,
+    const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction)
+    -> mir::BoundConnection {
   if (!IsFullyBindableRecipe(recipe)) {
     throw common::InternalError(
         "BindConnectionRecipe",
@@ -426,7 +426,6 @@ auto BindConnectionRecipe(
   return mir::BoundConnection{
       .recipe_index = recipe_index,
       .kind = recipe.kind,
-      .parent_body_id = parent_body_id,
       .parent_object_index = parent_object_index,
       .child_target = child_ep,
       .parent_source = parent_ep,

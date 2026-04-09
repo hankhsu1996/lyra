@@ -1111,8 +1111,7 @@ auto LowerDesign(
       const auto& recipe = body.connection_recipes[r];
       if (IsFullyBindableRecipe(recipe)) {
         bound_connections.push_back(BindConnectionRecipe(
-            recipe, r, body, mir::ModuleBodyId{body_idx},
-            common::ObjectIndex{oi}, topo, construction));
+            recipe, r, body, common::ObjectIndex{oi}, topo, construction));
       } else if (
           recipe.source.kind == mir::ConnectionSourceRecipe::Kind::kFunction) {
         // This adapter only supports kDriveParentToChild with
@@ -1137,7 +1136,7 @@ auto LowerDesign(
         expr_connections.push_back(
             mir::CompiledConnectionExpr{
                 .kind = recipe.kind,
-                .parent_body_id = mir::ModuleBodyId{body_idx},
+                .parent_arena = &body.arena,
                 .expr_function = recipe.source.function,
                 .parent_object_index = common::ObjectIndex{oi},
                 .child_object_index = common::ObjectIndex{child_oi},

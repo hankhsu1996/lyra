@@ -1204,9 +1204,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
                                     .object_index = expr.child_object_index,
                                     .local_slot = expr.child_local_slot})
                                 .value;
-      const auto& parent_body =
-          input.design->module_bodies.at(expr.parent_body_id.value);
-      const auto& func = parent_body.arena[expr.expr_function];
+      const auto& func = (*expr.parent_arena)[expr.expr_function];
 
       auto remap_place = [&](mir::PlaceId pid,
                              const mir::Arena& src) -> mir::PlaceId {
@@ -1274,11 +1272,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
         std::visit(
             common::Overloaded{
                 [&](const mir::Operand& op) {
-                  collect_trigger(op, parent_body.arena);
+                  collect_trigger(op, *expr.parent_arena);
                 },
                 [&](const mir::Rvalue& rv) {
                   for (const auto& op : rv.operands)
-                    collect_trigger(op, parent_body.arena);
+                    collect_trigger(op, *expr.parent_arena);
                 },
             },
             rhs);
@@ -1297,11 +1295,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
         std::visit(
             common::Overloaded{
                 [&](const mir::Branch& b) {
-                  collect_trigger(b.condition, parent_body.arena);
+                  collect_trigger(b.condition, *expr.parent_arena);
                 },
                 [&](const mir::Jump& j) {
                   for (const auto& a : j.args)
-                    collect_trigger(a, parent_body.arena);
+                    collect_trigger(a, *expr.parent_arena);
                 },
                 [](const auto&) {},
             },
@@ -1322,14 +1320,14 @@ auto CompileDesignProcesses(const LoweringInput& input)
                     return mir::Assign{
                         .dest = remap_place(
                             mir::RequireLocalDest(a.dest, "ExprConnections"),
-                            parent_body.arena),
-                        .rhs = remap_rhs(a.rhs, parent_body.arena)};
+                            *expr.parent_arena),
+                        .rhs = remap_rhs(a.rhs, *expr.parent_arena)};
                   },
                   [&](const mir::DefineTemp& dt) -> mir::StatementData {
                     return mir::DefineTemp{
                         .temp_id = dt.temp_id,
                         .type = dt.type,
-                        .rhs = remap_rhs(dt.rhs, parent_body.arena)};
+                        .rhs = remap_rhs(dt.rhs, *expr.parent_arena)};
                   },
                   [&](const auto& other) -> mir::StatementData {
                     return other;
@@ -1345,7 +1343,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
                 mir::Statement{
                     .data = mir::Assign{
                         .dest = child_place,
-                        .rhs = remap_operand(*ret->value, parent_body.arena)}});
+                        .rhs =
+                            remap_operand(*ret->value, *expr.parent_arena)}});
           }
           std::vector<mir::WaitTrigger> triggers;
           std::ranges::sort(trigger_slots);
@@ -1371,18 +1370,18 @@ auto CompileDesignProcesses(const LoweringInput& input)
                   [&](const mir::Jump& j) -> mir::TerminatorData {
                     std::vector<mir::Operand> args;
                     for (const auto& a : j.args)
-                      args.push_back(remap_operand(a, parent_body.arena));
+                      args.push_back(remap_operand(a, *expr.parent_arena));
                     return mir::Jump{
                         .target = j.target, .args = std::move(args)};
                   },
                   [&](const mir::Branch& b) -> mir::TerminatorData {
-                    auto cond = remap_operand(b.condition, parent_body.arena);
+                    auto cond = remap_operand(b.condition, *expr.parent_arena);
                     std::vector<mir::Operand> then_args;
                     for (const auto& a : b.then_args)
-                      then_args.push_back(remap_operand(a, parent_body.arena));
+                      then_args.push_back(remap_operand(a, *expr.parent_arena));
                     std::vector<mir::Operand> else_args;
                     for (const auto& a : b.else_args)
-                      else_args.push_back(remap_operand(a, parent_body.arena));
+                      else_args.push_back(remap_operand(a, *expr.parent_arena));
                     return mir::Branch{
                         .condition = cond,
                         .then_target = b.then_target,
@@ -1393,7 +1392,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
                   [&](const mir::Switch& s) -> mir::TerminatorData {
                     return mir::Switch{
                         .selector =
-                            remap_operand(s.selector, parent_body.arena),
+                            remap_operand(s.selector, *expr.parent_arena),
                         .targets = s.targets};
                   },
                   [&](const auto& other) -> mir::TerminatorData {
