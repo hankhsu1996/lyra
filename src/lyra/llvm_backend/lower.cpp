@@ -1866,7 +1866,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
     // Each iteration builds a body-local resolver from the owning body's
     // origin table.
     for (auto& info : layout->body_realization_infos) {
-      const auto& body = input.design->module_bodies.at(info.body_id.value);
+      const auto& body = *info.body;
       const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
       info.meta.pool.push_back('\0');
 
@@ -2079,7 +2079,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
     // body_to_process_triggers[body_id] is indexed by dense non-final
     // body-local ordinal.
     for (auto& info : layout->body_realization_infos) {
-      const auto& body = input.design->module_bodies.at(info.body_id.value);
+      const auto& body = *info.body;
       const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
       auto nonfinal_count =
           static_cast<uint32_t>(ordinal_map.nonfinal_processes.size());
@@ -2237,7 +2237,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
 
     for (auto& info : layout->body_realization_infos) {
-      const auto& body = input.design->module_bodies.at(info.body_id.value);
+      const auto& body = *info.body;
       const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
 
       auto base_it = body_base_slots.find(info.body_id.value);
@@ -2443,7 +2443,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       auto owned_base =
           layout->design.GetStorageBaseForRange(base_slot, info.slot_count);
 
-      const auto& obs_body = input.design->module_bodies.at(info.body_id.value);
+      const auto& obs_body = *info.body;
 
       // Body-local observable identity: each slot in the body's contiguous
       // range [base_slot, base_slot + slot_count) has a canonical body-local
@@ -2531,8 +2531,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
           layout->design.GetStorageBaseForRange(base_slot, info.slot_count);
       if (!init_owned_base.has_value()) continue;
 
-      const auto& init_body =
-          input.design->module_bodies.at(info.body_id.value);
+      const auto& init_body = *info.body;
       std::vector<ParamSlotTemplateEntry> param_entries;
 
       for (uint32_t i = 0; i < info.slot_count; ++i) {

@@ -2032,6 +2032,7 @@ auto BuildLayout(
           layout.body_realization_infos.push_back(
               Layout::BodyRealizationInfo{
                   .body_id = mir::ModuleBodyId{body_id_val},
+                  .body = plan.body,
                   .slot_count = plan.slot_count,
                   .body_layout = std::move(body_layout),
                   .slot_specs = std::move(body_slot_specs),

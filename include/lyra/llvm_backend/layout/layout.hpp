@@ -491,6 +491,11 @@ struct Layout {
   // Do not reorder.
   struct BodyRealizationInfo {
     mir::ModuleBodyId body_id;
+    // Direct pointer into mir::Design::module_bodies. Parallel to body_id,
+    // used for structural fetches that previously re-indexed through
+    // design.module_bodies.at(body_id.value). body_id stays for dedup
+    // keys, timescale indexing, origin provenance, and debug naming.
+    const mir::ModuleBody* body = nullptr;
     uint32_t slot_count = 0;
     // Body-local byte layout. Per-slot offsets in BodyByteOffset domain.
     // Sole authority for body-local addressing in spec compilation.
