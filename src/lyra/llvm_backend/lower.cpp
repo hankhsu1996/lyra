@@ -701,6 +701,7 @@ auto BuildSpecCompilationUnits(const mir::Design& design)
       units.push_back(
           SpecCompilationUnit{
               .body_id = body_id,
+              .body = mod->body,
               .processes = {body.processes.begin(), body.processes.end()},
               .functions = {body.functions.begin(), body.functions.end()},
               .instances = {binding},
@@ -731,7 +732,7 @@ auto BuildModuleSchedIndices(const Layout& layout)
 }
 
 auto BuildSpecCodegenViews(
-    const std::vector<SpecCompilationUnit>& units, const mir::Design& design,
+    const std::vector<SpecCompilationUnit>& units,
     const std::unordered_map<uint32_t, std::vector<uint32_t>>&
         modidx_to_sched_indices) -> std::vector<SpecCodegenView> {
   std::vector<SpecCodegenView> views(units.size());
@@ -746,7 +747,7 @@ auto BuildSpecCodegenViews(
               unit.body_id.value));
     }
 
-    const auto& body = design.module_bodies.at(unit.body_id.value);
+    const auto& body = *unit.body;
     const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
     if (ordinal_map.nonfinal_processes.empty()) continue;
 
@@ -827,8 +828,8 @@ auto BuildCompiledModuleSpecInputs(
 }
 
 auto BuildSpecSlotInfos(
-    const std::vector<SpecCompilationUnit>& units, const Layout& layout,
-    const mir::Design& design) -> std::vector<SpecSlotInfo> {
+    const std::vector<SpecCompilationUnit>& units, const Layout& layout)
+    -> std::vector<SpecSlotInfo> {
   // Build body-id-to-index table once for O(1) lookup per unit.
   std::unordered_map<uint32_t, uint32_t> body_info_index_by_body_id_value;
   for (uint32_t i = 0; i < layout.body_realization_infos.size(); ++i) {
@@ -859,7 +860,7 @@ auto BuildSpecSlotInfos(
     // of the same body have identical slot specs.
     const auto& body_info = layout.body_realization_infos[body_info_idx];
     const auto& body_layout = body_info.body_layout;
-    const auto& body = design.module_bodies.at(unit.body_id.value);
+    const auto& body = *unit.body;
     auto slot_count = body_info.slot_count;
 
     info.inline_offsets.reserve(slot_count);
@@ -1438,9 +1439,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // Phase 1: Build specialization inputs (units + layouts + codegen views)
   auto units = BuildSpecCompilationUnits(*input.design);
   auto modidx_to_sched_indices = BuildModuleSchedIndices(*layout);
-  auto views =
-      BuildSpecCodegenViews(units, *input.design, modidx_to_sched_indices);
-  auto spec_slot_infos = BuildSpecSlotInfos(units, *layout, *input.design);
+  auto views = BuildSpecCodegenViews(units, modidx_to_sched_indices);
+  auto spec_slot_infos = BuildSpecSlotInfos(units, *layout);
 
   // Build per-instance local-slot connection trigger facts from the
   // design-global connection trigger bitmap and module plans.

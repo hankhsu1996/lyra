@@ -34,6 +34,7 @@ struct SpecInstanceBinding {
 // Does not contain backend layout or codegen routing data.
 struct SpecCompilationUnit {
   mir::ModuleBodyId body_id;
+  const mir::ModuleBody* body = nullptr;
   std::vector<mir::ProcessId> processes;
   std::vector<mir::FunctionId> functions;
   std::vector<SpecInstanceBinding> instances;
