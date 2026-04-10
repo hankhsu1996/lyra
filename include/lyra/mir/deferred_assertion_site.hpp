@@ -164,8 +164,8 @@ inline void ValidateDeferredAssertionSiteInfo(
 }
 
 // Dense allocator for deferred assertion sites during HIR-to-MIR lowering.
-// Owned by the design lowering scope; shared across all body/process
-// lowering contexts via pointer. Produces design-global site ID values.
+// One registry per body; produces body-local site ID values (0-based per
+// body). Design-global indices are computed at assembly time.
 // Validates site-shape invariants at allocation time.
 class DeferredAssertionSiteRegistry {
  public:

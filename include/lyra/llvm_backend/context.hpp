@@ -510,6 +510,18 @@ class Context {
   void SetConnectionNotificationMask(const ConnectionNotificationMask* mask) {
     connection_notification_mask_ = mask;
   }
+  // Body-local-to-global site ID base offsets. MIR effects carry body-local
+  // IDs; codegen adds the base to produce design-global runtime indices.
+  void SetSiteBaseIndices(uint32_t deferred_base, uint32_t cover_base) {
+    deferred_site_base_index_ = deferred_base;
+    cover_site_base_index_ = cover_base;
+  }
+  [[nodiscard]] auto GetDeferredSiteBaseIndex() const -> uint32_t {
+    return deferred_site_base_index_;
+  }
+  [[nodiscard]] auto GetCoverSiteBaseIndex() const -> uint32_t {
+    return cover_site_base_index_;
+  }
   // B2: External ref resolution environment. Installed as a unit by
   // SpecLocalScope; cleared on scope exit. All fields must be consistent.
   struct ExternalRefResolutionEnv {
@@ -1000,6 +1012,9 @@ class Context {
   void RegisterDeferredAssertionSiteInfo(
       mir::DeferredAssertionSiteId site_id,
       const mir::DeferredAssertionSiteInfo* info);
+  void ClearDeferredAssertionSiteInfo() {
+    deferred_assertion_sites_.clear();
+  }
   [[nodiscard]] auto GetDeferredAssertionSiteInfo(
       mir::DeferredAssertionSiteId site_id) const
       -> const mir::DeferredAssertionSiteInfo*;
@@ -1265,6 +1280,8 @@ class Context {
   llvm::Value* dynamic_instance_id_ = nullptr;
   const SpecSlotInfo* spec_slot_info_ = nullptr;
   const ConnectionNotificationMask* connection_notification_mask_ = nullptr;
+  uint32_t deferred_site_base_index_ = 0;
+  uint32_t cover_site_base_index_ = 0;
 
   // External ref resolution state. Env carries bindings + construction
   // for ResolveExternalRefRoot.

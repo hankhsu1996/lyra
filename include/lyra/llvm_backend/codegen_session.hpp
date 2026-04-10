@@ -140,10 +140,11 @@ struct CompiledModuleSpecInput {
   const lowering::BodyOriginProvenance::Entry* origin_entry = nullptr;
   // Per-body deferred assertion sites (from body-owned storage).
   std::span<const mir::DeferredAssertionSiteInfo> deferred_sites;
-  // Base index of this body's sites within the design-global deferred
-  // assertion site vector. Used by callee capture to write into the
-  // design-global parallel output vector.
+  // Base indices for body-local-to-global remapping. MIR effects carry
+  // body-local site IDs; the backend adds the base to produce design-global
+  // runtime indices.
   uint32_t deferred_site_base_index = 0;
+  uint32_t cover_site_base_index = 0;
   // Specialization-local state. Owned by CompileDesignProcesses,
   // consumed by CompileModuleSpecSession via SpecLocalScope.
   const SpecSlotInfo* spec_slot_info = nullptr;

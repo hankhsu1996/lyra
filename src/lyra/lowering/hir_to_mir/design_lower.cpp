@@ -182,8 +182,7 @@ auto LowerDesign(
     return std::unexpected(std::move(diag));
   }
 
-  mir::ImmediateCoverSiteRegistry cover_site_registry;
-  mir::DeferredAssertionSiteRegistry deferred_assertion_site_registry;
+  // (Per-body site registries are allocated below, after spec_map is defined.)
 
   mir::Design result;
   result.num_design_slots = decls.num_design_slots;
@@ -298,10 +297,14 @@ auto LowerDesign(
   std::vector<Result<MirBodyLoweringResult>> body_results;
   body_results.reserve(spec_map.groups.size());
 
-  // Track deferred assertion site ranges per body. Each body's lowering
-  // allocates a contiguous range of site IDs from the shared registry.
-  // Used in Phase 2 to stamp body ownership on sites.
-  std::vector<std::pair<uint32_t, uint32_t>> deferred_site_ranges;
+  // Per-body site registries. Each body gets a fresh registry so site IDs
+  // are body-local (0-based per body). Design-global tables are built by
+  // concatenation in Phase 2.
+  auto num_groups = spec_map.groups.size();
+  std::vector<mir::ImmediateCoverSiteRegistry> cover_site_registries(
+      num_groups);
+  std::vector<mir::DeferredAssertionSiteRegistry> deferred_site_registries(
+      num_groups);
 
   auto spec_groups =
       BuildMirSpecGroups(spec_map, static_cast<uint32_t>(hir_modules.size()));
@@ -346,13 +349,10 @@ auto LowerDesign(
       }
     }
 
-    uint32_t site_base = deferred_assertion_site_registry.Size();
     body_results.push_back(LowerModule(
         hir_body, body_input, std::move(body_arena), mir_arena, decls,
-        body_decls, &cover_site_registry, &deferred_assertion_site_registry,
+        body_decls, &cover_site_registries[g], &deferred_site_registries[g],
         &cross_instance_places));
-    deferred_site_ranges.emplace_back(
-        site_base, deferred_assertion_site_registry.Size());
   }
 
   // Phase 2: Assemble body results in stable group order.
@@ -395,25 +395,21 @@ auto LowerDesign(
   }
   result.max_body_local_events = max_events;
 
-  result.immediate_cover_sites = cover_site_registry.TakeSites();
-
-  // Attach deferred assertion sites to their owning bodies and build the
-  // design-global concatenation. Ordering invariant: deferred_site_ranges[g]
-  // corresponds to body_results[g] which became result.module_bodies[g].
-  // The design-global vector preserves the same order as the registry
-  // (body 0 sites first, then body 1, etc.) for DeferredAssertionSiteId
-  // indexing by MIR effects.
-  {
-    auto all_sites = deferred_assertion_site_registry.TakeSites();
-    for (size_t g = 0; g < deferred_site_ranges.size(); ++g) {
-      auto [base, end] = deferred_site_ranges[g];
-      auto& body = result.module_bodies[g];
-      body.deferred_assertion_sites.reserve(end - base);
-      for (uint32_t i = base; i < end; ++i) {
-        body.deferred_assertion_sites.push_back(all_sites[i]);
-      }
-    }
-    result.deferred_assertion_sites = std::move(all_sites);
+  // Build design-global site tables by concatenating per-body registries.
+  // Site IDs in MIR effects are body-local (0-based per body). The design-
+  // global tables are the concatenation of all body-local tables in body
+  // order, used only at assembly/emission time for runtime table building.
+  for (size_t g = 0; g < result.module_bodies.size(); ++g) {
+    auto& body = result.module_bodies[g];
+    body.immediate_cover_sites = cover_site_registries[g].TakeSites();
+    body.deferred_assertion_sites = deferred_site_registries[g].TakeSites();
+    result.immediate_cover_sites.insert(
+        result.immediate_cover_sites.end(), body.immediate_cover_sites.begin(),
+        body.immediate_cover_sites.end());
+    result.deferred_assertion_sites.insert(
+        result.deferred_assertion_sites.end(),
+        body.deferred_assertion_sites.begin(),
+        body.deferred_assertion_sites.end());
   }
 
   // Build DPI export wrapper descriptors now that body-local function maps

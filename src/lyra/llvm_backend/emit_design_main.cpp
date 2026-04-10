@@ -1865,7 +1865,8 @@ auto EmitDeferredAssertionSiteMetaGlobal(
     Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites,
     std::span<const DeferredSiteCompiledArtifact> artifacts,
     std::span<const lowering::BodyOriginProvenance::Entry* const>
-        site_origin_entries) -> llvm::Constant* {
+        site_origin_entries,
+    std::span<const uint32_t> site_cover_bases) -> llvm::Constant* {
   if (sites.empty()) return nullptr;
 
   if (artifacts.size() != sites.size()) {
@@ -1900,12 +1901,16 @@ auto EmitDeferredAssertionSiteMetaGlobal(
     auto kind_val = static_cast<uint8_t>(site.kind);
 
     // Derive cover_site_id from semantic action variant.
+    // cover_site_id in the action is body-local; apply per-site cover base
+    // to produce the design-global runtime index.
     uint32_t cover_id = UINT32_MAX;
     if (site.pass_action.has_value()) {
       const auto* cover_hit =
           std::get_if<mir::DeferredCoverHitAction>(&*site.pass_action);
       if (cover_hit != nullptr) {
-        cover_id = cover_hit->cover_site_id.Index();
+        uint32_t cover_base =
+            (si < site_cover_bases.size()) ? site_cover_bases[si] : 0;
+        cover_id = cover_base + cover_hit->cover_site_id.Index();
       }
     }
 
@@ -2649,23 +2654,31 @@ auto EmitDesignMain(
       slot_trace_for_abi = ctor_result.slot_trace;
     }
 
-    // Build per-site origin entry mapping from body-owned site counts.
-    // Each site's origin entry is determined by which body owns it.
+    // Build per-site origin entry and cover base mappings from body-owned
+    // site counts. Each site's origin/cover-base is determined by its
+    // owning body.
     std::vector<const lowering::BodyOriginProvenance::Entry*>
         site_origin_entries;
-    if (input.origin_provenance != nullptr) {
-      site_origin_entries.reserve(
-          input.design->deferred_assertion_sites.size());
+    std::vector<uint32_t> site_cover_bases;
+    {
+      auto num_sites = input.design->deferred_assertion_sites.size();
+      site_origin_entries.reserve(num_sites);
+      site_cover_bases.reserve(num_sites);
+      uint32_t cover_base = 0;
       for (const auto& body : input.design->module_bodies) {
-        const auto* entry = input.origin_provenance->Find(&body);
+        const auto* entry = (input.origin_provenance != nullptr)
+                                ? input.origin_provenance->Find(&body)
+                                : nullptr;
         for (size_t s = 0; s < body.deferred_assertion_sites.size(); ++s) {
           site_origin_entries.push_back(entry);
+          site_cover_bases.push_back(cover_base);
         }
+        cover_base += static_cast<uint32_t>(body.immediate_cover_sites.size());
       }
     }
     auto* deferred_site_meta_global = EmitDeferredAssertionSiteMetaGlobal(
         context, input.design->deferred_assertion_sites,
-        session.deferred_site_artifacts, site_origin_entries);
+        session.deferred_site_artifacts, site_origin_entries, site_cover_bases);
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,

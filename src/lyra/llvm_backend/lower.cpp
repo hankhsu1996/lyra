@@ -818,15 +818,22 @@ auto BuildCompiledModuleSpecInputs(
     std::vector<SpecCodegenView> views, const mir::Design& design,
     const lowering::BodyOriginProvenance* origin_provenance)
     -> std::vector<CompiledModuleSpecInput> {
-  // Precompute design-global deferred site base index for each body.
-  // The design-global vector is ordered body 0, body 1, ... so base[i]
-  // is the sum of site counts of bodies 0..i-1.
-  std::unordered_map<const mir::ModuleBody*, uint32_t> body_deferred_base;
+  // Precompute design-global site base indices for each body.
+  // The design-global tables are concatenations of body-local tables in body
+  // order. base[i] = sum of site counts of bodies 0..i-1.
+  struct SiteBaseIndices {
+    uint32_t deferred = 0;
+    uint32_t cover = 0;
+  };
+  std::unordered_map<const mir::ModuleBody*, SiteBaseIndices> body_site_bases;
   {
-    uint32_t base = 0;
+    uint32_t deferred_base = 0;
+    uint32_t cover_base = 0;
     for (const auto& body : design.module_bodies) {
-      body_deferred_base[&body] = base;
-      base += static_cast<uint32_t>(body.deferred_assertion_sites.size());
+      body_site_bases[&body] = {deferred_base, cover_base};
+      deferred_base +=
+          static_cast<uint32_t>(body.deferred_assertion_sites.size());
+      cover_base += static_cast<uint32_t>(body.immediate_cover_sites.size());
     }
   }
 
@@ -837,9 +844,10 @@ auto BuildCompiledModuleSpecInputs(
     const lowering::BodyOriginProvenance::Entry* origin_entry =
         (origin_provenance != nullptr) ? origin_provenance->Find(units[i].body)
                                        : nullptr;
-    auto base_it = body_deferred_base.find(units[i].body);
-    uint32_t deferred_base =
-        (base_it != body_deferred_base.end()) ? base_it->second : 0;
+    auto base_it = body_site_bases.find(units[i].body);
+    SiteBaseIndices bases = (base_it != body_site_bases.end())
+                                ? base_it->second
+                                : SiteBaseIndices{};
     inputs.push_back(
         CompiledModuleSpecInput{
             .body = units[i].body,
@@ -849,7 +857,8 @@ auto BuildCompiledModuleSpecInputs(
             .name_prefix = std::format("body_{}", body_idx),
             .origin_entry = origin_entry,
             .deferred_sites = units[i].body->deferred_assertion_sites,
-            .deferred_site_base_index = deferred_base,
+            .deferred_site_base_index = bases.deferred,
+            .cover_site_base_index = bases.cover,
         });
   }
   return inputs;
@@ -967,6 +976,18 @@ auto CompileModuleSpecSession(
   Context::SpecLocalScope spec_scope(
       context, input.spec_slot_info, input.connection_notification_mask,
       std::move(ext_ref_env));
+
+  // Install body-local-to-global site ID base offsets for codegen.
+  context.SetSiteBaseIndices(
+      input.deferred_site_base_index, input.cover_site_base_index);
+
+  // Register this body's deferred assertion site info for enqueue codegen.
+  // Site IDs in MIR are body-local; registration uses body-local keys.
+  context.ClearDeferredAssertionSiteInfo();
+  for (uint32_t si = 0; si < input.deferred_sites.size(); ++si) {
+    context.RegisterDeferredAssertionSiteInfo(
+        mir::DeferredAssertionSiteId{si}, &input.deferred_sites[si]);
+  }
 
   // Clear per-spec state: body-local FunctionIds are 0-based per body,
   // so registrations from a previous spec session would collide.
@@ -1543,13 +1564,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
     RegisterMonitorInfo(*context, *input.mir_arena, proc_id);
   }
 
-  // Phase 2b: Register deferred assertion site info (for enqueue codegen).
-  for (uint32_t si = 0; si < input.design->deferred_assertion_sites.size();
-       ++si) {
-    const auto& site = input.design->deferred_assertion_sites[si];
-    context->RegisterDeferredAssertionSiteInfo(
-        mir::DeferredAssertionSiteId{si}, &site);
-  }
+  // (Deferred assertion site registration is now per-body, done inside
+  // CompileModuleSpecSession before per-body codegen begins.)
 
   // Phase 3: Design-global function declare/define only (packages + generated)
   std::vector<mir::FunctionId> global_func_ids;

@@ -611,9 +611,11 @@ auto LowerEffectOp(
           [&](const mir::CoverHitEffect& hit) -> Result<void> {
             auto& builder = context.GetBuilder();
             auto* engine_ptr = context.GetEnginePointer();
+            auto global_cover_id =
+                context.GetCoverSiteBaseIndex() + hit.site_id.Index();
             auto* site_val = llvm::ConstantInt::get(
                 llvm::Type::getInt32Ty(context.GetLlvmContext()),
-                hit.site_id.Index());
+                global_cover_id);
             builder.CreateCall(
                 context.GetLyraRecordImmediateCoverHit(),
                 {engine_ptr, site_val});
@@ -635,8 +637,9 @@ auto LowerEffectOp(
             auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
             auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
             auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
-            auto* site_val =
-                llvm::ConstantInt::get(i32_ty, enq.site_id.Index());
+            auto global_site_id =
+                context.GetDeferredSiteBaseIndex() + enq.site_id.Index();
+            auto* site_val = llvm::ConstantInt::get(i32_ty, global_site_id);
             auto* disp_val = llvm::ConstantInt::get(
                 i8_ty, static_cast<uint8_t>(enq.disposition));
 
