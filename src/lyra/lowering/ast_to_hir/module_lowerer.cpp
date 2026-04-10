@@ -41,6 +41,7 @@ ScopeLowerer::ScopeLowerer(
     Context& ctx, SymbolRegistrar& registrar,
     const slang::ast::InstanceSymbol& instance)
     : ScopeLowerer(ctx, registrar, ComputeFrame(ctx, instance.body)) {
+  frame_.instance = &instance;
 }
 
 ScopeLowerer::ScopeLowerer(

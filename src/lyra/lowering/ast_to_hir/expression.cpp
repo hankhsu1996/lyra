@@ -992,46 +992,82 @@ auto LowerExpression(
         return steps;
       };
 
+      // Walk up exactly N instance boundaries from the current instance
+      // and return the InstanceSymbol at that level. Returns nullptr if
+      // the walk runs out of parents (e.g., frame is null or N too large).
+      auto walk_up_instances =
+          [&](uint32_t count) -> const slang::ast::InstanceSymbol* {
+        if (frame == nullptr || frame->instance == nullptr) return nullptr;
+        const auto* inst = frame->instance;
+        for (uint32_t i = 0; i < count; ++i) {
+          const auto* parent_scope = inst->getParentScope();
+          if (parent_scope == nullptr) return nullptr;
+          const auto& parent_sym = parent_scope->asSymbol();
+          if (parent_sym.kind != slang::ast::SymbolKind::InstanceBody) {
+            return nullptr;
+          }
+          inst = parent_sym.as<slang::ast::InstanceBodySymbol>().parentInstance;
+          if (inst == nullptr) return nullptr;
+        }
+        return inst;
+      };
+
       // Extract descendant path elements from slang's hierarchical
       // reference path. Each element is an instance traversal step with
       // its generate-scope selection extracted from the symbol's parent
       // scope chain.
+      //
+      // slang's upward lookup can find names in two ways:
+      //   1. scope->find(): name found as a child of an ancestor scope.
+      //      path[0] is a real downward child step -- must be kept.
+      //   2. Definition-name match: module definition name matches.
+      //      path[0] IS the ancestor instance itself -- must be skipped.
+      //
+      // We distinguish by checking whether path[0]'s InstanceBody is an
+      // ancestor of the current instance being lowered.
       auto extract_path_elements =
           [&](const slang::ast::HierarchicalReference& ref)
           -> std::vector<hir::HierPathElement> {
         std::vector<hir::HierPathElement> elements;
-        // The slang path includes all symbols from reference scope to
-        // target. Exclude:
-        //   - The last element: target variable/net (carried by target_sym)
-        //   - The first element when upwardCount > 0: scope name at the
-        //     resolution root (e.g., "Top" in "Top.var"), not a child
-        //     instance traversal
-        // Skip the first element when it is the resolution root scope:
-        //   - upwardCount > 0: first element is the named scope reached
-        //     by upward navigation (e.g., "Test" in "Test.var" from child)
-        //   - upwardCount == 0 with explicit scope name: first element is
-        //     the enclosing scope itself (e.g., "Test" in "Test.a.value"
-        //     from Test's own initial block)
-        // Detect the second case: if first element is an Instance whose
-        // parent is the root compilation unit, it's the enclosing module.
+        // The last path element is always the target variable/net,
+        // carried separately by target_sym. Skip it.
+        // The first element may need to be skipped if it is an ancestor
+        // self-reference (definition-name match or enclosing scope name).
         size_t start = 0;
-        if (!ref.path.empty()) {
+        if (!ref.path.empty() &&
+            ref.path[0].symbol->kind == slang::ast::SymbolKind::Instance) {
+          const auto& first_inst =
+              ref.path[0].symbol->as<slang::ast::InstanceSymbol>();
           if (ref.upwardCount > 0) {
-            start = 1;
-          } else if (
-              ref.path[0].symbol->kind == slang::ast::SymbolKind::Instance &&
-              ref.path[0].symbol->getParentScope() != nullptr &&
-              ref.path[0].symbol->getParentScope()->asSymbol().kind ==
-                  slang::ast::SymbolKind::Root) {
-            start = 1;
+            // Upward lookup: skip only if path[0] is the exact instance
+            // reached by walking up (definition-name self-reference).
+            // Keep if it's a child found in the ancestor scope.
+            //
+            // Exact instance identity is required -- body/definition
+            // equality is not sufficient because two different instances
+            // can share the same module definition. A child instance of
+            // the same module type as the ancestor must still be kept as
+            // a real traversal step.
+            const auto* ancestor =
+                walk_up_instances(static_cast<uint32_t>(ref.upwardCount));
+            if (ancestor != nullptr && ancestor == &first_inst) {
+              start = 1;
+            }
+          } else {
+            // No upward walk: skip if the first element is the enclosing
+            // scope itself (e.g., "Test" in "Test.a.value" from Test's
+            // own initial block).
+            if (ref.path[0].symbol->getParentScope() != nullptr &&
+                ref.path[0].symbol->getParentScope()->asSymbol().kind ==
+                    slang::ast::SymbolKind::Root) {
+              start = 1;
+            }
           }
         }
         if (ref.path.size() <= start + 1) return elements;
         for (size_t i = start; i + 1 < ref.path.size(); ++i) {
           const auto& sym = *ref.path[i].symbol;
           SymbolId step_sym = registrar.Lookup(sym);
-          // Classify: InstanceSymbol -> kChildInstance, everything else
-          // (GenerateBlock, GenerateBlockArray) -> kGenerateScope.
           auto kind = sym.kind == slang::ast::SymbolKind::Instance
                           ? hir::HierPathStepKind::kChildInstance
                           : hir::HierPathStepKind::kGenerateScope;

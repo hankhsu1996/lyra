@@ -1,0 +1,69 @@
+feature: upward_hierarchical_refs_child_lookup
+description: >
+  Tests for hierarchical references where the upward lookup finds a child
+  instance in an ancestor scope (scope->find() case), as opposed to the
+  definition-name match case. The first path element is a real downward
+  child traversal step that must be preserved.
+
+cases:
+  - name: upward_then_child_read
+    description: >
+      Deep module reads a variable in a sibling child of an ancestor.
+      Hierarchy: Test > u_core(Core) > u_stage(Stage) > u_ctrl(Controller).
+      Controller references u_core.value -- walks up 3 to Test, then finds
+      u_core as a child of Test, then accesses value in Core. The first path
+      element (u_core) is a real child traversal step, not a self-reference.
+    sv: |
+      module Controller;
+        int result;
+        initial begin
+          result = u_core.value;
+          $display("result=%0d", result);
+        end
+      endmodule
+
+      module Stage;
+        Controller u_ctrl();
+      endmodule
+
+      module Core;
+        int value = 66;
+        Stage u_stage();
+      endmodule
+
+      module Test;
+        Core u_core();
+        initial #1;
+      endmodule
+    expect:
+      stdout: "result=66\n"
+
+  - name: upward_then_child_two_levels
+    description: >
+      Same pattern but with two child traversal steps after the upward walk.
+      Controller references u_core.u_stage.some_var -- walks up to Test,
+      then descends through u_core and u_stage.
+    sv: |
+      module Controller;
+        int result;
+        initial begin
+          result = u_core.u_stage.stage_val;
+          $display("result=%0d", result);
+        end
+      endmodule
+
+      module Stage;
+        int stage_val = 77;
+        Controller u_ctrl();
+      endmodule
+
+      module Core;
+        Stage u_stage();
+      endmodule
+
+      module Test;
+        Core u_core();
+        initial #1;
+      endmodule
+    expect:
+      stdout: "result=77\n"
