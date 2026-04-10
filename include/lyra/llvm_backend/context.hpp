@@ -738,14 +738,14 @@ class Context {
   [[nodiscard]] auto RequiresStaticDirtyPropagation(
       const mir::SignalRef& sig) const -> bool;
 
-  // Legacy runtime-interop: resolve a signal reference to a design-global
-  // slot index for runtime APIs that still use flat slot identity (trace
-  // observation, packed store notifications). For module-local signals,
-  // maps through ResolveRepresentativeDesignSlot. For design-global
+  // Resolve a signal reference to a design-global slot index for runtime
+  // APIs that still use flat slot identity (trace observation, packed
+  // store notifications). For module-local signals, maps through
+  // SpecLayoutContract::representative_slot_base. For design-global
   // signals, returns the id directly.
   // Must NOT be used for spec compilation decisions -- only for runtime
   // signal identity at the codegen->runtime boundary.
-  [[nodiscard]] auto GetLegacyRuntimeSignalSlot(const mir::SignalRef& sig) const
+  [[nodiscard]] auto GetRuntimeSignalSlot(const mir::SignalRef& sig) const
       -> uint32_t;
 
   // Emit IR that queries whether the canonical storage-owner slot for

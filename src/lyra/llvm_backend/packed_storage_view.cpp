@@ -1329,8 +1329,7 @@ auto BuildStorePolicyFromContext(
   if (mutation_signal != nullptr) {
     policy.requires_static_dirty_propagation =
         ctx.RequiresStaticDirtyPropagation(*mutation_signal);
-    policy.mutation_resolved_slot =
-        ctx.GetLegacyRuntimeSignalSlot(*mutation_signal);
+    policy.mutation_resolved_slot = ctx.GetRuntimeSignalSlot(*mutation_signal);
   }
   policy.signal_id = std::move(signal_id);
   policy.engine_ptr = ctx.GetEnginePointer();

@@ -568,32 +568,6 @@ struct Layout {
   // Do NOT use in new code -- use body-local BodyLayout/slot_specs instead.
   std::vector<uint32_t> body_representative_base_slots;
 
-  // Transitional: resolve a body-local slot to a representative
-  // design-global slot index. ONLY for runtime signal identity at the
-  // codegen->runtime boundary (trace observation, packed store
-  // notifications). Must NOT be used for spec compilation decisions.
-  // Will be deleted when runtime signal identity moves fully to
-  // object-local coordinates.
-  [[nodiscard]] auto ResolveRepresentativeDesignSlot(
-      uint32_t body_info_index, uint32_t local_slot) const -> uint32_t {
-    if (body_info_index >= body_representative_base_slots.size()) {
-      throw common::InternalError(
-          "ResolveRepresentativeDesignSlot",
-          std::format(
-              "body_info_index {} out of range (size={})", body_info_index,
-              body_representative_base_slots.size()));
-    }
-    if (local_slot >= body_realization_infos.at(body_info_index).slot_count) {
-      throw common::InternalError(
-          "ResolveRepresentativeDesignSlot",
-          std::format(
-              "local_slot {} out of range for body {} (slot_count={})",
-              local_slot, body_realization_infos[body_info_index].body_id.value,
-              body_realization_infos[body_info_index].slot_count));
-    }
-    return body_representative_base_slots[body_info_index] + local_slot;
-  }
-
   // Per-connection codegen trigger fact. Intentionally reduced payload
   // from ProcessTriggerFact (process.hpp): only the fields needed for
   // trigger template extraction. Stored on the connection realization

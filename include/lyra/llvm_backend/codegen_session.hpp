@@ -77,6 +77,14 @@ struct SpecLayoutContract {
   // Body-local behavioral dirty-propagation contract.
   // Copied from BodyRealizationInfo::slot_has_behavioral_trigger.
   std::vector<bool> slot_has_behavioral_trigger;
+  // Per body-local slot: true iff any other body has a behavioral trigger
+  // referencing this slot's design-global representative. Covers cross-body
+  // dependents (e.g., parent always_ff @(posedge child.clk)).
+  std::vector<bool> slot_has_cross_body_behavioral_trigger;
+  // Representative design-global base slot for this body. Used only for
+  // runtime signal identity at the codegen->runtime boundary (trace
+  // observation, packed store notifications).
+  uint32_t representative_slot_base = 0;
 };
 
 // Per-specialization slot access classification.
@@ -88,10 +96,6 @@ enum class SpecSlotAccessKind : uint8_t {
 };
 
 struct SpecSlotInfo {
-  // Stable index into Layout::body_realization_infos for this body.
-  static constexpr uint32_t kInvalidBodyInfoIndex = UINT32_MAX;
-  uint32_t body_realization_info_index = kInvalidBodyInfoIndex;
-
   // Per-slot body-relative byte offset for local storage.
   // Every body-local slot has a valid offset (no forwarded aliases).
   // For kInlineValue: offset of the slot's value bytes from body base.

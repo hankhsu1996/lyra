@@ -213,7 +213,6 @@ auto BuildSpecSlotInfos(
             "BuildSpecSlotInfos", "no BodyRealizationInfo for body");
       }
       body_info_idx = it->second;
-      info.body_realization_info_index = body_info_idx;
     }
 
     const auto& body_info = layout.body_realization_infos[body_info_idx];
@@ -338,11 +337,23 @@ auto BuildSpecPlan(
   }
 
   // Build per-body CU-local layout contracts from the design-global Layout.
+  // Map body pointers to body_realization_infos indices for contract building.
+  std::unordered_map<const mir::ModuleBody*, uint32_t> body_info_index_by_ptr;
+  for (uint32_t i = 0; i < layout.body_realization_infos.size(); ++i) {
+    body_info_index_by_ptr[layout.body_realization_infos[i].body] = i;
+  }
+
   std::vector<SpecLayoutContract> layout_contracts;
   layout_contracts.reserve(inputs.size());
   for (size_t i = 0; i < inputs.size(); ++i) {
-    const auto& bri = layout.body_realization_infos.at(
-        slot_infos[i].body_realization_info_index);
+    auto it = body_info_index_by_ptr.find(units[i].body);
+    if (it == body_info_index_by_ptr.end()) {
+      throw common::InternalError(
+          "BuildSpecPlan", "no BodyRealizationInfo for body");
+    }
+    auto body_info_idx = it->second;
+    const auto& bri = layout.body_realization_infos[body_info_idx];
+
     SpecLayoutContract contract;
     contract.process_layouts.reserve(inputs[i].view.processes.size());
     for (const auto& pv : inputs[i].view.processes) {
@@ -351,6 +362,24 @@ auto BuildSpecPlan(
     }
     contract.slot_specs = bri.slot_specs;
     contract.slot_has_behavioral_trigger = bri.slot_has_behavioral_trigger;
+    contract.representative_slot_base =
+        layout.body_representative_base_slots[body_info_idx];
+
+    // Pre-compute cross-body behavioral trigger bitmap for this body.
+    // A slot has a cross-body behavioral trigger if its design-global
+    // representative is marked in the design-global bitmap but NOT in
+    // the body-local bitmap.
+    auto slot_count = bri.slot_count;
+    contract.slot_has_cross_body_behavioral_trigger.resize(slot_count, false);
+    for (uint32_t s = 0; s < slot_count; ++s) {
+      auto global_slot = contract.representative_slot_base + s;
+      if (global_slot < layout.slot_has_design_behavioral_trigger.size() &&
+          layout.slot_has_design_behavioral_trigger[global_slot] &&
+          !bri.slot_has_behavioral_trigger[s]) {
+        contract.slot_has_cross_body_behavioral_trigger[s] = true;
+      }
+    }
+
     layout_contracts.push_back(std::move(contract));
   }
 

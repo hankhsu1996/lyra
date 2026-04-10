@@ -877,21 +877,11 @@ auto Context::RequiresBehavioralDirtyPropagation(
               local_slot,
               spec_layout_contract_->slot_has_behavioral_trigger.size()));
     }
-    bool behavioral =
-        spec_layout_contract_->slot_has_behavioral_trigger[local_slot];
-    if (behavioral) return true;
-
-    // Check design-global behavioral triggers for package/init signals.
-    // Body-local slots are projected to their representative design-global
-    // equivalent for this check.
-    const auto& spec = *GetSpecSlotInfo();
-    auto global_slot = layout_.ResolveRepresentativeDesignSlot(
-        spec.body_realization_info_index, local_slot);
-    if (global_slot < layout_.slot_has_design_behavioral_trigger.size()) {
-      if (layout_.slot_has_design_behavioral_trigger[global_slot]) return true;
+    if (spec_layout_contract_->slot_has_behavioral_trigger[local_slot]) {
+      return true;
     }
-
-    return false;
+    return spec_layout_contract_
+        ->slot_has_cross_body_behavioral_trigger[local_slot];
   }
   if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
     const auto& layout = GetLayout();
@@ -945,32 +935,30 @@ auto Context::RequiresStaticDirtyPropagation(const mir::SignalRef& sig) const
          RequiresConnectionNotification(sig);
 }
 
-auto Context::GetLegacyRuntimeSignalSlot(const mir::SignalRef& sig) const
+auto Context::GetRuntimeSignalSlot(const mir::SignalRef& sig) const
     -> uint32_t {
   const auto& layout = GetLayout();
   uint32_t owner_slot = 0;
 
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
-    if (GetSpecSlotInfo() == nullptr) {
+    if (spec_layout_contract_ == nullptr) {
       throw common::InternalError(
-          "Context::GetLegacyRuntimeSignalSlot",
+          "Context::GetRuntimeSignalSlot",
           "module-local signal queried without active "
-          "specialization context");
+          "SpecLayoutContract");
     }
-    const auto& spec = *GetSpecSlotInfo();
     auto local_slot = static_cast<uint32_t>(sig.id);
-    owner_slot = layout_.ResolveRepresentativeDesignSlot(
-        spec.body_realization_info_index, local_slot);
+    owner_slot = spec_layout_contract_->representative_slot_base + local_slot;
   } else if (sig.scope == mir::SignalRef::Scope::kDesignGlobal) {
     owner_slot = static_cast<uint32_t>(sig.id);
   } else {
     throw common::InternalError(
-        "Context::GetLegacyRuntimeSignalSlot", "unknown signal scope");
+        "Context::GetRuntimeSignalSlot", "unknown signal scope");
   }
 
   if (owner_slot >= layout.design.slots.size()) {
     throw common::InternalError(
-        "Context::GetLegacyRuntimeSignalSlot",
+        "Context::GetRuntimeSignalSlot",
         std::format(
             "owner slot {} out of range (design has {} slots)", owner_slot,
             layout.design.slots.size()));
@@ -998,7 +986,7 @@ auto Context::EmitIsTraceObservedOwnerSlot(uint32_t owner_slot)
 }
 
 auto Context::EmitIsTraceObserved(const mir::SignalRef& sig) -> llvm::Value* {
-  return EmitIsTraceObservedOwnerSlot(GetLegacyRuntimeSignalSlot(sig));
+  return EmitIsTraceObservedOwnerSlot(GetRuntimeSignalSlot(sig));
 }
 
 }  // namespace lyra::lowering::mir_to_llvm
