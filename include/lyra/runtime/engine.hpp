@@ -395,6 +395,7 @@ class Engine {
     }
     update_set_.Init(registry.Size(), sizes);
     signal_subs_.resize(registry.Size());
+    global_has_observers_.assign(registry.Size(), 0);
     activation_slot_gen_.resize(registry.Size(), 0);
     // Flat path (no bundles): all slots are design-global.
     global_slot_count_ = registry.Size();
@@ -1093,6 +1094,11 @@ class Engine {
   auto ResolveSubSlot(uint32_t slot_id, bool is_local, InstanceId instance_id)
       -> SlotSubscriptions&;
 
+  // Recompute the per-signal observer flag after subscription mutations.
+  // Called after every add/remove to keep the flag consistent.
+  void UpdateObserverFlag(
+      uint32_t signal_id, bool is_local, InstanceId instance_id);
+
   // Per-kind flush helpers. Callers resolve slot storage before calling.
   void FlushSlotRebindSubs(
       std::vector<RebindWatcherSub>& subs,
@@ -1212,6 +1218,9 @@ class Engine {
   // Dense per-slot subscription storage (indexed by slot_id, sized in
   // InitSlotMeta). Four typed vectors per slot for branch-free flush scans.
   std::vector<SlotSubscriptions> signal_subs_;
+  // Per-slot observer flag: 1 if any subscriber exists. Used to skip dirty
+  // marking for unwatched global slots.
+  std::vector<uint8_t> global_has_observers_;
 
   // Typed cold pools: each sub kind has its own cold storage.
   std::vector<EdgeTargetCold> edge_cold_pool_;

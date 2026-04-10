@@ -42,6 +42,7 @@ void RuntimeInstanceObservability::Init() {
 
   trace_select = layout->trace_select_default;
   local_signal_subs.resize(local_signal_count);
+  local_has_observers.assign(local_signal_count, 0);
   activation_gen.assign(local_signal_count, 0);
 }
 

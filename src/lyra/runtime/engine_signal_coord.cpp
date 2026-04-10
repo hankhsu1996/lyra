@@ -14,18 +14,30 @@ namespace lyra::runtime {
 // the engine-level dirty-instance sparse indexes (derived acceleration).
 
 void Engine::MarkLocalSignalDirty(RuntimeInstance& inst, LocalSignalId lid) {
+  if (inst.observability.local_has_observers[lid.value] == 0 &&
+      !trace_manager_.IsEnabled()) {
+    return;
+  }
   MarkLocalSignalDirty(inst, lid, GetInstanceIndex(inst));
 }
 
 void Engine::MarkLocalSignalDirty(
     RuntimeInstance& inst, LocalSignalId lid, uint32_t instance_idx) {
-  inst.observability.local_updates.MarkSlotDirty(lid);
+  auto& obs = inst.observability;
+  if (obs.local_has_observers[lid.value] == 0 && !trace_manager_.IsEnabled()) {
+    return;
+  }
+  obs.local_updates.MarkSlotDirty(lid);
   MarkInstanceDeltaDirty(instance_idx);
 }
 
 void Engine::MarkLocalSignalDirtyRange(
     RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
     uint32_t byte_size) {
+  if (inst.observability.local_has_observers[lid.value] == 0 &&
+      !trace_manager_.IsEnabled()) {
+    return;
+  }
   MarkLocalSignalDirtyRange(
       inst, lid, byte_off, byte_size, GetInstanceIndex(inst));
 }
@@ -33,7 +45,11 @@ void Engine::MarkLocalSignalDirtyRange(
 void Engine::MarkLocalSignalDirtyRange(
     RuntimeInstance& inst, LocalSignalId lid, uint32_t byte_off,
     uint32_t byte_size, uint32_t instance_idx) {
-  inst.observability.local_updates.MarkDirtyRange(lid, byte_off, byte_size);
+  auto& obs = inst.observability;
+  if (obs.local_has_observers[lid.value] == 0 && !trace_manager_.IsEnabled()) {
+    return;
+  }
+  obs.local_updates.MarkDirtyRange(lid, byte_off, byte_size);
   MarkInstanceDeltaDirty(instance_idx);
 }
 

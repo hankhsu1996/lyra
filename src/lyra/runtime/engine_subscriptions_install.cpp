@@ -91,6 +91,30 @@ auto Engine::ResolveSubSlot(
   return signal_subs_[slot_id];
 }
 
+void Engine::UpdateObserverFlag(
+    uint32_t signal_id, bool is_local, InstanceId instance_id) {
+  auto& slot = ResolveSubSlot(signal_id, is_local, instance_id);
+  uint8_t has = 0;
+  if (!slot.edge_groups.empty()) {
+    for (const auto& g : slot.edge_groups) {
+      if (!g.posedge_subs.empty() || !g.negedge_subs.empty()) {
+        has = 1;
+        break;
+      }
+    }
+  }
+  if (has == 0 && !slot.change_subs.empty()) has = 1;
+  if (has == 0 && !slot.container_subs.empty()) has = 1;
+  if (has == 0 && !slot.rebind_subs.empty()) has = 1;
+
+  if (is_local) {
+    GetInstanceMut(instance_id).observability.local_has_observers[signal_id] =
+        has;
+  } else {
+    global_has_observers_[signal_id] = has;
+  }
+}
+
 namespace {
 
 // Backpatch a moved subscription's SubRef after swap-and-pop removal.
@@ -242,6 +266,7 @@ void Engine::RemoveEdgeSub(const SubRef& ref) {
     }
   }
   vec.pop_back();
+  UpdateObserverFlag(ref.signal_id, ref.is_local, ref.instance_id);
 }
 
 void Engine::RemoveChangeSub(const SubRef& ref) {
@@ -260,6 +285,7 @@ void Engine::RemoveChangeSub(const SubRef& ref) {
         index);
   }
   vec.pop_back();
+  UpdateObserverFlag(ref.signal_id, ref.is_local, ref.instance_id);
 }
 
 void Engine::RemoveRebindWatcherSub(const SubRef& ref) {
@@ -278,6 +304,7 @@ void Engine::RemoveRebindWatcherSub(const SubRef& ref) {
         index);
   }
   vec.pop_back();
+  UpdateObserverFlag(ref.signal_id, ref.is_local, ref.instance_id);
 }
 
 void Engine::RemoveContainerSub(const SubRef& ref) {
@@ -306,6 +333,7 @@ void Engine::RemoveContainerSub(const SubRef& ref) {
     }
   }
   vec.pop_back();
+  UpdateObserverFlag(ref.signal_id, ref.is_local, ref.instance_id);
 }
 
 void Engine::ClearInstalledSubscriptions(ProcessHandle handle) {
@@ -1074,6 +1102,7 @@ auto Engine::SubscribeGlobalChange(
           .instance_id = handle.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  global_has_observers_[signal.value] = 1;
   return sub_idx;
 }
 
@@ -1136,6 +1165,7 @@ auto Engine::SubscribeLocalChange(
           .instance_id = signal.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  inst.observability.local_has_observers[signal.signal.value] = 1;
   return sub_idx;
 }
 
@@ -1214,6 +1244,7 @@ auto Engine::SubscribeGlobalEdge(
           .instance_id = handle.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  global_has_observers_[signal.value] = 1;
   return sub_idx;
 }
 
@@ -1285,6 +1316,7 @@ auto Engine::SubscribeLocalEdge(
           .instance_id = signal.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  inst.observability.local_has_observers[signal.signal.value] = 1;
   return sub_idx;
 }
 
@@ -1476,6 +1508,7 @@ auto Engine::SubscribeGlobalContainerElement(
           .instance_id = handle.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  global_has_observers_[signal.value] = 1;
   return sub_idx;
 }
 
@@ -1534,6 +1567,7 @@ auto Engine::SubscribeLocalContainerElement(
           .instance_id = signal.instance_id});
   ++proc_state.subscription_count;
   ++live_subscription_count_;
+  inst.observability.local_has_observers[signal.signal.value] = 1;
   return sub_idx;
 }
 
@@ -1681,6 +1715,7 @@ void Engine::InstallRebindDepWatchers(
                   .instance_id = dep_instance_id});
           ++proc_state.subscription_count;
           ++live_subscription_count_;
+          UpdateObserverFlag(dep_signal_id, dep_is_local, dep_instance_id);
         },
         dep);
   }
