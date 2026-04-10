@@ -791,8 +791,10 @@ auto BuildBodyLayout(
 // Borrowed view into MIR data; valid only for the synchronous BuildLayout call.
 // Do not store beyond the call scope. body is a direct pointer into
 // mir::Design::module_bodies; stable as long as the vector is not resized.
+// Per-module-instance layout planning entry.
+// Header-level facts only: slot descriptors, slot counts, base offsets.
+// Process/scheduling data is carried separately in TopologyPlan.
 struct LayoutModulePlan {
-  std::span<const mir::ProcessId> body_processes;
   const mir::ModuleBody* body = nullptr;
   // Body-local slot descriptors (header-level interface).
   // Consumers that only need slot shape should use this span
@@ -813,9 +815,10 @@ auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
     std::vector<ConnectionKernelEntry> precollected_connection_kernels,
     std::vector<mir::ProcessId> non_kernelized_connection_processes,
-    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena, const TypeArena& types,
-    DesignLayout design_layout,
+    std::span<const LayoutModulePlan> module_plans,
+    std::span<const std::span<const mir::ProcessId>> module_body_processes,
+    const mir::Design& design, const mir::Arena& design_arena,
+    const TypeArena& types, DesignLayout design_layout,
     const std::unordered_map<uint32_t, BodyStorageLayout>& body_storage_layouts,
     const std::vector<common::BodyTimeScale>* body_timescales,
     llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)

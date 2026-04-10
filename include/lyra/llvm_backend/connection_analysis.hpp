@@ -30,8 +30,10 @@ struct TriggerSlotSummary {
 
 // Collect non-connection trigger slot sets from MIR processes before layout.
 auto CollectTriggerSlotSummary(
-    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena) -> TriggerSlotSummary;
+    std::span<const LayoutModulePlan> module_plans,
+    std::span<const std::span<const mir::ProcessId>> module_body_processes,
+    const mir::Design& design, const mir::Arena& design_arena)
+    -> TriggerSlotSummary;
 
 // Record of a downstream src-use of a slot in a connection kernel.
 struct DownstreamSrcUse {
@@ -102,9 +104,10 @@ struct ConnectionAnalysisResult {
 // Pass 0 to use design.slots.size() (pre-B2a behavior).
 auto AnalyzeConnections(
     std::vector<ConnectionKernelEntry> kernel_entries,
-    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena, uint32_t expanded_num_slots = 0)
-    -> ConnectionAnalysisResult;
+    std::span<const LayoutModulePlan> module_plans,
+    std::span<const std::span<const mir::ProcessId>> module_body_processes,
+    const mir::Design& design, const mir::Arena& design_arena,
+    uint32_t expanded_num_slots = 0) -> ConnectionAnalysisResult;
 
 // Compile-time connection elimination for transform-safe relay candidates.
 // For each relay slot R with upstream edge U->R and downstream edges R->D...,

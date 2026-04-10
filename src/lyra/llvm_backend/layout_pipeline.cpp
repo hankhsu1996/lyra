@@ -25,12 +25,12 @@ auto BuildTopologyPlan(const LoweringInput& input) -> TopologyPlan {
     const auto& obj = input.construction->objects.at(module_idx);
     topo.module_plans.push_back(
         LayoutModulePlan{
-            .body_processes = body.processes,
             .body = mod->body,
             .body_slots = body.slots,
             .design_state_base_slot = obj.design_state_base_slot,
             .slot_count = obj.slot_count,
         });
+    topo.module_body_processes.push_back(body.processes);
     ++module_idx;
   }
   if (module_idx != input.construction->objects.size()) {
@@ -80,7 +80,8 @@ auto BuildBackendLayout(
 
   auto connection_analysis = AnalyzeConnections(
       std::move(connections.kernel_entries), topology.module_plans,
-      *input.design, *input.mir_arena, topology.total_design_slot_count);
+      topology.module_body_processes, *input.design, *input.mir_arena,
+      topology.total_design_slot_count);
 
   uint32_t relays_eliminated = EliminateRelayConnections(connection_analysis);
 
@@ -92,9 +93,9 @@ auto BuildBackendLayout(
       input.design->init_processes,
       std::move(connection_analysis.connection_edges),
       std::move(connections.non_kernelized_processes), topology.module_plans,
-      *input.design, *input.mir_arena, *input.type_arena,
-      std::move(design_layout), body_storage_layouts, input.body_timescales,
-      llvm_ctx, data_layout, input.force_two_state));
+      topology.module_body_processes, *input.design, *input.mir_arena,
+      *input.type_arena, std::move(design_layout), body_storage_layouts,
+      input.body_timescales, llvm_ctx, data_layout, input.force_two_state));
 
   layout->relay_slots_eliminated = relays_eliminated;
   return layout;

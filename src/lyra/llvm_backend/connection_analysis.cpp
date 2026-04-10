@@ -52,8 +52,10 @@ void ClassifyConnectionKernelSlotUses(
 }  // namespace
 
 auto CollectTriggerSlotSummary(
-    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena) -> TriggerSlotSummary {
+    std::span<const LayoutModulePlan> module_plans,
+    std::span<const std::span<const mir::ProcessId>> module_body_processes,
+    const mir::Design& design, const mir::Arena& design_arena)
+    -> TriggerSlotSummary {
   TriggerSlotSummary summary;
 
   auto collect_triggers = [&](const mir::Process& process, uint32_t slot_base) {
@@ -141,9 +143,10 @@ auto CollectTriggerSlotSummary(
     collect_reads(process, 0, design_arena);
   }
 
-  for (const auto& plan : module_plans) {
+  for (size_t mi = 0; mi < module_plans.size(); ++mi) {
+    const auto& plan = module_plans[mi];
     const auto& body = *plan.body;
-    for (const auto& proc_id : plan.body_processes) {
+    for (const auto& proc_id : module_body_processes[mi]) {
       const auto& process = body.arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
       collect_triggers(process, plan.design_state_base_slot);
@@ -271,15 +274,16 @@ auto CollectIdentityCopyCombs(std::span<const LayoutModulePlan> module_plans)
 
 auto AnalyzeConnections(
     std::vector<ConnectionKernelEntry> kernel_entries,
-    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena, uint32_t expanded_num_slots)
-    -> ConnectionAnalysisResult {
+    std::span<const LayoutModulePlan> module_plans,
+    std::span<const std::span<const mir::ProcessId>> module_body_processes,
+    const mir::Design& design, const mir::Arena& design_arena,
+    uint32_t expanded_num_slots) -> ConnectionAnalysisResult {
   auto num_slots = expanded_num_slots > 0
                        ? expanded_num_slots
                        : static_cast<uint32_t>(design.slots.size());
 
-  auto trigger_summary =
-      CollectTriggerSlotSummary(module_plans, design, design_arena);
+  auto trigger_summary = CollectTriggerSlotSummary(
+      module_plans, module_body_processes, design, design_arena);
 
   auto identity_combs = CollectIdentityCopyCombs(module_plans);
 

@@ -23,8 +23,9 @@ namespace lyra::lowering::mir_to_llvm {
 //
 // Must complete before codegen reads RequiresDirtyPropagation.
 void PopulateBehavioralTriggerContracts(
-    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena, const mir::ConstructionInput& construction,
-    Layout& layout);
+    std::span<const LayoutModulePlan> module_plans,
+    std::span<const std::span<const mir::ProcessId>> module_body_processes,
+    const mir::Design& design, const mir::Arena& design_arena,
+    const mir::ConstructionInput& construction, Layout& layout);
 
 }  // namespace lyra::lowering::mir_to_llvm

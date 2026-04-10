@@ -19,6 +19,10 @@ struct LoweringInput;
 // Module-level topology facts extracted from the design.
 struct TopologyPlan {
   std::vector<LayoutModulePlan> module_plans;
+  // Per-module process lists (scheduling data, parallel to module_plans).
+  // Separated from LayoutModulePlan so header-only layout consumers
+  // do not carry process/implementation references.
+  std::vector<std::span<const mir::ProcessId>> module_body_processes;
   uint32_t total_design_slot_count = 0;
 };
 

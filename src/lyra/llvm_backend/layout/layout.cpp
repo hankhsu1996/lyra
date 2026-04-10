@@ -1656,9 +1656,10 @@ auto BuildLayout(
     std::span<const mir::ProcessId> init_processes,
     std::vector<ConnectionKernelEntry> precollected_connection_kernels,
     std::vector<mir::ProcessId> non_kernelized_connection_processes,
-    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
-    const mir::Arena& design_arena, const TypeArena& types,
-    DesignLayout design_layout,
+    std::span<const LayoutModulePlan> module_plans,
+    std::span<const std::span<const mir::ProcessId>> module_body_processes,
+    const mir::Design& design, const mir::Arena& design_arena,
+    const TypeArena& types, DesignLayout design_layout,
     const std::unordered_map<uint32_t, BodyStorageLayout>& body_storage_layouts,
     const std::vector<common::BodyTimeScale>* body_timescales,
     llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
@@ -1737,7 +1738,7 @@ auto BuildLayout(
   for (uint32_t mi = 0; mi < module_plans.size(); ++mi) {
     const auto& plan = module_plans[mi];
     const auto& body_arena = plan.body->arena;
-    for (mir::ProcessId proc_id : plan.body_processes) {
+    for (mir::ProcessId proc_id : module_body_processes[mi]) {
       const auto& process = body_arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
       layout.scheduled_processes.push_back({proc_id, ModuleIndex{mi}});
