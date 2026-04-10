@@ -170,7 +170,9 @@ void CheckNoStrayInitBefore(
 auto BuildParamPayloads(
     std::span<const uint32_t> instance_body_group,
     std::span<const uint32_t> design_base_slots,
-    std::span<const mir::InstanceConstBlock> const_blocks, const Layout& layout,
+    std::span<const mir::InstanceConstBlock> const_blocks,
+    size_t num_body_groups,
+    std::span<const SlotStorageSpec> design_slot_storage_specs,
     std::span<const ParamSlotTemplate> body_param_templates)
     -> std::vector<std::vector<uint8_t>> {
   if (instance_body_group.size() != const_blocks.size()) {
@@ -196,12 +198,12 @@ auto BuildParamPayloads(
 
     if (const_block.slot_inits.empty()) continue;
     uint32_t bg = instance_body_group[inst_idx];
-    if (bg >= layout.body_realization_infos.size()) {
+    if (bg >= num_body_groups) {
       throw common::InternalError(
           "BuildParamPayloads",
           std::format(
-              "instance {} body_group {} >= body_realization_infos size {}",
-              inst_idx, bg, layout.body_realization_infos.size()));
+              "instance {} body_group {} >= num_body_groups {}", inst_idx, bg,
+              num_body_groups));
     }
     const auto& tmpl = body_param_templates[bg].entries;
     if (tmpl.empty()) {
@@ -223,7 +225,7 @@ auto BuildParamPayloads(
           sorted_inits[init_idx].body_local_slot == te.body_local_slot) {
         const auto& init = *sorted_inits[init_idx].init;
         uint32_t abs_slot = design_base_slot + init.body_local_slot;
-        const auto& spec = layout.design.slot_storage_specs[abs_slot];
+        const auto& spec = design_slot_storage_specs[abs_slot];
         LowerIntegralConstantToCanonicalBytes(init.value, spec, payload);
         ++init_idx;
       } else {
@@ -244,7 +246,8 @@ auto BuildParamPayloads(
 }
 
 auto BuildConstructionProgram(
-    std::span<const uint32_t> instance_body_group, const Layout& layout,
+    std::span<const uint32_t> instance_body_group,
+    std::span<const Layout::InstanceStorageSizes> instance_storage_sizes,
     const mir::InstanceTable& instance_table,
     std::span<const std::vector<uint8_t>> param_payloads,
     const std::vector<std::vector<common::ResolvedExtRefBinding>>&
@@ -273,7 +276,7 @@ auto BuildConstructionProgram(
           prog.param_pool.end(), payload.begin(), payload.end());
     }
 
-    const auto& sizes = layout.instance_storage_sizes[mi];
+    const auto& sizes = instance_storage_sizes[mi];
     entry.realized_inline_size = sizes.inline_bytes;
     entry.realized_appendix_size = sizes.appendix_bytes;
 
@@ -324,26 +327,30 @@ auto CompareCombSlotsByFinalObservableOrder(
 // Sub-extraction functions for each runtime data category.
 
 void ExtractBodyMetadata(
-    const LoweringInput& input, const Layout& layout,
+    const lowering::BodyOriginProvenance* origin_provenance,
+    const lowering::DiagnosticContext* diag_ctx,
+    const SourceManager* source_manager,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
     std::vector<BodyRuntimeProducts>& body_products) {
-  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
-    const auto& info = layout.body_realization_infos[gi];
+  for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
+    const auto& info = body_realization_infos[gi];
     const auto& body = *info.body;
     const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
     auto& bp = body_products[gi];
     bp.meta.pool.push_back('\0');
 
     std::optional<lowering::BodyLocalOriginResolver> body_resolver;
-    std::optional<lowering::DiagnosticContext> body_diag_ctx;
-    if (input.origin_provenance != nullptr) {
-      const auto* prov = input.origin_provenance->Find(info.body);
+    std::optional<lowering::DiagnosticContext> body_diag;
+    if (origin_provenance != nullptr) {
+      const auto* prov = origin_provenance->Find(info.body);
       if (prov != nullptr && prov->arena != nullptr) {
         body_resolver.emplace(prov->origins, *prov->arena);
-        body_diag_ctx.emplace(*body_resolver);
+        body_diag.emplace(*body_resolver);
       }
     }
     const lowering::DiagnosticContext* diag =
-        body_diag_ctx.has_value() ? &*body_diag_ctx : input.diag_ctx;
+        body_diag.has_value() ? &*body_diag : diag_ctx;
 
     auto add_pool_string = [&](const std::string& s) -> uint32_t {
       if (s.empty()) return 0;
@@ -353,7 +360,7 @@ void ExtractBodyMetadata(
       return off;
     };
 
-    const auto& rt = layout.body_runtime_descriptors[gi];
+    const auto& rt = body_runtime_descriptors[gi];
     auto num_entries = static_cast<uint32_t>(rt.process_schema_indices.size());
     if (ordinal_map.nonfinal_processes.size() != num_entries) {
       throw common::InternalError(
@@ -370,8 +377,7 @@ void ExtractBodyMetadata(
         [&](uint32_t nonfinal_proc_ordinal, mir::ProcessId /*pid*/,
             const mir::Process& proc) {
           auto kind = MapProcessKind(proc.kind);
-          auto loc =
-              ResolveProcessOrigin(proc.origin, diag, input.source_manager);
+          auto loc = ResolveProcessOrigin(proc.origin, diag, source_manager);
 
           uint32_t file_off = add_pool_string(loc.file);
           bp.meta.entries[nonfinal_proc_ordinal] =
@@ -410,8 +416,7 @@ void ExtractBodyMetadata(
         }
         filled[idx] = 1;
         const auto& site = rec.site;
-        auto site_loc =
-            ResolveProcessOrigin(site.origin, diag, input.source_manager);
+        auto site_loc = ResolveProcessOrigin(site.origin, diag, source_manager);
         uint32_t packed =
             static_cast<uint8_t>(site.qualifier) |
             (static_cast<uint8_t>(site.kind) << 8) |
@@ -460,11 +465,18 @@ void ExtractBodyMetadata(
 }
 
 void ExtractConnectionMetadata(
-    const LoweringInput& input, const Layout& layout,
+    std::span<const mir::DesignElement> design_elements,
+    const mir::Arena& design_arena,
+    const lowering::BodyOriginProvenance* origin_provenance,
+    const lowering::DiagnosticContext* diag_ctx,
+    const SourceManager* source_manager, uint32_t num_init_processes,
+    uint32_t num_module_process_base,
+    std::span<const ScheduledProcess> scheduled_processes,
+    size_t num_connection_realization_infos,
     Layout::ConnectionTemplates& conn_templates) {
   // Build module_index -> body pointer mapping.
   std::vector<const mir::ModuleBody*> module_body_ptrs;
-  for (const auto& elem : input.design->elements) {
+  for (const auto& elem : design_elements) {
     if (const auto* mod = std::get_if<mir::Module>(&elem)) {
       module_body_ptrs.push_back(mod->body);
     }
@@ -480,31 +492,29 @@ void ExtractConnectionMetadata(
     return off;
   };
 
-  for (size_t ci = layout.num_init_processes;
-       ci < layout.num_module_process_base; ++ci) {
-    const auto& sp = layout.scheduled_processes[ci];
+  for (size_t ci = num_init_processes; ci < num_module_process_base; ++ci) {
+    const auto& sp = scheduled_processes[ci];
     bool is_body_local =
         sp.module_index && sp.module_index.value < module_body_ptrs.size();
     const mir::Arena& proc_arena =
         is_body_local ? module_body_ptrs[sp.module_index.value]->arena
-                      : *input.mir_arena;
+                      : design_arena;
     const auto& proc = proc_arena[sp.process_id];
     auto kind = MapProcessKind(proc.kind);
 
     std::optional<lowering::BodyLocalOriginResolver> conn_resolver;
     std::optional<lowering::DiagnosticContext> conn_diag;
-    const lowering::DiagnosticContext* conn_diag_ptr = input.diag_ctx;
-    if (is_body_local && input.origin_provenance != nullptr) {
-      const auto* prov = input.origin_provenance->Find(
-          module_body_ptrs[sp.module_index.value]);
+    const lowering::DiagnosticContext* conn_diag_ptr = diag_ctx;
+    if (is_body_local && origin_provenance != nullptr) {
+      const auto* prov =
+          origin_provenance->Find(module_body_ptrs[sp.module_index.value]);
       if (prov != nullptr && prov->arena != nullptr) {
         conn_resolver.emplace(prov->origins, *prov->arena);
         conn_diag.emplace(*conn_resolver);
         conn_diag_ptr = &*conn_diag;
       }
     }
-    auto loc =
-        ResolveProcessOrigin(proc.origin, conn_diag_ptr, input.source_manager);
+    auto loc = ResolveProcessOrigin(proc.origin, conn_diag_ptr, source_manager);
 
     uint32_t file_off = add_conn_pool_string(loc.file);
     conn_templates.meta.entries.push_back(
@@ -516,33 +526,33 @@ void ExtractConnectionMetadata(
         });
   }
 
-  if (conn_templates.meta.entries.size() !=
-      layout.connection_realization_infos.size()) {
+  if (conn_templates.meta.entries.size() != num_connection_realization_infos) {
     throw common::InternalError(
         "ExtractConnectionMetadata",
         std::format(
             "connection_templates.meta entries {} != "
             "connection_realization_infos {}",
             conn_templates.meta.entries.size(),
-            layout.connection_realization_infos.size()));
+            num_connection_realization_infos));
   }
 }
 
 void ExtractBodyTriggerTemplates(
-    const Layout& layout,
+    std::span<const Layout::BodyRealizationInfo> body_realization_infos,
+    std::span<const Layout::BodyRuntimeDescriptors> body_runtime_descriptors,
     const std::unordered_map<
         const mir::ModuleBody*,
         std::vector<std::optional<ProcessTriggerEntry>>>&
         body_to_process_triggers,
     std::vector<BodyRuntimeProducts>& body_products) {
-  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
-    const auto& info = layout.body_realization_infos[gi];
+  for (size_t gi = 0; gi < body_realization_infos.size(); ++gi) {
+    const auto& info = body_realization_infos[gi];
     const auto& body = *info.body;
     const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
     auto nonfinal_count =
         static_cast<uint32_t>(ordinal_map.nonfinal_processes.size());
 
-    const auto& rt = layout.body_runtime_descriptors[gi];
+    const auto& rt = body_runtime_descriptors[gi];
     auto num_procs = static_cast<uint32_t>(rt.process_schema_indices.size());
     if (num_procs != nonfinal_count) {
       throw common::InternalError(
@@ -638,9 +648,9 @@ void ExtractBodyTriggerTemplates(
 }
 
 void ExtractConnectionTriggerTemplates(
-    const Layout& layout, Layout::ConnectionTemplates& conn_templates) {
-  auto num_conn =
-      static_cast<uint32_t>(layout.connection_realization_infos.size());
+    std::span<const Layout::ConnectionRealizationInfo> connection_infos,
+    Layout::ConnectionTemplates& conn_templates) {
+  auto num_conn = static_cast<uint32_t>(connection_infos.size());
 
   auto& conn_trig = conn_templates.triggers;
   conn_trig.proc_ranges.resize(num_conn);
@@ -649,7 +659,7 @@ void ExtractConnectionTriggerTemplates(
   conn_trig.proc_groupable.resize(num_conn, runtime::kProcNotGroupable);
 
   for (uint32_t ci = 0; ci < num_conn; ++ci) {
-    const auto& conn_info = layout.connection_realization_infos[ci];
+    const auto& conn_info = connection_infos[ci];
     if (!conn_info.trigger) {
       conn_trig.proc_ranges[ci] = {.start = 0, .count = 0};
       continue;
@@ -820,7 +830,7 @@ void ExtractBodyCombTemplates(
 }
 
 void ExtractBodyObservableDescriptors(
-    const LoweringInput& input, const Layout& layout,
+    const TypeArena& type_arena, const Layout& layout,
     std::vector<BodyRuntimeProducts>& body_products) {
   for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
     const auto& info = layout.body_realization_infos[gi];
@@ -862,7 +872,7 @@ void ExtractBodyObservableDescriptors(
           ObservableOwnerSlotId::Create(layout.design.slots[gsi].value);
       const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
           owner, layout.design, obs_body.slots[i].type, obs_body.slots[i].kind,
-          *input.type_arena);
+          type_arena);
       const ObservableDescriptorShapeFields sf =
           BuildObservableDescriptorShapeFields(shape);
 
@@ -917,7 +927,7 @@ void ExtractBodyObservableDescriptors(
 }
 
 void ExtractBodyInitDescriptors(
-    const LoweringInput& input, const Layout& layout,
+    const mir::ConstructionInput& construction, const Layout& layout,
     std::span<const uint32_t> instance_body_group,
     std::vector<BodyRuntimeProducts>& body_products,
     ConstructionProgramData& construction_program) {
@@ -991,25 +1001,25 @@ void ExtractBodyInitDescriptors(
 
   // Build param payloads and construction program.
   std::vector<uint32_t> design_base_slots;
-  design_base_slots.reserve(input.construction->objects.size());
-  for (const auto& obj : input.construction->objects) {
+  design_base_slots.reserve(construction.objects.size());
+  for (const auto& obj : construction.objects) {
     design_base_slots.push_back(obj.design_state_base_slot);
   }
 
   auto param_payloads = BuildParamPayloads(
-      instance_body_group, design_base_slots, input.construction->const_blocks,
-      layout, body_param_templates);
+      instance_body_group, design_base_slots, construction.const_blocks,
+      layout.body_realization_infos.size(), layout.design.slot_storage_specs,
+      body_param_templates);
 
   // Validate parallel structure invariants.
   {
     auto instance_count = instance_body_group.size();
-    if (instance_count != input.construction->instance_table.entries.size()) {
+    if (instance_count != construction.instance_table.entries.size()) {
       throw common::InternalError(
           "ExtractBodyInitDescriptors",
           std::format(
               "instance_body_group size {} != instance_table size {}",
-              instance_count,
-              input.construction->instance_table.entries.size()));
+              instance_count, construction.instance_table.entries.size()));
     }
     if (instance_count != layout.instance_storage_bases.size()) {
       throw common::InternalError(
@@ -1045,8 +1055,9 @@ void ExtractBodyInitDescriptors(
   }
 
   construction_program = BuildConstructionProgram(
-      instance_body_group, layout, input.construction->instance_table,
-      param_payloads, input.construction->instance_ext_ref_bindings);
+      instance_body_group, layout.instance_storage_sizes,
+      construction.instance_table, param_payloads,
+      construction.instance_ext_ref_bindings);
 
   // Validate construction program.
   for (size_t i = 0; i < construction_program.entries.size(); ++i) {
@@ -1094,14 +1105,14 @@ void ExtractPackageInitDescriptor(
 }
 
 void ExtractPackageObservableDescriptors(
-    const LoweringInput& input, const Layout& layout,
-    OwnedObservableDescriptorTemplate& pkg) {
+    const mir::Design& design, const TypeArena& type_arena,
+    const Layout& layout, OwnedObservableDescriptorTemplate& pkg) {
   pkg.pool.push_back('\0');
   uint32_t num_pkg = layout.num_package_slots;
   pkg.entries.reserve(num_pkg);
 
   auto read_pkg_trace_pool = [&](uint32_t offset) -> std::string_view {
-    const auto& pool = input.design->slot_trace_string_pool;
+    const auto& pool = design.slot_trace_string_pool;
     if (offset >= pool.size()) {
       throw common::InternalError(
           "ExtractPackageObservableDescriptors",
@@ -1133,15 +1144,15 @@ void ExtractPackageObservableDescriptors(
   for (uint32_t gsi = 0; gsi < num_pkg; ++gsi) {
     if (gsi >= layout.design.slots.size()) break;
 
-    const auto& pkg_slot = input.design->slots[gsi];
+    const auto& pkg_slot = design.slots[gsi];
     const ObservableOwnerSlotId owner =
         ObservableOwnerSlotId::Create(layout.design.slots[gsi].value);
     const CanonicalObservableShape shape = ComputeCanonicalObservableShape(
-        owner, layout.design, pkg_slot.type, pkg_slot.kind, *input.type_arena);
+        owner, layout.design, pkg_slot.type, pkg_slot.kind, type_arena);
     const ObservableDescriptorShapeFields sf =
         BuildObservableDescriptorShapeFields(shape);
 
-    const auto& prov = input.design->slot_trace_provenance[gsi];
+    const auto& prov = design.slot_trace_provenance[gsi];
     auto local_name = read_pkg_trace_pool(prov.local_name_str_off);
     std::string qualified_name;
     if (prov.scope_kind == mir::SlotScopeKind::kPackage) {
@@ -1175,19 +1186,31 @@ auto ExtractRuntimeData(
   RuntimeExtractionProducts products;
   products.body_products.resize(layout.body_realization_infos.size());
 
-  ExtractBodyMetadata(input, layout, products.body_products);
-  ExtractConnectionMetadata(input, layout, products.connection_templates);
+  ExtractBodyMetadata(
+      input.origin_provenance, input.diag_ctx, input.source_manager,
+      layout.body_realization_infos, layout.body_runtime_descriptors,
+      products.body_products);
+  ExtractConnectionMetadata(
+      input.design->elements, *input.mir_arena, input.origin_provenance,
+      input.diag_ctx, input.source_manager, layout.num_init_processes,
+      layout.num_module_process_base, layout.scheduled_processes,
+      layout.connection_realization_infos.size(),
+      products.connection_templates);
   ExtractBodyTriggerTemplates(
-      layout, body_to_process_triggers, products.body_products);
-  ExtractConnectionTriggerTemplates(layout, products.connection_templates);
+      layout.body_realization_infos, layout.body_runtime_descriptors,
+      body_to_process_triggers, products.body_products);
+  ExtractConnectionTriggerTemplates(
+      layout.connection_realization_infos, products.connection_templates);
   ExtractBodyCombTemplates(layout, products.body_products);
-  ExtractBodyObservableDescriptors(input, layout, products.body_products);
+  ExtractBodyObservableDescriptors(
+      *input.type_arena, layout, products.body_products);
   ExtractBodyInitDescriptors(
-      input, layout, instance_body_group, products.body_products,
+      *input.construction, layout, instance_body_group, products.body_products,
       products.construction_program);
   ExtractPackageInitDescriptor(layout, products.package_init_descriptor);
   ExtractPackageObservableDescriptors(
-      input, layout, products.package_observable_descriptors);
+      *input.design, *input.type_arena, layout,
+      products.package_observable_descriptors);
 
   return products;
 }
