@@ -258,7 +258,9 @@ struct RealizationData {
 // Backend-owned intermediate state between behavioral codegen and assembly.
 // This is a strict bridge object: assembly may append IR (main()) to the
 // module owned by context, but must not own layout/process compilation
-// decisions. Assembly-facing helpers live in emit_design_main.cpp.
+// decisions. Assembly owns two products: realization descriptors
+// (body/connection/schema globals consumed by the runtime constructor)
+// and the runtime entry (main function, ABI setup, simulation dispatch).
 //
 // Layout and Context are heap-allocated because Context stores
 // `const Layout&` internally. Returning CodegenSession from
