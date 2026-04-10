@@ -78,8 +78,7 @@ auto ActivationLocalSlotAccess::LoadSlotValue(mir::PlaceId place_id)
   }
   auto& builder = ctx_.GetBuilder();
   return builder.CreateLoad(
-      storage->alloca_inst->getAllocatedType(), storage->alloca_inst,
-      "actlocal.load");
+      storage->shadow_type, storage->shadow_ptr, "actlocal.load");
 }
 
 auto ActivationLocalSlotAccess::CommitSlotValue(
@@ -89,7 +88,7 @@ auto ActivationLocalSlotAccess::CommitSlotValue(
   if (storage == nullptr) {
     return CommitValue(ctx_, target, value, type_id, policy);
   }
-  ctx_.GetBuilder().CreateStore(value, storage->alloca_inst);
+  ctx_.GetBuilder().CreateStore(value, storage->shadow_ptr);
   return {};
 }
 
@@ -107,9 +106,9 @@ void ActivationLocalSlotAccess::SeedSlot(const ManagedSlotStorage& storage) {
   }
   auto& builder = ctx_.GetBuilder();
   auto* canonical_ptr = ctx_.GetSignalSlotPointer(storage.slot);
-  auto* llvm_type = storage.alloca_inst->getAllocatedType();
-  auto* val = builder.CreateLoad(llvm_type, canonical_ptr, "actlocal.seed");
-  builder.CreateStore(val, storage.alloca_inst);
+  auto* val =
+      builder.CreateLoad(storage.shadow_type, canonical_ptr, "actlocal.seed");
+  builder.CreateStore(val, storage.shadow_ptr);
 }
 
 void ActivationLocalSlotAccess::SyncSlot(const ManagedSlotStorage& storage) {
@@ -118,10 +117,9 @@ void ActivationLocalSlotAccess::SyncSlot(const ManagedSlotStorage& storage) {
         "SyncSlot", "managed slot must be module-local");
   }
   auto& builder = ctx_.GetBuilder();
-  auto* llvm_type = storage.alloca_inst->getAllocatedType();
 
-  auto* val =
-      builder.CreateLoad(llvm_type, storage.alloca_inst, "actlocal.sync");
+  auto* val = builder.CreateLoad(
+      storage.shadow_type, storage.shadow_ptr, "actlocal.sync");
   auto* canonical_ptr = ctx_.GetSignalSlotPointer(storage.slot);
   // Mutation-target: resolve to storage owner for dirty-mark identity.
   auto signal_id = ctx_.EmitMutationTargetSignalCoord(storage.slot);
@@ -198,37 +196,42 @@ void ActivationLocalSlotAccess::SyncAndReloadSpecific(
   }
 }
 
-namespace {
+auto CreateManagedSlotStorage(const ProcessActivationPlan& plan, Context& ctx)
+    -> std::vector<ManagedSlotStorage> {
+  const auto& proc_layout =
+      ctx.GetLayout().processes[ctx.GetCurrentProcessIndex()];
+  const auto& frame = proc_layout.frame;
+  auto& builder = ctx.GetBuilder();
+  auto* frame_type = frame.llvm_type;
+  auto* frame_ptr = ctx.GetFramePointer();
 
-// Get the LLVM storage type for an activation-local managed slot.
-// Asserts v1 invariants: only plain scalar types are eligible for
-// activation-local treatment. For these types, the canonical slot
-// storage representation is identical to GetLlvmTypeForTypeId:
-//   kIntegral -> iN (2-state) or {iN, iN} (4-state)
-//   kReal -> double
-//   kShortReal -> float
-//   kEnum with integral base -> same as kIntegral
-auto GetActivationLocalStorageType(
-    llvm::LLVMContext& llvm_ctx, TypeId root_type, const TypeArena& types,
-    bool force_two_state) -> llvm::Type* {
-  const auto& type = types[root_type];
-  auto kind = type.Kind();
-  if (kind == TypeKind::kEnum) {
-    kind = types[type.AsEnum().base_type].Kind();
+  std::unordered_set<uint32_t> seen_slot_ids;
+  std::vector<ManagedSlotStorage> result;
+
+  for (const auto& segment : plan.segments) {
+    for (const auto& managed : segment.managed_slots.slots) {
+      if (!seen_slot_ids.insert(managed.slot.id).second) continue;
+
+      const auto& shadow = frame.GetShadowField(managed.slot.id);
+      auto* gep = builder.CreateStructGEP(
+          frame_type, frame_ptr, shadow.field_index, "actlocal.shadow");
+      auto* field_type = frame_type->getElementType(shadow.field_index);
+
+      result.push_back(
+          ManagedSlotStorage{
+              .slot = managed.slot,
+              .root_type = managed.root_type,
+              .shadow_ptr = gep,
+              .shadow_type = field_type,
+          });
+    }
   }
-  if (kind != TypeKind::kIntegral && kind != TypeKind::kReal &&
-      kind != TypeKind::kShortReal) {
-    throw common::InternalError(
-        "GetActivationLocalStorageType",
-        "managed slot type must be a v1-eligible scalar (integral, real, "
-        "shortreal, or enum with integral base)");
-  }
-  return GetLlvmTypeForTypeId(llvm_ctx, root_type, types, force_two_state);
+
+  return result;
 }
 
-}  // namespace
-
-auto CreateManagedSlotStorage(const ProcessActivationPlan& plan, Context& ctx)
+auto CreateManagedSlotStorageAsAllocas(
+    const ProcessActivationPlan& plan, Context& ctx)
     -> std::vector<ManagedSlotStorage> {
   auto& llvm_ctx = ctx.GetLlvmContext();
   const auto& types = ctx.GetTypeArena();
@@ -245,9 +248,8 @@ auto CreateManagedSlotStorage(const ProcessActivationPlan& plan, Context& ctx)
     for (const auto& managed : segment.managed_slots.slots) {
       if (!seen_slot_ids.insert(managed.slot.id).second) continue;
 
-      auto* alloca_type = GetActivationLocalStorageType(
+      auto* alloca_type = GetLlvmTypeForTypeId(
           llvm_ctx, managed.root_type, types, force_two_state);
-
       auto* alloca_inst =
           alloca_builder.CreateAlloca(alloca_type, nullptr, "actlocal.shadow");
 
@@ -255,7 +257,8 @@ auto CreateManagedSlotStorage(const ProcessActivationPlan& plan, Context& ctx)
           ManagedSlotStorage{
               .slot = managed.slot,
               .root_type = managed.root_type,
-              .alloca_inst = alloca_inst,
+              .shadow_ptr = alloca_inst,
+              .shadow_type = alloca_type,
           });
     }
   }

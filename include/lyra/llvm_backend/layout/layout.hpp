@@ -17,6 +17,7 @@
 #include "lyra/common/slot_id.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
+#include "lyra/llvm_backend/activation_local.hpp"
 #include "lyra/llvm_backend/kernel_types.hpp"
 #include "lyra/llvm_backend/layout/body_layout.hpp"
 #include "lyra/llvm_backend/layout/storage_contract.hpp"
@@ -161,19 +162,44 @@ struct DesignLayout {
       -> std::optional<ArenaByteOffset>;
 };
 
-// Process frame layout - one per process
+// Activation-local shadow field in the persistent process frame.
+// Maps a managed signal slot to its frame field index so codegen
+// can emit GEPs instead of stack allocas.
+struct ShadowFieldEntry {
+  uint32_t slot_id;
+  uint32_t field_index;
+  TypeId root_type;
+};
+
+// Process frame layout - one per process.
 // Maps place root identity to field index in ProcessFrameN struct.
 // Multiple PlaceIds sharing a root (with different projections) map to
 // the same frame slot.
+//
+// The LLVM struct contains two regions, contiguous in field order:
+//   [0, num_semantic_roots): semantic roots collected from MIR places
+//   [num_semantic_roots, N): activation-local shadow fields
+// Both regions participate in 4-state patch collection.
 struct FrameLayout {
-  // Root types in field order (for 4-state initialization)
-  std::vector<TypeId> root_types;
-  // Map from root identity to field index
+  // Number of semantic root fields (MIR-derived process locals/temps).
+  // Fields [0, num_semantic_roots) are semantic roots.
+  uint32_t num_semantic_roots = 0;
+  // Type of each field in struct order (semantic roots + shadow fields).
+  // Used for 4-state patch collection. Size = total field count.
+  std::vector<TypeId> field_types;
+  // Map from root identity to field index (semantic roots only).
   std::unordered_map<PlaceRootKey, uint32_t, PlaceRootKeyHash> root_to_field;
-  // LLVM struct type for ProcessFrameN (built by BuildLayout)
+  // LLVM struct type for ProcessFrameN (built by BuildLayout).
   llvm::StructType* llvm_type = nullptr;
-  // Patches for 4-state X-encoding (byte offsets to unknown planes)
+  // Patches for 4-state X-encoding (byte offsets to unknown planes).
   FourStatePatchTable four_state_patches;
+  // Activation-local shadow fields (sorted by slot_id).
+  std::vector<ShadowFieldEntry> shadow_fields;
+
+  // Canonical lookup for a shadow field by managed slot id.
+  // Throws InternalError if the slot has no shadow field.
+  [[nodiscard]] auto GetShadowField(uint32_t slot_id) const
+      -> const ShadowFieldEntry&;
 };
 
 // Root identity + type pair for alloca allocation in suspension-free processes.
@@ -195,6 +221,10 @@ struct ProcessLayout {
   // Root identity + type for each local/temp that needs an alloca.
   // Populated only when has_suspension is false (suspension-free processes).
   std::vector<AllocaRootInfo> alloca_roots;
+  // Activation-local plan, present only for processes with suspension.
+  // Computed at layout time so shadow fields can be added to the
+  // persistent frame. Codegen must assert presence before use.
+  std::optional<ProcessActivationPlan> activation_plan;
 };
 
 // Index into module-instance parallel arrays (instance_storage_bases,

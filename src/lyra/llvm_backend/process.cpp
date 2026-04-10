@@ -1898,8 +1898,12 @@ auto GenerateSharedProcessFunction(
       process.blocks, context.GetMirArena(), context.GetTypeArena());
   auto deferred_blocks = BuildDeferredPolicyBlocks(deferred_loops);
 
-  auto activation_plan = BuildProcessActivationPlan(
-      process, context.GetMirArena(), context.GetTypeArena());
+  // Activation plan is computed at layout time so shadow fields live in the
+  // persistent process frame (not stack allocas that die on suspend).
+  // Present only for processes with suspension; suspension-free processes
+  // skip activation-local lowering entirely.
+  const auto& shared_proc_layout_for_plan =
+      context.GetLayout().processes[context.GetCurrentProcessIndex()];
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -1949,9 +1953,20 @@ auto GenerateSharedProcessFunction(
   context.SetSlotAddressingMode(SlotAddressingMode::kSpecializationLocal);
   context.EmitSharedBodyBindingSetup(func->getArg(0));
 
-  // Create activation-local managed slot storage (shadow allocas).
+  // Create activation-local managed slot storage.
   // Must be after slot addressing setup (this_ptr, instance binding).
-  auto managed_storage = CreateManagedSlotStorage(activation_plan, context);
+  // Processes with suspension use persistent frame fields (survive
+  // suspend/resume). Suspension-free processes use stack allocas
+  // (safe because the function runs to completion without suspending).
+  std::vector<ManagedSlotStorage> managed_storage;
+  if (shared_proc_layout_for_plan.activation_plan.has_value()) {
+    managed_storage = CreateManagedSlotStorage(
+        *shared_proc_layout_for_plan.activation_plan, context);
+  } else {
+    auto local_plan = BuildProcessActivationPlan(
+        process, context.GetMirArena(), context.GetTypeArena());
+    managed_storage = CreateManagedSlotStorageAsAllocas(local_plan, context);
+  }
 
   // Resume dispatch (same logic as GenerateProcessFunction)
   std::vector<size_t> resume_targets;
@@ -1993,6 +2008,11 @@ auto GenerateSharedProcessFunction(
   if (!phi_state_or_err) return std::unexpected(phi_state_or_err.error());
   auto& phi_state = *phi_state_or_err;
 
+  static const ProcessActivationPlan kEmptyPlan;
+  const auto& activation_plan =
+      shared_proc_layout_for_plan.activation_plan.has_value()
+          ? *shared_proc_layout_for_plan.activation_plan
+          : kEmptyPlan;
   ContractExecutor executor(
       context, activation_plan, std::move(managed_storage));
 

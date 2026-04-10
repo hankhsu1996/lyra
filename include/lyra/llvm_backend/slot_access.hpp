@@ -78,10 +78,16 @@ class CanonicalSlotAccess final : public SlotAccessResolver,
   Context& ctx_;
 };
 
+// Shadow storage for an activation-local managed signal slot.
+// Always backed by a persistent process frame field (GEP into ProcessFrameN).
+// Suspension-free processes do not use activation-local storage.
 struct ManagedSlotStorage {
   mir::SignalRef slot;
   TypeId root_type;
-  llvm::AllocaInst* alloca_inst = nullptr;
+  // GEP into the persistent process frame for this shadow cell.
+  llvm::Value* shadow_ptr = nullptr;
+  // LLVM type of the shadow cell (matches the frame field type).
+  llvm::Type* shadow_type = nullptr;
 };
 
 class ActivationLocalSlotAccess final : public SlotAccessResolver,
@@ -111,7 +117,15 @@ class ActivationLocalSlotAccess final : public SlotAccessResolver,
   std::unordered_map<uint32_t, ManagedSlotStorage> managed_;
 };
 
+// Create managed slot storage backed by persistent frame fields.
+// For processes with suspension only (frame fields survive suspend/resume).
 auto CreateManagedSlotStorage(const ProcessActivationPlan& plan, Context& ctx)
+    -> std::vector<ManagedSlotStorage>;
+
+// Create managed slot storage backed by stack allocas.
+// For suspension-free processes only (single function call, no resume).
+auto CreateManagedSlotStorageAsAllocas(
+    const ProcessActivationPlan& plan, Context& ctx)
     -> std::vector<ManagedSlotStorage>;
 
 }  // namespace lyra::lowering::mir_to_llvm
