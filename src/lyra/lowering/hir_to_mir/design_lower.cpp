@@ -396,22 +396,24 @@ auto LowerDesign(
   result.max_body_local_events = max_events;
 
   result.immediate_cover_sites = cover_site_registry.TakeSites();
-  result.deferred_assertion_sites =
-      deferred_assertion_site_registry.TakeSites();
 
-  // Stamp body ownership on deferred assertion sites using the ranges
-  // tracked during Phase 1 and the body IDs assigned above in Phase 2.
-  // Ordering invariant: deferred_site_ranges[g] corresponds to
-  // body_results[g] which becomes result.module_bodies[g], so
-  // mir::ModuleBodyId{g} is the correct owner. This depends on the
-  // Phase 1 and Phase 2 loops iterating spec_groups in the same order
-  // and assembling module_bodies by sequential push_back.
-  for (size_t g = 0; g < deferred_site_ranges.size(); ++g) {
-    auto [base, end] = deferred_site_ranges[g];
-    mir::ModuleBodyId body_id{static_cast<uint32_t>(g)};
-    for (uint32_t i = base; i < end; ++i) {
-      result.deferred_assertion_sites[i].body_id = body_id;
+  // Attach deferred assertion sites to their owning bodies and build the
+  // design-global concatenation. Ordering invariant: deferred_site_ranges[g]
+  // corresponds to body_results[g] which became result.module_bodies[g].
+  // The design-global vector preserves the same order as the registry
+  // (body 0 sites first, then body 1, etc.) for DeferredAssertionSiteId
+  // indexing by MIR effects.
+  {
+    auto all_sites = deferred_assertion_site_registry.TakeSites();
+    for (size_t g = 0; g < deferred_site_ranges.size(); ++g) {
+      auto [base, end] = deferred_site_ranges[g];
+      auto& body = result.module_bodies[g];
+      body.deferred_assertion_sites.reserve(end - base);
+      for (uint32_t i = base; i < end; ++i) {
+        body.deferred_assertion_sites.push_back(all_sites[i]);
+      }
     }
+    result.deferred_assertion_sites = std::move(all_sites);
   }
 
   // Build DPI export wrapper descriptors now that body-local function maps
@@ -420,7 +422,7 @@ auto LowerDesign(
   {
     // Collect module-scoped export targets with multi-body collision
     // detection. For each module-scoped export symbol, collect all
-    // (body_id, function_id) pairs across specialization groups.
+    // (body pointer, function_id) pairs across specialization groups.
     struct ModuleExportResolution {
       std::string c_name;
       SourceSpan span;
@@ -447,7 +449,8 @@ auto LowerDesign(
         }
         resolution.targets.push_back(
             mir::ModuleExportCalleeKey{
-                .body_id = body_id, .function_id = func_it->second});
+                .body = &result.module_bodies[g],
+                .function_id = func_it->second});
       }
     }
 

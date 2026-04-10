@@ -16,6 +16,8 @@
 
 namespace lyra::mir {
 
+struct ModuleBody;
+
 // Explicit cross-domain reference to a design-global callable.
 // Used when body MIR calls any design-global function (package functions,
 // design-level generated functions). The SymbolId identifies the callable
@@ -181,26 +183,29 @@ enum class DpiExportScopeKind : uint8_t {
   kModule,
 };
 
-// Stable cross-session identity for a module-scoped export callee.
-// Body-local FunctionIds are 0-based per body and can collide across bodies.
-// Pairing with ModuleBodyId makes the identity design-global and unique.
+// In-memory identity for a module-scoped export callee within one compile
+// flow. Body-local FunctionIds are 0-based per body and can collide across
+// bodies. Pairing with the body pointer disambiguates within the current
+// lowered design. NOT a durable or serializable identity -- valid only for
+// the lifetime of the mir::Design that owns the ModuleBody.
 struct ModuleExportCalleeKey {
-  ModuleBodyId body_id;
+  const ModuleBody* body = nullptr;
   FunctionId function_id;
   auto operator==(const ModuleExportCalleeKey&) const -> bool = default;
 };
 
 struct ModuleExportCalleeKeyHash {
   auto operator()(const ModuleExportCalleeKey& k) const -> size_t {
-    return std::hash<uint64_t>{}(
-        (static_cast<uint64_t>(k.body_id.value) << 32) | k.function_id.value);
+    auto h1 = std::hash<const void*>{}(k.body);
+    auto h2 = std::hash<uint32_t>{}(k.function_id.value);
+    return h1 ^ (h2 * 2654435761U);
   }
 };
 
 // Resolved export target for wrapper emission.
 // Package path uses package_symbol (design-global callable, resolved by
 // SymbolId through the design function registry).
-// Module path uses module_target (body_id + body-local function_id),
+// Module path uses module_target (body pointer + body-local function_id),
 // resolved through the module-scoped function accumulator after Phase 4.
 struct DpiExportTarget {
   DpiExportScopeKind scope_kind = DpiExportScopeKind::kPackage;
@@ -210,7 +215,8 @@ struct DpiExportTarget {
 
 // DPI export wrapper descriptor for LLVM backend emission.
 // Binds a visible C name to the canonical DpiSignature and a resolved
-// export target. Populated during MIR design lowering,
+// export target. Populated during MIR design lowering (body pointers in
+// module_target are valid for the lifetime of the owning mir::Design),
 // deterministically sorted by c_name.
 struct DpiExportWrapperDesc {
   std::string c_name;

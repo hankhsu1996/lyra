@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -14,7 +15,8 @@
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/llvm_backend/process.hpp"
-#include "lyra/mir/arena.hpp"
+#include "lyra/lowering/origin_map_lookup.hpp"
+#include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/runtime/construction_program_abi.hpp"
 
@@ -32,8 +34,8 @@ struct SpecInstanceBinding {
 
 // Specialization-owned MIR content: identity + behavioral IR references.
 // Does not contain backend layout or codegen routing data.
+// body is the canonical identity -- numeric body_id is derived when needed.
 struct SpecCompilationUnit {
-  mir::ModuleBodyId body_id;
   const mir::ModuleBody* body = nullptr;
   std::vector<mir::ProcessId> processes;
   std::vector<mir::FunctionId> functions;
@@ -48,7 +50,7 @@ struct SpecProcessView {
   uint32_t nonfinal_proc_ordinal;  // Dense non-final body-local process ordinal
   uint32_t layout_process_index;   // Matching entry in layout.processes
   mir::ProcessId process_id;
-  std::string func_name;  // body_{body_id}_proc_{nonfinal_proc_ordinal}
+  std::string func_name;  // body_{idx}_proc_{nonfinal_proc_ordinal}
 };
 
 // Narrow backend view for compiling one specialization body.
@@ -124,11 +126,24 @@ struct ConnectionNotificationMask {
 // specialization body. Owns specialization-local backend data (MIR
 // membership, layout, codegen routing). Does not reference orchestrator
 // storage -- the specialization compiler reads only from this object.
+// body is the canonical identity -- no numeric body_id.
 struct CompiledModuleSpecInput {
-  mir::ModuleBodyId body_id;
+  const mir::ModuleBody* body = nullptr;
   std::vector<mir::ProcessId> processes;
   std::vector<mir::FunctionId> functions;
   SpecCodegenView view;
+  // LLVM symbol naming prefix, precomputed from body index.
+  // E.g., "body_3" for the fourth specialization body.
+  std::string name_prefix;
+  // Origin provenance for this body's diagnostic resolution.
+  // Null when origin provenance is unavailable.
+  const lowering::BodyOriginProvenance::Entry* origin_entry = nullptr;
+  // Per-body deferred assertion sites (from body-owned storage).
+  std::span<const mir::DeferredAssertionSiteInfo> deferred_sites;
+  // Base index of this body's sites within the design-global deferred
+  // assertion site vector. Used by callee capture to write into the
+  // design-global parallel output vector.
+  uint32_t deferred_site_base_index = 0;
   // Specialization-local state. Owned by CompileDesignProcesses,
   // consumed by CompileModuleSpecSession via SpecLocalScope.
   const SpecSlotInfo* spec_slot_info = nullptr;
@@ -141,7 +156,7 @@ struct CompiledModuleSpecInput {
 // Context side effects (not returned here) because no downstream consumer
 // currently needs them as explicit products.
 struct CompiledModuleSpec {
-  mir::ModuleBodyId body_id;
+  const mir::ModuleBody* body = nullptr;
   // Parallel to input.view.processes: one compiled function per body process
   std::vector<llvm::Function*> process_functions;
   std::vector<WaitSiteEntry> wait_sites;
@@ -149,6 +164,10 @@ struct CompiledModuleSpec {
   // process. Index by body process ordinal to get trigger facts.
   // scheduled_process_index is NOT yet set (stamped per-instance later).
   std::vector<std::optional<ProcessTriggerEntry>> process_triggers;
+  // Per-body deferred assertion sites (forwarded from input).
+  std::span<const mir::DeferredAssertionSiteInfo> deferred_sites;
+  // Design-global base index (forwarded from input).
+  uint32_t deferred_site_base_index = 0;
 };
 
 // Pure-data construction program: pooled paths, pooled param payloads, and
@@ -191,7 +210,6 @@ struct CodegenSession {
   // body_realization_infos[i]. Each inner vector is parallel to the
   // body's non-final process list.
   struct BodyCompiledFuncs {
-    mir::ModuleBodyId body_id;
     std::vector<llvm::Function*> functions;
   };
   std::vector<BodyCompiledFuncs> body_compiled_funcs;
@@ -212,9 +230,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
 // entrypoint. Registers monitors, declares/defines body-local functions,
 // generates shared/template process functions, and returns an explicit product.
 // Does not inspect design-global state, package functions, or wrapper logic.
+// All body-specific data is carried on the input -- no design or provenance
+// parameter needed.
 auto CompileModuleSpecSession(
-    Context& context, const mir::Arena& arena,
-    const CompiledModuleSpecInput& input) -> Result<CompiledModuleSpec>;
+    Context& context, const CompiledModuleSpecInput& input,
+    const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec>;
 
 // Backend phase: extract LLVM ownership from a completed session.
 auto FinalizeModule(CodegenSession session, LoweringReport report)

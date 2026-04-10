@@ -1047,13 +1047,6 @@ auto EmitBodyRealizationDescs(
     uint32_t body_id_val = info.body_id.value;
     auto num_procs = static_cast<uint32_t>(info.process_schema_indices.size());
 
-    if (funcs.body_id != info.body_id) {
-      throw common::InternalError(
-          "EmitBodyRealizationDescs",
-          std::format(
-              "body_id mismatch at index {}: compiled {} vs info {}", bi,
-              funcs.body_id.value, body_id_val));
-    }
     if (funcs.functions.size() != num_procs) {
       throw common::InternalError(
           "EmitBodyRealizationDescs",
@@ -1871,8 +1864,8 @@ struct ConstructorEmissionResult {
 auto EmitDeferredAssertionSiteMetaGlobal(
     Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites,
     std::span<const DeferredSiteCompiledArtifact> artifacts,
-    const lowering::BodyOriginProvenance* origin_provenance)
-    -> llvm::Constant* {
+    std::span<const lowering::BodyOriginProvenance::Entry* const>
+        site_origin_entries) -> llvm::Constant* {
   if (sites.empty()) return nullptr;
 
   if (artifacts.size() != sites.size()) {
@@ -1928,14 +1921,13 @@ auto EmitDeferredAssertionSiteMetaGlobal(
       std::optional<lowering::DiagnosticContext> site_diag;
       const lowering::DiagnosticContext* site_diag_ptr =
           &context.GetDiagnosticContext();
-      if (origin_provenance != nullptr &&
-          site.body_id.value < origin_provenance->bodies.size()) {
-        const auto& prov = origin_provenance->bodies[site.body_id.value];
-        if (prov.arena != nullptr) {
-          site_resolver.emplace(prov.origins, *prov.arena);
-          site_diag.emplace(*site_resolver);
-          site_diag_ptr = &*site_diag;
-        }
+      if (si < site_origin_entries.size() &&
+          site_origin_entries[si] != nullptr &&
+          site_origin_entries[si]->arena != nullptr) {
+        site_resolver.emplace(
+            site_origin_entries[si]->origins, *site_origin_entries[si]->arena);
+        site_diag.emplace(*site_resolver);
+        site_diag_ptr = &*site_diag;
       }
       auto loc = ResolveProcessOrigin(
           site.origin, site_diag_ptr, context.GetSourceManager());
@@ -2657,9 +2649,23 @@ auto EmitDesignMain(
       slot_trace_for_abi = ctor_result.slot_trace;
     }
 
+    // Build per-site origin entry mapping from body-owned site counts.
+    // Each site's origin entry is determined by which body owns it.
+    std::vector<const lowering::BodyOriginProvenance::Entry*>
+        site_origin_entries;
+    if (input.origin_provenance != nullptr) {
+      site_origin_entries.reserve(
+          input.design->deferred_assertion_sites.size());
+      for (const auto& body : input.design->module_bodies) {
+        const auto* entry = input.origin_provenance->Find(&body);
+        for (size_t s = 0; s < body.deferred_assertion_sites.size(); ++s) {
+          site_origin_entries.push_back(entry);
+        }
+      }
+    }
     auto* deferred_site_meta_global = EmitDeferredAssertionSiteMetaGlobal(
         context, input.design->deferred_assertion_sites,
-        session.deferred_site_artifacts, input.origin_provenance);
+        session.deferred_site_artifacts, site_origin_entries);
     auto* abi_alloca = BuildRuntimeAbi(
         context, meta_globals, wait_site_meta, num_connection,
         input.feature_flags, input.signal_trace_path, design_state,

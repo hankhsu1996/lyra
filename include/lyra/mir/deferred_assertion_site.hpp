@@ -84,12 +84,6 @@ struct DeferredAssertionSiteInfo {
   common::OriginId origin;
   DeferredAssertionKind kind = DeferredAssertionKind::kAssert;
 
-  // Owning body. Action callee FunctionIds are indices into this body's
-  // arena. Required for correct post-session capture: without it, a
-  // body-local FunctionId cannot be unambiguously attributed to its
-  // owning body in the design-global sites vector.
-  ModuleBodyId body_id = kInvalidModuleBodyId;
-
   // Default failure report. Present for assert/assume sites that have no
   // user-supplied fail action.
   bool has_default_fail_report = false;

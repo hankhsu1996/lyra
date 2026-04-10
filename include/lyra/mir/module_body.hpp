@@ -4,6 +4,7 @@
 
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/connection_recipe.hpp"
+#include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 
@@ -65,6 +66,13 @@ struct ModuleBody {
 
   // B2: Connection recipes for this body.
   std::vector<ConnectionRecipe> connection_recipes;
+
+  // Body-owned deferred assertion sites. Populated during HIR-to-MIR
+  // lowering from the body-local allocation range. The design-global flat
+  // vector (Design::deferred_assertion_sites) is the concatenation of all
+  // body-local vectors in module_bodies order. DeferredAssertionSiteId
+  // (MIR effect handle) indexes the design-global vector, not this one.
+  std::vector<DeferredAssertionSiteInfo> deferred_assertion_sites;
 };
 
 }  // namespace lyra::mir

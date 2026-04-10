@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 #include "lyra/common/origin_id.hpp"
@@ -10,6 +11,7 @@
 #include "lyra/hir/arena.hpp"
 #include "lyra/hir/design.hpp"
 #include "lyra/lowering/origin_map.hpp"
+#include "lyra/mir/module_body.hpp"
 
 namespace lyra::lowering {
 
@@ -17,28 +19,39 @@ namespace lyra::lowering {
 // Built at the lowering/backend boundary from body-local origin entries
 // and their corresponding HIR arenas. The backend never needs raw
 // hir::Design -- this table provides everything needed to construct
-// body-local origin resolvers.
+// body-local origin resolvers. Keyed by MIR body pointer (in-memory
+// identity valid for the lifetime of the owning mir::Design).
 struct BodyOriginProvenance {
   struct Entry {
     std::span<const OriginEntry> origins;
     const hir::Arena* arena = nullptr;
   };
-  std::vector<Entry> bodies;  // indexed by ModuleBodyId::value
+  std::unordered_map<const mir::ModuleBody*, Entry> by_body;
+
+  // Look up the origin entry for a body. Returns nullptr if not found.
+  [[nodiscard]] auto Find(const mir::ModuleBody* body) const -> const Entry* {
+    auto it = by_body.find(body);
+    return (it != by_body.end()) ? &it->second : nullptr;
+  }
 };
 
-// Build provenance table from body-local origins and HIR design.
-// Each body entry pairs its origin vector with the corresponding
-// HIR body arena for direct span resolution.
+// Build provenance table from body-local origins, HIR design, and MIR
+// module bodies. body_origins[i] and mir_bodies[i] must correspond to
+// the same specialization group.
 inline auto BuildBodyOriginProvenance(
     const std::vector<std::vector<OriginEntry>>& body_origins,
-    const hir::Design& design) -> BodyOriginProvenance {
+    const hir::Design& design, const std::vector<mir::ModuleBody>& mir_bodies)
+    -> BodyOriginProvenance {
   BodyOriginProvenance result;
-  result.bodies.reserve(body_origins.size());
+  result.by_body.reserve(body_origins.size());
   for (size_t i = 0; i < body_origins.size(); ++i) {
     const hir::Arena* arena = (i < design.module_bodies.size())
                                   ? &design.module_bodies[i].arena
                                   : nullptr;
-    result.bodies.push_back({.origins = body_origins[i], .arena = arena});
+    if (i < mir_bodies.size()) {
+      result.by_body[&mir_bodies[i]] = {
+          .origins = body_origins[i], .arena = arena};
+    }
   }
   return result;
 }

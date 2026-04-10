@@ -345,7 +345,8 @@ auto PrepareLlvmModule(
   }
 
   auto origin_provenance = lowering::BuildBodyOriginProvenance(
-      mir_result->body_origins, hir_result.design);
+      mir_result->body_origins, hir_result.design,
+      mir_result->design.module_bodies);
 
   lowering::mir_to_llvm::LoweringInput llvm_input{
       .design = &mir_result->design,

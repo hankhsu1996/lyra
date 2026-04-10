@@ -682,25 +682,22 @@ void PopulateBodyBehavioralTriggerContracts(
 auto BuildSpecCompilationUnits(const mir::Design& design)
     -> std::vector<SpecCompilationUnit> {
   std::vector<SpecCompilationUnit> units;
-  std::unordered_map<uint32_t, size_t> body_to_unit;
+  std::unordered_map<const mir::ModuleBody*, size_t> body_to_unit;
 
   uint32_t module_idx = 0;
   for (const auto& element : design.elements) {
     const auto* mod = std::get_if<mir::Module>(&element);
     if (mod == nullptr) continue;
 
-    mir::ModuleBodyId body_id{
-        static_cast<uint32_t>(mod->body - design.module_bodies.data())};
     SpecInstanceBinding binding{
         .module_index = ModuleIndex{module_idx},
     };
 
-    auto [it, inserted] = body_to_unit.try_emplace(body_id.value, units.size());
+    auto [it, inserted] = body_to_unit.try_emplace(mod->body, units.size());
     if (inserted) {
       const auto& body = *mod->body;
       units.push_back(
           SpecCompilationUnit{
-              .body_id = body_id,
               .body = mod->body,
               .processes = {body.processes.begin(), body.processes.end()},
               .functions = {body.functions.begin(), body.functions.end()},
@@ -731,20 +728,28 @@ auto BuildModuleSchedIndices(const Layout& layout)
   return result;
 }
 
+// Derive the numeric body index from a body pointer for naming and error
+// messages only. Not a stable identity -- do not use as a map key, dedup
+// key, or cross-phase pairing token.
+auto BodyIndex(const mir::ModuleBody* body, const mir::Design& design)
+    -> uint32_t {
+  return static_cast<uint32_t>(body - design.module_bodies.data());
+}
+
 auto BuildSpecCodegenViews(
-    const std::vector<SpecCompilationUnit>& units,
+    const std::vector<SpecCompilationUnit>& units, const mir::Design& design,
     const std::unordered_map<uint32_t, std::vector<uint32_t>>&
         modidx_to_sched_indices) -> std::vector<SpecCodegenView> {
   std::vector<SpecCodegenView> views(units.size());
 
   for (size_t u = 0; u < units.size(); ++u) {
     const auto& unit = units[u];
+    auto body_idx = BodyIndex(unit.body, design);
     if (unit.instances.empty()) {
       throw common::InternalError(
           "BuildSpecCodegenViews",
           std::format(
-              "specialization unit for body {} has no instances",
-              unit.body_id.value));
+              "specialization unit for body {} has no instances", body_idx));
     }
 
     const auto& body = *unit.body;
@@ -763,7 +768,7 @@ auto BuildSpecCodegenViews(
           std::format(
               "body {} unit.processes non-final order does not match "
               "canonical body ordinal map",
-              unit.body_id.value));
+              body_idx));
     }
 
     // Use first instance as representative for scheduled-process indexing
@@ -775,7 +780,7 @@ auto BuildSpecCodegenViews(
           std::format(
               "body {} has {} non-final processes but representative "
               "module_index {} has no scheduled processes",
-              unit.body_id.value, ordinal_map.nonfinal_processes.size(),
+              body_idx, ordinal_map.nonfinal_processes.size(),
               rep_module_index.value));
     }
     const auto& sched_indices = sched_it->second;
@@ -785,7 +790,7 @@ auto BuildSpecCodegenViews(
           std::format(
               "body {} sched index count {} != non-final process "
               "count {}",
-              unit.body_id.value, sched_indices.size(),
+              body_idx, sched_indices.size(),
               ordinal_map.nonfinal_processes.size()));
     }
 
@@ -800,8 +805,7 @@ auto BuildSpecCodegenViews(
                   .layout_process_index = sched_indices[nonfinal_proc_ordinal],
                   .process_id = proc_id,
                   .func_name = std::format(
-                      "body_{}_proc_{}", unit.body_id.value,
-                      nonfinal_proc_ordinal),
+                      "body_{}_proc_{}", body_idx, nonfinal_proc_ordinal),
               });
         });
   }
@@ -811,17 +815,41 @@ auto BuildSpecCodegenViews(
 
 auto BuildCompiledModuleSpecInputs(
     const std::vector<SpecCompilationUnit>& units,
-    std::vector<SpecCodegenView> views)
+    std::vector<SpecCodegenView> views, const mir::Design& design,
+    const lowering::BodyOriginProvenance* origin_provenance)
     -> std::vector<CompiledModuleSpecInput> {
+  // Precompute design-global deferred site base index for each body.
+  // The design-global vector is ordered body 0, body 1, ... so base[i]
+  // is the sum of site counts of bodies 0..i-1.
+  std::unordered_map<const mir::ModuleBody*, uint32_t> body_deferred_base;
+  {
+    uint32_t base = 0;
+    for (const auto& body : design.module_bodies) {
+      body_deferred_base[&body] = base;
+      base += static_cast<uint32_t>(body.deferred_assertion_sites.size());
+    }
+  }
+
   std::vector<CompiledModuleSpecInput> inputs;
   inputs.reserve(units.size());
   for (size_t i = 0; i < units.size(); ++i) {
+    auto body_idx = BodyIndex(units[i].body, design);
+    const lowering::BodyOriginProvenance::Entry* origin_entry =
+        (origin_provenance != nullptr) ? origin_provenance->Find(units[i].body)
+                                       : nullptr;
+    auto base_it = body_deferred_base.find(units[i].body);
+    uint32_t deferred_base =
+        (base_it != body_deferred_base.end()) ? base_it->second : 0;
     inputs.push_back(
         CompiledModuleSpecInput{
-            .body_id = units[i].body_id,
+            .body = units[i].body,
             .processes = units[i].processes,
             .functions = units[i].functions,
             .view = std::move(views[i]),
+            .name_prefix = std::format("body_{}", body_idx),
+            .origin_entry = origin_entry,
+            .deferred_sites = units[i].body->deferred_assertion_sites,
+            .deferred_site_base_index = deferred_base,
         });
   }
   return inputs;
@@ -830,11 +858,10 @@ auto BuildCompiledModuleSpecInputs(
 auto BuildSpecSlotInfos(
     const std::vector<SpecCompilationUnit>& units, const Layout& layout)
     -> std::vector<SpecSlotInfo> {
-  // Build body-id-to-index table once for O(1) lookup per unit.
-  std::unordered_map<uint32_t, uint32_t> body_info_index_by_body_id_value;
+  // Build body-ptr-to-index table once for O(1) lookup per unit.
+  std::unordered_map<const mir::ModuleBody*, uint32_t> body_info_index_by_ptr;
   for (uint32_t i = 0; i < layout.body_realization_infos.size(); ++i) {
-    body_info_index_by_body_id_value[layout.body_realization_infos[i]
-                                         .body_id.value] = i;
+    body_info_index_by_ptr[layout.body_realization_infos[i].body] = i;
   }
 
   std::vector<SpecSlotInfo> result;
@@ -843,12 +870,10 @@ auto BuildSpecSlotInfos(
     SpecSlotInfo info;
     uint32_t body_info_idx = 0;
     {
-      auto it = body_info_index_by_body_id_value.find(unit.body_id.value);
-      if (it == body_info_index_by_body_id_value.end()) {
+      auto it = body_info_index_by_ptr.find(unit.body);
+      if (it == body_info_index_by_ptr.end()) {
         throw common::InternalError(
-            "BuildSpecSlotInfos",
-            std::format(
-                "no BodyRealizationInfo for body {}", unit.body_id.value));
+            "BuildSpecSlotInfos", "no BodyRealizationInfo for body");
       }
       body_info_idx = it->second;
       info.body_realization_info_index = body_info_idx;
@@ -913,13 +938,10 @@ auto CompareCombSlotsByFinalObservableOrder(
 }  // namespace
 
 auto CompileModuleSpecSession(
-    Context& context, const mir::Design& design,
-    const CompiledModuleSpecInput& input,
-    const mir::ConstructionInput* construction,
-    const lowering::BodyOriginProvenance* origin_provenance)
-    -> Result<CompiledModuleSpec> {
+    Context& context, const CompiledModuleSpecInput& input,
+    const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec> {
   // Set the body arena for this compilation session.
-  const auto& body = design.module_bodies.at(input.body_id.value);
+  const auto& body = *input.body;
   Context::ArenaScope arena_scope(context, &body.arena);
 
   // Establish body-local diagnostic resolution so OriginId lookups during
@@ -928,14 +950,11 @@ auto CompileModuleSpecSession(
   std::optional<lowering::BodyLocalOriginResolver> body_resolver;
   std::optional<lowering::DiagnosticContext> body_diag_ctx;
   std::optional<Context::DiagnosticScope> diag_scope;
-  if (origin_provenance != nullptr &&
-      input.body_id.value < origin_provenance->bodies.size()) {
-    const auto& prov = origin_provenance->bodies[input.body_id.value];
-    if (prov.arena != nullptr) {
-      body_resolver.emplace(prov.origins, *prov.arena);
-      body_diag_ctx.emplace(*body_resolver);
-      diag_scope.emplace(context, &*body_diag_ctx);
-    }
+  if (input.origin_entry != nullptr && input.origin_entry->arena != nullptr) {
+    body_resolver.emplace(
+        input.origin_entry->origins, *input.origin_entry->arena);
+    body_diag_ctx.emplace(*body_resolver);
+    diag_scope.emplace(context, &*body_diag_ctx);
   }
 
   // Install all specialization-local state via RAII scope.
@@ -978,7 +997,7 @@ auto CompileModuleSpecSession(
     if (!seen_func_ids.insert(func_id.value).second) continue;
     auto llvm_func_or_err = DeclareMirFunction(
         context, func_id,
-        std::format("body_{}_func_{}", input.body_id.value, func_id.value));
+        std::format("{}_func_{}", input.name_prefix, func_id.value));
     if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
     declared_funcs.emplace_back(func_id, *llvm_func_or_err);
   }
@@ -991,10 +1010,12 @@ auto CompileModuleSpecSession(
 
   // Step 5: Codegen all body-owned processes
   CompiledModuleSpec product{
-      .body_id = input.body_id,
+      .body = input.body,
       .process_functions = {},
       .wait_sites = {},
       .process_triggers = {},
+      .deferred_sites = input.deferred_sites,
+      .deferred_site_base_index = input.deferred_site_base_index,
   };
 
   for (const auto& proc_view : input.view.processes) {
@@ -1020,12 +1041,13 @@ auto CompileModuleSpecSession(
 // Capture deferred-action callee backend metadata from the current body
 // session's user_functions_ / module_function_lowering_ before the next
 // session overwrites them. Same per-session capture pattern as DPI exports.
-// Uses site.body_id (stamped during design lowering) for exact ownership
-// matching -- no heuristic FunctionId.value comparison.
+// Takes the body's deferred-site span directly -- no global scan needed.
+// base_index is the offset of this body's sites within the design-global
+// deferred_site_callee_info vector.
 void CaptureDeferredCalleeInfo(
-    Context& context, mir::ModuleBodyId body_id,
-    const std::vector<mir::DeferredAssertionSiteInfo>& sites,
-    std::vector<DeferredSiteCalleeInfo>& out) {
+    Context& context,
+    std::span<const mir::DeferredAssertionSiteInfo> body_sites,
+    size_t base_index, std::vector<DeferredSiteCalleeInfo>& out) {
   auto capture_callee = [&](const mir::DeferredUserCallAction* action)
       -> std::optional<DeferredCalleeBackendInfo> {
     if (action == nullptr) return std::nullopt;
@@ -1035,14 +1057,13 @@ void CaptureDeferredCalleeInfo(
     };
   };
 
-  for (uint32_t di = 0; di < sites.size(); ++di) {
-    const auto& site = sites[di];
-    if (site.body_id != body_id) continue;
+  for (uint32_t di = 0; di < body_sites.size(); ++di) {
+    const auto& site = body_sites[di];
     if (auto info = capture_callee(GetDeferredPassUserCallAction(site))) {
-      out[di].pass_callee = *info;
+      out[base_index + di].pass_callee = *info;
     }
     if (auto info = capture_callee(GetDeferredFailUserCallAction(site))) {
-      out[di].fail_callee = *info;
+      out[base_index + di].fail_callee = *info;
     }
   }
 }
@@ -1052,6 +1073,23 @@ auto CompileDesignProcesses(const LoweringInput& input)
   if (input.body_timescales == nullptr) {
     throw common::InternalError(
         "CompileDesignProcesses", "body_timescales must be non-null");
+  }
+
+  // Verify deferred site concatenation invariant: the design-global vector
+  // must be exactly the concatenation of all body-owned vectors.
+  {
+    size_t expected = 0;
+    for (const auto& body : input.design->module_bodies) {
+      expected += body.deferred_assertion_sites.size();
+    }
+    if (expected != input.design->deferred_assertion_sites.size()) {
+      throw common::InternalError(
+          "CompileDesignProcesses",
+          std::format(
+              "deferred site concatenation invariant violated: "
+              "sum of body-local counts ({}) != design-global count ({})",
+              expected, input.design->deferred_assertion_sites.size()));
+    }
   }
 
   // Phase 0: Backend/session setup
@@ -1439,7 +1477,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // Phase 1: Build specialization inputs (units + layouts + codegen views)
   auto units = BuildSpecCompilationUnits(*input.design);
   auto modidx_to_sched_indices = BuildModuleSchedIndices(*layout);
-  auto views = BuildSpecCodegenViews(units, modidx_to_sched_indices);
+  auto views =
+      BuildSpecCodegenViews(units, *input.design, modidx_to_sched_indices);
   auto spec_slot_infos = BuildSpecSlotInfos(units, *layout);
 
   // Build per-instance local-slot connection trigger facts from the
@@ -1496,7 +1535,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
   }
 
-  auto spec_inputs = BuildCompiledModuleSpecInputs(units, std::move(views));
+  auto spec_inputs = BuildCompiledModuleSpecInputs(
+      units, std::move(views), *input.design, input.origin_provenance);
 
   // Phase 2: Design-wide init-process monitor registration
   for (mir::ProcessId proc_id : input.design->init_processes) {
@@ -1552,14 +1592,15 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   // Phase 4: Compile each specialization via CompileModuleSpecSession
-  // Build body_id -> compiled process functions routing table
-  std::unordered_map<uint32_t, std::vector<llvm::Function*>>
+  // Build body -> compiled process functions routing table (pointer-keyed).
+  std::unordered_map<const mir::ModuleBody*, std::vector<llvm::Function*>>
       body_to_compiled_funcs;
-  std::unordered_map<uint32_t, std::vector<std::optional<ProcessTriggerEntry>>>
+  std::unordered_map<
+      const mir::ModuleBody*, std::vector<std::optional<ProcessTriggerEntry>>>
       body_to_process_triggers;
   std::vector<WaitSiteEntry> all_wait_sites;
   // Accumulate module-scoped export callees for wrapper emission (D4a).
-  // Keyed by (body_id, function_id) to avoid body-local FunctionId collisions.
+  // Keyed by (body, function_id) to avoid body-local FunctionId collisions.
   // Captured after each CompileModuleSpecSession before user_functions_
   // is overwritten by the next session.
   std::unordered_map<
@@ -1580,9 +1621,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
     spec_input.spec_slot_info = &spec_slot_infos[si];
     spec_input.connection_notification_mask =
         &connection_notification_masks[si];
-    auto product = CompileModuleSpecSession(
-        *context, *input.design, spec_input, input.construction,
-        input.origin_provenance);
+    auto product =
+        CompileModuleSpecSession(*context, spec_input, input.construction);
     if (!product) return std::unexpected(product.error());
 
     // Capture module export callees from this session's user_functions_
@@ -1592,16 +1632,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
         if (desc.target.scope_kind != mir::DpiExportScopeKind::kModule) {
           continue;
         }
-        if (desc.target.module_target.body_id != product->body_id) {
+        if (desc.target.module_target.body != product->body) {
           continue;
         }
         auto func_id = desc.target.module_target.function_id;
         if (context->HasUserFunction(func_id)) {
-          // Read contract from the body arena (accessible via design, not
-          // via context->GetMirArena() which has been restored by ArenaScope).
-          const auto& body =
-              input.design->module_bodies.at(product->body_id.value);
-          const auto& callee = body.arena[func_id];
+          const auto& callee = product->body->arena[func_id];
           module_export_callees[desc.target.module_target] = {
               .llvm_func = context->GetUserFunction(func_id),
               .accepts_decision_owner =
@@ -1614,19 +1650,18 @@ auto CompileDesignProcesses(const LoweringInput& input)
     // Capture deferred-action callee backend info before next session
     // overwrites user_functions_ / module_function_lowering_.
     CaptureDeferredCalleeInfo(
-        *context, product->body_id, deferred_sites, deferred_site_callee_info);
+        *context, product->deferred_sites, product->deferred_site_base_index,
+        deferred_site_callee_info);
 
     body_to_process_triggers.try_emplace(
-        product->body_id.value, std::move(product->process_triggers));
+        product->body, std::move(product->process_triggers));
 
     auto [it, inserted] = body_to_compiled_funcs.try_emplace(
-        product->body_id.value, std::move(product->process_functions));
+        product->body, std::move(product->process_functions));
     if (!inserted) {
       throw common::InternalError(
           "CompileDesignProcesses",
-          std::format(
-              "duplicate body_id {} in specialization products",
-              product->body_id.value));
+          "duplicate body in specialization products");
     }
     all_wait_sites.insert(
         all_wait_sites.end(),
@@ -1787,7 +1822,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // layout->body_realization_infos.
   std::vector<CodegenSession::BodyCompiledFuncs> body_funcs;
   for (const auto& info : layout->body_realization_infos) {
-    auto it = body_to_compiled_funcs.find(info.body_id.value);
+    auto it = body_to_compiled_funcs.find(info.body);
     if (it == body_to_compiled_funcs.end()) {
       throw common::InternalError(
           "CompileDesignProcesses",
@@ -1803,7 +1838,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
     body_funcs.push_back(
         CodegenSession::BodyCompiledFuncs{
-            .body_id = info.body_id,
             .functions = std::move(it->second),
         });
   }
@@ -1811,10 +1845,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // Build per-instance body group index: maps ModuleIndex -> body group.
   // This is retained compile-owned topology summary for the emitted
   // constructor function to emit calls in instance-major order.
-  // First, build body_id -> body_group_index mapping.
-  std::unordered_map<uint32_t, uint32_t> body_id_to_group;
+  // First, build body -> body_group_index mapping.
+  std::unordered_map<const mir::ModuleBody*, uint32_t> body_to_group;
   for (size_t gi = 0; gi < layout->body_realization_infos.size(); ++gi) {
-    body_id_to_group[layout->body_realization_infos[gi].body_id.value] =
+    body_to_group[layout->body_realization_infos[gi].body] =
         static_cast<uint32_t>(gi);
   }
   // Then walk instances in ModuleIndex order (design element iteration).
@@ -1824,15 +1858,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
     for (const auto& element : input.design->elements) {
       const auto* mod = std::get_if<mir::Module>(&element);
       if (mod == nullptr) continue;
-      auto body_id_val =
-          static_cast<uint32_t>(mod->body - input.design->module_bodies.data());
-      auto it = body_id_to_group.find(body_id_val);
-      if (it == body_id_to_group.end()) {
+      auto it = body_to_group.find(mod->body);
+      if (it == body_to_group.end()) {
         throw common::InternalError(
             "CompileDesignProcesses",
-            std::format(
-                "instance {} body {} not in body_realization_infos", mi,
-                body_id_val));
+            std::format("instance {} body not in body_realization_infos", mi));
       }
       instance_body_group.push_back(it->second);
       ++mi;
@@ -1877,11 +1907,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
       // Body-local diagnostic resolver for this body's origin entries.
       std::optional<lowering::BodyLocalOriginResolver> body_resolver;
       std::optional<lowering::DiagnosticContext> body_diag_ctx;
-      if (input.origin_provenance != nullptr &&
-          info.body_id.value < input.origin_provenance->bodies.size()) {
-        const auto& prov = input.origin_provenance->bodies[info.body_id.value];
-        if (prov.arena != nullptr) {
-          body_resolver.emplace(prov.origins, *prov.arena);
+      if (input.origin_provenance != nullptr) {
+        const auto* prov = input.origin_provenance->Find(info.body);
+        if (prov != nullptr && prov->arena != nullptr) {
+          body_resolver.emplace(prov->origins, *prov->arena);
           body_diag_ctx.emplace(*body_resolver);
         }
       }
@@ -2042,16 +2071,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
       std::optional<lowering::DiagnosticContext> conn_diag;
       const lowering::DiagnosticContext* conn_diag_ptr = input.diag_ctx;
       if (is_body_local && input.origin_provenance != nullptr) {
-        auto conn_body_id_val = static_cast<uint32_t>(
-            module_body_ptrs[sp.module_index.value] -
-            input.design->module_bodies.data());
-        if (conn_body_id_val < input.origin_provenance->bodies.size()) {
-          const auto& prov = input.origin_provenance->bodies[conn_body_id_val];
-          if (prov.arena != nullptr) {
-            conn_resolver.emplace(prov.origins, *prov.arena);
-            conn_diag.emplace(*conn_resolver);
-            conn_diag_ptr = &*conn_diag;
-          }
+        const auto* prov = input.origin_provenance->Find(
+            module_body_ptrs[sp.module_index.value]);
+        if (prov != nullptr && prov->arena != nullptr) {
+          conn_resolver.emplace(prov->origins, *prov->arena);
+          conn_diag.emplace(*conn_resolver);
+          conn_diag_ptr = &*conn_diag;
         }
       }
       auto loc = ResolveProcessOrigin(
@@ -2104,7 +2129,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       info.triggers.proc_groupable.resize(
           nonfinal_count, runtime::kProcNotGroupable);
 
-      auto triggers_it = body_to_process_triggers.find(info.body_id.value);
+      auto triggers_it = body_to_process_triggers.find(info.body);
       if (triggers_it == body_to_process_triggers.end()) continue;
       const auto& body_triggers = triggers_it->second;
 
@@ -2633,17 +2658,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
             std::format(
                 "body_funcs size {} != body_realization_infos size {}",
                 num_body_groups, layout->body_realization_infos.size()));
-      }
-      for (size_t gi = 0; gi < num_body_groups; ++gi) {
-        if (body_funcs[gi].body_id !=
-            layout->body_realization_infos[gi].body_id) {
-          throw common::InternalError(
-              "CompileDesignProcesses",
-              std::format(
-                  "body group {} body_id mismatch: funcs={} vs info={}", gi,
-                  body_funcs[gi].body_id.value,
-                  layout->body_realization_infos[gi].body_id.value));
-        }
       }
       for (size_t mi = 0; mi < instance_count; ++mi) {
         if (instance_body_group[mi] >= num_body_groups) {
