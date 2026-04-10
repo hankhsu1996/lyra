@@ -125,8 +125,8 @@ void InitializeProcessState(
   EmitApply4StatePatches(context, frame_ptr, frame_layout.four_state_patches);
 
   const auto& types = context.GetTypeArena();
-  for (uint32_t i = 0; i < frame_layout.root_types.size(); ++i) {
-    TypeId type_id = frame_layout.root_types[i];
+  for (uint32_t i = 0; i < frame_layout.field_types.size(); ++i) {
+    TypeId type_id = frame_layout.field_types[i];
     if (!context.IsFourState(type_id)) {
       continue;
     }
@@ -315,8 +315,8 @@ auto EmitPerSchemaFrameInitFunctions(Context& context, const Layout& layout)
     // Apply composite 4-state initialization.
     auto* frame_type = proc_layout.frame.llvm_type;
     const auto& types = context.GetTypeArena();
-    for (uint32_t fi = 0; fi < proc_layout.frame.root_types.size(); ++fi) {
-      TypeId type_id = proc_layout.frame.root_types[fi];
+    for (uint32_t fi = 0; fi < proc_layout.frame.field_types.size(); ++fi) {
+      TypeId type_id = proc_layout.frame.field_types[fi];
       if (!context.IsFourState(type_id)) continue;
       if (IsScalarPatchable(type_id, types, force_two_state)) continue;
       auto* field_ptr =

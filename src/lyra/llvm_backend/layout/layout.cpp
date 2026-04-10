@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <span>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -1443,36 +1444,62 @@ auto DesignLayout::GetStorageBaseForRange(
 
 namespace {
 
-// Build FrameLayout from de-duplicated roots.
+// Descriptor for an activation-local shadow field to append to the frame.
+struct ShadowFieldDesc {
+  uint32_t slot_id;
+  TypeId root_type;
+};
+
+// Build FrameLayout from de-duplicated roots and optional shadow fields.
+// Shadow fields are appended after regular roots in the LLVM struct.
 // frame_name is the semantic type name (e.g., "Body0Frame0", "Conn3Frame").
 auto BuildFrameLayout(
-    const std::vector<RootInfo>& roots, const TypeArena& types,
+    const std::vector<RootInfo>& roots,
+    std::span<const ShadowFieldDesc> shadows, const TypeArena& types,
     llvm::LLVMContext& ctx, std::string_view frame_name,
     const llvm::DataLayout& dl, bool force_two_state) -> FrameLayout {
   FrameLayout layout;
-  std::vector<llvm::Type*> field_types;
+  layout.num_semantic_roots = static_cast<uint32_t>(roots.size());
+  std::vector<llvm::Type*> llvm_field_types;
 
+  // Region 1: semantic roots from MIR places.
   for (size_t i = 0; i < roots.size(); ++i) {
     const auto& root = roots[i];
-    layout.root_types.push_back(root.type);
+    layout.field_types.push_back(root.type);
     layout.root_to_field[root.key] = static_cast<uint32_t>(i);
-    field_types.push_back(
+    llvm_field_types.push_back(
         GetLlvmTypeForTypeId(ctx, root.type, types, force_two_state));
   }
 
-  if (field_types.empty()) {
+  // Region 2: activation-local shadow fields.
+  for (const auto& shadow : shadows) {
+    auto field_index = static_cast<uint32_t>(llvm_field_types.size());
+    layout.shadow_fields.push_back(
+        ShadowFieldEntry{
+            .slot_id = shadow.slot_id,
+            .field_index = field_index,
+            .root_type = shadow.root_type,
+        });
+    layout.field_types.push_back(shadow.root_type);
+    llvm_field_types.push_back(
+        GetLlvmTypeForTypeId(ctx, shadow.root_type, types, force_two_state));
+  }
+
+  if (llvm_field_types.empty()) {
     layout.llvm_type = llvm::StructType::create(
         ctx, {llvm::Type::getInt8Ty(ctx)}, std::string(frame_name));
   } else {
-    layout.llvm_type =
-        llvm::StructType::create(ctx, field_types, std::string(frame_name));
+    layout.llvm_type = llvm::StructType::create(
+        ctx, llvm_field_types, std::string(frame_name));
   }
 
-  // Collect 4-state patches for scalar patchable fields
-  if (!roots.empty()) {
+  // Collect 4-state patches over both regions.
+  size_t total_fields = layout.field_types.size();
+  if (total_fields > 0) {
     CollectPatches(
         layout.four_state_patches, layout.llvm_type, dl, types,
-        [&](size_t i) { return roots[i].type; }, roots.size(), force_two_state);
+        [&](size_t i) { return layout.field_types[i]; }, total_fields,
+        force_two_state);
   }
 
   return layout;
@@ -1489,6 +1516,16 @@ auto BuildProcessStateType(
 }
 
 }  // namespace
+
+auto FrameLayout::GetShadowField(uint32_t slot_id) const
+    -> const ShadowFieldEntry& {
+  for (const auto& entry : shadow_fields) {
+    if (entry.slot_id == slot_id) return entry;
+  }
+  throw common::InternalError(
+      "FrameLayout::GetShadowField",
+      std::format("no shadow field for managed slot {}", slot_id));
+}
 
 auto IsScalarPatchable(
     TypeId type_id, const TypeArena& types, bool force_two_state) -> bool {
@@ -1762,12 +1799,43 @@ auto BuildLayout(
     auto roots = CollectProcessRoots(process, sched_arena, types);
 
     if (proc_layout.has_suspension) {
-      proc_layout.frame =
-          BuildFrameLayout(roots, types, ctx, frame_name, dl, force_two_state);
+      // Compute activation plan at layout time so shadow fields can be
+      // added to the persistent process frame (not stack allocas).
+      proc_layout.activation_plan.emplace(
+          BuildProcessActivationPlan(process, sched_arena, types));
+
+      // Collect deduplicated shadow field descriptors from the plan.
+      std::vector<ShadowFieldDesc> shadows;
+      if (proc_layout.activation_plan->HasActivationLocalSlots()) {
+        std::unordered_set<uint32_t> seen;
+        for (const auto& seg : proc_layout.activation_plan->segments) {
+          for (const auto& ms : seg.managed_slots.slots) {
+            if (seen.insert(ms.slot.id).second) {
+              shadows.push_back(
+                  ShadowFieldDesc{
+                      .slot_id = ms.slot.id, .root_type = ms.root_type});
+            }
+          }
+        }
+        std::ranges::sort(shadows, {}, &ShadowFieldDesc::slot_id);
+      }
+
+      proc_layout.frame = BuildFrameLayout(
+          roots, shadows, types, ctx, frame_name, dl, force_two_state);
+
+      // Structural invariant: every managed slot in the activation plan
+      // must resolve to a frame shadow field. This guards against drift
+      // between plan semantics and frame population, making the
+      // stale-stack-alloca bug class structurally impossible.
+      for (const auto& seg : proc_layout.activation_plan->segments) {
+        for (const auto& ms : seg.managed_slots.slots) {
+          proc_layout.frame.GetShadowField(ms.slot.id);
+        }
+      }
     } else {
       // Suspension-free: empty frame, roots become allocas at codegen time.
       proc_layout.frame =
-          BuildFrameLayout({}, types, ctx, frame_name, dl, force_two_state);
+          BuildFrameLayout({}, {}, types, ctx, frame_name, dl, force_two_state);
       proc_layout.alloca_roots.reserve(roots.size());
       for (const auto& root : roots) {
         proc_layout.alloca_roots.push_back(
@@ -1802,7 +1870,7 @@ auto BuildLayout(
       bool needs =
           !force_two_state && !proc_layout.frame.four_state_patches.IsEmpty();
       if (!force_two_state && !needs) {
-        for (TypeId type_id : proc_layout.frame.root_types) {
+        for (TypeId type_id : proc_layout.frame.field_types) {
           if (IsLayoutFourState(type_id, types, force_two_state) &&
               !IsScalarPatchable(type_id, types, force_two_state)) {
             needs = true;
