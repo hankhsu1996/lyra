@@ -10,6 +10,7 @@
 #include <llvm/IR/Module.h>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/slot_id.hpp"
@@ -24,7 +25,6 @@
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/construction_input.hpp"
-#include "lyra/mir/deferred_assertion_site.hpp"
 #include "lyra/mir/external_ref.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/routine.hpp"
@@ -510,18 +510,6 @@ class Context {
   void SetConnectionNotificationMask(const ConnectionNotificationMask* mask) {
     connection_notification_mask_ = mask;
   }
-  // Body-local-to-global site ID base offsets. MIR effects carry body-local
-  // IDs; codegen adds the base to produce design-global runtime indices.
-  void SetSiteBaseIndices(uint32_t deferred_base, uint32_t cover_base) {
-    deferred_site_base_index_ = deferred_base;
-    cover_site_base_index_ = cover_base;
-  }
-  [[nodiscard]] auto GetDeferredSiteBaseIndex() const -> uint32_t {
-    return deferred_site_base_index_;
-  }
-  [[nodiscard]] auto GetCoverSiteBaseIndex() const -> uint32_t {
-    return cover_site_base_index_;
-  }
   // B2: External ref resolution environment. Installed as a unit by
   // SpecLocalScope; cleared on scope exit. All fields must be consistent.
   struct ExternalRefResolutionEnv {
@@ -959,27 +947,17 @@ class Context {
   [[nodiscard]] auto GetDesignFunction(SymbolId symbol) const
       -> const DesignFunctionEntry&;
 
-  // Module-scoped function lowering metadata.
-  // Module-scoped functions use kSpecializationLocal addressing for
-  // module-local slot access. How the specialization-local context is
-  // received (ObserverContext* vs exploded args) is determined by
-  // mir::IsObserverProgram(runtime_kind), not by this struct.
-  //
-  // spec_slot_info is specialization-owned addressing data (owned by
-  // SpecSlotInfo, shared across all instances of the same specialization).
-  struct ModuleFunctionLowering {
-    const SpecSlotInfo* spec_slot_info = nullptr;
-    const ConnectionNotificationMask* connection_notification_mask = nullptr;
-  };
-  void RegisterModuleScopedFunction(
-      mir::FunctionId func_id, ModuleFunctionLowering lowering);
+  // Module-scoped function membership. Body-local functions are registered
+  // here at session start; membership determines ABI (module-scoped functions
+  // receive this_ptr, instance_id, and use specialization-local addressing).
+  // Body-level spec context (spec_slot_info, connection_notification_mask) is
+  // provided by SpecLocalScope, not stored per function.
+  void RegisterModuleScopedFunction(mir::FunctionId func_id);
   void ClearModuleScopedFunctions() {
-    module_function_lowering_.clear();
+    module_scoped_functions_.clear();
   }
   [[nodiscard]] auto IsModuleScopedFunction(mir::FunctionId func_id) const
       -> bool;
-  [[nodiscard]] auto GetModuleFunctionLowering(mir::FunctionId func_id) const
-      -> const ModuleFunctionLowering&;
 
   // Monitor layout: snapshot encoding info (codegen artifact, not in MIR).
   // Keyed by check_program FunctionId. Contains only layout info (offsets,
@@ -1007,18 +985,6 @@ class Context {
       -> const MonitorSetupInfo*;
 
   // Deferred assertion site info (borrowed pointer into design sites).
-  // Keyed by site ID. Used by enqueue codegen to derive ref binding
-  // metadata from the site action + target signature in lockstep.
-  void RegisterDeferredAssertionSiteInfo(
-      mir::DeferredAssertionSiteId site_id,
-      const mir::DeferredAssertionSiteInfo* info);
-  void ClearDeferredAssertionSiteInfo() {
-    deferred_assertion_sites_.clear();
-  }
-  [[nodiscard]] auto GetDeferredAssertionSiteInfo(
-      mir::DeferredAssertionSiteId site_id) const
-      -> const mir::DeferredAssertionSiteInfo*;
-
   // Build LLVM function type from MIR function signature.
   // Package-scoped: (DesignState*, Engine*, args...)
   // Module-scoped:  (DesignState*, Engine*, this_ptr*,
@@ -1280,9 +1246,6 @@ class Context {
   llvm::Value* dynamic_instance_id_ = nullptr;
   const SpecSlotInfo* spec_slot_info_ = nullptr;
   const ConnectionNotificationMask* connection_notification_mask_ = nullptr;
-  uint32_t deferred_site_base_index_ = 0;
-  uint32_t cover_site_base_index_ = 0;
-
   // External ref resolution state. Env carries bindings + construction
   // for ResolveExternalRefRoot.
   std::optional<ExternalRefResolutionEnv> ext_ref_env_;
@@ -1312,9 +1275,8 @@ class Context {
   absl::flat_hash_map<SymbolId, DesignFunctionEntry, SymbolIdHash>
       design_functions_;
 
-  // Module-scoped functions: lowering metadata keyed by FunctionId.
-  absl::flat_hash_map<mir::FunctionId, ModuleFunctionLowering>
-      module_function_lowering_;
+  // Module-scoped function membership set.
+  absl::flat_hash_set<mir::FunctionId> module_scoped_functions_;
 
   // Monitor layouts (codegen artifact, not MIR semantics).
   // Keyed by check_program FunctionId - single source of truth for encoding.
@@ -1324,10 +1286,6 @@ class Context {
   // Just stores check_program reference; layout is looked up from
   // monitor_layouts_.
   absl::flat_hash_map<mir::FunctionId, MonitorSetupInfo> monitor_setup_infos_;
-
-  // Deferred assertion site info (borrowed pointers into design sites).
-  absl::flat_hash_map<uint32_t, const mir::DeferredAssertionSiteInfo*>
-      deferred_assertion_sites_;
 
   // SSA temp bindings: temp_id -> TempValue (explicit semantic contract).
   // Temps defined by block params (split PHI nodes) or statements.

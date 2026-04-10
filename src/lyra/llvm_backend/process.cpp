@@ -1655,7 +1655,8 @@ static auto MaterializeAllocaStorage(
 
 auto GenerateProcessFunction(
     Context& context, const mir::Process& process, const std::string& name,
-    ProcessExecutionKind execution_kind) -> Result<ProcessCodegenResult> {
+    ProcessExecutionKind execution_kind, const BodySiteContext& site_ctx)
+    -> Result<ProcessCodegenResult> {
   // Process-level origin scope for errors during code generation.
   // If process.origin is Invalid, this is a no-op.
   OriginScope proc_scope(context, process.origin);
@@ -1839,7 +1840,7 @@ auto GenerateProcessFunction(
     }
 
     for (const auto& instruction : block.statements) {
-      auto result = LowerStatement(context, instruction, exec_mode);
+      auto result = LowerStatement(context, instruction, exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -1881,8 +1882,8 @@ auto GenerateProcessFunction(
 }
 
 auto GenerateSharedProcessFunction(
-    Context& context, const mir::Process& process, const std::string& name)
-    -> Result<ProcessCodegenResult> {
+    Context& context, const mir::Process& process, const std::string& name,
+    const BodySiteContext& site_ctx) -> Result<ProcessCodegenResult> {
   OriginScope proc_scope(context, process.origin);
   std::vector<WaitSiteEntry> wait_sites;
 
@@ -2038,8 +2039,8 @@ auto GenerateSharedProcessFunction(
 
     for (uint32_t si = 0; si < block.statements.size(); ++si) {
       executor.ExecutePreStatement(bi, si);
-      auto result =
-          LowerStatement(context, resolver, block.statements[si], exec_mode);
+      auto result = LowerStatement(
+          context, resolver, block.statements[si], exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
       executor.ExecutePostStatement(bi, si);
     }
@@ -2430,7 +2431,8 @@ struct PlaceCollector {
 // values changed.
 auto DefineMonitorCheckProgram(
     Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
-    const Context::MonitorLayout& layout) -> Result<void> {
+    const Context::MonitorLayout& layout, const BodySiteContext& site_ctx)
+    -> Result<void> {
   // Observer programs are simulation-only (engine passed as explicit param).
   // No decision owner for observer programs.
   ExecutionContractScope contract_scope(
@@ -2551,7 +2553,7 @@ auto DefineMonitorCheckProgram(
           continue;
         }
       }
-      auto result = LowerStatement(context, instruction, exec_mode);
+      auto result = LowerStatement(context, instruction, exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
     }
 
@@ -3106,8 +3108,8 @@ auto CompileDeferredAssertionArtifacts(
 }
 
 auto DefineMirFunction(
-    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func)
-    -> Result<void> {
+    Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
+    const BodySiteContext& site_ctx) -> Result<void> {
   const auto& arena = context.GetMirArena();
   const auto& func = arena[func_id];
 
@@ -3121,7 +3123,8 @@ auto DefineMirFunction(
           func.origin, "monitor check observer program missing layout",
           UnsupportedCategory::kFeature));
     }
-    return DefineMonitorCheckProgram(context, func_id, llvm_func, *layout);
+    return DefineMonitorCheckProgram(
+        context, func_id, llvm_func, *layout, site_ctx);
   }
 
   auto& llvm_ctx = context.GetLlvmContext();
@@ -3199,11 +3202,9 @@ auto DefineMirFunction(
     context.SetEnginePointer(engine_arg);
   }
   if (!is_observer && is_module_scoped) {
-    const auto& lowering = context.GetModuleFunctionLowering(func_id);
-    context.SetSpecSlotInfo(lowering.spec_slot_info);
-    context.SetConnectionNotificationMask(
-        lowering.connection_notification_mask);
-
+    // spec_slot_info and connection_notification_mask are already set on
+    // Context by SpecLocalScope at session start. All body functions share
+    // the same body-level spec context.
     auto* this_arg = llvm_func->getArg(arg_offset + 2);
     this_arg->setName("this_ptr");
     context.SetThisPointer(this_arg);
@@ -3385,7 +3386,7 @@ auto DefineMirFunction(
 
     // Lower all instructions
     for (const auto& instruction : block.statements) {
-      auto result = LowerStatement(context, instruction, exec_mode);
+      auto result = LowerStatement(context, instruction, exec_mode, site_ctx);
       if (!result) return std::unexpected(result.error());
     }
 

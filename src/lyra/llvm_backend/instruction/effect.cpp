@@ -544,16 +544,23 @@ auto LowerMemIOEffect(Context& context, const mir::MemIOEffect& mem_io)
 
 }  // namespace
 
+auto BodySiteContext::GetDeferredSiteInfo(uint32_t body_local_id) const
+    -> const mir::DeferredAssertionSiteInfo* {
+  if (body_local_id >= deferred_sites.size()) return nullptr;
+  return &deferred_sites[body_local_id];
+}
+
 auto LowerEffectOp(
     Context& context, const mir::EffectOp& effect_op,
-    const ActiveExecutionMode& mode) -> Result<void> {
+    const ActiveExecutionMode& mode, const BodySiteContext& site_ctx)
+    -> Result<void> {
   CanonicalSlotAccess canonical(context);
-  return LowerEffectOp(context, canonical, effect_op, mode);
+  return LowerEffectOp(context, canonical, effect_op, mode, site_ctx);
 }
 auto LowerEffectOp(
     Context& context, SlotAccessResolver& resolver,
-    const mir::EffectOp& effect_op, const ActiveExecutionMode& mode)
-    -> Result<void> {
+    const mir::EffectOp& effect_op, const ActiveExecutionMode& mode,
+    const BodySiteContext& site_ctx) -> Result<void> {
   return std::visit(
       common::Overloaded{
           [&](const mir::DisplayEffect& display) -> Result<void> {
@@ -612,7 +619,7 @@ auto LowerEffectOp(
             auto& builder = context.GetBuilder();
             auto* engine_ptr = context.GetEnginePointer();
             auto global_cover_id =
-                context.GetCoverSiteBaseIndex() + hit.site_id.Index();
+                site_ctx.cover_site_base + hit.site_id.Index();
             auto* site_val = llvm::ConstantInt::get(
                 llvm::Type::getInt32Ty(context.GetLlvmContext()),
                 global_cover_id);
@@ -638,7 +645,7 @@ auto LowerEffectOp(
             auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
             auto* i8_ty = llvm::Type::getInt8Ty(llvm_ctx);
             auto global_site_id =
-                context.GetDeferredSiteBaseIndex() + enq.site_id.Index();
+                site_ctx.deferred_site_base + enq.site_id.Index();
             auto* site_val = llvm::ConstantInt::get(i32_ty, global_site_id);
             auto* disp_val = llvm::ConstantInt::get(
                 i8_ty, static_cast<uint8_t>(enq.disposition));
@@ -652,7 +659,7 @@ auto LowerEffectOp(
 
             // Look up semantic site info (must exist).
             const auto* site_info =
-                context.GetDeferredAssertionSiteInfo(enq.site_id);
+                site_ctx.GetDeferredSiteInfo(enq.site_id.Index());
             if (site_info == nullptr) {
               throw common::InternalError(
                   "LowerEnqueueDeferredAssertionEffect",

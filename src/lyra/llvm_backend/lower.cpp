@@ -946,6 +946,36 @@ auto CompareCombSlotsByFinalObservableOrder(
 
 }  // namespace
 
+// Capture deferred-action callee backend metadata for a single body's
+// deferred sites. Returns one entry per body-local site. Called inside
+// CompileModuleSpecSession while user_functions_ / module_function_lowering_
+// are valid for the owning body.
+auto CaptureDeferredCalleeInfoForBody(
+    Context& context,
+    std::span<const mir::DeferredAssertionSiteInfo> body_sites)
+    -> std::vector<DeferredSiteCalleeInfo> {
+  std::vector<DeferredSiteCalleeInfo> result(body_sites.size());
+  auto capture_callee = [&](const mir::DeferredUserCallAction* action)
+      -> std::optional<DeferredCalleeBackendInfo> {
+    if (action == nullptr) return std::nullopt;
+    return DeferredCalleeBackendInfo{
+        .llvm_func = context.GetUserFunction(action->callee),
+        .is_module_scoped = context.IsModuleScopedFunction(action->callee),
+    };
+  };
+
+  for (uint32_t di = 0; di < body_sites.size(); ++di) {
+    const auto& site = body_sites[di];
+    if (auto info = capture_callee(GetDeferredPassUserCallAction(site))) {
+      result[di].pass_callee = *info;
+    }
+    if (auto info = capture_callee(GetDeferredFailUserCallAction(site))) {
+      result[di].fail_callee = *info;
+    }
+  }
+  return result;
+}
+
 auto CompileModuleSpecSession(
     Context& context, const CompiledModuleSpecInput& input,
     const mir::ConstructionInput* construction) -> Result<CompiledModuleSpec> {
@@ -977,17 +1007,14 @@ auto CompileModuleSpecSession(
       context, input.spec_slot_info, input.connection_notification_mask,
       std::move(ext_ref_env));
 
-  // Install body-local-to-global site ID base offsets for codegen.
-  context.SetSiteBaseIndices(
-      input.deferred_site_base_index, input.cover_site_base_index);
-
-  // Register this body's deferred assertion site info for enqueue codegen.
-  // Site IDs in MIR are body-local; registration uses body-local keys.
-  context.ClearDeferredAssertionSiteInfo();
-  for (uint32_t si = 0; si < input.deferred_sites.size(); ++si) {
-    context.RegisterDeferredAssertionSiteInfo(
-        mir::DeferredAssertionSiteId{si}, &input.deferred_sites[si]);
-  }
+  // Body-local site context: carries site base indices and deferred site
+  // metadata for effect lowering. Threaded explicitly through statement/effect
+  // codegen instead of ambient Context state.
+  BodySiteContext site_ctx{
+      .deferred_site_base = input.deferred_site_base_index,
+      .cover_site_base = input.cover_site_base_index,
+      .deferred_sites = input.deferred_sites,
+  };
 
   // Clear per-spec state: body-local FunctionIds are 0-based per body,
   // so registrations from a previous spec session would collide.
@@ -998,17 +1025,9 @@ auto CompileModuleSpecSession(
     RegisterMonitorInfo(context, body.arena, proc_id);
   }
 
-  // Step 2: Register module-scoped function lowering metadata.
-  if (context.GetSpecSlotInfo() == nullptr) {
-    throw common::InternalError(
-        "CompileModuleSpecSession",
-        "spec_slot_info not set on context before body compilation");
-  }
+  // Step 2: Register module-scoped function membership.
   for (mir::FunctionId func_id : input.functions) {
-    context.RegisterModuleScopedFunction(
-        func_id, {.spec_slot_info = context.GetSpecSlotInfo(),
-                  .connection_notification_mask =
-                      context.GetConnectionNotificationMask()});
+    context.RegisterModuleScopedFunction(func_id);
   }
 
   // Step 3: Declare all body functions
@@ -1025,7 +1044,7 @@ auto CompileModuleSpecSession(
 
   // Step 4: Define all body functions
   for (const auto& [func_id, llvm_func] : declared_funcs) {
-    auto result = DefineMirFunction(context, func_id, llvm_func);
+    auto result = DefineMirFunction(context, func_id, llvm_func, site_ctx);
     if (!result) return std::unexpected(result.error());
   }
 
@@ -1037,6 +1056,8 @@ auto CompileModuleSpecSession(
       .process_triggers = {},
       .deferred_sites = input.deferred_sites,
       .deferred_site_base_index = input.deferred_site_base_index,
+      .deferred_callee_info = {},
+      .declared_functions = {},
   };
 
   for (const auto& proc_view : input.view.processes) {
@@ -1044,7 +1065,7 @@ auto CompileModuleSpecSession(
 
     const auto& mir_process = body.arena[proc_view.process_id];
     auto func_result = GenerateSharedProcessFunction(
-        context, mir_process, proc_view.func_name);
+        context, mir_process, proc_view.func_name, site_ctx);
     if (!func_result) return std::unexpected(func_result.error());
 
     product.process_functions.push_back(func_result->function);
@@ -1056,37 +1077,14 @@ auto CompileModuleSpecSession(
         std::make_move_iterator(func_result->wait_sites.end()));
   }
 
+  // Step 6: Capture callee products while session state is still valid.
+  // Deferred callee info and declared functions are consumed by the outer
+  // loop for thunk compilation and DPI export wrappers, respectively.
+  product.deferred_callee_info =
+      CaptureDeferredCalleeInfoForBody(context, input.deferred_sites);
+  product.declared_functions = std::move(declared_funcs);
+
   return product;
-}
-
-// Capture deferred-action callee backend metadata from the current body
-// session's user_functions_ / module_function_lowering_ before the next
-// session overwrites them. Same per-session capture pattern as DPI exports.
-// Takes the body's deferred-site span directly -- no global scan needed.
-// base_index is the offset of this body's sites within the design-global
-// deferred_site_callee_info vector.
-void CaptureDeferredCalleeInfo(
-    Context& context,
-    std::span<const mir::DeferredAssertionSiteInfo> body_sites,
-    size_t base_index, std::vector<DeferredSiteCalleeInfo>& out) {
-  auto capture_callee = [&](const mir::DeferredUserCallAction* action)
-      -> std::optional<DeferredCalleeBackendInfo> {
-    if (action == nullptr) return std::nullopt;
-    return DeferredCalleeBackendInfo{
-        .llvm_func = context.GetUserFunction(action->callee),
-        .is_module_scoped = context.IsModuleScopedFunction(action->callee),
-    };
-  };
-
-  for (uint32_t di = 0; di < body_sites.size(); ++di) {
-    const auto& site = body_sites[di];
-    if (auto info = capture_callee(GetDeferredPassUserCallAction(site))) {
-      out[base_index + di].pass_callee = *info;
-    }
-    if (auto info = capture_callee(GetDeferredFailUserCallAction(site))) {
-      out[base_index + di].fail_callee = *info;
-    }
-  }
 }
 
 auto CompileDesignProcesses(const LoweringInput& input)
@@ -1596,7 +1594,8 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   for (const auto& [func_id, llvm_func] : declared_funcs) {
-    auto result = DefineMirFunction(*context, func_id, llvm_func);
+    BodySiteContext no_sites;
+    auto result = DefineMirFunction(*context, func_id, llvm_func, no_sites);
     if (!result) return std::unexpected(result.error());
 
     // Register by canonical symbol for DesignFunctionRef resolution
@@ -1607,27 +1606,19 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
   }
 
-  // Phase 4: Compile each specialization via CompileModuleSpecSession
-  // Build body -> compiled process functions routing table (pointer-keyed).
+  // Phase 4: Compile each specialization via CompileModuleSpecSession.
+  // All callee captures are returned as product fields -- no ambient Context
+  // reads between sessions.
   std::unordered_map<const mir::ModuleBody*, std::vector<llvm::Function*>>
       body_to_compiled_funcs;
   std::unordered_map<
       const mir::ModuleBody*, std::vector<std::optional<ProcessTriggerEntry>>>
       body_to_process_triggers;
   std::vector<WaitSiteEntry> all_wait_sites;
-  // Accumulate module-scoped export callees for wrapper emission (D4a).
-  // Keyed by (body, function_id) to avoid body-local FunctionId collisions.
-  // Captured after each CompileModuleSpecSession before user_functions_
-  // is overwritten by the next session.
   std::unordered_map<
       mir::ModuleExportCalleeKey, dpi::ModuleExportCalleeInfo,
       mir::ModuleExportCalleeKeyHash>
       module_export_callees;
-
-  // Capture deferred-action callee backend metadata during each body session
-  // (when user_functions_ and module_function_lowering_ are valid for the
-  // owning body). Consumed by post-session thunk compilation. Parallel to
-  // design.deferred_assertion_sites.
   const auto& deferred_sites = input.design->deferred_assertion_sites;
   std::vector<DeferredSiteCalleeInfo> deferred_site_callee_info(
       deferred_sites.size());
@@ -1641,8 +1632,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
         CompileModuleSpecSession(*context, spec_input, input.construction);
     if (!product) return std::unexpected(product.error());
 
-    // Capture module export callees from this session's user_functions_
-    // before the next session overwrites them.
+    // Merge DPI export callees from product's declared functions.
     if (input.dpi_export_wrappers != nullptr) {
       for (const auto& desc : *input.dpi_export_wrappers) {
         if (desc.target.scope_kind != mir::DpiExportScopeKind::kModule) {
@@ -1652,22 +1642,24 @@ auto CompileDesignProcesses(const LoweringInput& input)
           continue;
         }
         auto func_id = desc.target.module_target.function_id;
-        if (context->HasUserFunction(func_id)) {
+        for (const auto& [fid, llvm_func] : product->declared_functions) {
+          if (fid != func_id) continue;
           const auto& callee = product->body->arena[func_id];
           module_export_callees[desc.target.module_target] = {
-              .llvm_func = context->GetUserFunction(func_id),
+              .llvm_func = llvm_func,
               .accepts_decision_owner =
                   callee.abi_contract.accepts_decision_owner,
           };
+          break;
         }
       }
     }
 
-    // Capture deferred-action callee backend info before next session
-    // overwrites user_functions_ / module_function_lowering_.
-    CaptureDeferredCalleeInfo(
-        *context, product->deferred_sites, product->deferred_site_base_index,
-        deferred_site_callee_info);
+    // Merge deferred callee info from product into design-global vector.
+    for (uint32_t di = 0; di < product->deferred_callee_info.size(); ++di) {
+      deferred_site_callee_info[product->deferred_site_base_index + di] =
+          std::move(product->deferred_callee_info[di]);
+    }
 
     body_to_process_triggers.try_emplace(
         product->body, std::move(product->process_triggers));
@@ -1754,8 +1746,10 @@ auto CompileDesignProcesses(const LoweringInput& input)
       Context::ArenaScope arena_scope(*context, input.mir_arena);
       auto execution_kind = (i < num_init) ? ProcessExecutionKind::kInit
                                            : ProcessExecutionKind::kSimulation;
+      BodySiteContext no_sites;
       auto func_result = GenerateProcessFunction(
-          *context, mir_process, std::format("process_{}", i), execution_kind);
+          *context, mir_process, std::format("process_{}", i), execution_kind,
+          no_sites);
       if (!func_result) return std::unexpected(func_result.error());
       process_funcs.push_back(func_result->function);
       all_wait_sites.insert(

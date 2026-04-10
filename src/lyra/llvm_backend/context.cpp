@@ -883,9 +883,8 @@ auto Context::GetDesignFunction(SymbolId symbol) const
   return it->second;
 }
 
-void Context::RegisterModuleScopedFunction(
-    mir::FunctionId func_id, ModuleFunctionLowering lowering) {
-  auto [it, inserted] = module_function_lowering_.emplace(func_id, lowering);
+void Context::RegisterModuleScopedFunction(mir::FunctionId func_id) {
+  auto [it, inserted] = module_scoped_functions_.emplace(func_id);
   if (!inserted) {
     throw common::InternalError(
         "RegisterModuleScopedFunction",
@@ -897,19 +896,7 @@ void Context::RegisterModuleScopedFunction(
 }
 
 auto Context::IsModuleScopedFunction(mir::FunctionId func_id) const -> bool {
-  return module_function_lowering_.contains(func_id);
-}
-
-auto Context::GetModuleFunctionLowering(mir::FunctionId func_id) const
-    -> const ModuleFunctionLowering& {
-  auto it = module_function_lowering_.find(func_id);
-  if (it == module_function_lowering_.end()) {
-    throw common::InternalError(
-        "GetModuleFunctionLowering",
-        std::format(
-            "function {} not registered as module-scoped", func_id.value));
-  }
-  return it->second;
+  return module_scoped_functions_.contains(func_id);
 }
 
 void Context::RegisterMonitorLayout(
@@ -938,32 +925,6 @@ auto Context::GetMonitorSetupInfo(mir::FunctionId setup_program) const
     return nullptr;
   }
   return &it->second;
-}
-
-void Context::RegisterDeferredAssertionSiteInfo(
-    mir::DeferredAssertionSiteId site_id,
-    const mir::DeferredAssertionSiteInfo* info) {
-  if (info == nullptr) {
-    throw common::InternalError(
-        "RegisterDeferredAssertionSiteInfo",
-        std::format("null info for site {}", site_id.Index()));
-  }
-  auto [it, inserted] =
-      deferred_assertion_sites_.emplace(site_id.Index(), info);
-  if (!inserted) {
-    throw common::InternalError(
-        "RegisterDeferredAssertionSiteInfo",
-        std::format("duplicate registration for site {}", site_id.Index()));
-  }
-}
-
-auto Context::GetDeferredAssertionSiteInfo(mir::DeferredAssertionSiteId site_id)
-    const -> const mir::DeferredAssertionSiteInfo* {
-  auto it = deferred_assertion_sites_.find(site_id.Index());
-  if (it == deferred_assertion_sites_.end()) {
-    return nullptr;
-  }
-  return it->second;
 }
 
 auto Context::BuildUserFunctionType(
