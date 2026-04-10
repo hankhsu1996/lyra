@@ -265,8 +265,13 @@ auto CompileDesignProcesses(const LoweringInput& input)
       input.force_two_state);
 
   // Specialization planning + compilation.
+  std::span<const mir::DpiExportWrapperDesc> dpi_exports;
+  if (input.dpi_export_wrappers != nullptr) {
+    dpi_exports = *input.dpi_export_wrappers;
+  }
   auto spec_plan = BuildSpecPlan(
-      *input.design, *layout, topology.module_plans, input.origin_provenance);
+      *input.design, *layout, topology.module_plans, input.origin_provenance,
+      dpi_exports);
 
   auto globals_result = CompileGlobalFunctions(*context, input);
   if (!globals_result) return std::unexpected(globals_result.error());

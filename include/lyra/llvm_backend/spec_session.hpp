@@ -25,10 +25,10 @@ struct SpecializationProducts {
       const mir::ModuleBody*, std::vector<std::optional<ProcessTriggerEntry>>>
       body_to_process_triggers;
   std::vector<WaitSiteEntry> wait_sites;
-  std::unordered_map<
-      mir::ModuleExportCalleeKey, dpi::ModuleExportCalleeInfo,
-      mir::ModuleExportCalleeKeyHash>
-      module_export_callees;
+  // Parallel to design-global dpi_export_wrappers. nullopt for
+  // package-scoped entries; populated for module-scoped entries.
+  // Spliced positionally from per-body session products.
+  std::vector<std::optional<dpi::ModuleExportCalleeInfo>> module_export_callees;
   // Design-global deferred assertion thunk artifacts, concatenated from
   // per-body products. Positional: element [i] corresponds to
   // design.deferred_assertion_sites[i].

@@ -6,8 +6,9 @@
 // wrapper emission.
 // Separate from internal Lyra function ABI; never reuses BuildUserFunctionType.
 
+#include <optional>
+#include <span>
 #include <string>
-#include <unordered_map>
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/dpi_types.hpp"
@@ -72,8 +73,7 @@ struct ModuleExportCalleeInfo {
 
 auto EmitDpiExportWrappers(
     Context& context, const std::vector<mir::DpiExportWrapperDesc>& exports,
-    const std::unordered_map<
-        mir::ModuleExportCalleeKey, ModuleExportCalleeInfo,
-        mir::ModuleExportCalleeKeyHash>& module_export_callees) -> Result<void>;
+    std::span<const std::optional<ModuleExportCalleeInfo>>
+        module_export_callees) -> Result<void>;
 
 }  // namespace lyra::lowering::mir_to_llvm::dpi

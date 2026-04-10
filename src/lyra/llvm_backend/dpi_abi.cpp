@@ -1714,10 +1714,8 @@ auto EmitDecisionOwnerGuard(
 
 auto EmitDpiExportWrappers(
     Context& context, const std::vector<mir::DpiExportWrapperDesc>& exports,
-    const std::unordered_map<
-        mir::ModuleExportCalleeKey, ModuleExportCalleeInfo,
-        mir::ModuleExportCalleeKeyHash>& module_export_callees)
-    -> Result<void> {
+    std::span<const std::optional<ModuleExportCalleeInfo>>
+        module_export_callees) -> Result<void> {
   if (exports.empty()) return {};
 
   auto& llvm_ctx = context.GetLlvmContext();
@@ -1725,7 +1723,8 @@ auto EmitDpiExportWrappers(
 
   const auto& types = context.GetTypeArena();
 
-  for (const auto& desc : exports) {
+  for (size_t ei = 0; ei < exports.size(); ++ei) {
+    const auto& desc = exports[ei];
     // Build wrapper function (same C ABI shape for both package and module).
     auto* wrapper_ty = BuildExportWrapperType(llvm_ctx, desc.signature, types);
     auto* wrapper = llvm::Function::Create(
@@ -1792,15 +1791,14 @@ auto EmitDpiExportWrappers(
     } else {
       // Module path: resolve instance binding + direct call to module callee.
       auto binding = EmitResolveModuleBinding(context);
-      auto callee_it = module_export_callees.find(desc.target.module_target);
-      if (callee_it == module_export_callees.end()) {
+      if (ei >= module_export_callees.size() ||
+          !module_export_callees[ei].has_value()) {
         throw common::InternalError(
             "EmitDpiExportWrappers",
             std::format(
-                "module callee for DPI export '{}' not found in accumulator",
-                desc.c_name));
+                "module callee for DPI export '{}' not resolved", desc.c_name));
       }
-      const auto& callee_info = callee_it->second;
+      const auto& callee_info = *module_export_callees[ei];
       llvm::Function* internal_fn = callee_info.llvm_func;
 
       // Push per-wrapper-call context (D7a: suspension_disallowed for tasks).

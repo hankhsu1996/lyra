@@ -13,6 +13,7 @@
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/ext_ref_binding.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
+#include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/llvm_backend/process.hpp"
@@ -126,6 +127,21 @@ struct ConnectionNotificationMask {
   }
 };
 
+// Pre-resolved module-scoped DPI export target for one body.
+// Precomputed during planning so the session does not scan the
+// design-global wrapper list.
+struct ModuleExportTarget {
+  uint32_t wrapper_index = 0;
+  mir::FunctionId function_id;
+};
+
+// Per-wrapper resolved module export callee, produced by the body session.
+// wrapper_index identifies the position in the design-global wrapper list.
+struct ResolvedModuleExportEntry {
+  uint32_t wrapper_index = 0;
+  dpi::ModuleExportCalleeInfo info;
+};
+
 // Specialization compilation input: all data needed to compile one
 // specialization body. Owns specialization-local backend data (MIR
 // membership, layout, codegen routing). Does not reference orchestrator
@@ -149,6 +165,11 @@ struct CompiledModuleSpecInput {
   // runtime indices.
   uint32_t deferred_site_base_index = 0;
   uint32_t cover_site_base_index = 0;
+  // Module-scoped DPI export targets for this body, precomputed by planning.
+  // Each entry carries the design-global wrapper index and the body-local
+  // function to resolve. Empty when no module-scoped DPI exports target
+  // this body.
+  std::span<const ModuleExportTarget> module_export_targets;
   // Specialization-local state. Owned by CompileDesignProcesses,
   // consumed by CompileModuleSpecSession via SpecLocalScope.
   const SpecSlotInfo* spec_slot_info = nullptr;
@@ -173,9 +194,11 @@ struct CompiledModuleSpec {
   // Parallel to body's deferred_assertion_sites. Compiled inside the
   // session while declared functions are in scope.
   std::vector<DeferredSiteCompiledArtifact> deferred_artifacts;
-  // Body-local declared functions: (FunctionId, llvm::Function*).
-  // Captured inside the session for DPI export wrapper resolution.
-  std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_functions;
+  // Resolved module-scoped DPI export callees for this body.
+  // Each entry carries the design-global wrapper index and resolved callee.
+  // Captured inside the session while declared functions and MIR ABI
+  // contracts are in scope. Spliced positionally by merge.
+  std::vector<ResolvedModuleExportEntry> module_export_entries;
 };
 
 // Pure-data construction program: pooled paths, pooled param payloads, and

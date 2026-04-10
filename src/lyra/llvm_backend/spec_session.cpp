@@ -116,7 +116,7 @@ auto CompileModuleSpecSession(
       .process_triggers = {},
       .deferred_site_base_index = input.deferred_site_base_index,
       .deferred_artifacts = {},
-      .declared_functions = {},
+      .module_export_entries = {},
   };
 
   for (const auto& proc_view : input.view.processes) {
@@ -147,7 +147,24 @@ auto CompileModuleSpecSession(
     if (!artifacts) return std::unexpected(artifacts.error());
     product.deferred_artifacts = std::move(*artifacts);
   }
-  product.declared_functions = std::move(declared_funcs);
+
+  // Step 5: Resolve module-scoped DPI export callees while declared functions
+  // and MIR ABI contracts are in scope.
+  for (const auto& target : input.module_export_targets) {
+    auto it = declared_func_map.find(target.function_id);
+    if (it == declared_func_map.end()) continue;
+    const auto& callee = body.arena[target.function_id];
+    product.module_export_entries.push_back(
+        ResolvedModuleExportEntry{
+            .wrapper_index = target.wrapper_index,
+            .info =
+                {
+                    .llvm_func = it->second,
+                    .accepts_decision_owner =
+                        callee.abi_contract.accepts_decision_owner,
+                },
+        });
+  }
 
   return product;
 }
@@ -202,32 +219,17 @@ auto CompileSpecializations(
   SpecializationProducts products;
   products.deferred_site_artifacts.resize(
       input.design->deferred_assertion_sites.size());
+  if (input.dpi_export_wrappers != nullptr) {
+    products.module_export_callees.resize(input.dpi_export_wrappers->size());
+  }
 
   for (const auto& spec_input : spec_plan.inputs) {
     auto product = CompileModuleSpecSession(context, spec_input);
     if (!product) return std::unexpected(product.error());
 
-    // Merge DPI export callees.
-    if (input.dpi_export_wrappers != nullptr) {
-      for (const auto& desc : *input.dpi_export_wrappers) {
-        if (desc.target.scope_kind != mir::DpiExportScopeKind::kModule) {
-          continue;
-        }
-        if (desc.target.module_target.body != product->body) {
-          continue;
-        }
-        auto func_id = desc.target.module_target.function_id;
-        for (const auto& [fid, llvm_func] : product->declared_functions) {
-          if (fid != func_id) continue;
-          const auto& callee = product->body->arena[func_id];
-          products.module_export_callees[desc.target.module_target] = {
-              .llvm_func = llvm_func,
-              .accepts_decision_owner =
-                  callee.abi_contract.accepts_decision_owner,
-          };
-          break;
-        }
-      }
+    // Splice per-body module export callees into positional array.
+    for (const auto& entry : product->module_export_entries) {
+      products.module_export_callees[entry.wrapper_index] = entry.info;
     }
 
     // Merge per-body deferred artifacts into design-global array.

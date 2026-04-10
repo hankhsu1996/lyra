@@ -10,6 +10,7 @@
 #include "lyra/common/internal_error.hpp"
 #include "lyra/llvm_backend/process_meta_utils.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
+#include "lyra/mir/call.hpp"
 #include "lyra/mir/module.hpp"
 
 namespace lyra::lowering::mir_to_llvm {
@@ -186,6 +187,7 @@ auto BuildCompiledModuleSpecInputs(
             .deferred_sites = units[i].body->deferred_assertion_sites,
             .deferred_site_base_index = bases.deferred,
             .cover_site_base_index = bases.cover,
+            .module_export_targets = {},
         });
   }
   return inputs;
@@ -302,7 +304,9 @@ auto BuildConnectionNotificationMasks(
 auto BuildSpecPlan(
     const mir::Design& design, const Layout& layout,
     std::span<const LayoutModulePlan> module_plans,
-    const lowering::BodyOriginProvenance* origin_provenance) -> SpecPlan {
+    const lowering::BodyOriginProvenance* origin_provenance,
+    std::span<const mir::DpiExportWrapperDesc> dpi_export_wrappers)
+    -> SpecPlan {
   auto units = BuildSpecCompilationUnits(design);
   auto modidx_to_sched_indices = BuildModuleSchedIndices(layout);
   auto views = BuildSpecCodegenViews(units, design, modidx_to_sched_indices);
@@ -316,19 +320,38 @@ auto BuildSpecPlan(
   auto inputs = BuildCompiledModuleSpecInputs(
       units, std::move(views), design, origin_provenance);
 
+  // Precompute per-body module export targets from the design-global wrapper
+  // list. Each body gets only the module-scoped wrappers that target it.
+  std::vector<std::vector<ModuleExportTarget>> export_targets(inputs.size());
+  for (uint32_t wi = 0; wi < dpi_export_wrappers.size(); ++wi) {
+    const auto& desc = dpi_export_wrappers[wi];
+    if (desc.target.scope_kind != mir::DpiExportScopeKind::kModule) continue;
+    for (size_t u = 0; u < inputs.size(); ++u) {
+      if (inputs[u].body != desc.target.module_target.body) continue;
+      export_targets[u].push_back(
+          ModuleExportTarget{
+              .wrapper_index = wi,
+              .function_id = desc.target.module_target.function_id,
+          });
+      break;
+    }
+  }
+
   SpecPlan plan{
       .units = std::move(units),
       .slot_infos = std::move(slot_infos),
       .inputs = std::move(inputs),
       .connection_notification_masks = std::move(masks),
+      .module_export_targets = std::move(export_targets),
   };
 
-  // Wire up per-input pointers. Safe through moves because vector move
+  // Wire up per-input pointers/spans. Safe through moves because vector move
   // transfers the heap buffer without relocating elements.
   for (size_t i = 0; i < plan.inputs.size(); ++i) {
     plan.inputs[i].spec_slot_info = &plan.slot_infos[i];
     plan.inputs[i].connection_notification_mask =
         &plan.connection_notification_masks[i];
+    plan.inputs[i].module_export_targets = plan.module_export_targets[i];
   }
 
   return plan;
