@@ -883,22 +883,6 @@ auto Context::GetDesignFunction(SymbolId symbol) const
   return it->second;
 }
 
-void Context::RegisterModuleScopedFunction(mir::FunctionId func_id) {
-  auto [it, inserted] = module_scoped_functions_.emplace(func_id);
-  if (!inserted) {
-    throw common::InternalError(
-        "RegisterModuleScopedFunction",
-        std::format(
-            "function {} registered twice (must be registered once per "
-            "specialization, not per instance)",
-            func_id.value));
-  }
-}
-
-auto Context::IsModuleScopedFunction(mir::FunctionId func_id) const -> bool {
-  return module_scoped_functions_.contains(func_id);
-}
-
 void Context::RegisterMonitorLayout(
     mir::FunctionId check_program, MonitorLayout layout) {
   monitor_layouts_.emplace(check_program, std::move(layout));

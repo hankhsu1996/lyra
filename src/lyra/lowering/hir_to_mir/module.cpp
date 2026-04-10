@@ -185,6 +185,13 @@ auto LowerModule(
   // that exactly this many sites are reconstructed from the stored records.
   result.total_decision_sites = body_decision_allocator.TotalAllocated();
 
+  // Mark all body functions as module-scoped. This sets
+  // needs_module_binding on each function's ABI contract so the backend
+  // can read it directly from the arena instead of external bookkeeping.
+  for (mir::FunctionId func_id : result.functions) {
+    body_arena.MarkModuleScoped(func_id);
+  }
+
   // Propagate decision owner acceptance through internal call graph.
   // body_requirement stays intrinsic; only abi_contract is propagated.
   // Pass design_arena for cross-arena DesignFunctionRef edge resolution.

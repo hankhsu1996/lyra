@@ -280,7 +280,7 @@ auto LowerCall(
                 .signature = &func.signature,
                 .return_type = func.signature.return_type,
                 .uses_sret = context.FunctionUsesSret(func_id),
-                .is_module_scoped = context.IsModuleScopedFunction(func_id),
+                .is_module_scoped = func.abi_contract.needs_module_binding,
                 .accepts_decision_owner =
                     func.abi_contract.accepts_decision_owner,
                 .func_id = func_id,
@@ -296,7 +296,7 @@ auto LowerCall(
                 .return_type = func.signature.return_type,
                 .uses_sret = func.signature.return_policy ==
                              mir::ReturnPolicy::kSretOutParam,
-                .is_module_scoped = false,
+                .is_module_scoped = func.abi_contract.needs_module_binding,
                 .accepts_decision_owner =
                     func.abi_contract.accepts_decision_owner,
                 .func_id = entry.func_id,

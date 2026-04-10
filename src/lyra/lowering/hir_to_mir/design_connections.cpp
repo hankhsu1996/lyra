@@ -186,7 +186,9 @@ auto LowerExprAsBodyFunction(
       .param_origins = {},
   };
 
-  return body_arena.AddFunction(std::move(func));
+  mir::FunctionId func_id = body_arena.AddFunction(std::move(func));
+  body_arena.MarkModuleScoped(func_id);
+  return func_id;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

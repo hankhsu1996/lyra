@@ -960,7 +960,8 @@ auto CaptureDeferredCalleeInfoForBody(
     if (action == nullptr) return std::nullopt;
     return DeferredCalleeBackendInfo{
         .llvm_func = context.GetUserFunction(action->callee),
-        .is_module_scoped = context.IsModuleScopedFunction(action->callee),
+        .is_module_scoped = context.GetMirArena()[action->callee]
+                                .abi_contract.needs_module_binding,
     };
   };
 
@@ -1016,21 +1017,12 @@ auto CompileModuleSpecSession(
       .deferred_sites = input.deferred_sites,
   };
 
-  // Clear per-spec state: body-local FunctionIds are 0-based per body,
-  // so registrations from a previous spec session would collide.
-  context.ClearModuleScopedFunctions();
-
   // Step 1: Register monitor info for body processes
   for (mir::ProcessId proc_id : input.processes) {
     RegisterMonitorInfo(context, body.arena, proc_id);
   }
 
-  // Step 2: Register module-scoped function membership.
-  for (mir::FunctionId func_id : input.functions) {
-    context.RegisterModuleScopedFunction(func_id);
-  }
-
-  // Step 3: Declare all body functions
+  // Step 2: Declare all body functions
   std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_funcs;
   std::unordered_set<uint32_t> seen_func_ids;
   for (mir::FunctionId func_id : input.functions) {

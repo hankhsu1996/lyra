@@ -98,6 +98,7 @@ inline auto IsObserverProgram(RuntimeProgramKind kind) -> bool {
 // Orthogonal to BodyExecutionRequirement; verifier checks compatibility.
 struct CallableAbiContract {
   // Module binding group: this_ptr + instance_ptr + instance_id.
+  // Set by Arena::MarkModuleScoped() for all functions in a module body.
   bool needs_module_binding = false;
   // Active decision owner context may be threaded to this callable.
   bool accepts_decision_owner = false;
@@ -179,7 +180,7 @@ auto ComputeBodyExecutionRequirement(const Function& func)
 // Seed the ABI contract for a callable from intrinsic body requirement.
 // Sets accepts_decision_owner = true iff this body directly contains
 // deferred-check-owner-required effects. Observer programs never accept (own
-// ABI). needs_module_binding is set separately by the backend.
+// ABI). needs_module_binding is set separately by Arena::MarkModuleScoped().
 //
 // This is the seed step only. PropagateDeferredOwnerAbi() must run
 // after all bodies are set to propagate through the call graph: if A

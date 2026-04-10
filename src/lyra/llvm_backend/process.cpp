@@ -2097,7 +2097,7 @@ auto DeclareMirFunction(
   // Observer programs unconditionally use the observer ABI with
   // ObserverContext*, regardless of module-scoped vs design-global.
   // Regular functions use signature-derived types.
-  bool is_module_scoped = context.IsModuleScopedFunction(func_id);
+  bool is_module_scoped = func.abi_contract.needs_module_binding;
   bool is_observer = mir::IsObserverProgram(func.runtime_kind);
 
   if (is_observer) {
@@ -2157,7 +2157,8 @@ auto SetupObserverProgramEntry(
   auto* observer_ctx_arg = llvm_func->getArg(arg_base + 2);
   observer_ctx_arg->setName("observer_ctx");
 
-  if (context.IsModuleScopedFunction(func_id)) {
+  const auto& func = context.GetMirArena()[func_id];
+  if (func.abi_contract.needs_module_binding) {
     EnterObserverSpecializationLocalContext(context, func_id, observer_ctx_arg);
   }
 
@@ -3185,7 +3186,7 @@ auto DefineMirFunction(
   // These are independent: a design-global observer receives ObserverContext*
   // but does not enter specialization-local mode (context fields are
   // zero/null).
-  bool is_module_scoped = context.IsModuleScopedFunction(func_id);
+  bool is_module_scoped = func.abi_contract.needs_module_binding;
   bool is_observer = mir::IsObserverProgram(func.runtime_kind);
   unsigned context_arg_count = 0;
   if (is_observer) {

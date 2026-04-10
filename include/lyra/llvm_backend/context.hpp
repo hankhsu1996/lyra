@@ -10,7 +10,6 @@
 #include <llvm/IR/Module.h>
 
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/origin_id.hpp"
 #include "lyra/common/slot_id.hpp"
@@ -947,18 +946,6 @@ class Context {
   [[nodiscard]] auto GetDesignFunction(SymbolId symbol) const
       -> const DesignFunctionEntry&;
 
-  // Module-scoped function membership. Body-local functions are registered
-  // here at session start; membership determines ABI (module-scoped functions
-  // receive this_ptr, instance_id, and use specialization-local addressing).
-  // Body-level spec context (spec_slot_info, connection_notification_mask) is
-  // provided by SpecLocalScope, not stored per function.
-  void RegisterModuleScopedFunction(mir::FunctionId func_id);
-  void ClearModuleScopedFunctions() {
-    module_scoped_functions_.clear();
-  }
-  [[nodiscard]] auto IsModuleScopedFunction(mir::FunctionId func_id) const
-      -> bool;
-
   // Monitor layout: snapshot encoding info (codegen artifact, not in MIR).
   // Keyed by check_program FunctionId. Contains only layout info (offsets,
   // sizes). format_ops come from the check program's own DisplayEffect
@@ -1274,9 +1261,6 @@ class Context {
   };
   absl::flat_hash_map<SymbolId, DesignFunctionEntry, SymbolIdHash>
       design_functions_;
-
-  // Module-scoped function membership set.
-  absl::flat_hash_set<mir::FunctionId> module_scoped_functions_;
 
   // Monitor layouts (codegen artifact, not MIR semantics).
   // Keyed by check_program FunctionId - single source of truth for encoding.
