@@ -2025,23 +2025,16 @@ auto BuildLayout(
                   .slot_count = plan.slot_count,
                   .body_layout = std::move(body_layout),
                   .slot_specs = std::move(body_slot_specs),
-                  .process_schema_indices = {},
-                  .meta = {},
-                  .triggers = {},
-                  .comb = {},
-                  .observable_descriptors = {},
-                  .init = {},
                   .slot_has_behavioral_trigger = {},
                   .inline_state_size_bytes = size.inline_bytes,
                   .appendix_state_size_bytes = size.appendix_bytes,
                   .total_state_size_bytes = size.total_bytes,
-                  .decision_metas = {},
-                  .decision_meta_files = {},
                   .time_unit_power = plan.time_unit_power,
                   .time_precision_power = plan.time_precision_power,
                   .event_count = static_cast<uint32_t>(
                       design.module_bodies.at(body_id_val).events.size()),
               });
+          layout.body_runtime_descriptors.push_back({});
           layout.body_representative_base_slots.push_back(
               plan.design_state_base_slot);
         } else {
@@ -2060,7 +2053,9 @@ auto BuildLayout(
       // Fill process schema indices ordered by dense non-final ordinal.
       // Invariant: every ordinal in [0, nonfinal_count) is present
       // exactly once and matches the canonical BodyProcessOrdinalMap.
-      for (auto& info : layout.body_realization_infos) {
+      for (size_t bi = 0; bi < layout.body_realization_infos.size(); ++bi) {
+        const auto& info = layout.body_realization_infos[bi];
+        auto& rt = layout.body_runtime_descriptors[bi];
         const auto* info_body_ptr = &design.module_bodies[info.body_id.value];
         const auto& ordinal_map = body_ordinal_maps.at(info_body_ptr);
         auto nonfinal_count =
@@ -2070,7 +2065,7 @@ auto BuildLayout(
         // ordinal. Drive population from the canonical ordinal domain
         // directly rather than reconstructing density from emitted schema
         // keys.
-        info.process_schema_indices.resize(nonfinal_count);
+        rt.process_schema_indices.resize(nonfinal_count);
         for (uint32_t nonfinal_proc_ordinal = 0;
              nonfinal_proc_ordinal < nonfinal_count; ++nonfinal_proc_ordinal) {
           SchemaKey key{
@@ -2084,7 +2079,7 @@ auto BuildLayout(
                                    "body {} missing nonfinal_proc_ordinal {}",
                                    info.body_id.value, nonfinal_proc_ordinal));
           }
-          info.process_schema_indices[nonfinal_proc_ordinal] = it->second;
+          rt.process_schema_indices[nonfinal_proc_ordinal] = it->second;
         }
       }
     }

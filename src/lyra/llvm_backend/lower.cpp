@@ -199,13 +199,15 @@ auto BuildFinalPackaging(
           "BuildFinalPackaging",
           std::format("no compiled functions for body {}", info.body_id.value));
     }
-    if (it->second.size() != info.process_schema_indices.size()) {
+    const auto& rt = layout.body_runtime_descriptors
+                         [&info - layout.body_realization_infos.data()];
+    if (it->second.size() != rt.process_schema_indices.size()) {
       throw common::InternalError(
           "BuildFinalPackaging",
           std::format(
               "body {} compiled function count {} != schema count {}",
               info.body_id.value, it->second.size(),
-              info.process_schema_indices.size()));
+              rt.process_schema_indices.size()));
     }
     pkg.body_funcs.push_back(
         CodegenSession::BodyCompiledFuncs{

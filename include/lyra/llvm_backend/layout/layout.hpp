@@ -13,7 +13,6 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 
-#include "lyra/common/body_timescale.hpp"
 #include "lyra/common/slot_id.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/common/type_arena.hpp"
@@ -164,8 +163,8 @@ struct DesignLayout {
 // Maps a managed signal slot to its frame field index so codegen
 // can emit GEPs instead of stack allocas.
 struct ShadowFieldEntry {
-  uint32_t slot_id;
-  uint32_t field_index;
+  uint32_t slot_id = 0;
+  uint32_t field_index = 0;
   TypeId root_type;
 };
 
@@ -505,30 +504,6 @@ struct Layout {
     // Body-local slot storage specs (absorbed from BodyStorageLayout).
     // Parallel to body_layout.inline_offsets (indexed by body-local slot).
     std::vector<SlotStorageSpec> slot_specs;
-    // Per-process schema indices, indexed by dense non-final body-local
-    // process ordinal. Every ordinal in [0, size) is present and valid.
-    // This ordering matches the body's non-final process list and the
-    // compiled function vector for that body.
-    std::vector<uint32_t> process_schema_indices;
-    // Process metadata template in descriptor-ready canonical form.
-    // One entry per non-final process ordinal, parallel to
-    // process_schema_indices.
-    // The post-layout metadata template extraction pass is the sole
-    // producer.
-    OwnedProcessMetaTemplate meta;
-    // Trigger metadata template. Flat entries + per-process range table.
-    // The post-layout template extraction pass is the sole producer.
-    OwnedTriggerTemplate triggers;
-    // Comb kernel metadata template. Flat entries + per-kernel descriptors.
-    // The post-layout template extraction pass is the sole producer.
-    OwnedCombTemplate comb;
-    // Observable descriptor template. Flat entries + local-name pool.
-    // The post-layout descriptor extraction pass is the sole producer.
-    OwnedObservableDescriptorTemplate observable_descriptors;
-    // Design-state initialization descriptor.
-    // Body-shaped init metadata consumed by the constructor to initialize
-    // per-instance design state. All offsets are body-relative.
-    BodyInitDescriptor init;
     // Specialization-owned body-local behavioral dirty-propagation
     // contract. True iff any behavioral wait trigger in the body's
     // artifact repertoire (process waits, comb triggers) references
@@ -541,24 +516,41 @@ struct Layout {
     uint64_t inline_state_size_bytes = 0;
     uint64_t appendix_state_size_bytes = 0;
     uint64_t total_state_size_bytes = 0;
-    // Per-process decision site metadata. Outer vector indexed by
-    // body-local process ordinal. Inner vector: one DecisionMetaEntry
-    // per decision site in that process.
-    // The DecisionMetaEntry::file field is null at this stage; the actual
-    // file strings are in decision_meta_files (parallel structure).
-    std::vector<std::vector<runtime::DecisionMetaEntry>> decision_metas;
-    // Parallel file path strings for decision_metas. Same shape.
-    // Used at LLVM emission time to create global string constants.
-    std::vector<std::vector<std::string>> decision_meta_files;
     // Per-body timescale from compile-time scope metadata.
-    // Populated from LayoutModulePlan during body_realization_info
-    // construction.
     int8_t time_unit_power = 0;
     int8_t time_precision_power = 0;
     // L8a: Body-local named event count. Set from MIR body events.
     uint32_t event_count = 0;
   };
   std::vector<BodyRealizationInfo> body_realization_infos;
+
+  // Per-body runtime descriptors produced during assembly (runtime data
+  // extraction). Parallel to body_realization_infos. Populated in two
+  // phases: process_schema_indices during layout construction,
+  // remaining fields by ApplyRuntimeDataToLayout after extraction.
+  // Consumed only by assembly/emission (body descriptor codegen,
+  // metadata table emission).
+  struct BodyRuntimeDescriptors {
+    // Per-process schema indices, indexed by dense non-final body-local
+    // process ordinal. Populated during layout construction.
+    std::vector<uint32_t> process_schema_indices;
+    // Process metadata template in descriptor-ready canonical form.
+    OwnedProcessMetaTemplate meta;
+    // Trigger metadata template. Flat entries + per-process range table.
+    OwnedTriggerTemplate triggers;
+    // Comb kernel metadata template. Flat entries + per-kernel descriptors.
+    OwnedCombTemplate comb;
+    // Observable descriptor template. Flat entries + local-name pool.
+    OwnedObservableDescriptorTemplate observable_descriptors;
+    // Design-state initialization descriptor.
+    BodyInitDescriptor init;
+    // Per-process decision site metadata. Outer vector indexed by
+    // body-local process ordinal.
+    std::vector<std::vector<runtime::DecisionMetaEntry>> decision_metas;
+    // Parallel file path strings for decision_metas. Same shape.
+    std::vector<std::vector<std::string>> decision_meta_files;
+  };
+  std::vector<BodyRuntimeDescriptors> body_runtime_descriptors;
 
   // Transitional design-global bridge: per-body representative base slot.
   // Indexed parallel to body_realization_infos.

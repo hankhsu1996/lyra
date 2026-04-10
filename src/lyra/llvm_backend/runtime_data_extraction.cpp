@@ -358,8 +358,8 @@ void ExtractBodyMetadata(
       return off;
     };
 
-    auto num_entries =
-        static_cast<uint32_t>(info.process_schema_indices.size());
+    const auto& rt = layout.body_runtime_descriptors[gi];
+    auto num_entries = static_cast<uint32_t>(rt.process_schema_indices.size());
     if (ordinal_map.nonfinal_processes.size() != num_entries) {
       throw common::InternalError(
           "ExtractBodyMetadata",
@@ -547,7 +547,8 @@ void ExtractBodyTriggerTemplates(
     auto nonfinal_count =
         static_cast<uint32_t>(ordinal_map.nonfinal_processes.size());
 
-    auto num_procs = static_cast<uint32_t>(info.process_schema_indices.size());
+    const auto& rt = layout.body_runtime_descriptors[gi];
+    auto num_procs = static_cast<uint32_t>(rt.process_schema_indices.size());
     if (num_procs != nonfinal_count) {
       throw common::InternalError(
           "ExtractBodyTriggerTemplates",
@@ -1260,14 +1261,14 @@ void ApplyRuntimeDataToLayout(
   // Body runtime data.
   for (size_t gi = 0; gi < products.body_products.size(); ++gi) {
     auto& bp = products.body_products[gi];
-    auto& info = layout.body_realization_infos[gi];
-    info.meta = std::move(bp.meta);
-    info.triggers = std::move(bp.triggers);
-    info.comb = std::move(bp.comb);
-    info.observable_descriptors = std::move(bp.observable_descriptors);
-    info.init = std::move(bp.init);
-    info.decision_metas = std::move(bp.decision_metas);
-    info.decision_meta_files = std::move(bp.decision_meta_files);
+    auto& rt = layout.body_runtime_descriptors[gi];
+    rt.meta = std::move(bp.meta);
+    rt.triggers = std::move(bp.triggers);
+    rt.comb = std::move(bp.comb);
+    rt.observable_descriptors = std::move(bp.observable_descriptors);
+    rt.init = std::move(bp.init);
+    rt.decision_metas = std::move(bp.decision_metas);
+    rt.decision_meta_files = std::move(bp.decision_meta_files);
   }
 
   // Connection templates.

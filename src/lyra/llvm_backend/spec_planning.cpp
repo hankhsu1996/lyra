@@ -179,7 +179,6 @@ auto BuildCompiledModuleSpecInputs(
     inputs.push_back(
         CompiledModuleSpecInput{
             .body = units[i].body,
-            .processes = units[i].processes,
             .functions = units[i].functions,
             .view = std::move(views[i]),
             .name_prefix = std::format("body_{}", body_idx),

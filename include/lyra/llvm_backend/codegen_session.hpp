@@ -169,7 +169,6 @@ struct ResolvedModuleExportEntry {
 // body is the canonical identity -- no numeric body_id.
 struct CompiledModuleSpecInput {
   const mir::ModuleBody* body = nullptr;
-  std::vector<mir::ProcessId> processes;
   std::vector<mir::FunctionId> functions;
   SpecCodegenView view;
   // LLVM symbol naming prefix, precomputed from body index.

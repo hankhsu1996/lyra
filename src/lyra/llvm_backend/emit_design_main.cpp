@@ -1045,9 +1045,10 @@ auto EmitBodyRealizationDescs(
 
   for (size_t bi = 0; bi < layout.body_realization_infos.size(); ++bi) {
     const auto& info = layout.body_realization_infos[bi];
+    const auto& rt = layout.body_runtime_descriptors[bi];
     const auto& funcs = body_compiled_funcs[bi];
     uint32_t body_id_val = info.body_id.value;
-    auto num_procs = static_cast<uint32_t>(info.process_schema_indices.size());
+    auto num_procs = static_cast<uint32_t>(rt.process_schema_indices.size());
 
     if (funcs.functions.size() != num_procs) {
       throw common::InternalError(
@@ -1090,7 +1091,7 @@ auto EmitBodyRealizationDescs(
           llvm::ConstantStruct::get(
               entry_type,
               {fn_ptr,
-               llvm::ConstantInt::get(i32_ty, info.process_schema_indices[pi]),
+               llvm::ConstantInt::get(i32_ty, rt.process_schema_indices[pi]),
                llvm::ConstantInt::get(i32_ty, 0)}));
     }
 
@@ -1113,7 +1114,7 @@ auto EmitBodyRealizationDescs(
     }
 
     // Validate and emit metadata template as part of body descriptor package.
-    auto num_meta = static_cast<uint32_t>(info.meta.entries.size());
+    auto num_meta = static_cast<uint32_t>(rt.meta.entries.size());
     if (num_meta != num_procs) {
       throw common::InternalError(
           "EmitBodyRealizationDescs",
@@ -1123,7 +1124,7 @@ auto EmitBodyRealizationDescs(
     }
     auto meta_caller =
         std::format("EmitBodyRealizationDescs body {}", body_id_val);
-    ValidateOwnedMetaTemplate(info.meta, meta_caller.c_str());
+    ValidateOwnedMetaTemplate(rt.meta, meta_caller.c_str());
 
     auto* meta_entry_type =
         llvm::StructType::get(ctx, {i32_ty, i32_ty, i32_ty, i32_ty});
@@ -1132,7 +1133,7 @@ auto EmitBodyRealizationDescs(
     if (num_meta > 0) {
       std::vector<llvm::Constant*> meta_constants;
       meta_constants.reserve(num_meta);
-      for (const auto& me : info.meta.entries) {
+      for (const auto& me : rt.meta.entries) {
         meta_constants.push_back(
             llvm::ConstantStruct::get(
                 meta_entry_type,
@@ -1155,7 +1156,7 @@ auto EmitBodyRealizationDescs(
               llvm::ConstantInt::get(i32_ty, 0)});
     }
 
-    auto meta_pool_size = static_cast<uint32_t>(info.meta.pool.size());
+    auto meta_pool_size = static_cast<uint32_t>(rt.meta.pool.size());
     llvm::Constant* meta_pool_ptr =
         llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
     if (meta_pool_size > 0) {
@@ -1164,7 +1165,7 @@ auto EmitBodyRealizationDescs(
       auto* i8_ty = llvm::Type::getInt8Ty(ctx);
       std::vector<llvm::Constant*> pool_bytes;
       pool_bytes.reserve(meta_pool_size);
-      for (char c : info.meta.pool) {
+      for (char c : rt.meta.pool) {
         pool_bytes.push_back(
             llvm::ConstantInt::get(i8_ty, static_cast<uint8_t>(c)));
       }
@@ -1182,10 +1183,10 @@ auto EmitBodyRealizationDescs(
     // Validate and emit trigger/comb template globals.
     auto trig_caller =
         std::format("EmitBodyRealizationDescs body {} triggers", body_id_val);
-    ValidateOwnedTriggerTemplate(info.triggers, trig_caller.c_str());
+    ValidateOwnedTriggerTemplate(rt.triggers, trig_caller.c_str());
     auto comb_caller =
         std::format("EmitBodyRealizationDescs body {} comb", body_id_val);
-    ValidateOwnedCombTemplate(info.comb, comb_caller.c_str());
+    ValidateOwnedCombTemplate(rt.comb, comb_caller.c_str());
 
     auto* i8_ty = llvm::Type::getInt8Ty(ctx);
     auto* null_ptr_val =
@@ -1198,7 +1199,7 @@ auto EmitBodyRealizationDescs(
         .shapes_ptr = null_ptr_val,
         .groupable_ptr = null_ptr_val,
     };
-    const auto& trig = info.triggers;
+    const auto& trig = rt.triggers;
     auto num_trig_entries = static_cast<uint32_t>(trig.entries.size());
     auto num_trig_ranges = static_cast<uint32_t>(trig.proc_ranges.size());
     if (num_trig_ranges > 0) {
@@ -1303,7 +1304,7 @@ auto EmitBodyRealizationDescs(
         .kernels_ptr = null_ptr_val,
         .num_kernels = 0,
     };
-    const auto& comb = info.comb;
+    const auto& comb = rt.comb;
     auto num_comb_entries = static_cast<uint32_t>(comb.entries.size());
     auto num_comb_kernels = static_cast<uint32_t>(comb.kernels.size());
     if (num_comb_kernels > 0) {
@@ -1375,12 +1376,12 @@ auto EmitBodyRealizationDescs(
     }
 
     auto obs_emission = EmitObservableDescriptorTemplate(
-        ctx, mod, info.observable_descriptors,
+        ctx, mod, rt.observable_descriptors,
         std::format("__lyra_body_desc_{}", body_id_val));
 
     auto init_emission = EmitInitDescriptor(
-        ctx, mod, info.init.storage_recipe, info.init.recipe_root_indices,
-        info.init.recipe_child_indices, info.init.param_slots,
+        ctx, mod, rt.init.storage_recipe, rt.init.recipe_root_indices,
+        rt.init.recipe_child_indices, rt.init.param_slots,
         std::format("__lyra_body_desc_{}", body_id_val));
 
     // Decision metadata tables: per body-local process, emit a
@@ -1394,11 +1395,11 @@ auto EmitBodyRealizationDescs(
       std::vector<llvm::Constant*> table_descs;
       table_descs.reserve(num_procs);
       for (uint32_t p = 0; p < num_procs; ++p) {
-        const auto& per_proc = (p < info.decision_metas.size())
-                                   ? info.decision_metas[p]
+        const auto& per_proc = (p < rt.decision_metas.size())
+                                   ? rt.decision_metas[p]
                                    : std::vector<runtime::DecisionMetaEntry>{};
-        const auto& per_proc_files = (p < info.decision_meta_files.size())
-                                         ? info.decision_meta_files[p]
+        const auto& per_proc_files = (p < rt.decision_meta_files.size())
+                                         ? rt.decision_meta_files[p]
                                          : std::vector<std::string>{};
         auto site_count = static_cast<uint32_t>(per_proc.size());
         llvm::Constant* meta_array_ptr = nullptr;

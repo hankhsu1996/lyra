@@ -315,15 +315,15 @@ auto FindPortBindingForwardingCandidates(
   std::vector<bool> is_process_trigger(num_slots, false);
   std::vector<bool> is_comb_trigger(num_slots, false);
 
-  for (const auto& body_info : layout.body_realization_infos) {
-    for (const auto& entry : body_info.triggers.entries) {
+  for (const auto& rt : layout.body_runtime_descriptors) {
+    for (const auto& entry : rt.triggers.entries) {
       if ((entry.flags & runtime::kTriggerTemplateFlagDesignGlobal) != 0) {
         if (entry.slot_id < num_slots) {
           is_process_trigger[entry.slot_id] = true;
         }
       }
     }
-    for (const auto& entry : body_info.comb.entries) {
+    for (const auto& entry : rt.comb.entries) {
       if ((entry.flags & runtime::kCombTemplateFlagDesignGlobal) != 0) {
         if (entry.slot_id < num_slots) {
           is_comb_trigger[entry.slot_id] = true;
