@@ -306,6 +306,8 @@ auto LowerStrobeEffect(
       .param_origins = {},
       .decision_sites = {},
       .abi_contract = {},
+      .monitor_check_meta = std::nullopt,
+      .monitor_setup_meta = std::nullopt,
   };
   mir::FunctionId program_id =
       original_ctx.mir_arena->AddFunction(std::move(program));
@@ -612,6 +614,13 @@ auto LowerMonitorCheckProgram(
       .param_origins = {},
       .decision_sites = {},
       .abi_contract = {},
+      .monitor_check_meta =
+          mir::MonitorCheckMeta{
+              .offsets = layout.offsets,
+              .byte_sizes = layout.byte_sizes,
+              .total_size = layout.total_size,
+          },
+      .monitor_setup_meta = std::nullopt,
   };
   mir::FunctionId program_id =
       original_ctx.mir_arena->AddFunction(std::move(program));
@@ -698,6 +707,9 @@ auto LowerMonitorSetupProgram(
       .param_origins = {},
       .decision_sites = {},
       .abi_contract = {},
+      .monitor_check_meta = std::nullopt,
+      .monitor_setup_meta =
+          mir::MonitorSetupMeta{.check_program = check_program_id},
   };
   mir::FunctionId program_id =
       original_ctx.mir_arena->AddFunction(std::move(program));

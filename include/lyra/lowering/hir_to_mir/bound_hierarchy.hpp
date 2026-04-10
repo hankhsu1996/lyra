@@ -128,7 +128,7 @@ void CanonicalizeExternalRefPaths(
     mir::Design& design,
     const std::unordered_map<uint32_t, std::vector<ProvisionalNonLocalTarget>>&
         provisionals_by_body,
-    const BoundHierarchyIndex& topo, const mir::ConstructionInput& construction,
+    const BoundHierarchyIndex& topo,
     const std::unordered_map<uint32_t, mir::DurableChildId>&
         oi_to_durable_child);
 

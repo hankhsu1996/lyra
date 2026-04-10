@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "lyra/common/origin_id.hpp"
@@ -93,6 +94,23 @@ inline auto IsObserverProgram(RuntimeProgramKind kind) -> bool {
          kind == RuntimeProgramKind::kMonitorCheck;
 }
 
+// Monitor check program metadata: snapshot buffer layout for comparison logic.
+// Populated at MIR construction time in LowerMonitorEffect, read by the
+// backend's DefineMonitorCheckProgram and EmitMonitorSetupEpilogue.
+// Present iff runtime_kind == kMonitorCheck.
+struct MonitorCheckMeta {
+  std::vector<uint32_t> offsets;
+  std::vector<uint32_t> byte_sizes;
+  uint32_t total_size = 0;
+};
+
+// Monitor setup program metadata: reference to the paired check program.
+// The backend reads the check program's MonitorCheckMeta from the arena
+// for layout data. Present iff runtime_kind == kMonitorSetup.
+struct MonitorSetupMeta {
+  FunctionId check_program;
+};
+
 // ABI contract: what hidden context a callable accepts.
 // Formed at callable-definition policy level, not derived from body.
 // Orthogonal to BodyExecutionRequirement; verifier checks compatibility.
@@ -170,6 +188,10 @@ struct Function {
   // Formed from callable-definition policy, independent of body_requirement.
   // The verifier checks that body_requirement is satisfiable by this contract.
   CallableAbiContract abi_contract;
+
+  // Runtime-kind-specific metadata. Populated at MIR construction time.
+  std::optional<MonitorCheckMeta> monitor_check_meta;
+  std::optional<MonitorSetupMeta> monitor_setup_meta;
 };
 
 // Compute the body execution requirement for a function by walking all

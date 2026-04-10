@@ -964,31 +964,6 @@ class Context {
   [[nodiscard]] auto GetDesignFunction(SymbolId symbol) const
       -> const DesignFunctionEntry&;
 
-  // Monitor layout: snapshot encoding info (codegen artifact, not in MIR).
-  // Keyed by check_program FunctionId. Contains only layout info (offsets,
-  // sizes). format_ops come from the check program's own DisplayEffect
-  // (correct MIR context).
-  struct MonitorLayout {
-    std::vector<uint32_t> offsets;     // Per-operand offset into buffer
-    std::vector<uint32_t> byte_sizes;  // Per-operand byte size
-    uint32_t total_size = 0;           // Total buffer size
-  };
-  void RegisterMonitorLayout(
-      mir::FunctionId check_program, MonitorLayout layout);
-  [[nodiscard]] auto GetMonitorLayout(mir::FunctionId check_program) const
-      -> const MonitorLayout*;
-
-  // Monitor setup program marker (codegen artifact, not stored in MIR).
-  // When present, LLVM lowering appends serialization + registration.
-  // Layout is looked up via check_program (single source of truth).
-  struct MonitorSetupInfo {
-    mir::FunctionId check_program;
-  };
-  void RegisterMonitorSetupInfo(
-      mir::FunctionId setup_program, MonitorSetupInfo info);
-  [[nodiscard]] auto GetMonitorSetupInfo(mir::FunctionId setup_program) const
-      -> const MonitorSetupInfo*;
-
   // Deferred assertion site info (borrowed pointer into design sites).
   // Build LLVM function type from MIR function signature.
   // Package-scoped: (DesignState*, Engine*, args...)
@@ -1281,15 +1256,6 @@ class Context {
   };
   absl::flat_hash_map<SymbolId, DesignFunctionEntry, SymbolIdHash>
       design_functions_;
-
-  // Monitor layouts (codegen artifact, not MIR semantics).
-  // Keyed by check_program FunctionId - single source of truth for encoding.
-  absl::flat_hash_map<mir::FunctionId, MonitorLayout> monitor_layouts_;
-
-  // Monitor setup program markers (codegen artifact, not MIR semantics).
-  // Just stores check_program reference; layout is looked up from
-  // monitor_layouts_.
-  absl::flat_hash_map<mir::FunctionId, MonitorSetupInfo> monitor_setup_infos_;
 
   // SSA temp bindings: temp_id -> TempValue (explicit semantic contract).
   // Temps defined by block params (split PHI nodes) or statements.

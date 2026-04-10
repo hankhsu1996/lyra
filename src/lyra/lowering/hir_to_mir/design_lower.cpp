@@ -1024,7 +1024,7 @@ auto LowerDesign(
           auto per_instance_places = BuildPerInstancePlaces(
               *hir_modules[construction.objects[parent_oi.value].path_index],
               *hir_modules[rep_path], body_local_slots_by_body.at(body_group),
-              *input.symbol_table, parent_body.arena);
+              parent_body.arena);
           auto func_result = LowerExprAsBodyFunction(
               binding.parent_rvalue, result_type, input, decls,
               parent_body.arena, per_instance_places);
@@ -1090,7 +1090,7 @@ auto LowerDesign(
           hir_modules.data(), hir_modules.size()));
 
   CanonicalizeExternalRefPaths(
-      result, provisionals_by_body, topo, construction, oi_to_durable_child);
+      result, provisionals_by_body, topo, oi_to_durable_child);
 
   // After canonicalization, provisionals_by_body is scratch-only.
   // BuildResolvedExternalRefBindings consumes the canonical recipe.

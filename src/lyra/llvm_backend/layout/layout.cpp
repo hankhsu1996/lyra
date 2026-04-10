@@ -702,13 +702,13 @@ auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
       std::visit(
           common::Overloaded{
               [&](const mir::Assign& a) {
-                if (auto* p = std::get_if<mir::PlaceId>(&a.dest)) {
+                if (const auto* p = std::get_if<mir::PlaceId>(&a.dest)) {
                   places.insert(*p);
                 }
                 CollectPlacesFromRhs(a.rhs, places);
               },
               [&](const mir::GuardedAssign& ga) {
-                if (auto* p = std::get_if<mir::PlaceId>(&ga.dest)) {
+                if (const auto* p = std::get_if<mir::PlaceId>(&ga.dest)) {
                   places.insert(*p);
                 }
                 CollectPlacesFromRhs(ga.rhs, places);
@@ -718,7 +718,7 @@ auto CollectProcessPlaces(const mir::Process& process, const mir::Arena& arena)
                 CollectPlacesFromEffectOp(e.op, places);
               },
               [&](const mir::DeferredAssign& da) {
-                if (auto* p = std::get_if<mir::PlaceId>(&da.dest)) {
+                if (const auto* p = std::get_if<mir::PlaceId>(&da.dest)) {
                   places.insert(*p);
                 }
                 CollectPlacesFromRhs(da.rhs, places);
@@ -1021,7 +1021,7 @@ auto AnalyzeCombKernel(const mir::Process& process, const mir::Arena& arena)
           if (mir::RvalueHasSideEffects(rv->info)) return std::nullopt;
         }
         const auto* dest_pid = std::get_if<mir::PlaceId>(&assign->dest);
-        if (!dest_pid) return std::nullopt;
+        if (dest_pid == nullptr) return std::nullopt;
         const auto& root = arena[*dest_pid].root;
         if (root.kind == mir::PlaceRoot::Kind::kModuleSlot) {
           write_slots.insert(
@@ -1112,7 +1112,7 @@ auto BuildDesignLayout(
   };
 
   // Compute total flat slot count from package + per-instance sizes.
-  uint32_t total_slots = static_cast<uint32_t>(package_slots.size());
+  auto total_slots = static_cast<uint32_t>(package_slots.size());
   for (const auto& range : instance_ranges) {
     total_slots += range.slot_count;
   }
@@ -1834,7 +1834,7 @@ auto BuildLayout(
       // stale-stack-alloca bug class structurally impossible.
       for (const auto& seg : proc_layout.activation_plan->segments) {
         for (const auto& ms : seg.managed_slots.slots) {
-          proc_layout.frame.GetShadowField(ms.slot.id);
+          static_cast<void>(proc_layout.frame.GetShadowField(ms.slot.id));
         }
       }
     } else {

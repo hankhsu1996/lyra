@@ -100,14 +100,6 @@ auto ClassifyDeferredStoreByType(Context& context, TypeId type_id)
       .byte_size = byte_size};
 }
 
-// PlaceId overload: derives TypeId from Place and forwards.
-auto ClassifyDeferredStore(Context& context, mir::PlaceId dest)
-    -> Result<StoreShape> {
-  const auto& types = context.GetTypeArena();
-  TypeId dst_ty = mir::TypeOfPlace(types, context.LookupPlace(dest));
-  return ClassifyDeferredStoreByType(context, dst_ty);
-}
-
 // Coerce raw RHS value to match store shape.
 // - kScalar2State: ZExtOrTrunc to target integer
 // - kScalar4State: Extract/create val+unk, pack into struct
@@ -318,30 +310,12 @@ auto LowerDeferredAssignWithOobGuard(
   return {};
 }
 
-// Direct NBA: simple full-width write (no projections needing special
-// handling). Uses StoreShape classification and EmitDeferredStoreCore.
-auto LowerDeferredAssignDirect(
-    Context& context, const mir::DeferredAssign& deferred,
-    const StoreShape& shape, const SignalCoordExpr& signal_id,
-    mir::PlaceId dest) -> Result<void> {
-  auto write_ptr_or_err = context.GetPlacePointer(dest);
-  if (!write_ptr_or_err) return std::unexpected(write_ptr_or_err.error());
-  llvm::Value* write_ptr = *write_ptr_or_err;
-  llvm::Value* notify_base_ptr = context.GetStorageRootPointer(dest);
-
-  const auto& types = context.GetTypeArena();
-  TypeId dest_type = mir::TypeOfPlace(types, context.LookupPlace(dest));
-  return EmitDeferredStoreCore(
-      context, deferred, shape, write_ptr, notify_base_ptr, signal_id,
-      dest_type);
-}
-
 }  // namespace
 
 auto LowerDeferredAssign(Context& context, const mir::DeferredAssign& deferred)
     -> Result<void> {
   const auto& dest = deferred.dest;
-  auto* dest_place = std::get_if<mir::PlaceId>(&dest);
+  const auto* dest_place = std::get_if<mir::PlaceId>(&dest);
 
   // Resolve destination type and signal coord from WriteTarget.
   TypeId dest_type = detail::ResolveDestType(context, dest);

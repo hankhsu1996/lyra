@@ -216,6 +216,8 @@ auto LowerFunctionBody(
       .materialize_count = ctx.materialize_count,
       .decision_sites = std::move(decision_sites),
       .abi_contract = {},
+      .monitor_check_meta = std::nullopt,
+      .monitor_setup_meta = std::nullopt,
   };
 }
 
@@ -332,6 +334,8 @@ auto LowerTaskBody(
       .materialize_count = ctx.materialize_count,
       .decision_sites = std::move(decision_sites),
       .abi_contract = {},
+      .monitor_check_meta = std::nullopt,
+      .monitor_setup_meta = std::nullopt,
   };
 }
 

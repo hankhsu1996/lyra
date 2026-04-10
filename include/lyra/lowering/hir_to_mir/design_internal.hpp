@@ -13,7 +13,6 @@
 #include "lyra/lowering/hir_to_mir/context.hpp"
 #include "lyra/lowering/hir_to_mir/lower.hpp"
 #include "lyra/mir/connection_endpoint.hpp"
-#include "lyra/mir/module_body.hpp"
 
 namespace lyra::hir {
 struct Module;
@@ -69,7 +68,7 @@ class InstanceSlotResolver {
   // Check whether a variable symbol is resolver-addressable (body-local
   // and registered). Non-throwing classification probe.
   [[nodiscard]] auto Contains(SymbolId variable_sym) const -> bool {
-    return reverse_.find(variable_sym) != reverse_.end();
+    return reverse_.contains(variable_sym);
   }
 
   // Resolve by variable symbol alone (for finding parent instance from
@@ -125,8 +124,8 @@ auto FindAnyNameRef(hir::ExpressionId expr_id, const hir::Arena& arena)
 // Build per-instance places for expression lowering in a body-local context.
 auto BuildPerInstancePlaces(
     const hir::Module& inst_mod, const hir::Module& rep_mod,
-    const std::vector<BodyLocalSlotEntry>& body_slots,
-    const SymbolTable& symbol_table, mir::Arena& body_arena) -> PlaceMap;
+    const std::vector<BodyLocalSlotEntry>& body_slots, mir::Arena& body_arena)
+    -> PlaceMap;
 
 // Compile a parent expression as a body-local function.
 auto LowerExprAsBodyFunction(

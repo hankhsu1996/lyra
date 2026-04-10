@@ -889,34 +889,6 @@ auto Context::GetDesignFunction(SymbolId symbol) const
   return it->second;
 }
 
-void Context::RegisterMonitorLayout(
-    mir::FunctionId check_program, MonitorLayout layout) {
-  monitor_layouts_.emplace(check_program, std::move(layout));
-}
-
-auto Context::GetMonitorLayout(mir::FunctionId check_program) const
-    -> const MonitorLayout* {
-  auto it = monitor_layouts_.find(check_program);
-  if (it == monitor_layouts_.end()) {
-    return nullptr;
-  }
-  return &it->second;
-}
-
-void Context::RegisterMonitorSetupInfo(
-    mir::FunctionId setup_program, MonitorSetupInfo info) {
-  monitor_setup_infos_.emplace(setup_program, std::move(info));
-}
-
-auto Context::GetMonitorSetupInfo(mir::FunctionId setup_program) const
-    -> const MonitorSetupInfo* {
-  auto it = monitor_setup_infos_.find(setup_program);
-  if (it == monitor_setup_infos_.end()) {
-    return nullptr;
-  }
-  return &it->second;
-}
-
 auto Context::BuildUserFunctionType(
     const mir::FunctionSignature& sig, bool is_module_scoped,
     bool accepts_decision_owner) -> Result<llvm::FunctionType*> {

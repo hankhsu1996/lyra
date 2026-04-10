@@ -2431,7 +2431,7 @@ struct PlaceCollector {
 // values changed.
 auto DefineMonitorCheckProgram(
     Context& context, mir::FunctionId func_id, llvm::Function* llvm_func,
-    const Context::MonitorLayout& layout, const BodySiteContext& site_ctx)
+    const mir::MonitorCheckMeta& layout, const BodySiteContext& site_ctx)
     -> Result<void> {
   // Observer programs are simulation-only (engine passed as explicit param).
   // No decision owner for observer programs.
@@ -2737,7 +2737,7 @@ auto DefineMonitorCheckProgram(
 // return.
 auto EmitMonitorSetupEpilogue(
     Context& context, mir::FunctionId setup_program_id,
-    const Context::MonitorSetupInfo& info, llvm::Value* design_ptr,
+    const mir::MonitorSetupMeta& setup_meta, llvm::Value* design_ptr,
     llvm::Value* engine_ptr) -> Result<void> {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
@@ -2770,7 +2770,8 @@ auto EmitMonitorSetupEpilogue(
   }
 
   // Get check program function pointer for registration
-  llvm::Function* check_fn = context.GetDeclaredFunction(info.check_program);
+  llvm::Function* check_fn =
+      context.GetDeclaredFunction(setup_meta.check_program);
   if (check_fn == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
@@ -2778,14 +2779,15 @@ auto EmitMonitorSetupEpilogue(
         UnsupportedCategory::kFeature));
   }
 
-  // Look up layout via check_program (single source of truth)
-  const auto* layout = context.GetMonitorLayout(info.check_program);
-  if (layout == nullptr) {
+  // Read layout from the check program's MIR metadata (single source of truth)
+  const auto& check_func = arena[setup_meta.check_program];
+  if (!check_func.monitor_check_meta.has_value()) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
         "$monitor layout not found for setup epilogue",
         UnsupportedCategory::kFeature));
   }
+  const auto* layout = &*check_func.monitor_check_meta;
 
   llvm::Value* init_buf = nullptr;
   if (layout->total_size > 0) {
@@ -3113,17 +3115,16 @@ auto DefineMirFunction(
   const auto& func = arena[func_id];
 
   // Monitor check observer programs have special lowering with comparison
-  // logic. Use runtime_kind from MIR (source of truth), layout from side table
-  // (codegen artifact).
+  // logic. Layout metadata is owned by the MIR function (set at MIR
+  // construction time).
   if (func.runtime_kind == mir::RuntimeProgramKind::kMonitorCheck) {
-    const auto* layout = context.GetMonitorLayout(func_id);
-    if (layout == nullptr) {
+    if (!func.monitor_check_meta.has_value()) {
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
           func.origin, "monitor check observer program missing layout",
           UnsupportedCategory::kFeature));
     }
     return DefineMonitorCheckProgram(
-        context, func_id, llvm_func, *layout, site_ctx);
+        context, func_id, llvm_func, *func.monitor_check_meta, site_ctx);
   }
 
   auto& llvm_ctx = context.GetLlvmContext();
@@ -3456,17 +3457,16 @@ auto DefineMirFunction(
   builder.SetInsertPoint(exit_block);
 
   // Setup programs need serialization + registration before returning.
-  // Use runtime_kind from MIR (source of truth), setup_info from side table
-  // (codegen artifact).
+  // Setup programs need serialization + registration before returning.
+  // Metadata is owned by the MIR function (set at MIR construction time).
   if (func.runtime_kind == mir::RuntimeProgramKind::kMonitorSetup) {
-    const auto* setup_info = context.GetMonitorSetupInfo(func_id);
-    if (setup_info == nullptr) {
+    if (!func.monitor_setup_meta.has_value()) {
       return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
           func.origin, "monitor setup program missing info",
           UnsupportedCategory::kFeature));
     }
     auto result = EmitMonitorSetupEpilogue(
-        context, func_id, *setup_info, design_arg, engine_arg);
+        context, func_id, *func.monitor_setup_meta, design_arg, engine_arg);
     if (!result) return std::unexpected(result.error());
   }
 

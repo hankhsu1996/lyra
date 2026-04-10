@@ -44,7 +44,6 @@
 #include "lyra/llvm_backend/storage_construction_recipe_builder.hpp"
 #include "lyra/lowering/origin_map_lookup.hpp"
 #include "lyra/mir/basic_block.hpp"
-#include "lyra/mir/effect.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
 #include "lyra/mir/operand.hpp"
@@ -378,33 +377,6 @@ void SetHostDataLayout(llvm::Module& module) {
 
   module.setTargetTriple(triple);
   module.setDataLayout(tm->createDataLayout());
-}
-
-void RegisterMonitorInfo(
-    Context& context, const mir::Arena& arena, mir::ProcessId proc_id) {
-  const auto& process = arena[proc_id];
-  for (const auto& block : process.blocks) {
-    for (const auto& instr : block.statements) {
-      const auto* effect = std::get_if<mir::Effect>(&instr.data);
-      if (effect == nullptr) continue;
-      const auto* monitor = std::get_if<mir::MonitorEffect>(&effect->op);
-      if (monitor == nullptr) continue;
-
-      Context::MonitorLayout mon_layout{
-          .offsets = monitor->offsets,
-          .byte_sizes = monitor->byte_sizes,
-          .total_size = monitor->prev_buffer_size,
-      };
-      context.RegisterMonitorLayout(
-          monitor->check_program, std::move(mon_layout));
-
-      Context::MonitorSetupInfo setup_info{
-          .check_program = monitor->check_program,
-      };
-      context.RegisterMonitorSetupInfo(
-          monitor->setup_program, std::move(setup_info));
-    }
-  }
 }
 
 // Named transfer type for body-relative behavioral dirty-trigger bitmaps.
@@ -1016,12 +988,7 @@ auto CompileModuleSpecSession(
       .deferred_sites = input.deferred_sites,
   };
 
-  // Step 1: Register monitor info for body processes
-  for (mir::ProcessId proc_id : input.processes) {
-    RegisterMonitorInfo(context, body.arena, proc_id);
-  }
-
-  // Step 2: Declare all body functions and build session-local lookup.
+  // Step 1: Declare all body functions and build session-local lookup.
   std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_funcs;
   absl::flat_hash_map<mir::FunctionId, llvm::Function*> declared_func_map;
   std::unordered_set<uint32_t> seen_func_ids;
@@ -1038,13 +1005,13 @@ auto CompileModuleSpecSession(
   // Install session-scoped function lookup for define + process codegen.
   Context::DeclaredFunctionScope func_scope(context, declared_func_map);
 
-  // Step 3: Define all body functions
+  // Step 2: Define all body functions
   for (const auto& [func_id, llvm_func] : declared_funcs) {
     auto result = DefineMirFunction(context, func_id, llvm_func, site_ctx);
     if (!result) return std::unexpected(result.error());
   }
 
-  // Step 5: Codegen all body-owned processes
+  // Step 3: Codegen all body-owned processes
   CompiledModuleSpec product{
       .body = input.body,
       .process_functions = {},
@@ -1073,7 +1040,7 @@ auto CompileModuleSpecSession(
         std::make_move_iterator(func_result->wait_sites.end()));
   }
 
-  // Step 6: Capture callee products while session state is still valid.
+  // Step 4: Capture callee products while session state is still valid.
   // Deferred callee info and declared functions are consumed by the outer
   // loop for thunk compilation and DPI export wrappers, respectively.
   product.deferred_callee_info =
@@ -1553,15 +1520,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   auto spec_inputs = BuildCompiledModuleSpecInputs(
       units, std::move(views), *input.design, input.origin_provenance);
 
-  // Phase 2: Design-wide init-process monitor registration
-  for (mir::ProcessId proc_id : input.design->init_processes) {
-    RegisterMonitorInfo(*context, *input.mir_arena, proc_id);
-  }
-
-  // (Deferred assertion site registration is now per-body, done inside
-  // CompileModuleSpecSession before per-body codegen begins.)
-
-  // Phase 3: Design-global function declare/define only (packages + generated)
+  // Phase 2: Design-global function declare/define only (packages + generated)
   std::vector<mir::FunctionId> global_func_ids;
   std::unordered_set<uint32_t> seen_func_ids;
 
@@ -1605,7 +1564,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
   }
 
-  // Phase 4: Compile each specialization via CompileModuleSpecSession.
+  // Phase 3: Compile each specialization via CompileModuleSpecSession.
   // All callee captures are returned as product fields -- no ambient Context
   // reads between sessions.
   std::unordered_map<const mir::ModuleBody*, std::vector<llvm::Function*>>
