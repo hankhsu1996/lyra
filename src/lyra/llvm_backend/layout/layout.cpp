@@ -1661,7 +1661,6 @@ auto BuildLayout(
     const mir::Design& design, const mir::Arena& design_arena,
     const TypeArena& types, DesignLayout design_layout,
     const std::unordered_map<uint32_t, BodyStorageLayout>& body_storage_layouts,
-    const std::vector<common::BodyTimeScale>* body_timescales,
     llvm::LLVMContext& ctx, const llvm::DataLayout& dl, bool force_two_state)
     -> Layout {
   Layout layout;
@@ -2019,19 +2018,6 @@ auto BuildLayout(
             body_layout = BuildBodyLayout(plan.body_slots, bsl_it->second);
             body_slot_specs = bsl_it->second.slot_specs;
           }
-          if (body_id_val >= body_timescales->size()) {
-            throw common::InternalError(
-                "BuildLayout",
-                std::format("body {} missing timescale entry", body_id_val));
-          }
-          const auto& ts = body_timescales->at(body_id_val);
-          if (ts.body_id != body_id_val) {
-            throw common::InternalError(
-                "BuildLayout",
-                std::format(
-                    "body {} timescale entry has mismatched body_id {}",
-                    body_id_val, ts.body_id));
-          }
           layout.body_realization_infos.push_back(
               Layout::BodyRealizationInfo{
                   .body_id = mir::ModuleBodyId{body_id_val},
@@ -2051,8 +2037,8 @@ auto BuildLayout(
                   .total_state_size_bytes = size.total_bytes,
                   .decision_metas = {},
                   .decision_meta_files = {},
-                  .time_unit_power = ts.unit_power,
-                  .time_precision_power = ts.precision_power,
+                  .time_unit_power = plan.time_unit_power,
+                  .time_precision_power = plan.time_precision_power,
                   .event_count = static_cast<uint32_t>(
                       design.module_bodies.at(body_id_val).events.size()),
               });

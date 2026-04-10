@@ -23,12 +23,27 @@ auto BuildTopologyPlan(const LoweringInput& input) -> TopologyPlan {
     if (mod == nullptr) continue;
     const auto& body = *mod->body;
     const auto& obj = input.construction->objects.at(module_idx);
+
+    // Look up per-body timescale from the body-id-indexed table.
+    auto body_idx =
+        static_cast<uint32_t>(mod->body - input.design->module_bodies.data());
+    int8_t unit_power = 0;
+    int8_t precision_power = 0;
+    if (input.body_timescales != nullptr &&
+        body_idx < input.body_timescales->size()) {
+      const auto& ts = (*input.body_timescales)[body_idx];
+      unit_power = ts.unit_power;
+      precision_power = ts.precision_power;
+    }
+
     topo.module_plans.push_back(
         LayoutModulePlan{
             .body = mod->body,
             .body_slots = body.slots,
             .design_state_base_slot = obj.design_state_base_slot,
             .slot_count = obj.slot_count,
+            .time_unit_power = unit_power,
+            .time_precision_power = precision_power,
         });
     topo.module_body_processes.push_back(body.processes);
     ++module_idx;
@@ -95,7 +110,7 @@ auto BuildBackendLayout(
       std::move(connections.non_kernelized_processes), topology.module_plans,
       topology.module_body_processes, *input.design, *input.mir_arena,
       *input.type_arena, std::move(design_layout), body_storage_layouts,
-      input.body_timescales, llvm_ctx, data_layout, input.force_two_state));
+      llvm_ctx, data_layout, input.force_two_state));
 
   layout->relay_slots_eliminated = relays_eliminated;
   return layout;

@@ -231,19 +231,10 @@ auto BuildFinalPackaging(
   return pkg;
 }
 
-void VerifyLoweringInput(const LoweringInput& input) {
-  if (input.body_timescales == nullptr) {
-    throw common::InternalError(
-        "CompileDesignProcesses", "body_timescales must be non-null");
-  }
-}
-
 }  // namespace
 
 auto CompileDesignProcesses(const LoweringInput& input)
     -> Result<CodegenSession> {
-  VerifyLoweringInput(input);
-
   // Backend setup.
   auto llvm_ctx = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("lyra_module", *llvm_ctx);
