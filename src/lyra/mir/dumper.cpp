@@ -211,9 +211,10 @@ void Dumper::Dump(const Design& design) {
     for (const auto& element : design.elements) {
       if (const auto* mod = std::get_if<Module>(&element)) {
         PrintIndent();
+        auto body_idx =
+            static_cast<uint32_t>(mod->body - design.module_bodies.data());
         *out_ << std::format(
-            "instance_sym={} -> body_{}\n", mod->instance_sym.value,
-            mod->body_id.value);
+            "instance_sym={} -> body_{}\n", mod->instance_sym.value, body_idx);
       }
     }
     Dedent();

@@ -173,9 +173,8 @@ auto RunLli(const ValidatedCompilationInput& input) -> int {
     output.PrintLlvmStats(llvm_stats_data, input.input.stats_top_n);
     auto ps = CollectProcessStats(
         compilation.mir.design, *compilation.mir.design_arena,
-        compilation.mir.design_origins, compilation.hir.design,
-        *compilation.hir.hir_arena, *compilation.hir.source_manager,
-        llvm_stats_data);
+        compilation.mir.design_origins, *compilation.hir.hir_arena,
+        *compilation.hir.source_manager, llvm_stats_data);
     output.PrintProcessStats(ps);
   }
 

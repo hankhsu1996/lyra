@@ -17,10 +17,7 @@
 #include "lyra/mir/design.hpp"
 #include "lyra/mir/handle.hpp"
 #include "lyra/mir/module.hpp"
-#include "lyra/mir/place.hpp"
 #include "lyra/mir/routine.hpp"
-#include "lyra/mir/statement.hpp"
-#include "lyra/mir/terminator.hpp"
 
 namespace lyra::driver {
 
@@ -102,7 +99,7 @@ auto ClassifyProcessKind(
 
 auto CollectProcessStats(
     const mir::Design& design, const mir::Arena& design_arena,
-    const lowering::OriginMap& design_origins, const hir::Design& hir_design,
+    const lowering::OriginMap& design_origins,
     const hir::Arena& global_hir_arena, const SourceManager& source_manager,
     const LlvmStats& llvm_stats) -> ProcessStatsData {
   struct ProcessRef {
@@ -126,7 +123,7 @@ auto CollectProcessStats(
       continue;
     }
     const auto& mir_module = std::get<mir::Module>(element);
-    const auto& body = mir::GetModuleBody(design, mir_module);
+    const auto& body = *mir_module.body;
     for (mir::ProcessId pid : body.processes) {
       if (body.arena[pid].kind != mir::ProcessKind::kFinal) {
         process_refs.push_back({pid, &body.arena});

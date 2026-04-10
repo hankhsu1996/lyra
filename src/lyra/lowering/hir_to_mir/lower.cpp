@@ -54,7 +54,7 @@ void VerifyLoweredMir(
     std::visit(
         common::Overloaded{
             [&](const mir::Module& mod) {
-              const auto& body = mir::GetModuleBody(design, mod);
+              const auto& body = *mod.body;
               const auto& arena = body.arena;
               // Module bodies use kBackendReady because they are still
               // mir::ModuleBody (old type, cannot contain ExternalRefId).
@@ -129,7 +129,7 @@ auto ComputeMirStats(const mir::Design& design, const mir::Arena& design_arena)
     std::visit(
         common::Overloaded{
             [&](const mir::Module& mod) {
-              const auto& body = mir::GetModuleBody(design, mod);
+              const auto& body = *mod.body;
               for (auto fid : body.functions) {
                 count_routine(body.arena[fid]);
               }

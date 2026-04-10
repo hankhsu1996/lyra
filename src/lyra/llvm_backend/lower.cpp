@@ -689,14 +689,15 @@ auto BuildSpecCompilationUnits(const mir::Design& design)
     const auto* mod = std::get_if<mir::Module>(&element);
     if (mod == nullptr) continue;
 
-    auto body_id = mod->body_id;
+    mir::ModuleBodyId body_id{
+        static_cast<uint32_t>(mod->body - design.module_bodies.data())};
     SpecInstanceBinding binding{
         .module_index = ModuleIndex{module_idx},
     };
 
     auto [it, inserted] = body_to_unit.try_emplace(body_id.value, units.size());
     if (inserted) {
-      const auto& body = design.module_bodies.at(body_id.value);
+      const auto& body = *mod->body;
       units.push_back(
           SpecCompilationUnit{
               .body_id = body_id,
@@ -1074,12 +1075,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
     for (const auto& element : input.design->elements) {
       const auto* mod = std::get_if<mir::Module>(&element);
       if (mod == nullptr) continue;
-      const auto& body = input.design->module_bodies.at(mod->body_id.value);
+      const auto& body = *mod->body;
       const auto& obj = input.construction->objects.at(module_idx);
       module_plans.push_back(
           LayoutModulePlan{
               .body_processes = body.processes,
-              .body = &body,
+              .body = mod->body,
               .design_state_base_slot = obj.design_state_base_slot,
               .slot_count = obj.slot_count,
           });
@@ -1823,13 +1824,15 @@ auto CompileDesignProcesses(const LoweringInput& input)
     for (const auto& element : input.design->elements) {
       const auto* mod = std::get_if<mir::Module>(&element);
       if (mod == nullptr) continue;
-      auto it = body_id_to_group.find(mod->body_id.value);
+      auto body_id_val =
+          static_cast<uint32_t>(mod->body - input.design->module_bodies.data());
+      auto it = body_id_to_group.find(body_id_val);
       if (it == body_id_to_group.end()) {
         throw common::InternalError(
             "CompileDesignProcesses",
             std::format(
                 "instance {} body {} not in body_realization_infos", mi,
-                mod->body_id.value));
+                body_id_val));
       }
       instance_body_group.push_back(it->second);
       ++mi;
@@ -1851,11 +1854,12 @@ auto CompileDesignProcesses(const LoweringInput& input)
   // connection_templates.meta/triggers.
   // Populates descriptor-ready canonical templates from MIR.
   {
-    // Build module_index -> body_id mapping (same as in lower loop above).
-    std::vector<mir::ModuleBodyId> module_body_ids;
+    // Build module_index -> body pointer mapping (same as in lower loop
+    // above). Parallel to layout instance order.
+    std::vector<const mir::ModuleBody*> module_body_ptrs;
     for (const auto& elem : input.design->elements) {
       if (const auto* mod = std::get_if<mir::Module>(&elem)) {
-        module_body_ids.push_back(mod->body_id);
+        module_body_ptrs.push_back(mod->body);
       }
     }
 
@@ -2025,11 +2029,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
          ci < layout->num_module_process_base; ++ci) {
       const auto& sp = layout->scheduled_processes[ci];
       bool is_body_local =
-          sp.module_index && sp.module_index.value < module_body_ids.size();
+          sp.module_index && sp.module_index.value < module_body_ptrs.size();
       const mir::Arena& proc_arena =
-          is_body_local ? input.design->module_bodies
-                              .at(module_body_ids[sp.module_index.value].value)
-                              .arena
+          is_body_local ? module_body_ptrs[sp.module_index.value]->arena
                         : *input.mir_arena;
       const auto& proc = proc_arena[sp.process_id];
       auto kind = MapProcessKind(proc.kind);
@@ -2040,10 +2042,11 @@ auto CompileDesignProcesses(const LoweringInput& input)
       std::optional<lowering::DiagnosticContext> conn_diag;
       const lowering::DiagnosticContext* conn_diag_ptr = input.diag_ctx;
       if (is_body_local && input.origin_provenance != nullptr) {
-        auto conn_body_id = module_body_ids[sp.module_index.value];
-        if (conn_body_id.value < input.origin_provenance->bodies.size()) {
-          const auto& prov =
-              input.origin_provenance->bodies[conn_body_id.value];
+        auto conn_body_id_val = static_cast<uint32_t>(
+            module_body_ptrs[sp.module_index.value] -
+            input.design->module_bodies.data());
+        if (conn_body_id_val < input.origin_provenance->bodies.size()) {
+          const auto& prov = input.origin_provenance->bodies[conn_body_id_val];
           if (prov.arena != nullptr) {
             conn_resolver.emplace(prov.origins, *prov.arena);
             conn_diag.emplace(*conn_resolver);

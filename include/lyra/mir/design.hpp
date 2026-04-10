@@ -128,9 +128,4 @@ struct Design {
   size_t max_body_local_events = 0;
 };
 
-inline auto GetModuleBody(const Design& design, const Module& mod)
-    -> const ModuleBody& {
-  return design.module_bodies.at(mod.body_id.value);
-}
-
 }  // namespace lyra::mir

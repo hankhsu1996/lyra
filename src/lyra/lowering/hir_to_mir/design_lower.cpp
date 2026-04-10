@@ -612,10 +612,12 @@ auto LowerDesign(
         throw common::InternalError(
             "LowerDesign", "no body lowered for specialization");
       }
-      result.elements.emplace_back(
-          mir::Module{.instance_sym = mod.symbol, .body_id = it->second});
-
+      // Safe pointer capture: Phase 2 finished pushing to module_bodies
+      // before Phase 2b began, so &module_bodies[i] is stable for the
+      // lifetime of the design.
       const auto& body = result.module_bodies.at(it->second.value);
+      result.elements.emplace_back(
+          mir::Module{.instance_sym = mod.symbol, .body = &body});
       auto slot_count = static_cast<uint32_t>(body.slots.size());
 
       // Build InstanceConstBlock directly from HIR param values.

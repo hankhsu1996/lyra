@@ -7,7 +7,6 @@
 #include "llvm_stats.hpp"
 #include "lyra/common/source_manager.hpp"
 #include "lyra/hir/arena.hpp"
-#include "lyra/hir/design.hpp"
 #include "lyra/lowering/origin_map.hpp"
 #include "lyra/mir/arena.hpp"
 #include "lyra/mir/design.hpp"
@@ -76,7 +75,7 @@ struct ProcessStatsData {
 
 auto CollectProcessStats(
     const mir::Design& design, const mir::Arena& design_arena,
-    const lowering::OriginMap& design_origins, const hir::Design& hir_design,
+    const lowering::OriginMap& design_origins,
     const hir::Arena& global_hir_arena, const SourceManager& source_manager,
     const LlvmStats& llvm_stats) -> ProcessStatsData;
 
