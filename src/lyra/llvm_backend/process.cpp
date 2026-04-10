@@ -3028,8 +3028,9 @@ auto DefineDeferredAssertionThunk(
 }
 
 auto CompileDeferredAssertionArtifacts(
-    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites,
-    std::span<const DeferredSiteCalleeInfo> callee_info)
+    Context& context, std::span<const mir::DeferredAssertionSiteInfo> sites,
+    std::span<const DeferredSiteCalleeInfo> callee_info,
+    std::string_view name_prefix)
     -> Result<std::vector<DeferredSiteCompiledArtifact>> {
   std::vector<DeferredSiteCompiledArtifact> artifacts(sites.size());
 
@@ -3047,12 +3048,12 @@ auto CompileDeferredAssertionArtifacts(
   auto* fn_type = llvm::FunctionType::get(
       void_ty, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, false);
 
-  // Single pipeline per site: declare, define, compute payload size.
   auto compile_thunk = [&](uint32_t si, const char* suffix,
                            const mir::DeferredUserCallAction& action,
                            const DeferredCalleeBackendInfo& callee_backend)
       -> Result<std::pair<llvm::Function*, uint32_t>> {
-    auto name = std::format("__lyra_deferred_thunk_s{}_{}", si, suffix);
+    auto name =
+        std::format("__lyra_deferred_thunk_{}_s{}_{}", name_prefix, si, suffix);
     auto* fn = llvm::Function::Create(
         fn_type, llvm::Function::InternalLinkage, name, &module);
 

@@ -116,9 +116,8 @@ auto CompileModuleSpecSession(
       .process_functions = {},
       .wait_sites = {},
       .process_triggers = {},
-      .deferred_sites = input.deferred_sites,
       .deferred_site_base_index = input.deferred_site_base_index,
-      .deferred_callee_info = {},
+      .deferred_artifacts = {},
       .declared_functions = {},
   };
 
@@ -139,9 +138,17 @@ auto CompileModuleSpecSession(
         std::make_move_iterator(func_result->wait_sites.end()));
   }
 
-  // Step 4: Capture callee products while session state is still valid.
-  product.deferred_callee_info =
-      CaptureDeferredCalleeInfoForBody(context, input.deferred_sites);
+  // Step 4: Compile deferred assertion thunks while session state is valid.
+  // Callee captures and thunk codegen happen here, inside the session,
+  // because declared functions are in scope.
+  if (!input.deferred_sites.empty()) {
+    auto callee_info =
+        CaptureDeferredCalleeInfoForBody(context, input.deferred_sites);
+    auto artifacts = CompileDeferredAssertionArtifacts(
+        context, input.deferred_sites, callee_info, input.name_prefix);
+    if (!artifacts) return std::unexpected(artifacts.error());
+    product.deferred_artifacts = std::move(*artifacts);
+  }
   product.declared_functions = std::move(declared_funcs);
 
   return product;
@@ -195,7 +202,7 @@ auto CompileSpecializations(
     Context& context, const LoweringInput& input, const SpecPlan& spec_plan)
     -> Result<SpecializationProducts> {
   SpecializationProducts products;
-  products.deferred_site_callee_info.resize(
+  products.deferred_site_artifacts.resize(
       input.design->deferred_assertion_sites.size());
 
   for (const auto& spec_input : spec_plan.inputs) {
@@ -226,11 +233,10 @@ auto CompileSpecializations(
       }
     }
 
-    // Merge deferred callee info.
-    for (uint32_t di = 0; di < product->deferred_callee_info.size(); ++di) {
-      products
-          .deferred_site_callee_info[product->deferred_site_base_index + di] =
-          std::move(product->deferred_callee_info[di]);
+    // Merge per-body deferred artifacts into design-global array.
+    for (uint32_t di = 0; di < product->deferred_artifacts.size(); ++di) {
+      products.deferred_site_artifacts[product->deferred_site_base_index + di] =
+          std::move(product->deferred_artifacts[di]);
     }
 
     products.body_to_process_triggers.try_emplace(

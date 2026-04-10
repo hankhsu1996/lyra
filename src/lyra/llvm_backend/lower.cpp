@@ -288,18 +288,6 @@ void VerifyLoweringInput(const LoweringInput& input) {
     throw common::InternalError(
         "CompileDesignProcesses", "body_timescales must be non-null");
   }
-  size_t expected = 0;
-  for (const auto& body : input.design->module_bodies) {
-    expected += body.deferred_assertion_sites.size();
-  }
-  if (expected != input.design->deferred_assertion_sites.size()) {
-    throw common::InternalError(
-        "CompileDesignProcesses",
-        std::format(
-            "deferred site concatenation invariant violated: "
-            "sum of body-local counts ({}) != design-global count ({})",
-            expected, input.design->deferred_assertion_sites.size()));
-  }
 }
 
 }  // namespace
@@ -346,18 +334,6 @@ auto CompileDesignProcesses(const LoweringInput& input)
     if (!export_result) return std::unexpected(export_result.error());
   }
 
-  const auto& deferred_sites = input.design->deferred_assertion_sites;
-  auto deferred_result = CompileDeferredAssertionArtifacts(
-      *context, deferred_sites, specs.deferred_site_callee_info);
-  if (!deferred_result) return std::unexpected(deferred_result.error());
-  if (deferred_result->size() != deferred_sites.size()) {
-    throw common::InternalError(
-        "CompileDesignProcesses",
-        std::format(
-            "deferred artifacts count {} != sites count {}",
-            deferred_result->size(), deferred_sites.size()));
-  }
-
   auto standalone_result = CompileStandaloneProcesses(
       *context, input, topology.module_plans, *layout);
   if (!standalone_result) return std::unexpected(standalone_result.error());
@@ -395,7 +371,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .wait_sites = std::move(all_wait_sites),
       .num_init_processes = num_init,
       .body_compiled_funcs = std::move(packaging.body_funcs),
-      .deferred_site_artifacts = std::move(*deferred_result),
+      .deferred_site_artifacts = std::move(specs.deferred_site_artifacts),
   };
 }
 

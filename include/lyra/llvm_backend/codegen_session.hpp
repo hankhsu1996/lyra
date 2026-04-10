@@ -152,8 +152,8 @@ struct CompiledModuleSpecInput {
 };
 
 // Process codegen product of compiling one specialization body.
-// All callee captures are performed inside the session and returned here,
-// so the caller never reads ambient Context state between sessions.
+// All compilation (processes, thunks) is performed inside the session.
+// The caller never reads ambient Context state between sessions.
 struct CompiledModuleSpec {
   const mir::ModuleBody* body = nullptr;
   // Parallel to input.view.processes: one compiled function per body process
@@ -163,13 +163,12 @@ struct CompiledModuleSpec {
   // process. Index by body process ordinal to get trigger facts.
   // scheduled_process_index is NOT yet set (stamped per-instance later).
   std::vector<std::optional<ProcessTriggerEntry>> process_triggers;
-  // Per-body deferred assertion sites (forwarded from input).
-  std::span<const mir::DeferredAssertionSiteInfo> deferred_sites;
-  // Design-global base index (forwarded from input).
+  // Design-global base index for deferred site concatenation.
   uint32_t deferred_site_base_index = 0;
-  // Deferred callee captures: one entry per body-local deferred site.
-  // Captured inside the session while DeclaredFunctionScope is active.
-  std::vector<DeferredSiteCalleeInfo> deferred_callee_info;
+  // Per-body compiled deferred assertion thunk artifacts.
+  // Parallel to body's deferred_assertion_sites. Compiled inside the
+  // session while declared functions are in scope.
+  std::vector<DeferredSiteCompiledArtifact> deferred_artifacts;
   // Body-local declared functions: (FunctionId, llvm::Function*).
   // Captured inside the session for DPI export wrapper resolution.
   std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_functions;

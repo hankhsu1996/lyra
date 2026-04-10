@@ -82,18 +82,16 @@ struct DeferredCalleeBackendInfo {
   bool is_module_scoped = false;
 };
 
-// Per-site captured callee backend info, parallel to
-// design.deferred_assertion_sites. Populated during body sessions,
-// consumed by CompileDeferredAssertionArtifacts.
+// Per-site captured callee backend info. Session-internal: captured and
+// consumed within CompileModuleSpecSession for per-body thunk compilation.
 struct DeferredSiteCalleeInfo {
   std::optional<DeferredCalleeBackendInfo> pass_callee;
   std::optional<DeferredCalleeBackendInfo> fail_callee;
 };
 
 // Per-site compiled artifact for deferred assertion thunks.
-// Positional: element [i] corresponds to deferred_assertion_sites[i].
-// Produced by CompileDeferredAssertionArtifacts in a single pipeline that
-// declares, defines, and computes payload sizes for all thunks.
+// Compiled per-body inside the spec session, then concatenated into a
+// design-global array for runtime metadata emission.
 struct DeferredSiteCompiledArtifact {
   llvm::Function* pass_thunk = nullptr;
   llvm::Function* fail_thunk = nullptr;

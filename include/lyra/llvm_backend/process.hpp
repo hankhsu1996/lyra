@@ -4,6 +4,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <llvm/IR/Function.h>
@@ -99,11 +100,13 @@ auto DefineMirFunction(
     Context& context, mir::FunctionId func_id, llvm::Function* func,
     const BodySiteContext& site_ctx) -> Result<void>;
 
-// Single pipeline: declare, define, and compute payload sizes for all
-// deferred assertion thunks. Returns positional artifacts parallel to sites.
+// Compile deferred assertion thunks for one body's sites. Returns positional
+// artifacts parallel to sites. Called per-body inside the spec session while
+// declared functions are in scope.
 auto CompileDeferredAssertionArtifacts(
-    Context& context, const std::vector<mir::DeferredAssertionSiteInfo>& sites,
-    std::span<const DeferredSiteCalleeInfo> callee_info)
+    Context& context, std::span<const mir::DeferredAssertionSiteInfo> sites,
+    std::span<const DeferredSiteCalleeInfo> callee_info,
+    std::string_view name_prefix)
     -> Result<std::vector<DeferredSiteCompiledArtifact>>;
 
 // Extract raw canonical process-trigger facts from a MIR process.

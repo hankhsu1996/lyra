@@ -29,7 +29,10 @@ struct SpecializationProducts {
       mir::ModuleExportCalleeKey, dpi::ModuleExportCalleeInfo,
       mir::ModuleExportCalleeKeyHash>
       module_export_callees;
-  std::vector<DeferredSiteCalleeInfo> deferred_site_callee_info;
+  // Design-global deferred assertion thunk artifacts, concatenated from
+  // per-body products. Positional: element [i] corresponds to
+  // design.deferred_assertion_sites[i].
+  std::vector<DeferredSiteCompiledArtifact> deferred_site_artifacts;
 };
 
 // Declare and define all design-global functions (packages + generated).
