@@ -309,7 +309,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       std::move(specs.body_to_compiled_funcs));
 
   auto runtime_products = ExtractRuntimeData(
-      input, *layout, topology.module_plans, specs.body_to_process_triggers,
+      input, *layout, specs.body_to_process_triggers,
       packaging.instance_body_group);
   RealizationData realization;
   ApplyRuntimeDataToLayout(std::move(runtime_products), *layout, realization);

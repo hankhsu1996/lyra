@@ -121,9 +121,6 @@ struct ParamSlotTemplate {
   std::vector<ParamSlotTemplateEntry> entries;
 };
 
-using BodyParamTemplateMap =
-    std::unordered_map<mir::ModuleBodyId, ParamSlotTemplate>;
-
 struct SortedParamInitRef {
   uint32_t body_local_slot;
   const mir::ConstSlotInit* init;
@@ -174,7 +171,7 @@ auto BuildParamPayloads(
     std::span<const uint32_t> instance_body_group,
     std::span<const uint32_t> design_base_slots,
     std::span<const mir::InstanceConstBlock> const_blocks, const Layout& layout,
-    const BodyParamTemplateMap& body_param_templates)
+    std::span<const ParamSlotTemplate> body_param_templates)
     -> std::vector<std::vector<uint8_t>> {
   if (instance_body_group.size() != const_blocks.size()) {
     throw common::InternalError(
@@ -206,16 +203,14 @@ auto BuildParamPayloads(
               "instance {} body_group {} >= body_realization_infos size {}",
               inst_idx, bg, layout.body_realization_infos.size()));
     }
-    auto body_id = layout.body_realization_infos[bg].body_id;
-    auto tmpl_it = body_param_templates.find(body_id);
-    if (tmpl_it == body_param_templates.end()) {
+    const auto& tmpl = body_param_templates[bg].entries;
+    if (tmpl.empty()) {
       throw common::InternalError(
           "BuildParamPayloads",
           std::format(
               "instance {} has param inits but no body param template",
               inst_idx));
     }
-    const auto& tmpl = tmpl_it->second.entries;
 
     auto sorted_inits = ValidateAndSortParamInits(const_block, inst_idx);
     uint32_t design_base_slot = design_base_slots[inst_idx];
@@ -688,26 +683,13 @@ void ExtractConnectionTriggerTemplates(
 }
 
 void ExtractBodyCombTemplates(
-    const LoweringInput& input, const Layout& layout,
-    std::span<const LayoutModulePlan> module_plans,
-    std::vector<BodyRuntimeProducts>& body_products) {
-  // Precompute body_id -> any representative base_slot mapping.
-  std::unordered_map<uint32_t, uint32_t> body_base_slots;
-  for (const auto& plan : module_plans) {
-    auto body_id_val =
-        static_cast<uint32_t>(plan.body - input.design->module_bodies.data());
-    body_base_slots.try_emplace(body_id_val, plan.design_state_base_slot);
-  }
-
+    const Layout& layout, std::vector<BodyRuntimeProducts>& body_products) {
   for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
     const auto& info = layout.body_realization_infos[gi];
     const auto& body = *info.body;
     const auto ordinal_map = BuildBodyProcessOrdinalMap(body);
 
-    auto base_it = body_base_slots.find(info.body_id.value);
-    uint32_t base_slot =
-        (base_it != body_base_slots.end()) ? base_it->second : 0;
-    bool found_base = (base_it != body_base_slots.end());
+    uint32_t base_slot = layout.body_representative_base_slots[gi];
 
     auto& bp = body_products[gi];
 
@@ -732,14 +714,6 @@ void ExtractBodyCombTemplates(
             if (is_global) {
               final_global_id = fact.signal.id;
             } else {
-              if (!found_base) {
-                throw common::InternalError(
-                    "ExtractBodyCombTemplates",
-                    std::format(
-                        "body {} proc {} comb kernel has module-local "
-                        "trigger but no instance base_slot found",
-                        info.body_id.value, nonfinal_proc_ordinal));
-              }
               final_global_id = base_slot + fact.signal.id;
             }
 
@@ -847,32 +821,12 @@ void ExtractBodyCombTemplates(
 
 void ExtractBodyObservableDescriptors(
     const LoweringInput& input, const Layout& layout,
-    std::span<const LayoutModulePlan> module_plans,
     std::vector<BodyRuntimeProducts>& body_products) {
-  std::unordered_map<uint32_t, uint32_t> body_base_slots;
-  for (const auto& plan : module_plans) {
-    auto body_id_val =
-        static_cast<uint32_t>(plan.body - input.design->module_bodies.data());
-    body_base_slots.try_emplace(body_id_val, plan.design_state_base_slot);
-  }
-
   for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
     const auto& info = layout.body_realization_infos[gi];
     auto& bp = body_products[gi];
 
-    auto base_it = body_base_slots.find(info.body_id.value);
-    if (base_it == body_base_slots.end()) {
-      if (info.slot_count == 0) {
-        bp.observable_descriptors.pool.assign(1, '\0');
-        continue;
-      }
-      throw common::InternalError(
-          "ExtractBodyObservableDescriptors",
-          std::format(
-              "missing representative base slot for body {} with {} slots",
-              info.body_id.value, info.slot_count));
-    }
-    uint32_t base_slot = base_it->second;
+    uint32_t base_slot = layout.body_representative_base_slots[gi];
 
     auto& tmpl = bp.observable_descriptors;
     tmpl.pool.push_back('\0');
@@ -964,33 +918,18 @@ void ExtractBodyObservableDescriptors(
 
 void ExtractBodyInitDescriptors(
     const LoweringInput& input, const Layout& layout,
-    std::span<const LayoutModulePlan> module_plans,
     std::span<const uint32_t> instance_body_group,
     std::vector<BodyRuntimeProducts>& body_products,
     ConstructionProgramData& construction_program) {
-  std::unordered_map<uint32_t, uint32_t> body_base_slots;
-  for (const auto& plan : module_plans) {
-    auto body_id_val =
-        static_cast<uint32_t>(plan.body - input.design->module_bodies.data());
-    body_base_slots.try_emplace(body_id_val, plan.design_state_base_slot);
-  }
-
-  BodyParamTemplateMap body_param_templates;
+  std::vector<ParamSlotTemplate> body_param_templates(
+      layout.body_realization_infos.size());
 
   for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
     const auto& info = layout.body_realization_infos[gi];
     auto& bp = body_products[gi];
 
     if (info.slot_count == 0) continue;
-    auto base_it = body_base_slots.find(info.body_id.value);
-    if (base_it == body_base_slots.end()) {
-      throw common::InternalError(
-          "ExtractBodyInitDescriptors",
-          std::format(
-              "missing base slot for body {} in init descriptor extraction",
-              info.body_id.value));
-    }
-    uint32_t base_slot = base_it->second;
+    uint32_t base_slot = layout.body_representative_base_slots[gi];
     auto init_owned_base =
         layout.design.GetStorageBaseForRange(base_slot, info.slot_count);
     if (!init_owned_base.has_value()) continue;
@@ -1046,7 +985,7 @@ void ExtractBodyInitDescriptors(
     for (const auto& pe : param_entries) {
       bp.init.param_slots.push_back(pe.slot);
     }
-    body_param_templates[info.body_id] =
+    body_param_templates[gi] =
         ParamSlotTemplate{.entries = std::move(param_entries)};
   }
 
@@ -1227,7 +1166,6 @@ void ExtractPackageObservableDescriptors(
 
 auto ExtractRuntimeData(
     const LoweringInput& input, const Layout& layout,
-    std::span<const LayoutModulePlan> module_plans,
     const std::unordered_map<
         const mir::ModuleBody*,
         std::vector<std::optional<ProcessTriggerEntry>>>&
@@ -1242,11 +1180,10 @@ auto ExtractRuntimeData(
   ExtractBodyTriggerTemplates(
       layout, body_to_process_triggers, products.body_products);
   ExtractConnectionTriggerTemplates(layout, products.connection_templates);
-  ExtractBodyCombTemplates(input, layout, module_plans, products.body_products);
-  ExtractBodyObservableDescriptors(
-      input, layout, module_plans, products.body_products);
+  ExtractBodyCombTemplates(layout, products.body_products);
+  ExtractBodyObservableDescriptors(input, layout, products.body_products);
   ExtractBodyInitDescriptors(
-      input, layout, module_plans, instance_body_group, products.body_products,
+      input, layout, instance_body_group, products.body_products,
       products.construction_program);
   ExtractPackageInitDescriptor(layout, products.package_init_descriptor);
   ExtractPackageObservableDescriptors(

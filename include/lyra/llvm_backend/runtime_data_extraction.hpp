@@ -54,7 +54,6 @@ struct RuntimeExtractionProducts {
 // Returns products that must be applied via ApplyRuntimeDataToLayout.
 auto ExtractRuntimeData(
     const LoweringInput& input, const Layout& layout,
-    std::span<const LayoutModulePlan> module_plans,
     const std::unordered_map<
         const mir::ModuleBody*,
         std::vector<std::optional<ProcessTriggerEntry>>>&
