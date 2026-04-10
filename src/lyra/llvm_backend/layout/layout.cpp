@@ -1269,7 +1269,7 @@ auto BuildDesignLayout(
 }
 
 auto BuildBodyStorageLayout(
-    const mir::ModuleBody& body, const TypeArena& types,
+    std::span<const mir::SlotDesc> slots, const TypeArena& types,
     const llvm::DataLayout& dl, bool force_two_state) -> BodyStorageLayout {
   auto storage_mode =
       force_two_state ? StorageMode::kTwoState : StorageMode::kNormal;
@@ -1282,8 +1282,8 @@ auto BuildBodyStorageLayout(
   };
 
   BodyStorageLayout result;
-  result.slot_specs.reserve(body.slots.size());
-  for (const auto& slot : body.slots) {
+  result.slot_specs.reserve(slots.size());
+  for (const auto& slot : slots) {
     result.slot_specs.push_back(ResolveStorageSpec(
         slot.type, types, storage_mode, target_abi, result.spec_arena));
   }
@@ -2006,7 +2006,6 @@ auto BuildLayout(
           BodyLayout body_layout;
           std::vector<SlotStorageSpec> body_slot_specs;
           if (plan.slot_count > 0) {
-            const auto& body = *plan.body;
             auto bsl_it = body_storage_layouts.find(body_id_val);
             if (bsl_it == body_storage_layouts.end()) {
               throw common::InternalError(
@@ -2015,9 +2014,8 @@ auto BuildLayout(
                       "no precomputed body storage layout for body {}",
                       body_id_val));
             }
-            size = ComputeBodyStateSize(std::span(body.slots), bsl_it->second);
-            body_layout =
-                BuildBodyLayout(std::span(body.slots), bsl_it->second);
+            size = ComputeBodyStateSize(plan.body_slots, bsl_it->second);
+            body_layout = BuildBodyLayout(plan.body_slots, bsl_it->second);
             body_slot_specs = bsl_it->second.slot_specs;
           }
           if (body_id_val >= body_timescales->size()) {

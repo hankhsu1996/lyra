@@ -27,6 +27,7 @@ auto BuildTopologyPlan(const LoweringInput& input) -> TopologyPlan {
         LayoutModulePlan{
             .body_processes = body.processes,
             .body = mod->body,
+            .body_slots = body.slots,
             .design_state_base_slot = obj.design_state_base_slot,
             .slot_count = obj.slot_count,
         });
@@ -62,7 +63,7 @@ auto BuildBackendLayout(
         InstanceSlotRange{
             .base_slot = plan.design_state_base_slot,
             .slot_count = plan.slot_count,
-            .body_slots = plan.body->slots,
+            .body_slots = plan.body_slots,
         });
   }
 
@@ -72,8 +73,9 @@ auto BuildBackendLayout(
     const auto& body = input.design->module_bodies[bi];
     if (body.slots.empty()) continue;
     body_storage_layouts.emplace(
-        bi, BuildBodyStorageLayout(
-                body, *input.type_arena, data_layout, input.force_two_state));
+        bi,
+        BuildBodyStorageLayout(
+            body.slots, *input.type_arena, data_layout, input.force_two_state));
   }
 
   auto connection_analysis = AnalyzeConnections(

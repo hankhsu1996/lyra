@@ -770,9 +770,9 @@ struct BodyStorageLayout {
   StorageSpecArena spec_arena;
 };
 
-// Build body-owned storage layout from body-local inputs.
+// Build body-owned storage layout from body-local slot descriptors.
 auto BuildBodyStorageLayout(
-    const mir::ModuleBody& body, const TypeArena& types,
+    std::span<const mir::SlotDesc> slots, const TypeArena& types,
     const llvm::DataLayout& dl, bool force_two_state) -> BodyStorageLayout;
 
 // Compute body-local state region sizes from body-owned storage layout.
@@ -794,6 +794,10 @@ auto BuildBodyLayout(
 struct LayoutModulePlan {
   std::span<const mir::ProcessId> body_processes;
   const mir::ModuleBody* body = nullptr;
+  // Body-local slot descriptors (header-level interface).
+  // Consumers that only need slot shape should use this span
+  // rather than reaching through body->slots.
+  std::span<const mir::SlotDesc> body_slots;
   uint32_t design_state_base_slot = 0;
   uint32_t slot_count = 0;
 };
