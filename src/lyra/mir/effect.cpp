@@ -46,7 +46,7 @@ auto ComputeBodyExecutionRequirement(const Function& func)
 
 auto BuildCallableAbiContract(const Function& func) -> CallableAbiContract {
   CallableAbiContract contract;
-  if (IsObserverProgram(func.runtime_kind)) {
+  if (IsObserverProgram(func.runtime_meta)) {
     return contract;
   }
   // Seed: accept decision owner iff this body directly contains

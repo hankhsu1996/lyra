@@ -2184,12 +2184,13 @@ auto DeclareMirFunction(
   // ObserverContext*, regardless of module-scoped vs design-global.
   // Regular functions use signature-derived types.
   bool is_module_scoped = func.abi_contract.needs_module_binding;
-  bool is_observer = mir::IsObserverProgram(func.runtime_kind);
+  bool is_observer = mir::IsObserverProgram(func.runtime_meta);
 
   if (is_observer) {
     auto* ptr_ty = llvm::PointerType::getUnqual(llvm_ctx);
     auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
-    if (func.runtime_kind == mir::RuntimeProgramKind::kMonitorCheck) {
+    if (std::holds_alternative<mir::MonitorCheckProgramMeta>(
+            func.runtime_meta)) {
       // Monitor check: (design*, engine*, observer_ctx*, prev_buf*)
       fn_type = llvm::FunctionType::get(
           void_ty, {ptr_ty, ptr_ty, ptr_ty, ptr_ty}, false);
@@ -2866,15 +2867,17 @@ auto EmitMonitorSetupEpilogue(
         UnsupportedCategory::kFeature));
   }
 
-  // Read layout from the check program's MIR metadata (single source of truth)
+  // Read layout from the check program's MIR metadata (single source of truth).
   const auto& check_func = arena[setup_meta.check_program];
-  if (!check_func.monitor_check_meta.has_value()) {
+  const auto* check_program_meta =
+      std::get_if<mir::MonitorCheckProgramMeta>(&check_func.runtime_meta);
+  if (check_program_meta == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
         "$monitor layout not found for setup epilogue",
         UnsupportedCategory::kFeature));
   }
-  const auto* layout = &*check_func.monitor_check_meta;
+  const auto* layout = &check_program_meta->meta;
 
   llvm::Value* init_buf = nullptr;
   if (layout->total_size > 0) {
@@ -3203,16 +3206,11 @@ auto DefineMirFunction(
   const auto& func = arena[func_id];
 
   // Monitor check observer programs have special lowering with comparison
-  // logic. Layout metadata is owned by the MIR function (set at MIR
-  // construction time).
-  if (func.runtime_kind == mir::RuntimeProgramKind::kMonitorCheck) {
-    if (!func.monitor_check_meta.has_value()) {
-      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          func.origin, "monitor check observer program missing layout",
-          UnsupportedCategory::kFeature));
-    }
+  // logic. Layout metadata is owned by the MIR function.
+  if (const auto* check_meta =
+          std::get_if<mir::MonitorCheckProgramMeta>(&func.runtime_meta)) {
     return DefineMonitorCheckProgram(
-        context, func_id, llvm_func, *func.monitor_check_meta, site_ctx);
+        context, func_id, llvm_func, check_meta->meta, site_ctx);
   }
 
   auto& llvm_ctx = context.GetLlvmContext();
@@ -3222,7 +3220,7 @@ auto DefineMirFunction(
   // Select execution contract based on callable category:
   // - Observer programs (strobe/setup): simulation-only, engine always non-null
   // - User-defined functions/tasks: cross-context, engine may be null
-  bool is_observer_program = mir::IsObserverProgram(func.runtime_kind);
+  bool is_observer_program = mir::IsObserverProgram(func.runtime_meta);
   auto store_mode = is_observer_program ? DesignStoreMode::kNotifySimulation
                                         : DesignStoreMode::kNotifyCrossContext;
   ExecutionContractScope contract_scope(context, store_mode);
@@ -3267,14 +3265,13 @@ auto DefineMirFunction(
   auto* engine_arg = llvm_func->getArg(arg_offset + 1);
 
   // Two orthogonal axes determine function entry:
-  //   1. ABI: observer programs always receive ObserverContext* (from
-  //   runtime_kind)
+  //   1. ABI: observer programs always receive ObserverContext*
   //   2. Entry: module-scoped functions enter specialization-local mode
   // These are independent: a design-global observer receives ObserverContext*
   // but does not enter specialization-local mode (context fields are
   // zero/null).
   bool is_module_scoped = func.abi_contract.needs_module_binding;
-  bool is_observer = mir::IsObserverProgram(func.runtime_kind);
+  bool is_observer = mir::IsObserverProgram(func.runtime_meta);
   unsigned context_arg_count = 0;
   if (is_observer) {
     // SetupObserverProgramEntry handles design/engine/observer_ctx setup
@@ -3545,16 +3542,11 @@ auto DefineMirFunction(
   builder.SetInsertPoint(exit_block);
 
   // Setup programs need serialization + registration before returning.
-  // Setup programs need serialization + registration before returning.
-  // Metadata is owned by the MIR function (set at MIR construction time).
-  if (func.runtime_kind == mir::RuntimeProgramKind::kMonitorSetup) {
-    if (!func.monitor_setup_meta.has_value()) {
-      return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
-          func.origin, "monitor setup program missing info",
-          UnsupportedCategory::kFeature));
-    }
+  // Metadata is owned by the MIR function.
+  if (const auto* setup_meta =
+          std::get_if<mir::MonitorSetupProgramMeta>(&func.runtime_meta)) {
     auto result = EmitMonitorSetupEpilogue(
-        context, func_id, *func.monitor_setup_meta, design_arg, engine_arg);
+        context, func_id, setup_meta->meta, design_arg, engine_arg);
     if (!result) return std::unexpected(result.error());
   }
 

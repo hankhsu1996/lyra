@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
+#include <variant>
 #include <vector>
 
 #include "lyra/common/origin_id.hpp"
@@ -74,30 +74,9 @@ enum class ReturnPolicy {
   kSretOutParam,  // Return via out-param pointer (value aggregates only)
 };
 
-// Classifies runtime-invoked functions by their ABI family.
-// kNone: regular function (signature-derived ABI).
-// kStrobe / kMonitorSetup / kMonitorCheck: observer programs that always use
-//   the observer ABI (DesignState*, Engine*, ObserverContext*[, prev_buf*]).
-// IsObserverProgram() is the canonical predicate for the observer-ABI class.
-// Deferred assertion thunks are backend-only artifacts (not MIR functions).
-enum class RuntimeProgramKind {
-  kNone,
-  kStrobe,
-  kMonitorCheck,
-  kMonitorSetup,
-};
-
-// True for runtime program kinds that use the observer program ABI.
-inline auto IsObserverProgram(RuntimeProgramKind kind) -> bool {
-  return kind == RuntimeProgramKind::kStrobe ||
-         kind == RuntimeProgramKind::kMonitorSetup ||
-         kind == RuntimeProgramKind::kMonitorCheck;
-}
-
 // Monitor check program metadata: snapshot buffer layout for comparison logic.
 // Populated at MIR construction time in LowerMonitorEffect, read by the
 // backend's DefineMonitorCheckProgram and EmitMonitorSetupEpilogue.
-// Present iff runtime_kind == kMonitorCheck.
 struct MonitorCheckMeta {
   std::vector<uint32_t> offsets;
   std::vector<uint32_t> byte_sizes;
@@ -106,10 +85,32 @@ struct MonitorCheckMeta {
 
 // Monitor setup program metadata: reference to the paired check program.
 // The backend reads the check program's MonitorCheckMeta from the arena
-// for layout data. Present iff runtime_kind == kMonitorSetup.
+// for layout data.
 struct MonitorSetupMeta {
   FunctionId check_program;
 };
+
+// Runtime program metadata variant. Discriminates the ABI family and
+// carries kind-specific metadata in a single field.
+// std::monostate: regular function (signature-derived ABI).
+// Observer program arms (strobe, monitor check, monitor setup) use the
+// observer ABI (DesignState*, Engine*, ObserverContext*[, prev_buf*]).
+// Deferred assertion thunks are backend-only artifacts (not MIR functions).
+struct StrobeProgramMeta {};
+struct MonitorCheckProgramMeta {
+  MonitorCheckMeta meta;
+};
+struct MonitorSetupProgramMeta {
+  MonitorSetupMeta meta;
+};
+using RuntimeProgramMeta = std::variant<
+    std::monostate, StrobeProgramMeta, MonitorCheckProgramMeta,
+    MonitorSetupProgramMeta>;
+
+// True for runtime program metadata that uses the observer program ABI.
+inline auto IsObserverProgram(const RuntimeProgramMeta& meta) -> bool {
+  return !std::holds_alternative<std::monostate>(meta);
+}
 
 // ABI contract: what hidden context a callable accepts.
 // Formed at callable-definition policy level, not derived from body.
@@ -138,7 +139,7 @@ struct FunctionSignature {
 // Allowed terminators: Control (Jump/Branch/Switch), Return.
 struct Function {
   FunctionSignature signature;  // Frozen at pre-allocation
-  RuntimeProgramKind runtime_kind = RuntimeProgramKind::kNone;
+  RuntimeProgramMeta runtime_meta;
 
   // Canonical symbol identity for design-global callables (package functions,
   // generated design-level functions). Body-local functions leave this
@@ -188,10 +189,6 @@ struct Function {
   // Formed from callable-definition policy, independent of body_requirement.
   // The verifier checks that body_requirement is satisfiable by this contract.
   CallableAbiContract abi_contract;
-
-  // Runtime-kind-specific metadata. Populated at MIR construction time.
-  std::optional<MonitorCheckMeta> monitor_check_meta;
-  std::optional<MonitorSetupMeta> monitor_setup_meta;
 };
 
 // Compute the body execution requirement for a function by walking all

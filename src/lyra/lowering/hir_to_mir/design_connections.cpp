@@ -169,6 +169,7 @@ auto LowerExprAsBodyFunction(
               .params = {},
               .return_policy = mir::ReturnPolicy::kDirect,
           },
+      .runtime_meta = {},
       .entry = mir::BasicBlockId{entry_idx.value},
       .blocks = std::move(blocks),
       .local_types = std::move(ctx.local_types),
@@ -178,8 +179,6 @@ auto LowerExprAsBodyFunction(
       .param_origins = {},
       .decision_sites = {},
       .abi_contract = {},
-      .monitor_check_meta = std::nullopt,
-      .monitor_setup_meta = std::nullopt,
   };
 
   mir::FunctionId func_id = body_arena.AddFunction(std::move(func));

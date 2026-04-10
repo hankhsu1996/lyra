@@ -295,7 +295,7 @@ auto LowerStrobeEffect(
               .return_type = original_ctx.builtin_types.void_type,
               .params = {},  // Called via runtime ABI, not MIR call
           },
-      .runtime_kind = mir::RuntimeProgramKind::kStrobe,
+      .runtime_meta = mir::StrobeProgramMeta{},
       .canonical_symbol = kInvalidSymbolId,
       .entry = mir::BasicBlockId{0},
       .blocks = std::move(blocks),
@@ -306,8 +306,6 @@ auto LowerStrobeEffect(
       .param_origins = {},
       .decision_sites = {},
       .abi_contract = {},
-      .monitor_check_meta = std::nullopt,
-      .monitor_setup_meta = std::nullopt,
   };
   mir::FunctionId program_id =
       original_ctx.mir_arena->AddFunction(std::move(program));
@@ -603,7 +601,15 @@ auto LowerMonitorCheckProgram(
               .return_type = original_ctx.builtin_types.void_type,
               .params = {},
           },
-      .runtime_kind = mir::RuntimeProgramKind::kMonitorCheck,
+      .runtime_meta =
+          mir::MonitorCheckProgramMeta{
+              .meta =
+                  {
+                      .offsets = layout.offsets,
+                      .byte_sizes = layout.byte_sizes,
+                      .total_size = layout.total_size,
+                  },
+          },
       .canonical_symbol = kInvalidSymbolId,
       .entry = mir::BasicBlockId{0},
       .blocks = std::move(blocks),
@@ -614,13 +620,6 @@ auto LowerMonitorCheckProgram(
       .param_origins = {},
       .decision_sites = {},
       .abi_contract = {},
-      .monitor_check_meta =
-          mir::MonitorCheckMeta{
-              .offsets = layout.offsets,
-              .byte_sizes = layout.byte_sizes,
-              .total_size = layout.total_size,
-          },
-      .monitor_setup_meta = std::nullopt,
   };
   mir::FunctionId program_id =
       original_ctx.mir_arena->AddFunction(std::move(program));
@@ -696,7 +695,10 @@ auto LowerMonitorSetupProgram(
               .return_type = original_ctx.builtin_types.void_type,
               .params = {},
           },
-      .runtime_kind = mir::RuntimeProgramKind::kMonitorSetup,
+      .runtime_meta =
+          mir::MonitorSetupProgramMeta{
+              .meta = {.check_program = check_program_id},
+          },
       .canonical_symbol = kInvalidSymbolId,
       .entry = mir::BasicBlockId{0},
       .blocks = std::move(blocks),
@@ -707,9 +709,6 @@ auto LowerMonitorSetupProgram(
       .param_origins = {},
       .decision_sites = {},
       .abi_contract = {},
-      .monitor_check_meta = std::nullopt,
-      .monitor_setup_meta =
-          mir::MonitorSetupMeta{.check_program = check_program_id},
   };
   mir::FunctionId program_id =
       original_ctx.mir_arena->AddFunction(std::move(program));

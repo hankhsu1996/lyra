@@ -203,7 +203,7 @@ auto LowerFunctionBody(
   // here
   return mir::Function{
       .signature = {},
-      .runtime_kind = mir::RuntimeProgramKind::kNone,
+      .runtime_meta = {},
       .canonical_symbol = kInvalidSymbolId,
       .entry = mir::BasicBlockId{entry_idx.value},
       .blocks = std::move(blocks),
@@ -216,8 +216,6 @@ auto LowerFunctionBody(
       .materialize_count = ctx.materialize_count,
       .decision_sites = std::move(decision_sites),
       .abi_contract = {},
-      .monitor_check_meta = std::nullopt,
-      .monitor_setup_meta = std::nullopt,
   };
 }
 
@@ -321,7 +319,7 @@ auto LowerTaskBody(
 
   return mir::Function{
       .signature = {},
-      .runtime_kind = mir::RuntimeProgramKind::kNone,
+      .runtime_meta = {},
       .canonical_symbol = kInvalidSymbolId,
       .entry = mir::BasicBlockId{entry_idx.value},
       .blocks = std::move(blocks),
@@ -334,8 +332,6 @@ auto LowerTaskBody(
       .materialize_count = ctx.materialize_count,
       .decision_sites = std::move(decision_sites),
       .abi_contract = {},
-      .monitor_check_meta = std::nullopt,
-      .monitor_setup_meta = std::nullopt,
   };
 }
 
