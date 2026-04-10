@@ -21,6 +21,7 @@
 #include <llvm/Support/Casting.h>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/common/type.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/context.hpp"
@@ -1791,11 +1792,12 @@ struct DesignMetadataOutputs {
 };
 
 auto BuildDesignMetadataOutputs(
-    Context& context, const Layout& layout, const EmitDesignMainInput& input)
+    Context& context, const Layout& layout, const EmitDesignMainInput& input,
+    std::span<const common::OriginId> back_edge_origins)
     -> DesignMetadataOutputs {
   auto conn_desc_entries = ExtractConnectionDescriptorEntries(layout);
-  auto back_edge_site_inputs =
-      PrepareBackEdgeSiteInputs(context, input.diag_ctx, input.source_manager);
+  auto back_edge_site_inputs = PrepareBackEdgeSiteInputs(
+      back_edge_origins, input.diag_ctx, input.source_manager);
 
   // Port-binding forwarding candidate analysis (analysis only, no transform).
   ForwardingAnalysisReport forwarding_report;
@@ -2661,7 +2663,8 @@ auto EmitDesignMain(
 
     auto plusargs = BuildPlusargs(context, main_func, input);
 
-    auto metadata_outputs = BuildDesignMetadataOutputs(context, layout, input);
+    auto metadata_outputs = BuildDesignMetadataOutputs(
+        context, layout, input, session.back_edge_origins);
     forwarding_report = std::move(metadata_outputs.forwarding_analysis);
     auto& meta_globals = metadata_outputs.globals;
 

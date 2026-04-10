@@ -8,6 +8,7 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
 
+#include "lyra/common/origin_id.hpp"
 #include "lyra/llvm_backend/lowering_reports.hpp"
 #include "lyra/lowering/diagnostic_context.hpp"
 #include "lyra/metadata/design_metadata.hpp"
@@ -17,9 +18,10 @@ namespace lyra::lowering::mir_to_llvm {
 class Context;
 struct Layout;
 
-// Extract back-edge site inputs from accumulated codegen origins.
+// Extract back-edge site inputs from pre-assembled origin array.
 auto PrepareBackEdgeSiteInputs(
-    const Context& context, const lowering::DiagnosticContext* diag_ctx,
+    std::span<const common::OriginId> origins,
+    const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager)
     -> std::vector<metadata::BackEdgeSiteInput>;
 

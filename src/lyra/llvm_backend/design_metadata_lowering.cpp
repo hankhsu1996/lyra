@@ -102,10 +102,10 @@ auto GetConnectionDescriptorLlvmType(llvm::LLVMContext& ctx)
 }  // namespace
 
 auto PrepareBackEdgeSiteInputs(
-    const Context& context, const lowering::DiagnosticContext* diag_ctx,
+    std::span<const common::OriginId> origins,
+    const lowering::DiagnosticContext* diag_ctx,
     const SourceManager* source_manager)
     -> std::vector<metadata::BackEdgeSiteInput> {
-  const auto& origins = context.GetBackEdgeSiteOrigins();
   std::vector<metadata::BackEdgeSiteInput> entries;
   entries.reserve(origins.size());
 

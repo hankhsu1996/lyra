@@ -1022,22 +1022,6 @@ class Context {
   // Check if a function uses out-param calling convention (managed return).
   [[nodiscard]] auto FunctionUsesSret(mir::FunctionId func_id) const -> bool;
 
-  // Iteration limit site tracking for back-edge guard emission.
-  // Returns the assigned back-edge site id.
-  auto RegisterBackEdgeSite(common::OriginId origin) -> uint32_t;
-  [[nodiscard]] auto GetBackEdgeSiteOrigins() const
-      -> const std::vector<common::OriginId>& {
-    return back_edge_site_origins_;
-  }
-
-  // Wait-site ID allocation for persistent wait installation.
-  // Returns the next sequential wait-site ID. Process codegen uses this
-  // to assign IDs; the entries themselves are returned as process-level
-  // output (not stored on Context).
-  auto NextWaitSiteId() -> uint32_t {
-    return next_wait_site_id_++;
-  }
-
   // SSA temp management (TempValue-based explicit semantic contract).
   // TempValue is defined in compute/temp_value.hpp.
 
@@ -1319,13 +1303,6 @@ class Context {
   // SSA temp bindings: temp_id -> TempValue (explicit semantic contract).
   // Temps defined by block params (split PHI nodes) or statements.
   absl::flat_hash_map<int, TempValue> temp_entries_;
-
-  // Iteration limit site origins accumulated during process codegen.
-  // Index = back-edge site id, value = origin of the back-edge terminator.
-  std::vector<common::OriginId> back_edge_site_origins_;
-
-  // Wait-site ID counter. Incremented by NextWaitSiteId().
-  uint32_t next_wait_site_id_ = 0;
 
   // Lazy-initialized runtime function for cover hit recording.
   llvm::Function* lyra_record_immediate_cover_hit_ = nullptr;

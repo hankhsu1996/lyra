@@ -12,6 +12,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/ext_ref_binding.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/dpi_abi.hpp"
 #include "lyra/llvm_backend/layout/layout.hpp"
@@ -180,6 +181,8 @@ struct CompiledModuleSpecInput {
   // runtime indices.
   uint32_t deferred_site_base_index = 0;
   uint32_t cover_site_base_index = 0;
+  uint32_t wait_site_base_index = 0;
+  uint32_t back_edge_site_base_index = 0;
   // Module-scoped DPI export targets for this body, precomputed by planning.
   // Each entry carries the design-global wrapper index and the body-local
   // function to resolve. Empty when no module-scoped DPI exports target
@@ -219,6 +222,9 @@ struct CompiledModuleSpec {
   // Captured inside the session while declared functions and MIR ABI
   // contracts are in scope. Spliced positionally by merge.
   std::vector<ResolvedModuleExportEntry> module_export_entries;
+  // Per-body back-edge site origins, accumulated during CU codegen.
+  // Spliced positionally into the design-global back-edge origin array.
+  std::vector<common::OriginId> back_edge_origins;
 };
 
 // Pure-data construction program: pooled paths, pooled param payloads, and
@@ -277,6 +283,9 @@ struct CodegenSession {
   // Produced by CompileDeferredAssertionArtifacts, consumed by metadata
   // emission. Single-pipeline compilation product.
   std::vector<DeferredSiteCompiledArtifact> deferred_site_artifacts;
+  // Design-global back-edge site origins for metadata emission.
+  // Concatenated from spec products + standalone products.
+  std::vector<common::OriginId> back_edge_origins;
 };
 
 // Backend phase: compile all design processes into LLVM IR.

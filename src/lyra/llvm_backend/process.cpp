@@ -539,12 +539,15 @@ auto HasBackEdge(const mir::Terminator& term, size_t current_block_idx)
 // back-edge.
 void EmitBackEdgeGuard(
     Context& context, common::OriginId origin, llvm::Function* func,
-    llvm::Value* out_ptr, llvm::Value* limit_ptr) {
+    llvm::Value* out_ptr, llvm::Value* limit_ptr, uint32_t back_edge_site_base,
+    std::vector<common::OriginId>& back_edge_origins) {
   auto& builder = context.GetBuilder();
   auto& llvm_ctx = context.GetLlvmContext();
   auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
-  uint32_t site_id = context.RegisterBackEdgeSite(origin);
+  uint32_t site_id =
+      back_edge_site_base + static_cast<uint32_t>(back_edge_origins.size());
+  back_edge_origins.push_back(origin);
 
   auto* limit = builder.CreateLoad(i32_ty, limit_ptr, "limit");
   auto* new_limit =
@@ -1501,7 +1504,8 @@ auto TriggersMatchForDedup(
 
 auto LowerWait(
     Context& context, const mir::Wait& wait, llvm::BasicBlock* exit_block,
-    std::vector<WaitSiteEntry>& wait_sites) -> Result<void> {
+    uint32_t wait_site_base, std::vector<WaitSiteEntry>& wait_sites)
+    -> Result<void> {
   static_assert(sizeof(runtime::WaitTriggerRecord) == 28);
 
   auto& builder = context.GetBuilder();
@@ -1565,6 +1569,25 @@ auto LowerWait(
   auto* trigger_type = llvm::StructType::get(
       llvm_ctx, {i32_ty, i8_ty, i8_ty, i8_ty, i8_ty, i32_ty, i32_ty, i32_ty,
                  i32_ty, i32_ty});
+
+  // Emit late-bound data (headers + plan ops pool + dep slots pool).
+  auto lb_data = EmitLateBoundData(context, wait.triggers);
+
+  // Allocate wait-site ID and record entry for the caller.
+  bool has_late_bound = (lb_data.num_headers > 0);
+  bool has_container = std::ranges::any_of(wait.triggers, [](const auto& t) {
+    return t.late_bound && t.late_bound->is_container;
+  });
+  uint32_t wait_site_id =
+      wait_site_base + static_cast<uint32_t>(wait_sites.size());
+  wait_sites.push_back(
+      WaitSiteEntry{
+          .resume_block = wait.resume.value,
+          .num_triggers = num_triggers,
+          .has_late_bound = has_late_bound,
+          .has_container = has_container});
+  auto* wait_site_id_val = llvm::ConstantInt::get(i32_ty, wait_site_id);
+
 
   // Compile-time branching: different codegen for small vs large trigger counts
   if (num_triggers <= runtime::kInlineTriggerCapacity) {
@@ -1651,8 +1674,8 @@ void LowerRepeat(Context& context, llvm::BasicBlock* exit_block) {
 auto LowerTerminator(
     Context& context, SlotAccessResolver& resolver, const mir::Terminator& term,
     const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block,
-    PhiWiringState& phi_state, std::vector<WaitSiteEntry>& wait_sites)
-    -> Result<void> {
+    PhiWiringState& phi_state, uint32_t wait_site_base,
+    std::vector<WaitSiteEntry>& wait_sites) -> Result<void> {
   // Set origin for error reporting.
   // OriginScope preserves outer (function/process) origin if term.origin is
   // Invalid.
@@ -1678,7 +1701,8 @@ auto LowerTerminator(
             return {};
           },
           [&](const mir::Wait& w) -> Result<void> {
-            return LowerWait(context, w, exit_block, wait_sites);
+            return LowerWait(
+                context, w, exit_block, wait_site_base, wait_sites);
           },
           [&](const mir::Repeat&) -> Result<void> {
             LowerRepeat(context, exit_block);
@@ -1706,11 +1730,12 @@ auto LowerTerminator(
 auto LowerTerminator(
     Context& context, const mir::Terminator& term,
     const std::vector<llvm::BasicBlock*>& blocks, llvm::BasicBlock* exit_block,
-    PhiWiringState& phi_state, std::vector<WaitSiteEntry>& wait_sites)
-    -> Result<void> {
+    PhiWiringState& phi_state, uint32_t wait_site_base,
+    std::vector<WaitSiteEntry>& wait_sites) -> Result<void> {
   CanonicalSlotAccess canonical(context);
   return LowerTerminator(
-      context, canonical, term, blocks, exit_block, phi_state, wait_sites);
+      context, canonical, term, blocks, exit_block, phi_state, wait_site_base,
+      wait_sites);
 }
 
 }  // namespace
@@ -1747,6 +1772,7 @@ auto GenerateProcessFunction(
   // If process.origin is Invalid, this is a no-op.
   OriginScope proc_scope(context, process.origin);
   std::vector<WaitSiteEntry> wait_sites;
+  std::vector<common::OriginId> back_edge_origins;
 
   const bool is_simulation =
       execution_kind == ProcessExecutionKind::kSimulation;
@@ -1935,12 +1961,13 @@ auto GenerateProcessFunction(
         !std::ranges::binary_search(
             bounded_latches, static_cast<uint32_t>(i))) {
       EmitBackEdgeGuard(
-          context, block.terminator.origin, func, out_arg, limit_ptr);
+          context, block.terminator.origin, func, out_arg, limit_ptr,
+          site_ctx.back_edge_site_base, back_edge_origins);
     }
 
     auto term_result = LowerTerminator(
         context, block.terminator, llvm_blocks, exit_block, phi_state,
-        wait_sites);
+        site_ctx.wait_site_base, wait_sites);
     if (!term_result) return std::unexpected(term_result.error());
   }
 
@@ -1963,7 +1990,8 @@ auto GenerateProcessFunction(
   return ProcessCodegenResult{
       .function = func,
       .wait_sites = std::move(wait_sites),
-      .process_trigger = ExtractProcessTriggerEntry(process)};
+      .back_edge_origins = std::move(back_edge_origins),
+      .process_trigger = ExtractProcessTriggerEntry(context, process)};
 }
 
 auto GenerateSharedProcessFunction(
@@ -1971,6 +1999,7 @@ auto GenerateSharedProcessFunction(
     const BodySiteContext& site_ctx) -> Result<ProcessCodegenResult> {
   OriginScope proc_scope(context, process.origin);
   std::vector<WaitSiteEntry> wait_sites;
+  std::vector<common::OriginId> back_edge_origins;
 
   // Shared module processes are simulation-only by architecture.
   ExecutionContractScope contract_scope(
@@ -2135,12 +2164,13 @@ auto GenerateSharedProcessFunction(
             bounded_latches, static_cast<uint32_t>(i))) {
       auto* outcome_ptr = context.EmitOutcomePtr(func->getArg(0));
       EmitBackEdgeGuard(
-          context, block.terminator.origin, func, outcome_ptr, limit_ptr);
+          context, block.terminator.origin, func, outcome_ptr, limit_ptr,
+          site_ctx.back_edge_site_base, back_edge_origins);
     }
 
     auto term_result = LowerTerminator(
         context, resolver, block.terminator, llvm_blocks, exit_block, phi_state,
-        wait_sites);
+        site_ctx.wait_site_base, wait_sites);
     if (!term_result) return std::unexpected(term_result.error());
   }
 
@@ -2163,7 +2193,8 @@ auto GenerateSharedProcessFunction(
   return ProcessCodegenResult{
       .function = func,
       .wait_sites = std::move(wait_sites),
-      .process_trigger = ExtractProcessTriggerEntry(process)};
+      .back_edge_origins = std::move(back_edge_origins),
+      .process_trigger = ExtractProcessTriggerEntry(context, process)};
 }
 
 auto DeclareMirFunction(

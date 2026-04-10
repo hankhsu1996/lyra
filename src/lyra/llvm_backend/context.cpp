@@ -962,10 +962,4 @@ auto Context::FunctionUsesSret(mir::FunctionId func_id) const -> bool {
   return func.signature.return_policy == mir::ReturnPolicy::kSretOutParam;
 }
 
-auto Context::RegisterBackEdgeSite(common::OriginId origin) -> uint32_t {
-  auto id = static_cast<uint32_t>(back_edge_site_origins_.size());
-  back_edge_site_origins_.push_back(origin);
-  return id;
-}
-
 }  // namespace lyra::lowering::mir_to_llvm

@@ -11,6 +11,7 @@
 
 #include "lyra/common/diagnostic/diagnostic.hpp"
 #include "lyra/common/edge_kind.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/llvm_backend/context.hpp"
 #include "lyra/llvm_backend/deferred_thunk_abi.hpp"
 #include "lyra/llvm_backend/execution_mode.hpp"
@@ -34,7 +35,7 @@ enum class ProcessExecutionKind {
 };
 
 // Per-wait-site entry produced during process codegen.
-// Index = wait_site_id (assigned sequentially via Context::NextWaitSiteId).
+// Index = wait_site_base + local ordinal within the process.
 struct WaitSiteEntry {
   uint32_t resume_block = 0;
   uint32_t num_triggers = 0;
@@ -79,6 +80,10 @@ struct ProcessTriggerEntry {
 struct ProcessCodegenResult {
   llvm::Function* function;
   std::vector<WaitSiteEntry> wait_sites;
+  // Per-process back-edge site origins, accumulated during codegen.
+  // Positional: element [i] corresponds to the (base + i)-th design-global
+  // back-edge site.
+  std::vector<common::OriginId> back_edge_origins;
   // Canonical process-trigger metadata for G13.
   // Present when the process has at least one Wait terminator.
   std::optional<ProcessTriggerEntry> process_trigger;

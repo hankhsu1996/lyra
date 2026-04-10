@@ -21,6 +21,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include "lyra/common/internal_error.hpp"
+#include "lyra/common/origin_id.hpp"
 #include "lyra/llvm_backend/behavioral_trigger_contracts.hpp"
 #include "lyra/llvm_backend/codegen_session.hpp"
 #include "lyra/llvm_backend/connection_lowering.hpp"
@@ -52,12 +53,14 @@ struct ConnectionTriggerWriteback {
 struct StandaloneProcessProducts {
   std::vector<llvm::Function*> process_funcs;
   std::vector<WaitSiteEntry> wait_sites;
+  std::vector<common::OriginId> back_edge_origins;
   std::vector<ConnectionTriggerWriteback> connection_trigger_writebacks;
 };
 
 auto CompileStandaloneProcesses(
     Context& context, const LoweringInput& input,
-    std::span<const LayoutModulePlan> module_plans, const Layout& layout)
+    std::span<const LayoutModulePlan> module_plans, const Layout& layout,
+    uint32_t wait_site_base, uint32_t back_edge_site_base)
     -> Result<StandaloneProcessProducts> {
   StandaloneProcessProducts products;
   products.process_funcs.reserve(layout.scheduled_processes.size());
@@ -78,16 +81,27 @@ auto CompileStandaloneProcesses(
       Context::ArenaScope arena_scope(context, input.mir_arena);
       auto execution_kind = (i < num_init) ? ProcessExecutionKind::kInit
                                            : ProcessExecutionKind::kSimulation;
-      BodySiteContext no_sites;
+      BodySiteContext standalone_sites{
+          .wait_site_base = wait_site_base +
+                            static_cast<uint32_t>(products.wait_sites.size()),
+          .back_edge_site_base =
+              back_edge_site_base +
+              static_cast<uint32_t>(products.back_edge_origins.size()),
+          .deferred_sites = {},
+      };
       auto func_result = GenerateProcessFunction(
           context, mir_process, std::format("process_{}", i), execution_kind,
-          no_sites);
+          standalone_sites);
       if (!func_result) return std::unexpected(func_result.error());
       products.process_funcs.push_back(func_result->function);
       products.wait_sites.insert(
           products.wait_sites.end(),
           std::make_move_iterator(func_result->wait_sites.begin()),
           std::make_move_iterator(func_result->wait_sites.end()));
+      products.back_edge_origins.insert(
+          products.back_edge_origins.end(),
+          std::make_move_iterator(func_result->back_edge_origins.begin()),
+          std::make_move_iterator(func_result->back_edge_origins.end()));
 
       // Collect connection trigger facts as writebacks.
       if (i >= num_init && i < layout.num_module_process_base) {
@@ -279,7 +293,9 @@ auto CompileDesignProcesses(const LoweringInput& input)
   }
 
   auto standalone_result = CompileStandaloneProcesses(
-      *context, input, topology.module_plans, *layout);
+      *context, input, topology.module_plans, *layout,
+      static_cast<uint32_t>(specs.wait_sites.size()),
+      static_cast<uint32_t>(specs.back_edge_origins.size()));
   if (!standalone_result) return std::unexpected(standalone_result.error());
   auto standalone = std::move(*standalone_result);
   ApplyConnectionTriggerWritebacks(
@@ -296,7 +312,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
   RealizationData realization;
   ApplyRuntimeDataToLayout(std::move(runtime_products), *layout, realization);
 
-  // Assemble session.
+  // Assemble session: merge spec + standalone wait-sites and back-edge origins.
   auto num_init = layout->num_init_processes;
   std::vector<WaitSiteEntry> all_wait_sites;
   all_wait_sites.insert(
@@ -307,6 +323,16 @@ auto CompileDesignProcesses(const LoweringInput& input)
       std::make_move_iterator(standalone.wait_sites.begin()),
       std::make_move_iterator(standalone.wait_sites.end()));
 
+  std::vector<common::OriginId> all_back_edge_origins;
+  all_back_edge_origins.insert(
+      all_back_edge_origins.end(),
+      std::make_move_iterator(specs.back_edge_origins.begin()),
+      std::make_move_iterator(specs.back_edge_origins.end()));
+  all_back_edge_origins.insert(
+      all_back_edge_origins.end(),
+      std::make_move_iterator(standalone.back_edge_origins.begin()),
+      std::make_move_iterator(standalone.back_edge_origins.end()));
+
   return CodegenSession{
       .layout = std::move(layout),
       .context = std::move(context),
@@ -316,6 +342,7 @@ auto CompileDesignProcesses(const LoweringInput& input)
       .num_init_processes = num_init,
       .body_compiled_funcs = std::move(packaging.body_funcs),
       .deferred_site_artifacts = std::move(specs.deferred_site_artifacts),
+      .back_edge_origins = std::move(all_back_edge_origins),
   };
 }
 

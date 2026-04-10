@@ -33,6 +33,8 @@ struct SpecializationProducts {
   // per-body products. Positional: element [i] corresponds to
   // design.deferred_assertion_sites[i].
   std::vector<DeferredSiteCompiledArtifact> deferred_site_artifacts;
+  // Design-global back-edge site origins, concatenated from per-body products.
+  std::vector<common::OriginId> back_edge_origins;
 };
 
 // Declare and define all design-global functions (packages + generated).

@@ -89,6 +89,8 @@ auto CompileModuleSpecSession(
   BodySiteContext site_ctx{
       .deferred_site_base = input.deferred_site_base_index,
       .cover_site_base = input.cover_site_base_index,
+      .wait_site_base = input.wait_site_base_index,
+      .back_edge_site_base = input.back_edge_site_base_index,
       .deferred_sites = input.deferred_sites,
   };
 
@@ -123,15 +125,26 @@ auto CompileModuleSpecSession(
       .deferred_site_base_index = input.deferred_site_base_index,
       .deferred_artifacts = {},
       .module_export_entries = {},
+      .back_edge_origins = {},
   };
 
   for (size_t pi = 0; pi < input.view.processes.size(); ++pi) {
     const auto& proc_view = input.view.processes[pi];
     context.SetCurrentProcess(input.layout_contract->process_layouts[pi]);
 
+    // Advance per-process bases: each process within the body gets bases
+    // offset by the cumulative count from prior processes.
+    BodySiteContext proc_site_ctx = site_ctx;
+    proc_site_ctx.wait_site_base =
+        input.wait_site_base_index +
+        static_cast<uint32_t>(product.wait_sites.size());
+    proc_site_ctx.back_edge_site_base =
+        input.back_edge_site_base_index +
+        static_cast<uint32_t>(product.back_edge_origins.size());
+
     const auto& mir_process = body.arena[proc_view.process_id];
     auto func_result = GenerateSharedProcessFunction(
-        context, mir_process, proc_view.func_name, site_ctx);
+        context, mir_process, proc_view.func_name, proc_site_ctx);
     if (!func_result) return std::unexpected(func_result.error());
 
     product.process_functions.push_back(func_result->function);
@@ -141,6 +154,10 @@ auto CompileModuleSpecSession(
         product.wait_sites.end(),
         std::make_move_iterator(func_result->wait_sites.begin()),
         std::make_move_iterator(func_result->wait_sites.end()));
+    product.back_edge_origins.insert(
+        product.back_edge_origins.end(),
+        std::make_move_iterator(func_result->back_edge_origins.begin()),
+        std::make_move_iterator(func_result->back_edge_origins.end()));
   }
 
   // Step 4: Compile deferred assertion thunks while session state is valid.
@@ -230,9 +247,24 @@ auto CompileSpecializations(
     products.module_export_callees.resize(input.dpi_export_wrappers->size());
   }
 
+  uint32_t running_wait_base = 0;
+  uint32_t running_back_edge_base = 0;
+
   for (const auto& spec_input : spec_plan.inputs) {
-    auto product = CompileModuleSpecSession(context, spec_input);
+    // Set incremental bases for wait-site and back-edge numbering.
+    // These cannot be pre-computed during planning because counts depend
+    // on codegen decisions (bounded latch elimination, etc.).
+    auto input_with_bases = spec_input;
+    input_with_bases.wait_site_base_index = running_wait_base;
+    input_with_bases.back_edge_site_base_index = running_back_edge_base;
+
+    auto product =
+        CompileModuleSpecSession(context, input_with_bases, input.construction);
     if (!product) return std::unexpected(product.error());
+
+    running_wait_base += static_cast<uint32_t>(product->wait_sites.size());
+    running_back_edge_base +=
+        static_cast<uint32_t>(product->back_edge_origins.size());
 
     // Splice per-body module export callees into positional array.
     for (const auto& entry : product->module_export_entries) {
@@ -259,6 +291,10 @@ auto CompileSpecializations(
         products.wait_sites.end(),
         std::make_move_iterator(product->wait_sites.begin()),
         std::make_move_iterator(product->wait_sites.end()));
+    products.back_edge_origins.insert(
+        products.back_edge_origins.end(),
+        std::make_move_iterator(product->back_edge_origins.begin()),
+        std::make_move_iterator(product->back_edge_origins.end()));
   }
 
   return products;
