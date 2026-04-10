@@ -337,12 +337,30 @@ auto BuildSpecPlan(
     }
   }
 
+  // Build per-body CU-local layout contracts from the design-global Layout.
+  std::vector<SpecLayoutContract> layout_contracts;
+  layout_contracts.reserve(inputs.size());
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    const auto& bri = layout.body_realization_infos.at(
+        slot_infos[i].body_realization_info_index);
+    SpecLayoutContract contract;
+    contract.process_layouts.reserve(inputs[i].view.processes.size());
+    for (const auto& pv : inputs[i].view.processes) {
+      contract.process_layouts.push_back(
+          &layout.processes.at(pv.layout_process_index));
+    }
+    contract.slot_specs = bri.slot_specs;
+    contract.slot_has_behavioral_trigger = bri.slot_has_behavioral_trigger;
+    layout_contracts.push_back(std::move(contract));
+  }
+
   SpecPlan plan{
       .units = std::move(units),
       .slot_infos = std::move(slot_infos),
       .inputs = std::move(inputs),
       .connection_notification_masks = std::move(masks),
       .module_export_targets = std::move(export_targets),
+      .layout_contracts = std::move(layout_contracts),
   };
 
   // Wire up per-input pointers/spans. Safe through moves because vector move
@@ -352,6 +370,7 @@ auto BuildSpecPlan(
     plan.inputs[i].connection_notification_mask =
         &plan.connection_notification_masks[i];
     plan.inputs[i].module_export_targets = plan.module_export_targets[i];
+    plan.inputs[i].layout_contract = &plan.layout_contracts[i];
   }
 
   return plan;

@@ -26,6 +26,9 @@ struct SpecPlan {
   // Per-body module export targets. Parallel to inputs.
   // Inputs carry spans into this storage.
   std::vector<std::vector<ModuleExportTarget>> module_export_targets;
+  // Per-body CU-local layout contracts. Parallel to inputs.
+  // Inputs carry pointers into this storage.
+  std::vector<SpecLayoutContract> layout_contracts;
 };
 
 // Build the complete specialization plan from design topology and layout.

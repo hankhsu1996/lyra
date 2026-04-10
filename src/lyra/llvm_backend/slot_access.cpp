@@ -198,8 +198,7 @@ void ActivationLocalSlotAccess::SyncAndReloadSpecific(
 
 auto CreateManagedSlotStorage(const ProcessActivationPlan& plan, Context& ctx)
     -> std::vector<ManagedSlotStorage> {
-  const auto& proc_layout =
-      ctx.GetLayout().processes[ctx.GetCurrentProcessIndex()];
+  const auto& proc_layout = ctx.GetCurrentProcessLayout();
   const auto& frame = proc_layout.frame;
   auto& builder = ctx.GetBuilder();
   auto* frame_type = frame.llvm_type;

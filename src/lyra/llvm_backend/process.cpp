@@ -756,10 +756,11 @@ auto ResolveObservationRange(Context& context, const mir::WaitTrigger& trigger)
   };
   const SlotStorageSpec* slot_spec_ptr = nullptr;
   if (place.root.kind == mir::PlaceRoot::Kind::kModuleSlot &&
-      context.GetSpecSlotInfo() != nullptr) {
+      context.GetSpecSlotInfo() != nullptr &&
+      context.GetSpecLayoutContract() != nullptr) {
     auto local_slot = static_cast<uint32_t>(place.root.id);
     slot_spec_ptr = &context.GetSpecSlotInfo()->GetSlotSpec(
-        local_slot, context.GetLayout());
+        local_slot, *context.GetSpecLayoutContract());
   } else {
     auto slot_id = common::SlotId{static_cast<uint32_t>(place.root.id)};
     slot_spec_ptr = &context.GetDesignSlotStorageSpec(slot_id);
@@ -1830,8 +1831,7 @@ auto GenerateProcessFunction(
   ActiveExecutionMode exec_mode{
       .decision_owner_id = context.GetCurrentDecisionOwnerId()};
 
-  const auto& proc_layout =
-      context.GetLayout().processes[context.GetCurrentProcessIndex()];
+  const auto& proc_layout = context.GetCurrentProcessLayout();
   auto alloca_result = MaterializeAllocaStorage(context, *func, proc_layout);
   if (!alloca_result) return std::unexpected(alloca_result.error());
 
@@ -1990,8 +1990,7 @@ auto GenerateSharedProcessFunction(
   // persistent process frame (not stack allocas that die on suspend).
   // Present only for processes with suspension; suspension-free processes
   // skip activation-local lowering entirely.
-  const auto& shared_proc_layout_for_plan =
-      context.GetLayout().processes[context.GetCurrentProcessIndex()];
+  const auto& shared_proc_layout_for_plan = context.GetCurrentProcessLayout();
 
   auto& llvm_ctx = context.GetLlvmContext();
   auto& module = context.GetModule();
@@ -2026,8 +2025,7 @@ auto GenerateSharedProcessFunction(
   ActiveExecutionMode exec_mode{
       .decision_owner_id = context.GetCurrentDecisionOwnerId()};
 
-  const auto& shared_proc_layout =
-      context.GetLayout().processes[context.GetCurrentProcessIndex()];
+  const auto& shared_proc_layout = context.GetCurrentProcessLayout();
   auto shared_alloca_result =
       MaterializeAllocaStorage(context, *func, shared_proc_layout);
   if (!shared_alloca_result) {

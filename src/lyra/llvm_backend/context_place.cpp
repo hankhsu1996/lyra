@@ -220,9 +220,10 @@ auto Context::GetWriteTarget(mir::PlaceId place_id) -> Result<WriteTarget> {
     };
     const SlotStorageSpec* slot_spec_ptr = nullptr;
     if (resolved.root.kind == mir::PlaceRoot::Kind::kModuleSlot &&
-        GetSpecSlotInfo() != nullptr) {
+        GetSpecSlotInfo() != nullptr && GetSpecLayoutContract() != nullptr) {
       auto local_slot = static_cast<uint32_t>(resolved.root.id);
-      slot_spec_ptr = &GetSpecSlotInfo()->GetSlotSpec(local_slot, GetLayout());
+      slot_spec_ptr =
+          &GetSpecSlotInfo()->GetSlotSpec(local_slot, *GetSpecLayoutContract());
     } else {
       auto slot_id = common::SlotId{static_cast<uint32_t>(resolved.root.id)};
       slot_spec_ptr = &GetDesignSlotStorageSpec(slot_id);
@@ -882,17 +883,35 @@ auto Context::GetCurrentBodyRealizationInfo() const
 auto Context::RequiresBehavioralDirtyPropagation(
     const mir::SignalRef& sig) const -> bool {
   if (sig.scope == mir::SignalRef::Scope::kModuleLocal) {
-    const auto& body_info = GetCurrentBodyRealizationInfo();
     auto local_slot = static_cast<uint32_t>(sig.id);
-    if (local_slot >= body_info.slot_has_behavioral_trigger.size()) {
-      throw common::InternalError(
-          "Context::RequiresBehavioralDirtyPropagation",
-          std::format(
-              "module-local slot {} out of range "
-              "(behavioral trigger bitmap size={})",
-              local_slot, body_info.slot_has_behavioral_trigger.size()));
+    // Read body-local behavioral trigger from CU layout contract when
+    // available, falling back to BodyRealizationInfo for legacy paths.
+    bool behavioral = false;
+    if (spec_layout_contract_ != nullptr) {
+      if (local_slot >=
+          spec_layout_contract_->slot_has_behavioral_trigger.size()) {
+        throw common::InternalError(
+            "Context::RequiresBehavioralDirtyPropagation",
+            std::format(
+                "module-local slot {} out of range "
+                "(contract behavioral trigger bitmap size={})",
+                local_slot,
+                spec_layout_contract_->slot_has_behavioral_trigger.size()));
+      }
+      behavioral =
+          spec_layout_contract_->slot_has_behavioral_trigger[local_slot];
+    } else {
+      const auto& body_info = GetCurrentBodyRealizationInfo();
+      if (local_slot >= body_info.slot_has_behavioral_trigger.size()) {
+        throw common::InternalError(
+            "Context::RequiresBehavioralDirtyPropagation",
+            std::format(
+                "module-local slot {} out of range "
+                "(behavioral trigger bitmap size={})",
+                local_slot, body_info.slot_has_behavioral_trigger.size()));
+      }
+      behavioral = body_info.slot_has_behavioral_trigger[local_slot];
     }
-    bool behavioral = body_info.slot_has_behavioral_trigger[local_slot];
     if (behavioral) return true;
 
     // Check design-global behavioral triggers for package/init signals.

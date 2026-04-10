@@ -62,6 +62,22 @@ struct SpecCodegenView {
   std::vector<SpecProcessView> processes;
 };
 
+// CU-local layout contract: the subset of Layout data that one
+// specialization body needs for compilation. Extracted from the
+// design-global Layout during spec planning so CU compilation
+// does not index into design-global layout arrays.
+struct SpecLayoutContract {
+  // Per-process ProcessLayout pointers, parallel to SpecCodegenView.processes.
+  // Points into the design-global Layout::processes array (stable lifetime).
+  std::vector<const ProcessLayout*> process_layouts;
+  // Body-local slot storage specs, indexed by body-local slot id.
+  // Copied from BodyRealizationInfo::slot_specs.
+  std::vector<SlotStorageSpec> slot_specs;
+  // Body-local behavioral dirty-propagation contract.
+  // Copied from BodyRealizationInfo::slot_has_behavioral_trigger.
+  std::vector<bool> slot_has_behavioral_trigger;
+};
+
 // Per-specialization slot access classification.
 // After R2, every body-local slot owns storage. Access kind distinguishes
 // inline value slots from owned-container slots.
@@ -88,12 +104,11 @@ struct SpecSlotInfo {
   // Per-slot access classification.
   std::vector<SpecSlotAccessKind> access_kinds;
 
-  // Access body-local slot storage spec through BodyRealizationInfo.
-  // Single source of truth -- no duplication.
-  [[nodiscard]] auto GetSlotSpec(uint32_t local_slot, const Layout& layout)
-      const -> const SlotStorageSpec& {
-    return layout.body_realization_infos.at(body_realization_info_index)
-        .slot_specs.at(local_slot);
+  // Access body-local slot storage spec through the CU layout contract.
+  [[nodiscard]] static auto GetSlotSpec(
+      uint32_t local_slot, const SpecLayoutContract& contract)
+      -> const SlotStorageSpec& {
+    return contract.slot_specs.at(local_slot);
   }
 
   [[nodiscard]] auto SlotCount() const -> uint32_t {
@@ -174,6 +189,11 @@ struct CompiledModuleSpecInput {
   // consumed by CompileModuleSpecSession via SpecLocalScope.
   const SpecSlotInfo* spec_slot_info = nullptr;
   const ConnectionNotificationMask* connection_notification_mask = nullptr;
+  // CU-local layout contract: per-process layouts, body-local slot specs,
+  // and behavioral trigger mask. Built from the design-global Layout during
+  // spec planning. CU compilation reads layout data from this contract
+  // instead of indexing into the design-global Layout.
+  const SpecLayoutContract* layout_contract = nullptr;
 };
 
 // Process codegen product of compiling one specialization body.

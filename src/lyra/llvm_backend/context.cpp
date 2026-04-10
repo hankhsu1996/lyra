@@ -195,11 +195,11 @@ auto Context::GetDesignStorageSpecArena() const -> const StorageSpecArena& {
 }
 
 auto Context::GetProcessFrameType() const -> llvm::StructType* {
-  return layout_.processes[current_process_index_].frame.llvm_type;
+  return GetCurrentProcessLayout().frame.llvm_type;
 }
 
 auto Context::GetProcessStateType() const -> llvm::StructType* {
-  return layout_.processes[current_process_index_].state_type;
+  return GetCurrentProcessLayout().state_type;
 }
 
 void Context::BeginFunction(llvm::Function& func) {
@@ -331,7 +331,7 @@ void Context::InitializePlaceStorage(llvm::AllocaInst* alloca, TypeId type_id) {
 auto Context::GetFrameFieldIndex(mir::PlaceId place_id) const -> uint32_t {
   const auto& place = LookupPlace(place_id);
   PlaceRootKey key{.kind = place.root.kind, .id = place.root.id};
-  const auto& frame = layout_.processes[current_process_index_].frame;
+  const auto& frame = GetCurrentProcessLayout().frame;
   auto it = frame.root_to_field.find(key);
   if (it == frame.root_to_field.end()) {
     throw common::InternalError(
@@ -398,6 +398,15 @@ auto Context::TryGetTempConstantInt(int temp_id) const -> llvm::ConstantInt* {
 
 void Context::SetCurrentProcess(size_t process_index) {
   current_process_index_ = process_index;
+  current_process_layout_ = nullptr;
+  state_ptr_ = nullptr;
+  design_ptr_ = nullptr;
+  frame_ptr_ = nullptr;
+  engine_ptr_ = nullptr;
+}
+
+void Context::SetCurrentProcess(const ProcessLayout* layout) {
+  current_process_layout_ = layout;
   state_ptr_ = nullptr;
   design_ptr_ = nullptr;
   frame_ptr_ = nullptr;
@@ -406,6 +415,13 @@ void Context::SetCurrentProcess(size_t process_index) {
 
 auto Context::GetCurrentProcessIndex() const -> size_t {
   return current_process_index_;
+}
+
+auto Context::GetCurrentProcessLayout() const -> const ProcessLayout& {
+  if (current_process_layout_ != nullptr) {
+    return *current_process_layout_;
+  }
+  return layout_.processes[current_process_index_];
 }
 
 void Context::SetSlotAddressingMode(SlotAddressingMode mode) {

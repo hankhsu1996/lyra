@@ -39,6 +39,7 @@ struct ScopedSlotRef;
 namespace lyra::lowering::mir_to_llvm {
 
 struct SpecSlotInfo;
+struct SpecLayoutContract;
 class Context;
 
 // Forward declaration for friend access
@@ -493,9 +494,18 @@ class Context {
   [[nodiscard]] auto GetFrameFieldIndex(mir::PlaceId place_id) const
       -> uint32_t;
 
-  // Per-process setup (set before generating each process function)
+  // Per-process setup (set before generating each process function).
+  // Design-global index path: used by standalone (init/connection) processes.
   void SetCurrentProcess(size_t process_index);
+  // CU-local path: bind a specific ProcessLayout directly.
+  // Used by specialization compilation to avoid indexing design-global arrays.
+  void SetCurrentProcess(const ProcessLayout* layout);
   [[nodiscard]] auto GetCurrentProcessIndex() const -> size_t;
+  // CU-local process layout access. Returns the ProcessLayout bound by
+  // SetCurrentProcess(const ProcessLayout*). Falls back to
+  // layout_.processes[current_process_index_] if no direct binding is set
+  // (standalone process path).
+  [[nodiscard]] auto GetCurrentProcessLayout() const -> const ProcessLayout&;
 
   // Slot addressing mode -- controls how kModuleSlot roots are lowered.
   // Must be set explicitly per function scope.
@@ -555,6 +565,33 @@ class Context {
    private:
     Context& ctx_;
   };
+
+  // CU-local layout contract scope. Installs the SpecLayoutContract for
+  // one specialization session. CU codegen reads layout data through this
+  // contract instead of indexing design-global Layout arrays.
+  class SpecLayoutScope {
+   public:
+    SpecLayoutScope(Context& ctx, const SpecLayoutContract* contract)
+        : ctx_(ctx), saved_(ctx.spec_layout_contract_) {
+      ctx_.spec_layout_contract_ = contract;
+    }
+    ~SpecLayoutScope() {
+      ctx_.spec_layout_contract_ = saved_;
+    }
+    SpecLayoutScope(const SpecLayoutScope&) = delete;
+    auto operator=(const SpecLayoutScope&) -> SpecLayoutScope& = delete;
+    SpecLayoutScope(SpecLayoutScope&&) = delete;
+    auto operator=(SpecLayoutScope&&) -> SpecLayoutScope& = delete;
+
+   private:
+    Context& ctx_;
+    const SpecLayoutContract* saved_;
+  };
+
+  [[nodiscard]] auto GetSpecLayoutContract() const
+      -> const SpecLayoutContract* {
+    return spec_layout_contract_;
+  }
 
   // External-ref helpers. Recipes are specialization-scoped; actual slot
   // resolution uses per-instance data loaded from RuntimeInstance at runtime.
@@ -1229,8 +1266,14 @@ class Context {
   // Cached union storage info (per union TypeId)
   absl::flat_hash_map<TypeId, CachedUnionInfo> union_storage_cache_;
 
-  // Current process index (set before generating each process)
+  // Current process index (set before generating each process).
+  // Used by standalone (init/connection) path to index layout_.processes.
   size_t current_process_index_ = 0;
+  // CU-local direct process layout binding. When non-null, process layout
+  // accessors use this instead of layout_.processes[current_process_index_].
+  const ProcessLayout* current_process_layout_ = nullptr;
+  // CU-local layout contract. Installed by SpecLayoutScope.
+  const SpecLayoutContract* spec_layout_contract_ = nullptr;
 
   // Cached pointers for current process function
   llvm::Value* state_ptr_ = nullptr;
