@@ -74,10 +74,9 @@ auto DeriveDeferredCallPlan(const mir::DeferredUserCallAction& action)
     -> DeferredDerivedCallPlan;
 
 // Backend-resolved callee metadata for a single deferred user-call action.
-// Captured during body session (when user_functions_ and
-// module_function_lowering_ are valid for the owning body), consumed by
-// post-session thunk compilation. Eliminates post-session ambient lookup
-// of body-local FunctionIds.
+// Captured during body session (when DeclaredFunctionScope is active),
+// consumed by post-session thunk compilation. Eliminates post-session
+// ambient lookup of body-local FunctionIds.
 struct DeferredCalleeBackendInfo {
   llvm::Function* llvm_func = nullptr;
   bool is_module_scoped = false;

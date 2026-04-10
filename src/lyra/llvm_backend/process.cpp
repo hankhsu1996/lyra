@@ -2128,8 +2128,7 @@ auto DeclareMirFunction(
   // add LLVM's sret attribute. The sret attribute is for aggregate types, not
   // pointer handles. Our "sret" is just a regular pointer parameter.
 
-  // Register in context for call resolution
-  context.RegisterUserFunction(func_id, llvm_func);
+  // Registration is handled by the caller's DeclaredFunctionScope.
 
   return llvm_func;
 }
@@ -2771,7 +2770,7 @@ auto EmitMonitorSetupEpilogue(
   }
 
   // Get check program function pointer for registration
-  llvm::Function* check_fn = context.GetUserFunction(info.check_program);
+  llvm::Function* check_fn = context.GetDeclaredFunction(info.check_program);
   if (check_fn == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(),
@@ -2933,9 +2932,8 @@ auto DefineDeferredAssertionThunk(
   }
 
   // Callee backend metadata was captured during body session (when
-  // user_functions_ and module_function_lowering_ were valid for the owning
-  // body). At thunk compilation time the ambient context maps may hold
-  // stale/wrong entries from a different body session.
+  // DeclaredFunctionScope was active). At thunk compilation time no
+  // declared-function scope is active.
   llvm::Function* target_fn = callee_backend.llvm_func;
   bool target_is_module_scoped = callee_backend.is_module_scoped;
 

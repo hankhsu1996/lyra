@@ -67,7 +67,7 @@ auto LowerTimeFormatEffect(Context& context, const mir::TimeFormatEffect& tf)
 auto LowerStrobeEffect(Context& context, const mir::StrobeEffect& strobe)
     -> Result<void> {
   // Get the strobe program function (already declared via DeclareMirFunction)
-  llvm::Function* program_fn = context.GetUserFunction(strobe.program);
+  llvm::Function* program_fn = context.GetDeclaredFunction(strobe.program);
   if (program_fn == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(), "$strobe program function not found",
@@ -96,7 +96,7 @@ auto LowerMonitorEffect(Context& context, const mir::MonitorEffect& monitor)
     -> Result<void> {
   // Get the setup program (already declared via DeclareMirFunction).
   // The setup program handles: initial print, serialization, and registration.
-  llvm::Function* setup_fn = context.GetUserFunction(monitor.setup_program);
+  llvm::Function* setup_fn = context.GetDeclaredFunction(monitor.setup_program);
   if (setup_fn == nullptr) {
     return std::unexpected(context.GetDiagnosticContext().MakeUnsupported(
         context.GetCurrentOrigin(), "$monitor setup program not found",

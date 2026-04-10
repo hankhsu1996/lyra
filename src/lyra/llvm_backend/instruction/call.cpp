@@ -276,7 +276,7 @@ auto LowerCall(
             const auto& arena = context.GetMirArena();
             const auto& func = arena[func_id];
             ResolvedCallee resolved{
-                .llvm_func = context.GetUserFunction(func_id),
+                .llvm_func = context.GetDeclaredFunction(func_id),
                 .signature = &func.signature,
                 .return_type = func.signature.return_type,
                 .uses_sret = context.FunctionUsesSret(func_id),

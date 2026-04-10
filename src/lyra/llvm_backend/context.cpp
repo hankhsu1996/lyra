@@ -846,24 +846,30 @@ void Context::ReleaseOwnedTemps() {
   owned_temps_.clear();
 }
 
-void Context::RegisterUserFunction(
-    mir::FunctionId func_id, llvm::Function* llvm_func) {
-  user_functions_[func_id] = llvm_func;
+Context::DeclaredFunctionScope::DeclaredFunctionScope(
+    Context& ctx,
+    const absl::flat_hash_map<mir::FunctionId, llvm::Function*>& funcs)
+    : ctx_(ctx) {
+  ctx_.declared_functions_ = &funcs;
 }
 
-auto Context::GetUserFunction(mir::FunctionId func_id) const
+Context::DeclaredFunctionScope::~DeclaredFunctionScope() {
+  ctx_.declared_functions_ = nullptr;
+}
+
+auto Context::GetDeclaredFunction(mir::FunctionId func_id) const
     -> llvm::Function* {
-  auto it = user_functions_.find(func_id);
-  if (it == user_functions_.end()) {
+  if (declared_functions_ == nullptr) {
     throw common::InternalError(
-        "GetUserFunction",
-        std::format("user function {} not found", func_id.value));
+        "GetDeclaredFunction", "no declared-function scope active");
+  }
+  auto it = declared_functions_->find(func_id);
+  if (it == declared_functions_->end()) {
+    throw common::InternalError(
+        "GetDeclaredFunction",
+        std::format("function {} not found in current scope", func_id.value));
   }
   return it->second;
-}
-
-auto Context::HasUserFunction(mir::FunctionId func_id) const -> bool {
-  return user_functions_.contains(func_id);
 }
 
 void Context::RegisterDesignFunction(

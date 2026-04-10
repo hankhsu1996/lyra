@@ -948,8 +948,7 @@ auto CompareCombSlotsByFinalObservableOrder(
 
 // Capture deferred-action callee backend metadata for a single body's
 // deferred sites. Returns one entry per body-local site. Called inside
-// CompileModuleSpecSession while user_functions_ / module_function_lowering_
-// are valid for the owning body.
+// CompileModuleSpecSession while DeclaredFunctionScope is active.
 auto CaptureDeferredCalleeInfoForBody(
     Context& context,
     std::span<const mir::DeferredAssertionSiteInfo> body_sites)
@@ -959,7 +958,7 @@ auto CaptureDeferredCalleeInfoForBody(
       -> std::optional<DeferredCalleeBackendInfo> {
     if (action == nullptr) return std::nullopt;
     return DeferredCalleeBackendInfo{
-        .llvm_func = context.GetUserFunction(action->callee),
+        .llvm_func = context.GetDeclaredFunction(action->callee),
         .is_module_scoped = context.GetMirArena()[action->callee]
                                 .abi_contract.needs_module_binding,
     };
@@ -1022,8 +1021,9 @@ auto CompileModuleSpecSession(
     RegisterMonitorInfo(context, body.arena, proc_id);
   }
 
-  // Step 2: Declare all body functions
+  // Step 2: Declare all body functions and build session-local lookup.
   std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_funcs;
+  absl::flat_hash_map<mir::FunctionId, llvm::Function*> declared_func_map;
   std::unordered_set<uint32_t> seen_func_ids;
   for (mir::FunctionId func_id : input.functions) {
     if (!seen_func_ids.insert(func_id.value).second) continue;
@@ -1032,9 +1032,13 @@ auto CompileModuleSpecSession(
         std::format("{}_func_{}", input.name_prefix, func_id.value));
     if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
     declared_funcs.emplace_back(func_id, *llvm_func_or_err);
+    declared_func_map[func_id] = *llvm_func_or_err;
   }
 
-  // Step 4: Define all body functions
+  // Install session-scoped function lookup for define + process codegen.
+  Context::DeclaredFunctionScope func_scope(context, declared_func_map);
+
+  // Step 3: Define all body functions
   for (const auto& [func_id, llvm_func] : declared_funcs) {
     auto result = DefineMirFunction(context, func_id, llvm_func, site_ctx);
     if (!result) return std::unexpected(result.error());
@@ -1576,25 +1580,28 @@ auto CompileDesignProcesses(const LoweringInput& input)
     }
   }
 
-  std::vector<std::pair<mir::FunctionId, llvm::Function*>> declared_funcs;
-  declared_funcs.reserve(global_func_ids.size());
+  absl::flat_hash_map<mir::FunctionId, llvm::Function*> global_func_map;
+  global_func_map.reserve(global_func_ids.size());
   for (mir::FunctionId func_id : global_func_ids) {
     auto llvm_func_or_err = DeclareMirFunction(
         *context, func_id, std::format("global_func_{}", func_id.value));
     if (!llvm_func_or_err) return std::unexpected(llvm_func_or_err.error());
-    declared_funcs.emplace_back(func_id, *llvm_func_or_err);
+    global_func_map[func_id] = *llvm_func_or_err;
   }
 
-  for (const auto& [func_id, llvm_func] : declared_funcs) {
-    BodySiteContext no_sites;
-    auto result = DefineMirFunction(*context, func_id, llvm_func, no_sites);
-    if (!result) return std::unexpected(result.error());
+  {
+    Context::DeclaredFunctionScope func_scope(*context, global_func_map);
+    for (const auto& [func_id, llvm_func] : global_func_map) {
+      BodySiteContext no_sites;
+      auto result = DefineMirFunction(*context, func_id, llvm_func, no_sites);
+      if (!result) return std::unexpected(result.error());
 
-    // Register by canonical symbol for DesignFunctionRef resolution
-    const auto& func = (*input.mir_arena)[func_id];
-    if (func.canonical_symbol) {
-      context->RegisterDesignFunction(
-          func.canonical_symbol, func_id, llvm_func);
+      // Register by canonical symbol for DesignFunctionRef resolution
+      const auto& func = (*input.mir_arena)[func_id];
+      if (func.canonical_symbol) {
+        context->RegisterDesignFunction(
+            func.canonical_symbol, func_id, llvm_func);
+      }
     }
   }
 

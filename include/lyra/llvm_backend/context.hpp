@@ -927,11 +927,29 @@ class Context {
   // Release all registered owned temps (called by StatementScope destructor)
   void ReleaseOwnedTemps();
 
-  // User function registry for function calls
-  void RegisterUserFunction(mir::FunctionId func_id, llvm::Function* llvm_func);
-  [[nodiscard]] auto GetUserFunction(mir::FunctionId func_id) const
+  // Session-scoped declared-function lookup. Installed by
+  // DeclaredFunctionScope for the duration of a declare/define pass
+  // (Phase 3 or per-body session). Not persistent across sessions.
+  [[nodiscard]] auto GetDeclaredFunction(mir::FunctionId func_id) const
       -> llvm::Function*;
-  [[nodiscard]] auto HasUserFunction(mir::FunctionId func_id) const -> bool;
+
+  // RAII guard for declared-function lookup scope.
+  // The caller owns the map; this scope installs a non-owning pointer.
+  class DeclaredFunctionScope {
+   public:
+    DeclaredFunctionScope(
+        Context& ctx,
+        const absl::flat_hash_map<mir::FunctionId, llvm::Function*>& funcs);
+    ~DeclaredFunctionScope();
+    DeclaredFunctionScope(const DeclaredFunctionScope&) = delete;
+    auto operator=(const DeclaredFunctionScope&)
+        -> DeclaredFunctionScope& = delete;
+    DeclaredFunctionScope(DeclaredFunctionScope&&) = delete;
+    auto operator=(DeclaredFunctionScope&&) -> DeclaredFunctionScope& = delete;
+
+   private:
+    Context& ctx_;
+  };
 
   // Design-global function registry (keyed by SymbolId).
   // Used for DesignFunctionRef resolution in body MIR.
@@ -1249,8 +1267,10 @@ class Context {
   // Owned string temps that need release at end of current statement
   std::vector<llvm::Value*> owned_temps_;
 
-  // User function registry: FunctionId -> llvm::Function*
-  absl::flat_hash_map<mir::FunctionId, llvm::Function*> user_functions_;
+  // Session-scoped declared-function lookup (non-owning pointer).
+  // Installed by DeclaredFunctionScope; null between sessions.
+  const absl::flat_hash_map<mir::FunctionId, llvm::Function*>*
+      declared_functions_ = nullptr;
 
   // Design-global function registry: SymbolId -> llvm::Function*
   // For DesignFunctionRef resolution in body MIR.

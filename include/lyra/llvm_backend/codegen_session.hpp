@@ -168,7 +168,7 @@ struct CompiledModuleSpec {
   // Design-global base index (forwarded from input).
   uint32_t deferred_site_base_index = 0;
   // Deferred callee captures: one entry per body-local deferred site.
-  // Captured inside the session while user_functions_ is valid.
+  // Captured inside the session while DeclaredFunctionScope is active.
   std::vector<DeferredSiteCalleeInfo> deferred_callee_info;
   // Body-local declared functions: (FunctionId, llvm::Function*).
   // Captured inside the session for DPI export wrapper resolution.
