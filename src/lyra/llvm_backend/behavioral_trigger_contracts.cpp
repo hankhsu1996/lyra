@@ -19,40 +19,33 @@ namespace lyra::lowering::mir_to_llvm {
 
 namespace {
 
-struct BodyBehavioralTriggerBitmaps {
-  std::unordered_map<uint32_t, std::vector<bool>> by_body_id_value;
-};
+// Build per-body behavioral trigger bitmaps. Positional: parallel to
+// layout.body_realization_infos. Each bitmap marks body-local slots
+// that appear as behavioral wait triggers in non-final processes.
+auto BuildBodyBehavioralDirtyTriggerBitmaps(const Layout& layout)
+    -> std::vector<std::vector<bool>> {
+  std::vector<std::vector<bool>> result(layout.body_realization_infos.size());
 
-auto BuildBodyBehavioralDirtyTriggerBitmaps(
-    std::span<const LayoutModulePlan> module_plans,
-    std::span<const std::span<const mir::ProcessId>> module_body_processes,
-    const mir::Design& design) -> BodyBehavioralTriggerBitmaps {
-  BodyBehavioralTriggerBitmaps result;
+  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
+    const auto& info = layout.body_realization_infos[gi];
+    const auto& body = *info.body;
+    std::vector<bool> bitmap(info.slot_count, false);
 
-  for (size_t mi = 0; mi < module_plans.size(); ++mi) {
-    const auto& plan = module_plans[mi];
-    auto body_id_val =
-        static_cast<uint32_t>(plan.body - design.module_bodies.data());
-    if (result.by_body_id_value.contains(body_id_val)) continue;
+    auto mark_local = [&](uint32_t local_slot, const char* source) {
+      if (local_slot >= info.slot_count) {
+        throw common::InternalError(
+            "BuildBodyBehavioralDirtyTriggerBitmaps",
+            std::format(
+                "{} slot {} out of range for body group {} "
+                "(slot_count={})",
+                source, local_slot, gi, info.slot_count));
+      }
+      bitmap[local_slot] = true;
+    };
 
-    std::vector<bool> bitmap(plan.slot_count, false);
-    const auto& body = *plan.body;
-
-    for (const auto& proc_id : module_body_processes[mi]) {
+    for (const auto& proc_id : body.processes) {
       const auto& process = body.arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
-
-      auto mark_local = [&](uint32_t local_slot, const char* source) {
-        if (local_slot >= plan.slot_count) {
-          throw common::InternalError(
-              "BuildBodyBehavioralDirtyTriggerBitmaps",
-              std::format(
-                  "{} slot {} out of range for body {} "
-                  "(slot_count={})",
-                  source, local_slot, body_id_val, plan.slot_count));
-        }
-        bitmap[local_slot] = true;
-      };
 
       for (const auto& block : process.blocks) {
         const auto* wait = std::get_if<mir::Wait>(&block.terminator.data);
@@ -75,7 +68,7 @@ auto BuildBodyBehavioralDirtyTriggerBitmaps(
       }
     }
 
-    result.by_body_id_value[body_id_val] = std::move(bitmap);
+    result[gi] = std::move(bitmap);
   }
 
   return result;
@@ -86,20 +79,18 @@ auto BuildBodyBehavioralDirtyTriggerBitmaps(
 // ext-ref binding to the target body and mark the target local slot in
 // that body's bitmap. This is body-local identity, not design-global.
 void MarkExtRefTriggerTargetsInBodyBitmaps(
+    const Layout& layout,
     std::span<const LayoutModulePlan> module_plans,
-    std::span<const std::span<const mir::ProcessId>> module_body_processes,
     const mir::Design& design, const mir::ConstructionInput& construction,
-    BodyBehavioralTriggerBitmaps& bitmaps) {
-  // Step 1: per body, collect which ext-ref indices appear in triggers.
+    std::vector<std::vector<bool>>& bitmaps) {
+  // Step 1: per body group, collect which ext-ref indices appear in triggers.
   std::unordered_map<uint32_t, std::vector<uint32_t>> trigger_refs_by_body;
-  for (size_t mi = 0; mi < module_plans.size(); ++mi) {
-    const auto& plan = module_plans[mi];
-    auto body_id =
-        static_cast<uint32_t>(plan.body - design.module_bodies.data());
-    if (trigger_refs_by_body.contains(body_id)) continue;
-    const auto& body = *plan.body;
+  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
+    auto body_group_id = static_cast<uint32_t>(gi);
+    if (trigger_refs_by_body.contains(body_group_id)) continue;
+    const auto& body = *layout.body_realization_infos[gi].body;
     std::vector<uint32_t> refs;
-    for (const auto& proc_id : module_body_processes[mi]) {
+    for (const auto& proc_id : body.processes) {
       const auto& process = body.arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
       for (const auto& block : process.blocks) {
@@ -113,7 +104,7 @@ void MarkExtRefTriggerTargetsInBodyBitmaps(
       }
     }
     if (!refs.empty()) {
-      trigger_refs_by_body[body_id] = std::move(refs);
+      trigger_refs_by_body[body_group_id] = std::move(refs);
     }
   }
   if (trigger_refs_by_body.empty()) return;
@@ -136,24 +127,19 @@ void MarkExtRefTriggerTargetsInBodyBitmaps(
       uint32_t target_body = construction.objects[target_oi].body_group;
       uint32_t target_local = binding.target_local_signal.value;
 
-      auto& bitmap = bitmaps.by_body_id_value[target_body];
-      if (bitmap.empty()) {
-        bitmap.assign(construction.objects[target_oi].slot_count, false);
-      }
-      if (target_local < bitmap.size()) {
-        bitmap[target_local] = true;
+      if (target_body < bitmaps.size() &&
+          target_local < bitmaps[target_body].size()) {
+        bitmaps[target_body][target_local] = true;
       }
     }
   }
 }
 
 auto BuildDesignGlobalBehavioralTriggerBitmap(
-    std::span<const LayoutModulePlan> module_plans,
-    std::span<const std::span<const mir::ProcessId>> module_body_processes,
+    const Layout& layout, std::span<const LayoutModulePlan> module_plans,
     const mir::Design& design, const mir::Arena& design_arena,
-    const DesignLayout& design_layout,
-    const BodyBehavioralTriggerBitmaps& body_bitmaps) -> std::vector<bool> {
-  auto num_slots = design_layout.slots.size();
+    const std::vector<std::vector<bool>>& body_bitmaps) -> std::vector<bool> {
+  auto num_slots = layout.design.slots.size();
   std::vector<bool> bitmap(num_slots, false);
 
   auto mark_global_slot = [&](uint32_t slot) {
@@ -189,10 +175,12 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
   }
 
   // Body processes with kDesignGlobal triggers.
-  for (size_t mi = 0; mi < module_plans.size(); ++mi) {
-    const auto& plan = module_plans[mi];
-    const auto& body = *plan.body;
-    for (const auto& proc_id : module_body_processes[mi]) {
+  // Iterate body groups (not instances): body-level scanning is the same
+  // for all instances of the same body.
+  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
+    const auto& info = layout.body_realization_infos[gi];
+    const auto& body = *info.body;
+    for (const auto& proc_id : body.processes) {
       const auto& process = body.arena[proc_id];
       if (process.kind == mir::ProcessKind::kFinal) continue;
       for (const auto& block : process.blocks) {
@@ -210,26 +198,31 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
   }
 
   // Project body-local behavioral triggers onto design-global slots.
+  // This is the only instance-level step: each instance has its own
+  // design_state_base_slot, so we iterate module_plans and route
+  // through body pointer to find the positional body-group bitmap.
+  std::unordered_map<const mir::ModuleBody*, size_t> body_to_group;
+  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
+    body_to_group[layout.body_realization_infos[gi].body] = gi;
+  }
   for (const auto& plan : module_plans) {
-    auto plan_body_id_val =
-        static_cast<uint32_t>(plan.body - design.module_bodies.data());
-    auto it = body_bitmaps.by_body_id_value.find(plan_body_id_val);
-    if (it == body_bitmaps.by_body_id_value.end()) continue;
-    const auto& body_bitmap = it->second;
+    auto it = body_to_group.find(plan.body);
+    if (it == body_to_group.end()) continue;
+    const auto& body_bitmap = body_bitmaps[it->second];
     for (uint32_t local_slot = 0; local_slot < body_bitmap.size();
          ++local_slot) {
       if (!body_bitmap[local_slot]) continue;
       uint32_t design_slot_row = plan.design_state_base_slot + local_slot;
-      if (design_slot_row >= design_layout.slots.size()) {
+      if (design_slot_row >= layout.design.slots.size()) {
         throw common::InternalError(
             "BuildDesignGlobalBehavioralTriggerBitmap",
             std::format(
-                "body {} local_slot {} maps to design_slot_row {} "
+                "body group {} local_slot {} maps to design_slot_row {} "
                 "out of range ({} slots)",
-                plan_body_id_val, local_slot, design_slot_row,
-                design_layout.slots.size()));
+                it->second, local_slot, design_slot_row,
+                layout.design.slots.size()));
       }
-      auto canonical_slot = design_layout.slots[design_slot_row];
+      auto canonical_slot = layout.design.slots[design_slot_row];
       if (canonical_slot.value != design_slot_row) {
         throw common::InternalError(
             "BuildDesignGlobalBehavioralTriggerBitmap",
@@ -246,42 +239,36 @@ auto BuildDesignGlobalBehavioralTriggerBitmap(
 }
 
 void PopulateBodyBitmaps(
-    const BodyBehavioralTriggerBitmaps& bitmaps, Layout& layout) {
-  for (auto& info : layout.body_realization_infos) {
-    auto it = bitmaps.by_body_id_value.find(info.body_id.value);
-    if (it != bitmaps.by_body_id_value.end()) {
-      if (it->second.size() != info.slot_count) {
-        throw common::InternalError(
-            "PopulateBodyBehavioralTriggerContracts",
-            std::format(
-                "behavioral trigger bitmap size mismatch for body "
-                "{}: got {}, expected {}",
-                info.body_id.value, it->second.size(), info.slot_count));
-      }
-      info.slot_has_behavioral_trigger = it->second;
-    } else {
-      info.slot_has_behavioral_trigger.assign(info.slot_count, false);
+    const std::vector<std::vector<bool>>& bitmaps, Layout& layout) {
+  for (size_t gi = 0; gi < layout.body_realization_infos.size(); ++gi) {
+    auto& info = layout.body_realization_infos[gi];
+    const auto& bitmap = bitmaps[gi];
+    if (bitmap.size() != info.slot_count) {
+      throw common::InternalError(
+          "PopulateBehavioralTriggerContracts",
+          std::format(
+              "behavioral trigger bitmap size mismatch for body "
+              "group {}: got {}, expected {}",
+              gi, bitmap.size(), info.slot_count));
     }
+    info.slot_has_behavioral_trigger = bitmap;
   }
 }
 
 }  // namespace
 
 void PopulateBehavioralTriggerContracts(
-    std::span<const LayoutModulePlan> module_plans,
-    std::span<const std::span<const mir::ProcessId>> module_body_processes,
-    const mir::Design& design, const mir::Arena& design_arena,
-    const mir::ConstructionInput& construction, Layout& layout) {
-  auto body_bitmaps = BuildBodyBehavioralDirtyTriggerBitmaps(
-      module_plans, module_body_processes, design);
+    std::span<const LayoutModulePlan> module_plans, const mir::Design& design,
+    const mir::Arena& design_arena, const mir::ConstructionInput& construction,
+    Layout& layout) {
+  auto body_bitmaps = BuildBodyBehavioralDirtyTriggerBitmaps(layout);
   // Mark target body-local slots that have cross-body ext-ref subscribers.
   MarkExtRefTriggerTargetsInBodyBitmaps(
-      module_plans, module_body_processes, design, construction, body_bitmaps);
+      layout, module_plans, design, construction, body_bitmaps);
   PopulateBodyBitmaps(body_bitmaps, layout);
   layout.slot_has_design_behavioral_trigger =
       BuildDesignGlobalBehavioralTriggerBitmap(
-          module_plans, module_body_processes, design, design_arena,
-          layout.design, body_bitmaps);
+          layout, module_plans, design, design_arena, body_bitmaps);
 }
 
 }  // namespace lyra::lowering::mir_to_llvm
